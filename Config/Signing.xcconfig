@@ -1,0 +1,3 @@
+#include? "LocalSigning.xcconfig"
+
+DEVELOPMENT_TEAM = $(BETTERTILE_DEVELOPMENT_TEAM)

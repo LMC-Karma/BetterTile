@@ -1,0 +1,31 @@
+# macOS
+.DS_Store
+
+# Build products
+/.build/
+/DerivedData/
+BetterTile.xcarchive/
+*.dSYM
+*.app
+
+# Xcode user state
+/.swiftpm/xcode/package.xcworkspace/xcuserdata/
+/.swiftpm/xcode/xcuserdata/
+*.xcuserstate
+*.xccheckout
+*.moved-aside
+*.xcworkspace/xcuserdata/
+*.xcodeproj/xcuserdata/
+
+# Transient writes
+*.json.tmp
+
+# Local-only notes, research, and scratch work (never published)
+/Local/
+
+# Local agent and tooling configuration
+/.xcodebuildmcp/
+/.claude/
+/Config/LocalSigning.xcconfig
+# Claude Code auto-loads this local symlink to AGENTS.md; do not publish it.
+/CLAUDE.md

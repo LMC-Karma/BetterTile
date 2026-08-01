@@ -1,0 +1,2 @@
+// Copy this file to LocalSigning.xcconfig and replace the value below.
+BETTERTILE_DEVELOPMENT_TEAM = YOUR_TEAM_ID
