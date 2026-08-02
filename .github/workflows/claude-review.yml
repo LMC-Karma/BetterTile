@@ -15,20 +15,24 @@ on:
 
 jobs:
   review:
-    # Automatic review: only for non-draft PRs.
+    # Automatic review: only for non-draft PRs from the base repo. Fork PRs are
+    # skipped because GitHub withholds secrets from fork-triggered pull_request
+    # runs, so CLAUDE_CODE_OAUTH_TOKEN would be empty and the job would fail with
+    # a confusing red X on every external contributor's PR.
     if: >
       github.event_name == 'pull_request' &&
-      github.event.pull_request.draft == false
+      github.event.pull_request.draft == false &&
+      github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     permissions:
       contents: read
       pull-requests: write
       id-token: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
-      - uses: anthropics/claude-code-action@v1
+      - uses: anthropics/claude-code-action@be7b93b1907a4abad570368f3c74b6fe3807510b # v1
         with:
           # Uses a Claude subscription (Pro/Max) via OAuth — no API credits.
           # Generate the token with `claude setup-token` and store it as a repo secret.
@@ -57,11 +61,19 @@ jobs:
 
   claude-mention:
     # On-demand: respond when someone writes "@claude" in a PR/issue comment.
+    #
+    # The author_association gate is essential on a public repo: these events run
+    # in the base-repo context with access to CLAUDE_CODE_OAUTH_TOKEN regardless
+    # of who commented, so without it any GitHub user could burn the Claude
+    # subscription quota (or attempt prompt injection) by writing "@claude".
+    # Only the repo owner, org members, and invited collaborators may trigger it.
     if: >
       (github.event_name == 'issue_comment' &&
-       contains(github.event.comment.body, '@claude')) ||
+       contains(github.event.comment.body, '@claude') &&
+       contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association)) ||
       (github.event_name == 'pull_request_review_comment' &&
-       contains(github.event.comment.body, '@claude'))
+       contains(github.event.comment.body, '@claude') &&
+       contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association))
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -69,9 +81,9 @@ jobs:
       issues: write
       id-token: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
-      - uses: anthropics/claude-code-action@v1
+      - uses: anthropics/claude-code-action@be7b93b1907a4abad570368f3c74b6fe3807510b # v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}

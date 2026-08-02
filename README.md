@@ -6,7 +6,7 @@
 
 **A native macOS window manager that resizes neighbours together, not just one window at a time.**
 
-[![CI](https://github.com/LMC-Karma/bettertile/actions/workflows/ci.yml/badge.svg)](https://github.com/LMC-Karma/bettertile/actions/workflows/ci.yml)
+[![CI](https://github.com/LMC-Karma/BetterTile/actions/workflows/ci.yml/badge.svg)](https://github.com/LMC-Karma/BetterTile/actions/workflows/ci.yml)
 [![License: GPL v3 or later](https://img.shields.io/badge/License-GPL--3.0--or--later-blue.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-macOS%2026%2B-lightgrey.svg)](#what-you-need)
 [![Swift](https://img.shields.io/badge/Swift-6.3-orange.svg)](https://swift.org)
@@ -75,8 +75,8 @@ To build it yourself, also Xcode 26 / Swift 6.3 or later.
 No signed release is published yet. Build it from source:
 
 ```sh
-git clone https://github.com/LMC-Karma/bettertile.git
-cd bettertile
+git clone https://github.com/LMC-Karma/BetterTile.git
+cd BetterTile
 cp Config/LocalSigning.xcconfig.example Config/LocalSigning.xcconfig
 ```
 

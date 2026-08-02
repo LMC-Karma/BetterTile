@@ -127,7 +127,7 @@ Accessibility. Follow the existing pattern in `Tests/BetterTileMacOSTests/`.
 
 ## Git workflow
 
-- Repository is `LMC-Karma/bettertile`. Use local `git` and the `gh` CLI. Do not
+- Repository is `LMC-Karma/BetterTile`. Use local `git` and the `gh` CLI. Do not
   open a browser or run `gh auth login` unless an operation actually fails for
   want of authentication.
 - Fetch `origin/main` before starting. Branch as `feat/<short-description>`,
