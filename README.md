@@ -53,11 +53,6 @@ out at assignment time instead of the first time a shortcut silently fails.
 BetterTile keeps a bounded frame history per window, so a misplaced action is
 one step back rather than a manual reconstruction.
 
-### Settings you can search
-
-A native sidebar Settings window with search across every preference.
-Configuration is stored locally in a versioned, atomically written JSON file.
-
 ---
 
 ## What you need
