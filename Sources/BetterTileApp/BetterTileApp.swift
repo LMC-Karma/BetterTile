@@ -585,7 +585,7 @@ private final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSPo
     ) {
         switch choice {
         case .skip: applyUpdateEvent(.userSkippedUpdate)
-        case .install: applyUpdateEvent(.userInstalledUpdate)
+        case .install: applyUpdateEvent(.userBeganInstallingUpdate)
         case .dismiss: applyUpdateEvent(.userDeferredUpdate)
         @unknown default: break
         }

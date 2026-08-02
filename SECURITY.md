@@ -50,12 +50,17 @@ browser. The URL carries exactly two query parameters:
 - `title`, a proposed issue title containing the BetterTile marketing version
   and build number, for example `[Bug] BetterTile 0.1.0 (2): `
 
-Opening the form does not submit anything. Nothing is sent until the user fills
+Opening the page is itself a request to GitHub: it sends those two query
+parameters, so GitHub receives the BetterTile version and build, along with the
+ordinary connection metadata any web request carries, such as the requesting IP
+address. No issue is created and no form body is submitted until the user fills
 the form in and submits it themselves, and the user can edit or delete every
-field first. BetterTile does not place window information, layout or Bento
-state, configuration, shortcuts, diagnostics, analytics, telemetry, crash
-reports, a system profile, or any other user or machine data in the URL. This is
-covered by an automated test.
+field first.
+
+Beyond the version and build in the title, BetterTile places no window
+information, layout or Bento state, configuration, shortcuts, diagnostics,
+analytics, telemetry, crash reports, system profile, or any other user or
+machine data in the URL. This is covered by an automated test.
 
 Any future network feature must serve a documented user-facing purpose,
 minimize transmitted data, use secure transport, and document its endpoints

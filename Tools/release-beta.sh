@@ -63,29 +63,27 @@ release_url_prefix="https://github.com/$repo/releases/download/$tag/"
 # Stripping those attributes afterwards is a race against the sync daemon, so
 # every intermediate artifact is built outside the repository instead. Only the
 # finished, inspectable files are copied back into .build afterwards.
-work_dir="$(mktemp -d /private/tmp/bettertile-release.XXXXXXXX)"
-[[ "$work_dir" == /private/tmp/bettertile-release.* && -d "$work_dir" ]] || {
+#
+# make_release_workspace and is_release_workspace live in the sourced library so
+# the guard on cleanup's `rm -rf` has exactly one definition and can be tested
+# without running a release; see Tools/tests/release-workspace-test.sh.
+# shellcheck source=lib/release-workspace.sh
+source "$script_dir/lib/release-workspace.sh"
+
+work_dir="$(make_release_workspace)"
+is_release_workspace "$work_dir" || {
     echo "Refusing to continue without a private temporary directory." >&2
     exit 1
 }
 mount_dir="$work_dir/mount"
 derived_data="$work_dir/DerivedData"
+debug_derived_data="$work_dir/DerivedDataDebug"
+settings_derived_data="$work_dir/DerivedDataSettings"
 archive_dir="$work_dir/appcast-input"
 stage_dir="$work_dir/dmg-root"
 appcast_path="$work_dir/appcast.xml"
 
-cleanup() {
-    local status=$?
-    if [[ -d "$mount_dir" ]]; then
-        hdiutil detach "$mount_dir" >/dev/null 2>&1 || true
-    fi
-    # Deliberately narrow: only ever the one directory this run created.
-    if [[ "$work_dir" == /private/tmp/bettertile-release.* && -d "$work_dir" ]]; then
-        rm -rf "$work_dir"
-    fi
-    return $status
-}
-trap cleanup EXIT
+trap 'release_cleanup "$work_dir" "$mount_dir"' EXIT
 
 export CLANG_MODULE_CACHE_PATH="$work_dir/module-cache/clang"
 export SWIFTPM_MODULECACHE_OVERRIDE="$work_dir/module-cache/swift"
@@ -152,7 +150,12 @@ expected_public_key="$(/usr/libexec/PlistBuddy -c 'Print :SUPublicEDKey' Sources
     exit 1
 }
 
-build_settings="$(xcodebuild -project BetterTile.xcodeproj -scheme BetterTile -configuration Release -showBuildSettings)"
+# Every xcodebuild invocation here, including -showBuildSettings, is given an
+# explicit derived data path inside the workspace. Xcode's shared DerivedData
+# would leave release state on the machine after cleanup and could reuse output
+# from an unrelated build of this project.
+build_settings="$(xcodebuild -project BetterTile.xcodeproj -scheme BetterTile \
+    -configuration Release -derivedDataPath "$settings_derived_data" -showBuildSettings)"
 project_version="$(awk -F ' = ' '/^[[:space:]]*MARKETING_VERSION = / { print $2; exit }' <<< "$build_settings")"
 project_build="$(awk -F ' = ' '/^[[:space:]]*CURRENT_PROJECT_VERSION = / { print $2; exit }' <<< "$build_settings")"
 [[ "$project_version" == "$version" ]] || {
@@ -203,7 +206,8 @@ echo "Running tests and builds..."
 swift test
 swift build
 xcodebuild -project BetterTile.xcodeproj -scheme BetterTile \
-    -configuration Debug CODE_SIGNING_ALLOWED=NO build
+    -configuration Debug CODE_SIGNING_ALLOWED=NO \
+    -derivedDataPath "$debug_derived_data" build
 xcodebuild -project BetterTile.xcodeproj -scheme BetterTile \
     -configuration Release CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO \
     -derivedDataPath "$derived_data" build

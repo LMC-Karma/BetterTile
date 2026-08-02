@@ -26,8 +26,9 @@ public enum UpdateIndicatorEvent: Equatable, Sendable {
     case userSkippedUpdate
     /// The user deferred the update, for example with "Remind Me Later".
     case userDeferredUpdate
-    /// The user started installing the update.
-    case userInstalledUpdate
+    /// The user began downloading and installing the update. This only starts
+    /// the work; it does not mean the update was applied.
+    case userBeganInstallingUpdate
     /// The check failed, for example because the network was unreachable.
     case checkFailed
 }
@@ -36,9 +37,16 @@ public enum UpdateIndicator {
     /// A confirmed result moves the indicator; anything inconclusive leaves it
     /// exactly as it was.
     ///
-    /// A failed check must not clear an already-advertised update: the update
-    /// still exists, and silently dropping the indicator because a laptop woke
-    /// up on a captive network would hide it until the next daily check.
+    /// Two events deliberately preserve the current state rather than clearing
+    /// it:
+    ///
+    /// - A failed check says nothing about whether an update exists. Dropping
+    ///   the indicator because a laptop woke on a captive network would hide a
+    ///   real update until the next daily check.
+    /// - Choosing Install only *begins* downloading and installing. If that
+    ///   fails, the update is still available and the indicator must still say
+    ///   so. A successful install quits and relaunches the app, which resets
+    ///   this state naturally, so nothing needs to clear it on success.
     public static func state(
         after event: UpdateIndicatorEvent,
         from current: UpdateIndicatorState
@@ -46,9 +54,9 @@ public enum UpdateIndicator {
         switch event {
         case .foundValidUpdate:
             .updateAvailable
-        case .confirmedNoUpdate, .userSkippedUpdate, .userInstalledUpdate:
+        case .confirmedNoUpdate, .userSkippedUpdate:
             .idle
-        case .userDeferredUpdate, .checkFailed:
+        case .userDeferredUpdate, .userBeganInstallingUpdate, .checkFailed:
             current
         }
     }

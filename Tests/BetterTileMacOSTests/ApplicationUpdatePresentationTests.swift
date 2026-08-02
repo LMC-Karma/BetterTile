@@ -27,8 +27,20 @@ import Testing
     #expect(UpdateIndicator.state(after: .checkFailed, from: .idle) == .idle)
 }
 
-@Test func installingAnUpdateClearsTheIndicator() {
-    #expect(UpdateIndicator.state(after: .userInstalledUpdate, from: .updateAvailable) == .idle)
+@Test func beginningAnInstallKeepsTheIndicatorUntilTheAppRelaunches() {
+    // Sparkle's install choice only starts the download and install. A
+    // successful install relaunches the app, which resets the indicator on its
+    // own, so this must not clear it early — otherwise a failed install leaves
+    // an available update unadvertised.
+    #expect(UpdateIndicator.state(after: .userBeganInstallingUpdate, from: .updateAvailable) == .updateAvailable)
+}
+
+@Test func anInstallThatFailsLeavesTheUpdateAdvertised() {
+    var state = UpdateIndicatorState.idle
+    for event in [UpdateIndicatorEvent.foundValidUpdate, .userBeganInstallingUpdate, .checkFailed] {
+        state = UpdateIndicator.state(after: event, from: state)
+    }
+    #expect(state == .updateAvailable)
 }
 
 @Test func deferringThenFailingStillAdvertisesTheUpdate() {
@@ -37,6 +49,14 @@ import Testing
         state = UpdateIndicator.state(after: event, from: state)
     }
     #expect(state == .updateAvailable)
+}
+
+@Test func skippingAfterBeginningAnInstallStillClearsTheIndicator() {
+    var state = UpdateIndicatorState.idle
+    for event in [UpdateIndicatorEvent.foundValidUpdate, .userBeganInstallingUpdate, .userSkippedUpdate] {
+        state = UpdateIndicator.state(after: event, from: state)
+    }
+    #expect(state == .idle)
 }
 
 // MARK: - Feedback link

@@ -1,8 +1,11 @@
 # Public beta releases
 
-BetterTile public betas are ad-hoc signed DMGs published as GitHub prereleases.
-The app uses Sparkle 2.9.5 to discover and verify later releases. Tags and
-release titles carry the beta label; Apple bundle versions remain numeric.
+BetterTile public betas are published as GitHub prereleases: a DMG containing an
+**ad-hoc signed application**. The DMG archive itself carries no Apple code
+signature; it is authenticated separately by the Sparkle **EdDSA signature**
+recorded in the appcast. The app uses Sparkle 2.9.5 to discover and verify later
+releases. Tags and release titles carry the beta label; Apple bundle versions
+remain numeric.
 
 The first release is:
 
@@ -21,7 +24,7 @@ These are separate and easy to confuse:
 | --- | --- | --- |
 | Contributor builds from Xcode | the contributor's own Apple Development / Personal Team identity, from the gitignored `Config/LocalSigning.xcconfig` | keeps the local Accessibility grant across rebuilds |
 | CI, and the build steps inside this script | none — `CODE_SIGNING_ALLOWED=NO` | unsigned validation builds only; never distributed |
-| The published beta | ad-hoc (`-`), applied by `Tools/release-beta.sh` | the downloadable DMG |
+| The published beta | ad-hoc (`-`), applied by `Tools/release-beta.sh` | the application inside the downloadable DMG |
 
 `Tools/release-beta.sh` is the only place the distributed signature is applied.
 It does not touch `Config/LocalSigning.xcconfig` and does not use a contributor
