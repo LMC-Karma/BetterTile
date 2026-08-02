@@ -8,10 +8,32 @@ import Testing
     let store = ConfigurationStore(fileURL: directory.appending(path: "configuration.json"))
     var configuration = BetterTileConfiguration()
     configuration.showDockIcon = true
+    configuration.setupCompletionVersion = 1
+    configuration.macOSTilingRecommendationAcknowledged = true
+    configuration.stageManagerRecommendationAcknowledged = true
     configuration.singleWindowInitialPlacement = .almostMaximize
     configuration.customZones = [CustomZone(name: "Focus", rect: NormalizedRect(x: 0.1, y: 0.1, width: 0.8, height: 0.8))]
     try store.save(configuration)
     #expect(try store.load() == configuration)
+}
+
+@Test func schemaEightAddsPersistentSetupProgressWithoutRuntimeSideEffects() throws {
+    let migrated = try ConfigurationStore.decode(JSONSerialization.data(withJSONObject: [
+        "schemaVersion": 7,
+    ]))
+    #expect(migrated.schemaVersion == 8)
+    #expect(migrated.setupCompletionVersion == 0)
+    #expect(!migrated.macOSTilingRecommendationAcknowledged)
+    #expect(!migrated.stageManagerRecommendationAcknowledged)
+
+    var completed = migrated
+    completed.setupCompletionVersion = 1
+    completed.macOSTilingRecommendationAcknowledged = true
+    completed.stageManagerRecommendationAcknowledged = true
+
+    let roundTrip = try ConfigurationStore.decode(JSONEncoder().encode(completed))
+    #expect(roundTrip == completed)
+    #expect(ConfigurationChangeSet.between(migrated, completed).isEmpty)
 }
 
 @Test func configurationChangesClassifyOnlyAffectedRuntimeDomains() {
@@ -123,7 +145,7 @@ import Testing
         "bentoStates": ["main": ["floatingWindowIDs": []]],
     ]
     let migrated = try ConfigurationStore.decode(JSONSerialization.data(withJSONObject: legacy))
-    #expect(migrated.schemaVersion == 7)
+    #expect(migrated.schemaVersion == 8)
     #expect(migrated.showDockIcon)
     #expect(migrated.defaultLayoutMode == .bento)
     #expect(migrated.resizeFeedbackMode == .ghost)
@@ -186,7 +208,7 @@ import Testing
         "schemaVersion": 3,
         "bentoSwapHoverDelay": 0.12,
     ]))
-    #expect(oldDefault.schemaVersion == 7)
+    #expect(oldDefault.schemaVersion == 8)
     #expect(oldDefault.bentoSwapHoverDelay == 0.12)
 
     let customized = try ConfigurationStore.decode(JSONSerialization.data(withJSONObject: [

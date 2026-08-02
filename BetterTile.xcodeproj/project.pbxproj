@@ -10,6 +10,7 @@
 		100000000000000000000001 /* BetterTileApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000001 /* BetterTileApp.swift */; };
 		100000000000000000000002 /* BetterTileModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000002 /* BetterTileModel.swift */; };
 		100000000000000000000003 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000003 /* SettingsView.swift */; };
+		100000000000000000000007 /* SetupAssistantView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000000A /* SetupAssistantView.swift */; };
 		100000000000000000000004 /* BetterTileCore in Frameworks */ = {isa = PBXBuildFile; productRef = 700000000000000000000001 /* BetterTileCore */; };
 		100000000000000000000005 /* BetterTileMacOS in Frameworks */ = {isa = PBXBuildFile; productRef = 700000000000000000000002 /* BetterTileMacOS */; };
 		100000000000000000000006 /* AppIcon.icon in Resources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000008 /* AppIcon.icon */; };
@@ -25,6 +26,7 @@
 		200000000000000000000007 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		200000000000000000000008 /* AppIcon.icon */ = {isa = PBXFileReference; lastKnownFileType = folder.iconcomposer.icon; path = Resources/AppIcon.icon; sourceTree = "<group>"; };
 		200000000000000000000009 /* Signing.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config/Signing.xcconfig; sourceTree = "<group>"; };
+		20000000000000000000000A /* SetupAssistantView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SetupAssistantView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -58,6 +60,7 @@
 				200000000000000000000001 /* BetterTileApp.swift */,
 				200000000000000000000002 /* BetterTileModel.swift */,
 				200000000000000000000003 /* SettingsView.swift */,
+				20000000000000000000000A /* SetupAssistantView.swift */,
 				200000000000000000000007 /* Info.plist */,
 			);
 			name = BetterTileApp;
@@ -152,6 +155,7 @@
 				100000000000000000000001 /* BetterTileApp.swift in Sources */,
 				100000000000000000000002 /* BetterTileModel.swift in Sources */,
 				100000000000000000000003 /* SettingsView.swift in Sources */,
+				100000000000000000000007 /* SetupAssistantView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -257,6 +261,7 @@
 				MARKETING_VERSION = 0.1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.lmckarma.BetterTile;
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_STRICT_CONCURRENCY = complete;
 			};

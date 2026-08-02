@@ -91,9 +91,12 @@ public enum SingleWindowInitialPlacement: String, Codable, CaseIterable, Sendabl
 }
 
 public struct BetterTileConfiguration: Codable, Hashable, Sendable {
-    public static let currentSchemaVersion = 7
+    public static let currentSchemaVersion = 8
 
     public var schemaVersion: Int
+    public var setupCompletionVersion: Int
+    public var macOSTilingRecommendationAcknowledged: Bool
+    public var stageManagerRecommendationAcknowledged: Bool
     public var showDockIcon: Bool
     public var snappingEnabled: Bool
     public var linkedResizeEnabled: Bool
@@ -113,6 +116,9 @@ public struct BetterTileConfiguration: Codable, Hashable, Sendable {
 
     public init(
         schemaVersion: Int = BetterTileConfiguration.currentSchemaVersion,
+        setupCompletionVersion: Int = 0,
+        macOSTilingRecommendationAcknowledged: Bool = false,
+        stageManagerRecommendationAcknowledged: Bool = false,
         showDockIcon: Bool = false,
         snappingEnabled: Bool = true,
         linkedResizeEnabled: Bool = false,
@@ -131,6 +137,9 @@ public struct BetterTileConfiguration: Codable, Hashable, Sendable {
         customZones: [CustomZone] = []
     ) {
         self.schemaVersion = schemaVersion
+        self.setupCompletionVersion = max(0, setupCompletionVersion)
+        self.macOSTilingRecommendationAcknowledged = macOSTilingRecommendationAcknowledged
+        self.stageManagerRecommendationAcknowledged = stageManagerRecommendationAcknowledged
         self.showDockIcon = showDockIcon
         self.snappingEnabled = snappingEnabled
         self.linkedResizeEnabled = linkedResizeEnabled
@@ -150,7 +159,9 @@ public struct BetterTileConfiguration: Codable, Hashable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case schemaVersion, showDockIcon, snappingEnabled, linkedResizeEnabled
+        case schemaVersion, setupCompletionVersion
+        case macOSTilingRecommendationAcknowledged, stageManagerRecommendationAcknowledged
+        case showDockIcon, snappingEnabled, linkedResizeEnabled
         case defaultLayoutMode, resizeFeedbackMode, dividerVisibility, dividerThickness, bentoInnerGap, bentoSwapHoverDelay
         case singleWindowInitialPlacement
         case dockReservationMode
@@ -165,6 +176,18 @@ public struct BetterTileConfiguration: Codable, Hashable, Sendable {
         guard version <= Self.currentSchemaVersion else { throw ConfigurationError.unsupportedFutureVersion(version) }
 
         schemaVersion = Self.currentSchemaVersion
+        setupCompletionVersion = max(
+            0,
+            try container.decodeIfPresent(Int.self, forKey: .setupCompletionVersion) ?? 0
+        )
+        macOSTilingRecommendationAcknowledged = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .macOSTilingRecommendationAcknowledged
+        ) ?? false
+        stageManagerRecommendationAcknowledged = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .stageManagerRecommendationAcknowledged
+        ) ?? false
         showDockIcon = try container.decodeIfPresent(Bool.self, forKey: .showDockIcon) ?? false
         snappingEnabled = try container.decodeIfPresent(Bool.self, forKey: .snappingEnabled) ?? true
         linkedResizeEnabled = try container.decodeIfPresent(Bool.self, forKey: .linkedResizeEnabled) ?? false
@@ -234,6 +257,15 @@ public struct BetterTileConfiguration: Codable, Hashable, Sendable {
     public func encode(to encoder: any Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(Self.currentSchemaVersion, forKey: .schemaVersion)
+        try container.encode(setupCompletionVersion, forKey: .setupCompletionVersion)
+        try container.encode(
+            macOSTilingRecommendationAcknowledged,
+            forKey: .macOSTilingRecommendationAcknowledged
+        )
+        try container.encode(
+            stageManagerRecommendationAcknowledged,
+            forKey: .stageManagerRecommendationAcknowledged
+        )
         try container.encode(showDockIcon, forKey: .showDockIcon)
         try container.encode(snappingEnabled, forKey: .snappingEnabled)
         try container.encode(linkedResizeEnabled, forKey: .linkedResizeEnabled)

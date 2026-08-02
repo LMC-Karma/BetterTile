@@ -1,3 +1,4 @@
+import AppKit
 import Testing
 @testable import BetterTileCore
 @testable import BetterTileMacOS
@@ -223,6 +224,23 @@ import Testing
     let thumbnail = BTRect(x: 20, y: 100, width: 160, height: 120)
     #expect(OnscreenWindowMatcher.matches(accessibilityFrame: full, windowServerFrame: decorated))
     #expect(!OnscreenWindowMatcher.matches(accessibilityFrame: full, windowServerFrame: thumbnail))
+}
+
+@Test func windowSystemNeverManagesItsOwnApplicationWindows() {
+    #expect(!AccessibilityWindowSystem.shouldManageApplication(
+        processIdentifier: 42,
+        ownProcessIdentifier: 42,
+        activationPolicy: .regular,
+        isHidden: false,
+        includeHidden: false
+    ))
+    #expect(AccessibilityWindowSystem.shouldManageApplication(
+        processIdentifier: 43,
+        ownProcessIdentifier: 42,
+        activationPolicy: .regular,
+        isHidden: false,
+        includeHidden: false
+    ))
 }
 
 @Test func bentoSwapSupportsTallerUnifiedToolbarsWithoutEnteringWindowContent() {

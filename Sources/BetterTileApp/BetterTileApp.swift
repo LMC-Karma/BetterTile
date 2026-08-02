@@ -121,6 +121,7 @@ private final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSPo
     private var statusItem: NSStatusItem!
     private var repairStatusItem: NSStatusItem!
     private var settingsWindow: NSWindow?
+    private var setupWindow: NSWindow?
     private var globalDismissMonitor: Any?
     private var localDismissMonitor: Any?
 
@@ -132,16 +133,27 @@ private final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSPo
         configurePopover()
 #if DEBUG
         let arguments = ProcessInfo.processInfo.arguments
-        if let cycles = diagnosticCycleCount(prefix: "--diagnostic-cycle-popover=", arguments: arguments) {
+        if let page = diagnosticSetupPage(arguments: arguments) {
+            DispatchQueue.main.async { [weak self] in self?.presentSetupAssistant(page: page) }
+            return
+        } else if arguments.contains("--diagnostic-open-setup") {
+            DispatchQueue.main.async { [weak self] in self?.presentSetupAssistant(page: .welcome) }
+            return
+        } else if let cycles = diagnosticCycleCount(prefix: "--diagnostic-cycle-popover=", arguments: arguments) {
             DispatchQueue.main.async { [weak self] in self?.cyclePopover(remaining: cycles) }
+            return
         } else if let cycles = diagnosticCycleCount(prefix: "--diagnostic-cycle-settings=", arguments: arguments) {
             DispatchQueue.main.async { [weak self] in self?.cycleSettings(remaining: cycles) }
+            return
         } else if arguments.contains("--diagnostic-open-settings") {
             DispatchQueue.main.async { [weak self] in self?.showSettings() }
+            return
         } else if arguments.contains("--diagnostic-open-popover") {
             DispatchQueue.main.async { [weak self] in self?.showPopover() }
+            return
         }
 #endif
+        showSetupAtLaunchIfNeeded()
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
@@ -210,6 +222,7 @@ private final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSPo
         let panel = BetterTileMenuPanel(
             model: model,
             panelHeight: panelHeight,
+            openSetup: { [weak self] in self?.showSetupAssistant() },
             openSettings: { [weak self] in self?.showSettings() },
             quit: { NSApp.terminate(nil) }
         )
@@ -270,6 +283,7 @@ private final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSPo
             guard event.type != .keyDown else { return event }
             if popover.contentViewController?.view.window === event.window
                 || settingsWindow === event.window
+                || setupWindow === event.window
                 || statusButtonContainsMouse() {
                 return event
             }
@@ -295,6 +309,13 @@ private final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSPo
     }
 
 #if DEBUG
+    private func diagnosticSetupPage(arguments: [String]) -> SetupPage? {
+        let prefix = "--diagnostic-setup-page="
+        return arguments
+            .first(where: { $0.hasPrefix(prefix) })
+            .flatMap { SetupPage(diagnosticName: String($0.dropFirst(prefix.count))) }
+    }
+
     private func diagnosticCycleCount(prefix: String, arguments: [String]) -> Int? {
         arguments
             .first(where: { $0.hasPrefix(prefix) })
@@ -330,6 +351,13 @@ private final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSPo
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             let menu = NSMenu()
+            let setup = NSMenuItem(
+                title: "Setup Assistant…",
+                action: #selector(showSetupAssistant),
+                keyEquivalent: ""
+            )
+            setup.target = self
+            menu.addItem(setup)
             let settings = NSMenuItem(
                 title: "Settings…",
                 action: #selector(showSettings),
@@ -358,15 +386,19 @@ private final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSPo
         let created = settingsWindow == nil
         if settingsWindow == nil {
             let creation = Self.signposter.beginInterval("createSettings")
-            let host = NSHostingController(rootView: SettingsView(model: model))
+            let host = NSHostingController(rootView: SettingsView(
+                model: model,
+                openSetup: { [weak self] in self?.showSetupAssistant() }
+            ))
             let window = NSWindow(contentViewController: host)
             window.title = "BetterTile Settings"
             window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
             window.contentMinSize = NSSize(width: 820, height: 560)
             window.setContentSize(NSSize(width: 920, height: 640))
+            window.level = .floating
             window.isReleasedWhenClosed = false
             window.hidesOnDeactivate = false
-            window.collectionBehavior.insert(.moveToActiveSpace)
+            window.collectionBehavior.insert([.moveToActiveSpace, .fullScreenAuxiliary])
             window.setFrameAutosaveName("BetterTileSettingsWindow")
             window.delegate = self
             settingsWindow = window
@@ -380,10 +412,58 @@ private final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSPo
         settingsWindow?.orderFrontRegardless()
     }
 
+    private func showSetupAtLaunchIfNeeded() {
+        let page: SetupPage?
+        if model.configuration.setupCompletionVersion < SetupAssistantView.currentVersion {
+            page = .welcome
+        } else if !model.hasAccessibilityPermission {
+            page = .accessibility
+        } else {
+            page = nil
+        }
+        guard let page else { return }
+        DispatchQueue.main.async { [weak self] in self?.presentSetupAssistant(page: page) }
+    }
+
+    @objc private func showSetupAssistant() {
+        presentSetupAssistant(page: .welcome)
+    }
+
+    private func presentSetupAssistant(page: SetupPage) {
+        closePopover()
+        let created = setupWindow == nil
+        if setupWindow == nil {
+            let host = NSHostingController(rootView: SetupAssistantView(
+                model: model,
+                initialPage: page,
+                close: { [weak self] in self?.setupWindow?.performClose(nil) }
+            ))
+            let window = NSWindow(contentViewController: host)
+            window.title = "BetterTile Setup"
+            window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
+            window.contentMinSize = NSSize(width: 680, height: 540)
+            window.setContentSize(NSSize(width: 720, height: 580))
+            window.isReleasedWhenClosed = false
+            window.hidesOnDeactivate = false
+            window.collectionBehavior.insert(.moveToActiveSpace)
+            window.setFrameAutosaveName("BetterTileSetupWindow")
+            window.delegate = self
+            setupWindow = window
+        }
+        NSApp.activate(ignoringOtherApps: true)
+        if created {
+            setupWindow?.center()
+        }
+        setupWindow?.makeKeyAndOrderFront(nil)
+        setupWindow?.orderFrontRegardless()
+    }
+
     func windowWillClose(_ notification: Notification) {
-        guard notification.object as? NSWindow === settingsWindow else { return }
-        let interval = Self.signposter.beginInterval("closeSettings")
-        defer { Self.signposter.endInterval("closeSettings", interval) }
+        guard let window = notification.object as? NSWindow,
+              window === settingsWindow || window === setupWindow
+        else { return }
+        let interval = Self.signposter.beginInterval("closeWindow")
+        defer { Self.signposter.endInterval("closeWindow", interval) }
         model.flushConfiguration()
     }
 
@@ -401,6 +481,13 @@ private final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSPo
 
         let appItem = NSMenuItem()
         let appMenu = NSMenu(title: "BetterTile")
+        let setup = NSMenuItem(
+            title: "Setup Assistant…",
+            action: #selector(showSetupAssistant),
+            keyEquivalent: ""
+        )
+        setup.target = self
+        appMenu.addItem(setup)
         let settings = NSMenuItem(
             title: "Settings…",
             action: #selector(showSettings),
@@ -468,6 +555,7 @@ private enum PanelSurface {
 private struct BetterTileMenuPanel: View {
     @Bindable var model: BetterTileModel
     let panelHeight: CGFloat
+    let openSetup: () -> Void
     let openSettings: () -> Void
     let quit: () -> Void
 
@@ -531,7 +619,7 @@ private struct BetterTileMenuPanel: View {
                     Label("Accessibility required", systemImage: "hand.raised.fill")
                         .foregroundStyle(.orange)
                     Spacer()
-                    Button("Grant…") { model.requestAccessibilityPermission() }
+                    Button("Setup…", action: openSetup)
                         .controlSize(.small)
                 }
             }
