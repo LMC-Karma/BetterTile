@@ -51,8 +51,11 @@ jobs:
               coordinates are converted only at the BetterTileMacOS boundary.
             - All window mutations must go through the main-actor WindowCoordinator.
             - Missing tests for geometry, state transitions, migrations, or failure paths.
-            - Disallowed changes: private Apple APIs, third-party dependencies, SIP
-              workarounds, code injection, or a new permission.
+            - Permanent red lines: private Apple APIs, SIP workarounds, or code injection.
+            - For networking, permissions, privileged components, dependencies,
+              user-data handling, distribution, or architecture changes: verify the
+              user benefit, security/maintenance review, tests, licenses, and repository
+              disclosure required by SECURITY.md.
 
             Skip trivial nits. If the change looks good, post a brief approving summary.
           # Grant the tools Claude needs to actually POST its review.

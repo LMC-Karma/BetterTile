@@ -24,7 +24,7 @@ private enum SettingsDestination: String, CaseIterable, Identifiable {
     var keywords: String {
         switch self {
         case .general:
-            "permission accessibility dock appearance light dark system drag snapping application"
+            "permission accessibility dock appearance light dark system drag snapping application update automatic"
         case .windowLayout:
             "mode manual native bento resize linked divider shortcut keyboard hotkey halves thirds quarters sixths move display restore"
         case .snapZones:
@@ -35,6 +35,7 @@ private enum SettingsDestination: String, CaseIterable, Identifiable {
 
 struct SettingsView: View {
     @Bindable var model: BetterTileModel
+    @Binding var automaticallyChecksForUpdates: Bool
     let openSetup: () -> Void
     @State private var selection: SettingsDestination = .general
     @State private var search = ""
@@ -116,7 +117,11 @@ struct SettingsView: View {
     private var detail: some View {
         switch selection {
         case .general:
-            GeneralSettings(model: model, openSetup: openSetup)
+            GeneralSettings(
+                model: model,
+                automaticallyChecksForUpdates: $automaticallyChecksForUpdates,
+                openSetup: openSetup
+            )
         case .windowLayout:
             WindowLayoutSettings(model: model)
         case .snapZones:
@@ -127,6 +132,7 @@ struct SettingsView: View {
 
 private struct GeneralSettings: View {
     @Bindable var model: BetterTileModel
+    @Binding var automaticallyChecksForUpdates: Bool
     let openSetup: () -> Void
     @AppStorage(AppAppearance.defaultsKey) private var appearanceRawValue = AppAppearance.system.rawValue
 
@@ -169,6 +175,7 @@ private struct GeneralSettings: View {
             Section("Application") {
                 Toggle("Show Dock icon", isOn: configurationBinding(\.showDockIcon))
                 Toggle("Enable drag snapping", isOn: configurationBinding(\.snappingEnabled))
+                Toggle("Automatically check for updates", isOn: $automaticallyChecksForUpdates)
             }
 
             Section("Appearance") {

@@ -14,9 +14,10 @@ written for agents.
 ## Before you start
 
 Open an issue describing the user-visible behavior and what "done" looks like.
-For anything beyond a small fix, it's worth agreeing on the approach before you
-write code — BetterTile has strict layer boundaries and a change in the wrong
-layer is expensive to unwind.
+For anything beyond a small fix, agree on the approach before writing code.
+BetterTile's current layer boundaries are deliberate; an intentional change is
+welcome when its rationale, migration impact, documentation, and tests are part
+of the proposal.
 
 ---
 
@@ -57,9 +58,9 @@ layer is expensive to unwind.
 
 ---
 
-## Architecture rules
+## Current architecture
 
-The dependency direction is strict:
+The default dependency direction is:
 
 ```
 BetterTileApp  →  BetterTileMacOS  →  BetterTileCore
@@ -78,13 +79,16 @@ BetterTileApp  →  BetterTileMacOS  →  BetterTileCore
 
 ---
 
-## What will be rejected
+## Security and disclosure
 
-- private macOS APIs, including private SkyLight symbols
-- code copied from other window managers
-- SIP workarounds or code injection
-- third-party package dependencies
-- a new system permission without an explicit design decision first
+Private macOS APIs, SIP workarounds, and code injection are not accepted.
+Dependencies, networking, permissions, privileged components, user-data
+handling, distribution, and architecture may evolve through explicit design
+review. Explain the user benefit, security and maintenance tradeoffs, and test
+coverage in the pull request; update the repository documentation at the same
+time. Adapted code must have compatible licensing, provenance, and attribution.
+
+[SECURITY.md](SECURITY.md) is the canonical security and privacy policy.
 
 ---
 

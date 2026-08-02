@@ -6,6 +6,7 @@ import AppKit
 import BetterTileCore
 import BetterTileMacOS
 import os
+import Sparkle
 import SwiftUI
 
 enum AppAppearance: String, CaseIterable, Identifiable {
@@ -109,13 +110,21 @@ enum BetterTileApplication {
 }
 
 @MainActor
-private final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSWindowDelegate {
+private final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSWindowDelegate,
+    SPUUpdaterDelegate
+{
     private static let signposter = OSSignposter(
         subsystem: "com.lmckarma.BetterTile",
         category: "ApplicationUI"
     )
 
-    private let model = BetterTileModel()
+    private lazy var model = BetterTileModel()
+    private lazy var updaterController = SPUStandardUpdaterController(
+        startingUpdater: true,
+        updaterDelegate: self,
+        userDriverDelegate: nil
+    )
+    private var modelStarted = false
     private let popover = NSPopover()
     private var popoverHost: NSHostingController<BetterTileMenuPanel>?
     private var statusItem: NSStatusItem!
@@ -126,6 +135,13 @@ private final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSPo
     private var localDismissMonitor: Any?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        guard !isRunningFromReadOnlyVolume else {
+            showMoveToApplicationsAlertAndQuit()
+            return
+        }
+        modelStarted = true
+        _ = model
+        _ = updaterController
         WindowActionGroup.assertComplete()
         AppAppearance.apply()
         installMainMenu()
@@ -151,6 +167,9 @@ private final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSPo
         } else if arguments.contains("--diagnostic-open-popover") {
             DispatchQueue.main.async { [weak self] in self?.showPopover() }
             return
+        } else if arguments.contains("--diagnostic-update-available") {
+            setUpdateAvailable(true)
+            return
         }
 #endif
         showSetupAtLaunchIfNeeded()
@@ -161,7 +180,26 @@ private final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSPo
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        model.shutdown()
+        if modelStarted { model.shutdown() }
+    }
+
+    private var isRunningFromReadOnlyVolume: Bool {
+        let values = try? Bundle.main.bundleURL.resourceValues(forKeys: [.volumeIsReadOnlyKey])
+        return values?.volumeIsReadOnly == true
+    }
+
+    private func showMoveToApplicationsAlertAndQuit() {
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.messageText = "Move BetterTile to Applications"
+        alert.informativeText = "Drag BetterTile into the Applications folder before opening it so updates can be installed."
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "Open Applications")
+        alert.addButton(withTitle: "Quit")
+        if alert.runModal() == .alertFirstButtonReturn {
+            NSWorkspace.shared.open(URL(fileURLWithPath: "/Applications", isDirectory: true))
+        }
+        NSApp.terminate(nil)
     }
 
     private func installStatusItem() {
@@ -365,6 +403,20 @@ private final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSPo
             )
             settings.target = self
             menu.addItem(settings)
+            let updates = NSMenuItem(
+                title: "Check for Updates…",
+                action: #selector(checkForUpdates(_:)),
+                keyEquivalent: ""
+            )
+            updates.target = self
+            menu.addItem(updates)
+            let feedback = NSMenuItem(
+                title: "Send Feedback…",
+                action: #selector(sendFeedback),
+                keyEquivalent: ""
+            )
+            feedback.target = self
+            menu.addItem(feedback)
             menu.addItem(.separator())
             let quit = NSMenuItem(
                 title: "Quit BetterTile",
@@ -388,6 +440,14 @@ private final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSPo
             let creation = Self.signposter.beginInterval("createSettings")
             let host = NSHostingController(rootView: SettingsView(
                 model: model,
+                automaticallyChecksForUpdates: Binding(
+                    get: { [weak self] in
+                        self?.updaterController.updater.automaticallyChecksForUpdates ?? false
+                    },
+                    set: { [weak self] value in
+                        self?.updaterController.updater.automaticallyChecksForUpdates = value
+                    }
+                ),
                 openSetup: { [weak self] in self?.showSetupAssistant() }
             ))
             let window = NSWindow(contentViewController: host)
@@ -476,6 +536,43 @@ private final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSPo
         NSApp.terminate(nil)
     }
 
+    @objc private func checkForUpdates(_ sender: Any?) {
+        updaterController.checkForUpdates(sender)
+    }
+
+    @objc private func sendFeedback() {
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown"
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown"
+        var components = URLComponents(string: "https://github.com/LMC-Karma/BetterTile/issues/new")
+        components?.queryItems = [
+            URLQueryItem(name: "template", value: "bug.yml"),
+            URLQueryItem(name: "title", value: "[Bug] BetterTile \(version) (\(build)): "),
+        ]
+        if let url = components?.url { NSWorkspace.shared.open(url) }
+    }
+
+    private func setUpdateAvailable(_ available: Bool) {
+        statusItem.button?.contentTintColor = available ? .systemBlue : nil
+        statusItem.button?.toolTip = available ? "BetterTile update available" : "BetterTile"
+    }
+
+    func updater(_ updater: SPUUpdater, didFindValidUpdate item: SUAppcastItem) {
+        setUpdateAvailable(true)
+    }
+
+    func updaterDidNotFindUpdate(_ updater: SPUUpdater) {
+        setUpdateAvailable(false)
+    }
+
+    func updater(
+        _ updater: SPUUpdater,
+        userDidMake choice: SPUUserUpdateChoice,
+        forUpdate item: SUAppcastItem,
+        state: SPUUserUpdateState
+    ) {
+        if choice == .skip { setUpdateAvailable(false) }
+    }
+
     private func installMainMenu() {
         let mainMenu = NSMenu()
 
@@ -495,6 +592,20 @@ private final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSPo
         )
         settings.target = self
         appMenu.addItem(settings)
+        let updates = NSMenuItem(
+            title: "Check for Updates…",
+            action: #selector(checkForUpdates(_:)),
+            keyEquivalent: ""
+        )
+        updates.target = self
+        appMenu.addItem(updates)
+        let feedback = NSMenuItem(
+            title: "Send Feedback…",
+            action: #selector(sendFeedback),
+            keyEquivalent: ""
+        )
+        feedback.target = self
+        appMenu.addItem(feedback)
         appMenu.addItem(.separator())
         let quit = NSMenuItem(
             title: "Quit BetterTile",

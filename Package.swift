@@ -9,6 +9,9 @@ let package = Package(
         .library(name: "BetterTileCore", targets: ["BetterTileCore"]),
         .library(name: "BetterTileMacOS", targets: ["BetterTileMacOS"]),
     ],
+    dependencies: [
+        .package(url: "https://github.com/sparkle-project/Sparkle", exact: "2.9.5"),
+    ],
     targets: [
         .target(name: "BetterTileCore"),
         .target(
@@ -22,7 +25,11 @@ let package = Package(
         ),
         .executableTarget(
             name: "BetterTileApp",
-            dependencies: ["BetterTileCore", "BetterTileMacOS"],
+            dependencies: [
+                "BetterTileCore",
+                "BetterTileMacOS",
+                .product(name: "Sparkle", package: "Sparkle"),
+            ],
             exclude: ["Info.plist"]
         ),
         .testTarget(name: "BetterTileCoreTests", dependencies: ["BetterTileCore"]),
