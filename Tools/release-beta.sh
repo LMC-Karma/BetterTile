@@ -187,6 +187,38 @@ info_path="$app_path/Contents/Info.plist"
     exit 1
 }
 
+# The Release build runs with signing disabled, which leaves two defects: the
+# bundle has no seal at all, and Xcode's embed step strips Sparkle's Headers and
+# Modules without re-signing, so the framework's upstream signature no longer
+# validates. An unsealed bundle is not merely untrusted — once quarantined,
+# macOS reports it as damaged with no "Open Anyway" path, so the beta would be
+# unopenable. Sign inside-out to produce a valid seal.
+#
+# BETTERTILE_SIGNING_IDENTITY defaults to "-" (ad-hoc). Ad-hoc identities make
+# the designated requirement a bare cdhash, so every release is a different app
+# to TCC and the Accessibility grant does not survive an update. Setting a
+# stable Developer ID identity here is what fixes that; see docs/RELEASING.md.
+signing_identity="${BETTERTILE_SIGNING_IDENTITY:--}"
+sparkle_versions="$app_path/Contents/Frameworks/Sparkle.framework/Versions/B"
+for nested in \
+    "$sparkle_versions/XPCServices/Downloader.xpc" \
+    "$sparkle_versions/XPCServices/Installer.xpc" \
+    "$sparkle_versions/Updater.app" \
+    "$sparkle_versions/Autoupdate" \
+    "$sparkle_versions"; do
+    [[ -e "$nested" ]] || {
+        echo "Expected Sparkle component is missing: $nested" >&2
+        exit 1
+    }
+    codesign --force --sign "$signing_identity" "$nested"
+done
+codesign --force --sign "$signing_identity" "$app_path"
+codesign --verify --deep --strict "$app_path"
+[[ "$(codesign -dvv "$app_path" 2>&1 | sed -n 's/^Identifier=//p')" == "com.lmckarma.BetterTile" ]] || {
+    echo "Signed bundle identifier does not match the Accessibility grant identity." >&2
+    exit 1
+}
+
 read_info() {
     /usr/libexec/PlistBuddy -c "Print :$1" "$info_path"
 }
@@ -242,7 +274,10 @@ gh release create "$tag" "$artifact_dir/$dmg_name" "$artifact_dir/$checksum_name
     --title "BetterTile $version Beta" --notes-file "$notes_path"
 
 asset_url="$release_url_prefix$dmg_name"
-curl --fail --location --head --retry 12 --retry-delay 5 "$asset_url" >/dev/null
+# --retry alone only covers timeouts and 5xx. A release asset that has not
+# finished propagating answers 404, which would abort the run after the release
+# is already public, so retry on all errors.
+curl --fail --location --head --retry 12 --retry-delay 5 --retry-all-errors "$asset_url" >/dev/null
 
 feed_repo="$artifact_dir/updates-repository"
 mkdir -p "$feed_repo"
@@ -259,5 +294,22 @@ git -C "$feed_repo" add appcast.xml
 git -C "$feed_repo" commit -m "Publish BetterTile $version beta appcast"
 git -C "$feed_repo" push origin updates
 
-curl --fail --location --retry 12 --retry-delay 5 "$feed_url" | grep -q "sparkle:version=\"$project_build\""
+# raw.githubusercontent.com serves a cached copy for several minutes, so a
+# successful request can still return the previous appcast. Retrying the request
+# is not enough; poll until the published build actually appears.
+feed_confirmed=false
+for _ in $(seq 1 30); do
+    if curl --fail --silent --location --retry 3 --retry-delay 2 --retry-all-errors \
+        --header 'Cache-Control: no-cache' "$feed_url" \
+        | grep -q "sparkle:version=\"$project_build\""; then
+        feed_confirmed=true
+        break
+    fi
+    sleep 10
+done
+[[ "$feed_confirmed" == true ]] || {
+    echo "The release published, but $feed_url still does not serve build $project_build." >&2
+    echo "This is usually GitHub's raw cache. Re-check before announcing the release." >&2
+    exit 1
+}
 echo "Published $tag and updated the Sparkle appcast."

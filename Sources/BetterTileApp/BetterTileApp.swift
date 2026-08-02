@@ -141,12 +141,14 @@ private final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSPo
         }
         modelStarted = true
         _ = model
-        _ = updaterController
         WindowActionGroup.assertComplete()
         AppAppearance.apply()
         installMainMenu()
         installStatusItem()
         configurePopover()
+        // Start the updater only after the status item exists: its delegate
+        // callbacks drive the update-available indicator through statusItem.
+        _ = updaterController
 #if DEBUG
         let arguments = ProcessInfo.processInfo.arguments
         if let page = diagnosticSetupPage(arguments: arguments) {

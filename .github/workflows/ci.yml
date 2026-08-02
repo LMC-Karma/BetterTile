@@ -25,3 +25,8 @@ jobs:
         run: swift build -c release
       - name: Build application bundle
         run: xcodebuild -project BetterTile.xcodeproj -scheme BetterTile -configuration Debug CODE_SIGNING_ALLOWED=NO build
+      # Release is what ships. It resolves BETTERTILE_ENABLE_AUTOMATIC_CHECKS
+      # differently from Debug, so a Debug-only build cannot catch a broken
+      # release configuration.
+      - name: Build release application bundle
+        run: xcodebuild -project BetterTile.xcodeproj -scheme BetterTile -configuration Release CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build

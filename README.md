@@ -68,18 +68,29 @@ To build it yourself, also Xcode 26 / Swift 6.3 or later.
 
 ## Install
 
-Public beta builds are distributed as unsigned disk images from
-[GitHub Releases](https://github.com/LMC-Karma/BetterTile/releases). Download the
-latest `BetterTile-*-beta.dmg`, open it, and drag BetterTile into the Applications
-shortcut before launching it. Because the beta is unsigned, macOS may identify
-it as coming from an unknown developer. Control-click BetterTile and choose
-**Open**, or use **System Settings → Privacy & Security → Open Anyway**, after
-confirming that the download came from this repository.
+Public beta builds are distributed as ad-hoc signed, un-notarized disk images
+from [GitHub Releases](https://github.com/LMC-Karma/BetterTile/releases).
+Download the latest `BetterTile-*-beta.dmg`, open it, and drag BetterTile into
+the Applications shortcut before launching it.
+
+Because the beta is not signed with a paid Developer ID certificate, macOS
+cannot verify the developer and will refuse the first launch. Open **System
+Settings → Privacy & Security**, find the message about BetterTile, and choose
+**Open Anyway**, after confirming that the download came from this repository.
+You can check the download against the `.sha256` file published beside it.
 
 BetterTile checks the repository's GitHub-hosted update feed once per day by
 default. It shows release notes and asks before downloading or installing. You
 can turn automatic checks off in General Settings or use **Check for Updates…**
 at any time.
+
+> **Public beta limitation.** Every beta build has a different ad-hoc code
+> signature, so macOS treats an updated BetterTile as a new application and
+> **the Accessibility permission does not survive an update**. After installing
+> an update, open **System Settings → Privacy & Security → Accessibility**,
+> remove BetterTile with the **–** button, and add it again. Signing with a paid
+> Developer ID certificate is what removes this step, and it is planned before a
+> stable release.
 
 To build it from source instead:
 

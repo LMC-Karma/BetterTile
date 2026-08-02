@@ -1,8 +1,9 @@
 # Public beta releases
 
-BetterTile public betas are unsigned DMGs published as GitHub prereleases. The
-app uses Sparkle 2.9.5 to discover and verify later releases. Tags and release
-titles carry the beta label; Apple bundle versions remain numeric.
+BetterTile public betas are ad-hoc signed, un-notarized DMGs published as GitHub
+prereleases. The app uses Sparkle 2.9.5 to discover and verify later releases.
+Tags and release titles carry the beta label; Apple bundle versions remain
+numeric.
 
 The first release is:
 
@@ -13,7 +14,33 @@ The first release is:
 
 Increase both the marketing version and numeric build for every later release.
 
-## Signing key
+## Code signing
+
+Two independent signatures are involved. Do not confuse them.
+
+**Apple code signature.** The Release build runs with signing disabled, so
+`Tools/release-beta.sh` signs the bundle itself, inside-out: each Sparkle
+component first, then `Sparkle.framework`, then `BetterTile.app`. This is not
+optional. An unsealed bundle is reported by macOS as *damaged* once it carries a
+quarantine attribute, with no **Open Anyway** path, which would make the beta
+unopenable. Signing also repairs Sparkle's own signature, which Xcode's embed
+step invalidates by stripping the framework's `Headers` and `Modules`.
+
+The default identity is ad-hoc (`-`). Override it with
+`BETTERTILE_SIGNING_IDENTITY` once a paid Developer ID certificate exists:
+
+```sh
+BETTERTILE_SIGNING_IDENTITY="Developer ID Application: …" Tools/release-beta.sh 0.2.0 notes.md
+```
+
+An ad-hoc identity makes the designated requirement a bare cdhash, which changes
+with every build. macOS therefore treats each update as a different application
+and **discards the Accessibility grant on every update**. Until a Developer ID
+certificate is in use, every set of release notes must tell testers to re-add
+BetterTile in System Settings → Privacy & Security → Accessibility. Notarization
+additionally requires the hardened runtime, which is currently off.
+
+## Sparkle signing key
 
 Sparkle's official `generate_keys` tool created the EdDSA key. The public key is
 committed in `Sources/BetterTileApp/Info.plist`; the private key remains in the
@@ -44,10 +71,11 @@ From the repository root:
 Tools/release-beta.sh --dry-run 0.1.0 path/to/notes.md
 ```
 
-A dry run may run from a feature branch. It runs the tests and builds, validates
-the unsigned Release app, creates and mounts the DMG, signs it with the Keychain
-EdDSA key, and generates an appcast. Artifacts are left in
-`.build/beta-release/v<version>-beta/` for manual inspection.
+A dry run may run from a feature branch. It runs the tests and builds, code
+signs and verifies the Release app, validates its Info.plist, creates and mounts
+the DMG, signs the DMG with the Keychain EdDSA key, and generates an appcast.
+Artifacts are left in `.build/beta-release/v<version>-beta/` for manual
+inspection.
 
 Confirm the following before merging the release change:
 
@@ -59,8 +87,12 @@ Confirm the following before merging the release change:
   clear it; transient network failures preserve it.
 - Sparkle rejects a deliberately modified archive.
 - automatic-check preference changes persist and no system profile is sent.
-- Accessibility still works after an unsigned update, or reauthorization is
-  documented as a public-beta limitation.
+- `codesign --verify --deep --strict` passes on the app inside the mounted DMG.
+- A quarantined copy is offered **Open Anyway** in System Settings rather than
+  being reported as damaged. Reproduce the quarantine with
+  `xattr -w com.apple.quarantine "0081;0;BetterTile;" /Applications/BetterTile.app`.
+- The Accessibility re-grant step after an update matches what the release notes
+  and README tell testers to do.
 
 ## Publish
 
