@@ -91,4 +91,4 @@ BetterTileApp  →  BetterTileMacOS  →  BetterTileCore
 ## License
 
 By contributing, you agree that your contributions are licensed under the
-[MIT License](LICENSE).
+[GNU General Public License v3.0 or later](LICENSE).
