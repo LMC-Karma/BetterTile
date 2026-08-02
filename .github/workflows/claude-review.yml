@@ -37,8 +37,6 @@ jobs:
           # Uses a Claude subscription (Pro/Max) via OAuth — no API credits.
           # Generate the token with `claude setup-token` and store it as a repo secret.
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          # TEMP debug: surface the SDK error so we can see why the review fails.
-          show_full_output: true
           prompt: |
             Review pull request #${{ github.event.pull_request.number }} in the
             repository ${{ github.repository }}. It is a native macOS window manager
