@@ -57,11 +57,19 @@ jobs:
 
   claude-mention:
     # On-demand: respond when someone writes "@claude" in a PR/issue comment.
+    #
+    # The author_association gate is essential on a public repo: these events run
+    # in the base-repo context with access to CLAUDE_CODE_OAUTH_TOKEN regardless
+    # of who commented, so without it any GitHub user could burn the Claude
+    # subscription quota (or attempt prompt injection) by writing "@claude".
+    # Only the repo owner, org members, and invited collaborators may trigger it.
     if: >
       (github.event_name == 'issue_comment' &&
-       contains(github.event.comment.body, '@claude')) ||
+       contains(github.event.comment.body, '@claude') &&
+       contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association)) ||
       (github.event_name == 'pull_request_review_comment' &&
-       contains(github.event.comment.body, '@claude'))
+       contains(github.event.comment.body, '@claude') &&
+       contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association))
     runs-on: ubuntu-latest
     permissions:
       contents: read
