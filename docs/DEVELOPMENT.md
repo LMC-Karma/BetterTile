@@ -2,7 +2,7 @@
 
 Everything a new contributor needs to build, run, and test BetterTile on their
 own Mac. Read [AGENTS.md](../AGENTS.md) for the architecture rules and
-[CONTRIBUTING.md](../CONTRIBUTING.md) for the branch/PR workflow.
+[CONTRIBUTING.md](../CONTRIBUTING.md) for the branch and pull-request workflow.
 
 ---
 
