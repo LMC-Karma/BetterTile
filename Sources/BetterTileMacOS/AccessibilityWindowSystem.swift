@@ -112,15 +112,20 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         let frontmostPID = NSWorkspace.shared.frontmostApplication?.processIdentifier
         let candidates = ([frontmostPID].compactMap { $0 } + recentApplicationPIDs)
             .reduce(into: [pid_t]()) { result, pid in
-                if pid != getpid(), !result.contains(pid) { result.append(pid) }
+                if !result.contains(pid) { result.append(pid) }
             }
 
         for pid in candidates {
             guard let application = NSWorkspace.shared.runningApplications.first(where: {
                 $0.processIdentifier == pid
             }),
-            application.activationPolicy == .regular,
-            !application.isHidden
+            Self.shouldManageApplication(
+                processIdentifier: application.processIdentifier,
+                ownProcessIdentifier: getpid(),
+                activationPolicy: application.activationPolicy,
+                isHidden: application.isHidden,
+                includeHidden: false
+            )
             else { continue }
 
             let appElement = AXUIElementCreateApplication(pid)
@@ -159,7 +164,13 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         let hasWindowServerSnapshot = !onscreen.isEmpty
         var snapshots: [WindowSnapshot] = []
         var refreshedElements: [WindowID: AXUIElement] = [:]
-        for application in NSWorkspace.shared.runningApplications where application.activationPolicy == .regular && !application.isHidden {
+        for application in NSWorkspace.shared.runningApplications where Self.shouldManageApplication(
+            processIdentifier: application.processIdentifier,
+            ownProcessIdentifier: getpid(),
+            activationPolicy: application.activationPolicy,
+            isHidden: application.isHidden,
+            includeHidden: false
+        ) {
             let appElement = AXUIElementCreateApplication(application.processIdentifier)
             let windows: [AXUIElement] = value(kAXWindowsAttribute, from: appElement) ?? []
             for window in windows {
@@ -296,7 +307,13 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
 
     private func recordActivation(of application: NSRunningApplication) {
         let pid = application.processIdentifier
-        guard pid != getpid(), application.activationPolicy == .regular else { return }
+        guard Self.shouldManageApplication(
+            processIdentifier: pid,
+            ownProcessIdentifier: getpid(),
+            activationPolicy: application.activationPolicy,
+            isHidden: application.isHidden,
+            includeHidden: true
+        ) else { return }
         recentApplicationPIDs.removeAll { $0 == pid }
         recentApplicationPIDs.insert(pid, at: 0)
         if recentApplicationPIDs.count > 12 {
@@ -307,7 +324,15 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
     private func synchronizeObservers() {
         let interval = Self.signposter.beginInterval("synchronizeObservers")
         defer { Self.signposter.endInterval("synchronizeObservers", interval) }
-        let applications = NSWorkspace.shared.runningApplications.filter { $0.activationPolicy == .regular }
+        let applications = NSWorkspace.shared.runningApplications.filter {
+            Self.shouldManageApplication(
+                processIdentifier: $0.processIdentifier,
+                ownProcessIdentifier: getpid(),
+                activationPolicy: $0.activationPolicy,
+                isHidden: $0.isHidden,
+                includeHidden: true
+            )
+        }
         let activePIDs = Set(applications.map(\.processIdentifier))
         for pid in observers.keys where !activePIDs.contains(pid) {
             if let observer = observers.removeValue(forKey: pid) {
@@ -512,6 +537,18 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
 
     private func number(_ value: Any?) -> CGFloat? {
         (value as? NSNumber).map(CGFloat.init(truncating:))
+    }
+
+    nonisolated static func shouldManageApplication(
+        processIdentifier: pid_t,
+        ownProcessIdentifier: pid_t,
+        activationPolicy: NSApplication.ActivationPolicy,
+        isHidden: Bool,
+        includeHidden: Bool
+    ) -> Bool {
+        processIdentifier != ownProcessIdentifier
+            && activationPolicy == .regular
+            && (includeHidden || !isHidden)
     }
 }
 

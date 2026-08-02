@@ -35,6 +35,7 @@ private enum SettingsDestination: String, CaseIterable, Identifiable {
 
 struct SettingsView: View {
     @Bindable var model: BetterTileModel
+    let openSetup: () -> Void
     @State private var selection: SettingsDestination = .general
     @State private var search = ""
 
@@ -115,7 +116,7 @@ struct SettingsView: View {
     private var detail: some View {
         switch selection {
         case .general:
-            GeneralSettings(model: model)
+            GeneralSettings(model: model, openSetup: openSetup)
         case .windowLayout:
             WindowLayoutSettings(model: model)
         case .snapZones:
@@ -126,27 +127,13 @@ struct SettingsView: View {
 
 private struct GeneralSettings: View {
     @Bindable var model: BetterTileModel
+    let openSetup: () -> Void
     @AppStorage(AppAppearance.defaultsKey) private var appearanceRawValue = AppAppearance.system.rawValue
 
     var body: some View {
         Form {
             Section("Permissions") {
-                HStack {
-                    Label(
-                        model.hasAccessibilityPermission
-                            ? "Accessibility granted"
-                            : "Accessibility required",
-                        systemImage: model.hasAccessibilityPermission
-                            ? "checkmark.circle.fill"
-                            : "exclamationmark.triangle.fill"
-                    )
-                    .foregroundStyle(model.hasAccessibilityPermission ? .green : .orange)
-                    Spacer()
-                    if model.isWaitingForAccessibilityPermission {
-                        ProgressView()
-                            .controlSize(.small)
-                    }
-                }
+                AccessibilityPermissionStatus(model: model)
 
                 if !model.hasAccessibilityPermission {
                     Text(
@@ -168,6 +155,7 @@ private struct GeneralSettings: View {
                 )
                 .font(.caption)
                 .foregroundStyle(.secondary)
+                Button("Open Setup Assistant…", action: openSetup)
 #if DEBUG
                 Label(
                     "Use an Apple Development Personal Team for permission persistence across rebuilds.",

@@ -130,12 +130,7 @@ final class BetterTileModel {
         refreshActiveWindows(force: true)
 
         Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .milliseconds(400))
-            guard !Task.isCancelled else { return }
-            if self?.hasAccessibilityPermission == false {
-                self?.requestAccessibilityPermission()
-            }
-            try? await Task.sleep(for: .milliseconds(100))
+            try? await Task.sleep(for: .milliseconds(500))
             guard !Task.isCancelled else { return }
             self?.applyDockPolicy()
         }
@@ -177,7 +172,7 @@ final class BetterTileModel {
     func perform(_ action: WindowAction) {
         let originalDisplayID = (try? system.focusedWindow())?.displayID ?? activeDisplayID
         guard hasAccessibilityPermission || refreshPermission() else {
-            requestAccessibilityPermission()
+            statusMessage = "Accessibility permission is required. Open the Setup Assistant to grant access."
             presentActionResult(
                 succeeded: false,
                 error: "Accessibility permission is required.",
