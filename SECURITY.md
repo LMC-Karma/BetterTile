@@ -3,7 +3,7 @@
 ## Reporting a vulnerability
 
 Report security or privacy concerns privately through
-[GitHub Security Advisories](https://github.com/LMC-Karma/bettertile/security/advisories/new).
+[GitHub Security Advisories](https://github.com/LMC-Karma/BetterTile/security/advisories/new).
 Please do not open a public issue containing sensitive details.
 
 Include what you observed, how to reproduce it, and the macOS version you saw

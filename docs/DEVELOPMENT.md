@@ -18,7 +18,7 @@ own Mac. Read [AGENTS.md](../AGENTS.md) for the architecture rules and
 ## 1. Clone
 
 ```sh
-git clone https://github.com/LMC-Karma/bettertile.git
+git clone https://github.com/LMC-Karma/BetterTile.git
 cd bettertile
 ```
 
