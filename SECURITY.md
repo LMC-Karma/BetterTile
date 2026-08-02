@@ -36,6 +36,27 @@ release archive. These requests necessarily expose ordinary connection metadata
 such as the requesting IP address to GitHub. Automatic checks default to once
 per day and can be disabled in Settings. Sparkle system profiling is disabled.
 
+Update archives are authenticated by an EdDSA signature that Sparkle verifies
+against the public key built into the application. That verification is
+independent of the application's macOS code signature.
+
+### Send Feedback
+
+The **Send Feedback…** menu item opens
+`https://github.com/LMC-Karma/BetterTile/issues/new` in the user's default
+browser. The URL carries exactly two query parameters:
+
+- `template=bug.yml`, which selects the public bug report form
+- `title`, a proposed issue title containing the BetterTile marketing version
+  and build number, for example `[Bug] BetterTile 0.1.0 (2): `
+
+Opening the form does not submit anything. Nothing is sent until the user fills
+the form in and submits it themselves, and the user can edit or delete every
+field first. BetterTile does not place window information, layout or Bento
+state, configuration, shortcuts, diagnostics, analytics, telemetry, crash
+reports, a system profile, or any other user or machine data in the URL. This is
+covered by an automated test.
+
 Any future network feature must serve a documented user-facing purpose,
 minimize transmitted data, use secure transport, and document its endpoints
 and payload purpose here before release. Optional diagnostics require a
@@ -58,6 +79,23 @@ provenance, compatible licensing, and attribution.
 Sparkle is the sole current runtime dependency. It verifies BetterTile update
 archives with an EdDSA signature. Its private signing key remains outside the
 repository and GitHub Actions.
+
+## Distribution
+
+Public beta builds are **ad-hoc signed** and are **not signed with a Developer
+ID**. The signature is valid but does not identify a developer to macOS, so
+first launch requires **Open Anyway** in System Settings → Privacy & Security.
+Ad-hoc signatures change from build to build, so macOS treats each update as a
+new application and the Accessibility grant must be given again after an update.
+
+The unsigned `CODE_SIGNING_ALLOWED=NO` builds produced by CI and by the release
+script's internal build step are validation builds only and are never
+distributed. The distributed signature is applied solely by
+`Tools/release-beta.sh`; see [docs/RELEASING.md](docs/RELEASING.md).
+
+The Sparkle EdDSA private signing key is held only in the maintainer's login
+Keychain. It is not in this repository and not in GitHub Actions, so releases
+cannot be published from CI.
 
 ## Change disclosure
 

@@ -68,12 +68,23 @@ BetterTileApp  →  BetterTileMacOS  →  BetterTileCore
 ```
 
 - **`BetterTileCore` imports no AppKit and no Accessibility.** It is pure,
-  deterministic placement policy, and that is what makes it testable.
-- **`BetterTileMacOS`** owns every side effect and all coordinate conversion.
-  Core uses top-left logical points; AppKit's bottom-left coordinates are
-  converted at this boundary and never leak inward.
+  deterministic placement policy, and that is what makes it testable. It holds
+  no updater API.
+- **`BetterTileMacOS`** owns Accessibility, window-system integration, window
+  mutations, and all coordinate conversion. Core uses top-left logical points;
+  AppKit's bottom-left coordinates are converted at this boundary and never leak
+  inward.
+- **`BetterTileApp`** owns the application lifecycle and application-level UI
+  integrations: menus, the status item, alerts, Sparkle's
+  `SPUStandardUpdaterController`, and user-requested `NSWorkspace` actions.
 - **All window mutations go through `WindowCoordinator`** so that multi-window
   operations can preflight and roll back.
+
+Updates live in the app layer on purpose. The app delegate owns the Sparkle
+updater controller and implements `SPUUpdaterDelegate`; please do not propose an
+updater service or an updater API in `BetterTileCore`. The testable decisions
+behind those integrations are extracted into
+`BetterTileMacOS/ApplicationUpdatePresentation.swift`.
 
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) has the full detail.
 

@@ -93,6 +93,20 @@ actively developing you rebuild from Xcode well within that, so it never bites.
 If the app ever refuses to launch after a week off, just rebuild from Xcode and
 it's signed fresh.
 
+### This has nothing to do with the published beta
+
+Three signing contexts exist and they never touch each other:
+
+- **Your Xcode builds** use *your* Apple Development identity from your
+  gitignored `Config/LocalSigning.xcconfig`. Nothing here is committed.
+- **CI and `swift build` / `swift test`** build with `CODE_SIGNING_ALLOWED=NO`.
+  Those are unsigned validation builds and are never distributed.
+- **The published beta** is ad-hoc signed by `Tools/release-beta.sh` alone, and
+  is not signed with a Developer ID. See [RELEASING.md](RELEASING.md).
+
+Nothing you do locally changes what testers download, and the release tool never
+reads your signing identity.
+
 ---
 
 ## 3. Run and grant Accessibility

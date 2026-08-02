@@ -52,10 +52,17 @@ jobs:
             - All window mutations must go through the main-actor WindowCoordinator.
             - Missing tests for geometry, state transitions, migrations, or failure paths.
             - Permanent red lines: private Apple APIs, SIP workarounds, or code injection.
-            - For networking, permissions, privileged components, dependencies,
-              user-data handling, distribution, or architecture changes: verify the
-              user benefit, security/maintenance review, tests, licenses, and repository
-              disclosure required by SECURITY.md.
+            - Updates are an intentional application-layer integration: the app delegate
+              owns SPUStandardUpdaterController and implements SPUUpdaterDelegate. Do not
+              ask for an updater service or an updater API in BetterTileCore.
+
+            SECURITY.md in this repository is the canonical policy for networking,
+            privacy, permissions, privileged components, dependencies, distribution,
+            and user-data handling. Read it before judging any change in those areas,
+            and check the change against it rather than against your own defaults:
+            verify the stated user benefit, the security and maintenance review, tests,
+            license compatibility, and the repository disclosure it requires. Quote the
+            relevant SECURITY.md requirement when you raise such a finding.
 
             Skip trivial nits. If the change looks good, post a brief approving summary.
           # Grant the tools Claude needs to actually POST its review.

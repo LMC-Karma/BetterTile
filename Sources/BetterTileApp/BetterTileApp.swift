@@ -125,6 +125,7 @@ private final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSPo
         userDriverDelegate: nil
     )
     private var modelStarted = false
+    private var updateIndicatorState = UpdateIndicatorState.idle
     private let popover = NSPopover()
     private var popoverHost: NSHostingController<BetterTileMenuPanel>?
     private var statusItem: NSStatusItem!
@@ -170,7 +171,7 @@ private final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSPo
             DispatchQueue.main.async { [weak self] in self?.showPopover() }
             return
         } else if arguments.contains("--diagnostic-update-available") {
-            setUpdateAvailable(true)
+            applyUpdateEvent(.foundValidUpdate)
             return
         }
 #endif
@@ -187,7 +188,7 @@ private final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSPo
 
     private var isRunningFromReadOnlyVolume: Bool {
         let values = try? Bundle.main.bundleURL.resourceValues(forKeys: [.volumeIsReadOnlyKey])
-        return values?.volumeIsReadOnly == true
+        return ApplicationVolume.requiresRelocation(volumeIsReadOnly: values?.volumeIsReadOnly)
     }
 
     private func showMoveToApplicationsAlertAndQuit() {
@@ -545,25 +546,35 @@ private final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSPo
     @objc private func sendFeedback() {
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown"
         let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown"
-        var components = URLComponents(string: "https://github.com/LMC-Karma/BetterTile/issues/new")
-        components?.queryItems = [
-            URLQueryItem(name: "template", value: "bug.yml"),
-            URLQueryItem(name: "title", value: "[Bug] BetterTile \(version) (\(build)): "),
-        ]
-        if let url = components?.url { NSWorkspace.shared.open(url) }
+        guard let url = FeedbackLink.url(version: version, build: build) else { return }
+        NSWorkspace.shared.open(url)
     }
 
-    private func setUpdateAvailable(_ available: Bool) {
+    /// Translates one updater outcome into the menu-bar indicator. The decision
+    /// itself lives in `UpdateIndicator` so it can be tested without Sparkle.
+    private func applyUpdateEvent(_ event: UpdateIndicatorEvent) {
+        updateIndicatorState = UpdateIndicator.state(after: event, from: updateIndicatorState)
+        renderUpdateIndicator()
+    }
+
+    private func renderUpdateIndicator() {
+        let available = updateIndicatorState == .updateAvailable
         statusItem.button?.contentTintColor = available ? .systemBlue : nil
         statusItem.button?.toolTip = available ? "BetterTile update available" : "BetterTile"
     }
 
     func updater(_ updater: SPUUpdater, didFindValidUpdate item: SUAppcastItem) {
-        setUpdateAvailable(true)
+        applyUpdateEvent(.foundValidUpdate)
     }
 
     func updaterDidNotFindUpdate(_ updater: SPUUpdater) {
-        setUpdateAvailable(false)
+        applyUpdateEvent(.confirmedNoUpdate)
+    }
+
+    /// Sparkle reports a failed cycle here. A check that could not complete says
+    /// nothing about whether an update exists, so the indicator is left alone.
+    func updater(_ updater: SPUUpdater, didFinishUpdateCycleFor updateCheck: SPUUpdateCheck, error: Error?) {
+        if error != nil { applyUpdateEvent(.checkFailed) }
     }
 
     func updater(
@@ -572,7 +583,12 @@ private final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSPo
         forUpdate item: SUAppcastItem,
         state: SPUUserUpdateState
     ) {
-        if choice == .skip { setUpdateAvailable(false) }
+        switch choice {
+        case .skip: applyUpdateEvent(.userSkippedUpdate)
+        case .install: applyUpdateEvent(.userInstalledUpdate)
+        case .dismiss: applyUpdateEvent(.userDeferredUpdate)
+        @unknown default: break
+        }
     }
 
     private func installMainMenu() {

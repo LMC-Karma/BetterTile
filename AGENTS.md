@@ -85,8 +85,24 @@ BetterTileApp  →  BetterTileMacOS  →  BetterTileCore
    planning, linked resizing, frame history, configuration
    models, and migrations. If you find yourself reaching for `NSScreen` in
    Core, the boundary is in the wrong place.
-2. **`BetterTileMacOS`** adapts public macOS APIs and owns all side effects.
-3. **`BetterTileApp`** is SwiftUI scenes only.
+2. **`BetterTileMacOS`** owns Accessibility, window-system integration,
+   coordinate conversion, and window mutations, and adapts public macOS APIs.
+3. **`BetterTileApp`** owns the SwiftUI/AppKit application lifecycle and
+   application-level UI integrations: Settings and menu-bar scenes, the main
+   menu, the status item, alerts, Sparkle's `SPUStandardUpdaterController`, and
+   user-requested `NSWorkspace` actions such as opening the Applications folder
+   or the feedback form.
+
+**Updates are an application-layer integration.** The app delegate owns
+`SPUStandardUpdaterController` and implements `SPUUpdaterDelegate`. This is an
+intentional, documented boundary, not an exception to be tidied away. Do not
+create a separate updater service and do not add an updater API to
+`BetterTileCore`.
+
+Only the framework-independent decisions are extracted, into
+`BetterTileMacOS/ApplicationUpdatePresentation.swift` (`UpdateIndicator`,
+`FeedbackLink`, `ApplicationVolume`). They import neither Sparkle nor AppKit and
+are unit tested; the app delegate translates Sparkle's callbacks into them.
 
 **Coordinate model.** Core uses logical points with a **top-left** origin.
 AppKit's bottom-left global coordinates are converted at the `BetterTileMacOS`

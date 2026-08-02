@@ -44,20 +44,52 @@ xcode_developer_dir="/Applications/Xcode.app/Contents/Developer"
     exit 1
 }
 export DEVELOPER_DIR="$xcode_developer_dir"
-export CLANG_MODULE_CACHE_PATH="$repo_root/.build/release-cache/clang"
-export SWIFTPM_MODULECACHE_OVERRIDE="$repo_root/.build/release-cache/swift"
-mkdir -p "$CLANG_MODULE_CACHE_PATH" "$SWIFTPM_MODULECACHE_OVERRIDE"
 
 repo="LMC-Karma/BetterTile"
 tag="v${version}-beta"
 dmg_name="BetterTile-${version}-beta.dmg"
 checksum_name="${dmg_name}.sha256"
+notes_name="${dmg_name%.dmg}.md"
 artifact_dir="$repo_root/.build/beta-release/$tag"
-derived_data="$artifact_dir/DerivedData"
-archive_dir="$artifact_dir/appcast-input"
-appcast_path="$artifact_dir/appcast.xml"
 feed_url="https://raw.githubusercontent.com/$repo/updates/appcast.xml"
 release_url_prefix="https://github.com/$repo/releases/download/$tag/"
+
+# This repository normally lives in iCloud Drive. iCloud attaches
+# com.apple.FinderInfo and com.apple.fileprovider.fpfs#P metadata to files it
+# manages, and codesign refuses to sign a bundle carrying it:
+#
+#   resource fork, Finder information, or similar detritus not allowed
+#
+# Stripping those attributes afterwards is a race against the sync daemon, so
+# every intermediate artifact is built outside the repository instead. Only the
+# finished, inspectable files are copied back into .build afterwards.
+work_dir="$(mktemp -d /private/tmp/bettertile-release.XXXXXXXX)"
+[[ "$work_dir" == /private/tmp/bettertile-release.* && -d "$work_dir" ]] || {
+    echo "Refusing to continue without a private temporary directory." >&2
+    exit 1
+}
+mount_dir="$work_dir/mount"
+derived_data="$work_dir/DerivedData"
+archive_dir="$work_dir/appcast-input"
+stage_dir="$work_dir/dmg-root"
+appcast_path="$work_dir/appcast.xml"
+
+cleanup() {
+    local status=$?
+    if [[ -d "$mount_dir" ]]; then
+        hdiutil detach "$mount_dir" >/dev/null 2>&1 || true
+    fi
+    # Deliberately narrow: only ever the one directory this run created.
+    if [[ "$work_dir" == /private/tmp/bettertile-release.* && -d "$work_dir" ]]; then
+        rm -rf "$work_dir"
+    fi
+    return $status
+}
+trap cleanup EXIT
+
+export CLANG_MODULE_CACHE_PATH="$work_dir/module-cache/clang"
+export SWIFTPM_MODULECACHE_OVERRIDE="$work_dir/module-cache/swift"
+mkdir -p "$CLANG_MODULE_CACHE_PATH" "$SWIFTPM_MODULECACHE_OVERRIDE"
 
 for command in git swift xcodebuild hdiutil shasum ditto; do
     command -v "$command" >/dev/null || {
@@ -234,28 +266,27 @@ read_info() {
 [[ "$(read_info SUEnableSystemProfiling)" == "false" ]]
 [[ "$(read_info SUShowReleaseNotes)" == "true" ]]
 
-stage_dir="$artifact_dir/dmg-root"
 mkdir -p "$stage_dir"
 ditto "$app_path" "$stage_dir/BetterTile.app"
 ln -s /Applications "$stage_dir/Applications"
 hdiutil create -volname "BetterTile $version Beta" -srcfolder "$stage_dir" \
-    -ov -format UDZO "$artifact_dir/$dmg_name"
+    -ov -format UDZO "$work_dir/$dmg_name"
 
-mount_dir="$artifact_dir/mount"
 mkdir -p "$mount_dir"
-hdiutil attach "$artifact_dir/$dmg_name" -readonly -nobrowse -mountpoint "$mount_dir" >/dev/null
-trap 'hdiutil detach "$mount_dir" >/dev/null 2>&1 || true' EXIT
+hdiutil attach "$work_dir/$dmg_name" -readonly -nobrowse -mountpoint "$mount_dir" >/dev/null
 [[ -d "$mount_dir/BetterTile.app" && -L "$mount_dir/Applications" ]]
+# The signature must still validate through the disk image, which is what a
+# tester actually launches from.
+codesign --verify --deep --strict "$mount_dir/BetterTile.app"
 hdiutil detach "$mount_dir" >/dev/null
-trap - EXIT
 rmdir "$mount_dir"
 
 (
-    cd "$artifact_dir"
+    cd "$work_dir"
     shasum -a 256 "$dmg_name" > "$checksum_name"
 )
-cp "$artifact_dir/$dmg_name" "$archive_dir/$dmg_name"
-cp "$notes_path" "$archive_dir/${dmg_name%.dmg}.md"
+cp "$work_dir/$dmg_name" "$archive_dir/$dmg_name"
+cp "$notes_path" "$archive_dir/$notes_name"
 "$generate_appcast" --download-url-prefix "$release_url_prefix" \
     --embed-release-notes --maximum-deltas 0 --maximum-versions 0 \
     --versions "$project_build" "$archive_dir"
@@ -263,13 +294,19 @@ cp "$archive_dir/appcast.xml" "$appcast_path"
 grep -q "sparkle:edSignature=" "$appcast_path"
 grep -q "$release_url_prefix$dmg_name" "$appcast_path"
 
+# Retain only the finished, inspectable artifacts. DerivedData and the disk
+# image staging tree stay in the temporary directory and are discarded.
+mkdir -p "$artifact_dir"
+cp "$work_dir/$dmg_name" "$work_dir/$checksum_name" "$appcast_path" "$artifact_dir/"
+cp "$notes_path" "$artifact_dir/$notes_name"
+
 echo "Validated beta artifacts: $artifact_dir"
 if [[ "$dry_run" == true ]]; then
     echo "Dry run complete; nothing was published."
     exit 0
 fi
 
-gh release create "$tag" "$artifact_dir/$dmg_name" "$artifact_dir/$checksum_name" \
+gh release create "$tag" "$work_dir/$dmg_name" "$work_dir/$checksum_name" \
     --repo "$repo" --target main --prerelease \
     --title "BetterTile $version Beta" --notes-file "$notes_path"
 
@@ -279,7 +316,7 @@ asset_url="$release_url_prefix$dmg_name"
 # is already public, so retry on all errors.
 curl --fail --location --head --retry 12 --retry-delay 5 --retry-all-errors "$asset_url" >/dev/null
 
-feed_repo="$artifact_dir/updates-repository"
+feed_repo="$work_dir/updates-repository"
 mkdir -p "$feed_repo"
 git -C "$feed_repo" init
 git -C "$feed_repo" remote add origin "$(git remote get-url origin)"

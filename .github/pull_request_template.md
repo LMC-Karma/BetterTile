@@ -15,6 +15,11 @@
 
 ## Safety
 
+[SECURITY.md](../SECURITY.md) is the canonical policy for networking, privacy,
+permissions, privileged components, dependencies, distribution, and user-data
+handling. Read it before ticking these boxes, and disclose anything it requires
+in the sections above.
+
 - [ ] Uses only public Apple APIs
 - [ ] Adds no unexplained permissions
 - [ ] Documents provenance, compatible licensing, and attribution for adapted code
