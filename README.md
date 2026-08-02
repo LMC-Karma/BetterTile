@@ -7,7 +7,7 @@
 **A native macOS window manager that resizes neighbours together, not just one window at a time.**
 
 [![CI](https://github.com/LMC-Karma/bettertile/actions/workflows/ci.yml/badge.svg)](https://github.com/LMC-Karma/bettertile/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![License: GPL v3 or later](https://img.shields.io/badge/License-GPL--3.0--or--later-blue.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-macOS%2026%2B-lightgrey.svg)](#what-you-need)
 [![Swift](https://img.shields.io/badge/Swift-6.3-orange.svg)](https://swift.org)
 [![Free forever](https://img.shields.io/badge/price-free%20forever-brightgreen.svg)](#bettertile-is-free)
@@ -141,8 +141,8 @@ is for in-product before requesting it.
 
 BetterTile is free, and it will always be free. There is no paid tier, no
 subscription, no trial, and no feature held back behind a purchase. It is
-released under the [MIT License](LICENSE) — use it, read it, fork it, ship your
-own version of it.
+released under the [GNU GPL v3 or later](LICENSE) — use it, read it, fork it,
+and share modified versions under the same license.
 
 ---
 
@@ -154,6 +154,7 @@ own version of it.
   own Mac
 - [Contributing](CONTRIBUTING.md) — branch, test, and pull-request workflow
 - [Security](SECURITY.md) — reporting policy and permission rules
+- [Third-party notices](THIRD_PARTY_NOTICES.md) — upstream code and attribution
 - [AGENTS.md](AGENTS.md) — build, test, and convention rules for AI coding
   agents
 
@@ -163,10 +164,10 @@ own version of it.
 
 BetterTile exists because other people published their work openly.
 
-- **[Vorssaint](https://github.com/vorssaint/vorssaint-utils)** — its approach
-  to demand-based service ownership and disciplined teardown shaped how
-  BetterTile manages its own runtime cost. Reading it made this app measurably
-  lighter.
+- **[Vorssaint](https://github.com/vorssaint/vorssaint-utils)** — BetterTile
+  includes adapted settings and menu-panel presentation code from Vorssaint,
+  and its demand-based service ownership shaped BetterTile's runtime lifecycle.
+  See [Third-party notices](THIRD_PARTY_NOTICES.md) for attribution and terms.
 - **[Rectangle](https://github.com/rxhanson/Rectangle)** — the reference for
   event-driven window management on macOS, and a reminder that the best window
   manager is the one doing nothing until you ask.
