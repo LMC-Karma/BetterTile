@@ -73,6 +73,8 @@ release_url_prefix="https://github.com/$repo/releases/download/$tag/"
 # without running a release; see Tools/tests/release-workspace-test.sh.
 # shellcheck source=lib/release-workspace.sh
 source "$script_dir/lib/release-workspace.sh"
+# shellcheck source=lib/release-appcast.sh
+source "$script_dir/lib/release-appcast.sh"
 
 work_dir="$(make_release_workspace)"
 is_release_workspace "$work_dir" || {
@@ -185,12 +187,8 @@ version_is_greater() {
     (( candidate_patch > existing_patch ))
 }
 
-if ! appcast_status="$(curl --silent --show-error --location \
-    --output "$archive_dir/appcast.xml" --write-out '%{http_code}' "$feed_url")"; then
-    echo "Unable to read the existing appcast at $feed_url." >&2
-    exit 1
-fi
-if [[ "$appcast_status" == "200" ]]; then
+fetch_existing_appcast "$feed_url" "$archive_dir/appcast.xml"
+if [[ -f "$archive_dir/appcast.xml" ]]; then
     newest_feed_build="$(sed -n 's/.*sparkle:version="\([0-9][0-9]*\)".*/\1/p' "$archive_dir/appcast.xml" | sort -n | tail -1)"
     if [[ -n "$newest_feed_build" && "$project_build" -le "$newest_feed_build" ]]; then
         echo "Project build $project_build must be newer than appcast build $newest_feed_build." >&2
@@ -207,11 +205,6 @@ if [[ "$appcast_status" == "200" ]]; then
             exit 1
         }
     done < <(sed -n 's/.*sparkle:shortVersionString="\([0-9][0-9.]*\)".*/\1/p' "$archive_dir/appcast.xml")
-elif [[ "$appcast_status" == "404" ]]; then
-    rm -f "$archive_dir/appcast.xml"
-else
-    echo "Unexpected HTTP $appcast_status while reading $feed_url." >&2
-    exit 1
 fi
 
 echo "Running tests and builds..."

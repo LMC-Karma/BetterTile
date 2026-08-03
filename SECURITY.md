@@ -30,11 +30,13 @@ maintainability, and user benefit rather than a blanket technology ban.
 
 ## Network disclosure
 
-BetterTile contacts `raw.githubusercontent.com` over HTTPS to fetch the public
-Sparkle appcast and `github.com` over HTTPS when the user chooses to download a
-release archive. These requests necessarily expose ordinary connection metadata
-such as the requesting IP address to GitHub. Automatic checks default to once
-per day and can be disabled in Settings. Sparkle system profiling is disabled.
+BetterTile contacts `github.com` over HTTPS to fetch the public Sparkle appcast
+from `LMC-Karma/BetterTile/releases/latest/download/appcast.xml` and when the
+user chooses to download a release archive. GitHub may redirect release assets
+through its delivery infrastructure. These requests necessarily expose ordinary
+connection metadata such as the requesting IP address to GitHub. Automatic
+checks default to once per day and can be disabled in Settings. Sparkle system
+profiling is disabled.
 
 Update archives are authenticated by an EdDSA signature that Sparkle verifies
 against the public key built into the application. That verification is
