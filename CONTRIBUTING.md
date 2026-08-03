@@ -14,9 +14,10 @@ written for agents.
 ## Before you start
 
 Open an issue describing the user-visible behavior and what "done" looks like.
-For anything beyond a small fix, it's worth agreeing on the approach before you
-write code — BetterTile has strict layer boundaries and a change in the wrong
-layer is expensive to unwind.
+For anything beyond a small fix, agree on the approach before writing code.
+BetterTile's current layer boundaries are deliberate; an intentional change is
+welcome when its rationale, migration impact, documentation, and tests are part
+of the proposal.
 
 ---
 
@@ -57,9 +58,9 @@ layer is expensive to unwind.
 
 ---
 
-## Architecture rules
+## Current architecture
 
-The dependency direction is strict:
+The default dependency direction is:
 
 ```
 BetterTileApp  →  BetterTileMacOS  →  BetterTileCore
@@ -67,24 +68,38 @@ BetterTileApp  →  BetterTileMacOS  →  BetterTileCore
 ```
 
 - **`BetterTileCore` imports no AppKit and no Accessibility.** It is pure,
-  deterministic placement policy, and that is what makes it testable.
-- **`BetterTileMacOS`** owns every side effect and all coordinate conversion.
-  Core uses top-left logical points; AppKit's bottom-left coordinates are
-  converted at this boundary and never leak inward.
+  deterministic placement policy, and that is what makes it testable. It holds
+  no updater API.
+- **`BetterTileMacOS`** owns Accessibility, window-system integration, window
+  mutations, and all coordinate conversion. Core uses top-left logical points;
+  AppKit's bottom-left coordinates are converted at this boundary and never leak
+  inward.
+- **`BetterTileApp`** owns the application lifecycle and application-level UI
+  integrations: menus, the status item, alerts, Sparkle's
+  `SPUStandardUpdaterController`, and user-requested `NSWorkspace` actions.
 - **All window mutations go through `WindowCoordinator`** so that multi-window
   operations can preflight and roll back.
+
+Updates live in the app layer on purpose. The app delegate owns the Sparkle
+updater controller and implements `SPUUpdaterDelegate`; please do not propose an
+updater service or an updater API in `BetterTileCore`. The testable decisions
+behind those integrations are extracted into
+`BetterTileMacOS/ApplicationUpdatePresentation.swift`.
 
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) has the full detail.
 
 ---
 
-## What will be rejected
+## Security and disclosure
 
-- private macOS APIs, including private SkyLight symbols
-- code copied from other window managers
-- SIP workarounds or code injection
-- third-party package dependencies
-- a new system permission without an explicit design decision first
+Private macOS APIs, SIP workarounds, and code injection are not accepted.
+Dependencies, networking, permissions, privileged components, user-data
+handling, distribution, and architecture may evolve through explicit design
+review. Explain the user benefit, security and maintenance tradeoffs, and test
+coverage in the pull request; update the repository documentation at the same
+time. Adapted code must have compatible licensing, provenance, and attribution.
+
+[SECURITY.md](SECURITY.md) is the canonical security and privacy policy.
 
 ---
 

@@ -21,6 +21,13 @@ body:
       label: macOS version
     validations:
       required: true
+  - type: input
+    id: bettertile
+    attributes:
+      label: BetterTile version
+      description: Find this in the update window or the downloaded release name.
+    validations:
+      required: true
   - type: textarea
     id: displays
     attributes:

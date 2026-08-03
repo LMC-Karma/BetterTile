@@ -4,5 +4,21 @@
 <dict>
 	<key>LSMultipleInstancesProhibited</key>
 	<true/>
+	<key>SUAllowsAutomaticUpdates</key>
+	<false/>
+	<key>SUAutomaticallyUpdate</key>
+	<false/>
+	<key>SUEnableSystemProfiling</key>
+	<false/>
+	<key>SUEnableAutomaticChecks</key>
+	<string>$(BETTERTILE_ENABLE_AUTOMATIC_CHECKS)</string>
+	<key>SUFeedURL</key>
+	<string>https://raw.githubusercontent.com/LMC-Karma/BetterTile/updates/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>jDDzKbmy50mWyzmIUioKAMdMVKaiPORdrz+P9eQ579c=</string>
+	<key>SUScheduledCheckInterval</key>
+	<integer>86400</integer>
+	<key>SUShowReleaseNotes</key>
+	<true/>
 </dict>
 </plist>

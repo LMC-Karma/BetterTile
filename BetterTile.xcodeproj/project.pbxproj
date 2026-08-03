@@ -14,6 +14,7 @@
 		100000000000000000000004 /* BetterTileCore in Frameworks */ = {isa = PBXBuildFile; productRef = 700000000000000000000001 /* BetterTileCore */; };
 		100000000000000000000005 /* BetterTileMacOS in Frameworks */ = {isa = PBXBuildFile; productRef = 700000000000000000000002 /* BetterTileMacOS */; };
 		100000000000000000000006 /* AppIcon.icon in Resources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000008 /* AppIcon.icon */; };
+		100000000000000000000008 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = 700000000000000000000003 /* Sparkle */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -36,6 +37,7 @@
 			files = (
 				100000000000000000000004 /* BetterTileCore in Frameworks */,
 				100000000000000000000005 /* BetterTileMacOS in Frameworks */,
+				100000000000000000000008 /* Sparkle in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -94,6 +96,7 @@
 			packageProductDependencies = (
 				700000000000000000000001 /* BetterTileCore */,
 				700000000000000000000002 /* BetterTileMacOS */,
+				700000000000000000000003 /* Sparkle */,
 			);
 			productName = BetterTile;
 			productReference = 200000000000000000000004 /* BetterTile.app */;
@@ -126,6 +129,7 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				800000000000000000000001 /* XCLocalSwiftPackageReference "." */,
+				800000000000000000000002 /* XCRemoteSwiftPackageReference "Sparkle" */,
 			);
 			productRefGroup = 400000000000000000000003 /* Products */;
 			projectDirPath = "";
@@ -248,9 +252,10 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				BETTERTILE_ENABLE_AUTOMATIC_CHECKS = NO;
 				CLANG_ENABLE_OBJC_WEAK = YES;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2;
 				DEAD_CODE_STRIPPING = YES;
 				ENABLE_APP_SANDBOX = NO;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -258,6 +263,10 @@
 				INFOPLIST_KEY_CFBundleDisplayName = BetterTile;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
 				INFOPLIST_KEY_LSUIElement = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
 				MARKETING_VERSION = 0.1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.lmckarma.BetterTile;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -272,9 +281,10 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				BETTERTILE_ENABLE_AUTOMATIC_CHECKS = YES;
 				CLANG_ENABLE_OBJC_WEAK = YES;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2;
 				DEAD_CODE_STRIPPING = YES;
 				ENABLE_APP_SANDBOX = NO;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -282,6 +292,10 @@
 				INFOPLIST_KEY_CFBundleDisplayName = BetterTile;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
 				INFOPLIST_KEY_LSUIElement = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
 				MARKETING_VERSION = 0.1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.lmckarma.BetterTile;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -313,6 +327,17 @@
 		};
 /* End XCConfigurationList section */
 
+/* Begin XCRemoteSwiftPackageReference section */
+		800000000000000000000002 /* XCRemoteSwiftPackageReference "Sparkle" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/sparkle-project/Sparkle";
+			requirement = {
+				kind = exactVersion;
+				version = 2.9.5;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
 /* Begin XCLocalSwiftPackageReference section */
 		800000000000000000000001 /* XCLocalSwiftPackageReference "." */ = {
 			isa = XCLocalSwiftPackageReference;
@@ -328,6 +353,11 @@
 		700000000000000000000002 /* BetterTileMacOS */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = BetterTileMacOS;
+		};
+		700000000000000000000003 /* Sparkle */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 800000000000000000000002 /* XCRemoteSwiftPackageReference "Sparkle" */;
+			productName = Sparkle;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

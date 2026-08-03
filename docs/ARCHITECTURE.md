@@ -4,9 +4,33 @@ BetterTile separates deterministic placement policy from macOS side effects.
 
 ## Layers
 
-1. **BetterTileCore** owns geometry, actions, Bento placement, linked resizing, frame history, shortcut/configuration models, and migrations. It has no AppKit or Accessibility dependency.
-2. **BetterTileMacOS** adapts public macOS APIs. `AccessibilityWindowSystem` rejects scaled Stage Manager thumbnails and publishes AX window events, `WindowCoordinator` owns rollback-capable frame transactions and self-event suppression, and AppKit panels provide hover-only dividers and reusable ghost previews.
-3. **BetterTileApp** provides the SwiftUI menu-bar and searchable sidebar Settings scenes, permission guidance, immediate visible-window reconciliation, shortcut registration, and drag-snap lifecycle.
+1. **BetterTileCore** owns geometry, actions, Bento placement, linked resizing, frame history, shortcut/configuration models, and migrations. It has no AppKit or Accessibility dependency. It contains no updater API and must not gain one: updating is a distribution concern, not placement policy.
+2. **BetterTileMacOS** owns Accessibility, window-system integration, coordinate conversion, and window mutations. `AccessibilityWindowSystem` rejects scaled Stage Manager thumbnails and publishes AX window events, `WindowCoordinator` owns rollback-capable frame transactions and self-event suppression, and AppKit panels provide hover-only dividers and reusable ghost previews.
+3. **BetterTileApp** owns the SwiftUI/AppKit application lifecycle and application-level UI integrations: the menu-bar and searchable sidebar Settings scenes, the main menu and status item, alerts, permission guidance, immediate visible-window reconciliation, shortcut registration, drag-snap lifecycle, Sparkle's `SPUStandardUpdaterController`, and user-requested `NSWorkspace` actions such as opening the Applications folder or the feedback form.
+
+## Application-level integrations
+
+The app delegate owns `SPUStandardUpdaterController` and implements
+`SPUUpdaterDelegate` directly. This is an intentional clarification of the layer
+boundary rather than an undocumented exception.
+
+There is deliberately **no updater service type and no updater API in
+BetterTileCore**. Sparkle is an application-lifecycle integration in the same
+category as the status item and the main menu, and an indirection layer would
+add a seam without adding a decision.
+
+What is extracted is only the framework-independent *decisions* those
+integrations make, in `BetterTileMacOS/ApplicationUpdatePresentation.swift`:
+`UpdateIndicator` (how an updater outcome changes the menu-bar indicator),
+`FeedbackLink` (what the feedback URL may contain), and `ApplicationVolume`
+(whether the app must ask to be moved out of the disk image). These are pure,
+import neither Sparkle nor AppKit, and are unit tested. The app delegate remains
+responsible for translating Sparkle's callbacks into those inputs and for
+applying the results to real AppKit objects.
+
+Sparkle's own update UI, download, installation, bundle replacement, and
+relaunch are validated as manual release checks; see
+[RELEASING.md](RELEASING.md).
 
 ## Coordinate model
 

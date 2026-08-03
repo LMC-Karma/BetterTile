@@ -14,8 +14,9 @@
 
 BetterTile is built with Swift, SwiftUI, AppKit, and the public macOS
 Accessibility API. No private APIs, no code injection, no SIP workarounds, and
-no third-party dependencies. It asks for one permission and explains why before
-it does.
+no behavioral tracking. Sparkle is the only runtime dependency and provides
+secure update checks. BetterTile currently asks for one permission and explains
+why before it does.
 
 ---
 
@@ -67,7 +68,35 @@ To build it yourself, also Xcode 26 / Swift 6.3 or later.
 
 ## Install
 
-No signed release is published yet. Build it from source:
+Public beta builds are distributed as disk images from
+[GitHub Releases](https://github.com/LMC-Karma/BetterTile/releases). Download
+the latest `BetterTile-*-beta.dmg`, open it, and drag BetterTile into the
+Applications shortcut before launching it.
+
+The beta application is **ad-hoc signed**: it carries a valid macOS code
+signature, but it is **not signed with a Developer ID**. macOS therefore cannot
+identify the developer and will refuse the first launch. Open **System Settings
+→ Privacy & Security**, find the message about BetterTile, and choose **Open
+Anyway**, after confirming that the download came from this repository. You can
+also check the download against the `.sha256` file published beside it.
+
+Updates are authenticated separately: each DMG carries an EdDSA signature that
+Sparkle verifies against a public key built into the app, independently of the
+macOS code signature.
+
+BetterTile checks the repository's GitHub-hosted update feed once per day by
+default. It shows release notes and asks before downloading or installing. You
+can turn automatic checks off in General Settings or use **Check for Updates…**
+at any time.
+
+> **Public beta limitation.** Ad-hoc signatures differ from build to build, so
+> macOS treats an updated BetterTile as a new application and **the
+> Accessibility permission does not survive an update**. After installing an
+> update, open **System Settings → Privacy & Security → Accessibility**, remove
+> BetterTile with the **–** button, and add it again. Signing with a Developer
+> ID certificate is what removes this step.
+
+To build it from source instead:
 
 ```sh
 git clone https://github.com/LMC-Karma/BetterTile.git
@@ -114,12 +143,18 @@ rebuilds signed by the same team keep the grant.
 ## Private by default
 
 BetterTile reads window geometry through the public Accessibility API and does
-nothing else with it. There is no network code, no analytics, no telemetry, and
-no crash reporting. Nothing leaves your Mac. Your configuration is a plain JSON
-file on your own disk.
+nothing else with it. It does not send window data, configuration, analytics,
+telemetry, or crash reports anywhere. Your configuration is a plain JSON file
+on your own disk.
 
-Accessibility is the sole mandatory permission, and BetterTile explains what it
-is for in-product before requesting it.
+Update checks contact GitHub to fetch the public Sparkle appcast and release
+archive. They do not include BetterTile window data, configuration, diagnostics,
+analytics, telemetry, crash reports, or a Sparkle system profile. See the
+[security and privacy policy](SECURITY.md) for the review requirements that
+apply to any future network, data, dependency, or permission change.
+
+Accessibility is currently the sole mandatory permission, and BetterTile
+explains what it is for in-product before requesting it.
 
 ---
 
@@ -147,6 +182,8 @@ and share modified versions under the same license.
   event ordering, and the Bento split tree
 - [Development setup](docs/DEVELOPMENT.md) — build, sign, run, and test on your
   own Mac
+- [Beta releases](docs/RELEASING.md) — version, validate, sign, and publish an
+  update
 - [Contributing](CONTRIBUTING.md) — branch, test, and pull-request workflow
 - [Security](SECURITY.md) — reporting policy and permission rules
 - [Third-party notices](THIRD_PARTY_NOTICES.md) — upstream code and attribution

@@ -12,8 +12,10 @@ the same rules in the form a person needs them.
 
 BetterTile is a native macOS window manager: keyboard and drag snapping, linked
 resizing of adjacent windows, and adaptive Bento tiling. Swift 6.3, SwiftUI,
-AppKit, and the public Accessibility API. **No third-party dependencies** — do
-not add any.
+AppKit, and the public Accessibility API. BetterTile is a free utility with no
+advertising, behavioral tracking, or sale of user data. Read
+[SECURITY.md](SECURITY.md) before changing networking, permissions,
+dependencies, user-data handling, or distribution.
 
 ---
 
@@ -70,7 +72,8 @@ sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
 
 ## Architecture rules
 
-Three layers, and the dependency direction is strict:
+The current design has three layers, and changes should preserve this
+dependency direction unless an explicit architecture decision updates it:
 
 ```
 BetterTileApp  →  BetterTileMacOS  →  BetterTileCore
@@ -82,8 +85,24 @@ BetterTileApp  →  BetterTileMacOS  →  BetterTileCore
    planning, linked resizing, frame history, configuration
    models, and migrations. If you find yourself reaching for `NSScreen` in
    Core, the boundary is in the wrong place.
-2. **`BetterTileMacOS`** adapts public macOS APIs and owns all side effects.
-3. **`BetterTileApp`** is SwiftUI scenes only.
+2. **`BetterTileMacOS`** owns Accessibility, window-system integration,
+   coordinate conversion, and window mutations, and adapts public macOS APIs.
+3. **`BetterTileApp`** owns the SwiftUI/AppKit application lifecycle and
+   application-level UI integrations: Settings and menu-bar scenes, the main
+   menu, the status item, alerts, Sparkle's `SPUStandardUpdaterController`, and
+   user-requested `NSWorkspace` actions such as opening the Applications folder
+   or the feedback form.
+
+**Updates are an application-layer integration.** The app delegate owns
+`SPUStandardUpdaterController` and implements `SPUUpdaterDelegate`. This is an
+intentional, documented boundary, not an exception to be tidied away. Do not
+create a separate updater service and do not add an updater API to
+`BetterTileCore`.
+
+Only the framework-independent decisions are extracted, into
+`BetterTileMacOS/ApplicationUpdatePresentation.swift` (`UpdateIndicator`,
+`FeedbackLink`, `ApplicationVolume`). They import neither Sparkle nor AppKit and
+are unit tested; the app delegate translates Sparkle's callbacks into them.
 
 **Coordinate model.** Core uses logical points with a **top-left** origin.
 AppKit's bottom-left global coordinates are converted at the `BetterTileMacOS`
@@ -99,18 +118,24 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full picture.
 
 ---
 
-## Hard constraints
+## Security and product guardrails
 
-Never introduce, and reject any change that adds:
+The permanent platform-safety boundaries are:
 
-- private macOS APIs, including private SkyLight symbols
-- code copied from other window managers
-- SIP workarounds or code injection
-- third-party package dependencies
-- a new system permission without an explicit design decision first
+- no private macOS APIs, including private SkyLight symbols
+- no SIP workarounds
+- no code injection
 
-Accessibility is the sole mandatory permission. Any permission the app requests
-must be explained in-product before it is requested.
+Dependencies, network features, permissions, privileged components, and
+intentional architecture changes are reviewable design choices, not blanket
+prohibitions. They require a concrete user benefit, security and maintenance
+review, tests, and repository disclosure. New permissions also require an
+in-product explanation before macOS prompts. Adapted code needs compatible
+licensing, provenance, and attribution; undocumented copying is not allowed.
+
+Follow the canonical policy and disclosure requirements in
+[SECURITY.md](SECURITY.md). Sparkle is currently the only approved runtime
+dependency.
 
 ---
 

@@ -3,6 +3,8 @@
 Everything a new contributor needs to build, run, and test BetterTile on their
 own Mac. Read [AGENTS.md](../AGENTS.md) for the architecture rules and
 [CONTRIBUTING.md](../CONTRIBUTING.md) for the branch and pull-request workflow.
+The canonical security, privacy, dependency, networking, and permissions policy
+is [SECURITY.md](../SECURITY.md).
 
 ---
 
@@ -89,9 +91,21 @@ survives rebuilds on your machine.
 A free Personal Team's provisioning profile **expires after 7 days**. If you're
 actively developing you rebuild from Xcode well within that, so it never bites.
 If the app ever refuses to launch after a week off, just rebuild from Xcode and
-it's signed fresh. (When we later add non-developer testers, we'll distribute a
-notarized build so they don't deal with signing at all — that step needs the
-paid program and is out of scope here.)
+it's signed fresh.
+
+### This has nothing to do with the published beta
+
+Three signing contexts exist and they never touch each other:
+
+- **Your Xcode builds** use *your* Apple Development identity from your
+  gitignored `Config/LocalSigning.xcconfig`. Nothing here is committed.
+- **CI and `swift build` / `swift test`** build with `CODE_SIGNING_ALLOWED=NO`.
+  Those are unsigned validation builds and are never distributed.
+- **The published beta** is ad-hoc signed by `Tools/release-beta.sh` alone, and
+  is not signed with a Developer ID. See [RELEASING.md](RELEASING.md).
+
+Nothing you do locally changes what testers download, and the release tool never
+reads your signing identity.
 
 ---
 

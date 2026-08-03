@@ -21,7 +21,15 @@ jobs:
         run: swift --version
       - name: Test
         run: swift test --parallel
+      # Guards the `rm -rf` in the release tool's exit trap.
+      - name: Test release workspace cleanup
+        run: Tools/tests/release-workspace-test.sh
       - name: Build release
         run: swift build -c release
       - name: Build application bundle
         run: xcodebuild -project BetterTile.xcodeproj -scheme BetterTile -configuration Debug CODE_SIGNING_ALLOWED=NO build
+      # Release is what ships. It resolves BETTERTILE_ENABLE_AUTOMATIC_CHECKS
+      # differently from Debug, so a Debug-only build cannot catch a broken
+      # release configuration.
+      - name: Build release application bundle
+        run: xcodebuild -project BetterTile.xcodeproj -scheme BetterTile -configuration Release CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build
