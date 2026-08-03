@@ -54,15 +54,17 @@ artifact_dir="$repo_root/.build/beta-release/$tag"
 feed_url="https://raw.githubusercontent.com/$repo/updates/appcast.xml"
 release_url_prefix="https://github.com/$repo/releases/download/$tag/"
 
-# This repository normally lives in iCloud Drive. iCloud attaches
-# com.apple.FinderInfo and com.apple.fileprovider.fpfs#P metadata to files it
-# manages, and codesign refuses to sign a bundle carrying it:
+# Build every intermediate artifact outside the repository.
+#
+# A working copy can sit under a file provider or other synchronising storage
+# that attaches its own extended attributes to managed files. codesign refuses
+# to sign a bundle carrying them:
 #
 #   resource fork, Finder information, or similar detritus not allowed
 #
-# Stripping those attributes afterwards is a race against the sync daemon, so
-# every intermediate artifact is built outside the repository instead. Only the
-# finished, inspectable files are copied back into .build afterwards.
+# Stripping the attributes afterwards races whatever reapplies them, so the
+# build never acquires them in the first place. Only the finished, inspectable
+# files are copied back into .build.
 #
 # make_release_workspace and is_release_workspace live in the sourced library so
 # the guard on cleanup's `rm -rf` has exactly one definition and can be tested

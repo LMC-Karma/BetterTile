@@ -66,9 +66,9 @@ in System Settings → Privacy & Security → Accessibility.
 
 ## Where release work happens
 
-This repository normally lives in iCloud Drive, which attaches
-`com.apple.FinderInfo` and `com.apple.fileprovider.fpfs#P` metadata to the files
-it manages. `codesign` refuses to sign anything carrying it:
+A working copy can sit under a file provider or other synchronising storage that
+attaches its own extended attributes to managed files. `codesign` refuses to
+sign anything carrying them:
 
 ```
 resource fork, Finder information, or similar detritus not allowed
@@ -78,8 +78,10 @@ The script therefore does all intermediate work — DerivedData, the copied app
 bundle, the DMG staging tree, the Applications shortcut, the disk image, the
 mount point, and the appcast working files — in a unique `mktemp` directory
 under `/private/tmp`, and removes it through an exit trap that only ever deletes
-that one directory. Stripping extended attributes afterwards is not the fix; the
-files never acquire them.
+that one directory. Stripping extended attributes afterwards races whatever
+reapplies them, so the build never acquires them in the first place.
+
+This also keeps a release build independent of any state in the checkout.
 
 Only the finished, inspectable artifacts are copied back into
 `.build/beta-release/v<version>-beta/`:
