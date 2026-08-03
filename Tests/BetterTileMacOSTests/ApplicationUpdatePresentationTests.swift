@@ -12,6 +12,11 @@ private func finalState(
     events.reduce(start) { UpdateIndicator.state(after: $1, from: $0) }
 }
 
+private func feedbackURLComponents() throws -> URLComponents {
+    let url = try #require(FeedbackLink.url(version: "0.1.0", build: "2"))
+    return try #require(URLComponents(url: url, resolvingAgainstBaseURL: false))
+}
+
 @Test func validUpdateTurnsTheIndicatorOn() {
     #expect(UpdateIndicator.state(after: .foundValidUpdate, from: .idle) == .updateAvailable)
     #expect(UpdateIndicator.state(after: .foundValidUpdate, from: .updateAvailable) == .updateAvailable)
@@ -58,8 +63,7 @@ private func finalState(
 // MARK: - Feedback link
 
 @Test func feedbackURLSelectsTheBugFormAndCarriesTheRunningVersion() throws {
-    let url = try #require(FeedbackLink.url(version: "0.1.0", build: "2"))
-    let components = try #require(URLComponents(url: url, resolvingAgainstBaseURL: false))
+    let components = try feedbackURLComponents()
     let items = try #require(components.queryItems)
 
     #expect(components.scheme == "https")
@@ -72,8 +76,7 @@ private func finalState(
 }
 
 @Test func feedbackURLCarriesNothingBeyondTheTemplateAndTitle() throws {
-    let url = try #require(FeedbackLink.url(version: "0.1.0", build: "2"))
-    let components = try #require(URLComponents(url: url, resolvingAgainstBaseURL: false))
+    let components = try feedbackURLComponents()
     let items = try #require(components.queryItems)
 
     #expect(Set(items.map(\.name)) == ["template", "title"])
@@ -82,7 +85,7 @@ private func finalState(
 @Test func feedbackURLLeaksNoConfigurationWindowOrDiagnosticData() throws {
     // The feedback form is the app's only user-triggered outbound link, so it is
     // asserted against by content, not just by shape.
-    let url = try #require(FeedbackLink.url(version: "0.1.0", build: "2"))
+    let url = try #require(feedbackURLComponents().url)
     let lowercased = url.absoluteString.lowercased()
 
     for forbidden in [

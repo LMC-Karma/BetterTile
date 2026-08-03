@@ -54,7 +54,9 @@ artifact_dir="$repo_root/.build/beta-release/$tag"
 feed_url="https://raw.githubusercontent.com/$repo/updates/appcast.xml"
 release_url_prefix="https://github.com/$repo/releases/download/$tag/"
 
-# Build every intermediate artifact outside the repository.
+# Build the Xcode application and every DMG-packaging artifact outside the
+# repository. SwiftPM validation continues to use the checkout's normal .build;
+# none of those outputs enters the distributed application or disk image.
 #
 # A working copy can sit under a file provider or other synchronising storage
 # that attaches its own extended attributes to managed files. codesign refuses
@@ -63,8 +65,8 @@ release_url_prefix="https://github.com/$repo/releases/download/$tag/"
 #   resource fork, Finder information, or similar detritus not allowed
 #
 # Stripping the attributes afterwards races whatever reapplies them, so the
-# build never acquires them in the first place. Only the finished, inspectable
-# files are copied back into .build.
+# application and packaging artifacts never acquire them in the first place.
+# Only the finished, inspectable release files are copied back into .build.
 #
 # make_release_workspace and is_release_workspace live in the sourced library so
 # the guard on cleanup's `rm -rf` has exactly one definition and can be tested

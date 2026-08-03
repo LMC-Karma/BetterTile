@@ -74,14 +74,16 @@ sign anything carrying them:
 resource fork, Finder information, or similar detritus not allowed
 ```
 
-The script therefore does all intermediate work — DerivedData, the copied app
-bundle, the DMG staging tree, the Applications shortcut, the disk image, the
-mount point, and the appcast working files — in a unique `mktemp` directory
-under `/private/tmp`, and removes it through an exit trap that only ever deletes
-that one directory. Stripping extended attributes afterwards races whatever
-reapplies them, so the build never acquires them in the first place.
+The script therefore creates all Xcode DerivedData and every artifact that
+enters the distributed DMG — the copied app bundle, staging tree, Applications
+shortcut, disk image, mount point, and appcast working files — in a unique
+`mktemp` directory under `/private/tmp`. An exit trap removes only that exact
+directory. Stripping extended attributes afterwards races whatever reapplies
+them, so these release artifacts never acquire them in the first place.
 
-This also keeps a release build independent of any state in the checkout.
+The validation-only `swift package resolve`, `swift test`, and `swift build`
+commands continue to use the checkout's normal `.build`; their outputs are not
+copied into the application or DMG.
 
 Only the finished, inspectable artifacts are copied back into
 `.build/beta-release/v<version>-beta/`:

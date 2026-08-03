@@ -392,42 +392,7 @@ private final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSPo
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             let menu = NSMenu()
-            let setup = NSMenuItem(
-                title: "Setup Assistant…",
-                action: #selector(showSetupAssistant),
-                keyEquivalent: ""
-            )
-            setup.target = self
-            menu.addItem(setup)
-            let settings = NSMenuItem(
-                title: "Settings…",
-                action: #selector(showSettings),
-                keyEquivalent: ","
-            )
-            settings.target = self
-            menu.addItem(settings)
-            let updates = NSMenuItem(
-                title: "Check for Updates…",
-                action: #selector(checkForUpdates(_:)),
-                keyEquivalent: ""
-            )
-            updates.target = self
-            menu.addItem(updates)
-            let feedback = NSMenuItem(
-                title: "Send Feedback…",
-                action: #selector(sendFeedback),
-                keyEquivalent: ""
-            )
-            feedback.target = self
-            menu.addItem(feedback)
-            menu.addItem(.separator())
-            let quit = NSMenuItem(
-                title: "Quit BetterTile",
-                action: #selector(quitApplication),
-                keyEquivalent: "q"
-            )
-            quit.target = self
-            menu.addItem(quit)
+            populateApplicationCommands(in: menu)
             statusItem.menu = menu
             statusItem.button?.performClick(nil)
             DispatchQueue.main.async { [weak self] in self?.statusItem.menu = nil }
@@ -596,42 +561,7 @@ private final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSPo
 
         let appItem = NSMenuItem()
         let appMenu = NSMenu(title: "BetterTile")
-        let setup = NSMenuItem(
-            title: "Setup Assistant…",
-            action: #selector(showSetupAssistant),
-            keyEquivalent: ""
-        )
-        setup.target = self
-        appMenu.addItem(setup)
-        let settings = NSMenuItem(
-            title: "Settings…",
-            action: #selector(showSettings),
-            keyEquivalent: ","
-        )
-        settings.target = self
-        appMenu.addItem(settings)
-        let updates = NSMenuItem(
-            title: "Check for Updates…",
-            action: #selector(checkForUpdates(_:)),
-            keyEquivalent: ""
-        )
-        updates.target = self
-        appMenu.addItem(updates)
-        let feedback = NSMenuItem(
-            title: "Send Feedback…",
-            action: #selector(sendFeedback),
-            keyEquivalent: ""
-        )
-        feedback.target = self
-        appMenu.addItem(feedback)
-        appMenu.addItem(.separator())
-        let quit = NSMenuItem(
-            title: "Quit BetterTile",
-            action: #selector(quitApplication),
-            keyEquivalent: "q"
-        )
-        quit.target = self
-        appMenu.addItem(quit)
+        populateApplicationCommands(in: appMenu)
         appItem.submenu = appMenu
         mainMenu.addItem(appItem)
 
@@ -656,6 +586,21 @@ private final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSPo
 
         NSApp.mainMenu = mainMenu
         NSApp.windowsMenu = windowMenu
+    }
+
+    private func populateApplicationCommands(in menu: NSMenu) {
+        func addItem(_ title: String, action: Selector, keyEquivalent: String = "") {
+            let item = NSMenuItem(title: title, action: action, keyEquivalent: keyEquivalent)
+            item.target = self
+            menu.addItem(item)
+        }
+
+        addItem("Setup Assistant…", action: #selector(showSetupAssistant))
+        addItem("Settings…", action: #selector(showSettings), keyEquivalent: ",")
+        addItem("Check for Updates…", action: #selector(checkForUpdates(_:)))
+        addItem("Send Feedback…", action: #selector(sendFeedback))
+        menu.addItem(.separator())
+        addItem("Quit BetterTile", action: #selector(quitApplication), keyEquivalent: "q")
     }
 }
 
