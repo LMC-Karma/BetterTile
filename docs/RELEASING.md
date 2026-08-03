@@ -1,6 +1,6 @@
 # Public beta releases
 
-BetterTile public betas are published as GitHub prereleases: a DMG containing an
+BetterTile public betas are published as GitHub releases: a DMG containing an
 **ad-hoc signed application**. The DMG archive itself carries no Apple code
 signature; it is authenticated separately by the Sparkle **EdDSA signature**
 recorded in the appcast. The app uses Sparkle 2.9.5 to discover and verify later
@@ -171,12 +171,12 @@ The command refuses to publish unless `main` is clean and matches
 the tag and release are unused, GitHub CLI authentication works, the EdDSA key
 matches the public key in the app, and all validation succeeds.
 
-It publishes the DMG, SHA-256 checksum, and notes as a public GitHub prerelease.
-Only after the release asset is reachable does it commit the generated
-`appcast.xml` to the dedicated `updates` branch. That branch is the source of
-`https://raw.githubusercontent.com/LMC-Karma/BetterTile/updates/appcast.xml`.
+It publishes the DMG, SHA-256 checksum, notes, and `appcast.xml` as a public
+GitHub release marked Latest. Sparkle reads the appcast through GitHub's stable
+Latest-release asset URL:
+`https://github.com/LMC-Karma/BetterTile/releases/latest/download/appcast.xml`.
 
-After publication, confirm the release assets and raw appcast are public,
+After publication, confirm the release assets and appcast are public,
 inspect the appcast version, asset URL, and EdDSA signature, then complete one
 controlled update from an older build. Do not merge or publish automatically
 from CI; the EdDSA private key is intentionally absent from GitHub Actions.

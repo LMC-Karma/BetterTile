@@ -51,7 +51,7 @@ dmg_name="BetterTile-${version}-beta.dmg"
 checksum_name="${dmg_name}.sha256"
 notes_name="${dmg_name%.dmg}.md"
 artifact_dir="$repo_root/.build/beta-release/$tag"
-feed_url="https://raw.githubusercontent.com/$repo/updates/appcast.xml"
+feed_url="https://github.com/$repo/releases/latest/download/appcast.xml"
 release_url_prefix="https://github.com/$repo/releases/download/$tag/"
 
 # Build the Xcode application and every DMG-packaging artifact outside the
@@ -73,6 +73,8 @@ release_url_prefix="https://github.com/$repo/releases/download/$tag/"
 # without running a release; see Tools/tests/release-workspace-test.sh.
 # shellcheck source=lib/release-workspace.sh
 source "$script_dir/lib/release-workspace.sh"
+# shellcheck source=lib/release-appcast.sh
+source "$script_dir/lib/release-appcast.sh"
 
 work_dir="$(make_release_workspace)"
 is_release_workspace "$work_dir" || {
@@ -93,7 +95,7 @@ export CLANG_MODULE_CACHE_PATH="$work_dir/module-cache/clang"
 export SWIFTPM_MODULECACHE_OVERRIDE="$work_dir/module-cache/swift"
 mkdir -p "$CLANG_MODULE_CACHE_PATH" "$SWIFTPM_MODULECACHE_OVERRIDE"
 
-for command in git swift xcodebuild hdiutil shasum ditto; do
+for command in git swift xcodebuild hdiutil shasum ditto curl; do
     command -v "$command" >/dev/null || {
         echo "Required command not found: $command" >&2
         exit 1
@@ -185,9 +187,8 @@ version_is_greater() {
     (( candidate_patch > existing_patch ))
 }
 
-if git ls-remote --exit-code --heads origin updates >/dev/null 2>&1; then
-    git fetch origin updates
-    git show origin/updates:appcast.xml > "$archive_dir/appcast.xml"
+fetch_existing_appcast "$feed_url" "$archive_dir/appcast.xml"
+if [[ -f "$archive_dir/appcast.xml" ]]; then
     newest_feed_build="$(sed -n 's/.*sparkle:version="\([0-9][0-9]*\)".*/\1/p' "$archive_dir/appcast.xml" | sort -n | tail -1)"
     if [[ -n "$newest_feed_build" && "$project_build" -le "$newest_feed_build" ]]; then
         echo "Project build $project_build must be newer than appcast build $newest_feed_build." >&2
@@ -324,8 +325,8 @@ if [[ "$dry_run" == true ]]; then
     exit 0
 fi
 
-gh release create "$tag" "$work_dir/$dmg_name" "$work_dir/$checksum_name" \
-    --repo "$repo" --target main --prerelease \
+gh release create "$tag" "$work_dir/$dmg_name" "$work_dir/$checksum_name" "$appcast_path" \
+    --repo "$repo" --target main --latest \
     --title "BetterTile $version Beta" --notes-file "$notes_path"
 
 asset_url="$release_url_prefix$dmg_name"
@@ -334,24 +335,8 @@ asset_url="$release_url_prefix$dmg_name"
 # is already public, so retry on all errors.
 curl --fail --location --head --retry 12 --retry-delay 5 --retry-all-errors "$asset_url" >/dev/null
 
-feed_repo="$work_dir/updates-repository"
-mkdir -p "$feed_repo"
-git -C "$feed_repo" init
-git -C "$feed_repo" remote add origin "$(git remote get-url origin)"
-if git ls-remote --exit-code --heads origin updates >/dev/null 2>&1; then
-    git -C "$feed_repo" fetch origin updates
-    git -C "$feed_repo" switch -c updates --track origin/updates
-else
-    git -C "$feed_repo" switch --orphan updates
-fi
-cp "$appcast_path" "$feed_repo/appcast.xml"
-git -C "$feed_repo" add appcast.xml
-git -C "$feed_repo" commit -m "Publish BetterTile $version beta appcast"
-git -C "$feed_repo" push origin updates
-
-# raw.githubusercontent.com serves a cached copy for several minutes, so a
-# successful request can still return the previous appcast. Retrying the request
-# is not enough; poll until the published build actually appears.
+# The release and its Latest redirect can take a moment to propagate. Poll the
+# public feed until it serves the build that was just published.
 feed_confirmed=false
 for _ in $(seq 1 30); do
     if curl --fail --silent --location --retry 3 --retry-delay 2 --retry-all-errors \
@@ -364,7 +349,7 @@ for _ in $(seq 1 30); do
 done
 [[ "$feed_confirmed" == true ]] || {
     echo "The release published, but $feed_url still does not serve build $project_build." >&2
-    echo "This is usually GitHub's raw cache. Re-check before announcing the release." >&2
+    echo "Re-check the release assets before announcing the release." >&2
     exit 1
 }
-echo "Published $tag and updated the Sparkle appcast."
+echo "Published $tag with its Sparkle appcast."

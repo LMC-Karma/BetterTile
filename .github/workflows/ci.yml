@@ -24,6 +24,8 @@ jobs:
       # Guards the `rm -rf` in the release tool's exit trap.
       - name: Test release workspace cleanup
         run: Tools/tests/release-workspace-test.sh
+      - name: Test release appcast handling
+        run: Tools/tests/release-appcast-test.sh
       - name: Build release
         run: swift build -c release
       - name: Build application bundle
