@@ -4,6 +4,14 @@ import Testing
 
 // MARK: - Update indicator
 
+/// Replays a sequence of updater outcomes from the starting state.
+private func finalState(
+    after events: [UpdateIndicatorEvent],
+    from start: UpdateIndicatorState = .idle
+) -> UpdateIndicatorState {
+    events.reduce(start) { UpdateIndicator.state(after: $1, from: $0) }
+}
+
 @Test func validUpdateTurnsTheIndicatorOn() {
     #expect(UpdateIndicator.state(after: .foundValidUpdate, from: .idle) == .updateAvailable)
     #expect(UpdateIndicator.state(after: .foundValidUpdate, from: .updateAvailable) == .updateAvailable)
@@ -36,27 +44,15 @@ import Testing
 }
 
 @Test func anInstallThatFailsLeavesTheUpdateAdvertised() {
-    var state = UpdateIndicatorState.idle
-    for event in [UpdateIndicatorEvent.foundValidUpdate, .userBeganInstallingUpdate, .checkFailed] {
-        state = UpdateIndicator.state(after: event, from: state)
-    }
-    #expect(state == .updateAvailable)
+    #expect(finalState(after: [.foundValidUpdate, .userBeganInstallingUpdate, .checkFailed]) == .updateAvailable)
 }
 
 @Test func deferringThenFailingStillAdvertisesTheUpdate() {
-    var state = UpdateIndicatorState.idle
-    for event in [UpdateIndicatorEvent.foundValidUpdate, .userDeferredUpdate, .checkFailed] {
-        state = UpdateIndicator.state(after: event, from: state)
-    }
-    #expect(state == .updateAvailable)
+    #expect(finalState(after: [.foundValidUpdate, .userDeferredUpdate, .checkFailed]) == .updateAvailable)
 }
 
 @Test func skippingAfterBeginningAnInstallStillClearsTheIndicator() {
-    var state = UpdateIndicatorState.idle
-    for event in [UpdateIndicatorEvent.foundValidUpdate, .userBeganInstallingUpdate, .userSkippedUpdate] {
-        state = UpdateIndicator.state(after: event, from: state)
-    }
-    #expect(state == .idle)
+    #expect(finalState(after: [.foundValidUpdate, .userBeganInstallingUpdate, .userSkippedUpdate]) == .idle)
 }
 
 // MARK: - Feedback link

@@ -124,10 +124,10 @@ Tools/release-beta.sh --dry-run 0.1.0 path/to/notes.md
 
 A dry run may run from a feature branch. It runs the tests and builds, ad-hoc
 signs and verifies the Release app, validates its Info.plist, creates and mounts
-the DMG, re-verifies the signature through the mounted image, signs the DMG with
-the Keychain EdDSA key, and generates an appcast. The finished artifacts are
-copied to `.build/beta-release/v<version>-beta/` for manual inspection; the
-temporary working directory is removed.
+the DMG, re-verifies the signature through the mounted image, generates an EdDSA
+signature for the DMG with the Keychain key, and records it in the appcast. The
+finished artifacts are copied to `.build/beta-release/v<version>-beta/` for
+manual inspection; the temporary working directory is removed.
 
 The automated suite already covers the indicator state machine, the feedback URL
 contents, and the read-only-volume decision. The following need a person, and

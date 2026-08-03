@@ -48,15 +48,18 @@ check_rejects "$scratch" "rejects a directory outside the prefix"
 traversal="${workspace}/../../../etc"
 check_rejects "$traversal" "rejects a path traversal escaping the prefix"
 
-file_not_dir="${release_workspace_prefix}notadirectory"
+# Both objects live inside the unique workspace rather than at a predictable
+# path directly under /private/tmp: creating a fixed name there could truncate
+# or clobber whatever already sits at it. They still start with the workspace
+# prefix, which is what these two cases need to exercise, and the workspace
+# cleanup below removes them.
+file_not_dir="$workspace/not-a-directory"
 : > "$file_not_dir"
 check_rejects "$file_not_dir" "rejects a regular file"
-rm -f "$file_not_dir"
 
-link="${release_workspace_prefix}symlink"
+link="$workspace/outside-link"
 ln -s "$scratch" "$link"
 check_rejects "$link" "rejects a symlink pointing outside the prefix"
-rm -f "$link"
 
 echo "release_cleanup deletes only a real workspace"
 
