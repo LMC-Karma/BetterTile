@@ -416,6 +416,7 @@ private final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSPo
                         self?.updaterController.updater.automaticallyChecksForUpdates = value
                     }
                 ),
+                checkForUpdates: { [weak self] in self?.checkForUpdates(nil) },
                 openSetup: { [weak self] in self?.showSetupAssistant() }
             ))
             let window = NSWindow(contentViewController: host)

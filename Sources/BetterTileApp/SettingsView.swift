@@ -24,7 +24,7 @@ private enum SettingsDestination: String, CaseIterable, Identifiable {
     var keywords: String {
         switch self {
         case .general:
-            "permission accessibility dock appearance light dark system drag snapping application update automatic"
+            "permission accessibility dock appearance light dark system drag snapping application update automatic check"
         case .windowLayout:
             "mode manual native bento resize linked divider shortcut keyboard hotkey halves thirds quarters sixths move display restore"
         case .snapZones:
@@ -36,6 +36,7 @@ private enum SettingsDestination: String, CaseIterable, Identifiable {
 struct SettingsView: View {
     @Bindable var model: BetterTileModel
     @Binding var automaticallyChecksForUpdates: Bool
+    let checkForUpdates: () -> Void
     let openSetup: () -> Void
     @State private var selection: SettingsDestination = .general
     @State private var search = ""
@@ -120,6 +121,7 @@ struct SettingsView: View {
             GeneralSettings(
                 model: model,
                 automaticallyChecksForUpdates: $automaticallyChecksForUpdates,
+                checkForUpdates: checkForUpdates,
                 openSetup: openSetup
             )
         case .windowLayout:
@@ -133,6 +135,7 @@ struct SettingsView: View {
 private struct GeneralSettings: View {
     @Bindable var model: BetterTileModel
     @Binding var automaticallyChecksForUpdates: Bool
+    let checkForUpdates: () -> Void
     let openSetup: () -> Void
     @AppStorage(AppAppearance.defaultsKey) private var appearanceRawValue = AppAppearance.system.rawValue
 
@@ -176,6 +179,7 @@ private struct GeneralSettings: View {
                 Toggle("Show Dock icon", isOn: configurationBinding(\.showDockIcon))
                 Toggle("Enable drag snapping", isOn: configurationBinding(\.snappingEnabled))
                 Toggle("Automatically check for updates", isOn: $automaticallyChecksForUpdates)
+                Button("Check for Updates…", action: checkForUpdates)
             }
 
             Section("Appearance") {
