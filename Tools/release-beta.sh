@@ -227,6 +227,16 @@ info_path="$app_path/Contents/Info.plist"
     exit 1
 }
 
+otool -l "$app_path/Contents/MacOS/BetterTile" | awk '
+    $1 == "cmd" && $2 == "LC_RPATH" { in_rpath = 1; next }
+    in_rpath && $1 == "path" && $2 == "@executable_path/../Frameworks" { found = 1 }
+    in_rpath && $1 == "cmd" { in_rpath = 0 }
+    END { exit(found ? 0 : 1) }
+' || {
+    echo "Release executable is missing the Frameworks runpath required to load Sparkle." >&2
+    exit 1
+}
+
 # The Release build runs with signing disabled, which leaves two defects: the
 # bundle has no seal at all, and Xcode's embed step strips Sparkle's Headers and
 # Modules without re-signing, so the framework's upstream signature no longer
