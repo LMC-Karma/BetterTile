@@ -172,3 +172,56 @@ public extension PlacementBounds {
             && frame.maxY <= visibleFrame.maxY + tolerance
     }
 }
+
+/// The conclusion of a verification made after a window has had time to settle.
+public enum DelayedPlacementVerdict: Equatable, Sendable {
+    /// The window reached the frame it was asked for.
+    case landed
+    /// The window never moved: it is still sitting where it started.
+    case failed
+    /// Something else has happened to the window since. Nothing is reported,
+    /// because the action being verified is no longer what the user is looking
+    /// at.
+    case superseded
+    /// The window could not be read. Nothing can be concluded.
+    case inconclusive
+}
+
+public enum DelayedPlacementVerifier {
+    /// A delayed check is only allowed to report failure when the window
+    /// demonstrably never moved.
+    ///
+    /// Verification runs a few hundred milliseconds after the write, and a lot
+    /// can happen in that time: the user drags the window, a Bento reflow moves
+    /// it, macOS tiles it somewhere else. Reporting on the original action then
+    /// puts a failure on screen for something the user has already replaced.
+    ///
+    /// Two independent signals are needed. The mutation generation catches
+    /// anything BetterTile did, but a mouse drag never touches the coordinator
+    /// and so never changes it; the frame check catches that. A window found
+    /// anywhere other than where it started or where it was sent has been moved
+    /// by something else, whichever signal noticed.
+    public static func verdict(
+        source: BTRect,
+        target: BTRect,
+        actual: BTRect?,
+        generationChanged: Bool,
+        tolerance: Double = 8
+    ) -> DelayedPlacementVerdict {
+        guard let actual else { return .inconclusive }
+        switch PlacementVerifier.outcome(
+            requested: target,
+            actual: actual,
+            positionTolerance: tolerance,
+            sizeTolerance: tolerance
+        ) {
+        case .landed, .resisted:
+            return .landed
+        case .failed:
+            break
+        }
+        if generationChanged { return .superseded }
+        let stillAtSource = actual.approximatelyEquals(source, tolerance: tolerance)
+        return stillAtSource ? .failed : .superseded
+    }
+}

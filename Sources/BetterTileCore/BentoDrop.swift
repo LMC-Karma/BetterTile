@@ -82,6 +82,17 @@ public struct BentoDropPlanner: Sendable {
                 )
             }
             let managedIDs = Set(state.root?.windowIDs ?? [])
+            if managedIDs.count >= maximumManagedWindows,
+               state.floatingWindowIDs.contains(sourceWindowID) {
+                return panePlan(
+                    sourceWindowID: sourceWindowID,
+                    targetWindowID: targetWindowID,
+                    state: state,
+                    baselineFrames: baselineFrames,
+                    constraints: constraints,
+                    bounds: bounds
+                )
+            }
             guard managedIDs.contains(sourceWindowID) || managedIDs.count < maximumManagedWindows else {
                 return nil
             }
@@ -167,6 +178,16 @@ public struct BentoDropPlanner: Sendable {
         .bottomLeftSixth, .bottomCenterSixth, .bottomRightSixth,
     ]
 
+    public static func handlesShortcut(
+        _ action: WindowAction,
+        in mode: LayoutMode,
+        sourceRule: ApplicationRule
+    ) -> Bool {
+        mode == .bento
+            && sourceRule.allowsBentoParticipation
+            && partitionActions.contains(action)
+    }
+
     public static let focusActions: Set<WindowAction> = [
         .maximize, .almostMaximize, .center, .centerResize,
     ]
@@ -204,6 +225,7 @@ public struct BentoDropPlanner: Sendable {
         var next = state
         let treeIDs = Set(state.root?.windowIDs ?? [])
         var placements: [Placement]
+        var displacedPlacement: Placement?
         if treeIDs.contains(sourceWindowID) {
             guard let sourceFrame = baselineFrames[sourceWindowID],
                   let targetFrame = baselineFrames[targetWindowID]
@@ -226,14 +248,38 @@ public struct BentoDropPlanner: Sendable {
                 next = solved
                 placements = solved.placements(in: bounds)
             }
+        } else if treeIDs.count >= maximumManagedWindows {
+            guard let sourceFrame = baselineFrames[sourceWindowID],
+                  next.exchangeFloating(sourceWindowID, withPaneOf: targetWindowID)
+            else { return nil }
+            displacedPlacement = Placement(windowID: targetWindowID, frame: sourceFrame)
+            placements = next.placements(in: bounds)
+            if !valid(
+                placements,
+                expected: Set(next.root?.windowIDs ?? []),
+                constraints: constraints,
+                bounds: bounds
+            ) {
+                guard let solved = BentoConstraintSolver().solve(
+                    state: next,
+                    in: bounds,
+                    constraints: constraints
+                ) else { return nil }
+                next = solved
+                placements = solved.placements(in: bounds)
+            }
         } else {
-            guard treeIDs.count < maximumManagedWindows else { return nil }
             next.split(targetWindowID, inserting: sourceWindowID, in: bounds)
             guard let solved = BentoConstraintSolver().solve(state: next, in: bounds, constraints: constraints) else { return nil }
             next = solved
             placements = next.placements(in: bounds)
         }
-        guard valid(placements, expected: Set(next.root?.windowIDs ?? []), constraints: constraints, bounds: bounds) else { return nil }
+        var expected = Set(next.root?.windowIDs ?? [])
+        if let displacedPlacement {
+            placements.append(displacedPlacement)
+            expected.insert(displacedPlacement.windowID)
+        }
+        guard valid(placements, expected: expected, constraints: constraints, bounds: bounds) else { return nil }
         return BentoDropPlan(state: next, placements: placements)
     }
 

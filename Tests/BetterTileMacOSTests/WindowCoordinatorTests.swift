@@ -13,6 +13,88 @@ import Testing
     #expect(system.windows[0].frame == original)
 }
 
+@Test @MainActor func customZoneButtonsHonorApplicationRules() {
+    let system = FakeWindowSystem()
+    let original = system.windows[0].frame
+    let coordinator = WindowCoordinator(system: system)
+    let zone = CustomZone(
+        name: "Focus",
+        rect: NormalizedRect(x: 0.1, y: 0.1, width: 0.8, height: 0.8)
+    )
+    var rules = ApplicationRuleSet()
+    rules.set(.ignoreEverywhere, for: "com.example.Test")
+
+    #expect(!coordinator.applyCustomZone(zone, applicationRules: rules))
+    #expect(system.windows[0].frame == original)
+    #expect(coordinator.lastError == "BetterTile is set to ignore this app.")
+
+    rules.set(.excludeFromBento, for: "com.example.Test")
+    #expect(coordinator.applyCustomZone(zone, applicationRules: rules))
+    #expect(system.windows[0].frame == BTRect(x: 100, y: 80, width: 800, height: 640))
+}
+
+@Test @MainActor func bentoDragAdmissionHonorsApplicationRules() {
+    let system = FakeWindowSystem()
+    let window = system.windows[0]
+    let controller = DragSnapController(
+        coordinator: WindowCoordinator(system: system),
+        configuration: BetterTileConfiguration()
+    )
+    let bundleIdentifier = "com.example.Test"
+
+    #expect(controller.allowsBentoDrag(for: window))
+
+    var configuration = BetterTileConfiguration()
+    configuration.applicationRules.set(.excludeFromBento, for: bundleIdentifier)
+    controller.configuration = configuration
+    #expect(!controller.allowsBentoDrag(for: window))
+
+    configuration.applicationRules.set(.ignoreEverywhere, for: bundleIdentifier)
+    controller.configuration = configuration
+    #expect(!controller.allowsBentoDrag(for: window))
+}
+
+@Test @MainActor func linkedResizeAdmissionHonorsApplicationRules() {
+    let system = FakeWindowSystem()
+    let window = system.windows[0]
+    var configuration = BetterTileConfiguration()
+    configuration.linkedResizeEnabled = true
+    let controller = LinkedResizeController(
+        coordinator: WindowCoordinator(system: system),
+        configuration: configuration
+    )
+    controller.isEnabledForDisplay = { _ in true }
+
+    #expect(controller.allowsLinkedResize(for: window))
+
+    configuration.applicationRules.set(.excludeFromBento, for: "com.example.Test")
+    controller.configuration = configuration
+    #expect(controller.allowsLinkedResize(for: window))
+
+    configuration.applicationRules.set(.ignoreEverywhere, for: "com.example.Test")
+    controller.configuration = configuration
+    #expect(!controller.allowsLinkedResize(for: window))
+}
+
+@Test @MainActor func titleBarDoubleClickAdmissionHonorsApplicationRules() {
+    let system = FakeWindowSystem()
+    let window = system.windows[0]
+    let controller = TitleBarDoubleClickController(
+        coordinator: WindowCoordinator(system: system)
+    )
+
+    #expect(controller.allowsDoubleClickPlacement(for: window))
+
+    var rules = ApplicationRuleSet()
+    rules.set(.excludeFromBento, for: "com.example.Test")
+    controller.applicationRules = rules
+    #expect(controller.allowsDoubleClickPlacement(for: window))
+
+    rules.set(.ignoreEverywhere, for: "com.example.Test")
+    controller.applicationRules = rules
+    #expect(!controller.allowsDoubleClickPlacement(for: window))
+}
+
 @Test @MainActor func placementTransactionsUseTargetedWindowSnapshots() {
     let system = FakeWindowSystem()
     let coordinator = WindowCoordinator(system: system)
@@ -632,40 +714,115 @@ private final class FakeWindowSystem: WindowSystem, TargetedWindowSystem, Window
 /// Chromium-based applications do - must not be reported as a failure. Read
 /// straight back, "ignored the write" and "has not applied it yet" are the same
 /// observation, so the action succeeds and verification waits.
-@Test @MainActor func aWindowThatSettlesLateIsNotReportedAsAFailure() async throws {
+@Test @MainActor func aLateSettlingApplicationReachesItsTarget() async throws {
     let system = FakeWindowSystem()
     system.readsBeforeSettling = 2
     let coordinator = WindowCoordinator(system: system)
     let plan = try #require(coordinator.plan(.leftHalf))
 
     #expect(coordinator.perform(plan), "a late-settling window still counts as applied")
-    let outcome = await coordinator.verifyPlacement(plan, delay: .milliseconds(1))
-    #expect(outcome == .landed)
+    let generation = coordinator.mutationGeneration(for: plan.windowID)
+    #expect(await coordinator.verifyPlacement(plan, since: generation, delay: .milliseconds(1)) == .landed)
 }
 
-/// A window that never moves is only concluded to have failed after it has had
-/// time to settle.
-@Test @MainActor func aWindowThatNeverMovesIsReportedAsAFailureAfterVerification() async throws {
+/// A window that never moves is still sitting at the action's source frame, and
+/// nothing else has touched it. That is the only case a delayed check may
+/// report.
+@Test @MainActor func anIgnoredWriteLeavesTheWindowAtItsSourceAndFails() async throws {
     let system = FakeWindowSystem()
     let coordinator = WindowCoordinator(system: system)
     let plan = try #require(coordinator.plan(.leftHalf))
-    let original = system.windows[0].frame
     system.ignoredFrameWriteCounts[plan.windowID] = 1
 
     #expect(coordinator.perform(plan), "the write itself was accepted")
-    #expect(system.windows[0].frame == original)
-    #expect(await coordinator.verifyPlacement(plan, delay: .milliseconds(1)) == .failed(actual: original))
+    #expect(system.windows[0].frame == plan.sourceFrame)
+    let generation = coordinator.mutationGeneration(for: plan.windowID)
+    #expect(await coordinator.verifyPlacement(plan, since: generation, delay: .milliseconds(1)) == .failed)
+}
+
+/// Dragging the window somewhere else while verification is pending. The mouse
+/// never touches the coordinator, so the generation is unchanged and only the
+/// frame check can tell that the action has been superseded.
+@Test @MainActor func aWindowMovedByHandDuringVerificationReportsNothing() async throws {
+    let system = FakeWindowSystem()
+    let coordinator = WindowCoordinator(system: system)
+    let plan = try #require(coordinator.plan(.leftHalf))
+    system.ignoredFrameWriteCounts[plan.windowID] = 1
+    #expect(coordinator.perform(plan))
+
+    let generation = coordinator.mutationGeneration(for: plan.windowID)
+    system.windows[0].frame = BTRect(x: 640, y: 320, width: 500, height: 400)
+    #expect(coordinator.mutationGeneration(for: plan.windowID) == generation,
+            "a drag does not go through the coordinator")
+
+    #expect(await coordinator.verifyPlacement(plan, since: generation, delay: .milliseconds(1)) == .superseded)
+}
+
+@Test @MainActor func aWindowResizedByHandDuringVerificationReportsNothing() async throws {
+    let system = FakeWindowSystem()
+    let coordinator = WindowCoordinator(system: system)
+    let plan = try #require(coordinator.plan(.leftHalf))
+    system.ignoredFrameWriteCounts[plan.windowID] = 1
+    #expect(coordinator.perform(plan))
+
+    let generation = coordinator.mutationGeneration(for: plan.windowID)
+    system.windows[0].frame.size = BTSize(
+        width: plan.sourceFrame.size.width + 100,
+        height: plan.sourceFrame.size.height + 100
+    )
+    #expect(coordinator.mutationGeneration(for: plan.windowID) == generation,
+            "a hand resize does not go through the coordinator")
+
+    #expect(await coordinator.verifyPlacement(plan, since: generation, delay: .milliseconds(1)) == .superseded)
+}
+
+/// A second BetterTile mutation moves the generation on, so the earlier action
+/// must not report even if the window happens to be back near where it started.
+@Test @MainActor func anotherBetterTileMutationSupersedesTheCheck() async throws {
+    let system = FakeWindowSystem()
+    let coordinator = WindowCoordinator(system: system)
+    let plan = try #require(coordinator.plan(.leftHalf))
+    system.ignoredFrameWriteCounts[plan.windowID] = 1
+    #expect(coordinator.perform(plan))
+
+    let generation = coordinator.mutationGeneration(for: plan.windowID)
+    system.ignoredFrameWriteCounts[plan.windowID] = 1
+    _ = coordinator.applyPlacements(
+        [Placement(windowID: plan.windowID, frame: plan.sourceFrame)],
+        recordHistory: false
+    )
+    #expect(coordinator.mutationGeneration(for: plan.windowID) != generation)
+    #expect(await coordinator.verifyPlacement(plan, since: generation, delay: .milliseconds(1)) == .superseded)
 }
 
 /// A read-back that cannot be completed must not turn an applied action into a
-/// reported failure; nothing is concluded instead.
-@Test @MainActor func anUnreadableWindowLeavesTheReportAlone() async throws {
+/// reported failure.
+@Test @MainActor func anUnreadableWindowIsInconclusive() async throws {
     let system = FakeWindowSystem()
     let coordinator = WindowCoordinator(system: system)
     let plan = try #require(coordinator.plan(.leftHalf))
     #expect(coordinator.perform(plan))
+    let generation = coordinator.mutationGeneration(for: plan.windowID)
     system.windows.removeAll()
-    #expect(await coordinator.verifyPlacement(plan, delay: .milliseconds(1)) == nil)
+    #expect(await coordinator.verifyPlacement(plan, since: generation, delay: .milliseconds(1)) == .inconclusive)
+}
+
+/// A Bento operation resolves a shortcut to a pane, which is deliberately not
+/// the standard action frame. The window did move, so nothing is reported.
+@Test @MainActor func aBentoPlacementAwayFromTheStandardFrameReportsNothing() async throws {
+    let system = FakeWindowSystem()
+    let coordinator = WindowCoordinator(system: system)
+    let plan = try #require(coordinator.plan(.leftHalf))
+
+    // Bento puts the window in a pane of its own choosing rather than at the
+    // half the shortcut nominally names.
+    let generation = coordinator.mutationGeneration(for: plan.windowID)
+    let pane = BTRect(x: 500, y: 0, width: 500, height: 800)
+    #expect(pane != plan.targetFrame)
+    #expect(coordinator.applyPlacements([Placement(windowID: plan.windowID, frame: pane)]))
+    #expect(system.windows[0].frame == pane)
+
+    #expect(await coordinator.verifyPlacement(plan, since: generation, delay: .milliseconds(1)) == .superseded)
 }
 
 @Test @MainActor func anActionIsStillASuccessWhenTheWindowKeepsItsOwnSize() throws {

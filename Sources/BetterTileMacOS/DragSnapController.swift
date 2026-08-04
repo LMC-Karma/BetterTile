@@ -192,6 +192,12 @@ public final class DragSnapController {
         }
     }
 
+    func allowsBentoDrag(for window: WindowSnapshot) -> Bool {
+        configuration.applicationRules
+            .rule(for: window.bundleIdentifier)
+            .allowsBentoParticipation
+    }
+
     private func mousePressed(_ event: NSEvent) {
         dragGate.reset()
         draggedWindowID = nil
@@ -201,10 +207,17 @@ public final class DragSnapController {
         else { return }
         let point = CoordinateConverter.pointToTopLeft(NSEvent.mouseLocation, mainScreenFrame: mainFrame)
         guard let window = windowUnderTitleBar(at: point) else { return }
+        // Ignore Everywhere means no BetterTile feature places this window,
+        // drag snapping included.
+        guard configuration.applicationRules
+            .rule(for: window.bundleIdentifier)
+            .allowsDirectPlacement
+        else { return }
         guard NSEvent.pressedMouseButtons & 1 == 1 else { return }
         dragGate.begin(with: window)
         installGestureMonitors()
-        if activeModeProvider?(window.displayID) == .bento {
+        if activeModeProvider?(window.displayID) == .bento,
+           allowsBentoDrag(for: window) {
             guard bentoDragBeganHandler?(window.displayID, window.id) == true else {
                 clear()
                 return
@@ -507,6 +520,7 @@ public final class DragSnapController {
         else { return false }
         let point = CoordinateConverter.pointToTopLeft(NSEvent.mouseLocation, mainScreenFrame: mainFrame)
         guard BentoSwapDragRegion.isTitleBarStart(point, in: window.frame),
+              allowsBentoDrag(for: window),
               bentoDragBeganHandler?(window.displayID, window.id) == true
         else { return false }
         dragGate.begin(with: window)

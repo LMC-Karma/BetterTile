@@ -16,6 +16,10 @@ public final class TitleBarDoubleClickController {
     private var lastEventNumber: Int?
     private var isStarted = false
 
+    /// Consulted so a double click never places a window the user has asked
+    /// BetterTile to leave alone.
+    public var applicationRules = ApplicationRuleSet()
+
     public init(coordinator: WindowCoordinator, isEnabled: Bool = true) {
         self.coordinator = coordinator
         self.isEnabled = isEnabled
@@ -33,6 +37,14 @@ public final class TitleBarDoubleClickController {
     public func stop() {
         isStarted = false
         removeMonitor()
+    }
+
+    func allowsDoubleClickPlacement(for window: WindowSnapshot) -> Bool {
+        isEnabled
+            && window.processIdentifier != ProcessInfo.processInfo.processIdentifier
+            && window.isEligible
+            && window.constraints.isResizable
+            && applicationRules.rule(for: window.bundleIdentifier).allowsDirectPlacement
     }
 
     private func syncMonitoring() {
@@ -57,15 +69,12 @@ public final class TitleBarDoubleClickController {
     }
 
     private func handle(_ event: NSEvent) {
-        guard isEnabled,
-              event.clickCount == 2,
+        guard event.clickCount == 2,
               event.eventNumber != lastEventNumber,
               Self.macOSDoubleClickActionIsDisabled,
               let mainFrame = NSScreen.main?.frame,
               let window = try? coordinator.system.focusedWindow(),
-              window.processIdentifier != ProcessInfo.processInfo.processIdentifier,
-              window.isEligible,
-              window.constraints.isResizable
+              allowsDoubleClickPlacement(for: window)
         else { return }
 
         let point = CoordinateConverter.pointToTopLeft(NSEvent.mouseLocation, mainScreenFrame: mainFrame)

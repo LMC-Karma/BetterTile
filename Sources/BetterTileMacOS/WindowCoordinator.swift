@@ -120,31 +120,59 @@ public final class WindowCoordinator {
     /// Returns `nil` when nothing can be concluded - the window became
     /// unreadable, or the check was superseded - so callers leave their
     /// existing report alone rather than replacing it with a guess.
+    /// - Parameter generation: The window's mutation generation at the moment
+    ///   the check was scheduled. Taken by the caller rather than read here,
+    ///   because a task body does not necessarily begin running before the next
+    ///   mutation lands, and a generation read late would miss it.
     public func verifyPlacement(
         _ plan: WindowActionPlan,
+        since generation: UInt64,
         delay: Duration = .milliseconds(120),
         attempts: Int = 3
-    ) async -> PlacementOutcome? {
+    ) async -> DelayedPlacementVerdict {
         for attempt in 1...max(1, attempts) {
             try? await Task.sleep(for: delay)
-            guard !Task.isCancelled, let landed = try? snapshots(ids: [plan.windowID]).first else { return nil }
-            let outcome = PlacementVerifier.outcome(requested: plan.targetFrame, actual: landed.frame)
-            switch outcome {
-            case .landed, .resisted:
-                return outcome
+            guard !Task.isCancelled else { return .superseded }
+            let actual = (try? snapshots(ids: [plan.windowID]).first)??.frame
+            let verdict = DelayedPlacementVerifier.verdict(
+                source: plan.sourceFrame,
+                target: plan.targetFrame,
+                actual: actual,
+                generationChanged: mutationGeneration(for: plan.windowID) != generation
+            )
+            switch verdict {
+            case .landed, .superseded, .inconclusive:
+                return verdict
             case .failed:
-                if attempt == max(1, attempts) { return outcome }
+                // Give a slow application the remaining attempts before
+                // concluding it is never going to move.
+                if attempt == max(1, attempts) { return verdict }
             }
         }
-        return nil
+        return .inconclusive
+    }
+
+    /// How many times BetterTile has written a frame for this window. Used to
+    /// tell a delayed check that its action has been superseded.
+    public func mutationGeneration(for windowID: WindowID) -> UInt64 {
+        generations[windowID] ?? 0
     }
 
     @discardableResult
-    public func applyCustomZone(_ zone: CustomZone) -> Bool {
+    public func applyCustomZone(
+        _ zone: CustomZone,
+        applicationRules: ApplicationRuleSet
+    ) -> Bool {
         do {
-            guard let window = try system.focusedWindow(), window.isEligible,
-                  let display = system.displays().first(where: { $0.id == window.displayID })
-            else { return false }
+            guard let window = try system.focusedWindow(), window.isEligible else { return false }
+            guard applicationRules
+                .rule(for: window.bundleIdentifier)
+                .allowsDirectPlacement
+            else {
+                lastError = "BetterTile is set to ignore this app."
+                return false
+            }
+            guard let display = system.displays().first(where: { $0.id == window.displayID }) else { return false }
             history.record(window.frame, for: window.id)
             try apply(
                 zone.rect.frame(in: display.visibleFrame),

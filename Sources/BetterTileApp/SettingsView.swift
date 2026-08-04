@@ -10,6 +10,7 @@ private enum SettingsDestination: String, CaseIterable, Identifiable {
     case general = "General"
     case windowLayout = "Window Layout"
     case snapZones = "Snap Zones"
+    case applicationRules = "Per-App Rules"
 
     var id: Self { self }
 
@@ -18,6 +19,7 @@ private enum SettingsDestination: String, CaseIterable, Identifiable {
         case .general: "gearshape"
         case .windowLayout: "rectangle.3.group"
         case .snapZones: "rectangle.split.3x3"
+        case .applicationRules: "app.badge.checkmark"
         }
     }
 
@@ -25,11 +27,14 @@ private enum SettingsDestination: String, CaseIterable, Identifiable {
         switch self {
         case .general:
             "permission accessibility dock appearance light dark system drag snapping application update automatic check "
+                + "keyboard shortcuts master toggle macos tiling move resize edge "
                 + "advanced enhanced user interface chromium electron voiceover"
         case .windowLayout:
             "mode manual native bento resize linked divider shortcut keyboard hotkey halves thirds quarters sixths move display restore"
         case .snapZones:
             "drag snap custom zone edge corner title bar double click maximize"
+        case .applicationRules:
+            "app application rule exclude ignore bento manage per-app exception skip leave alone"
         }
     }
 }
@@ -52,6 +57,7 @@ struct SettingsView: View {
                         "Window Management",
                         destinations: [.windowLayout, .snapZones]
                     )
+                    destinationSection("Advanced", destinations: [.applicationRules])
                 }
                 .listStyle(.sidebar)
             }
@@ -129,6 +135,8 @@ struct SettingsView: View {
             WindowLayoutSettings(model: model)
         case .snapZones:
             ZoneSettings(model: model)
+        case .applicationRules:
+            ApplicationRuleSettings(model: model)
         }
     }
 }
@@ -176,11 +184,47 @@ private struct GeneralSettings: View {
 #endif
             }
 
+            Section("BetterTile Features") {
+                // Two independent switches. Either can be off without the other
+                // being affected, and neither discards what it turns off.
+                Toggle(
+                    "BetterTile Keyboard Shortcuts",
+                    isOn: configurationBinding(\.keyboardShortcutsEnabled)
+                )
+                Text("Turning these off keeps every shortcut you have set, ready for when you turn them back on.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Toggle("BetterTile Drag Snapping", isOn: configurationBinding(\.snappingEnabled))
+                Text("Turning this off keeps your snap zones. Use it if you would rather drag windows with macOS's own edge tiling.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             Section("Application") {
                 Toggle("Show Dock icon", isOn: configurationBinding(\.showDockIcon))
-                Toggle("Enable drag snapping", isOn: configurationBinding(\.snappingEnabled))
                 Toggle("Automatically check for updates", isOn: $automaticallyChecksForUpdates)
                 Button("Check for Updates…", action: checkForUpdates)
+            }
+
+            Section("BetterTile and macOS Window Tiling") {
+                Text(
+                    "macOS has its own window tiling, and BetterTile is built to sit alongside it rather than replace it."
+                )
+                .font(.callout)
+                Text(
+                    "Window ▸ Move & Resize and its keyboard equivalents keep working. "
+                        + "Bento recognises where macOS put a window and adopts that arrangement, "
+                        + "so you can tile with either and carry on with BetterTile's dividers."
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                Text(
+                    "Dragging is the one place they overlap. macOS and BetterTile both interpret a drag to a screen edge, "
+                        + "so pick one: leave BetterTile Drag Snapping on, or turn it off and use macOS's edge tiling. "
+                        + "Bento adopts the result either way."
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
             }
 
             Section("Appearance") {
@@ -789,5 +833,105 @@ private extension SingleWindowInitialPlacement {
         case .almostMaximize: "Almost Maximize"
         case .unchanged: "Leave Unchanged"
         }
+    }
+}
+
+private struct ApplicationRuleSettings: View {
+    @Bindable var model: BetterTileModel
+
+    var body: some View {
+        Form {
+            Section("Frontmost App") {
+                if let target = model.frontmostRuleTarget {
+                    // Changing the rule for whatever you were just using,
+                    // without hunting for it in a list.
+                    Picker(target.name, selection: frontmostBinding(target)) {
+                        ForEach(ApplicationRule.allCases) { rule in
+                            Text(rule.title).tag(rule)
+                        }
+                    }
+                    Text(target.rule.explanation)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text("Bring another app to the front to set a rule for it.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            Section("Apps With Rules") {
+                if model.ruledApplications.isEmpty {
+                    Text("Every app is managed normally.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(model.ruledApplications, id: \.bundleIdentifier) { entry in
+                        HStack {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(entry.name)
+                                Text(entry.bundleIdentifier)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            Picker("", selection: ruleBinding(entry.bundleIdentifier, current: entry.rule)) {
+                                ForEach(ApplicationRule.allCases) { rule in
+                                    Text(rule.title).tag(rule)
+                                }
+                            }
+                            .labelsHidden()
+                            .frame(width: 190)
+                            Button {
+                                model.clearRule(for: entry.bundleIdentifier)
+                            } label: {
+                                Image(systemName: "xmark.circle.fill")
+                                    .foregroundStyle(.secondary)
+                            }
+                            .buttonStyle(.plain)
+                            .help("Manage this app normally again")
+                        }
+                        .padding(.vertical, 2)
+                    }
+                }
+            }
+
+            Section("What The Rules Do") {
+                ForEach(ApplicationRule.allCases) { rule in
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(rule.title).font(.callout.weight(.medium))
+                        Text(rule.explanation)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.vertical, 1)
+                }
+                Text(
+                    "Rules are remembered by app, so one stays in effect the next time you open it. "
+                        + "An app that is not installed keeps its rule."
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+
+            StatusMessage(model: model)
+        }
+        .formStyle(.grouped)
+    }
+
+    private func frontmostBinding(
+        _ target: (bundleIdentifier: String, name: String, rule: ApplicationRule)
+    ) -> Binding<ApplicationRule> {
+        Binding(
+            get: { model.configuration.applicationRules.rule(for: target.bundleIdentifier) },
+            set: { model.setRule($0, for: target.bundleIdentifier) }
+        )
+    }
+
+    private func ruleBinding(_ bundleIdentifier: String, current: ApplicationRule) -> Binding<ApplicationRule> {
+        Binding(
+            get: { model.configuration.applicationRules.rule(for: bundleIdentifier) },
+            set: { model.setRule($0, for: bundleIdentifier) }
+        )
     }
 }

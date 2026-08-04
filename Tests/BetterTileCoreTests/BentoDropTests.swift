@@ -5,6 +5,13 @@ import Testing
 private let dropDisplayID = DisplayID(rawValue: "drop-display")
 private let dropBounds = BTRect(x: 0, y: 24, width: 1200, height: 876)
 
+@Test func excludedApplicationPartitionShortcutsBypassBento() {
+    #expect(BentoDropPlanner.handlesShortcut(.leftHalf, in: .bento, sourceRule: .manageNormally))
+    #expect(!BentoDropPlanner.handlesShortcut(.leftHalf, in: .bento, sourceRule: .excludeFromBento))
+    #expect(!BentoDropPlanner.handlesShortcut(.leftHalf, in: .manual, sourceRule: .manageNormally))
+    #expect(!BentoDropPlanner.handlesShortcut(.maximize, in: .bento, sourceRule: .manageNormally))
+}
+
 @Test func topRightQuarterDropKeepsLeftHalfAndBottomRightVacant() throws {
     let source = WindowID(rawValue: "source")
     let other = WindowID(rawValue: "other")
@@ -182,7 +189,7 @@ private let dropBounds = BTRect(x: 0, y: 24, width: 1200, height: 876)
     ) == nil)
 }
 
-@Test func seventhWindowCannotEnterBentoThroughAPaneDrop() {
+@Test func untrackedSeventhWindowCannotEnterBentoThroughAPaneDrop() {
     let source = WindowID(rawValue: "seventh")
     let ids = (0..<6).map { WindowID(rawValue: "window-\($0)") }
     var state = BentoLayoutState()
@@ -195,6 +202,38 @@ private let dropBounds = BTRect(x: 0, y: 24, width: 1200, height: 876)
         baselineFrames: frames, constraints: defaultConstraints(ids + [source]),
         contextWindowIDs: Set(ids + [source]), in: dropBounds
     ) == nil)
+}
+
+@Test func floatingSeventhWindowCanExchangeWithAPaneOccupant() throws {
+    let source = WindowID(rawValue: "seventh")
+    let ids = (0..<6).map { WindowID(rawValue: "window-\($0)") }
+    var state = BentoLayoutState()
+    for id in ids { state.insert(id, in: dropBounds) }
+    state.setFloating(true, windowID: source)
+    let originalFrames = Dictionary(
+        uniqueKeysWithValues: state.placements(in: dropBounds).map { ($0.windowID, $0.frame) }
+    )
+    var baselineFrames = originalFrames
+    baselineFrames[source] = BTRect(x: 100, y: 100, width: 400, height: 300)
+
+    for intent in [
+        BentoDropIntent.pane(ids[0]),
+        .insert(targetWindowID: ids[0], edge: .left),
+    ] {
+        let plan = try #require(BentoDropPlanner().plan(
+            intent: intent, sourceWindowID: source, state: state,
+            baselineFrames: baselineFrames, constraints: defaultConstraints(ids + [source]),
+            contextWindowIDs: Set(ids + [source]), in: dropBounds
+        ))
+
+        #expect(plan.state.root?.windowIDs.contains(source) == true)
+        #expect(plan.state.root?.windowIDs.contains(ids[0]) != true)
+        #expect(plan.state.floatingWindowIDs == [ids[0]])
+        #expect(plan.state.root?.windowIDs.count == 6)
+        #expect(plan.placements.first(where: { $0.windowID == source })?.frame == originalFrames[ids[0]])
+        #expect(plan.placements.first(where: { $0.windowID == ids[0] })?.frame == baselineFrames[source])
+        #expect(Set(plan.placements.map(\.windowID)) == Set(ids + [source]))
+    }
 }
 
 @Test func restoredWindowReleasedWithoutATargetAutomaticallyRejoinsBento() throws {

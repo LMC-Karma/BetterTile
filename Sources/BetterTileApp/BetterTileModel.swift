@@ -77,9 +77,11 @@ final class BetterTileModel {
             coordinator: coordinator,
             isEnabled: loaded.doubleClickTitleBarToMaximize
         )
+        titleBarDoubleClick.applicationRules = loaded.applicationRules
         linkedResize = LinkedResizeController(coordinator: coordinator, configuration: loaded)
         dividerResize = DividerOverlayController(coordinator: coordinator, configuration: loaded)
 
+        shortcuts.isEnabled = loaded.keyboardShortcutsEnabled
         shortcuts.setHandler { [weak self] action in self?.perform(action) }
         dragSnap.activeModeProvider = { [weak self] displayID in self?.activeMode(for: displayID) }
         dragSnap.bentoStateProvider = { [weak self] displayID in self?.sessionStore.session(for: displayID)?.bentoState }
@@ -193,6 +195,12 @@ final class BetterTileModel {
             )
             return
         }
+        let focusedRule = (try? system.focusedWindow()).map(rule(for:)) ?? .manageNormally
+        if !focusedRule.allowsDirectPlacement {
+            statusMessage = "BetterTile is set to ignore this app."
+            presentActionResult(succeeded: false, error: statusMessage, displayID: originalDisplayID)
+            return
+        }
         guard let actionPlan = coordinator.plan(action) else {
             statusMessage = coordinator.lastError ?? "No eligible focused window."
             presentActionResult(
@@ -202,8 +210,11 @@ final class BetterTileModel {
             )
             return
         }
-        let succeeded = if BentoDropPlanner.partitionActions.contains(actionPlan.resolvedAction),
-                           sessionStore.session(for: actionPlan.displayID)?.mode == .bento {
+        let succeeded = if BentoDropPlanner.handlesShortcut(
+            actionPlan.resolvedAction,
+            in: sessionStore.session(for: actionPlan.displayID)?.mode ?? .manual,
+            sourceRule: focusedRule
+        ) {
             performBentoAction(actionPlan)
         } else {
             coordinator.perform(actionPlan)
@@ -223,11 +234,14 @@ final class BetterTileModel {
     /// free to apply an Accessibility geometry change on its own run loop, so a
     /// report made at write time cannot tell a refusal from a delay.
     private func verifyActionLanded(_ plan: WindowActionPlan, displayID: DisplayID?) {
+        // Read now, not inside the task: a Bento reflow can land before the
+        // task body begins, and a generation read there would not see it.
+        let generation = coordinator.mutationGeneration(for: plan.windowID)
         actionVerificationTask?.cancel()
         actionVerificationTask = Task { @MainActor [weak self] in
             guard let self else { return }
-            let outcome = await self.coordinator.verifyPlacement(plan)
-            guard !Task.isCancelled, case .failed = outcome else { return }
+            let verdict = await self.coordinator.verifyPlacement(plan, since: generation)
+            guard !Task.isCancelled, verdict == .failed else { return }
             self.statusMessage = "The window did not move where it was asked to."
             Self.bentoLog.notice(
                 """
@@ -244,9 +258,9 @@ final class BetterTileModel {
               let display = system.displays().first(where: { $0.id == actionPlan.displayID }),
               let windows = try? system.visibleWindows()
         else { return false }
-        let displayWindows = windows.filter {
+        let displayWindows = bentoEligible(windows.filter {
             $0.displayID == display.id && $0.isEligible && !$0.isFloating
-        }
+        })
         let frames = Dictionary(uniqueKeysWithValues: displayWindows.map { ($0.id, $0.frame) })
         let constraints = Dictionary(uniqueKeysWithValues: displayWindows.map { ($0.id, $0.constraints) })
         Self.bentoLog.debug(
@@ -316,7 +330,10 @@ final class BetterTileModel {
 
     func apply(zone: CustomZone) {
         let displayID = (try? system.focusedWindow())?.displayID ?? activeDisplayID
-        let succeeded = coordinator.applyCustomZone(zone)
+        let succeeded = coordinator.applyCustomZone(
+            zone,
+            applicationRules: configuration.applicationRules
+        )
         statusMessage = succeeded ? nil : coordinator.lastError ?? "Could not apply the zone."
         presentActionResult(succeeded: succeeded, error: statusMessage, displayID: displayID)
     }
@@ -331,7 +348,7 @@ final class BetterTileModel {
                 presentActionResult(succeeded: false, error: statusMessage, displayID: activeDisplayID)
                 return
             }
-            let displayWindows = windows.filter { $0.displayID == display.id }
+            let displayWindows = bentoEligible(windows.filter { $0.displayID == display.id })
             guard !displayWindows.isEmpty else {
                 statusMessage = "No eligible visible windows on the active display."
                 presentActionResult(succeeded: false, error: statusMessage, displayID: display.id)
@@ -352,7 +369,6 @@ final class BetterTileModel {
                 let result = BentoPlanner().plan(
                     state: BentoRuntimeState(
                         layout: session.bentoState,
-                        focusHistory: session.bentoFocusHistory,
                         reinsertionAnchors: session.bentoReinsertionAnchors
                     ),
                     observation: BentoObservation(
@@ -372,7 +388,6 @@ final class BetterTileModel {
                     return
                 }
                 session.bentoState = result.state.layout
-                session.bentoFocusHistory = result.state.focusHistory
                 session.bentoReinsertionAnchors = result.state.reinsertionAnchors
                 session.automaticallyFloatingWindowIDs.removeAll()
                 placements = result.placements
@@ -723,20 +738,25 @@ final class BetterTileModel {
     private func applyRuntimeConfiguration(_ changes: ConfigurationChangeSet) {
         let interval = Self.signposter.beginInterval("applyConfiguration")
         defer { Self.signposter.endInterval("applyConfiguration", interval) }
-        if !changes.isDisjoint(with: [.snapping, .bentoGeometry]) {
+        if !changes.isDisjoint(with: [.snapping, .bentoGeometry, .applicationRules]) {
             dragSnap.configuration = configuration
         }
-        if changes.contains(.linkedResize) {
+        if !changes.isDisjoint(with: [.linkedResize, .applicationRules]) {
             linkedResize.configuration = configuration
         }
         if !changes.isDisjoint(with: [.divider, .bentoGeometry]) {
             dividerResize.configuration = configuration
         }
         if changes.contains(.shortcuts) {
+            shortcuts.isEnabled = configuration.keyboardShortcutsEnabled
             shortcuts.update(bindings: configuration.shortcuts)
         }
         if changes.contains(.titleBar) {
             titleBarDoubleClick.isEnabled = configuration.doubleClickTitleBarToMaximize
+        }
+        if changes.contains(.applicationRules) {
+            titleBarDoubleClick.applicationRules = configuration.applicationRules
+            refreshActiveWindows(force: true)
         }
         if changes.contains(.accessibilityWrites) {
             system.enhancedUserInterfacePolicy = configuration.enhancedUserInterfacePolicy
@@ -925,8 +945,6 @@ final class BetterTileModel {
                     }
                     sessionStore.update(displayID) {
                         $0.excludedFocusWindowIDs.removeAll()
-                        $0.bentoFocusHistory.removeAll()
-                        $0.activeBentoFocusWindowID = nil
                     }
                 }
                 dragSnap.prepareForRestoredWindowDrag(windowID: windowID)
@@ -936,7 +954,6 @@ final class BetterTileModel {
             if let windowID = event.windowID {
                 if event.kind == .minimized { recordMinimizedBentoPane(windowID) }
                 if event.kind == .destroyed { confirmedGoneWindowIDs.insert(windowID) }
-                unwindBentoFocusIfNeeded(windowID)
             }
             pendingTopologyRefresh = true
         case .focused:
@@ -945,36 +962,11 @@ final class BetterTileModel {
         schedulePendingWindowEvents()
     }
 
-    private func unwindBentoFocusIfNeeded(_ windowID: WindowID) {
-        for displayID in sessionStore.sessions.keys {
-            guard var session = sessionStore.session(for: displayID),
-                  session.activeBentoFocusWindowID == windowID
-            else { continue }
-            session.bentoFocusHistory.removeAll { $0 == windowID }
-            if let previous = session.bentoFocusHistory.last {
-                session.activeBentoFocusWindowID = nil
-                session.excludedFocusWindowIDs.remove(previous)
-                try? system.setMinimized(false, for: previous)
-                statusMessage = "Restoring previous overflow window."
-            } else {
-                let peers = session.excludedFocusWindowIDs
-                session.activeBentoFocusWindowID = nil
-                session.excludedFocusWindowIDs.removeAll()
-                for peerID in peers {
-                    try? system.setMinimized(false, for: peerID)
-                }
-                statusMessage = "Restoring Bento panes."
-            }
-            sessionStore.update(displayID) { $0 = session }
-        }
-    }
-
     private func recordMinimizedBentoPane(_ windowID: WindowID) {
         let displays = Dictionary(uniqueKeysWithValues: system.displays().map { ($0.id, $0) })
         for displayID in sessionStore.sessions.keys {
             guard let session = sessionStore.session(for: displayID),
                   session.mode == .bento,
-                  session.activeBentoFocusWindowID != windowID,
                   !session.excludedFocusWindowIDs.contains(windowID),
                   session.bentoState.root?.windowIDs.contains(windowID) == true,
                   let display = displays[displayID]
@@ -990,7 +982,6 @@ final class BetterTileModel {
             let result = BentoPlanner().plan(
                 state: BentoRuntimeState(
                     layout: session.bentoState,
-                    focusHistory: session.bentoFocusHistory,
                     reinsertionAnchors: session.bentoReinsertionAnchors
                 ),
                 observation: BentoObservation(
@@ -1222,6 +1213,61 @@ final class BetterTileModel {
         return true
     }
 
+    // MARK: - Application rules
+
+    /// Applications with a rule, newest decisions included, resolved to names
+    /// where macOS can still tell us one.
+    var ruledApplications: [(bundleIdentifier: String, name: String, rule: ApplicationRule)] {
+        configuration.applicationRules.entries.map { entry in
+            (entry.bundleIdentifier, Self.applicationName(for: entry.bundleIdentifier), entry.rule)
+        }
+    }
+
+    /// The frontmost application, so its rule can be changed without hunting
+    /// for it in a list.
+    var frontmostRuleTarget: (bundleIdentifier: String, name: String, rule: ApplicationRule)? {
+        guard let application = NSWorkspace.shared.frontmostApplication,
+              application.processIdentifier != ProcessInfo.processInfo.processIdentifier,
+              let bundleIdentifier = application.bundleIdentifier
+        else { return nil }
+        return (
+            bundleIdentifier,
+            application.localizedName ?? Self.applicationName(for: bundleIdentifier),
+            configuration.applicationRules.rule(for: bundleIdentifier)
+        )
+    }
+
+    func setRule(_ rule: ApplicationRule, for bundleIdentifier: String) {
+        updateConfiguration { $0.applicationRules.set(rule, for: bundleIdentifier) }
+        statusMessage = rule == .manageNormally
+            ? "\(Self.applicationName(for: bundleIdentifier)) is managed normally again."
+            : "\(Self.applicationName(for: bundleIdentifier)): \(rule.title)."
+    }
+
+    func clearRule(for bundleIdentifier: String) {
+        updateConfiguration { $0.applicationRules.clear(bundleIdentifier) }
+    }
+
+    static func applicationName(for bundleIdentifier: String) -> String {
+        if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleIdentifier) {
+            return FileManager.default.displayName(atPath: url.path)
+        }
+        // An application that is not installed keeps its rule and its
+        // identifier, so a rule set carried between Macs is not silently lost.
+        return bundleIdentifier
+    }
+
+    /// The rule the user has set for the application owning this window.
+    private func rule(for window: WindowSnapshot) -> ApplicationRule {
+        configuration.applicationRules.rule(for: window.bundleIdentifier)
+    }
+
+    /// Windows Bento may lay out. Excluded applications keep their own size and
+    /// position instead of becoming panes.
+    private func bentoEligible(_ windows: [WindowSnapshot]) -> [WindowSnapshot] {
+        windows.filter { rule(for: $0).allowsBentoParticipation }
+    }
+
     /// Bento panes are derived from the whole work area, so a pane that leaves
     /// it is a bad proposal. Stricter than the coordinator's reachability rule,
     /// which only asks whether a deliberately placed window is still grabbable.
@@ -1415,7 +1461,7 @@ final class BetterTileModel {
         var resolvedActiveDisplay: DisplayID?
 
         for display in displays {
-            let displayWindows = eligible.filter { $0.displayID == display.id }
+            let displayWindows = bentoEligible(eligible.filter { $0.displayID == display.id })
             let activation = sessionStore.activate(
                 displayID: display.id,
                 windowIDs: Set(displayWindows.map(\.id)),
@@ -1520,9 +1566,6 @@ final class BetterTileModel {
             }
             let stateChanged = before != session.bentoState
             if !activation.wasCreated, !desktopTransition, stateChanged { shouldApply = true }
-            if session.activeBentoFocusWindowID != nil {
-                shouldApply = false
-            }
             let needsWorkAreaSettlement = session.mode == .bento
                 && session.isBentoInitialized
                 && !displayWindows.isEmpty
@@ -1534,35 +1577,7 @@ final class BetterTileModel {
                 session.lastWorkArea = display.visibleFrame
             }
             sessionStore.update(display.id) { $0 = session }
-            if session.mode == .bento,
-               let focusWindowID = session.bentoFocusHistory.last,
-               session.activeBentoFocusWindowID != focusWindowID,
-               let focusWindow = displayWindows.first(where: { $0.id == focusWindowID }),
-               let focusFrame = StandardActionEngine().targetFrame(
-                   for: .almostMaximize,
-                   window: focusWindow,
-                   display: display
-               ) {
-                let peers = Set(session.bentoState.root?.windowIDs ?? [])
-                    .union(session.bentoFocusHistory.dropLast())
-                    .intersection(Set(displayWindows.map(\.id)))
-                    .subtracting([focusWindowID])
-                if coordinator.applyFocusDrop(
-                    placement: Placement(windowID: focusWindowID, frame: focusFrame),
-                    minimizing: peers,
-                    sourceBaselineFrame: focusWindow.frame
-                ) {
-                    sessionStore.update(display.id) {
-                        $0.activeBentoFocusWindowID = focusWindowID
-                        $0.excludedFocusWindowIDs.formUnion(
-                            Set($0.bentoState.root?.windowIDs ?? [])
-                                .union($0.bentoFocusHistory.dropLast())
-                                .subtracting([focusWindowID])
-                        )
-                    }
-                    statusMessage = "Six panes preserved; overflow focus."
-                }
-            } else if let initialPlacement {
+            if let initialPlacement {
                 _ = coordinator.applyPlacements([initialPlacement], recordHistory: false)
             } else if session.mode == .bento, session.isBentoInitialized, !displayWindows.isEmpty, shouldApply {
                 let placements = BentoLayoutEngine(state: session.bentoState).placements(for: displayWindows, in: display)
@@ -1650,7 +1665,6 @@ final class BetterTileModel {
         state.metrics = BentoLayoutMetrics(paneGap: configuration.bentoInnerGap)
         let knownIDs = Set(state.root?.windowIDs ?? []).union(state.floatingWindowIDs)
         let temporarilyHidden = session.excludedFocusWindowIDs
-            .union(session.bentoFocusHistory)
             .union(session.bentoReinsertionAnchors.keys)
         // A sweep can miss a window that is still on screen, and giving up its
         // pane on the first miss lets one unlucky observation dismantle a
@@ -1715,8 +1729,6 @@ final class BetterTileModel {
                 Self.bentoLog.debug("float \(id.rawValue, privacy: .public): tree already holds six panes")
                 state.setFloating(true, windowID: id)
                 session.automaticallyFloatingWindowIDs.insert(id)
-                session.bentoFocusHistory.removeAll { $0 == id }
-                session.bentoFocusHistory.append(id)
                 continue
             }
             var candidate = state
