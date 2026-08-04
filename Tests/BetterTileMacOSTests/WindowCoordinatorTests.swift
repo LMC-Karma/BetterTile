@@ -13,6 +13,27 @@ import Testing
     #expect(system.windows[0].frame == original)
 }
 
+@Test @MainActor func bentoDragAdmissionHonorsApplicationRules() {
+    let system = FakeWindowSystem()
+    let window = system.windows[0]
+    let controller = DragSnapController(
+        coordinator: WindowCoordinator(system: system),
+        configuration: BetterTileConfiguration()
+    )
+    let bundleIdentifier = "com.example.Test"
+
+    #expect(controller.allowsBentoDrag(for: window))
+
+    var configuration = BetterTileConfiguration()
+    configuration.applicationRules.set(.excludeFromBento, for: bundleIdentifier)
+    controller.configuration = configuration
+    #expect(!controller.allowsBentoDrag(for: window))
+
+    configuration.applicationRules.set(.ignoreEverywhere, for: bundleIdentifier)
+    controller.configuration = configuration
+    #expect(!controller.allowsBentoDrag(for: window))
+}
+
 @Test @MainActor func placementTransactionsUseTargetedWindowSnapshots() {
     let system = FakeWindowSystem()
     let coordinator = WindowCoordinator(system: system)
@@ -672,6 +693,24 @@ private final class FakeWindowSystem: WindowSystem, TargetedWindowSystem, Window
     system.windows[0].frame = BTRect(x: 640, y: 320, width: 500, height: 400)
     #expect(coordinator.mutationGeneration(for: plan.windowID) == generation,
             "a drag does not go through the coordinator")
+
+    #expect(await coordinator.verifyPlacement(plan, since: generation, delay: .milliseconds(1)) == .superseded)
+}
+
+@Test @MainActor func aWindowResizedByHandDuringVerificationReportsNothing() async throws {
+    let system = FakeWindowSystem()
+    let coordinator = WindowCoordinator(system: system)
+    let plan = try #require(coordinator.plan(.leftHalf))
+    system.ignoredFrameWriteCounts[plan.windowID] = 1
+    #expect(coordinator.perform(plan))
+
+    let generation = coordinator.mutationGeneration(for: plan.windowID)
+    system.windows[0].frame.size = BTSize(
+        width: plan.sourceFrame.size.width + 100,
+        height: plan.sourceFrame.size.height + 100
+    )
+    #expect(coordinator.mutationGeneration(for: plan.windowID) == generation,
+            "a hand resize does not go through the coordinator")
 
     #expect(await coordinator.verifyPlacement(plan, since: generation, delay: .milliseconds(1)) == .superseded)
 }

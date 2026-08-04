@@ -221,8 +221,7 @@ public enum DelayedPlacementVerifier {
             break
         }
         if generationChanged { return .superseded }
-        let stillAtSource = abs(actual.minX - source.minX) <= tolerance
-            && abs(actual.minY - source.minY) <= tolerance
+        let stillAtSource = actual.approximatelyEquals(source, tolerance: tolerance)
         return stillAtSource ? .failed : .superseded
     }
 }
