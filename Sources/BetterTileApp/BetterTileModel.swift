@@ -49,6 +49,7 @@ final class BetterTileModel {
     /// Windows a destroyed event has accounted for. Direct evidence, so their
     /// panes are released without waiting for absence to be corroborated.
     private var confirmedGoneWindowIDs: Set<WindowID> = []
+    private var actionVerificationTask: Task<Void, Never>?
     private var pendingTopologyRefresh = false
     private var pendingRestoredWindowDeadlines: [WindowID: Date] = [:]
     private var windowEventTask: Task<Void, Never>?
@@ -212,6 +213,30 @@ final class BetterTileModel {
             : coordinator.lastError ?? statusMessage ?? "No eligible focused window."
         let resultingDisplayID = (try? system.focusedWindow())?.displayID ?? originalDisplayID
         presentActionResult(succeeded: succeeded, error: statusMessage, displayID: resultingDisplayID)
+        if succeeded {
+            verifyActionLanded(actionPlan, displayID: resultingDisplayID)
+        }
+    }
+
+    /// Corrects the reported outcome if the window never actually reached the
+    /// frame it was asked for. Deliberately after the fact: an application is
+    /// free to apply an Accessibility geometry change on its own run loop, so a
+    /// report made at write time cannot tell a refusal from a delay.
+    private func verifyActionLanded(_ plan: WindowActionPlan, displayID: DisplayID?) {
+        actionVerificationTask?.cancel()
+        actionVerificationTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            let outcome = await self.coordinator.verifyPlacement(plan)
+            guard !Task.isCancelled, case .failed = outcome else { return }
+            self.statusMessage = "The window did not move where it was asked to."
+            Self.bentoLog.notice(
+                """
+                \(plan.windowID.rawValue, privacy: .public) never reached \
+                \(plan.targetFrame.debugText, privacy: .public)
+                """
+            )
+            self.presentActionResult(succeeded: false, error: self.statusMessage, displayID: displayID)
+        }
     }
 
     private func performBentoAction(_ actionPlan: WindowActionPlan) -> Bool {
@@ -653,6 +678,7 @@ final class BetterTileModel {
     }
 
     func shutdown() {
+        actionVerificationTask?.cancel()
         flushConfiguration()
         watchdogTimer?.invalidate()
         watchdogTimer = nil

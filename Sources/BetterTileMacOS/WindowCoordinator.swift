@@ -99,27 +99,44 @@ public final class WindowCoordinator {
                 history.record(plan.sourceFrame, for: plan.windowID)
             }
             try apply(plan.targetFrame, to: plan.windowID, knownCurrentFrame: plan.sourceFrame)
-            // An accepted write is not the same as a window that moved. Read
-            // back so the reported outcome is what the user is looking at.
-            guard let landed = try snapshots(ids: [plan.windowID]).first else {
-                lastError = nil
-                return true
-            }
-            switch PlacementVerifier.outcome(requested: plan.targetFrame, actual: landed.frame) {
-            case .landed, .resisted:
-                // A window that kept a size of its own is still where the user
-                // asked for it, and the layout adapts. Only the position being
-                // wrong is a failure worth reporting.
-                lastError = nil
-                return true
-            case .failed:
-                lastError = "The window did not move where it was asked to."
-                return false
-            }
+            lastError = nil
+            return true
         } catch {
             lastError = error.localizedDescription
             return false
         }
+    }
+
+    /// Confirms a window actually reached the frame it was asked for.
+    ///
+    /// An accepted Accessibility write is not the same as a window that moved,
+    /// but the check cannot be made immediately: applications are not required
+    /// to apply a geometry change before the write returns, and Chromium-based
+    /// ones schedule it on their own run loop. Read straight back and "ignored
+    /// the write" and "has not applied it yet" are the same observation, so
+    /// verification waits, looks again, and only concludes failure once the
+    /// window has had time to settle.
+    ///
+    /// Returns `nil` when nothing can be concluded - the window became
+    /// unreadable, or the check was superseded - so callers leave their
+    /// existing report alone rather than replacing it with a guess.
+    public func verifyPlacement(
+        _ plan: WindowActionPlan,
+        delay: Duration = .milliseconds(120),
+        attempts: Int = 3
+    ) async -> PlacementOutcome? {
+        for attempt in 1...max(1, attempts) {
+            try? await Task.sleep(for: delay)
+            guard !Task.isCancelled, let landed = try? snapshots(ids: [plan.windowID]).first else { return nil }
+            let outcome = PlacementVerifier.outcome(requested: plan.targetFrame, actual: landed.frame)
+            switch outcome {
+            case .landed, .resisted:
+                return outcome
+            case .failed:
+                if attempt == max(1, attempts) { return outcome }
+            }
+        }
+        return nil
     }
 
     @discardableResult
