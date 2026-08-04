@@ -38,8 +38,12 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
     /// Raised on a window element for the duration of a frame write only, then
     /// released back to the process default. A spuriously timed-out write is
     /// worse than a slow one.
-    private static let frameWriteMessagingTimeout: Float = 1.5
+    private nonisolated static let frameWriteMessagingTimeout: Float = 1.5
     private nonisolated static let enhancedUserInterfaceAttribute = "AXEnhancedUserInterface"
+    private nonisolated static let log = Logger(
+        subsystem: "com.lmckarma.BetterTile",
+        category: "Accessibility"
+    )
 
     /// How frame writes treat `AXEnhancedUserInterface`. Owned by the app layer
     /// and refreshed from configuration.
@@ -349,12 +353,38 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
 
         func restore() {
             guard shouldRestore, let applicationElement else { return }
-            AXUIElementSetAttributeValue(
-                applicationElement,
-                AccessibilityWindowSystem.enhancedUserInterfaceAttribute as CFString,
-                kCFBooleanTrue
+            // Restoring is what makes Chromium rebuild its accessibility tree,
+            // so this is the slowest write in the whole sequence and needs the
+            // full budget rather than the short read default.
+            let error = AccessibilityWindowSystem.writeEnhancedUserInterface(
+                true,
+                to: applicationElement
+            )
+            guard error != .success else { return }
+            // Deliberately not thrown: the frame write already succeeded, and
+            // failing it here would roll back a correct placement. Logged
+            // because a silent failure downgrades disableAndRestore to
+            // disableOnly for assistive technology.
+            AccessibilityWindowSystem.log.warning(
+                "Could not restore AXEnhancedUserInterface (\(error.rawValue, privacy: .public))."
             )
         }
+    }
+
+    /// Both enhanced-accessibility writes run on the application element, which
+    /// otherwise carries the short read timeout. Passing 0 afterwards releases
+    /// it back to the process default.
+    private nonisolated static func writeEnhancedUserInterface(
+        _ isEnabled: Bool,
+        to applicationElement: AXUIElement
+    ) -> AXError {
+        AXUIElementSetMessagingTimeout(applicationElement, frameWriteMessagingTimeout)
+        defer { AXUIElementSetMessagingTimeout(applicationElement, 0) }
+        return AXUIElementSetAttributeValue(
+            applicationElement,
+            enhancedUserInterfaceAttribute as CFString,
+            isEnabled ? kCFBooleanTrue : kCFBooleanFalse
+        )
     }
 
     private func suspendEnhancedUserInterfaceIfNeeded(
@@ -376,14 +406,19 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         guard decision.shouldDisableBeforeWrite else {
             return EnhancedUserInterfaceSuspension(applicationElement: nil, shouldRestore: false)
         }
-        AXUIElementSetAttributeValue(
-            applicationElement,
-            Self.enhancedUserInterfaceAttribute as CFString,
-            kCFBooleanFalse
-        )
+        let error = Self.writeEnhancedUserInterface(false, to: applicationElement)
+        if error != .success {
+            // Best effort. A failed disable usually still produces a mostly
+            // correct placement, whereas refusing to move the window at all is
+            // a visible regression. Read-back verification is the real remedy.
+            Self.log.warning(
+                "Could not disable AXEnhancedUserInterface (\(error.rawValue, privacy: .public)); frame may land imprecisely."
+            )
+        }
         return EnhancedUserInterfaceSuspension(
             applicationElement: applicationElement,
-            shouldRestore: decision.shouldRestoreAfterWrite
+            // Only ask for a restore if the disable actually took.
+            shouldRestore: decision.shouldRestoreAfterWrite && error == .success
         )
     }
 
