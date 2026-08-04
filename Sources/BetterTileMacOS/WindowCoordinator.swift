@@ -159,11 +159,20 @@ public final class WindowCoordinator {
     }
 
     @discardableResult
-    public func applyCustomZone(_ zone: CustomZone) -> Bool {
+    public func applyCustomZone(
+        _ zone: CustomZone,
+        applicationRules: ApplicationRuleSet
+    ) -> Bool {
         do {
-            guard let window = try system.focusedWindow(), window.isEligible,
-                  let display = system.displays().first(where: { $0.id == window.displayID })
-            else { return false }
+            guard let window = try system.focusedWindow(), window.isEligible else { return false }
+            guard applicationRules
+                .rule(for: window.bundleIdentifier)
+                .allowsDirectPlacement
+            else {
+                lastError = "BetterTile is set to ignore this app."
+                return false
+            }
+            guard let display = system.displays().first(where: { $0.id == window.displayID }) else { return false }
             history.record(window.frame, for: window.id)
             try apply(
                 zone.rect.frame(in: display.visibleFrame),

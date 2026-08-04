@@ -330,7 +330,10 @@ final class BetterTileModel {
 
     func apply(zone: CustomZone) {
         let displayID = (try? system.focusedWindow())?.displayID ?? activeDisplayID
-        let succeeded = coordinator.applyCustomZone(zone)
+        let succeeded = coordinator.applyCustomZone(
+            zone,
+            applicationRules: configuration.applicationRules
+        )
         statusMessage = succeeded ? nil : coordinator.lastError ?? "Could not apply the zone."
         presentActionResult(succeeded: succeeded, error: statusMessage, displayID: displayID)
     }

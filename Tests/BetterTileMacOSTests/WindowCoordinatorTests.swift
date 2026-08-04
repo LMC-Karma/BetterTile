@@ -13,6 +13,26 @@ import Testing
     #expect(system.windows[0].frame == original)
 }
 
+@Test @MainActor func customZoneButtonsHonorApplicationRules() {
+    let system = FakeWindowSystem()
+    let original = system.windows[0].frame
+    let coordinator = WindowCoordinator(system: system)
+    let zone = CustomZone(
+        name: "Focus",
+        rect: NormalizedRect(x: 0.1, y: 0.1, width: 0.8, height: 0.8)
+    )
+    var rules = ApplicationRuleSet()
+    rules.set(.ignoreEverywhere, for: "com.example.Test")
+
+    #expect(!coordinator.applyCustomZone(zone, applicationRules: rules))
+    #expect(system.windows[0].frame == original)
+    #expect(coordinator.lastError == "BetterTile is set to ignore this app.")
+
+    rules.set(.excludeFromBento, for: "com.example.Test")
+    #expect(coordinator.applyCustomZone(zone, applicationRules: rules))
+    #expect(system.windows[0].frame == BTRect(x: 100, y: 80, width: 800, height: 640))
+}
+
 @Test @MainActor func bentoDragAdmissionHonorsApplicationRules() {
     let system = FakeWindowSystem()
     let window = system.windows[0]
