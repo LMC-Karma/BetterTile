@@ -39,6 +39,14 @@ public final class TitleBarDoubleClickController {
         removeMonitor()
     }
 
+    func allowsDoubleClickPlacement(for window: WindowSnapshot) -> Bool {
+        isEnabled
+            && window.processIdentifier != ProcessInfo.processInfo.processIdentifier
+            && window.isEligible
+            && window.constraints.isResizable
+            && applicationRules.rule(for: window.bundleIdentifier).allowsDirectPlacement
+    }
+
     private func syncMonitoring() {
         if isStarted, isEnabled, Self.macOSDoubleClickActionIsDisabled {
             installMonitor()
@@ -61,16 +69,12 @@ public final class TitleBarDoubleClickController {
     }
 
     private func handle(_ event: NSEvent) {
-        guard isEnabled,
-              event.clickCount == 2,
+        guard event.clickCount == 2,
               event.eventNumber != lastEventNumber,
               Self.macOSDoubleClickActionIsDisabled,
               let mainFrame = NSScreen.main?.frame,
               let window = try? coordinator.system.focusedWindow(),
-              window.processIdentifier != ProcessInfo.processInfo.processIdentifier,
-              window.isEligible,
-              window.constraints.isResizable,
-              applicationRules.rule(for: window.bundleIdentifier).allowsDirectPlacement
+              allowsDoubleClickPlacement(for: window)
         else { return }
 
         let point = CoordinateConverter.pointToTopLeft(NSEvent.mouseLocation, mainScreenFrame: mainFrame)

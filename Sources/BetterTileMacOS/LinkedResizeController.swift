@@ -38,6 +38,16 @@ public final class LinkedResizeController {
         endGesture()
     }
 
+    func allowsLinkedResize(for window: WindowSnapshot) -> Bool {
+        configuration.linkedResizeEnabled
+            && window.isEligible
+            && !window.isFloating
+            && configuration.applicationRules
+                .rule(for: window.bundleIdentifier)
+                .allowsDirectPlacement
+            && isEnabledForDisplay?(window.displayID) == true
+    }
+
     private func syncMonitoring() {
         if isStarted, configuration.linkedResizeEnabled {
             installMouseDownMonitor()
@@ -87,11 +97,7 @@ public final class LinkedResizeController {
         }
         do {
             guard let focused = try coordinator.system.focusedWindow(),
-                  focused.isEligible, !focused.isFloating,
-                  configuration.applicationRules
-                      .rule(for: focused.bundleIdentifier)
-                      .allowsDirectPlacement,
-                  isEnabledForDisplay?(focused.displayID) == true
+                  allowsLinkedResize(for: focused)
             else {
                 endGesture()
                 return

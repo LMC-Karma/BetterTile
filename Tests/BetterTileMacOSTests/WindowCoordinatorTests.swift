@@ -34,6 +34,47 @@ import Testing
     #expect(!controller.allowsBentoDrag(for: window))
 }
 
+@Test @MainActor func linkedResizeAdmissionHonorsApplicationRules() {
+    let system = FakeWindowSystem()
+    let window = system.windows[0]
+    var configuration = BetterTileConfiguration()
+    configuration.linkedResizeEnabled = true
+    let controller = LinkedResizeController(
+        coordinator: WindowCoordinator(system: system),
+        configuration: configuration
+    )
+    controller.isEnabledForDisplay = { _ in true }
+
+    #expect(controller.allowsLinkedResize(for: window))
+
+    configuration.applicationRules.set(.excludeFromBento, for: "com.example.Test")
+    controller.configuration = configuration
+    #expect(controller.allowsLinkedResize(for: window))
+
+    configuration.applicationRules.set(.ignoreEverywhere, for: "com.example.Test")
+    controller.configuration = configuration
+    #expect(!controller.allowsLinkedResize(for: window))
+}
+
+@Test @MainActor func titleBarDoubleClickAdmissionHonorsApplicationRules() {
+    let system = FakeWindowSystem()
+    let window = system.windows[0]
+    let controller = TitleBarDoubleClickController(
+        coordinator: WindowCoordinator(system: system)
+    )
+
+    #expect(controller.allowsDoubleClickPlacement(for: window))
+
+    var rules = ApplicationRuleSet()
+    rules.set(.excludeFromBento, for: "com.example.Test")
+    controller.applicationRules = rules
+    #expect(controller.allowsDoubleClickPlacement(for: window))
+
+    rules.set(.ignoreEverywhere, for: "com.example.Test")
+    controller.applicationRules = rules
+    #expect(!controller.allowsDoubleClickPlacement(for: window))
+}
+
 @Test @MainActor func placementTransactionsUseTargetedWindowSnapshots() {
     let system = FakeWindowSystem()
     let coordinator = WindowCoordinator(system: system)
