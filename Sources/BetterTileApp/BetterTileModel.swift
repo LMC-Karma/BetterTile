@@ -195,8 +195,8 @@ final class BetterTileModel {
             )
             return
         }
-        if let focused = try? system.focusedWindow(),
-           !rule(for: focused).allowsDirectPlacement {
+        let focusedRule = (try? system.focusedWindow()).map(rule(for:)) ?? .manageNormally
+        if !focusedRule.allowsDirectPlacement {
             statusMessage = "BetterTile is set to ignore this app."
             presentActionResult(succeeded: false, error: statusMessage, displayID: originalDisplayID)
             return
@@ -210,8 +210,11 @@ final class BetterTileModel {
             )
             return
         }
-        let succeeded = if BentoDropPlanner.partitionActions.contains(actionPlan.resolvedAction),
-                           sessionStore.session(for: actionPlan.displayID)?.mode == .bento {
+        let succeeded = if BentoDropPlanner.handlesShortcut(
+            actionPlan.resolvedAction,
+            in: sessionStore.session(for: actionPlan.displayID)?.mode ?? .manual,
+            sourceRule: focusedRule
+        ) {
             performBentoAction(actionPlan)
         } else {
             coordinator.perform(actionPlan)

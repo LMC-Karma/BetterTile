@@ -178,6 +178,16 @@ public struct BentoDropPlanner: Sendable {
         .bottomLeftSixth, .bottomCenterSixth, .bottomRightSixth,
     ]
 
+    public static func handlesShortcut(
+        _ action: WindowAction,
+        in mode: LayoutMode,
+        sourceRule: ApplicationRule
+    ) -> Bool {
+        mode == .bento
+            && sourceRule.allowsBentoParticipation
+            && partitionActions.contains(action)
+    }
+
     public static let focusActions: Set<WindowAction> = [
         .maximize, .almostMaximize, .center, .centerResize,
     ]

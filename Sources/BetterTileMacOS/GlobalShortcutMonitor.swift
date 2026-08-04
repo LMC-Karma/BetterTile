@@ -20,7 +20,7 @@ public final class GlobalShortcutMonitor {
     }
     /// Bindings are retained whichever way both switches are set, so turning
     /// shortcuts back on restores exactly what was configured.
-    private var canRegister: Bool { isEnabled && !isSuspended }
+    var canRegister: Bool { isEnabled && !isSuspended }
     private var handler: (WindowAction) -> Void
 
     public init(handler: @escaping (WindowAction) -> Void) {

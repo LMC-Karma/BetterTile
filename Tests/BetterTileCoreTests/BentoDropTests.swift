@@ -5,6 +5,13 @@ import Testing
 private let dropDisplayID = DisplayID(rawValue: "drop-display")
 private let dropBounds = BTRect(x: 0, y: 24, width: 1200, height: 876)
 
+@Test func excludedApplicationPartitionShortcutsBypassBento() {
+    #expect(BentoDropPlanner.handlesShortcut(.leftHalf, in: .bento, sourceRule: .manageNormally))
+    #expect(!BentoDropPlanner.handlesShortcut(.leftHalf, in: .bento, sourceRule: .excludeFromBento))
+    #expect(!BentoDropPlanner.handlesShortcut(.leftHalf, in: .manual, sourceRule: .manageNormally))
+    #expect(!BentoDropPlanner.handlesShortcut(.maximize, in: .bento, sourceRule: .manageNormally))
+}
+
 @Test func topRightQuarterDropKeepsLeftHalfAndBottomRightVacant() throws {
     let source = WindowID(rawValue: "source")
     let other = WindowID(rawValue: "other")

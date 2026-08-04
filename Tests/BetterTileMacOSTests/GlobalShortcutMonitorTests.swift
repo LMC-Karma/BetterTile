@@ -21,3 +21,22 @@ import Testing
     #expect(GlobalShortcutMonitor.action(forHotKeyID: 0) == nil)
     #expect(GlobalShortcutMonitor.action(forHotKeyID: UInt32(WindowAction.allCases.count + 1)) == nil)
 }
+
+@Test @MainActor func shortcutMasterSwitchStaysIndependentFromRecordingSuspension() {
+    let monitor = GlobalShortcutMonitor { _ in }
+    defer { monitor.stop() }
+
+    #expect(monitor.canRegister)
+    monitor.suspend()
+    #expect(!monitor.canRegister)
+
+    monitor.isEnabled = false
+    monitor.resume()
+    #expect(!monitor.canRegister)
+
+    monitor.suspend()
+    monitor.isEnabled = true
+    #expect(!monitor.canRegister)
+    monitor.resume()
+    #expect(monitor.canRegister)
+}
