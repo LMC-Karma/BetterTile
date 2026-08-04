@@ -46,6 +46,9 @@ final class BetterTileModel {
     private var lastVisibleSignature = ""
     private var lastDisplayWorkAreaSignature = ""
     private var pendingFrameEventIDs: Set<WindowID> = []
+    /// Windows a destroyed event has accounted for. Direct evidence, so their
+    /// panes are released without waiting for absence to be corroborated.
+    private var confirmedGoneWindowIDs: Set<WindowID> = []
     private var pendingTopologyRefresh = false
     private var pendingRestoredWindowDeadlines: [WindowID: Date] = [:]
     private var windowEventTask: Task<Void, Never>?
@@ -901,6 +904,7 @@ final class BetterTileModel {
         case .created, .destroyed, .minimized:
             if let windowID = event.windowID {
                 if event.kind == .minimized { recordMinimizedBentoPane(windowID) }
+                if event.kind == .destroyed { confirmedGoneWindowIDs.insert(windowID) }
                 unwindBentoFocusIfNeeded(windowID)
             }
             pendingTopologyRefresh = true
@@ -1556,12 +1560,29 @@ final class BetterTileModel {
         let temporarilyHidden = session.excludedFocusWindowIDs
             .union(session.bentoFocusHistory)
             .union(session.bentoReinsertionAnchors.keys)
-        for oldID in knownIDs where !present.contains(oldID) && !temporarilyHidden.contains(oldID) {
+        // A sweep can miss a window that is still on screen, and giving up its
+        // pane on the first miss lets one unlucky observation dismantle a
+        // layout with nothing on screen to explain it. Absence has to be
+        // corroborated across sweeps; a destroyed event is direct evidence and
+        // skips the wait.
+        let removals = session.presence.observe(
+            known: knownIDs,
+            present: present,
+            confirmedGone: confirmedGoneWindowIDs.intersection(knownIDs),
+            exempt: temporarilyHidden
+        )
+        confirmedGoneWindowIDs.subtract(removals)
+        for oldID in removals {
             state.remove(oldID)
         }
-        session.bentoInsertionOrder.removeAll {
-            !present.contains($0) && !temporarilyHidden.contains($0)
+        let heldAbsences = session.presence.pending
+            .map { "\($0.key.rawValue)x\($0.value)" }
+            .sorted()
+            .joined(separator: " ")
+        if !heldAbsences.isEmpty {
+            Self.bentoLog.debug("holding absent panes: \(heldAbsences, privacy: .public)")
         }
+        session.bentoInsertionOrder.removeAll { removals.contains($0) }
         session.automaticallyFloatingWindowIDs.formIntersection(present)
         for id in windows.map(\.id).sorted() where !session.bentoInsertionOrder.contains(id) {
             session.bentoInsertionOrder.append(id)

@@ -27,6 +27,8 @@ public struct LayoutSession: Hashable, Sendable {
     public var lastWorkArea: BTRect?
     public var isBentoInitialized: Bool
     public var hasEvaluatedInitialPlacement: Bool
+    /// Corroborates a window's disappearance before its pane is given up.
+    public var presence: WindowPresenceTracker
 
     public init(
         id: DesktopSessionID = DesktopSessionID(),
@@ -44,7 +46,8 @@ public struct LayoutSession: Hashable, Sendable {
         lastObservedFrames: [WindowID: BTRect] = [:],
         lastWorkArea: BTRect? = nil,
         isBentoInitialized: Bool = false,
-        hasEvaluatedInitialPlacement: Bool = false
+        hasEvaluatedInitialPlacement: Bool = false,
+        presence: WindowPresenceTracker = WindowPresenceTracker()
     ) {
         self.id = id
         self.displayID = displayID
@@ -62,6 +65,7 @@ public struct LayoutSession: Hashable, Sendable {
         self.lastWorkArea = lastWorkArea
         self.isBentoInitialized = isBentoInitialized || bentoState.root != nil
         self.hasEvaluatedInitialPlacement = hasEvaluatedInitialPlacement
+        self.presence = presence
     }
 
     /// Makes explicitly visible windows eligible for the next Bento
