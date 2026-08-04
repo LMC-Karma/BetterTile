@@ -1024,49 +1024,44 @@ final class BetterTileModel {
                     .placements(in: display.visibleFrame)
                     .map { ($0.windowID, $0.frame) }
             )
-            var dividerChanges: Set<WindowID> = []
-            var snapped: (windowID: WindowID, action: WindowAction)?
-            var relocated = false
-            for id in displayChanges.sorted() {
-                guard let expected = expectedFrames[id], let observed = frames[id] else { continue }
-                switch ExternalWindowChangeClassifier.classify(
-                    expected: expected,
-                    observed: observed,
-                    in: display.visibleFrame,
-                    edgeTolerance: configuration.adjacencyTolerance
-                ) {
-                case let .snapDestination(action):
-                    if snapped == nil { snapped = (id, action) }
-                case .relocation:
-                    relocated = true
-                case .dividerResize:
-                    dividerChanges.insert(id)
+            let classifications = Dictionary(
+                uniqueKeysWithValues: displayChanges.compactMap { id -> (WindowID, ExternalWindowChange)? in
+                    guard let expected = expectedFrames[id], let observed = frames[id] else { return nil }
+                    return (id, ExternalWindowChangeClassifier.classify(
+                        expected: expected,
+                        observed: observed,
+                        in: display.visibleFrame,
+                        edgeTolerance: configuration.adjacencyTolerance
+                    ))
                 }
-            }
+            )
 
-            // A recognised destination runs through the same planner a
-            // BetterTile shortcut uses, so macOS's commands and BetterTile's
-            // own produce identical layouts instead of two rearrangement rules.
-            if let snapped {
+            let dividerChanges: Set<WindowID>
+            switch ExternalChangeRouter.route(classifications) {
+            case let .snap(windowID, action):
+                // A recognised destination runs through the same planner a
+                // BetterTile shortcut uses, so macOS's commands and BetterTile's
+                // own produce identical layouts rather than two rules.
                 applyExternalSnap(
-                    windowID: snapped.windowID,
-                    action: snapped.action,
+                    windowID: windowID,
+                    action: action,
                     session: &session,
                     displayWindows: displayWindows,
                     display: display
                 )
                 continue
-            }
-
-            // Unrecognised movement cannot be expressed as a weight change.
-            // Put the layout back rather than let the tree drift out of step
-            // with the windows; general adoption is handled separately.
-            if relocated, dividerChanges.isEmpty {
+            case .restoreLayout:
+                // Unrecognised movement cannot be expressed as a weight change.
+                // Put the layout back rather than let the tree drift out of
+                // step with the windows; general adoption is handled separately.
                 restoreBentoLayout(session: session, displayWindows: displayWindows, display: display)
                 continue
+            case .none:
+                continue
+            case let .fitDividers(ids):
+                dividerChanges = ids
             }
 
-            guard !dividerChanges.isEmpty else { continue }
             guard let fitted = BentoLayoutFitter(tolerance: configuration.adjacencyTolerance).fit(
                 state: session.bentoState,
                 currentFrames: frames,

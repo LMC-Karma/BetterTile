@@ -126,3 +126,54 @@ public enum ExternalWindowChangeClassifier {
         return tied ? nil : best?.action
     }
 }
+
+/// What to do with a batch of classified external changes.
+///
+/// A single Accessibility flush can carry changes for several windows, so the
+/// choice between snapping, restoring and fitting is a decision in its own
+/// right rather than a per-window one. Extracted so it can be tested without an
+/// application test target.
+public enum ExternalChangeRoute: Equatable, Sendable {
+    /// One window landed on a position BetterTile can express. Runs through the
+    /// same planner a BetterTile shortcut uses.
+    case snap(windowID: WindowID, action: WindowAction)
+    /// Something moved somewhere unrecognised and nothing else is explicable,
+    /// so put the windows back where the layout says they belong.
+    case restoreLayout
+    /// Ordinary divider work for these windows.
+    case fitDividers(Set<WindowID>)
+    /// Nothing actionable.
+    case none
+}
+
+public enum ExternalChangeRouter {
+    /// Priority: a recognised destination, then divider work, then restoring.
+    ///
+    /// A destination wins outright because it is the most specific reading
+    /// available and it already rebuilds the layout around the moved window.
+    /// Divider work is preferred over restoring when both appear in the same
+    /// flush, because a relocation with no recognised destination is usually a
+    /// window that has been dragged and will be settled by its own gesture,
+    /// whereas a divider change is always actionable now.
+    public static func route(_ changes: [WindowID: ExternalWindowChange]) -> ExternalChangeRoute {
+        var dividers: Set<WindowID> = []
+        var snap: (windowID: WindowID, action: WindowAction)?
+        var sawRelocation = false
+        // Sorted so a flush carrying two snaps resolves the same way every time.
+        for windowID in changes.keys.sorted() {
+            switch changes[windowID] {
+            case let .snapDestination(action):
+                if snap == nil { snap = (windowID, action) }
+            case .relocation:
+                sawRelocation = true
+            case .dividerResize:
+                dividers.insert(windowID)
+            case nil:
+                continue
+            }
+        }
+        if let snap { return .snap(windowID: snap.windowID, action: snap.action) }
+        if !dividers.isEmpty { return .fitDividers(dividers) }
+        return sawRelocation ? .restoreLayout : .none
+    }
+}

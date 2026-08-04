@@ -329,3 +329,52 @@ func macOSRightHalfSwapsThePanesInsteadOfCollapsingThem(margins: Bool) throws {
     #expect(placed[b] == partition(.leftHalf), "its neighbour takes the left pane")
     #expect(placed[b]?.size.width != 120, "nothing collapses to a minimum-width sliver")
 }
+
+// MARK: - Routing a batch of classified changes
+
+private let w1 = WindowID(rawValue: "w1")
+private let w2 = WindowID(rawValue: "w2")
+private let w3 = WindowID(rawValue: "w3")
+
+@Test func anEmptyFlushIsNotActionable() {
+    #expect(ExternalChangeRouter.route([:]) == .none)
+}
+
+@Test func dividerChangesAreCollectedForTheFitter() {
+    let route = ExternalChangeRouter.route([w1: .dividerResize, w2: .dividerResize])
+    #expect(route == .fitDividers([w1, w2]))
+}
+
+@Test func aRecognisedDestinationTakesPriorityOverDividerWork() {
+    let route = ExternalChangeRouter.route([w1: .dividerResize, w2: .snapDestination(.rightHalf)])
+    #expect(route == .snap(windowID: w2, action: .rightHalf))
+}
+
+@Test func aRecognisedDestinationTakesPriorityOverARelocation() {
+    let route = ExternalChangeRouter.route([w1: .relocation, w2: .snapDestination(.topLeftQuarter)])
+    #expect(route == .snap(windowID: w2, action: .topLeftQuarter))
+}
+
+/// A relocation with no recognised destination is usually a window mid-drag,
+/// which its own gesture will settle. A divider change is actionable now, so it
+/// wins rather than triggering a restore that would fight the drag.
+@Test func dividerWorkWinsOverAnUnrecognisedRelocation() {
+    let route = ExternalChangeRouter.route([w1: .relocation, w2: .dividerResize])
+    #expect(route == .fitDividers([w2]))
+}
+
+@Test func aRelocationAloneRestoresTheLayout() {
+    #expect(ExternalChangeRouter.route([w1: .relocation]) == .restoreLayout)
+}
+
+/// Two snaps in one flush must not depend on dictionary ordering.
+@Test func competingSnapsResolveDeterministically() {
+    let changes: [WindowID: ExternalWindowChange] = [
+        w3: .snapDestination(.leftHalf),
+        w1: .snapDestination(.rightHalf),
+        w2: .snapDestination(.maximize),
+    ]
+    for _ in 0..<50 {
+        #expect(ExternalChangeRouter.route(changes) == .snap(windowID: w1, action: .rightHalf))
+    }
+}
