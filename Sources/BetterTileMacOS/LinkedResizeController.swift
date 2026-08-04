@@ -88,6 +88,9 @@ public final class LinkedResizeController {
         do {
             guard let focused = try coordinator.system.focusedWindow(),
                   focused.isEligible, !focused.isFloating,
+                  configuration.applicationRules
+                      .rule(for: focused.bundleIdentifier)
+                      .allowsDirectPlacement,
                   isEnabledForDisplay?(focused.displayID) == true
             else {
                 endGesture()

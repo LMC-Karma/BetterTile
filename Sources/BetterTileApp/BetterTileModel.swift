@@ -77,9 +77,11 @@ final class BetterTileModel {
             coordinator: coordinator,
             isEnabled: loaded.doubleClickTitleBarToMaximize
         )
+        titleBarDoubleClick.applicationRules = loaded.applicationRules
         linkedResize = LinkedResizeController(coordinator: coordinator, configuration: loaded)
         dividerResize = DividerOverlayController(coordinator: coordinator, configuration: loaded)
 
+        shortcuts.isEnabled = loaded.keyboardShortcutsEnabled
         shortcuts.setHandler { [weak self] action in self?.perform(action) }
         dragSnap.activeModeProvider = { [weak self] displayID in self?.activeMode(for: displayID) }
         dragSnap.bentoStateProvider = { [weak self] displayID in self?.sessionStore.session(for: displayID)?.bentoState }
@@ -193,6 +195,12 @@ final class BetterTileModel {
             )
             return
         }
+        if let focused = try? system.focusedWindow(),
+           !rule(for: focused).allowsDirectPlacement {
+            statusMessage = "BetterTile is set to ignore this app."
+            presentActionResult(succeeded: false, error: statusMessage, displayID: originalDisplayID)
+            return
+        }
         guard let actionPlan = coordinator.plan(action) else {
             statusMessage = coordinator.lastError ?? "No eligible focused window."
             presentActionResult(
@@ -247,9 +255,9 @@ final class BetterTileModel {
               let display = system.displays().first(where: { $0.id == actionPlan.displayID }),
               let windows = try? system.visibleWindows()
         else { return false }
-        let displayWindows = windows.filter {
+        let displayWindows = bentoEligible(windows.filter {
             $0.displayID == display.id && $0.isEligible && !$0.isFloating
-        }
+        })
         let frames = Dictionary(uniqueKeysWithValues: displayWindows.map { ($0.id, $0.frame) })
         let constraints = Dictionary(uniqueKeysWithValues: displayWindows.map { ($0.id, $0.constraints) })
         Self.bentoLog.debug(
@@ -334,7 +342,7 @@ final class BetterTileModel {
                 presentActionResult(succeeded: false, error: statusMessage, displayID: activeDisplayID)
                 return
             }
-            let displayWindows = windows.filter { $0.displayID == display.id }
+            let displayWindows = bentoEligible(windows.filter { $0.displayID == display.id })
             guard !displayWindows.isEmpty else {
                 statusMessage = "No eligible visible windows on the active display."
                 presentActionResult(succeeded: false, error: statusMessage, displayID: display.id)
@@ -736,10 +744,15 @@ final class BetterTileModel {
             dividerResize.configuration = configuration
         }
         if changes.contains(.shortcuts) {
+            shortcuts.isEnabled = configuration.keyboardShortcutsEnabled
             shortcuts.update(bindings: configuration.shortcuts)
         }
         if changes.contains(.titleBar) {
             titleBarDoubleClick.isEnabled = configuration.doubleClickTitleBarToMaximize
+        }
+        if changes.contains(.applicationRules) {
+            titleBarDoubleClick.applicationRules = configuration.applicationRules
+            refreshActiveWindows(force: true)
         }
         if changes.contains(.accessibilityWrites) {
             system.enhancedUserInterfacePolicy = configuration.enhancedUserInterfacePolicy
@@ -1225,6 +1238,17 @@ final class BetterTileModel {
         return true
     }
 
+    /// The rule the user has set for the application owning this window.
+    private func rule(for window: WindowSnapshot) -> ApplicationRule {
+        configuration.applicationRules.rule(for: window.bundleIdentifier)
+    }
+
+    /// Windows Bento may lay out. Excluded applications keep their own size and
+    /// position instead of becoming panes.
+    private func bentoEligible(_ windows: [WindowSnapshot]) -> [WindowSnapshot] {
+        windows.filter { rule(for: $0).allowsBentoParticipation }
+    }
+
     /// Bento panes are derived from the whole work area, so a pane that leaves
     /// it is a bad proposal. Stricter than the coordinator's reachability rule,
     /// which only asks whether a deliberately placed window is still grabbable.
@@ -1418,7 +1442,7 @@ final class BetterTileModel {
         var resolvedActiveDisplay: DisplayID?
 
         for display in displays {
-            let displayWindows = eligible.filter { $0.displayID == display.id }
+            let displayWindows = bentoEligible(eligible.filter { $0.displayID == display.id })
             let activation = sessionStore.activate(
                 displayID: display.id,
                 windowIDs: Set(displayWindows.map(\.id)),

@@ -8,7 +8,19 @@ public final class GlobalShortcutMonitor {
     private var bindings: [ShortcutBinding] = []
     private var hotKeyRefs: [UInt32: EventHotKeyRef] = [:]
     private var eventHandler: EventHandlerRef?
+    /// Transient: set while the user is recording a replacement shortcut.
     private var isSuspended = false
+    /// The user's master switch. Independent of `isSuspended` so recording a
+    /// shortcut cannot silently turn the feature back on, or off.
+    public var isEnabled = true {
+        didSet {
+            guard isEnabled != oldValue else { return }
+            if canRegister { registerHotKeys() } else { unregisterHotKeys() }
+        }
+    }
+    /// Bindings are retained whichever way both switches are set, so turning
+    /// shortcuts back on restores exactly what was configured.
+    private var canRegister: Bool { isEnabled && !isSuspended }
     private var handler: (WindowAction) -> Void
 
     public init(handler: @escaping (WindowAction) -> Void) {
@@ -21,7 +33,7 @@ public final class GlobalShortcutMonitor {
 
     public func update(bindings: [ShortcutBinding]) {
         self.bindings = bindings
-        guard !isSuspended else { return }
+        guard canRegister else { return }
         registerHotKeys()
     }
 
@@ -33,6 +45,7 @@ public final class GlobalShortcutMonitor {
     public func resume() {
         guard isSuspended else { return }
         isSuspended = false
+        guard canRegister else { return }
         registerHotKeys()
     }
 

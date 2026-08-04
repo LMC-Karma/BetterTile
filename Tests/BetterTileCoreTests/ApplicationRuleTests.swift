@@ -50,18 +50,34 @@ private let notes = "com.apple.Notes"
 
 // MARK: - Deterministic migration and storage
 
-/// Dictionary key order is undefined, so encoding rules as a dictionary would
-/// reorder the file between writes. An exported configuration has to be
-/// diffable and comparable.
-@Test func encodingIsByteIdenticalAcrossRepeatedWrites() throws {
-    var rules = ApplicationRuleSet()
-    for identifier in [figma, safari, notes, "com.tinyspeck.slackmacgap", "com.google.Chrome"] {
-        rules.set(.excludeFromBento, for: identifier)
+/// Dictionary key order is undefined, so storing rules as a dictionary would
+/// reorder the file between writes. The entry sequence is what this type
+/// controls, and it has to be stable regardless of the order rules were added.
+@Test func theEntrySequenceDoesNotDependOnInsertionOrder() {
+    let identifiers = [figma, safari, notes, "com.tinyspeck.slackmacgap", "com.google.Chrome"]
+    var forwards = ApplicationRuleSet()
+    for identifier in identifiers { forwards.set(.excludeFromBento, for: identifier) }
+    var backwards = ApplicationRuleSet()
+    for identifier in identifiers.reversed() { backwards.set(.excludeFromBento, for: identifier) }
+
+    #expect(forwards.entries.map(\.bundleIdentifier) == backwards.entries.map(\.bundleIdentifier))
+    #expect(forwards.entries.map(\.bundleIdentifier) == identifiers.sorted())
+}
+
+/// The written file has to be byte-identical between saves of the same
+/// configuration, or an exported configuration is neither diffable nor
+/// comparable. Uses the encoder settings the configuration store writes with;
+/// a bare JSONEncoder does not order the keys inside an object.
+@Test func theStoredConfigurationIsByteIdenticalAcrossRepeatedWrites() throws {
+    var configuration = BetterTileConfiguration()
+    for identifier in [figma, safari, notes, "com.google.Chrome"] {
+        configuration.applicationRules.set(.excludeFromBento, for: identifier)
     }
     let encoder = JSONEncoder()
-    let first = try encoder.encode(rules)
+    encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+    let first = try encoder.encode(configuration)
     for _ in 0..<20 {
-        #expect(try encoder.encode(rules) == first)
+        #expect(try encoder.encode(configuration) == first)
     }
 }
 

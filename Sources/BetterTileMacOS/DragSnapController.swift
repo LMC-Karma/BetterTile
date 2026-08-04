@@ -201,6 +201,12 @@ public final class DragSnapController {
         else { return }
         let point = CoordinateConverter.pointToTopLeft(NSEvent.mouseLocation, mainScreenFrame: mainFrame)
         guard let window = windowUnderTitleBar(at: point) else { return }
+        // Ignore Everywhere means no BetterTile feature places this window,
+        // drag snapping included.
+        guard configuration.applicationRules
+            .rule(for: window.bundleIdentifier)
+            .allowsDirectPlacement
+        else { return }
         guard NSEvent.pressedMouseButtons & 1 == 1 else { return }
         dragGate.begin(with: window)
         installGestureMonitors()
