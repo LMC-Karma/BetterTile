@@ -202,25 +202,38 @@ struct SetupAssistantView: View {
 
     private var compatibilityPage: some View {
         VStack(alignment: .leading, spacing: 18) {
-            Text("Reduce conflicts with macOS")
+            Text("BetterTile and macOS window tiling")
                 .font(.largeTitle.weight(.semibold))
             Text(
-                "These changes are recommended, not required. BetterTile cannot detect them "
-                    + "through supported public APIs, so their status is confirmed by you."
+                "macOS has its own window tiling. BetterTile is built to sit alongside it, "
+                    + "so you do not have to give either one up."
             )
             .foregroundStyle(.secondary)
 
-            Button("Open Desktop & Dock Settings") { openDesktopAndDockSettings() }
-                .buttonStyle(.borderedProminent)
+            RecommendationCard(
+                title: "Move & Resize keeps working",
+                symbol: "rectangle.split.2x1",
+                explanation:
+                    "Window ▸ Move & Resize and its keyboard equivalents work as they always did. "
+                        + "Bento recognises where macOS put a window and adopts that arrangement, "
+                        + "so you can tile with either and carry on resizing with BetterTile's dividers.",
+                directions: [
+                    "Nothing to change. Use whichever you reach for.",
+                ],
+                isAcknowledged: nil
+            )
 
             RecommendationCard(
-                title: "Turn off built-in window tiling",
-                symbol: "rectangle.split.2x1",
-                explanation: "Built-in edge tiling can compete with BetterTile drag snapping.",
+                title: "Pick one way to drag",
+                symbol: "hand.draw",
+                explanation:
+                    "Dragging to a screen edge is the one place the two overlap: macOS and BetterTile "
+                        + "would both try to interpret the same drag. Bento adopts the result either way, "
+                        + "so this is about which one you want to feel.",
                 directions: [
-                    "Turn off “Drag windows to left or right edge of screen to tile.”",
-                    "Turn off “Drag windows to menu bar to fill screen.”",
-                    "Turn off “Hold Option key while dragging windows to tile.”",
+                    "Keep BetterTile Drag Snapping on for BetterTile's zones and previews, or",
+                    "Turn it off in Settings ▸ General and use macOS's edge tiling instead.",
+                    "Your snap zones are kept either way.",
                 ],
                 isAcknowledged: configurationBinding(
                     \.macOSTilingRecommendationAcknowledged
@@ -240,6 +253,7 @@ struct SetupAssistantView: View {
                 )
             )
 
+            Button("Open Desktop & Dock Settings") { openDesktopAndDockSettings() }
             Text("If the button does not reach the section directly, choose Desktop & Dock in the System Settings sidebar.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -445,7 +459,9 @@ private struct RecommendationCard: View {
     let symbol: String
     let explanation: String
     let directions: [String]
-    @Binding var isAcknowledged: Bool
+    /// Nil for a card that only explains something, with nothing for the user
+    /// to confirm.
+    var isAcknowledged: Binding<Bool>?
 
     var body: some View {
         GroupBox {
@@ -459,16 +475,22 @@ private struct RecommendationCard: View {
                     VStack(alignment: .leading, spacing: 4) {
                         Text(title)
                             .font(.headline)
-                        Label(
-                            isAcknowledged
-                                ? "Confirmed by you"
-                                : "Recommended — not necessary",
-                            systemImage: isAcknowledged
-                                ? "checkmark.circle.fill"
-                                : "exclamationmark.triangle.fill"
-                        )
-                        .font(.callout.weight(.medium))
-                        .foregroundStyle(isAcknowledged ? .green : .orange)
+                        if let isAcknowledged {
+                            Label(
+                                isAcknowledged.wrappedValue
+                                    ? "Confirmed by you"
+                                    : "Your choice — either works",
+                                systemImage: isAcknowledged.wrappedValue
+                                    ? "checkmark.circle.fill"
+                                    : "questionmark.circle.fill"
+                            )
+                            .font(.callout.weight(.medium))
+                            .foregroundStyle(isAcknowledged.wrappedValue ? .green : .secondary)
+                        } else {
+                            Label("Nothing to change", systemImage: "checkmark.circle.fill")
+                                .font(.callout.weight(.medium))
+                                .foregroundStyle(.green)
+                        }
                     }
                 }
 
@@ -483,7 +505,9 @@ private struct RecommendationCard: View {
                     }
                 }
 
-                Toggle("Done — I turned this off", isOn: $isAcknowledged)
+                if let isAcknowledged {
+                    Toggle("Done — I have chosen", isOn: isAcknowledged)
+                }
             }
             .padding(6)
         }
