@@ -136,3 +136,10 @@ public struct NormalizedRect: Codable, Hashable, Sendable {
 public enum GeometryError: Error, Equatable {
     case invalidNormalizedRect
 }
+
+public extension BTRect {
+    /// Compact form for diagnostics: `x,y wxh` rounded to whole points.
+    var debugText: String {
+        "\(Int(minX.rounded())),\(Int(minY.rounded())) \(Int(size.width.rounded()))x\(Int(size.height.rounded()))"
+    }
+}

@@ -8,6 +8,14 @@ import os
 @Observable
 @MainActor
 final class BetterTileModel {
+    /// Traces the Bento decision path. Bento reacts to Accessibility events
+    /// that carry no indication of who caused them, so when a layout ends up
+    /// somewhere unexpected the only way to tell which branch made the choice
+    /// is to have recorded it. Read with:
+    ///   log stream --predicate 'subsystem == "com.lmckarma.BetterTile"'
+    /// Window identifiers and frames only; never titles.
+    static let bentoLog = Logger(subsystem: "com.lmckarma.BetterTile", category: "Bento")
+
     private static let signposter = OSSignposter(
         subsystem: "com.lmckarma.BetterTile",
         category: "Model"
@@ -213,7 +221,17 @@ final class BetterTileModel {
         }
         let frames = Dictionary(uniqueKeysWithValues: displayWindows.map { ($0.id, $0.frame) })
         let constraints = Dictionary(uniqueKeysWithValues: displayWindows.map { ($0.id, $0.constraints) })
+        Self.bentoLog.debug(
+            """
+            action input: visible=\(windows.map(\.id.rawValue).sorted().joined(separator: " "), privacy: .public)             eligibleOnDisplay=\(displayWindows.map(\.id.rawValue).sorted().joined(separator: " "), privacy: .public)             session=\(session.windowIDs.map(\.rawValue).sorted().joined(separator: " "), privacy: .public)             tree=\((session.bentoState.root?.windowIDs ?? []).map(\.rawValue).sorted().joined(separator: " "), privacy: .public)
+            """
+        )
         reconcileBentoSession(&session, windows: displayWindows, display: display)
+        Self.bentoLog.debug(
+            """
+            after reconcile: tree=\((session.bentoState.root?.windowIDs ?? []).map(\.rawValue).sorted().joined(separator: " "), privacy: .public)             floating=\(session.bentoState.floatingWindowIDs.map(\.rawValue).sorted().joined(separator: " "), privacy: .public)
+            """
+        )
         guard let plan = BentoDropPlanner().plan(
             intent: .snap(action: actionPlan.resolvedAction, frame: actionPlan.targetFrame),
             sourceWindowID: actionPlan.windowID,
@@ -226,7 +244,15 @@ final class BetterTileModel {
             statusMessage = "That shortcut cannot satisfy the Bento windows’ minimum sizes."
             return false
         }
-        guard coordinator.applyPlacements(plan.placements) else { return false }
+        Self.bentoLog.debug(
+            """
+            shortcut \(actionPlan.resolvedAction.rawValue, privacy: .public)             source=\(actionPlan.windowID.rawValue, privacy: .public)             placements=\(plan.placements.map { "\($0.windowID.rawValue)@\($0.frame.debugText)" }.joined(separator: " "), privacy: .public)
+            """
+        )
+        guard coordinator.applyPlacements(plan.placements) else {
+            Self.bentoLog.error("shortcut placements rejected: \(self.coordinator.lastError ?? "unknown", privacy: .public)")
+            return false
+        }
 
         let requestedFrames = Dictionary(uniqueKeysWithValues: plan.placements.map { ($0.windowID, $0.frame) })
         session.bentoState = plan.state
@@ -1036,8 +1062,14 @@ final class BetterTileModel {
                 }
             )
 
+            let route = ExternalChangeRouter.route(classifications)
+            Self.bentoLog.debug(
+                """
+                external \(classifications.map { "\($0.key.rawValue)=\($0.value)" }.sorted().joined(separator: " "), privacy: .public)                 -> \(String(describing: route), privacy: .public)
+                """
+            )
             let dividerChanges: Set<WindowID>
-            switch ExternalChangeRouter.route(classifications) {
+            switch route {
             case let .snap(windowID, action):
                 // A recognised destination runs through the same planner a
                 // BetterTile shortcut uses, so macOS's commands and BetterTile's
@@ -1196,6 +1228,18 @@ final class BetterTileModel {
         else { return }
         var settledWindows = windows
         var learnedMinimum = false
+        if let requestedFrames {
+            let actualFrames = Dictionary(uniqueKeysWithValues: windows.map { ($0.id, $0.frame) })
+            for windowID in changedWindowIDs.sorted() {
+                guard let requested = requestedFrames[windowID], let actual = actualFrames[windowID] else { continue }
+                guard !actual.approximatelyEquals(requested, tolerance: 2) else { continue }
+                Self.bentoLog.notice(
+                    """
+                    \(windowID.rawValue, privacy: .public) did not settle:                     requested \(requested.debugText, privacy: .public) got \(actual.debugText, privacy: .public)
+                    """
+                )
+            }
+        }
         if let requestedFrames, let baselineFrames {
             let actualFrames = Dictionary(uniqueKeysWithValues: windows.map { ($0.id, $0.frame) })
             for windowID in changedWindowIDs {
@@ -1218,6 +1262,7 @@ final class BetterTileModel {
         let displayWindows = settledWindows.filter { session.windowIDs.contains($0.id) && $0.displayID == displayID }
         let frames = Dictionary(uniqueKeysWithValues: displayWindows.map { ($0.id, $0.frame) })
         let constraints = Dictionary(uniqueKeysWithValues: displayWindows.map { ($0.id, $0.constraints) })
+        Self.bentoLog.debug("settlement branch: \(learnedMinimum ? "learned-minimum resolve" : "divider fit", privacy: .public)")
         if learnedMinimum {
             if let solved = BentoConstraintSolver().solve(
                 state: session.bentoState,
@@ -1526,6 +1571,7 @@ final class BetterTileModel {
               let candidate = session.bentoInsertionOrder.reversed().first(where: {
                   state.root?.windowIDs.contains($0) == true
               }) {
+            Self.bentoLog.debug("float \(candidate.rawValue, privacy: .public): over the six-pane cap")
             state.setFloating(true, windowID: candidate)
             session.automaticallyFloatingWindowIDs.insert(candidate)
         }
@@ -1554,6 +1600,7 @@ final class BetterTileModel {
                 }
             }
             if (state.root?.windowIDs.count ?? 0) >= 6 {
+                Self.bentoLog.debug("float \(id.rawValue, privacy: .public): tree already holds six panes")
                 state.setFloating(true, windowID: id)
                 session.automaticallyFloatingWindowIDs.insert(id)
                 session.bentoFocusHistory.removeAll { $0 == id }
@@ -1572,6 +1619,7 @@ final class BetterTileModel {
                 state = solved
                 session.automaticallyFloatingWindowIDs.remove(id)
             } else {
+                Self.bentoLog.debug("float \(id.rawValue, privacy: .public): no insertion satisfied every minimum size")
                 state.setFloating(true, windowID: id)
                 session.automaticallyFloatingWindowIDs.insert(id)
             }
@@ -1580,6 +1628,9 @@ final class BetterTileModel {
         while state.root != nil,
               solver.solve(state: state, in: display.visibleFrame, constraints: constraints) == nil,
               let candidate = session.bentoInsertionOrder.reversed().first(where: { state.root?.windowIDs.contains($0) == true }) {
+            Self.bentoLog.debug(
+                "float \(candidate.rawValue, privacy: .public): tree unsolvable against current minimum sizes"
+            )
             state.setFloating(true, windowID: candidate)
             session.automaticallyFloatingWindowIDs.insert(candidate)
         }
