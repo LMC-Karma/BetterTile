@@ -52,6 +52,10 @@ public struct BentoObservation: Sendable {
     }
 }
 
+/// Shown when a window cannot become a pane because the layout is full. It
+/// stays visible and usable rather than being hidden to protect the layout.
+public let bentoOverflowMessage = "Bento manages up to six panes. This window will remain floating."
+
 public enum BentoPlannerIntent: Sendable {
     case activate
     case retile
@@ -269,14 +273,12 @@ public struct BentoPlanner: Sendable {
             bounds: observation.bounds
         )
         let overflow = ids.filter { !managed.contains($0) }
-        if let newest = overflow.last, let frame = focusFrame(in: observation.bounds) {
-            next.focusHistory = overflow
-            return BentoPlannerResult(
-                state: next,
-                placements: [Placement(windowID: newest, frame: frame)],
-                minimizeWindowIDs: Set(managed).union(overflow.dropLast()),
-                pill: .overflow("Six panes preserved; overflow focus")
-            )
+        if !overflow.isEmpty {
+            // Overflow stays visible and floating. It is not minimized and it
+            // does not displace the six panes: a window the user can still see
+            // and use beats one hidden to protect a layout.
+            for windowID in overflow { next.layout.setFloating(true, windowID: windowID) }
+            return solved(next, observation: observation, pill: .overflow(bentoOverflowMessage))
         }
         return solved(next, observation: observation, pill: .success("Bento arranged"))
     }
@@ -408,16 +410,10 @@ public struct BentoPlanner: Sendable {
             return BentoPlannerResult(state: next, writesFrames: false)
         }
         if treeIDs.count >= maximumManagedWindows {
-            next.focusHistory.removeAll { $0 == windowID }
-            next.focusHistory.append(windowID)
-            let hidden = treeIDs.union(next.focusHistory.dropLast())
-            return BentoPlannerResult(
-                state: next,
-                placements: [Placement(windowID: windowID, frame: focusFrame(in: observation.bounds)!)],
-                minimizeWindowIDs: hidden,
-                restoreWindowIDs: [windowID],
-                pill: .overflow("Six panes preserved; overflow focus")
-            )
+            // Beyond the cap the window floats where it is. Nothing is
+            // minimized and the existing panes keep their frames.
+            next.layout.setFloating(true, windowID: windowID)
+            return BentoPlannerResult(state: next, pill: .overflow(bentoOverflowMessage), writesFrames: false)
         }
         next.layout = automaticLayout(
             windowIDs: (next.layout.root?.windowIDs ?? []) + [windowID],

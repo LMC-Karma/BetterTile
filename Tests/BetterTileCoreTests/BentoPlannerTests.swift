@@ -260,7 +260,11 @@ private func plannerWindow(
     #expect(frames[c.id] == BTRect(x: 400, y: 600, width: 400, height: 600))
 }
 
-@Test func seventhAndEighthWindowsUseLIFOOverflowWithoutChangingSixPaneTree() throws {
+/// Beyond six panes a window stays visible and floating. It is not minimized,
+/// it does not take the display from the panes, and the six-pane tree is
+/// untouched - a window the user can still see and use beats one hidden to
+/// protect a layout.
+@Test func aSeventhWindowFloatsVisiblyWithoutDisturbingTheSixPanes() throws {
     let windows = (1...8).map { plannerWindow("\($0)") }
     var layout = BentoLayoutState(root: .leaf(windows[0].id))
     for window in windows[1..<6] {
@@ -268,6 +272,7 @@ private func plannerWindow(
     }
     let originalRoot = layout.root
     let observation = BentoObservation(bounds: plannerBounds, windows: windows, focusedWindowID: windows[0].id)
+
     let seventh = BentoPlanner().plan(
         state: BentoRuntimeState(layout: layout),
         observation: observation,
@@ -279,25 +284,29 @@ private func plannerWindow(
         intent: .insert(windows[7].id)
     )
 
-    #expect(eighth.state.layout.root == originalRoot)
-    #expect(eighth.state.focusHistory == [windows[6].id, windows[7].id])
-    #expect(eighth.minimizeWindowIDs.contains(windows[6].id))
+    #expect(eighth.state.layout.root == originalRoot, "the six panes keep their arrangement")
+    #expect(eighth.minimizeWindowIDs.isEmpty, "nothing is hidden to make room")
+    #expect(eighth.state.layout.floatingWindowIDs.isSuperset(of: [windows[6].id, windows[7].id]))
+    #expect(eighth.placements.isEmpty, "an overflow window keeps its own frame")
+}
 
-    let unwind = BentoPlanner().plan(
-        state: eighth.state,
-        observation: observation,
-        intent: .unwindFocus(windows[7].id)
-    )
-    #expect(unwind.state.focusHistory == [windows[6].id])
-    #expect(unwind.restoreWindowIDs == [windows[6].id])
+@Test func theOverflowMessageNamesTheCapAndTheOutcome() {
+    #expect(bentoOverflowMessage == "Bento manages up to six panes. This window will remain floating.")
+}
 
-    let restoreTree = BentoPlanner().plan(
-        state: unwind.state,
+/// Activating a desktop that already holds more than six windows floats the
+/// extras rather than hiding them.
+@Test func activatingWithMoreThanSixWindowsFloatsTheExtras() throws {
+    let windows = (1...8).map { plannerWindow("\($0)") }
+    let observation = BentoObservation(bounds: plannerBounds, windows: windows, focusedWindowID: windows[0].id)
+    let result = BentoPlanner().plan(
+        state: BentoRuntimeState(layout: BentoLayoutState()),
         observation: observation,
-        intent: .unwindFocus(windows[6].id)
+        intent: .activate
     )
-    #expect(restoreTree.state.layout.root == originalRoot)
-    #expect(restoreTree.restoreWindowIDs == Set(originalRoot?.windowIDs ?? []))
+    #expect(result.minimizeWindowIDs.isEmpty)
+    #expect(result.state.layout.floatingWindowIDs.count == 2)
+    #expect((result.state.layout.root?.windowIDs.count ?? 0) == 6)
 }
 
 @Test func minimizingAndRestoringUsesALocalReinsertionAnchor() {
@@ -409,4 +418,46 @@ private func plannerWindow(
     #expect(result.sourceState.layout.root?.windowIDs == [sourcePeer.id])
     #expect(result.destinationState.layout.root?.windowIDs == [source.id, destinationPeer.id])
     #expect(Set(result.placements.map(\.windowID)) == [source.id, sourcePeer.id, destinationPeer.id])
+}
+
+// MARK: - Floating pane exchange
+
+/// An overflow window has to be usable, not merely visible: it can take a
+/// pane's slot, and the pane's previous occupant floats in its place. The
+/// layout keeps its shape and its pane count.
+@Test func aFloatingWindowCanTakeAPaneAndDisplaceItsOccupant() throws {
+    let a = WindowID(rawValue: "a")
+    let b = WindowID(rawValue: "b")
+    let floater = WindowID(rawValue: "floater")
+    var layout = BentoLayoutState(root: .leaf(a))
+    layout.split(a, inserting: b, in: plannerBounds)
+    layout.setFloating(true, windowID: floater)
+    let shape = layout.placements(in: plannerBounds).map(\.frame).sorted { $0.minX < $1.minX }
+
+    let exchanged = layout.exchangeFloating(floater, withPaneOf: b)
+    #expect(exchanged)
+    #expect(layout.root?.windowIDs.contains(floater) == true)
+    #expect(layout.root?.windowIDs.contains(b) != true)
+    #expect(layout.floatingWindowIDs.contains(b), "the displaced pane floats")
+    #expect(!layout.floatingWindowIDs.contains(floater))
+    #expect(layout.root?.windowIDs.count == 2, "the pane count is unchanged")
+    #expect(layout.placements(in: plannerBounds).map(\.frame).sorted { $0.minX < $1.minX } == shape,
+            "the layout keeps its shape")
+}
+
+@Test func exchangeRefusesWindowsThatAreNotFloatingOrNotPanes() {
+    let a = WindowID(rawValue: "a")
+    let b = WindowID(rawValue: "b")
+    let floater = WindowID(rawValue: "floater")
+    let stranger = WindowID(rawValue: "stranger")
+    var layout = BentoLayoutState(root: .leaf(a))
+    layout.split(a, inserting: b, in: plannerBounds)
+    layout.setFloating(true, windowID: floater)
+
+    let paneIsNotFloating = layout.exchangeFloating(a, withPaneOf: b)
+    #expect(!paneIsNotFloating, "a pane is not a floating window")
+    let targetIsNotAPane = layout.exchangeFloating(floater, withPaneOf: stranger)
+    #expect(!targetIsNotAPane, "the target must be a pane")
+    let selfExchange = layout.exchangeFloating(floater, withPaneOf: floater)
+    #expect(!selfExchange)
 }

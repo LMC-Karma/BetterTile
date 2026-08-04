@@ -286,6 +286,27 @@ public struct BentoLayoutState: Codable, Hashable, Sendable {
         return true
     }
 
+    /// Exchanges a floating window with a pane.
+    ///
+    /// The floating window takes the pane's place in the tree and the pane's
+    /// previous occupant floats in its stead, so the layout keeps its shape and
+    /// its pane count while the user swaps which window occupies a slot. This
+    /// is what makes an overflow window useful rather than merely visible: it
+    /// can be brought into the layout without the layout being rebuilt.
+    @discardableResult
+    public mutating func exchangeFloating(
+        _ floatingWindowID: WindowID,
+        withPaneOf paneWindowID: WindowID
+    ) -> Bool {
+        guard floatingWindowID != paneWindowID,
+              floatingWindowIDs.contains(floatingWindowID),
+              root?.windowIDs.contains(paneWindowID) == true,
+              replace(paneWindowID, with: floatingWindowID)
+        else { return false }
+        setFloating(true, windowID: paneWindowID)
+        return true
+    }
+
     public mutating func split(_ targetWindowID: WindowID, inserting windowID: WindowID, in bounds: BTRect) {
         let depth = depth(of: targetWindowID) ?? 0
         let axis: SplitAxis = depth.isMultiple(of: 2) ? .vertical : .horizontal
