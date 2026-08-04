@@ -107,6 +107,38 @@ public final class WindowCoordinator {
         }
     }
 
+    /// Confirms a window actually reached the frame it was asked for.
+    ///
+    /// An accepted Accessibility write is not the same as a window that moved,
+    /// but the check cannot be made immediately: applications are not required
+    /// to apply a geometry change before the write returns, and Chromium-based
+    /// ones schedule it on their own run loop. Read straight back and "ignored
+    /// the write" and "has not applied it yet" are the same observation, so
+    /// verification waits, looks again, and only concludes failure once the
+    /// window has had time to settle.
+    ///
+    /// Returns `nil` when nothing can be concluded - the window became
+    /// unreadable, or the check was superseded - so callers leave their
+    /// existing report alone rather than replacing it with a guess.
+    public func verifyPlacement(
+        _ plan: WindowActionPlan,
+        delay: Duration = .milliseconds(120),
+        attempts: Int = 3
+    ) async -> PlacementOutcome? {
+        for attempt in 1...max(1, attempts) {
+            try? await Task.sleep(for: delay)
+            guard !Task.isCancelled, let landed = try? snapshots(ids: [plan.windowID]).first else { return nil }
+            let outcome = PlacementVerifier.outcome(requested: plan.targetFrame, actual: landed.frame)
+            switch outcome {
+            case .landed, .resisted:
+                return outcome
+            case .failed:
+                if attempt == max(1, attempts) { return outcome }
+            }
+        }
+        return nil
+    }
+
     @discardableResult
     public func applyCustomZone(_ zone: CustomZone) -> Bool {
         do {
@@ -339,6 +371,7 @@ public final class WindowCoordinator {
     private func validate(_ placements: [Placement]) throws {
         let ids = Set(placements.map(\.windowID))
         let snapshots = Dictionary(uniqueKeysWithValues: try snapshots(ids: ids).map { ($0.id, $0) })
+        let displays = Dictionary(uniqueKeysWithValues: system.displays().map { ($0.id, $0) })
         for placement in placements {
             guard let snapshot = snapshots[placement.windowID] else { throw WindowSystemError.windowNotFound(placement.windowID) }
             guard snapshot.isEligible, snapshot.constraints.isMovable, snapshot.constraints.isResizable else {
@@ -347,6 +380,15 @@ public final class WindowCoordinator {
             guard placement.frame.size.width >= snapshot.constraints.minimumSize.width,
                   placement.frame.size.height >= snapshot.constraints.minimumSize.height
             else { throw WindowSystemError.operationFailed("A window reached its minimum size.") }
+            // A legal size is not enough: a stale display frame or a split
+            // driven to an edge can produce a placement that leaves nothing on
+            // screen to grab.
+            if let display = displays[snapshot.displayID],
+               !PlacementBounds.isReachable(placement.frame, in: display.visibleFrame) {
+                throw WindowSystemError.operationFailed(
+                    "A window would have been placed off screen."
+                )
+            }
         }
     }
 

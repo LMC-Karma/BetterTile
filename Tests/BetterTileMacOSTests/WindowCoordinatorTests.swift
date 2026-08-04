@@ -461,6 +461,27 @@ private final class FakeWindowSystem: WindowSystem, TargetedWindowSystem, Window
     /// Every `knownCurrentFrame` hint the coordinator supplied, per window, in
     /// call order. `nil` means the coordinator had no fresh reading.
     var recordedKnownCurrentFrames: [WindowID: [BTRect?]] = [:]
+    /// Simulates an application that refuses to grow beyond a fixed width.
+    var clampWidth: Double?
+    /// Simulates an application that applies a geometry change on its own run
+    /// loop: the write is accepted, but the new frame is only observable after
+    /// this many reads.
+    var readsBeforeSettling = 0
+    private var pendingFrames: [WindowID: (frame: BTRect, readsRemaining: Int)] = [:]
+
+    private func settlePendingFrames() {
+        for (id, pending) in pendingFrames {
+            let remaining = pending.readsRemaining - 1
+            if remaining <= 0 {
+                pendingFrames.removeValue(forKey: id)
+                if let index = windows.firstIndex(where: { $0.id == id }) {
+                    windows[index].frame = pending.frame
+                }
+            } else {
+                pendingFrames[id] = (pending.frame, remaining)
+            }
+        }
+    }
 
     init() {
         windows = [WindowSnapshot(
@@ -473,9 +494,13 @@ private final class FakeWindowSystem: WindowSystem, TargetedWindowSystem, Window
     func focusedWindow() throws -> WindowSnapshot? {
         focusedWindowID.flatMap { id in windows.first(where: { $0.id == id }) } ?? windows.first
     }
-    func visibleWindows() throws -> [WindowSnapshot] { windows }
+    func visibleWindows() throws -> [WindowSnapshot] {
+        settlePendingFrames()
+        return windows
+    }
     func windowSnapshots(ids: Set<WindowID>) throws -> [WindowSnapshot] {
         targetedSnapshotRequests += 1
+        settlePendingFrames()
         return windows.filter { ids.contains($0.id) }
     }
     func displays() -> [DisplaySnapshot] { availableDisplays }
@@ -493,8 +518,14 @@ private final class FakeWindowSystem: WindowSystem, TargetedWindowSystem, Window
             ignoredFrameWriteCounts[windowID, default: 0] -= 1
             return
         }
-        windows[index].frame = frame
-        windows[index].displayID = availableDisplays.first(where: { $0.visibleFrame.intersection(frame)?.area ?? 0 > frame.area / 2 })?.id ?? windows[index].displayID
+        var applied = frame
+        if let clampWidth { applied.size.width = min(applied.size.width, clampWidth) }
+        if readsBeforeSettling > 0 {
+            pendingFrames[windowID] = (applied, readsBeforeSettling)
+            return
+        }
+        windows[index].frame = applied
+        windows[index].displayID = availableDisplays.first(where: { $0.visibleFrame.intersection(applied)?.area ?? 0 > applied.area / 2 })?.id ?? windows[index].displayID
     }
 
     func setMinimized(_ minimized: Bool, for windowID: WindowID) throws {
@@ -593,4 +624,69 @@ private final class FakeWindowSystem: WindowSystem, TargetedWindowSystem, Window
     let id = system.windows[0].id
     try system.setFrame(BTRect(x: 10, y: 10, width: 300, height: 300), for: id)
     #expect(system.recordedKnownCurrentFrames[id] == [nil])
+}
+
+// MARK: - Truthful outcomes
+
+/// An application that applies a geometry change on its own run loop - which
+/// Chromium-based applications do - must not be reported as a failure. Read
+/// straight back, "ignored the write" and "has not applied it yet" are the same
+/// observation, so the action succeeds and verification waits.
+@Test @MainActor func aWindowThatSettlesLateIsNotReportedAsAFailure() async throws {
+    let system = FakeWindowSystem()
+    system.readsBeforeSettling = 2
+    let coordinator = WindowCoordinator(system: system)
+    let plan = try #require(coordinator.plan(.leftHalf))
+
+    #expect(coordinator.perform(plan), "a late-settling window still counts as applied")
+    let outcome = await coordinator.verifyPlacement(plan, delay: .milliseconds(1))
+    #expect(outcome == .landed)
+}
+
+/// A window that never moves is only concluded to have failed after it has had
+/// time to settle.
+@Test @MainActor func aWindowThatNeverMovesIsReportedAsAFailureAfterVerification() async throws {
+    let system = FakeWindowSystem()
+    let coordinator = WindowCoordinator(system: system)
+    let plan = try #require(coordinator.plan(.leftHalf))
+    let original = system.windows[0].frame
+    system.ignoredFrameWriteCounts[plan.windowID] = 1
+
+    #expect(coordinator.perform(plan), "the write itself was accepted")
+    #expect(system.windows[0].frame == original)
+    #expect(await coordinator.verifyPlacement(plan, delay: .milliseconds(1)) == .failed(actual: original))
+}
+
+/// A read-back that cannot be completed must not turn an applied action into a
+/// reported failure; nothing is concluded instead.
+@Test @MainActor func anUnreadableWindowLeavesTheReportAlone() async throws {
+    let system = FakeWindowSystem()
+    let coordinator = WindowCoordinator(system: system)
+    let plan = try #require(coordinator.plan(.leftHalf))
+    #expect(coordinator.perform(plan))
+    system.windows.removeAll()
+    #expect(await coordinator.verifyPlacement(plan, delay: .milliseconds(1)) == nil)
+}
+
+@Test @MainActor func anActionIsStillASuccessWhenTheWindowKeepsItsOwnSize() throws {
+    let system = FakeWindowSystem()
+    system.clampWidth = 400
+    let coordinator = WindowCoordinator(system: system)
+
+    #expect(coordinator.perform(.leftHalf))
+    #expect(system.windows[0].frame.size.width == 400)
+    #expect(system.windows[0].frame.minX == 0, "the position is still honoured")
+    #expect(coordinator.lastError == nil)
+}
+
+@Test @MainActor func placementsOutsideTheDisplayAreRejected() throws {
+    let system = FakeWindowSystem()
+    let coordinator = WindowCoordinator(system: system)
+    let offScreen = Placement(
+        windowID: system.windows[0].id,
+        frame: BTRect(x: 4000, y: 0, width: 500, height: 500)
+    )
+
+    #expect(!coordinator.applyPlacements([offScreen]))
+    #expect(coordinator.lastError == "A window would have been placed off screen.")
 }
