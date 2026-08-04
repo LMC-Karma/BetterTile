@@ -98,7 +98,7 @@ public final class WindowCoordinator {
             if !plan.resolvedAction.isRestore {
                 history.record(plan.sourceFrame, for: plan.windowID)
             }
-            try apply(plan.targetFrame, to: plan.windowID)
+            try apply(plan.targetFrame, to: plan.windowID, knownCurrentFrame: plan.sourceFrame)
             lastError = nil
             return true
         } catch {
@@ -114,7 +114,11 @@ public final class WindowCoordinator {
                   let display = system.displays().first(where: { $0.id == window.displayID })
             else { return false }
             history.record(window.frame, for: window.id)
-            try apply(zone.rect.frame(in: display.visibleFrame), to: window.id)
+            try apply(
+                zone.rect.frame(in: display.visibleFrame),
+                to: window.id,
+                knownCurrentFrame: window.frame
+            )
             lastError = nil
             return true
         } catch {
@@ -273,7 +277,7 @@ public final class WindowCoordinator {
         var minimized: [WindowID] = []
         do {
             try validate([placement])
-            try apply(placement.frame, to: placement.windowID)
+            try apply(placement.frame, to: placement.windowID, knownCurrentFrame: sourceBaselineFrame)
             for windowID in windowIDs.sorted() {
                 try system.setMinimized(true, for: windowID)
                 minimized.append(windowID)
@@ -287,7 +291,7 @@ public final class WindowCoordinator {
             for windowID in minimized.reversed() {
                 try? system.setMinimized(false, for: windowID)
             }
-            try? apply(sourceBaselineFrame, to: placement.windowID)
+            try? apply(sourceBaselineFrame, to: placement.windowID, knownCurrentFrame: placement.frame)
             lastError = error.localizedDescription
             return false
         }
@@ -320,12 +324,16 @@ public final class WindowCoordinator {
         }
     }
 
-    private func apply(_ frame: BTRect, to windowID: WindowID) throws {
+    private func apply(
+        _ frame: BTRect,
+        to windowID: WindowID,
+        knownCurrentFrame: BTRect? = nil
+    ) throws {
         let generation = (generations[windowID] ?? 0) &+ 1
         generations[windowID] = generation
         guard generations[windowID] == generation else { return }
         expect(frame, for: windowID, generation: generation)
-        try system.setFrame(frame, for: windowID)
+        try system.setFrame(frame, knownCurrentFrame: knownCurrentFrame, for: windowID)
     }
 
     private func validate(_ placements: [Placement]) throws {
@@ -349,7 +357,11 @@ public final class WindowCoordinator {
                 let generation = (generations[placement.windowID] ?? 0) &+ 1
                 generations[placement.windowID] = generation
                 expect(placement.frame, for: placement.windowID, generation: generation)
-                try system.setFrame(placement.frame, for: placement.windowID)
+                try system.setFrame(
+                    placement.frame,
+                    knownCurrentFrame: rollbackFrames[placement.windowID],
+                    for: placement.windowID
+                )
                 applied.append(placement.windowID)
             }
         } catch {
@@ -358,7 +370,8 @@ public final class WindowCoordinator {
                 let generation = (generations[id] ?? 0) &+ 1
                 generations[id] = generation
                 expect(frame, for: id, generation: generation)
-                try? system.setFrame(frame, for: id)
+                let appliedFrame = placements.first(where: { $0.windowID == id })?.frame
+                try? system.setFrame(frame, knownCurrentFrame: appliedFrame, for: id)
             }
             throw error
         }

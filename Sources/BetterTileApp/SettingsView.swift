@@ -24,7 +24,8 @@ private enum SettingsDestination: String, CaseIterable, Identifiable {
     var keywords: String {
         switch self {
         case .general:
-            "permission accessibility dock appearance light dark system drag snapping application update automatic check"
+            "permission accessibility dock appearance light dark system drag snapping application update automatic check "
+                + "advanced enhanced user interface chromium electron voiceover"
         case .windowLayout:
             "mode manual native bento resize linked divider shortcut keyboard hotkey halves thirds quarters sixths move display restore"
         case .snapZones:
@@ -192,6 +193,24 @@ private struct GeneralSettings: View {
                 Text("System follows the current macOS appearance.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+            }
+
+            Section("Advanced") {
+                Picker(
+                    "Enhanced accessibility",
+                    selection: configurationBinding(\.enhancedUserInterfacePolicy)
+                ) {
+                    ForEach(EnhancedUserInterfacePolicy.allCases, id: \.self) { policy in
+                        Text(policy.title).tag(policy)
+                    }
+                }
+                Text(
+                    "Some apps reinterpret window positions while enhanced accessibility is on, "
+                        + "so BetterTile turns it off while it moves a window. "
+                        + model.configuration.enhancedUserInterfacePolicy.explanation
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
             }
 
             StatusMessage(model: model)

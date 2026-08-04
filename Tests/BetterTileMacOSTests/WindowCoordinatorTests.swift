@@ -458,6 +458,9 @@ private final class FakeWindowSystem: WindowSystem, TargetedWindowSystem, Window
     var focusedWindowID: WindowID?
     var eventHandler: (@MainActor (WindowSystemEvent) -> Void)?
     var targetedSnapshotRequests = 0
+    /// Every `knownCurrentFrame` hint the coordinator supplied, per window, in
+    /// call order. `nil` means the coordinator had no fresh reading.
+    var recordedKnownCurrentFrames: [WindowID: [BTRect?]] = [:]
 
     init() {
         windows = [WindowSnapshot(
@@ -481,7 +484,8 @@ private final class FakeWindowSystem: WindowSystem, TargetedWindowSystem, Window
     func stopWindowObservation() {}
     func emit(_ event: WindowSystemEvent) { eventHandler?(event) }
 
-    func setFrame(_ frame: BTRect, for windowID: WindowID) throws {
+    func setFrame(_ frame: BTRect, knownCurrentFrame: BTRect?, for windowID: WindowID) throws {
+        recordedKnownCurrentFrames[windowID, default: []].append(knownCurrentFrame)
         if failingWindowID == windowID { throw WindowSystemError.operationFailed("Simulated Accessibility failure") }
         guard let index = windows.firstIndex(where: { $0.id == windowID }) else { throw WindowSystemError.windowNotFound(windowID) }
         frameWriteCounts[windowID, default: 0] += 1
@@ -505,4 +509,88 @@ private final class FakeWindowSystem: WindowSystem, TargetedWindowSystem, Window
             frame: BTRect(x: 800, y: 200, width: 200, height: 400), displayID: DisplayID(rawValue: "main")
         ))
     }
+}
+
+// MARK: - Accessibility write hints
+
+@Test @MainActor func actionsTellTheSystemWhereTheWindowCurrentlyIs() throws {
+    let system = FakeWindowSystem()
+    let original = system.windows[0].frame
+    let coordinator = WindowCoordinator(system: system)
+    let id = system.windows[0].id
+
+    #expect(coordinator.perform(.leftHalf))
+    #expect(system.recordedKnownCurrentFrames[id] == [original])
+}
+
+@Test @MainActor func aMoveActionLetsTheSystemSkipTheLeadingSizeWrite() throws {
+    let system = FakeWindowSystem()
+    let coordinator = WindowCoordinator(system: system)
+    let id = system.windows[0].id
+    let before = system.windows[0].frame
+
+    #expect(coordinator.perform(.moveRight))
+    let hint = try #require(system.recordedKnownCurrentFrames[id]?.first ?? nil)
+    // A move keeps the size, so the planner drops one of the three AX writes.
+    let plan = FrameWritePlanner.plan(target: system.windows[0].frame, knownCurrentFrame: hint)
+    #expect(hint == before)
+    #expect(plan.writeCount == 2)
+}
+
+@Test @MainActor func transactionsPassTheBaselineAsTheCurrentFrame() throws {
+    let system = FakeWindowSystem()
+    system.addSecondWindow()
+    let coordinator = WindowCoordinator(system: system)
+    let baselines = Dictionary(uniqueKeysWithValues: system.windows.map { ($0.id, $0.frame) })
+    var transaction = try #require(coordinator.beginTransaction(windowIDs: Set(system.windows.map(\.id))))
+    let placements = system.windows.map {
+        Placement(windowID: $0.id, frame: BTRect(x: 0, y: 0, width: 500, height: 800))
+    }
+
+    #expect(coordinator.commit(transaction: &transaction, placements: placements))
+    for (id, baseline) in baselines {
+        #expect(system.recordedKnownCurrentFrames[id]?.first == baseline)
+    }
+}
+
+@Test @MainActor func liveTransactionsPassTheLastAppliedFrameNotTheBaseline() throws {
+    let system = FakeWindowSystem()
+    let coordinator = WindowCoordinator(system: system)
+    let id = system.windows[0].id
+    var transaction = try #require(coordinator.beginTransaction(windowIDs: [id]))
+
+    let first = BTRect(x: 0, y: 0, width: 400, height: 800)
+    let second = BTRect(x: 0, y: 0, width: 450, height: 800)
+    #expect(coordinator.applyLive(transaction: &transaction, placements: [Placement(windowID: id, frame: first)]))
+    #expect(coordinator.applyLive(transaction: &transaction, placements: [Placement(windowID: id, frame: second)]))
+
+    let hints = try #require(system.recordedKnownCurrentFrames[id])
+    #expect(hints.count == 2)
+    #expect(hints[1] == first)
+}
+
+@Test @MainActor func rollbackTellsTheSystemTheWindowIsAtTheFrameItJustWrote() throws {
+    let system = FakeWindowSystem()
+    system.addSecondWindow()
+    let coordinator = WindowCoordinator(system: system)
+    let firstID = system.windows[0].id
+    system.failingWindowID = system.windows[1].id
+
+    let placements = system.windows.map {
+        Placement(windowID: $0.id, frame: BTRect(x: 0, y: 0, width: 500, height: 800))
+    }
+    #expect(!coordinator.applyPlacements(placements))
+
+    // Two writes for the first window: the forward apply, then the rollback,
+    // which knows the window is sitting at the frame the forward apply wrote.
+    let hints = try #require(system.recordedKnownCurrentFrames[firstID])
+    #expect(hints.count == 2)
+    #expect(hints[1] == placements[0].frame)
+}
+
+@Test @MainActor func theConvenienceOverloadStillPerformsAFullWrite() throws {
+    let system = FakeWindowSystem()
+    let id = system.windows[0].id
+    try system.setFrame(BTRect(x: 10, y: 10, width: 300, height: 300), for: id)
+    #expect(system.recordedKnownCurrentFrames[id] == [nil])
 }

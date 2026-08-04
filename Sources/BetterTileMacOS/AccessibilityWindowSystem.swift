@@ -26,6 +26,20 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
     private var recentApplicationPIDs: [pid_t] = []
     private var activationObserver: NSObjectProtocol?
 
+    /// Applied to every application element. Reads are the bulk of the traffic
+    /// and a stalled application should be skipped rather than block the main
+    /// actor, so this stays short.
+    private static let applicationMessagingTimeout: Float = 0.35
+    /// Applied to cached window elements. Frame writes live here, and a
+    /// spuriously timed-out write is worse than a slow one, so this is more
+    /// generous than the application timeout.
+    private static let windowMessagingTimeout: Float = 1.5
+    private nonisolated static let enhancedUserInterfaceAttribute = "AXEnhancedUserInterface"
+
+    /// How frame writes treat `AXEnhancedUserInterface`. Owned by the app layer
+    /// and refreshed from configuration.
+    public var enhancedUserInterfacePolicy: EnhancedUserInterfacePolicy = .disableAndRestore
+
     public init() {
         if let application = NSWorkspace.shared.frontmostApplication {
             recordActivation(of: application)
@@ -115,6 +129,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
                 if !result.contains(pid) { result.append(pid) }
             }
 
+        let availableDisplays = displays()
         for pid in candidates {
             guard let application = NSWorkspace.shared.runningApplications.first(where: {
                 $0.processIdentifier == pid
@@ -128,14 +143,14 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
             )
             else { continue }
 
-            let appElement = AXUIElementCreateApplication(pid)
-            AXUIElementSetMessagingTimeout(appElement, 0.35)
+            let appElement = makeApplicationElement(pid: pid)
             for attribute in [kAXFocusedWindowAttribute, kAXMainWindowAttribute] {
                 if let window: AXUIElement = value(attribute, from: appElement),
                    let snapshot = snapshot(
                        window,
                        pid: pid,
-                       bundleIdentifier: application.bundleIdentifier
+                       bundleIdentifier: application.bundleIdentifier,
+                       displays: availableDisplays
                    ) {
                     retainRecent(snapshot.id)
                     registerWindowNotifications(window, snapshot: snapshot)
@@ -144,7 +159,12 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
             }
             let windows: [AXUIElement] = value(kAXWindowsAttribute, from: appElement) ?? []
             if let snapshot = windows.lazy.compactMap({
-                self.snapshot($0, pid: pid, bundleIdentifier: application.bundleIdentifier)
+                self.snapshot(
+                    $0,
+                    pid: pid,
+                    bundleIdentifier: application.bundleIdentifier,
+                    displays: availableDisplays
+                )
             }).first {
                 retainRecent(snapshot.id)
                 if let element = elements[snapshot.id] {
@@ -162,6 +182,9 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         try ensurePermission()
         let onscreen = onscreenWindowFrames()
         let hasWindowServerSnapshot = !onscreen.isEmpty
+        // Enumerated once per sweep. Resolving the containing display per
+        // window used to re-read every NSScreen for every window.
+        let availableDisplays = displays()
         var snapshots: [WindowSnapshot] = []
         var refreshedElements: [WindowID: AXUIElement] = [:]
         for application in NSWorkspace.shared.runningApplications where Self.shouldManageApplication(
@@ -171,10 +194,15 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
             isHidden: application.isHidden,
             includeHidden: false
         ) {
-            let appElement = AXUIElementCreateApplication(application.processIdentifier)
+            let appElement = makeApplicationElement(pid: application.processIdentifier)
             let windows: [AXUIElement] = value(kAXWindowsAttribute, from: appElement) ?? []
             for window in windows {
-                guard let snapshot = snapshot(window, pid: application.processIdentifier, bundleIdentifier: application.bundleIdentifier) else { continue }
+                guard let snapshot = snapshot(
+                    window,
+                    pid: application.processIdentifier,
+                    bundleIdentifier: application.bundleIdentifier,
+                    displays: availableDisplays
+                ) else { continue }
                 if hasWindowServerSnapshot,
                    !isOnscreen(snapshot, candidates: onscreen[application.processIdentifier] ?? []) { continue }
                 snapshots.append(snapshot)
@@ -226,7 +254,8 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         return snapshot(
             element,
             pid: pid,
-            bundleIdentifier: NSRunningApplication(processIdentifier: pid)?.bundleIdentifier
+            bundleIdentifier: NSRunningApplication(processIdentifier: pid)?.bundleIdentifier,
+            displays: displays()
         )
     }
 
@@ -254,7 +283,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         }
     }
 
-    public func setFrame(_ frame: BTRect, for windowID: WindowID) throws {
+    public func setFrame(_ frame: BTRect, knownCurrentFrame: BTRect?, for windowID: WindowID) throws {
         try ensurePermission()
         guard let element = elements[windowID] ?? refreshElement(for: windowID) else {
             throw WindowSystemError.windowNotFound(windowID)
@@ -269,22 +298,82 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
               let sizeValue = AXValueCreate(.cgSize, &size)
         else { throw WindowSystemError.operationFailed("Could not encode the target frame.") }
 
-        // Several applications clamp position against their current size.
-        // The recovered tiler avoids that race by setting size, then position,
-        // then size once more so the requested outer edge lands exactly.
-        let initialSizeError = AXUIElementSetAttributeValue(element, kAXSizeAttribute as CFString, sizeValue)
-        let positionError = AXUIElementSetAttributeValue(element, kAXPositionAttribute as CFString, positionValue)
-        let finalSizeError = AXUIElementSetAttributeValue(element, kAXSizeAttribute as CFString, sizeValue)
+        // AppKit and Chromium reinterpret geometry writes while enhanced
+        // accessibility is active, so the window lands somewhere other than the
+        // requested frame. Disable it for the duration of the write. The
+        // attribute is only ever touched when the application had it enabled.
+        let enhancedUserInterface = suspendEnhancedUserInterfaceIfNeeded(for: element)
+        defer { enhancedUserInterface.restore() }
+
+        // Several applications clamp position against their current size, so the
+        // sequence is size, position, size. When the size is not changing the
+        // leading write asks for the value the window already has, so it is
+        // skipped; the trailing write still corrects any clamping.
+        let plan = FrameWritePlanner.plan(target: frame, knownCurrentFrame: knownCurrentFrame)
+        var errors: [AXError] = []
+        if plan.writesInitialSize {
+            errors.append(AXUIElementSetAttributeValue(element, kAXSizeAttribute as CFString, sizeValue))
+        }
+        if plan.writesPosition {
+            errors.append(AXUIElementSetAttributeValue(element, kAXPositionAttribute as CFString, positionValue))
+        }
+        if plan.writesFinalSize {
+            errors.append(AXUIElementSetAttributeValue(element, kAXSizeAttribute as CFString, sizeValue))
+        }
+
         let accepted: [AXError] = [.success, .attributeUnsupported]
-        guard accepted.contains(initialSizeError),
-              accepted.contains(positionError),
-              accepted.contains(finalSizeError)
-        else {
+        guard errors.allSatisfy({ accepted.contains($0) }) else {
             elements.removeValue(forKey: windowID)
             throw WindowSystemError.operationFailed(
-                "macOS rejected the window frame update (\(initialSizeError.rawValue), \(positionError.rawValue), \(finalSizeError.rawValue))."
+                "macOS rejected the window frame update (\(errors.map { String($0.rawValue) }.joined(separator: ", ")))."
             )
         }
+    }
+
+    /// Result of a suspend request. `restore` is a no-op unless BetterTile
+    /// actually disabled the attribute and the policy asks for it back.
+    private struct EnhancedUserInterfaceSuspension {
+        var applicationElement: AXUIElement?
+        var shouldRestore: Bool
+
+        func restore() {
+            guard shouldRestore, let applicationElement else { return }
+            AXUIElementSetAttributeValue(
+                applicationElement,
+                AccessibilityWindowSystem.enhancedUserInterfaceAttribute as CFString,
+                kCFBooleanTrue
+            )
+        }
+    }
+
+    private func suspendEnhancedUserInterfaceIfNeeded(
+        for window: AXUIElement
+    ) -> EnhancedUserInterfaceSuspension {
+        var pid: pid_t = 0
+        guard AXUIElementGetPid(window, &pid) == .success else {
+            return EnhancedUserInterfaceSuspension(applicationElement: nil, shouldRestore: false)
+        }
+        let applicationElement = makeApplicationElement(pid: pid)
+        let isEnabled: Bool = value(
+            Self.enhancedUserInterfaceAttribute,
+            from: applicationElement
+        ) ?? false
+        let decision = EnhancedUserInterfaceCoordinator.decision(
+            policy: enhancedUserInterfacePolicy,
+            isCurrentlyEnabled: isEnabled
+        )
+        guard decision.shouldDisableBeforeWrite else {
+            return EnhancedUserInterfaceSuspension(applicationElement: nil, shouldRestore: false)
+        }
+        AXUIElementSetAttributeValue(
+            applicationElement,
+            Self.enhancedUserInterfaceAttribute as CFString,
+            kCFBooleanFalse
+        )
+        return EnhancedUserInterfaceSuspension(
+            applicationElement: applicationElement,
+            shouldRestore: decision.shouldRestoreAfterWrite
+        )
     }
 
     public func setMinimized(_ minimized: Bool, for windowID: WindowID) throws {
@@ -299,6 +388,14 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         guard result == .success else {
             throw WindowSystemError.operationFailed("macOS rejected the minimize update (\(result.rawValue)).")
         }
+    }
+
+    /// Every application element is created here so the messaging timeout is
+    /// applied uniformly. A hung application must never block the main actor.
+    private func makeApplicationElement(pid: pid_t) -> AXUIElement {
+        let element = AXUIElementCreateApplication(pid)
+        AXUIElementSetMessagingTimeout(element, Self.applicationMessagingTimeout)
+        return element
     }
 
     private func ensurePermission() throws {
@@ -371,7 +468,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         guard error == .success, let observer else { return }
         observers[pid] = observer
         CFRunLoopAddSource(CFRunLoopGetMain(), AXObserverGetRunLoopSource(observer), .commonModes)
-        let application = AXUIElementCreateApplication(pid)
+        let application = makeApplicationElement(pid: pid)
         register(kAXWindowCreatedNotification, element: application, observer: observer, pid: pid)
         register(kAXFocusedWindowChangedNotification, element: application, observer: observer, pid: pid)
     }
@@ -437,15 +534,21 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         eventHandler?(event)
     }
 
-    private func snapshot(_ element: AXUIElement, pid: pid_t, bundleIdentifier: String?) -> WindowSnapshot? {
+    private func snapshot(
+        _ element: AXUIElement,
+        pid: pid_t,
+        bundleIdentifier: String?,
+        displays availableDisplays: [DisplaySnapshot]
+    ) -> WindowSnapshot? {
         guard let role: String = value(kAXRoleAttribute, from: element), role == kAXWindowRole,
               let position: CGPoint = axValue(kAXPositionAttribute, from: element, type: .cgPoint),
               let size: CGSize = axValue(kAXSizeAttribute, from: element, type: .cgSize),
               size.width > 20, size.height > 20
         else { return nil }
         let frame = BTRect(x: position.x, y: position.y, width: size.width, height: size.height)
-        guard let display = display(containing: frame.center) else { return nil }
+        guard let display = display(containing: frame.center, in: availableDisplays) else { return nil }
         let id = WindowID(rawValue: "\(pid):\(CFHash(element))")
+        if elements[id] == nil { AXUIElementSetMessagingTimeout(element, Self.windowMessagingTimeout) }
         elements[id] = element
         let minimized: Bool = value(kAXMinimizedAttribute, from: element) ?? false
         let fullScreen: Bool = value("AXFullScreen", from: element) ?? false
@@ -470,8 +573,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         )
     }
 
-    private func display(containing point: BTPoint) -> DisplaySnapshot? {
-        let available = displays()
+    private func display(containing point: BTPoint, in available: [DisplaySnapshot]) -> DisplaySnapshot? {
         return available.first(where: { $0.frame.contains(point) })
             ?? available.max(by: { ($0.frame.intersection(BTRect(x: point.x, y: point.y, width: 1, height: 1))?.area ?? 0) < ($1.frame.intersection(BTRect(x: point.x, y: point.y, width: 1, height: 1))?.area ?? 0) })
     }

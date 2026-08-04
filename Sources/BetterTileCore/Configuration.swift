@@ -111,6 +111,7 @@ public struct BetterTileConfiguration: Codable, Hashable, Sendable {
     public var adjacencyTolerance: Double
     public var snapAreaBindings: [SnapAreaBinding]
     public var doubleClickTitleBarToMaximize: Bool
+    public var enhancedUserInterfacePolicy: EnhancedUserInterfacePolicy
     public var shortcuts: [ShortcutBinding]
     public var customZones: [CustomZone]
 
@@ -133,6 +134,7 @@ public struct BetterTileConfiguration: Codable, Hashable, Sendable {
         adjacencyTolerance: Double = 6,
         snapAreaBindings: [SnapAreaBinding] = BetterTileConfiguration.defaultSnapAreaBindings,
         doubleClickTitleBarToMaximize: Bool = true,
+        enhancedUserInterfacePolicy: EnhancedUserInterfacePolicy = .disableAndRestore,
         shortcuts: [ShortcutBinding] = BetterTileConfiguration.defaultShortcuts,
         customZones: [CustomZone] = []
     ) {
@@ -154,6 +156,7 @@ public struct BetterTileConfiguration: Codable, Hashable, Sendable {
         self.adjacencyTolerance = adjacencyTolerance
         self.snapAreaBindings = snapAreaBindings
         self.doubleClickTitleBarToMaximize = doubleClickTitleBarToMaximize
+        self.enhancedUserInterfacePolicy = enhancedUserInterfacePolicy
         self.shortcuts = shortcuts
         self.customZones = customZones
     }
@@ -166,6 +169,7 @@ public struct BetterTileConfiguration: Codable, Hashable, Sendable {
         case singleWindowInitialPlacement
         case dockReservationMode
         case snapSuppressionModifiers, adjacencyTolerance, snapAreaBindings, doubleClickTitleBarToMaximize
+        case enhancedUserInterfacePolicy
         case shortcuts, customZones
         case layoutMode, bentoEnabled, bentoStates
     }
@@ -234,6 +238,10 @@ public struct BetterTileConfiguration: Codable, Hashable, Sendable {
         adjacencyTolerance = try container.decodeIfPresent(Double.self, forKey: .adjacencyTolerance) ?? 6
         snapAreaBindings = try container.decodeIfPresent([SnapAreaBinding].self, forKey: .snapAreaBindings) ?? Self.defaultSnapAreaBindings
         doubleClickTitleBarToMaximize = try container.decodeIfPresent(Bool.self, forKey: .doubleClickTitleBarToMaximize) ?? true
+        enhancedUserInterfacePolicy = try container.decodeIfPresent(
+            EnhancedUserInterfacePolicy.self,
+            forKey: .enhancedUserInterfacePolicy
+        ) ?? .disableAndRestore
         let decodedShortcuts = try container.decodeIfPresent([ShortcutBinding].self, forKey: .shortcuts)
         if version < 3, decodedShortcuts == Self.legacyDefaultShortcutsV2 {
             shortcuts = Self.defaultShortcuts
@@ -280,6 +288,7 @@ public struct BetterTileConfiguration: Codable, Hashable, Sendable {
         try container.encode(adjacencyTolerance, forKey: .adjacencyTolerance)
         try container.encode(snapAreaBindings, forKey: .snapAreaBindings)
         try container.encode(doubleClickTitleBarToMaximize, forKey: .doubleClickTitleBarToMaximize)
+        try container.encode(enhancedUserInterfacePolicy, forKey: .enhancedUserInterfacePolicy)
         try container.encode(shortcuts, forKey: .shortcuts)
         try container.encode(customZones, forKey: .customZones)
     }
@@ -368,9 +377,10 @@ public struct ConfigurationChangeSet: OptionSet, Hashable, Sendable {
     public static let bentoGeometry = Self(rawValue: 1 << 4)
     public static let activationPolicy = Self(rawValue: 1 << 5)
     public static let titleBar = Self(rawValue: 1 << 6)
+    public static let accessibilityWrites = Self(rawValue: 1 << 7)
     public static let all: Self = [
         .shortcuts, .snapping, .linkedResize, .divider,
-        .bentoGeometry, .activationPolicy, .titleBar,
+        .bentoGeometry, .activationPolicy, .titleBar, .accessibilityWrites,
     ]
 
     public static func between(
@@ -401,6 +411,9 @@ public struct ConfigurationChangeSet: OptionSet, Hashable, Sendable {
             || old.bentoSwapHoverDelay != new.bentoSwapHoverDelay
             || old.adjacencyTolerance != new.adjacencyTolerance {
             changes.insert(.bentoGeometry)
+        }
+        if old.enhancedUserInterfacePolicy != new.enhancedUserInterfacePolicy {
+            changes.insert(.accessibilityWrites)
         }
         if old.showDockIcon != new.showDockIcon {
             changes.insert(.activationPolicy)
