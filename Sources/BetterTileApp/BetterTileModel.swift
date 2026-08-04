@@ -56,6 +56,7 @@ final class BetterTileModel {
         let loaded = (try? store.load()) ?? BetterTileConfiguration()
         let windowSystem = AccessibilityWindowSystem()
         configuration = loaded
+        windowSystem.enhancedUserInterfacePolicy = loaded.enhancedUserInterfacePolicy
         system = windowSystem
         coordinator = WindowCoordinator(system: windowSystem)
         shortcuts = GlobalShortcutMonitor { _ in }
@@ -676,6 +677,9 @@ final class BetterTileModel {
         }
         if changes.contains(.titleBar) {
             titleBarDoubleClick.isEnabled = configuration.doubleClickTitleBarToMaximize
+        }
+        if changes.contains(.accessibilityWrites) {
+            system.enhancedUserInterfacePolicy = configuration.enhancedUserInterfacePolicy
         }
         if changes.contains(.activationPolicy) {
             applyDockPolicy()

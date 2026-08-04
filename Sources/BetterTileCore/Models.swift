@@ -145,8 +145,18 @@ public protocol WindowSystem: AnyObject {
     func focusedWindow() throws -> WindowSnapshot?
     func visibleWindows() throws -> [WindowSnapshot]
     func displays() -> [DisplaySnapshot]
-    func setFrame(_ frame: BTRect, for windowID: WindowID) throws
+    /// - Parameter knownCurrentFrame: The caller's freshest reading of the
+    ///   window's frame, when it has one. Implementations may use it to skip
+    ///   redundant Accessibility writes; passing `nil` always performs the full
+    ///   write sequence. See `FrameWritePlanner`.
+    func setFrame(_ frame: BTRect, knownCurrentFrame: BTRect?, for windowID: WindowID) throws
     func setMinimized(_ minimized: Bool, for windowID: WindowID) throws
+}
+
+public extension WindowSystem {
+    func setFrame(_ frame: BTRect, for windowID: WindowID) throws {
+        try setFrame(frame, knownCurrentFrame: nil, for: windowID)
+    }
 }
 
 @MainActor
