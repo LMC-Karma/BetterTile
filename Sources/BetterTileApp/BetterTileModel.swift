@@ -734,10 +734,10 @@ final class BetterTileModel {
     private func applyRuntimeConfiguration(_ changes: ConfigurationChangeSet) {
         let interval = Self.signposter.beginInterval("applyConfiguration")
         defer { Self.signposter.endInterval("applyConfiguration", interval) }
-        if !changes.isDisjoint(with: [.snapping, .bentoGeometry]) {
+        if !changes.isDisjoint(with: [.snapping, .bentoGeometry, .applicationRules]) {
             dragSnap.configuration = configuration
         }
-        if changes.contains(.linkedResize) {
+        if !changes.isDisjoint(with: [.linkedResize, .applicationRules]) {
             linkedResize.configuration = configuration
         }
         if !changes.isDisjoint(with: [.divider, .bentoGeometry]) {
