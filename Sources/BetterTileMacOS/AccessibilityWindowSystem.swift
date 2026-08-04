@@ -26,14 +26,19 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
     private var recentApplicationPIDs: [pid_t] = []
     private var activationObserver: NSObjectProtocol?
 
-    /// Applied to every application element. Reads are the bulk of the traffic
-    /// and a stalled application should be skipped rather than block the main
-    /// actor, so this stays short.
-    private static let applicationMessagingTimeout: Float = 0.35
-    /// Applied to cached window elements. Frame writes live here, and a
-    /// spuriously timed-out write is worse than a slow one, so this is more
-    /// generous than the application timeout.
-    private static let windowMessagingTimeout: Float = 1.5
+    /// The process-wide default, set once on the system-wide element. Reads are
+    /// the bulk of the traffic and a stalled application should be skipped
+    /// rather than block the main actor, so this stays short.
+    ///
+    /// This has to be set process-wide rather than per element: the API sets a
+    /// timeout "only for that object, not for other accessibility objects that
+    /// are equal to it", and every sweep hands back fresh element instances for
+    /// windows already known, so per-element overrides do not survive.
+    private static let defaultMessagingTimeout: Float = 0.35
+    /// Raised on a window element for the duration of a frame write only, then
+    /// released back to the process default. A spuriously timed-out write is
+    /// worse than a slow one.
+    private static let frameWriteMessagingTimeout: Float = 1.5
     private nonisolated static let enhancedUserInterfaceAttribute = "AXEnhancedUserInterface"
 
     /// How frame writes treat `AXEnhancedUserInterface`. Owned by the app layer
@@ -41,6 +46,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
     public var enhancedUserInterfacePolicy: EnhancedUserInterfacePolicy = .disableAndRestore
 
     public init() {
+        AXUIElementSetMessagingTimeout(AXUIElementCreateSystemWide(), Self.defaultMessagingTimeout)
         if let application = NSWorkspace.shared.frontmostApplication {
             recordActivation(of: application)
         }
@@ -305,6 +311,11 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         let enhancedUserInterface = suspendEnhancedUserInterfaceIfNeeded(for: element)
         defer { enhancedUserInterface.restore() }
 
+        // A frame write deserves more patience than a bulk read. Passing 0
+        // returns this element to the process-wide default afterwards.
+        AXUIElementSetMessagingTimeout(element, Self.frameWriteMessagingTimeout)
+        defer { AXUIElementSetMessagingTimeout(element, 0) }
+
         // Several applications clamp position against their current size, so the
         // sequence is size, position, size. When the size is not changing the
         // leading write asks for the value the window already has, so it is
@@ -390,11 +401,12 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         }
     }
 
-    /// Every application element is created here so the messaging timeout is
-    /// applied uniformly. A hung application must never block the main actor.
+    /// Every application element is created here. The process-wide default set
+    /// in `init` already bounds these; repeating it keeps the bound explicit if
+    /// the process default is ever changed.
     private func makeApplicationElement(pid: pid_t) -> AXUIElement {
         let element = AXUIElementCreateApplication(pid)
-        AXUIElementSetMessagingTimeout(element, Self.applicationMessagingTimeout)
+        AXUIElementSetMessagingTimeout(element, Self.defaultMessagingTimeout)
         return element
     }
 
@@ -548,7 +560,6 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         let frame = BTRect(x: position.x, y: position.y, width: size.width, height: size.height)
         guard let display = display(containing: frame.center, in: availableDisplays) else { return nil }
         let id = WindowID(rawValue: "\(pid):\(CFHash(element))")
-        if elements[id] == nil { AXUIElementSetMessagingTimeout(element, Self.windowMessagingTimeout) }
         elements[id] = element
         let minimized: Bool = value(kAXMinimizedAttribute, from: element) ?? false
         let fullScreen: Bool = value("AXFullScreen", from: element) ?? false
