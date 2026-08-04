@@ -24,6 +24,36 @@ public enum WindowAction: String, Codable, CaseIterable, Identifiable, Sendable 
             .capitalized
     }
 
+    /// The fixed share of a display this action targets, or `nil` for actions
+    /// that depend on the window's current frame. Shared by `targetFrame` and
+    /// by external-change destination matching so both agree on what, say, a
+    /// right half is.
+    public var partition: NormalizedRect? {
+        switch self {
+        case .leftHalf: .init(x: 0, y: 0, width: 0.5, height: 1)
+        case .rightHalf: .init(x: 0.5, y: 0, width: 0.5, height: 1)
+        case .topHalf: .init(x: 0, y: 0, width: 1, height: 0.5)
+        case .bottomHalf: .init(x: 0, y: 0.5, width: 1, height: 0.5)
+        case .leftThird: .init(x: 0, y: 0, width: 1.0 / 3, height: 1)
+        case .centerThird: .init(x: 1.0 / 3, y: 0, width: 1.0 / 3, height: 1)
+        case .rightThird: .init(x: 2.0 / 3, y: 0, width: 1.0 / 3, height: 1)
+        case .leftTwoThirds: .init(x: 0, y: 0, width: 2.0 / 3, height: 1)
+        case .rightTwoThirds: .init(x: 1.0 / 3, y: 0, width: 2.0 / 3, height: 1)
+        case .topLeftQuarter: .init(x: 0, y: 0, width: 0.5, height: 0.5)
+        case .topRightQuarter: .init(x: 0.5, y: 0, width: 0.5, height: 0.5)
+        case .bottomLeftQuarter: .init(x: 0, y: 0.5, width: 0.5, height: 0.5)
+        case .bottomRightQuarter: .init(x: 0.5, y: 0.5, width: 0.5, height: 0.5)
+        case .topLeftSixth: .init(x: 0, y: 0, width: 1.0 / 3, height: 0.5)
+        case .topCenterSixth: .init(x: 1.0 / 3, y: 0, width: 1.0 / 3, height: 0.5)
+        case .topRightSixth: .init(x: 2.0 / 3, y: 0, width: 1.0 / 3, height: 0.5)
+        case .bottomLeftSixth: .init(x: 0, y: 0.5, width: 1.0 / 3, height: 0.5)
+        case .bottomCenterSixth: .init(x: 1.0 / 3, y: 0.5, width: 1.0 / 3, height: 0.5)
+        case .bottomRightSixth: .init(x: 2.0 / 3, y: 0.5, width: 1.0 / 3, height: 0.5)
+        case .maximize: .init(x: 0, y: 0, width: 1, height: 1)
+        default: nil
+        }
+    }
+
     public var isDisplayTransfer: Bool { self == .previousDisplay || self == .nextDisplay }
     public var isRestore: Bool { self == .restore }
 }
@@ -60,28 +90,8 @@ public struct StandardActionEngine: Sendable {
 
     public func targetFrame(for action: WindowAction, window: WindowSnapshot, display: DisplaySnapshot) -> BTRect? {
         let bounds = display.visibleFrame
-        let normalized: NormalizedRect? = switch action {
-        case .leftHalf: .init(x: 0, y: 0, width: 0.5, height: 1)
-        case .rightHalf: .init(x: 0.5, y: 0, width: 0.5, height: 1)
-        case .topHalf: .init(x: 0, y: 0, width: 1, height: 0.5)
-        case .bottomHalf: .init(x: 0, y: 0.5, width: 1, height: 0.5)
-        case .leftThird: .init(x: 0, y: 0, width: 1.0 / 3, height: 1)
-        case .centerThird: .init(x: 1.0 / 3, y: 0, width: 1.0 / 3, height: 1)
-        case .rightThird: .init(x: 2.0 / 3, y: 0, width: 1.0 / 3, height: 1)
-        case .leftTwoThirds: .init(x: 0, y: 0, width: 2.0 / 3, height: 1)
-        case .rightTwoThirds: .init(x: 1.0 / 3, y: 0, width: 2.0 / 3, height: 1)
-        case .topLeftQuarter: .init(x: 0, y: 0, width: 0.5, height: 0.5)
-        case .topRightQuarter: .init(x: 0.5, y: 0, width: 0.5, height: 0.5)
-        case .bottomLeftQuarter: .init(x: 0, y: 0.5, width: 0.5, height: 0.5)
-        case .bottomRightQuarter: .init(x: 0.5, y: 0.5, width: 0.5, height: 0.5)
-        case .topLeftSixth: .init(x: 0, y: 0, width: 1.0 / 3, height: 0.5)
-        case .topCenterSixth: .init(x: 1.0 / 3, y: 0, width: 1.0 / 3, height: 0.5)
-        case .topRightSixth: .init(x: 2.0 / 3, y: 0, width: 1.0 / 3, height: 0.5)
-        case .bottomLeftSixth: .init(x: 0, y: 0.5, width: 1.0 / 3, height: 0.5)
-        case .bottomCenterSixth: .init(x: 1.0 / 3, y: 0.5, width: 1.0 / 3, height: 0.5)
-        case .bottomRightSixth: .init(x: 2.0 / 3, y: 0.5, width: 1.0 / 3, height: 0.5)
-        default: nil
-        }
+        // maximize is handled below so it keeps its own clamping path.
+        let normalized: NormalizedRect? = action == .maximize ? nil : action.partition
 
         if let normalized {
             return normalized.frame(in: bounds).clamped(to: bounds, minimumSize: window.constraints.minimumSize)
