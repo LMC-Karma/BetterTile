@@ -194,3 +194,45 @@ private let requested = BTRect(x: 960, y: 30, width: 960, height: 983)
     #expect(PlacementVerifier.outcome(requested: requested, actual: wrongSizeOnly) != .failed(actual: wrongSizeOnly))
     #expect(PlacementVerifier.outcome(requested: requested, actual: wrongPlaceOnly) == .failed(actual: wrongPlaceOnly))
 }
+
+// MARK: - Bento containment
+
+/// Bento panes are derived from the whole work area, so "mostly on screen" is
+/// not good enough for one: a pane that overhangs is a bad proposal even though
+/// the same frame would be a perfectly reasonable window to place by hand.
+@Test func bentoContainmentIsStricterThanReachability() {
+    let overhanging = BTRect(x: -20, y: -10, width: 960, height: 983)
+    #expect(PlacementBounds.isReachable(overhanging, in: screen))
+    #expect(!PlacementBounds.isContained(overhanging, in: screen))
+}
+
+@Test func aPaneFillingTheWorkAreaIsContained() {
+    #expect(PlacementBounds.isContained(screen, in: screen))
+}
+
+/// Derived frames carry rounding, so containment tolerates sub-point error
+/// without tolerating a window actually leaving the work area.
+@Test func containmentToleratesRoundingButNotRealOverhang() {
+    #expect(PlacementBounds.isContained(BTRect(x: -0.3, y: 0, width: 960, height: 983), in: screen))
+    #expect(!PlacementBounds.isContained(BTRect(x: -4, y: 0, width: 960, height: 983), in: screen))
+}
+
+@Test func aPaneRunningPastTheFarEdgeIsNotContained() {
+    #expect(!PlacementBounds.isContained(BTRect(x: 1000, y: 0, width: 960, height: 983), in: screen))
+    #expect(!PlacementBounds.isContained(BTRect(x: 0, y: 30, width: 1920, height: 983), in: screen))
+}
+
+@Test func aDegeneratePaneIsNotContained() {
+    #expect(!PlacementBounds.isContained(BTRect(x: 0, y: 0, width: 0, height: 500), in: screen))
+}
+
+/// A confirmed-gone identifier for a window the layout does not hold is inert.
+/// That is what makes it safe to hand a whole sweep's batch of destroyed
+/// identifiers to every display: identifiers belonging to another display, to a
+/// manual-mode desktop, or to a session that was never initialised cannot evict
+/// anything.
+@Test func aConfirmedGoneIdentifierForAnUnheldWindowDoesNothing() {
+    var tracker = WindowPresenceTracker()
+    #expect(tracker.observe(known: [a], present: [a], confirmedGone: [b, c]).isEmpty)
+    #expect(tracker.pending.isEmpty)
+}

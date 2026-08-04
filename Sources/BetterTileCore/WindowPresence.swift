@@ -147,3 +147,28 @@ public enum PlacementVerifier {
         return sizeMatches ? .landed : .resisted(actual: actual)
     }
 }
+
+public extension PlacementBounds {
+    /// Slack for the arithmetic that produced a frame, not for how far a window
+    /// may stray.
+    static let containmentTolerance: Double = 0.5
+
+    /// Whether a frame lies entirely inside the visible frame.
+    ///
+    /// Bento owns the whole work area and its panes are derived from it, so a
+    /// proposal that leaves the visible frame at all is a bad proposal. That is
+    /// a stricter question than `isReachable`, which asks only whether a window
+    /// the user placed deliberately is still grabbable.
+    static func isContained(
+        _ frame: BTRect,
+        in visibleFrame: BTRect,
+        tolerance: Double = containmentTolerance
+    ) -> Bool {
+        guard visibleFrame.size.width > 0, visibleFrame.size.height > 0 else { return true }
+        guard frame.size.width > 0, frame.size.height > 0 else { return false }
+        return frame.minX >= visibleFrame.minX - tolerance
+            && frame.minY >= visibleFrame.minY - tolerance
+            && frame.maxX <= visibleFrame.maxX + tolerance
+            && frame.maxY <= visibleFrame.maxY + tolerance
+    }
+}

@@ -252,6 +252,11 @@ final class BetterTileModel {
             shortcut \(actionPlan.resolvedAction.rawValue, privacy: .public)             source=\(actionPlan.windowID.rawValue, privacy: .public)             placements=\(plan.placements.map { "\($0.windowID.rawValue)@\($0.frame.debugText)" }.joined(separator: " "), privacy: .public)
             """
         )
+        guard bentoProposalIsContained(plan.placements, in: display) else {
+            statusMessage = "That layout would have placed a window outside the screen area."
+            Self.bentoLog.error("rejected shortcut proposal: a pane fell outside the work area")
+            return false
+        }
         guard coordinator.applyPlacements(plan.placements) else {
             Self.bentoLog.error("shortcut placements rejected: \(self.coordinator.lastError ?? "unknown", privacy: .public)")
             return false
@@ -1149,15 +1154,53 @@ final class BetterTileModel {
             restoreBentoLayout(session: session, displayWindows: displayWindows, display: display)
             return
         }
-        session.bentoState = plan.state
+        // Apply before committing. A proposed tree that the coordinator could
+        // not realise must not become the session's state, or the layout and
+        // the windows disagree from then on.
+        guard commitBentoProposal(plan.placements, state: plan.state, session: &session, display: display) else {
+            restoreBentoLayout(session: session, displayWindows: displayWindows, display: display)
+            return
+        }
+        scheduleBentoSettlement(displayID: display.id, changedWindowIDs: Set(plan.placements.map(\.windowID)))
+        refreshDividerBoundaries()
+    }
+
+    /// Validates, applies, and only then commits a proposed Bento layout.
+    /// Returns `false` with the coordinator's error surfaced when the proposal
+    /// could not be realised, leaving the session's previous state untouched.
+    @discardableResult
+    private func commitBentoProposal(
+        _ placements: [Placement],
+        state: BentoLayoutState,
+        session: inout LayoutSession,
+        display: DisplaySnapshot
+    ) -> Bool {
+        guard bentoProposalIsContained(placements, in: display) else {
+            statusMessage = "That layout would have placed a window outside the screen area."
+            Self.bentoLog.error("rejected proposal: a pane fell outside the work area")
+            presentActionResult(succeeded: false, error: statusMessage, displayID: display.id)
+            return false
+        }
+        guard coordinator.applyPlacements(placements, recordHistory: false) else {
+            statusMessage = coordinator.lastError ?? "That layout could not be applied."
+            Self.bentoLog.error("proposal rejected: \(self.statusMessage ?? "unknown", privacy: .public)")
+            presentActionResult(succeeded: false, error: statusMessage, displayID: display.id)
+            return false
+        }
+        session.bentoState = state
         session.recordProposedFrames(
-            Dictionary(uniqueKeysWithValues: plan.placements.map { ($0.windowID, $0.frame) })
+            Dictionary(uniqueKeysWithValues: placements.map { ($0.windowID, $0.frame) })
         )
         sessionStore.update(display.id) { $0 = session }
         sessionRevision &+= 1
-        _ = coordinator.applyPlacements(plan.placements, recordHistory: false)
-        scheduleBentoSettlement(displayID: display.id, changedWindowIDs: Set(plan.placements.map(\.windowID)))
-        refreshDividerBoundaries()
+        return true
+    }
+
+    /// Bento panes are derived from the whole work area, so a pane that leaves
+    /// it is a bad proposal. Stricter than the coordinator's reachability rule,
+    /// which only asks whether a deliberately placed window is still grabbable.
+    private func bentoProposalIsContained(_ placements: [Placement], in display: DisplaySnapshot) -> Bool {
+        placements.allSatisfy { PlacementBounds.isContained($0.frame, in: display.visibleFrame) }
     }
 
     /// Re-applies the tree the session already holds, returning the windows to
@@ -1170,7 +1213,13 @@ final class BetterTileModel {
         let placements = BentoLayoutEngine(state: session.bentoState)
             .placements(for: displayWindows, in: display)
         guard !placements.isEmpty else { return }
-        _ = coordinator.applyPlacements(placements, recordHistory: false)
+        if !coordinator.applyPlacements(placements, recordHistory: false) {
+            // The windows are already back at their pre-attempt frames; what is
+            // left is to say so rather than let the failure pass silently.
+            statusMessage = coordinator.lastError ?? "The previous layout could not be restored."
+            Self.bentoLog.error("restore failed: \(self.statusMessage ?? "unknown", privacy: .public)")
+            presentActionResult(succeeded: false, error: statusMessage, displayID: display.id)
+        }
         refreshDividerBoundaries()
     }
 
@@ -1319,6 +1368,12 @@ final class BetterTileModel {
             return
         }
         guard let windows = suppliedWindows ?? (try? system.visibleWindows()) else { return }
+        // Destroyed-window identifiers are a batch consumed by exactly one
+        // completed sweep. Capturing here means an early return above leaves
+        // them pending for the next attempt, while identifiers belonging to
+        // manual-mode desktops or sessions that were never initialised still
+        // expire at the end of this sweep instead of accumulating forever.
+        let consumedDestroyedWindowIDs = confirmedGoneWindowIDs
         let eligible = windows.filter { $0.isEligible && !$0.isFloating }
         let signature = windowSignature(eligible)
         let windowSetChanged = signature != lastVisibleSignature
@@ -1398,7 +1453,12 @@ final class BetterTileModel {
                     // tree and ratios already describe how the user left it.
                 } else if session.isBentoInitialized {
                     let membershipChanged = activation.previousWindowIDs != session.windowIDs
-                    reconcileBentoSession(&session, windows: displayWindows, display: display)
+                    reconcileBentoSession(
+                        &session,
+                        windows: displayWindows,
+                        display: display,
+                        confirmedGone: consumedDestroyedWindowIDs
+                    )
                     shouldApply = workAreaChanged || membershipChanged
                 } else if displayWindows.count > 1,
                           let adopted = BentoLayoutAdopter(tolerance: configuration.adjacencyTolerance)
@@ -1496,6 +1556,7 @@ final class BetterTileModel {
                 }
             }
         }
+        confirmedGoneWindowIDs.subtract(consumedDestroyedWindowIDs)
         activeDisplayID = resolvedActiveDisplay
             ?? activeDisplayID.flatMap { current in displays.contains(where: { $0.id == current }) ? current : nil }
             ?? displays.first(where: { !(sessionStore.session(for: $0.id)?.windowIDs.isEmpty ?? true) })?.id
@@ -1550,7 +1611,12 @@ final class BetterTileModel {
         }
     }
 
-    private func reconcileBentoSession(_ session: inout LayoutSession, windows: [WindowSnapshot], display: DisplaySnapshot) {
+    private func reconcileBentoSession(
+        _ session: inout LayoutSession,
+        windows: [WindowSnapshot],
+        display: DisplaySnapshot,
+        confirmedGone: Set<WindowID> = []
+    ) {
         let frames = Dictionary(uniqueKeysWithValues: windows.map { ($0.id, $0.frame) })
         let present = Set(windows.map(\.id))
         let constraints = Dictionary(uniqueKeysWithValues: windows.map { ($0.id, $0.constraints) })
@@ -1568,10 +1634,9 @@ final class BetterTileModel {
         let removals = session.presence.observe(
             known: knownIDs,
             present: present,
-            confirmedGone: confirmedGoneWindowIDs.intersection(knownIDs),
+            confirmedGone: confirmedGone,
             exempt: temporarilyHidden
         )
-        confirmedGoneWindowIDs.subtract(removals)
         for oldID in removals {
             state.remove(oldID)
         }
