@@ -461,6 +461,8 @@ private final class FakeWindowSystem: WindowSystem, TargetedWindowSystem, Window
     /// Every `knownCurrentFrame` hint the coordinator supplied, per window, in
     /// call order. `nil` means the coordinator had no fresh reading.
     var recordedKnownCurrentFrames: [WindowID: [BTRect?]] = [:]
+    /// Simulates an application that refuses to grow beyond a fixed width.
+    var clampWidth: Double?
 
     init() {
         windows = [WindowSnapshot(
@@ -493,8 +495,10 @@ private final class FakeWindowSystem: WindowSystem, TargetedWindowSystem, Window
             ignoredFrameWriteCounts[windowID, default: 0] -= 1
             return
         }
-        windows[index].frame = frame
-        windows[index].displayID = availableDisplays.first(where: { $0.visibleFrame.intersection(frame)?.area ?? 0 > frame.area / 2 })?.id ?? windows[index].displayID
+        var applied = frame
+        if let clampWidth { applied.size.width = min(applied.size.width, clampWidth) }
+        windows[index].frame = applied
+        windows[index].displayID = availableDisplays.first(where: { $0.visibleFrame.intersection(applied)?.area ?? 0 > applied.area / 2 })?.id ?? windows[index].displayID
     }
 
     func setMinimized(_ minimized: Bool, for windowID: WindowID) throws {
@@ -593,4 +597,45 @@ private final class FakeWindowSystem: WindowSystem, TargetedWindowSystem, Window
     let id = system.windows[0].id
     try system.setFrame(BTRect(x: 10, y: 10, width: 300, height: 300), for: id)
     #expect(system.recordedKnownCurrentFrames[id] == [nil])
+}
+
+// MARK: - Truthful outcomes
+
+/// A successful Accessibility write is not the same as a window that moved.
+/// Reporting the write told the user an action succeeded while they were
+/// looking at a window that had not moved.
+@Test @MainActor func anActionThatLeavesTheWindowPutIsReportedAsAFailure() throws {
+    let system = FakeWindowSystem()
+    let coordinator = WindowCoordinator(system: system)
+    let original = system.windows[0].frame
+    system.ignoredFrameWriteCounts[system.windows[0].id] = 1
+
+    #expect(!coordinator.perform(.leftHalf))
+    #expect(system.windows[0].frame == original)
+    #expect(coordinator.lastError == "The window did not move where it was asked to.")
+}
+
+/// A window that keeps a size of its own is still where the user asked for it,
+/// so the action succeeded and nothing is reported.
+@Test @MainActor func anActionIsStillASuccessWhenTheWindowKeepsItsOwnSize() throws {
+    let system = FakeWindowSystem()
+    system.clampWidth = 400
+    let coordinator = WindowCoordinator(system: system)
+
+    #expect(coordinator.perform(.leftHalf))
+    #expect(system.windows[0].frame.size.width == 400)
+    #expect(system.windows[0].frame.minX == 0, "the position is still honoured")
+    #expect(coordinator.lastError == nil)
+}
+
+@Test @MainActor func placementsOutsideTheDisplayAreRejected() throws {
+    let system = FakeWindowSystem()
+    let coordinator = WindowCoordinator(system: system)
+    let offScreen = Placement(
+        windowID: system.windows[0].id,
+        frame: BTRect(x: 4000, y: 0, width: 500, height: 500)
+    )
+
+    #expect(!coordinator.applyPlacements([offScreen]))
+    #expect(coordinator.lastError == "A window would have been placed off screen.")
 }

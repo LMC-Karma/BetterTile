@@ -99,8 +99,23 @@ public final class WindowCoordinator {
                 history.record(plan.sourceFrame, for: plan.windowID)
             }
             try apply(plan.targetFrame, to: plan.windowID, knownCurrentFrame: plan.sourceFrame)
-            lastError = nil
-            return true
+            // An accepted write is not the same as a window that moved. Read
+            // back so the reported outcome is what the user is looking at.
+            guard let landed = try snapshots(ids: [plan.windowID]).first else {
+                lastError = nil
+                return true
+            }
+            switch PlacementVerifier.outcome(requested: plan.targetFrame, actual: landed.frame) {
+            case .landed, .resisted:
+                // A window that kept a size of its own is still where the user
+                // asked for it, and the layout adapts. Only the position being
+                // wrong is a failure worth reporting.
+                lastError = nil
+                return true
+            case .failed:
+                lastError = "The window did not move where it was asked to."
+                return false
+            }
         } catch {
             lastError = error.localizedDescription
             return false
@@ -339,6 +354,7 @@ public final class WindowCoordinator {
     private func validate(_ placements: [Placement]) throws {
         let ids = Set(placements.map(\.windowID))
         let snapshots = Dictionary(uniqueKeysWithValues: try snapshots(ids: ids).map { ($0.id, $0) })
+        let displays = Dictionary(uniqueKeysWithValues: system.displays().map { ($0.id, $0) })
         for placement in placements {
             guard let snapshot = snapshots[placement.windowID] else { throw WindowSystemError.windowNotFound(placement.windowID) }
             guard snapshot.isEligible, snapshot.constraints.isMovable, snapshot.constraints.isResizable else {
@@ -347,6 +363,15 @@ public final class WindowCoordinator {
             guard placement.frame.size.width >= snapshot.constraints.minimumSize.width,
                   placement.frame.size.height >= snapshot.constraints.minimumSize.height
             else { throw WindowSystemError.operationFailed("A window reached its minimum size.") }
+            // A legal size is not enough: a stale display frame or a split
+            // driven to an edge can produce a placement that leaves nothing on
+            // screen to grab.
+            if let display = displays[snapshot.displayID],
+               !PlacementBounds.isReachable(placement.frame, in: display.visibleFrame) {
+                throw WindowSystemError.operationFailed(
+                    "A window would have been placed off screen."
+                )
+            }
         }
     }
 

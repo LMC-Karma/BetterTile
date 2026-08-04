@@ -122,3 +122,75 @@ private let c = WindowID(rawValue: "c")
     _ = session.presence.observe(known: [a, b], present: [a])
     #expect(session.presence.pending[b] == 1)
 }
+
+// MARK: - Placement bounds
+
+private let screen = BTRect(x: 0, y: 0, width: 1920, height: 983)
+
+@Test func aPlacementInsideTheDisplayIsReachable() {
+    #expect(PlacementBounds.isReachable(BTRect(x: 0, y: 0, width: 960, height: 983), in: screen))
+}
+
+@Test func aPlacementMostlyOffScreenIsRejected() {
+    #expect(!PlacementBounds.isReachable(BTRect(x: 1800, y: 0, width: 960, height: 983), in: screen))
+}
+
+@Test func aPlacementEntirelyOffScreenIsRejected() {
+    #expect(!PlacementBounds.isReachable(BTRect(x: 4000, y: 0, width: 400, height: 400), in: screen))
+    #expect(!PlacementBounds.isReachable(BTRect(x: -900, y: 0, width: 400, height: 400), in: screen))
+}
+
+/// A window may legitimately overhang a little; the rule is about frames that
+/// leave nothing to grab, not about pixel-perfect containment.
+@Test func aSlightOverhangIsStillReachable() {
+    #expect(PlacementBounds.isReachable(BTRect(x: -20, y: -10, width: 960, height: 983), in: screen))
+}
+
+@Test func aDegeneratePlacementIsNotReachable() {
+    #expect(!PlacementBounds.isReachable(BTRect(x: 0, y: 0, width: 0, height: 500), in: screen))
+}
+
+/// Unknown display bounds must not cause every placement to be rejected.
+@Test func unknownDisplayBoundsDoNotBlockPlacement() {
+    #expect(
+        PlacementBounds.isReachable(
+            BTRect(x: 0, y: 0, width: 400, height: 400),
+            in: BTRect(x: 0, y: 0, width: 0, height: 0)
+        )
+    )
+}
+
+// MARK: - Placement verification
+
+private let requested = BTRect(x: 960, y: 30, width: 960, height: 983)
+
+@Test func aWindowAtTheRequestedFrameLanded() {
+    #expect(PlacementVerifier.outcome(requested: requested, actual: requested) == .landed)
+}
+
+@Test func subPointDriftStillCountsAsLanded() {
+    let actual = BTRect(x: 960.5, y: 30.5, width: 959.6, height: 982.7)
+    #expect(PlacementVerifier.outcome(requested: requested, actual: actual) == .landed)
+}
+
+/// The case behind the reported confusion: the window is where it was asked to
+/// be but kept a size of its own. Reported as resisted, not as failure, because
+/// the position is right and the layout can adapt.
+@Test func aWindowThatKeptItsOwnSizeIsResistedNotFailed() {
+    let actual = BTRect(x: 960, y: 30, width: 655, height: 800)
+    #expect(PlacementVerifier.outcome(requested: requested, actual: actual) == .resisted(actual: actual))
+}
+
+@Test func aWindowInTheWrongPlaceFails() {
+    let actual = BTRect(x: 0, y: 30, width: 960, height: 983)
+    #expect(PlacementVerifier.outcome(requested: requested, actual: actual) == .failed(actual: actual))
+}
+
+/// Position is judged more strictly than size: a window in the wrong place is
+/// the failure people notice, a window of the wrong size usually is not.
+@Test func positionIsJudgedMoreStrictlyThanSize() {
+    let wrongSizeOnly = BTRect(x: 960, y: 30, width: 700, height: 983)
+    let wrongPlaceOnly = BTRect(x: 900, y: 30, width: 960, height: 983)
+    #expect(PlacementVerifier.outcome(requested: requested, actual: wrongSizeOnly) != .failed(actual: wrongSizeOnly))
+    #expect(PlacementVerifier.outcome(requested: requested, actual: wrongPlaceOnly) == .failed(actual: wrongPlaceOnly))
+}

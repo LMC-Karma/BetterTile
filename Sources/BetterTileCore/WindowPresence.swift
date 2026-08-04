@@ -86,3 +86,64 @@ public struct WindowPresenceTracker: Hashable, Sendable {
         consecutiveAbsences.removeAll()
     }
 }
+
+/// Whether a frame BetterTile is about to write leaves the window reachable.
+///
+/// A placement can be arithmetically valid and still be useless: a stale
+/// display frame, a layout computed against bounds that have since changed, or
+/// a split driven to a display edge can all produce a frame that puts a window
+/// mostly or entirely off-screen. Minimum-size validation does not catch any of
+/// those, because the size can be perfectly legal while the origin is not.
+public enum PlacementBounds {
+    /// How much of a placement has to land inside the display's visible frame.
+    /// Generous, because a window may legitimately overhang slightly, but
+    /// decisive about frames that leave nothing to grab.
+    public static let minimumVisibleFraction: Double = 0.5
+
+    public static func isReachable(
+        _ frame: BTRect,
+        in visibleFrame: BTRect,
+        minimumVisibleFraction: Double = minimumVisibleFraction
+    ) -> Bool {
+        let area = frame.size.width * frame.size.height
+        guard area > 0 else { return false }
+        guard visibleFrame.size.width > 0, visibleFrame.size.height > 0 else { return true }
+        let visible = frame.intersection(visibleFrame)?.area ?? 0
+        return visible / area >= minimumVisibleFraction
+    }
+}
+
+/// What actually became of a frame BetterTile asked for.
+///
+/// A successful Accessibility write only means the application accepted the
+/// message, not that the window is where it was asked to be. Reporting the
+/// write as the outcome tells the user an action succeeded while they are
+/// looking at a window that did not move.
+public enum PlacementOutcome: Equatable, Sendable {
+    /// The window is where it was asked to be.
+    case landed
+    /// Positioned correctly, but the application kept a size of its own. Common
+    /// and usually benign: fixed-size and minimum-size windows do this.
+    case resisted(actual: BTRect)
+    /// The window is not where it was asked to be.
+    case failed(actual: BTRect)
+}
+
+public enum PlacementVerifier {
+    /// Position is judged more strictly than size. A window that refuses to
+    /// resize is still where the user asked for it and the layout can adapt; a
+    /// window in the wrong place is the failure people actually notice.
+    public static func outcome(
+        requested: BTRect,
+        actual: BTRect,
+        positionTolerance: Double = 8,
+        sizeTolerance: Double = 8
+    ) -> PlacementOutcome {
+        let positionMatches = abs(actual.minX - requested.minX) <= positionTolerance
+            && abs(actual.minY - requested.minY) <= positionTolerance
+        guard positionMatches else { return .failed(actual: actual) }
+        let sizeMatches = abs(actual.size.width - requested.size.width) <= sizeTolerance
+            && abs(actual.size.height - requested.size.height) <= sizeTolerance
+        return sizeMatches ? .landed : .resisted(actual: actual)
+    }
+}
