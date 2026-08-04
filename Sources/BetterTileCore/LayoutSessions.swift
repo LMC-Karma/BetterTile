@@ -20,8 +20,6 @@ public struct LayoutSession: Hashable, Sendable {
     public var bentoInsertionOrder: [WindowID]
     public var automaticallyFloatingWindowIDs: Set<WindowID>
     public var excludedFocusWindowIDs: Set<WindowID>
-    public var bentoFocusHistory: [WindowID]
-    public var activeBentoFocusWindowID: WindowID?
     public var bentoReinsertionAnchors: [WindowID: BentoReinsertionAnchor]
     public var lastObservedFrames: [WindowID: BTRect]
     public var lastWorkArea: BTRect?
@@ -40,8 +38,6 @@ public struct LayoutSession: Hashable, Sendable {
         bentoInsertionOrder: [WindowID] = [],
         automaticallyFloatingWindowIDs: Set<WindowID> = [],
         excludedFocusWindowIDs: Set<WindowID> = [],
-        bentoFocusHistory: [WindowID] = [],
-        activeBentoFocusWindowID: WindowID? = nil,
         bentoReinsertionAnchors: [WindowID: BentoReinsertionAnchor] = [:],
         lastObservedFrames: [WindowID: BTRect] = [:],
         lastWorkArea: BTRect? = nil,
@@ -58,8 +54,6 @@ public struct LayoutSession: Hashable, Sendable {
         self.bentoInsertionOrder = bentoInsertionOrder
         self.automaticallyFloatingWindowIDs = automaticallyFloatingWindowIDs
         self.excludedFocusWindowIDs = excludedFocusWindowIDs
-        self.bentoFocusHistory = bentoFocusHistory
-        self.activeBentoFocusWindowID = activeBentoFocusWindowID
         self.bentoReinsertionAnchors = bentoReinsertionAnchors
         self.lastObservedFrames = lastObservedFrames
         self.lastWorkArea = lastWorkArea
@@ -165,7 +159,7 @@ public struct LayoutSessionStore: Sendable {
             wasCreated = true
             previousWindowIDs = []
         }
-        if session.excludedFocusWindowIDs.isEmpty && session.bentoFocusHistory.isEmpty {
+        if session.excludedFocusWindowIDs.isEmpty {
             session.windowIDs = windowIDs
         } else {
             session.windowIDs.formUnion(windowIDs)

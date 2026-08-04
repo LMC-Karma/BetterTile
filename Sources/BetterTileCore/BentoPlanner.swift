@@ -11,19 +11,16 @@ public struct BentoReinsertionAnchor: Hashable, Sendable {
 }
 
 /// Process-lifetime state that is deliberately separate from the partition
-/// tree. Focus and overflow therefore never destroy the six-pane layout.
+/// tree. Reinsertion metadata therefore never distorts pane geometry.
 public struct BentoRuntimeState: Hashable, Sendable {
     public var layout: BentoLayoutState
-    public var focusHistory: [WindowID]
     public var reinsertionAnchors: [WindowID: BentoReinsertionAnchor]
 
     public init(
         layout: BentoLayoutState = BentoLayoutState(),
-        focusHistory: [WindowID] = [],
         reinsertionAnchors: [WindowID: BentoReinsertionAnchor] = [:]
     ) {
         self.layout = layout
-        self.focusHistory = focusHistory
         self.reinsertionAnchors = reinsertionAnchors
     }
 }
@@ -64,10 +61,7 @@ public enum BentoPlannerIntent: Sendable {
     case restore(WindowID)
     case paneDrop(source: WindowID, target: WindowID, position: BentoPaneDropPosition)
     case rootDrop(source: WindowID, edge: BentoPaneDropPosition)
-    case snap(source: WindowID, action: WindowAction, frame: BTRect)
     case nativeResize(changedWindowIDs: Set<WindowID>)
-    case focus(WindowID, frame: BTRect)
-    case unwindFocus(WindowID)
 }
 
 public enum BentoPillResult: Equatable, Sendable {
@@ -154,20 +148,11 @@ public struct BentoPlanner: Sendable {
             )
         case let .rootDrop(source, edge):
             return rootDrop(source: source, edge: edge, state: state, observation: observation)
-        case let .snap(source, action, frame):
-            return snap(
-                source: source, action: action, frame: frame,
-                state: state, observation: observation
-            )
         case let .nativeResize(changedWindowIDs):
             return nativeResize(
                 changedWindowIDs: changedWindowIDs,
                 state: state, observation: observation
             )
-        case let .focus(windowID, frame):
-            return focus(windowID, frame: frame, state: state, observation: observation)
-        case let .unwindFocus(windowID):
-            return unwindFocus(windowID, state: state, observation: observation)
         }
     }
 
@@ -430,9 +415,6 @@ public struct BentoPlanner: Sendable {
         state: BentoRuntimeState,
         observation: BentoObservation
     ) -> BentoPlannerResult {
-        if state.focusHistory.contains(windowID) {
-            return unwindFocus(windowID, state: state, observation: observation)
-        }
         var next = state
         if minimized, let anchor = reinsertionAnchor(
             for: windowID,
@@ -501,30 +483,6 @@ public struct BentoPlanner: Sendable {
         return solved(next, observation: observation, pill: .success("Pane inserted at display edge"))
     }
 
-    private func snap(
-        source: WindowID,
-        action: WindowAction,
-        frame: BTRect,
-        state: BentoRuntimeState,
-        observation: BentoObservation
-    ) -> BentoPlannerResult {
-        if BentoDropPlanner.focusActions.contains(action) {
-            return focus(source, frame: frame, state: state, observation: observation)
-        }
-        guard let plan = BentoDropPlanner(maximumManagedWindows: maximumManagedWindows).plan(
-            intent: .snap(action: action, frame: frame),
-            sourceWindowID: source,
-            state: state.layout,
-            baselineFrames: observation.frames,
-            constraints: observation.constraints,
-            contextWindowIDs: observation.eligibleWindowIDs,
-            in: observation.bounds
-        ) else { return failure(state, "The requested panes do not satisfy window constraints") }
-        var next = state
-        next.layout = plan.state
-        return BentoPlannerResult(state: next, placements: plan.placements, pill: .success("Bento snap applied"))
-    }
-
     private func nativeResize(
         changedWindowIDs: Set<WindowID>,
         state: BentoRuntimeState,
@@ -544,52 +502,6 @@ public struct BentoPlanner: Sendable {
             placements: fitted.placements,
             pill: .adapted("Pane ratios adapted")
         )
-    }
-
-    private func focus(
-        _ windowID: WindowID,
-        frame: BTRect,
-        state: BentoRuntimeState,
-        observation: BentoObservation
-    ) -> BentoPlannerResult {
-        guard observation.windows[windowID] != nil else {
-            return failure(state, "Focus window is unavailable")
-        }
-        var next = state
-        next.focusHistory.removeAll { $0 == windowID }
-        next.focusHistory.append(windowID)
-        let peers = Set(next.layout.root?.windowIDs ?? [])
-            .union(next.focusHistory.dropLast())
-            .subtracting([windowID])
-        return BentoPlannerResult(
-            state: next,
-            placements: [Placement(windowID: windowID, frame: frame)],
-            minimizeWindowIDs: peers,
-            restoreWindowIDs: [windowID],
-            pill: .success("Focus view")
-        )
-    }
-
-    private func unwindFocus(
-        _ windowID: WindowID,
-        state: BentoRuntimeState,
-        observation: BentoObservation
-    ) -> BentoPlannerResult {
-        var next = state
-        next.focusHistory.removeAll { $0 == windowID }
-        if let previous = next.focusHistory.last {
-            return BentoPlannerResult(
-                state: next,
-                placements: [Placement(windowID: previous, frame: focusFrame(in: observation.bounds)!)],
-                minimizeWindowIDs: Set(next.layout.root?.windowIDs ?? [])
-                    .union(next.focusHistory.dropLast()),
-                restoreWindowIDs: [previous],
-                pill: .overflow("Previous overflow window restored")
-            )
-        }
-        var result = solved(next, observation: observation, pill: .success("Bento panes restored"))
-        result.restoreWindowIDs = Set(next.layout.root?.windowIDs ?? [])
-        return result
     }
 
     private func solved(
@@ -641,11 +553,6 @@ public struct BentoPlanner: Sendable {
             root: BentoAutomaticTopology.node(for: ordered, primaryAxis: primaryAxis),
             metrics: metrics
         )
-    }
-
-    private func focusFrame(in bounds: BTRect) -> BTRect? {
-        guard !bounds.isEmpty else { return nil }
-        return bounds.insetBy(dx: min(24, bounds.size.width * 0.02), dy: min(24, bounds.size.height * 0.02))
     }
 
     private func reinsertionAnchor(
