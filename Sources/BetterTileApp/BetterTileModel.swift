@@ -1238,6 +1238,50 @@ final class BetterTileModel {
         return true
     }
 
+    // MARK: - Application rules
+
+    /// Applications with a rule, newest decisions included, resolved to names
+    /// where macOS can still tell us one.
+    var ruledApplications: [(bundleIdentifier: String, name: String, rule: ApplicationRule)] {
+        configuration.applicationRules.entries.map { entry in
+            (entry.bundleIdentifier, Self.applicationName(for: entry.bundleIdentifier), entry.rule)
+        }
+    }
+
+    /// The frontmost application, so its rule can be changed without hunting
+    /// for it in a list.
+    var frontmostRuleTarget: (bundleIdentifier: String, name: String, rule: ApplicationRule)? {
+        guard let application = NSWorkspace.shared.frontmostApplication,
+              application.processIdentifier != ProcessInfo.processInfo.processIdentifier,
+              let bundleIdentifier = application.bundleIdentifier
+        else { return nil }
+        return (
+            bundleIdentifier,
+            application.localizedName ?? Self.applicationName(for: bundleIdentifier),
+            configuration.applicationRules.rule(for: bundleIdentifier)
+        )
+    }
+
+    func setRule(_ rule: ApplicationRule, for bundleIdentifier: String) {
+        updateConfiguration { $0.applicationRules.set(rule, for: bundleIdentifier) }
+        statusMessage = rule == .manageNormally
+            ? "\(Self.applicationName(for: bundleIdentifier)) is managed normally again."
+            : "\(Self.applicationName(for: bundleIdentifier)): \(rule.title)."
+    }
+
+    func clearRule(for bundleIdentifier: String) {
+        updateConfiguration { $0.applicationRules.clear(bundleIdentifier) }
+    }
+
+    static func applicationName(for bundleIdentifier: String) -> String {
+        if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleIdentifier) {
+            return FileManager.default.displayName(atPath: url.path)
+        }
+        // An application that is not installed keeps its rule and its
+        // identifier, so a rule set carried between Macs is not silently lost.
+        return bundleIdentifier
+    }
+
     /// The rule the user has set for the application owning this window.
     private func rule(for window: WindowSnapshot) -> ApplicationRule {
         configuration.applicationRules.rule(for: window.bundleIdentifier)
