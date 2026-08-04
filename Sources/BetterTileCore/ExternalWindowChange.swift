@@ -54,18 +54,18 @@ public enum ExternalWindowChangeClassifier {
             abs(observed.maxX - expected.maxX),
             abs(observed.maxY - expected.maxY)
         )
+        // Nudging a divider a few points leaves the window within tolerance of
+        // a destination. Treating that as a snap would drag it to the exact
+        // partition and make fine adjustment impossible.
+        guard displacement > destinationTolerance else { return .dividerResize }
 
-        // A recognised destination wins over the edge test, because filling the
-        // screen from a half moves only one edge and the edge test alone would
-        // call that a divider drag and push the split off the display.
-        //
-        // It only wins for a window that actually travelled, though. Nudging a
-        // divider a few points away from the midpoint leaves the window within
-        // tolerance of a half, and treating that as a snap would drag it back
-        // to dead centre and make small adjustments near the middle impossible.
-        if displacement > destinationTolerance,
-           let action = matchDestination(observed, in: bounds, tolerance: destinationTolerance) {
-            return .snapDestination(action)
+        // Filling the display is the one destination a divider drag can never
+        // legitimately produce: a leaf can only span the whole bounds if it is
+        // the only leaf, and the resize engine clamps long before a sibling
+        // reaches zero. Recognising it first is what keeps Fill from being read
+        // as a divider dragged off the end of the screen.
+        if observed.approximatelyEquals(bounds, tolerance: destinationTolerance) {
+            return .snapDestination(.maximize)
         }
 
         // A divider drag pivots the window: one edge follows the pointer while
@@ -75,10 +75,20 @@ public enum ExternalWindowChangeClassifier {
         let movedMaxX = abs(observed.maxX - expected.maxX) > edgeTolerance
         let movedMinY = abs(observed.minY - expected.minY) > edgeTolerance
         let movedMaxY = abs(observed.maxY - expected.maxY) > edgeTolerance
-        if (movedMinX && movedMaxX) || (movedMinY && movedMaxY) {
-            return .relocation
+        guard (movedMinX && movedMaxX) || (movedMinY && movedMaxY) else {
+            // Still anchored, so the fitter can express this as a weight change.
+            // Destination matching must not override it: in a three-column
+            // split, dragging the first divider towards the middle leaves that
+            // column looking exactly like a left half, and routing it to the
+            // planner would discard the tree and squeeze the columns the user
+            // never touched into the other half.
+            return .dividerResize
         }
-        return .dividerResize
+
+        if let action = matchDestination(observed, in: bounds, tolerance: destinationTolerance) {
+            return .snapDestination(action)
+        }
+        return .relocation
     }
 
     /// The closest recognised destination whose every edge falls within

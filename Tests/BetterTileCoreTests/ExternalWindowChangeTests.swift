@@ -199,17 +199,60 @@ func targetFrameAgreesWithThePartitionTable(action: WindowAction) {
     #expect(target == partition(action))
 }
 
-/// A divider dragged from well away onto the exact midpoint does match a half,
-/// and routing it through the planner is harmless because the planner puts it
-/// at the same place. Recorded so the displacement guard is not mistaken for a
-/// rule that destination matching never applies to divider work.
-@Test func aDividerDraggedOntoTheMidpointResolvesToTheHalf() {
+/// A divider dragged from well away onto the exact midpoint matches a half on
+/// every edge, but it is still a divider drag: the left edge never moved. The
+/// anchored edge has to win, or the layout gets rebuilt around a destination the
+/// user never asked for.
+@Test func aDividerDraggedOntoTheMidpointIsStillADividerResize() {
     let change = ExternalWindowChangeClassifier.classify(
         expected: BTRect(x: 0, y: 0, width: 700, height: 983),
         observed: partition(.leftHalf),
         in: bounds
     )
-    #expect(change == .snapDestination(.leftHalf))
+    #expect(change == .dividerResize)
+}
+
+// MARK: - Multi-pane layouts must not be restructured by a divider drag
+
+/// Three equal columns. Dragging the first divider rightwards towards the middle
+/// leaves column one looking exactly like a left half — same origin, same full
+/// height, right edge within tolerance of the midpoint.
+///
+/// Routing that to the planner would take the `.leftHalf` root path, which drops
+/// the source from the tree and reinserts it at the root, collapsing the two
+/// columns the user never touched into the other half. The anchored left edge is
+/// what keeps this on the divider path.
+@Test(arguments: [940.0, 950.0, 958.0, 960.0, 972.0])
+func aDividerDragInAThreeColumnSplitIsNeverASnapDestination(width: Double) {
+    let a = WindowID(rawValue: "A"), b = WindowID(rawValue: "B"), c = WindowID(rawValue: "C")
+    let state = BentoLayoutState(
+        root: .branch(BentoBranch(
+            axis: .vertical, weight: 1.0 / 3,
+            first: .leaf(a),
+            second: .branch(BentoBranch(axis: .vertical, weight: 0.5, first: .leaf(b), second: .leaf(c)))
+        )),
+        metrics: .gapless
+    )
+    let expected = Dictionary(
+        uniqueKeysWithValues: state.placements(in: bounds).map { ($0.windowID, $0.frame) }
+    )
+    let change = ExternalWindowChangeClassifier.classify(
+        expected: expected[a]!,
+        observed: BTRect(x: 0, y: 0, width: width, height: bounds.size.height),
+        in: bounds
+    )
+    #expect(change == .dividerResize, "a \(width)pt first column was treated as a snap destination")
+}
+
+/// The same column filling the display is unambiguous, because no leaf in a
+/// multi-leaf tree can span the whole bounds by a weight change.
+@Test func fillingTheDisplayFromAColumnIsStillRecognised() {
+    let change = ExternalWindowChangeClassifier.classify(
+        expected: BTRect(x: 0, y: 0, width: 640, height: 983),
+        observed: bounds,
+        in: bounds
+    )
+    #expect(change == .snapDestination(.maximize))
 }
 
 // MARK: - End to end: the reported 90/10 split
