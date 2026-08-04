@@ -223,11 +223,14 @@ final class BetterTileModel {
     /// free to apply an Accessibility geometry change on its own run loop, so a
     /// report made at write time cannot tell a refusal from a delay.
     private func verifyActionLanded(_ plan: WindowActionPlan, displayID: DisplayID?) {
+        // Read now, not inside the task: a Bento reflow can land before the
+        // task body begins, and a generation read there would not see it.
+        let generation = coordinator.mutationGeneration(for: plan.windowID)
         actionVerificationTask?.cancel()
         actionVerificationTask = Task { @MainActor [weak self] in
             guard let self else { return }
-            let outcome = await self.coordinator.verifyPlacement(plan)
-            guard !Task.isCancelled, case .failed = outcome else { return }
+            let verdict = await self.coordinator.verifyPlacement(plan, since: generation)
+            guard !Task.isCancelled, verdict == .failed else { return }
             self.statusMessage = "The window did not move where it was asked to."
             Self.bentoLog.notice(
                 """
