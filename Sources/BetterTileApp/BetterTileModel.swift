@@ -1014,10 +1014,63 @@ final class BetterTileModel {
                 return session.lastObservedFrames[id]?.approximatelyEquals(frame, tolerance: 1) != true
             })
             guard !displayChanges.isEmpty else { continue }
+
+            // Classify before fitting. The fitter can only read a moved edge as
+            // a divider position, so a window relocated by macOS's own
+            // Window > Move & Resize used to have its new far edge mistaken for
+            // a dragged divider, collapsing its neighbour to a sliver.
+            let expectedFrames = Dictionary(
+                uniqueKeysWithValues: session.bentoState
+                    .placements(in: display.visibleFrame)
+                    .map { ($0.windowID, $0.frame) }
+            )
+            var dividerChanges: Set<WindowID> = []
+            var snapped: (windowID: WindowID, action: WindowAction)?
+            var relocated = false
+            for id in displayChanges.sorted() {
+                guard let expected = expectedFrames[id], let observed = frames[id] else { continue }
+                switch ExternalWindowChangeClassifier.classify(
+                    expected: expected,
+                    observed: observed,
+                    in: display.visibleFrame,
+                    edgeTolerance: configuration.adjacencyTolerance
+                ) {
+                case let .snapDestination(action):
+                    if snapped == nil { snapped = (id, action) }
+                case .relocation:
+                    relocated = true
+                case .dividerResize:
+                    dividerChanges.insert(id)
+                }
+            }
+
+            // A recognised destination runs through the same planner a
+            // BetterTile shortcut uses, so macOS's commands and BetterTile's
+            // own produce identical layouts instead of two rearrangement rules.
+            if let snapped {
+                applyExternalSnap(
+                    windowID: snapped.windowID,
+                    action: snapped.action,
+                    session: &session,
+                    displayWindows: displayWindows,
+                    display: display
+                )
+                continue
+            }
+
+            // Unrecognised movement cannot be expressed as a weight change.
+            // Put the layout back rather than let the tree drift out of step
+            // with the windows; general adoption is handled separately.
+            if relocated, dividerChanges.isEmpty {
+                restoreBentoLayout(session: session, displayWindows: displayWindows, display: display)
+                continue
+            }
+
+            guard !dividerChanges.isEmpty else { continue }
             guard let fitted = BentoLayoutFitter(tolerance: configuration.adjacencyTolerance).fit(
                 state: session.bentoState,
                 currentFrames: frames,
-                changedWindowIDs: displayChanges,
+                changedWindowIDs: dividerChanges,
                 in: display.visibleFrame,
                 constraints: constraints
             ) else { continue }
@@ -1029,13 +1082,65 @@ final class BetterTileModel {
                 fitted.placements.filter { session.windowIDs.contains($0.windowID) },
                 recordHistory: false
             )
-            scheduleBentoSettlement(displayID: displayID, changedWindowIDs: displayChanges)
+            scheduleBentoSettlement(displayID: displayID, changedWindowIDs: dividerChanges)
         }
         if refreshTopology {
             refreshActiveWindows(force: false)
         } else {
             refreshDividerBoundaries()
         }
+    }
+
+    /// Routes an externally produced snap through the same planner
+    /// `performBentoAction` uses, so a macOS Move & Resize command and the
+    /// equivalent BetterTile shortcut resolve to the same layout, including its
+    /// pane-swap behaviour.
+    private func applyExternalSnap(
+        windowID: WindowID,
+        action: WindowAction,
+        session: inout LayoutSession,
+        displayWindows: [WindowSnapshot],
+        display: DisplaySnapshot
+    ) {
+        let baselineFrames = Dictionary(uniqueKeysWithValues: displayWindows.map { ($0.id, $0.frame) })
+        let constraints = Dictionary(uniqueKeysWithValues: displayWindows.map { ($0.id, $0.constraints) })
+        guard let partition = action.partition,
+              let plan = BentoDropPlanner().plan(
+                  intent: .snap(action: action, frame: partition.frame(in: display.visibleFrame)),
+                  sourceWindowID: windowID,
+                  state: session.bentoState,
+                  baselineFrames: baselineFrames,
+                  constraints: constraints,
+                  contextWindowIDs: Set(displayWindows.map(\.id)),
+                  in: display.visibleFrame
+              )
+        else {
+            restoreBentoLayout(session: session, displayWindows: displayWindows, display: display)
+            return
+        }
+        session.bentoState = plan.state
+        session.recordProposedFrames(
+            Dictionary(uniqueKeysWithValues: plan.placements.map { ($0.windowID, $0.frame) })
+        )
+        sessionStore.update(display.id) { $0 = session }
+        sessionRevision &+= 1
+        _ = coordinator.applyPlacements(plan.placements, recordHistory: false)
+        scheduleBentoSettlement(displayID: display.id, changedWindowIDs: Set(plan.placements.map(\.windowID)))
+        refreshDividerBoundaries()
+    }
+
+    /// Re-applies the tree the session already holds, returning the windows to
+    /// the last arrangement BetterTile considered valid.
+    private func restoreBentoLayout(
+        session: LayoutSession,
+        displayWindows: [WindowSnapshot],
+        display: DisplaySnapshot
+    ) {
+        let placements = BentoLayoutEngine(state: session.bentoState)
+            .placements(for: displayWindows, in: display)
+        guard !placements.isEmpty else { return }
+        _ = coordinator.applyPlacements(placements, recordHistory: false)
+        refreshDividerBoundaries()
     }
 
     private func scheduleBentoSettlement(
