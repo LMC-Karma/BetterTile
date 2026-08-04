@@ -112,6 +112,10 @@ public struct BetterTileConfiguration: Codable, Hashable, Sendable {
     public var snapAreaBindings: [SnapAreaBinding]
     public var doubleClickTitleBarToMaximize: Bool
     public var enhancedUserInterfacePolicy: EnhancedUserInterfacePolicy
+    public var applicationRules: ApplicationRuleSet
+    /// Master switch for every BetterTile global shortcut. Bindings are kept so
+    /// turning it back on restores them untouched.
+    public var keyboardShortcutsEnabled: Bool
     public var shortcuts: [ShortcutBinding]
     public var customZones: [CustomZone]
 
@@ -135,6 +139,8 @@ public struct BetterTileConfiguration: Codable, Hashable, Sendable {
         snapAreaBindings: [SnapAreaBinding] = BetterTileConfiguration.defaultSnapAreaBindings,
         doubleClickTitleBarToMaximize: Bool = true,
         enhancedUserInterfacePolicy: EnhancedUserInterfacePolicy = .disableAndRestore,
+        applicationRules: ApplicationRuleSet = ApplicationRuleSet(),
+        keyboardShortcutsEnabled: Bool = true,
         shortcuts: [ShortcutBinding] = BetterTileConfiguration.defaultShortcuts,
         customZones: [CustomZone] = []
     ) {
@@ -157,6 +163,8 @@ public struct BetterTileConfiguration: Codable, Hashable, Sendable {
         self.snapAreaBindings = snapAreaBindings
         self.doubleClickTitleBarToMaximize = doubleClickTitleBarToMaximize
         self.enhancedUserInterfacePolicy = enhancedUserInterfacePolicy
+        self.applicationRules = applicationRules
+        self.keyboardShortcutsEnabled = keyboardShortcutsEnabled
         self.shortcuts = shortcuts
         self.customZones = customZones
     }
@@ -170,6 +178,7 @@ public struct BetterTileConfiguration: Codable, Hashable, Sendable {
         case dockReservationMode
         case snapSuppressionModifiers, adjacencyTolerance, snapAreaBindings, doubleClickTitleBarToMaximize
         case enhancedUserInterfacePolicy
+        case applicationRules, keyboardShortcutsEnabled
         case shortcuts, customZones
         case layoutMode, bentoEnabled, bentoStates
     }
@@ -242,6 +251,14 @@ public struct BetterTileConfiguration: Codable, Hashable, Sendable {
             EnhancedUserInterfacePolicy.self,
             forKey: .enhancedUserInterfacePolicy
         ) ?? .disableAndRestore
+        applicationRules = try container.decodeIfPresent(
+            ApplicationRuleSet.self,
+            forKey: .applicationRules
+        ) ?? ApplicationRuleSet()
+        keyboardShortcutsEnabled = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .keyboardShortcutsEnabled
+        ) ?? true
         let decodedShortcuts = try container.decodeIfPresent([ShortcutBinding].self, forKey: .shortcuts)
         if version < 3, decodedShortcuts == Self.legacyDefaultShortcutsV2 {
             shortcuts = Self.defaultShortcuts
@@ -289,6 +306,8 @@ public struct BetterTileConfiguration: Codable, Hashable, Sendable {
         try container.encode(snapAreaBindings, forKey: .snapAreaBindings)
         try container.encode(doubleClickTitleBarToMaximize, forKey: .doubleClickTitleBarToMaximize)
         try container.encode(enhancedUserInterfacePolicy, forKey: .enhancedUserInterfacePolicy)
+        try container.encode(applicationRules, forKey: .applicationRules)
+        try container.encode(keyboardShortcutsEnabled, forKey: .keyboardShortcutsEnabled)
         try container.encode(shortcuts, forKey: .shortcuts)
         try container.encode(customZones, forKey: .customZones)
     }
@@ -378,9 +397,11 @@ public struct ConfigurationChangeSet: OptionSet, Hashable, Sendable {
     public static let activationPolicy = Self(rawValue: 1 << 5)
     public static let titleBar = Self(rawValue: 1 << 6)
     public static let accessibilityWrites = Self(rawValue: 1 << 7)
+    public static let applicationRules = Self(rawValue: 1 << 8)
     public static let all: Self = [
         .shortcuts, .snapping, .linkedResize, .divider,
         .bentoGeometry, .activationPolicy, .titleBar, .accessibilityWrites,
+        .applicationRules,
     ]
 
     public static func between(
@@ -388,7 +409,13 @@ public struct ConfigurationChangeSet: OptionSet, Hashable, Sendable {
         _ new: BetterTileConfiguration
     ) -> Self {
         var changes: Self = []
-        if old.shortcuts != new.shortcuts { changes.insert(.shortcuts) }
+        if old.shortcuts != new.shortcuts
+            || old.keyboardShortcutsEnabled != new.keyboardShortcutsEnabled {
+            changes.insert(.shortcuts)
+        }
+        if old.applicationRules != new.applicationRules {
+            changes.insert(.applicationRules)
+        }
         if old.snappingEnabled != new.snappingEnabled
             || old.snapSuppressionModifiers != new.snapSuppressionModifiers
             || old.snapAreaBindings != new.snapAreaBindings
