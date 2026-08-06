@@ -360,8 +360,14 @@ final class BetterTileModel {
                 focusedWindowID: focused.id,
                 defaultMode: configuration.defaultLayoutMode
             )
+            // One window has no layout to repair. Restoring its configured
+            // placement is the useful thing to do, and it deliberately leaves
+            // the desktop's mode alone: a manual desktop stays manual.
+            if displayWindows.count == 1, let window = displayWindows.first {
+                repairSingleWindow(window, session: session, display: display)
+                return
+            }
             session.mode = .bento
-            session.hasEvaluatedInitialPlacement = true
             session.reincludeInBento(Set(displayWindows.map(\.id)))
             session.bentoState.metrics = BentoLayoutMetrics(paneGap: configuration.bentoInnerGap)
             let placements: [Placement]
@@ -428,6 +434,39 @@ final class BetterTileModel {
             statusMessage = error.localizedDescription
             presentActionResult(succeeded: false, error: statusMessage, displayID: activeDisplayID)
         }
+    }
+
+    /// Returns the only window on a display to its configured placement.
+    ///
+    /// The desktop's mode is left untouched, and no Bento tree is built: with
+    /// one window there is nothing to tile, and a tree seeded here would fight
+    /// the placement the moment the work area changed.
+    private func repairSingleWindow(_ window: WindowSnapshot, session: LayoutSession, display: DisplaySnapshot) {
+        var session = session
+        session.hasAppliedSingleWindowPlacement = true
+        activeDisplayID = display.id
+
+        guard let action = configuration.singleWindowPlacement,
+              let frame = StandardActionEngine().targetFrame(for: action, window: window, display: display)
+        else {
+            session.lastWorkArea = display.visibleFrame
+            sessionStore.update(display.id) { $0 = session }
+            sessionRevision &+= 1
+            statusMessage = nil
+            presentActionResult(succeeded: true, error: nil, displayID: display.id)
+            return
+        }
+
+        let placement = Placement(windowID: window.id, frame: frame)
+        session.recordProposedFrames([window.id: frame])
+        session.lastWorkArea = display.visibleFrame
+        sessionStore.update(display.id) { $0 = session }
+        sessionRevision &+= 1
+
+        let applied = coordinator.applyPlacements([placement])
+        statusMessage = applied ? nil : (coordinator.lastError ?? "The window could not be placed.")
+        presentActionResult(succeeded: applied, error: statusMessage, displayID: display.id)
+        refreshDividerBoundaries()
     }
 
     private func beginBentoDrag(displayID: DisplayID, sourceID: WindowID) -> Bool {
@@ -1223,18 +1262,37 @@ final class BetterTileModel {
         }
     }
 
-    /// The frontmost application, so its rule can be changed without hunting
-    /// for it in a list.
-    var frontmostRuleTarget: (bundleIdentifier: String, name: String, rule: ApplicationRule)? {
-        guard let application = NSWorkspace.shared.frontmostApplication,
-              application.processIdentifier != ProcessInfo.processInfo.processIdentifier,
-              let bundleIdentifier = application.bundleIdentifier
-        else { return nil }
-        return (
-            bundleIdentifier,
-            application.localizedName ?? Self.applicationName(for: bundleIdentifier),
-            configuration.applicationRules.rule(for: bundleIdentifier)
+    /// Running applications the user could give a rule to, minus the ones that
+    /// already have one and minus BetterTile itself.
+    var addableApplications: [ApplicationRuleCandidate] {
+        let running = NSWorkspace.shared.runningApplications.compactMap { application -> ApplicationRuleCandidate? in
+            guard application.activationPolicy == .regular,
+                  let bundleIdentifier = application.bundleIdentifier
+            else { return nil }
+            return ApplicationRuleCandidate(
+                bundleIdentifier: bundleIdentifier,
+                name: application.localizedName ?? Self.applicationName(for: bundleIdentifier)
+            )
+        }
+        return configuration.applicationRules.addableCandidates(
+            from: running,
+            excluding: Bundle.main.bundleIdentifier ?? ""
         )
+    }
+
+    /// Resolves an application bundle the user browsed to, so a rule can be set
+    /// for something that is not currently running.
+    func candidate(atApplicationURL url: URL) -> ApplicationRuleCandidate? {
+        guard let bundleIdentifier = Bundle(url: url)?.bundleIdentifier else { return nil }
+        return ApplicationRuleCandidate(
+            bundleIdentifier: bundleIdentifier,
+            name: FileManager.default.displayName(atPath: url.path)
+        )
+    }
+
+    static func applicationIcon(for bundleIdentifier: String) -> NSImage? {
+        guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleIdentifier) else { return nil }
+        return NSWorkspace.shared.icon(forFile: url.path)
     }
 
     func setRule(_ rule: ApplicationRule, for bundleIdentifier: String) {
@@ -1385,6 +1443,12 @@ final class BetterTileModel {
         }
 
         let displayWindows = settledWindows.filter { session.windowIDs.contains($0.id) && $0.displayID == displayID }
+        // A lone window owns its own frame. Correcting it back towards a layout
+        // would undo the resize the user just performed by hand.
+        guard displayWindows.count > 1 else {
+            refreshDividerBoundaries()
+            return
+        }
         let frames = Dictionary(uniqueKeysWithValues: displayWindows.map { ($0.id, $0.frame) })
         let constraints = Dictionary(uniqueKeysWithValues: displayWindows.map { ($0.id, $0.constraints) })
         Self.bentoLog.debug("settlement branch: \(learnedMinimum ? "learned-minimum resolve" : "divider fit", privacy: .public)")
@@ -1477,10 +1541,15 @@ final class BetterTileModel {
             let workAreaChanged = session.lastWorkArea.map {
                 !$0.approximatelyEquals(display.visibleFrame, tolerance: 0.5)
             } ?? false
-            let initialPlacement: Placement? = if session.shouldApplyInitialPlacement(
+            // Evaluated on every sweep, and deliberately first in the chain, so
+            // the latch re-arms as soon as the desktop stops having exactly one
+            // window.
+            let becameSingleWindow = session.shouldApplySingleWindowPlacement(
                 eligibleWindowCount: displayWindows.count
-            ), let window = displayWindows.first,
-               let action = configuration.singleWindowInitialPlacement.action,
+            )
+            let singleWindowPlacement: Placement? = if becameSingleWindow,
+               let window = displayWindows.first,
+               let action = configuration.singleWindowPlacement,
                let frame = StandardActionEngine().targetFrame(for: action, window: window, display: display) {
                 Placement(windowID: window.id, frame: frame)
             } else {
@@ -1489,19 +1558,15 @@ final class BetterTileModel {
             var shouldApply = false
             if session.mode == .bento {
                 if activation.wasCreated {
-                    if displayWindows.count == 1, let id = displayWindows.first?.id {
-                        session.bentoState = BentoLayoutState(
-                            root: .leaf(id),
+                    // A lone window is left to the single-window placement
+                    // above; no tree is built until a second window arrives.
+                    if displayWindows.count > 1,
+                       let adopted = BentoLayoutAdopter(tolerance: configuration.adjacencyTolerance)
+                        .adopt(
+                            frames: frames,
+                            in: display.visibleFrame,
                             metrics: BentoLayoutMetrics(paneGap: configuration.bentoInnerGap)
-                        )
-                        session.isBentoInitialized = true
-                    } else if displayWindows.count > 1,
-                              let adopted = BentoLayoutAdopter(tolerance: configuration.adjacencyTolerance)
-                                .adopt(
-                                    frames: frames,
-                                    in: display.visibleFrame,
-                                    metrics: BentoLayoutMetrics(paneGap: configuration.bentoInnerGap)
-                                ) {
+                        ) {
                         session.bentoState = adopted
                         session.isBentoInitialized = true
                     } else if displayWindows.count > 1 {
@@ -1556,30 +1621,26 @@ final class BetterTileModel {
                     session.bentoState = result.state.layout
                     session.isBentoInitialized = true
                     shouldApply = result.writesFrames
-                } else if displayWindows.count == 1, let id = displayWindows.first?.id {
-                    session.bentoState = BentoLayoutState(
-                        root: .leaf(id),
-                        metrics: BentoLayoutMetrics(paneGap: configuration.bentoInnerGap)
-                    )
-                    session.isBentoInitialized = true
                 }
             }
             let stateChanged = before != session.bentoState
             if !activation.wasCreated, !desktopTransition, stateChanged { shouldApply = true }
             let needsWorkAreaSettlement = session.mode == .bento
                 && session.isBentoInitialized
-                && !displayWindows.isEmpty
+                && displayWindows.count > 1
                 && shouldApply
                 && workAreaChanged
             session.lastObservedFrames = frames
-            if let initialPlacement { session.recordProposedFrames([initialPlacement.windowID: initialPlacement.frame]) }
+            if let singleWindowPlacement {
+                session.recordProposedFrames([singleWindowPlacement.windowID: singleWindowPlacement.frame])
+            }
             if !needsWorkAreaSettlement {
                 session.lastWorkArea = display.visibleFrame
             }
             sessionStore.update(display.id) { $0 = session }
-            if let initialPlacement {
-                _ = coordinator.applyPlacements([initialPlacement], recordHistory: false)
-            } else if session.mode == .bento, session.isBentoInitialized, !displayWindows.isEmpty, shouldApply {
+            if let singleWindowPlacement {
+                _ = coordinator.applyPlacements([singleWindowPlacement], recordHistory: false)
+            } else if session.mode == .bento, session.isBentoInitialized, displayWindows.count > 1, shouldApply {
                 let placements = BentoLayoutEngine(state: session.bentoState).placements(for: displayWindows, in: display)
                 let applied = coordinator.applyPlacements(placements, recordHistory: false)
                 if needsWorkAreaSettlement {

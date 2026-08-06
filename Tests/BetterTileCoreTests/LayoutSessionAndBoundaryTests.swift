@@ -67,24 +67,51 @@ private let sessionDisplay = DisplayID(rawValue: "main")
     #expect(session.automaticallyFloatingWindowIDs.contains(restored))
 }
 
-@Test func firstSingleWindowPlacementIsEvaluatedExactlyOnce() {
+@Test func aLoneWindowIsPlacedOnceAndThenLeftAlone() {
     var session = LayoutSession(displayID: sessionDisplay, mode: .manual)
-    let empty = session.shouldApplyInitialPlacement(eligibleWindowCount: 0)
-    let firstNonEmpty = session.shouldApplyInitialPlacement(eligibleWindowCount: 1)
-    let repeated = session.shouldApplyInitialPlacement(eligibleWindowCount: 1)
+    let empty = session.shouldApplySingleWindowPlacement(eligibleWindowCount: 0)
+    let becameSolo = session.shouldApplySingleWindowPlacement(eligibleWindowCount: 1)
+    let sweptAgain = session.shouldApplySingleWindowPlacement(eligibleWindowCount: 1)
+    let sweptOnceMore = session.shouldApplySingleWindowPlacement(eligibleWindowCount: 1)
     #expect(!empty)
-    #expect(firstNonEmpty)
-    #expect(!repeated)
-    #expect(session.hasEvaluatedInitialPlacement)
+    #expect(becameSolo)
+    // The later sweeps are what let a manual resize survive.
+    #expect(!sweptAgain)
+    #expect(!sweptOnceMore)
+    #expect(session.hasAppliedSingleWindowPlacement)
 }
 
-@Test func aMultiWindowFirstObservationDisablesTheLaterSoloRule() {
+@Test func closingBackToOneWindowPlacesItAgain() {
     var session = LayoutSession(displayID: sessionDisplay, mode: .bento)
-    let multiple = session.shouldApplyInitialPlacement(eligibleWindowCount: 2)
-    let afterClose = session.shouldApplyInitialPlacement(eligibleWindowCount: 1)
-    #expect(!multiple)
-    #expect(!afterClose)
-    #expect(session.hasEvaluatedInitialPlacement)
+    let firstSolo = session.shouldApplySingleWindowPlacement(eligibleWindowCount: 1)
+    let secondOpened = session.shouldApplySingleWindowPlacement(eligibleWindowCount: 2)
+    let reArmed = !session.hasAppliedSingleWindowPlacement
+    let soloAgain = session.shouldApplySingleWindowPlacement(eligibleWindowCount: 1)
+    #expect(firstSolo)
+    #expect(!secondOpened)
+    #expect(reArmed, "leaving one window re-arms the placement")
+    #expect(soloAgain)
+    #expect(session.hasAppliedSingleWindowPlacement)
+}
+
+@Test func aDesktopFirstSeenWithSeveralWindowsStillPlacesItsLastSurvivor() {
+    var session = LayoutSession(displayID: sessionDisplay, mode: .bento)
+    let three = session.shouldApplySingleWindowPlacement(eligibleWindowCount: 3)
+    let two = session.shouldApplySingleWindowPlacement(eligibleWindowCount: 2)
+    let survivor = session.shouldApplySingleWindowPlacement(eligibleWindowCount: 1)
+    #expect(!three)
+    #expect(!two)
+    #expect(survivor, "a crowded first observation must not disqualify the desktop forever")
+}
+
+@Test func anEmptyDesktopReArmsTheSingleWindowPlacement() {
+    var session = LayoutSession(displayID: sessionDisplay, mode: .manual)
+    let solo = session.shouldApplySingleWindowPlacement(eligibleWindowCount: 1)
+    let emptied = session.shouldApplySingleWindowPlacement(eligibleWindowCount: 0)
+    let soloAgain = session.shouldApplySingleWindowPlacement(eligibleWindowCount: 1)
+    #expect(solo)
+    #expect(!emptied)
+    #expect(soloAgain)
 }
 
 @Test func returningToAnEarlierDesktopRestoresItsRuntimeSession() throws {
@@ -107,7 +134,7 @@ private let sessionDisplay = DisplayID(rawValue: "main")
             second: .leaf(a2)
         )))
         $0.isBentoInitialized = true
-        $0.hasEvaluatedInitialPlacement = true
+        $0.hasAppliedSingleWindowPlacement = true
         $0.lastObservedFrames = [
             a: BTRect(x: 0, y: 0, width: 680, height: 800),
             a2: BTRect(x: 680, y: 0, width: 320, height: 800),
@@ -135,7 +162,7 @@ private let sessionDisplay = DisplayID(rawValue: "main")
     #expect(returned.session.mode == .bento)
     #expect(returned.session.bentoState.branches.first?.weight == 0.68)
     #expect(returned.session.lastObservedFrames[a]?.size.width == 680)
-    #expect(returned.session.hasEvaluatedInitialPlacement)
+    #expect(returned.session.hasAppliedSingleWindowPlacement)
     #expect(store.allSessions(for: sessionDisplay).count == 2)
 }
 

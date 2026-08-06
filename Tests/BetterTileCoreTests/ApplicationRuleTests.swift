@@ -116,6 +116,71 @@ private let notes = "com.apple.Notes"
     #expect(try JSONDecoder().decode(ApplicationRuleSet.self, from: json).isEmpty)
 }
 
+// MARK: - Picking an application to rule
+
+private func candidate(_ bundleIdentifier: String, _ name: String) -> ApplicationRuleCandidate {
+    ApplicationRuleCandidate(bundleIdentifier: bundleIdentifier, name: name)
+}
+
+private let betterTile = "com.lmc.BetterTile"
+
+@Test func thePickerOffersRunningApplicationsSortedByName() {
+    let offered = ApplicationRuleSet().addableCandidates(
+        from: [candidate(figma, "Figma"), candidate(safari, "Safari"), candidate(notes, "Notes")],
+        excluding: betterTile
+    )
+    #expect(offered.map(\.name) == ["Figma", "Notes", "Safari"])
+}
+
+@Test func thePickerHidesApplicationsThatAlreadyHaveARule() {
+    var rules = ApplicationRuleSet()
+    rules.set(.ignoreEverywhere, for: safari)
+    let offered = rules.addableCandidates(
+        from: [candidate(safari, "Safari"), candidate(figma, "Figma")],
+        excluding: betterTile
+    )
+    #expect(offered.map(\.bundleIdentifier) == [figma], "a ruled app is edited in the list, not added again")
+}
+
+@Test func thePickerNeverOffersBetterTileItself() {
+    let offered = ApplicationRuleSet().addableCandidates(
+        from: [candidate(betterTile, "BetterTile"), candidate(notes, "Notes")],
+        excluding: betterTile
+    )
+    #expect(offered.map(\.bundleIdentifier) == [notes])
+}
+
+@Test func repeatedIdentifiersCollapseToOneRow() {
+    // The same application can be running as several processes.
+    let offered = ApplicationRuleSet().addableCandidates(
+        from: [candidate(safari, "Safari"), candidate(safari, "Safari"), candidate(notes, "Notes")],
+        excluding: betterTile
+    )
+    #expect(offered.count == 2)
+    #expect(offered.map(\.bundleIdentifier) == [notes, safari])
+}
+
+@Test func anApplicationWithoutAnIdentifierIsNotOffered() {
+    let offered = ApplicationRuleSet().addableCandidates(
+        from: [candidate("", "Nameless"), candidate(notes, "Notes")],
+        excluding: betterTile
+    )
+    #expect(offered.map(\.bundleIdentifier) == [notes], "a rule keyed on an empty identifier could never match")
+}
+
+@Test func theOfferedOrderDoesNotDependOnHowApplicationsWereLaunched() {
+    let rules = ApplicationRuleSet()
+    let forward = rules.addableCandidates(
+        from: [candidate(safari, "Safari"), candidate(figma, "Figma"), candidate(notes, "Notes")],
+        excluding: betterTile
+    )
+    let reversed = rules.addableCandidates(
+        from: [candidate(notes, "Notes"), candidate(figma, "Figma"), candidate(safari, "Safari")],
+        excluding: betterTile
+    )
+    #expect(forward == reversed)
+}
+
 // MARK: - Configuration integration
 
 @Test func aConfigurationWithoutRulesMigratesToTheDefaults() throws {

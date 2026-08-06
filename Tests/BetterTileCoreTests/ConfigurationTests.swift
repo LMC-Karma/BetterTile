@@ -11,7 +11,7 @@ import Testing
     configuration.setupCompletionVersion = 1
     configuration.macOSTilingRecommendationAcknowledged = true
     configuration.stageManagerRecommendationAcknowledged = true
-    configuration.singleWindowInitialPlacement = .almostMaximize
+    configuration.singleWindowPlacement = .almostMaximize
     configuration.customZones = [CustomZone(name: "Focus", rect: NormalizedRect(x: 0.1, y: 0.1, width: 0.8, height: 0.8))]
     try store.save(configuration)
     #expect(try store.load() == configuration)
@@ -21,7 +21,7 @@ import Testing
     let migrated = try ConfigurationStore.decode(JSONSerialization.data(withJSONObject: [
         "schemaVersion": 7,
     ]))
-    #expect(migrated.schemaVersion == 8)
+    #expect(migrated.schemaVersion == 9)
     #expect(migrated.setupCompletionVersion == 0)
     #expect(!migrated.macOSTilingRecommendationAcknowledged)
     #expect(!migrated.stageManagerRecommendationAcknowledged)
@@ -84,7 +84,7 @@ import Testing
         ([.snapping], { $0.snappingEnabled.toggle() }),
         ([.linkedResize], { $0.linkedResizeEnabled.toggle() }),
         ([.bentoGeometry], { $0.defaultLayoutMode = .bento }),
-        ([.bentoGeometry], { $0.singleWindowInitialPlacement = .almostMaximize }),
+        ([.bentoGeometry], { $0.singleWindowPlacement = .almostMaximize }),
         ([.divider], { $0.resizeFeedbackMode = .ghost }),
         ([.divider], { $0.dividerVisibility = .dragOnly }),
         ([.divider], { $0.dividerThickness = 8 }),
@@ -130,10 +130,61 @@ import Testing
     #expect(throws: ConfigurationError.unsupportedFutureVersion(999)) { try ConfigurationStore.decode(data) }
 }
 
-@Test func singleWindowPlacementMapsOnlyConfiguredActions() {
-    #expect(SingleWindowInitialPlacement.maximize.action == .maximize)
-    #expect(SingleWindowInitialPlacement.almostMaximize.action == .almostMaximize)
-    #expect(SingleWindowInitialPlacement.unchanged.action == nil)
+@Test func schemaNineWidensTheSingleWindowPlacementToTheActionList() throws {
+    // The three cases stored by schemas 5 to 8 map onto the wider list.
+    let almost = try ConfigurationStore.decode(JSONSerialization.data(withJSONObject: [
+        "schemaVersion": 8,
+        "singleWindowInitialPlacement": "almostMaximize",
+    ]))
+    #expect(almost.schemaVersion == 9)
+    #expect(almost.singleWindowPlacement == .almostMaximize)
+
+    let unchanged = try ConfigurationStore.decode(JSONSerialization.data(withJSONObject: [
+        "schemaVersion": 8,
+        "singleWindowInitialPlacement": "unchanged",
+    ]))
+    #expect(unchanged.singleWindowPlacement == nil)
+
+    let absent = try ConfigurationStore.decode(JSONSerialization.data(withJSONObject: [
+        "schemaVersion": 8,
+    ]))
+    #expect(absent.singleWindowPlacement == .maximize)
+
+    // The legacy key is read once and never written again.
+    let object = try #require(
+        JSONSerialization.jsonObject(with: try JSONEncoder().encode(almost)) as? [String: Any]
+    )
+    #expect(object["singleWindowInitialPlacement"] == nil)
+    #expect(object["singleWindowPlacement"] as? String == "almostMaximize")
+}
+
+@Test func aSingleWindowPlacementCanBeAnyPositioningAction() throws {
+    let centered = try ConfigurationStore.decode(JSONSerialization.data(withJSONObject: [
+        "schemaVersion": 9,
+        "singleWindowPlacement": "centerResize",
+    ]))
+    #expect(centered.singleWindowPlacement == .centerResize)
+
+    let unchanged = try ConfigurationStore.decode(JSONSerialization.data(withJSONObject: [
+        "schemaVersion": 9,
+    ]))
+    #expect(unchanged.singleWindowPlacement == nil)
+}
+
+@Test func aRelativeActionIsNotAcceptedAsASingleWindowPlacement() throws {
+    // Move, grow, shrink, display transfer and restore all describe a change to
+    // an existing frame, so they cannot describe where a lone window belongs.
+    for relative in WindowAction.allCases where !WindowAction.snapAssignableActions.contains(relative) {
+        let decoded = try ConfigurationStore.decode(JSONSerialization.data(withJSONObject: [
+            "schemaVersion": 9,
+            "singleWindowPlacement": relative.rawValue,
+        ]))
+        #expect(decoded.singleWindowPlacement == .maximize)
+    }
+
+    var handEdited = BetterTileConfiguration()
+    handEdited.singleWindowPlacement = .growWidth
+    #expect(try handEdited.validated().singleWindowPlacement == .maximize)
 }
 
 @Test func versionOneConfigurationMigratesWithoutPersistingWindowIDs() throws {
@@ -145,14 +196,14 @@ import Testing
         "bentoStates": ["main": ["floatingWindowIDs": []]],
     ]
     let migrated = try ConfigurationStore.decode(JSONSerialization.data(withJSONObject: legacy))
-    #expect(migrated.schemaVersion == 8)
+    #expect(migrated.schemaVersion == 9)
     #expect(migrated.showDockIcon)
     #expect(migrated.defaultLayoutMode == .bento)
     #expect(migrated.resizeFeedbackMode == .ghost)
     #expect(migrated.dividerVisibility == .hoverAndDrag)
     #expect(migrated.dividerThickness == 6)
     #expect(migrated.bentoSwapHoverDelay == 0.12)
-    #expect(migrated.singleWindowInitialPlacement == .maximize)
+    #expect(migrated.singleWindowPlacement == .maximize)
     #expect(migrated.snapAreaBindings.first(where: { $0.area == .top })?.action == .almostMaximize)
     #expect(migrated.doubleClickTitleBarToMaximize)
 
@@ -208,7 +259,7 @@ import Testing
         "schemaVersion": 3,
         "bentoSwapHoverDelay": 0.12,
     ]))
-    #expect(oldDefault.schemaVersion == 8)
+    #expect(oldDefault.schemaVersion == 9)
     #expect(oldDefault.bentoSwapHoverDelay == 0.12)
 
     let customized = try ConfigurationStore.decode(JSONSerialization.data(withJSONObject: [
@@ -228,7 +279,7 @@ import Testing
     ]))
     #expect(configuration.bentoSwapHoverDelay == 0.12)
     #expect(configuration.bentoInnerGap == 0)
-    #expect(configuration.singleWindowInitialPlacement == .maximize)
+    #expect(configuration.singleWindowPlacement == .maximize)
 }
 
 @Test func schemaSixAddsGapAndKeepsExistingResizeFeedbackChoice() throws {
