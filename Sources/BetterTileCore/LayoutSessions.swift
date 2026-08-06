@@ -24,7 +24,7 @@ public struct LayoutSession: Hashable, Sendable {
     public var lastObservedFrames: [WindowID: BTRect]
     public var lastWorkArea: BTRect?
     public var isBentoInitialized: Bool
-    public var hasEvaluatedInitialPlacement: Bool
+    public var hasAppliedSingleWindowPlacement: Bool
     /// Corroborates a window's disappearance before its pane is given up.
     public var presence: WindowPresenceTracker
 
@@ -42,7 +42,7 @@ public struct LayoutSession: Hashable, Sendable {
         lastObservedFrames: [WindowID: BTRect] = [:],
         lastWorkArea: BTRect? = nil,
         isBentoInitialized: Bool = false,
-        hasEvaluatedInitialPlacement: Bool = false,
+        hasAppliedSingleWindowPlacement: Bool = false,
         presence: WindowPresenceTracker = WindowPresenceTracker()
     ) {
         self.id = id
@@ -58,7 +58,7 @@ public struct LayoutSession: Hashable, Sendable {
         self.lastObservedFrames = lastObservedFrames
         self.lastWorkArea = lastWorkArea
         self.isBentoInitialized = isBentoInitialized || bentoState.root != nil
-        self.hasEvaluatedInitialPlacement = hasEvaluatedInitialPlacement
+        self.hasAppliedSingleWindowPlacement = hasAppliedSingleWindowPlacement
         self.presence = presence
     }
 
@@ -77,10 +77,21 @@ public struct LayoutSession: Hashable, Sendable {
         lastObservedFrames.merge(frames) { _, proposed in proposed }
     }
 
-    public mutating func shouldApplyInitialPlacement(eligibleWindowCount: Int) -> Bool {
-        guard !hasEvaluatedInitialPlacement, eligibleWindowCount > 0 else { return false }
-        hasEvaluatedInitialPlacement = true
-        return eligibleWindowCount == 1
+    /// True exactly once each time this desktop's eligible window count becomes
+    /// one, so a desktop that drops back to a single window is placed again.
+    ///
+    /// Between those moments it stays false, which is what makes the configured
+    /// placement a starting point rather than a rule: once the lone window has
+    /// been placed, resizing it by hand sticks until another window arrives or
+    /// the user asks for a repair.
+    public mutating func shouldApplySingleWindowPlacement(eligibleWindowCount: Int) -> Bool {
+        guard eligibleWindowCount == 1 else {
+            hasAppliedSingleWindowPlacement = false
+            return false
+        }
+        guard !hasAppliedSingleWindowPlacement else { return false }
+        hasAppliedSingleWindowPlacement = true
+        return true
     }
 }
 

@@ -399,14 +399,6 @@ private final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSPo
         }
     }
 
-    @objc private func setFrontmostApplicationRule(_ sender: NSMenuItem) {
-        guard let rawValue = sender.representedObject as? String,
-              let rule = ApplicationRule(rawValue: rawValue),
-              let target = model.frontmostRuleTarget
-        else { return }
-        model.setRule(rule, for: target.bundleIdentifier)
-    }
-
     @objc private func showSettings() {
         let interval = Self.signposter.beginInterval("showSettings")
         defer { Self.signposter.endInterval("showSettings", interval) }
@@ -604,26 +596,6 @@ private final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSPo
             menu.addItem(item)
         }
 
-        if let frontmost = model.frontmostRuleTarget {
-            // The rule for whatever you were just using, without hunting for it
-            // in a list.
-            let submenu = NSMenu()
-            for rule in ApplicationRule.allCases {
-                let item = NSMenuItem(
-                    title: rule.title,
-                    action: #selector(setFrontmostApplicationRule(_:)),
-                    keyEquivalent: ""
-                )
-                item.target = self
-                item.representedObject = rule.rawValue
-                item.state = rule == frontmost.rule ? .on : .off
-                submenu.addItem(item)
-            }
-            let parent = NSMenuItem(title: "Rule for \(frontmost.name)", action: nil, keyEquivalent: "")
-            parent.submenu = submenu
-            menu.addItem(parent)
-            menu.addItem(.separator())
-        }
         addItem("Setup Assistant…", action: #selector(showSetupAssistant))
         addItem("Settings…", action: #selector(showSettings), keyEquivalent: ",")
         addItem("Check for Updates…", action: #selector(checkForUpdates(_:)))

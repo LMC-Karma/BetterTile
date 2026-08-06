@@ -76,22 +76,19 @@ public enum DividerVisibility: String, Codable, CaseIterable, Sendable {
     case dragOnly
 }
 
-public enum SingleWindowInitialPlacement: String, Codable, CaseIterable, Sendable {
-    case maximize
-    case almostMaximize
-    case unchanged
-
-    public var action: WindowAction? {
-        switch self {
-        case .maximize: .maximize
-        case .almostMaximize: .almostMaximize
-        case .unchanged: nil
-        }
-    }
-}
-
 public struct BetterTileConfiguration: Codable, Hashable, Sendable {
-    public static let currentSchemaVersion = 8
+    public static let currentSchemaVersion = 9
+
+    /// The placement a lone window receives, restricted to the actions that
+    /// describe a position on the display. `nil` means "leave it unchanged".
+    ///
+    /// The relative actions — move, grow, shrink, display transfer, restore —
+    /// are meaningless here: a window that just became the only one on its
+    /// desktop has no prior placement to move relative to.
+    static func normalizedSingleWindowPlacement(_ action: WindowAction?) -> WindowAction? {
+        guard let action else { return nil }
+        return WindowAction.snapAssignableActions.contains(action) ? action : .maximize
+    }
 
     public var schemaVersion: Int
     public var setupCompletionVersion: Int
@@ -101,7 +98,7 @@ public struct BetterTileConfiguration: Codable, Hashable, Sendable {
     public var snappingEnabled: Bool
     public var linkedResizeEnabled: Bool
     public var defaultLayoutMode: LayoutMode
-    public var singleWindowInitialPlacement: SingleWindowInitialPlacement
+    public var singleWindowPlacement: WindowAction?
     public var resizeFeedbackMode: ResizeFeedbackMode
     public var dividerVisibility: DividerVisibility
     public var dividerThickness: Double
@@ -128,7 +125,7 @@ public struct BetterTileConfiguration: Codable, Hashable, Sendable {
         snappingEnabled: Bool = true,
         linkedResizeEnabled: Bool = false,
         defaultLayoutMode: LayoutMode = .manual,
-        singleWindowInitialPlacement: SingleWindowInitialPlacement = .maximize,
+        singleWindowPlacement: WindowAction? = .maximize,
         resizeFeedbackMode: ResizeFeedbackMode = .live,
         dividerVisibility: DividerVisibility = .hoverAndDrag,
         dividerThickness: Double = 6,
@@ -152,7 +149,7 @@ public struct BetterTileConfiguration: Codable, Hashable, Sendable {
         self.snappingEnabled = snappingEnabled
         self.linkedResizeEnabled = linkedResizeEnabled
         self.defaultLayoutMode = defaultLayoutMode
-        self.singleWindowInitialPlacement = singleWindowInitialPlacement
+        self.singleWindowPlacement = Self.normalizedSingleWindowPlacement(singleWindowPlacement)
         self.resizeFeedbackMode = resizeFeedbackMode
         self.dividerVisibility = dividerVisibility
         self.dividerThickness = dividerThickness
@@ -174,6 +171,7 @@ public struct BetterTileConfiguration: Codable, Hashable, Sendable {
         case macOSTilingRecommendationAcknowledged, stageManagerRecommendationAcknowledged
         case showDockIcon, snappingEnabled, linkedResizeEnabled
         case defaultLayoutMode, resizeFeedbackMode, dividerVisibility, dividerThickness, bentoInnerGap, bentoSwapHoverDelay
+        case singleWindowPlacement
         case singleWindowInitialPlacement
         case dockReservationMode
         case snapSuppressionModifiers, adjacencyTolerance, snapAreaBindings, doubleClickTitleBarToMaximize
@@ -216,12 +214,20 @@ public struct BetterTileConfiguration: Codable, Hashable, Sendable {
             defaultLayoutMode = migratedMode
         }
         if version < 5 {
-            singleWindowInitialPlacement = .maximize
+            singleWindowPlacement = .maximize
+        } else if version < 9 {
+            // Versions 5 to 8 stored a three-value enum. Its cases map onto the
+            // full action list the setting now offers.
+            let legacy = try container.decodeIfPresent(String.self, forKey: .singleWindowInitialPlacement)
+            singleWindowPlacement = switch legacy {
+            case "almostMaximize": .almostMaximize
+            case "unchanged": nil
+            default: .maximize
+            }
         } else {
-            singleWindowInitialPlacement = try container.decodeIfPresent(
-                SingleWindowInitialPlacement.self,
-                forKey: .singleWindowInitialPlacement
-            ) ?? .maximize
+            singleWindowPlacement = Self.normalizedSingleWindowPlacement(
+                try container.decodeIfPresent(WindowAction.self, forKey: .singleWindowPlacement)
+            )
         }
         resizeFeedbackMode = try container.decodeIfPresent(ResizeFeedbackMode.self, forKey: .resizeFeedbackMode) ?? .ghost
         // Legacy values remain decodable, but handles are now deliberately
@@ -295,7 +301,7 @@ public struct BetterTileConfiguration: Codable, Hashable, Sendable {
         try container.encode(snappingEnabled, forKey: .snappingEnabled)
         try container.encode(linkedResizeEnabled, forKey: .linkedResizeEnabled)
         try container.encode(defaultLayoutMode, forKey: .defaultLayoutMode)
-        try container.encode(singleWindowInitialPlacement, forKey: .singleWindowInitialPlacement)
+        try container.encodeIfPresent(singleWindowPlacement, forKey: .singleWindowPlacement)
         try container.encode(resizeFeedbackMode, forKey: .resizeFeedbackMode)
         try container.encode(dividerVisibility, forKey: .dividerVisibility)
         try container.encode(dividerThickness, forKey: .dividerThickness)
@@ -380,6 +386,7 @@ public struct BetterTileConfiguration: Codable, Hashable, Sendable {
         result.schemaVersion = Self.currentSchemaVersion
         result.defaultLayoutMode = result.defaultLayoutMode.availableMode
         result.dividerVisibility = .hoverAndDrag
+        result.singleWindowPlacement = Self.normalizedSingleWindowPlacement(result.singleWindowPlacement)
         return result
     }
 }
@@ -433,7 +440,7 @@ public struct ConfigurationChangeSet: OptionSet, Hashable, Sendable {
             changes.insert(.divider)
         }
         if old.defaultLayoutMode != new.defaultLayoutMode
-            || old.singleWindowInitialPlacement != new.singleWindowInitialPlacement
+            || old.singleWindowPlacement != new.singleWindowPlacement
             || old.bentoInnerGap != new.bentoInnerGap
             || old.bentoSwapHoverDelay != new.bentoSwapHoverDelay
             || old.adjacencyTolerance != new.adjacencyTolerance {

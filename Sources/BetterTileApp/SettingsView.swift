@@ -303,16 +303,17 @@ private struct WindowLayoutSettings: View {
                     }
                 }
                 Picker(
-                    "First window on a new desktop",
-                    selection: configurationBinding(\.singleWindowInitialPlacement)
+                    "When a desktop has one window",
+                    selection: configurationBinding(\.singleWindowPlacement)
                 ) {
-                    ForEach(SingleWindowInitialPlacement.allCases, id: \.self) { placement in
-                        Text(placement.title).tag(placement)
+                    Text("Leave Unchanged").tag(nil as WindowAction?)
+                    ForEach(WindowAction.snapAssignableActions) { action in
+                        Text(action.title).tag(Optional(action))
                     }
                 }
                 Text(
-                    "The initial placement is applied once when a new desktop is first observed "
-                        + "with exactly one eligible window."
+                    "Applied each time a desktop is left with a single window. After that the window "
+                        + "keeps whatever size you give it, until another window opens or you repair the layout."
                 )
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -826,48 +827,21 @@ private extension LayoutMode {
     }
 }
 
-private extension SingleWindowInitialPlacement {
-    var title: String {
-        switch self {
-        case .maximize: "Maximize"
-        case .almostMaximize: "Almost Maximize"
-        case .unchanged: "Leave Unchanged"
-        }
-    }
-}
-
 private struct ApplicationRuleSettings: View {
     @Bindable var model: BetterTileModel
+    @State private var isPickingApplication = false
 
     var body: some View {
         Form {
-            Section("Frontmost App") {
-                if let target = model.frontmostRuleTarget {
-                    // Changing the rule for whatever you were just using,
-                    // without hunting for it in a list.
-                    Picker(target.name, selection: frontmostBinding(target)) {
-                        ForEach(ApplicationRule.allCases) { rule in
-                            Text(rule.title).tag(rule)
-                        }
-                    }
-                    Text(target.rule.explanation)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                } else {
-                    Text("Bring another app to the front to set a rule for it.")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                }
-            }
-
-            Section("Apps With Rules") {
+            Section {
                 if model.ruledApplications.isEmpty {
-                    Text("Every app is managed normally.")
+                    Text("Every app is managed normally. Add one to give it a rule.")
                         .font(.callout)
                         .foregroundStyle(.secondary)
                 } else {
                     ForEach(model.ruledApplications, id: \.bundleIdentifier) { entry in
                         HStack {
+                            ApplicationIcon(bundleIdentifier: entry.bundleIdentifier)
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(entry.name)
                                 Text(entry.bundleIdentifier)
@@ -875,7 +849,7 @@ private struct ApplicationRuleSettings: View {
                                     .foregroundStyle(.secondary)
                             }
                             Spacer()
-                            Picker("", selection: ruleBinding(entry.bundleIdentifier, current: entry.rule)) {
+                            Picker("", selection: ruleBinding(entry.bundleIdentifier)) {
                                 ForEach(ApplicationRule.allCases) { rule in
                                     Text(rule.title).tag(rule)
                                 }
@@ -893,6 +867,15 @@ private struct ApplicationRuleSettings: View {
                         }
                         .padding(.vertical, 2)
                     }
+                }
+                Text("Choosing Manage Normally removes an app from this list, the same as the × button.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } header: {
+                HStack {
+                    Text("Apps With Rules")
+                    Spacer()
+                    Button("Add App…") { isPickingApplication = true }
                 }
             }
 
@@ -917,21 +900,136 @@ private struct ApplicationRuleSettings: View {
             StatusMessage(model: model)
         }
         .formStyle(.grouped)
+        .sheet(isPresented: $isPickingApplication) {
+            ApplicationPickerSheet(model: model)
+        }
     }
 
-    private func frontmostBinding(
-        _ target: (bundleIdentifier: String, name: String, rule: ApplicationRule)
-    ) -> Binding<ApplicationRule> {
-        Binding(
-            get: { model.configuration.applicationRules.rule(for: target.bundleIdentifier) },
-            set: { model.setRule($0, for: target.bundleIdentifier) }
-        )
-    }
-
-    private func ruleBinding(_ bundleIdentifier: String, current: ApplicationRule) -> Binding<ApplicationRule> {
+    private func ruleBinding(_ bundleIdentifier: String) -> Binding<ApplicationRule> {
         Binding(
             get: { model.configuration.applicationRules.rule(for: bundleIdentifier) },
             set: { model.setRule($0, for: bundleIdentifier) }
         )
+    }
+}
+
+/// An application's own icon, so a row is recognisable at a glance rather than
+/// by reading a reverse-DNS identifier.
+private struct ApplicationIcon: View {
+    let bundleIdentifier: String
+
+    var body: some View {
+        Group {
+            if let icon = BetterTileModel.applicationIcon(for: bundleIdentifier) {
+                Image(nsImage: icon).resizable()
+            } else {
+                Image(systemName: "app.dashed")
+                    .resizable()
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .frame(width: 24, height: 24)
+    }
+}
+
+/// Picks the application a rule applies to.
+///
+/// Running applications cover almost every case and need no permission to
+/// enumerate. Browsing exists for the rest: an app you want to exclude before
+/// ever launching it cannot appear in a list of what is running.
+private struct ApplicationPickerSheet: View {
+    @Bindable var model: BetterTileModel
+    @Environment(\.dismiss) private var dismiss
+    @State private var searchText = ""
+    @State private var selection: String?
+
+    private var candidates: [ApplicationRuleCandidate] {
+        let all = model.addableApplications
+        let query = searchText.trimmingCharacters(in: .whitespaces)
+        guard !query.isEmpty else { return all }
+        return all.filter {
+            $0.name.localizedCaseInsensitiveContains(query)
+                || $0.bundleIdentifier.localizedCaseInsensitiveContains(query)
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Add an App").font(.headline)
+
+            TextField("Search", text: $searchText)
+                .textFieldStyle(.roundedBorder)
+
+            if candidates.isEmpty {
+                VStack {
+                    Spacer()
+                    Text(
+                        model.addableApplications.isEmpty
+                            ? "Every running app already has a rule. Use Browse… for one that is not running."
+                            : "No running app matches “\(searchText)”."
+                    )
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    Spacer()
+                }
+                .frame(maxWidth: .infinity)
+            } else {
+                List(candidates, selection: $selection) { candidate in
+                    HStack {
+                        ApplicationIcon(bundleIdentifier: candidate.bundleIdentifier)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(candidate.name)
+                            Text(candidate.bundleIdentifier)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .tag(candidate.bundleIdentifier)
+                    .contentShape(.rect)
+                }
+                .listStyle(.inset)
+                .alternatingRowBackgrounds()
+            }
+
+            HStack {
+                Button("Browse…") { browseForApplication() }
+                Spacer()
+                Button("Cancel", role: .cancel) { dismiss() }
+                Button("Add") { addSelection() }
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(selection == nil)
+            }
+        }
+        .padding(20)
+        .frame(width: 460, height: 420)
+    }
+
+    private func addSelection() {
+        guard let selection else { return }
+        add(bundleIdentifier: selection)
+    }
+
+    private func add(bundleIdentifier: String) {
+        // Exclude from Bento rather than Manage Normally: the default rule is
+        // stored as an absence, so adding an app with it would drop the row the
+        // user just created.
+        model.setRule(.excludeFromBento, for: bundleIdentifier)
+        dismiss()
+    }
+
+    private func browseForApplication() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.applicationBundle]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.directoryURL = URL(fileURLWithPath: "/Applications")
+        panel.prompt = "Choose"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        guard let candidate = model.candidate(atApplicationURL: url) else {
+            model.statusMessage = "That bundle does not have an application identifier."
+            return
+        }
+        add(bundleIdentifier: candidate.bundleIdentifier)
     }
 }

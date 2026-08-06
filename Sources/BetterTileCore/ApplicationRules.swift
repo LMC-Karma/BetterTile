@@ -110,3 +110,47 @@ public struct ApplicationRuleSet: Codable, Hashable, Sendable {
         )
     }
 }
+
+/// One application offered by the rule picker.
+///
+/// Deliberately framework-free: the application layer maps whatever it can see —
+/// running applications, or a bundle the user browsed to — into this shape, and
+/// the filtering that decides what is worth offering stays testable.
+public struct ApplicationRuleCandidate: Hashable, Sendable, Identifiable {
+    public var bundleIdentifier: String
+    public var name: String
+
+    public var id: String { bundleIdentifier }
+
+    public init(bundleIdentifier: String, name: String) {
+        self.bundleIdentifier = bundleIdentifier
+        self.name = name
+    }
+}
+
+public extension ApplicationRuleSet {
+    /// The applications worth offering in the picker: everything except
+    /// BetterTile itself and the applications that already have a rule, since
+    /// those are edited in the list rather than added again.
+    ///
+    /// Repeated bundle identifiers collapse to their first occurrence — the
+    /// same application can be running as several processes — and the result is
+    /// sorted by display name so the picker does not reorder itself between
+    /// openings.
+    func addableCandidates(
+        from running: [ApplicationRuleCandidate],
+        excluding ownBundleIdentifier: String
+    ) -> [ApplicationRuleCandidate] {
+        var seen: Set<String> = ruledBundleIdentifiers
+        seen.insert(ownBundleIdentifier)
+        var candidates: [ApplicationRuleCandidate] = []
+        for candidate in running where !candidate.bundleIdentifier.isEmpty {
+            guard seen.insert(candidate.bundleIdentifier).inserted else { continue }
+            candidates.append(candidate)
+        }
+        return candidates.sorted {
+            let order = $0.name.localizedStandardCompare($1.name)
+            return order == .orderedSame ? $0.bundleIdentifier < $1.bundleIdentifier : order == .orderedAscending
+        }
+    }
+}
