@@ -141,6 +141,9 @@ are the remaining gates before publishing:
 - Opening BetterTile directly from the mounted DMG shows the move-to-Applications
   explanation before Accessibility or update services start.
 - An older test build discovers the update and turns the menu-bar icon blue.
+  The older build must carry the **current** `SUFeedURL`. A build from before a
+  feed relocation points at the old address and can only ever fail, so this gate
+  silently cannot pass and proves nothing about the release.
 - Sparkle's own update UI appears, shows the release notes, and requires user
   action before downloading and before installing.
 - **Later** preserves the blue state; **Skip** and a confirmed no-update result
@@ -180,3 +183,31 @@ After publication, confirm the release assets and appcast are public,
 inspect the appcast version, asset URL, and EdDSA signature, then complete one
 controlled update from an older build. Do not merge or publish automatically
 from CI; the EdDSA private key is intentionally absent from GitHub Actions.
+
+Also confirm that the address the published application will actually ask for
+serves the release. Read the URL out of the shipped bundle rather than trusting
+this document, because the value that matters is the one compiled into the app
+testers are running:
+
+```sh
+curl -sfL "$(/usr/libexec/PlistBuddy -c 'Print :SUFeedURL' \
+    /Applications/BetterTile.app/Contents/Info.plist)" \
+    | grep -E 'sparkle:(version|shortVersionString)'
+```
+
+The release tool already polls the Latest-release asset URL and reports if it
+does not yet serve the new build. That check can lag behind GitHub's CDN by a
+minute; re-run it before announcing rather than treating the first failure as
+final.
+
+## Relocating the appcast
+
+Moving the feed to a new address strands every installation that predates the
+move: those builds keep asking the old URL, and once it stops answering they
+report only a generic update error, with no way to discover any later release.
+
+Before removing an old feed location, either rebuild and replace the previous
+release so a fresh download carries the new `SUFeedURL`, or leave the old
+location serving an appcast that points at the current release until no
+installation is still asking for it. Removing the old address first cannot be
+undone from the users' side — a stranded build has to be replaced by hand.
