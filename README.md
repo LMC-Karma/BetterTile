@@ -20,6 +20,10 @@ why before it does.
 
 ---
 
+https://github.com/user-attachments/assets/8f8eda65-384f-4e5a-8548-9a9208da6c30
+
+---
+
 ## Everything it does
 
 ### Drag windows where they belong
