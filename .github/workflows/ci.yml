@@ -59,12 +59,31 @@ jobs:
             echo "code=false" >> "$GITHUB_OUTPUT"
           fi
 
+  # A job skipped because its dependency failed reports the same "skipped"
+  # conclusion as one skipped by its own condition, and a skipped required
+  # check counts as passing. Gating only on `code == 'true'` would therefore
+  # turn any failure inside `changes` into a green `test` with nothing built.
+  # Run whenever the classification is not a clean "no code changed", and let
+  # the first step decide whether that was a real answer.
   test:
     needs: changes
-    if: needs.changes.outputs.code == 'true'
+    if: >-
+      !cancelled() &&
+      (needs.changes.result != 'success' ||
+       needs.changes.outputs.code == 'true')
     runs-on: macos-26
     timeout-minutes: 20
     steps:
+      - name: Require a successful change classification
+        env:
+          RESULT: ${{ needs.changes.result }}
+        run: |
+          if [ "$RESULT" != "success" ]; then
+            echo "The changes job ended as '$RESULT', so nothing establishes"
+            echo "that this pull request is documentation only. Failing rather"
+            echo "than letting the required check pass without a build."
+            exit 1
+          fi
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Swift version
         run: swift --version
