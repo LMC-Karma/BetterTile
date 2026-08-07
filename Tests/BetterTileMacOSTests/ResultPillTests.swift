@@ -14,6 +14,28 @@ import Testing
     #expect(failure.dismissDelay == 1.6)
 }
 
+/// Repairing a desktop whose single window is set to be left unchanged succeeds
+/// without moving anything, and the pill has to say so rather than claim a
+/// layout was applied.
+@Test func resultPillCarriesACustomSuccessMessage() {
+    let unchanged = ResultPillFeedback.success("Nothing to repair")
+
+    #expect(unchanged.message == "Nothing to repair")
+    #expect(unchanged.kind == .success)
+    #expect(unchanged.symbolName == "checkmark")
+    #expect(unchanged.dismissDelay == ResultPillFeedback.success().dismissDelay)
+
+    let display = DisplaySnapshot(
+        id: DisplayID(rawValue: "main"),
+        frame: BTRect(x: 0, y: 0, width: 1440, height: 900),
+        visibleFrame: BTRect(x: 0, y: 24, width: 1440, height: 840)
+    )
+    let frame = ResultPillLayout.frame(for: unchanged, on: display)
+    #expect(frame.size.width >= 172)
+    #expect(frame.size.width <= 240)
+    #expect(frame.maxX <= display.visibleFrame.maxX)
+}
+
 @Test func resultPillShortensKnownErrors() {
     #expect(ResultPillFeedback.failure("No eligible focused window.").message == "No eligible window")
     #expect(ResultPillFeedback.failure("Accessibility access was removed.").message == "Accessibility required")

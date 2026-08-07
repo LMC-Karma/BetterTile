@@ -444,6 +444,12 @@ final class BetterTileModel {
     private func repairSingleWindow(_ window: WindowSnapshot, session: LayoutSession, display: DisplaySnapshot) {
         var session = session
         session.hasAppliedSingleWindowPlacement = true
+        // A window left floating or focus-excluded by an earlier, busier layout
+        // is skipped by reconciliation for as long as those marks survive, so
+        // without this the next window to open would not tile with it. Repair
+        // is the button people press when something is stuck; it has to clear
+        // that state even when there is only one window to place.
+        session.reincludeInBento([window.id])
         activeDisplayID = display.id
 
         guard let action = configuration.singleWindowPlacement,
@@ -453,7 +459,7 @@ final class BetterTileModel {
             sessionStore.update(display.id) { $0 = session }
             sessionRevision &+= 1
             statusMessage = nil
-            presentActionResult(succeeded: true, error: nil, displayID: display.id)
+            presentActionResult(succeeded: true, successMessage: "Nothing to repair", displayID: display.id)
             return
         }
 
@@ -1877,8 +1883,15 @@ final class BetterTileModel {
         windows.filter(\.isEligible).map { "\($0.displayID.rawValue):\($0.id.rawValue)" }.sorted().joined(separator: "|")
     }
 
-    private func presentActionResult(succeeded: Bool, error: String? = nil, displayID: DisplayID?) {
-        let feedback = succeeded ? ResultPillFeedback.success() : ResultPillFeedback.failure(error)
+    private func presentActionResult(
+        succeeded: Bool,
+        error: String? = nil,
+        successMessage: String? = nil,
+        displayID: DisplayID?
+    ) {
+        let feedback = succeeded
+            ? successMessage.map(ResultPillFeedback.success) ?? ResultPillFeedback.success()
+            : ResultPillFeedback.failure(error)
         lastActionFeedback = feedback
         let displays = system.displays()
         guard let display = displayID.flatMap({ id in displays.first { $0.id == id } })

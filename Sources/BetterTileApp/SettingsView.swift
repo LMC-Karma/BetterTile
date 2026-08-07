@@ -942,12 +942,16 @@ private struct ApplicationPickerSheet: View {
     @Environment(\.dismiss) private var dismiss
     @State private var searchText = ""
     @State private var selection: String?
+    /// Sampled once when the sheet opens rather than read from the model on
+    /// every keystroke: enumerating running applications is not free, and a
+    /// list that reorders itself because something launched mid-search would be
+    /// harder to use, not fresher.
+    @State private var allCandidates: [ApplicationRuleCandidate] = []
 
     private var candidates: [ApplicationRuleCandidate] {
-        let all = model.addableApplications
         let query = searchText.trimmingCharacters(in: .whitespaces)
-        guard !query.isEmpty else { return all }
-        return all.filter {
+        guard !query.isEmpty else { return allCandidates }
+        return allCandidates.filter {
             $0.name.localizedCaseInsensitiveContains(query)
                 || $0.bundleIdentifier.localizedCaseInsensitiveContains(query)
         }
@@ -964,7 +968,7 @@ private struct ApplicationPickerSheet: View {
                 VStack {
                     Spacer()
                     Text(
-                        model.addableApplications.isEmpty
+                        allCandidates.isEmpty
                             ? "Every running app already has a rule. Use Browse… for one that is not running."
                             : "No running app matches “\(searchText)”."
                     )
@@ -1003,6 +1007,7 @@ private struct ApplicationPickerSheet: View {
         }
         .padding(20)
         .frame(width: 460, height: 420)
+        .onAppear { allCandidates = model.addableApplications }
     }
 
     private func addSelection() {
