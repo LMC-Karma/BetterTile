@@ -12,7 +12,56 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # `test` is a required status check. A workflow skipped by a `paths-ignore`
+  # filter never reports that check at all, so the pull request waits on it
+  # forever; a job skipped by an `if` condition reports success and satisfies
+  # it. That is why the path decision lives here rather than in `on:`.
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      code: ${{ steps.filter.outputs.code }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - name: Decide whether the change can affect a build
+        id: filter
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+
+          # Anything that is not a pull request (a manual dispatch) gets the
+          # full run, because there is no base commit to compare against.
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            echo "code=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          changed=$(git diff --name-only "$BASE" "$HEAD")
+          echo "Changed files:"
+          echo "$changed" | sed 's/^/  /'
+
+          # Everything not matched here is treated as code, so a path nobody
+          # anticipated is built rather than silently skipped. Workflow files
+          # are deliberately absent: a change to CI must still run CI.
+          code=$(printf '%s\n' "$changed" \
+            | grep -vE '(^docs/|^\.github/ISSUE_TEMPLATE/|^LICENSE$|\.md$)' \
+            || true)
+
+          if [ -n "$code" ]; then
+            echo "Build-affecting paths changed, running the full suite."
+            echo "code=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Documentation only, skipping the build."
+            echo "code=false" >> "$GITHUB_OUTPUT"
+          fi
+
   test:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: macos-26
     timeout-minutes: 20
     steps:
