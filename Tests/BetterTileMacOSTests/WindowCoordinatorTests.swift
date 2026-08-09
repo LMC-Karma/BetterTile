@@ -291,6 +291,122 @@ import Testing
     ))
 }
 
+@Test @MainActor func coordinatorOwnsDelayedEventsFromOverlappingGenerations() throws {
+    let system = FakeWindowSystem()
+    let coordinator = WindowCoordinator(system: system)
+    let id = system.windows[0].id
+    let first = BTRect(x: 0, y: 0, width: 500, height: 800)
+    let second = BTRect(x: 500, y: 0, width: 500, height: 800)
+
+    #expect(coordinator.applyPlacements([Placement(windowID: id, frame: first)]))
+    #expect(coordinator.applyPlacements([Placement(windowID: id, frame: second)]))
+
+    #expect(coordinator.consumeExpectedMutation(windowID: id, actualFrame: first))
+    #expect(coordinator.consumeExpectedMutation(windowID: id, actualFrame: second))
+}
+
+@Test @MainActor func anObservedGenerationStillOwnsDelayedDuplicatesAfterANewerWrite() throws {
+    let system = FakeWindowSystem()
+    let coordinator = WindowCoordinator(system: system)
+    let id = system.windows[0].id
+    let first = BTRect(x: 0, y: 0, width: 500, height: 800)
+    let second = BTRect(x: 500, y: 0, width: 500, height: 800)
+
+    #expect(coordinator.applyPlacements([Placement(windowID: id, frame: first)]))
+    #expect(coordinator.consumeExpectedMutation(windowID: id, actualFrame: first))
+    #expect(coordinator.applyPlacements([Placement(windowID: id, frame: second)]))
+
+    #expect(coordinator.consumeExpectedMutation(windowID: id, actualFrame: first))
+}
+
+@Test @MainActor func coordinatorOwnsACallbackBeyondTheOldHalfSecondDeadline() async throws {
+    let system = FakeWindowSystem()
+    let coordinator = WindowCoordinator(system: system)
+    let id = system.windows[0].id
+    let target = BTRect(x: 0, y: 0, width: 500, height: 800)
+
+    #expect(coordinator.applyPlacements([Placement(windowID: id, frame: target)]))
+    try await Task.sleep(for: .milliseconds(550))
+    #expect(coordinator.consumeExpectedMutation(windowID: id, actualFrame: target))
+}
+
+@Test @MainActor func coordinatorOwnsEveryCallbackFromAFrameWrite() throws {
+    let system = FakeWindowSystem()
+    let coordinator = WindowCoordinator(system: system)
+    let id = system.windows[0].id
+    let target = BTRect(x: 0, y: 0, width: 500, height: 800)
+
+    #expect(coordinator.applyPlacements([Placement(windowID: id, frame: target)]))
+    #expect(coordinator.consumeExpectedMutation(windowID: id, actualFrame: target))
+    #expect(coordinator.consumeExpectedMutation(windowID: id, actualFrame: target))
+    #expect(coordinator.consumeExpectedMutation(windowID: id, actualFrame: target))
+    #expect(coordinator.consumeExpectedMutation(windowID: id, actualFrame: target))
+    coordinator.finishExpectedMutations(upTo: [id: coordinator.mutationGeneration(for: id)])
+    #expect(!coordinator.consumeExpectedMutation(windowID: id, actualFrame: target))
+}
+
+@Test @MainActor func rapidWritesDoNotDropAnOwnedGeneration() throws {
+    let system = FakeWindowSystem()
+    let coordinator = WindowCoordinator(system: system)
+    let id = system.windows[0].id
+    let targets = (0..<9).map { index in
+        BTRect(x: Double(index * 10), y: 0, width: 500, height: 700)
+    }
+
+    for target in targets {
+        #expect(coordinator.applyPlacements([Placement(windowID: id, frame: target)]))
+    }
+
+    #expect(coordinator.consumeExpectedMutation(windowID: id, actualFrame: targets[0]))
+}
+
+@Test @MainActor func finishingAnOlderGenerationPreservesNewerOwnership() throws {
+    let system = FakeWindowSystem()
+    let coordinator = WindowCoordinator(system: system)
+    let id = system.windows[0].id
+    let first = BTRect(x: 0, y: 0, width: 500, height: 800)
+    let second = BTRect(x: 500, y: 0, width: 500, height: 800)
+
+    #expect(coordinator.applyPlacements([Placement(windowID: id, frame: first)]))
+    let firstGeneration = coordinator.mutationGeneration(for: id)
+    #expect(coordinator.applyPlacements([Placement(windowID: id, frame: second)]))
+    coordinator.finishExpectedMutations(upTo: [id: firstGeneration])
+
+    #expect(!coordinator.consumeExpectedMutation(windowID: id, actualFrame: first))
+    #expect(coordinator.consumeExpectedMutation(windowID: id, actualFrame: second))
+}
+
+@Test @MainActor func failedFrameWriteDoesNotClaimAFutureEvent() throws {
+    let system = FakeWindowSystem()
+    let coordinator = WindowCoordinator(system: system)
+    let id = system.windows[0].id
+    let target = BTRect(x: 0, y: 0, width: 500, height: 800)
+    system.failingWindowID = id
+
+    #expect(!coordinator.applyPlacements([Placement(windowID: id, frame: target)]))
+    #expect(!coordinator.consumeExpectedMutation(windowID: id, actualFrame: target))
+}
+
+@Test @MainActor func rollbackOwnsBothForwardAndRestoringEvents() throws {
+    let system = FakeWindowSystem()
+    system.addSecondWindow()
+    let coordinator = WindowCoordinator(system: system)
+    let first = system.windows[0]
+    let failing = system.windows[1]
+    let forwardFrame = BTRect(x: 0, y: 0, width: 500, height: 800)
+    let failingFrame = BTRect(x: 500, y: 0, width: 500, height: 800)
+    system.failingWindowID = failing.id
+
+    #expect(!coordinator.applyPlacements([
+        Placement(windowID: first.id, frame: forwardFrame),
+        Placement(windowID: failing.id, frame: failingFrame),
+    ]))
+
+    #expect(coordinator.consumeExpectedMutation(windowID: first.id, actualFrame: forwardFrame))
+    #expect(coordinator.consumeExpectedMutation(windowID: first.id, actualFrame: first.frame))
+    #expect(!coordinator.consumeExpectedMutation(windowID: failing.id, actualFrame: failingFrame))
+}
+
 @Test @MainActor func fakeEventSourceEmitsDeterministicNativeResizeEvent() {
     let system = FakeWindowSystem()
     var received: WindowSystemEvent?
@@ -540,6 +656,7 @@ private final class FakeWindowSystem: WindowSystem, TargetedWindowSystem, Window
     var focusedWindowID: WindowID?
     var eventHandler: (@MainActor (WindowSystemEvent) -> Void)?
     var targetedSnapshotRequests = 0
+    var targetedSnapshotsFail = false
     /// Every `knownCurrentFrame` hint the coordinator supplied, per window, in
     /// call order. `nil` means the coordinator had no fresh reading.
     var recordedKnownCurrentFrames: [WindowID: [BTRect?]] = [:]
@@ -582,6 +699,7 @@ private final class FakeWindowSystem: WindowSystem, TargetedWindowSystem, Window
     }
     func windowSnapshots(ids: Set<WindowID>) throws -> [WindowSnapshot] {
         targetedSnapshotRequests += 1
+        if targetedSnapshotsFail { throw WindowSystemError.operationFailed("Simulated snapshot failure") }
         settlePendingFrames()
         return windows.filter { ids.contains($0.id) }
     }
@@ -723,6 +841,7 @@ private final class FakeWindowSystem: WindowSystem, TargetedWindowSystem, Window
     #expect(coordinator.perform(plan), "a late-settling window still counts as applied")
     let generation = coordinator.mutationGeneration(for: plan.windowID)
     #expect(await coordinator.verifyPlacement(plan, since: generation, delay: .milliseconds(1)) == .landed)
+    #expect(!coordinator.consumeExpectedMutation(windowID: plan.windowID, actualFrame: plan.targetFrame))
 }
 
 /// A window that never moves is still sitting at the action's source frame, and
@@ -738,6 +857,7 @@ private final class FakeWindowSystem: WindowSystem, TargetedWindowSystem, Window
     #expect(system.windows[0].frame == plan.sourceFrame)
     let generation = coordinator.mutationGeneration(for: plan.windowID)
     #expect(await coordinator.verifyPlacement(plan, since: generation, delay: .milliseconds(1)) == .failed)
+    #expect(!coordinator.consumeExpectedMutation(windowID: plan.windowID, actualFrame: plan.targetFrame))
 }
 
 /// Dragging the window somewhere else while verification is pending. The mouse
@@ -793,6 +913,7 @@ private final class FakeWindowSystem: WindowSystem, TargetedWindowSystem, Window
     )
     #expect(coordinator.mutationGeneration(for: plan.windowID) != generation)
     #expect(await coordinator.verifyPlacement(plan, since: generation, delay: .milliseconds(1)) == .superseded)
+    #expect(coordinator.consumeExpectedMutation(windowID: plan.windowID, actualFrame: plan.targetFrame))
 }
 
 /// A read-back that cannot be completed must not turn an applied action into a
@@ -805,6 +926,34 @@ private final class FakeWindowSystem: WindowSystem, TargetedWindowSystem, Window
     let generation = coordinator.mutationGeneration(for: plan.windowID)
     system.windows.removeAll()
     #expect(await coordinator.verifyPlacement(plan, since: generation, delay: .milliseconds(1)) == .inconclusive)
+}
+
+@Test @MainActor func cancellingVerificationRetainsItsMutationOwnership() async throws {
+    let system = FakeWindowSystem()
+    let coordinator = WindowCoordinator(system: system)
+    let plan = try #require(coordinator.plan(.leftHalf))
+    #expect(coordinator.perform(plan))
+    let generation = coordinator.mutationGeneration(for: plan.windowID)
+    let verification = Task {
+        await coordinator.verifyPlacement(plan, since: generation, delay: .seconds(1))
+    }
+
+    verification.cancel()
+    #expect(await verification.value == .superseded)
+    #expect(coordinator.consumeExpectedMutation(windowID: plan.windowID, actualFrame: plan.targetFrame))
+}
+
+@Test @MainActor func failedSettlementReadEndsOnlyItsOwnedGenerations() async throws {
+    let system = FakeWindowSystem()
+    let coordinator = WindowCoordinator(system: system)
+    let id = system.windows[0].id
+    let target = BTRect(x: 0, y: 0, width: 500, height: 800)
+    let placements = [Placement(windowID: id, frame: target)]
+    #expect(coordinator.applyPlacements(placements))
+    system.targetedSnapshotsFail = true
+
+    #expect(!(await coordinator.settleAuthoritativePlacements(placements, retryDelay: .zero)))
+    #expect(!coordinator.consumeExpectedMutation(windowID: id, actualFrame: target))
 }
 
 /// A Bento operation resolves a shortcut to a pane, which is deliberately not

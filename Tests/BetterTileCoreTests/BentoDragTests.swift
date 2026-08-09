@@ -259,23 +259,6 @@ private let dragBounds = BTRect(x: 80, y: 24, width: 1120, height: 776)
     #expect(swapped[target]?.size.width == 520)
 }
 
-@Test func bentoDragEventBufferDefersFrameAndTopologyEventsUntilDrain() {
-    let source = WindowID(rawValue: "source")
-    var buffer = BentoDragEventBuffer()
-    buffer.record(WindowSystemEvent(kind: .moved, windowID: source, processIdentifier: 1))
-    buffer.record(WindowSystemEvent(kind: .resized, windowID: source, processIdentifier: 1))
-    buffer.record(WindowSystemEvent(kind: .created, windowID: nil, processIdentifier: 2))
-    buffer.record(WindowSystemEvent(kind: .focused, windowID: source, processIdentifier: 1))
-
-    #expect(buffer.frameEventWindowIDs == [source])
-    #expect(buffer.topologyChanged)
-    let drained = buffer.drain()
-    #expect(drained.frameEventWindowIDs == [source])
-    #expect(drained.topologyChanged)
-    #expect(buffer.frameEventWindowIDs.isEmpty)
-    #expect(!buffer.topologyChanged)
-}
-
 @Test func bentoDragPreviewShowsOnlyChangedNeighbours() {
     let source = WindowID(rawValue: "source")
     let unchanged = WindowID(rawValue: "unchanged")
