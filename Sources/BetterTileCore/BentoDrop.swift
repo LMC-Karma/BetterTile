@@ -392,7 +392,12 @@ public struct BentoDropPlanner: Sendable {
             let secondBounds = BTRect(x: cut, y: bounds.minY, width: bounds.maxX - cut, height: bounds.size.height)
             if let firstNode = buildTree(items: first, bounds: firstBounds),
                let secondNode = buildTree(items: second, bounds: secondBounds) {
-                return .branch(BentoBranch(axis: .vertical, weight: firstBounds.size.width / bounds.size.width, first: firstNode, second: secondNode))
+                return .partition(BentoPartition(
+                    axis: .vertical,
+                    weight: firstBounds.size.width / bounds.size.width,
+                    first: firstNode,
+                    second: secondNode
+                ))
             }
         }
         let horizontalCuts = Set(items.flatMap { [$0.frame.minY, $0.frame.maxY] })
@@ -405,7 +410,12 @@ public struct BentoDropPlanner: Sendable {
             let secondBounds = BTRect(x: bounds.minX, y: cut, width: bounds.size.width, height: bounds.maxY - cut)
             if let firstNode = buildTree(items: first, bounds: firstBounds),
                let secondNode = buildTree(items: second, bounds: secondBounds) {
-                return .branch(BentoBranch(axis: .horizontal, weight: firstBounds.size.height / bounds.size.height, first: firstNode, second: secondNode))
+                return .partition(BentoPartition(
+                    axis: .horizontal,
+                    weight: firstBounds.size.height / bounds.size.height,
+                    first: firstNode,
+                    second: secondNode
+                ))
             }
         }
         return nil

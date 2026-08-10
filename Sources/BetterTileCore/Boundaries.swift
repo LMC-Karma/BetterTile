@@ -91,8 +91,6 @@ public extension BentoLayoutState {
             switch node {
             case .leaf, .vacant:
                 return []
-            case .branch:
-                return collect(BentoLayoutState.normalized(node), rect: rect)
             case let .partition(partition):
                 let rects = partitionChildRects(partition, in: rect)
                 let descriptors = partition.boundaryIDs.indices.map { index in

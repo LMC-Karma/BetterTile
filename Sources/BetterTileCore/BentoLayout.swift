@@ -45,6 +45,25 @@ public struct BentoPartition: Hashable, Sendable {
         self.lockedBoundaryIDs = lockedBoundaryIDs.intersection(self.boundaryIDs)
     }
 
+    public init(
+        id: UUID = UUID(),
+        axis: SplitAxis,
+        weight: Double = 0.5,
+        isLocked: Bool = false,
+        first: BentoNode,
+        second: BentoNode
+    ) {
+        let weight = min(0.9, max(0.1, weight))
+        self.init(
+            id: id,
+            axis: axis,
+            children: [first, second],
+            ratios: [weight, 1 - weight],
+            boundaryIDs: [id],
+            lockedBoundaryIDs: isLocked ? [id] : []
+        )
+    }
+
     public var isLocked: Bool { !lockedBoundaryIDs.isEmpty }
 
     public func cumulativeRatio(at boundaryIndex: Int) -> Double {
@@ -71,35 +90,15 @@ public struct BentoPartition: Hashable, Sendable {
     }
 }
 
-public struct BentoBranch: Hashable, Sendable {
-    public var id: UUID
-    public var axis: SplitAxis
-    public var weight: Double
-    public var isLocked: Bool
-    public var first: BentoNode
-    public var second: BentoNode
-
-    public init(id: UUID = UUID(), axis: SplitAxis, weight: Double = 0.5, isLocked: Bool = false, first: BentoNode, second: BentoNode) {
-        self.id = id
-        self.axis = axis
-        self.weight = min(0.9, max(0.1, weight))
-        self.isLocked = isLocked
-        self.first = first
-        self.second = second
-    }
-}
-
 public indirect enum BentoNode: Hashable, Sendable {
     case leaf(WindowID)
     case vacant(UUID)
-    case branch(BentoBranch)
     case partition(BentoPartition)
 
     public var windowIDs: [WindowID] {
         switch self {
         case let .leaf(id): [id]
         case .vacant: []
-        case let .branch(branch): branch.first.windowIDs + branch.second.windowIDs
         case let .partition(partition): partition.children.flatMap(\.windowIDs)
         }
     }
@@ -125,10 +124,6 @@ public struct BentoLayoutState: Hashable, Sendable {
         func collect(_ node: BentoNode, depth: Int) -> [BentoBranchDescriptor] {
             switch node {
             case .leaf, .vacant: return []
-            case let .branch(branch):
-                return [BentoBranchDescriptor(id: branch.id, axis: branch.axis, weight: branch.weight, isLocked: branch.isLocked, depth: depth)]
-                    + collect(branch.first, depth: depth + 1)
-                    + collect(branch.second, depth: depth + 1)
             case let .partition(partition):
                 let boundaries = partition.boundaryIDs.indices.map { index in
                     BentoBranchDescriptor(
@@ -202,8 +197,6 @@ public struct BentoLayoutState: Hashable, Sendable {
             switch node {
             case .leaf, .vacant:
                 return (node, false)
-            case .branch:
-                return update(Self.normalized(node), rect: rect)
             case var .partition(partition):
                 if let index = partition.boundaryIDs.firstIndex(of: branchID) {
                     guard !partition.lockedBoundaryIDs.contains(branchID) else { return (node, false) }
@@ -253,10 +246,6 @@ public struct BentoLayoutState: Hashable, Sendable {
                 return candidate == targetWindowID ? .leaf(windowID) : node
             case .vacant:
                 return node
-            case var .branch(branch):
-                branch.first = replacing(branch.first)
-                branch.second = replacing(branch.second)
-                return .branch(branch)
             case var .partition(partition):
                 partition.children = partition.children.map(replacing)
                 return .partition(partition)
@@ -328,9 +317,6 @@ public struct BentoLayoutState: Hashable, Sendable {
                 return candidate == windowID ? depth : nil
             case .vacant:
                 return nil
-            case let .branch(branch):
-                return find(branch.first, depth: depth + 1)
-                    ?? find(branch.second, depth: depth + 1)
             case let .partition(partition):
                 return partition.children.lazy.compactMap { find($0, depth: depth + 1) }.first
             }
@@ -391,8 +377,6 @@ public struct BentoLayoutState: Hashable, Sendable {
             switch node {
             case .leaf, .vacant:
                 return (node, false)
-            case .branch:
-                return reorderSiblings(in: Self.normalized(node))
             case var .partition(partition):
                 if partition.axis == axis,
                    let sourceIndex = directLeafIndex(sourceWindowID, in: partition.children),
@@ -446,8 +430,6 @@ public struct BentoLayoutState: Hashable, Sendable {
                 )), true)
             case .vacant:
                 return (node, false)
-            case .branch:
-                return insertBesideTarget(in: Self.normalized(node))
             case var .partition(partition):
                 if partition.axis == axis,
                    let targetIndex = directLeafIndex(targetWindowID, in: partition.children) {
@@ -526,33 +508,6 @@ public struct BentoLayoutState: Hashable, Sendable {
         func update(_ node: BentoNode, rect: BTRect) -> BentoNode {
             switch node {
             case .leaf, .vacant: return node
-            case var .branch(branch):
-                if !branch.isLocked {
-                    let firstFrames = branch.first.windowIDs.compactMap { currentFrames[$0] }
-                    if !firstFrames.isEmpty {
-                        let boundary: Double = switch branch.axis {
-                        case .vertical: firstFrames.map(\.maxX).max() ?? rect.midX
-                        case .horizontal: firstFrames.map(\.maxY).max() ?? rect.midY
-                        }
-                        let extent = branch.axis == .vertical ? rect.size.width : rect.size.height
-                        let start = branch.axis == .vertical ? rect.minX : rect.minY
-                        if extent > 0 { branch.weight = min(0.9, max(0.1, (boundary - start) / extent)) }
-                    }
-                }
-                let firstRect: BTRect
-                let secondRect: BTRect
-                if branch.axis == .vertical {
-                    let width = rect.size.width * branch.weight
-                    firstRect = BTRect(x: rect.minX, y: rect.minY, width: width, height: rect.size.height)
-                    secondRect = BTRect(x: rect.minX + width, y: rect.minY, width: rect.size.width - width, height: rect.size.height)
-                } else {
-                    let height = rect.size.height * branch.weight
-                    firstRect = BTRect(x: rect.minX, y: rect.minY, width: rect.size.width, height: height)
-                    secondRect = BTRect(x: rect.minX, y: rect.minY + height, width: rect.size.width, height: rect.size.height - height)
-                }
-                branch.first = update(branch.first, rect: firstRect)
-                branch.second = update(branch.second, rect: secondRect)
-                return .branch(branch)
             case var .partition(partition):
                 if partition.lockedBoundaryIDs.isEmpty {
                     let measured = partition.children.map { child -> Double in
@@ -595,20 +550,6 @@ public struct BentoLayoutState: Hashable, Sendable {
         switch node {
         case let .leaf(id): return [id: rect]
         case .vacant: return [:]
-        case let .branch(branch):
-            let firstRect: BTRect
-            let secondRect: BTRect
-            switch branch.axis {
-            case .vertical:
-                let width = rect.size.width * branch.weight
-                firstRect = BTRect(x: rect.minX, y: rect.minY, width: width, height: rect.size.height)
-                secondRect = BTRect(x: rect.minX + width, y: rect.minY, width: rect.size.width - width, height: rect.size.height)
-            case .horizontal:
-                let height = rect.size.height * branch.weight
-                firstRect = BTRect(x: rect.minX, y: rect.minY, width: rect.size.width, height: height)
-                secondRect = BTRect(x: rect.minX, y: rect.minY + height, width: rect.size.width, height: rect.size.height - height)
-            }
-            return frames(for: branch.first, in: firstRect).merging(frames(for: branch.second, in: secondRect)) { first, _ in first }
         case let .partition(partition):
             return zip(partition.children, partitionChildRects(partition, in: rect)).reduce(into: [:]) { output, pair in
                 output.merge(frames(for: pair.0, in: pair.1)) { first, _ in first }
@@ -621,17 +562,6 @@ public struct BentoLayoutState: Hashable, Sendable {
             switch node {
             case let .leaf(candidate): return candidate == id ? transform(rect) : node
             case .vacant: return node
-            case var .branch(branch):
-                if branch.axis == .vertical {
-                    let width = rect.size.width * branch.weight
-                    branch.first = replace(branch.first, rect: BTRect(x: rect.minX, y: rect.minY, width: width, height: rect.size.height))
-                    branch.second = replace(branch.second, rect: BTRect(x: rect.minX + width, y: rect.minY, width: rect.size.width - width, height: rect.size.height))
-                } else {
-                    let height = rect.size.height * branch.weight
-                    branch.first = replace(branch.first, rect: BTRect(x: rect.minX, y: rect.minY, width: rect.size.width, height: height))
-                    branch.second = replace(branch.second, rect: BTRect(x: rect.minX, y: rect.minY + height, width: rect.size.width, height: rect.size.height - height))
-                }
-                return .branch(branch)
             case var .partition(partition):
                 let rects = partitionChildRects(partition, in: rect)
                 for index in partition.children.indices {
@@ -647,10 +577,6 @@ public struct BentoLayoutState: Hashable, Sendable {
         switch node {
         case .leaf: return node
         case let .vacant(candidate): return candidate == id ? replacement : node
-        case var .branch(branch):
-            branch.first = replacingVacant(id, in: branch.first, with: replacement)
-            branch.second = replacingVacant(id, in: branch.second, with: replacement)
-            return .branch(branch)
         case var .partition(partition):
             partition.children = partition.children.map { replacingVacant(id, in: $0, with: replacement) }
             return Self.normalized(.partition(partition))
@@ -661,10 +587,6 @@ public struct BentoLayoutState: Hashable, Sendable {
         switch node {
         case .leaf: return [:]
         case let .vacant(id): return [id: rect]
-        case let .branch(branch):
-            let children = childRects(branch, in: rect)
-            return vacantFrames(for: branch.first, in: children.0)
-                .merging(vacantFrames(for: branch.second, in: children.1)) { first, _ in first }
         case let .partition(partition):
             return zip(partition.children, partitionChildRects(partition, in: rect)).reduce(into: [:]) { output, pair in
                 output.merge(vacantFrames(for: pair.0, in: pair.1)) { first, _ in first }
@@ -676,18 +598,6 @@ public struct BentoLayoutState: Hashable, Sendable {
         switch node {
         case let .leaf(candidate): return candidate == id ? nil : node
         case .vacant: return node
-        case let .branch(branch):
-            let first = removing(id, from: branch.first)
-            let second = removing(id, from: branch.second)
-            switch (first, second) {
-            case (nil, nil): return nil
-            case let (value?, nil), let (nil, value?): return value
-            case let (first?, second?):
-                var branch = branch
-                branch.first = first
-                branch.second = second
-                return .branch(branch)
-            }
         case var .partition(partition):
             var retainedChildren: [BentoNode] = []
             var retainedRatios: [Double] = []
@@ -725,33 +635,9 @@ public struct BentoLayoutState: Hashable, Sendable {
             return node
         case .vacant:
             return node
-        case var .branch(branch):
-            branch.first = swapping(first, second, in: branch.first)
-            branch.second = swapping(first, second, in: branch.second)
-            return .branch(branch)
         case var .partition(partition):
             partition.children = partition.children.map { swapping(first, second, in: $0) }
             return .partition(partition)
-        }
-    }
-
-    private func childRects(_ branch: BentoBranch, in rect: BTRect) -> (BTRect, BTRect) {
-        let gap = metrics.paneGap
-        switch branch.axis {
-        case .vertical:
-            let usable = max(0, rect.size.width - gap)
-            let width = usable * branch.weight
-            return (
-                BTRect(x: rect.minX, y: rect.minY, width: width, height: rect.size.height),
-                BTRect(x: rect.minX + width + gap, y: rect.minY, width: usable - width, height: rect.size.height)
-            )
-        case .horizontal:
-            let usable = max(0, rect.size.height - gap)
-            let height = usable * branch.weight
-            return (
-                BTRect(x: rect.minX, y: rect.minY, width: rect.size.width, height: height),
-                BTRect(x: rect.minX, y: rect.minY + height + gap, width: rect.size.width, height: usable - height)
-            )
         }
     }
 
@@ -796,23 +682,10 @@ public struct BentoLayoutState: Hashable, Sendable {
         return UUID(uuidString: text)!
     }
 
-    public mutating func normalizePartitions() {
-        root = root.map(Self.normalized)
-    }
-
     public static func normalized(_ node: BentoNode) -> BentoNode {
         switch node {
         case .leaf, .vacant:
             return node
-        case let .branch(branch):
-            return normalized(.partition(BentoPartition(
-                id: branch.id,
-                axis: branch.axis,
-                children: [branch.first, branch.second],
-                ratios: [branch.weight, 1 - branch.weight],
-                boundaryIDs: [branch.id],
-                lockedBoundaryIDs: branch.isLocked ? [branch.id] : []
-            )))
         case var .partition(partition):
             partition.children = partition.children.map(normalized)
             var children: [BentoNode] = []

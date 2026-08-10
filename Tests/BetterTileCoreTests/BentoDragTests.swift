@@ -99,7 +99,7 @@ private let dragBounds = BTRect(x: 80, y: 24, width: 1120, height: 776)
 @Test func bentoDragSnapshotKeepsTheSourceSlotReservedWhileActualFramesMove() throws {
     let source = WindowID(rawValue: "source")
     let target = WindowID(rawValue: "target")
-    let state = BentoLayoutState(root: .branch(BentoBranch(
+    let state = BentoLayoutState(root: .partition(BentoPartition(
         axis: .vertical,
         weight: 0.5,
         first: .leaf(source),
@@ -126,11 +126,11 @@ private let dragBounds = BTRect(x: 80, y: 24, width: 1120, height: 776)
     let source = WindowID(rawValue: "source")
     let target = WindowID(rawValue: "target")
     let third = WindowID(rawValue: "third")
-    let state = BentoLayoutState(root: .branch(BentoBranch(
+    let state = BentoLayoutState(root: .partition(BentoPartition(
         axis: .vertical,
         weight: 0.6,
         first: .leaf(source),
-        second: .branch(BentoBranch(
+        second: .partition(BentoPartition(
             axis: .horizontal,
             weight: 0.4,
             first: .leaf(target),
@@ -166,7 +166,7 @@ private let dragBounds = BTRect(x: 80, y: 24, width: 1120, height: 776)
 @Test func bentoDragSwapUsesExactMouseDownFramesWithoutResolvingSizes() throws {
     let source = WindowID(rawValue: "source")
     let target = WindowID(rawValue: "target")
-    let state = BentoLayoutState(root: .branch(BentoBranch(
+    let state = BentoLayoutState(root: .partition(BentoPartition(
         axis: .vertical,
         weight: 0.5,
         first: .leaf(source),
@@ -200,7 +200,7 @@ private let dragBounds = BTRect(x: 80, y: 24, width: 1120, height: 776)
 @Test func bentoDragStillFreezesAnInfeasibleLayoutButRejectsItsSwap() throws {
     let source = WindowID(rawValue: "source")
     let target = WindowID(rawValue: "target")
-    let state = BentoLayoutState(root: .branch(BentoBranch(
+    let state = BentoLayoutState(root: .partition(BentoPartition(
         axis: .vertical,
         first: .leaf(source),
         second: .leaf(target)
@@ -234,7 +234,7 @@ private let dragBounds = BTRect(x: 80, y: 24, width: 1120, height: 776)
 @Test func bentoDragAdaptsOnlyWhenExactSwapFramesViolateMinimumSizes() throws {
     let source = WindowID(rawValue: "source")
     let target = WindowID(rawValue: "target")
-    let state = BentoLayoutState(root: .branch(BentoBranch(
+    let state = BentoLayoutState(root: .partition(BentoPartition(
         axis: .vertical,
         weight: 0.7,
         first: .leaf(source),

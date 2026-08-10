@@ -15,7 +15,7 @@ private let dropBounds = BTRect(x: 0, y: 24, width: 1200, height: 876)
 @Test func topRightQuarterDropKeepsLeftHalfAndBottomRightVacant() throws {
     let source = WindowID(rawValue: "source")
     let other = WindowID(rawValue: "other")
-    let state = BentoLayoutState(root: .branch(BentoBranch(
+    let state = BentoLayoutState(root: .partition(BentoPartition(
         axis: .vertical,
         first: .leaf(source),
         second: .leaf(other)
@@ -153,7 +153,7 @@ private let dropBounds = BTRect(x: 0, y: 24, width: 1200, height: 876)
     let source = WindowID(rawValue: "source")
     let other = WindowID(rawValue: "other")
     let newcomer = WindowID(rawValue: "newcomer")
-    let state = BentoLayoutState(root: .branch(BentoBranch(axis: .vertical, first: .leaf(source), second: .leaf(other))))
+    let state = BentoLayoutState(root: .partition(BentoPartition(axis: .vertical, first: .leaf(source), second: .leaf(other))))
     let frames = Dictionary(uniqueKeysWithValues: state.placements(in: dropBounds).map { ($0.windowID, $0.frame) })
     let target = NormalizedRect(x: 0.5, y: 0, width: 0.5, height: 0.5).frame(in: dropBounds)
     var planned = try #require(BentoDropPlanner().plan(
@@ -174,7 +174,7 @@ private let dropBounds = BTRect(x: 0, y: 24, width: 1200, height: 876)
     let other = WindowID(rawValue: "other")
     let floating = WindowID(rawValue: "floating")
     let state = BentoLayoutState(
-        root: .branch(BentoBranch(axis: .vertical, first: .leaf(source), second: .leaf(other))),
+        root: .partition(BentoPartition(axis: .vertical, first: .leaf(source), second: .leaf(other))),
         floatingWindowIDs: [floating]
     )
     var frames = Dictionary(uniqueKeysWithValues: state.placements(in: dropBounds).map { ($0.windowID, $0.frame) })
@@ -195,7 +195,7 @@ private let dropBounds = BTRect(x: 0, y: 24, width: 1200, height: 876)
 @Test func customZonesPartitionWhenFeasibleAndFocusWhenTheyAreNot() throws {
     let source = WindowID(rawValue: "source")
     let other = WindowID(rawValue: "other")
-    let state = BentoLayoutState(root: .branch(BentoBranch(axis: .vertical, first: .leaf(source), second: .leaf(other))))
+    let state = BentoLayoutState(root: .partition(BentoPartition(axis: .vertical, first: .leaf(source), second: .leaf(other))))
     let frames = Dictionary(uniqueKeysWithValues: state.placements(in: dropBounds).map { ($0.windowID, $0.frame) })
     let constraints = defaultConstraints([source, other])
     let partitionFrame = NormalizedRect(x: 0, y: 0, width: 0.4, height: 1).frame(in: dropBounds)
@@ -220,7 +220,7 @@ private let dropBounds = BTRect(x: 0, y: 24, width: 1200, height: 876)
 @Test func impossiblePartitionRestoresInsteadOfViolatingMinimumSizes() {
     let source = WindowID(rawValue: "source")
     let other = WindowID(rawValue: "other")
-    let state = BentoLayoutState(root: .branch(BentoBranch(axis: .vertical, first: .leaf(source), second: .leaf(other))))
+    let state = BentoLayoutState(root: .partition(BentoPartition(axis: .vertical, first: .leaf(source), second: .leaf(other))))
     let frames = Dictionary(uniqueKeysWithValues: state.placements(in: dropBounds).map { ($0.windowID, $0.frame) })
     let target = NormalizedRect(x: 0.5, y: 0, width: 0.5, height: 0.5).frame(in: dropBounds)
     let constraints = [

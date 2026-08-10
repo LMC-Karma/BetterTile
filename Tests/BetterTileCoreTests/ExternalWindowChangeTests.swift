@@ -226,10 +226,10 @@ func targetFrameAgreesWithThePartitionTable(action: WindowAction) {
 func aDividerDragInAThreeColumnSplitIsNeverASnapDestination(width: Double) {
     let a = WindowID(rawValue: "A"), b = WindowID(rawValue: "B"), c = WindowID(rawValue: "C")
     let state = BentoLayoutState(
-        root: .branch(BentoBranch(
+        root: .partition(BentoPartition(
             axis: .vertical, weight: 1.0 / 3,
             first: .leaf(a),
-            second: .branch(BentoBranch(axis: .vertical, weight: 0.5, first: .leaf(b), second: .leaf(c)))
+            second: .partition(BentoPartition(axis: .vertical, weight: 0.5, first: .leaf(b), second: .leaf(c)))
         )),
         metrics: .gapless
     )
@@ -259,7 +259,7 @@ func aDividerDragInAThreeColumnSplitIsNeverASnapDestination(width: Double) {
 
 private func twoPaneState(_ a: WindowID, _ b: WindowID) -> BentoLayoutState {
     BentoLayoutState(
-        root: .branch(BentoBranch(axis: .vertical, weight: 0.5, first: .leaf(a), second: .leaf(b))),
+        root: .partition(BentoPartition(axis: .vertical, weight: 0.5, first: .leaf(a), second: .leaf(b))),
         metrics: .gapless
     )
 }
