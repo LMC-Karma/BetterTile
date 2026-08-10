@@ -218,6 +218,7 @@ final class BetterTileModel {
             )
             return
         }
+        statusMessage = nil
         let succeeded = if BentoDropPlanner.handlesShortcut(
             actionPlan.resolvedAction,
             in: sessionStore.session(for: actionPlan.displayID)?.mode ?? .manual,
@@ -229,7 +230,7 @@ final class BetterTileModel {
         }
         statusMessage = succeeded
             ? nil
-            : coordinator.lastError ?? statusMessage ?? "No eligible focused window."
+            : statusMessage ?? coordinator.lastError ?? "No eligible focused window."
         let resultingDisplayID = (try? system.focusedWindow())?.displayID ?? originalDisplayID
         presentActionResult(succeeded: succeeded, error: statusMessage, displayID: resultingDisplayID)
         if succeeded {
@@ -316,13 +317,24 @@ final class BetterTileModel {
         session.windowIDs = Set(displayWindows.map(\.id))
         session.recordProposedFrames(requestedFrames)
         session.lastWorkArea = display.visibleFrame
-        guard commitBentoProposal(
+        let commitResult = commitBentoProposal(
             plan.placements,
             session: &session,
             display: display,
             recordHistory: true,
             surfaceFailure: false
-        ) == .committed else { return false }
+        )
+        guard commitResult == .committed else {
+            if commitResult.needsRepair {
+                suspendAutomaticBentoWrites(
+                    displayID: display.id,
+                    windows: windows,
+                    error: coordinator.lastError ?? "The shortcut layout could not be rolled back.",
+                    surfaceFailure: false
+                )
+            }
+            return false
+        }
 
         let changedWindowIDs = Set(plan.placements.compactMap { placement -> WindowID? in
             guard let baseline = frames[placement.windowID],
@@ -583,6 +595,7 @@ final class BetterTileModel {
 
         var committed = false
         var frameTransactionCommitted = false
+        var recoveryFailurePresented = false
         let intent: BentoDropIntent? = switch outcome {
         case let .swap(targetWindowID): .pane(targetWindowID)
         case let .insert(targetWindowID, edge): .insert(targetWindowID: targetWindowID, edge: edge)
@@ -626,6 +639,7 @@ final class BetterTileModel {
             frameTransactionCommitted = committed
             if !committed, coordinator.lastApplyWasDegraded {
                 frameTransactionCommitted = true
+                recoveryFailurePresented = true
                 suspendAutomaticBentoWrites(
                     displayID: displayID,
                     windows: (try? system.visibleWindows()) ?? [],
@@ -673,7 +687,7 @@ final class BetterTileModel {
                     // reduce it against the current session instead of merging
                     // the stale drag snapshot.
                 }
-            } else {
+            } else if !recoveryFailurePresented {
                 statusMessage = coordinator.lastError ?? "macOS rejected the Bento window update."
             }
         }
@@ -681,7 +695,7 @@ final class BetterTileModel {
         if !committed, !frameTransactionCommitted {
             restoreBentoDragIfNeeded(active.session)
         }
-        if intent != nil {
+        if intent != nil, !recoveryFailurePresented {
             presentActionResult(
                 succeeded: committed,
                 error: committed ? nil : statusMessage,
@@ -1477,7 +1491,8 @@ final class BetterTileModel {
     private func suspendAutomaticBentoWrites(
         displayID: DisplayID,
         windows: [WindowSnapshot],
-        error: String
+        error: String,
+        surfaceFailure: Bool = true
     ) {
         guard var current = sessionStore.session(for: displayID) else { return }
         Self.bentoLog.error(
@@ -1488,7 +1503,9 @@ final class BetterTileModel {
             sessionRevision &+= 1
         }
         statusMessage = error + " Use Repair to rebuild Bento."
-        presentActionResult(succeeded: false, error: statusMessage, displayID: displayID)
+        if surfaceFailure {
+            presentActionResult(succeeded: false, error: statusMessage, displayID: displayID)
+        }
     }
 
     private func scheduleBentoSettlement(
