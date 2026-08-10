@@ -385,6 +385,7 @@ public final class WindowCoordinator {
 
     @discardableResult
     public func applyLive(transaction: inout WindowFrameTransaction, placements: [Placement]) -> Bool {
+        lastApplyWasDegraded = false
         guard preview(transaction: &transaction, placements: placements) else { return false }
         do {
             try validate(transaction.proposedPlacements)

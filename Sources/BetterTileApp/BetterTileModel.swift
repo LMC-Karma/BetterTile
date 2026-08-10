@@ -1862,7 +1862,12 @@ final class BetterTileModel {
         }
         if sweepCommitted {
             confirmedGoneWindowIDs.subtract(consumedDestroyedWindowIDs)
-            confirmedMinimizedWindowIDs.subtract(consumedMinimizedWindowIDs)
+            // A desktop-transition sweep deliberately does not reconcile its
+            // stored tree. Retain minimize evidence for the first normal sweep
+            // so the reducer can still capture the pane's reinsertion anchor.
+            if !desktopTransition {
+                confirmedMinimizedWindowIDs.subtract(consumedMinimizedWindowIDs)
+            }
         } else {
             pendingWindowEvents.recordTopologyChange()
             schedulePendingWindowEvents()
