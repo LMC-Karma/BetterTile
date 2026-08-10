@@ -778,12 +778,11 @@ private struct BetterTileMenuPanel: View {
                         .lineLimit(1)
                         .minimumScaleFactor(0.78)
                 }
-                if let shortcut = shortcut(for: action) {
-                    Text(shortcut.displayText)
-                        .font(.system(size: 9, weight: .medium, design: .rounded))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
+                Text(shortcut(for: action)?.displayText ?? " ")
+                    .font(.system(size: 9, weight: .medium, design: .rounded))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .accessibilityHidden(shortcut(for: action) == nil)
             }
             .frame(maxWidth: .infinity, minHeight: 38)
             .padding(.horizontal, 5)
