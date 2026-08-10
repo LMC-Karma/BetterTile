@@ -77,6 +77,22 @@ public struct LayoutSession: Hashable, Sendable {
         lastObservedFrames.merge(frames) { _, proposed in proposed }
     }
 
+    public func driftedManagedWindowIDs(
+        in windows: [WindowSnapshot],
+        tolerance: Double = 1
+    ) -> Set<WindowID> {
+        guard mode == .bento else { return [] }
+        let managedWindowIDs = Set(bentoState.root?.windowIDs ?? [])
+        let windowsByID = Dictionary(uniqueKeysWithValues: windows.map { ($0.id, $0) })
+        return Set(lastObservedFrames.compactMap { windowID, expectedFrame in
+            guard managedWindowIDs.contains(windowID),
+                  let actualFrame = windowsByID[windowID]?.frame,
+                  !actualFrame.approximatelyEquals(expectedFrame, tolerance: tolerance)
+            else { return nil }
+            return windowID
+        })
+    }
+
     /// True exactly once each time this desktop's eligible window count becomes
     /// one, so a desktop that drops back to a single window is placed again.
     ///

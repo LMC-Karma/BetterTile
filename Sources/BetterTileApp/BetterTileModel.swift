@@ -15,7 +15,6 @@ final class BetterTileModel {
     ///   log stream --predicate 'subsystem == "com.lmckarma.BetterTile"'
     /// Window identifiers and frames only; never titles.
     static let bentoLog = Logger(subsystem: "com.lmckarma.BetterTile", category: "Bento")
-
     private static let signposter = OSSignposter(
         subsystem: "com.lmckarma.BetterTile",
         category: "Model"
@@ -45,21 +44,21 @@ final class BetterTileModel {
     private var notificationTokens: [NSObjectProtocol] = []
     private var lastVisibleSignature = ""
     private var lastDisplayWorkAreaSignature = ""
-    private var pendingFrameEventIDs: Set<WindowID> = []
+    private var pendingWindowEvents = WindowEventBuffer()
     /// Windows a destroyed event has accounted for. Direct evidence, so their
     /// panes are released without waiting for absence to be corroborated.
     private var confirmedGoneWindowIDs: Set<WindowID> = []
     private var actionVerificationTask: Task<Void, Never>?
-    private var pendingTopologyRefresh = false
     private var pendingRestoredWindowDeadlines: [WindowID: Date] = [:]
     private var windowEventTask: Task<Void, Never>?
+    private var windowEventRetryBackoff = WindowEventRetryBackoff()
     private var settlementTasks: [DisplayID: Task<Void, Never>] = [:]
     private var spaceStabilizationTask: Task<Void, Never>?
     private var spaceStabilizationGeneration = 0
     private var isStabilizingSpace = false
     private var suppressSpaceFrameEventsUntil = Date.distantPast
     private var activeBentoDrag: ActiveBentoDrag?
-    private var bentoDragEventBuffer = BentoDragEventBuffer()
+    private var bentoDragEventBuffer = WindowEventBuffer()
     private var configurationSaveTask: Task<Void, Never>?
     private var configurationNeedsSave = false
 
@@ -124,6 +123,7 @@ final class BetterTileModel {
         }
         dividerResize.gestureEndedHandler = { [weak self] in
             self?.performDeferredDockReflow()
+            self?.schedulePendingWindowEvents()
         }
         linkedResize.isEnabledForDisplay = { [weak self] displayID in
             guard let self else { return false }
@@ -497,10 +497,10 @@ final class BetterTileModel {
         // drag monitor. Fitting them here would resize the tree before the
         // drag is frozen. The fresh visible-window snapshot above is the
         // authoritative baseline for this gesture.
-        pendingFrameEventIDs.removeAll()
+        pendingWindowEvents.removeAll()
         settlementTasks[displayID]?.cancel()
         settlementTasks.removeValue(forKey: displayID)
-        bentoDragEventBuffer = BentoDragEventBuffer()
+        bentoDragEventBuffer = WindowEventBuffer()
         activeBentoDrag = ActiveBentoDrag(session: dragSession, transaction: transaction)
         dividerResize.refresh(boundaries: [])
         return true
@@ -641,8 +641,7 @@ final class BetterTileModel {
 
     private func replayBufferedBentoDragEvents() {
         let buffered = bentoDragEventBuffer.drain()
-        pendingFrameEventIDs.formUnion(buffered.frameEventWindowIDs)
-        pendingTopologyRefresh = pendingTopologyRefresh || buffered.topologyChanged
+        pendingWindowEvents.formUnion(buffered)
         schedulePendingWindowEvents()
     }
 
@@ -907,8 +906,6 @@ final class BetterTileModel {
         windowEventTask = nil
         settlementTasks.values.forEach { $0.cancel() }
         settlementTasks.removeAll()
-        pendingFrameEventIDs.removeAll()
-        pendingTopologyRefresh = false
         spaceStabilizationTask?.cancel()
         spaceStabilizationGeneration &+= 1
         let generation = spaceStabilizationGeneration
@@ -921,6 +918,7 @@ final class BetterTileModel {
                 guard !Task.isCancelled, self.spaceStabilizationGeneration == generation else { return }
                 guard let sampled = try? self.system.visibleWindows() else {
                     self.isStabilizingSpace = false
+                    self.schedulePendingWindowEvents()
                     return
                 }
                 latestWindows = sampled
@@ -931,6 +929,8 @@ final class BetterTileModel {
                 try? await Task.sleep(for: .milliseconds(75))
             }
             guard !Task.isCancelled, self.spaceStabilizationGeneration == generation else { return }
+            self.pendingWindowEvents.removeAll()
+            self.coordinator.finishExpectedMutations(observing: latestWindows)
             self.suppressSpaceFrameEventsUntil = Date().addingTimeInterval(0.3)
             self.isStabilizingSpace = false
             self.refreshActiveWindows(force: true, windows: latestWindows, desktopTransition: true)
@@ -950,6 +950,9 @@ final class BetterTileModel {
         guard refreshPermission() else { return }
         guard activeBentoDrag == nil, !isStabilizingSpace else { return }
         guard let windows = try? system.visibleWindows() else { return }
+        if !dividerResize.isDragging {
+            coordinator.verifyExpectedMutations(observing: windows)
+        }
         let workAreaSignature = displayWorkAreaSignature(system.displays())
         if workAreaSignature != lastDisplayWorkAreaSignature {
             lastDisplayWorkAreaSignature = workAreaSignature
@@ -958,7 +961,17 @@ final class BetterTileModel {
             return
         }
         let signature = windowSignature(windows)
-        if signature != lastVisibleSignature { refreshActiveWindows(force: false, windows: windows) }
+        if signature != lastVisibleSignature {
+            refreshActiveWindows(force: false, windows: windows)
+            return
+        }
+        let driftedWindowIDs = sessionStore.sessions.values.reduce(into: Set<WindowID>()) { result, session in
+            result.formUnion(session.driftedManagedWindowIDs(in: windows))
+        }
+        if !driftedWindowIDs.isEmpty {
+            pendingWindowEvents.recordFrameChanges(driftedWindowIDs)
+            schedulePendingWindowEvents()
+        }
     }
 
     private func receiveWindowSystemEvent(_ event: WindowSystemEvent) {
@@ -975,7 +988,7 @@ final class BetterTileModel {
         switch event.kind {
         case .moved, .resized:
             guard Date() >= suppressSpaceFrameEventsUntil else { return }
-            if let id = event.windowID { pendingFrameEventIDs.insert(id) }
+            pendingWindowEvents.record(event)
             // Do not leave a handle at a coordinate macOS has invalidated.
             if !dividerResize.isDragging { dividerResize.refresh(boundaries: []) }
         case .restored:
@@ -994,13 +1007,13 @@ final class BetterTileModel {
                 }
                 dragSnap.prepareForRestoredWindowDrag(windowID: windowID)
             }
-            pendingTopologyRefresh = true
+            pendingWindowEvents.record(event)
         case .created, .destroyed, .minimized:
             if let windowID = event.windowID {
                 if event.kind == .minimized { recordMinimizedBentoPane(windowID) }
                 if event.kind == .destroyed { confirmedGoneWindowIDs.insert(windowID) }
             }
-            pendingTopologyRefresh = true
+            pendingWindowEvents.record(event)
         case .focused:
             break
         }
@@ -1043,32 +1056,42 @@ final class BetterTileModel {
         }
     }
 
-    private func schedulePendingWindowEvents() {
-        guard activeBentoDrag == nil, !dragSnap.isGestureActive, !isStabilizingSpace else { return }
-        guard !pendingFrameEventIDs.isEmpty || pendingTopologyRefresh else { return }
+    private func schedulePendingWindowEvents(after delay: Duration = WindowEventRetryBackoff.initialDelay) {
+        let isGestureActive = activeBentoDrag != nil || dragSnap.isGestureActive || dividerResize.isDragging
+        guard pendingWindowEvents.isReadyForProcessing(
+            isGestureActive: isGestureActive,
+            isStabilizingSpace: isStabilizingSpace
+        ) else { return }
         windowEventTask?.cancel()
         windowEventTask = Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .milliseconds(120))
+            try? await Task.sleep(for: delay)
             guard !Task.isCancelled else { return }
             self?.processPendingWindowEvents()
         }
     }
 
     private func processPendingWindowEvents() {
-        guard activeBentoDrag == nil, !dragSnap.isGestureActive, !isStabilizingSpace else { return }
-        let changedIDs = pendingFrameEventIDs
-        let refreshTopology = pendingTopologyRefresh
-        pendingFrameEventIDs.removeAll()
-        pendingTopologyRefresh = false
-
-        guard let windows = try? system.visibleWindows() else { return }
+        let isGestureActive = activeBentoDrag != nil || dragSnap.isGestureActive || dividerResize.isDragging
+        guard pendingWindowEvents.isReadyForProcessing(
+            isGestureActive: isGestureActive,
+            isStabilizingSpace: isStabilizingSpace
+        ) else { return }
+        guard let windows = try? system.visibleWindows() else {
+            schedulePendingWindowEvents(after: windowEventRetryBackoff.nextDelayAfterFailure())
+            return
+        }
+        let pendingEvents = pendingWindowEvents
+        let changedIDs = pendingEvents.frameEventWindowIDs
+        let refreshTopology = pendingEvents.topologyChanged
+        pendingWindowEvents.acknowledge(pendingEvents)
+        windowEventRetryBackoff.reset()
         let visibleIDs = Set(windows.map(\.id))
         let now = Date()
         pendingRestoredWindowDeadlines = pendingRestoredWindowDeadlines.filter { windowID, deadline in
             !visibleIDs.contains(windowID) && deadline > now
         }
         let shouldRetryRestoredWindows = !pendingRestoredWindowDeadlines.isEmpty
-        if shouldRetryRestoredWindows { pendingTopologyRefresh = true }
+        if shouldRetryRestoredWindows { pendingWindowEvents.recordTopologyChange() }
         defer {
             if shouldRetryRestoredWindows { schedulePendingWindowEvents() }
         }
@@ -1081,11 +1104,12 @@ final class BetterTileModel {
             return
         }
 
-        let indexed = Dictionary(uniqueKeysWithValues: windows.map { ($0.id, $0) })
+        let windowsByID = Dictionary(uniqueKeysWithValues: windows.map { ($0.id, $0) })
         let externalIDs = Set(changedIDs.filter { id in
-            guard let frame = indexed[id]?.frame else { return false }
-            return !coordinator.consumeExpectedMutation(windowID: id, actualFrame: frame)
+            guard let frame = windowsByID[id]?.frame else { return false }
+            return !coordinator.matchesExpectedMutation(windowID: id, actualFrame: frame)
         })
+        coordinator.finishExpectedMutations(observing: windows)
         guard !externalIDs.isEmpty else {
             if refreshTopology {
                 refreshActiveWindows(force: false, windows: windows)
@@ -1095,7 +1119,7 @@ final class BetterTileModel {
             return
         }
 
-        let displayIDs = Set(externalIDs.compactMap { indexed[$0]?.displayID })
+        let displayIDs = Set(externalIDs.compactMap { windowsByID[$0]?.displayID })
         for displayID in displayIDs {
             // A BetterTile divider commit owns its read-back settlement. Do
             // not start a second adoption cycle from the same AX callbacks.
@@ -1107,7 +1131,7 @@ final class BetterTileModel {
             let frames = Dictionary(uniqueKeysWithValues: displayWindows.map { ($0.id, $0.frame) })
             let constraints = Dictionary(uniqueKeysWithValues: displayWindows.map { ($0.id, $0.constraints) })
             let displayChanges = Set(externalIDs.filter { id in
-                guard indexed[id]?.displayID == displayID, let frame = frames[id] else { return false }
+                guard windowsByID[id]?.displayID == displayID, let frame = frames[id] else { return false }
                 return session.lastObservedFrames[id]?.approximatelyEquals(frame, tolerance: 1) != true
             })
             guard !displayChanges.isEmpty else { continue }
@@ -1366,6 +1390,9 @@ final class BetterTileModel {
         baselineFrames: [WindowID: BTRect]? = nil
     ) {
         guard let sessionID = sessionStore.session(for: displayID)?.id else { return }
+        let mutationGenerations = Dictionary(uniqueKeysWithValues: changedWindowIDs.map {
+            ($0, coordinator.mutationGeneration(for: $0))
+        })
         settlementTasks[displayID]?.cancel()
         settlementTasks[displayID] = Task { @MainActor [weak self] in
             guard let self else { return }
@@ -1391,6 +1418,7 @@ final class BetterTileModel {
                 previous = frames
             }
             guard !Task.isCancelled else { return }
+            self.coordinator.finishExpectedMutations(upTo: mutationGenerations)
             self.correctBentoAfterSettlement(
                 displayID: displayID,
                 sessionID: sessionID,
@@ -1502,7 +1530,7 @@ final class BetterTileModel {
     ) {
         guard !isStabilizingSpace || desktopTransition else { return }
         guard activeBentoDrag == nil else {
-            pendingTopologyRefresh = true
+            pendingWindowEvents.recordTopologyChange()
             return
         }
         guard hasAccessibilityPermission || refreshPermission(recoverWindows: false) else {

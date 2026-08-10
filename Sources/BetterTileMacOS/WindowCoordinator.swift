@@ -28,13 +28,19 @@ public struct WindowFrameTransaction: Sendable {
 
 @MainActor
 public final class WindowCoordinator {
+    private struct ExpectedMutation {
+        let frame: BTRect
+        let generation: UInt64
+        var failedTerminalObservations = 0
+    }
+
     public let system: any WindowSystem
     public var actionEngine: StandardActionEngine
     public private(set) var lastError: String?
 
     private var history: FrameHistory
     private var generations: [WindowID: UInt64] = [:]
-    private var expectedMutations: [WindowID: (frame: BTRect, generation: UInt64, expiresAt: Date)] = [:]
+    private var expectedMutations: [WindowID: [ExpectedMutation]] = [:]
     private var lastCycle: (windowID: WindowID, requestedAction: WindowAction, index: Int, date: Date)?
 
     public init(system: any WindowSystem, historyCapacity: Int = 10, actionEngine: StandardActionEngine = StandardActionEngine()) {
@@ -43,17 +49,81 @@ public final class WindowCoordinator {
         self.actionEngine = actionEngine
     }
 
-    /// Consumes an Accessibility event caused by BetterTile itself. Events that
-    /// do not match the latest expected frame remain available to the native
-    /// resize adoption path.
-    public func consumeExpectedMutation(windowID: WindowID, actualFrame: BTRect, tolerance: Double = 2) -> Bool {
-        let now = Date()
-        expectedMutations = expectedMutations.filter { $0.value.expiresAt > now }
-        guard let expected = expectedMutations[windowID],
-              actualFrame.approximatelyEquals(expected.frame, tolerance: tolerance)
-        else { return false }
-        expectedMutations.removeValue(forKey: windowID)
-        return true
+    /// Returns whether an Accessibility event matches a BetterTile-owned frame.
+    /// This query does not finish ownership; the caller ends matching
+    /// generations after its successful terminal snapshot.
+    public func matchesExpectedMutation(windowID: WindowID, actualFrame: BTRect, tolerance: Double = 2) -> Bool {
+        expectedMutations[windowID]?.contains {
+            actualFrame.approximatelyEquals($0.frame, tolerance: tolerance)
+        } == true
+    }
+
+    /// Ends ownership after a caller has taken the terminal snapshot for a
+    /// multi-window operation. A later frame change starts a new cause instead
+    /// of being mistaken for another callback from the finished transaction.
+    public func finishExpectedMutations(upTo generations: [WindowID: UInt64]) {
+        for (windowID, generation) in generations {
+            expectedMutations[windowID]?.removeAll { $0.generation <= generation }
+            if expectedMutations[windowID]?.isEmpty == true {
+                expectedMutations.removeValue(forKey: windowID)
+            }
+        }
+    }
+
+    /// Ends every generation through the newest frame a successful system
+    /// snapshot has actually observed. This is the terminal fallback for
+    /// write paths that do not own a dedicated settlement task.
+    public func finishExpectedMutations(
+        observing windows: [WindowSnapshot],
+        tolerance: Double = 1
+    ) {
+        let terminalGenerations = Dictionary(uniqueKeysWithValues: windows.compactMap { window in
+            let generation = expectedMutations[window.id]?
+                .filter { window.frame.approximatelyEquals($0.frame, tolerance: tolerance) }
+                .map(\.generation)
+                .max()
+            return generation.map { (window.id, $0) }
+        })
+        finishExpectedMutations(upTo: terminalGenerations)
+    }
+
+    /// Verifies pending generations from a periodic terminal sample. Matching
+    /// frames finish immediately; ignored writes finish only after repeated
+    /// nonmatching samples so a slow application keeps its ownership window.
+    public func verifyExpectedMutations(
+        observing windows: [WindowSnapshot],
+        tolerance: Double = 1,
+        failureLimit: Int = 3
+    ) {
+        let limit = max(1, failureLimit)
+        let windowsByID = Dictionary(uniqueKeysWithValues: windows.map { ($0.id, $0) })
+        var updated = expectedMutations
+        var terminalGenerations: [WindowID: UInt64] = [:]
+
+        for (windowID, var mutations) in expectedMutations {
+            let matchedGeneration = windowsByID[windowID].flatMap { window in
+                mutations
+                    .filter { window.frame.approximatelyEquals($0.frame, tolerance: tolerance) }
+                    .map(\.generation)
+                    .max()
+            }
+            if let matchedGeneration {
+                terminalGenerations[windowID] = matchedGeneration
+            }
+            for index in mutations.indices
+                where mutations[index].generation > (matchedGeneration ?? 0) {
+                mutations[index].failedTerminalObservations += 1
+                if mutations[index].failedTerminalObservations >= limit {
+                    terminalGenerations[windowID] = max(
+                        terminalGenerations[windowID] ?? 0,
+                        mutations[index].generation
+                    )
+                }
+            }
+            updated[windowID] = mutations
+        }
+        expectedMutations = updated
+        finishExpectedMutations(upTo: terminalGenerations)
     }
 
     @discardableResult
@@ -134,19 +204,31 @@ public final class WindowCoordinator {
             try? await Task.sleep(for: delay)
             guard !Task.isCancelled else { return .superseded }
             let actual = (try? snapshots(ids: [plan.windowID]).first)??.frame
+            let generationChanged = mutationGeneration(for: plan.windowID) != generation
             let verdict = DelayedPlacementVerifier.verdict(
                 source: plan.sourceFrame,
                 target: plan.targetFrame,
                 actual: actual,
-                generationChanged: mutationGeneration(for: plan.windowID) != generation
+                generationChanged: generationChanged
             )
             switch verdict {
-            case .landed, .superseded, .inconclusive:
+            case .landed:
+                finishExpectedMutations(upTo: [plan.windowID: generation])
+                return verdict
+            case .superseded:
+                if !generationChanged {
+                    finishExpectedMutations(upTo: [plan.windowID: generation])
+                }
+                return verdict
+            case .inconclusive:
                 return verdict
             case .failed:
                 // Give a slow application the remaining attempts before
                 // concluding it is never going to move.
-                if attempt == max(1, attempts) { return verdict }
+                if attempt == max(1, attempts) {
+                    finishExpectedMutations(upTo: [plan.windowID: generation])
+                    return verdict
+                }
             }
         }
         return .inconclusive
@@ -202,10 +284,15 @@ public final class WindowCoordinator {
         tolerance: Double = 1
     ) async -> Bool {
         let retryLimit = max(0, maximumRetries)
+        let windowIDs = Set(placements.map(\.windowID))
+        var terminalGenerations = Dictionary(uniqueKeysWithValues: windowIDs.map {
+            ($0, mutationGeneration(for: $0))
+        })
         for attempt in 0...retryLimit {
             do {
                 try await Task.sleep(for: retryDelay)
             } catch {
+                finishExpectedMutations(upTo: terminalGenerations)
                 return false
             }
 
@@ -215,6 +302,7 @@ public final class WindowCoordinator {
                     ids: Set(placements.map(\.windowID))
                 ).map { ($0.id, $0.frame) })
             } catch {
+                finishExpectedMutations(upTo: terminalGenerations)
                 lastError = error.localizedDescription
                 return false
             }
@@ -222,14 +310,17 @@ public final class WindowCoordinator {
                 actualFrames[$0.windowID]?.approximatelyEquals($0.frame, tolerance: tolerance) != true
             }
             if pending.isEmpty {
+                finishExpectedMutations(upTo: terminalGenerations)
                 lastError = nil
                 return true
             }
-            guard attempt < retryLimit,
-                  applyPlacements(pending, recordHistory: false)
-            else {
+            guard attempt < retryLimit, applyPlacements(pending, recordHistory: false) else {
+                finishExpectedMutations(upTo: terminalGenerations)
                 lastError = "One or more windows did not settle at the requested frame."
                 return false
+            }
+            for placement in pending {
+                terminalGenerations[placement.windowID] = mutationGeneration(for: placement.windowID)
             }
         }
         return false
@@ -393,7 +484,12 @@ public final class WindowCoordinator {
         generations[windowID] = generation
         guard generations[windowID] == generation else { return }
         expect(frame, for: windowID, generation: generation)
-        try system.setFrame(frame, knownCurrentFrame: knownCurrentFrame, for: windowID)
+        do {
+            try system.setFrame(frame, knownCurrentFrame: knownCurrentFrame, for: windowID)
+        } catch {
+            cancelExpectedMutation(for: windowID, generation: generation)
+            throw error
+        }
     }
 
     private func validate(_ placements: [Placement]) throws {
@@ -424,24 +520,18 @@ public final class WindowCoordinator {
         var applied: [WindowID] = []
         do {
             for placement in placements.sorted(by: { $0.windowID < $1.windowID }) {
-                let generation = (generations[placement.windowID] ?? 0) &+ 1
-                generations[placement.windowID] = generation
-                expect(placement.frame, for: placement.windowID, generation: generation)
-                try system.setFrame(
+                try apply(
                     placement.frame,
-                    knownCurrentFrame: rollbackFrames[placement.windowID],
-                    for: placement.windowID
+                    to: placement.windowID,
+                    knownCurrentFrame: rollbackFrames[placement.windowID]
                 )
                 applied.append(placement.windowID)
             }
         } catch {
             for id in applied.reversed() {
                 guard let frame = rollbackFrames[id] else { continue }
-                let generation = (generations[id] ?? 0) &+ 1
-                generations[id] = generation
-                expect(frame, for: id, generation: generation)
                 let appliedFrame = placements.first(where: { $0.windowID == id })?.frame
-                try? system.setFrame(frame, knownCurrentFrame: appliedFrame, for: id)
+                try? apply(frame, to: id, knownCurrentFrame: appliedFrame)
             }
             throw error
         }
@@ -471,7 +561,14 @@ public final class WindowCoordinator {
     }
 
     private func expect(_ frame: BTRect, for windowID: WindowID, generation: UInt64) {
-        expectedMutations[windowID] = (frame, generation, Date().addingTimeInterval(0.5))
+        expectedMutations[windowID, default: []].append(ExpectedMutation(frame: frame, generation: generation))
+    }
+
+    private func cancelExpectedMutation(for windowID: WindowID, generation: UInt64) {
+        expectedMutations[windowID]?.removeAll { $0.generation == generation }
+        if expectedMutations[windowID]?.isEmpty == true {
+            expectedMutations.removeValue(forKey: windowID)
+        }
     }
 
     private func transferTarget(for action: WindowAction, window: WindowSnapshot, displays: [DisplaySnapshot]) -> BTRect? {

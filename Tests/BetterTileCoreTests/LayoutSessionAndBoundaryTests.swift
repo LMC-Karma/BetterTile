@@ -67,6 +67,27 @@ private let sessionDisplay = DisplayID(rawValue: "main")
     #expect(session.automaticallyFloatingWindowIDs.contains(restored))
 }
 
+@Test func frameDriftIncludesOnlyManagedBentoWindows() {
+    let managed = WindowID(rawValue: "managed")
+    let floating = WindowID(rawValue: "floating")
+    let bounds = BTRect(x: 0, y: 0, width: 1_000, height: 800)
+    let previous = BTRect(x: 0, y: 0, width: 500, height: 800)
+    let changed = BTRect(x: 0, y: 0, width: 600, height: 800)
+    var state = BentoLayoutState(floatingWindowIDs: [floating])
+    state.insert(managed, in: bounds)
+    let session = LayoutSession(
+        displayID: sessionDisplay,
+        mode: .bento,
+        bentoState: state,
+        lastObservedFrames: [managed: previous, floating: previous]
+    )
+    let windows = [managed, floating].map {
+        WindowSnapshot(id: $0, processIdentifier: 1, frame: changed, displayID: sessionDisplay)
+    }
+
+    #expect(session.driftedManagedWindowIDs(in: windows) == [managed])
+}
+
 @Test func aLoneWindowIsPlacedOnceAndThenLeftAlone() {
     var session = LayoutSession(displayID: sessionDisplay, mode: .manual)
     let empty = session.shouldApplySingleWindowPlacement(eligibleWindowCount: 0)
