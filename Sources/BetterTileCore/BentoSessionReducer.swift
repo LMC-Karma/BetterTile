@@ -49,7 +49,15 @@ public struct BentoSessionReducer: Sendable {
             exempt: exempt
         )
 
-        for windowID in removals {
+        let insertionIndexes = Dictionary(uniqueKeysWithValues: next.bentoInsertionOrder.enumerated().map {
+            ($0.element, $0.offset)
+        })
+        let orderedRemovals = removals.sorted { lhs, rhs in
+            let lhsIndex = insertionIndexes[lhs] ?? Int.max
+            let rhsIndex = insertionIndexes[rhs] ?? Int.max
+            return lhsIndex == rhsIndex ? lhs < rhs : lhsIndex < rhsIndex
+        }
+        for windowID in orderedRemovals {
             if minimized.contains(windowID) {
                 runtime = BentoPlanner(maximumManagedWindows: maximumManagedWindows).plan(
                     state: runtime,

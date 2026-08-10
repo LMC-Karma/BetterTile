@@ -159,3 +159,30 @@ private func reducerWindow(_ name: String) -> WindowSnapshot {
     #expect(transition.session.bentoState.root?.windowIDs == [b.id])
     #expect(transition.session.bentoReinsertionAnchors[a.id]?.neighborWindowID == b.id)
 }
+
+@Test func simultaneousMinimizeAnchorsFollowInsertionOrder() {
+    let a = reducerWindow("a")
+    let b = reducerWindow("b")
+    let c = reducerWindow("c")
+    let state = BentoLayoutState(root: .partition(BentoPartition(
+        axis: .vertical,
+        children: [.leaf(a.id), .leaf(b.id), .leaf(c.id)]
+    )))
+    let session = LayoutSession(
+        displayID: reducerDisplay,
+        mode: .bento,
+        bentoState: state,
+        windowIDs: [c.id],
+        bentoInsertionOrder: [a.id, b.id, c.id]
+    )
+
+    let transition = BentoSessionReducer().reconcile(
+        session: session,
+        observation: BentoObservation(bounds: reducerBounds, windows: [c]),
+        paneGap: 0,
+        minimized: [b.id, a.id]
+    )
+
+    #expect(transition.session.bentoReinsertionAnchors[a.id]?.neighborWindowID == b.id)
+    #expect(transition.session.bentoReinsertionAnchors[b.id]?.neighborWindowID == c.id)
+}

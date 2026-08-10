@@ -248,11 +248,10 @@ public struct LayoutSessionStore: Sendable {
         session.focusedWindowID = focusedWindowID
         if wasCreated {
             // Establish a compare-and-swap base for callers that want to plan
-            // the activation atomically with a frame transaction.
-            var base = session
-            base.windowIDs = []
-            base.focusedWindowID = nil
-            storedSessions[displayID, default: [:]][session.id] = commitObservation ? session : base
+            // the activation atomically with a frame transaction. A brand-new
+            // desktop has no older state to preserve, so its observed
+            // membership is the truthful base if the proposal is rejected.
+            storedSessions[displayID, default: [:]][session.id] = session
         } else if commitObservation, session != matched {
             session.advanceRevision()
             storedSessions[displayID, default: [:]][session.id] = session

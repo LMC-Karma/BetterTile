@@ -137,6 +137,24 @@ private let sessionDisplay = DisplayID(rawValue: "main")
     #expect(store.session(for: sessionDisplay)?.windowIDs == [a, b])
 }
 
+@Test func aRejectedFirstProposalLeavesTruthfulObservedMembership() {
+    var store = LayoutSessionStore()
+    let visible = WindowID(rawValue: "visible")
+
+    let activation = store.activate(
+        displayID: sessionDisplay,
+        windowIDs: [visible],
+        focusedWindowID: visible,
+        defaultMode: .bento,
+        reuseActiveWhenUnmatched: false,
+        commitObservation: false
+    )
+
+    #expect(activation.wasCreated)
+    #expect(store.session(for: sessionDisplay)?.windowIDs == [visible])
+    #expect(store.session(for: sessionDisplay)?.focusedWindowID == visible)
+}
+
 @Test func aDisplaySessionExistsWithoutWaitingForWindows() {
     var store = LayoutSessionStore()
     let session = store.refresh(displayID: sessionDisplay, windowIDs: [], focusedWindowID: nil, defaultMode: .linked)
