@@ -314,7 +314,7 @@ private let sessionDisplay = DisplayID(rawValue: "main")
         reuseActiveWhenUnmatched: false
     )
     store.update(sessionDisplay) {
-        $0.bentoState = BentoLayoutState(root: .branch(BentoBranch(
+        $0.bentoState = BentoLayoutState(root: .partition(BentoPartition(
             axis: .vertical,
             weight: 0.68,
             first: .leaf(a),
@@ -444,9 +444,9 @@ private let sessionDisplay = DisplayID(rawValue: "main")
 @Test func nestedBentoTreeProducesOneBoundaryPerBranch() {
     let display = DisplayID(rawValue: "display")
     let a = WindowID(rawValue: "a"), b = WindowID(rawValue: "b"), c = WindowID(rawValue: "c"), d = WindowID(rawValue: "d")
-    let root = BentoNode.branch(BentoBranch(axis: .vertical, weight: 0.6,
-        first: .branch(BentoBranch(axis: .horizontal, weight: 0.5, first: .leaf(a), second: .leaf(b))),
-        second: .branch(BentoBranch(axis: .horizontal, weight: 0.4, first: .leaf(c), second: .leaf(d)))))
+    let root = BentoNode.partition(BentoPartition(axis: .vertical, weight: 0.6,
+        first: .partition(BentoPartition(axis: .horizontal, weight: 0.5, first: .leaf(a), second: .leaf(b))),
+        second: .partition(BentoPartition(axis: .horizontal, weight: 0.4, first: .leaf(c), second: .leaf(d)))))
     let state = BentoLayoutState(root: root)
     let boundaries = state.boundaries(in: BTRect(x: 0, y: 0, width: 1000, height: 800), displayID: display)
     #expect(boundaries.count == 3)

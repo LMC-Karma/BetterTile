@@ -97,7 +97,12 @@ public struct BentoLayoutAdopter: Sendable {
                 }
                 if let firstNode = infer(first, in: firstRect, metrics: metrics),
                    let secondNode = infer(second, in: secondRect, metrics: metrics) {
-                    return .branch(BentoBranch(axis: axis, weight: weight, first: firstNode, second: secondNode))
+                    return .partition(BentoPartition(
+                        axis: axis,
+                        weight: weight,
+                        first: firstNode,
+                        second: secondNode
+                    ))
                 }
             }
         }

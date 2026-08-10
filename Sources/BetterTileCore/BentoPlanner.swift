@@ -329,11 +329,6 @@ public struct BentoPlanner: Sendable {
             switch node {
             case .leaf, .vacant:
                 return node
-            case var .branch(branch):
-                branch.weight = 0.5
-                branch.first = reset(branch.first)
-                branch.second = reset(branch.second)
-                return .branch(branch)
             case var .partition(partition):
                 partition.children = partition.children.map(reset)
                 partition.ratios = Array(repeating: 1 / Double(partition.children.count), count: partition.children.count)

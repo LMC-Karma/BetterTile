@@ -57,8 +57,6 @@ public struct BentoConstraintSolver: Sendable {
                       rect.size.height + tolerance >= minimum.height
                 else { return nil }
                 return node
-            case .branch:
-                return solveNode(BentoLayoutState.normalized(node), rect: rect)
             case var .partition(partition):
                 let extent = partition.axis == .vertical ? rect.size.width : rect.size.height
                 let available = extent - gap * Double(partition.children.count - 1)
@@ -181,8 +179,8 @@ public struct BentoResizeEngine: Sendable {
         }
 
         let applied = Dictionary(uniqueKeysWithValues: branchCoordinates.keys.compactMap { id -> (UUID, Double)? in
-            guard let geometry = BentoTreeGeometry.branch(id, in: next, bounds: bounds) else { return nil }
-            return (id, BentoTreeGeometry.coordinate(of: geometry))
+            guard let geometry = BentoTreeGeometry.boundary(id, in: next, bounds: bounds) else { return nil }
+            return (id, geometry.resolvedCoordinate)
         })
 
         return BentoResizeResult(
@@ -218,27 +216,27 @@ public struct BentoLayoutFitter: Sendable {
         // Parents first. Orthogonal descendants remain valid when an ancestor
         // changes; their own parent geometry is recalculated before fitting.
         for descriptor in state.branches.sorted(by: { $0.depth < $1.depth }) {
-            guard let geometry = BentoTreeGeometry.branch(descriptor.id, in: next, bounds: bounds),
-                  !geometry.branch.isLocked
+            guard let geometry = BentoTreeGeometry.boundary(descriptor.id, in: next, bounds: bounds),
+                  !geometry.isLocked
             else { continue }
-            let expectedCoordinate = BentoTreeGeometry.coordinate(of: geometry)
+            let expectedCoordinate = geometry.resolvedCoordinate
             var changedCandidates: [Double] = []
 
             for id in changedWindowIDs {
                 guard let expected = originalFrames[id], let actual = currentFrames[id] else { continue }
-                switch geometry.branch.axis {
+                switch geometry.axis {
                 case .vertical:
-                    if geometry.branch.first.windowIDs.contains(id), abs(expected.maxX - expectedCoordinate) <= tolerance {
+                    if geometry.before.windowIDs.contains(id), abs(expected.maxX - expectedCoordinate) <= tolerance {
                         changedCandidates.append(actual.maxX)
                     }
-                    if geometry.branch.second.windowIDs.contains(id), abs(expected.minX - expectedCoordinate) <= tolerance {
+                    if geometry.after.windowIDs.contains(id), abs(expected.minX - expectedCoordinate) <= tolerance {
                         changedCandidates.append(actual.minX)
                     }
                 case .horizontal:
-                    if geometry.branch.first.windowIDs.contains(id), abs(expected.maxY - expectedCoordinate) <= tolerance {
+                    if geometry.before.windowIDs.contains(id), abs(expected.maxY - expectedCoordinate) <= tolerance {
                         changedCandidates.append(actual.maxY)
                     }
-                    if geometry.branch.second.windowIDs.contains(id), abs(expected.minY - expectedCoordinate) <= tolerance {
+                    if geometry.after.windowIDs.contains(id), abs(expected.minY - expectedCoordinate) <= tolerance {
                         changedCandidates.append(actual.minY)
                     }
                 }
@@ -253,7 +251,7 @@ public struct BentoLayoutFitter: Sendable {
                     abs($0 - expectedCoordinate) < abs($1 - expectedCoordinate)
                 })
             } else {
-                coordinate = stableSharedCoordinate(for: geometry.branch, frames: currentFrames)
+                coordinate = stableSharedCoordinate(for: geometry, frames: currentFrames)
             }
 
             guard let coordinate, abs(coordinate - expectedCoordinate) > 0.5,
@@ -276,13 +274,16 @@ public struct BentoLayoutFitter: Sendable {
         )
     }
 
-    private func stableSharedCoordinate(for branch: BentoBranch, frames: [WindowID: BTRect]) -> Double? {
-        let first = branch.first.windowIDs.compactMap { frames[$0] }
-        let second = branch.second.windowIDs.compactMap { frames[$0] }
+    private func stableSharedCoordinate(
+        for boundary: BentoTreeGeometry.BoundaryGeometry,
+        frames: [WindowID: BTRect]
+    ) -> Double? {
+        let first = boundary.before.windowIDs.compactMap { frames[$0] }
+        let second = boundary.after.windowIDs.compactMap { frames[$0] }
         guard !first.isEmpty, !second.isEmpty else { return nil }
         let firstEdge: Double
         let secondEdge: Double
-        switch branch.axis {
+        switch boundary.axis {
         case .vertical:
             firstEdge = first.map(\.maxX).max()!
             secondEdge = second.map(\.minX).min()!
@@ -322,8 +323,6 @@ public struct BentoBoundaryResolver: Sendable {
             switch node {
             case .leaf, .vacant:
                 return
-            case .branch:
-                collect(BentoLayoutState.normalized(node))
             case let .partition(partition):
                 for index in partition.boundaryIDs.indices {
                     let beforeNode = partition.children[index]
@@ -414,38 +413,35 @@ public struct BentoBoundaryResolver: Sendable {
 }
 
 private enum BentoTreeGeometry {
-    struct BranchGeometry {
-        var branch: BentoBranch
+    struct BoundaryGeometry {
+        var axis: SplitAxis
+        var before: BentoNode
+        var after: BentoNode
+        var isLocked: Bool
         var resolvedCoordinate: Double
     }
 
-    static func branch(
+    static func boundary(
         _ id: UUID,
         in state: BentoLayoutState,
         bounds: BTRect
-    ) -> BranchGeometry? {
+    ) -> BoundaryGeometry? {
         guard let root = state.root else { return nil }
         let normalizedRoot = BentoLayoutState.normalized(root)
-        func find(_ node: BentoNode, rect: BTRect) -> BranchGeometry? {
+        func find(_ node: BentoNode, rect: BTRect) -> BoundaryGeometry? {
             switch node {
             case .leaf, .vacant:
                 return nil
-            case .branch:
-                return find(BentoLayoutState.normalized(node), rect: rect)
             case let .partition(partition):
                 let children = partitionRects(partition, in: rect, gap: state.metrics.paneGap)
                 if let index = partition.boundaryIDs.firstIndex(of: id) {
                     let first = children[index]
                     let second = children[index + 1]
-                    return BranchGeometry(
-                        branch: BentoBranch(
-                            id: id,
-                            axis: partition.axis,
-                            weight: partition.cumulativeRatio(at: index),
-                            isLocked: partition.lockedBoundaryIDs.contains(id),
-                            first: partition.children[index],
-                            second: partition.children[index + 1]
-                        ),
+                    return BoundaryGeometry(
+                        axis: partition.axis,
+                        before: partition.children[index],
+                        after: partition.children[index + 1],
+                        isLocked: partition.lockedBoundaryIDs.contains(id),
                         resolvedCoordinate: partition.axis == .vertical
                             ? (first.maxX + second.minX) / 2
                             : (first.maxY + second.minY) / 2
@@ -460,10 +456,6 @@ private enum BentoTreeGeometry {
         return find(normalizedRoot, rect: bounds)
     }
 
-    static func coordinate(of geometry: BranchGeometry) -> Double {
-        geometry.resolvedCoordinate
-    }
-
     static func minimumExtent(
         _ node: BentoNode,
         axis: SplitAxis,
@@ -476,10 +468,6 @@ private enum BentoTreeGeometry {
         case let .leaf(id):
             let minimum = constraints[id]?.minimumSize ?? WindowConstraints().minimumSize
             return axis == .vertical ? minimum.width : minimum.height
-        case let .branch(branch):
-            let first = minimumExtent(branch.first, axis: axis, constraints: constraints, gap: gap)
-            let second = minimumExtent(branch.second, axis: axis, constraints: constraints, gap: gap)
-            return branch.axis == axis ? first + second + gap : max(first, second)
         case let .partition(partition):
             let values = partition.children.map { minimumExtent($0, axis: axis, constraints: constraints, gap: gap) }
             return partition.axis == axis

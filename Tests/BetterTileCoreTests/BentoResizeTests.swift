@@ -8,9 +8,9 @@ private let resizeDisplay = DisplayID(rawValue: "display")
 @Test func nestedSameAxisResizeIsDerivedFromTheTreeAndStaysGapless() throws {
     let a = WindowID(rawValue: "a"), b = WindowID(rawValue: "b"), c = WindowID(rawValue: "c")
     let nestedID = UUID(), rootID = UUID()
-    let state = BentoLayoutState(root: .branch(BentoBranch(
+    let state = BentoLayoutState(root: .partition(BentoPartition(
         id: rootID, axis: .vertical, weight: 0.5,
-        first: .branch(BentoBranch(id: nestedID, axis: .vertical, weight: 0.5, first: .leaf(a), second: .leaf(b))),
+        first: .partition(BentoPartition(id: nestedID, axis: .vertical, weight: 0.5, first: .leaf(a), second: .leaf(b))),
         second: .leaf(c)
     )))
 
@@ -69,9 +69,9 @@ private let resizeDisplay = DisplayID(rawValue: "display")
 @Test func recursiveMinimumSizesClampTheWholeBranch() throws {
     let a = WindowID(rawValue: "a"), b = WindowID(rawValue: "b"), c = WindowID(rawValue: "c")
     let rootID = UUID()
-    let state = BentoLayoutState(root: .branch(BentoBranch(
+    let state = BentoLayoutState(root: .partition(BentoPartition(
         id: rootID, axis: .vertical,
-        first: .branch(BentoBranch(axis: .vertical, first: .leaf(a), second: .leaf(b))),
+        first: .partition(BentoPartition(axis: .vertical, first: .leaf(a), second: .leaf(b))),
         second: .leaf(c)
     )))
     let constraints = Dictionary(uniqueKeysWithValues: [a, b, c].map {
@@ -92,7 +92,7 @@ private let resizeDisplay = DisplayID(rawValue: "display")
 @Test func constraintSolverProjectsWeightsWithoutGrowingIndividualLeaves() throws {
     let left = WindowID(rawValue: "left"), right = WindowID(rawValue: "right")
     let branchID = UUID()
-    let state = BentoLayoutState(root: .branch(BentoBranch(
+    let state = BentoLayoutState(root: .partition(BentoPartition(
         id: branchID,
         axis: .vertical,
         weight: 0.1,
@@ -115,7 +115,7 @@ private let resizeDisplay = DisplayID(rawValue: "display")
 
 @Test func impossibleMinimumSizesRejectTheWholeTree() {
     let left = WindowID(rawValue: "left"), right = WindowID(rawValue: "right")
-    let state = BentoLayoutState(root: .branch(BentoBranch(
+    let state = BentoLayoutState(root: .partition(BentoPartition(
         axis: .vertical,
         first: .leaf(left),
         second: .leaf(right)
@@ -143,7 +143,7 @@ private let resizeDisplay = DisplayID(rawValue: "display")
     #expect(didLearn)
     let constraints = [left: learner.merging(WindowConstraints(), for: left)]
     let branchID = UUID()
-    let state = BentoLayoutState(root: .branch(BentoBranch(
+    let state = BentoLayoutState(root: .partition(BentoPartition(
         id: branchID,
         axis: .vertical,
         first: .leaf(left),
@@ -160,7 +160,7 @@ private let resizeDisplay = DisplayID(rawValue: "display")
 
 @Test func bentoPlacementsStayInsideBottomAndSideDockWorkAreas() throws {
     let top = WindowID(rawValue: "top"), bottom = WindowID(rawValue: "bottom")
-    let state = BentoLayoutState(root: .branch(BentoBranch(
+    let state = BentoLayoutState(root: .partition(BentoPartition(
         axis: .horizontal,
         first: .leaf(top),
         second: .leaf(bottom)
@@ -184,10 +184,10 @@ private let resizeDisplay = DisplayID(rawValue: "display")
 @Test func junctionResizeUpdatesEveryIntersectingBranchAtomically() throws {
     let ids = ["a", "b", "c", "d"].map { WindowID(rawValue: $0) }
     let rootID = UUID(), leftID = UUID(), rightID = UUID()
-    let state = BentoLayoutState(root: .branch(BentoBranch(
+    let state = BentoLayoutState(root: .partition(BentoPartition(
         id: rootID, axis: .vertical,
-        first: .branch(BentoBranch(id: leftID, axis: .horizontal, first: .leaf(ids[0]), second: .leaf(ids[1]))),
-        second: .branch(BentoBranch(id: rightID, axis: .horizontal, first: .leaf(ids[2]), second: .leaf(ids[3])))
+        first: .partition(BentoPartition(id: leftID, axis: .horizontal, first: .leaf(ids[0]), second: .leaf(ids[1]))),
+        second: .partition(BentoPartition(id: rightID, axis: .horizontal, first: .leaf(ids[2]), second: .leaf(ids[3])))
     )))
     let result = try #require(BentoResizeEngine().resize(
         state: state,
@@ -204,10 +204,10 @@ private let resizeDisplay = DisplayID(rawValue: "display")
 @Test func actualFrameBoundaryResolverRejectsInteriorAndMergesRealSegments() {
     let a = WindowID(rawValue: "a"), b = WindowID(rawValue: "b"), c = WindowID(rawValue: "c"), d = WindowID(rawValue: "d")
     let rootID = UUID()
-    let state = BentoLayoutState(root: .branch(BentoBranch(
+    let state = BentoLayoutState(root: .partition(BentoPartition(
         id: rootID, axis: .vertical,
-        first: .branch(BentoBranch(axis: .horizontal, first: .leaf(a), second: .leaf(b))),
-        second: .branch(BentoBranch(axis: .horizontal, first: .leaf(c), second: .leaf(d)))
+        first: .partition(BentoPartition(axis: .horizontal, first: .leaf(a), second: .leaf(b))),
+        second: .partition(BentoPartition(axis: .horizontal, first: .leaf(c), second: .leaf(d)))
     )))
     let matching = [
         window(a, x: 0, y: 0, width: 600, height: 400),
@@ -236,7 +236,7 @@ private let resizeDisplay = DisplayID(rawValue: "display")
 @Test func nativeEdgeResizeIsAdoptedAndReflowsItsNeighbor() throws {
     let a = WindowID(rawValue: "a"), b = WindowID(rawValue: "b")
     let rootID = UUID()
-    let state = BentoLayoutState(root: .branch(BentoBranch(
+    let state = BentoLayoutState(root: .partition(BentoPartition(
         id: rootID, axis: .vertical, first: .leaf(a), second: .leaf(b)
     )))
     let frames = [
