@@ -1284,7 +1284,12 @@ final class BetterTileModel {
         // not realise must not become the session's state, or the layout and
         // the windows disagree from then on.
         session.bentoState = plan.state
-        let commitResult = commitBentoProposal(plan.placements, session: &session, display: display)
+        let commitResult = commitBentoProposal(
+            plan.placements,
+            session: &session,
+            display: display,
+            surfaceFailure: false
+        )
         guard commitResult == .committed else {
             guard commitResult.needsRepair else { return }
             suspendAutomaticBentoWrites(
@@ -2054,5 +2059,5 @@ private enum BentoProposalCommitResult {
     case rejected
     case degraded
 
-    var needsRepair: Bool { self == .rejected || self == .degraded }
+    var needsRepair: Bool { self == .degraded }
 }
