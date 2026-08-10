@@ -167,6 +167,36 @@ private let sessionDisplay = DisplayID(rawValue: "main")
     #expect(!session.bentoState.floatingWindowIDs.contains(visible))
 }
 
+@Test func onlyADegradedProposalRequiresRepair() {
+    #expect(!BentoProposalCommitResult.committed.needsRepair)
+    #expect(!BentoProposalCommitResult.stale.needsRepair)
+    #expect(!BentoProposalCommitResult.rejected.needsRepair)
+    #expect(BentoProposalCommitResult.degraded.needsRepair)
+}
+
+@Test func recoverySuspensionIsScopedToTheSessionDisplayAndUserWorkResumesIt() {
+    let local = WindowID(rawValue: "local")
+    let remote = WindowID(rawValue: "remote")
+    let localFrame = BTRect(x: 1, y: 2, width: 300, height: 400)
+    var session = LayoutSession(displayID: sessionDisplay, mode: .bento)
+
+    session.suspendAutomaticWrites(observing: [
+        WindowSnapshot(id: local, processIdentifier: 1, frame: localFrame, displayID: sessionDisplay),
+        WindowSnapshot(
+            id: remote,
+            processIdentifier: 2,
+            frame: BTRect(x: 500, y: 0, width: 300, height: 400),
+            displayID: DisplayID(rawValue: "other")
+        )
+    ])
+
+    #expect(session.automaticWritesSuspended)
+    #expect(session.lastObservedFrames == [local: localFrame])
+
+    session.resumeAutomaticWrites()
+    #expect(!session.automaticWritesSuspended)
+}
+
 @Test func frameDriftIncludesOnlyManagedBentoWindows() {
     let managed = WindowID(rawValue: "managed")
     let floating = WindowID(rawValue: "floating")

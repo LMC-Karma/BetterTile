@@ -8,6 +8,18 @@ public struct DesktopSessionID: Hashable, Sendable {
     public init(rawValue: UUID = UUID()) { self.rawValue = rawValue }
 }
 
+/// Result of attempting to make a proposed Bento session authoritative.
+/// Only a degraded rollback leaves the display in an unknown state that must
+/// stop ambient writes until the user begins a new transaction.
+public enum BentoProposalCommitResult: Hashable, Sendable {
+    case committed
+    case stale
+    case rejected
+    case degraded
+
+    public var needsRepair: Bool { self == .degraded }
+}
+
 /// Runtime layout state for the eligible windows currently visible on one display.
 /// Window identifiers remain process-local, so these sessions are never persisted.
 public struct LayoutSession: Hashable, Sendable {
@@ -88,12 +100,26 @@ public struct LayoutSession: Hashable, Sendable {
     /// visible membership instead of carrying exclusions and reinsertion
     /// guesses forward into the canonical planner.
     public mutating func prepareForRepair() {
-        automaticWritesSuspended = false
+        resumeAutomaticWrites()
         excludedFocusWindowIDs.removeAll()
         automaticallyFloatingWindowIDs.removeAll()
         bentoReinsertionAnchors.removeAll()
         bentoState.floatingWindowIDs.removeAll()
         presence = WindowPresenceTracker()
+    }
+
+    /// A user-owned transaction clears this display's recovery stop.
+    public mutating func resumeAutomaticWrites() {
+        automaticWritesSuspended = false
+    }
+
+    /// Captures the observed truth for this display and stops ambient writes
+    /// after the one bounded recovery transaction has degraded.
+    public mutating func suspendAutomaticWrites(observing windows: [WindowSnapshot]) {
+        automaticWritesSuspended = true
+        lastObservedFrames = Dictionary(uniqueKeysWithValues: windows.compactMap { window in
+            window.displayID == displayID ? (window.id, window.frame) : nil
+        })
     }
 
     mutating func advanceRevision() {

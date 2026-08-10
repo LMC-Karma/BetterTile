@@ -110,7 +110,7 @@ final class BetterTileModel {
         }
         dividerResize.bentoStateChangedHandler = { [weak self] displayID, state, frames, baselineFrames in
             guard let self, var session = self.sessionStore.session(for: displayID) else { return }
-            session.automaticWritesSuspended = false
+            session.resumeAutomaticWrites()
             session.bentoState = state
             session.recordProposedFrames(frames)
             guard self.sessionStore.commit(session, replacing: session.revision) != nil else {
@@ -269,7 +269,7 @@ final class BetterTileModel {
         // An explicit shortcut is a new user-owned transaction and therefore
         // clears a scoped recovery stop for this desktop.
         if session.automaticWritesSuspended {
-            session.automaticWritesSuspended = false
+            session.resumeAutomaticWrites()
             guard let resumed = sessionStore.commit(session, replacing: session.revision) else {
                 statusMessage = "The Bento session changed before the shortcut could begin. Try again."
                 return false
@@ -370,7 +370,7 @@ final class BetterTileModel {
             }
             if var current = sessionStore.session(for: display.id),
                current.automaticWritesSuspended {
-                current.automaticWritesSuspended = false
+                current.resumeAutomaticWrites()
                 if sessionStore.commit(current, replacing: current.revision) != nil {
                     sessionRevision &+= 1
                 }
@@ -521,7 +521,7 @@ final class BetterTileModel {
               ),
               let transaction = coordinator.beginTransaction(windowIDs: dragSession.managedWindowIDs)
         else { return false }
-        layoutSession.automaticWritesSuspended = false
+        layoutSession.resumeAutomaticWrites()
         guard let resumedSession = sessionStore.commit(
             layoutSession,
             replacing: layoutSession.revision
@@ -1483,10 +1483,7 @@ final class BetterTileModel {
         Self.bentoLog.error(
             "invalidating Bento revision \(current.revision, privacy: .public) tree=\(String(describing: current.bentoState.root), privacy: .public)"
         )
-        current.automaticWritesSuspended = true
-        current.lastObservedFrames = Dictionary(uniqueKeysWithValues: windows.compactMap { window in
-            window.displayID == displayID ? (window.id, window.frame) : nil
-        })
+        current.suspendAutomaticWrites(observing: windows)
         if sessionStore.commit(current, replacing: current.revision) != nil {
             sessionRevision &+= 1
         }
@@ -2051,13 +2048,4 @@ private struct ActiveBentoDrag {
     var session: BentoDragSession
     var layoutSession: LayoutSession
     var transaction: WindowFrameTransaction
-}
-
-private enum BentoProposalCommitResult {
-    case committed
-    case stale
-    case rejected
-    case degraded
-
-    var needsRepair: Bool { self == .degraded }
 }
