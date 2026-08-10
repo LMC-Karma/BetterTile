@@ -46,6 +46,51 @@ private func reducerWindow(_ name: String) -> WindowSnapshot {
     #expect(transition.session.bentoInsertionOrder == [a.id, b.id, c.id])
 }
 
+@Test func membershipInsertionPreservesCustomizedPaneRatios() throws {
+    let a = reducerWindow("a")
+    let b = reducerWindow("b")
+    let c = reducerWindow("c")
+    let d = reducerWindow("d")
+    let nested = BentoPartition(
+        axis: .horizontal,
+        children: [.leaf(b.id), .leaf(c.id)],
+        ratios: [0.4, 0.6]
+    )
+    let customizedRoot = BentoPartition(
+        axis: .vertical,
+        children: [.leaf(a.id), .partition(nested)],
+        ratios: [0.65, 0.35]
+    )
+    let session = LayoutSession(
+        displayID: reducerDisplay,
+        mode: .bento,
+        bentoState: BentoLayoutState(root: .partition(customizedRoot)),
+        windowIDs: [a.id, b.id, c.id, d.id],
+        focusedWindowID: b.id,
+        bentoInsertionOrder: [a.id, b.id, c.id]
+    )
+
+    let transition = BentoSessionReducer().reconcile(
+        session: session,
+        observation: BentoObservation(
+            bounds: reducerBounds,
+            windows: [a, b, c, d],
+            focusedWindowID: b.id
+        ),
+        paneGap: 0
+    )
+
+    guard case let .partition(root) = transition.session.bentoState.root,
+          case let .partition(preservedNested) = root.children.last
+    else {
+        Issue.record("Expected the customized topology to remain")
+        return
+    }
+    #expect(root.ratios == [0.65, 0.35])
+    #expect(preservedNested.ratios == [0.4, 0.6])
+    #expect(transition.session.bentoState.root?.windowIDs == [a.id, b.id, d.id, c.id])
+}
+
 @Test func membershipFloatsOverflowWithoutChangingSixManagedPanes() {
     let windows = (1...7).map { reducerWindow("\($0)") }
     let firstSix = Array(windows.prefix(6))
