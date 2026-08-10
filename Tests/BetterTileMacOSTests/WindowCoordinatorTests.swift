@@ -174,7 +174,51 @@ import Testing
     ]
     #expect(coordinator.applyLive(transaction: &transaction, placements: placements))
     #expect(system.windows.map(\.frame) == placements.map(\.frame))
-    coordinator.cancel(transaction: transaction)
+    #expect(coordinator.cancel(transaction: transaction))
+    #expect(system.windows.map(\.frame) == original)
+}
+
+@Test @MainActor func failedLiveCancellationRequiresRepair() throws {
+    let system = FakeWindowSystem()
+    system.addSecondWindow()
+    let coordinator = WindowCoordinator(system: system)
+    var transaction = try #require(coordinator.beginTransaction(windowIDs: Set(system.windows.map(\.id))))
+    let placements = [
+        Placement(windowID: system.windows[0].id, frame: BTRect(x: 0, y: 0, width: 650, height: 800)),
+        Placement(windowID: system.windows[1].id, frame: BTRect(x: 650, y: 0, width: 350, height: 800)),
+    ]
+    #expect(coordinator.applyLive(transaction: &transaction, placements: placements))
+    system.failingWindowID = system.windows[0].id
+
+    #expect(!coordinator.cancel(transaction: transaction))
+    #expect(coordinator.lastApplyWasDegraded)
+    #expect(coordinator.lastError == "The divider change failed and the previous layout could not be fully restored.")
+}
+
+@Test @MainActor func cancellationRecoversADegradedFirstLiveWrite() throws {
+    let system = FakeWindowSystem()
+    system.addSecondWindow()
+    let coordinator = WindowCoordinator(system: system)
+    let original = system.windows.map(\.frame)
+    let firstID = system.windows[0].id
+    let secondID = system.windows[1].id
+    var transaction = try #require(coordinator.beginTransaction(windowIDs: [firstID, secondID]))
+    system.failedFrameWriteNumbers[secondID] = [1]
+    system.failedFrameWriteNumbers[firstID] = [2]
+
+    #expect(!coordinator.applyLive(
+        transaction: &transaction,
+        placements: [
+            Placement(windowID: firstID, frame: BTRect(x: 0, y: 0, width: 650, height: 800)),
+            Placement(windowID: secondID, frame: BTRect(x: 650, y: 0, width: 350, height: 800)),
+        ]
+    ))
+    #expect(coordinator.lastApplyWasDegraded)
+    #expect(!transaction.hasLiveChanges)
+
+    system.failedFrameWriteNumbers.removeAll()
+    #expect(coordinator.cancel(transaction: transaction))
+    #expect(!coordinator.lastApplyWasDegraded)
     #expect(system.windows.map(\.frame) == original)
 }
 
@@ -224,6 +268,7 @@ import Testing
     #expect(coordinator.applyPlacements(placements))
     #expect(!(await coordinator.settleAuthoritativePlacements(placements, retryDelay: .zero)))
     #expect(system.frameWriteCounts[system.windows[1].id] == 3)
+    #expect(!coordinator.lastApplyWasDegraded)
     #expect(coordinator.lastError == "One or more windows did not settle at the requested frame.")
 }
 
@@ -722,7 +767,10 @@ private final class FakeWindowSystem: WindowSystem, TargetedWindowSystem, Window
     var failingWindowID: WindowID?
     var ignoredFrameWriteCounts: [WindowID: Int] = [:]
     var frameWriteCounts: [WindowID: Int] = [:]
+    var failedFrameWriteNumbers: [WindowID: Set<Int>] = [:]
     var failingMinimizeWindowID: WindowID?
+    var minimizeWriteCounts: [WindowID: Int] = [:]
+    var failedMinimizeWriteNumbers: [WindowID: Set<Int>] = [:]
     var focusedWindowID: WindowID?
     var eventHandler: (@MainActor (WindowSystemEvent) -> Void)?
     var targetedSnapshotRequests = 0
@@ -781,9 +829,12 @@ private final class FakeWindowSystem: WindowSystem, TargetedWindowSystem, Window
 
     func setFrame(_ frame: BTRect, knownCurrentFrame: BTRect?, for windowID: WindowID) throws {
         recordedKnownCurrentFrames[windowID, default: []].append(knownCurrentFrame)
-        if failingWindowID == windowID { throw WindowSystemError.operationFailed("Simulated Accessibility failure") }
-        guard let index = windows.firstIndex(where: { $0.id == windowID }) else { throw WindowSystemError.windowNotFound(windowID) }
         frameWriteCounts[windowID, default: 0] += 1
+        if failingWindowID == windowID { throw WindowSystemError.operationFailed("Simulated Accessibility failure") }
+        if failedFrameWriteNumbers[windowID]?.contains(frameWriteCounts[windowID, default: 0]) == true {
+            throw WindowSystemError.operationFailed("Simulated numbered Accessibility failure")
+        }
+        guard let index = windows.firstIndex(where: { $0.id == windowID }) else { throw WindowSystemError.windowNotFound(windowID) }
         if ignoredFrameWriteCounts[windowID, default: 0] > 0 {
             ignoredFrameWriteCounts[windowID, default: 0] -= 1
             return
@@ -799,7 +850,11 @@ private final class FakeWindowSystem: WindowSystem, TargetedWindowSystem, Window
     }
 
     func setMinimized(_ minimized: Bool, for windowID: WindowID) throws {
+        minimizeWriteCounts[windowID, default: 0] += 1
         if failingMinimizeWindowID == windowID { throw WindowSystemError.operationFailed("Simulated minimize failure") }
+        if failedMinimizeWriteNumbers[windowID]?.contains(minimizeWriteCounts[windowID, default: 0]) == true {
+            throw WindowSystemError.operationFailed("Simulated numbered minimize failure")
+        }
         guard let index = windows.firstIndex(where: { $0.id == windowID }) else { throw WindowSystemError.windowNotFound(windowID) }
         windows[index].isMinimized = minimized
     }
@@ -887,6 +942,92 @@ private final class FakeWindowSystem: WindowSystem, TargetedWindowSystem, Window
     let hints = try #require(system.recordedKnownCurrentFrames[firstID])
     #expect(hints.count == 2)
     #expect(hints[1] == placements[0].frame)
+}
+
+@Test @MainActor func rollbackFailureMarksTheApplyAsDegraded() {
+    let system = FakeWindowSystem()
+    system.addSecondWindow()
+    let coordinator = WindowCoordinator(system: system)
+    let firstID = system.windows[0].id
+    system.failingWindowID = system.windows[1].id
+    system.failedFrameWriteNumbers[firstID] = [2]
+
+    let placements = system.windows.map {
+        Placement(windowID: $0.id, frame: BTRect(x: 0, y: 0, width: 500, height: 800))
+    }
+
+    #expect(!coordinator.applyPlacements(placements))
+    #expect(coordinator.lastApplyWasDegraded)
+}
+
+@Test @MainActor func successfulLiveApplyClearsAnEarlierDegradedResult() throws {
+    let system = FakeWindowSystem()
+    system.addSecondWindow()
+    let coordinator = WindowCoordinator(system: system)
+    let firstID = system.windows[0].id
+    system.failingWindowID = system.windows[1].id
+    system.failedFrameWriteNumbers[firstID] = [2]
+    let failedPlacements = system.windows.map {
+        Placement(windowID: $0.id, frame: BTRect(x: 0, y: 0, width: 500, height: 800))
+    }
+    #expect(!coordinator.applyPlacements(failedPlacements))
+    #expect(coordinator.lastApplyWasDegraded)
+
+    system.failingWindowID = nil
+    system.failedFrameWriteNumbers.removeAll()
+    var transaction = try #require(coordinator.beginTransaction(windowIDs: [firstID]))
+    #expect(coordinator.applyLive(
+        transaction: &transaction,
+        placements: [Placement(windowID: firstID, frame: BTRect(x: 0, y: 0, width: 450, height: 800))]
+    ))
+    #expect(!coordinator.lastApplyWasDegraded)
+}
+
+@Test @MainActor func focusDropRollbackFailureMarksTheApplyAsDegraded() {
+    let system = FakeWindowSystem()
+    system.addSecondWindow()
+    let thirdID = WindowID(rawValue: "third")
+    system.windows.append(WindowSnapshot(
+        id: thirdID,
+        processIdentifier: 44,
+        frame: BTRect(x: 600, y: 200, width: 200, height: 400),
+        displayID: DisplayID(rawValue: "main")
+    ))
+    let coordinator = WindowCoordinator(system: system)
+    let source = system.windows[0]
+    let firstMinimizedID = system.windows[1].id
+    system.failingMinimizeWindowID = thirdID
+    system.failedMinimizeWriteNumbers[firstMinimizedID] = [2]
+
+    #expect(!coordinator.applyFocusDrop(
+        placement: Placement(
+            windowID: source.id,
+            frame: BTRect(x: 0, y: 0, width: 500, height: 800)
+        ),
+        minimizing: [firstMinimizedID, thirdID],
+        sourceBaselineFrame: source.frame
+    ))
+    #expect(coordinator.lastApplyWasDegraded)
+    #expect(coordinator.lastError == "The focus drop failed and the previous layout could not be fully restored.")
+}
+
+@Test @MainActor func anUnappliedFocusDropDoesNotReportADegradedRollback() {
+    let system = FakeWindowSystem()
+    let coordinator = WindowCoordinator(system: system)
+    let source = system.windows[0]
+    system.failedFrameWriteNumbers[source.id] = [1, 2]
+
+    #expect(!coordinator.applyFocusDrop(
+        placement: Placement(
+            windowID: source.id,
+            frame: BTRect(x: 0, y: 0, width: 500, height: 800)
+        ),
+        minimizing: [],
+        sourceBaselineFrame: source.frame
+    ))
+    #expect(!coordinator.lastApplyWasDegraded)
+    #expect(system.windows[0].frame == source.frame)
+    #expect(system.frameWriteCounts[source.id] == 1)
 }
 
 @Test @MainActor func theConvenienceOverloadStillPerformsAFullWrite() throws {

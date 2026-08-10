@@ -37,6 +37,9 @@ public final class WindowCoordinator {
     public let system: any WindowSystem
     public var actionEngine: StandardActionEngine
     public private(set) var lastError: String?
+    /// True only when a failed multi-window apply could not return every
+    /// already-written window to its baseline frame.
+    public private(set) var lastApplyWasDegraded = false
 
     private var history: FrameHistory
     private var generations: [WindowID: UInt64] = [:]
@@ -271,6 +274,7 @@ public final class WindowCoordinator {
 
     @discardableResult
     public func applyPlacements(_ placements: [Placement], recordHistory: Bool = true) -> Bool {
+        lastApplyWasDegraded = false
         guard var transaction = beginTransaction(windowIDs: Set(placements.map(\.windowID))) else { return false }
         return commit(transaction: &transaction, placements: placements, recordHistory: recordHistory)
     }
@@ -283,6 +287,7 @@ public final class WindowCoordinator {
         retryDelay: Duration = .milliseconds(100),
         tolerance: Double = 1
     ) async -> Bool {
+        lastApplyWasDegraded = false
         let retryLimit = max(0, maximumRetries)
         let windowIDs = Set(placements.map(\.windowID))
         var terminalGenerations = Dictionary(uniqueKeysWithValues: windowIDs.map {
@@ -359,6 +364,7 @@ public final class WindowCoordinator {
         placements: [Placement]? = nil,
         recordHistory: Bool = true
     ) -> Bool {
+        lastApplyWasDegraded = false
         if let placements, !preview(transaction: &transaction, placements: placements) { return false }
         do {
             try validate(transaction.proposedPlacements)
@@ -380,6 +386,7 @@ public final class WindowCoordinator {
 
     @discardableResult
     public func applyLive(transaction: inout WindowFrameTransaction, placements: [Placement]) -> Bool {
+        lastApplyWasDegraded = false
         guard preview(transaction: &transaction, placements: placements) else { return false }
         do {
             try validate(transaction.proposedPlacements)
@@ -403,16 +410,25 @@ public final class WindowCoordinator {
         }
     }
 
-    public func cancel(transaction: WindowFrameTransaction) {
-        guard transaction.hasLiveChanges else { return }
+    @discardableResult
+    public func cancel(transaction: WindowFrameTransaction) -> Bool {
+        let recoveryRequired = transaction.hasLiveChanges || lastApplyWasDegraded
+        lastApplyWasDegraded = false
+        guard recoveryRequired else {
+            lastError = nil
+            return true
+        }
         do {
             try applyAtomically(
                 transaction.baselineFrames.map { Placement(windowID: $0.key, frame: $0.value) },
                 rollbackFrames: transaction.lastAppliedFrames
             )
             lastError = nil
+            return true
         } catch {
-            lastError = error.localizedDescription
+            lastApplyWasDegraded = true
+            lastError = "The divider change failed and the previous layout could not be fully restored."
+            return false
         }
     }
 
@@ -425,10 +441,13 @@ public final class WindowCoordinator {
         minimizing windowIDs: Set<WindowID>,
         sourceBaselineFrame: BTRect
     ) -> Bool {
+        lastApplyWasDegraded = false
         var minimized: [WindowID] = []
+        var sourceWriteCompleted = false
         do {
             try validate([placement])
             try apply(placement.frame, to: placement.windowID, knownCurrentFrame: sourceBaselineFrame)
+            sourceWriteCompleted = true
             for windowID in windowIDs.sorted() {
                 try system.setMinimized(true, for: windowID)
                 minimized.append(windowID)
@@ -439,11 +458,37 @@ public final class WindowCoordinator {
             lastError = nil
             return true
         } catch {
+            var rollbackFailed = false
             for windowID in minimized.reversed() {
-                try? system.setMinimized(false, for: windowID)
+                do {
+                    try system.setMinimized(false, for: windowID)
+                } catch {
+                    rollbackFailed = true
+                }
             }
-            try? apply(sourceBaselineFrame, to: placement.windowID, knownCurrentFrame: placement.frame)
-            lastError = error.localizedDescription
+            var sourceNeedsRestore = sourceWriteCompleted
+                && !sourceBaselineFrame.approximatelyEquals(placement.frame, tolerance: 0.01)
+            var observedSourceFrame: BTRect? = sourceWriteCompleted ? placement.frame : nil
+            if !sourceWriteCompleted,
+               let source = (try? snapshots(ids: [placement.windowID]))?.first {
+                observedSourceFrame = source.frame
+                sourceNeedsRestore = !source.frame.approximatelyEquals(sourceBaselineFrame, tolerance: 0.01)
+            }
+            if sourceNeedsRestore {
+                do {
+                    try apply(
+                        sourceBaselineFrame,
+                        to: placement.windowID,
+                        knownCurrentFrame: observedSourceFrame
+                    )
+                } catch {
+                    rollbackFailed = true
+                }
+            }
+            lastApplyWasDegraded = rollbackFailed
+            lastError = rollbackFailed
+                ? "The focus drop failed and the previous layout could not be fully restored."
+                : error.localizedDescription
             return false
         }
     }
@@ -528,10 +573,21 @@ public final class WindowCoordinator {
                 applied.append(placement.windowID)
             }
         } catch {
+            var rollbackFailures: [WindowID] = []
             for id in applied.reversed() {
                 guard let frame = rollbackFrames[id] else { continue }
                 let appliedFrame = placements.first(where: { $0.windowID == id })?.frame
-                try? apply(frame, to: id, knownCurrentFrame: appliedFrame)
+                do {
+                    try apply(frame, to: id, knownCurrentFrame: appliedFrame)
+                } catch {
+                    rollbackFailures.append(id)
+                }
+            }
+            if !rollbackFailures.isEmpty {
+                lastApplyWasDegraded = true
+                throw WindowSystemError.operationFailed(
+                    "A window update failed and the previous layout could not be fully restored."
+                )
             }
             throw error
         }

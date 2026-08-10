@@ -27,6 +27,7 @@ public final class DividerOverlayController {
     public var layoutChangedHandler: ((DisplayID, [WindowID: BTRect]) -> Void)?
     public var bentoStateProvider: ((DisplayID) -> BentoLayoutState?)?
     public var bentoStateChangedHandler: ((DisplayID, BentoLayoutState, [WindowID: BTRect], [WindowID: BTRect]) -> Void)?
+    public var rollbackFailureHandler: ((DisplayID, String?) -> Void)?
     public var gestureEndedHandler: (() -> Void)?
     public private(set) var isDragging = false
 
@@ -274,7 +275,14 @@ public final class DividerOverlayController {
             ghosts.hide()
             guard Date().timeIntervalSince(lastLiveUpdate) >= 1.0 / 30.0 else { return }
             lastLiveUpdate = Date()
-            guard coordinator.applyLive(transaction: &transaction, placements: placements) else { return }
+            guard coordinator.applyLive(transaction: &transaction, placements: placements) else {
+                if coordinator.lastApplyWasDegraded {
+                    _ = coordinator.cancel(transaction: transaction)
+                    reportRollbackFailureIfNeeded(displayID: interaction.displayID)
+                    clearGesture()
+                }
+                return
+            }
         }
         self.transaction = transaction
     }
@@ -285,6 +293,10 @@ public final class DividerOverlayController {
         switch configuration.resizeFeedbackMode {
         case .ghost:
             succeeded = coordinator.commit(transaction: &transaction, placements: latestPlacements)
+            if !succeeded, coordinator.lastApplyWasDegraded {
+                _ = coordinator.cancel(transaction: transaction)
+                reportRollbackFailureIfNeeded(displayID: interaction.displayID)
+            }
         case .live:
             var appliedFinalPlacement = true
             if Dictionary(uniqueKeysWithValues: latestPlacements.map { ($0.windowID, $0.frame) }) != transaction.lastAppliedFrames {
@@ -294,7 +306,8 @@ public final class DividerOverlayController {
                 coordinator.finishLive(transaction: transaction)
                 succeeded = transaction.hasLiveChanges
             } else {
-                coordinator.cancel(transaction: transaction)
+                _ = coordinator.cancel(transaction: transaction)
+                reportRollbackFailureIfNeeded(displayID: interaction.displayID)
                 succeeded = false
             }
         }
@@ -309,8 +322,18 @@ public final class DividerOverlayController {
     }
 
     private func cancelActiveGesture() {
-        if let transaction { coordinator.cancel(transaction: transaction) }
+        if let transaction {
+            _ = coordinator.cancel(transaction: transaction)
+            if let displayID = activeInteraction?.displayID {
+                reportRollbackFailureIfNeeded(displayID: displayID)
+            }
+        }
         clearGesture()
+    }
+
+    private func reportRollbackFailureIfNeeded(displayID: DisplayID) {
+        guard coordinator.lastApplyWasDegraded else { return }
+        rollbackFailureHandler?(displayID, coordinator.lastError)
     }
 
     private func clearGesture() {

@@ -8,10 +8,26 @@ public struct DesktopSessionID: Hashable, Sendable {
     public init(rawValue: UUID = UUID()) { self.rawValue = rawValue }
 }
 
+/// Result of attempting to make a proposed Bento session authoritative.
+/// Only a degraded rollback leaves the display in an unknown state that must
+/// stop ambient writes until the user begins a new transaction.
+public enum BentoProposalCommitResult: Hashable, Sendable {
+    case committed
+    case stale
+    case rejected
+    case degraded
+
+    public var needsRepair: Bool { self == .degraded }
+}
+
 /// Runtime layout state for the eligible windows currently visible on one display.
 /// Window identifiers remain process-local, so these sessions are never persisted.
 public struct LayoutSession: Hashable, Sendable {
     public var id: DesktopSessionID
+    /// Monotonically identifies the exact value used to derive a proposal.
+    /// Deferred work must commit against this revision, never merely the same
+    /// process-local session identity.
+    public private(set) var revision: UInt64
     public var displayID: DisplayID
     public var mode: LayoutMode
     public var bentoState: BentoLayoutState
@@ -27,9 +43,13 @@ public struct LayoutSession: Hashable, Sendable {
     public var hasAppliedSingleWindowPlacement: Bool
     /// Corroborates a window's disappearance before its pane is given up.
     public var presence: WindowPresenceTracker
+    /// A failed bounded recovery stops ambient writes for this display until
+    /// the user starts a new Bento transaction.
+    public var automaticWritesSuspended: Bool
 
     public init(
         id: DesktopSessionID = DesktopSessionID(),
+        revision: UInt64 = 0,
         displayID: DisplayID,
         mode: LayoutMode,
         bentoState: BentoLayoutState = BentoLayoutState(),
@@ -43,9 +63,11 @@ public struct LayoutSession: Hashable, Sendable {
         lastWorkArea: BTRect? = nil,
         isBentoInitialized: Bool = false,
         hasAppliedSingleWindowPlacement: Bool = false,
-        presence: WindowPresenceTracker = WindowPresenceTracker()
+        presence: WindowPresenceTracker = WindowPresenceTracker(),
+        automaticWritesSuspended: Bool = false
     ) {
         self.id = id
+        self.revision = revision
         self.displayID = displayID
         self.mode = mode
         self.bentoState = bentoState
@@ -60,6 +82,7 @@ public struct LayoutSession: Hashable, Sendable {
         self.isBentoInitialized = isBentoInitialized || bentoState.root != nil
         self.hasAppliedSingleWindowPlacement = hasAppliedSingleWindowPlacement
         self.presence = presence
+        self.automaticWritesSuspended = automaticWritesSuspended
     }
 
     /// Makes explicitly visible windows eligible for the next Bento
@@ -71,6 +94,36 @@ public struct LayoutSession: Hashable, Sendable {
         for windowID in windowIDs {
             bentoState.setFloating(false, windowID: windowID)
         }
+    }
+
+    /// Repair is the explicit escape hatch for a stuck desktop. It starts from
+    /// visible membership instead of carrying exclusions and reinsertion
+    /// guesses forward into the canonical planner.
+    public mutating func prepareForRepair() {
+        resumeAutomaticWrites()
+        excludedFocusWindowIDs.removeAll()
+        automaticallyFloatingWindowIDs.removeAll()
+        bentoReinsertionAnchors.removeAll()
+        bentoState.floatingWindowIDs.removeAll()
+        presence = WindowPresenceTracker()
+    }
+
+    /// A user-owned transaction clears this display's recovery stop.
+    public mutating func resumeAutomaticWrites() {
+        automaticWritesSuspended = false
+    }
+
+    /// Captures the observed truth for this display and stops ambient writes
+    /// after the one bounded recovery transaction has degraded.
+    public mutating func suspendAutomaticWrites(observing windows: [WindowSnapshot]) {
+        automaticWritesSuspended = true
+        lastObservedFrames = Dictionary(uniqueKeysWithValues: windows.compactMap { window in
+            window.displayID == displayID ? (window.id, window.frame) : nil
+        })
+    }
+
+    mutating func advanceRevision() {
+        revision &+= 1
     }
 
     public mutating func recordProposedFrames(_ frames: [WindowID: BTRect]) {
@@ -163,7 +216,8 @@ public struct LayoutSessionStore: Sendable {
         windowIDs: Set<WindowID>,
         focusedWindowID: WindowID?,
         defaultMode: LayoutMode,
-        reuseActiveWhenUnmatched: Bool
+        reuseActiveWhenUnmatched: Bool,
+        commitObservation: Bool = true
     ) -> (session: LayoutSession, wasCreated: Bool, previousWindowIDs: Set<WindowID>) {
         let previousActiveID = activeSessionIDs[displayID]
         let candidates = storedSessions[displayID].map { Array($0.values) } ?? []
@@ -192,7 +246,16 @@ public struct LayoutSessionStore: Sendable {
             session.windowIDs.formUnion(windowIDs)
         }
         session.focusedWindowID = focusedWindowID
-        storedSessions[displayID, default: [:]][session.id] = session
+        if wasCreated {
+            // Establish a compare-and-swap base for callers that want to plan
+            // the activation atomically with a frame transaction. A brand-new
+            // desktop has no older state to preserve, so its observed
+            // membership is the truthful base if the proposal is rejected.
+            storedSessions[displayID, default: [:]][session.id] = session
+        } else if commitObservation, session != matched {
+            session.advanceRevision()
+            storedSessions[displayID, default: [:]][session.id] = session
+        }
         activeSessionIDs[displayID] = session.id
         return (session, wasCreated, previousWindowIDs)
     }
@@ -215,14 +278,44 @@ public struct LayoutSessionStore: Sendable {
         activeSessionIDs[displayID] == sessionID
     }
 
+    public func isCurrent(
+        _ sessionID: DesktopSessionID,
+        revision: UInt64,
+        on displayID: DisplayID
+    ) -> Bool {
+        guard activeSessionIDs[displayID] == sessionID else { return false }
+        return storedSessions[displayID]?[sessionID]?.revision == revision
+    }
+
     public func allSessions(for displayID: DisplayID) -> [LayoutSession] {
         storedSessions[displayID].map { Array($0.values) } ?? []
     }
 
     public mutating func update(_ displayID: DisplayID, _ update: (inout LayoutSession) -> Void) {
         guard let id = activeSessionIDs[displayID], var session = storedSessions[displayID]?[id] else { return }
+        let original = session
         update(&session)
+        guard session != original else { return }
+        session.advanceRevision()
         storedSessions[displayID]?[id] = session
+    }
+
+    /// Replaces the entire active session only when it was derived from the
+    /// exact current revision. A stale proposal is discarded wholesale.
+    @discardableResult
+    public mutating func commit(
+        _ proposed: LayoutSession,
+        replacing expectedRevision: UInt64
+    ) -> LayoutSession? {
+        guard proposed.revision == expectedRevision,
+              isCurrent(proposed.id, revision: expectedRevision, on: proposed.displayID)
+        else { return nil }
+        guard let current = storedSessions[proposed.displayID]?[proposed.id] else { return nil }
+        if proposed == current { return current }
+        var committed = proposed
+        committed.advanceRevision()
+        storedSessions[proposed.displayID]?[proposed.id] = committed
+        return committed
     }
 
     public mutating func removeMissingDisplays(_ displayIDs: Set<DisplayID>) {
