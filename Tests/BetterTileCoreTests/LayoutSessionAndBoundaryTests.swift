@@ -43,6 +43,82 @@ private let sessionDisplay = DisplayID(rawValue: "main")
     #expect(store.sessions.count == 2)
 }
 
+@Test func sessionCommitRejectsAStaleCompleteProposal() throws {
+    var store = LayoutSessionStore()
+    let original = store.refresh(
+        displayID: sessionDisplay,
+        windowIDs: [WindowID(rawValue: "a")],
+        focusedWindowID: nil,
+        defaultMode: .bento
+    )
+    var staleProposal = original
+    staleProposal.bentoInsertionOrder = [WindowID(rawValue: "stale")]
+
+    store.update(sessionDisplay) {
+        $0.excludedFocusWindowIDs = [WindowID(rawValue: "newer")]
+    }
+
+    #expect(store.commit(staleProposal, replacing: original.revision) == nil)
+    let current = try #require(store.session(for: sessionDisplay))
+    #expect(current.excludedFocusWindowIDs == [WindowID(rawValue: "newer")])
+    #expect(current.bentoInsertionOrder.isEmpty)
+}
+
+@Test func sessionCommitAtomicallyReplacesEveryRuntimeField() throws {
+    var store = LayoutSessionStore()
+    let original = store.refresh(
+        displayID: sessionDisplay,
+        windowIDs: [WindowID(rawValue: "a")],
+        focusedWindowID: nil,
+        defaultMode: .bento
+    )
+    let replacement = WindowID(rawValue: "replacement")
+    var proposal = original
+    proposal.windowIDs = [replacement]
+    proposal.bentoInsertionOrder = [replacement]
+    proposal.automaticallyFloatingWindowIDs = [replacement]
+    proposal.excludedFocusWindowIDs = [replacement]
+    proposal.bentoReinsertionAnchors[replacement] = BentoReinsertionAnchor(
+        neighborWindowID: WindowID(rawValue: "neighbor"),
+        edge: .left
+    )
+    proposal.lastObservedFrames[replacement] = BTRect(x: 1, y: 2, width: 3, height: 4)
+    proposal.lastWorkArea = BTRect(x: 0, y: 0, width: 100, height: 100)
+    proposal.automaticWritesSuspended = true
+
+    let commitResult = store.commit(proposal, replacing: original.revision)
+    let committed = try #require(commitResult)
+
+    #expect(committed.revision == original.revision + 1)
+    #expect(store.session(for: sessionDisplay) == committed)
+}
+
+@Test func activationCanBeProposedWithoutPartiallyStoringMembership() throws {
+    var store = LayoutSessionStore()
+    let a = WindowID(rawValue: "a")
+    let b = WindowID(rawValue: "b")
+    let original = store.refresh(
+        displayID: sessionDisplay,
+        windowIDs: [a],
+        focusedWindowID: a,
+        defaultMode: .bento
+    )
+
+    let activation = store.activate(
+        displayID: sessionDisplay,
+        windowIDs: [a, b],
+        focusedWindowID: b,
+        defaultMode: .bento,
+        reuseActiveWhenUnmatched: true,
+        commitObservation: false
+    )
+
+    #expect(activation.session.windowIDs == [a, b])
+    #expect(store.session(for: sessionDisplay)?.windowIDs == [a])
+    #expect(store.commit(activation.session, replacing: original.revision) != nil)
+    #expect(store.session(for: sessionDisplay)?.windowIDs == [a, b])
+}
+
 @Test func aDisplaySessionExistsWithoutWaitingForWindows() {
     var store = LayoutSessionStore()
     let session = store.refresh(displayID: sessionDisplay, windowIDs: [], focusedWindowID: nil, defaultMode: .linked)
@@ -65,6 +141,30 @@ private let sessionDisplay = DisplayID(rawValue: "main")
     #expect(!session.excludedFocusWindowIDs.contains(restored))
     #expect(!session.bentoState.floatingWindowIDs.contains(restored))
     #expect(session.automaticallyFloatingWindowIDs.contains(restored))
+}
+
+@Test func repairClearsRuntimeExclusionsAndWriteSuspension() {
+    let visible = WindowID(rawValue: "visible")
+    let neighbor = WindowID(rawValue: "neighbor")
+    var session = LayoutSession(
+        displayID: sessionDisplay,
+        mode: .bento,
+        bentoState: BentoLayoutState(floatingWindowIDs: [visible]),
+        automaticallyFloatingWindowIDs: [visible],
+        excludedFocusWindowIDs: [visible],
+        bentoReinsertionAnchors: [
+            visible: BentoReinsertionAnchor(neighborWindowID: neighbor, edge: .right)
+        ],
+        automaticWritesSuspended: true
+    )
+
+    session.prepareForRepair()
+
+    #expect(!session.automaticWritesSuspended)
+    #expect(session.excludedFocusWindowIDs.isEmpty)
+    #expect(session.automaticallyFloatingWindowIDs.isEmpty)
+    #expect(session.bentoReinsertionAnchors.isEmpty)
+    #expect(!session.bentoState.floatingWindowIDs.contains(visible))
 }
 
 @Test func frameDriftIncludesOnlyManagedBentoWindows() {

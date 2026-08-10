@@ -722,6 +722,7 @@ private final class FakeWindowSystem: WindowSystem, TargetedWindowSystem, Window
     var failingWindowID: WindowID?
     var ignoredFrameWriteCounts: [WindowID: Int] = [:]
     var frameWriteCounts: [WindowID: Int] = [:]
+    var failedFrameWriteNumbers: [WindowID: Set<Int>] = [:]
     var failingMinimizeWindowID: WindowID?
     var focusedWindowID: WindowID?
     var eventHandler: (@MainActor (WindowSystemEvent) -> Void)?
@@ -781,9 +782,12 @@ private final class FakeWindowSystem: WindowSystem, TargetedWindowSystem, Window
 
     func setFrame(_ frame: BTRect, knownCurrentFrame: BTRect?, for windowID: WindowID) throws {
         recordedKnownCurrentFrames[windowID, default: []].append(knownCurrentFrame)
-        if failingWindowID == windowID { throw WindowSystemError.operationFailed("Simulated Accessibility failure") }
-        guard let index = windows.firstIndex(where: { $0.id == windowID }) else { throw WindowSystemError.windowNotFound(windowID) }
         frameWriteCounts[windowID, default: 0] += 1
+        if failingWindowID == windowID { throw WindowSystemError.operationFailed("Simulated Accessibility failure") }
+        if failedFrameWriteNumbers[windowID]?.contains(frameWriteCounts[windowID, default: 0]) == true {
+            throw WindowSystemError.operationFailed("Simulated numbered Accessibility failure")
+        }
+        guard let index = windows.firstIndex(where: { $0.id == windowID }) else { throw WindowSystemError.windowNotFound(windowID) }
         if ignoredFrameWriteCounts[windowID, default: 0] > 0 {
             ignoredFrameWriteCounts[windowID, default: 0] -= 1
             return
@@ -887,6 +891,22 @@ private final class FakeWindowSystem: WindowSystem, TargetedWindowSystem, Window
     let hints = try #require(system.recordedKnownCurrentFrames[firstID])
     #expect(hints.count == 2)
     #expect(hints[1] == placements[0].frame)
+}
+
+@Test @MainActor func rollbackFailureMarksTheApplyAsDegraded() {
+    let system = FakeWindowSystem()
+    system.addSecondWindow()
+    let coordinator = WindowCoordinator(system: system)
+    let firstID = system.windows[0].id
+    system.failingWindowID = system.windows[1].id
+    system.failedFrameWriteNumbers[firstID] = [2]
+
+    let placements = system.windows.map {
+        Placement(windowID: $0.id, frame: BTRect(x: 0, y: 0, width: 500, height: 800))
+    }
+
+    #expect(!coordinator.applyPlacements(placements))
+    #expect(coordinator.lastApplyWasDegraded)
 }
 
 @Test @MainActor func theConvenienceOverloadStillPerformsAFullWrite() throws {

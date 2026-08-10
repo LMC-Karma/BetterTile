@@ -400,12 +400,15 @@ public struct BentoPlanner: Sendable {
             next.layout.setFloating(true, windowID: windowID)
             return BentoPlannerResult(state: next, pill: .overflow(bentoOverflowMessage), writesFrames: false)
         }
+        let floatingWindowIDs = next.layout.floatingWindowIDs
+        let managedWindowIDs = treeIDs.union([windowID])
         next.layout = automaticLayout(
             windowIDs: (next.layout.root?.windowIDs ?? []) + [windowID],
             focusedWindowID: observation.focusedWindowID,
             metrics: next.layout.metrics,
             bounds: observation.bounds
         )
+        next.layout.floatingWindowIDs = floatingWindowIDs.subtracting(managedWindowIDs)
         return solved(next, observation: observation, pill: .success("Pane added"))
     }
 
