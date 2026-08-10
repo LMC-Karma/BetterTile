@@ -174,7 +174,51 @@ import Testing
     ]
     #expect(coordinator.applyLive(transaction: &transaction, placements: placements))
     #expect(system.windows.map(\.frame) == placements.map(\.frame))
-    coordinator.cancel(transaction: transaction)
+    #expect(coordinator.cancel(transaction: transaction))
+    #expect(system.windows.map(\.frame) == original)
+}
+
+@Test @MainActor func failedLiveCancellationRequiresRepair() throws {
+    let system = FakeWindowSystem()
+    system.addSecondWindow()
+    let coordinator = WindowCoordinator(system: system)
+    var transaction = try #require(coordinator.beginTransaction(windowIDs: Set(system.windows.map(\.id))))
+    let placements = [
+        Placement(windowID: system.windows[0].id, frame: BTRect(x: 0, y: 0, width: 650, height: 800)),
+        Placement(windowID: system.windows[1].id, frame: BTRect(x: 650, y: 0, width: 350, height: 800)),
+    ]
+    #expect(coordinator.applyLive(transaction: &transaction, placements: placements))
+    system.failingWindowID = system.windows[0].id
+
+    #expect(!coordinator.cancel(transaction: transaction))
+    #expect(coordinator.lastApplyWasDegraded)
+    #expect(coordinator.lastError == "The divider change failed and the previous layout could not be fully restored.")
+}
+
+@Test @MainActor func cancellationRecoversADegradedFirstLiveWrite() throws {
+    let system = FakeWindowSystem()
+    system.addSecondWindow()
+    let coordinator = WindowCoordinator(system: system)
+    let original = system.windows.map(\.frame)
+    let firstID = system.windows[0].id
+    let secondID = system.windows[1].id
+    var transaction = try #require(coordinator.beginTransaction(windowIDs: [firstID, secondID]))
+    system.failedFrameWriteNumbers[secondID] = [1]
+    system.failedFrameWriteNumbers[firstID] = [2]
+
+    #expect(!coordinator.applyLive(
+        transaction: &transaction,
+        placements: [
+            Placement(windowID: firstID, frame: BTRect(x: 0, y: 0, width: 650, height: 800)),
+            Placement(windowID: secondID, frame: BTRect(x: 650, y: 0, width: 350, height: 800)),
+        ]
+    ))
+    #expect(coordinator.lastApplyWasDegraded)
+    #expect(!transaction.hasLiveChanges)
+
+    system.failedFrameWriteNumbers.removeAll()
+    #expect(coordinator.cancel(transaction: transaction))
+    #expect(!coordinator.lastApplyWasDegraded)
     #expect(system.windows.map(\.frame) == original)
 }
 

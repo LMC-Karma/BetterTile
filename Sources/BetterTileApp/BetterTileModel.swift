@@ -129,6 +129,20 @@ final class BetterTileModel {
         dividerResize.layoutChangedHandler = { [weak self] displayID, _ in
             self?.refreshDividerBoundaries()
         }
+        dividerResize.rollbackFailureHandler = { [weak self] displayID, error in
+            guard let self else { return }
+            let message = error ?? "The divider change could not be rolled back."
+            if self.activeMode(for: displayID) == .bento {
+                self.suspendAutomaticBentoWrites(
+                    displayID: displayID,
+                    windows: (try? self.system.visibleWindows()) ?? [],
+                    error: message
+                )
+            } else {
+                self.statusMessage = message
+                self.presentActionResult(succeeded: false, error: message, displayID: displayID)
+            }
+        }
         dividerResize.gestureEndedHandler = { [weak self] in
             self?.performDeferredDockReflow()
             self?.schedulePendingWindowEvents()
@@ -616,7 +630,7 @@ final class BetterTileModel {
             ) else {
                 statusMessage = "That Bento drop cannot satisfy the windows’ minimum sizes."
                 presentActionResult(succeeded: false, error: statusMessage, displayID: displayID)
-                restoreBentoDragIfNeeded(active.session)
+                _ = restoreBentoDragIfNeeded(active.session)
                 activeBentoDrag = nil
                 replayBufferedBentoDragEvents()
                 refreshDividerBoundaries()
@@ -693,7 +707,7 @@ final class BetterTileModel {
         }
 
         if !committed, !frameTransactionCommitted {
-            restoreBentoDragIfNeeded(active.session)
+            recoveryFailurePresented = restoreBentoDragIfNeeded(active.session)
         }
         if intent != nil, !recoveryFailurePresented {
             presentActionResult(
@@ -708,12 +722,20 @@ final class BetterTileModel {
         refreshDividerBoundaries()
     }
 
-    private func restoreBentoDragIfNeeded(_ session: BentoDragSession) {
+    @discardableResult
+    private func restoreBentoDragIfNeeded(_ session: BentoDragSession) -> Bool {
         let restorePlacement = session.restorePlacement
         guard let source = try? system.visibleWindows().first(where: { $0.id == session.sourceWindowID }),
               !source.frame.approximatelyEquals(restorePlacement.frame, tolerance: 1)
-        else { return }
-        _ = coordinator.applyPlacements([restorePlacement], recordHistory: false)
+        else { return false }
+        let restored = coordinator.applyPlacements([restorePlacement], recordHistory: false)
+        guard !restored, coordinator.lastApplyWasDegraded else { return false }
+        suspendAutomaticBentoWrites(
+            displayID: session.displayID,
+            windows: (try? system.visibleWindows()) ?? [],
+            error: coordinator.lastError ?? "The Bento drag could not be rolled back."
+        )
+        return true
     }
 
     private func replayBufferedBentoDragEvents() {

@@ -409,16 +409,25 @@ public final class WindowCoordinator {
         }
     }
 
-    public func cancel(transaction: WindowFrameTransaction) {
-        guard transaction.hasLiveChanges else { return }
+    @discardableResult
+    public func cancel(transaction: WindowFrameTransaction) -> Bool {
+        let recoveryRequired = transaction.hasLiveChanges || lastApplyWasDegraded
+        lastApplyWasDegraded = false
+        guard recoveryRequired else {
+            lastError = nil
+            return true
+        }
         do {
             try applyAtomically(
                 transaction.baselineFrames.map { Placement(windowID: $0.key, frame: $0.value) },
                 rollbackFrames: transaction.lastAppliedFrames
             )
             lastError = nil
+            return true
         } catch {
-            lastError = error.localizedDescription
+            lastApplyWasDegraded = true
+            lastError = "The divider change failed and the previous layout could not be fully restored."
+            return false
         }
     }
 
