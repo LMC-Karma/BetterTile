@@ -268,6 +268,7 @@ import Testing
     #expect(coordinator.applyPlacements(placements))
     #expect(!(await coordinator.settleAuthoritativePlacements(placements, retryDelay: .zero)))
     #expect(system.frameWriteCounts[system.windows[1].id] == 3)
+    #expect(!coordinator.lastApplyWasDegraded)
     #expect(coordinator.lastError == "One or more windows did not settle at the requested frame.")
 }
 

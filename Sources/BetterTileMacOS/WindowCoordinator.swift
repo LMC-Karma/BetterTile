@@ -287,6 +287,7 @@ public final class WindowCoordinator {
         retryDelay: Duration = .milliseconds(100),
         tolerance: Double = 1
     ) async -> Bool {
+        lastApplyWasDegraded = false
         let retryLimit = max(0, maximumRetries)
         let windowIDs = Set(placements.map(\.windowID))
         var terminalGenerations = Dictionary(uniqueKeysWithValues: windowIDs.map {

@@ -629,8 +629,10 @@ final class BetterTileModel {
                in: active.session.workArea
             ) else {
                 statusMessage = "That Bento drop cannot satisfy the windows’ minimum sizes."
-                presentActionResult(succeeded: false, error: statusMessage, displayID: displayID)
-                _ = restoreBentoDragIfNeeded(active.session)
+                let recoveryFailurePresented = restoreBentoDragIfNeeded(active.session)
+                if !recoveryFailurePresented {
+                    presentActionResult(succeeded: false, error: statusMessage, displayID: displayID)
+                }
                 activeBentoDrag = nil
                 replayBufferedBentoDragEvents()
                 refreshDividerBoundaries()
@@ -1957,12 +1959,32 @@ final class BetterTileModel {
                         self.sessionRevision &+= 1
                     }
                 }
-            } else {
+            } else if self.coordinator.lastApplyWasDegraded {
                 self.suspendAutomaticBentoWrites(
                     displayID: displayID,
                     windows: (try? self.system.visibleWindows()) ?? [],
                     error: self.coordinator.lastError
                         ?? "Some windows could not follow the updated screen area."
+                )
+            } else {
+                if let windows = try? self.system.visibleWindows() {
+                    let placementIDs = Set(placements.map(\.windowID))
+                    let actualFrames = Dictionary(uniqueKeysWithValues: windows.compactMap { window in
+                        placementIDs.contains(window.id) ? (window.id, window.frame) : nil
+                    })
+                    if var current = self.sessionStore.session(for: displayID) {
+                        current.recordProposedFrames(actualFrames)
+                        if self.sessionStore.commit(current, replacing: revision) != nil {
+                            self.sessionRevision &+= 1
+                        }
+                    }
+                }
+                self.statusMessage = self.coordinator.lastError
+                    ?? "Some windows could not follow the updated screen area."
+                self.presentActionResult(
+                    succeeded: false,
+                    error: self.statusMessage,
+                    displayID: displayID
                 )
             }
             self.refreshDividerBoundaries()
