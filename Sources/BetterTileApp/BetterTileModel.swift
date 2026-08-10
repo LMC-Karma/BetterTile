@@ -2009,7 +2009,8 @@ final class BetterTileModel {
             confirmedGone: confirmedGone,
             minimized: minimized
         )
-        session = transition.session
+        guard case let .update(updated, _, _) = transition else { return }
+        session = updated
         let heldAbsences = session.presence.pending
             .map { "\($0.key.rawValue)x\($0.value)" }
             .sorted()

@@ -1,19 +1,12 @@
 import Foundation
 
-public struct BentoSessionTransition: Sendable {
-    public var session: LayoutSession
-    public var placements: [Placement]
-    public var removedWindowIDs: Set<WindowID>
-
-    public init(
+public enum BentoSessionTransition: Sendable {
+    case none
+    case update(
         session: LayoutSession,
         placements: [Placement],
-        removedWindowIDs: Set<WindowID> = []
-    ) {
-        self.session = session
-        self.placements = placements
-        self.removedWindowIDs = removedWindowIDs
-    }
+        removedWindowIDs: Set<WindowID>
+    )
 }
 
 /// Pure membership transition for a live Bento desktop. This is the one place
@@ -138,7 +131,8 @@ public struct BentoSessionReducer: Sendable {
         let placements = runtime.layout.placements(in: observation.bounds).filter {
             present.contains($0.windowID)
         }
-        return BentoSessionTransition(
+        guard next != session || !removals.isEmpty else { return .none }
+        return .update(
             session: next,
             placements: placements,
             removedWindowIDs: removals

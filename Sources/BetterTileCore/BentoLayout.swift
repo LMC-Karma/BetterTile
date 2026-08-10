@@ -1,11 +1,11 @@
 import Foundation
 
-public enum SplitAxis: String, Codable, Sendable {
+public enum SplitAxis: String, Sendable {
     case horizontal
     case vertical
 }
 
-public struct BentoLayoutMetrics: Codable, Hashable, Sendable {
+public struct BentoLayoutMetrics: Hashable, Sendable {
     public var paneGap: Double
 
     public init(paneGap: Double = 0) {
@@ -18,7 +18,7 @@ public struct BentoLayoutMetrics: Codable, Hashable, Sendable {
 /// An ordered, same-axis partition. Ratios describe each child's share of the
 /// usable extent after pane gaps are removed. Boundary identifiers remain
 /// stable while ratios change so overlays never need geometry-derived IDs.
-public struct BentoPartition: Codable, Hashable, Sendable {
+public struct BentoPartition: Hashable, Sendable {
     public var id: UUID
     public var axis: SplitAxis
     public var children: [BentoNode]
@@ -71,7 +71,7 @@ public struct BentoPartition: Codable, Hashable, Sendable {
     }
 }
 
-public struct BentoBranch: Codable, Hashable, Sendable {
+public struct BentoBranch: Hashable, Sendable {
     public var id: UUID
     public var axis: SplitAxis
     public var weight: Double
@@ -89,7 +89,7 @@ public struct BentoBranch: Codable, Hashable, Sendable {
     }
 }
 
-public indirect enum BentoNode: Codable, Hashable, Sendable {
+public indirect enum BentoNode: Hashable, Sendable {
     case leaf(WindowID)
     case vacant(UUID)
     case branch(BentoBranch)
@@ -105,7 +105,7 @@ public indirect enum BentoNode: Codable, Hashable, Sendable {
     }
 }
 
-public struct BentoLayoutState: Codable, Hashable, Sendable {
+public struct BentoLayoutState: Hashable, Sendable {
     public var root: BentoNode?
     public var floatingWindowIDs: Set<WindowID>
     public var metrics: BentoLayoutMetrics
@@ -118,24 +118,6 @@ public struct BentoLayoutState: Codable, Hashable, Sendable {
         self.root = root.map(Self.normalized)
         self.floatingWindowIDs = floatingWindowIDs
         self.metrics = metrics
-    }
-
-    private enum CodingKeys: String, CodingKey {
-        case root, floatingWindowIDs, metrics
-    }
-
-    public init(from decoder: any Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        root = try container.decodeIfPresent(BentoNode.self, forKey: .root).map(Self.normalized)
-        floatingWindowIDs = try container.decodeIfPresent(Set<WindowID>.self, forKey: .floatingWindowIDs) ?? []
-        metrics = try container.decodeIfPresent(BentoLayoutMetrics.self, forKey: .metrics) ?? .gapless
-    }
-
-    public func encode(to encoder: any Encoder) throws {
-        var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encodeIfPresent(root, forKey: .root)
-        try container.encode(floatingWindowIDs, forKey: .floatingWindowIDs)
-        try container.encode(metrics, forKey: .metrics)
     }
 
     public var branches: [BentoBranchDescriptor] {
@@ -886,7 +868,7 @@ public struct BentoBranchDescriptor: Identifiable, Hashable, Sendable {
     }
 }
 
-public struct BentoLayoutEngine: LayoutEngine {
+public struct BentoLayoutEngine: Sendable {
     public var state: BentoLayoutState
 
     public init(state: BentoLayoutState) { self.state = state }

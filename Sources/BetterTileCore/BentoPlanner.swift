@@ -59,9 +59,6 @@ public enum BentoPlannerIntent: Sendable {
     case insert(WindowID)
     case remove(WindowID, minimized: Bool)
     case restore(WindowID)
-    case paneDrop(source: WindowID, target: WindowID, position: BentoPaneDropPosition)
-    case rootDrop(source: WindowID, edge: BentoPaneDropPosition)
-    case nativeResize(changedWindowIDs: Set<WindowID>)
 }
 
 public enum BentoPillResult: Equatable, Sendable {
@@ -141,18 +138,6 @@ public struct BentoPlanner: Sendable {
             return remove(windowID, minimized: minimized, state: state, observation: observation)
         case let .restore(windowID):
             return restore(windowID, state: state, observation: observation)
-        case let .paneDrop(source, target, position):
-            return paneDrop(
-                source: source, target: target, position: position,
-                state: state, observation: observation
-            )
-        case let .rootDrop(source, edge):
-            return rootDrop(source: source, edge: edge, state: state, observation: observation)
-        case let .nativeResize(changedWindowIDs):
-            return nativeResize(
-                changedWindowIDs: changedWindowIDs,
-                state: state, observation: observation
-            )
         }
     }
 
@@ -467,60 +452,6 @@ public struct BentoPlanner: Sendable {
         var result = solved(next, observation: observation, pill: .success("Pane restored"))
         result.restoreWindowIDs.insert(windowID)
         return result
-    }
-
-    private func paneDrop(
-        source: WindowID,
-        target: WindowID,
-        position: BentoPaneDropPosition,
-        state: BentoRuntimeState,
-        observation: BentoObservation
-    ) -> BentoPlannerResult {
-        var next = state
-        if position == .center {
-            next.layout.swap(source, target)
-        } else if !next.layout.reinsert(source, beside: target, edge: position) {
-            return failure(state, "Pane insertion is no longer valid")
-        }
-        return solved(next, observation: observation, pill: .success(position == .center ? "Panes swapped" : "Pane inserted"))
-    }
-
-    private func rootDrop(
-        source: WindowID,
-        edge: BentoPaneDropPosition,
-        state: BentoRuntimeState,
-        observation: BentoObservation
-    ) -> BentoPlannerResult {
-        guard edge != .center else { return failure(state, "A display edge is required") }
-        var next = state
-        next.layout.remove(source)
-        if next.layout.root == nil {
-            next.layout.root = .leaf(source)
-        } else if !next.layout.insertAtRoot(source, edge: edge) {
-            return failure(state, "Display-edge insertion failed")
-        }
-        return solved(next, observation: observation, pill: .success("Pane inserted at display edge"))
-    }
-
-    private func nativeResize(
-        changedWindowIDs: Set<WindowID>,
-        state: BentoRuntimeState,
-        observation: BentoObservation
-    ) -> BentoPlannerResult {
-        guard let fitted = BentoLayoutFitter().fit(
-            state: state.layout,
-            currentFrames: observation.frames,
-            changedWindowIDs: changedWindowIDs,
-            in: observation.bounds,
-            constraints: observation.constraints
-        ) else { return failure(state, "Window resize could not be adopted") }
-        var next = state
-        next.layout = fitted.state
-        return BentoPlannerResult(
-            state: next,
-            placements: fitted.placements,
-            pill: .adapted("Pane ratios adapted")
-        )
     }
 
     private func solved(
