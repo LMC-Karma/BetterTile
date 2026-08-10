@@ -64,6 +64,24 @@ private let sessionDisplay = DisplayID(rawValue: "main")
     #expect(current.bentoInsertionOrder.isEmpty)
 }
 
+@Test func unchangedSessionWritesDoNotInvalidateDeferredWork() throws {
+    var store = LayoutSessionStore()
+    let original = store.refresh(
+        displayID: sessionDisplay,
+        windowIDs: [WindowID(rawValue: "a")],
+        focusedWindowID: nil,
+        defaultMode: .bento
+    )
+
+    let commitResult = store.commit(original, replacing: original.revision)
+    let committed = try #require(commitResult)
+    #expect(committed.revision == original.revision)
+    #expect(store.isCurrent(original.id, revision: original.revision, on: sessionDisplay))
+
+    store.update(sessionDisplay) { _ in }
+    #expect(store.session(for: sessionDisplay)?.revision == original.revision)
+}
+
 @Test func sessionCommitAtomicallyReplacesEveryRuntimeField() throws {
     var store = LayoutSessionStore()
     let original = store.refresh(

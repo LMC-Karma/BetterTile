@@ -294,7 +294,9 @@ public struct LayoutSessionStore: Sendable {
 
     public mutating func update(_ displayID: DisplayID, _ update: (inout LayoutSession) -> Void) {
         guard let id = activeSessionIDs[displayID], var session = storedSessions[displayID]?[id] else { return }
+        let original = session
         update(&session)
+        guard session != original else { return }
         session.advanceRevision()
         storedSessions[displayID]?[id] = session
     }
@@ -309,6 +311,8 @@ public struct LayoutSessionStore: Sendable {
         guard proposed.revision == expectedRevision,
               isCurrent(proposed.id, revision: expectedRevision, on: proposed.displayID)
         else { return nil }
+        guard let current = storedSessions[proposed.displayID]?[proposed.id] else { return nil }
+        if proposed == current { return current }
         var committed = proposed
         committed.advanceRevision()
         storedSessions[proposed.displayID]?[proposed.id] = committed
