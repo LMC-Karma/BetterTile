@@ -13,6 +13,141 @@ private func reducerWindow(_ name: String) -> WindowSnapshot {
     )
 }
 
+private extension BentoSessionTransition {
+    var update: (session: LayoutSession, placements: [Placement], removedWindowIDs: Set<WindowID>)? {
+        guard case let .update(session, placements, removedWindowIDs) = self else { return nil }
+        return (session, placements, removedWindowIDs)
+    }
+}
+
+@Test func unchangedMembershipProducesNoTransition() {
+    let window = reducerWindow("stable")
+    let session = LayoutSession(
+        displayID: reducerDisplay,
+        mode: .bento,
+        bentoState: BentoLayoutState(root: .leaf(window.id)),
+        windowIDs: [window.id],
+        bentoInsertionOrder: [window.id]
+    )
+
+    let transition = BentoSessionReducer().reconcile(
+        session: session,
+        observation: BentoObservation(bounds: reducerBounds, windows: [window]),
+        paneGap: 0
+    )
+
+    guard case .none = transition else {
+        Issue.record("An unchanged observation must not create another transition")
+        return
+    }
+}
+
+@Test func everyMembershipCauseReachesAFixedPoint() {
+    let a = reducerWindow("a")
+    let b = reducerWindow("b")
+    let windows = [a, b]
+    let tiledPair = BentoLayoutState(root: .partition(BentoPartition(
+        axis: .vertical,
+        children: [.leaf(a.id), .leaf(b.id)]
+    )))
+
+    func expectFixedPoint(
+        _ cause: String,
+        session: LayoutSession,
+        windows: [WindowSnapshot],
+        paneGap: Double = 0,
+        confirmedGone: Set<WindowID> = [],
+        minimized: Set<WindowID> = []
+    ) {
+        let observation = BentoObservation(bounds: reducerBounds, windows: windows)
+        let reducer = BentoSessionReducer()
+        let first = reducer.reconcile(
+            session: session,
+            observation: observation,
+            paneGap: paneGap,
+            confirmedGone: confirmedGone,
+            minimized: minimized
+        )
+        guard case let .update(updated, _, _) = first else {
+            Issue.record("\(cause) did not produce its expected transition")
+            return
+        }
+        let second = reducer.reconcile(
+            session: updated,
+            observation: observation,
+            paneGap: paneGap,
+            confirmedGone: confirmedGone,
+            minimized: minimized
+        )
+        guard case .none = second else {
+            Issue.record("\(cause) did not converge after one transition")
+            return
+        }
+    }
+
+    expectFixedPoint(
+        "insertion",
+        session: LayoutSession(
+            displayID: reducerDisplay,
+            mode: .bento,
+            bentoState: BentoLayoutState(root: .leaf(a.id)),
+            windowIDs: [a.id, b.id],
+            bentoInsertionOrder: [a.id]
+        ),
+        windows: windows
+    )
+    expectFixedPoint(
+        "confirmed removal",
+        session: LayoutSession(
+            displayID: reducerDisplay,
+            mode: .bento,
+            bentoState: tiledPair,
+            windowIDs: [a.id],
+            bentoInsertionOrder: [a.id, b.id]
+        ),
+        windows: [a],
+        confirmedGone: [b.id]
+    )
+    expectFixedPoint(
+        "minimize",
+        session: LayoutSession(
+            displayID: reducerDisplay,
+            mode: .bento,
+            bentoState: tiledPair,
+            windowIDs: [b.id],
+            bentoInsertionOrder: [a.id, b.id]
+        ),
+        windows: [b],
+        minimized: [a.id]
+    )
+    expectFixedPoint(
+        "restore",
+        session: LayoutSession(
+            displayID: reducerDisplay,
+            mode: .bento,
+            bentoState: BentoLayoutState(root: .leaf(b.id)),
+            windowIDs: [a.id, b.id],
+            bentoInsertionOrder: [a.id, b.id],
+            bentoReinsertionAnchors: [
+                a.id: BentoReinsertionAnchor(neighborWindowID: b.id, edge: .left)
+            ]
+        ),
+        windows: windows
+    )
+    expectFixedPoint(
+        "gap change",
+        session: LayoutSession(
+            displayID: reducerDisplay,
+            mode: .bento,
+            bentoState: BentoLayoutState(root: .leaf(a.id)),
+            windowIDs: [a.id],
+            bentoInsertionOrder: [a.id]
+        ),
+        windows: [a],
+        paneGap: 6
+    )
+}
+
 @Test func membershipUsesThePlannerInsertionPolicy() throws {
     let a = reducerWindow("a")
     let b = reducerWindow("b")
@@ -35,15 +170,16 @@ private func reducerWindow(_ name: String) -> WindowSnapshot {
         ),
         paneGap: 0
     )
+    let update = try #require(transition.update)
 
-    guard case let .partition(root) = transition.session.bentoState.root else {
+    guard case let .partition(root) = update.session.bentoState.root else {
         Issue.record("Expected the planner's three-pane topology")
         return
     }
     #expect(root.axis == .vertical)
     #expect(root.children.first == .leaf(a.id))
-    #expect(Set(transition.placements.map(\.windowID)) == [a.id, b.id, c.id])
-    #expect(transition.session.bentoInsertionOrder == [a.id, b.id, c.id])
+    #expect(Set(update.placements.map(\.windowID)) == [a.id, b.id, c.id])
+    #expect(update.session.bentoInsertionOrder == [a.id, b.id, c.id])
 }
 
 @Test func membershipInsertionPreservesCustomizedPaneRatios() throws {
@@ -79,8 +215,9 @@ private func reducerWindow(_ name: String) -> WindowSnapshot {
         ),
         paneGap: 0
     )
+    let update = try #require(transition.update)
 
-    guard case let .partition(root) = transition.session.bentoState.root,
+    guard case let .partition(root) = update.session.bentoState.root,
           case let .partition(preservedNested) = root.children.last
     else {
         Issue.record("Expected the customized topology to remain")
@@ -88,10 +225,10 @@ private func reducerWindow(_ name: String) -> WindowSnapshot {
     }
     #expect(root.ratios == [0.65, 0.35])
     #expect(preservedNested.ratios == [0.4, 0.6])
-    #expect(transition.session.bentoState.root?.windowIDs == [a.id, b.id, d.id, c.id])
+    #expect(update.session.bentoState.root?.windowIDs == [a.id, b.id, d.id, c.id])
 }
 
-@Test func membershipFloatsOverflowWithoutChangingSixManagedPanes() {
+@Test func membershipFloatsOverflowWithoutChangingSixManagedPanes() throws {
     let windows = (1...7).map { reducerWindow("\($0)") }
     let firstSix = Array(windows.prefix(6))
     let activated = BentoPlanner().plan(
@@ -112,10 +249,11 @@ private func reducerWindow(_ name: String) -> WindowSnapshot {
         observation: BentoObservation(bounds: reducerBounds, windows: windows),
         paneGap: 0
     )
+    let update = try #require(transition.update)
 
-    #expect(transition.session.bentoState.root == activated.state.layout.root)
-    #expect(transition.session.automaticallyFloatingWindowIDs == [windows[6].id])
-    #expect(transition.session.bentoState.floatingWindowIDs.contains(windows[6].id))
+    #expect(update.session.bentoState.root == activated.state.layout.root)
+    #expect(update.session.automaticallyFloatingWindowIDs == [windows[6].id])
+    #expect(update.session.bentoState.floatingWindowIDs.contains(windows[6].id))
 }
 
 @Test func plannerInsertionPreservesAnExplicitlyFloatingWindow() {
@@ -141,7 +279,7 @@ private func reducerWindow(_ name: String) -> WindowSnapshot {
     #expect(result.state.layout.root?.windowIDs.contains(added.id) == true)
 }
 
-@Test func membershipCorroboratesAbsenceBeforeRemovingAPane() {
+@Test func membershipCorroboratesAbsenceBeforeRemovingAPane() throws {
     let a = reducerWindow("a")
     let b = reducerWindow("b")
     let state = BentoLayoutState(root: .partition(BentoPartition(
@@ -162,24 +300,27 @@ private func reducerWindow(_ name: String) -> WindowSnapshot {
         observation: observation,
         paneGap: 0
     )
+    let firstUpdate = try #require(first.update)
     let second = BentoSessionReducer().reconcile(
-        session: first.session,
+        session: firstUpdate.session,
         observation: observation,
         paneGap: 0
     )
+    let secondUpdate = try #require(second.update)
     let third = BentoSessionReducer().reconcile(
-        session: second.session,
+        session: secondUpdate.session,
         observation: observation,
         paneGap: 0
     )
+    let thirdUpdate = try #require(third.update)
 
-    #expect(first.session.bentoState.root?.windowIDs.contains(b.id) == true)
-    #expect(second.session.bentoState.root?.windowIDs.contains(b.id) == true)
-    #expect(third.session.bentoState.root?.windowIDs.contains(b.id) == false)
-    #expect(third.removedWindowIDs == [b.id])
+    #expect(firstUpdate.session.bentoState.root?.windowIDs.contains(b.id) == true)
+    #expect(secondUpdate.session.bentoState.root?.windowIDs.contains(b.id) == true)
+    #expect(thirdUpdate.session.bentoState.root?.windowIDs.contains(b.id) == false)
+    #expect(thirdUpdate.removedWindowIDs == [b.id])
 }
 
-@Test func minimizedMembershipRemovalKeepsAReinsertionAnchor() {
+@Test func minimizedMembershipRemovalKeepsAReinsertionAnchor() throws {
     let a = reducerWindow("a")
     let b = reducerWindow("b")
     let state = BentoLayoutState(root: .partition(BentoPartition(
@@ -200,12 +341,13 @@ private func reducerWindow(_ name: String) -> WindowSnapshot {
         paneGap: 0,
         minimized: [a.id]
     )
+    let update = try #require(transition.update)
 
-    #expect(transition.session.bentoState.root?.windowIDs == [b.id])
-    #expect(transition.session.bentoReinsertionAnchors[a.id]?.neighborWindowID == b.id)
+    #expect(update.session.bentoState.root?.windowIDs == [b.id])
+    #expect(update.session.bentoReinsertionAnchors[a.id]?.neighborWindowID == b.id)
 }
 
-@Test func simultaneousMinimizeAnchorsFollowInsertionOrder() {
+@Test func simultaneousMinimizeAnchorsFollowInsertionOrder() throws {
     let a = reducerWindow("a")
     let b = reducerWindow("b")
     let c = reducerWindow("c")
@@ -227,7 +369,8 @@ private func reducerWindow(_ name: String) -> WindowSnapshot {
         paneGap: 0,
         minimized: [b.id, a.id]
     )
+    let update = try #require(transition.update)
 
-    #expect(transition.session.bentoReinsertionAnchors[a.id]?.neighborWindowID == b.id)
-    #expect(transition.session.bentoReinsertionAnchors[b.id]?.neighborWindowID == c.id)
+    #expect(update.session.bentoReinsertionAnchors[a.id]?.neighborWindowID == b.id)
+    #expect(update.session.bentoReinsertionAnchors[b.id]?.neighborWindowID == c.id)
 }

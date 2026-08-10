@@ -493,33 +493,6 @@ public final class WindowCoordinator {
         }
     }
 
-    @discardableResult
-    public func applyBento(state: BentoLayoutState, displayID: DisplayID) -> Bool {
-        do {
-            let windows = try system.visibleWindows()
-            guard let display = system.displays().first(where: { $0.id == displayID }) else { return false }
-            return applyPlacements(BentoLayoutEngine(state: state).placements(for: windows, in: display))
-        } catch {
-            lastError = error.localizedDescription
-            return false
-        }
-    }
-
-    @discardableResult
-    public func applyLinkedResize(windowID: WindowID, edge: WindowEdge, delta: Double, tolerance: Double = 6, locked: Set<WindowID> = []) -> LinkedResizeResult? {
-        do {
-            let windows = try system.visibleWindows()
-            guard let window = windows.first(where: { $0.id == windowID }),
-                  let display = system.displays().first(where: { $0.id == window.displayID }),
-                  let result = LinkedResizeEngine(tolerance: tolerance).resize(windowID: windowID, edge: edge, delta: delta, windows: windows, bounds: display.visibleFrame, lockedWindowIDs: locked)
-            else { return nil }
-            return applyPlacements(result.placements) ? result : nil
-        } catch {
-            lastError = error.localizedDescription
-            return nil
-        }
-    }
-
     private func apply(
         _ frame: BTRect,
         to windowID: WindowID,

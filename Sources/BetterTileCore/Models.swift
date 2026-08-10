@@ -195,10 +195,6 @@ public protocol WindowEventSource: AnyObject {
     func stopWindowObservation()
 }
 
-public protocol LayoutEngine: Sendable {
-    func placements(for windows: [WindowSnapshot], in display: DisplaySnapshot) -> [Placement]
-}
-
 public enum WindowSystemError: Error, LocalizedError, Equatable {
     case accessibilityPermissionRequired
     case windowNotFound(WindowID)

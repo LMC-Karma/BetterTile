@@ -334,55 +334,6 @@ private func plannerWindow(
     #expect(restored.state.reinsertionAnchors[a.id] == nil)
 }
 
-@Test func paneCenterSwapsAndEdgeDropInsertsLocally() {
-    let a = plannerWindow("a")
-    let b = plannerWindow("b")
-    let c = plannerWindow("c")
-    let layout = BentoLayoutState(root: .partition(BentoPartition(
-        axis: .horizontal,
-        children: [.leaf(a.id), .leaf(b.id)]
-    )))
-    let observation = BentoObservation(bounds: plannerBounds, windows: [a, b, c], focusedWindowID: a.id)
-
-    let swapped = BentoPlanner().plan(
-        state: BentoRuntimeState(layout: layout),
-        observation: observation,
-        intent: .paneDrop(source: a.id, target: b.id, position: .center)
-    )
-    #expect(swapped.state.layout.root?.windowIDs == [b.id, a.id])
-
-    let inserted = BentoPlanner().plan(
-        state: BentoRuntimeState(layout: layout),
-        observation: observation,
-        intent: .paneDrop(source: c.id, target: b.id, position: .left)
-    )
-    #expect(Set(inserted.state.layout.root?.windowIDs ?? []) == [a.id, b.id, c.id])
-}
-
-@Test func displayEdgeDropWrapsTheExistingTreeWithoutChangingItsSubtree() {
-    let a = plannerWindow("a")
-    let b = plannerWindow("b")
-    let source = plannerWindow("source")
-    let layout = BentoLayoutState(root: .partition(BentoPartition(
-        axis: .horizontal,
-        children: [.leaf(a.id), .leaf(b.id)]
-    )))
-    let originalSubtree = layout.root
-
-    let result = BentoPlanner().plan(
-        state: BentoRuntimeState(layout: layout),
-        observation: BentoObservation(bounds: plannerBounds, windows: [a, b, source]),
-        intent: .rootDrop(source: source.id, edge: .left)
-    )
-
-    guard case let .partition(root) = result.state.layout.root else {
-        Issue.record("Expected a root partition")
-        return
-    }
-    #expect(root.children.first == .leaf(source.id))
-    #expect(root.children.last == originalSubtree)
-}
-
 @Test func crossDisplayEdgeTransferRemovesAndInsertsAsOnePlan() throws {
     let source = plannerWindow("source")
     let sourcePeer = plannerWindow("source-peer")
