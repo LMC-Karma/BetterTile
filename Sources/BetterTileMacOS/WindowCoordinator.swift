@@ -31,6 +31,7 @@ public final class WindowCoordinator {
     private struct ExpectedMutation {
         let frame: BTRect
         let generation: UInt64
+        var failedTerminalObservations = 0
     }
 
     public let system: any WindowSystem
@@ -68,6 +69,62 @@ public final class WindowCoordinator {
                 expectedMutations.removeValue(forKey: windowID)
             }
         }
+    }
+
+    /// Ends every generation through the newest frame a successful system
+    /// snapshot has actually observed. This is the terminal fallback for
+    /// write paths that do not own a dedicated settlement task.
+    public func finishExpectedMutations(
+        observing windows: [WindowSnapshot],
+        tolerance: Double = 1
+    ) {
+        let terminalGenerations = Dictionary(uniqueKeysWithValues: windows.compactMap { window in
+            let generation = expectedMutations[window.id]?
+                .filter { window.frame.approximatelyEquals($0.frame, tolerance: tolerance) }
+                .map(\.generation)
+                .max()
+            return generation.map { (window.id, $0) }
+        })
+        finishExpectedMutations(upTo: terminalGenerations)
+    }
+
+    /// Verifies pending generations from a periodic terminal sample. Matching
+    /// frames finish immediately; ignored writes finish only after repeated
+    /// nonmatching samples so a slow application keeps its ownership window.
+    public func verifyExpectedMutations(
+        observing windows: [WindowSnapshot],
+        tolerance: Double = 1,
+        failureLimit: Int = 3
+    ) {
+        let limit = max(1, failureLimit)
+        let windowsByID = Dictionary(uniqueKeysWithValues: windows.map { ($0.id, $0) })
+        var updated = expectedMutations
+        var terminalGenerations: [WindowID: UInt64] = [:]
+
+        for (windowID, var mutations) in expectedMutations {
+            let matchedGeneration = windowsByID[windowID].flatMap { window in
+                mutations
+                    .filter { window.frame.approximatelyEquals($0.frame, tolerance: tolerance) }
+                    .map(\.generation)
+                    .max()
+            }
+            if let matchedGeneration {
+                terminalGenerations[windowID] = matchedGeneration
+            }
+            for index in mutations.indices
+                where mutations[index].generation > (matchedGeneration ?? 0) {
+                mutations[index].failedTerminalObservations += 1
+                if mutations[index].failedTerminalObservations >= limit {
+                    terminalGenerations[windowID] = max(
+                        terminalGenerations[windowID] ?? 0,
+                        mutations[index].generation
+                    )
+                }
+            }
+            updated[windowID] = mutations
+        }
+        expectedMutations = updated
+        finishExpectedMutations(upTo: terminalGenerations)
     }
 
     @discardableResult

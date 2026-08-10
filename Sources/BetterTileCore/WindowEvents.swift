@@ -11,6 +11,10 @@ public struct WindowEventBuffer: Sendable {
         frameEventWindowIDs.isEmpty && !topologyChanged
     }
 
+    public func isReadyForProcessing(isGestureActive: Bool, isStabilizingSpace: Bool) -> Bool {
+        !isEmpty && !isGestureActive && !isStabilizingSpace
+    }
+
     public mutating func record(_ event: WindowSystemEvent) {
         switch event.kind {
         case .moved:

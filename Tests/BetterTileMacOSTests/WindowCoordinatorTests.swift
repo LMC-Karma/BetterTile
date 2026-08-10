@@ -376,6 +376,76 @@ import Testing
     #expect(coordinator.consumeExpectedMutation(windowID: id, actualFrame: second))
 }
 
+@Test @MainActor func terminalObservationFinishesOnlyGenerationsThroughTheObservedFrame() throws {
+    let system = FakeWindowSystem()
+    let coordinator = WindowCoordinator(system: system)
+    let id = system.windows[0].id
+    let first = BTRect(x: 0, y: 0, width: 500, height: 800)
+    let second = BTRect(x: 500, y: 0, width: 500, height: 800)
+
+    #expect(coordinator.applyPlacements([Placement(windowID: id, frame: first)]))
+    #expect(coordinator.applyPlacements([Placement(windowID: id, frame: second)]))
+    coordinator.finishExpectedMutations(observing: [
+        WindowSnapshot(id: id, processIdentifier: 1, frame: first, displayID: system.displays()[0].id),
+    ])
+
+    #expect(!coordinator.consumeExpectedMutation(windowID: id, actualFrame: first))
+    #expect(coordinator.consumeExpectedMutation(windowID: id, actualFrame: second))
+}
+
+@Test @MainActor func terminalObservationBoundsAnUnsettledBurst() throws {
+    let system = FakeWindowSystem()
+    let coordinator = WindowCoordinator(system: system)
+    let id = system.windows[0].id
+    let targets = (0..<20).map { index in
+        BTRect(x: Double(index * 10), y: 0, width: 500, height: 700)
+    }
+
+    for target in targets {
+        #expect(coordinator.applyPlacements([Placement(windowID: id, frame: target)]))
+    }
+    coordinator.finishExpectedMutations(observing: try system.visibleWindows())
+
+    #expect(!coordinator.consumeExpectedMutation(windowID: id, actualFrame: targets[0]))
+    #expect(!coordinator.consumeExpectedMutation(windowID: id, actualFrame: targets[19]))
+}
+
+@Test @MainActor func repeatedTerminalMismatchBoundsAnIgnoredWrite() throws {
+    let system = FakeWindowSystem()
+    let coordinator = WindowCoordinator(system: system)
+    let id = system.windows[0].id
+    let target = BTRect(x: 0, y: 0, width: 500, height: 800)
+    system.ignoredFrameWriteCounts[id] = 1
+
+    #expect(coordinator.applyPlacements([Placement(windowID: id, frame: target)]))
+    let unchanged = try system.visibleWindows()
+    coordinator.verifyExpectedMutations(observing: unchanged, failureLimit: 3)
+    coordinator.verifyExpectedMutations(observing: unchanged, failureLimit: 3)
+    #expect(coordinator.consumeExpectedMutation(windowID: id, actualFrame: target))
+    coordinator.verifyExpectedMutations(observing: unchanged, failureLimit: 3)
+
+    #expect(!coordinator.consumeExpectedMutation(windowID: id, actualFrame: target))
+}
+
+@Test @MainActor func olderFailedVerificationDoesNotRetireANewerGeneration() throws {
+    let system = FakeWindowSystem()
+    let coordinator = WindowCoordinator(system: system)
+    let id = system.windows[0].id
+    let first = BTRect(x: 0, y: 0, width: 500, height: 800)
+    let second = BTRect(x: 500, y: 0, width: 500, height: 800)
+    system.ignoredFrameWriteCounts[id] = 2
+
+    #expect(coordinator.applyPlacements([Placement(windowID: id, frame: first)]))
+    let unchanged = try system.visibleWindows()
+    coordinator.verifyExpectedMutations(observing: unchanged, failureLimit: 3)
+    coordinator.verifyExpectedMutations(observing: unchanged, failureLimit: 3)
+    #expect(coordinator.applyPlacements([Placement(windowID: id, frame: second)]))
+    coordinator.verifyExpectedMutations(observing: unchanged, failureLimit: 3)
+
+    #expect(!coordinator.consumeExpectedMutation(windowID: id, actualFrame: first))
+    #expect(coordinator.consumeExpectedMutation(windowID: id, actualFrame: second))
+}
+
 @Test @MainActor func failedFrameWriteDoesNotClaimAFutureEvent() throws {
     let system = FakeWindowSystem()
     let coordinator = WindowCoordinator(system: system)

@@ -44,3 +44,15 @@ import Testing
     backoff.reset()
     #expect(backoff.delay == WindowEventRetryBackoff.initialDelay)
 }
+
+@Test func windowEventProcessingWaitsForAnActiveGestureAndDrainsOnceAfterward() {
+    let source = WindowID(rawValue: "source")
+    var buffer = WindowEventBuffer()
+    buffer.record(WindowSystemEvent(kind: .resized, windowID: source, processIdentifier: 1))
+
+    #expect(!buffer.isReadyForProcessing(isGestureActive: true, isStabilizingSpace: false))
+    #expect(buffer.frameEventWindowIDs == [source])
+    #expect(buffer.isReadyForProcessing(isGestureActive: false, isStabilizingSpace: false))
+    _ = buffer.drain()
+    #expect(!buffer.isReadyForProcessing(isGestureActive: false, isStabilizingSpace: false))
+}

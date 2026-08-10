@@ -123,6 +123,7 @@ final class BetterTileModel {
         }
         dividerResize.gestureEndedHandler = { [weak self] in
             self?.performDeferredDockReflow()
+            self?.schedulePendingWindowEvents()
         }
         linkedResize.isEnabledForDisplay = { [weak self] displayID in
             guard let self else { return false }
@@ -929,6 +930,7 @@ final class BetterTileModel {
             }
             guard !Task.isCancelled, self.spaceStabilizationGeneration == generation else { return }
             self.pendingWindowEvents.removeAll()
+            self.coordinator.finishExpectedMutations(observing: latestWindows)
             self.suppressSpaceFrameEventsUntil = Date().addingTimeInterval(0.3)
             self.isStabilizingSpace = false
             self.refreshActiveWindows(force: true, windows: latestWindows, desktopTransition: true)
@@ -948,6 +950,9 @@ final class BetterTileModel {
         guard refreshPermission() else { return }
         guard activeBentoDrag == nil, !isStabilizingSpace else { return }
         guard let windows = try? system.visibleWindows() else { return }
+        if !dividerResize.isDragging {
+            coordinator.verifyExpectedMutations(observing: windows)
+        }
         let workAreaSignature = displayWorkAreaSignature(system.displays())
         if workAreaSignature != lastDisplayWorkAreaSignature {
             lastDisplayWorkAreaSignature = workAreaSignature
@@ -1052,8 +1057,11 @@ final class BetterTileModel {
     }
 
     private func schedulePendingWindowEvents(after delay: Duration = WindowEventRetryBackoff.initialDelay) {
-        guard activeBentoDrag == nil, !dragSnap.isGestureActive, !isStabilizingSpace else { return }
-        guard !pendingWindowEvents.isEmpty else { return }
+        let isGestureActive = activeBentoDrag != nil || dragSnap.isGestureActive || dividerResize.isDragging
+        guard pendingWindowEvents.isReadyForProcessing(
+            isGestureActive: isGestureActive,
+            isStabilizingSpace: isStabilizingSpace
+        ) else { return }
         windowEventTask?.cancel()
         windowEventTask = Task { @MainActor [weak self] in
             try? await Task.sleep(for: delay)
@@ -1063,7 +1071,11 @@ final class BetterTileModel {
     }
 
     private func processPendingWindowEvents() {
-        guard activeBentoDrag == nil, !dragSnap.isGestureActive, !isStabilizingSpace else { return }
+        let isGestureActive = activeBentoDrag != nil || dragSnap.isGestureActive || dividerResize.isDragging
+        guard pendingWindowEvents.isReadyForProcessing(
+            isGestureActive: isGestureActive,
+            isStabilizingSpace: isStabilizingSpace
+        ) else { return }
         guard let windows = try? system.visibleWindows() else {
             schedulePendingWindowEvents(after: windowEventRetryBackoff.nextDelayAfterFailure())
             return
@@ -1097,6 +1109,7 @@ final class BetterTileModel {
             guard let frame = windowsByID[id]?.frame else { return false }
             return !coordinator.consumeExpectedMutation(windowID: id, actualFrame: frame)
         })
+        coordinator.finishExpectedMutations(observing: windows)
         guard !externalIDs.isEmpty else {
             if refreshTopology {
                 refreshActiveWindows(force: false, windows: windows)
