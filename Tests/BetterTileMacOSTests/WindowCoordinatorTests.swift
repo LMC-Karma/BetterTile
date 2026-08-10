@@ -966,6 +966,25 @@ private final class FakeWindowSystem: WindowSystem, TargetedWindowSystem, Window
     #expect(coordinator.lastError == "The focus drop failed and the previous layout could not be fully restored.")
 }
 
+@Test @MainActor func anUnappliedFocusDropDoesNotReportADegradedRollback() {
+    let system = FakeWindowSystem()
+    let coordinator = WindowCoordinator(system: system)
+    let source = system.windows[0]
+    system.failedFrameWriteNumbers[source.id] = [1, 2]
+
+    #expect(!coordinator.applyFocusDrop(
+        placement: Placement(
+            windowID: source.id,
+            frame: BTRect(x: 0, y: 0, width: 500, height: 800)
+        ),
+        minimizing: [],
+        sourceBaselineFrame: source.frame
+    ))
+    #expect(!coordinator.lastApplyWasDegraded)
+    #expect(system.windows[0].frame == source.frame)
+    #expect(system.frameWriteCounts[source.id] == 1)
+}
+
 @Test @MainActor func theConvenienceOverloadStillPerformsAFullWrite() throws {
     let system = FakeWindowSystem()
     let id = system.windows[0].id

@@ -433,9 +433,11 @@ public final class WindowCoordinator {
     ) -> Bool {
         lastApplyWasDegraded = false
         var minimized: [WindowID] = []
+        var sourceWriteCompleted = false
         do {
             try validate([placement])
             try apply(placement.frame, to: placement.windowID, knownCurrentFrame: sourceBaselineFrame)
+            sourceWriteCompleted = true
             for windowID in windowIDs.sorted() {
                 try system.setMinimized(true, for: windowID)
                 minimized.append(windowID)
@@ -454,10 +456,24 @@ public final class WindowCoordinator {
                     rollbackFailed = true
                 }
             }
-            do {
-                try apply(sourceBaselineFrame, to: placement.windowID, knownCurrentFrame: placement.frame)
-            } catch {
-                rollbackFailed = true
+            var sourceNeedsRestore = sourceWriteCompleted
+                && !sourceBaselineFrame.approximatelyEquals(placement.frame, tolerance: 0.01)
+            var observedSourceFrame: BTRect? = sourceWriteCompleted ? placement.frame : nil
+            if !sourceWriteCompleted,
+               let source = (try? snapshots(ids: [placement.windowID]))?.first {
+                observedSourceFrame = source.frame
+                sourceNeedsRestore = !source.frame.approximatelyEquals(sourceBaselineFrame, tolerance: 0.01)
+            }
+            if sourceNeedsRestore {
+                do {
+                    try apply(
+                        sourceBaselineFrame,
+                        to: placement.windowID,
+                        knownCurrentFrame: observedSourceFrame
+                    )
+                } catch {
+                    rollbackFailed = true
+                }
             }
             lastApplyWasDegraded = rollbackFailed
             lastError = rollbackFailed
