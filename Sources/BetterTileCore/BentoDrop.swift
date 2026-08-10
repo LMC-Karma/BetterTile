@@ -111,16 +111,6 @@ public struct BentoDropPlanner: Sendable {
             return BentoDropPlan(state: next, placements: placements)
         case let .snap(action, frame):
             if Self.partitionActions.contains(action) {
-                if let edge = rootEdge(for: action) {
-                    return rootPlan(
-                        sourceWindowID: sourceWindowID,
-                        edge: edge,
-                        targetFrame: frame,
-                        state: state,
-                        constraints: constraints,
-                        bounds: bounds
-                    )
-                }
                 return partitionPlan(
                     sourceWindowID: sourceWindowID,
                     targetFrame: frame,
@@ -334,49 +324,6 @@ public struct BentoDropPlanner: Sendable {
             bounds: bounds
         ) else { return nil }
         return BentoDropPlan(state: next, placements: placements)
-    }
-
-    private func rootPlan(
-        sourceWindowID: WindowID,
-        edge: BentoPaneDropPosition,
-        targetFrame: BTRect,
-        state: BentoLayoutState,
-        constraints: [WindowID: WindowConstraints],
-        bounds: BTRect
-    ) -> BentoDropPlan? {
-        var next = state
-        next.remove(sourceWindowID)
-        if next.root == nil {
-            next.root = .leaf(sourceWindowID)
-        } else {
-            let ratio = edge.axis == .vertical
-                ? targetFrame.size.width / max(1, bounds.size.width)
-                : targetFrame.size.height / max(1, bounds.size.height)
-            guard next.insertAtRoot(sourceWindowID, edge: edge, ratio: ratio) else { return nil }
-        }
-        guard let solved = BentoConstraintSolver().solve(
-            state: next,
-            in: bounds,
-            constraints: constraints
-        ) else { return nil }
-        let placements = solved.placements(in: bounds)
-        guard valid(
-            placements,
-            expected: Set(solved.root?.windowIDs ?? []),
-            constraints: constraints,
-            bounds: bounds
-        ) else { return nil }
-        return BentoDropPlan(state: solved, placements: placements)
-    }
-
-    private func rootEdge(for action: WindowAction) -> BentoPaneDropPosition? {
-        switch action {
-        case .leftHalf, .leftThird, .leftTwoThirds: .left
-        case .rightHalf, .rightThird, .rightTwoThirds: .right
-        case .topHalf: .top
-        case .bottomHalf: .bottom
-        default: nil
-        }
     }
 
     private func focusPlan(

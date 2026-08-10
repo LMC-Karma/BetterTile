@@ -40,6 +40,52 @@ private let dropBounds = BTRect(x: 0, y: 24, width: 1200, height: 876)
     ])
 }
 
+@Test func partitionShortcutsReplaceVacanciesFromEarlierZones() throws {
+    let left = WindowID(rawValue: "left")
+    let right = WindowID(rawValue: "right")
+    let constraints = defaultConstraints([left, right])
+    let planner = BentoDropPlanner()
+    let halves = BentoLayoutState(root: .partition(BentoPartition(
+        axis: .vertical,
+        children: [.leaf(left), .leaf(right)]
+    )))
+
+    func frames(_ state: BentoLayoutState) -> [WindowID: BTRect] {
+        Dictionary(uniqueKeysWithValues: state.placements(in: dropBounds).map { ($0.windowID, $0.frame) })
+    }
+
+    func plan(_ action: WindowAction, from state: BentoLayoutState) throws -> BentoDropPlan {
+        try #require(planner.plan(
+            intent: .snap(action: action, frame: action.partition!.frame(in: dropBounds)),
+            sourceWindowID: right,
+            state: state,
+            baselineFrames: frames(state),
+            constraints: constraints,
+            contextWindowIDs: [left, right],
+            in: dropBounds
+        ))
+    }
+
+    let centerThird = try plan(.centerThird, from: halves).state
+    #expect(centerThird.vacantFrames(in: dropBounds).count == 1)
+
+    for action in BentoDropPlanner.partitionActions {
+        let fresh = try plan(action, from: halves)
+        let replanned = try plan(action, from: centerThird)
+        #expect(
+            replanned.state.vacantFrames(in: dropBounds).count
+                == fresh.state.vacantFrames(in: dropBounds).count,
+            "\(action.rawValue) carried a vacancy from the earlier center-third layout"
+        )
+    }
+
+    let leftHalf = try plan(.leftHalf, from: centerThird).state
+    let rightHalf = try plan(.rightHalf, from: leftHalf).state
+    #expect(rightHalf.vacantFrames(in: dropBounds).isEmpty)
+    #expect(frames(rightHalf)[left] == WindowAction.leftHalf.partition!.frame(in: dropBounds))
+    #expect(frames(rightHalf)[right] == WindowAction.rightHalf.partition!.frame(in: dropBounds))
+}
+
 @Test func everyPartitionDropKeepsTheSourceInItsExactZone() throws {
     let source = WindowID(rawValue: "source")
     let other = WindowID(rawValue: "other")
