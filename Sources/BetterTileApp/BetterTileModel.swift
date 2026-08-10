@@ -1107,7 +1107,7 @@ final class BetterTileModel {
         let windowsByID = Dictionary(uniqueKeysWithValues: windows.map { ($0.id, $0) })
         let externalIDs = Set(changedIDs.filter { id in
             guard let frame = windowsByID[id]?.frame else { return false }
-            return !coordinator.consumeExpectedMutation(windowID: id, actualFrame: frame)
+            return !coordinator.matchesExpectedMutation(windowID: id, actualFrame: frame)
         })
         coordinator.finishExpectedMutations(observing: windows)
         guard !externalIDs.isEmpty else {

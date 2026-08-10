@@ -49,11 +49,10 @@ public final class WindowCoordinator {
         self.actionEngine = actionEngine
     }
 
-    /// Consumes an Accessibility event caused by BetterTile itself. Events that
-    /// do not match a recent owned generation remain available to the native
-    /// resize adoption path. Keeping several generations matters because AX
-    /// callbacks can arrive after a newer multi-window write has begun.
-    public func consumeExpectedMutation(windowID: WindowID, actualFrame: BTRect, tolerance: Double = 2) -> Bool {
+    /// Returns whether an Accessibility event matches a BetterTile-owned frame.
+    /// This query does not finish ownership; the caller ends matching
+    /// generations after its successful terminal snapshot.
+    public func matchesExpectedMutation(windowID: WindowID, actualFrame: BTRect, tolerance: Double = 2) -> Bool {
         expectedMutations[windowID]?.contains {
             actualFrame.approximatelyEquals($0.frame, tolerance: tolerance)
         } == true
