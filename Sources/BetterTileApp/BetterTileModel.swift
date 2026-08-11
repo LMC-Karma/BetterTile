@@ -26,10 +26,9 @@ final class BetterTileModel {
     var statusMessage: String?
     private(set) var lastActionFeedback: ResultPillFeedback?
     private(set) var activeDisplayID: DisplayID?
-    private(set) var sessionRevision = 0
 
-    let system: AccessibilityWindowSystem
-    let coordinator: WindowCoordinator
+    private let system: AccessibilityWindowSystem
+    private let coordinator: WindowCoordinator
     private let store: ConfigurationStore
     private let shortcuts: GlobalShortcutMonitor
     private let dragSnap: DragSnapController
@@ -118,7 +117,6 @@ final class BetterTileModel {
                 self.schedulePendingWindowEvents()
                 return
             }
-            self.sessionRevision &+= 1
             self.scheduleBentoSettlement(
                 displayID: displayID,
                 changedWindowIDs: Set(frames.keys),
@@ -198,7 +196,6 @@ final class BetterTileModel {
         }
         sessionStore.ensure(displayID: displayID, defaultMode: configuration.defaultLayoutMode)
         sessionStore.update(displayID) { $0.mode = mode }
-        sessionRevision &+= 1
         if mode == .bento {
             tileCurrentDisplay()
         } else {
@@ -223,8 +220,20 @@ final class BetterTileModel {
             presentActionResult(succeeded: false, error: statusMessage, displayID: originalDisplayID)
             return
         }
-        guard let actionPlan = coordinator.plan(action) else {
-            statusMessage = coordinator.lastError ?? "No eligible focused window."
+        let actionPlan: WindowActionPlan
+        switch coordinator.plan(action) {
+        case let .ready(plan):
+            actionPlan = plan
+        case .unavailable:
+            statusMessage = "No eligible focused window."
+            presentActionResult(
+                succeeded: false,
+                error: statusMessage,
+                displayID: originalDisplayID
+            )
+            return
+        case let .failed(reason):
+            statusMessage = reason
             presentActionResult(
                 succeeded: false,
                 error: statusMessage,
@@ -233,18 +242,21 @@ final class BetterTileModel {
             return
         }
         statusMessage = nil
-        let succeeded = if BentoDropPlanner.handlesShortcut(
+        let succeeded: Bool
+        if BentoDropPlanner.handlesShortcut(
             actionPlan.resolvedAction,
             in: sessionStore.session(for: actionPlan.displayID)?.mode ?? .manual,
             sourceRule: focusedRule
         ) {
-            performBentoAction(actionPlan)
+            succeeded = performBentoAction(actionPlan)
         } else {
-            coordinator.perform(actionPlan)
+            let outcome = coordinator.perform(actionPlan)
+            succeeded = outcome.isApplied
+            if !succeeded { statusMessage = outcome.failureReason }
         }
         statusMessage = succeeded
             ? nil
-            : statusMessage ?? coordinator.lastError ?? "No eligible focused window."
+            : statusMessage ?? "No eligible focused window."
         let resultingDisplayID = (try? system.focusedWindow())?.displayID ?? originalDisplayID
         presentActionResult(succeeded: succeeded, error: statusMessage, displayID: resultingDisplayID)
         if succeeded {
@@ -290,7 +302,6 @@ final class BetterTileModel {
                 return false
             }
             session = resumed
-            sessionRevision &+= 1
         }
         let displayWindows = bentoEligible(windows.filter {
             $0.displayID == display.id && $0.isEligible && !$0.isFloating
@@ -338,12 +349,12 @@ final class BetterTileModel {
             recordHistory: true,
             surfaceFailure: false
         )
-        guard commitResult == .committed else {
-            if commitResult.needsRepair {
+        guard commitResult.result == .committed else {
+            if commitResult.result.needsRepair {
                 suspendAutomaticBentoWrites(
                     displayID: display.id,
                     windows: windows,
-                    error: coordinator.lastError ?? "The shortcut layout could not be rolled back.",
+                    error: commitResult.failureReason ?? "The shortcut layout could not be rolled back.",
                     surfaceFailure: false
                 )
             }
@@ -370,12 +381,12 @@ final class BetterTileModel {
 
     func apply(zone: CustomZone) {
         let displayID = (try? system.focusedWindow())?.displayID ?? activeDisplayID
-        let succeeded = coordinator.applyCustomZone(
+        let outcome = coordinator.applyCustomZone(
             zone,
             applicationRules: configuration.applicationRules
         )
-        statusMessage = succeeded ? nil : coordinator.lastError ?? "Could not apply the zone."
-        presentActionResult(succeeded: succeeded, error: statusMessage, displayID: displayID)
+        statusMessage = outcome.isApplied ? nil : outcome.failureReason ?? "Could not apply the zone."
+        presentActionResult(succeeded: outcome.isApplied, error: statusMessage, displayID: displayID)
     }
 
     func tileCurrentDisplay() {
@@ -397,9 +408,7 @@ final class BetterTileModel {
             if var current = sessionStore.session(for: display.id),
                current.automaticWritesSuspended {
                 current.resumeAutomaticWrites()
-                if sessionStore.commit(current, replacing: current.revision) != nil {
-                    sessionRevision &+= 1
-                }
+                _ = sessionStore.commit(current, replacing: current.revision)
             }
             var session = sessionStore.activate(
                 displayID: display.id,
@@ -455,13 +464,14 @@ final class BetterTileModel {
             session.lastWorkArea = display.visibleFrame
             session.lastObservedFrames = Dictionary(uniqueKeysWithValues: placements.map { ($0.windowID, $0.frame) })
             activeDisplayID = display.id
-            let applied = commitBentoProposal(
+            let commitResult = commitBentoProposal(
                 placements,
                 session: &session,
                 display: display,
                 recordHistory: true,
                 surfaceFailure: false
-            ) == .committed
+            )
+            let applied = commitResult.result == .committed
             if applied {
                 scheduleAuthoritativePlacementSettlement(
                     displayID: display.id,
@@ -471,7 +481,7 @@ final class BetterTileModel {
                 )
             }
             statusMessage = if !applied {
-                coordinator.lastError ?? "The Bento layout could not be repaired."
+                commitResult.failureReason ?? "The Bento layout could not be repaired."
             } else if !session.automaticallyFloatingWindowIDs.isEmpty {
                 "Some windows are floating because their minimum sizes do not fit this display."
             } else {
@@ -509,9 +519,7 @@ final class BetterTileModel {
               let frame = StandardActionEngine().targetFrame(for: action, window: window, display: display)
         else {
             session.lastWorkArea = display.visibleFrame
-            if sessionStore.commit(session, replacing: session.revision) != nil {
-                sessionRevision &+= 1
-            }
+            _ = sessionStore.commit(session, replacing: session.revision)
             statusMessage = nil
             presentActionResult(succeeded: true, successMessage: "Nothing to repair", displayID: display.id)
             return
@@ -520,14 +528,15 @@ final class BetterTileModel {
         let placement = Placement(windowID: window.id, frame: frame)
         session.recordProposedFrames([window.id: frame])
         session.lastWorkArea = display.visibleFrame
-        let applied = commitBentoProposal(
+        let commitResult = commitBentoProposal(
             [placement],
             session: &session,
             display: display,
             recordHistory: true,
             surfaceFailure: false
-        ) == .committed
-        statusMessage = applied ? nil : (coordinator.lastError ?? "The window could not be placed.")
+        )
+        let applied = commitResult.result == .committed
+        statusMessage = applied ? nil : (commitResult.failureReason ?? "The window could not be placed.")
         presentActionResult(succeeded: applied, error: statusMessage, displayID: display.id)
         refreshDividerBoundaries()
     }
@@ -545,14 +554,13 @@ final class BetterTileModel {
                   windows: windows,
                   workArea: display.visibleFrame
               ),
-              let transaction = coordinator.beginTransaction(windowIDs: dragSession.managedWindowIDs)
+              case let .started(transaction) = coordinator.beginTransaction(windowIDs: dragSession.managedWindowIDs)
         else { return false }
         layoutSession.resumeAutomaticWrites()
         guard let resumedSession = sessionStore.commit(
             layoutSession,
             replacing: layoutSession.revision
         ) else { return false }
-        sessionRevision &+= 1
 
         windowEventTask?.cancel()
         windowEventTask = nil
@@ -638,28 +646,30 @@ final class BetterTileModel {
                 refreshDividerBoundaries()
                 return
             }
+            let dropOutcome: WindowMutationOutcome
             if plan.isFocusDrop, let placement = plan.placements.first,
                let baseline = active.session.baselineFrames[sourceID] {
-                committed = coordinator.applyFocusDrop(
+                dropOutcome = coordinator.applyFocusDrop(
                     placement: placement,
                     minimizing: plan.minimizedWindowIDs,
                     sourceBaselineFrame: baseline
                 )
             } else {
-                committed = coordinator.commit(
+                dropOutcome = coordinator.commit(
                     transaction: &active.transaction,
                     placements: plan.placements,
                     recordHistory: true
                 )
             }
+            committed = dropOutcome.isApplied
             frameTransactionCommitted = committed
-            if !committed, coordinator.lastApplyWasDegraded {
+            if case let .degraded(reason) = dropOutcome {
                 frameTransactionCommitted = true
                 recoveryFailurePresented = true
                 suspendAutomaticBentoWrites(
                     displayID: displayID,
                     windows: (try? system.visibleWindows()) ?? [],
-                    error: coordinator.lastError ?? "The Bento drop could not be rolled back."
+                    error: reason
                 )
             }
             if committed {
@@ -678,7 +688,6 @@ final class BetterTileModel {
                     proposed,
                     replacing: active.layoutSession.revision
                 ) != nil {
-                    sessionRevision &+= 1
                     let changedWindowIDs: Set<WindowID> = Set(plan.placements.compactMap { placement -> WindowID? in
                         guard let baseline = active.transaction.baselineFrames[placement.windowID],
                               !baseline.approximatelyEquals(placement.frame, tolerance: 0.01)
@@ -704,7 +713,7 @@ final class BetterTileModel {
                     // the stale drag snapshot.
                 }
             } else if !recoveryFailurePresented {
-                statusMessage = coordinator.lastError ?? "macOS rejected the Bento window update."
+                statusMessage = dropOutcome.failureReason ?? "macOS rejected the Bento window update."
             }
         }
 
@@ -730,12 +739,13 @@ final class BetterTileModel {
         guard let source = try? system.visibleWindows().first(where: { $0.id == session.sourceWindowID }),
               !source.frame.approximatelyEquals(restorePlacement.frame, tolerance: 1)
         else { return false }
-        let restored = coordinator.applyPlacements([restorePlacement], recordHistory: false)
-        guard !restored, coordinator.lastApplyWasDegraded else { return false }
+        guard case let .degraded(reason) = coordinator.applyPlacements([restorePlacement], recordHistory: false) else {
+            return false
+        }
         suspendAutomaticBentoWrites(
             displayID: session.displayID,
             windows: (try? system.visibleWindows()) ?? [],
-            error: coordinator.lastError ?? "The Bento drag could not be rolled back."
+            error: reason
         )
         return true
     }
@@ -1043,7 +1053,6 @@ final class BetterTileModel {
         dividerResize.hideAndCancel()
         guard !isStabilizingSpace, let focused = try? system.focusedWindow() else { return }
         activeDisplayID = focused.displayID
-        sessionRevision &+= 1
         refreshDividerBoundaries()
     }
 
@@ -1099,8 +1108,11 @@ final class BetterTileModel {
                     guard let session = sessionStore.session(for: displayID),
                           session.excludedFocusWindowIDs.contains(windowID)
                     else { continue }
-                    for peerID in session.excludedFocusWindowIDs where peerID != windowID {
-                        try? system.setMinimized(false, for: peerID)
+                    // A peer left minimized self-heals on the next reconcile,
+                    // so an incomplete restore is logged rather than surfaced.
+                    let peers = session.excludedFocusWindowIDs.subtracting([windowID])
+                    if case let .failed(reason) = coordinator.restoreFocusDropPeers(peers) {
+                        Self.bentoLog.notice("focus-drop peer restore incomplete: \(reason, privacy: .public)")
                     }
                     sessionStore.update(displayID) {
                         $0.excludedFocusWindowIDs.removeAll()
@@ -1274,13 +1286,13 @@ final class BetterTileModel {
                 display: display,
                 surfaceFailure: false
             )
-            if commitResult == .committed {
+            if commitResult.result == .committed {
                 scheduleBentoSettlement(displayID: displayID, changedWindowIDs: dividerChanges)
-            } else if commitResult.needsRepair {
+            } else if commitResult.result.needsRepair {
                 suspendAutomaticBentoWrites(
                     displayID: displayID,
                     windows: displayWindows,
-                    error: coordinator.lastError ?? "The divider change could not be adopted."
+                    error: commitResult.failureReason ?? "The divider change could not be adopted."
                 )
             }
         }
@@ -1328,12 +1340,12 @@ final class BetterTileModel {
             display: display,
             surfaceFailure: false
         )
-        guard commitResult == .committed else {
-            guard commitResult.needsRepair else { return }
+        guard commitResult.result == .committed else {
+            guard commitResult.result.needsRepair else { return }
             suspendAutomaticBentoWrites(
                 displayID: display.id,
                 windows: displayWindows,
-                error: coordinator.lastError ?? "The external window change could not be adopted."
+                error: commitResult.failureReason ?? "The external window change could not be adopted."
             )
             return
         }
@@ -1344,6 +1356,8 @@ final class BetterTileModel {
     /// Validates, applies, and only then commits a proposed Bento layout.
     /// Distinguishes a rejected platform write from a stale proposal so ambient
     /// conflicts can be re-reduced without needlessly suspending the display.
+    /// The failure reason accompanies the result so callers surface the cause
+    /// of the exact operation they attempted.
     @discardableResult
     private func commitBentoProposal(
         _ placements: [Placement],
@@ -1351,7 +1365,7 @@ final class BetterTileModel {
         display: DisplaySnapshot,
         recordHistory: Bool = false,
         surfaceFailure: Bool = true
-    ) -> BentoProposalCommitResult {
+    ) -> (result: BentoProposalCommitResult, failureReason: String?) {
         let expectedRevision = session.revision
         guard sessionStore.isCurrent(session.id, revision: expectedRevision, on: display.id) else {
             statusMessage = "The Bento layout changed before this update could finish. Try again."
@@ -1361,7 +1375,7 @@ final class BetterTileModel {
             if surfaceFailure {
                 presentActionResult(succeeded: false, error: statusMessage, displayID: display.id)
             }
-            return .stale
+            return (.stale, statusMessage)
         }
         guard bentoProposalIsContained(placements, in: display) else {
             statusMessage = "That layout would have placed a window outside the screen area."
@@ -1369,15 +1383,19 @@ final class BetterTileModel {
             if surfaceFailure {
                 presentActionResult(succeeded: false, error: statusMessage, displayID: display.id)
             }
-            return .rejected
+            return (.rejected, statusMessage)
         }
-        guard coordinator.applyPlacements(placements, recordHistory: recordHistory) else {
-            statusMessage = coordinator.lastError ?? "That layout could not be applied."
+        let applyOutcome = coordinator.applyPlacements(placements, recordHistory: recordHistory)
+        guard applyOutcome.isApplied else {
+            statusMessage = applyOutcome.failureReason ?? "That layout could not be applied."
             Self.bentoLog.error("proposal rejected: \(self.statusMessage ?? "unknown", privacy: .public)")
             if surfaceFailure {
                 presentActionResult(succeeded: false, error: statusMessage, displayID: display.id)
             }
-            return coordinator.lastApplyWasDegraded ? .degraded : .rejected
+            if case .degraded = applyOutcome {
+                return (.degraded, statusMessage)
+            }
+            return (.rejected, statusMessage)
         }
         session.recordProposedFrames(
             Dictionary(uniqueKeysWithValues: placements.map { ($0.windowID, $0.frame) })
@@ -1393,11 +1411,10 @@ final class BetterTileModel {
             if surfaceFailure {
                 presentActionResult(succeeded: false, error: statusMessage, displayID: display.id)
             }
-            return .stale
+            return (.stale, statusMessage)
         }
         session = committed
-        sessionRevision &+= 1
-        return .committed
+        return (.committed, nil)
     }
 
     // MARK: - Application rules
@@ -1499,11 +1516,11 @@ final class BetterTileModel {
             display: display,
             surfaceFailure: false
         )
-        if commitResult.needsRepair {
+        if commitResult.result.needsRepair {
             suspendAutomaticBentoWrites(
                 displayID: display.id,
                 windows: (try? system.visibleWindows()) ?? displayWindows,
-                error: coordinator.lastError ?? "The previous layout could not be restored."
+                error: commitResult.failureReason ?? "The previous layout could not be restored."
             )
         }
         refreshDividerBoundaries()
@@ -1523,9 +1540,7 @@ final class BetterTileModel {
             "invalidating Bento revision \(current.revision, privacy: .public) tree=\(String(describing: current.bentoState.root), privacy: .public)"
         )
         current.suspendAutomaticWrites(observing: windows)
-        if sessionStore.commit(current, replacing: current.revision) != nil {
-            sessionRevision &+= 1
-        }
+        _ = sessionStore.commit(current, replacing: current.revision)
         statusMessage = error + " Use Repair to rebuild Bento."
         if surfaceFailure {
             presentActionResult(succeeded: false, error: statusMessage, displayID: displayID)
@@ -1663,11 +1678,11 @@ final class BetterTileModel {
                 display: display,
                 surfaceFailure: false
             )
-            if commitResult.needsRepair {
+            if commitResult.result.needsRepair {
                 suspendAutomaticBentoWrites(
                     displayID: displayID,
                     windows: settledWindows,
-                    error: coordinator.lastError ?? "Bento could not adapt to this window's minimum size."
+                    error: commitResult.failureReason ?? "Bento could not adapt to this window's minimum size."
                 )
             }
             refreshDividerBoundaries()
@@ -1688,11 +1703,11 @@ final class BetterTileModel {
                 display: display,
                 surfaceFailure: false
             )
-            if commitResult.needsRepair {
+            if commitResult.result.needsRepair {
                 suspendAutomaticBentoWrites(
                     displayID: displayID,
                     windows: settledWindows,
-                    error: coordinator.lastError ?? "Bento could not adopt the settled divider."
+                    error: commitResult.failureReason ?? "Bento could not adopt the settled divider."
                 )
             }
         }
@@ -1859,12 +1874,12 @@ final class BetterTileModel {
                     display: display,
                     surfaceFailure: false
                 )
-                sweepCommitted = sweepCommitted && result == .committed
-                if result.needsRepair {
+                sweepCommitted = sweepCommitted && result.result == .committed
+                if result.result.needsRepair {
                     suspendAutomaticBentoWrites(
                         displayID: display.id,
                         windows: windows,
-                        error: coordinator.lastError ?? "The window could not follow the desktop update."
+                        error: result.failureReason ?? "The window could not follow the desktop update."
                     )
                 }
             } else if session.mode == .bento, session.isBentoInitialized, displayWindows.count > 1, shouldApply {
@@ -1875,13 +1890,13 @@ final class BetterTileModel {
                     display: display,
                     surfaceFailure: false
                 )
-                let applied = result == .committed
+                let applied = result.result == .committed
                 sweepCommitted = sweepCommitted && applied
-                if result.needsRepair {
+                if result.result.needsRepair {
                     suspendAutomaticBentoWrites(
                         displayID: display.id,
                         windows: windows,
-                        error: coordinator.lastError ?? "Bento could not follow the desktop update."
+                        error: result.failureReason ?? "Bento could not follow the desktop update."
                     )
                 }
                 if needsWorkAreaSettlement {
@@ -1892,15 +1907,14 @@ final class BetterTileModel {
                             workArea: display.visibleFrame,
                             placements: placements
                         )
-                    } else if !result.needsRepair {
-                        statusMessage = coordinator.lastError ?? "Some windows could not follow the updated screen area."
+                    } else if !result.result.needsRepair {
+                        statusMessage = result.failureReason ?? "Some windows could not follow the updated screen area."
                         presentActionResult(succeeded: false, error: statusMessage, displayID: display.id)
                     }
                 }
             } else {
                 let committed = sessionStore.commit(session, replacing: session.revision) != nil
                 sweepCommitted = sweepCommitted && committed
-                if committed { sessionRevision &+= 1 }
             }
         }
         if sweepCommitted {
@@ -1919,7 +1933,6 @@ final class BetterTileModel {
             ?? activeDisplayID.flatMap { current in displays.contains(where: { $0.id == current }) ? current : nil }
             ?? displays.first(where: { !(sessionStore.session(for: $0.id)?.windowIDs.isEmpty ?? true) })?.id
             ?? displays.first(where: \.isMain)?.id
-        sessionRevision &+= 1
         system.updateManagedWindowIDs(Set(eligible.map(\.id)))
         refreshDividerBoundaries(windows: eligible)
     }
@@ -1945,28 +1958,26 @@ final class BetterTileModel {
                     self.settlementTaskGenerations.removeValue(forKey: displayID)
                 }
             }
-            let succeeded = await self.coordinator.settleAuthoritativePlacements(placements)
+            let outcome = await self.coordinator.settleAuthoritativePlacements(placements)
             guard !Task.isCancelled,
                   self.sessionStore.isCurrent(sessionID, revision: revision, on: displayID)
             else { return }
 
-            if succeeded {
+            switch outcome {
+            case .applied:
                 let frames = Dictionary(uniqueKeysWithValues: placements.map { ($0.windowID, $0.frame) })
                 if var current = self.sessionStore.session(for: displayID) {
                     current.lastWorkArea = workArea
                     current.recordProposedFrames(frames)
-                    if self.sessionStore.commit(current, replacing: revision) != nil {
-                        self.sessionRevision &+= 1
-                    }
+                    _ = self.sessionStore.commit(current, replacing: revision)
                 }
-            } else if self.coordinator.lastApplyWasDegraded {
+            case let .degraded(reason):
                 self.suspendAutomaticBentoWrites(
                     displayID: displayID,
                     windows: (try? self.system.visibleWindows()) ?? [],
-                    error: self.coordinator.lastError
-                        ?? "Some windows could not follow the updated screen area."
+                    error: reason
                 )
-            } else {
+            case let .failed(reason):
                 if let windows = try? self.system.visibleWindows() {
                     let placementIDs = Set(placements.map(\.windowID))
                     let actualFrames = Dictionary(uniqueKeysWithValues: windows.compactMap { window in
@@ -1974,13 +1985,10 @@ final class BetterTileModel {
                     })
                     if var current = self.sessionStore.session(for: displayID) {
                         current.recordProposedFrames(actualFrames)
-                        if self.sessionStore.commit(current, replacing: revision) != nil {
-                            self.sessionRevision &+= 1
-                        }
+                        _ = self.sessionStore.commit(current, replacing: revision)
                     }
                 }
-                self.statusMessage = self.coordinator.lastError
-                    ?? "Some windows could not follow the updated screen area."
+                self.statusMessage = reason
                 self.presentActionResult(
                     succeeded: false,
                     error: self.statusMessage,

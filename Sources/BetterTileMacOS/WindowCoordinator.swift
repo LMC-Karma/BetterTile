@@ -10,12 +10,61 @@ public struct WindowActionPlan: Sendable {
     public let targetFrame: BTRect
 }
 
+/// The terminal meaning of one window mutation. Exactly one value describes
+/// exactly one operation; nothing about it survives into the next call.
+public enum WindowMutationOutcome: Hashable, Sendable {
+    case applied
+    /// The operation failed and every already-written window returned to its
+    /// baseline frame.
+    case failed(reason: String)
+    /// The operation failed and rollback was incomplete: at least one window
+    /// was left away from its baseline frame.
+    case degraded(reason: String)
+
+    public var isApplied: Bool { self == .applied }
+
+    public var failureReason: String? {
+        switch self {
+        case .applied: nil
+        case let .failed(reason), let .degraded(reason): reason
+        }
+    }
+}
+
+/// Result of planning a window action. `unavailable` is not a failure: no
+/// eligible focused window, an unknown display, or an empty restore history
+/// mean there is legitimately nothing to plan.
+public enum WindowPlanOutcome: Sendable {
+    case ready(WindowActionPlan)
+    case unavailable
+    case failed(reason: String)
+}
+
+/// Result of starting a window frame transaction.
+public enum TransactionStartOutcome: Sendable {
+    case started(WindowFrameTransaction)
+    case failed(reason: String)
+}
+
+/// Result of updating a transaction's proposed placements. Previewing never
+/// touches a window, so it cannot degrade.
+public enum PreviewOutcome: Hashable, Sendable {
+    case accepted
+    case failed(reason: String)
+}
+
 public struct WindowFrameTransaction: Sendable {
     public let id: UUID
     public let baselineFrames: [WindowID: BTRect]
     public fileprivate(set) var proposedPlacements: [Placement]
     public fileprivate(set) var lastAppliedFrames: [WindowID: BTRect]
     public fileprivate(set) var hasLiveChanges: Bool
+    /// True while this transaction's windows are in an unknown arrangement: a
+    /// commit or live apply failed without restoring every already-written
+    /// window. `cancel` then restores the baseline even when no live change
+    /// ever succeeded. A later fully successful apply clears it — every
+    /// participant was just written, so no window remains in unknown state.
+    public fileprivate(set) var hasDegradedApply: Bool
 
     fileprivate init(baselineFrames: [WindowID: BTRect]) {
         id = UUID()
@@ -23,6 +72,7 @@ public struct WindowFrameTransaction: Sendable {
         proposedPlacements = baselineFrames.map { Placement(windowID: $0.key, frame: $0.value) }.sorted { $0.windowID < $1.windowID }
         lastAppliedFrames = baselineFrames
         hasLiveChanges = false
+        hasDegradedApply = false
     }
 }
 
@@ -36,10 +86,13 @@ public final class WindowCoordinator {
 
     public let system: any WindowSystem
     public var actionEngine: StandardActionEngine
-    public private(set) var lastError: String?
-    /// True only when a failed multi-window apply could not return every
-    /// already-written window to its baseline frame.
-    public private(set) var lastApplyWasDegraded = false
+
+    /// Marks an apply whose rollback also failed, so callers can distinguish a
+    /// cleanly reverted failure from windows left in a mixed state.
+    private struct DegradedApplyError: LocalizedError {
+        let message: String
+        var errorDescription: String? { message }
+    }
 
     private var history: FrameHistory
     private var generations: [WindowID: UInt64] = [:]
@@ -129,17 +182,11 @@ public final class WindowCoordinator {
         finishExpectedMutations(upTo: terminalGenerations)
     }
 
-    @discardableResult
-    public func perform(_ requestedAction: WindowAction) -> Bool {
-        guard let plan = plan(requestedAction) else { return false }
-        return perform(plan)
-    }
-
-    public func plan(_ requestedAction: WindowAction) -> WindowActionPlan? {
+    public func plan(_ requestedAction: WindowAction) -> WindowPlanOutcome {
         do {
-            guard let window = try system.focusedWindow(), window.isEligible else { return nil }
+            guard let window = try system.focusedWindow(), window.isEligible else { return .unavailable }
             let displays = system.displays()
-            guard let display = displays.first(where: { $0.id == window.displayID }) else { return nil }
+            guard let display = displays.first(where: { $0.id == window.displayID }) else { return .unavailable }
             let action = cycledAction(for: requestedAction, windowID: window.id)
             let target: BTRect?
             if action.isRestore {
@@ -149,34 +196,29 @@ public final class WindowCoordinator {
             } else {
                 target = actionEngine.targetFrame(for: action, window: window, display: display)
             }
-            guard let target else { return nil }
-            lastError = nil
-            return WindowActionPlan(
+            guard let target else { return .unavailable }
+            return .ready(WindowActionPlan(
                 requestedAction: requestedAction,
                 resolvedAction: action,
                 windowID: window.id,
                 displayID: window.displayID,
                 sourceFrame: window.frame,
                 targetFrame: target
-            )
+            ))
         } catch {
-            lastError = error.localizedDescription
-            return nil
+            return .failed(reason: error.localizedDescription)
         }
     }
 
-    @discardableResult
-    public func perform(_ plan: WindowActionPlan) -> Bool {
+    public func perform(_ plan: WindowActionPlan) -> WindowMutationOutcome {
         do {
             if !plan.resolvedAction.isRestore {
                 history.record(plan.sourceFrame, for: plan.windowID)
             }
             try apply(plan.targetFrame, to: plan.windowID, knownCurrentFrame: plan.sourceFrame)
-            lastError = nil
-            return true
+            return .applied
         } catch {
-            lastError = error.localizedDescription
-            return false
+            return .failed(reason: error.localizedDescription)
         }
     }
 
@@ -243,40 +285,42 @@ public final class WindowCoordinator {
         generations[windowID] ?? 0
     }
 
-    @discardableResult
     public func applyCustomZone(
         _ zone: CustomZone,
         applicationRules: ApplicationRuleSet
-    ) -> Bool {
+    ) -> WindowMutationOutcome {
         do {
-            guard let window = try system.focusedWindow(), window.isEligible else { return false }
+            guard let window = try system.focusedWindow(), window.isEligible else {
+                return .failed(reason: "No eligible focused window.")
+            }
             guard applicationRules
                 .rule(for: window.bundleIdentifier)
                 .allowsDirectPlacement
             else {
-                lastError = "BetterTile is set to ignore this app."
-                return false
+                return .failed(reason: "BetterTile is set to ignore this app.")
             }
-            guard let display = system.displays().first(where: { $0.id == window.displayID }) else { return false }
+            guard let display = system.displays().first(where: { $0.id == window.displayID }) else {
+                return .failed(reason: "The window's display could not be found.")
+            }
             history.record(window.frame, for: window.id)
             try apply(
                 zone.rect.frame(in: display.visibleFrame),
                 to: window.id,
                 knownCurrentFrame: window.frame
             )
-            lastError = nil
-            return true
+            return .applied
         } catch {
-            lastError = error.localizedDescription
-            return false
+            return .failed(reason: error.localizedDescription)
         }
     }
 
-    @discardableResult
-    public func applyPlacements(_ placements: [Placement], recordHistory: Bool = true) -> Bool {
-        lastApplyWasDegraded = false
-        guard var transaction = beginTransaction(windowIDs: Set(placements.map(\.windowID))) else { return false }
-        return commit(transaction: &transaction, placements: placements, recordHistory: recordHistory)
+    public func applyPlacements(_ placements: [Placement], recordHistory: Bool = true) -> WindowMutationOutcome {
+        switch beginTransaction(windowIDs: Set(placements.map(\.windowID))) {
+        case let .failed(reason):
+            return .failed(reason: reason)
+        case var .started(transaction):
+            return commit(transaction: &transaction, placements: placements, recordHistory: recordHistory)
+        }
     }
 
     /// Verifies a completed system-driven reflow and retries only windows
@@ -286,8 +330,8 @@ public final class WindowCoordinator {
         maximumRetries: Int = 2,
         retryDelay: Duration = .milliseconds(100),
         tolerance: Double = 1
-    ) async -> Bool {
-        lastApplyWasDegraded = false
+    ) async -> WindowMutationOutcome {
+        let unsettled = "One or more windows did not settle at the requested frame."
         let retryLimit = max(0, maximumRetries)
         let windowIDs = Set(placements.map(\.windowID))
         var terminalGenerations = Dictionary(uniqueKeysWithValues: windowIDs.map {
@@ -298,7 +342,7 @@ public final class WindowCoordinator {
                 try await Task.sleep(for: retryDelay)
             } catch {
                 finishExpectedMutations(upTo: terminalGenerations)
-                return false
+                return .failed(reason: "The settlement check was interrupted.")
             }
 
             let actualFrames: [WindowID: BTRect]
@@ -308,64 +352,69 @@ public final class WindowCoordinator {
                 ).map { ($0.id, $0.frame) })
             } catch {
                 finishExpectedMutations(upTo: terminalGenerations)
-                lastError = error.localizedDescription
-                return false
+                return .failed(reason: error.localizedDescription)
             }
             let pending = placements.filter {
                 actualFrames[$0.windowID]?.approximatelyEquals($0.frame, tolerance: tolerance) != true
             }
             if pending.isEmpty {
                 finishExpectedMutations(upTo: terminalGenerations)
-                lastError = nil
-                return true
+                return .applied
             }
-            guard attempt < retryLimit, applyPlacements(pending, recordHistory: false) else {
+            guard attempt < retryLimit else {
                 finishExpectedMutations(upTo: terminalGenerations)
-                lastError = "One or more windows did not settle at the requested frame."
-                return false
+                return .failed(reason: unsettled)
             }
-            for placement in pending {
-                terminalGenerations[placement.windowID] = mutationGeneration(for: placement.windowID)
+            switch applyPlacements(pending, recordHistory: false) {
+            case .applied:
+                for placement in pending {
+                    terminalGenerations[placement.windowID] = mutationGeneration(for: placement.windowID)
+                }
+            case .failed:
+                finishExpectedMutations(upTo: terminalGenerations)
+                return .failed(reason: unsettled)
+            case let .degraded(reason):
+                // The inner reason survives: windows were left in a mixed
+                // arrangement, which is worse news than "not yet settled".
+                finishExpectedMutations(upTo: terminalGenerations)
+                return .degraded(reason: reason)
             }
         }
-        return false
+        return .failed(reason: unsettled)
     }
 
-    public func beginTransaction(windowIDs: Set<WindowID>) -> WindowFrameTransaction? {
+    public func beginTransaction(windowIDs: Set<WindowID>) -> TransactionStartOutcome {
         do {
             let snapshots = Dictionary(uniqueKeysWithValues: try snapshots(ids: windowIDs).map { ($0.id, $0) })
+            // This guard also guarantees a complete baseline: every requested
+            // ID resolved to an eligible snapshot in the same dictionary the
+            // baseline is built from.
             guard !windowIDs.isEmpty, windowIDs.allSatisfy({ snapshots[$0]?.isEligible == true }) else {
-                lastError = "One or more windows are no longer eligible."
-                return nil
+                return .failed(reason: "One or more windows are no longer eligible.")
             }
             let baseline = Dictionary(uniqueKeysWithValues: windowIDs.compactMap { id in snapshots[id].map { (id, $0.frame) } })
-            guard baseline.count == windowIDs.count else { return nil }
-            lastError = nil
-            return WindowFrameTransaction(baselineFrames: baseline)
+            return .started(WindowFrameTransaction(baselineFrames: baseline))
         } catch {
-            lastError = error.localizedDescription
-            return nil
+            return .failed(reason: error.localizedDescription)
         }
     }
 
-    @discardableResult
-    public func preview(transaction: inout WindowFrameTransaction, placements: [Placement]) -> Bool {
+    public func preview(transaction: inout WindowFrameTransaction, placements: [Placement]) -> PreviewOutcome {
         guard Set(placements.map(\.windowID)) == Set(transaction.baselineFrames.keys) else {
-            lastError = "The preview no longer matches the active window transaction."
-            return false
+            return .failed(reason: "The preview no longer matches the active window transaction.")
         }
         transaction.proposedPlacements = placements.sorted { $0.windowID < $1.windowID }
-        return true
+        return .accepted
     }
 
-    @discardableResult
     public func commit(
         transaction: inout WindowFrameTransaction,
         placements: [Placement]? = nil,
         recordHistory: Bool = true
-    ) -> Bool {
-        lastApplyWasDegraded = false
-        if let placements, !preview(transaction: &transaction, placements: placements) { return false }
+    ) -> WindowMutationOutcome {
+        if let placements, case let .failed(reason) = preview(transaction: &transaction, placements: placements) {
+            return .failed(reason: reason)
+        }
         do {
             try validate(transaction.proposedPlacements)
             try applyAtomically(transaction.proposedPlacements, rollbackFrames: transaction.baselineFrames)
@@ -376,28 +425,26 @@ public final class WindowCoordinator {
                 )
             }
             transaction.lastAppliedFrames = Dictionary(uniqueKeysWithValues: transaction.proposedPlacements.map { ($0.windowID, $0.frame) })
-            lastError = nil
-            return true
+            transaction.hasDegradedApply = false
+            return .applied
         } catch {
-            lastError = error.localizedDescription
-            return false
+            return applyFailureOutcome(for: error, transaction: &transaction)
         }
     }
 
-    @discardableResult
-    public func applyLive(transaction: inout WindowFrameTransaction, placements: [Placement]) -> Bool {
-        lastApplyWasDegraded = false
-        guard preview(transaction: &transaction, placements: placements) else { return false }
+    public func applyLive(transaction: inout WindowFrameTransaction, placements: [Placement]) -> WindowMutationOutcome {
+        if case let .failed(reason) = preview(transaction: &transaction, placements: placements) {
+            return .failed(reason: reason)
+        }
         do {
             try validate(transaction.proposedPlacements)
             try applyAtomically(transaction.proposedPlacements, rollbackFrames: transaction.lastAppliedFrames)
             transaction.lastAppliedFrames = Dictionary(uniqueKeysWithValues: placements.map { ($0.windowID, $0.frame) })
             transaction.hasLiveChanges = true
-            lastError = nil
-            return true
+            transaction.hasDegradedApply = false
+            return .applied
         } catch {
-            lastError = error.localizedDescription
-            return false
+            return applyFailureOutcome(for: error, transaction: &transaction)
         }
     }
 
@@ -410,38 +457,29 @@ public final class WindowCoordinator {
         }
     }
 
-    @discardableResult
-    public func cancel(transaction: WindowFrameTransaction) -> Bool {
-        let recoveryRequired = transaction.hasLiveChanges || lastApplyWasDegraded
-        lastApplyWasDegraded = false
-        guard recoveryRequired else {
-            lastError = nil
-            return true
-        }
+    public func cancel(transaction: WindowFrameTransaction) -> WindowMutationOutcome {
+        guard transaction.hasLiveChanges || transaction.hasDegradedApply else { return .applied }
         do {
             try applyAtomically(
                 transaction.baselineFrames.map { Placement(windowID: $0.key, frame: $0.value) },
                 rollbackFrames: transaction.lastAppliedFrames
             )
-            lastError = nil
-            return true
+            return .applied
         } catch {
-            lastApplyWasDegraded = true
-            lastError = "The divider change failed and the previous layout could not be fully restored."
-            return false
+            // A failed cancel is degraded by definition: the baseline was not
+            // fully restored, regardless of why the restore write failed.
+            return .degraded(reason: "The divider change failed and the previous layout could not be fully restored.")
         }
     }
 
     /// Applies a focus drop as one best-effort atomic operation. If any
     /// minimize request fails, every already-minimized window is restored and
     /// the source returns to its mouse-down frame.
-    @discardableResult
     public func applyFocusDrop(
         placement: Placement,
         minimizing windowIDs: Set<WindowID>,
         sourceBaselineFrame: BTRect
-    ) -> Bool {
-        lastApplyWasDegraded = false
+    ) -> WindowMutationOutcome {
         var minimized: [WindowID] = []
         var sourceWriteCompleted = false
         do {
@@ -455,8 +493,7 @@ public final class WindowCoordinator {
             if !sourceBaselineFrame.approximatelyEquals(placement.frame, tolerance: 0.01) {
                 history.record(sourceBaselineFrame, for: placement.windowID)
             }
-            lastError = nil
-            return true
+            return .applied
         } catch {
             var rollbackFailed = false
             for windowID in minimized.reversed() {
@@ -485,12 +522,30 @@ public final class WindowCoordinator {
                     rollbackFailed = true
                 }
             }
-            lastApplyWasDegraded = rollbackFailed
-            lastError = rollbackFailed
-                ? "The focus drop failed and the previous layout could not be fully restored."
-                : error.localizedDescription
-            return false
+            return rollbackFailed
+                ? .degraded(reason: "The focus drop failed and the previous layout could not be fully restored.")
+                : .failed(reason: error.localizedDescription)
         }
+    }
+
+    /// Restores every focus-drop peer in deterministic order, best-effort: a
+    /// failing peer does not stop the sweep, and successfully restored windows
+    /// are deliberately never re-minimized. This is asymmetric with
+    /// `applyFocusDrop`'s rollback on purpose — there the drop never became
+    /// the user-visible arrangement, so re-minimizing undoes a mistake; here
+    /// each restore is immediately user-visible, and undoing it to satisfy
+    /// atomicity would trade a small inconsistency for a larger one.
+    public func restoreFocusDropPeers(_ windowIDs: Set<WindowID>) -> WindowMutationOutcome {
+        var failureReason: String?
+        for windowID in windowIDs.sorted() {
+            do {
+                try system.setMinimized(false, for: windowID)
+            } catch {
+                failureReason = error.localizedDescription
+            }
+        }
+        if let failureReason { return .failed(reason: failureReason) }
+        return .applied
     }
 
     private func apply(
@@ -557,13 +612,26 @@ public final class WindowCoordinator {
                 }
             }
             if !rollbackFailures.isEmpty {
-                lastApplyWasDegraded = true
-                throw WindowSystemError.operationFailed(
-                    "A window update failed and the previous layout could not be fully restored."
+                throw DegradedApplyError(
+                    message: "A window update failed and the previous layout could not be fully restored."
                 )
             }
             throw error
         }
+    }
+
+    /// Translates an apply failure into its outcome and marks the transaction
+    /// when the rollback was incomplete, so a later `cancel` still restores the
+    /// baseline.
+    private func applyFailureOutcome(
+        for error: Error,
+        transaction: inout WindowFrameTransaction
+    ) -> WindowMutationOutcome {
+        if let degraded = error as? DegradedApplyError {
+            transaction.hasDegradedApply = true
+            return .degraded(reason: degraded.message)
+        }
+        return .failed(reason: error.localizedDescription)
     }
 
     private func snapshots(ids: Set<WindowID>) throws -> [WindowSnapshot] {

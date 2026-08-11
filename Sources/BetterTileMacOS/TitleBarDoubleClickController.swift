@@ -83,11 +83,11 @@ public final class TitleBarDoubleClickController {
         lastEventNumber = event.eventNumber
 
         guard let display = coordinator.system.displays().first(where: { $0.id == window.displayID }) else { return }
-        if window.frame.approximatelyEquals(display.visibleFrame, tolerance: 2) {
-            _ = coordinator.perform(.restore)
-        } else {
-            _ = coordinator.perform(.maximize)
-        }
+        let action: WindowAction = window.frame.approximatelyEquals(display.visibleFrame, tolerance: 2)
+            ? .restore
+            : .maximize
+        guard case let .ready(plan) = coordinator.plan(action) else { return }
+        _ = coordinator.perform(plan)
     }
 
     private static var macOSDoubleClickActionIsDisabled: Bool {

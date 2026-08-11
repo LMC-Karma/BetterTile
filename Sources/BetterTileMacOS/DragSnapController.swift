@@ -445,9 +445,9 @@ public final class DragSnapController {
         }
         guard let target, let windowID = draggedWindowID else { return }
         let displayID = (try? coordinator.system.visibleWindows().first(where: { $0.id == windowID }))?.displayID
-        let succeeded = coordinator.applyPlacements([Placement(windowID: windowID, frame: target.frame)])
+        let outcome = coordinator.applyPlacements([Placement(windowID: windowID, frame: target.frame)])
         if let displayID {
-            actionResultHandler?(displayID, succeeded, coordinator.lastError)
+            actionResultHandler?(displayID, outcome.isApplied, outcome.failureReason)
         }
     }
 
