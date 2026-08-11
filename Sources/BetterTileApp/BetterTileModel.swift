@@ -1119,8 +1119,11 @@ final class BetterTileModel {
                     guard let session = sessionStore.session(for: displayID),
                           session.excludedFocusWindowIDs.contains(windowID)
                     else { continue }
-                    for peerID in session.excludedFocusWindowIDs where peerID != windowID {
-                        try? system.setMinimized(false, for: peerID)
+                    // A peer left minimized self-heals on the next reconcile,
+                    // so an incomplete restore is logged rather than surfaced.
+                    let peers = session.excludedFocusWindowIDs.subtracting([windowID])
+                    if case let .failed(reason) = coordinator.restoreFocusDropPeers(peers) {
+                        Self.bentoLog.notice("focus-drop peer restore incomplete: \(reason, privacy: .public)")
                     }
                     sessionStore.update(displayID) {
                         $0.excludedFocusWindowIDs.removeAll()

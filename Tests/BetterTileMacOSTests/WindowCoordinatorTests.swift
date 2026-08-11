@@ -315,6 +315,51 @@ import Testing
     #expect(system.windows.first(where: { $0.id == third.id })?.isMinimized == false)
 }
 
+@Test @MainActor func focusDropPeerRestoreUnminimizesEveryPeer() {
+    let system = FakeWindowSystem()
+    system.addSecondWindow()
+    let thirdID = WindowID(rawValue: "third")
+    system.windows.append(WindowSnapshot(
+        id: thirdID,
+        processIdentifier: 44,
+        frame: BTRect(x: 600, y: 200, width: 200, height: 400),
+        displayID: DisplayID(rawValue: "main")
+    ))
+    system.windows[1].isMinimized = true
+    system.windows[2].isMinimized = true
+    let coordinator = WindowCoordinator(system: system)
+
+    #expect(coordinator.restoreFocusDropPeers([system.windows[1].id, thirdID]).isApplied)
+    #expect(system.windows[1].isMinimized == false)
+    #expect(system.windows[2].isMinimized == false)
+}
+
+@Test @MainActor func focusDropPeerRestoreContinuesPastAFailingPeer() {
+    let system = FakeWindowSystem()
+    system.addSecondWindow()
+    let thirdID = WindowID(rawValue: "third")
+    system.windows.append(WindowSnapshot(
+        id: thirdID,
+        processIdentifier: 44,
+        frame: BTRect(x: 600, y: 200, width: 200, height: 400),
+        displayID: DisplayID(rawValue: "main")
+    ))
+    let failingID = system.windows[1].id
+    system.windows[1].isMinimized = true
+    system.windows[2].isMinimized = true
+    system.failingMinimizeWindowID = failingID
+    let coordinator = WindowCoordinator(system: system)
+
+    guard case let .failed(reason) = coordinator.restoreFocusDropPeers([failingID, thirdID]) else {
+        Issue.record("an incomplete peer restore must report failure")
+        return
+    }
+    #expect(reason == WindowSystemError.operationFailed("Simulated minimize failure").localizedDescription)
+    // Best-effort by design: the peer that restored stays restored.
+    #expect(system.windows[2].isMinimized == false)
+    #expect(system.windows[1].isMinimized == true)
+}
+
 @Test @MainActor func transactionHistoryIncludesOnlyWindowsWhoseFramesChanged() throws {
     let system = FakeWindowSystem()
     system.addSecondWindow()

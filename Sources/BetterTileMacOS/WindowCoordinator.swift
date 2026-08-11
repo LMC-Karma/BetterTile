@@ -522,6 +522,26 @@ public final class WindowCoordinator {
         }
     }
 
+    /// Restores every focus-drop peer in deterministic order, best-effort: a
+    /// failing peer does not stop the sweep, and successfully restored windows
+    /// are deliberately never re-minimized. This is asymmetric with
+    /// `applyFocusDrop`'s rollback on purpose — there the drop never became
+    /// the user-visible arrangement, so re-minimizing undoes a mistake; here
+    /// each restore is immediately user-visible, and undoing it to satisfy
+    /// atomicity would trade a small inconsistency for a larger one.
+    public func restoreFocusDropPeers(_ windowIDs: Set<WindowID>) -> WindowMutationOutcome {
+        var failureReason: String?
+        for windowID in windowIDs.sorted() {
+            do {
+                try system.setMinimized(false, for: windowID)
+            } catch {
+                failureReason = error.localizedDescription
+            }
+        }
+        if let failureReason { return .failed(reason: failureReason) }
+        return .applied
+    }
+
     private func apply(
         _ frame: BTRect,
         to windowID: WindowID,
