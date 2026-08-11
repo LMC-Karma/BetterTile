@@ -201,7 +201,7 @@ public final class DividerOverlayController {
         } else {
             affected = interaction.affectedWindowIDs
         }
-        guard !affected.isEmpty, var newTransaction = coordinator.beginTransaction(windowIDs: affected) else { return }
+        guard !affected.isEmpty, case var .started(newTransaction) = coordinator.beginTransaction(windowIDs: affected) else { return }
 
         activeInteraction = interaction
         isDragging = true
@@ -266,7 +266,7 @@ public final class DividerOverlayController {
         latestPlacements = placements
         switch configuration.resizeFeedbackMode {
         case .ghost:
-            guard coordinator.preview(transaction: &transaction, placements: placements) else { return }
+            guard case .accepted = coordinator.preview(transaction: &transaction, placements: placements) else { return }
             if Date().timeIntervalSince(lastGhostUpdate) >= 1.0 / 60.0 {
                 lastGhostUpdate = Date()
                 ghosts.show(placements: placements, windows: baselineWindows)
@@ -275,12 +275,16 @@ public final class DividerOverlayController {
             ghosts.hide()
             guard Date().timeIntervalSince(lastLiveUpdate) >= 1.0 / 30.0 else { return }
             lastLiveUpdate = Date()
-            guard coordinator.applyLive(transaction: &transaction, placements: placements) else {
-                if coordinator.lastApplyWasDegraded {
-                    _ = coordinator.cancel(transaction: transaction)
-                    reportRollbackFailureIfNeeded(displayID: interaction.displayID)
-                    clearGesture()
-                }
+            switch coordinator.applyLive(transaction: &transaction, placements: placements) {
+            case .applied:
+                break
+            case .failed:
+                // A transient rejection keeps the gesture alive; the next drag
+                // sample proposes fresh placements.
+                return
+            case .degraded:
+                reportRollbackFailure(displayID: interaction.displayID, outcome: coordinator.cancel(transaction: transaction))
+                clearGesture()
                 return
             }
         }
@@ -292,22 +296,21 @@ public final class DividerOverlayController {
         let succeeded: Bool
         switch configuration.resizeFeedbackMode {
         case .ghost:
-            succeeded = coordinator.commit(transaction: &transaction, placements: latestPlacements)
-            if !succeeded, coordinator.lastApplyWasDegraded {
-                _ = coordinator.cancel(transaction: transaction)
-                reportRollbackFailureIfNeeded(displayID: interaction.displayID)
+            let outcome = coordinator.commit(transaction: &transaction, placements: latestPlacements)
+            succeeded = outcome.isApplied
+            if case .degraded = outcome {
+                reportRollbackFailure(displayID: interaction.displayID, outcome: coordinator.cancel(transaction: transaction))
             }
         case .live:
             var appliedFinalPlacement = true
             if Dictionary(uniqueKeysWithValues: latestPlacements.map { ($0.windowID, $0.frame) }) != transaction.lastAppliedFrames {
-                appliedFinalPlacement = coordinator.applyLive(transaction: &transaction, placements: latestPlacements)
+                appliedFinalPlacement = coordinator.applyLive(transaction: &transaction, placements: latestPlacements).isApplied
             }
             if appliedFinalPlacement {
                 coordinator.finishLive(transaction: transaction)
                 succeeded = transaction.hasLiveChanges
             } else {
-                _ = coordinator.cancel(transaction: transaction)
-                reportRollbackFailureIfNeeded(displayID: interaction.displayID)
+                reportRollbackFailure(displayID: interaction.displayID, outcome: coordinator.cancel(transaction: transaction))
                 succeeded = false
             }
         }
@@ -323,17 +326,17 @@ public final class DividerOverlayController {
 
     private func cancelActiveGesture() {
         if let transaction {
-            _ = coordinator.cancel(transaction: transaction)
+            let outcome = coordinator.cancel(transaction: transaction)
             if let displayID = activeInteraction?.displayID {
-                reportRollbackFailureIfNeeded(displayID: displayID)
+                reportRollbackFailure(displayID: displayID, outcome: outcome)
             }
         }
         clearGesture()
     }
 
-    private func reportRollbackFailureIfNeeded(displayID: DisplayID) {
-        guard coordinator.lastApplyWasDegraded else { return }
-        rollbackFailureHandler?(displayID, coordinator.lastError)
+    private func reportRollbackFailure(displayID: DisplayID, outcome: WindowMutationOutcome) {
+        guard case let .degraded(reason) = outcome else { return }
+        rollbackFailureHandler?(displayID, reason)
     }
 
     private func clearGesture() {

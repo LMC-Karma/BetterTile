@@ -136,7 +136,7 @@ public final class LinkedResizeController {
               )
         else { return }
 
-        guard coordinator.applyPlacements(result.placements, recordHistory: false) else { return }
+        guard coordinator.applyPlacements(result.placements, recordHistory: false).isApplied else { return }
         let frames = Dictionary(uniqueKeysWithValues: result.placements.map { ($0.windowID, $0.frame) })
         for index in baselineWindows.indices {
             if let frame = frames[baselineWindows[index].id] { baselineWindows[index].frame = frame }
