@@ -123,13 +123,13 @@ public struct BetterTileConfiguration: Codable, Hashable, Sendable {
         stageManagerRecommendationAcknowledged: Bool = false,
         showDockIcon: Bool = false,
         snappingEnabled: Bool = true,
-        linkedResizeEnabled: Bool = false,
+        linkedResizeEnabled: Bool = true,
         defaultLayoutMode: LayoutMode = .manual,
         singleWindowPlacement: WindowAction? = .maximize,
-        resizeFeedbackMode: ResizeFeedbackMode = .live,
+        resizeFeedbackMode: ResizeFeedbackMode = .ghost,
         dividerVisibility: DividerVisibility = .hoverAndDrag,
-        dividerThickness: Double = 6,
-        bentoInnerGap: Double = 0,
+        dividerThickness: Double = 10,
+        bentoInnerGap: Double = 1,
         bentoSwapHoverDelay: Double = 0.12,
         snapSuppressionModifiers: ShortcutModifiers = .option,
         adjacencyTolerance: Double = 6,
@@ -201,6 +201,8 @@ public struct BetterTileConfiguration: Codable, Hashable, Sendable {
         ) ?? false
         showDockIcon = try container.decodeIfPresent(Bool.self, forKey: .showDockIcon) ?? false
         snappingEnabled = try container.decodeIfPresent(Bool.self, forKey: .snappingEnabled) ?? true
+        // Keep pre-existing installs off when their saved configuration
+        // predates this key; only a configuration created from scratch defaults on.
         linkedResizeEnabled = try container.decodeIfPresent(Bool.self, forKey: .linkedResizeEnabled) ?? false
         if let rawMode = try container.decodeIfPresent(String.self, forKey: .defaultLayoutMode) {
             defaultLayoutMode = try Self.migrateLayoutMode(rawMode, codingPath: container.codingPath)

@@ -85,7 +85,7 @@ import Testing
         ([.linkedResize], { $0.linkedResizeEnabled.toggle() }),
         ([.bentoGeometry], { $0.defaultLayoutMode = .bento }),
         ([.bentoGeometry], { $0.singleWindowPlacement = .almostMaximize }),
-        ([.divider], { $0.resizeFeedbackMode = .ghost }),
+        ([.divider], { $0.resizeFeedbackMode = .live }),
         ([.divider], { $0.dividerVisibility = .dragOnly }),
         ([.divider], { $0.dividerThickness = 8 }),
         ([.bentoGeometry], { $0.bentoInnerGap = 4 }),
@@ -198,6 +198,7 @@ import Testing
     let migrated = try ConfigurationStore.decode(JSONSerialization.data(withJSONObject: legacy))
     #expect(migrated.schemaVersion == 9)
     #expect(migrated.showDockIcon)
+    #expect(!migrated.linkedResizeEnabled)
     #expect(migrated.defaultLayoutMode == .bento)
     #expect(migrated.resizeFeedbackMode == .ghost)
     #expect(migrated.dividerVisibility == .hoverAndDrag)
@@ -283,10 +284,6 @@ import Testing
 }
 
 @Test func schemaSixAddsGapAndKeepsExistingResizeFeedbackChoice() throws {
-    let fresh = BetterTileConfiguration()
-    #expect(fresh.resizeFeedbackMode == .live)
-    #expect(fresh.bentoInnerGap == 0)
-
     let existing = try ConfigurationStore.decode(JSONSerialization.data(withJSONObject: [
         "schemaVersion": 5,
         "resizeFeedbackMode": "ghost",
@@ -319,8 +316,13 @@ import Testing
     #expect(roundTrip.linkedResizeEnabled)
 }
 
-@Test func adjacentResizeDefaultsOff() {
-    #expect(!BetterTileConfiguration().linkedResizeEnabled)
+@Test func freshInstallUsesRecommendedResizeDefaults() {
+    let configuration = BetterTileConfiguration()
+    #expect(configuration.linkedResizeEnabled)
+    #expect(configuration.resizeFeedbackMode == .ghost)
+    #expect(configuration.dividerThickness == 10)
+    #expect(configuration.bentoInnerGap == 1)
+    #expect(configuration.bentoSwapHoverDelay == 0.12)
 }
 
 @Test func removedTabbedModeMigratesToBento() throws {
