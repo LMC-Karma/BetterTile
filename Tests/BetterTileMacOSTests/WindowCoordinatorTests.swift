@@ -33,6 +33,32 @@ import Testing
     #expect(system.windows[0].frame == BTRect(x: 100, y: 80, width: 800, height: 640))
 }
 
+@Test @MainActor func aCustomZoneWithoutAFocusedWindowNamesTheMissingWindow() {
+    let system = FakeWindowSystem()
+    system.windows.removeAll()
+    let coordinator = WindowCoordinator(system: system)
+    let zone = CustomZone(
+        name: "Focus",
+        rect: NormalizedRect(x: 0.1, y: 0.1, width: 0.8, height: 0.8)
+    )
+
+    #expect(coordinator.applyCustomZone(zone, applicationRules: ApplicationRuleSet())
+        == .failed(reason: "No eligible focused window."))
+}
+
+@Test @MainActor func aCustomZoneWithoutAResolvableDisplayNamesTheDisplay() {
+    let system = FakeWindowSystem()
+    system.availableDisplays.removeAll()
+    let coordinator = WindowCoordinator(system: system)
+    let zone = CustomZone(
+        name: "Focus",
+        rect: NormalizedRect(x: 0.1, y: 0.1, width: 0.8, height: 0.8)
+    )
+
+    #expect(coordinator.applyCustomZone(zone, applicationRules: ApplicationRuleSet())
+        == .failed(reason: "The window's display could not be found."))
+}
+
 @Test @MainActor func bentoDragAdmissionHonorsApplicationRules() {
     let system = FakeWindowSystem()
     let window = system.windows[0]

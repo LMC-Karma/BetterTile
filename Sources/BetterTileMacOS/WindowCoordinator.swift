@@ -300,7 +300,7 @@ public final class WindowCoordinator {
                 return .failed(reason: "BetterTile is set to ignore this app.")
             }
             guard let display = system.displays().first(where: { $0.id == window.displayID }) else {
-                return .failed(reason: "No eligible focused window.")
+                return .failed(reason: "The window's display could not be found.")
             }
             history.record(window.frame, for: window.id)
             try apply(
