@@ -26,10 +26,9 @@ final class BetterTileModel {
     var statusMessage: String?
     private(set) var lastActionFeedback: ResultPillFeedback?
     private(set) var activeDisplayID: DisplayID?
-    private(set) var sessionRevision = 0
 
-    let system: AccessibilityWindowSystem
-    let coordinator: WindowCoordinator
+    private let system: AccessibilityWindowSystem
+    private let coordinator: WindowCoordinator
     private let store: ConfigurationStore
     private let shortcuts: GlobalShortcutMonitor
     private let dragSnap: DragSnapController
@@ -118,7 +117,6 @@ final class BetterTileModel {
                 self.schedulePendingWindowEvents()
                 return
             }
-            self.sessionRevision &+= 1
             self.scheduleBentoSettlement(
                 displayID: displayID,
                 changedWindowIDs: Set(frames.keys),
@@ -198,7 +196,6 @@ final class BetterTileModel {
         }
         sessionStore.ensure(displayID: displayID, defaultMode: configuration.defaultLayoutMode)
         sessionStore.update(displayID) { $0.mode = mode }
-        sessionRevision &+= 1
         if mode == .bento {
             tileCurrentDisplay()
         } else {
@@ -305,7 +302,6 @@ final class BetterTileModel {
                 return false
             }
             session = resumed
-            sessionRevision &+= 1
         }
         let displayWindows = bentoEligible(windows.filter {
             $0.displayID == display.id && $0.isEligible && !$0.isFloating
@@ -412,9 +408,7 @@ final class BetterTileModel {
             if var current = sessionStore.session(for: display.id),
                current.automaticWritesSuspended {
                 current.resumeAutomaticWrites()
-                if sessionStore.commit(current, replacing: current.revision) != nil {
-                    sessionRevision &+= 1
-                }
+                _ = sessionStore.commit(current, replacing: current.revision)
             }
             var session = sessionStore.activate(
                 displayID: display.id,
@@ -525,9 +519,7 @@ final class BetterTileModel {
               let frame = StandardActionEngine().targetFrame(for: action, window: window, display: display)
         else {
             session.lastWorkArea = display.visibleFrame
-            if sessionStore.commit(session, replacing: session.revision) != nil {
-                sessionRevision &+= 1
-            }
+            _ = sessionStore.commit(session, replacing: session.revision)
             statusMessage = nil
             presentActionResult(succeeded: true, successMessage: "Nothing to repair", displayID: display.id)
             return
@@ -569,7 +561,6 @@ final class BetterTileModel {
             layoutSession,
             replacing: layoutSession.revision
         ) else { return false }
-        sessionRevision &+= 1
 
         windowEventTask?.cancel()
         windowEventTask = nil
@@ -697,7 +688,6 @@ final class BetterTileModel {
                     proposed,
                     replacing: active.layoutSession.revision
                 ) != nil {
-                    sessionRevision &+= 1
                     let changedWindowIDs: Set<WindowID> = Set(plan.placements.compactMap { placement -> WindowID? in
                         guard let baseline = active.transaction.baselineFrames[placement.windowID],
                               !baseline.approximatelyEquals(placement.frame, tolerance: 0.01)
@@ -1063,7 +1053,6 @@ final class BetterTileModel {
         dividerResize.hideAndCancel()
         guard !isStabilizingSpace, let focused = try? system.focusedWindow() else { return }
         activeDisplayID = focused.displayID
-        sessionRevision &+= 1
         refreshDividerBoundaries()
     }
 
@@ -1425,7 +1414,6 @@ final class BetterTileModel {
             return (.stale, statusMessage)
         }
         session = committed
-        sessionRevision &+= 1
         return (.committed, nil)
     }
 
@@ -1552,9 +1540,7 @@ final class BetterTileModel {
             "invalidating Bento revision \(current.revision, privacy: .public) tree=\(String(describing: current.bentoState.root), privacy: .public)"
         )
         current.suspendAutomaticWrites(observing: windows)
-        if sessionStore.commit(current, replacing: current.revision) != nil {
-            sessionRevision &+= 1
-        }
+        _ = sessionStore.commit(current, replacing: current.revision)
         statusMessage = error + " Use Repair to rebuild Bento."
         if surfaceFailure {
             presentActionResult(succeeded: false, error: statusMessage, displayID: displayID)
@@ -1929,7 +1915,6 @@ final class BetterTileModel {
             } else {
                 let committed = sessionStore.commit(session, replacing: session.revision) != nil
                 sweepCommitted = sweepCommitted && committed
-                if committed { sessionRevision &+= 1 }
             }
         }
         if sweepCommitted {
@@ -1948,7 +1933,6 @@ final class BetterTileModel {
             ?? activeDisplayID.flatMap { current in displays.contains(where: { $0.id == current }) ? current : nil }
             ?? displays.first(where: { !(sessionStore.session(for: $0.id)?.windowIDs.isEmpty ?? true) })?.id
             ?? displays.first(where: \.isMain)?.id
-        sessionRevision &+= 1
         system.updateManagedWindowIDs(Set(eligible.map(\.id)))
         refreshDividerBoundaries(windows: eligible)
     }
@@ -1985,9 +1969,7 @@ final class BetterTileModel {
                 if var current = self.sessionStore.session(for: displayID) {
                     current.lastWorkArea = workArea
                     current.recordProposedFrames(frames)
-                    if self.sessionStore.commit(current, replacing: revision) != nil {
-                        self.sessionRevision &+= 1
-                    }
+                    _ = self.sessionStore.commit(current, replacing: revision)
                 }
             case let .degraded(reason):
                 self.suspendAutomaticBentoWrites(
@@ -2003,9 +1985,7 @@ final class BetterTileModel {
                     })
                     if var current = self.sessionStore.session(for: displayID) {
                         current.recordProposedFrames(actualFrames)
-                        if self.sessionStore.commit(current, replacing: revision) != nil {
-                            self.sessionRevision &+= 1
-                        }
+                        _ = self.sessionStore.commit(current, replacing: revision)
                     }
                 }
                 self.statusMessage = reason
