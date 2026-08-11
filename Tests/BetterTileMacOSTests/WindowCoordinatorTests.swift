@@ -292,6 +292,60 @@ import Testing
     #expect(system.frameWriteCounts[system.windows[1].id] == 3)
 }
 
+@Test @MainActor func aDegradedRetryDuringSettlementSurfacesTheMixedStateReason() async throws {
+    let system = FakeWindowSystem()
+    system.addSecondWindow()
+    let coordinator = WindowCoordinator(system: system)
+    let firstID = system.windows[0].id
+    let secondID = system.windows[1].id
+    let placements = [
+        Placement(windowID: firstID, frame: BTRect(x: 0, y: 0, width: 500, height: 700)),
+        Placement(windowID: secondID, frame: BTRect(x: 500, y: 0, width: 500, height: 700)),
+    ]
+    // Both first writes are accepted but ignored, so the settlement retry
+    // re-applies both windows; the retry then degrades: the second window's
+    // write fails and the first window's rollback write fails too.
+    system.ignoredFrameWriteCounts[firstID] = 1
+    system.ignoredFrameWriteCounts[secondID] = 1
+    system.failedFrameWriteNumbers[secondID] = [2]
+    system.failedFrameWriteNumbers[firstID] = [3]
+
+    #expect(coordinator.applyPlacements(placements).isApplied)
+    let outcome = await coordinator.settleAuthoritativePlacements(placements, retryDelay: .zero)
+    #expect(outcome == .degraded(reason: "A window update failed and the previous layout could not be fully restored."))
+}
+
+@Test @MainActor func aFullySuccessfulApplyClearsTheTransactionDegradedLatch() throws {
+    let system = FakeWindowSystem()
+    system.addSecondWindow()
+    let coordinator = WindowCoordinator(system: system)
+    let firstID = system.windows[0].id
+    let secondID = system.windows[1].id
+    var transaction = try #require(coordinator.beginTransaction(windowIDs: [firstID, secondID]).startedTransaction)
+    let placements = [
+        Placement(windowID: firstID, frame: BTRect(x: 0, y: 0, width: 600, height: 800)),
+        Placement(windowID: secondID, frame: BTRect(x: 600, y: 0, width: 400, height: 800)),
+    ]
+    system.failingWindowID = secondID
+    system.failedFrameWriteNumbers[firstID] = [2]
+
+    guard case .degraded = coordinator.commit(transaction: &transaction, placements: placements) else {
+        Issue.record("expected the first commit to degrade")
+        return
+    }
+    #expect(transaction.hasDegradedApply)
+
+    system.failingWindowID = nil
+    system.failedFrameWriteNumbers.removeAll()
+    #expect(coordinator.commit(transaction: &transaction, placements: placements).isApplied)
+    #expect(!transaction.hasDegradedApply)
+
+    // Degrade-then-recover behaves like never-degraded: with no live changes
+    // and no outstanding degrade, cancel leaves the committed frames alone.
+    #expect(coordinator.cancel(transaction: transaction).isApplied)
+    #expect(system.windows.map(\.frame) == placements.map(\.frame))
+}
+
 @Test @MainActor func focusDropRollsBackFramesAndMinimizedWindowsAfterPartialFailure() throws {
     let system = FakeWindowSystem()
     system.addSecondWindow()

@@ -59,9 +59,11 @@ public struct WindowFrameTransaction: Sendable {
     public fileprivate(set) var proposedPlacements: [Placement]
     public fileprivate(set) var lastAppliedFrames: [WindowID: BTRect]
     public fileprivate(set) var hasLiveChanges: Bool
-    /// True once a commit or live apply on this transaction failed without
-    /// restoring every already-written window. `cancel` then restores the
-    /// baseline even when no live change ever succeeded.
+    /// True while this transaction's windows are in an unknown arrangement: a
+    /// commit or live apply failed without restoring every already-written
+    /// window. `cancel` then restores the baseline even when no live change
+    /// ever succeeded. A later fully successful apply clears it — every
+    /// participant was just written, so no window remains in unknown state.
     public fileprivate(set) var hasDegradedApply: Bool
 
     fileprivate init(baselineFrames: [WindowID: BTRect]) {
@@ -371,9 +373,11 @@ public final class WindowCoordinator {
             case .failed:
                 finishExpectedMutations(upTo: terminalGenerations)
                 return .failed(reason: unsettled)
-            case .degraded:
+            case let .degraded(reason):
+                // The inner reason survives: windows were left in a mixed
+                // arrangement, which is worse news than "not yet settled".
                 finishExpectedMutations(upTo: terminalGenerations)
-                return .degraded(reason: unsettled)
+                return .degraded(reason: reason)
             }
         }
         return .failed(reason: unsettled)
@@ -421,6 +425,7 @@ public final class WindowCoordinator {
                 )
             }
             transaction.lastAppliedFrames = Dictionary(uniqueKeysWithValues: transaction.proposedPlacements.map { ($0.windowID, $0.frame) })
+            transaction.hasDegradedApply = false
             return .applied
         } catch {
             return applyFailureOutcome(for: error, transaction: &transaction)
@@ -436,6 +441,7 @@ public final class WindowCoordinator {
             try applyAtomically(transaction.proposedPlacements, rollbackFrames: transaction.lastAppliedFrames)
             transaction.lastAppliedFrames = Dictionary(uniqueKeysWithValues: placements.map { ($0.windowID, $0.frame) })
             transaction.hasLiveChanges = true
+            transaction.hasDegradedApply = false
             return .applied
         } catch {
             return applyFailureOutcome(for: error, transaction: &transaction)
