@@ -22,3 +22,10 @@ A mutation failed *and* the attempt to undo it was itself incomplete, so at
 least one window was left away from where it started. A degraded desktop is in
 an unknown arrangement: automatic corrections stop until the user starts a new
 transaction or asks for a repair.
+
+## Ambient layout transition
+
+The complete result of reconciling one display's observed windows with its
+active layout session during a background desktop sweep. It either updates
+bookkeeping without moving windows, places the lone window when its latch
+fires, or proposes a Bento layout for the mutation path to apply atomically.
