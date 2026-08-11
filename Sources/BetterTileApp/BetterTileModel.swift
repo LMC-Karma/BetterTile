@@ -1750,6 +1750,11 @@ final class BetterTileModel {
         sessionStore.removeMissingDisplays(displayIDs)
         var resolvedActiveDisplay: DisplayID?
         var sweepCommitted = true
+        let ambientReconciler = AmbientLayoutReconciler(
+            paneGap: configuration.bentoInnerGap,
+            adjacencyTolerance: configuration.adjacencyTolerance,
+            singleWindowPlacement: configuration.singleWindowPlacement
+        )
 
         for display in displays {
             let displayWindows = bentoEligible(eligible.filter { $0.displayID == display.id })
@@ -1761,115 +1766,33 @@ final class BetterTileModel {
                 reuseActiveWhenUnmatched: !desktopTransition,
                 commitObservation: false
             )
-            var session = activation.session
             if focused?.displayID == display.id { resolvedActiveDisplay = display.id }
-
-            let before = session.bentoState
-            let frames = Dictionary(uniqueKeysWithValues: displayWindows.map { ($0.id, $0.frame) })
-            let workAreaChanged = session.lastWorkArea.map {
-                !$0.approximatelyEquals(display.visibleFrame, tolerance: 0.5)
-            } ?? false
-            // Evaluated on every sweep, and deliberately first in the chain, so
-            // the latch re-arms as soon as the desktop stops having exactly one
-            // window.
-            let becameSingleWindow = session.shouldApplySingleWindowPlacement(
-                eligibleWindowCount: displayWindows.count
+            let shouldLogHeldAbsences = activation.session.mode == .bento
+                && !activation.session.automaticWritesSuspended
+                && !activation.wasCreated
+                && !desktopTransition
+                && activation.session.isBentoInitialized
+            let transition = ambientReconciler.transition(
+                session: activation.session,
+                observation: AmbientLayoutObservation(
+                    display: display,
+                    windows: displayWindows,
+                    wasCreated: activation.wasCreated,
+                    previousWindowIDs: activation.previousWindowIDs,
+                    isDesktopTransition: desktopTransition,
+                    confirmedGone: consumedDestroyedWindowIDs,
+                    confirmedMinimized: consumedMinimizedWindowIDs
+                )
             )
-            let singleWindowPlacement: Placement? = if becameSingleWindow,
-               !session.automaticWritesSuspended,
-               let window = displayWindows.first,
-               let action = configuration.singleWindowPlacement,
-               let frame = StandardActionEngine().targetFrame(for: action, window: window, display: display) {
-                Placement(windowID: window.id, frame: frame)
-            } else {
-                nil
+            if shouldLogHeldAbsences {
+                logHeldAbsences(in: transition.session)
             }
-            var shouldApply = false
-            if session.mode == .bento, !session.automaticWritesSuspended {
-                if activation.wasCreated {
-                    // A lone window is left to the single-window placement
-                    // above; no tree is built until a second window arrives.
-                    if displayWindows.count > 1,
-                       let adopted = BentoLayoutAdopter(tolerance: configuration.adjacencyTolerance)
-                        .adopt(
-                            frames: frames,
-                            in: display.visibleFrame,
-                            metrics: BentoLayoutMetrics(paneGap: configuration.bentoInnerGap)
-                        ) {
-                        session.bentoState = adopted
-                        session.isBentoInitialized = true
-                    } else if displayWindows.count > 1 {
-                        let result = BentoPlanner().plan(
-                            state: BentoRuntimeState(layout: BentoLayoutState(
-                                metrics: BentoLayoutMetrics(paneGap: configuration.bentoInnerGap)
-                            )),
-                            observation: BentoObservation(
-                                bounds: display.visibleFrame,
-                                windows: displayWindows,
-                                focusedWindowID: focused?.displayID == display.id ? focused?.id : nil
-                            ),
-                            intent: .activate
-                        )
-                        session.bentoState = result.state.layout
-                        session.isBentoInitialized = true
-                        shouldApply = result.writesFrames
-                    }
-                } else if desktopTransition {
-                    // Returning to a known desktop is read-only. Its stored
-                    // tree and ratios already describe how the user left it.
-                } else if session.isBentoInitialized {
-                    let membershipChanged = activation.previousWindowIDs != session.windowIDs
-                    reconcileBentoSession(
-                        &session,
-                        windows: displayWindows,
-                        display: display,
-                        confirmedGone: consumedDestroyedWindowIDs,
-                        minimized: consumedMinimizedWindowIDs
-                    )
-                    shouldApply = workAreaChanged || membershipChanged
-                } else if displayWindows.count > 1,
-                          let adopted = BentoLayoutAdopter(tolerance: configuration.adjacencyTolerance)
-                            .adopt(
-                                frames: frames,
-                                in: display.visibleFrame,
-                                metrics: BentoLayoutMetrics(paneGap: configuration.bentoInnerGap)
-                            ) {
-                    session.bentoState = adopted
-                    session.isBentoInitialized = true
-                } else if displayWindows.count > 1 {
-                    let result = BentoPlanner().plan(
-                        state: BentoRuntimeState(layout: BentoLayoutState(
-                            metrics: BentoLayoutMetrics(paneGap: configuration.bentoInnerGap)
-                        )),
-                        observation: BentoObservation(
-                            bounds: display.visibleFrame,
-                            windows: displayWindows,
-                            focusedWindowID: focused?.displayID == display.id ? focused?.id : nil
-                        ),
-                        intent: .activate
-                    )
-                    session.bentoState = result.state.layout
-                    session.isBentoInitialized = true
-                    shouldApply = result.writesFrames
-                }
-            }
-            let stateChanged = before != session.bentoState
-            if !activation.wasCreated, !desktopTransition, stateChanged { shouldApply = true }
-            let needsWorkAreaSettlement = session.mode == .bento
-                && session.isBentoInitialized
-                && displayWindows.count > 1
-                && shouldApply
-                && workAreaChanged
-            session.lastObservedFrames = frames
-            if let singleWindowPlacement {
-                session.recordProposedFrames([singleWindowPlacement.windowID: singleWindowPlacement.frame])
-            }
-            if !needsWorkAreaSettlement {
-                session.lastWorkArea = display.visibleFrame
-            }
-            if let singleWindowPlacement {
+
+            switch transition {
+            case let .placeSingleWindow(proposed, placement):
+                var session = proposed
                 let result = commitBentoProposal(
-                    [singleWindowPlacement],
+                    [placement],
                     session: &session,
                     display: display,
                     surfaceFailure: false
@@ -1882,8 +1805,8 @@ final class BetterTileModel {
                         error: result.failureReason ?? "The window could not follow the desktop update."
                     )
                 }
-            } else if session.mode == .bento, session.isBentoInitialized, displayWindows.count > 1, shouldApply {
-                let placements = BentoLayoutEngine(state: session.bentoState).placements(for: displayWindows, in: display)
+            case let .applyLayout(proposed, placements, settleWorkArea):
+                var session = proposed
                 let result = commitBentoProposal(
                     placements,
                     session: &session,
@@ -1899,12 +1822,12 @@ final class BetterTileModel {
                         error: result.failureReason ?? "Bento could not follow the desktop update."
                     )
                 }
-                if needsWorkAreaSettlement {
+                if let settleWorkArea {
                     if applied {
                         scheduleAuthoritativePlacementSettlement(
                             displayID: display.id,
                             sessionID: session.id,
-                            workArea: display.visibleFrame,
+                            workArea: settleWorkArea,
                             placements: placements
                         )
                     } else if !result.result.needsRepair {
@@ -1912,7 +1835,7 @@ final class BetterTileModel {
                         presentActionResult(succeeded: false, error: statusMessage, displayID: display.id)
                     }
                 }
-            } else {
+            case let .observe(session):
                 let committed = sessionStore.commit(session, replacing: session.revision) != nil
                 sweepCommitted = sweepCommitted && committed
             }
@@ -2019,6 +1942,10 @@ final class BetterTileModel {
         )
         guard case let .update(updated, _, _) = transition else { return }
         session = updated
+        logHeldAbsences(in: session)
+    }
+
+    private func logHeldAbsences(in session: LayoutSession) {
         let heldAbsences = session.presence.pending
             .map { "\($0.key.rawValue)x\($0.value)" }
             .sorted()
