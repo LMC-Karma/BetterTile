@@ -201,6 +201,8 @@ public struct BetterTileConfiguration: Codable, Hashable, Sendable {
         ) ?? false
         showDockIcon = try container.decodeIfPresent(Bool.self, forKey: .showDockIcon) ?? false
         snappingEnabled = try container.decodeIfPresent(Bool.self, forKey: .snappingEnabled) ?? true
+        // Keep pre-existing installs off when their saved configuration
+        // predates this key; only a configuration created from scratch defaults on.
         linkedResizeEnabled = try container.decodeIfPresent(Bool.self, forKey: .linkedResizeEnabled) ?? false
         if let rawMode = try container.decodeIfPresent(String.self, forKey: .defaultLayoutMode) {
             defaultLayoutMode = try Self.migrateLayoutMode(rawMode, codingPath: container.codingPath)

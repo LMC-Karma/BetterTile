@@ -198,6 +198,7 @@ import Testing
     let migrated = try ConfigurationStore.decode(JSONSerialization.data(withJSONObject: legacy))
     #expect(migrated.schemaVersion == 9)
     #expect(migrated.showDockIcon)
+    #expect(!migrated.linkedResizeEnabled)
     #expect(migrated.defaultLayoutMode == .bento)
     #expect(migrated.resizeFeedbackMode == .ghost)
     #expect(migrated.dividerVisibility == .hoverAndDrag)
