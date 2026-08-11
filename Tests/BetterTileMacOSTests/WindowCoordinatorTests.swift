@@ -134,6 +134,29 @@ import Testing
     #expect(system.windows[0].frame == second.targetFrame)
 }
 
+@Test @MainActor func aFailedFocusedWindowReadPlansAsFailedWithItsReason() {
+    let system = FakeWindowSystem()
+    system.focusedWindowReadFails = true
+    let coordinator = WindowCoordinator(system: system)
+
+    guard case let .failed(reason) = coordinator.plan(.leftHalf) else {
+        Issue.record("expected a failed plan, not ready or unavailable")
+        return
+    }
+    #expect(reason == WindowSystemError.operationFailed("Simulated focused-window failure").localizedDescription)
+}
+
+@Test @MainActor func aMissingFocusedWindowPlansAsUnavailableNotFailed() {
+    let system = FakeWindowSystem()
+    system.windows.removeAll()
+    let coordinator = WindowCoordinator(system: system)
+
+    guard case .unavailable = coordinator.plan(.leftHalf) else {
+        Issue.record("no focused window is nothing to plan, not a failure")
+        return
+    }
+}
+
 @Test @MainActor func displayTransferWraps() {
     let system = FakeWindowSystem()
     system.availableDisplays.append(DisplaySnapshot(
@@ -769,6 +792,7 @@ private final class FakeWindowSystem: WindowSystem, TargetedWindowSystem, Window
     var minimizeWriteCounts: [WindowID: Int] = [:]
     var failedMinimizeWriteNumbers: [WindowID: Set<Int>] = [:]
     var focusedWindowID: WindowID?
+    var focusedWindowReadFails = false
     var eventHandler: (@MainActor (WindowSystemEvent) -> Void)?
     var targetedSnapshotRequests = 0
     var targetedSnapshotsFail = false
@@ -806,7 +830,8 @@ private final class FakeWindowSystem: WindowSystem, TargetedWindowSystem, Window
 
     func requestAccessibilityPermission(prompt: Bool) -> Bool { true }
     func focusedWindow() throws -> WindowSnapshot? {
-        focusedWindowID.flatMap { id in windows.first(where: { $0.id == id }) } ?? windows.first
+        if focusedWindowReadFails { throw WindowSystemError.operationFailed("Simulated focused-window failure") }
+        return focusedWindowID.flatMap { id in windows.first(where: { $0.id == id }) } ?? windows.first
     }
     func visibleWindows() throws -> [WindowSnapshot] {
         settlePendingFrames()
