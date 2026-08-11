@@ -184,6 +184,9 @@ public struct AmbientLayoutReconciler: Sendable {
     ) -> Bool {
         guard windows.count > 1 else { return false }
         let metrics = BentoLayoutMetrics(paneGap: paneGap)
+        // Initialization must return a complete runtime session. Deferring
+        // this metadata to the next sweep breaks the fixed point and makes
+        // planner-created overflow indistinguishable from a user's float.
         session.bentoInsertionOrder = windows.map(\.id).sorted()
         if let adopted = BentoLayoutAdopter(tolerance: adjacencyTolerance).adopt(
             frames: frames,

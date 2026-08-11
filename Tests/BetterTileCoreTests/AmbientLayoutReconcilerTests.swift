@@ -87,6 +87,9 @@ private let ambientThird = ambientWindow(
     }
     #expect(updated.isBentoInitialized)
     #expect(Set(updated.bentoState.root?.windowIDs ?? []) == Set(windows.map(\.id)))
+    #expect(updated.bentoInsertionOrder == windows.map(\.id).sorted())
+    #expect(updated.automaticallyFloatingWindowIDs.isEmpty)
+    #expect(updated.bentoReinsertionAnchors.isEmpty)
 }
 
 @Test func aNewNonAdoptableDesktopAppliesTheCanonicalLayout() throws {
@@ -112,6 +115,31 @@ private let ambientThird = ambientWindow(
     #expect(updated.isBentoInitialized)
     #expect(Set(placements.map(\.windowID)) == Set(overlapping.map(\.id)))
     #expect(settleWorkArea == nil)
+}
+
+@Test func coldStartOverflowRemainsEligibleForAutomaticReinsertion() throws {
+    let windows = (0..<7).map { index in
+        ambientWindow("overflow-\(index)", frame: ambientBounds)
+    }
+    let session = LayoutSession(
+        displayID: ambientDisplayID,
+        mode: .bento,
+        windowIDs: Set(windows.map(\.id))
+    )
+
+    let transition = ambientReconciler().transition(
+        session: session,
+        observation: ambientObservation(windows: windows, wasCreated: true, previousWindowIDs: [])
+    )
+
+    guard case let .applyLayout(updated, placements, _) = transition else {
+        Issue.record("Cold-start overflow must still apply the managed layout")
+        return
+    }
+    #expect(updated.bentoInsertionOrder == windows.map(\.id).sorted())
+    #expect(updated.automaticallyFloatingWindowIDs == updated.bentoState.floatingWindowIDs)
+    #expect(updated.automaticallyFloatingWindowIDs.count == 1)
+    #expect(placements.count == 6)
 }
 
 @Test func aLoneWindowUsesTheConfiguredPlacement() throws {
