@@ -15,6 +15,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
     private let privateAPIsDisabled: Bool
     private let exactWindowIDResolver: ExactWindowIDResolver
     private let nativeDesktopProvider: NativeDesktopObservationProvider
+    private let stageManagerGroupResolver: StageManagerGroupResolver
     private var snapshotCache = WindowSnapshotCache()
     private var snapshotGeneration: UInt64 = 0
     private var nativeObservationGeneration: UInt64?
@@ -72,6 +73,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         self.privateAPIsDisabled = privateAPIsDisabled
         exactWindowIDResolver = ExactWindowIDResolver(disabled: privateAPIsDisabled)
         nativeDesktopProvider = NativeDesktopObservationProvider(disabled: privateAPIsDisabled)
+        stageManagerGroupResolver = StageManagerGroupResolver(disabled: privateAPIsDisabled)
         AXUIElementSetMessagingTimeout(AXUIElementCreateSystemWide(), Self.defaultMessagingTimeout)
         if let application = NSWorkspace.shared.frontmostApplication {
             recordActivation(of: application)
@@ -375,6 +377,44 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
             bundleIdentifier: NSRunningApplication(processIdentifier: pid)?.bundleIdentifier,
             displays: displays()
         ).flatMap(classifyByNativeMembership)
+    }
+
+    func windowSnapshot(exactWindowID: CGWindowID) throws -> WindowSnapshot? {
+        if let windowID = identities.windowID(forExactWindowID: exactWindowID),
+           let snapshot = try windowSnapshot(id: windowID) {
+            return snapshot
+        }
+        _ = try visibleWindows()
+        guard let windowID = identities.windowID(forExactWindowID: exactWindowID) else { return nil }
+        return try windowSnapshot(id: windowID)
+    }
+
+    func stageManagerWindowID(at point: BTPoint) -> CGWindowID? {
+        guard let observation = stageManagerGroupResolver.observation(at: point) else { return nil }
+        guard let records = targetedWindowServerRecords(ids: Set(observation.windowIDs)) else {
+            stageManagerGroupResolver.logValidationFallbackOnce()
+            return nil
+        }
+        let runningApplications = NSWorkspace.shared.runningApplications
+        let knownOwnerPIDs = Set(runningApplications.map(\.processIdentifier))
+        let rejectedOwnerPIDs = Set(runningApplications.compactMap { application in
+            application.bundleIdentifier == "com.apple.WindowManager"
+                ? application.processIdentifier
+                : nil
+        }).union([getpid(), observation.windowManagerPID])
+        let selected = StageManagerGroupResolver.frontmostValidWindowID(
+            groupWindowIDs: observation.windowIDs,
+            targetedRecords: records,
+            frontToBackWindowIDs: frontToBackWindowIDs(in: Set(observation.windowIDs)),
+            rejectedOwnerPIDs: rejectedOwnerPIDs,
+            knownOwnerPIDs: knownOwnerPIDs
+        )
+        if selected == nil { stageManagerGroupResolver.logValidationFallbackOnce() }
+        return selected
+    }
+
+    func recordStageManagerWindowExposureFailure() {
+        stageManagerGroupResolver.logExposureFallbackOnce()
     }
 
     public func displays() -> [DisplaySnapshot] {
@@ -1048,12 +1088,29 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
     }
 
     private func targetedWindowServerIndex(ids: Set<CGWindowID>) -> WindowServerIndex? {
+        targetedWindowServerRecords(ids: ids).map(WindowServerIndex.init(records:))
+    }
+
+    private func targetedWindowServerRecords(ids: Set<CGWindowID>) -> [WindowServerRecord]? {
         guard !ids.isEmpty,
               let info = CGWindowListCreateDescriptionFromArray(
                   ids.sorted().map { NSNumber(value: $0) } as CFArray
               ) as? [[CFString: Any]]
         else { return nil }
-        return WindowServerIndex(records: windowServerRecords(from: info, defaultOnscreen: false))
+        return windowServerRecords(from: info, defaultOnscreen: false)
+    }
+
+    private func frontToBackWindowIDs(in candidates: Set<CGWindowID>) -> [CGWindowID] {
+        guard let info = CGWindowListCopyWindowInfo(
+            [.optionAll, .excludeDesktopElements],
+            kCGNullWindowID
+        ) as? [[CFString: Any]] else { return [] }
+        return info.compactMap { item in
+            guard let number = item[kCGWindowNumber] as? NSNumber,
+                  candidates.contains(number.uint32Value)
+            else { return nil }
+            return number.uint32Value
+        }
     }
 
     private func windowServerRecords(

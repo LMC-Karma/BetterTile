@@ -27,6 +27,7 @@ import Testing
     #expect(bound == provisional)
     #expect(refreshedElement == provisional)
     #expect(registry.exactWindowID(for: provisional) == 700)
+    #expect(registry.windowID(forExactWindowID: 700) == provisional)
     #expect(registry.windowID(application: application, accessibilityHash: 101) == provisional)
 }
 

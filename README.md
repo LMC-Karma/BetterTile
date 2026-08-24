@@ -167,8 +167,9 @@ explains what it is for in-product before requesting it.
 
 - **No cross-Space window movement.** macOS exposes no public API that can do
   this safely, and BetterTile will not use a private one to fake it.
-- **Stage Manager thumbnails are ignored.** Scaled thumbnails are rejected
-  rather than treated as real windows.
+- **Stage Manager groups stay single-window.** A thumbnail drag selects one
+  validated frontmost real member. BetterTile does not move or synchronize the
+  other windows in that Stage group.
 
 ---
 

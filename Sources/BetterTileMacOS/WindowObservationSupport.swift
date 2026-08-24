@@ -85,6 +85,10 @@ struct WindowIdentityRegistry {
         records[windowID]?.exactWindowID
     }
 
+    func windowID(forExactWindowID exactWindowID: CGWindowID) -> WindowID? {
+        records.values.first { $0.exactWindowID == exactWindowID }?.windowID
+    }
+
     @discardableResult
     mutating func remove(_ windowID: WindowID) -> WindowIdentityRecord? {
         guard let record = records.removeValue(forKey: windowID) else { return nil }

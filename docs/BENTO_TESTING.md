@@ -33,6 +33,11 @@ windows look correct.
 - Keep one window on multiple Spaces and confirm Bento leaves it floating.
 - Enter a native fullscreen Space and confirm BetterTile shows no divider and
   performs no ambient placement.
+- With Stage Manager enabled, drag single-window and multi-window thumbnails.
+  Confirm BetterTile selects only the frontmost real member, never adds a
+  thumbnail artifact as a pane, and leaves every other group member untouched.
+- Repeat the Stage Manager checks with its Accessibility hierarchy unavailable
+  or `disablePrivateAPIs` enabled. Confirm ordinary hit-testing still works.
 - Repeat the Space, fullscreen, and display checks after running
   `defaults write com.lmckarma.BetterTile disablePrivateAPIs -bool true` and
   reopening BetterTile. Restore normal behavior with

@@ -35,3 +35,9 @@ fires, or proposes a Bento layout for the mutation path to apply atomically.
 One macOS desktop reported by the validated native observation capability.
 BetterTile pairs its process-local identity with a display to select a runtime
 layout session. It never persists the identity or uses it to move a window.
+
+## Stage group
+
+The real windows represented by one Stage Manager thumbnail. BetterTile may
+select one validated frontmost member for a drag. It does not create a layout
+session for the group or synchronize the other members.
