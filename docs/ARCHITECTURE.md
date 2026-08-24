@@ -38,7 +38,7 @@ Core geometry uses logical points with a top-left origin. Display visible frames
 
 ## Space boundary
 
-BetterTile operates on eligible on-screen windows exposed by public APIs. It refreshes the current window set immediately when apps, Spaces, or displays change and keeps one runtime layout session per display. It does not infer or wait for Stage Manager groups and never attempts to move windows across Spaces.
+BetterTile operates on eligible on-screen windows exposed by its macOS integration layer. It refreshes the current window set immediately when apps, Spaces, or displays change and keeps one runtime layout session per display. It does not infer or wait for Stage Manager groups and never attempts to move windows across Spaces.
 
 ## Event ordering
 
@@ -58,4 +58,4 @@ Settings use a versioned Codable envelope. Version-1 display-keyed Bento states 
 
 ## Security
 
-Only Accessibility permission is required. BetterTile uses public frameworks, does not inject code, does not disable SIP, and does not call private SkyLight symbols.
+Only Accessibility permission is required. BetterTile does not inject code or disable SIP. Public Apple APIs are preferred; any private API integration requires the design review, approval, fallback, testing, and disclosure defined in [SECURITY.md](../SECURITY.md).

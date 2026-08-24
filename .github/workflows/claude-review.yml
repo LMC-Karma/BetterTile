@@ -51,7 +51,10 @@ jobs:
               coordinates are converted only at the BetterTileMacOS boundary.
             - All window mutations must go through the main-actor WindowCoordinator.
             - Missing tests for geometry, state transitions, migrations, or failure paths.
-            - Permanent red lines: private Apple APIs, SIP workarounds, or code injection.
+            - Permanent red lines: SIP workarounds or code injection.
+            - Private Apple APIs require a linked design discussion, maintainer approval,
+              concrete product fit, compatibility testing, safe fallback, and disclosure
+              under SECURITY.md; public APIs remain the default.
             - Updates are an intentional application-layer integration: the app delegate
               owns SPUStandardUpdaterController and implements SPUUpdaterDelegate. Do not
               ask for an updater service or an updater API in BetterTileCore.

@@ -86,7 +86,7 @@ BetterTileApp  →  BetterTileMacOS  →  BetterTileCore
    models, and migrations. If you find yourself reaching for `NSScreen` in
    Core, the boundary is in the wrong place.
 2. **`BetterTileMacOS`** owns Accessibility, window-system integration,
-   coordinate conversion, and window mutations, and adapts public macOS APIs.
+   coordinate conversion, window mutations, and approved macOS API adapters.
 3. **`BetterTileApp`** owns the SwiftUI/AppKit application lifecycle and
    application-level UI integrations: Settings and menu-bar scenes, the main
    menu, the status item, alerts, Sparkle's `SPUStandardUpdaterController`, and
@@ -122,9 +122,14 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full picture.
 
 The permanent platform-safety boundaries are:
 
-- no private macOS APIs, including private SkyLight symbols
 - no SIP workarounds
 - no code injection
+
+Prefer public Apple APIs. Before implementing a private API, open or link an
+explicit design discussion and obtain maintainer approval under the review
+criteria in [SECURITY.md](SECURITY.md). Keep approved platform integration in
+`BetterTileMacOS`, with the agreed capability checks, fallbacks, tests, and
+disclosure.
 
 Dependencies, network features, permissions, privileged components, and
 intentional architecture changes are reviewable design choices, not blanket

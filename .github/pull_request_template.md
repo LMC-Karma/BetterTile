@@ -20,7 +20,7 @@ permissions, privileged components, dependencies, distribution, and user-data
 handling. Read it before ticking these boxes, and disclose anything it requires
 in the sections above.
 
-- [ ] Uses only public Apple APIs
+- [ ] Uses public Apple APIs, or links the approved private-API discussion and documents its scope, fallback, and compatibility testing
 - [ ] Adds no unexplained permissions
 - [ ] Documents provenance, compatible licensing, and attribution for adapted code
 - [ ] Discloses new or changed network communication
