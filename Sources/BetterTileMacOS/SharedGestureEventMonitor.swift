@@ -31,14 +31,28 @@ public struct GlobalGestureEvent: Equatable, Sendable {
         self.timestamp = timestamp
     }
 
+    static func position(cgEventLocation: CGPoint) -> BTPoint {
+        BTPoint(x: cgEventLocation.x, y: cgEventLocation.y)
+    }
+
+    static func position(
+        nsEventMouseLocation: CGPoint,
+        primaryScreenFrame: CGRect
+    ) -> BTPoint {
+        CoordinateConverter.pointToTopLeft(
+            nsEventMouseLocation,
+            mainScreenFrame: primaryScreenFrame
+        )
+    }
+
     @MainActor
     init?(_ event: NSEvent, kind: GlobalGestureEventKind) {
         guard let mainFrame = NSScreen.screens.first?.frame else { return nil }
         self.init(
             kind: kind,
-            position: CoordinateConverter.pointToTopLeft(
-                NSEvent.mouseLocation,
-                mainScreenFrame: mainFrame
+            position: Self.position(
+                nsEventMouseLocation: NSEvent.mouseLocation,
+                primaryScreenFrame: mainFrame
             ),
             button: Int64(event.buttonNumber),
             modifiers: ShortcutModifiers(event.modifierFlags),
@@ -277,7 +291,7 @@ private final class GestureEventTapWorker: @unchecked Sendable {
             kind: kind,
             // CGEvent's global display coordinates already use the same
             // upper-left origin as BetterTile's logical coordinates.
-            position: BTPoint(x: event.location.x, y: event.location.y),
+            position: GlobalGestureEvent.position(cgEventLocation: event.location),
             button: event.getIntegerValueField(.mouseEventButtonNumber),
             modifiers: ShortcutModifiers(event.flags),
             timestamp: event.timestamp

@@ -116,3 +116,52 @@ import Testing
 
     #expect(system.windows[1].frame.minX == 510)
 }
+
+@Test @MainActor func deferredStartDoesNotReplaceAnActiveLinkedResizeBaseline() async {
+    let system = FakeWindowSystem()
+    system.windows = [
+        WindowSnapshot(
+            id: WindowID(rawValue: "focused"),
+            processIdentifier: 42,
+            frame: BTRect(x: 0, y: 0, width: 500, height: 800),
+            displayID: DisplayID(rawValue: "main")
+        ),
+        WindowSnapshot(
+            id: WindowID(rawValue: "second"),
+            processIdentifier: 43,
+            frame: BTRect(x: 500, y: 0, width: 500, height: 800),
+            displayID: DisplayID(rawValue: "main")
+        ),
+    ]
+    system.focusedWindowID = WindowID(rawValue: "focused")
+    var configuration = BetterTileConfiguration()
+    configuration.linkedResizeEnabled = true
+    let controller = LinkedResizeController(
+        coordinator: WindowCoordinator(system: system),
+        configuration: configuration
+    )
+    controller.isEnabledForDisplay = { _ in true }
+    controller.setUsesSharedGestureEvents(true)
+
+    func event(_ kind: GlobalGestureEventKind, timestamp: UInt64) -> GlobalGestureEvent {
+        GlobalGestureEvent(
+            kind: kind,
+            position: BTPoint(x: 500, y: 400),
+            button: 0,
+            modifiers: [],
+            timestamp: timestamp
+        )
+    }
+
+    controller.handleSharedGestureEvent(event(.leftMouseDown, timestamp: 1))
+    system.windows[0].frame.size.width = 503
+    controller.handleSharedGestureEvent(event(.leftMouseDragged, timestamp: 2))
+    system.windows[0].frame.size.width = 510
+    await Task.yield()
+    await Task.yield()
+    system.windows[0].frame.size.width = 520
+    controller.handleSharedGestureEvent(event(.leftMouseDragged, timestamp: 3))
+    controller.handleSharedGestureEvent(event(.leftMouseUp, timestamp: 4))
+
+    #expect(system.windows[1].frame.minX == 517)
+}

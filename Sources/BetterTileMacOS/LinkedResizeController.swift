@@ -122,7 +122,7 @@ public final class LinkedResizeController {
             isLeftButtonDown = true
             Task { @MainActor [weak self] in
                 await Task.yield()
-                guard self?.isLeftButtonDown == true else { return }
+                guard self?.isLeftButtonDown == true, self?.sourceID == nil else { return }
                 self?.beginGesture()
             }
         case .leftMouseDragged:

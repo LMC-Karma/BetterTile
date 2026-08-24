@@ -93,13 +93,18 @@ private let rects: [(name: String, rect: CGRect)] = [
     }
 }
 
-@Test func appKitAndCGEventPointsAgreeWhenTheyUseThePrimaryDisplayOrigin() {
+@Test func globalEventPositionsUseThePrimaryDisplayOrigin() {
     let primary = CGRect(x: 0, y: 0, width: 1920, height: 1080)
-    let cgEventPoint = BTPoint(x: 250, y: 300)
-    let appKitPoint = CGPoint(x: 250, y: primary.maxY - cgEventPoint.y)
+    let expected = BTPoint(x: 250, y: 300)
 
     #expect(
-        CoordinateConverter.pointToTopLeft(appKitPoint, mainScreenFrame: primary)
-            == cgEventPoint
+        GlobalGestureEvent.position(cgEventLocation: CGPoint(x: 250, y: 300))
+            == expected
+    )
+    #expect(
+        GlobalGestureEvent.position(
+            nsEventMouseLocation: CGPoint(x: 250, y: 780),
+            primaryScreenFrame: primary
+        ) == expected
     )
 }
