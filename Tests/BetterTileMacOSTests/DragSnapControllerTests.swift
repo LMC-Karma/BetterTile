@@ -28,6 +28,27 @@ import Testing
     #expect(!controller.allowsBentoDrag(for: floatingWindow))
 }
 
+@Test @MainActor func sharedGestureSourceIgnoresMouseUpWithoutAnActiveDrag() {
+    let system = FakeWindowSystem()
+    let controller = DragSnapController(
+        coordinator: WindowCoordinator(system: system),
+        configuration: BetterTileConfiguration()
+    )
+    var endedCount = 0
+    controller.gestureEndedHandler = { endedCount += 1 }
+    controller.setUsesSharedGestureEvents(true)
+
+    controller.handleSharedGestureEvent(GlobalGestureEvent(
+        kind: .leftMouseUp,
+        position: BTPoint(x: 0, y: 0),
+        button: 0,
+        modifiers: [],
+        timestamp: 1
+    ))
+
+    #expect(endedCount == 0)
+}
+
 @Test func bentoSwapSupportsTallerUnifiedToolbarsWithoutEnteringWindowContent() {
     let frame = BTRect(x: 100, y: 100, width: 500, height: 400)
     #expect(BentoSwapDragRegion.isTitleBarStart(BTPoint(x: 200, y: 112), in: frame))

@@ -42,6 +42,13 @@ BetterTile operates on eligible on-screen windows exposed by its macOS integrati
 
 ## Event ordering
 
+One listen-only session event tap forwards ordered scalar mouse position, button,
+modifier, timestamp, and event-kind values from a dedicated run loop to the
+main actor. Drag snapping and linked resizing share that stream. If tap creation
+or recovery fails, both consumers switch to their existing `NSEvent` monitors
+as one unit so one physical event has one owner. Divider-local events, hover,
+Escape, and title-bar double-click handling keep their AppKit paths.
+
 All window mutations pass through the main-actor coordinator. Multi-window operations preflight every participant, apply in deterministic order, and roll back already-applied frames when a later Accessibility write fails. Ghost resize transactions do not mutate real windows before commit; live transactions can restore their original baseline on cancellation. AX move/resize events are debounced, while events matching a recent coordinator generation and expected frame are suppressed to prevent feedback loops.
 
 ## Bento

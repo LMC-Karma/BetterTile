@@ -34,6 +34,7 @@ final class BetterTileModel {
     private let dragSnap: DragSnapController
     private let titleBarDoubleClick: TitleBarDoubleClickController
     private let linkedResize: LinkedResizeController
+    private let sharedGestureEvents: SharedGestureEventMonitor
     private let dividerResize: DividerOverlayController
     private var resultPill: ResultPillController?
     private var sessionStore = LayoutSessionStore()
@@ -83,6 +84,7 @@ final class BetterTileModel {
         )
         titleBarDoubleClick.applicationRules = loaded.applicationRules
         linkedResize = LinkedResizeController(coordinator: coordinator, configuration: loaded)
+        sharedGestureEvents = SharedGestureEventMonitor()
         dividerResize = DividerOverlayController(coordinator: coordinator, configuration: loaded)
 
         shortcuts.isEnabled = loaded.keyboardShortcutsEnabled
@@ -153,6 +155,13 @@ final class BetterTileModel {
         }
         linkedResize.layoutChangedHandler = { [weak self] _, _ in
             self?.refreshDividerBoundaries()
+        }
+        sharedGestureEvents.eventHandler = { [weak self] event in
+            self?.dragSnap.handleSharedGestureEvent(event)
+            self?.linkedResize.handleSharedGestureEvent(event)
+        }
+        sharedGestureEvents.fallbackHandler = { [weak self] in
+            self?.setUsesSharedGestureEvents(false)
         }
         system.setWindowEventHandler { [weak self] event in self?.receiveWindowSystemEvent(event) }
         shortcuts.update(bindings: loaded.shortcuts)
@@ -770,6 +779,7 @@ final class BetterTileModel {
         let trusted = system.requestAccessibilityPermission(prompt: false)
         let changed = trusted != hasAccessibilityPermission
         hasAccessibilityPermission = trusted
+        syncSharedGestureMonitoring()
 
         guard changed else { return trusted }
         if !trusted { dragSnap.cancel() }
@@ -870,6 +880,7 @@ final class BetterTileModel {
         system.stopDisplayReconfigurationMonitoring()
         system.stopWindowObservation()
         shortcuts.stop()
+        sharedGestureEvents.stop()
         dragSnap.stop()
         titleBarDoubleClick.stop()
         linkedResize.stop()
@@ -910,6 +921,9 @@ final class BetterTileModel {
         if !changes.isDisjoint(with: [.linkedResize, .applicationRules]) {
             linkedResize.configuration = configuration
         }
+        if !changes.isDisjoint(with: [.snapping, .linkedResize]) {
+            syncSharedGestureMonitoring()
+        }
         if !changes.isDisjoint(with: [.divider, .bentoGeometry]) {
             dividerResize.configuration = configuration
         }
@@ -933,6 +947,22 @@ final class BetterTileModel {
         if !changes.isDisjoint(with: [.divider, .bentoGeometry, .linkedResize]) {
             refreshDividerBoundaries()
         }
+    }
+
+    private func syncSharedGestureMonitoring() {
+        guard hasAccessibilityPermission,
+              configuration.snappingEnabled || configuration.linkedResizeEnabled
+        else {
+            sharedGestureEvents.stop()
+            setUsesSharedGestureEvents(false)
+            return
+        }
+        setUsesSharedGestureEvents(sharedGestureEvents.start())
+    }
+
+    private func setUsesSharedGestureEvents(_ enabled: Bool) {
+        dragSnap.setUsesSharedGestureEvents(enabled)
+        linkedResize.setUsesSharedGestureEvents(enabled)
     }
 
     private func applyDockPolicy() {

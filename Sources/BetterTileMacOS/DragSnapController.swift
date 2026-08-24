@@ -120,6 +120,7 @@ public final class DragSnapController {
     private var dragMonitor: Any?
     private var mouseUpMonitor: Any?
     private var escapeMonitor: Any?
+    private var gestureEventSource = GestureEventSourceGate()
     private var target: SnapTarget?
     private var dragGate = WindowDragGate()
     private var draggedWindowID: WindowID?
@@ -157,9 +158,24 @@ public final class DragSnapController {
         cancel()
     }
 
+    public func setUsesSharedGestureEvents(_ enabled: Bool) {
+        gestureEventSource.setUsesEventTap(enabled)
+        syncMonitoring()
+    }
+
+    public func handleSharedGestureEvent(_ event: GlobalGestureEvent) {
+        receive(event, from: .eventTap)
+    }
+
     private func syncMonitoring() {
         if isStarted, configuration.snappingEnabled {
-            installMouseDownMonitor()
+            if gestureEventSource.usesEventTap {
+                removeMouseDownMonitor()
+                removeFallbackGestureMonitors()
+            } else {
+                installMouseDownMonitor()
+                if isGestureActive { installGestureMonitors() }
+            }
         } else {
             removeMouseDownMonitor()
             removeGestureMonitors()
@@ -167,23 +183,26 @@ public final class DragSnapController {
     }
 
     private func installMouseDownMonitor() {
-        guard mouseDownMonitor == nil else { return }
+        guard !gestureEventSource.usesEventTap, mouseDownMonitor == nil else { return }
         mouseDownMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown]) { [weak self] event in
-            Task { @MainActor in self?.mousePressed(event) }
+            Task { @MainActor in self?.receive(event, kind: .leftMouseDown) }
         }
     }
 
     private func installGestureMonitors() {
-        guard dragMonitor == nil else { return }
-        dragMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDragged]) { [weak self] event in
-            Task { @MainActor in self?.mouseDragged(event) }
+        if !gestureEventSource.usesEventTap, dragMonitor == nil {
+            dragMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDragged]) { [weak self] event in
+                Task { @MainActor in self?.receive(event, kind: .leftMouseDragged) }
+            }
+            mouseUpMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseUp]) { [weak self] event in
+                Task { @MainActor in self?.receive(event, kind: .leftMouseUp) }
+            }
         }
-        mouseUpMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseUp]) { [weak self] _ in
-            Task { @MainActor in self?.mouseReleased() }
-        }
-        escapeMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.keyDown]) { [weak self] event in
-            guard event.keyCode == 53 else { return }
-            Task { @MainActor in self?.cancel() }
+        if escapeMonitor == nil {
+            escapeMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.keyDown]) { [weak self] event in
+                guard event.keyCode == 53 else { return }
+                Task { @MainActor in self?.cancel() }
+            }
         }
     }
 
@@ -193,12 +212,16 @@ public final class DragSnapController {
     }
 
     private func removeGestureMonitors() {
+        removeFallbackGestureMonitors()
+        if let escapeMonitor { NSEvent.removeMonitor(escapeMonitor) }
+        escapeMonitor = nil
+    }
+
+    private func removeFallbackGestureMonitors() {
         if let dragMonitor { NSEvent.removeMonitor(dragMonitor) }
         if let mouseUpMonitor { NSEvent.removeMonitor(mouseUpMonitor) }
-        if let escapeMonitor { NSEvent.removeMonitor(escapeMonitor) }
         dragMonitor = nil
         mouseUpMonitor = nil
-        escapeMonitor = nil
     }
 
     public func cancel() {
@@ -234,15 +257,30 @@ public final class DragSnapController {
             .allowsBentoParticipation
     }
 
-    private func mousePressed(_ event: NSEvent) {
+    private func receive(_ event: NSEvent, kind: GlobalGestureEventKind) {
+        guard gestureEventSource.accepts(.nsEvent),
+              let gestureEvent = GlobalGestureEvent(event, kind: kind)
+        else { return }
+        receive(gestureEvent, from: .nsEvent)
+    }
+
+    private func receive(_ event: GlobalGestureEvent, from source: GestureEventSource) {
+        guard gestureEventSource.accepts(source), event.button == 0 else { return }
+        switch event.kind {
+        case .leftMouseDown: mousePressed(event)
+        case .leftMouseDragged where isGestureActive: mouseDragged(event)
+        case .leftMouseUp where isGestureActive: mouseReleased()
+        case .leftMouseDragged, .leftMouseUp: return
+        }
+    }
+
+    private func mousePressed(_ event: GlobalGestureEvent) {
         dragGate.reset()
         draggedWindowID = nil
         guard configuration.snappingEnabled,
-              !ShortcutModifiers(event.modifierFlags).isSuperset(of: configuration.snapSuppressionModifiers),
-              let mainFrame = NSScreen.main?.frame
+              !event.modifiers.isSuperset(of: configuration.snapSuppressionModifiers)
         else { return }
-        let point = CoordinateConverter.pointToTopLeft(NSEvent.mouseLocation, mainScreenFrame: mainFrame)
-        guard NSEvent.pressedMouseButtons & 1 == 1 else { return }
+        let point = event.position
         mouseDownPoint = point
         guard let window = windowUnderTitleBar(at: point) else {
             guard let system = coordinator.system as? AccessibilityWindowSystem,
@@ -267,12 +305,12 @@ public final class DragSnapController {
         installGestureMonitors()
     }
 
-    private func mouseDragged(_ event: NSEvent) {
+    private func mouseDragged(_ event: GlobalGestureEvent) {
         guard configuration.snappingEnabled else { clearTargets(); return }
-        let activeModifiers = ShortcutModifiers(event.modifierFlags)
+        let activeModifiers = event.modifiers
         guard !activeModifiers.isSuperset(of: configuration.snapSuppressionModifiers) else { clearTargets(); return }
         guard let mainFrame = NSScreen.main?.frame else { return }
-        let point = CoordinateConverter.pointToTopLeft(NSEvent.mouseLocation, mainScreenFrame: mainFrame)
+        let point = event.position
         guard pendingRestoredWindowID == nil, pendingStageManagerWindowID == nil else {
             clearTargets()
             return
@@ -1190,16 +1228,5 @@ private final class BentoWireframeView: NSView {
         path.setLineDash(pattern, count: pattern.count, phase: 0)
         NSColor.controlAccentColor.withAlphaComponent(0.72).setStroke()
         path.stroke()
-    }
-}
-
-private extension ShortcutModifiers {
-    init(_ flags: NSEvent.ModifierFlags) {
-        var value: ShortcutModifiers = []
-        if flags.contains(.command) { value.insert(.command) }
-        if flags.contains(.option) { value.insert(.option) }
-        if flags.contains(.control) { value.insert(.control) }
-        if flags.contains(.shift) { value.insert(.shift) }
-        self = value
     }
 }

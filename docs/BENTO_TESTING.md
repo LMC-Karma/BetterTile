@@ -38,6 +38,14 @@ windows look correct.
   thumbnail artifact as a pane, and leaves every other group member untouched.
 - Repeat the Stage Manager checks with its Accessibility hierarchy unavailable
   or `disablePrivateAPIs` enabled. Confirm ordinary hit-testing still works.
+- Exercise drag snapping and linked resizing with the shared gesture event tap
+  active. Confirm down/drag/up ordering matches the `NSEvent` fallback, Escape
+  still cancels drag snapping, and one gesture produces one settlement path.
+- Disable the event tap during an active gesture and confirm it recovers or both
+  consumers switch to `NSEvent` without a duplicate drag or resize. Confirm no
+  Input Monitoring prompt appears.
+- Compare shared-event and `NSEvent` gesture traces in Instruments. Confirm p95
+  down/drag/up delivery latency does not regress by more than 10%.
 - Repeat the Space, fullscreen, and display checks after running
   `defaults write com.lmckarma.BetterTile disablePrivateAPIs -bool true` and
   reopening BetterTile. Restore normal behavior with

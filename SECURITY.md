@@ -117,6 +117,14 @@ permission or privileged component requires an explicit design review,
 least-privilege justification, repository documentation, and an in-product
 explanation before the system prompt appears.
 
+BetterTile attempts one public, listen-only session `CGEventTap` for global
+left-button gesture ordering only after Accessibility access is present. It
+never calls the API that requests Input Monitoring. If the existing grant is
+insufficient, tap creation fails, or a disabled tap cannot be re-enabled, both
+gesture consumers return to their public `NSEvent` monitors automatically.
+The tap copies only scalar position, button, modifier, timestamp, and event-kind
+values to the main actor. It neither changes nor retains system events.
+
 Runtime dependencies are allowed after reviewing necessity, maintenance,
 security history, license compatibility, update strategy, and removal cost.
 Approved dependencies are pinned and recorded in
