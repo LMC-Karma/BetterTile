@@ -80,6 +80,33 @@ struct GestureEventSourceGate {
     }
 }
 
+/// Holds a requested switch to the shared event tap until the active gesture
+/// ends. A gesture that started on the NSEvent monitors must keep receiving its
+/// remaining drag and up events from that same source.
+struct GestureEventSourceHandoff {
+    private(set) var isPending = false
+
+    /// Returns true when the caller can change the gesture source now.
+    mutating func request(
+        usesEventTap: Bool,
+        currentlyUsesEventTap: Bool,
+        isGestureActive: Bool
+    ) -> Bool {
+        isPending = usesEventTap && !currentlyUsesEventTap && isGestureActive
+        return !isPending
+    }
+
+    /// Returns true once a deferred switch to the event tap can be applied.
+    mutating func resolve() -> Bool {
+        defer { isPending = false }
+        return isPending
+    }
+
+    mutating func clear() {
+        isPending = false
+    }
+}
+
 struct GestureEventGenerationGate {
     private var nextGeneration = 0
     private var activeGeneration: Int?
@@ -110,6 +137,43 @@ enum GestureEventTapRecovery {
     }
 }
 
+/// Suppresses repeated event-tap creation after a failure. Each attempt starts
+/// a worker thread and blocks the caller until the tap is created, so a
+/// persistent failure must not retry on every application activation.
+struct GestureEventTapRetryGate {
+    static let defaultCooldown: TimeInterval = 30
+
+    private let cooldown: TimeInterval
+    private var retryTime: TimeInterval?
+
+    init(cooldown: TimeInterval = GestureEventTapRetryGate.defaultCooldown) {
+        self.cooldown = cooldown
+    }
+
+    func allowsStart(at time: TimeInterval) -> Bool {
+        guard let retryTime else { return true }
+        return time >= retryTime
+    }
+
+    mutating func recordFailure(at time: TimeInterval) {
+        retryTime = time + cooldown
+    }
+
+    mutating func recordSuccess() {
+        retryTime = nil
+    }
+}
+
+enum GestureEventTapMessage: Sendable {
+    case event(GlobalGestureEvent)
+    case fallback
+}
+
+protocol GestureEventTapWorking: AnyObject {
+    func start() -> Bool
+    func stop()
+}
+
 /// Owns one listen-only session event tap. The callback copies only scalar
 /// gesture data before forwarding it to the main actor.
 @MainActor
@@ -122,29 +186,52 @@ public final class SharedGestureEventMonitor {
         subsystem: "com.lmckarma.BetterTile",
         category: "GestureEvents"
     )
-    private var worker: GestureEventTapWorker?
+    private let now: () -> TimeInterval
+    private let makeWorker: (
+        @escaping @Sendable (GestureEventTapMessage) -> Void
+    ) -> GestureEventTapWorking
+    private var worker: GestureEventTapWorking?
     private var generationGate = GestureEventGenerationGate()
+    private var retryGate: GestureEventTapRetryGate
     private var loggedAvailability = false
     private var loggedFallback = false
 
-    public init() {}
+    public convenience init() {
+        self.init(cooldown: GestureEventTapRetryGate.defaultCooldown)
+    }
+
+    init(
+        cooldown: TimeInterval = GestureEventTapRetryGate.defaultCooldown,
+        now: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
+        makeWorker: @escaping (
+            @escaping @Sendable (GestureEventTapMessage) -> Void
+        ) -> GestureEventTapWorking = { GestureEventTapWorker(handler: $0) }
+    ) {
+        retryGate = GestureEventTapRetryGate(cooldown: cooldown)
+        self.now = now
+        self.makeWorker = makeWorker
+    }
 
     @discardableResult
     public func start() -> Bool {
         if isUsingEventTap { return true }
+        let time = now()
+        guard retryGate.allowsStart(at: time) else { return false }
         let generation = generationGate.begin()
-        let worker = GestureEventTapWorker { [weak self] message in
+        let worker = makeWorker { [weak self] message in
             DispatchQueue.main.async { [weak self] in
                 self?.receive(message, generation: generation)
             }
         }
         guard worker.start() else {
             generationGate.end()
+            retryGate.recordFailure(at: time)
             logFallbackOnce("shared gesture event tap unavailable; using NSEvent monitors")
             return false
         }
         self.worker = worker
         isUsingEventTap = true
+        retryGate.recordSuccess()
         if !loggedAvailability {
             loggedAvailability = true
             Self.log.notice("shared gesture event tap available")
@@ -152,6 +239,8 @@ public final class SharedGestureEventMonitor {
         return true
     }
 
+    /// Stops the tap on request. An intentional stop is not a failure, so it
+    /// leaves the retry cooldown untouched.
     public func stop() {
         generationGate.end()
         worker?.stop()
@@ -159,7 +248,7 @@ public final class SharedGestureEventMonitor {
         isUsingEventTap = false
     }
 
-    private func receive(_ message: GestureEventTapWorker.Message, generation: Int) {
+    private func receive(_ message: GestureEventTapMessage, generation: Int) {
         guard generationGate.accepts(generation) else { return }
         switch message {
         case let .event(event):
@@ -168,6 +257,7 @@ public final class SharedGestureEventMonitor {
         case .fallback:
             guard isUsingEventTap else { return }
             stop()
+            retryGate.recordFailure(at: now())
             logFallbackOnce("shared gesture event tap recovery failed; using NSEvent monitors")
             fallbackHandler?()
         }
@@ -180,12 +270,7 @@ public final class SharedGestureEventMonitor {
     }
 }
 
-private final class GestureEventTapWorker: @unchecked Sendable {
-    enum Message: Sendable {
-        case event(GlobalGestureEvent)
-        case fallback
-    }
-
+final class GestureEventTapWorker: GestureEventTapWorking, @unchecked Sendable {
     private static let eventMask = [
         CGEventType.leftMouseDown,
         .leftMouseDragged,
@@ -194,13 +279,13 @@ private final class GestureEventTapWorker: @unchecked Sendable {
         $0 | (CGEventMask(1) << $1.rawValue)
     }
 
-    private let handler: @Sendable (Message) -> Void
+    private let handler: @Sendable (GestureEventTapMessage) -> Void
     private let lock = NSLock()
     private var runLoop: CFRunLoop?
     private var tap: CFMachPort?
     private var isStopping = false
 
-    init(handler: @escaping @Sendable (Message) -> Void) {
+    init(handler: @escaping @Sendable (GestureEventTapMessage) -> Void) {
         self.handler = handler
     }
 

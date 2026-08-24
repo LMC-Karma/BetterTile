@@ -6,7 +6,10 @@ import BetterTileCore
 public final class LinkedResizeController {
     public var configuration: BetterTileConfiguration {
         didSet {
-            if !configuration.linkedResizeEnabled { endGesture() }
+            if !configuration.linkedResizeEnabled {
+                eventTapHandoff.clear()
+                endGesture()
+            }
             syncMonitoring()
         }
     }
@@ -18,6 +21,7 @@ public final class LinkedResizeController {
     private var dragMonitor: Any?
     private var mouseUpMonitor: Any?
     private var gestureEventSource = GestureEventSourceGate()
+    private var eventTapHandoff = GestureEventSourceHandoff()
     private var baselineWindows: [WindowSnapshot] = []
     private var sourceID: WindowID?
     private var isLeftButtonDown = false
@@ -35,17 +39,36 @@ public final class LinkedResizeController {
 
     public func stop() {
         isStarted = false
+        eventTapHandoff.clear()
         removeMouseDownMonitor()
         removeGestureMonitors()
         endGesture()
     }
 
+    /// Switching to the event tap waits for an active gesture to finish. The
+    /// tap knows nothing about a gesture that began on the NSEvent monitors, so
+    /// removing those monitors mid-gesture would strand it.
     public func setUsesSharedGestureEvents(_ enabled: Bool) {
         let wasUsingEventTap = gestureEventSource.usesEventTap
+        guard eventTapHandoff.request(
+            usesEventTap: enabled,
+            currentlyUsesEventTap: wasUsingEventTap,
+            isGestureActive: isGestureActive
+        ) else { return }
         gestureEventSource.setUsesEventTap(enabled)
         if wasUsingEventTap, !enabled, isLeftButtonDown, sourceID == nil {
             beginGesture()
         }
+        syncMonitoring()
+    }
+
+    private var isGestureActive: Bool {
+        isLeftButtonDown || sourceID != nil
+    }
+
+    private func applyPendingEventTapHandoff() {
+        guard eventTapHandoff.resolve() else { return }
+        gestureEventSource.setUsesEventTap(true)
         syncMonitoring()
     }
 
@@ -189,6 +212,7 @@ public final class LinkedResizeController {
         baselineWindows = []
         sourceID = nil
         removeGestureMonitors()
+        applyPendingEventTapHandoff()
     }
 
     private func dominantResizeChange(from before: BTRect, to after: BTRect) -> (edge: WindowEdge, delta: Double)? {

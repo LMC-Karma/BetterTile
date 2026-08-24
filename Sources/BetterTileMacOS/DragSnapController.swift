@@ -97,7 +97,10 @@ enum WindowExposureRetry {
 public final class DragSnapController {
     public var configuration: BetterTileConfiguration {
         didSet {
-            if !configuration.snappingEnabled { cancel() }
+            if !configuration.snappingEnabled {
+                eventTapHandoff.clear()
+                cancel()
+            }
             syncMonitoring()
         }
     }
@@ -121,6 +124,7 @@ public final class DragSnapController {
     private var mouseUpMonitor: Any?
     private var escapeMonitor: Any?
     private var gestureEventSource = GestureEventSourceGate()
+    private var eventTapHandoff = GestureEventSourceHandoff()
     private var target: SnapTarget?
     private var dragGate = WindowDragGate()
     private var draggedWindowID: WindowID?
@@ -153,13 +157,28 @@ public final class DragSnapController {
 
     public func stop() {
         isStarted = false
+        eventTapHandoff.clear()
         removeMouseDownMonitor()
         removeGestureMonitors()
         cancel()
     }
 
+    /// Switching to the event tap waits for an active gesture to finish. The
+    /// tap knows nothing about a gesture that began on the NSEvent monitors, so
+    /// removing those monitors mid-gesture would strand it.
     public func setUsesSharedGestureEvents(_ enabled: Bool) {
+        guard eventTapHandoff.request(
+            usesEventTap: enabled,
+            currentlyUsesEventTap: gestureEventSource.usesEventTap,
+            isGestureActive: isGestureActive
+        ) else { return }
         gestureEventSource.setUsesEventTap(enabled)
+        syncMonitoring()
+    }
+
+    private func applyPendingEventTapHandoff() {
+        guard eventTapHandoff.resolve() else { return }
+        gestureEventSource.setUsesEventTap(true)
         syncMonitoring()
     }
 
@@ -577,6 +596,7 @@ public final class DragSnapController {
         mouseDownPoint = nil
         resolvedDragTarget = false
         removeGestureMonitors()
+        applyPendingEventTapHandoff()
     }
 
     private func clearTargets() {

@@ -246,3 +246,89 @@ import Testing
     #expect(gate.activate(with: moved) == original.id)
     #expect(gate.activate(with: nil) == original.id)
 }
+
+@Test @MainActor func eventTapHandoffWaitsForTheActiveNSEventDrag() {
+    let system = FakeWindowSystem()
+    let controller = DragSnapController(
+        coordinator: WindowCoordinator(system: system),
+        configuration: BetterTileConfiguration()
+    )
+    let windowID = WindowID(rawValue: "focused")
+
+    func event(_ kind: GlobalGestureEventKind, timestamp: UInt64) -> GlobalGestureEvent {
+        GlobalGestureEvent(
+            kind: kind,
+            position: kind == .leftMouseDown
+                ? BTPoint(x: 300, y: 220)
+                : BTPoint(x: 1, y: 400),
+            button: 0,
+            modifiers: [],
+            timestamp: timestamp
+        )
+    }
+
+    // The tap starts the drag, then fails, so NSEvent monitors take the gesture.
+    controller.setUsesSharedGestureEvents(true)
+    controller.handleSharedGestureEvent(event(.leftMouseDown, timestamp: 1))
+    system.windows[0].frame.origin.x += 3
+    controller.setUsesSharedGestureEvents(false)
+    controller.receive(event(.leftMouseDragged, timestamp: 2), from: .nsEvent)
+    #expect(controller.isGestureActive)
+
+    // The tap becomes available again while that NSEvent drag is still running.
+    controller.setUsesSharedGestureEvents(true)
+    controller.handleSharedGestureEvent(event(.leftMouseDragged, timestamp: 3))
+    controller.handleSharedGestureEvent(event(.leftMouseUp, timestamp: 4))
+    #expect(controller.isGestureActive)
+    #expect(system.windows[0].frame == BTRect(x: 203, y: 200, width: 600, height: 400))
+
+    // The NSEvent up finishes the gesture exactly once.
+    controller.receive(event(.leftMouseUp, timestamp: 5), from: .nsEvent)
+    #expect(!controller.isGestureActive)
+    #expect(system.windows[0].frame == BTRect(x: 0, y: 0, width: 500, height: 800))
+    #expect(system.frameWriteCounts[windowID] == 1)
+
+    // The deferred handoff applies, so the next gesture uses the event tap.
+    system.windows[0].frame = BTRect(x: 200, y: 200, width: 600, height: 400)
+    controller.handleSharedGestureEvent(event(.leftMouseDown, timestamp: 6))
+    system.windows[0].frame.origin.x += 3
+    controller.handleSharedGestureEvent(event(.leftMouseDragged, timestamp: 7))
+    controller.handleSharedGestureEvent(event(.leftMouseUp, timestamp: 8))
+
+    #expect(system.windows[0].frame == BTRect(x: 0, y: 0, width: 500, height: 800))
+    #expect(system.frameWriteCounts[windowID] == 2)
+}
+
+@Test @MainActor func stoppingDuringADeferredHandoffDoesNotEnableTheEventTap() {
+    let system = FakeWindowSystem()
+    let controller = DragSnapController(
+        coordinator: WindowCoordinator(system: system),
+        configuration: BetterTileConfiguration()
+    )
+
+    func event(_ kind: GlobalGestureEventKind, timestamp: UInt64) -> GlobalGestureEvent {
+        GlobalGestureEvent(
+            kind: kind,
+            position: kind == .leftMouseDown
+                ? BTPoint(x: 300, y: 220)
+                : BTPoint(x: 1, y: 400),
+            button: 0,
+            modifiers: [],
+            timestamp: timestamp
+        )
+    }
+
+    controller.setUsesSharedGestureEvents(true)
+    controller.handleSharedGestureEvent(event(.leftMouseDown, timestamp: 1))
+    system.windows[0].frame.origin.x += 3
+    controller.setUsesSharedGestureEvents(false)
+    controller.receive(event(.leftMouseDragged, timestamp: 2), from: .nsEvent)
+    controller.setUsesSharedGestureEvents(true)
+
+    controller.stop()
+
+    // The cleared handoff must not switch the source back to the event tap.
+    controller.handleSharedGestureEvent(event(.leftMouseDown, timestamp: 3))
+    #expect(!controller.isGestureActive)
+    #expect(system.windows[0].frame == BTRect(x: 203, y: 200, width: 600, height: 400))
+}
