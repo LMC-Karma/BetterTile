@@ -7,10 +7,14 @@ import Testing
     let debouncer = DisplayRefreshDebouncer(delay: .milliseconds(20))
     var refreshCount = 0
 
-    debouncer.schedule { refreshCount += 1 }
-    debouncer.schedule { refreshCount += 1 }
-    debouncer.schedule { refreshCount += 1 }
-    try? await Task.sleep(for: .milliseconds(100))
+    await withCheckedContinuation { continuation in
+        debouncer.schedule { refreshCount += 1 }
+        debouncer.schedule { refreshCount += 1 }
+        debouncer.schedule {
+            refreshCount += 1
+            continuation.resume()
+        }
+    }
 
     #expect(refreshCount == 1)
 }
