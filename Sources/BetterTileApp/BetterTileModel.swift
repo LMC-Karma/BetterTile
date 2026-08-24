@@ -57,8 +57,10 @@ final class BetterTileModel {
     private var settlementTasks: [DisplayID: Task<Void, Never>] = [:]
     private var settlementTaskGenerations: [DisplayID: UInt64] = [:]
     private var spaceStabilizationTask: Task<Void, Never>?
+    private let displayRefreshDebouncer = DisplayRefreshDebouncer()
     private var spaceStabilizationGeneration = 0
     private var isStabilizingSpace = false
+    private var nativeFullscreenDisplayIDs: Set<DisplayID> = []
     private var suppressSpaceFrameEventsUntil = Date.distantPast
     private var activeBentoDrag: ActiveBentoDrag?
     private var bentoDragEventBuffer = WindowEventBuffer()
@@ -161,6 +163,9 @@ final class BetterTileModel {
         installWorkspaceTriggers()
         system.startDockFootprintMonitoring { [weak self] in
             self?.dockFootprintChanged()
+        }
+        system.startDisplayReconfigurationMonitoring { [weak self] in
+            self?.scheduleDisplayRefresh()
         }
         refreshActiveWindows(force: true)
 
@@ -391,7 +396,10 @@ final class BetterTileModel {
 
     func tileCurrentDisplay() {
         do {
-            let windows = try system.visibleWindows().filter { $0.isEligible && !$0.isFloating }
+            let observedWindows = try system.visibleWindows()
+            let nativeObservation = system.nativeDesktopObservation()
+            let windows = (nativeObservation?.windowsOnCurrentSpaces(observedWindows) ?? observedWindows)
+                .filter { $0.isEligible && !$0.isFloating }
             guard let focused = try system.focusedWindow(),
                   let display = system.displays().first(where: { $0.id == focused.displayID })
             else {
@@ -416,7 +424,8 @@ final class BetterTileModel {
                 focusedWindowID: focused.id,
                 defaultMode: configuration.defaultLayoutMode,
                 reuseActiveWhenUnmatched: true,
-                commitObservation: false
+                commitObservation: false,
+                nativeSpaceID: nativeObservation?.currentSpace(on: display.id)
             ).session
             // One window has no layout to repair. Restoring its configured
             // placement is the useful thing to do, and it deliberately leaves
@@ -855,8 +864,10 @@ final class BetterTileModel {
         permissionPollTask?.cancel()
         windowEventTask?.cancel()
         spaceStabilizationTask?.cancel()
+        displayRefreshDebouncer.cancel()
         settlementTasks.values.forEach { $0.cancel() }
         system.stopDockFootprintMonitoring()
+        system.stopDisplayReconfigurationMonitoring()
         system.stopWindowObservation()
         shortcuts.stop()
         dragSnap.stop()
@@ -937,12 +948,7 @@ final class BetterTileModel {
         let center = NotificationCenter.default
         let workspaceCenter = NSWorkspace.shared.notificationCenter
         notificationTokens.append(center.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in
-            Task { @MainActor in
-                self?.system.triggerDockFootprintCheck()
-                self?.dragSnap.cancel()
-                self?.dividerResize.hideAndCancel()
-                self?.refreshActiveWindows(force: true)
-            }
+            Task { @MainActor in self?.scheduleDisplayRefresh() }
         })
         notificationTokens.append(center.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
             Task { @MainActor in
@@ -1003,6 +1009,18 @@ final class BetterTileModel {
         }
     }
 
+    /// Coalesces Core Graphics and AppKit display notifications into the same
+    /// refresh. AppKit remains the fallback when callback registration fails.
+    private func scheduleDisplayRefresh() {
+        displayRefreshDebouncer.schedule { [weak self] in
+            guard let self else { return }
+            self.system.triggerDockFootprintCheck()
+            self.dragSnap.cancel()
+            self.dividerResize.hideAndCancel()
+            self.refreshActiveWindows(force: true)
+        }
+    }
+
     private func performDeferredDockReflow() {
         schedulePendingWindowEvents()
         guard pendingDockReflow, !dragSnap.isGestureActive, !dividerResize.isDragging else { return }
@@ -1018,6 +1036,7 @@ final class BetterTileModel {
         settlementTasks.values.forEach { $0.cancel() }
         settlementTasks.removeAll()
         spaceStabilizationTask?.cancel()
+        selectNativeDesktopSessions()
         spaceStabilizationGeneration &+= 1
         let generation = spaceStabilizationGeneration
         isStabilizingSpace = true
@@ -1047,6 +1066,26 @@ final class BetterTileModel {
             self.refreshActiveWindows(force: true, windows: latestWindows, desktopTransition: true)
             self.schedulePendingWindowEvents()
         }
+    }
+
+    /// A native Space change selects the exact runtime session immediately.
+    /// Membership still stabilizes twice before the normal refresh may write.
+    private func selectNativeDesktopSessions() {
+        guard let observation = system.refreshNativeDesktopObservation() else {
+            nativeFullscreenDisplayIDs.removeAll()
+            return
+        }
+        sessionStore.removeMissingNativeSpaces(observation.knownSpacesByDisplay)
+        for (displayID, nativeSpaceID) in observation.currentSpaceByDisplay {
+            sessionStore.select(
+                displayID: displayID,
+                nativeSpaceID: nativeSpaceID,
+                defaultMode: configuration.defaultLayoutMode
+            )
+        }
+        nativeFullscreenDisplayIDs = Set(observation.currentSpaceByDisplay.compactMap {
+            observation.fullscreenSpaceIDs.contains($0.value) ? $0.key : nil
+        })
     }
 
     private func refreshFocusedDisplayWithoutLayout() {
@@ -1736,7 +1775,9 @@ final class BetterTileModel {
             activeDisplayID = system.displays().first(where: \.isMain)?.id
             return
         }
-        guard let windows = suppliedWindows ?? (try? system.visibleWindows()) else { return }
+        guard let observedWindows = suppliedWindows ?? (try? system.visibleWindows()) else { return }
+        let nativeObservation = system.nativeDesktopObservation()
+        let windows = nativeObservation?.windowsOnCurrentSpaces(observedWindows) ?? observedWindows
         // Destroyed-window identifiers are a batch consumed by exactly one
         // completed sweep. Capturing here means an early return above leaves
         // them pending for the next attempt, while identifiers belonging to
@@ -1756,6 +1797,14 @@ final class BetterTileModel {
         lastDisplayWorkAreaSignature = displayWorkAreaSignature(displays)
         let displayIDs = Set(displays.map(\.id))
         sessionStore.removeMissingDisplays(displayIDs)
+        if let nativeObservation {
+            sessionStore.removeMissingNativeSpaces(nativeObservation.knownSpacesByDisplay)
+            nativeFullscreenDisplayIDs = Set(nativeObservation.currentSpaceByDisplay.compactMap {
+                nativeObservation.fullscreenSpaceIDs.contains($0.value) ? $0.key : nil
+            })
+        } else {
+            nativeFullscreenDisplayIDs.removeAll()
+        }
         var resolvedActiveDisplay: DisplayID?
         var sweepCommitted = true
         let ambientReconciler = AmbientLayoutReconciler(
@@ -1772,9 +1821,18 @@ final class BetterTileModel {
                 focusedWindowID: focused?.displayID == display.id ? focused?.id : nil,
                 defaultMode: configuration.defaultLayoutMode,
                 reuseActiveWhenUnmatched: !desktopTransition,
-                commitObservation: false
+                commitObservation: false,
+                nativeSpaceID: nativeObservation?.currentSpace(on: display.id)
             )
             if focused?.displayID == display.id { resolvedActiveDisplay = display.id }
+            if nativeObservation?.allowsAutomaticLayout(on: display.id) == false {
+                let committed = sessionStore.commit(
+                    activation.session,
+                    replacing: activation.session.revision
+                ) != nil
+                sweepCommitted = sweepCommitted && committed
+                continue
+            }
             let shouldLogHeldAbsences = activation.session.mode == .bento
                 && !activation.session.automaticWritesSuspended
                 && !activation.wasCreated
@@ -1976,6 +2034,7 @@ final class BetterTileModel {
         var boundaries: [BoundaryDescriptor] = []
         var managedWindowIDs: Set<WindowID> = []
         for (displayID, session) in sessionStore.sessions {
+            guard !nativeFullscreenDisplayIDs.contains(displayID) else { continue }
             guard let display = displays[displayID] else { continue }
             let contextWindows = windows.filter { session.windowIDs.contains($0.id) && $0.displayID == displayID }
             switch session.mode {

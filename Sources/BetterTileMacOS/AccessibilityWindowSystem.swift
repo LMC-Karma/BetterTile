@@ -4,7 +4,7 @@ import BetterTileCore
 import os
 
 @MainActor
-public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventSource {
+public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventSource, NativeDesktopProviding {
     private static let signposter = OSSignposter(
         subsystem: "com.lmckarma.BetterTile",
         category: "Accessibility"
@@ -14,7 +14,11 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
     private var identities = WindowIdentityRegistry()
     private let privateAPIsDisabled: Bool
     private let exactWindowIDResolver: ExactWindowIDResolver
+    private let nativeDesktopProvider: NativeDesktopObservationProvider
     private var snapshotCache = WindowSnapshotCache()
+    private var snapshotGeneration: UInt64 = 0
+    private var nativeObservationGeneration: UInt64?
+    private var lastNativeDesktopObservation: NativeDesktopObservation?
     private struct LaunchRecord {
         var launchToken: UInt64?
         var instance: ApplicationLaunchInstance
@@ -37,6 +41,8 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
     private let dockFootprintMonitor = DockFootprintMonitor()
     private var recentApplicationPIDs: [pid_t] = []
     private var activationObserver: NSObjectProtocol?
+    private var displayReconfigurationHandler: (@MainActor () -> Void)?
+    private var isMonitoringDisplayReconfiguration = false
 
     /// The process-wide default, set once on the system-wide element. Reads are
     /// the bulk of the traffic and a stalled application should be skipped
@@ -65,6 +71,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         let privateAPIsDisabled = UserDefaults.standard.bool(forKey: "disablePrivateAPIs")
         self.privateAPIsDisabled = privateAPIsDisabled
         exactWindowIDResolver = ExactWindowIDResolver(disabled: privateAPIsDisabled)
+        nativeDesktopProvider = NativeDesktopObservationProvider(disabled: privateAPIsDisabled)
         AXUIElementSetMessagingTimeout(AXUIElementCreateSystemWide(), Self.defaultMessagingTimeout)
         if let application = NSWorkspace.shared.frontmostApplication {
             recordActivation(of: application)
@@ -91,6 +98,39 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
 
     public func stopDockFootprintMonitoring() {
         dockFootprintMonitor.stop()
+    }
+
+    public func startDisplayReconfigurationMonitoring(
+        onChange: @escaping @MainActor () -> Void
+    ) {
+        displayReconfigurationHandler = onChange
+        guard !isMonitoringDisplayReconfiguration else { return }
+        let result = CGDisplayRegisterReconfigurationCallback(
+            betterTileDisplayReconfigurationCallback,
+            Unmanaged.passUnretained(self).toOpaque()
+        )
+        guard result == .success else {
+            Self.log.notice("display callback unavailable; retaining AppKit screen notifications")
+            return
+        }
+        isMonitoringDisplayReconfiguration = true
+    }
+
+    public func stopDisplayReconfigurationMonitoring() {
+        guard isMonitoringDisplayReconfiguration else {
+            displayReconfigurationHandler = nil
+            return
+        }
+        CGDisplayRemoveReconfigurationCallback(
+            betterTileDisplayReconfigurationCallback,
+            Unmanaged.passUnretained(self).toOpaque()
+        )
+        isMonitoringDisplayReconfiguration = false
+        displayReconfigurationHandler = nil
+    }
+
+    fileprivate func displayConfigurationChanged() {
+        displayReconfigurationHandler?()
     }
 
     public func setWindowEventHandler(_ handler: (@MainActor (WindowSystemEvent) -> Void)?) {
@@ -124,6 +164,9 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         elements.removeAll()
         identities.removeAll()
         snapshotCache.invalidate()
+        snapshotGeneration &+= 1
+        nativeObservationGeneration = nil
+        lastNativeDesktopObservation = nil
         launchRecords.removeAll()
         managedWindowIDs.removeAll()
         recentWindowIDs.removeAll()
@@ -180,10 +223,11 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
                        application: applicationInstance,
                        bundleIdentifier: application.bundleIdentifier,
                        displays: availableDisplays
-                   ) {
-                    retainRecent(snapshot.id)
-                    registerWindowNotifications(window, snapshot: snapshot)
-                    return snapshot
+                   ),
+                   let classified = classifyByNativeMembership(snapshot) {
+                    retainRecent(classified.id)
+                    registerWindowNotifications(window, snapshot: classified)
+                    return classified
                 }
             }
             let windows: [AXUIElement] = value(kAXWindowsAttribute, from: appElement) ?? []
@@ -193,7 +237,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
                     application: applicationInstance,
                     bundleIdentifier: application.bundleIdentifier,
                     displays: availableDisplays
-                )
+                ).flatMap(self.classifyByNativeMembership)
             }).first {
                 retainRecent(snapshot.id)
                 if let element = elements[snapshot.id] {
@@ -255,7 +299,11 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         }
         let sorted = snapshots.sorted { $0.id < $1.id }
         snapshotCache.recordFullSweep(sorted)
-        return sorted
+        snapshotGeneration &+= 1
+        nativeObservationGeneration = nil
+        let classified = nativeDesktopObservation()?.windowsOnCurrentSpaces(sorted) ?? sorted
+        snapshotCache.recordFullSweep(classified)
+        return classified
     }
 
     public func updateManagedWindowIDs(_ ids: Set<WindowID>) {
@@ -326,7 +374,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
             application: applicationInstance(forPID: pid),
             bundleIdentifier: NSRunningApplication(processIdentifier: pid)?.bundleIdentifier,
             displays: displays()
-        )
+        ).flatMap(classifyByNativeMembership)
     }
 
     public func displays() -> [DisplaySnapshot] {
@@ -351,6 +399,29 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         }.sorted { lhs, rhs in
             lhs.frame.minX == rhs.frame.minX ? lhs.frame.minY < rhs.frame.minY : lhs.frame.minX < rhs.frame.minX
         }
+    }
+
+    public func nativeDesktopObservation() -> NativeDesktopObservation? {
+        if nativeObservationGeneration == snapshotGeneration {
+            return lastNativeDesktopObservation
+        }
+        return refreshNativeDesktopObservation()
+    }
+
+    /// Space notifications change topology without changing the snapshot
+    /// cache. Force a fresh read before selecting the exact runtime session.
+    public func refreshNativeDesktopObservation() -> NativeDesktopObservation? {
+        let windows = snapshotCache.snapshots.map { Array($0.keys) } ?? Array(elements.keys)
+        let exactWindowIDs = Dictionary(uniqueKeysWithValues: windows.compactMap { windowID in
+            identities.exactWindowID(for: windowID).map { (windowID, $0) }
+        })
+        let observation = nativeDesktopProvider.observation(
+            displays: displays(),
+            exactWindowIDs: exactWindowIDs
+        )
+        lastNativeDesktopObservation = observation
+        nativeObservationGeneration = snapshotGeneration
+        return observation
     }
 
     public func setFrame(_ frame: BTRect, knownCurrentFrame: BTRect?, for windowID: WindowID) throws {
@@ -886,7 +957,12 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
                   windowServer.contains(snapshot, exactWindowID: exactWindowID)
             else { return nil }
         }
-        return snapshot
+        return classifyByNativeMembership(snapshot)
+    }
+
+    private func classifyByNativeMembership(_ window: WindowSnapshot) -> WindowSnapshot? {
+        guard let lastNativeDesktopObservation else { return window }
+        return lastNativeDesktopObservation.windowsOnCurrentSpaces([window]).first
     }
 
     private func containingWindow(for element: AXUIElement) -> AXUIElement? {
@@ -1049,6 +1125,20 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         processIdentifier != ownProcessIdentifier
             && activationPolicy == .regular
             && (includeHidden || !isHidden)
+    }
+}
+
+private func betterTileDisplayReconfigurationCallback(
+    display: CGDirectDisplayID,
+    flags: CGDisplayChangeSummaryFlags,
+    userInfo: UnsafeMutableRawPointer?
+) {
+    guard let userInfo else { return }
+    let address = UInt(bitPattern: userInfo)
+    Task { @MainActor in
+        guard let pointer = UnsafeMutableRawPointer(bitPattern: address) else { return }
+        let system = Unmanaged<AccessibilityWindowSystem>.fromOpaque(pointer).takeUnretainedValue()
+        system.displayConfigurationChanged()
     }
 }
 

@@ -21,6 +21,11 @@ import Testing
     configuration.applicationRules.set(.ignoreEverywhere, for: bundleIdentifier)
     controller.configuration = configuration
     #expect(!controller.allowsBentoDrag(for: window))
+
+    controller.configuration = BetterTileConfiguration()
+    var floatingWindow = window
+    floatingWindow.isFloating = true
+    #expect(!controller.allowsBentoDrag(for: floatingWindow))
 }
 
 @Test func bentoSwapSupportsTallerUnifiedToolbarsWithoutEnteringWindowContent() {

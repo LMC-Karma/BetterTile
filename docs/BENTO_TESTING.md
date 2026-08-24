@@ -28,5 +28,14 @@ windows look correct.
 - Enter and leave focus mode, including with a minimum-size window.
 - Switch Spaces and sleep/wake the Mac, then confirm the first stable observation
   produces at most one reflow.
+- Repeat Space switching with “Displays have separate Spaces” enabled and
+  disabled. Confirm each display and Space restores its own Bento tree.
+- Keep one window on multiple Spaces and confirm Bento leaves it floating.
+- Enter a native fullscreen Space and confirm BetterTile shows no divider and
+  performs no ambient placement.
+- Repeat the Space, fullscreen, and display checks after running
+  `defaults write com.lmckarma.BetterTile disablePrivateAPIs -bool true` and
+  reopening BetterTile. Restore normal behavior with
+  `defaults delete com.lmckarma.BetterTile disablePrivateAPIs`.
 - During and immediately after each operation, confirm windows do not twitch,
   drift, or restore twice.

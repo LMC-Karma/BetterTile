@@ -38,7 +38,7 @@ Core geometry uses logical points with a top-left origin. Display visible frames
 
 ## Space boundary
 
-BetterTile operates on eligible on-screen windows exposed by its macOS integration layer. It refreshes the current window set immediately when apps, Spaces, or displays change and keeps one runtime layout session per display. It does not infer or wait for Stage Manager groups and never attempts to move windows across Spaces.
+BetterTile operates on eligible on-screen windows exposed by its macOS integration layer. It refreshes the current window set immediately when apps, Spaces, or displays change. A validated native desktop observation selects one process-local runtime layout session for each display and Space pair. Missing or malformed native observations retain the public-API window-overlap matcher. Empty window membership remains unknown, windows reported on several Spaces float, and native fullscreen Spaces expose neither automatic layout writes nor dividers. BetterTile never attempts to move windows across Spaces.
 
 ## Event ordering
 

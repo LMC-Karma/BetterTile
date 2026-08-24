@@ -29,6 +29,7 @@ public struct LayoutSession: Hashable, Sendable {
     /// process-local session identity.
     public private(set) var revision: UInt64
     public var displayID: DisplayID
+    public var nativeSpaceID: NativeSpaceID?
     public var mode: LayoutMode
     public var bentoState: BentoLayoutState
     public var windowIDs: Set<WindowID>
@@ -51,6 +52,7 @@ public struct LayoutSession: Hashable, Sendable {
         id: DesktopSessionID = DesktopSessionID(),
         revision: UInt64 = 0,
         displayID: DisplayID,
+        nativeSpaceID: NativeSpaceID? = nil,
         mode: LayoutMode,
         bentoState: BentoLayoutState = BentoLayoutState(),
         windowIDs: Set<WindowID> = [],
@@ -69,6 +71,7 @@ public struct LayoutSession: Hashable, Sendable {
         self.id = id
         self.revision = revision
         self.displayID = displayID
+        self.nativeSpaceID = nativeSpaceID
         self.mode = mode
         self.bentoState = bentoState
         self.windowIDs = windowIDs
@@ -183,6 +186,7 @@ public struct DesktopObservationStabilizer: Sendable {
 public struct LayoutSessionStore: Sendable {
     private var storedSessions: [DisplayID: [DesktopSessionID: LayoutSession]] = [:]
     private var activeSessionIDs: [DisplayID: DesktopSessionID] = [:]
+    private var awaitingFirstObservation: Set<DesktopSessionID> = []
 
     public init() {}
 
@@ -217,26 +221,38 @@ public struct LayoutSessionStore: Sendable {
         focusedWindowID: WindowID?,
         defaultMode: LayoutMode,
         reuseActiveWhenUnmatched: Bool,
-        commitObservation: Bool = true
+        commitObservation: Bool = true,
+        nativeSpaceID: NativeSpaceID? = nil
     ) -> (session: LayoutSession, wasCreated: Bool, previousWindowIDs: Set<WindowID>) {
         let previousActiveID = activeSessionIDs[displayID]
         let candidates = storedSessions[displayID].map { Array($0.values) } ?? []
-        let matched = bestMatch(
-            candidates: candidates,
-            windowIDs: windowIDs,
-            focusedWindowID: focusedWindowID,
-            preferredID: previousActiveID
-        ) ?? (reuseActiveWhenUnmatched ? previousActiveID.flatMap { storedSessions[displayID]?[$0] } : nil)
+        let matched: LayoutSession?
+        if let nativeSpaceID {
+            matched = candidates.first { $0.nativeSpaceID == nativeSpaceID }
+        } else {
+            matched = bestMatch(
+                candidates: candidates,
+                windowIDs: windowIDs,
+                focusedWindowID: focusedWindowID,
+                preferredID: previousActiveID
+            ) ?? (reuseActiveWhenUnmatched
+                ? previousActiveID.flatMap { storedSessions[displayID]?[$0] }
+                : nil)
+        }
 
         var session: LayoutSession
         let wasCreated: Bool
         let previousWindowIDs: Set<WindowID>
         if let matched {
             session = matched
-            wasCreated = false
+            wasCreated = awaitingFirstObservation.remove(matched.id) != nil
             previousWindowIDs = matched.windowIDs
         } else {
-            session = LayoutSession(displayID: displayID, mode: defaultMode)
+            session = LayoutSession(
+                displayID: displayID,
+                nativeSpaceID: nativeSpaceID,
+                mode: defaultMode
+            )
             wasCreated = true
             previousWindowIDs = []
         }
@@ -258,6 +274,32 @@ public struct LayoutSessionStore: Sendable {
         }
         activeSessionIDs[displayID] = session.id
         return (session, wasCreated, previousWindowIDs)
+    }
+
+    /// Selects a native Space before its window membership settles. This makes
+    /// reads use the exact stored session immediately without permitting an
+    /// automatic frame write.
+    @discardableResult
+    public mutating func select(
+        displayID: DisplayID,
+        nativeSpaceID: NativeSpaceID,
+        defaultMode: LayoutMode
+    ) -> LayoutSession {
+        if let existing = storedSessions[displayID]?.values.first(where: {
+            $0.nativeSpaceID == nativeSpaceID
+        }) {
+            activeSessionIDs[displayID] = existing.id
+            return existing
+        }
+        let session = LayoutSession(
+            displayID: displayID,
+            nativeSpaceID: nativeSpaceID,
+            mode: defaultMode
+        )
+        storedSessions[displayID, default: [:]][session.id] = session
+        activeSessionIDs[displayID] = session.id
+        awaitingFirstObservation.insert(session.id)
+        return session
     }
 
     @discardableResult
@@ -321,6 +363,33 @@ public struct LayoutSessionStore: Sendable {
     public mutating func removeMissingDisplays(_ displayIDs: Set<DisplayID>) {
         storedSessions = storedSessions.filter { displayIDs.contains($0.key) }
         activeSessionIDs = activeSessionIDs.filter { displayIDs.contains($0.key) }
+        removeOrphanedObservationMarkers()
+    }
+
+    /// Removes exact sessions only after a valid native observation confirms
+    /// that their Spaces no longer exist. Inferred sessions remain available
+    /// for the public-API fallback.
+    public mutating func removeMissingNativeSpaces(
+        _ knownSpacesByDisplay: [DisplayID: Set<NativeSpaceID>]
+    ) {
+        for (displayID, knownSpaceIDs) in knownSpacesByDisplay {
+            guard var sessions = storedSessions[displayID] else { continue }
+            sessions = sessions.filter { _, session in
+                session.nativeSpaceID.map(knownSpaceIDs.contains) ?? true
+            }
+            storedSessions[displayID] = sessions
+            if let activeID = activeSessionIDs[displayID], sessions[activeID] == nil {
+                activeSessionIDs.removeValue(forKey: displayID)
+            }
+        }
+        removeOrphanedObservationMarkers()
+    }
+
+    private mutating func removeOrphanedObservationMarkers() {
+        let retainedSessionIDs = storedSessions.values.reduce(into: Set<DesktopSessionID>()) {
+            $0.formUnion($1.keys)
+        }
+        awaitingFirstObservation.formIntersection(retainedSessionIDs)
     }
 
     private func bestMatch(
