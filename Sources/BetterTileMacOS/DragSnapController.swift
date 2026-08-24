@@ -42,6 +42,7 @@ struct WindowDragGate {
     private var activeWindowID: WindowID?
 
     var candidateWindowID: WindowID? { candidate?.id }
+    var candidateWindow: WindowSnapshot? { candidate }
     var isTracking: Bool { candidate != nil }
 
     mutating func begin(with window: WindowSnapshot) {
@@ -101,6 +102,8 @@ public final class DragSnapController {
     private var bentoPreview: BentoDropPreviewController?
     private var restoredDragTask: Task<Void, Never>?
     private var pendingRestoredWindowID: WindowID?
+    private var mouseDownPoint: BTPoint?
+    private var resolvedDragTarget = false
     private var isStarted = false
 
     private static let bentoCueArmDelay = 0.12
@@ -214,16 +217,9 @@ public final class DragSnapController {
             .allowsDirectPlacement
         else { return }
         guard NSEvent.pressedMouseButtons & 1 == 1 else { return }
+        mouseDownPoint = point
         dragGate.begin(with: window)
         installGestureMonitors()
-        if activeModeProvider?(window.displayID) == .bento,
-           allowsBentoDrag(for: window) {
-            guard bentoDragBeganHandler?(window.displayID, window.id) == true else {
-                clear()
-                return
-            }
-            bentoDragDisplayID = window.displayID
-        }
     }
 
     private func mouseDragged(_ event: NSEvent) {
@@ -232,6 +228,28 @@ public final class DragSnapController {
         guard !activeModifiers.isSuperset(of: configuration.snapSuppressionModifiers) else { clearTargets(); return }
         guard let mainFrame = NSScreen.main?.frame else { return }
         let point = CoordinateConverter.pointToTopLeft(NSEvent.mouseLocation, mainScreenFrame: mainFrame)
+        if !resolvedDragTarget {
+            resolvedDragTarget = true
+            guard let window = resolvedWindowForFirstDrag(),
+                  configuration.applicationRules
+                    .rule(for: window.bundleIdentifier)
+                    .allowsDirectPlacement
+            else {
+                clear()
+                return
+            }
+            if window.id != dragGate.candidateWindowID {
+                dragGate.begin(with: window)
+            }
+            if activeModeProvider?(window.displayID) == .bento,
+               allowsBentoDrag(for: window) {
+                guard bentoDragBeganHandler?(window.displayID, window.id) == true else {
+                    clear()
+                    return
+                }
+                bentoDragDisplayID = window.displayID
+            }
+        }
         if draggedWindowID == nil {
             guard let candidateWindowID = dragGate.candidateWindowID,
                   let windowID = dragGate.activate(with: windowSnapshot(id: candidateWindowID))
@@ -457,6 +475,8 @@ public final class DragSnapController {
         dragGate.reset()
         draggedWindowID = nil
         bentoDragDisplayID = nil
+        mouseDownPoint = nil
+        resolvedDragTarget = false
         removeGestureMonitors()
     }
 
@@ -505,6 +525,13 @@ public final class DragSnapController {
         )
     }
 
+    private func resolvedWindowForFirstDrag() -> WindowSnapshot? {
+        guard let mouseDownPoint,
+              let system = coordinator.system as? AccessibilityWindowSystem
+        else { return dragGate.candidateWindow }
+        return (try? system.window(at: mouseDownPoint)) ?? dragGate.candidateWindow
+    }
+
     private func windowSnapshot(id: WindowID) -> WindowSnapshot? {
         if let system = coordinator.system as? AccessibilityWindowSystem {
             return try? system.windowSnapshot(id: id)
@@ -524,6 +551,7 @@ public final class DragSnapController {
               bentoDragBeganHandler?(window.displayID, window.id) == true
         else { return false }
         dragGate.begin(with: window)
+        resolvedDragTarget = true
         bentoDragDisplayID = window.displayID
         clearRestoredDragRetry()
         return true

@@ -1153,13 +1153,21 @@ final class BetterTileModel {
             isGestureActive: isGestureActive,
             isStabilizingSpace: isStabilizingSpace
         ) else { return }
-        guard let windows = try? system.visibleWindows() else {
-            schedulePendingWindowEvents(after: windowEventRetryBackoff.nextDelayAfterFailure())
-            return
-        }
         let pendingEvents = pendingWindowEvents
         let changedIDs = pendingEvents.frameEventWindowIDs
         let refreshTopology = pendingEvents.topologyChanged
+        let windows: [WindowSnapshot]
+        if !refreshTopology,
+           !changedIDs.isEmpty,
+           let targeted = try? system.cachedVisibleWindows(refreshing: changedIDs) {
+            windows = targeted
+        } else {
+            guard let completeSweep = try? system.visibleWindows() else {
+                schedulePendingWindowEvents(after: windowEventRetryBackoff.nextDelayAfterFailure())
+                return
+            }
+            windows = completeSweep
+        }
         pendingWindowEvents.acknowledge(pendingEvents)
         windowEventRetryBackoff.reset()
         let visibleIDs = Set(windows.map(\.id))

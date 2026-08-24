@@ -35,6 +35,39 @@ Other implementation choices may evolve when the user benefit justifies them.
 Changes are evaluated against security, privacy, transparency,
 maintainability, and user benefit rather than a blanket technology ban.
 
+## Private window observations
+
+[Design issue #32](https://github.com/LMC-Karma/BetterTile/issues/32) approves
+the following read-only observations for macOS 26. BetterTile resolves private
+symbols at runtime. A missing symbol or rejected value uses the public fallback
+and never prevents launch.
+
+| API or attribute | Purpose | Validation and fallback |
+| --- | --- | --- |
+| `_AXUIElementGetWindow` | Join an Accessibility window to its exact WindowServer ID. | Accept a nonzero ID only. Validate it against the same PID, layer zero, and on-screen WindowServer record. Fall back to PID and frame correlation. |
+| `AXMinSize`, `AXMinimumSize` | Read an application's stated minimum window size. | Accept only finite, positive values no larger than the containing display. Merge accepted values with BetterTile's default and learned minimums by greatest dimension. Ignore malformed or unavailable values. |
+| `SLSMainConnectionID`, `SLSCopyManagedDisplaySpaces`, `SLSCopySpacesForWindows` | Observe display Spaces and window membership for runtime Bento sessions. | Approved but not implemented. A future phase must validate the complete topology and retain inferred sessions when unavailable. |
+| `AXWindowIDs` | Resolve a Stage Manager thumbnail to real member windows. | Approved but not implemented. A future phase must validate each ID through WindowServer and retain ordinary hit-testing when unavailable. |
+
+Exact identity stays process-local. BetterTile includes the owning PID and an
+application launch generation in each identity record. It retains AX hashes
+only to correlate observer callbacks. Logs contain capability availability and
+one-time fallback reasons, never titles, AX identifiers, raw desktop topology,
+or Stage Manager contents.
+
+All private capabilities can be disabled before launch with:
+
+```sh
+defaults write com.lmckarma.BetterTile disablePrivateAPIs -bool true
+```
+
+Quit and reopen BetterTile after changing the default. Restore automatic use
+of validated private capabilities with:
+
+```sh
+defaults delete com.lmckarma.BetterTile disablePrivateAPIs
+```
+
 ## Network disclosure
 
 BetterTile contacts `github.com` over HTTPS to fetch the public Sparkle appcast
