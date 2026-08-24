@@ -72,7 +72,7 @@ public final class TitleBarDoubleClickController {
         guard event.clickCount == 2,
               event.eventNumber != lastEventNumber,
               Self.macOSDoubleClickActionIsDisabled,
-              let mainFrame = NSScreen.main?.frame,
+              let mainFrame = NSScreen.screens.first?.frame,
               let window = try? coordinator.system.focusedWindow(),
               allowsDoubleClickPlacement(for: window)
         else { return }

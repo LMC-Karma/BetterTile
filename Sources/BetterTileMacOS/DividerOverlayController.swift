@@ -143,7 +143,7 @@ public final class DividerOverlayController {
     }
 
     private func presentHandle(for interaction: DividerInteraction, near point: BTPoint, active: Bool) {
-        guard let mainFrame = NSScreen.main?.frame else { return }
+        guard let mainFrame = NSScreen.screens.first?.frame else { return }
         let topLeftFrame = handleFrame(for: interaction, near: point)
         let appKitFrame = CoordinateConverter.toAppKit(topLeftFrame, mainScreenFrame: mainFrame)
         guard active || !isCovered(topLeftFrame: topLeftFrame, appKitFrame: appKitFrame) else {
@@ -173,7 +173,7 @@ public final class DividerOverlayController {
 
     private func beginHoveredGesture() {
         guard let interaction = hoveredInteraction,
-              let mainFrame = NSScreen.main?.frame,
+              let mainFrame = NSScreen.screens.first?.frame,
               let display = coordinator.system.displays().first(where: { $0.id == interaction.displayID }),
               let windows = try? coordinator.system.visibleWindows()
         else { return }
@@ -421,7 +421,7 @@ public final class DividerOverlayController {
     private func currentMousePoint() -> BTPoint { topLeftPoint(NSEvent.mouseLocation) }
 
     private func topLeftPoint(_ point: CGPoint) -> BTPoint {
-        guard let mainFrame = NSScreen.main?.frame else { return BTPoint(x: point.x, y: point.y) }
+        guard let mainFrame = NSScreen.screens.first?.frame else { return BTPoint(x: point.x, y: point.y) }
         return CoordinateConverter.pointToTopLeft(point, mainScreenFrame: mainFrame)
     }
 
@@ -586,7 +586,7 @@ private final class GhostFrameOverlayController {
     private var panels: [WindowID: NSPanel] = [:]
 
     func show(placements: [Placement], windows: [WindowSnapshot]) {
-        guard let mainFrame = NSScreen.main?.frame else { return }
+        guard let mainFrame = NSScreen.screens.first?.frame else { return }
         let snapshots = Dictionary(uniqueKeysWithValues: windows.map { ($0.id, $0) })
         let ids = Set(placements.map(\.windowID))
         let staleIDs = panels.keys.filter { !ids.contains($0) }

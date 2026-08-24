@@ -6,7 +6,10 @@ import BetterTileCore
 public final class LinkedResizeController {
     public var configuration: BetterTileConfiguration {
         didSet {
-            if !configuration.linkedResizeEnabled { endGesture() }
+            if !configuration.linkedResizeEnabled {
+                eventTapHandoff.clear()
+                endGesture()
+            }
             syncMonitoring()
         }
     }
@@ -17,8 +20,11 @@ public final class LinkedResizeController {
     private var mouseDownMonitor: Any?
     private var dragMonitor: Any?
     private var mouseUpMonitor: Any?
+    private var gestureEventSource = GestureEventSourceGate()
+    private var eventTapHandoff = GestureEventSourceHandoff()
     private var baselineWindows: [WindowSnapshot] = []
     private var sourceID: WindowID?
+    private var isLeftButtonDown = false
     private var isStarted = false
 
     public init(coordinator: WindowCoordinator, configuration: BetterTileConfiguration) {
@@ -33,9 +39,41 @@ public final class LinkedResizeController {
 
     public func stop() {
         isStarted = false
+        eventTapHandoff.clear()
         removeMouseDownMonitor()
         removeGestureMonitors()
         endGesture()
+    }
+
+    /// Switching to the event tap waits for an active gesture to finish. The
+    /// tap knows nothing about a gesture that began on the NSEvent monitors, so
+    /// removing those monitors mid-gesture would strand it.
+    public func setUsesSharedGestureEvents(_ enabled: Bool) {
+        let wasUsingEventTap = gestureEventSource.usesEventTap
+        guard eventTapHandoff.request(
+            usesEventTap: enabled,
+            currentlyUsesEventTap: wasUsingEventTap,
+            isGestureActive: isGestureActive
+        ) else { return }
+        gestureEventSource.setUsesEventTap(enabled)
+        if wasUsingEventTap, !enabled, isLeftButtonDown, sourceID == nil {
+            beginGesture()
+        }
+        syncMonitoring()
+    }
+
+    private var isGestureActive: Bool {
+        isLeftButtonDown || sourceID != nil
+    }
+
+    private func applyPendingEventTapHandoff() {
+        guard eventTapHandoff.resolve() else { return }
+        gestureEventSource.setUsesEventTap(true)
+        syncMonitoring()
+    }
+
+    public func handleSharedGestureEvent(_ event: GlobalGestureEvent) {
+        receive(event, from: .eventTap)
     }
 
     func allowsLinkedResize(for window: WindowSnapshot) -> Bool {
@@ -50,7 +88,13 @@ public final class LinkedResizeController {
 
     private func syncMonitoring() {
         if isStarted, configuration.linkedResizeEnabled {
-            installMouseDownMonitor()
+            if gestureEventSource.usesEventTap {
+                removeMouseDownMonitor()
+                removeGestureMonitors()
+            } else {
+                installMouseDownMonitor()
+                if sourceID != nil { installGestureMonitors() }
+            }
         } else {
             removeMouseDownMonitor()
             removeGestureMonitors()
@@ -58,22 +102,19 @@ public final class LinkedResizeController {
     }
 
     private func installMouseDownMonitor() {
-        guard mouseDownMonitor == nil else { return }
-        mouseDownMonitor = NSEvent.addGlobalMonitorForEvents(matching: .leftMouseDown) { [weak self] _ in
-            Task { @MainActor in
-                await Task.yield()
-                self?.beginGesture()
-            }
+        guard !gestureEventSource.usesEventTap, mouseDownMonitor == nil else { return }
+        mouseDownMonitor = NSEvent.addGlobalMonitorForEvents(matching: .leftMouseDown) { [weak self] event in
+            Task { @MainActor in self?.receive(event, kind: .leftMouseDown) }
         }
     }
 
     private func installGestureMonitors() {
-        guard dragMonitor == nil else { return }
-        dragMonitor = NSEvent.addGlobalMonitorForEvents(matching: .leftMouseDragged) { [weak self] _ in
-            Task { @MainActor in self?.continueGesture() }
+        guard !gestureEventSource.usesEventTap, dragMonitor == nil else { return }
+        dragMonitor = NSEvent.addGlobalMonitorForEvents(matching: .leftMouseDragged) { [weak self] event in
+            Task { @MainActor in self?.receive(event, kind: .leftMouseDragged) }
         }
-        mouseUpMonitor = NSEvent.addGlobalMonitorForEvents(matching: .leftMouseUp) { [weak self] _ in
-            Task { @MainActor in self?.endGesture() }
+        mouseUpMonitor = NSEvent.addGlobalMonitorForEvents(matching: .leftMouseUp) { [weak self] event in
+            Task { @MainActor in self?.receive(event, kind: .leftMouseUp) }
         }
     }
 
@@ -88,6 +129,32 @@ public final class LinkedResizeController {
         }
         dragMonitor = nil
         mouseUpMonitor = nil
+    }
+
+    private func receive(_ event: NSEvent, kind: GlobalGestureEventKind) {
+        guard gestureEventSource.accepts(.nsEvent),
+              let gestureEvent = GlobalGestureEvent(event, kind: kind)
+        else { return }
+        receive(gestureEvent, from: .nsEvent)
+    }
+
+    func receive(_ event: GlobalGestureEvent, from source: GestureEventSource) {
+        guard gestureEventSource.accepts(source), event.button == 0 else { return }
+        switch event.kind {
+        case .leftMouseDown:
+            isLeftButtonDown = true
+            Task { @MainActor [weak self] in
+                await Task.yield()
+                guard self?.isLeftButtonDown == true, self?.sourceID == nil else { return }
+                self?.beginGesture()
+            }
+        case .leftMouseDragged:
+            if sourceID == nil, isLeftButtonDown { beginGesture() }
+            continueGesture()
+        case .leftMouseUp:
+            isLeftButtonDown = false
+            endGesture()
+        }
     }
 
     private func beginGesture() {
@@ -106,10 +173,6 @@ public final class LinkedResizeController {
                 $0.displayID == focused.displayID && $0.isEligible && !$0.isFloating
             }
             guard baselineWindows.contains(where: { $0.id == focused.id }) else {
-                endGesture()
-                return
-            }
-            guard NSEvent.pressedMouseButtons & 1 == 1 else {
                 endGesture()
                 return
             }
@@ -145,9 +208,11 @@ public final class LinkedResizeController {
     }
 
     private func endGesture() {
+        isLeftButtonDown = false
         baselineWindows = []
         sourceID = nil
         removeGestureMonitors()
+        applyPendingEventTapHandoff()
     }
 
     private func dominantResizeChange(from before: BTRect, to after: BTRect) -> (edge: WindowEdge, delta: Double)? {

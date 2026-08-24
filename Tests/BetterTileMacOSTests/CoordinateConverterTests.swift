@@ -92,3 +92,19 @@ private let rects: [(name: String, rect: CGRect)] = [
         }
     }
 }
+
+@Test func globalEventPositionsUseThePrimaryDisplayOrigin() {
+    let primary = CGRect(x: 0, y: 0, width: 1920, height: 1080)
+    let expected = BTPoint(x: 250, y: 300)
+
+    #expect(
+        GlobalGestureEvent.position(cgEventLocation: CGPoint(x: 250, y: 300))
+            == expected
+    )
+    #expect(
+        GlobalGestureEvent.position(
+            nsEventMouseLocation: CGPoint(x: 250, y: 780),
+            primaryScreenFrame: primary
+        ) == expected
+    )
+}
