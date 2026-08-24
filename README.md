@@ -12,11 +12,12 @@
 [![Swift](https://img.shields.io/badge/Swift-6.3-orange.svg)](https://swift.org)
 [![Free forever](https://img.shields.io/badge/price-free%20forever-brightgreen.svg)](#bettertile-is-free)
 
-BetterTile is built with Swift, SwiftUI, AppKit, and the public macOS
-Accessibility API. No private APIs, no code injection, no SIP workarounds, and
-no behavioral tracking. Sparkle is the only runtime dependency and provides
-secure update checks. BetterTile currently asks for one permission and explains
-why before it does.
+BetterTile is built with Swift, SwiftUI, AppKit, and the macOS Accessibility
+API. Public Apple APIs are preferred; any private API proposal requires an
+explicit project-fit, safety, compatibility, and fallback review before
+adoption. No code injection, no SIP workarounds, and no behavioral tracking.
+Sparkle is the only runtime dependency and provides secure update checks.
+BetterTile currently asks for one permission and explains why before it does.
 
 ---
 

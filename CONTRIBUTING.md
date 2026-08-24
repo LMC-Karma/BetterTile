@@ -92,12 +92,15 @@ behind those integrations are extracted into
 
 ## Security and disclosure
 
-Private macOS APIs, SIP workarounds, and code injection are not accepted.
-Dependencies, networking, permissions, privileged components, user-data
-handling, distribution, and architecture may evolve through explicit design
-review. Explain the user benefit, security and maintenance tradeoffs, and test
-coverage in the pull request; update the repository documentation at the same
-time. Adapted code must have compatible licensing, provenance, and attribution.
+Public Apple APIs are preferred. Before implementing a private API, start or
+link an explicit issue or draft-pull-request discussion explaining why the
+public alternatives are inadequate and how the proposal fits BetterTile. Cover
+scope, fallback behavior, compatibility testing, security, privacy,
+distribution, and maintenance; adoption requires maintainer approval. SIP
+workarounds and code injection are not accepted. Dependencies, networking,
+permissions, privileged components, user-data handling, distribution, and
+architecture may likewise evolve through explicit design review. Adapted code
+must have compatible licensing, provenance, and attribution.
 
 [SECURITY.md](SECURITY.md) is the canonical security and privacy policy.
 

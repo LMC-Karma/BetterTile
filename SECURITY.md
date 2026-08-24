@@ -18,11 +18,18 @@ stay on the Mac; update checks send no window data, configuration, analytics,
 telemetry, crash reports, or system profile. Product behavior and material data
 handling are disclosed in this repository.
 
-Three platform-safety boundaries are permanent:
+Two platform-safety boundaries are permanent:
 
-- use public Apple APIs rather than private frameworks or SkyLight symbols
 - do not inject code into other processes
 - do not bypass System Integrity Protection
+
+Public Apple APIs are the default. A private API may be considered only after
+an explicit design discussion in an issue or draft pull request confirms that
+it fits BetterTile's product goals and that no adequate public API provides the
+same user benefit. The discussion must cover the API's scope, failure and
+compatibility risks, security and privacy impact, distribution implications,
+maintenance cost, testing plan, and a safe fallback when the API is unavailable
+or changes. Adoption requires maintainer approval and repository disclosure.
 
 Other implementation choices may evolve when the user benefit justifies them.
 Changes are evaluated against security, privacy, transparency,
@@ -107,6 +114,6 @@ cannot be published from CI.
 ## Change disclosure
 
 Pull requests must call out changes to networking, permissions, privileged
-components, dependencies, user-data handling, distribution, updates, or
-architecture. Intentional architecture changes are permitted when their
-rationale, documentation, migration impact, and tests are included.
+components, dependencies, user-data handling, distribution, updates, private
+APIs, or architecture. Intentional architecture changes are permitted when
+their rationale, documentation, migration impact, and tests are included.
