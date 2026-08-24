@@ -264,7 +264,7 @@ public final class DragSnapController {
         receive(gestureEvent, from: .nsEvent)
     }
 
-    private func receive(_ event: GlobalGestureEvent, from source: GestureEventSource) {
+    func receive(_ event: GlobalGestureEvent, from source: GestureEventSource) {
         guard gestureEventSource.accepts(source), event.button == 0 else { return }
         switch event.kind {
         case .leftMouseDown: mousePressed(event)

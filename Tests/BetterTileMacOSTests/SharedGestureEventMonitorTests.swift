@@ -32,6 +32,16 @@ import Testing
     #expect(delivered == [.leftMouseDown, .leftMouseDragged, .leftMouseUp])
 }
 
+@Test func restartedTapRejectsEventsQueuedByTheStoppedWorker() {
+    var gate = GestureEventGenerationGate()
+    let stoppedGeneration = gate.begin()
+    gate.end()
+    let activeGeneration = gate.begin()
+
+    #expect(!gate.accepts(stoppedGeneration))
+    #expect(gate.accepts(activeGeneration))
+}
+
 @Test func gestureTapRecoveryResumesOnlyWhenReenableSucceeds() {
     #expect(GestureEventTapRecovery.action(isEnabledAfterRecovery: true) == .resume)
     #expect(GestureEventTapRecovery.action(isEnabledAfterRecovery: false) == .fallBack)

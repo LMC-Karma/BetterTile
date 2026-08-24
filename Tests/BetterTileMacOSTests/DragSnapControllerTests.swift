@@ -49,6 +49,108 @@ import Testing
     #expect(endedCount == 0)
 }
 
+@Test @MainActor func sharedGestureSequenceAppliesSnapPlacement() {
+    let system = FakeWindowSystem()
+    let controller = DragSnapController(
+        coordinator: WindowCoordinator(system: system),
+        configuration: BetterTileConfiguration()
+    )
+    controller.setUsesSharedGestureEvents(true)
+
+    controller.handleSharedGestureEvent(GlobalGestureEvent(
+        kind: .leftMouseDown,
+        position: BTPoint(x: 300, y: 220),
+        button: 0,
+        modifiers: [],
+        timestamp: 1
+    ))
+
+    system.windows[0].frame.origin.x += 3
+    controller.handleSharedGestureEvent(GlobalGestureEvent(
+        kind: .leftMouseDragged,
+        position: BTPoint(x: 1, y: 400),
+        button: 0,
+        modifiers: [],
+        timestamp: 2
+    ))
+    controller.handleSharedGestureEvent(GlobalGestureEvent(
+        kind: .leftMouseUp,
+        position: BTPoint(x: 1, y: 400),
+        button: 0,
+        modifiers: [],
+        timestamp: 3
+    ))
+
+    #expect(system.windows[0].frame == BTRect(x: 0, y: 0, width: 500, height: 800))
+}
+
+@Test @MainActor func cancellingSharedGesturePreventsSnapPlacement() {
+    let system = FakeWindowSystem()
+    let controller = DragSnapController(
+        coordinator: WindowCoordinator(system: system),
+        configuration: BetterTileConfiguration()
+    )
+    controller.setUsesSharedGestureEvents(true)
+
+    controller.handleSharedGestureEvent(GlobalGestureEvent(
+        kind: .leftMouseDown,
+        position: BTPoint(x: 300, y: 220),
+        button: 0,
+        modifiers: [],
+        timestamp: 1
+    ))
+    system.windows[0].frame.origin.x += 3
+    controller.handleSharedGestureEvent(GlobalGestureEvent(
+        kind: .leftMouseDragged,
+        position: BTPoint(x: 1, y: 400),
+        button: 0,
+        modifiers: [],
+        timestamp: 2
+    ))
+
+    controller.cancel()
+    controller.handleSharedGestureEvent(GlobalGestureEvent(
+        kind: .leftMouseUp,
+        position: BTPoint(x: 1, y: 400),
+        button: 0,
+        modifiers: [],
+        timestamp: 3
+    ))
+
+    #expect(system.windows[0].frame == BTRect(x: 203, y: 200, width: 600, height: 400))
+}
+
+@Test @MainActor func failedTapHandsActiveSnapToNSEventWithoutDuplicatePlacement() {
+    let system = FakeWindowSystem()
+    let controller = DragSnapController(
+        coordinator: WindowCoordinator(system: system),
+        configuration: BetterTileConfiguration()
+    )
+    controller.setUsesSharedGestureEvents(true)
+
+    func event(_ kind: GlobalGestureEventKind, timestamp: UInt64) -> GlobalGestureEvent {
+        GlobalGestureEvent(
+            kind: kind,
+            position: kind == .leftMouseDown
+                ? BTPoint(x: 300, y: 220)
+                : BTPoint(x: 1, y: 400),
+            button: 0,
+            modifiers: [],
+            timestamp: timestamp
+        )
+    }
+
+    controller.handleSharedGestureEvent(event(.leftMouseDown, timestamp: 1))
+    system.windows[0].frame.origin.x += 3
+    controller.handleSharedGestureEvent(event(.leftMouseDragged, timestamp: 2))
+    controller.setUsesSharedGestureEvents(false)
+    controller.handleSharedGestureEvent(event(.leftMouseUp, timestamp: 3))
+    controller.receive(event(.leftMouseUp, timestamp: 3), from: .nsEvent)
+
+    #expect(system.windows[0].frame == BTRect(x: 0, y: 0, width: 500, height: 800))
+    #expect(system.frameWriteCounts[WindowID(rawValue: "focused")] == 1)
+}
+
 @Test func bentoSwapSupportsTallerUnifiedToolbarsWithoutEnteringWindowContent() {
     let frame = BTRect(x: 100, y: 100, width: 500, height: 400)
     #expect(BentoSwapDragRegion.isTitleBarStart(BTPoint(x: 200, y: 112), in: frame))

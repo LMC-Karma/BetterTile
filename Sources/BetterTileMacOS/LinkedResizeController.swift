@@ -41,7 +41,11 @@ public final class LinkedResizeController {
     }
 
     public func setUsesSharedGestureEvents(_ enabled: Bool) {
+        let wasUsingEventTap = gestureEventSource.usesEventTap
         gestureEventSource.setUsesEventTap(enabled)
+        if wasUsingEventTap, !enabled, isLeftButtonDown, sourceID == nil {
+            beginGesture()
+        }
         syncMonitoring()
     }
 
@@ -111,7 +115,7 @@ public final class LinkedResizeController {
         receive(gestureEvent, from: .nsEvent)
     }
 
-    private func receive(_ event: GlobalGestureEvent, from source: GestureEventSource) {
+    func receive(_ event: GlobalGestureEvent, from source: GestureEventSource) {
         guard gestureEventSource.accepts(source), event.button == 0 else { return }
         switch event.kind {
         case .leftMouseDown:
@@ -122,6 +126,7 @@ public final class LinkedResizeController {
                 self?.beginGesture()
             }
         case .leftMouseDragged:
+            if sourceID == nil, isLeftButtonDown { beginGesture() }
             continueGesture()
         case .leftMouseUp:
             isLeftButtonDown = false

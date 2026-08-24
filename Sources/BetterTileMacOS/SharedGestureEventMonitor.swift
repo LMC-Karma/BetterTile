@@ -66,6 +66,25 @@ struct GestureEventSourceGate {
     }
 }
 
+struct GestureEventGenerationGate {
+    private var nextGeneration = 0
+    private var activeGeneration: Int?
+
+    mutating func begin() -> Int {
+        nextGeneration &+= 1
+        activeGeneration = nextGeneration
+        return nextGeneration
+    }
+
+    mutating func end() {
+        activeGeneration = nil
+    }
+
+    func accepts(_ generation: Int) -> Bool {
+        activeGeneration == generation
+    }
+}
+
 enum GestureEventTapRecovery {
     enum Action: Equatable {
         case resume
@@ -90,6 +109,7 @@ public final class SharedGestureEventMonitor {
         category: "GestureEvents"
     )
     private var worker: GestureEventTapWorker?
+    private var generationGate = GestureEventGenerationGate()
     private var loggedAvailability = false
     private var loggedFallback = false
 
@@ -98,12 +118,14 @@ public final class SharedGestureEventMonitor {
     @discardableResult
     public func start() -> Bool {
         if isUsingEventTap { return true }
+        let generation = generationGate.begin()
         let worker = GestureEventTapWorker { [weak self] message in
             DispatchQueue.main.async { [weak self] in
-                self?.receive(message)
+                self?.receive(message, generation: generation)
             }
         }
         guard worker.start() else {
+            generationGate.end()
             logFallbackOnce("shared gesture event tap unavailable; using NSEvent monitors")
             return false
         }
@@ -117,12 +139,14 @@ public final class SharedGestureEventMonitor {
     }
 
     public func stop() {
+        generationGate.end()
         worker?.stop()
         worker = nil
         isUsingEventTap = false
     }
 
-    private func receive(_ message: GestureEventTapWorker.Message) {
+    private func receive(_ message: GestureEventTapWorker.Message, generation: Int) {
+        guard generationGate.accepts(generation) else { return }
         switch message {
         case let .event(event):
             guard isUsingEventTap else { return }
@@ -251,6 +275,8 @@ private final class GestureEventTapWorker: @unchecked Sendable {
         }
         worker.handler(.event(GlobalGestureEvent(
             kind: kind,
+            // CGEvent's global display coordinates already use the same
+            // upper-left origin as BetterTile's logical coordinates.
             position: BTPoint(x: event.location.x, y: event.location.y),
             button: event.getIntegerValueField(.mouseEventButtonNumber),
             modifiers: ShortcutModifiers(event.flags),
