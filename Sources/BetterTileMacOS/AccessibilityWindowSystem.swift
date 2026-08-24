@@ -434,7 +434,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
                     appKitVisibleFrame: appKitVisibleFrame
                 ),
                 scaleFactor: screen.backingScaleFactor,
-                isMain: screen == screens.first
+                isMain: screen == NSScreen.main
             )
         }.sorted { lhs, rhs in
             lhs.frame.minX == rhs.frame.minX ? lhs.frame.minY < rhs.frame.minY : lhs.frame.minX < rhs.frame.minX

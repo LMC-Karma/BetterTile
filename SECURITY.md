@@ -125,6 +125,13 @@ gesture consumers return to their public `NSEvent` monitors automatically.
 The tap copies only scalar position, button, modifier, timestamp, and event-kind
 values to the main actor. It neither changes nor retains system events.
 
+The maintainer design and least-privilege review is recorded in
+[pull request #36](https://github.com/LMC-Karma/BetterTile/pull/36). Validation
+on macOS 26.5.2 confirmed that a personally signed build with Accessibility
+granted created the tap without an Input Monitoring prompt and did not appear
+in the Input Monitoring application list. The Setup Assistant and Settings
+explain the observed event scope before the Accessibility request.
+
 Runtime dependencies are allowed after reviewing necessity, maintenance,
 security history, license compatibility, update strategy, and removal cost.
 Approved dependencies are pinned and recorded in

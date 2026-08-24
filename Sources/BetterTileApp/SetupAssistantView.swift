@@ -160,7 +160,9 @@ struct SetupAssistantView: View {
                 .font(.largeTitle.weight(.semibold))
             Text(
                 "BetterTile uses the public macOS Accessibility API to read, move, and resize "
-                    + "eligible windows. It does not request Screen Recording."
+                    + "eligible windows. For snapping and linked resizing, it listens only for "
+                    + "global left-button down, drag, and up ordering. It does not request Screen "
+                    + "Recording or Input Monitoring."
             )
             .font(.body)
             .foregroundStyle(.secondary)

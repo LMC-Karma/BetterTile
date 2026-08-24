@@ -267,11 +267,23 @@ public final class DragSnapController {
     func receive(_ event: GlobalGestureEvent, from source: GestureEventSource) {
         guard gestureEventSource.accepts(source), event.button == 0 else { return }
         switch event.kind {
-        case .leftMouseDown: mousePressed(event)
+        case .leftMouseDown:
+            guard Self.acceptsMouseDown(
+                from: source,
+                pressedMouseButtons: NSEvent.pressedMouseButtons
+            ) else { return }
+            mousePressed(event)
         case .leftMouseDragged where isGestureActive: mouseDragged(event)
         case .leftMouseUp where isGestureActive: mouseReleased()
         case .leftMouseDragged, .leftMouseUp: return
         }
+    }
+
+    static func acceptsMouseDown(
+        from source: GestureEventSource,
+        pressedMouseButtons: Int
+    ) -> Bool {
+        source == .eventTap || pressedMouseButtons & 1 == 1
     }
 
     private func mousePressed(_ event: GlobalGestureEvent) {

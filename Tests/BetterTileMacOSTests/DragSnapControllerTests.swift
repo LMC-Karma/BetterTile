@@ -2,6 +2,12 @@ import Testing
 @testable import BetterTileCore
 @testable import BetterTileMacOS
 
+@Test @MainActor func nsEventMouseDownRequiresTheButtonToStillBePressed() {
+    #expect(!DragSnapController.acceptsMouseDown(from: .nsEvent, pressedMouseButtons: 0))
+    #expect(DragSnapController.acceptsMouseDown(from: .nsEvent, pressedMouseButtons: 1))
+    #expect(DragSnapController.acceptsMouseDown(from: .eventTap, pressedMouseButtons: 0))
+}
+
 @Test @MainActor func bentoDragAdmissionHonorsApplicationRules() {
     let system = FakeWindowSystem()
     let window = system.windows[0]

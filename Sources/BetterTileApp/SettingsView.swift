@@ -168,8 +168,9 @@ private struct GeneralSettings: View {
                 }
 
                 Text(
-                    "BetterTile uses public Accessibility APIs and requests no Screen Recording "
-                        + "or private entitlement."
+                    "BetterTile uses public Accessibility APIs and listens only for global "
+                        + "left-button gesture ordering for snapping and linked resizing. It "
+                        + "requests no Screen Recording, Input Monitoring, or private entitlement."
                 )
                 .font(.caption)
                 .foregroundStyle(.secondary)
