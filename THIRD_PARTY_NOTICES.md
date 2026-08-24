@@ -25,3 +25,15 @@ teardown patterns also informed BetterTile's runtime lifecycle.
 
 BetterTile is distributed under the GNU General Public License v3.0 or later.
 The complete license terms are provided in [LICENSE](LICENSE).
+
+## Rectangle
+
+- Source: <https://github.com/rxhanson/Rectangle>
+- Copyright: Copyright (c) 2019–2026 Ryan Hanson
+- License: MIT License
+
+Rectangle's `StageUtil.swift` documented the bounded WindowManager
+group/list/button Accessibility hierarchy used to find `AXWindowIDs`. BetterTile
+adapts that hierarchy pattern, then applies its own strict WindowServer
+validation and single-window drag policy. Rectangle's complete license text is
+available in its [upstream repository](https://github.com/rxhanson/Rectangle/blob/main/LICENSE).

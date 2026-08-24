@@ -66,6 +66,33 @@ struct WindowDragGate {
     }
 }
 
+enum WindowExposureRetry {
+    enum Attempt {
+        case retry
+        case resolved
+        case stop
+    }
+
+    @MainActor
+    static func run(
+        maximumAttempts: Int = 20,
+        delay: Duration = .milliseconds(20),
+        attempt: @MainActor () -> Attempt
+    ) async -> Bool {
+        for index in 0..<maximumAttempts {
+            switch attempt() {
+            case .resolved: return true
+            case .stop: return false
+            case .retry where index + 1 < maximumAttempts:
+                try? await Task.sleep(for: delay)
+            case .retry:
+                break
+            }
+        }
+        return false
+    }
+}
+
 @MainActor
 public final class DragSnapController {
     public var configuration: BetterTileConfiguration {
@@ -82,7 +109,10 @@ public final class DragSnapController {
     public var gestureEndedHandler: (() -> Void)?
     public var actionResultHandler: ((DisplayID, Bool, String?) -> Void)?
     public var isGestureActive: Bool {
-        dragGate.isTracking || draggedWindowID != nil || pendingRestoredWindowID != nil
+        dragGate.isTracking
+            || draggedWindowID != nil
+            || pendingRestoredWindowID != nil
+            || pendingStageManagerWindowID != nil
     }
 
     private let coordinator: WindowCoordinator
@@ -102,6 +132,7 @@ public final class DragSnapController {
     private var bentoPreview: BentoDropPreviewController?
     private var restoredDragTask: Task<Void, Never>?
     private var pendingRestoredWindowID: WindowID?
+    private var pendingStageManagerWindowID: CGWindowID?
     private var mouseDownPoint: BTPoint?
     private var resolvedDragTarget = false
     private var isStarted = false
@@ -183,14 +214,16 @@ public final class DragSnapController {
         guard configuration.snappingEnabled, NSEvent.pressedMouseButtons & 1 == 1 else { return }
         installGestureMonitors()
         pendingRestoredWindowID = windowID
+        pendingStageManagerWindowID = nil
         restoredDragTask?.cancel()
         restoredDragTask = Task { @MainActor [weak self] in
-            for _ in 0..<20 {
+            _ = await WindowExposureRetry.run {
                 guard let self, !Task.isCancelled,
                       NSEvent.pressedMouseButtons & 1 == 1
-                else { return }
-                if self.beginPendingRestoredWindowDrag(windowID: windowID) { return }
-                try? await Task.sleep(for: .milliseconds(20))
+                else { return .stop }
+                return self.beginPendingRestoredWindowDrag(windowID: windowID)
+                    ? .resolved
+                    : .retry
             }
         }
     }
@@ -209,15 +242,27 @@ public final class DragSnapController {
               let mainFrame = NSScreen.main?.frame
         else { return }
         let point = CoordinateConverter.pointToTopLeft(NSEvent.mouseLocation, mainScreenFrame: mainFrame)
-        guard let window = windowUnderTitleBar(at: point) else { return }
+        guard NSEvent.pressedMouseButtons & 1 == 1 else { return }
+        mouseDownPoint = point
+        guard let window = windowUnderTitleBar(at: point) else {
+            guard let system = coordinator.system as? AccessibilityWindowSystem,
+                  let exactWindowID = system.stageManagerWindowID(at: point)
+            else {
+                mouseDownPoint = nil
+                return
+            }
+            prepareForStageManagerDrag(exactWindowID: exactWindowID)
+            return
+        }
         // Ignore Everywhere means no BetterTile feature places this window,
         // drag snapping included.
         guard configuration.applicationRules
             .rule(for: window.bundleIdentifier)
             .allowsDirectPlacement
-        else { return }
-        guard NSEvent.pressedMouseButtons & 1 == 1 else { return }
-        mouseDownPoint = point
+        else {
+            mouseDownPoint = nil
+            return
+        }
         dragGate.begin(with: window)
         installGestureMonitors()
     }
@@ -228,6 +273,10 @@ public final class DragSnapController {
         guard !activeModifiers.isSuperset(of: configuration.snapSuppressionModifiers) else { clearTargets(); return }
         guard let mainFrame = NSScreen.main?.frame else { return }
         let point = CoordinateConverter.pointToTopLeft(NSEvent.mouseLocation, mainScreenFrame: mainFrame)
+        guard pendingRestoredWindowID == nil, pendingStageManagerWindowID == nil else {
+            clearTargets()
+            return
+        }
         if !resolvedDragTarget {
             resolvedDragTarget = true
             guard let window = resolvedWindowForFirstDrag(),
@@ -557,10 +606,54 @@ public final class DragSnapController {
         return true
     }
 
+    private func prepareForStageManagerDrag(exactWindowID: CGWindowID) {
+        installGestureMonitors()
+        pendingRestoredWindowID = nil
+        pendingStageManagerWindowID = exactWindowID
+        restoredDragTask?.cancel()
+        restoredDragTask = Task { @MainActor [weak self] in
+            let resolved = await WindowExposureRetry.run {
+                guard let self, !Task.isCancelled,
+                      NSEvent.pressedMouseButtons & 1 == 1
+                else { return .stop }
+                return self.beginPendingStageManagerDrag(exactWindowID: exactWindowID)
+                    ? .resolved
+                    : .retry
+            }
+            guard !resolved,
+                  let self,
+                  self.pendingStageManagerWindowID == exactWindowID,
+                  let system = self.coordinator.system as? AccessibilityWindowSystem
+            else { return }
+            system.recordStageManagerWindowExposureFailure()
+        }
+    }
+
+    private func beginPendingStageManagerDrag(exactWindowID: CGWindowID) -> Bool {
+        guard bentoDragDisplayID == nil,
+              let system = coordinator.system as? AccessibilityWindowSystem,
+              let window = try? system.windowSnapshot(exactWindowID: exactWindowID),
+              configuration.applicationRules
+                .rule(for: window.bundleIdentifier)
+                .allowsDirectPlacement
+        else { return false }
+
+        if activeModeProvider?(window.displayID) == .bento,
+           allowsBentoDrag(for: window) {
+            guard bentoDragBeganHandler?(window.displayID, window.id) == true else { return false }
+            bentoDragDisplayID = window.displayID
+        }
+        dragGate.begin(with: window)
+        resolvedDragTarget = true
+        clearRestoredDragRetry()
+        return true
+    }
+
     private func clearRestoredDragRetry() {
         restoredDragTask?.cancel()
         restoredDragTask = nil
         pendingRestoredWindowID = nil
+        pendingStageManagerWindowID = nil
     }
 }
 

@@ -241,12 +241,15 @@ struct SetupAssistantView: View {
             )
 
             RecommendationCard(
-                title: "Turn off Stage Manager",
+                title: "Choose Stage Manager behavior",
                 symbol: "uiwindow.split.2x1",
-                explanation: "BetterTile ignores Stage Manager thumbnails, but Bento behavior is most predictable when Stage Manager is off.",
+                explanation:
+                    "BetterTile resolves a Stage Manager thumbnail to one real window and leaves "
+                        + "the rest of its group alone. Bento behavior is still most predictable "
+                        + "when Stage Manager is off.",
                 directions: [
-                    "In Desktop & Dock, go to Desktop & Stage Manager.",
-                    "Turn Stage Manager off, or use Stage Manager in Control Center.",
+                    "Leave Stage Manager on for single-window thumbnail drags, or",
+                    "Turn it off in Desktop & Dock or Control Center for ordinary Bento desktops.",
                 ],
                 isAcknowledged: configurationBinding(
                     \.stageManagerRecommendationAcknowledged
