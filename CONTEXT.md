@@ -29,3 +29,9 @@ The complete result of reconciling one display's observed windows with its
 active layout session during a background desktop sweep. It either updates
 bookkeeping without moving windows, places the lone window when its latch
 fires, or proposes a Bento layout for the mutation path to apply atomically.
+
+## Native Space
+
+One macOS desktop reported by the validated native observation capability.
+BetterTile pairs its process-local identity with a display to select a runtime
+layout session. It never persists the identity or uses it to move a window.

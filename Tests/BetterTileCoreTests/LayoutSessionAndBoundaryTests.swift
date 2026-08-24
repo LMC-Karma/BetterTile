@@ -417,6 +417,194 @@ private let sessionDisplay = DisplayID(rawValue: "main")
     #expect(stable)
 }
 
+@Test func nativeSpaceIdentityRestoresTheExactSessionWithoutMembershipGuessing() {
+    var store = LayoutSessionStore()
+    let firstSpace = NativeSpaceID(rawValue: 11)
+    let secondSpace = NativeSpaceID(rawValue: 22)
+    let sharedWindow = WindowID(rawValue: "sticky-looking")
+    let first = store.activate(
+        displayID: sessionDisplay,
+        windowIDs: [sharedWindow],
+        focusedWindowID: sharedWindow,
+        defaultMode: .bento,
+        reuseActiveWhenUnmatched: false,
+        nativeSpaceID: firstSpace
+    )
+    store.update(sessionDisplay) { $0.mode = .manual }
+    let second = store.activate(
+        displayID: sessionDisplay,
+        windowIDs: [sharedWindow],
+        focusedWindowID: sharedWindow,
+        defaultMode: .bento,
+        reuseActiveWhenUnmatched: false,
+        nativeSpaceID: secondSpace
+    )
+    let returned = store.activate(
+        displayID: sessionDisplay,
+        windowIDs: [],
+        focusedWindowID: nil,
+        defaultMode: .bento,
+        reuseActiveWhenUnmatched: false,
+        nativeSpaceID: firstSpace
+    )
+
+    #expect(first.session.id != second.session.id)
+    #expect(returned.session.id == first.session.id)
+    #expect(returned.session.mode == .manual)
+}
+
+@Test func nativeSessionIdentityIncludesTheDisplay() {
+    var store = LayoutSessionStore()
+    let nativeSpaceID = NativeSpaceID(rawValue: 11)
+    let secondDisplay = DisplayID(rawValue: "second")
+    let first = store.activate(
+        displayID: sessionDisplay,
+        windowIDs: [],
+        focusedWindowID: nil,
+        defaultMode: .manual,
+        reuseActiveWhenUnmatched: false,
+        nativeSpaceID: nativeSpaceID
+    )
+    let second = store.activate(
+        displayID: secondDisplay,
+        windowIDs: [],
+        focusedWindowID: nil,
+        defaultMode: .manual,
+        reuseActiveWhenUnmatched: false,
+        nativeSpaceID: nativeSpaceID
+    )
+
+    #expect(first.session.id != second.session.id)
+    #expect(store.session(for: sessionDisplay)?.displayID == sessionDisplay)
+    #expect(store.session(for: secondDisplay)?.displayID == secondDisplay)
+}
+
+@Test func nativeSpaceSelectionChangesTheReadableSessionBeforeMembershipSettles() {
+    var store = LayoutSessionStore()
+    let firstSpace = NativeSpaceID(rawValue: 11)
+    let secondSpace = NativeSpaceID(rawValue: 22)
+    let first = store.select(
+        displayID: sessionDisplay,
+        nativeSpaceID: firstSpace,
+        defaultMode: .manual
+    )
+    let second = store.select(
+        displayID: sessionDisplay,
+        nativeSpaceID: secondSpace,
+        defaultMode: .bento
+    )
+
+    #expect(first.id != second.id)
+    #expect(store.session(for: sessionDisplay)?.nativeSpaceID == secondSpace)
+    #expect(store.session(for: sessionDisplay)?.windowIDs.isEmpty == true)
+
+    let firstObservation = store.activate(
+        displayID: sessionDisplay,
+        windowIDs: [WindowID(rawValue: "new")],
+        focusedWindowID: nil,
+        defaultMode: .bento,
+        reuseActiveWhenUnmatched: false,
+        nativeSpaceID: secondSpace
+    )
+    #expect(firstObservation.wasCreated)
+}
+
+@Test func inferredFallbackCanRestoreAnExactSessionWhenNativeObservationDisappears() {
+    var store = LayoutSessionStore()
+    let window = WindowID(rawValue: "window")
+    let exact = store.activate(
+        displayID: sessionDisplay,
+        windowIDs: [window],
+        focusedWindowID: window,
+        defaultMode: .bento,
+        reuseActiveWhenUnmatched: false,
+        nativeSpaceID: NativeSpaceID(rawValue: 11)
+    )
+    let inferred = store.activate(
+        displayID: sessionDisplay,
+        windowIDs: [window],
+        focusedWindowID: window,
+        defaultMode: .manual,
+        reuseActiveWhenUnmatched: false
+    )
+
+    #expect(inferred.session.id == exact.session.id)
+}
+
+@Test func nativeTopologyPrunesOnlyConfirmedMissingExactSessions() {
+    var store = LayoutSessionStore()
+    let retained = NativeSpaceID(rawValue: 11)
+    let removed = NativeSpaceID(rawValue: 22)
+    _ = store.activate(
+        displayID: sessionDisplay,
+        windowIDs: [],
+        focusedWindowID: nil,
+        defaultMode: .manual,
+        reuseActiveWhenUnmatched: false,
+        nativeSpaceID: retained
+    )
+    _ = store.activate(
+        displayID: sessionDisplay,
+        windowIDs: [],
+        focusedWindowID: nil,
+        defaultMode: .manual,
+        reuseActiveWhenUnmatched: false,
+        nativeSpaceID: removed
+    )
+    _ = store.activate(
+        displayID: sessionDisplay,
+        windowIDs: [WindowID(rawValue: "fallback")],
+        focusedWindowID: nil,
+        defaultMode: .manual,
+        reuseActiveWhenUnmatched: false
+    )
+
+    store.removeMissingNativeSpaces([sessionDisplay: [retained]])
+
+    #expect(store.allSessions(for: sessionDisplay).contains { $0.nativeSpaceID == retained })
+    #expect(!store.allSessions(for: sessionDisplay).contains { $0.nativeSpaceID == removed })
+    #expect(store.allSessions(for: sessionDisplay).contains { $0.nativeSpaceID == nil })
+}
+
+@Test func nativeMembershipFloatsStickyWindowsAndPreservesUnknownMembership() {
+    let current = NativeSpaceID(rawValue: 11)
+    let other = NativeSpaceID(rawValue: 22)
+    let currentWindow = testWindow("current", x: 0, width: 100, height: 100)
+    let otherWindow = testWindow("other", x: 0, width: 100, height: 100)
+    let stickyWindow = testWindow("sticky", x: 0, width: 100, height: 100)
+    let unknownWindow = testWindow("unknown", x: 0, width: 100, height: 100)
+    let observation = NativeDesktopObservation(
+        currentSpaceByDisplay: [sessionDisplay: current],
+        knownSpacesByDisplay: [sessionDisplay: [current, other]],
+        windowMembership: [
+            currentWindow.id: [current],
+            otherWindow.id: [other],
+            stickyWindow.id: [current, other],
+        ]
+    )
+
+    let visible = observation.windowsOnCurrentSpaces([
+        currentWindow, otherWindow, stickyWindow, unknownWindow,
+    ])
+
+    #expect(Set(visible.map(\.id)) == [currentWindow.id, stickyWindow.id, unknownWindow.id])
+    #expect(visible.first(where: { $0.id == stickyWindow.id })?.isFloating == true)
+    #expect(visible.first(where: { $0.id == unknownWindow.id })?.isFloating == false)
+}
+
+@Test func nativeFullscreenSpaceDisablesOnlyAutomaticLayout() {
+    let current = NativeSpaceID(rawValue: 11)
+    let observation = NativeDesktopObservation(
+        currentSpaceByDisplay: [sessionDisplay: current],
+        knownSpacesByDisplay: [sessionDisplay: [current]],
+        fullscreenSpaceIDs: [current]
+    )
+
+    #expect(observation.isFullscreenSpace(on: sessionDisplay))
+    #expect(!observation.allowsAutomaticLayout(on: sessionDisplay))
+    #expect(observation.allowsAutomaticLayout(on: DisplayID(rawValue: "unknown")))
+}
+
 @Test func adopterInfersNestedGuillotineLayoutWithoutMovingFrames() throws {
     let bounds = BTRect(x: 0, y: 24, width: 1200, height: 876)
     let a = WindowID(rawValue: "a"), b = WindowID(rawValue: "b")

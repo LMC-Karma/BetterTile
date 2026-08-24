@@ -46,10 +46,10 @@ and never prevents launch.
 | --- | --- | --- |
 | `_AXUIElementGetWindow` | Join an Accessibility window to its exact WindowServer ID. | Accept a nonzero ID only. Validate it against the same PID, layer zero, and on-screen WindowServer record. Fall back to PID and frame correlation. |
 | `AXMinSize`, `AXMinimumSize` | Read an application's stated minimum window size. | Accept only finite, positive values no larger than the containing display. Merge accepted values with BetterTile's default and learned minimums by greatest dimension. Ignore malformed or unavailable values. |
-| `SLSMainConnectionID`, `SLSCopyManagedDisplaySpaces`, `SLSCopySpacesForWindows` | Observe display Spaces and window membership for runtime Bento sessions. | Approved but not implemented. A future phase must validate the complete topology and retain inferred sessions when unavailable. |
+| `SLSMainConnectionID`, `SLSCopyManagedDisplaySpaces`, `SLSCopySpacesForWindows` | Observe display Spaces and window membership for runtime Bento sessions. | Require complete current-Space coverage and valid typed IDs and containers. Empty membership stays unknown, multi-Space windows float, and fullscreen Spaces suppress automatic writes and dividers. Fall back to inferred session matching when any symbol or topology is unavailable. |
 | `AXWindowIDs` | Resolve a Stage Manager thumbnail to real member windows. | Approved but not implemented. A future phase must validate each ID through WindowServer and retain ordinary hit-testing when unavailable. |
 
-Exact identity stays process-local. BetterTile includes the owning PID and an
+Exact identity and native Space identity stay process-local. BetterTile includes the owning PID and an
 application launch generation in each identity record. It retains AX hashes
 only to correlate observer callbacks. Logs contain capability availability and
 one-time fallback reasons, never titles, AX identifiers, raw desktop topology,

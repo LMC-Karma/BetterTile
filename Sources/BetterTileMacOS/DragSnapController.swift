@@ -196,7 +196,7 @@ public final class DragSnapController {
     }
 
     func allowsBentoDrag(for window: WindowSnapshot) -> Bool {
-        configuration.applicationRules
+        !window.isFloating && configuration.applicationRules
             .rule(for: window.bundleIdentifier)
             .allowsBentoParticipation
     }
