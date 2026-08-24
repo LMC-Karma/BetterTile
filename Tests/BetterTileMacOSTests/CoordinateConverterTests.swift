@@ -92,3 +92,14 @@ private let rects: [(name: String, rect: CGRect)] = [
         }
     }
 }
+
+@Test func appKitAndCGEventPointsAgreeWhenTheyUseThePrimaryDisplayOrigin() {
+    let primary = CGRect(x: 0, y: 0, width: 1920, height: 1080)
+    let cgEventPoint = BTPoint(x: 250, y: 300)
+    let appKitPoint = CGPoint(x: 250, y: primary.maxY - cgEventPoint.y)
+
+    #expect(
+        CoordinateConverter.pointToTopLeft(appKitPoint, mainScreenFrame: primary)
+            == cgEventPoint
+    )
+}

@@ -33,7 +33,7 @@ public struct GlobalGestureEvent: Equatable, Sendable {
 
     @MainActor
     init?(_ event: NSEvent, kind: GlobalGestureEventKind) {
-        guard let mainFrame = NSScreen.main?.frame else { return nil }
+        guard let mainFrame = NSScreen.screens.first?.frame else { return nil }
         self.init(
             kind: kind,
             position: CoordinateConverter.pointToTopLeft(

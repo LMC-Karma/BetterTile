@@ -309,7 +309,7 @@ public final class DragSnapController {
         guard configuration.snappingEnabled else { clearTargets(); return }
         let activeModifiers = event.modifiers
         guard !activeModifiers.isSuperset(of: configuration.snapSuppressionModifiers) else { clearTargets(); return }
-        guard let mainFrame = NSScreen.main?.frame else { return }
+        guard let mainFrame = NSScreen.screens.first?.frame else { return }
         let point = event.position
         guard pendingRestoredWindowID == nil, pendingStageManagerWindowID == nil else {
             clearTargets()
@@ -628,7 +628,7 @@ public final class DragSnapController {
 
     private func beginPendingRestoredWindowDrag(windowID: WindowID) -> Bool {
         guard bentoDragDisplayID == nil,
-              let mainFrame = NSScreen.main?.frame,
+              let mainFrame = NSScreen.screens.first?.frame,
               let window = try? coordinator.system.visibleWindows().first(where: { $0.id == windowID }),
               activeModeProvider?(window.displayID) == .bento
         else { return false }
@@ -797,7 +797,7 @@ private final class BentoDropPreviewController {
     ) {
         let interval = Self.signposter.beginInterval("showBentoWireframes")
         defer { Self.signposter.endInterval("showBentoWireframes", interval) }
-        guard let mainFrame = NSScreen.main?.frame else { return }
+        guard let mainFrame = NSScreen.screens.first?.frame else { return }
         let ids = Set(placements.map(\.windowID))
         for id in wireframePanels.keys.filter({ !ids.contains($0) }) {
             wireframePanels.removeValue(forKey: id)?.orderOut(nil)

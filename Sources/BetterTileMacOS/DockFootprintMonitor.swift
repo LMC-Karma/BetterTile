@@ -233,7 +233,7 @@ public final class DockFootprintMonitor {
 
     private func screenGeometry() -> [DisplayID: (full: BTRect, visible: BTRect)] {
         let screens = NSScreen.screens
-        guard let mainFrame = NSScreen.main?.frame ?? screens.first?.frame else { return [:] }
+        guard let mainFrame = screens.first?.frame else { return [:] }
         return Dictionary(uniqueKeysWithValues: screens.map { screen in
             let id = displayID(for: screen)
             return (id, (

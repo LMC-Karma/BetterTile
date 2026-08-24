@@ -80,7 +80,7 @@ public final class ResultPillController {
     public func show(_ feedback: ResultPillFeedback, on display: DisplaySnapshot) {
         let interval = Self.signposter.beginInterval("showResultPill")
         defer { Self.signposter.endInterval("showResultPill", interval) }
-        guard let mainFrame = NSScreen.main?.frame else { return }
+        guard let mainFrame = NSScreen.screens.first?.frame else { return }
         dismissalTask?.cancel()
 
         label.stringValue = feedback.message

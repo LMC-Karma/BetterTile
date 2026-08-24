@@ -419,7 +419,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
 
     public func displays() -> [DisplaySnapshot] {
         let screens = NSScreen.screens
-        guard let mainFrame = NSScreen.main?.frame ?? screens.first?.frame else { return [] }
+        guard let mainFrame = screens.first?.frame else { return [] }
         return screens.map { screen in
             let number = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber
             let id = DisplayID(rawValue: number?.stringValue ?? String(screen.hash))
@@ -434,7 +434,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
                     appKitVisibleFrame: appKitVisibleFrame
                 ),
                 scaleFactor: screen.backingScaleFactor,
-                isMain: screen == NSScreen.main
+                isMain: screen == screens.first
             )
         }.sorted { lhs, rhs in
             lhs.frame.minX == rhs.frame.minX ? lhs.frame.minY < rhs.frame.minY : lhs.frame.minX < rhs.frame.minX
