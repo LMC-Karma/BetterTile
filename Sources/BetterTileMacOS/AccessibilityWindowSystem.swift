@@ -11,9 +11,21 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
     )
 
     private var elements: [WindowID: AXUIElement] = [:]
+    private var identities = WindowIdentityRegistry()
+    private let privateAPIsDisabled: Bool
+    private let exactWindowIDResolver: ExactWindowIDResolver
+    private var snapshotCache = WindowSnapshotCache()
+    private struct LaunchRecord {
+        var launchToken: UInt64?
+        var instance: ApplicationLaunchInstance
+    }
+    private var launchRecords: [pid_t: LaunchRecord] = [:]
+    private var nextLaunchGeneration: UInt64 = 0
+    private var loggedBatchFallback = false
     private var observers: [pid_t: AXObserver] = [:]
     private struct Registration: Hashable {
         var windowID: WindowID?
+        var accessibilityHash: CFHashCode?
         var notification: String
     }
     private var registrations: [pid_t: Set<Registration>] = [:]
@@ -50,6 +62,9 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
     public var enhancedUserInterfacePolicy: EnhancedUserInterfacePolicy = .disableAndRestore
 
     public init() {
+        let privateAPIsDisabled = UserDefaults.standard.bool(forKey: "disablePrivateAPIs")
+        self.privateAPIsDisabled = privateAPIsDisabled
+        exactWindowIDResolver = ExactWindowIDResolver(disabled: privateAPIsDisabled)
         AXUIElementSetMessagingTimeout(AXUIElementCreateSystemWide(), Self.defaultMessagingTimeout)
         if let application = NSWorkspace.shared.frontmostApplication {
             recordActivation(of: application)
@@ -107,6 +122,9 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
 
     public func resetCachedWindows() {
         elements.removeAll()
+        identities.removeAll()
+        snapshotCache.invalidate()
+        launchRecords.removeAll()
         managedWindowIDs.removeAll()
         recentWindowIDs.removeAll()
         minimizedWindowIDs.removeAll()
@@ -154,11 +172,12 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
             else { continue }
 
             let appElement = makeApplicationElement(pid: pid)
+            let applicationInstance = applicationInstance(for: application)
             for attribute in [kAXFocusedWindowAttribute, kAXMainWindowAttribute] {
                 if let window: AXUIElement = value(attribute, from: appElement),
                    let snapshot = snapshot(
                        window,
-                       pid: pid,
+                       application: applicationInstance,
                        bundleIdentifier: application.bundleIdentifier,
                        displays: availableDisplays
                    ) {
@@ -171,7 +190,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
             if let snapshot = windows.lazy.compactMap({
                 self.snapshot(
                     $0,
-                    pid: pid,
+                    application: applicationInstance,
                     bundleIdentifier: application.bundleIdentifier,
                     displays: availableDisplays
                 )
@@ -187,11 +206,11 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
     }
 
     public func visibleWindows() throws -> [WindowSnapshot] {
-        let interval = Self.signposter.beginInterval("visibleWindows")
-        defer { Self.signposter.endInterval("visibleWindows", interval) }
+        let interval = Self.signposter.beginInterval("completeSweep")
+        defer { Self.signposter.endInterval("completeSweep", interval) }
         try ensurePermission()
-        let onscreen = onscreenWindowFrames()
-        let hasWindowServerSnapshot = !onscreen.isEmpty
+        let windowServer = onscreenWindowIndex()
+        let hasWindowServerSnapshot = !windowServer.isEmpty
         // Enumerated once per sweep. Resolving the containing display per
         // window used to re-read every NSScreen for every window.
         let availableDisplays = displays()
@@ -204,17 +223,21 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
             isHidden: application.isHidden,
             includeHidden: false
         ) {
+            let applicationInstance = applicationInstance(for: application)
             let appElement = makeApplicationElement(pid: application.processIdentifier)
             let windows: [AXUIElement] = value(kAXWindowsAttribute, from: appElement) ?? []
             for window in windows {
                 guard let snapshot = snapshot(
                     window,
-                    pid: application.processIdentifier,
+                    application: applicationInstance,
                     bundleIdentifier: application.bundleIdentifier,
                     displays: availableDisplays
                 ) else { continue }
                 if hasWindowServerSnapshot,
-                   !isOnscreen(snapshot, candidates: onscreen[application.processIdentifier] ?? []) { continue }
+                   !windowServer.contains(
+                       snapshot,
+                       exactWindowID: identities.exactWindowID(for: snapshot.id)
+                   ) { continue }
                 snapshots.append(snapshot)
                 refreshedElements[snapshot.id] = window
                 if managedWindowIDs.contains(snapshot.id) || recentWindowIDs.contains(snapshot.id) {
@@ -225,7 +248,14 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         let retainedIDs = managedWindowIDs.union(recentWindowIDs).union(minimizedWindowIDs)
         elements = elements.filter { retainedIDs.contains($0.key) }
         elements.merge(refreshedElements) { _, latest in latest }
-        return snapshots.sorted { $0.id < $1.id }
+        let observedIDs = Set(snapshots.map(\.id))
+        for staleID in Set(identities.records.keys).subtracting(retainedIDs.union(observedIDs)) {
+            identities.remove(staleID)
+            minimumSizeLearner.remove(staleID)
+        }
+        let sorted = snapshots.sorted { $0.id < $1.id }
+        snapshotCache.recordFullSweep(sorted)
+        return sorted
     }
 
     public func updateManagedWindowIDs(_ ids: Set<WindowID>) {
@@ -256,6 +286,36 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         try ids.sorted().compactMap { try windowSnapshot(id: $0) }
     }
 
+    public func cachedVisibleWindows(
+        refreshing ids: Set<WindowID>
+    ) throws -> [WindowSnapshot]? {
+        let interval = Self.signposter.beginInterval("targetedRefresh")
+        defer { Self.signposter.endInterval("targetedRefresh", interval) }
+        guard !ids.isEmpty, snapshotCache.snapshots != nil else { return nil }
+        let exactIDs = Dictionary(uniqueKeysWithValues: ids.compactMap { windowID in
+            identities.exactWindowID(for: windowID).map { (windowID, $0) }
+        })
+        guard exactIDs.count == ids.count,
+              let windowServer = targetedWindowServerIndex(ids: Set(exactIDs.values))
+        else {
+            snapshotCache.invalidate()
+            return nil
+        }
+        let refreshed = try windowSnapshots(ids: ids)
+        guard Set(refreshed.map(\.id)) == ids,
+              refreshed.allSatisfy({ snapshot in
+                  windowServer.contains(
+                      snapshot,
+                      exactWindowID: exactIDs[snapshot.id]
+                  )
+              })
+        else {
+            snapshotCache.invalidate()
+            return nil
+        }
+        return snapshotCache.merge(refreshed, expectedWindowIDs: ids)
+    }
+
     func windowSnapshot(id: WindowID) throws -> WindowSnapshot? {
         try ensurePermission()
         guard let element = elements[id] ?? refreshElement(for: id) else { return nil }
@@ -263,7 +323,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         guard AXUIElementGetPid(element, &pid) == .success else { return nil }
         return snapshot(
             element,
-            pid: pid,
+            application: applicationInstance(forPID: pid),
             bundleIdentifier: NSRunningApplication(processIdentifier: pid)?.bundleIdentifier,
             displays: displays()
         )
@@ -458,6 +518,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
             isHidden: application.isHidden,
             includeHidden: true
         ) else { return }
+        _ = applicationInstance(for: application)
         recentApplicationPIDs.removeAll { $0 == pid }
         recentApplicationPIDs.insert(pid, at: 0)
         if recentApplicationPIDs.count > 12 {
@@ -477,12 +538,17 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
                 includeHidden: true
             )
         }
-        let activePIDs = Set(applications.map(\.processIdentifier))
+        let activePIDs = Set(applications.map { application -> pid_t in
+            _ = applicationInstance(for: application)
+            return application.processIdentifier
+        })
         for pid in observers.keys where !activePIDs.contains(pid) {
             if let observer = observers.removeValue(forKey: pid) {
                 CFRunLoopRemoveSource(CFRunLoopGetMain(), AXObserverGetRunLoopSource(observer), .commonModes)
             }
             registrations.removeValue(forKey: pid)
+            removeCachedState(for: identities.remove(processIdentifier: pid))
+            launchRecords.removeValue(forKey: pid)
         }
         for application in applications where observers[application.processIdentifier] == nil {
             installObserver(for: application.processIdentifier)
@@ -550,7 +616,11 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         pid: pid_t,
         windowID: WindowID? = nil
     ) {
-        let registration = Registration(windowID: windowID, notification: notification)
+        let registration = Registration(
+            windowID: windowID,
+            accessibilityHash: windowID == nil ? nil : CFHash(element),
+            notification: notification
+        )
         guard registrations[pid, default: []].insert(registration).inserted else { return }
         let pointer = Unmanaged.passUnretained(self).toOpaque()
         let result = AXObserverAddNotification(observer, element, notification as CFString, pointer)
@@ -569,6 +639,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         }
         if event.kind == .destroyed, let windowID = event.windowID {
             elements.removeValue(forKey: windowID)
+            identities.remove(windowID)
             recentWindowIDs.removeAll { $0 == windowID }
             minimizedWindowIDs.remove(windowID)
             if let existing = registrations[event.processIdentifier] {
@@ -578,44 +649,192 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
             }
             minimumSizeLearner.remove(windowID)
         }
+        if event.kind != .moved, event.kind != .resized, event.kind != .focused {
+            snapshotCache.invalidate()
+        }
         eventHandler?(event)
     }
 
+    fileprivate func receiveAXEvent(
+        kind: WindowSystemEvent.Kind,
+        processIdentifier: pid_t,
+        accessibilityHash: CFHashCode
+    ) {
+        let windowID: WindowID?
+        if kind == .focused {
+            windowID = nil
+        } else {
+            let application = applicationInstance(forPID: processIdentifier)
+            windowID = identities.windowID(
+                application: application,
+                accessibilityHash: accessibilityHash
+            ) ?? identities.resolve(
+                application: application,
+                accessibilityHash: accessibilityHash,
+                exactWindowID: nil
+            )
+        }
+        receiveWindowEvent(WindowSystemEvent(
+            kind: kind,
+            windowID: windowID,
+            processIdentifier: processIdentifier
+        ))
+    }
+
+    struct SnapshotAttributes: Equatable {
+        var role: String
+        var position: CGPoint
+        var size: CGSize
+        var minimized: Bool
+        var fullScreen: Bool
+        var title: String
+        var subrole: String?
+        var minimumSizes: [BTSize]
+    }
+
+    private nonisolated static let snapshotAttributeNames = [
+        kAXRoleAttribute,
+        kAXPositionAttribute,
+        kAXSizeAttribute,
+        kAXMinimizedAttribute,
+        "AXFullScreen",
+        kAXTitleAttribute,
+        kAXSubroleAttribute,
+        "AXMinSize",
+        "AXMinimumSize",
+    ]
+
     private func snapshot(
         _ element: AXUIElement,
-        pid: pid_t,
+        application: ApplicationLaunchInstance,
         bundleIdentifier: String?,
         displays availableDisplays: [DisplaySnapshot]
     ) -> WindowSnapshot? {
-        guard let role: String = value(kAXRoleAttribute, from: element), role == kAXWindowRole,
-              let position: CGPoint = axValue(kAXPositionAttribute, from: element, type: .cgPoint),
-              let size: CGSize = axValue(kAXSizeAttribute, from: element, type: .cgSize),
-              size.width > 20, size.height > 20
+        guard let attributes = snapshotAttributes(element),
+              attributes.role == kAXWindowRole,
+              attributes.size.width > 20, attributes.size.height > 20
         else { return nil }
-        let frame = BTRect(x: position.x, y: position.y, width: size.width, height: size.height)
+        let frame = BTRect(
+            x: attributes.position.x,
+            y: attributes.position.y,
+            width: attributes.size.width,
+            height: attributes.size.height
+        )
         guard let display = display(containing: frame.center, in: availableDisplays) else { return nil }
-        let id = WindowID(rawValue: "\(pid):\(CFHash(element))")
+        let id = identities.resolve(
+            application: application,
+            accessibilityHash: CFHash(element),
+            exactWindowID: exactWindowIDResolver.windowID(for: element)
+        )
         elements[id] = element
-        let minimized: Bool = value(kAXMinimizedAttribute, from: element) ?? false
-        let fullScreen: Bool = value("AXFullScreen", from: element) ?? false
         let movable = isSettable(kAXPositionAttribute, on: element)
         let resizable = isSettable(kAXSizeAttribute, on: element)
-        let title: String = value(kAXTitleAttribute, from: element) ?? ""
+        let minimumSize = MinimumSizeHintValidator.merged(
+            defaultSize: WindowConstraints().minimumSize,
+            hints: attributes.minimumSizes,
+            displaySize: display.frame.size
+        )
         let constraints = minimumSizeLearner.merging(
-            WindowConstraints(isMovable: movable, isResizable: resizable),
+            WindowConstraints(
+                minimumSize: minimumSize,
+                isMovable: movable,
+                isResizable: resizable
+            ),
             for: id
         )
         return WindowSnapshot(
             id: id,
-            processIdentifier: pid,
+            processIdentifier: application.processIdentifier,
             bundleIdentifier: bundleIdentifier,
-            title: title,
+            title: attributes.title,
             frame: frame,
             displayID: display.id,
             constraints: constraints,
-            isMinimized: minimized,
-            isFullScreen: fullScreen,
-            isHidden: false
+            isMinimized: attributes.minimized,
+            isFullScreen: attributes.fullScreen,
+            isHidden: false,
+            isFloating: WindowFloatingClassifier.isFloating(subrole: attributes.subrole)
+        )
+    }
+
+    private func snapshotAttributes(_ element: AXUIElement) -> SnapshotAttributes? {
+        if let attributes = batchedSnapshotAttributes(element) { return attributes }
+        guard let role: String = value(kAXRoleAttribute, from: element),
+              let position: CGPoint = axValue(
+                  kAXPositionAttribute,
+                  from: element,
+                  type: .cgPoint
+              ),
+              let size: CGSize = axValue(kAXSizeAttribute, from: element, type: .cgSize)
+        else { return nil }
+        return SnapshotAttributes(
+            role: role,
+            position: position,
+            size: size,
+            minimized: value(kAXMinimizedAttribute, from: element) ?? false,
+            fullScreen: value("AXFullScreen", from: element) ?? false,
+            title: value(kAXTitleAttribute, from: element) ?? "",
+            subrole: value(kAXSubroleAttribute, from: element),
+            minimumSizes: privateAPIsDisabled ? [] : ["AXMinSize", "AXMinimumSize"].compactMap {
+                (axValue($0, from: element, type: .cgSize) as CGSize?).map {
+                    BTSize(width: $0.width, height: $0.height)
+                }
+            }
+        )
+    }
+
+    private func batchedSnapshotAttributes(_ element: AXUIElement) -> SnapshotAttributes? {
+        var copiedValues: CFArray?
+        let names = privateAPIsDisabled
+            ? Array(Self.snapshotAttributeNames.prefix(7))
+            : Self.snapshotAttributeNames
+        let error = AXUIElementCopyMultipleAttributeValues(
+            element,
+            names as CFArray,
+            [],
+            &copiedValues
+        )
+        guard error == .success,
+              let values = copiedValues as? [Any],
+              values.count == names.count
+        else {
+            logBatchFallbackOnce(reason: "batch request unavailable")
+            return nil
+        }
+        let parsed = Self.parsedBatchedSnapshotAttributes(
+            values + Array(repeating: NSNull(), count: Self.snapshotAttributeNames.count - values.count)
+        )
+        if parsed == nil { logBatchFallbackOnce(reason: "required batch value malformed") }
+        return parsed
+    }
+
+    private func logBatchFallbackOnce(reason: String) {
+        guard !loggedBatchFallback else { return }
+        loggedBatchFallback = true
+        Self.log.notice("AX snapshot batching fallback: \(reason, privacy: .public)")
+    }
+
+    nonisolated static func parsedBatchedSnapshotAttributes(
+        _ values: [Any]
+    ) -> SnapshotAttributes? {
+        guard values.count == snapshotAttributeNames.count,
+              let role = values[0] as? String,
+              let position: CGPoint = decodedAXValue(values[1], type: .cgPoint),
+              let size: CGSize = decodedAXValue(values[2], type: .cgSize)
+        else { return nil }
+        let minimumSizes = values[7...8].compactMap { raw -> BTSize? in
+            guard let size: CGSize = decodedAXValue(raw, type: .cgSize) else { return nil }
+            return BTSize(width: size.width, height: size.height)
+        }
+        return SnapshotAttributes(
+            role: role,
+            position: position,
+            size: size,
+            minimized: values[3] as? Bool ?? false,
+            fullScreen: values[4] as? Bool ?? false,
+            title: values[5] as? String ?? "",
+            subrole: values[6] as? String,
+            minimumSizes: minimumSizes
         )
     }
 
@@ -627,6 +846,64 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
     private func refreshElement(for windowID: WindowID) -> AXUIElement? {
         _ = try? visibleWindows()
         return elements[windowID]
+    }
+
+    public func window(at point: BTPoint) throws -> WindowSnapshot? {
+        let interval = Self.signposter.beginInterval("dragResolution")
+        defer { Self.signposter.endInterval("dragResolution", interval) }
+        try ensurePermission()
+        var hitElement: AXUIElement?
+        guard AXUIElementCopyElementAtPosition(
+            AXUIElementCreateSystemWide(),
+            Float(point.x),
+            Float(point.y),
+            &hitElement
+        ) == .success,
+        let hitElement,
+        let window = containingWindow(for: hitElement)
+        else { return nil }
+
+        var pid: pid_t = 0
+        guard AXUIElementGetPid(window, &pid) == .success,
+              let runningApplication = NSRunningApplication(processIdentifier: pid),
+              Self.shouldManageApplication(
+                  processIdentifier: pid,
+                  ownProcessIdentifier: getpid(),
+                  activationPolicy: runningApplication.activationPolicy,
+                  isHidden: runningApplication.isHidden,
+                  includeHidden: false
+              ),
+              let snapshot = snapshot(
+                  window,
+                  application: applicationInstance(for: runningApplication),
+                  bundleIdentifier: runningApplication.bundleIdentifier,
+                  displays: displays()
+              )
+        else { return nil }
+
+        if let exactWindowID = identities.exactWindowID(for: snapshot.id) {
+            guard let windowServer = targetedWindowServerIndex(ids: [exactWindowID]),
+                  windowServer.contains(snapshot, exactWindowID: exactWindowID)
+            else { return nil }
+        }
+        return snapshot
+    }
+
+    private func containingWindow(for element: AXUIElement) -> AXUIElement? {
+        var current = element
+        for _ in 0..<8 {
+            if let role: String = value(kAXRoleAttribute, from: current), role == kAXWindowRole {
+                return current
+            }
+            if let window: AXUIElement = value(kAXWindowAttribute, from: current) {
+                return window
+            }
+            guard let parent: AXUIElement = value(kAXParentAttribute, from: current) else {
+                return nil
+            }
+            current = parent
+        }
+        return nil
     }
 
     private func retainRecent(_ windowID: WindowID) {
@@ -643,25 +920,86 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         }
     }
 
-    private func isOnscreen(_ snapshot: WindowSnapshot, candidates: [BTRect]) -> Bool {
-        candidates.contains { OnscreenWindowMatcher.matches(accessibilityFrame: snapshot.frame, windowServerFrame: $0) }
+    private func applicationInstance(
+        for application: NSRunningApplication
+    ) -> ApplicationLaunchInstance {
+        let pid = application.processIdentifier
+        let launchToken = application.launchDate?.timeIntervalSinceReferenceDate.bitPattern
+        if let record = launchRecords[pid], record.launchToken == launchToken {
+            return record.instance
+        }
+        removeCachedState(for: identities.remove(processIdentifier: pid))
+        nextLaunchGeneration &+= 1
+        let instance = ApplicationLaunchInstance(
+            processIdentifier: pid,
+            generation: nextLaunchGeneration
+        )
+        launchRecords[pid] = LaunchRecord(launchToken: launchToken, instance: instance)
+        return instance
     }
 
-    private func onscreenWindowFrames() -> [pid_t: [BTRect]] {
-        guard let info = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[CFString: Any]] else { return [:] }
-        var result: [pid_t: [BTRect]] = [:]
-        for item in info {
-            guard let layer = item[kCGWindowLayer] as? Int, layer == 0,
-                  let owner = item[kCGWindowOwnerPID] as? Int,
+    private func applicationInstance(forPID pid: pid_t) -> ApplicationLaunchInstance {
+        if let application = NSRunningApplication(processIdentifier: pid) {
+            return applicationInstance(for: application)
+        }
+        if let record = launchRecords[pid] { return record.instance }
+        nextLaunchGeneration &+= 1
+        let instance = ApplicationLaunchInstance(
+            processIdentifier: pid,
+            generation: nextLaunchGeneration
+        )
+        launchRecords[pid] = LaunchRecord(launchToken: nil, instance: instance)
+        return instance
+    }
+
+    private func removeCachedState(for windowIDs: Set<WindowID>) {
+        guard !windowIDs.isEmpty else { return }
+        for windowID in windowIDs {
+            elements.removeValue(forKey: windowID)
+            minimumSizeLearner.remove(windowID)
+            minimizedWindowIDs.remove(windowID)
+        }
+        recentWindowIDs.removeAll { windowIDs.contains($0) }
+        snapshotCache.invalidate()
+    }
+
+    private func onscreenWindowIndex() -> WindowServerIndex {
+        guard let info = CGWindowListCopyWindowInfo(
+            [.optionOnScreenOnly, .excludeDesktopElements],
+            kCGNullWindowID
+        ) as? [[CFString: Any]] else { return WindowServerIndex(records: []) }
+        return WindowServerIndex(records: windowServerRecords(from: info, defaultOnscreen: true))
+    }
+
+    private func targetedWindowServerIndex(ids: Set<CGWindowID>) -> WindowServerIndex? {
+        guard !ids.isEmpty,
+              let info = CGWindowListCreateDescriptionFromArray(
+                  ids.sorted().map { NSNumber(value: $0) } as CFArray
+              ) as? [[CFString: Any]]
+        else { return nil }
+        return WindowServerIndex(records: windowServerRecords(from: info, defaultOnscreen: false))
+    }
+
+    private func windowServerRecords(
+        from info: [[CFString: Any]],
+        defaultOnscreen: Bool
+    ) -> [WindowServerRecord] {
+        info.compactMap { item in
+            guard let windowNumber = item[kCGWindowNumber] as? NSNumber,
+                  let layer = item[kCGWindowLayer] as? NSNumber,
+                  let owner = item[kCGWindowOwnerPID] as? NSNumber,
                   let bounds = item[kCGWindowBounds] as? [String: Any],
                   let x = number(bounds["X"]), let y = number(bounds["Y"]),
                   let width = number(bounds["Width"]), let height = number(bounds["Height"])
-            else { continue }
-            let rect = CGRect(x: x, y: y, width: width, height: height)
-            // CGWindow bounds use the same global top-left convention as Accessibility.
-            result[pid_t(owner), default: []].append(BTRect(x: rect.minX, y: rect.minY, width: rect.width, height: rect.height))
+            else { return nil }
+            return WindowServerRecord(
+                windowID: windowNumber.uint32Value,
+                processIdentifier: pid_t(owner.int32Value),
+                layer: layer.intValue,
+                frame: BTRect(x: x, y: y, width: width, height: height),
+                isOnscreen: item[kCGWindowIsOnscreen] as? Bool ?? defaultOnscreen
+            )
         }
-        return result
     }
 
     private func value<T>(_ attribute: String, from element: AXUIElement) -> T? {
@@ -672,6 +1010,20 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
 
     private func axValue<T>(_ attribute: String, from element: AXUIElement, type: AXValueType) -> T? {
         guard let value: AXValue = value(attribute, from: element), AXValueGetType(value) == type else { return nil }
+        let pointer = UnsafeMutablePointer<T>.allocate(capacity: 1)
+        defer { pointer.deallocate() }
+        guard AXValueGetValue(value, type, pointer) else { return nil }
+        return pointer.pointee
+    }
+
+    private nonisolated static func decodedAXValue<T>(
+        _ raw: Any,
+        type: AXValueType
+    ) -> T? {
+        let rawValue = raw as CFTypeRef
+        guard CFGetTypeID(rawValue) == AXValueGetTypeID() else { return nil }
+        let value = rawValue as! AXValue
+        guard AXValueGetType(value) == type else { return nil }
         let pointer = UnsafeMutablePointer<T>.allocate(capacity: 1)
         defer { pointer.deallocate() }
         guard AXValueGetValue(value, type, pointer) else { return nil }
@@ -721,13 +1073,16 @@ private func betterTileAXObserverCallback(
     case kAXFocusedWindowChangedNotification: kind = .focused
     default: return
     }
-    let windowID = kind == .focused ? nil : WindowID(rawValue: "\(pid):\(CFHash(element))")
-    let event = WindowSystemEvent(kind: kind, windowID: windowID, processIdentifier: pid)
+    let accessibilityHash = CFHash(element)
     let address = UInt(bitPattern: refcon)
     Task { @MainActor in
         guard let pointer = UnsafeMutableRawPointer(bitPattern: address) else { return }
         let system = Unmanaged<AccessibilityWindowSystem>.fromOpaque(pointer).takeUnretainedValue()
-        system.receiveWindowEvent(event)
+        system.receiveAXEvent(
+            kind: kind,
+            processIdentifier: pid,
+            accessibilityHash: accessibilityHash
+        )
     }
 }
 
