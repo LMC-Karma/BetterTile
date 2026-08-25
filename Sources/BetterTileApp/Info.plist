@@ -13,7 +13,7 @@
 	<key>SUEnableAutomaticChecks</key>
 	<string>$(BETTERTILE_ENABLE_AUTOMATIC_CHECKS)</string>
 	<key>SUFeedURL</key>
-	<string>https://github.com/LMC-Karma/BetterTile/releases/latest/download/appcast.xml</string>
+	<string>$(BETTERTILE_UPDATE_FEED_URL)</string>
 	<key>SUPublicEDKey</key>
 	<string>jDDzKbmy50mWyzmIUioKAMdMVKaiPORdrz+P9eQ579c=</string>
 	<key>SUScheduledCheckInterval</key>

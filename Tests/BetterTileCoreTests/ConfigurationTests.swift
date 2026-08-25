@@ -2,6 +2,13 @@ import Foundation
 import Testing
 @testable import BetterTileCore
 
+@Test func defaultConfigurationStoreCanUseAVariantDirectory() {
+    let store = ConfigurationStore.defaultStore(directoryName: "BetterTile Debug")
+
+    #expect(store.fileURL.lastPathComponent == "configuration.json")
+    #expect(store.fileURL.deletingLastPathComponent().lastPathComponent == "BetterTile Debug")
+}
+
 @Test func configurationAtomicRoundTrip() throws {
     let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: directory) }

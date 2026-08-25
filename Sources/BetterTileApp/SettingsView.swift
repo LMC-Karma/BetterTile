@@ -41,8 +41,10 @@ private enum SettingsDestination: String, CaseIterable, Identifiable {
 
 struct SettingsView: View {
     @Bindable var model: BetterTileModel
+#if !DEBUG
     @Binding var automaticallyChecksForUpdates: Bool
     let checkForUpdates: () -> Void
+#endif
     let openSetup: () -> Void
     @State private var selection: SettingsDestination = .general
     @State private var search = ""
@@ -125,12 +127,16 @@ struct SettingsView: View {
     private var detail: some View {
         switch selection {
         case .general:
+#if DEBUG
+            GeneralSettings(model: model, openSetup: openSetup)
+#else
             GeneralSettings(
                 model: model,
                 automaticallyChecksForUpdates: $automaticallyChecksForUpdates,
                 checkForUpdates: checkForUpdates,
                 openSetup: openSetup
             )
+#endif
         case .windowLayout:
             WindowLayoutSettings(model: model)
         case .snapZones:
@@ -143,8 +149,10 @@ struct SettingsView: View {
 
 private struct GeneralSettings: View {
     @Bindable var model: BetterTileModel
+#if !DEBUG
     @Binding var automaticallyChecksForUpdates: Bool
     let checkForUpdates: () -> Void
+#endif
     let openSetup: () -> Void
     @AppStorage(AppAppearance.defaultsKey) private var appearanceRawValue = AppAppearance.system.rawValue
 
@@ -203,8 +211,10 @@ private struct GeneralSettings: View {
 
             Section("Application") {
                 Toggle("Show Dock icon", isOn: configurationBinding(\.showDockIcon))
+#if !DEBUG
                 Toggle("Automatically check for updates", isOn: $automaticallyChecksForUpdates)
                 Button("Check for Updates…", action: checkForUpdates)
+#endif
             }
 
             Section("BetterTile and macOS Window Tiling") {

@@ -1,0 +1,43 @@
+{
+  "fill" : {
+    "automatic-gradient" : "srgb:0.00000,0.26308,1.00000,1.00000"
+  },
+  "groups" : [
+    {
+      "layers" : [
+        {
+          "image-name" : "02-RightPane.svg",
+          "name" : "Emerald Pane"
+        },
+        {
+          "image-name" : "01-LeftPanes.svg",
+          "name" : "Frosted Panes"
+        }
+      ],
+      "name" : "Glass Panes",
+      "shadow" : {
+        "kind" : "neutral",
+        "opacity" : 0.5
+      },
+      "translucency" : {
+        "enabled" : true,
+        "value" : 0.5
+      }
+    },
+    {
+      "layers" : [
+        {
+          "image-name" : "03-DebugBadge.svg",
+          "name" : "Debug Badge"
+        }
+      ],
+      "name" : "Debug"
+    }
+  ],
+  "supported-platforms" : {
+    "circles" : [
+      "watchOS"
+    ],
+    "squares" : "shared"
+  }
+}

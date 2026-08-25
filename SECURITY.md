@@ -82,6 +82,13 @@ Update archives are authenticated by an EdDSA signature that Sparkle verifies
 against the public key built into the application. That verification is
 independent of the application's macOS code signature.
 
+The Xcode Debug configuration builds **BetterTile Debug** with bundle identifier
+`com.lmckarma.BetterTile.debug`. Sparkle remains embedded because Debug and
+Release share one target, but Debug supplies no feed URL and does not create an
+updater controller or show update controls. It therefore performs no update
+network requests. Release keeps the public feed and updater behavior described
+above.
+
 ### Send Feedback
 
 The **Send Feedback…** menu item opens

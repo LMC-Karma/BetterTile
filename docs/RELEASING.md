@@ -22,7 +22,7 @@ These are separate and easy to confuse:
 
 | Context | Signature | Purpose |
 | --- | --- | --- |
-| Contributor builds from Xcode | the contributor's own Apple Development / Personal Team identity, from the gitignored `Config/LocalSigning.xcconfig` | keeps the local Accessibility grant across rebuilds |
+| BetterTile Debug builds from Xcode | the contributor's own Apple Development / Personal Team identity, from the gitignored `Config/LocalSigning.xcconfig` | keeps the separate Debug Accessibility grant across rebuilds |
 | CI, and the build steps inside this script | none — `CODE_SIGNING_ALLOWED=NO` | unsigned validation builds only; never distributed |
 | The published beta | ad-hoc (`-`), applied by `Tools/release-beta.sh` | the application inside the downloadable DMG |
 
@@ -151,6 +151,9 @@ are the remaining gates before publishing:
 - Sparkle rejects a deliberately modified archive.
 - Installation, bundle replacement, and relaunch complete successfully.
 - automatic-check preference changes persist and no system profile is sent.
+- With BetterTile Debug running, launching the release build offers to quit
+  BetterTile Debug before continuing. Accepting the prompt leaves only the
+  release build running.
 - `codesign --verify --deep --strict` passes on the app inside the mounted DMG.
 - A quarantined copy is offered **Open Anyway** in System Settings rather than
   being reported as damaged. Reproduce the quarantine with
