@@ -55,7 +55,7 @@ Dry runs default to ad-hoc signing (`-`). Publication fails unless
 `BETTERTILE_SIGNING_IDENTITY` selects the stable beta identity:
 
 ```sh
-BETTERTILE_SIGNING_IDENTITY="BetterTile Beta" Tools/release-beta.sh 0.4.1 notes.md
+BETTERTILE_SIGNING_IDENTITY="BetterTile Beta" Tools/release-beta.sh 0.1.0 notes.md
 ```
 
 The release tool also requires the signed app and the copy mounted from the DMG
@@ -169,7 +169,7 @@ clean, current `main`, then run:
 git switch main
 git pull --ff-only origin main
 BETTERTILE_SIGNING_IDENTITY="BetterTile Beta" \
-  Tools/release-beta.sh 0.4.1 path/to/notes.md
+  Tools/release-beta.sh 0.1.0 path/to/notes.md
 ```
 
 The command refuses to publish unless `main` is clean and matches

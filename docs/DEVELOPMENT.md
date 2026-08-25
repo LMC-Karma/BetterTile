@@ -101,8 +101,9 @@ Three signing contexts exist and they never touch each other:
   gitignored `Config/LocalSigning.xcconfig`. Nothing here is committed.
 - **CI and `swift build` / `swift test`** build with `CODE_SIGNING_ALLOWED=NO`.
   Those are unsigned validation builds and are never distributed.
-- **The published beta** is ad-hoc signed by `Tools/release-beta.sh` alone, and
-  is not signed with a Developer ID. See [RELEASING.md](RELEASING.md).
+- **The published beta** uses the maintainer-held, self-signed `BetterTile Beta`
+  identity through `Tools/release-beta.sh` alone. It is not signed with a
+  Developer ID. See [RELEASING.md](RELEASING.md).
 
 Nothing you do locally changes what testers download, and the release tool never
 reads your signing identity.
