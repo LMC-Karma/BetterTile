@@ -125,6 +125,16 @@ gesture consumers return to their public `NSEvent` monitors automatically.
 The tap copies only scalar position, button, modifier, timestamp, and event-kind
 values to the main actor. It neither changes nor retains system events.
 
+The tap can be turned off before launch, which returns both gesture consumers to
+their `NSEvent` monitors:
+
+```sh
+defaults write com.lmckarma.BetterTile disableSharedGestureEvents -bool true
+```
+
+Quit and reopen BetterTile after changing the default. Restore the tap with
+`defaults delete com.lmckarma.BetterTile disableSharedGestureEvents`.
+
 The maintainer design and least-privilege review is recorded in
 [pull request #36](https://github.com/LMC-Karma/BetterTile/pull/36). Validation
 on macOS 26.5.2 confirmed that a personally signed build with Accessibility
