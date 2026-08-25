@@ -26,6 +26,7 @@ BetterTile.xcarchive/
 # Local agent and tooling configuration
 /.xcodebuildmcp/
 /.claude/
+/.vscode/
 /Config/LocalSigning.xcconfig
 # Claude Code auto-loads this local symlink to AGENTS.md; do not publish it.
 /CLAUDE.md

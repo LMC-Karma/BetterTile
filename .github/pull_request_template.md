@@ -1,31 +1,26 @@
-## What changed
+## Problem
 
 
-## Why
+## Before
 
 
-## User impact
+## After
+
+
+## Not changed
 
 
 ## Validation
 
-- [ ] `swift test`
-- [ ] `swift build`
-- [ ] Relevant manual macOS scenarios checked
+- Ran:
+- Not run:
+- Acceptance gates: name each measurable gate with its measured value, or the
+  written maintainer waiver that allows merge without it.
 
-## Safety
+## Safety and project limits
 
 [SECURITY.md](../SECURITY.md) is the canonical policy for networking, privacy,
 permissions, privileged components, dependencies, distribution, and user-data
-handling. Read it before ticking these boxes, and disclose anything it requires
-in the sections above.
-
-- [ ] Uses public Apple APIs, or links the approved private-API discussion and documents its scope, fallback, and compatibility testing
-- [ ] Adds no unexplained permissions
-- [ ] Documents provenance, compatible licensing, and attribution for adapted code
-- [ ] Discloses new or changed network communication
-- [ ] Discloses permissions or privileged components
-- [ ] Lists runtime dependencies and compatible licenses
-- [ ] Explains changes to user-data handling
-- [ ] Explains distribution or update changes
-- [ ] Documents intentional architecture changes and their rationale
+handling. Write `None` or name each affected area and link its required design
+discussion, approval, test evidence, and disclosure. Also report changes to
+private APIs, licensing or provenance, updates, and architecture.

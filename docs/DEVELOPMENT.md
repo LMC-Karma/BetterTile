@@ -129,16 +129,10 @@ signed build.
 
 ## 4. Run the tests
 
-Before opening a PR:
+Run focused checks while you work. Before opening a ready pull request, run:
 
 ```sh
 swift test        # unit + fake-system integration tests
-swift build       # library build
-```
-
-Full application-bundle build (what CI also runs):
-
-```sh
 xcodebuild -project BetterTile.xcodeproj -scheme BetterTile \
   -configuration Debug CODE_SIGNING_ALLOWED=NO build
 ```
@@ -163,19 +157,27 @@ changed (avoid `git add -A`), then:
 
 ```sh
 git push -u origin feat/short-description
-gh pr create --draft --base main
+gh pr create --base main
 ```
 
-Mark the PR **Ready for review** when it's done. Wait for CI and review before
-merging.
+This opens a ready pull request, which starts the automated review. Use
+`--draft` only when you want early feedback or the maintainer asks for a draft.
+When a draft is complete and locally validated, mark it **Ready for review**.
+
+Check automated review comments against the code, tests, and project rules.
+Resolve every review thread. Merge only after CI passes and the maintainer
+approves the final pushed version. If automated review cannot run, report the
+failure and wait for a retry or a maintainer decision.
 
 ---
 
 ## 6. Automated review on pull requests
 
-- **Claude** reviews every update to a non-draft PR, including when it is opened,
-  marked **Ready for review**, or receives new commits. It comments inline on
-  the diff. You can also write **`@claude`** in a PR comment to ask a follow-up.
+- **Claude** checks each non-draft pull request against its stated goal and the
+  BetterTile repository rules. It reviews the pull request when it opens, when
+  a draft becomes ready, and when it receives new commits. It comments inline
+  on confirmed problems. You can write **`@claude`** in a comment to ask a
+  follow-up question.
 - **GPT/Codex** is available as a second opinion through ChatGPT. Write
   **`@codex review`** in a PR comment to request a review, or enable automatic
   reviews in [Codex settings](https://chatgpt.com/codex/settings/code-review).

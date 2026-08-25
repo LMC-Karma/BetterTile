@@ -157,11 +157,15 @@ are the remaining gates before publishing:
   `xattr -w com.apple.quarantine "0081;0;BetterTile;" /Applications/BetterTile.app`.
 - Accessibility is re-granted after an ad-hoc-signed update exactly as the
   release notes and README describe.
+- Every measurable acceptance gate from design work merged since the last
+  release has a recorded measurement on this build, or a written maintainer
+  waiver. `docs/BENTO_TESTING.md` lists the manual and latency gates.
 
 ## Publish
 
-Only publish after the draft pull request passes CI, the maintainer approves it,
-and the change is merged. Check out the clean, current `main`, then run:
+Only publish after the pull request passes CI, review threads are resolved, the
+maintainer approves the final version, and the change is merged. Check out the
+clean, current `main`, then run:
 
 ```sh
 git switch main

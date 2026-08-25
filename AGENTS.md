@@ -1,196 +1,155 @@
 # AGENTS.md
 
-Instructions for AI coding agents working in this repository. Vendor-neutral —
-applies to Claude Code, Codex, Cursor, Copilot, or any other agent.
+Instructions for AI coding agents working in this repository. Human
+contributors should read [CONTRIBUTING.md](CONTRIBUTING.md).
 
-Human contributors: see [CONTRIBUTING.md](CONTRIBUTING.md) instead. It covers
-the same rules in the form a person needs them.
+## Project
 
----
+BetterTile is a native macOS window manager. It provides keyboard and drag
+snapping, linked resizing, and adaptive Bento tiling. It uses Swift 6.3,
+SwiftUI, AppKit, and the public Accessibility API.
 
-## What this project is
+BetterTile is free. It has no advertising, behavioral tracking, or sale of user
+data.
 
-BetterTile is a native macOS window manager: keyboard and drag snapping, linked
-resizing of adjacent windows, and adaptive Bento tiling. Swift 6.3, SwiftUI,
-AppKit, and the public Accessibility API. BetterTile is a free utility with no
-advertising, behavioral tracking, or sale of user data. Read
-[SECURITY.md](SECURITY.md) before changing networking, permissions,
-dependencies, user-data handling, or distribution.
+## Read the relevant guide
 
----
+- Read [CONTEXT.md](CONTEXT.md) before domain or user-behavior work. Use its
+  terms. Add a term only when a distinct project concept needs one stable name.
+- Read [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) before changing layers,
+  coordinates, window mutations, application integrations, or updates.
+- Read [SECURITY.md](SECURITY.md) before changing networking, permissions,
+  dependencies, user data, privileged components, private APIs, distribution,
+  or updates.
+- Read [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) before setting up a machine,
+  changing signing, or diagnosing the local build environment.
+- Read [docs/BENTO_TESTING.md](docs/BENTO_TESTING.md) before changing Bento event
+  handling, settlement, recovery, or placement transactions.
+- Read [docs/RELEASING.md](docs/RELEASING.md) before changing a version, release,
+  appcast, distributed signature, or update feed.
 
 ## Build and test
 
-```sh
-swift test              # unit and fake-system integration tests
-swift build             # library build
-```
-
-Full application bundle:
+Run focused checks while you work. Before opening a ready pull request, run:
 
 ```sh
+swift test
 xcodebuild -project BetterTile.xcodeproj -scheme BetterTile \
   -configuration Debug CODE_SIGNING_ALLOWED=NO build
 ```
 
-Run `swift test` and the `xcodebuild` bundle build before proposing any code
-change. CI runs both on every pull request.
+Add tests for geometry, state transitions, configuration migrations, and
+failure paths. Test `BetterTileMacOS` with the fake window system in
+`Tests/BetterTileMacOSTests/`, not with live Accessibility.
 
-`Package.swift` deliberately exposes only libraries, not an executable. The
-runnable app comes from `BetterTile.xcodeproj`. Do not add an executable
-product to `Package.swift`.
+When a plan or design discussion states a measurable acceptance gate, measure it
+before you ask for merge, and record the measured value in the pull request. An
+unmeasured gate blocks merge until the maintainer waives it in writing. Passing
+automated tests do not satisfy a latency, hardware, or manual-matrix gate. If
+the code cannot produce the measurement, add the instrumentation in the same
+pull request that claims the gate.
 
----
+`Package.swift` exposes libraries only. The runnable app comes from
+`BetterTile.xcodeproj`. Keep it that way.
 
-## Fresh-machine setup
+## Architecture limits
 
-Before launching BetterTile on a contributor's Mac:
-
-1. Confirm an Apple Development identity exists with
-   `security find-identity -v -p codesigning`. If none exists, ask the user to
-   add their Apple ID and create an Apple Development certificate in
-   **Xcode → Settings → Accounts**. Never access or export a private key.
-2. Copy `Config/LocalSigning.xcconfig.example` to
-   `Config/LocalSigning.xcconfig`.
-3. If exactly one Apple Development identity exists, use the 10-character Team
-   ID shown in parentheses for `BETTERTILE_DEVELOPMENT_TEAM`. If multiple
-   identities exist, ask the user which team to use.
-4. Verify `git check-ignore Config/LocalSigning.xcconfig` succeeds. Never commit
-   this local file, add a Team ID to `project.pbxproj`, or change the bundle
-   identifier.
-5. Open `BetterTile.xcodeproj`, run the shared **BetterTile** scheme, and guide
-   the user through the one-time Accessibility grant.
-
-If `swift test` reports `no such module 'Testing'`, the active developer
-directory is Command Line Tools rather than full Xcode. Ask before running:
-
-```sh
-sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
-```
-
----
-
-## Architecture rules
-
-The current design has three layers, and changes should preserve this
-dependency direction unless an explicit architecture decision updates it:
+Keep this dependency direction:
 
 ```
 BetterTileApp  →  BetterTileMacOS  →  BetterTileCore
    (SwiftUI)       (AppKit + AX)       (pure logic)
 ```
 
-1. **`BetterTileCore` must not import AppKit, Accessibility, or any macOS UI
-   framework.** It is deterministic placement policy: geometry, actions, Bento
-   planning, linked resizing, frame history, configuration
-   models, and migrations. If you find yourself reaching for `NSScreen` in
-   Core, the boundary is in the wrong place.
-2. **`BetterTileMacOS`** owns Accessibility, window-system integration,
-   coordinate conversion, window mutations, and approved macOS API adapters.
-3. **`BetterTileApp`** owns the SwiftUI/AppKit application lifecycle and
-   application-level UI integrations: Settings and menu-bar scenes, the main
-   menu, the status item, alerts, Sparkle's `SPUStandardUpdaterController`, and
-   user-requested `NSWorkspace` actions such as opening the Applications folder
-   or the feedback form.
+- `BetterTileCore` contains deterministic policy. It imports no AppKit,
+  Accessibility, or macOS UI framework.
+- `BetterTileMacOS` owns Accessibility, coordinate conversion, window-system
+  integration, and window mutations.
+- `BetterTileApp` owns the application lifecycle, UI integrations, and Sparkle.
+- Core uses top-left logical points. Convert AppKit's bottom-left coordinates at
+  the `BetterTileMacOS` boundary.
+- Route every window mutation through the main-actor `WindowCoordinator`.
+- The app delegate owns `SPUStandardUpdaterController` and implements
+  `SPUUpdaterDelegate`. Keep updater APIs out of `BetterTileCore`.
 
-**Updates are an application-layer integration.** The app delegate owns
-`SPUStandardUpdaterController` and implements `SPUUpdaterDelegate`. This is an
-intentional, documented boundary, not an exception to be tidied away. Do not
-create a separate updater service and do not add an updater API to
-`BetterTileCore`.
+## Security limits
 
-Only the framework-independent decisions are extracted, into
-`BetterTileMacOS/ApplicationUpdatePresentation.swift` (`UpdateIndicator`,
-`FeedbackLink`, `ApplicationVolume`). They import neither Sparkle nor AppKit and
-are unit tested; the app delegate translates Sparkle's callbacks into them.
+Use public Apple APIs by default. BetterTile accepts no SIP workaround or code
+injection.
 
-**Coordinate model.** Core uses logical points with a **top-left** origin.
-AppKit's bottom-left global coordinates are converted at the `BetterTileMacOS`
-boundary by `CoordinateConverter`. Core code must never see a bottom-left
-frame.
+Get maintainer approval through a written design discussion before implementing
+a private API. Follow the review, fallback, test, and disclosure rules in
+`SECURITY.md`.
 
-**Window mutations** all pass through the main-actor `WindowCoordinator`.
-Multi-window operations preflight every participant, apply in deterministic
-order, and roll back already-applied frames if a later Accessibility write
-fails. Do not write window frames outside this path.
+Networking, dependencies, permissions, privileged components, user-data
+handling, distribution, updates, and intentional architecture changes also
+need the benefit, review, tests, and disclosure required by `SECURITY.md`. New
+permissions need an in-product explanation before the system prompt. Record
+compatible licensing, provenance, and attribution for adapted code.
 
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full picture.
+Sparkle is the only approved runtime dependency.
 
----
+## Work boundaries
 
-## Security and product guardrails
+- Keep one clear goal in each task. The goal can come from the user request, a
+  discussion, an issue, or the pull-request body. A GitHub issue is optional.
+- Clarify an unclear goal before editing. Use a written design discussion when
+  an approval rule requires one.
+- Keep one topic in each pull request. Report nearby problems without adding
+  them unless they block safe completion.
+- Use subagents only for independent work. Use separate branches and worktrees
+  for parallel writers, give each writer non-overlapping files, and combine the
+  work only after each part passes its checks.
+- Add a repository skill only after the same manual workflow succeeds several
+  times. Use real request phrases as its triggers.
+- Improve these rules after a repeated failure or one serious safety failure.
+  Avoid permanent rules for isolated minor corrections.
 
-The permanent platform-safety boundaries are:
+## Writing
 
-- no SIP workarounds
-- no code injection
+Use plain technical English. These rules take inspiration from
+[ASD-STE100 Simplified Technical English](https://www.asd-ste100.org/about_STE.html);
+they do not claim formal compliance.
 
-Prefer public Apple APIs. Before implementing a private API, open or link an
-explicit design discussion and obtain maintainer approval under the review
-criteria in [SECURITY.md](SECURITY.md). Keep approved platform integration in
-`BetterTileMacOS`, with the agreed capability checks, fallbacks, tests, and
-disclosure.
+- Lead with the result. Add only the context needed to understand or act.
+- Keep one topic in each sentence. Prefer short sentences and concrete verbs.
+- Prefer active voice when it makes the responsible actor clear.
+- Use one term for one concept. Use the BetterTile terms in `CONTEXT.md`.
+- Name the behavior, file, command, or failure directly. Explain unavoidable
+  jargon the first time it appears.
+- Describe changes as the problem, behavior before and after, evidence, and
+  anything not checked.
+- If a reader says an explanation is unclear, rewrite it from the beginning
+  with the missing context.
 
-Dependencies, network features, permissions, privileged components, and
-intentional architecture changes are reviewable design choices, not blanket
-prohibitions. They require a concrete user benefit, security and maintenance
-review, tests, and repository disclosure. New permissions also require an
-in-product explanation before macOS prompts. Adapted code needs compatible
-licensing, provenance, and attribution; undocumented copying is not allowed.
+Apply these rules to agent replies, plans, issues, pull requests, review
+comments, commit messages, and technical documentation.
 
-Follow the canonical policy and disclosure requirements in
-[SECURITY.md](SECURITY.md). Sparkle is currently the only approved runtime
-dependency.
+## Git and pull requests
 
----
+- Use local Git and `gh` for `LMC-Karma/BetterTile`. Fetch `origin/main` before
+  starting.
+- Branch as `feat/<short-description>`, `fix/<short-description>`,
+  `docs/<short-description>`, or `refactor/<short-description>`.
+- Commit and push only on a branch. Keep `main` unchanged.
+- Preserve unrelated work. Stage explicit files instead of using `git add -A`.
+- Ask the user for the exact action and target before force-pushing, using
+  `git clean` to delete files, running `git reset --hard`, or deleting a branch.
+- Open a ready pull request with `gh pr create --base main` after the change and
+  local checks are complete. Use `--draft` only when the user requests a draft
+  or the purpose is early feedback.
+- Complete the pull-request body. Record checks that ran and checks that did not
+  run.
+- Verify automated review comments against the code, tests, and project rules.
+  Fix confirmed faults. Explain false alarms and infrastructure failures.
+- Merge only after CI passes, review is complete, review threads are resolved,
+  and the maintainer approves the final pushed version.
+- If automated review cannot run, report the failure and wait for a retry or a
+  maintainer decision.
+- When abandoning work, close its pull request and return the workspace to
+  `origin/main`. Keep the branch unless the user asks to delete it.
 
-## Testing expectations
+## Local files
 
-Add tests for geometry, state transitions, configuration migrations, and
-failure paths. `BetterTileCore` is pure and therefore directly testable — new
-Core logic without a test is incomplete.
-
-`BetterTileMacOS` is tested against a fake window system rather than live
-Accessibility. Follow the existing pattern in `Tests/BetterTileMacOSTests/`.
-
----
-
-## Git workflow
-
-- Repository is `LMC-Karma/BetterTile`. Use local `git` and the `gh` CLI. Do not
-  open a browser or run `gh auth login` unless an operation actually fails for
-  want of authentication.
-- Fetch `origin/main` before starting. Branch as `feat/<short-description>`,
-  `fix/<short-description>`, `docs/<short-description>`, or
-  `refactor/<short-description>`.
-- **Never commit or push directly to `main`.**
-- Preserve unrelated working-tree changes. Stage explicit files; do not use
-  `git add -A`.
-- Push with `git push -u origin <branch>`, then open a draft PR with
-  `gh pr create --draft` targeting `main`.
-- **Leave pull requests unmerged until the maintainer explicitly approves the
-  tested version.** Use `gh pr merge` only after that approval.
-- When abandoning work, close its PR and return the workspace to `origin/main`.
-  Keep the branch unless asked to delete it.
-
----
-
-## Xcode notes
-
-**Accessibility permission across rebuilds.** macOS ties privacy grants to the
-code-signing designated requirement. Xcode's ad-hoc *Sign to Run Locally*
-identity changes on every rebuild, so the grant does not survive. Configure a
-Personal Team in the gitignored `Config/LocalSigning.xcconfig`, keep the bundle
-identifier stable, and always launch the Xcode app target rather than the Swift
-package executable.
-
-**Do not change the bundle identifier.** The Accessibility grant is attached to
-it.
-
----
-
-## Local-only files
-
-`/Local/` is gitignored and holds private notes, research, and scratch work.
-Never move its contents into a tracked path, quote it in a public file, or
-reference it from documentation.
+`/Local/` contains private, gitignored notes and scratch work. Keep its contents
+out of tracked files and public documentation.
