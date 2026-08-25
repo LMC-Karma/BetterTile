@@ -285,6 +285,7 @@ public final class DragSnapController {
 
     func receive(_ event: GlobalGestureEvent, from source: GestureEventSource) {
         guard gestureEventSource.accepts(source), event.button == 0 else { return }
+        GestureEventLatency.record(event, from: source, consumer: "dragSnap")
         switch event.kind {
         case .leftMouseDown:
             guard Self.acceptsMouseDown(

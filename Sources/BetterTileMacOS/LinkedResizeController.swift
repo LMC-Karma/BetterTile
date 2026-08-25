@@ -140,6 +140,7 @@ public final class LinkedResizeController {
 
     func receive(_ event: GlobalGestureEvent, from source: GestureEventSource) {
         guard gestureEventSource.accepts(source), event.button == 0 else { return }
+        GestureEventLatency.record(event, from: source, consumer: "linkedResize")
         switch event.kind {
         case .leftMouseDown:
             isLeftButtonDown = true

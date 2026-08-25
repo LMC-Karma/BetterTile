@@ -44,8 +44,80 @@ windows look correct.
 - Disable the event tap during an active gesture and confirm it recovers or both
   consumers switch to `NSEvent` without a duplicate drag or resize. Confirm no
   Input Monitoring prompt appears.
-- Compare shared-event and `NSEvent` gesture traces in Instruments. Confirm p95
-  down/drag/up delivery latency does not regress by more than 10%.
+- Measure gesture delivery latency on both sources and confirm the shared event
+  tap p95 does not regress by more than 10% against the `NSEvent` monitors. Drag
+  a window for about a minute on each source, then read the signposts:
+
+  ```sh
+  p95() {
+    log show --last 10m --signpost --style compact \
+      --predicate 'subsystem == "com.lmckarma.BetterTile" AND category == "GestureEvents"' \
+    | sed -n "s/.*source=$1 .*latencyNanoseconds=\([0-9]*\).*/\1/p" \
+    | sort -n \
+    | awk '{a[NR]=$1} END {if(NR==0){print "no samples";exit} i=int((NR*95+99)/100); printf "n=%d p95=%.2f ms\n", NR, a[i]/1000000}'
+  }
+  p95 eventTap
+  p95 nsEvent
+  ```
+
+  Take the `nsEvent` baseline first. Quit BetterTile, run `defaults write
+  com.lmckarma.BetterTile disableSharedGestureEvents -bool true`, and reopen it.
+  Restore the tap with `defaults delete com.lmckarma.BetterTile
+  disableSharedGestureEvents` and reopen again for the `eventTap` sample.
+
+  Record both values and both sample counts in the pull request. Fewer than 200
+  samples on either source is not a measurement.
+- Measure window observation latency and confirm a frame-only event refreshes
+  only the affected windows. Take the public fallback baseline first. Quit
+  BetterTile, run `defaults write com.lmckarma.BetterTile disablePrivateAPIs
+  -bool true`, and record the start time before reopening it:
+
+  ```sh
+  TRACE_START="$(date '+%Y-%m-%d %H:%M:%S')"
+  ```
+
+  Exercise focus changes, drags, and window open/close for a few minutes, then
+  read only the interval signposts recorded since that start time:
+
+  ```sh
+  interval_p95() {
+    log show --start "$TRACE_START" --signpost --style compact \
+      --predicate 'subsystem == "com.lmckarma.BetterTile" AND category == "Accessibility"' \
+    | awk -v want="$1" '
+        { t=$2; gsub(/:/," ",t); split(t,h," "); s=h[1]*3600+h[2]*60+h[3]; name=$NF }
+        /begin\]/ { if (name==want) b=s; next }
+        /end\]/   { if (name==want && b>0) { printf "%.3f\n", (s-b)*1000; b=0 } }
+      ' \
+    | sort -n \
+    | awk '{a[NR]=$1} END {if(NR==0){print "no samples";exit} i=int((NR*95+99)/100); printf "n=%d p95=%.2f ms\n", NR, a[i]}'
+  }
+  for name in completeSweep targetedRefresh dragResolution focusedWindow; do
+    printf '%-18s ' "$name"; interval_p95 "$name"
+  done
+  ```
+
+  Save the fallback output. Quit BetterTile, restore the private observation
+  path with `defaults delete com.lmckarma.BetterTile disablePrivateAPIs`, reset
+  `TRACE_START` immediately before reopening, and repeat the same sequence and
+  command. The new start time keeps the normal-path query from including the
+  fallback samples.
+
+  For `completeSweep`, `dragResolution`, and `focusedWindow`, the normal-path
+  p95 must not exceed the fallback p95 by more than 10%. Collect at least 30
+  samples for each interval in each mode and record every value and count in the
+  pull request. A lower count is not a measurement.
+
+  Do not compare `targetedRefresh` between modes: without exact identities the
+  interval ends at its fallback guard and a complete sweep does the work.
+  Instead, confirm the normal-path `targetedRefresh` p95 is lower than its
+  `completeSweep` p95, collect at least 30 targeted-refresh samples, and confirm
+  ordinary window movement produces more targeted refreshes than complete
+  sweeps.
+
+  `log show` reports whole milliseconds, so a p95 near or below 1 ms cannot be
+  compared at 10% resolution. Use Instruments with the os_signpost instrument
+  when a measurement lands that low. This pairing also assumes begin and end
+  stay ordered on the main actor, and it does not survive a midnight rollover.
 - Repeat the Space, fullscreen, and display checks after running
   `defaults write com.lmckarma.BetterTile disablePrivateAPIs -bool true` and
   reopening BetterTile. Restore normal behavior with
