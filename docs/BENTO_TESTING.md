@@ -67,6 +67,36 @@ windows look correct.
 
   Record both values and both sample counts in the pull request. Fewer than 200
   samples on either source is not a measurement.
+- Measure window observation latency and confirm a frame-only event refreshes
+  only the affected windows. Exercise focus changes, drags, and window
+  open/close for a few minutes, then read the interval signposts:
+
+  ```sh
+  interval_p95() {
+    log show --last 30m --signpost --style compact \
+      --predicate 'subsystem == "com.lmckarma.BetterTile" AND category == "Accessibility"' \
+    | awk -v want="$1" '
+        { t=$2; gsub(/:/," ",t); split(t,h," "); s=h[1]*3600+h[2]*60+h[3]; name=$NF }
+        /begin\]/ { if (name==want) b=s; next }
+        /end\]/   { if (name==want && b>0) { printf "%.3f\n", (s-b)*1000; b=0 } }
+      ' \
+    | sort -n \
+    | awk '{a[NR]=$1} END {if(NR==0){print "no samples";exit} i=int(NR*0.95); if(i<1)i=1; printf "n=%d p95=%.2f ms\n", NR, a[i]}'
+  }
+  for name in completeSweep targetedRefresh dragResolution focusedWindow; do
+    printf '%-18s ' "$name"; interval_p95 "$name"
+  done
+  ```
+
+  `targetedRefresh` must be substantially cheaper than `completeSweep`, and a
+  session of ordinary window movement must produce far more targeted refreshes
+  than complete sweeps. Both counts near zero mean the trace did not exercise
+  the path.
+
+  `log show` reports whole milliseconds, so a p95 near or below 1 ms cannot be
+  compared at 10% resolution. Use Instruments with the os_signpost instrument
+  when a measurement lands that low. This pairing also assumes begin and end
+  stay ordered on the main actor, and it does not survive a midnight rollover.
 - Repeat the Space, fullscreen, and display checks after running
   `defaults write com.lmckarma.BetterTile disablePrivateAPIs -bool true` and
   reopening BetterTile. Restore normal behavior with
