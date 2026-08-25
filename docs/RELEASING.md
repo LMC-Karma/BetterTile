@@ -97,15 +97,12 @@ DerivedData and the staging tree are intentionally not retained.
 
 ## Sparkle signing key
 
-Sparkle's official `generate_keys` tool created the EdDSA key. The public key is
-committed in `Sources/BetterTileApp/Info.plist`; the private key remains in the
-maintainer's login Keychain under Sparkle's default `ed25519` account.
-
-Before the first public release, export the private key once with Sparkle's
-official tool, store that export as an encrypted item in the maintainer's
-password manager, and securely delete the temporary export. Never commit it,
-paste it into an issue or pull request, or add it to GitHub Actions. The release
-tool reads the live key directly from the login Keychain.
+Sparkle verifies update archives against the EdDSA public key committed in
+`Sources/BetterTileApp/Info.plist`. The release tool uses Sparkle's standard
+local signing configuration. Configure and back up the corresponding private
+signing material outside this repository through private operator instructions.
+Keep private keys, storage details, and recovery instructions out of tracked
+files, logs, issues, pull requests, and CI.
 
 ## Release notes
 
@@ -129,40 +126,17 @@ Tools/release-beta.sh --dry-run 0.1.0 path/to/notes.md
 A dry run may run from a feature branch. It runs the tests and builds, ad-hoc
 signs and verifies the Release app, validates its Info.plist, creates and mounts
 the DMG, re-verifies the signature through the mounted image, generates an EdDSA
-signature for the DMG with the Keychain key, and records it in the appcast. The
-finished artifacts are copied to `.build/beta-release/v<version>-beta/` for
-manual inspection; the temporary working directory is removed.
+signature for the DMG, and records it in the appcast. The finished artifacts are
+copied to `.build/beta-release/v<version>-beta/` for inspection; the temporary
+working directory is removed.
 
-The automated suite already covers the indicator state machine, the feedback URL
-contents, and the read-only-volume decision. The following need a person, and
-are the remaining gates before publishing:
-
-- BetterTile and the Applications shortcut appear in the mounted DMG.
-- Opening BetterTile directly from the mounted DMG shows the move-to-Applications
-  explanation before Accessibility or update services start.
-- An older test build discovers the update and turns the menu-bar icon blue.
-  The older build must carry the **current** `SUFeedURL`. A build from before a
-  feed relocation points at the old address and can only ever fail, so this gate
-  silently cannot pass and proves nothing about the release.
-- Sparkle's own update UI appears, shows the release notes, and requires user
-  action before downloading and before installing.
-- **Later** preserves the blue state; **Skip** and a confirmed no-update result
-  clear it; a transient network failure preserves it.
-- Sparkle rejects a deliberately modified archive.
-- Installation, bundle replacement, and relaunch complete successfully.
-- automatic-check preference changes persist and no system profile is sent.
-- With BetterTile Debug running, launching the release build offers to quit
-  BetterTile Debug before continuing. Accepting the prompt leaves only the
-  release build running.
-- `codesign --verify --deep --strict` passes on the app inside the mounted DMG.
-- A quarantined copy is offered **Open Anyway** in System Settings rather than
-  being reported as damaged. Reproduce the quarantine with
-  `xattr -w com.apple.quarantine "0081;0;BetterTile;" /Applications/BetterTile.app`.
-- Accessibility is re-granted after an ad-hoc-signed update exactly as the
-  release notes and README describe.
-- Every measurable acceptance gate from design work merged since the last
-  release has a recorded measurement on this build, or a written maintainer
-  waiver. `docs/BENTO_TESTING.md` lists the manual and latency gates.
+Before publishing, inspect the artifact and test the user paths affected by the
+release. For an ordinary beta, confirm that the DMG installs and launches, a
+basic window action works after granting Accessibility, and an older supported
+beta discovers and installs the update. Add focused checks when a release
+changes packaging, signing, updates, permissions, or macOS integration. Use
+`docs/BENTO_TESTING.md` as guidance when Bento behavior changes. Record material
+risks or skipped checks; the maintainer decides whether they block the release.
 
 ## Publish
 
@@ -188,8 +162,8 @@ Latest-release asset URL:
 
 After publication, confirm the release assets and appcast are public,
 inspect the appcast version, asset URL, and EdDSA signature, then complete one
-controlled update from an older build. Do not merge or publish automatically
-from CI; the EdDSA private key is intentionally absent from GitHub Actions.
+controlled update from an older build. Publishing is a deliberate maintainer
+action and does not run automatically from CI.
 
 Also confirm that the address the published application will actually ask for
 serves the release. Read the URL out of the shipped bundle rather than trusting

@@ -13,10 +13,9 @@ body:
   - type: textarea
     id: outcome
     attributes:
-      label: Desired result and acceptance gates
+      label: Desired result
       description: >-
-        What should BetterTile do, and what measurable gates define
-        completion?
+        What should BetterTile do, and how can we tell that it works?
     validations:
       required: true
   - type: textarea

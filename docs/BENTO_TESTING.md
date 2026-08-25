@@ -14,113 +14,32 @@ xcodebuild -project BetterTile.xcodeproj -scheme BetterTile \
 
 ## Manual checks
 
+Choose the checks that match the changed behavior. This list is guidance, not a
+requirement to repeat the full matrix for every pull request or release.
+
 Keep Console filtered to the `bento` category while testing. One user action
 should produce one settlement path. Repeating `settlement branch:` messages for
 one action indicate an event-ownership or fixed-point failure even when the
 windows look correct.
 
-- Tile, resize, Repair, and remove windows from Finder, Safari, Terminal, Xcode,
-  and a Chromium or Electron application.
-- Repeat on one display and two displays. A failure on one display must not stop
-  Bento on the other.
-- Change Dock position and visibility, then confirm every pane remains inside
-  the new work area.
-- Enter and leave focus mode, including with a minimum-size window.
-- Switch Spaces and sleep/wake the Mac, then confirm the first stable observation
-  produces at most one reflow.
-- Repeat Space switching with “Displays have separate Spaces” enabled and
-  disabled. Confirm each display and Space restores its own Bento tree.
-- Keep one window on multiple Spaces and confirm Bento leaves it floating.
-- Enter a native fullscreen Space and confirm BetterTile shows no divider and
-  performs no ambient placement.
-- With Stage Manager enabled, drag single-window and multi-window thumbnails.
-  Confirm BetterTile selects only the frontmost real member, never adds a
-  thumbnail artifact as a pane, and leaves every other group member untouched.
-- Repeat the Stage Manager checks with its Accessibility hierarchy unavailable
-  or `disablePrivateAPIs` enabled. Confirm ordinary hit-testing still works.
-- Exercise drag snapping and linked resizing with the shared gesture event tap
-  active. Confirm down/drag/up ordering matches the `NSEvent` fallback, Escape
-  still cancels drag snapping, and one gesture produces one settlement path.
-- Disable the event tap during an active gesture and confirm it recovers or both
-  consumers switch to `NSEvent` without a duplicate drag or resize. Confirm no
-  Input Monitoring prompt appears.
-- Measure gesture delivery latency on both sources and confirm the shared event
-  tap p95 does not regress by more than 10% against the `NSEvent` monitors. Drag
-  a window for about a minute on each source, then read the signposts:
+- Exercise tile, resize, Repair, and window removal in representative native and
+  Electron applications.
+- Check one and multiple displays when display ownership or work-area behavior
+  changed.
+- Check Space switching, fullscreen, sticky windows, or Stage Manager when the
+  change touches those integrations.
+- Check drag snapping and linked resizing on both the shared gesture source and
+  its fallback when gesture routing changed.
+- Exercise the public fallback when private observation behavior changed. Use
+  the documented `disablePrivateAPIs` default for that comparison.
+- Confirm each action settles once without twitching, drifting, duplicate
+  placement, or a failure on one display stopping another.
 
-  ```sh
-  p95() {
-    log show --last 10m --signpost --style compact \
-      --predicate 'subsystem == "com.lmckarma.BetterTile" AND category == "GestureEvents"' \
-    | sed -n "s/.*source=$1 .*latencyNanoseconds=\([0-9]*\).*/\1/p" \
-    | sort -n \
-    | awk '{a[NR]=$1} END {if(NR==0){print "no samples";exit} i=int((NR*95+99)/100); printf "n=%d p95=%.2f ms\n", NR, a[i]/1000000}'
-  }
-  p95 eventTap
-  p95 nsEvent
-  ```
+## Performance checks
 
-  Take the `nsEvent` baseline first. Quit BetterTile, run `defaults write
-  com.lmckarma.BetterTile disableSharedGestureEvents -bool true`, and reopen it.
-  Restore the tap with `defaults delete com.lmckarma.BetterTile
-  disableSharedGestureEvents` and reopen again for the `eventTap` sample.
-
-  Record both values and both sample counts in the pull request. Fewer than 200
-  samples on either source is not a measurement.
-- Measure window observation latency and confirm a frame-only event refreshes
-  only the affected windows. Take the public fallback baseline first. Quit
-  BetterTile, run `defaults write com.lmckarma.BetterTile disablePrivateAPIs
-  -bool true`, and record the start time before reopening it:
-
-  ```sh
-  TRACE_START="$(date '+%Y-%m-%d %H:%M:%S')"
-  ```
-
-  Exercise focus changes, drags, and window open/close for a few minutes, then
-  read only the interval signposts recorded since that start time:
-
-  ```sh
-  interval_p95() {
-    log show --start "$TRACE_START" --signpost --style compact \
-      --predicate 'subsystem == "com.lmckarma.BetterTile" AND category == "Accessibility"' \
-    | awk -v want="$1" '
-        { t=$2; gsub(/:/," ",t); split(t,h," "); s=h[1]*3600+h[2]*60+h[3]; name=$NF }
-        /begin\]/ { if (name==want) b=s; next }
-        /end\]/   { if (name==want && b>0) { printf "%.3f\n", (s-b)*1000; b=0 } }
-      ' \
-    | sort -n \
-    | awk '{a[NR]=$1} END {if(NR==0){print "no samples";exit} i=int((NR*95+99)/100); printf "n=%d p95=%.2f ms\n", NR, a[i]}'
-  }
-  for name in completeSweep targetedRefresh dragResolution focusedWindow; do
-    printf '%-18s ' "$name"; interval_p95 "$name"
-  done
-  ```
-
-  Save the fallback output. Quit BetterTile, restore the private observation
-  path with `defaults delete com.lmckarma.BetterTile disablePrivateAPIs`, reset
-  `TRACE_START` immediately before reopening, and repeat the same sequence and
-  command. The new start time keeps the normal-path query from including the
-  fallback samples.
-
-  For `completeSweep`, `dragResolution`, and `focusedWindow`, the normal-path
-  p95 must not exceed the fallback p95 by more than 10%. Collect at least 30
-  samples for each interval in each mode and record every value and count in the
-  pull request. A lower count is not a measurement.
-
-  Do not compare `targetedRefresh` between modes: without exact identities the
-  interval ends at its fallback guard and a complete sweep does the work.
-  Instead, confirm the normal-path `targetedRefresh` p95 is lower than its
-  `completeSweep` p95, collect at least 30 targeted-refresh samples, and confirm
-  ordinary window movement produces more targeted refreshes than complete
-  sweeps.
-
-  `log show` reports whole milliseconds, so a p95 near or below 1 ms cannot be
-  compared at 10% resolution. Use Instruments with the os_signpost instrument
-  when a measurement lands that low. This pairing also assumes begin and end
-  stay ordered on the main actor, and it does not survive a midnight rollover.
-- Repeat the Space, fullscreen, and display checks after running
-  `defaults write com.lmckarma.BetterTile disablePrivateAPIs -bool true` and
-  reopening BetterTile. Restore normal behavior with
-  `defaults delete com.lmckarma.BetterTile disablePrivateAPIs`.
-- During and immediately after each operation, confirm windows do not twitch,
-  drift, or restore twice.
+Measure performance when a change touches a hot path or investigates a reported
+regression. Compare before and after builds on the same Mac with the same
+workload. The `GestureEvents` and `Accessibility` signposts provide delivery and
+observation timings. Record the method and result when performance affects the
+decision to merge or release; do not impose a universal sample count or
+threshold on unrelated changes.

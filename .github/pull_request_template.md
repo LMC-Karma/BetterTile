@@ -14,8 +14,8 @@
 
 - Ran:
 - Not run:
-- Acceptance gates: name each measurable gate with its measured value, or the
-  written maintainer waiver that allows merge without it.
+- Manual checks: record relevant results or explain why they were skipped. The
+  maintainer decides whether a remaining check blocks merge or release.
 
 ## Safety and project limits
 
