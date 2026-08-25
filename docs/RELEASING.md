@@ -98,11 +98,11 @@ DerivedData and the staging tree are intentionally not retained.
 ## Sparkle signing key
 
 Sparkle verifies update archives against the EdDSA public key committed in
-`Sources/BetterTileApp/Info.plist`. Configure and back up the corresponding
-private signing material outside this repository. Keep private keys, storage
-details, and recovery instructions out of tracked files, logs, issues, pull
-requests, and CI. The release tool assumes an authorized release environment is
-already configured.
+`Sources/BetterTileApp/Info.plist`. The release tool uses Sparkle's standard
+local signing configuration. Configure and back up the corresponding private
+signing material outside this repository through private operator instructions.
+Keep private keys, storage details, and recovery instructions out of tracked
+files, logs, issues, pull requests, and CI.
 
 ## Release notes
 
