@@ -62,10 +62,3 @@ public struct NativeDesktopObservation: Hashable, Sendable {
         }
     }
 }
-
-/// Optional native capability alongside `WindowSystem`. Callers must preserve
-/// their public-API inference path when an observation is unavailable.
-@MainActor
-public protocol NativeDesktopProviding: AnyObject {
-    func nativeDesktopObservation() -> NativeDesktopObservation?
-}

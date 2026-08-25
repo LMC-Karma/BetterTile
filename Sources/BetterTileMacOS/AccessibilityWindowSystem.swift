@@ -4,7 +4,7 @@ import BetterTileCore
 import os
 
 @MainActor
-public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventSource, NativeDesktopProviding {
+public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventSource {
     private static let signposter = OSSignposter(
         subsystem: "com.lmckarma.BetterTile",
         category: "Accessibility"
@@ -441,6 +441,8 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         }
     }
 
+    /// Returns nil whenever the native topology is unavailable or rejected.
+    /// Callers must keep their public-API inference path for that result.
     public func nativeDesktopObservation() -> NativeDesktopObservation? {
         if nativeObservationGeneration == snapshotGeneration {
             return lastNativeDesktopObservation
