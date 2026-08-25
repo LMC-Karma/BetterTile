@@ -135,11 +135,13 @@ release. For an ordinary beta, confirm that the app in the built DMG launches.
 Use the locally signed Debug app and its existing Accessibility grant to confirm
 that a basic window action and the affected app behavior work. Also confirm that
 the Sparkle dependency, updater integration, feed URL, signing configuration,
-and appcast generation have not changed since the previous release.
+appcast generation, and update packaging have not changed since the previous
+release.
 
 Run a controlled update from an older supported build when the release changes
-Sparkle, update configuration, signing, the feed URL, feed generation, or update
-packaging. Test the fresh release app's permission flow when signing or
+the Sparkle dependency, updater integration, feed URL, signing configuration,
+appcast generation, and update packaging. Test the fresh release app's
+permission flow when signing or
 Accessibility behavior changes. Add other focused checks when a release changes
 permissions or macOS integration. Use `docs/BENTO_TESTING.md` as guidance when
 Bento behavior changes. Record material risks or skipped checks; the maintainer
