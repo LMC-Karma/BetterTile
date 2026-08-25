@@ -131,11 +131,12 @@ copied to `.build/beta-release/v<version>-beta/` for inspection; the temporary
 working directory is removed.
 
 Before publishing, inspect the artifact and test the user paths affected by the
-release. For an ordinary beta, confirm that the built app launches and that the
-affected app behavior works. Also confirm that the Sparkle dependency, updater
-integration, feed URL, signing configuration, and appcast generation have not
-changed since the previous release. Do not repeat the full update workflow when
-these parts are unchanged.
+release. For an ordinary beta, install and launch the app from the built DMG,
+then confirm that a basic window action and the affected app behavior work with
+the current local Accessibility setup. Also confirm that the Sparkle dependency,
+updater integration, feed URL, signing configuration, and appcast generation
+have not changed since the previous release. Do not repeat a fresh permission
+grant or the full update workflow when these parts are unchanged.
 
 Run a controlled update from an older supported build when the release changes
 Sparkle, update configuration, signing, feed generation, or update packaging.
