@@ -107,3 +107,65 @@ private func feedbackURLComponents() throws -> URLComponents {
     #expect(!ApplicationVolume.requiresRelocation(volumeIsReadOnly: false))
     #expect(!ApplicationVolume.requiresRelocation(volumeIsReadOnly: nil))
 }
+
+// MARK: - Sibling application launch
+
+@Test func siblingLaunchContinuesWhenTheSiblingAlreadyTerminated() {
+    #expect(SiblingApplicationLaunch.nextDecision(
+        userChoseToQuitSibling: nil,
+        terminationRequestAccepted: nil,
+        siblingIsTerminated: true,
+        deadlinePassed: false
+    ) == .continueLaunching)
+}
+
+@Test func siblingLaunchAsksBeforeRequestingTermination() {
+    #expect(SiblingApplicationLaunch.nextDecision(
+        userChoseToQuitSibling: nil,
+        terminationRequestAccepted: nil,
+        siblingIsTerminated: false,
+        deadlinePassed: false
+    ) == .askUser)
+    #expect(SiblingApplicationLaunch.nextDecision(
+        userChoseToQuitSibling: false,
+        terminationRequestAccepted: nil,
+        siblingIsTerminated: false,
+        deadlinePassed: false
+    ) == .quitCurrentApplication)
+    #expect(SiblingApplicationLaunch.nextDecision(
+        userChoseToQuitSibling: true,
+        terminationRequestAccepted: nil,
+        siblingIsTerminated: false,
+        deadlinePassed: false
+    ) == .requestTermination)
+}
+
+@Test func siblingLaunchWaitsForAnAcceptedTerminationRequest() {
+    #expect(SiblingApplicationLaunch.nextDecision(
+        userChoseToQuitSibling: true,
+        terminationRequestAccepted: true,
+        siblingIsTerminated: false,
+        deadlinePassed: false
+    ) == .waitForTermination)
+    #expect(SiblingApplicationLaunch.nextDecision(
+        userChoseToQuitSibling: true,
+        terminationRequestAccepted: true,
+        siblingIsTerminated: true,
+        deadlinePassed: false
+    ) == .continueLaunching)
+}
+
+@Test func siblingLaunchReportsRejectedOrTimedOutTermination() {
+    #expect(SiblingApplicationLaunch.nextDecision(
+        userChoseToQuitSibling: true,
+        terminationRequestAccepted: false,
+        siblingIsTerminated: false,
+        deadlinePassed: false
+    ) == .showTerminationFailure)
+    #expect(SiblingApplicationLaunch.nextDecision(
+        userChoseToQuitSibling: true,
+        terminationRequestAccepted: true,
+        siblingIsTerminated: false,
+        deadlinePassed: true
+    ) == .showTerminationFailure)
+}

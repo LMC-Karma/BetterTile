@@ -214,33 +214,53 @@ private final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSPo
             withBundleIdentifier: BetterTileVariant.siblingBundleIdentifier
         ).first(where: { !$0.isTerminated }) else { return true }
 
-        NSApp.activate(ignoringOtherApps: true)
-        let alert = NSAlert()
-        alert.messageText = "\(BetterTileVariant.siblingDisplayName) Is Already Running"
-        alert.informativeText = "Only one BetterTile variant can manage windows at a time."
-        alert.alertStyle = .warning
-        alert.addButton(withTitle: "Quit \(BetterTileVariant.siblingDisplayName) & Continue")
-        alert.addButton(withTitle: "Quit \(BetterTileVariant.displayName)")
-        guard alert.runModal() == .alertFirstButtonReturn, sibling.terminate() else {
-            NSApp.terminate(nil)
-            return false
+        var userChoseToQuitSibling: Bool?
+        var terminationRequestAccepted: Bool?
+        var deadline: Date?
+        while true {
+            let decision = SiblingApplicationLaunch.nextDecision(
+                userChoseToQuitSibling: userChoseToQuitSibling,
+                terminationRequestAccepted: terminationRequestAccepted,
+                siblingIsTerminated: sibling.isTerminated,
+                deadlinePassed: deadline.map { Date.now >= $0 } ?? false
+            )
+            switch decision {
+            case .askUser:
+                NSApp.activate(ignoringOtherApps: true)
+                let alert = NSAlert()
+                alert.messageText = "\(BetterTileVariant.siblingDisplayName) Is Already Running"
+                alert.informativeText = "Only one BetterTile variant can manage windows at a time."
+                alert.alertStyle = .warning
+                alert.addButton(withTitle: "Quit \(BetterTileVariant.siblingDisplayName) & Continue")
+                alert.addButton(withTitle: "Quit \(BetterTileVariant.displayName)")
+                userChoseToQuitSibling = alert.runModal() == .alertFirstButtonReturn
+            case .requestTermination:
+                terminationRequestAccepted = sibling.terminate()
+                deadline = Date.now.addingTimeInterval(3)
+            case .waitForTermination:
+                let nextCheck = min(deadline ?? Date.now, Date.now.addingTimeInterval(0.05))
+                RunLoop.current.run(mode: .default, before: nextCheck)
+            case .continueLaunching:
+                return true
+            case .quitCurrentApplication:
+                NSApp.terminate(nil)
+                return false
+            case .showTerminationFailure:
+                showSiblingTerminationFailure()
+                NSApp.terminate(nil)
+                return false
+            }
         }
+    }
 
-        let deadline = Date.now.addingTimeInterval(3)
-        while !sibling.isTerminated, Date.now < deadline {
-            RunLoop.current.run(mode: .default, before: min(deadline, Date.now.addingTimeInterval(0.05)))
-        }
-        guard sibling.isTerminated else {
-            let failure = NSAlert()
-            failure.messageText = "Could Not Quit \(BetterTileVariant.siblingDisplayName)"
-            failure.informativeText = "Quit it manually, then reopen \(BetterTileVariant.displayName)."
-            failure.alertStyle = .warning
-            failure.addButton(withTitle: "Quit \(BetterTileVariant.displayName)")
-            failure.runModal()
-            NSApp.terminate(nil)
-            return false
-        }
-        return true
+    private func showSiblingTerminationFailure() {
+        NSApp.activate(ignoringOtherApps: true)
+        let failure = NSAlert()
+        failure.messageText = "Could Not Quit \(BetterTileVariant.siblingDisplayName)"
+        failure.informativeText = "Quit it manually, then reopen \(BetterTileVariant.displayName)."
+        failure.alertStyle = .warning
+        failure.addButton(withTitle: "Quit \(BetterTileVariant.displayName)")
+        failure.runModal()
     }
 
     private func showMoveToApplicationsAlertAndQuit() {

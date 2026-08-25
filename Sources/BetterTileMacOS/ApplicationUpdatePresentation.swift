@@ -1,7 +1,7 @@
 import Foundation
 
-/// Framework-independent decisions behind BetterTileApp's update and feedback
-/// integrations.
+/// Framework-independent decisions behind BetterTileApp's lifecycle, update,
+/// and feedback integrations.
 ///
 /// The app delegate owns `SPUStandardUpdaterController` and conforms to
 /// `SPUUpdaterDelegate`; it translates Sparkle's callbacks into the events
@@ -90,5 +90,33 @@ public enum ApplicationVolume {
     /// failed lookup would be worse than allowing it.
     public static func requiresRelocation(volumeIsReadOnly: Bool?) -> Bool {
         volumeIsReadOnly == true
+    }
+}
+
+public enum SiblingApplicationDecision: Equatable, Sendable {
+    case askUser
+    case requestTermination
+    case waitForTermination
+    case continueLaunching
+    case quitCurrentApplication
+    case showTerminationFailure
+}
+
+public enum SiblingApplicationLaunch {
+    /// Selects the next step while one BetterTile variant yields to the other.
+    /// AppKit owns the prompt, termination request, and short run-loop wait;
+    /// this function keeps their state transitions deterministic and tested.
+    public static func nextDecision(
+        userChoseToQuitSibling: Bool?,
+        terminationRequestAccepted: Bool?,
+        siblingIsTerminated: Bool,
+        deadlinePassed: Bool
+    ) -> SiblingApplicationDecision {
+        if siblingIsTerminated { return .continueLaunching }
+        guard let userChoseToQuitSibling else { return .askUser }
+        guard userChoseToQuitSibling else { return .quitCurrentApplication }
+        guard let terminationRequestAccepted else { return .requestTermination }
+        guard terminationRequestAccepted else { return .showTerminationFailure }
+        return deadlinePassed ? .showTerminationFailure : .waitForTermination
     }
 }

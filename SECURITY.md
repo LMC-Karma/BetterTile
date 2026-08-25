@@ -55,6 +55,10 @@ only to correlate observer callbacks. Logs contain capability availability and
 one-time fallback reasons, never titles, AX identifiers, raw desktop topology,
 or Stage Manager contents.
 
+The `defaults` commands below use the public app's domain. For BetterTile Debug,
+replace `com.lmckarma.BetterTile` with
+`com.lmckarma.BetterTile.debug`; its preferences are intentionally separate.
+
 All private capabilities can be disabled before launch with:
 
 ```sh
