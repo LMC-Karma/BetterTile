@@ -131,12 +131,18 @@ copied to `.build/beta-release/v<version>-beta/` for inspection; the temporary
 working directory is removed.
 
 Before publishing, inspect the artifact and test the user paths affected by the
-release. For an ordinary beta, confirm that the DMG installs and launches, a
-basic window action works after granting Accessibility, and an older supported
-beta discovers and installs the update. Add focused checks when a release
-changes packaging, signing, updates, permissions, or macOS integration. Use
-`docs/BENTO_TESTING.md` as guidance when Bento behavior changes. Record material
-risks or skipped checks; the maintainer decides whether they block the release.
+release. For an ordinary beta, confirm that the built app launches and that the
+affected app behavior works. Also confirm that the Sparkle dependency, updater
+integration, feed URL, signing configuration, and appcast generation have not
+changed since the previous release. Do not repeat the full update workflow when
+these parts are unchanged.
+
+Run a controlled update from an older supported build when the release changes
+Sparkle, update configuration, signing, feed generation, or update packaging.
+Add other focused checks when a release changes permissions or macOS
+integration. Use `docs/BENTO_TESTING.md` as guidance when Bento behavior
+changes. Record material risks or skipped checks; the maintainer decides whether
+they block the release.
 
 ## Publish
 
@@ -160,10 +166,12 @@ GitHub release marked Latest. Sparkle reads the appcast through GitHub's stable
 Latest-release asset URL:
 `https://github.com/LMC-Karma/BetterTile/releases/latest/download/appcast.xml`.
 
-After publication, confirm the release assets and appcast are public,
-inspect the appcast version, asset URL, and EdDSA signature, then complete one
-controlled update from an older build. Publishing is a deliberate maintainer
-action and does not run automatically from CI.
+After publication, confirm the release assets and appcast are public, then
+inspect the appcast version, asset URL, and EdDSA signature. The maintainer can
+check the update on an installed copy. Require a controlled update from an
+older build only when the Sparkle or update surfaces named above changed.
+Publishing is a deliberate maintainer action and does not run automatically
+from CI.
 
 Also confirm that the address the published application will actually ask for
 serves the release. Read the URL out of the shipped bundle rather than trusting
