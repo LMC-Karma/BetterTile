@@ -15,8 +15,8 @@ public struct GlobalGestureEvent: Equatable, Sendable {
     public var position: BTPoint
     public var button: Int64
     public var modifiers: ShortcutModifiers
-    /// Nanoseconds since boot, in the base `GestureEventClock` reads. Zero
-    /// means the source reported no usable time.
+    /// Nanoseconds since system startup. Zero means the source reported no
+    /// usable time.
     public var timestamp: UInt64
 
     public init(
@@ -77,18 +77,11 @@ enum GestureEventSource: Equatable {
     }
 }
 
-/// One time base for both gesture sources. `CGEvent` reports mach absolute
-/// ticks and `NSEvent` reports seconds since boot, so neither latency can be
-/// compared with the other until both are nanoseconds on this base.
+/// One nanosecond time base for both gesture sources and delivery time.
 enum GestureEventClock {
-    private static let timebase: mach_timebase_info_data_t = {
-        var timebase = mach_timebase_info_data_t()
-        mach_timebase_info(&timebase)
-        return timebase
-    }()
-
-    static func nanoseconds(machAbsolute ticks: UInt64) -> UInt64 {
-        ticks * UInt64(timebase.numer) / UInt64(timebase.denom)
+    /// `CGEventTimestamp` is already nanoseconds since system startup.
+    static func nanoseconds(cgEventTimestamp timestamp: CGEventTimestamp) -> UInt64 {
+        timestamp
     }
 
     static var uptimeNanoseconds: UInt64 {
@@ -462,9 +455,7 @@ final class GestureEventTapWorker: GestureEventTapWorking, @unchecked Sendable {
             position: GlobalGestureEvent.position(cgEventLocation: event.location),
             button: event.getIntegerValueField(.mouseEventButtonNumber),
             modifiers: ShortcutModifiers(event.flags),
-            // CGEvent reports mach absolute ticks and NSEvent reports seconds
-            // since boot. Normalize here so both sources share one base.
-            timestamp: GestureEventClock.nanoseconds(machAbsolute: event.timestamp)
+            timestamp: GestureEventClock.nanoseconds(cgEventTimestamp: event.timestamp)
         )))
         return Unmanaged.passUnretained(event)
     }

@@ -1,4 +1,5 @@
 import BetterTileCore
+import CoreGraphics
 import Foundation
 import Testing
 @testable import BetterTileMacOS
@@ -242,27 +243,10 @@ private final class FakeGestureEventTapWorker: GestureEventTapWorking {
     }
 }
 
-@Test func gestureClockConvertsMachTicksToNanoseconds() {
-    // A one-second interval must read as one second whatever the timebase is,
-    // otherwise the two sources cannot be compared against one p95 limit.
-    let start = GestureEventClock.uptimeNanoseconds
-    let ticks = mach_absolute_time()
-    let converted = GestureEventClock.nanoseconds(machAbsolute: ticks)
-    let end = GestureEventClock.uptimeNanoseconds
+@Test func gestureClockPreservesCGEventTimestampNanoseconds() {
+    let timestamp: CGEventTimestamp = 1_000
 
-    #expect(converted >= start)
-    #expect(converted <= end)
-}
-
-@Test func gestureClockConversionIsMonotonicAndScaled() {
-    let onceOver = GestureEventClock.nanoseconds(machAbsolute: 1_000)
-    let twiceOver = GestureEventClock.nanoseconds(machAbsolute: 2_000)
-
-    // Integer division truncates, so doubling the ticks may lose one
-    // nanosecond. That is far below the millisecond scale of the p95 gate.
-    #expect(twiceOver >= onceOver * 2)
-    #expect(twiceOver - onceOver * 2 <= 1)
-    #expect(GestureEventClock.nanoseconds(machAbsolute: 0) == 0)
+    #expect(GestureEventClock.nanoseconds(cgEventTimestamp: timestamp) == timestamp)
 }
 
 @Test func gestureLatencyMeasuresTheDeliveryInterval() {

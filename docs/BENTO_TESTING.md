@@ -68,12 +68,20 @@ windows look correct.
   Record both values and both sample counts in the pull request. Fewer than 200
   samples on either source is not a measurement.
 - Measure window observation latency and confirm a frame-only event refreshes
-  only the affected windows. Exercise focus changes, drags, and window
-  open/close for a few minutes, then read the interval signposts:
+  only the affected windows. Take the public fallback baseline first. Quit
+  BetterTile, run `defaults write com.lmckarma.BetterTile disablePrivateAPIs
+  -bool true`, and record the start time before reopening it:
+
+  ```sh
+  TRACE_START="$(date '+%Y-%m-%d %H:%M:%S')"
+  ```
+
+  Exercise focus changes, drags, and window open/close for a few minutes, then
+  read only the interval signposts recorded since that start time:
 
   ```sh
   interval_p95() {
-    log show --last 30m --signpost --style compact \
+    log show --start "$TRACE_START" --signpost --style compact \
       --predicate 'subsystem == "com.lmckarma.BetterTile" AND category == "Accessibility"' \
     | awk -v want="$1" '
         { t=$2; gsub(/:/," ",t); split(t,h," "); s=h[1]*3600+h[2]*60+h[3]; name=$NF }
@@ -88,11 +96,11 @@ windows look correct.
   done
   ```
 
-  Take the public fallback baseline first. Quit BetterTile, run `defaults write
-  com.lmckarma.BetterTile disablePrivateAPIs -bool true`, reopen it, exercise
-  the sequence, and save the output. Restore the private observation path with
-  `defaults delete com.lmckarma.BetterTile disablePrivateAPIs`, reopen, and
-  repeat the same sequence.
+  Save the fallback output. Quit BetterTile, restore the private observation
+  path with `defaults delete com.lmckarma.BetterTile disablePrivateAPIs`, reset
+  `TRACE_START` immediately before reopening, and repeat the same sequence and
+  command. The new start time keeps the normal-path query from including the
+  fallback samples.
 
   For `completeSweep`, `dragResolution`, and `focusedWindow`, the normal-path
   p95 must not exceed the fallback p95 by more than 10%. Collect at least 30
