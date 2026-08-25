@@ -42,12 +42,10 @@ Add tests for geometry, state transitions, configuration migrations, and
 failure paths. Test `BetterTileMacOS` with the fake window system in
 `Tests/BetterTileMacOSTests/`, not with live Accessibility.
 
-When a plan or design discussion states a measurable acceptance gate, measure it
-before you ask for merge, and record the measured value in the pull request. An
-unmeasured gate blocks merge until the maintainer waives it in writing. Passing
-automated tests do not satisfy a latency, hardware, or manual-matrix gate. If
-the code cannot produce the measurement, add the instrumentation in the same
-pull request that claims the gate.
+Use judgment for checks that require live macOS behavior or hardware. Run them
+when the change affects behavior that automated tests cannot cover, and record
+what was checked or skipped. The maintainer decides whether a remaining manual
+check blocks merge or release.
 
 `Package.swift` exposes libraries only. The runnable app comes from
 `BetterTile.xcodeproj`. Keep it that way.

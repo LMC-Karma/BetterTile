@@ -152,7 +152,7 @@ generate_appcast="$repo_root/.build/artifacts/sparkle/Sparkle/bin/generate_appca
 public_key="$("$generate_keys" -p)"
 expected_public_key="$(/usr/libexec/PlistBuddy -c 'Print :SUPublicEDKey' Sources/BetterTileApp/Info.plist)"
 [[ "$public_key" == "$expected_public_key" ]] || {
-    echo "The Keychain signing key does not match Info.plist." >&2
+    echo "The configured release signing key does not match Info.plist." >&2
     exit 1
 }
 

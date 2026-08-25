@@ -176,9 +176,9 @@ script's internal build step are validation builds only and are never
 distributed. The distributed signature is applied solely by
 `Tools/release-beta.sh`; see [docs/RELEASING.md](docs/RELEASING.md).
 
-The Sparkle EdDSA private signing key is held only in the maintainer's login
-Keychain. It is not in this repository and not in GitHub Actions, so releases
-cannot be published from CI.
+Release signing credentials and their recovery details stay outside this
+repository and CI. Publishing requires an authorized release environment and is
+never automatic.
 
 ## Change disclosure
 
