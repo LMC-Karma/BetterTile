@@ -13,11 +13,12 @@ written for agents.
 
 ## Before you start
 
-Open an issue describing the user-visible behavior and what "done" looks like.
-For anything beyond a small fix, agree on the approach before writing code.
-BetterTile's current layer boundaries are deliberate; an intentional change is
-welcome when its rationale, migration impact, documentation, and tests are part
-of the proposal.
+Write down one clear goal before you change code. The goal can be in a
+discussion, an issue, or the pull request. An issue is optional.
+
+Agree on the approach first when the goal is unclear, the work needs more than
+one pull request, or a project rule requires approval. Keep one topic in each
+pull request.
 
 ---
 
@@ -37,24 +38,29 @@ of the proposal.
 
 3. Add tests for geometry, state transitions, migrations, and failure paths.
 
-4. Validate:
+4. Run focused checks while you work. Before opening a ready pull request, run:
 
    ```sh
    swift test
-   swift build
    xcodebuild -project BetterTile.xcodeproj -scheme BetterTile \
      -configuration Debug CODE_SIGNING_ALLOWED=NO build
    ```
 
-5. Stage the files you actually changed, then push and open a draft pull
-   request against `main`:
+5. Stage the files you changed. Push and open a ready pull request against
+   `main`:
 
    ```sh
    git push -u origin feat/short-description
-   gh pr create --draft --base main
+   gh pr create --base main
    ```
 
-6. Wait for CI to pass and for review before marking it ready.
+   Use `--draft` only when you want early feedback or the maintainer asks for a
+   draft.
+
+6. Check automated review comments against the code and project rules. Resolve
+   every review thread. Merge only after CI passes and the maintainer approves
+   the final pushed version. If automated review cannot run, report the failure
+   and wait for a retry or a maintainer decision.
 
 ---
 
@@ -92,15 +98,16 @@ behind those integrations are extracted into
 
 ## Security and disclosure
 
-Public Apple APIs are preferred. Before implementing a private API, start or
-link an explicit issue or draft-pull-request discussion explaining why the
-public alternatives are inadequate and how the proposal fits BetterTile. Cover
-scope, fallback behavior, compatibility testing, security, privacy,
-distribution, and maintenance; adoption requires maintainer approval. SIP
-workarounds and code injection are not accepted. Dependencies, networking,
-permissions, privileged components, user-data handling, distribution, and
-architecture may likewise evolve through explicit design review. Adapted code
-must have compatible licensing, provenance, and attribution.
+Use public Apple APIs by default. Before implementing a private API, write a
+design discussion that explains why public alternatives do not work and how
+the proposal fits BetterTile. Cover scope, fallback behavior, compatibility
+testing, security, privacy, distribution, and maintenance. Get maintainer
+approval before implementation.
+
+BetterTile accepts no SIP workaround or code injection. Changes to
+dependencies, networking, permissions, privileged components, user data,
+distribution, and architecture also need the review defined in `SECURITY.md`.
+Record compatible licensing, provenance, and attribution for adapted code.
 
 [SECURITY.md](SECURITY.md) is the canonical security and privacy policy.
 

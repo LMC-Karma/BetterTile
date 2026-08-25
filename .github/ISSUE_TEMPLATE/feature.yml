@@ -13,7 +13,10 @@ body:
   - type: textarea
     id: outcome
     attributes:
-      label: Desired outcome and acceptance criteria
+      label: Desired result and acceptance gates
+      description: >-
+        What should BetterTile do, and what measurable gates define
+        completion?
     validations:
       required: true
   - type: textarea

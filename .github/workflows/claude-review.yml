@@ -32,45 +32,76 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
-      - uses: anthropics/claude-code-action@be7b93b1907a4abad570368f3c74b6fe3807510b # v1
+      - id: review
+        uses: anthropics/claude-code-action@be7b93b1907a4abad570368f3c74b6fe3807510b # v1
         with:
           # Uses a Claude subscription (Pro/Max) via OAuth — no API credits.
           # Generate the token with `claude setup-token` and store it as a repo secret.
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           prompt: |
-            Review pull request #${{ github.event.pull_request.number }} in the
-            repository ${{ github.repository }}. It is a native macOS window manager
-            (Swift 6.3, SwiftUI, AppKit, public Accessibility API).
+            Review pull request #${{ github.event.pull_request.number }} in
+            ${{ github.repository }}. Read its body and diff. Read AGENTS.md and
+            each project document that AGENTS.md says is relevant to the change.
 
-            Post inline comments on specific problem lines using the
-            create_inline_comment tool, then post one short overall summary with
-            `gh pr comment`. Prioritise:
+            Perform two checks:
 
-            - Layer boundary: BetterTileCore must not import AppKit or Accessibility.
-            - Coordinate model: Core uses top-left logical points; AppKit's bottom-left
-              coordinates are converted only at the BetterTileMacOS boundary.
-            - All window mutations must go through the main-actor WindowCoordinator.
-            - Missing tests for geometry, state transitions, migrations, or failure paths.
-            - Permanent red lines: SIP workarounds or code injection.
-            - Private Apple APIs require a linked design discussion, maintainer approval,
-              concrete product fit, compatibility testing, safe fallback, and disclosure
-              under SECURITY.md; public APIs remain the default.
-            - Updates are an intentional application-layer integration: the app delegate
-              owns SPUStandardUpdaterController and implements SPUUpdaterDelegate. Do not
-              ask for an updater service or an updater API in BetterTileCore.
+            1. Goal: compare the diff with the problem, before, after, unchanged
+               scope, and validation stated in the pull-request body. Check every
+               affected entry path and reverse transition when they apply.
+            2. Repository rules: compare the diff with BetterTile's architecture,
+               security, test, and product limits.
 
-            SECURITY.md in this repository is the canonical policy for networking,
-            privacy, permissions, privileged components, dependencies, distribution,
-            and user-data handling. Read it before judging any change in those areas,
-            and check the change against it rather than against your own defaults:
-            verify the stated user benefit, the security and maintenance review, tests,
-            license compatibility, and the repository disclosure it requires. Quote the
-            relevant SECURITY.md requirement when you raise such a finding.
+            Confirm a problem from the diff and repository evidence before you
+            comment. Use create_inline_comment to post an inline comment only on
+            a changed line that has an actionable problem. Put one problem in
+            each comment. Start with what can break or confuse a user, then give
+            the evidence and required fix. Use plain technical English and terms
+            from CONTEXT.md.
 
-            Skip trivial nits. If the change looks good, post a brief approving summary.
+            Keep these repository rules in the review:
+
+            - BetterTileCore imports no AppKit or Accessibility.
+            - Core uses top-left logical points. BetterTileMacOS converts AppKit's
+              bottom-left coordinates at its boundary.
+            - Every window mutation goes through the main-actor WindowCoordinator.
+            - Geometry, state transitions, migrations, and failure paths need tests.
+            - BetterTile accepts no SIP workaround or code injection.
+            - Private Apple APIs require a written design discussion, maintainer
+              approval, product fit, compatibility tests, safe fallback, and the
+              disclosure required by SECURITY.md. Public APIs remain the default.
+            - The app delegate owns SPUStandardUpdaterController and implements
+              SPUUpdaterDelegate. BetterTileCore has no updater API.
+
+            SECURITY.md is the canonical policy for networking, privacy,
+            permissions, privileged components, dependencies, distribution,
+            updates, licensing, and user-data handling. For a finding in one of
+            these areas, cite the relevant rule and verify the required benefit,
+            review, tests, and disclosure.
+
+            Do not expand the pull request with unrelated improvements. Do not
+            report a tool or infrastructure failure as a code fault. Put missing
+            validation, false alarms, and tool failures in the overall summary,
+            separate from confirmed code faults.
+
+            Skip trivial nits. After the inline comments, post one short overall
+            summary with `gh pr comment`. If there are no confirmed problems, say
+            that the change matches its stated goal and repository rules.
           # Grant the tools Claude needs to actually POST its review.
           claude_args: >-
             --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*)"
+      # The action exits successfully when it declines to run, so without this
+      # step the review check reports pass for a review that never happened.
+      # A pull request that edits this workflow file fails the action's own
+      # workflow validation, which is the usual reason. That is expected, and
+      # the maintainer then decides whether to merge without automated review.
+      - name: Confirm the review ran
+        if: steps.review.outputs.execution_file == ''
+        run: |
+          echo "::error::The automated review did not run, so this check proves" \
+            "nothing about the change. This is expected when the pull request" \
+            "edits .github/workflows/claude-review.yml. Retry the run, or record" \
+            "a maintainer decision to merge without automated review."
+          exit 1
 
   claude-mention:
     # On-demand: respond when someone writes "@claude" in a PR/issue comment.
