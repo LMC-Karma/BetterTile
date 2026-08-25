@@ -1,11 +1,11 @@
 # Public beta releases
 
 BetterTile public betas are published as GitHub releases: a DMG containing an
-**ad-hoc signed application**. The DMG archive itself carries no Apple code
-signature; it is authenticated separately by the Sparkle **EdDSA signature**
-recorded in the appcast. The app uses Sparkle 2.9.5 to discover and verify later
-releases. Tags and release titles carry the beta label; Apple bundle versions
-remain numeric.
+application signed with the maintainer-held, self-signed `BetterTile Beta`
+certificate. The DMG archive itself carries no Apple code signature; it is
+authenticated separately by the Sparkle **EdDSA signature** recorded in the
+appcast. The app uses Sparkle 2.9.5 to discover and verify later releases. Tags
+and release titles carry the beta label; Apple bundle versions remain numeric.
 
 The first release is:
 
@@ -24,7 +24,7 @@ These are separate and easy to confuse:
 | --- | --- | --- |
 | BetterTile Debug builds from Xcode | the contributor's own Apple Development / Personal Team identity, from the gitignored `Config/LocalSigning.xcconfig` | keeps the separate Debug Accessibility grant across rebuilds |
 | CI, and the build steps inside this script | none — `CODE_SIGNING_ALLOWED=NO` | unsigned validation builds only; never distributed |
-| The published beta | ad-hoc (`-`), applied by `Tools/release-beta.sh` | the application inside the downloadable DMG |
+| The published beta | maintainer-held, self-signed `BetterTile Beta`, applied by `Tools/release-beta.sh` | gives successive public betas one stable code-signing identity |
 
 `Tools/release-beta.sh` is the only place the distributed signature is applied.
 It does not touch `Config/LocalSigning.xcconfig` and does not use a contributor
@@ -51,18 +51,30 @@ would make the beta unopenable. Signing also repairs Sparkle's own signature,
 which Xcode's embed step invalidates by stripping the framework's `Headers` and
 `Modules` without re-signing.
 
-The default identity is ad-hoc (`-`). `BETTERTILE_SIGNING_IDENTITY` overrides it
-if a Developer ID certificate is ever available:
+Dry runs default to ad-hoc signing (`-`). Publication fails unless
+`BETTERTILE_SIGNING_IDENTITY` selects the stable beta identity:
 
 ```sh
-BETTERTILE_SIGNING_IDENTITY="Developer ID Application: …" Tools/release-beta.sh 0.2.0 notes.md
+BETTERTILE_SIGNING_IDENTITY="BetterTile Beta" Tools/release-beta.sh 0.4.1 notes.md
 ```
 
-An ad-hoc identity makes the designated requirement a bare cdhash, which changes
-with every build. macOS therefore treats each update as a different application
-and **discards the Accessibility grant on every update**. While the beta is
-ad-hoc signed, every set of release notes must tell testers to re-add BetterTile
-in System Settings → Privacy & Security → Accessibility.
+The release tool also requires the signed app and the copy mounted from the DMG
+to satisfy the pinned BetterTile bundle identifier and certificate requirement.
+A second certificate with the same name does not pass.
+
+The certificate gives successive releases a stable designated requirement. It
+is intended to let macOS retain one Accessibility grant, with the real 0.4.1 to
+0.4.2 update serving as the public continuity test. It is not a Developer ID
+certificate, does not attest an Apple-verified developer identity, and is not
+notarized. Gatekeeper still requires the user to approve the app with **Open
+Anyway** in System Settings → Privacy & Security.
+
+Version 0.4.1 is the one-time transition from the old ad-hoc identity. Its
+release notes must tell users to approve the app and re-add BetterTile to
+Accessibility once. Later releases do not require that instruction unless the
+certificate changes. Certificate loss, compromise, expiry, or replacement is
+an identity-breaking event that requires a warning and focused release tests.
+Private key and recovery instructions stay outside this repository.
 
 ## Where release work happens
 
@@ -156,7 +168,8 @@ clean, current `main`, then run:
 ```sh
 git switch main
 git pull --ff-only origin main
-Tools/release-beta.sh 0.1.0 path/to/notes.md
+BETTERTILE_SIGNING_IDENTITY="BetterTile Beta" \
+  Tools/release-beta.sh 0.4.1 path/to/notes.md
 ```
 
 The command refuses to publish unless `main` is clean and matches
