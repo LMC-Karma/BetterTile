@@ -15,6 +15,7 @@
 		100000000000000000000005 /* BetterTileMacOS in Frameworks */ = {isa = PBXBuildFile; productRef = 700000000000000000000002 /* BetterTileMacOS */; };
 		100000000000000000000006 /* AppIcon.icon in Resources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000008 /* AppIcon.icon */; };
 		100000000000000000000008 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = 700000000000000000000003 /* Sparkle */; };
+		100000000000000000000009 /* AppIconDebug.icon in Resources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000000B /* AppIconDebug.icon */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -28,6 +29,7 @@
 		200000000000000000000008 /* AppIcon.icon */ = {isa = PBXFileReference; lastKnownFileType = folder.iconcomposer.icon; path = Resources/AppIcon.icon; sourceTree = "<group>"; };
 		200000000000000000000009 /* Signing.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config/Signing.xcconfig; sourceTree = "<group>"; };
 		20000000000000000000000A /* SetupAssistantView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SetupAssistantView.swift; sourceTree = "<group>"; };
+		20000000000000000000000B /* AppIconDebug.icon */ = {isa = PBXFileReference; lastKnownFileType = folder.iconcomposer.icon; path = Resources/AppIconDebug.icon; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -50,6 +52,7 @@
 				200000000000000000000005 /* Package.swift */,
 				400000000000000000000002 /* BetterTileApp */,
 				200000000000000000000008 /* AppIcon.icon */,
+				20000000000000000000000B /* AppIconDebug.icon */,
 				200000000000000000000009 /* Signing.xcconfig */,
 				200000000000000000000006 /* README.md */,
 				400000000000000000000003 /* Products */,
@@ -146,6 +149,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				100000000000000000000006 /* AppIcon.icon in Resources */,
+				100000000000000000000009 /* AppIconDebug.icon in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -250,9 +254,10 @@
 		A00000000000000000000003 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIconDebug;
 				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
 				BETTERTILE_ENABLE_AUTOMATIC_CHECKS = NO;
+				BETTERTILE_UPDATE_FEED_URL = "";
 				CLANG_ENABLE_OBJC_WEAK = YES;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 4;
@@ -260,7 +265,7 @@
 				ENABLE_APP_SANDBOX = NO;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Sources/BetterTileApp/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = BetterTile;
+				INFOPLIST_KEY_CFBundleDisplayName = "BetterTile Debug";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
 				INFOPLIST_KEY_LSUIElement = YES;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -268,8 +273,8 @@
 					"@executable_path/../Frameworks",
 				);
 				MARKETING_VERSION = 0.3.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.lmckarma.BetterTile;
-				PRODUCT_NAME = "$(TARGET_NAME)";
+				PRODUCT_BUNDLE_IDENTIFIER = com.lmckarma.BetterTile.debug;
+				PRODUCT_NAME = "BetterTile Debug";
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_STRICT_CONCURRENCY = complete;
@@ -282,6 +287,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
 				BETTERTILE_ENABLE_AUTOMATIC_CHECKS = YES;
+				BETTERTILE_UPDATE_FEED_URL = "https://github.com/LMC-Karma/BetterTile/releases/latest/download/appcast.xml";
 				CLANG_ENABLE_OBJC_WEAK = YES;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 4;

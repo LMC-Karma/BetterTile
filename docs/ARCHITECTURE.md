@@ -14,6 +14,14 @@ The app delegate owns `SPUStandardUpdaterController` and implements
 `SPUUpdaterDelegate` directly. This is an intentional clarification of the layer
 boundary rather than an undocumented exception.
 
+The shared Xcode target has two application identities. Debug actions build
+**BetterTile Debug** with `com.lmckarma.BetterTile.debug`; Release and Archive
+build the public **BetterTile** identity. Each identity has separate
+configuration and `UserDefaults` storage. At launch, the app asks to quit a
+running sibling variant before the model registers shortcuts or Accessibility
+observers. This keeps one window manager active without adding another target
+or scheme.
+
 There is deliberately **no updater service type and no updater API in
 BetterTileCore**. Sparkle is an application-lifecycle integration in the same
 category as the status item and the main menu, and an indirection layer would
@@ -31,6 +39,10 @@ applying the results to real AppKit objects.
 Sparkle's own update UI, download, installation, bundle replacement, and
 relaunch are validated as manual release checks; see
 [RELEASING.md](RELEASING.md).
+
+Sparkle starts only in Release. Debug keeps the framework embedded through the
+shared target, but it has no feed URL, updater controller, update settings, or
+manual update command.
 
 ## Coordinate model
 

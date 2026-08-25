@@ -55,6 +55,10 @@ only to correlate observer callbacks. Logs contain capability availability and
 one-time fallback reasons, never titles, AX identifiers, raw desktop topology,
 or Stage Manager contents.
 
+The `defaults` commands below use the public app's domain. For BetterTile Debug,
+replace `com.lmckarma.BetterTile` with
+`com.lmckarma.BetterTile.debug`; its preferences are intentionally separate.
+
 All private capabilities can be disabled before launch with:
 
 ```sh
@@ -81,6 +85,13 @@ profiling is disabled.
 Update archives are authenticated by an EdDSA signature that Sparkle verifies
 against the public key built into the application. That verification is
 independent of the application's macOS code signature.
+
+The Xcode Debug configuration builds **BetterTile Debug** with bundle identifier
+`com.lmckarma.BetterTile.debug`. Sparkle remains embedded because Debug and
+Release share one target, but Debug supplies no feed URL and does not create an
+updater controller or show update controls. It therefore performs no update
+network requests. Release keeps the public feed and updater behavior described
+above.
 
 ### Send Feedback
 

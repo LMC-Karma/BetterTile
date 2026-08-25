@@ -490,9 +490,12 @@ public struct ConfigurationStore: Sendable {
 
     public init(fileURL: URL) { self.fileURL = fileURL }
 
-    public static func defaultStore(fileManager: FileManager = .default) -> ConfigurationStore {
+    public static func defaultStore(
+        fileManager: FileManager = .default,
+        directoryName: String = "BetterTile"
+    ) -> ConfigurationStore {
         let applicationSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        return ConfigurationStore(fileURL: applicationSupport.appending(path: "BetterTile/configuration.json"))
+        return ConfigurationStore(fileURL: applicationSupport.appending(path: "\(directoryName)/configuration.json"))
     }
 
     public func load(fileManager: FileManager = .default) throws -> BetterTileConfiguration {

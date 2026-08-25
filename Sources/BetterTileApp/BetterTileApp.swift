@@ -9,6 +9,22 @@ import os
 import Sparkle
 import SwiftUI
 
+private enum BetterTileVariant {
+    static var displayName: String {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String ?? "BetterTile"
+    }
+
+#if DEBUG
+    static let configurationDirectoryName = "BetterTile Debug"
+    static let siblingBundleIdentifier = "com.lmckarma.BetterTile"
+    static let siblingDisplayName = "BetterTile"
+#else
+    static let configurationDirectoryName = "BetterTile"
+    static let siblingBundleIdentifier = "com.lmckarma.BetterTile.debug"
+    static let siblingDisplayName = "BetterTile Debug"
+#endif
+}
+
 enum AppAppearance: String, CaseIterable, Identifiable {
     static let defaultsKey = "BetterTileAppAppearance"
 
@@ -110,22 +126,24 @@ enum BetterTileApplication {
 }
 
 @MainActor
-private final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSWindowDelegate,
-    SPUUpdaterDelegate
-{
+private final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSWindowDelegate {
     private static let signposter = OSSignposter(
         subsystem: "com.lmckarma.BetterTile",
         category: "ApplicationUI"
     )
 
-    private lazy var model = BetterTileModel()
+    private lazy var model = BetterTileModel(
+        store: .defaultStore(directoryName: BetterTileVariant.configurationDirectoryName)
+    )
+#if !DEBUG
     private lazy var updaterController = SPUStandardUpdaterController(
         startingUpdater: true,
         updaterDelegate: self,
         userDriverDelegate: nil
     )
-    private var modelStarted = false
     private var updateIndicatorState = UpdateIndicatorState.idle
+#endif
+    private var modelStarted = false
     private let popover = NSPopover()
     private var popoverHost: NSHostingController<BetterTileMenuPanel>?
     private var statusItem: NSStatusItem!
@@ -140,6 +158,7 @@ private final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSPo
             showMoveToApplicationsAlertAndQuit()
             return
         }
+        guard quitRunningSiblingIfNeeded() else { return }
         modelStarted = true
         _ = model
         WindowActionGroup.assertComplete()
@@ -147,9 +166,11 @@ private final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSPo
         installMainMenu()
         installStatusItem()
         configurePopover()
-        // Start the updater only after the status item exists: its delegate
-        // callbacks drive the update-available indicator through statusItem.
+#if !DEBUG
+        // Start the release updater only after the status item exists: its
+        // delegate callbacks drive the update-available indicator.
         _ = updaterController
+#endif
 #if DEBUG
         let arguments = ProcessInfo.processInfo.arguments
         if let page = diagnosticSetupPage(arguments: arguments) {
@@ -170,9 +191,6 @@ private final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSPo
         } else if arguments.contains("--diagnostic-open-popover") {
             DispatchQueue.main.async { [weak self] in self?.showPopover() }
             return
-        } else if arguments.contains("--diagnostic-update-available") {
-            applyUpdateEvent(.foundValidUpdate)
-            return
         }
 #endif
         showSetupAtLaunchIfNeeded()
@@ -189,6 +207,60 @@ private final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSPo
     private var isRunningFromReadOnlyVolume: Bool {
         let values = try? Bundle.main.bundleURL.resourceValues(forKeys: [.volumeIsReadOnlyKey])
         return ApplicationVolume.requiresRelocation(volumeIsReadOnly: values?.volumeIsReadOnly)
+    }
+
+    private func quitRunningSiblingIfNeeded() -> Bool {
+        guard let sibling = NSRunningApplication.runningApplications(
+            withBundleIdentifier: BetterTileVariant.siblingBundleIdentifier
+        ).first(where: { !$0.isTerminated }) else { return true }
+
+        var userChoseToQuitSibling: Bool?
+        var terminationRequestAccepted: Bool?
+        var deadline: Date?
+        while true {
+            let decision = SiblingApplicationLaunch.nextDecision(
+                userChoseToQuitSibling: userChoseToQuitSibling,
+                terminationRequestAccepted: terminationRequestAccepted,
+                siblingIsTerminated: sibling.isTerminated,
+                deadlinePassed: deadline.map { Date.now >= $0 } ?? false
+            )
+            switch decision {
+            case .askUser:
+                NSApp.activate(ignoringOtherApps: true)
+                let alert = NSAlert()
+                alert.messageText = "\(BetterTileVariant.siblingDisplayName) Is Already Running"
+                alert.informativeText = "Only one BetterTile variant can manage windows at a time."
+                alert.alertStyle = .warning
+                alert.addButton(withTitle: "Quit \(BetterTileVariant.siblingDisplayName) & Continue")
+                alert.addButton(withTitle: "Quit \(BetterTileVariant.displayName)")
+                userChoseToQuitSibling = alert.runModal() == .alertFirstButtonReturn
+            case .requestTermination:
+                terminationRequestAccepted = sibling.terminate()
+                deadline = Date.now.addingTimeInterval(3)
+            case .waitForTermination:
+                let nextCheck = min(deadline ?? Date.now, Date.now.addingTimeInterval(0.05))
+                RunLoop.current.run(mode: .default, before: nextCheck)
+            case .continueLaunching:
+                return true
+            case .quitCurrentApplication:
+                NSApp.terminate(nil)
+                return false
+            case .showTerminationFailure:
+                showSiblingTerminationFailure()
+                NSApp.terminate(nil)
+                return false
+            }
+        }
+    }
+
+    private func showSiblingTerminationFailure() {
+        NSApp.activate(ignoringOtherApps: true)
+        let failure = NSAlert()
+        failure.messageText = "Could Not Quit \(BetterTileVariant.siblingDisplayName)"
+        failure.informativeText = "Quit it manually, then reopen \(BetterTileVariant.displayName)."
+        failure.alertStyle = .warning
+        failure.addButton(withTitle: "Quit \(BetterTileVariant.displayName)")
+        failure.runModal()
     }
 
     private func showMoveToApplicationsAlertAndQuit() {
@@ -212,14 +284,14 @@ private final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSPo
         guard let button = statusItem.button else { return }
         let image = NSImage(
             systemSymbolName: "rectangle.3.group",
-            accessibilityDescription: "BetterTile"
+            accessibilityDescription: BetterTileVariant.displayName
         )?.withSymbolConfiguration(.init(pointSize: 13, weight: .semibold))
         image?.isTemplate = true
         button.image = image
         button.target = self
         button.action = #selector(statusItemClicked)
         button.sendAction(on: [.leftMouseUp, .rightMouseUp])
-        button.toolTip = "BetterTile"
+        button.toolTip = BetterTileVariant.displayName
 
         repairStatusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         repairStatusItem.autosaveName = "BetterTileRepairMenuBarItem"
@@ -406,7 +478,13 @@ private final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSPo
         let created = settingsWindow == nil
         if settingsWindow == nil {
             let creation = Self.signposter.beginInterval("createSettings")
-            let host = NSHostingController(rootView: SettingsView(
+#if DEBUG
+            let settingsView = SettingsView(
+                model: model,
+                openSetup: { [weak self] in self?.showSetupAssistant() }
+            )
+#else
+            let settingsView = SettingsView(
                 model: model,
                 automaticallyChecksForUpdates: Binding(
                     get: { [weak self] in
@@ -418,9 +496,11 @@ private final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSPo
                 ),
                 checkForUpdates: { [weak self] in self?.checkForUpdates(nil) },
                 openSetup: { [weak self] in self?.showSetupAssistant() }
-            ))
+            )
+#endif
+            let host = NSHostingController(rootView: settingsView)
             let window = NSWindow(contentViewController: host)
-            window.title = "BetterTile Settings"
+            window.title = "\(BetterTileVariant.displayName) Settings"
             window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
             window.contentMinSize = NSSize(width: 820, height: 560)
             window.setContentSize(NSSize(width: 920, height: 640))
@@ -468,7 +548,7 @@ private final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSPo
                 close: { [weak self] in self?.setupWindow?.performClose(nil) }
             ))
             let window = NSWindow(contentViewController: host)
-            window.title = "BetterTile Setup"
+            window.title = "\(BetterTileVariant.displayName) Setup"
             window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
             window.contentMinSize = NSSize(width: 680, height: 540)
             window.setContentSize(NSSize(width: 720, height: 580))
@@ -505,9 +585,11 @@ private final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSPo
         NSApp.terminate(nil)
     }
 
+#if !DEBUG
     @objc private func checkForUpdates(_ sender: Any?) {
         updaterController.checkForUpdates(sender)
     }
+#endif
 
     @objc private func sendFeedback() {
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown"
@@ -516,6 +598,7 @@ private final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSPo
         NSWorkspace.shared.open(url)
     }
 
+#if !DEBUG
     /// Translates one updater outcome into the menu-bar indicator. The decision
     /// itself lives in `UpdateIndicator` so it can be tested without Sparkle.
     private func applyUpdateEvent(_ event: UpdateIndicatorEvent) {
@@ -526,7 +609,7 @@ private final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSPo
     private func renderUpdateIndicator() {
         let available = updateIndicatorState == .updateAvailable
         statusItem.button?.contentTintColor = available ? .systemBlue : nil
-        statusItem.button?.toolTip = available ? "BetterTile update available" : "BetterTile"
+        statusItem.button?.toolTip = available ? "BetterTile update available" : BetterTileVariant.displayName
     }
 
     func updater(_ updater: SPUUpdater, didFindValidUpdate item: SUAppcastItem) {
@@ -556,12 +639,13 @@ private final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSPo
         @unknown default: break
         }
     }
+#endif
 
     private func installMainMenu() {
         let mainMenu = NSMenu()
 
         let appItem = NSMenuItem()
-        let appMenu = NSMenu(title: "BetterTile")
+        let appMenu = NSMenu(title: BetterTileVariant.displayName)
         populateApplicationCommands(in: appMenu)
         appItem.submenu = appMenu
         mainMenu.addItem(appItem)
@@ -598,12 +682,18 @@ private final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSPo
 
         addItem("Setup Assistant…", action: #selector(showSetupAssistant))
         addItem("Settings…", action: #selector(showSettings), keyEquivalent: ",")
+#if !DEBUG
         addItem("Check for Updates…", action: #selector(checkForUpdates(_:)))
+#endif
         addItem("Send Feedback…", action: #selector(sendFeedback))
         menu.addItem(.separator())
-        addItem("Quit BetterTile", action: #selector(quitApplication), keyEquivalent: "q")
+        addItem("Quit \(BetterTileVariant.displayName)", action: #selector(quitApplication), keyEquivalent: "q")
     }
 }
+
+#if !DEBUG
+extension BetterTileAppDelegate: SPUUpdaterDelegate {}
+#endif
 
 private enum PanelSurface {
     static func base(for scheme: ColorScheme, reduceTransparency: Bool) -> Color {

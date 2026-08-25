@@ -58,7 +58,7 @@ Developer Program — a free **Personal Team** is enough.
    ```sh
    git check-ignore Config/LocalSigning.xcconfig
    ```
-5. Open `BetterTile.xcodeproj`. Do not change the Team or bundle identifier in
+5. Open `BetterTile.xcodeproj`. Do not change the Team or bundle identifiers in
    the shared project; signing is supplied by your local configuration.
 
 The repository tracks only `Signing.xcconfig` and the example. Each contributor's
@@ -97,7 +97,7 @@ it's signed fresh.
 
 Three signing contexts exist and they never touch each other:
 
-- **Your Xcode builds** use *your* Apple Development identity from your
+- **Your BetterTile Debug Xcode builds** use *your* Apple Development identity from your
   gitignored `Config/LocalSigning.xcconfig`. Nothing here is committed.
 - **CI and `swift build` / `swift test`** build with `CODE_SIGNING_ALLOWED=NO`.
   Those are unsigned validation builds and are never distributed.
@@ -111,19 +111,35 @@ reads your signing identity.
 
 ## 3. Run and grant Accessibility
 
-1. Select the shared **BetterTile** scheme and **Run** (⌘R). BetterTile launches
-   into the **menu bar** (the Dock icon is optional, off by default).
+1. Select the shared **BetterTile** scheme and **Run** (⌘R). Xcode builds
+   **BetterTile Debug** and launches it from DerivedData into the **menu bar**
+   (the Dock icon is optional, off by default). Do not copy the Debug app into
+   `/Applications`.
 2. On first launch it explains how to grant Accessibility. Open
    **System Settings → Privacy & Security → Accessibility**, and enable
-   **BetterTile**.
+   **BetterTile Debug**.
 3. That's it — the grant is stored **per machine**, so every contributor does
    this once on their own Mac. It is not shareable across machines (macOS
    security design), but thanks to Personal Team signing it survives your
    rebuilds.
 
 If you revoke and re-grant, or switch signing identity, remove the stale
-BetterTile entry from the Accessibility list once, then re-add the freshly
-signed build.
+BetterTile Debug entry from the Accessibility list once, then re-add the
+freshly signed build.
+
+BetterTile Debug is intentionally separate from the public app:
+
+- its bundle identifier is `com.lmckarma.BetterTile.debug`
+- its configuration is stored under
+  `~/Library/Application Support/BetterTile Debug/`
+- its `UserDefaults` and Accessibility grant are separate
+- Sparkle and all update controls are inactive
+- its icon carries a small **D** badge
+
+Run, Test, Analyze, and Profile use the Debug identity. Archive uses the public
+Release identity. If one variant is already running, the other asks to quit it
+before registering shortcuts or observing windows. This permits both apps to
+remain on the Mac without letting them manage the desktop at the same time.
 
 ---
 
@@ -136,6 +152,10 @@ swift test        # unit + fake-system integration tests
 xcodebuild -project BetterTile.xcodeproj -scheme BetterTile \
   -configuration Debug CODE_SIGNING_ALLOWED=NO build
 ```
+
+That validation build is also named `BetterTile Debug.app`; it is unsigned and
+must not be distributed. The release script still builds and validates
+`BetterTile.app` from the Release configuration.
 
 > **Note:** `swift test` needs the full Xcode toolchain. If you see
 > `no such module 'Testing'`, point the command line at Xcode:
