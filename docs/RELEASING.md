@@ -131,19 +131,19 @@ copied to `.build/beta-release/v<version>-beta/` for inspection; the temporary
 working directory is removed.
 
 Before publishing, inspect the artifact and test the user paths affected by the
-release. For an ordinary beta, install and launch the app from the built DMG,
-then confirm that a basic window action and the affected app behavior work with
-the current local Accessibility setup. Also confirm that the Sparkle dependency,
-updater integration, feed URL, signing configuration, and appcast generation
-have not changed since the previous release. Do not repeat a fresh permission
-grant or the full update workflow when these parts are unchanged.
+release. For an ordinary beta, confirm that the app in the built DMG launches.
+Use the locally signed Debug app and its existing Accessibility grant to confirm
+that a basic window action and the affected app behavior work. Also confirm that
+the Sparkle dependency, updater integration, feed URL, signing configuration,
+and appcast generation have not changed since the previous release.
 
 Run a controlled update from an older supported build when the release changes
 Sparkle, update configuration, signing, feed generation, or update packaging.
-Add other focused checks when a release changes permissions or macOS
-integration. Use `docs/BENTO_TESTING.md` as guidance when Bento behavior
-changes. Record material risks or skipped checks; the maintainer decides whether
-they block the release.
+Test the fresh release app's permission flow when signing or Accessibility
+behavior changes. Add other focused checks when a release changes permissions
+or macOS integration. Use `docs/BENTO_TESTING.md` as guidance when Bento
+behavior changes. Record material risks or skipped checks; the maintainer
+decides whether they block the release.
 
 ## Publish
 
