@@ -32,7 +32,8 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
-      - uses: anthropics/claude-code-action@be7b93b1907a4abad570368f3c74b6fe3807510b # v1
+      - id: review
+        uses: anthropics/claude-code-action@be7b93b1907a4abad570368f3c74b6fe3807510b # v1
         with:
           # Uses a Claude subscription (Pro/Max) via OAuth — no API credits.
           # Generate the token with `claude setup-token` and store it as a repo secret.
@@ -88,6 +89,19 @@ jobs:
           # Grant the tools Claude needs to actually POST its review.
           claude_args: >-
             --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*)"
+      # The action exits successfully when it declines to run, so without this
+      # step the review check reports pass for a review that never happened.
+      # A pull request that edits this workflow file fails the action's own
+      # workflow validation, which is the usual reason. That is expected, and
+      # the maintainer then decides whether to merge without automated review.
+      - name: Confirm the review ran
+        if: steps.review.outputs.execution_file == ''
+        run: |
+          echo "::error::The automated review did not run, so this check proves" \
+            "nothing about the change. This is expected when the pull request" \
+            "edits .github/workflows/claude-review.yml. Retry the run, or record" \
+            "a maintainer decision to merge without automated review."
+          exit 1
 
   claude-mention:
     # On-demand: respond when someone writes "@claude" in a PR/issue comment.
