@@ -44,8 +44,29 @@ windows look correct.
 - Disable the event tap during an active gesture and confirm it recovers or both
   consumers switch to `NSEvent` without a duplicate drag or resize. Confirm no
   Input Monitoring prompt appears.
-- Compare shared-event and `NSEvent` gesture traces in Instruments. Confirm p95
-  down/drag/up delivery latency does not regress by more than 10%.
+- Measure gesture delivery latency on both sources and confirm the shared event
+  tap p95 does not regress by more than 10% against the `NSEvent` monitors. Drag
+  a window for about a minute on each source, then read the signposts:
+
+  ```sh
+  p95() {
+    log show --last 10m --signpost --style compact \
+      --predicate 'subsystem == "com.lmckarma.BetterTile" AND category == "GestureEvents"' \
+    | sed -n "s/.*source=$1 .*latencyNanoseconds=\([0-9]*\).*/\1/p" \
+    | sort -n \
+    | awk '{a[NR]=$1} END {if(NR==0){print "no samples";exit} i=int(NR*0.95); if(i<1)i=1; printf "n=%d p95=%.2f ms\n", NR, a[i]/1000000}'
+  }
+  p95 eventTap
+  p95 nsEvent
+  ```
+
+  Take the `nsEvent` baseline first. Quit BetterTile, run `defaults write
+  com.lmckarma.BetterTile disableSharedGestureEvents -bool true`, and reopen it.
+  Restore the tap with `defaults delete com.lmckarma.BetterTile
+  disableSharedGestureEvents` and reopen again for the `eventTap` sample.
+
+  Record both values and both sample counts in the pull request. Fewer than 200
+  samples on either source is not a measurement.
 - Repeat the Space, fullscreen, and display checks after running
   `defaults write com.lmckarma.BetterTile disablePrivateAPIs -bool true` and
   reopening BetterTile. Restore normal behavior with

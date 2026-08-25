@@ -15,6 +15,8 @@ public struct GlobalGestureEvent: Equatable, Sendable {
     public var position: BTPoint
     public var button: Int64
     public var modifiers: ShortcutModifiers
+    /// Nanoseconds since boot, in the base `GestureEventClock` reads. Zero
+    /// means the source reported no usable time.
     public var timestamp: UInt64
 
     public init(
@@ -66,6 +68,78 @@ public struct GlobalGestureEvent: Equatable, Sendable {
 enum GestureEventSource: Equatable {
     case eventTap
     case nsEvent
+
+    var signpostName: String {
+        switch self {
+        case .eventTap: "eventTap"
+        case .nsEvent: "nsEvent"
+        }
+    }
+}
+
+/// One time base for both gesture sources. `CGEvent` reports mach absolute
+/// ticks and `NSEvent` reports seconds since boot, so neither latency can be
+/// compared with the other until both are nanoseconds on this base.
+enum GestureEventClock {
+    private static let timebase: mach_timebase_info_data_t = {
+        var timebase = mach_timebase_info_data_t()
+        mach_timebase_info(&timebase)
+        return timebase
+    }()
+
+    static func nanoseconds(machAbsolute ticks: UInt64) -> UInt64 {
+        ticks * UInt64(timebase.numer) / UInt64(timebase.denom)
+    }
+
+    static var uptimeNanoseconds: UInt64 {
+        clock_gettime_nsec_np(CLOCK_UPTIME_RAW)
+    }
+}
+
+/// Measures how long a gesture event takes to reach the consumer that acts on
+/// it. The shared event tap and the `NSEvent` monitors emit the same signpost,
+/// so one trace answers whether the tap regresses the p95 delivery limit.
+enum GestureEventLatency {
+    private static let log = OSLog(
+        subsystem: "com.lmckarma.BetterTile",
+        category: "GestureEvents"
+    )
+    static let signposter = OSSignposter(logHandle: log)
+
+    /// Returns nil when the source reported no time, or when the event appears
+    /// to arrive before it happened. A negative interval means the two values
+    /// came from different clocks and must not enter the measurement.
+    static func nanoseconds(eventTimestamp: UInt64, deliveredAt: UInt64) -> UInt64? {
+        guard eventTimestamp > 0, deliveredAt >= eventTimestamp else { return nil }
+        return deliveredAt - eventTimestamp
+    }
+
+    static func record(
+        _ event: GlobalGestureEvent,
+        from source: GestureEventSource,
+        consumer: StaticString
+    ) {
+        guard log.signpostsEnabled,
+              let latency = nanoseconds(
+                  eventTimestamp: event.timestamp,
+                  deliveredAt: GestureEventClock.uptimeNanoseconds
+              )
+        else { return }
+        signposter.emitEvent(
+            "gestureDelivery",
+            "consumer=\(consumer, privacy: .public) source=\(source.signpostName, privacy: .public) kind=\(event.kind.signpostName, privacy: .public) latencyNanoseconds=\(latency, privacy: .public)"
+        )
+    }
+}
+
+extension GlobalGestureEventKind {
+    var signpostName: String {
+        switch self {
+        case .leftMouseDown: "down"
+        case .leftMouseDragged: "drag"
+        case .leftMouseUp: "up"
+        }
+    }
 }
 
 struct GestureEventSourceGate {
@@ -195,25 +269,34 @@ public final class SharedGestureEventMonitor {
     private var retryGate: GestureEventTapRetryGate
     private var loggedAvailability = false
     private var loggedFallback = false
+    private let disabled: Bool
 
     public convenience init() {
         self.init(cooldown: GestureEventTapRetryGate.defaultCooldown)
     }
 
     init(
+        disabled: Bool = UserDefaults.standard.bool(forKey: "disableSharedGestureEvents"),
         cooldown: TimeInterval = GestureEventTapRetryGate.defaultCooldown,
         now: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
         makeWorker: @escaping (
             @escaping @Sendable (GestureEventTapMessage) -> Void
         ) -> GestureEventTapWorking = { GestureEventTapWorker(handler: $0) }
     ) {
+        self.disabled = disabled
         retryGate = GestureEventTapRetryGate(cooldown: cooldown)
         self.now = now
         self.makeWorker = makeWorker
+        if disabled {
+            Self.log.notice("shared gesture event tap disabled by user default")
+        }
     }
 
     @discardableResult
     public func start() -> Bool {
+        // The NSEvent monitors are the measurement baseline for the gesture
+        // latency gate, so they must be selectable without breaking the tap.
+        if disabled { return false }
         if isUsingEventTap { return true }
         let time = now()
         guard retryGate.allowsStart(at: time) else { return false }
@@ -379,7 +462,9 @@ final class GestureEventTapWorker: GestureEventTapWorking, @unchecked Sendable {
             position: GlobalGestureEvent.position(cgEventLocation: event.location),
             button: event.getIntegerValueField(.mouseEventButtonNumber),
             modifiers: ShortcutModifiers(event.flags),
-            timestamp: event.timestamp
+            // CGEvent reports mach absolute ticks and NSEvent reports seconds
+            // since boot. Normalize here so both sources share one base.
+            timestamp: GestureEventClock.nanoseconds(machAbsolute: event.timestamp)
         )))
         return Unmanaged.passUnretained(event)
     }

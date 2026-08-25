@@ -241,3 +241,73 @@ private final class FakeGestureEventTapWorker: GestureEventTapWorking {
         log.stops += 1
     }
 }
+
+@Test func gestureClockConvertsMachTicksToNanoseconds() {
+    // A one-second interval must read as one second whatever the timebase is,
+    // otherwise the two sources cannot be compared against one p95 limit.
+    let start = GestureEventClock.uptimeNanoseconds
+    let ticks = mach_absolute_time()
+    let converted = GestureEventClock.nanoseconds(machAbsolute: ticks)
+    let end = GestureEventClock.uptimeNanoseconds
+
+    #expect(converted >= start)
+    #expect(converted <= end)
+}
+
+@Test func gestureClockConversionIsMonotonicAndScaled() {
+    let onceOver = GestureEventClock.nanoseconds(machAbsolute: 1_000)
+    let twiceOver = GestureEventClock.nanoseconds(machAbsolute: 2_000)
+
+    // Integer division truncates, so doubling the ticks may lose one
+    // nanosecond. That is far below the millisecond scale of the p95 gate.
+    #expect(twiceOver >= onceOver * 2)
+    #expect(twiceOver - onceOver * 2 <= 1)
+    #expect(GestureEventClock.nanoseconds(machAbsolute: 0) == 0)
+}
+
+@Test func gestureLatencyMeasuresTheDeliveryInterval() {
+    #expect(GestureEventLatency.nanoseconds(
+        eventTimestamp: 1_000,
+        deliveredAt: 3_500
+    ) == 2_500)
+}
+
+@Test func gestureLatencyRejectsAnUnusableOrMismatchedClock() {
+    // A source that reports no time cannot be measured.
+    #expect(GestureEventLatency.nanoseconds(
+        eventTimestamp: 0,
+        deliveredAt: 3_500
+    ) == nil)
+
+    // Delivery before the event means the two values came from different
+    // clocks. Recording that as a latency would corrupt the comparison.
+    #expect(GestureEventLatency.nanoseconds(
+        eventTimestamp: 3_500,
+        deliveredAt: 1_000
+    ) == nil)
+}
+
+@Test func gestureLatencySignpostNamesStayStableForTraceQueries() {
+    // The measurement recipe in docs/BENTO_TESTING.md greps these names.
+    #expect(GestureEventSource.eventTap.signpostName == "eventTap")
+    #expect(GestureEventSource.nsEvent.signpostName == "nsEvent")
+    #expect(GlobalGestureEventKind.leftMouseDown.signpostName == "down")
+    #expect(GlobalGestureEventKind.leftMouseDragged.signpostName == "drag")
+    #expect(GlobalGestureEventKind.leftMouseUp.signpostName == "up")
+}
+
+@Test @MainActor func disabledSharedGestureEventsNeverStartTheTap() {
+    // The NSEvent monitors are the baseline for the latency gate. Selecting
+    // them must not start a worker thread or consume the retry cooldown.
+    let log = GestureEventTapWorkerLog()
+    log.canStart = true
+    let monitor = SharedGestureEventMonitor(
+        disabled: true,
+        now: { 0 },
+        makeWorker: { _ in FakeGestureEventTapWorker(log: log) }
+    )
+
+    #expect(!monitor.start())
+    #expect(!monitor.isUsingEventTap)
+    #expect(log.startAttempts == 0)
+}
