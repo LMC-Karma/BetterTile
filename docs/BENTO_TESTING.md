@@ -54,7 +54,7 @@ windows look correct.
       --predicate 'subsystem == "com.lmckarma.BetterTile" AND category == "GestureEvents"' \
     | sed -n "s/.*source=$1 .*latencyNanoseconds=\([0-9]*\).*/\1/p" \
     | sort -n \
-    | awk '{a[NR]=$1} END {if(NR==0){print "no samples";exit} i=int(NR*0.95); if(i<1)i=1; printf "n=%d p95=%.2f ms\n", NR, a[i]/1000000}'
+    | awk '{a[NR]=$1} END {if(NR==0){print "no samples";exit} i=int((NR*95+99)/100); printf "n=%d p95=%.2f ms\n", NR, a[i]/1000000}'
   }
   p95 eventTap
   p95 nsEvent
@@ -81,17 +81,30 @@ windows look correct.
         /end\]/   { if (name==want && b>0) { printf "%.3f\n", (s-b)*1000; b=0 } }
       ' \
     | sort -n \
-    | awk '{a[NR]=$1} END {if(NR==0){print "no samples";exit} i=int(NR*0.95); if(i<1)i=1; printf "n=%d p95=%.2f ms\n", NR, a[i]}'
+    | awk '{a[NR]=$1} END {if(NR==0){print "no samples";exit} i=int((NR*95+99)/100); printf "n=%d p95=%.2f ms\n", NR, a[i]}'
   }
   for name in completeSweep targetedRefresh dragResolution focusedWindow; do
     printf '%-18s ' "$name"; interval_p95 "$name"
   done
   ```
 
-  `targetedRefresh` must be substantially cheaper than `completeSweep`, and a
-  session of ordinary window movement must produce far more targeted refreshes
-  than complete sweeps. Both counts near zero mean the trace did not exercise
-  the path.
+  Take the public fallback baseline first. Quit BetterTile, run `defaults write
+  com.lmckarma.BetterTile disablePrivateAPIs -bool true`, reopen it, exercise
+  the sequence, and save the output. Restore the private observation path with
+  `defaults delete com.lmckarma.BetterTile disablePrivateAPIs`, reopen, and
+  repeat the same sequence.
+
+  For `completeSweep`, `dragResolution`, and `focusedWindow`, the normal-path
+  p95 must not exceed the fallback p95 by more than 10%. Collect at least 30
+  samples for each interval in each mode and record every value and count in the
+  pull request. A lower count is not a measurement.
+
+  Do not compare `targetedRefresh` between modes: without exact identities the
+  interval ends at its fallback guard and a complete sweep does the work.
+  Instead, confirm the normal-path `targetedRefresh` p95 is lower than its
+  `completeSweep` p95, collect at least 30 targeted-refresh samples, and confirm
+  ordinary window movement produces more targeted refreshes than complete
+  sweeps.
 
   `log show` reports whole milliseconds, so a p95 near or below 1 ms cannot be
   compared at 10% resolution. Use Instruments with the os_signpost instrument
