@@ -63,6 +63,32 @@ else
     fail "reports and rejects HTTP 500"
 fi
 
+current_format="$scratch/current-format.xml"
+printf '%s\n' '<rss xmlns:sparkle="https://sparkle-project.org/xml-namespaces/sparkle"><channel><item><sparkle:version>6</sparkle:version><sparkle:shortVersionString>0.4.1</sparkle:shortVersionString></item></channel></rss>' > "$current_format"
+
+echo "appcast parsing reads Sparkle child elements"
+if [[ "$(appcast_builds "$current_format")" == "6" ]] \
+    && [[ "$(appcast_versions "$current_format")" == "0.4.1" ]] \
+    && appcast_contains_build "$current_format" 6 \
+    && appcast_contains_version "$current_format" 0.4.1; then
+    pass "reads the format emitted by Sparkle 2.9.5"
+else
+    fail "reads the format emitted by Sparkle 2.9.5"
+fi
+
+legacy_format="$scratch/legacy-format.xml"
+printf '%s\n' '<item sparkle:version="5" sparkle:shortVersionString="0.4.0" />' > "$legacy_format"
+
+echo "appcast parsing retains attribute compatibility"
+if [[ "$(appcast_builds "$legacy_format")" == "5" ]] \
+    && [[ "$(appcast_versions "$legacy_format")" == "0.4.0" ]] \
+    && appcast_contains_build "$legacy_format" 5 \
+    && appcast_contains_version "$legacy_format" 0.4.0; then
+    pass "reads legacy version attributes"
+else
+    fail "reads legacy version attributes"
+fi
+
 if [[ "$failures" -eq 0 ]]; then
     echo "release appcast tests passed"
 else

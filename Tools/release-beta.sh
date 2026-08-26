@@ -96,6 +96,7 @@ settings_derived_data="$work_dir/DerivedDataSettings"
 archive_dir="$work_dir/appcast-input"
 stage_dir="$work_dir/dmg-root"
 appcast_path="$work_dir/appcast.xml"
+published_appcast_path="$work_dir/published-appcast.xml"
 
 trap 'release_cleanup "$work_dir" "$mount_dir"' EXIT
 
@@ -197,12 +198,12 @@ version_is_greater() {
 
 fetch_existing_appcast "$feed_url" "$archive_dir/appcast.xml"
 if [[ -f "$archive_dir/appcast.xml" ]]; then
-    newest_feed_build="$(sed -n 's/.*sparkle:version="\([0-9][0-9]*\)".*/\1/p' "$archive_dir/appcast.xml" | sort -n | tail -1)"
+    newest_feed_build="$(appcast_builds "$archive_dir/appcast.xml" | sort -n | tail -1)"
     if [[ -n "$newest_feed_build" && "$project_build" -le "$newest_feed_build" ]]; then
         echo "Project build $project_build must be newer than appcast build $newest_feed_build." >&2
         exit 1
     fi
-    if grep -q "sparkle:shortVersionString=\"$version\"" "$archive_dir/appcast.xml"; then
+    if appcast_contains_version "$archive_dir/appcast.xml" "$version"; then
         echo "Version $version already exists in the appcast." >&2
         exit 1
     fi
@@ -212,7 +213,7 @@ if [[ -f "$archive_dir/appcast.xml" ]]; then
             echo "Version $version must be newer than appcast version $feed_version." >&2
             exit 1
         }
-    done < <(sed -n 's/.*sparkle:shortVersionString="\([0-9][0-9.]*\)".*/\1/p' "$archive_dir/appcast.xml")
+    done < <(appcast_versions "$archive_dir/appcast.xml")
 fi
 
 echo "Running tests and builds..."
@@ -330,6 +331,8 @@ cp "$notes_path" "$archive_dir/$notes_name"
 cp "$archive_dir/appcast.xml" "$appcast_path"
 grep -q "sparkle:edSignature=" "$appcast_path"
 grep -q "$release_url_prefix$dmg_name" "$appcast_path"
+appcast_contains_build "$appcast_path" "$project_build"
+appcast_contains_version "$appcast_path" "$version"
 
 # Retain only the finished, inspectable artifacts. DerivedData and the disk
 # image staging tree stay in the temporary directory and are discarded.
@@ -358,8 +361,8 @@ curl --fail --location --head --retry 12 --retry-delay 5 --retry-all-errors "$as
 feed_confirmed=false
 for _ in $(seq 1 30); do
     if curl --fail --silent --location --retry 3 --retry-delay 2 --retry-all-errors \
-        --header 'Cache-Control: no-cache' "$feed_url" \
-        | grep -q "sparkle:version=\"$project_build\""; then
+        --header 'Cache-Control: no-cache' --output "$published_appcast_path" "$feed_url" \
+        && appcast_contains_build "$published_appcast_path" "$project_build"; then
         feed_confirmed=true
         break
     fi

@@ -19,3 +19,33 @@ fetch_existing_appcast() {
             ;;
     esac
 }
+
+appcast_builds() {
+    sed -n \
+        -e 's/.*sparkle:version="\([0-9][0-9]*\)".*/\1/p' \
+        -e 's#.*<sparkle:version>\([0-9][0-9]*\)</sparkle:version>.*#\1#p' \
+        "$1"
+}
+
+appcast_versions() {
+    sed -n \
+        -e 's/.*sparkle:shortVersionString="\([0-9][0-9.]*\)".*/\1/p' \
+        -e 's#.*<sparkle:shortVersionString>\([0-9][0-9.]*\)</sparkle:shortVersionString>.*#\1#p' \
+        "$1"
+}
+
+appcast_contains_build() {
+    local build
+    while IFS= read -r build; do
+        [[ "$build" == "$2" ]] && return 0
+    done < <(appcast_builds "$1")
+    return 1
+}
+
+appcast_contains_version() {
+    local version
+    while IFS= read -r version; do
+        [[ "$version" == "$2" ]] && return 0
+    done < <(appcast_versions "$1")
+    return 1
+}
