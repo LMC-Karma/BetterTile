@@ -29,12 +29,13 @@ add a seam without adding a decision.
 
 What is extracted is only the framework-independent *decisions* those
 integrations make, in `BetterTileMacOS/ApplicationUpdatePresentation.swift`:
-`UpdateIndicator` (how an updater outcome changes the menu-bar indicator),
+`UpdateIndicator` (how updater outcomes retain or clear the available version
+shown by the app UI),
 `FeedbackLink` (what the feedback URL may contain), and `ApplicationVolume`
 (whether the app must ask to be moved out of the disk image). These are pure,
 import neither Sparkle nor AppKit, and are unit tested. The app delegate remains
-responsible for translating Sparkle's callbacks into those inputs and for
-applying the results to real AppKit objects.
+responsible for translating Sparkle's callbacks into those inputs, persisting
+the small reminder state, and applying the results to real AppKit objects.
 
 Sparkle's own update UI, download, installation, bundle replacement, and
 relaunch are validated as manual release checks; see

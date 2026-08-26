@@ -9,17 +9,32 @@ import Foundation
 /// linking Sparkle into the test target, and without pulling an updater API
 /// into `BetterTileCore`. Nothing in this file imports Sparkle or AppKit.
 
-/// Whether the menu-bar item is currently advertising an available update.
-public enum UpdateIndicatorState: Equatable, Sendable {
+public struct AvailableUpdate: Codable, Equatable, Sendable {
+    public let displayVersion: String
+    public let buildVersion: String
+
+    public init(displayVersion: String, buildVersion: String) {
+        self.displayVersion = displayVersion
+        self.buildVersion = buildVersion
+    }
+}
+
+/// Whether BetterTile is currently advertising an available update.
+public enum UpdateIndicatorState: Codable, Equatable, Sendable {
     case idle
-    case updateAvailable
+    case updateAvailable(AvailableUpdate)
+
+    public var availableUpdate: AvailableUpdate? {
+        guard case let .updateAvailable(update) = self else { return nil }
+        return update
+    }
 }
 
 /// What the updater reported. These map one-to-one onto the Sparkle delegate
 /// callbacks the app delegate implements.
 public enum UpdateIndicatorEvent: Equatable, Sendable {
     /// Sparkle found a valid update matching the signed appcast.
-    case foundValidUpdate
+    case foundValidUpdate(AvailableUpdate)
     /// Sparkle completed a check and confirmed no update is available.
     case confirmedNoUpdate
     /// The user chose to skip this version.
@@ -45,20 +60,36 @@ public enum UpdateIndicator {
     ///   real update until the next daily check.
     /// - Choosing Install only *begins* downloading and installing. If that
     ///   fails, the update is still available and the indicator must still say
-    ///   so. A successful install quits and relaunches the app, which resets
-    ///   this state naturally, so nothing needs to clear it on success.
+    ///   so. A successful install quits and relaunches the app; restoration
+    ///   clears the reminder when the running build reaches the stored build.
     public static func state(
         after event: UpdateIndicatorEvent,
         from current: UpdateIndicatorState
     ) -> UpdateIndicatorState {
         switch event {
-        case .foundValidUpdate:
-            .updateAvailable
+        case let .foundValidUpdate(update):
+            .updateAvailable(update)
         case .confirmedNoUpdate, .userSkippedUpdate:
             .idle
         case .userDeferredUpdate, .userBeganInstallingUpdate, .checkFailed:
             current
         }
+    }
+
+    /// Keeps a persisted reminder only while its build is newer than the
+    /// running application. BetterTile release builds use numeric bundle
+    /// versions, so malformed stored values are discarded rather than shown.
+    public static func restoredState(
+        _ stored: UpdateIndicatorState,
+        runningBuildVersion: String
+    ) -> UpdateIndicatorState {
+        guard
+            let update = stored.availableUpdate,
+            let runningBuild = Int(runningBuildVersion),
+            let availableBuild = Int(update.buildVersion),
+            runningBuild < availableBuild
+        else { return .idle }
+        return stored
     }
 }
 

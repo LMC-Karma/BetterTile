@@ -79,8 +79,13 @@ from `LMC-Karma/BetterTile/releases/latest/download/appcast.xml` and when the
 user chooses to download a release archive. GitHub may redirect release assets
 through its delivery infrastructure. These requests necessarily expose ordinary
 connection metadata such as the requesting IP address to GitHub. Automatic
-checks default to once per day and can be disabled in Settings. Sparkle system
-profiling is disabled.
+checks default to every four hours while BetterTile is running and can be
+disabled in Settings. Sparkle system profiling is disabled.
+
+BetterTile stores only the public display version and build number of a known
+available update in local user defaults so its reminder survives a relaunch.
+It clears that state after the update is installed, skipped, or no longer
+available.
 
 Update archives are authenticated by an EdDSA signature that Sparkle verifies
 against the public key built into the application. That verification is

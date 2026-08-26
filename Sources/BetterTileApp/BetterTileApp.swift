@@ -25,6 +25,41 @@ private enum BetterTileVariant {
 #endif
 }
 
+#if !DEBUG
+@MainActor
+@Observable
+final class UpdatePresentationModel {
+    private static let defaultsKey = "BetterTileAvailableUpdate"
+
+    private let defaults: UserDefaults
+    private(set) var state: UpdateIndicatorState
+
+    init(defaults: UserDefaults = .standard, runningBuildVersion: String) {
+        self.defaults = defaults
+        let stored = defaults.data(forKey: Self.defaultsKey)
+            .flatMap { try? JSONDecoder().decode(UpdateIndicatorState.self, from: $0) }
+            ?? .idle
+        state = UpdateIndicator.restoredState(stored, runningBuildVersion: runningBuildVersion)
+        persist()
+    }
+
+    func apply(_ event: UpdateIndicatorEvent) {
+        state = UpdateIndicator.state(after: event, from: state)
+        persist()
+    }
+
+    private func persist() {
+        guard state != .idle else {
+            defaults.removeObject(forKey: Self.defaultsKey)
+            return
+        }
+        if let data = try? JSONEncoder().encode(state) {
+            defaults.set(data, forKey: Self.defaultsKey)
+        }
+    }
+}
+#endif
+
 enum AppAppearance: String, CaseIterable, Identifiable {
     static let defaultsKey = "BetterTileAppAppearance"
 
@@ -136,12 +171,15 @@ private final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSPo
         store: .defaultStore(directoryName: BetterTileVariant.configurationDirectoryName)
     )
 #if !DEBUG
+    private lazy var updatePresentation = UpdatePresentationModel(
+        runningBuildVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown"
+    )
     private lazy var updaterController = SPUStandardUpdaterController(
         startingUpdater: true,
         updaterDelegate: self,
-        userDriverDelegate: nil
+        userDriverDelegate: self
     )
-    private var updateIndicatorState = UpdateIndicatorState.idle
+    private var mainUpdateMenuItem: NSMenuItem?
 #endif
     private var modelStarted = false
     private let popover = NSPopover()
@@ -165,6 +203,9 @@ private final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSPo
         AppAppearance.apply()
         installMainMenu()
         installStatusItem()
+#if !DEBUG
+        renderUpdateIndicator()
+#endif
         configurePopover()
 #if !DEBUG
         // Start the release updater only after the status item exists: its
@@ -282,7 +323,7 @@ private final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSPo
         statusItem.autosaveName = "BetterTileMenuBarItem"
         statusItem.behavior = []
         guard let button = statusItem.button else { return }
-        button.image = Self.statusImage(updateAvailable: false)
+        button.image = Self.statusImage(availableUpdate: nil)
         button.target = self
         button.action = #selector(statusItemClicked)
         button.sendAction(on: [.leftMouseUp, .rightMouseUp])
@@ -302,16 +343,17 @@ private final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSPo
         repairButton.toolTip = "Repair Bento Layout"
     }
 
-    private static func statusImage(updateAvailable: Bool) -> NSImage? {
+    private static func statusImage(availableUpdate: AvailableUpdate?) -> NSImage? {
+        let updateAvailable = availableUpdate != nil
         var configuration = NSImage.SymbolConfiguration(pointSize: 13, weight: .semibold)
         if updateAvailable {
             configuration = configuration.applying(.init(hierarchicalColor: .systemBlue))
         }
         let image = NSImage(
             systemSymbolName: updateAvailable ? "arrow.down.circle.fill" : "rectangle.3.group",
-            accessibilityDescription: updateAvailable
-                ? "BetterTile update available"
-                : BetterTileVariant.displayName
+            accessibilityDescription: availableUpdate.map {
+                "BetterTile update available, version \($0.displayVersion)"
+            } ?? BetterTileVariant.displayName
         )?.withSymbolConfiguration(configuration)
         image?.isTemplate = !updateAvailable
         return image
@@ -342,6 +384,7 @@ private final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSPo
             ?? NSScreen.main?.visibleFrame.height
             ?? 760
         let panelHeight = max(360, visibleHeight - 24)
+#if DEBUG
         let panel = BetterTileMenuPanel(
             model: model,
             panelHeight: panelHeight,
@@ -349,6 +392,17 @@ private final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSPo
             openSettings: { [weak self] in self?.showSettings() },
             quit: { NSApp.terminate(nil) }
         )
+#else
+        let panel = BetterTileMenuPanel(
+            model: model,
+            panelHeight: panelHeight,
+            updatePresentation: updatePresentation,
+            checkForUpdates: { [weak self] in self?.checkForUpdates(nil) },
+            openSetup: { [weak self] in self?.showSetupAssistant() },
+            openSettings: { [weak self] in self?.showSettings() },
+            quit: { NSApp.terminate(nil) }
+        )
+#endif
         let host: NSHostingController<BetterTileMenuPanel>
         if let existing = popoverHost {
             existing.rootView = panel
@@ -496,6 +550,7 @@ private final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSPo
 #else
             let settingsView = SettingsView(
                 model: model,
+                updatePresentation: updatePresentation,
                 automaticallyChecksForUpdates: Binding(
                     get: { [weak self] in
                         self?.updaterController.updater.automaticallyChecksForUpdates ?? false
@@ -612,19 +667,40 @@ private final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSPo
     /// Translates one updater outcome into the menu-bar indicator. The decision
     /// itself lives in `UpdateIndicator` so it can be tested without Sparkle.
     private func applyUpdateEvent(_ event: UpdateIndicatorEvent) {
-        updateIndicatorState = UpdateIndicator.state(after: event, from: updateIndicatorState)
+        updatePresentation.apply(event)
         renderUpdateIndicator()
     }
 
     private func renderUpdateIndicator() {
-        let available = updateIndicatorState == .updateAvailable
-        statusItem.button?.image = Self.statusImage(updateAvailable: available)
+        let update = updatePresentation.state.availableUpdate
+        let description = update.map {
+            "BetterTile update available, version \($0.displayVersion)"
+        } ?? BetterTileVariant.displayName
+        statusItem.button?.image = Self.statusImage(availableUpdate: update)
         statusItem.button?.contentTintColor = nil
-        statusItem.button?.toolTip = available ? "BetterTile update available" : BetterTileVariant.displayName
+        statusItem.button?.toolTip = description
+        statusItem.button?.setAccessibilityLabel(description)
+        configureUpdateMenuItem(mainUpdateMenuItem)
     }
 
-    func updater(_ updater: SPUUpdater, didFindValidUpdate item: SUAppcastItem) {
-        applyUpdateEvent(.foundValidUpdate)
+    var supportsGentleScheduledUpdateReminders: Bool { true }
+
+    func standardUserDriverShouldHandleShowingScheduledUpdate(
+        _: SUAppcastItem,
+        andInImmediateFocus immediateFocus: Bool
+    ) -> Bool {
+        immediateFocus
+    }
+
+    func standardUserDriverWillHandleShowingUpdate(
+        _: Bool,
+        forUpdate update: SUAppcastItem,
+        state _: SPUUserUpdateState
+    ) {
+        applyUpdateEvent(.foundValidUpdate(AvailableUpdate(
+            displayVersion: update.displayVersionString,
+            buildVersion: update.versionString
+        )))
     }
 
     func updaterDidNotFindUpdate(_ updater: SPUUpdater) {
@@ -657,7 +733,11 @@ private final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSPo
 
         let appItem = NSMenuItem()
         let appMenu = NSMenu(title: BetterTileVariant.displayName)
+#if DEBUG
         populateApplicationCommands(in: appMenu)
+#else
+        mainUpdateMenuItem = populateApplicationCommands(in: appMenu)
+#endif
         appItem.submenu = appMenu
         mainMenu.addItem(appItem)
 
@@ -684,26 +764,53 @@ private final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSPo
         NSApp.windowsMenu = windowMenu
     }
 
-    private func populateApplicationCommands(in menu: NSMenu) {
-        func addItem(_ title: String, action: Selector, keyEquivalent: String = "") {
+    @discardableResult
+    private func populateApplicationCommands(in menu: NSMenu) -> NSMenuItem? {
+        @discardableResult
+        func addItem(_ title: String, action: Selector, keyEquivalent: String = "") -> NSMenuItem {
             let item = NSMenuItem(title: title, action: action, keyEquivalent: keyEquivalent)
             item.target = self
             menu.addItem(item)
+            return item
         }
 
         addItem("Setup Assistant…", action: #selector(showSetupAssistant))
         addItem("Settings…", action: #selector(showSettings), keyEquivalent: ",")
+        var updateItem: NSMenuItem?
 #if !DEBUG
-        addItem("Check for Updates…", action: #selector(checkForUpdates(_:)))
+        updateItem = addItem("Check for Updates…", action: #selector(checkForUpdates(_:)))
+        configureUpdateMenuItem(updateItem)
 #endif
         addItem("Send Feedback…", action: #selector(sendFeedback))
         menu.addItem(.separator())
         addItem("Quit \(BetterTileVariant.displayName)", action: #selector(quitApplication), keyEquivalent: "q")
+        return updateItem
     }
+
+#if !DEBUG
+    private func configureUpdateMenuItem(_ item: NSMenuItem?) {
+        guard let item else { return }
+        guard let update = updatePresentation.state.availableUpdate else {
+            item.title = "Check for Updates…"
+            item.image = nil
+            item.badge = nil
+            item.toolTip = nil
+            item.setAccessibilityLabel(nil)
+            return
+        }
+
+        let description = "Update available, version \(update.displayVersion)"
+        item.title = "Update Available…"
+        item.image = NSImage(systemSymbolName: "arrow.down.circle.fill", accessibilityDescription: description)
+        item.badge = NSMenuItemBadge(string: update.displayVersion)
+        item.toolTip = description
+        item.setAccessibilityLabel(description)
+    }
+#endif
 }
 
 #if !DEBUG
-extension BetterTileAppDelegate: SPUUpdaterDelegate {}
+extension BetterTileAppDelegate: SPUUpdaterDelegate, @preconcurrency SPUStandardUserDriverDelegate {}
 #endif
 
 private enum PanelSurface {
@@ -731,6 +838,10 @@ private enum PanelSurface {
 private struct BetterTileMenuPanel: View {
     @Bindable var model: BetterTileModel
     let panelHeight: CGFloat
+#if !DEBUG
+    @Bindable var updatePresentation: UpdatePresentationModel
+    let checkForUpdates: () -> Void
+#endif
     let openSetup: () -> Void
     let openSettings: () -> Void
     let quit: () -> Void
@@ -749,6 +860,23 @@ private struct BetterTileMenuPanel: View {
                 .font(.system(size: 18, weight: .bold, design: .rounded))
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 5)
+
+#if !DEBUG
+            if let update = updatePresentation.state.availableUpdate {
+                Button(action: checkForUpdates) {
+                    HStack {
+                        Label("Update available", systemImage: "arrow.down.circle.fill")
+                        Spacer()
+                        UpdateVersionBadge(version: update.displayVersion)
+                    }
+                    .font(.system(size: 11, weight: .semibold))
+                }
+                .buttonStyle(.plain)
+                .panelCard(colorScheme: colorScheme, increaseContrast: increaseContrast)
+                .accessibilityLabel("View update, version \(update.displayVersion)")
+                .help("Open the BetterTile \(update.displayVersion) update")
+            }
+#endif
 
             controlsCard
 

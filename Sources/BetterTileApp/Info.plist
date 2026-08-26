@@ -17,7 +17,7 @@
 	<key>SUPublicEDKey</key>
 	<string>jDDzKbmy50mWyzmIUioKAMdMVKaiPORdrz+P9eQ579c=</string>
 	<key>SUScheduledCheckInterval</key>
-	<integer>86400</integer>
+	<integer>14400</integer>
 	<key>SUShowReleaseNotes</key>
 	<true/>
 </dict>
