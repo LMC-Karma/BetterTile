@@ -4,6 +4,9 @@ import Testing
 
 // MARK: - Update indicator
 
+private let update042 = AvailableUpdate(displayVersion: "0.4.2", buildVersion: "7")
+private let update043 = AvailableUpdate(displayVersion: "0.4.3", buildVersion: "8")
+
 /// Replays a sequence of updater outcomes from the starting state.
 private func finalState(
     after events: [UpdateIndicatorEvent],
@@ -18,46 +21,82 @@ private func feedbackURLComponents() throws -> URLComponents {
 }
 
 @Test func validUpdateTurnsTheIndicatorOn() {
-    #expect(UpdateIndicator.state(after: .foundValidUpdate, from: .idle) == .updateAvailable)
-    #expect(UpdateIndicator.state(after: .foundValidUpdate, from: .updateAvailable) == .updateAvailable)
+    #expect(UpdateIndicator.state(after: .foundValidUpdate(update042), from: .idle) == .updateAvailable(update042))
+    #expect(
+        UpdateIndicator.state(after: .foundValidUpdate(update043), from: .updateAvailable(update042))
+            == .updateAvailable(update043)
+    )
 }
 
 @Test func deferringAnUpdateKeepsTheIndicatorOn() {
-    #expect(UpdateIndicator.state(after: .userDeferredUpdate, from: .updateAvailable) == .updateAvailable)
+    #expect(
+        UpdateIndicator.state(after: .userDeferredUpdate, from: .updateAvailable(update042))
+            == .updateAvailable(update042)
+    )
 }
 
 @Test func skippingAVersionClearsTheIndicator() {
-    #expect(UpdateIndicator.state(after: .userSkippedUpdate, from: .updateAvailable) == .idle)
+    #expect(UpdateIndicator.state(after: .userSkippedUpdate, from: .updateAvailable(update042)) == .idle)
 }
 
 @Test func aConfirmedNoUpdateResultClearsTheIndicator() {
-    #expect(UpdateIndicator.state(after: .confirmedNoUpdate, from: .updateAvailable) == .idle)
+    #expect(UpdateIndicator.state(after: .confirmedNoUpdate, from: .updateAvailable(update042)) == .idle)
     #expect(UpdateIndicator.state(after: .confirmedNoUpdate, from: .idle) == .idle)
 }
 
 @Test func aFailedCheckPreservesWhicheverStateWasAlreadyShown() {
-    #expect(UpdateIndicator.state(after: .checkFailed, from: .updateAvailable) == .updateAvailable)
+    #expect(
+        UpdateIndicator.state(after: .checkFailed, from: .updateAvailable(update042))
+            == .updateAvailable(update042)
+    )
     #expect(UpdateIndicator.state(after: .checkFailed, from: .idle) == .idle)
 }
 
 @Test func beginningAnInstallKeepsTheIndicatorUntilTheAppRelaunches() {
     // Sparkle's install choice only starts the download and install. A
-    // successful install relaunches the app, which resets the indicator on its
-    // own, so this must not clear it early — otherwise a failed install leaves
-    // an available update unadvertised.
-    #expect(UpdateIndicator.state(after: .userBeganInstallingUpdate, from: .updateAvailable) == .updateAvailable)
+    // successful install relaunches the app, where build reconciliation clears
+    // it. This must not clear it early — otherwise a failed install leaves an
+    // available update unadvertised.
+    #expect(
+        UpdateIndicator.state(after: .userBeganInstallingUpdate, from: .updateAvailable(update042))
+            == .updateAvailable(update042)
+    )
 }
 
 @Test func anInstallThatFailsLeavesTheUpdateAdvertised() {
-    #expect(finalState(after: [.foundValidUpdate, .userBeganInstallingUpdate, .checkFailed]) == .updateAvailable)
+    #expect(
+        finalState(after: [.foundValidUpdate(update042), .userBeganInstallingUpdate, .checkFailed])
+            == .updateAvailable(update042)
+    )
 }
 
 @Test func deferringThenFailingStillAdvertisesTheUpdate() {
-    #expect(finalState(after: [.foundValidUpdate, .userDeferredUpdate, .checkFailed]) == .updateAvailable)
+    #expect(
+        finalState(after: [.foundValidUpdate(update042), .userDeferredUpdate, .checkFailed])
+            == .updateAvailable(update042)
+    )
 }
 
 @Test func skippingAfterBeginningAnInstallStillClearsTheIndicator() {
-    #expect(finalState(after: [.foundValidUpdate, .userBeganInstallingUpdate, .userSkippedUpdate]) == .idle)
+    #expect(finalState(after: [.foundValidUpdate(update042), .userBeganInstallingUpdate, .userSkippedUpdate]) == .idle)
+}
+
+@Test func aStoredFutureUpdateSurvivesRelaunch() {
+    #expect(
+        UpdateIndicator.restoredState(.updateAvailable(update042), runningBuildVersion: "6")
+            == .updateAvailable(update042)
+    )
+}
+
+@Test func anInstalledOrOlderStoredUpdateClearsOnRelaunch() {
+    #expect(UpdateIndicator.restoredState(.updateAvailable(update042), runningBuildVersion: "7") == .idle)
+    #expect(UpdateIndicator.restoredState(.updateAvailable(update042), runningBuildVersion: "8") == .idle)
+    #expect(UpdateIndicator.restoredState(.updateAvailable(update042), runningBuildVersion: "unknown") == .idle)
+}
+
+@Test func updateStateSurvivesPersistenceRoundTrip() throws {
+    let state = UpdateIndicatorState.updateAvailable(update042)
+    #expect(try JSONDecoder().decode(UpdateIndicatorState.self, from: JSONEncoder().encode(state)) == state)
 }
 
 // MARK: - Feedback link

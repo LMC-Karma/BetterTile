@@ -39,9 +39,26 @@ private enum SettingsDestination: String, CaseIterable, Identifiable {
     }
 }
 
+struct UpdateVersionBadge: View {
+    let version: String
+
+    var body: some View {
+        Text(version)
+            .font(.caption2.weight(.semibold))
+            .foregroundStyle(.white)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 2)
+            .background(Color(nsColor: .systemBlue), in: Capsule())
+            .overlay(Capsule().strokeBorder(.white.opacity(0.35), lineWidth: 0.5))
+            .fixedSize()
+            .accessibilityLabel("Update available, version \(version)")
+    }
+}
+
 struct SettingsView: View {
     @Bindable var model: BetterTileModel
 #if !DEBUG
+    @Bindable var updatePresentation: UpdatePresentationModel
     @Binding var automaticallyChecksForUpdates: Bool
     let checkForUpdates: () -> Void
 #endif
@@ -109,7 +126,16 @@ struct SettingsView: View {
         if !matches.isEmpty {
             Section(title) {
                 ForEach(matches) { destination in
-                    Label(destination.rawValue, systemImage: destination.icon)
+                    HStack {
+                        Label(destination.rawValue, systemImage: destination.icon)
+                        Spacer()
+#if !DEBUG
+                        if destination == .general,
+                           let update = updatePresentation.state.availableUpdate {
+                            UpdateVersionBadge(version: update.displayVersion)
+                        }
+#endif
+                    }
                         .tag(destination)
                 }
             }
@@ -132,6 +158,7 @@ struct SettingsView: View {
 #else
             GeneralSettings(
                 model: model,
+                updatePresentation: updatePresentation,
                 automaticallyChecksForUpdates: $automaticallyChecksForUpdates,
                 checkForUpdates: checkForUpdates,
                 openSetup: openSetup
@@ -150,6 +177,7 @@ struct SettingsView: View {
 private struct GeneralSettings: View {
     @Bindable var model: BetterTileModel
 #if !DEBUG
+    @Bindable var updatePresentation: UpdatePresentationModel
     @Binding var automaticallyChecksForUpdates: Bool
     let checkForUpdates: () -> Void
 #endif
@@ -213,7 +241,17 @@ private struct GeneralSettings: View {
                 Toggle("Show Dock icon", isOn: configurationBinding(\.showDockIcon))
 #if !DEBUG
                 Toggle("Automatically check for updates", isOn: $automaticallyChecksForUpdates)
-                Button("Check for Updates…", action: checkForUpdates)
+                if let update = updatePresentation.state.availableUpdate {
+                    HStack {
+                        Label("Update available", systemImage: "arrow.down.circle.fill")
+                        Spacer()
+                        UpdateVersionBadge(version: update.displayVersion)
+                    }
+                    Button("View Update…", action: checkForUpdates)
+                        .accessibilityLabel("View update, version \(update.displayVersion)")
+                } else {
+                    Button("Check for Updates…", action: checkForUpdates)
+                }
 #endif
             }
 
