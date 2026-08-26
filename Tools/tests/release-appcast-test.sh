@@ -63,6 +63,57 @@ else
     fail "reports and rejects HTTP 500"
 fi
 
+current_format="$scratch/current-format.xml"
+printf '%s\n' '<rss xmlns:sparkle="https://sparkle-project.org/xml-namespaces/sparkle"><channel><item><sparkle:version>6</sparkle:version><sparkle:shortVersionString>0.4.1</sparkle:shortVersionString></item></channel></rss>' > "$current_format"
+
+echo "appcast parsing reads Sparkle child elements"
+if [[ "$(appcast_builds "$current_format")" == "6" ]] \
+    && [[ "$(appcast_versions "$current_format")" == "0.4.1" ]] \
+    && appcast_contains_build "$current_format" 6 \
+    && appcast_contains_version "$current_format" 0.4.1; then
+    pass "reads the format emitted by Sparkle 2.9.5"
+else
+    fail "reads the format emitted by Sparkle 2.9.5"
+fi
+
+legacy_format="$scratch/legacy-format.xml"
+printf '%s\n' '<item sparkle:version="5" sparkle:shortVersionString="0.4.0" />' > "$legacy_format"
+
+echo "appcast parsing retains attribute compatibility"
+if [[ "$(appcast_builds "$legacy_format")" == "5" ]] \
+    && [[ "$(appcast_versions "$legacy_format")" == "0.4.0" ]] \
+    && appcast_contains_build "$legacy_format" 5 \
+    && appcast_contains_version "$legacy_format" 0.4.0; then
+    pass "reads legacy version attributes"
+else
+    fail "reads legacy version attributes"
+fi
+
+echo "appcast lookups reject a build or version that is absent"
+# release-beta.sh relies on these failures to reject a duplicate publication
+# and to decide whether the live feed has picked the new build up yet.
+if appcast_contains_build "$current_format" 99; then
+    fail "reports a missing build as absent"
+elif appcast_contains_version "$current_format" 9.9.9; then
+    fail "reports a missing version as absent"
+elif appcast_contains_build "$legacy_format" 99; then
+    fail "reports a missing legacy build as absent"
+elif appcast_contains_version "$legacy_format" 9.9.9; then
+    fail "reports a missing legacy version as absent"
+else
+    pass "reports a missing build or version as absent"
+fi
+
+echo "appcast lookups require a whole match"
+# A prefix or substring match would let 0.4 satisfy the guard for 0.4.1.
+if appcast_contains_build "$current_format" 61; then
+    fail "rejects a build that only shares a prefix"
+elif appcast_contains_version "$current_format" 0.4; then
+    fail "rejects a version that only shares a prefix"
+else
+    pass "rejects a build or version that only shares a prefix"
+fi
+
 if [[ "$failures" -eq 0 ]]; then
     echo "release appcast tests passed"
 else
