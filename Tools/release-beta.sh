@@ -33,6 +33,13 @@ notes_path="$2"
     exit 1
 }
 
+signing_identity="${BETTERTILE_SIGNING_IDENTITY:--}"
+if [[ "$dry_run" == false && "$signing_identity" == "-" ]]; then
+    echo "Public beta publication requires BETTERTILE_SIGNING_IDENTITY to select the stable BetterTile Beta identity." >&2
+    echo "Ad-hoc signing remains available only for dry runs." >&2
+    exit 1
+fi
+
 script_dir="$(cd "$(dirname "$0")" && pwd)"
 repo_root="$(cd "$script_dir/.." && pwd)"
 cd "$repo_root"
@@ -53,6 +60,7 @@ notes_name="${dmg_name%.dmg}.md"
 artifact_dir="$repo_root/.build/beta-release/$tag"
 feed_url="https://github.com/$repo/releases/latest/download/appcast.xml"
 release_url_prefix="https://github.com/$repo/releases/download/$tag/"
+expected_signing_requirement='identifier "com.lmckarma.BetterTile" and anchor = H"FB3A87AD07238EBCFBBA9125C6D95FE85CFCDFD0"'
 
 # Build the Xcode application and every DMG-packaging artifact outside the
 # repository. SwiftPM validation continues to use the checkout's normal .build;
@@ -245,11 +253,9 @@ otool -l "$app_path/Contents/MacOS/BetterTile" | awk '
 # macOS reports it as damaged with no "Open Anyway" path, so the beta would be
 # unopenable. Sign inside-out to produce a valid seal.
 #
-# BETTERTILE_SIGNING_IDENTITY defaults to "-" (ad-hoc). Ad-hoc identities make
-# the designated requirement a bare cdhash, so every release is a different app
-# to TCC and the Accessibility grant does not survive an update. Setting a
-# stable Developer ID identity here is what fixes that; see docs/RELEASING.md.
-signing_identity="${BETTERTILE_SIGNING_IDENTITY:--}"
+# Dry runs default to "-" (ad-hoc). Publication requires the maintainer-held
+# BetterTile Beta identity, and the requirement check below pins its exact
+# certificate rather than trusting the identity's editable Keychain name.
 sparkle_versions="$app_path/Contents/Frameworks/Sparkle.framework/Versions/B"
 for nested in \
     "$sparkle_versions/XPCServices/Downloader.xpc" \
@@ -269,6 +275,12 @@ codesign --verify --deep --strict "$app_path"
     echo "Signed bundle identifier does not match the Accessibility grant identity." >&2
     exit 1
 }
+if [[ "$signing_identity" != "-" ]]; then
+    codesign --verify --requirement "=$expected_signing_requirement" "$app_path" || {
+        echo "Signed application does not satisfy the pinned BetterTile Beta certificate requirement." >&2
+        exit 1
+    }
+fi
 
 read_info() {
     /usr/libexec/PlistBuddy -c "Print :$1" "$info_path"
@@ -297,6 +309,12 @@ hdiutil attach "$work_dir/$dmg_name" -readonly -nobrowse -mountpoint "$mount_dir
 # The signature must still validate through the disk image, which is what a
 # tester actually launches from.
 codesign --verify --deep --strict "$mount_dir/BetterTile.app"
+if [[ "$signing_identity" != "-" ]]; then
+    codesign --verify --requirement "=$expected_signing_requirement" "$mount_dir/BetterTile.app" || {
+        echo "Packaged application does not satisfy the pinned BetterTile Beta certificate requirement." >&2
+        exit 1
+    }
+fi
 hdiutil detach "$mount_dir" >/dev/null
 rmdir "$mount_dir"
 

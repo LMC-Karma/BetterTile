@@ -165,11 +165,20 @@ repository and GitHub Actions.
 
 ## Distribution
 
-Public beta builds are **ad-hoc signed** and are **not signed with a Developer
-ID**. The signature is valid but does not identify a developer to macOS, so
-first launch requires **Open Anyway** in System Settings → Privacy & Security.
-Ad-hoc signatures change from build to build, so macOS treats each update as a
-new application and the Accessibility grant must be given again after an update.
+Public beta builds are signed with the maintainer-held, self-signed
+`BetterTile Beta` certificate. Its stable certificate requirement is intended
+to let macOS recognize successive betas as the same application for
+Accessibility. The 0.4.1 to 0.4.2 public update will validate that behavior. It
+does not provide Apple developer attestation or notarization, so first launch
+still requires **Open Anyway** in System Settings → Privacy & Security. The
+first stable-signed release changes from the old ad-hoc identity and requires
+one final Accessibility grant.
+
+Sparkle independently authenticates update archives with the EdDSA key built
+into the application. The self-signed code-signing certificate and its private
+key are not stored in the repository or CI. Certificate rotation, loss,
+compromise, or expiry breaks the stable application identity and requires a
+warning and focused release tests.
 
 The unsigned `CODE_SIGNING_ALLOWED=NO` builds produced by CI and by the release
 script's internal build step are validation builds only and are never
