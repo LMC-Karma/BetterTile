@@ -89,6 +89,31 @@ else
     fail "reads legacy version attributes"
 fi
 
+echo "appcast lookups reject a build or version that is absent"
+# release-beta.sh relies on these failures to reject a duplicate publication
+# and to decide whether the live feed has picked the new build up yet.
+if appcast_contains_build "$current_format" 99; then
+    fail "reports a missing build as absent"
+elif appcast_contains_version "$current_format" 9.9.9; then
+    fail "reports a missing version as absent"
+elif appcast_contains_build "$legacy_format" 99; then
+    fail "reports a missing legacy build as absent"
+elif appcast_contains_version "$legacy_format" 9.9.9; then
+    fail "reports a missing legacy version as absent"
+else
+    pass "reports a missing build or version as absent"
+fi
+
+echo "appcast lookups require a whole match"
+# A prefix or substring match would let 0.4 satisfy the guard for 0.4.1.
+if appcast_contains_build "$current_format" 61; then
+    fail "rejects a build that only shares a prefix"
+elif appcast_contains_version "$current_format" 0.4; then
+    fail "rejects a version that only shares a prefix"
+else
+    pass "rejects a build or version that only shares a prefix"
+fi
+
 if [[ "$failures" -eq 0 ]]; then
     echo "release appcast tests passed"
 else
