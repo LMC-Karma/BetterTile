@@ -282,12 +282,7 @@ private final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSPo
         statusItem.autosaveName = "BetterTileMenuBarItem"
         statusItem.behavior = []
         guard let button = statusItem.button else { return }
-        let image = NSImage(
-            systemSymbolName: "rectangle.3.group",
-            accessibilityDescription: BetterTileVariant.displayName
-        )?.withSymbolConfiguration(.init(pointSize: 13, weight: .semibold))
-        image?.isTemplate = true
-        button.image = image
+        button.image = Self.statusImage(updateAvailable: false)
         button.target = self
         button.action = #selector(statusItemClicked)
         button.sendAction(on: [.leftMouseUp, .rightMouseUp])
@@ -305,6 +300,21 @@ private final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSPo
         repairButton.target = self
         repairButton.action = #selector(repairCurrentLayout)
         repairButton.toolTip = "Repair Bento Layout"
+    }
+
+    private static func statusImage(updateAvailable: Bool) -> NSImage? {
+        var configuration = NSImage.SymbolConfiguration(pointSize: 13, weight: .semibold)
+        if updateAvailable {
+            configuration = configuration.applying(.init(hierarchicalColor: .systemBlue))
+        }
+        let image = NSImage(
+            systemSymbolName: updateAvailable ? "arrow.down.circle.fill" : "rectangle.3.group",
+            accessibilityDescription: updateAvailable
+                ? "BetterTile update available"
+                : BetterTileVariant.displayName
+        )?.withSymbolConfiguration(configuration)
+        image?.isTemplate = !updateAvailable
+        return image
     }
 
     private func configurePopover() {
@@ -608,7 +618,8 @@ private final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSPo
 
     private func renderUpdateIndicator() {
         let available = updateIndicatorState == .updateAvailable
-        statusItem.button?.contentTintColor = available ? .systemBlue : nil
+        statusItem.button?.image = Self.statusImage(updateAvailable: available)
+        statusItem.button?.contentTintColor = nil
         statusItem.button?.toolTip = available ? "BetterTile update available" : BetterTileVariant.displayName
     }
 
