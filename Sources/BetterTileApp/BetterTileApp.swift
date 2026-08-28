@@ -651,7 +651,17 @@ private final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSPo
     }
 
 #if !DEBUG
+    /// Clears the way before Sparkle opens its own window. Sparkle's update
+    /// windows use the normal window level, while the Settings window floats
+    /// above them, so an update opened from Settings lands behind a window the
+    /// user cannot see past. Closing Settings also flushes pending
+    /// configuration through `windowWillClose`. Activating brings the update
+    /// forward when the request came from the menu bar, where Sparkle skips its
+    /// own activation because the popover already made the app active.
     @objc private func checkForUpdates(_ sender: Any?) {
+        closePopover()
+        settingsWindow?.close()
+        NSApp.activate(ignoringOtherApps: true)
         updaterController.checkForUpdates(sender)
     }
 #endif
