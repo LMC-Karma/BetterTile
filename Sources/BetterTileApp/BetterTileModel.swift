@@ -1325,10 +1325,12 @@ final class BetterTileModel {
                 // A recognised destination runs through the same planner a
                 // BetterTile shortcut uses, so macOS's commands and BetterTile's
                 // own produce identical layouts rather than two rules.
+                let sourceBaselineFrame = session.lastObservedFrames[windowID]
                 applyExternalSnap(
                     windowID: windowID,
                     action: action,
                     session: &session,
+                    sourceBaselineFrame: sourceBaselineFrame,
                     displayWindows: displayWindows,
                     display: display
                 )
@@ -1388,6 +1390,7 @@ final class BetterTileModel {
         windowID: WindowID,
         action: WindowAction,
         session: inout LayoutSession,
+        sourceBaselineFrame: BTRect?,
         displayWindows: [WindowSnapshot],
         display: DisplaySnapshot
     ) {
@@ -1417,11 +1420,15 @@ final class BetterTileModel {
         // visible under the filled window while the tree still called them
         // tiled.
         if plan.isFocusDrop {
+            guard let sourceBaselineFrame else {
+                restoreBentoLayout(session: session, displayWindows: displayWindows, display: display)
+                return
+            }
             applyExternalFocusDrop(
                 plan: plan,
                 windowID: windowID,
                 session: &session,
-                baselineFrames: baselineFrames,
+                sourceBaselineFrame: sourceBaselineFrame,
                 displayWindows: displayWindows,
                 display: display
             )
@@ -1450,19 +1457,17 @@ final class BetterTileModel {
     ///
     /// Mirrors the focus-drop branch of `finishBentoDrag`: one placement and
     /// the peers it covers are minimized together so a rejected write rolls
-    /// both back, and the covered peers are recorded so restoring the filled
-    /// window brings them back.
+    /// both back, and the covered peers are recorded so restoring one brings
+    /// back the rest.
     private func applyExternalFocusDrop(
         plan: BentoDropPlan,
         windowID: WindowID,
         session: inout LayoutSession,
-        baselineFrames: [WindowID: BTRect],
+        sourceBaselineFrame: BTRect,
         displayWindows: [WindowSnapshot],
         display: DisplaySnapshot
     ) {
-        guard let placement = plan.placements.first,
-              let baseline = baselineFrames[windowID]
-        else { return }
+        guard let placement = plan.placements.first else { return }
         let expectedRevision = session.revision
         guard sessionStore.isCurrent(session.id, revision: expectedRevision, on: display.id) else {
             Self.bentoLog.notice("discarded stale focus plan for revision \(expectedRevision, privacy: .public)")
@@ -1473,7 +1478,7 @@ final class BetterTileModel {
         let outcome = coordinator.applyFocusDrop(
             placement: placement,
             minimizing: plan.minimizedWindowIDs,
-            sourceBaselineFrame: baseline
+            sourceBaselineFrame: sourceBaselineFrame
         )
         guard outcome.isApplied else {
             if case let .degraded(reason) = outcome {

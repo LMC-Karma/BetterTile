@@ -309,7 +309,7 @@ import Testing
     #expect(system.windows.map(\.frame) == placements.map(\.frame))
 }
 
-@Test @MainActor func focusDropRollsBackFramesAndMinimizedWindowsAfterPartialFailure() throws {
+@Test @MainActor func focusDropRollsBackAnAlreadyPlacedSourceAndMinimizedWindowsAfterPartialFailure() throws {
     let system = FakeWindowSystem()
     system.addSecondWindow()
     let third = WindowSnapshot(
@@ -321,6 +321,8 @@ import Testing
     let coordinator = WindowCoordinator(system: system)
     let source = system.windows[0]
     let target = BTRect(x: 0, y: 0, width: 1000, height: 800)
+    // macOS can place the source before BetterTile receives the event.
+    system.windows[0].frame = target
 
     #expect(!coordinator.applyFocusDrop(
         placement: Placement(windowID: source.id, frame: target),
