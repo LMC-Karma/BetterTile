@@ -378,3 +378,49 @@ private let w3 = WindowID(rawValue: "w3")
         #expect(ExternalChangeRouter.route(changes) == .snap(windowID: w1, action: .rightHalf))
     }
 }
+
+// MARK: - macOS Window > Fill
+
+/// Fill is a focus plan, not a partition. The classifier recognises it, the
+/// router sends it to the snap path, and the planner asks for the peers it
+/// covers to be minimized. Anything applying that plan has to honour the
+/// minimize list, or the filled window sits on top of peers the tree still
+/// calls tiled.
+@Test func macOSFillRoutesToAFocusPlanThatMinimizesItsPeers() {
+    let a = WindowID(rawValue: "a")
+    let b = WindowID(rawValue: "b")
+
+    var state = BentoLayoutState()
+    state.insert(a, in: bounds)
+    state.insert(b, in: bounds)
+    let tiled = Dictionary(
+        uniqueKeysWithValues: state.placements(in: bounds).map { ($0.windowID, $0.frame) }
+    )
+
+    guard let tiledA = tiled[a] else {
+        Issue.record("the layout did not place the first window")
+        return
+    }
+    let change = ExternalWindowChangeClassifier.classify(
+        expected: tiledA,
+        observed: bounds,
+        in: bounds,
+        edgeTolerance: 6
+    )
+    #expect(change == ExternalWindowChange.snapDestination(.maximize))
+    #expect(ExternalChangeRouter.route([a: change]) == .snap(windowID: a, action: .maximize))
+
+    let plan = BentoDropPlanner().plan(
+        intent: .snap(action: .maximize, frame: bounds),
+        sourceWindowID: a,
+        state: state,
+        baselineFrames: tiled,
+        constraints: [:],
+        contextWindowIDs: [a, b],
+        in: bounds
+    )
+    #expect(plan?.isFocusDrop == true)
+    #expect(plan?.minimizedWindowIDs == [b])
+    #expect(plan?.excludedWindowIDs == [b])
+    #expect(plan?.placements.count == 1)
+}
