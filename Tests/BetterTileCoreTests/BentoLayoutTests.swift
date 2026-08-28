@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import BetterTileCore
 
@@ -65,7 +66,10 @@ private let bentoBounds = BTRect(x: 0, y: 0, width: 1200, height: 800)
                     state.insert(id, in: bentoBounds)
                 }
                 let reinserted = state.reinsert(source, beside: target, edge: edge)
-                guard reinserted else { continue }
+                #expect(
+                    reinserted,
+                    "reinsertion failed for \(source.rawValue) to \(edge.rawValue) of \(target.rawValue)"
+                )
                 let boundaryIDs = state.boundaries(in: bentoBounds, displayID: display).map(\.id)
                 #expect(
                     Set(boundaryIDs).count == boundaryIDs.count,
@@ -74,6 +78,41 @@ private let bentoBounds = BTRect(x: 0, y: 0, width: 1200, height: 800)
             }
         }
     }
+}
+
+/// Cleaning a repeated identifier must preserve the lock on its boundary and
+/// must not mint another identifier when the cleaned tree is stored again.
+@Test func duplicateBoundaryCleanupPreservesLocksAndIdentity() throws {
+    let repeatedID = UUID()
+    let a = WindowID(rawValue: "a")
+    let b = WindowID(rawValue: "b")
+    let c = WindowID(rawValue: "c")
+    var state = BentoLayoutState(root: .partition(BentoPartition(
+        axis: .vertical,
+        children: [
+            .leaf(a),
+            .partition(BentoPartition(
+                axis: .horizontal,
+                children: [.leaf(b), .leaf(c)],
+                boundaryIDs: [repeatedID],
+                lockedBoundaryIDs: [repeatedID]
+            )),
+        ],
+        boundaryIDs: [repeatedID]
+    )))
+
+    let cleanedRoot = try #require(state.root)
+    let branches = state.branches
+    let rootBoundary = try #require(branches.first { $0.depth == 0 })
+    let nestedBoundary = try #require(branches.first { $0.depth == 1 })
+    #expect(rootBoundary.id == repeatedID)
+    #expect(!rootBoundary.isLocked)
+    #expect(nestedBoundary.id != repeatedID)
+    #expect(nestedBoundary.isLocked)
+
+    state.root = cleanedRoot
+    #expect(state.root == cleanedRoot)
+    #expect(state.branches == branches)
 }
 
 /// A repeated identifier made one drag move the wrong divider. Dragging the
