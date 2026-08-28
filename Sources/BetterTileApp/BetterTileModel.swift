@@ -1411,6 +1411,22 @@ final class BetterTileModel {
         // not realise must not become the session's state, or the layout and
         // the windows disagree from then on.
         session.bentoState = plan.state
+        // macOS's Window > Fill resolves to the same focus plan a BetterTile
+        // maximize does, and a focus plan covers its peers instead of tiling
+        // beside them. Committing only its placement would leave those peers
+        // visible under the filled window while the tree still called them
+        // tiled.
+        if plan.isFocusDrop {
+            applyExternalFocusDrop(
+                plan: plan,
+                windowID: windowID,
+                session: &session,
+                baselineFrames: baselineFrames,
+                displayWindows: displayWindows,
+                display: display
+            )
+            return
+        }
         let commitResult = commitBentoProposal(
             plan.placements,
             session: &session,
@@ -1427,6 +1443,56 @@ final class BetterTileModel {
             return
         }
         scheduleBentoSettlement(displayID: display.id, changedWindowIDs: Set(plan.placements.map(\.windowID)))
+        refreshDividerBoundaries()
+    }
+
+    /// Applies a focus plan that arrived from macOS rather than from a drag.
+    ///
+    /// Mirrors the focus-drop branch of `finishBentoDrag`: one placement and
+    /// the peers it covers are minimized together so a rejected write rolls
+    /// both back, and the covered peers are recorded so restoring the filled
+    /// window brings them back.
+    private func applyExternalFocusDrop(
+        plan: BentoDropPlan,
+        windowID: WindowID,
+        session: inout LayoutSession,
+        baselineFrames: [WindowID: BTRect],
+        displayWindows: [WindowSnapshot],
+        display: DisplaySnapshot
+    ) {
+        guard let placement = plan.placements.first,
+              let baseline = baselineFrames[windowID]
+        else { return }
+        let expectedRevision = session.revision
+        guard sessionStore.isCurrent(session.id, revision: expectedRevision, on: display.id) else {
+            Self.bentoLog.notice("discarded stale focus plan for revision \(expectedRevision, privacy: .public)")
+            pendingWindowEvents.recordTopologyChange()
+            schedulePendingWindowEvents()
+            return
+        }
+        let outcome = coordinator.applyFocusDrop(
+            placement: placement,
+            minimizing: plan.minimizedWindowIDs,
+            sourceBaselineFrame: baseline
+        )
+        guard outcome.isApplied else {
+            if case let .degraded(reason) = outcome {
+                suspendAutomaticBentoWrites(displayID: display.id, windows: displayWindows, error: reason)
+            }
+            return
+        }
+        session.excludedFocusWindowIDs.formUnion(plan.excludedWindowIDs)
+        session.excludedFocusWindowIDs.remove(windowID)
+        session.recordProposedFrames([placement.windowID: placement.frame])
+        guard let committed = sessionStore.commit(session, replacing: expectedRevision) else {
+            Self.bentoLog.error("CAS conflict after a focus plan on revision \(expectedRevision, privacy: .public)")
+            pendingWindowEvents.recordTopologyChange()
+            schedulePendingWindowEvents()
+            return
+        }
+        session = committed
+        // A focus plan covers rather than tiles, so there are no sibling frames
+        // to settle. Settling here would read the covered peers as drift.
         refreshDividerBoundaries()
     }
 
