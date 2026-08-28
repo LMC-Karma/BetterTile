@@ -5,6 +5,19 @@ public enum SplitAxis: String, Sendable {
     case vertical
 }
 
+/// Derives a UUID from text. The same text always gives the same identifier,
+/// so identity survives recomputing a layout.
+func stableUUID(_ source: String) -> UUID {
+    func fnv1a(_ string: String, seed: UInt64) -> UInt64 {
+        string.utf8.reduce(seed) { hash, byte in (hash ^ UInt64(byte)) &* 1_099_511_628_211 }
+    }
+    let high = String(format: "%016llx", fnv1a(source, seed: 14_695_981_039_346_656_037))
+    let low = String(format: "%016llx", fnv1a(String(source.reversed()), seed: 7_807_828_912_877_952_651))
+    let hex = high + low
+    let text = "\(hex.prefix(8))-\(hex.dropFirst(8).prefix(4))-\(hex.dropFirst(12).prefix(4))-\(hex.dropFirst(16).prefix(4))-\(hex.dropFirst(20).prefix(12))"
+    return UUID(uuidString: text)!
+}
+
 public struct BentoLayoutMetrics: Hashable, Sendable {
     public var paneGap: Double
 
@@ -105,7 +118,10 @@ public indirect enum BentoNode: Hashable, Sendable {
 }
 
 public struct BentoLayoutState: Hashable, Sendable {
-    public var root: BentoNode?
+    public var root: BentoNode? {
+        didSet { root = root.map(Self.withDistinctBoundaryIDs) }
+    }
+
     public var floatingWindowIDs: Set<WindowID>
     public var metrics: BentoLayoutMetrics
 
@@ -114,7 +130,7 @@ public struct BentoLayoutState: Hashable, Sendable {
         floatingWindowIDs: Set<WindowID> = [],
         metrics: BentoLayoutMetrics = .gapless
     ) {
-        self.root = root.map(Self.normalized)
+        self.root = root.map { Self.withDistinctBoundaryIDs(Self.normalized($0)) }
         self.floatingWindowIDs = floatingWindowIDs
         self.metrics = metrics
     }
@@ -671,15 +687,46 @@ public struct BentoLayoutState: Hashable, Sendable {
     }
 
     private func stableBranchID(first: WindowID, second: WindowID) -> UUID {
-        func fnv1a(_ string: String, seed: UInt64) -> UInt64 {
-            string.utf8.reduce(seed) { hash, byte in (hash ^ UInt64(byte)) &* 1_099_511_628_211 }
+        stableUUID(first.rawValue + "\u{0}" + second.rawValue)
+    }
+
+    /// Returns the tree with every repeated boundary identifier replaced.
+    ///
+    /// A boundary identifier is derived from the window pair it separates, so
+    /// two dividers in one tree can be handed the same identifier: moving a
+    /// window back beside a pane it already neighboured recreates a pair, and
+    /// removing a window keeps the surviving identifiers while a new split
+    /// re-derives one. Every lookup resolves a boundary with
+    /// `firstIndex(of:)`, so a repeat would make one drag move the other
+    /// divider. The first occurrence keeps the derived identifier and each
+    /// repeat gets a distinct identifier derived from it, which keeps the
+    /// result stable across recomputation. A lock follows its boundary.
+    static func withDistinctBoundaryIDs(_ node: BentoNode) -> BentoNode {
+        var used: Set<UUID> = []
+
+        func visit(_ node: BentoNode) -> BentoNode {
+            guard case var .partition(partition) = node else { return node }
+            var boundaryIDs: [UUID] = []
+            var locked: Set<UUID> = []
+            for id in partition.boundaryIDs {
+                var candidate = id
+                var occurrence = 0
+                while !used.insert(candidate).inserted {
+                    occurrence += 1
+                    candidate = stableUUID("\(id.uuidString)\u{0}repeat\(occurrence)")
+                }
+                boundaryIDs.append(candidate)
+                if partition.lockedBoundaryIDs.contains(id) {
+                    locked.insert(candidate)
+                }
+            }
+            partition.boundaryIDs = boundaryIDs
+            partition.lockedBoundaryIDs = locked
+            partition.children = partition.children.map(visit)
+            return .partition(partition)
         }
-        let source = first.rawValue + "\u{0}" + second.rawValue
-        let high = String(format: "%016llx", fnv1a(source, seed: 14_695_981_039_346_656_037))
-        let low = String(format: "%016llx", fnv1a(String(source.reversed()), seed: 7_807_828_912_877_952_651))
-        let hex = high + low
-        let text = "\(hex.prefix(8))-\(hex.dropFirst(8).prefix(4))-\(hex.dropFirst(12).prefix(4))-\(hex.dropFirst(16).prefix(4))-\(hex.dropFirst(20).prefix(12))"
-        return UUID(uuidString: text)!
+
+        return visit(node)
     }
 
     public static func normalized(_ node: BentoNode) -> BentoNode {
