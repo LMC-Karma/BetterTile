@@ -31,3 +31,87 @@ private let bentoBounds = BTRect(x: 0, y: 0, width: 1200, height: 800)
     state.remove(a)
     #expect(state.root?.windowIDs == [b])
 }
+
+/// Boundary identifiers come from the window pair a divider separates, so
+/// moving a window next to a pane it already neighboured used to mint an
+/// identifier the partition already held. Lookups resolve a boundary with
+/// `firstIndex(of:)`, so the two dividers became one.
+@Test func bentoReinsertionKeepsBoundaryIdentifiersDistinct() {
+    var state = BentoLayoutState()
+    let a = WindowID(rawValue: "a")
+    let b = WindowID(rawValue: "b")
+    let c = WindowID(rawValue: "c")
+    for id in [a, b, c] {
+        state.insert(id, in: bentoBounds)
+    }
+    let reinserted = state.reinsert(a, beside: b, edge: .left)
+    #expect(reinserted)
+
+    let ids = state.boundaries(in: bentoBounds, displayID: DisplayID(rawValue: "d")).map(\.id)
+    #expect(ids.count == 2)
+    #expect(Set(ids).count == ids.count)
+}
+
+/// Every pane pair in a four-window layout, reinserted on every edge, has to
+/// leave one identifier for each divider.
+@Test func bentoReinsertionNeverRepeatsABoundaryIdentifier() {
+    let ids = ["a", "b", "c", "d"].map { WindowID(rawValue: $0) }
+    let display = DisplayID(rawValue: "d")
+    for source in ids {
+        for target in ids where target != source {
+            for edge in [BentoPaneDropPosition.left, .right, .top, .bottom] {
+                var state = BentoLayoutState()
+                for id in ids {
+                    state.insert(id, in: bentoBounds)
+                }
+                let reinserted = state.reinsert(source, beside: target, edge: edge)
+                guard reinserted else { continue }
+                let boundaryIDs = state.boundaries(in: bentoBounds, displayID: display).map(\.id)
+                #expect(
+                    Set(boundaryIDs).count == boundaryIDs.count,
+                    "repeated boundary identifier after \(source.rawValue) to \(edge.rawValue) of \(target.rawValue)"
+                )
+            }
+        }
+    }
+}
+
+/// A repeated identifier made one drag move the wrong divider. Dragging the
+/// first boundary must move only the first boundary.
+@Test func bentoResizeMovesOnlyTheDraggedBoundary() {
+    var state = BentoLayoutState()
+    let a = WindowID(rawValue: "a")
+    let b = WindowID(rawValue: "b")
+    let c = WindowID(rawValue: "c")
+    for id in [a, b, c] {
+        state.insert(id, in: bentoBounds)
+    }
+    let reinserted = state.reinsert(a, beside: b, edge: .left)
+    #expect(reinserted)
+
+    let before = state.boundaries(in: bentoBounds, displayID: DisplayID(rawValue: "d"))
+    #expect(before.count == 2)
+    guard let dragged = before.first, let untouched = before.last, dragged.id != untouched.id,
+          let draggedBranchID = dragged.branchID
+    else {
+        Issue.record("the layout did not give two distinct boundaries")
+        return
+    }
+
+    let target = dragged.coordinate - 80
+    guard let result = BentoResizeEngine().resize(
+        state: state,
+        branchCoordinates: [draggedBranchID: target],
+        in: bentoBounds
+    ) else {
+        Issue.record("the resize returned no result")
+        return
+    }
+
+    let after = result.state.boundaries(in: bentoBounds, displayID: DisplayID(rawValue: "d"))
+    let movedByID: [String: Double] = Dictionary(
+        uniqueKeysWithValues: after.map { ($0.id, $0.coordinate) }
+    )
+    #expect(abs((movedByID[dragged.id] ?? 0) - target) < 1)
+    #expect(abs((movedByID[untouched.id] ?? 0) - untouched.coordinate) < 1)
+}
