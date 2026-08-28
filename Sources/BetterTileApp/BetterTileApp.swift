@@ -652,13 +652,18 @@ private final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSPo
 
 #if !DEBUG
     /// Sparkle skips its own activation when the app is already active, which it
-    /// is whenever the popover opened it. Activating here brings Sparkle's
-    /// window forward from a menu-bar click. Settings is left alone; only the
-    /// update window itself needs it out of the way, and
-    /// `standardUserDriverWillHandleShowingUpdate` closes it then.
+    /// is whenever the popover opened it. Sparkle also skips the delegate callback
+    /// when it brings an existing update back into focus, so close Settings for
+    /// that active session here. A newly found update closes it in the callback.
     @objc private func checkForUpdates(_ sender: Any?) {
         closePopover()
         NSApp.activate(ignoringOtherApps: true)
+        let updater = updaterController.updater
+        if updatePresentation.state.availableUpdate != nil,
+           updater.sessionInProgress,
+           updater.canCheckForUpdates {
+            settingsWindow?.close()
+        }
         updaterController.checkForUpdates(sender)
     }
 #endif
