@@ -651,16 +651,13 @@ private final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSPo
     }
 
 #if !DEBUG
-    /// Clears the way before Sparkle opens its own window. Sparkle's update
-    /// windows use the normal window level, while the Settings window floats
-    /// above them, so an update opened from Settings lands behind a window the
-    /// user cannot see past. Closing Settings also flushes pending
-    /// configuration through `windowWillClose`. Activating brings the update
-    /// forward when the request came from the menu bar, where Sparkle skips its
-    /// own activation because the popover already made the app active.
+    /// Sparkle skips its own activation when the app is already active, which it
+    /// is whenever the popover opened it. Activating here brings Sparkle's
+    /// window forward from a menu-bar click. Settings is left alone; only the
+    /// update window itself needs it out of the way, and
+    /// `standardUserDriverWillHandleShowingUpdate` closes it then.
     @objc private func checkForUpdates(_ sender: Any?) {
         closePopover()
-        settingsWindow?.close()
         NSApp.activate(ignoringOtherApps: true)
         updaterController.checkForUpdates(sender)
     }
@@ -702,11 +699,18 @@ private final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSPo
         immediateFocus
     }
 
+    /// Sparkle calls this before it shows the update window, and again with
+    /// `willShowUpdate` false for a gentle scheduled reminder that only marks
+    /// the menu bar. The update window uses the normal window level while
+    /// Settings floats above it, so Settings has to close first or the update
+    /// opens behind a window the user cannot see past. Closing it here rather
+    /// than when the check starts keeps Settings open when no update is found.
     func standardUserDriverWillHandleShowingUpdate(
-        _: Bool,
+        _ willShowUpdate: Bool,
         forUpdate update: SUAppcastItem,
         state _: SPUUserUpdateState
     ) {
+        if willShowUpdate { settingsWindow?.close() }
         applyUpdateEvent(.foundValidUpdate(AvailableUpdate(
             displayVersion: update.displayVersionString,
             buildVersion: update.versionString
