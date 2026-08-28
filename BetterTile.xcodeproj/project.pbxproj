@@ -260,7 +260,7 @@
 				BETTERTILE_UPDATE_FEED_URL = "";
 				CLANG_ENABLE_OBJC_WEAK = YES;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 7;
+				CURRENT_PROJECT_VERSION = 8;
 				DEAD_CODE_STRIPPING = YES;
 				ENABLE_APP_SANDBOX = NO;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -272,7 +272,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 0.4.2;
+				MARKETING_VERSION = 0.4.3;
 				PRODUCT_BUNDLE_IDENTIFIER = com.lmckarma.BetterTile.debug;
 				PRODUCT_NAME = "BetterTile Debug";
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
@@ -290,7 +290,7 @@
 				BETTERTILE_UPDATE_FEED_URL = "https://github.com/LMC-Karma/BetterTile/releases/latest/download/appcast.xml";
 				CLANG_ENABLE_OBJC_WEAK = YES;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 7;
+				CURRENT_PROJECT_VERSION = 8;
 				DEAD_CODE_STRIPPING = YES;
 				ENABLE_APP_SANDBOX = NO;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -302,7 +302,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 0.4.2;
+				MARKETING_VERSION = 0.4.3;
 				PRODUCT_BUNDLE_IDENTIFIER = com.lmckarma.BetterTile;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
