@@ -8,8 +8,6 @@ import SwiftUI
 public struct LayoutWheelMetrics: Sendable {
     public let geometry: LayoutWheelGeometry
     public let outerRingOuterRadius: Double
-    public let captionSpacing: Double = 14
-    public let captionHeight: Double = 34
 
     public init?(
         hubRadius: Double,
@@ -28,10 +26,10 @@ public struct LayoutWheelMetrics: Sendable {
     }
 
     public static let standard = LayoutWheelMetrics(
-        hubRadius: 34,
-        innerRingOuterRadius: 102,
-        outerRingInnerRadius: 114,
-        outerRingOuterRadius: 178
+        hubRadius: 30,
+        innerRingOuterRadius: 86,
+        outerRingInnerRadius: 96,
+        outerRingOuterRadius: 150
     )!
 
     /// The drawn size. One Level omits the outer ring instead of leaving a gap.
@@ -43,7 +41,7 @@ public struct LayoutWheelMetrics: Sendable {
     }
 
     public func presentationHeight(for levelCount: LayoutWheelLevelCount) -> Double {
-        diameter(for: levelCount) + captionSpacing + captionHeight
+        diameter(for: levelCount)
     }
 
     public func innerRadius(for ring: LayoutWheelRing) -> Double {
@@ -60,21 +58,8 @@ public struct LayoutWheelMetrics: Sendable {
         }
     }
 
-    func labelRadius(for ring: LayoutWheelRing) -> Double {
+    func iconRadius(for ring: LayoutWheelRing) -> Double {
         (innerRadius(for: ring) + outerRadius(for: ring)) / 2
-    }
-
-    /// The largest label box that stays inside a sector in every direction.
-    ///
-    /// A label box is axis-aligned, so in the left and right sectors its width
-    /// runs radially and is bounded by the ring's band, while in the top and
-    /// bottom sectors it runs along the arc and is bounded by the chord. Taking
-    /// the smaller of the two keeps all eight directions inside the wheel.
-    func labelSize(for ring: LayoutWheelRing) -> Double {
-        let band = outerRadius(for: ring) - innerRadius(for: ring)
-        let sectorWidth = Double.pi / 4
-        let chord = 2 * labelRadius(for: ring) * sin(sectorWidth / 2)
-        return min(band, chord) - 2
     }
 }
 
@@ -293,10 +278,7 @@ public struct LayoutWheelView: View {
     private var isHighContrast: Bool { contrast == .increased }
 
     public var body: some View {
-        VStack(spacing: metrics.captionSpacing) {
-            wheel
-            caption
-        }
+        wheel
         .frame(width: diameter, height: metrics.presentationHeight(for: configuration.levelCount))
         .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: selection)
     }
@@ -363,7 +345,7 @@ public struct LayoutWheelView: View {
                 stroke(slot: slot, isSelected: isSelected, isFocused: isFocused),
                 style: strokeStyle(slot: slot, isSelected: isSelected, isFocused: isFocused)
             )
-            sectorLabel(slot, selection: selection, isSelected: isSelected)
+            sectorIcon(slot, selection: selection, isSelected: isSelected)
         }
         .contentShape(shape)
         .modifier(SectorControl(
@@ -378,27 +360,20 @@ public struct LayoutWheelView: View {
         .accessibilityAddTraits(isSelected ? [.isSelected] : [])
     }
 
-    private func sectorLabel(
+    private func sectorIcon(
         _ slot: LayoutWheelSlot,
         selection: LayoutWheelSelection,
         isSelected: Bool
     ) -> some View {
-        let radius = metrics.labelRadius(for: selection.ring)
+        let radius = metrics.iconRadius(for: selection.ring)
         let angle = selection.sector.drawnCenterAngle.radians
         let center = diameter / 2
-        let size = metrics.labelSize(for: selection.ring)
 
-        return VStack(spacing: 2) {
-            Image(systemName: slot.symbolName)
-                .font(.system(size: 13, weight: .medium))
-            Text(slot.label)
-                .font(.caption2)
-                .multilineTextAlignment(.center)
-                .lineLimit(3)
-                .minimumScaleFactor(0.7)
-        }
+        return Image(systemName: slot.symbolName)
+            .font(.system(size: 16, weight: .semibold))
+            .symbolRenderingMode(.monochrome)
         .foregroundStyle(labelStyle(slot: slot, isSelected: isSelected))
-        .frame(width: size, height: size)
+        .frame(width: 32, height: 32)
         .scaleEffect(isSelected && !reduceMotion ? 1.06 : 1)
         .position(x: center + cos(angle) * radius, y: center + sin(angle) * radius)
     }
@@ -451,7 +426,7 @@ public struct LayoutWheelView: View {
         return AnyShapeStyle(Color.primary)
     }
 
-    // MARK: - Hub and caption
+    // MARK: - Hub
 
     private var hub: some View {
         ZStack {
@@ -464,11 +439,8 @@ public struct LayoutWheelView: View {
                 selection == nil ? Color.accentColor : .primary.opacity(0.2),
                 lineWidth: selection == nil ? 3 : 1
             )
-            VStack(spacing: 2) {
-                Image(systemName: "xmark")
-                    .font(.system(size: 13, weight: .semibold))
-                Text("Cancel").font(.caption2)
-            }
+            Image(systemName: "xmark")
+                .font(.system(size: 15, weight: .semibold))
             .foregroundStyle(selection == nil ? Color.accentColor : .secondary)
         }
         .frame(
@@ -478,28 +450,6 @@ public struct LayoutWheelView: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Cancel")
         .accessibilityAddTraits(selection == nil ? [.isSelected] : [])
-    }
-
-    /// The current command stays readable over arbitrary desktop content, so
-    /// it sits on its own opaque or glass capsule rather than on the wallpaper.
-    private var caption: some View {
-        let text = selection.map { slot(for: $0).label } ?? "Cancel"
-        return Text(text)
-            .font(.callout.weight(.medium))
-            .foregroundStyle(Color.primary)
-            .padding(.horizontal, 14)
-            .padding(.vertical, 7)
-            .lineLimit(1)
-            .truncationMode(.tail)
-            .frame(maxWidth: diameter - 16)
-            .background {
-                if reduceTransparency {
-                    Capsule().fill(Color(nsColor: .windowBackgroundColor))
-                } else {
-                    Capsule().fill(.clear).glassEffect(.regular, in: .capsule)
-                }
-            }
-            .accessibilityHidden(true)
     }
 }
 

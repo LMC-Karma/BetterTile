@@ -120,9 +120,7 @@ private let zones: [UUID: String] = [zoneID: "Reading"]
 
     #expect(metrics.diameter(for: .one) == metrics.geometry.innerRingOuterRadius * 2)
     #expect(metrics.diameter(for: .two) == metrics.outerRingOuterRadius * 2)
-    // The Settings window is at least 820 x 560; the wheel plus its caption has
-    // to fit inside that with the sidebar and padding.
-    #expect(metrics.diameter(for: .two) <= 400)
+    #expect(metrics.diameter(for: .two) == 300)
 }
 
 @Test func metricsRejectOverlappingRadii() {
@@ -157,8 +155,7 @@ private let zones: [UUID: String] = [zoneID: "Reading"]
         let diameter = LayoutWheelMetrics.standard.diameter(for: levelCount)
 
         #expect(size.width >= diameter)
-        // The caption sits under the wheel, so height exceeds the diameter.
-        #expect(size.height > diameter)
+        #expect(abs(size.height - diameter) < 0.01)
         #expect(size.width <= 560)
         #expect(size.height <= 460)
 
@@ -190,22 +187,14 @@ private let zones: [UUID: String] = [zoneID: "Reading"]
     #expect(!LayoutWheelActionGroup.all.contains { $0.actions.isEmpty })
 }
 
-/// Labels are placed at the middle of a ring, so a box wider than the band or
-/// the sector chord would spill outside the wheel in some directions.
-@Test func labelBoxesStayInsideEveryRing() {
+/// Icons stay centred in their bands so the compact wheel keeps a clear visual
+/// hierarchy without labels.
+@Test func iconCentersStayInsideEveryRing() {
     let metrics = LayoutWheelMetrics.standard
 
     for ring in LayoutWheelRing.allCases {
-        let size = metrics.labelSize(for: ring)
-        let radius = metrics.labelRadius(for: ring)
-        let band = metrics.outerRadius(for: ring) - metrics.innerRadius(for: ring)
-        let chord = 2 * radius * sin(Double.pi / 8)
-
-        #expect(size > 0)
-        #expect(size <= band)
-        #expect(size <= chord)
-        // The radial extent has to stay between the ring's own edges.
-        #expect(radius - size / 2 >= metrics.innerRadius(for: ring))
-        #expect(radius + size / 2 <= metrics.outerRadius(for: ring))
+        let radius = metrics.iconRadius(for: ring)
+        #expect(radius > metrics.innerRadius(for: ring))
+        #expect(radius < metrics.outerRadius(for: ring))
     }
 }

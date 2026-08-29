@@ -738,19 +738,20 @@ private final class SnapPreviewPanel {
         panel.ignoresMouseEvents = true
         panel.hasShadow = false
         panel.isOpaque = false
-        panel.backgroundColor = NSColor.controlAccentColor.withAlphaComponent(0.18)
+        panel.backgroundColor = .clear
         panel.collectionBehavior = [.moveToActiveSpace, .transient, .ignoresCycle]
-        panel.contentView?.wantsLayer = true
-        panel.contentView?.layer?.borderWidth = 2
-        panel.contentView?.layer?.borderColor = NSColor.controlAccentColor.withAlphaComponent(0.8).cgColor
-        panel.contentView?.layer?.cornerRadius = 12
+        panel.sharingType = .none
+        panel.contentView = PlacementWireframeView()
     }
 
     func show(frame: BTRect, mainScreenFrame: CGRect) {
         let destination = CoordinateConverter.toAppKit(
             frame,
             mainScreenFrame: mainScreenFrame
-        ).insetBy(dx: 6, dy: 6)
+        ).insetBy(
+            dx: BentoPreviewMetrics.motionPanelInset,
+            dy: BentoPreviewMetrics.motionPanelInset
+        )
         panel.setFrame(
             destination,
             display: true,
@@ -1270,14 +1271,14 @@ final class PlacementWireframeController {
         panel.ignoresMouseEvents = true
         panel.collectionBehavior = [.moveToActiveSpace, .transient, .ignoresCycle]
         panel.sharingType = .none
-        panel.contentView = BentoWireframeView()
+        panel.contentView = PlacementWireframeView()
         panels[id] = panel
         return panel
     }
 }
 
 @MainActor
-final class BentoWireframeView: NSView {
+final class PlacementWireframeView: NSView {
     override var isOpaque: Bool { false }
 
     override func draw(_ dirtyRect: NSRect) {
@@ -1289,10 +1290,18 @@ final class BentoWireframeView: NSView {
             min(rect.width, rect.height) / 2
         )
         let path = NSBezierPath(roundedRect: rect, xRadius: radius, yRadius: radius)
-        path.lineWidth = 2
+        let increaseContrast = NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast
+        NSColor.controlAccentColor
+            .withAlphaComponent(increaseContrast ? 0.16 : 0.10)
+            .setFill()
+        path.fill()
+
+        path.lineWidth = increaseContrast ? 3 : 2
         let pattern: [CGFloat] = [8, 5]
         path.setLineDash(pattern, count: pattern.count, phase: 0)
-        NSColor.controlAccentColor.withAlphaComponent(0.72).setStroke()
+        NSColor.controlAccentColor
+            .withAlphaComponent(increaseContrast ? 0.95 : 0.78)
+            .setStroke()
         path.stroke()
     }
 }

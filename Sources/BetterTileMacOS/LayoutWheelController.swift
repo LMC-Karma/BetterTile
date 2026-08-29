@@ -118,6 +118,10 @@ public final class LayoutWheelController {
         NSEvent.EventTypeMask,
         @escaping (NSEvent) -> Void
     ) -> Any?
+    private let addLocalMonitor: (
+        NSEvent.EventTypeMask,
+        @escaping (NSEvent) -> Void
+    ) -> Any?
     private let removeMonitor: (Any) -> Void
     private let middleClickMonitor: LayoutWheelMiddleClickMonitoring
     private var phase = Phase.idle
@@ -131,8 +135,11 @@ public final class LayoutWheelController {
     private var keyboardMonitoringFailure: String?
     private var middleClickMonitoringFailure: String?
     private var flagsMonitor: Any?
+    private var localFlagsMonitor: Any?
     private var keyMonitor: Any?
+    private var localKeyMonitor: Any?
     private var pointerMonitor: Any?
+    private var localPointerMonitor: Any?
 
     public convenience init(configuration: BetterTileConfiguration) {
         self.init(configuration: configuration, presenter: LayoutWheelPanelPresenter())
@@ -150,6 +157,15 @@ public final class LayoutWheelController {
         ) -> Any? = { mask, handler in
             NSEvent.addGlobalMonitorForEvents(matching: mask, handler: handler)
         },
+        addLocalMonitor: @escaping (
+            NSEvent.EventTypeMask,
+            @escaping (NSEvent) -> Void
+        ) -> Any? = { mask, handler in
+            NSEvent.addLocalMonitorForEvents(matching: mask) { event in
+                handler(event)
+                return event
+            }
+        },
         removeMonitor: @escaping (Any) -> Void = { NSEvent.removeMonitor($0) },
         middleClickMonitor: LayoutWheelMiddleClickMonitoring = LayoutWheelMiddleClickMonitor()
     ) {
@@ -159,6 +175,7 @@ public final class LayoutWheelController {
         self.activationDelay = activationDelay
         self.pointerProvider = pointerProvider
         self.addGlobalMonitor = addGlobalMonitor
+        self.addLocalMonitor = addLocalMonitor
         self.removeMonitor = removeMonitor
         self.middleClickMonitor = middleClickMonitor
         middleClickMonitor.eventHandler = { [weak self] event in
@@ -225,20 +242,30 @@ public final class LayoutWheelController {
     /// keystrokes and no pointer movement for this feature.
     private func syncMonitoring() {
         if isStarted, isKeyboardTriggerEnabled {
-            if flagsMonitor == nil {
-                flagsMonitor = addGlobalMonitor([.flagsChanged]) { event in
-                    let modifiers = ShortcutModifiers(event.modifierFlags)
-                    Task { @MainActor [weak self] in self?.handleModifiers(modifiers) }
-                }
-                if flagsMonitor == nil {
-                    keyboardMonitoringFailure =
-                        "BetterTile could not monitor the Layout Wheel modifier trigger."
-                    publishMonitoringFailure()
-                }
+            let handler: (NSEvent) -> Void = { [weak self] event in
+                let modifiers = ShortcutModifiers(event.modifierFlags)
+                Task { @MainActor in self?.handleModifiers(modifiers) }
             }
-        } else if let flagsMonitor {
-            removeMonitor(flagsMonitor)
-            self.flagsMonitor = nil
+            if flagsMonitor == nil {
+                flagsMonitor = addGlobalMonitor([.flagsChanged], handler)
+            }
+            if localFlagsMonitor == nil {
+                localFlagsMonitor = addLocalMonitor([.flagsChanged], handler)
+            }
+            if flagsMonitor == nil || localFlagsMonitor == nil {
+                keyboardMonitoringFailure =
+                    "BetterTile could not monitor the Layout Wheel modifier trigger."
+                publishMonitoringFailure()
+            }
+        } else {
+            if let flagsMonitor {
+                removeMonitor(flagsMonitor)
+                self.flagsMonitor = nil
+            }
+            if let localFlagsMonitor {
+                removeMonitor(localFlagsMonitor)
+                self.localFlagsMonitor = nil
+            }
         }
         if isStarted, isMiddleClickTriggerEnabled {
             if !middleClickMonitor.isRunning {
@@ -268,20 +295,29 @@ public final class LayoutWheelController {
             needsPointer = session.trigger == .keyboard
         }
 
-        if needsKeys, keyMonitor == nil {
-            keyMonitor = addGlobalMonitor([.keyDown]) { event in
+        if needsKeys, keyMonitor == nil || localKeyMonitor == nil {
+            let handler: (NSEvent) -> Void = { [weak self] event in
                 let keyCode = event.keyCode
-                Task { @MainActor [weak self] in self?.handleKeyDown(keyCode: keyCode) }
+                Task { @MainActor in self?.handleKeyDown(keyCode: keyCode) }
             }
-        } else if !needsKeys, let keyMonitor {
-            removeMonitor(keyMonitor)
-            self.keyMonitor = nil
+            if keyMonitor == nil { keyMonitor = addGlobalMonitor([.keyDown], handler) }
+            if localKeyMonitor == nil { localKeyMonitor = addLocalMonitor([.keyDown], handler) }
+        } else if !needsKeys {
+            if let keyMonitor {
+                removeMonitor(keyMonitor)
+                self.keyMonitor = nil
+            }
+            if let localKeyMonitor {
+                removeMonitor(localKeyMonitor)
+                self.localKeyMonitor = nil
+            }
         }
 
-        if needsPointer, pointerMonitor == nil {
-            pointerMonitor = addGlobalMonitor(
-                [.mouseMoved, .leftMouseDragged, .rightMouseDragged, .otherMouseDragged]
-            ) { _ in
+        if needsPointer, pointerMonitor == nil || localPointerMonitor == nil {
+            let mask: NSEvent.EventTypeMask = [
+                .mouseMoved, .leftMouseDragged, .rightMouseDragged, .otherMouseDragged,
+            ]
+            let handler: (NSEvent) -> Void = { [weak self] _ in
                 Task { @MainActor [weak self] in
                     guard let self, let frame = NSScreen.screens.first?.frame else { return }
                     handlePointer(GlobalGestureEvent.position(
@@ -290,16 +326,26 @@ public final class LayoutWheelController {
                     ))
                 }
             }
-        } else if !needsPointer, let pointerMonitor {
-            removeMonitor(pointerMonitor)
-            self.pointerMonitor = nil
+            if pointerMonitor == nil { pointerMonitor = addGlobalMonitor(mask, handler) }
+            if localPointerMonitor == nil { localPointerMonitor = addLocalMonitor(mask, handler) }
+        } else if !needsPointer {
+            if let pointerMonitor {
+                removeMonitor(pointerMonitor)
+                self.pointerMonitor = nil
+            }
+            if let localPointerMonitor {
+                removeMonitor(localPointerMonitor)
+                self.localPointerMonitor = nil
+            }
         }
 
-        guard (!needsKeys || keyMonitor != nil), (!needsPointer || pointerMonitor != nil) else {
+        guard (!needsKeys || (keyMonitor != nil && localKeyMonitor != nil)),
+              (!needsPointer || (pointerMonitor != nil && localPointerMonitor != nil))
+        else {
             failGestureMonitoring()
             return false
         }
-        if !isKeyboardTriggerEnabled || flagsMonitor != nil {
+        if !isKeyboardTriggerEnabled || (flagsMonitor != nil && localFlagsMonitor != nil) {
             keyboardMonitoringFailure = nil
             publishMonitoringFailure()
         }
@@ -316,9 +362,17 @@ public final class LayoutWheelController {
             removeMonitor(keyMonitor)
             self.keyMonitor = nil
         }
+        if let localKeyMonitor {
+            removeMonitor(localKeyMonitor)
+            self.localKeyMonitor = nil
+        }
         if let pointerMonitor {
             removeMonitor(pointerMonitor)
             self.pointerMonitor = nil
+        }
+        if let localPointerMonitor {
+            removeMonitor(localPointerMonitor)
+            self.localPointerMonitor = nil
         }
         if wasOpen {
             presenter.hidePlacements()
@@ -661,8 +715,7 @@ final class LayoutWheelPanelPresenter: LayoutWheelPresenting {
         placementPreviews.hide()
     }
 
-    /// The wheel's circle, not the whole view, is what sits on the placement
-    /// centre. The command caption hangs below it.
+    /// The wheel sits on the placement centre.
     private func position(view: NSView, at placement: LayoutWheelPlacement) {
         guard let mainFrame = NSScreen.screens.first?.frame else { return }
         let size = view.fittingSize

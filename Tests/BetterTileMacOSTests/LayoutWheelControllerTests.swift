@@ -454,6 +454,46 @@ private struct Harness {
     #expect(!controller.isOpen)
 }
 
+/// Global AppKit monitors omit events delivered to BetterTile itself. The
+/// matching local monitor keeps the trigger working while Settings is active.
+@Test @MainActor func aLocalModifierEventCanOpenTheWheel() async {
+    var localFlagsHandler: ((NSEvent) -> Void)?
+    let presenter = FakePresenter()
+    let controller = LayoutWheelController(
+        configuration: BetterTileConfiguration(),
+        presenter: presenter,
+        pointerProvider: { anchor },
+        addGlobalMonitor: { _, _ in NSObject() },
+        addLocalMonitor: { mask, handler in
+            if mask == .flagsChanged { localFlagsHandler = handler }
+            return NSObject()
+        },
+        removeMonitor: { _ in }
+    )
+    controller.captureHandler = { target }
+    controller.previewHandler = { _, _ in .ready(placements: []) }
+    controller.start()
+
+    let event = NSEvent.keyEvent(
+        with: .flagsChanged,
+        location: .zero,
+        modifierFlags: [.control, .option, .shift],
+        timestamp: 0,
+        windowNumber: 0,
+        context: nil,
+        characters: "",
+        charactersIgnoringModifiers: "",
+        isARepeat: false,
+        keyCode: 56
+    )!
+    localFlagsHandler?(event)
+    await Task.yield()
+    controller.handleActivationDeadline(generation: 1)
+
+    #expect(controller.isOpen)
+    #expect(presenter.openCount == 1)
+}
+
 @Test @MainActor func availableCommandsShowTheirPlacements() {
     let harness = Harness()
     let placement = Placement(windowID: target.windowID, frame: BTRect(x: 0, y: 0, width: 800, height: 500))
@@ -477,14 +517,19 @@ private struct Harness {
 }
 
 @Test @MainActor func suspendingRemovesEveryKeyboardMonitorAndResumeRestoresOnlyTheTrigger() {
-    var addedMasks: [NSEvent.EventTypeMask] = []
+    var addedGlobalMasks: [NSEvent.EventTypeMask] = []
+    var addedLocalMasks: [NSEvent.EventTypeMask] = []
     var removed = 0
     let controller = LayoutWheelController(
         configuration: BetterTileConfiguration(),
         presenter: FakePresenter(),
         pointerProvider: { anchor },
         addGlobalMonitor: { mask, _ in
-            addedMasks.append(mask)
+            addedGlobalMasks.append(mask)
+            return NSObject()
+        },
+        addLocalMonitor: { mask, _ in
+            addedLocalMasks.append(mask)
             return NSObject()
         },
         removeMonitor: { _ in removed += 1 }
@@ -496,18 +541,22 @@ private struct Harness {
     controller.handleActivationDeadline(generation: 1)
 
     #expect(controller.isOpen)
-    #expect(addedMasks.contains(.flagsChanged))
-    #expect(addedMasks.contains(.keyDown))
-    #expect(addedMasks.contains { $0.contains(.mouseMoved) })
+    for addedMasks in [addedGlobalMasks, addedLocalMasks] {
+        #expect(addedMasks.contains(.flagsChanged))
+        #expect(addedMasks.contains(.keyDown))
+        #expect(addedMasks.contains { $0.contains(.mouseMoved) })
+    }
 
     controller.suspend()
 
     #expect(!controller.isOpen)
-    #expect(removed == 3)
+    #expect(removed == 6)
     controller.handleModifiers(trigger)
     #expect(!controller.isPendingActivation)
 
     controller.resume()
-    #expect(addedMasks.filter { $0 == .flagsChanged }.count == 2)
-    #expect(addedMasks.filter { $0 == .keyDown }.count == 1)
+    #expect(addedGlobalMasks.filter { $0 == .flagsChanged }.count == 2)
+    #expect(addedLocalMasks.filter { $0 == .flagsChanged }.count == 2)
+    #expect(addedGlobalMasks.filter { $0 == .keyDown }.count == 1)
+    #expect(addedLocalMasks.filter { $0 == .keyDown }.count == 1)
 }
