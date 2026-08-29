@@ -5,11 +5,6 @@ import Foundation
 import Observation
 import os
 
-enum LayoutWheelPreviewResult: Sendable {
-    case ready(placements: [Placement])
-    case unavailable(reason: String)
-}
-
 /// The macOS observations the app model coordinates. The Accessibility adapter
 /// and the deterministic app-test adapter meet at this seam.
 @MainActor
@@ -204,10 +199,7 @@ final class BetterTileModel {
         layoutWheel.captureHandler = { [weak self] in self?.captureLayoutWheelTarget() }
         layoutWheel.previewHandler = { [weak self] command, target in
             guard let self else { return .unavailable(reason: "BetterTile is not available.") }
-            switch previewLayoutWheel(command, for: target) {
-            case let .ready(placements): return .ready(placements: placements)
-            case let .unavailable(reason): return .unavailable(reason: reason)
-            }
+            return previewLayoutWheel(command, for: target)
         }
         layoutWheel.commitHandler = { [weak self] command, target in
             self?.performLayoutWheel(command, for: target)
@@ -217,6 +209,13 @@ final class BetterTileModel {
         }
         layoutWheel.monitoringFailureHandler = { [weak self] failure in
             self?.layoutWheelMonitoringFailure = failure
+        }
+        layoutWheel.gestureBeganHandler = { [weak self] in
+            self?.shortcuts.suspend()
+        }
+        layoutWheel.gestureEndedHandler = { [weak self] in
+            guard let self, !self.isShortcutCaptureActive else { return }
+            self.shortcuts.resume()
         }
         sharedGestureEvents.eventHandler = { [weak self] event in
             self?.dragSnap.handleSharedGestureEvent(event)
@@ -348,7 +347,7 @@ final class BetterTileModel {
     func previewLayoutWheel(
         _ command: LayoutWheelCommand,
         for target: LayoutWheelTarget
-    ) -> LayoutWheelPreviewResult {
+    ) -> LayoutWheelPreviewOutcome {
         switch planLayoutWheel(command, for: target) {
         case let .ready(.action(plan)):
             return .ready(placements: [Placement(windowID: plan.windowID, frame: plan.targetFrame)])
@@ -1320,10 +1319,10 @@ final class BetterTileModel {
         system.stopDockFootprintMonitoring()
         system.stopDisplayReconfigurationMonitoring()
         system.stopWindowObservation()
+        layoutWheel.stop()
         shortcuts.stop()
         sharedGestureEvents.stop()
         dragSnap.stop()
-        layoutWheel.stop()
         titleBarDoubleClick.stop()
         linkedResize.stop()
         dividerResize.hideAndCancel()
@@ -1469,8 +1468,15 @@ final class BetterTileModel {
         ) { [weak self] _ in
             Task { @MainActor in self?.beginActiveSpaceStabilization() }
         })
-        notificationTokens.append(workspaceCenter.addObserver(forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main) { [weak self] _ in
-            Task { @MainActor in self?.refreshFocusedDisplayWithoutLayout() }
+        notificationTokens.append(workspaceCenter.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.layoutWheel.handleApplicationDeactivated()
+                self?.refreshFocusedDisplayWithoutLayout()
+            }
         })
         let timer = Timer(timeInterval: 10, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.watchdog() }
@@ -1653,7 +1659,7 @@ final class BetterTileModel {
             }
             pendingWindowEvents.record(event)
         case .focused:
-            break
+            layoutWheel.handleFocusedWindowChanged()
         }
         schedulePendingWindowEvents()
     }

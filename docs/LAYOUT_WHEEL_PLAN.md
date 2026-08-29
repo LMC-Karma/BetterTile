@@ -2,13 +2,13 @@
 
 Status: approved design; implementation may begin
 
-Current step: **7 — Opt-in middle-click reservation**
+Current step: **9 — Full verification, documentation, and pull request**
 
-Last completed step: **6 — Modifier gesture and runtime panel**
+Last completed step: **8 — App lifecycle integration and accessibility**
 
 Branch: `feat/layout-wheel`
 
-Last updated: 2026-08-28
+Last updated: 2026-08-29
 
 ## Handoff
 
@@ -40,8 +40,8 @@ truth.
 - The focused eligible window is captured when the wheel opens. Losing that
   target cancels the gesture instead of changing targets.
 - Pressing the configured modifiers starts a 220 ms hold threshold. The
-  default is Control + Option. Pressing any non-modifier key cancels wheel
-  activation so existing Control + Option shortcuts continue normally.
+  default is Control + Option + Shift. Pressing any non-modifier key cancels
+  wheel activation so existing shortcuts continue normally.
 - The modifier trigger is configurable from Control, Option, Shift, and
   Command. At least two modifiers are required.
 - Middle-click activation is available independently and disabled by default.
@@ -139,7 +139,7 @@ pushed implementation is still required.
 - [x] Step 5 — Layout Wheel settings destination
 - [x] Step 6 — Modifier gesture and runtime panel
 - [x] Step 7 — Opt-in middle-click reservation
-- [ ] Step 8 — App lifecycle integration and accessibility
+- [x] Step 8 — App lifecycle integration and accessibility
 - [ ] Step 9 — Full verification, documentation, and pull request
 
 ## Step 0 — Research and product decisions
@@ -616,7 +616,7 @@ Completion criteria:
 - Added an arming rule the plan did not name. After a gesture ends, the trigger
   must be released before another can start. Without it the hold that just
   committed immediately began a second activation.
-- Left the trigger an exact modifier match. Control + Option + Command stays a
+- Left the trigger an exact modifier match. Any additional modifier produces a
   different combination instead of opening a wheel the user did not ask for.
 - Verified: 475 package tests pass, including 19 controller tests covering
   pending activation, early release, a conflicting key, a successful hold,
@@ -691,10 +691,11 @@ Completion criteria:
   reported all 61 focused Layout Wheel tests passing. The 920-by-592 minimum
   Settings window remained readable and scrollable in Light and Dark without
   horizontal clipping, and the app-local appearance was restored to System.
-- The maintainer confirmed that the physical Control + Option hold opens the
-  wheel. Disabling and re-enabling Layout Wheel in the signed app persisted
-  both transitions immediately and restored the original enabled state;
-  shutdown coverage remains in the focused lifecycle tests.
+- Before the default changed, the maintainer confirmed that the physical
+  Control + Option hold opened the wheel. Disabling and re-enabling Layout
+  Wheel in the signed app persisted both transitions immediately and restored
+  the original enabled state; shutdown coverage remains in the focused
+  lifecycle tests.
 - Increase Contrast added stronger control outlines and sector separators.
   Reduce Transparency replaced translucent surfaces with opaque semantic
   surfaces. Reduce Motion removed the selected-sector scale. Each macOS
@@ -703,4 +704,25 @@ Completion criteria:
 - The maintainer waived a live VoiceOver speech pass. Focused tests still cover
   every sector's accessibility label, availability description, keyboard
   selection path, and Settings button exposure. Middle Click remains disabled,
-  Layout Wheel remains enabled with Control + Option, and Step 9 is now current.
+  Layout Wheel remains enabled, and Step 9 is now current.
+- Changed the factory and migration fallback trigger to Control + Option +
+  Shift so it does not overlap BetterTile's Control + Option shortcuts. Saved
+  custom triggers remain unchanged. The signed Debug profile displayed and
+  persisted the new three-modifier value (`14`).
+- System Events cannot reproduce the physical `flagsChanged` delivery path.
+  The current Control + Option + Shift hold therefore remains a skipped manual
+  check pending a physical key press. Exact modifier matching remains covered
+  by the controller tests.
+- The remaining end-to-end behavior checks for one/two levels, every runtime
+  cancellation path, Manual/Bento previews, display edges, Spaces, target loss,
+  and keyboard operation were not repeated in this resumed session. They need
+  physical AppKit interaction; focused automated tests cover their state and
+  placement decisions. The Step 7 middle-click checks and Step 8 appearance,
+  Settings, lifecycle, and accessibility checks remain recorded above.
+- The Step 9 standards-and-spec review found and fixed focus-change cancellation
+  and removed a duplicate preview-result adapter. The review also found a small
+  repeated coordinator write path; it remains inline because extracting it
+  would add indirection without changing behavior.
+- XcodeBuildMCP reported all 492 package tests passing serially, the Swift
+  package building, and the unsigned Debug app building successfully. An earlier
+  signed build emitted only Sparkle's expected signed-binary stripping warning.

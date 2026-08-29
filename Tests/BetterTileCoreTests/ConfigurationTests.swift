@@ -152,7 +152,7 @@ import Testing
     #expect(migrated.layoutWheel.levelCount == .two)
     #expect(migrated.layoutWheel.innerSlots == LayoutWheelConfiguration.defaultInnerSlots)
     #expect(migrated.layoutWheel.outerSlots == LayoutWheelConfiguration.defaultOuterSlots)
-    #expect(migrated.layoutWheel.keyboardModifiers == [.control, .option])
+    #expect(migrated.layoutWheel.keyboardModifiers == [.control, .option, .shift])
     #expect(migrated.layoutWheel.keyboardTriggerEnabled)
     #expect(!migrated.layoutWheel.middleClickTriggerEnabled)
 }
@@ -194,7 +194,7 @@ import Testing
     let normalized = try configuration.validated().layoutWheel
     #expect(normalized.innerSlots == LayoutWheelConfiguration.defaultInnerSlots)
     #expect(normalized.outerSlots == LayoutWheelConfiguration.defaultOuterSlots)
-    #expect(normalized.keyboardModifiers == [.control, .option])
+    #expect(normalized.keyboardModifiers == [.control, .option, .shift])
 }
 
 @Test func removedCustomZonesLeaveLayoutWheelSlotsEmpty() throws {

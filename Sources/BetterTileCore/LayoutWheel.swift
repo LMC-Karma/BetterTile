@@ -61,7 +61,7 @@ public struct LayoutWheelConfiguration: Codable, Hashable, Sendable {
         innerSlots: [LayoutWheelCommand?] = Self.defaultInnerSlots,
         outerSlots: [LayoutWheelCommand?] = Self.defaultOuterSlots,
         keyboardTriggerEnabled: Bool = true,
-        keyboardModifiers: ShortcutModifiers = [.control, .option],
+        keyboardModifiers: ShortcutModifiers = [.control, .option, .shift],
         middleClickTriggerEnabled: Bool = false
     ) {
         self.isEnabled = isEnabled
@@ -109,7 +109,7 @@ public struct LayoutWheelConfiguration: Codable, Hashable, Sendable {
             .intersection(Self.supportedKeyboardModifiers)
         result.keyboardModifiers = supportedModifiers.rawValue.nonzeroBitCount >= 2
             ? supportedModifiers
-            : [.control, .option]
+            : [.control, .option, .shift]
 
         result.innerSlots = result.innerSlots.removingMissingZones(from: customZoneIDs)
         result.outerSlots = result.outerSlots.removingMissingZones(from: customZoneIDs)

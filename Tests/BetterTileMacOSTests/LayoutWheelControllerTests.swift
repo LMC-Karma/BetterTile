@@ -35,7 +35,7 @@ private let target = LayoutWheelTarget(
     visibleFrame: BTRect(x: 0, y: 0, width: 1600, height: 1000)
 )
 private let anchor = BTPoint(x: 800, y: 500)
-private let trigger: ShortcutModifiers = [.control, .option]
+private let trigger: ShortcutModifiers = [.control, .option, .shift]
 
 @MainActor
 private struct Harness {
@@ -90,7 +90,7 @@ private struct Harness {
     func release() { controller.handleModifiers([]) }
 }
 
-/// The hold has to elapse before anything opens, or every Control + Option
+/// The hold has to elapse before anything opens, or every trigger chord
 /// shortcut would flash a wheel on its way past.
 @Test @MainActor func holdingTheTriggerOpensOnlyAfterTheDeadline() {
     let harness = Harness()
@@ -104,6 +104,26 @@ private struct Harness {
     #expect(harness.controller.isOpen)
     #expect(harness.presenter.openCount == 1)
     #expect(harness.box.captureCount == 1)
+}
+
+@Test @MainActor func anOpenGestureOwnsShortcutKeysUntilItEnds() {
+    let harness = Harness()
+    var beganCount = 0
+    var endedCount = 0
+    harness.controller.gestureBeganHandler = { beganCount += 1 }
+    harness.controller.gestureEndedHandler = { endedCount += 1 }
+
+    harness.controller.handleModifiers(trigger)
+    #expect(beganCount == 0)
+
+    harness.controller.handleActivationDeadline(generation: 1)
+    #expect(beganCount == 1)
+    #expect(endedCount == 0)
+
+    harness.controller.handleKey(.commit)
+    #expect(endedCount == 1)
+    harness.controller.cancel()
+    #expect(endedCount == 1)
 }
 
 @Test @MainActor func releasingBeforeTheDeadlineNeverOpensTheWheel() {
@@ -130,7 +150,7 @@ private struct Harness {
     #expect(!harness.controller.isOpen)
     #expect(harness.presenter.openCount == 0)
 
-    // Still holding Control + Option: a second deadline must not open one either.
+    // Still holding the trigger: a second deadline must not open one either.
     harness.controller.handleModifiers(trigger)
     harness.controller.handleActivationDeadline(generation: 2)
     #expect(!harness.controller.isOpen)
@@ -238,6 +258,19 @@ private struct Harness {
     #expect(harness.box.endedCount == 1)
 }
 
+@Test @MainActor func focusedWindowChangeCancelsWithoutCommitting() {
+    let harness = Harness()
+    harness.activate()
+    harness.controller.handlePointer(BTPoint(x: anchor.x, y: anchor.y - 70))
+
+    harness.controller.handleFocusedWindowChanged()
+
+    #expect(!harness.controller.isOpen)
+    #expect(harness.box.commits.isEmpty)
+    #expect(harness.presenter.closeCount == 1)
+    #expect(harness.box.endedCount == 1)
+}
+
 @Test @MainActor func escapeCancelsWithoutCommitting() {
     let harness = Harness()
     harness.activate()
@@ -302,7 +335,7 @@ private struct Harness {
 @Test @MainActor func extraModifiersDoNotOpenTheWheel() {
     let harness = Harness()
 
-    harness.controller.handleModifiers([.control, .option, .command])
+    harness.controller.handleModifiers([.control, .option, .shift, .command])
     #expect(!harness.controller.isPendingActivation)
 
     harness.controller.handleModifiers(trigger)

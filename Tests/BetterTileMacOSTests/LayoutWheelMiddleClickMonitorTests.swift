@@ -11,7 +11,7 @@ private let middleTarget = LayoutWheelTarget(
     visibleFrame: BTRect(x: 0, y: 0, width: 1600, height: 1000)
 )
 private let middleAnchor = BTPoint(x: 800, y: 500)
-private let middleKeyboardTrigger: ShortcutModifiers = [.control, .option]
+private let middleKeyboardTrigger: ShortcutModifiers = [.control, .option, .shift]
 
 @Test func onlyUnmodifiedPhysicalButtonTwoIsReserved() {
     #expect(LayoutWheelMiddleClickEvent.reserves(button: 2, modifiers: []))

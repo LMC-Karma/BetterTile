@@ -181,7 +181,7 @@ press events. The radial controller needs paired press and release events. Keep
 that registration inside the controller unless a second hold gesture creates a
 real reason to generalize it.
 
-The settled design enables a delayed Control + Option modifier trigger and
+The settled design enables a delayed Control + Option + Shift modifier trigger and
 keeps middle-click disabled. The implementation adds this to
 `BetterTileConfiguration`, migrates schema 9 to 10, and covers the change
 with round-trip tests.

@@ -73,6 +73,7 @@ public final class LayoutWheelController {
     public var monitoringFailureHandler: ((String?) -> Void)? {
         didSet { publishMonitoringFailure() }
     }
+    public var gestureBeganHandler: (() -> Void)?
     public var gestureEndedHandler: (() -> Void)?
 
     public var isOpen: Bool {
@@ -338,8 +339,8 @@ public final class LayoutWheelController {
     /// the gesture was doing.
     func handleModifiers(_ modifiers: ShortcutModifiers) {
         let supported = modifiers.intersection(LayoutWheelConfiguration.supportedKeyboardModifiers)
-        // Exact match, so Control + Option + Command stays a different combination
-        // and does not open a wheel the user did not ask for.
+        // Exact match, so additional modifiers do not open a wheel the user did
+        // not ask for.
         let matchesTrigger = supported == wheel.keyboardModifiers
 
         guard matchesTrigger else {
@@ -416,6 +417,7 @@ public final class LayoutWheelController {
         session.selection = selection(for: anchor, placement: placement)
         phase = .open(session)
         guard syncGestureMonitors() else { return }
+        gestureBeganHandler?()
         presenter.open(presentation(for: session))
         refreshPreview()
     }
@@ -553,6 +555,10 @@ public final class LayoutWheelController {
     }
 
     public func handleApplicationDeactivated() {
+        cancel()
+    }
+
+    public func handleFocusedWindowChanged() {
         cancel()
     }
 

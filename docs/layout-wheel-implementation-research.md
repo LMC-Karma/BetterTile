@@ -62,9 +62,10 @@ middle-button trigger is representable with public `NSEvent` APIs.
 [Vorssaint README](https://github.com/vorssaintapp/vorssaint-utils#everything-it-does),
 [Apple NSEvent.EventType](https://developer.apple.com/documentation/appkit/nsevent/eventtype)
 
-For BetterTile, the default should be the existing `Control + Option` modifier
-chord held while the user moves the pointer. The middle-button option should
-be opt-in and should preserve the same press/move/release state machine. A
+For BetterTile, the default should be `Control + Option + Shift`, which avoids
+the existing `Control + Option` action shortcuts. Hold the chord while moving
+the pointer. The middle-button option should be opt-in and should preserve the
+same press/move/release state machine. A
 middle-button trigger must identify the physical button and consume or pass
 through events deliberately so it does not break applications that use the
 button. Test both local and global monitor paths.
@@ -157,9 +158,9 @@ Reusable interaction patterns for BetterTile's **Layout Wheel** settings are:
   shortcut registration, unsupported middle button, invalid duplicate slot,
   or permission problem must state the concrete cause.
 - Use a recorder only for a full shortcut chord. Modifier-only activation such
-  as the default Control + Option hold should use explicit modifier keycaps so
-  its press/release semantics are visible and cannot be confused with a
-  one-shot keyboard shortcut.
+  as the default Control + Option + Shift hold should use explicit modifier
+  keycaps so its press/release semantics are visible and cannot be confused
+  with a one-shot keyboard shortcut.
 
 Do not reproduce Vorssaint's exact keycap styling, sidebar composition,
 wording, icon selection, colors, spacing, screenshots, name, or trade dress.
