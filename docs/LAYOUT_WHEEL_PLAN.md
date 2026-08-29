@@ -726,3 +726,6 @@ Completion criteria:
 - XcodeBuildMCP reported all 492 package tests passing serially, the Swift
   package building, and the unsigned Debug app building successfully. An earlier
   signed build emitted only Sparkle's expected signed-binary stripping warning.
+- Pushed `feat/layout-wheel` and opened the ready pull request:
+  <https://github.com/LMC-Karma/BetterTile/pull/56>. Step 9 remains current until
+  CI and automated review complete. Merge still requires maintainer approval.
