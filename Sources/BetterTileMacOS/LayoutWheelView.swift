@@ -26,10 +26,10 @@ public struct LayoutWheelMetrics: Sendable {
     }
 
     public static let standard = LayoutWheelMetrics(
-        hubRadius: 36,
-        innerRingOuterRadius: 104,
-        outerRingInnerRadius: 116,
-        outerRingOuterRadius: 172
+        hubRadius: 34,
+        innerRingOuterRadius: 102,
+        outerRingInnerRadius: 114,
+        outerRingOuterRadius: 178
     )!
 
     /// The drawn size. One Level omits the outer ring instead of leaving a gap.
@@ -52,6 +52,23 @@ public struct LayoutWheelMetrics: Sendable {
         case .inner: geometry.innerRingOuterRadius
         case .outer: outerRingOuterRadius
         }
+    }
+
+    func labelRadius(for ring: LayoutWheelRing) -> Double {
+        (innerRadius(for: ring) + outerRadius(for: ring)) / 2
+    }
+
+    /// The largest label box that stays inside a sector in every direction.
+    ///
+    /// A label box is axis-aligned, so in the left and right sectors its width
+    /// runs radially and is bounded by the ring's band, while in the top and
+    /// bottom sectors it runs along the arc and is bounded by the chord. Taking
+    /// the smaller of the two keeps all eight directions inside the wheel.
+    func labelSize(for ring: LayoutWheelRing) -> Double {
+        let band = outerRadius(for: ring) - innerRadius(for: ring)
+        let sectorWidth = Double.pi / 4
+        let chord = 2 * labelRadius(for: ring) * sin(sectorWidth / 2)
+        return min(band, chord) - 2
     }
 }
 
@@ -191,6 +208,39 @@ public extension WindowAction {
     }
 }
 
+/// Groups the assignable commands so the inspector menu stays readable.
+public struct LayoutWheelActionGroup: Sendable {
+    public let title: String
+    public let actions: [WindowAction]
+
+    public static let all: [Self] = [
+        Self(title: "Halves", actions: [.leftHalf, .rightHalf, .topHalf, .bottomHalf]),
+        Self(title: "Thirds", actions: [
+            .leftThird, .centerThird, .rightThird, .leftTwoThirds, .rightTwoThirds,
+        ]),
+        Self(title: "Quarters", actions: [
+            .topLeftQuarter, .topRightQuarter, .bottomLeftQuarter, .bottomRightQuarter,
+        ]),
+        Self(title: "Sixths", actions: [
+            .topLeftSixth, .topCenterSixth, .topRightSixth,
+            .bottomLeftSixth, .bottomCenterSixth, .bottomRightSixth,
+        ]),
+        Self(title: "Whole Display", actions: [
+            .maximize, .almostMaximize, .center, .centerResize,
+        ]),
+        Self(title: "Displays", actions: [.previousDisplay, .nextDisplay]),
+        Self(title: "Move", actions: [.moveLeft, .moveRight, .moveUp, .moveDown]),
+        Self(title: "Resize", actions: [
+            .growWidth, .shrinkWidth, .growHeight, .shrinkHeight,
+        ]),
+        Self(title: "History", actions: [.restore]),
+    ]
+
+    /// Every action stays reachable from the inspector, so a command can never
+    /// become unassignable by being left out of a group.
+    public static var groupedActions: [WindowAction] { all.flatMap(\.actions) }
+}
+
 /// The Layout Wheel renderer used by both Settings and the runtime panel.
 ///
 /// The caller supplies wheel state. Passing `onSelect` makes sectors editable
@@ -326,22 +376,22 @@ public struct LayoutWheelView: View {
         selection: LayoutWheelSelection,
         isSelected: Bool
     ) -> some View {
-        let radius = (metrics.innerRadius(for: selection.ring)
-            + metrics.outerRadius(for: selection.ring)) / 2
+        let radius = metrics.labelRadius(for: selection.ring)
         let angle = selection.sector.drawnCenterAngle.radians
         let center = diameter / 2
+        let size = metrics.labelSize(for: selection.ring)
 
-        return VStack(spacing: 3) {
+        return VStack(spacing: 2) {
             Image(systemName: slot.symbolName)
-                .font(.system(size: 15, weight: .medium))
+                .font(.system(size: 13, weight: .medium))
             Text(slot.label)
                 .font(.caption2)
                 .multilineTextAlignment(.center)
-                .lineLimit(2)
-                .minimumScaleFactor(0.75)
+                .lineLimit(3)
+                .minimumScaleFactor(0.7)
         }
         .foregroundStyle(labelStyle(slot: slot, isSelected: isSelected))
-        .frame(width: selection.ring == .inner ? 58 : 92)
+        .frame(width: size, height: size)
         .scaleEffect(isSelected && !reduceMotion ? 1.06 : 1)
         .position(x: center + cos(angle) * radius, y: center + sin(angle) * radius)
     }

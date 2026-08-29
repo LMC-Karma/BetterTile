@@ -178,3 +178,34 @@ private let zones: [UUID: String] = [zoneID: "Reading"]
         #expect(hosting.frame.height >= diameter)
     }
 }
+
+/// The Settings inspector builds its menu from these groups. An action left out
+/// of every group could never be assigned to a sector, and nothing else would
+/// report it, so the grouping has to stay exhaustive and free of duplicates.
+@Test func everyWindowActionStaysAssignableFromExactlyOneGroup() {
+    let grouped = LayoutWheelActionGroup.groupedActions
+
+    #expect(Set(grouped) == Set(WindowAction.allCases))
+    #expect(grouped.count == WindowAction.allCases.count)
+    #expect(!LayoutWheelActionGroup.all.contains { $0.actions.isEmpty })
+}
+
+/// Labels are placed at the middle of a ring, so a box wider than the band or
+/// the sector chord would spill outside the wheel in some directions.
+@Test func labelBoxesStayInsideEveryRing() {
+    let metrics = LayoutWheelMetrics.standard
+
+    for ring in LayoutWheelRing.allCases {
+        let size = metrics.labelSize(for: ring)
+        let radius = metrics.labelRadius(for: ring)
+        let band = metrics.outerRadius(for: ring) - metrics.innerRadius(for: ring)
+        let chord = 2 * radius * sin(Double.pi / 8)
+
+        #expect(size > 0)
+        #expect(size <= band)
+        #expect(size <= chord)
+        // The radial extent has to stay between the ring's own edges.
+        #expect(radius - size / 2 >= metrics.innerRadius(for: ring))
+        #expect(radius + size / 2 <= metrics.outerRadius(for: ring))
+    }
+}

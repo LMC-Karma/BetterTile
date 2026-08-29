@@ -10,6 +10,7 @@ private enum SettingsDestination: String, CaseIterable, Identifiable {
     case general = "General"
     case windowLayout = "Window Layout"
     case snapZones = "Snap Zones"
+    case layoutWheel = "Layout Wheel"
     case applicationRules = "Per-App Rules"
 
     var id: Self { self }
@@ -19,6 +20,7 @@ private enum SettingsDestination: String, CaseIterable, Identifiable {
         case .general: "gearshape"
         case .windowLayout: "rectangle.3.group"
         case .snapZones: "rectangle.split.3x3"
+        case .layoutWheel: "circle.grid.cross.fill"
         case .applicationRules: "app.badge.checkmark"
         }
     }
@@ -33,6 +35,10 @@ private enum SettingsDestination: String, CaseIterable, Identifiable {
             "mode manual native bento resize linked divider shortcut keyboard hotkey halves thirds quarters sixths move display restore"
         case .snapZones:
             "drag snap custom zone edge corner title bar double click maximize"
+        case .layoutWheel:
+            "wheel layout radial pie ring sector hub gesture middle click mouse button "
+                + "control option shift command modifier trigger shortcut hold activation "
+                + "one level two levels repair bento custom zone empty cancel"
         case .applicationRules:
             "app application rule exclude ignore bento manage per-app exception skip leave alone"
         }
@@ -74,7 +80,7 @@ struct SettingsView: View {
                     destinationSection("Essentials", destinations: [.general])
                     destinationSection(
                         "Window Management",
-                        destinations: [.windowLayout, .snapZones]
+                        destinations: [.windowLayout, .snapZones, .layoutWheel]
                     )
                     destinationSection("Advanced", destinations: [.applicationRules])
                 }
@@ -168,6 +174,8 @@ struct SettingsView: View {
             WindowLayoutSettings(model: model)
         case .snapZones:
             ZoneSettings(model: model)
+        case .layoutWheel:
+            LayoutWheelSettings(model: model)
         case .applicationRules:
             ApplicationRuleSettings(model: model)
         }

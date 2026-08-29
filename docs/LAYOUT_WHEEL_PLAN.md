@@ -2,9 +2,9 @@
 
 Status: approved design; implementation may begin
 
-Current step: **5 — Layout Wheel settings destination**
+Current step: **6 — Modifier gesture and runtime panel**
 
-Last completed step: **4 — Shared glass wheel renderer**
+Last completed step: **5 — Layout Wheel settings destination**
 
 Branch: `feat/layout-wheel`
 
@@ -136,7 +136,7 @@ pushed implementation is still required.
 - [x] Step 2 — Commands and configuration migration
 - [x] Step 3 — Exact preview and commit planning
 - [x] Step 4 — Shared glass wheel renderer
-- [ ] Step 5 — Layout Wheel settings destination
+- [x] Step 5 — Layout Wheel settings destination
 - [ ] Step 6 — Modifier gesture and runtime panel
 - [ ] Step 7 — Opt-in middle-click reservation
 - [ ] Step 8 — App lifecycle integration and accessibility
@@ -332,7 +332,7 @@ Completion criteria:
 
 ## Step 5 — Layout Wheel settings destination
 
-Status: **current**
+Status: **complete**
 
 Files:
 
@@ -372,7 +372,7 @@ Completion criteria:
 
 ## Step 6 — Modifier gesture and runtime panel
 
-Status: **pending**
+Status: **current**
 
 Files:
 
@@ -567,3 +567,38 @@ Completion criteria:
 - Deferred the `NSVisualEffectView` fallback. Step 4 found no glass limitation
   to work around; Step 6 validates glass in the live panel and adds the
   fallback only if that validation finds one.
+- Completed Step 5. `LayoutWheelSettings` adds the Layout Wheel destination
+  under Window Management. Enablement and a hold-move-release explanation come
+  first, then the level control, then the wheel itself as the editor with an
+  adjacent inspector, then Activation. Clicking a sector only moves the editing
+  selection; the inspector assigns Empty, a grouped `WindowAction`, a Custom
+  Zone, or Repair Bento. Settings never previews or applies a layout. Every
+  change writes through `model.updateConfiguration`, so it persists at once.
+  Modifier keycaps are button-styled toggles, and the last two selected
+  modifiers are disabled so Settings cannot write a state the configuration
+  would reject. Restore Defaults resets the Layout Wheel alone.
+- Moved `LayoutWheelActionGroup` into `BetterTileMacOS` beside the other wheel
+  presentation data so a test can prove every `WindowAction` stays assignable
+  from exactly one group. An action left out of every group would otherwise be
+  silently unreachable.
+- Fixed a label-clipping fault the renderer check found. A fixed label width
+  cannot work: in the left and right sectors a label box extends radially and
+  is bounded by the ring band, while in the top and bottom sectors it extends
+  along the arc and is bounded by the chord. `labelSize(for:)` now takes the
+  smaller of the two, and the radii were rebalanced to give the outer ring a
+  wider band. Before the fix, Previous Display and Next Display overflowed the
+  wheel.
+- Verified: 448 package tests pass; the unsigned Debug app builds; the wheel
+  was rendered offscreen in light and dark and read correctly for selected,
+  unavailable, Empty, and normal sectors; and the seven required search queries
+  match the shipped keyword string using the same substring rule Settings uses.
+- Not verified, and outstanding for a live check before the pull request:
+  Settings at the minimum window size, Increase Contrast, Reduce Transparency,
+  the Liquid Glass appearance, and VoiceOver speech. Increase Contrast and
+  Reduce Transparency are system settings that cannot be injected in process,
+  and `ImageRenderer` does not capture backdrop material, so none of these can
+  be covered by an automated check.
+- Deferred the inline registration-failure surface. Settings now reports the
+  two failures it can check itself: missing Accessibility permission, and the
+  wheel being enabled with no trigger. Hot-key and event-tap registration
+  failures belong to Steps 6 and 7, which own those components.
