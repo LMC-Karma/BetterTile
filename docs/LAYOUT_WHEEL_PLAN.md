@@ -723,10 +723,14 @@ Completion criteria:
   and removed a duplicate preview-result adapter. The review also found a small
   repeated coordinator write path; it remains inline because extracting it
   would add indirection without changing behavior.
-- XcodeBuildMCP reported all 492 package tests passing serially, the Swift
+- XcodeBuildMCP reported all 493 package tests passing serially, the Swift
   package building, and the unsigned Debug app building successfully. An earlier
   signed build emitted only Sparkle's expected signed-binary stripping warning.
 - Pushed `feat/layout-wheel` and opened the ready pull request:
   <https://github.com/LMC-Karma/BetterTile/pull/56>. CI passed. Automated review
-  completed with no confirmed faults or review threads. Step 9 is complete;
-  merge still requires maintainer approval.
+  found that focus actions used Bento focus-drop behavior only when selected
+  from the wheel. The fix now shares the keyboard action-policy predicate, and
+  a model test proves that wheel Maximize leaves Bento peers visible. The five
+  focused model tests, all 493 package tests, and the unsigned Debug build pass.
+  The fix triggered follow-up CI and automated review. Merge still requires
+  maintainer approval.

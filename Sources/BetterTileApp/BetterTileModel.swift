@@ -474,10 +474,11 @@ final class BetterTileModel {
             case let .failed(reason):
                 return .unavailable(reason: reason, displayID: window.displayID)
             }
-            let usesBento = sourceRule.allowsBentoParticipation
-                && activeMode(for: actionPlan.displayID) == .bento
-                && (BentoDropPlanner.partitionActions.contains(action)
-                    || BentoDropPlanner.focusActions.contains(action))
+            let usesBento = BentoDropPlanner.handlesShortcut(
+                actionPlan.resolvedAction,
+                in: activeMode(for: actionPlan.displayID) ?? .manual,
+                sourceRule: sourceRule
+            )
             guard usesBento else { return .ready(.action(actionPlan)) }
             guard let proposal = layoutWheelBentoProposal(
                 intent: .snap(action: action, frame: actionPlan.targetFrame),

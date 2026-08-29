@@ -182,3 +182,36 @@ private func target(for system: FakeAppWindowSystem) -> LayoutWheelTarget {
         $0.windowID == captured.windowID
     })?.frame)
 }
+
+@Test @MainActor func bentoLayoutWheelFocusActionMatchesKeyboardPolicy() throws {
+    let system = FakeAppWindowSystem()
+    let peer = WindowSnapshot(
+        id: WindowID(rawValue: "peer"),
+        processIdentifier: 43,
+        bundleIdentifier: "com.example.Peer",
+        frame: BTRect(x: 0, y: 0, width: 200, height: 300),
+        displayID: system.mainDisplay.id
+    )
+    system.windows.append(peer)
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    model.setActiveMode(.bento)
+    let captured = target(for: system)
+    let peerBaseline = try #require(system.windows.first(where: { $0.id == peer.id }))
+
+    guard case let .ready(placements) = model.previewLayoutWheel(
+        .windowAction(.maximize),
+        for: captured
+    ) else {
+        Issue.record("Expected a Layout Wheel focus-action preview")
+        return
+    }
+
+    #expect(placements.map(\.windowID) == [captured.windowID])
+    model.performLayoutWheel(.windowAction(.maximize), for: captured)
+    #expect(system.windows.first(where: { $0.id == peer.id })?.frame == peerBaseline.frame)
+    #expect(
+        system.windows.first(where: { $0.id == peer.id })?.isMinimized
+            == peerBaseline.isMinimized
+    )
+}
