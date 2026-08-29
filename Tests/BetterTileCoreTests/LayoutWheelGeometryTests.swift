@@ -188,8 +188,22 @@ private let wheelDisplay = BTRect(x: 0, y: 0, width: 1600, height: 1000)
         visibleFrame: small
     )
 
-    #expect(placement.center == small.center)
+    #expect(placement.frame.center == small.center)
     #expect(placement.anchor == BTPoint(x: 10, y: 10))
+}
+
+@Test func wheelClampingIncludesTheCaptionBelowTheCircle() {
+    let contentHeight = 406.0
+    let placement = LayoutWheelPlacement.clamped(
+        anchor: BTPoint(x: 800, y: 995),
+        diameter: 356,
+        contentHeight: contentHeight,
+        visibleFrame: wheelDisplay
+    )
+
+    #expect(placement.contentHeight == contentHeight)
+    #expect(placement.frame.maxY <= wheelDisplay.maxY)
+    #expect(placement.frame.minY >= wheelDisplay.minY)
 }
 
 @Test func keyboardEntersTheWheelAtTheTopOfTheInnerRing() {

@@ -128,7 +128,7 @@ off switch.
 
 ## Permissions and dependencies
 
-Accessibility is currently the only required macOS permission. A new
+Accessibility is the only macOS permission BetterTile requests. A new
 permission or privileged component requires an explicit design review,
 least-privilege justification, repository documentation, and an in-product
 explanation before the system prompt appears.
@@ -150,6 +150,43 @@ defaults write com.lmckarma.BetterTile disableSharedGestureEvents -bool true
 
 Quit and reopen BetterTile after changing the default. Restore the tap with
 `defaults delete com.lmckarma.BetterTile disableSharedGestureEvents`.
+
+When Layout Wheel's keyboard trigger is enabled, BetterTile uses an
+observation-only AppKit monitor for modifier changes. A key monitor exists only
+from the start of the activation hold through the end of that gesture. A
+pointer monitor exists only while the keyboard-triggered wheel is open. These
+monitors do not change or retain system events. They forward only the modifier
+set, key code, or pointer position needed by the gesture state machine.
+
+Layout Wheel also has an independent, disabled-by-default Middle Click trigger.
+The user benefit is one-handed wheel activation. While the option is enabled,
+BetterTile creates a dedicated public session `CGEventTap` for
+`otherMouseDown`, `otherMouseDragged`, and `otherMouseUp`. It suppresses only
+unmodified physical button 2. It passes modified middle-clicks and every other
+mouse button unchanged. The tap forwards only scalar position, button,
+modifier, timestamp, and event-kind values. It does not retain the system
+event.
+
+If the middle-click tap cannot start or recover, BetterTile tears it down,
+cancels any gesture it owns, and reports the failure in Layout Wheel Settings.
+Keyboard activation remains available. The saved Middle Click preference is
+preserved so BetterTile can retry after a later lifecycle or configuration
+refresh. The separate recovery switch below prevents the suppressing tap from
+starting without changing the saved preference:
+
+```sh
+defaults write com.lmckarma.BetterTile disableLayoutWheelMiddleClick -bool true
+```
+
+Quit and reopen BetterTile after changing the default. Restore automatic use
+with
+`defaults delete com.lmckarma.BetterTile disableLayoutWheelMiddleClick`.
+
+BetterTile does not call the API that requests Input Monitoring for either tap.
+The listen-only left-button tap has the signed-build validation recorded below.
+The suppressing middle-click tap still requires the signed-build privacy-list
+and prompt checks recorded in the Layout Wheel implementation plan before it
+can ship.
 
 The maintainer design and least-privilege review is recorded in
 [pull request #36](https://github.com/LMC-Karma/BetterTile/pull/36). Validation

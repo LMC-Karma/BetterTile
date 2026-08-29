@@ -212,9 +212,12 @@ private struct GeneralSettings: View {
                 }
 
                 Text(
-                    "BetterTile uses public Accessibility APIs and listens only for global "
-                        + "left-button gesture ordering for snapping and linked resizing. It "
-                        + "requests no Screen Recording, Input Monitoring, or private entitlement."
+                    "BetterTile uses public Accessibility APIs. It observes global left-button "
+                        + "ordering for snapping and linked resizing. Layout Wheel observes its "
+                        + "configured modifiers and limited gesture input. Its optional Middle "
+                        + "Click trigger reserves unmodified middle-click system-wide while "
+                        + "enabled. BetterTile requests no Screen Recording, Input Monitoring, "
+                        + "or private entitlement."
                 )
                 .font(.caption)
                 .foregroundStyle(.secondary)

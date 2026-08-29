@@ -190,10 +190,13 @@ struct LayoutWheelSettings: View {
         .accessibilityLabel("Trigger modifiers")
     }
 
-    /// Concrete, checkable problems only. Event-tap and hot-key registration
-    /// failures belong to the controllers that own them.
+    /// Concrete, checkable problems only. Runtime registration failures come
+    /// from the controller that owns the affected monitor.
     private var activationProblems: [String] {
         var problems: [String] = []
+        if let failure = model.layoutWheelMonitoringFailure {
+            problems.append(failure)
+        }
         if !model.hasAccessibilityPermission {
             problems.append(
                 "Accessibility permission is required before the Layout Wheel can move a window."

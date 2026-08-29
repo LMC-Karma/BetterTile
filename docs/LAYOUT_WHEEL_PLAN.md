@@ -642,3 +642,42 @@ Completion criteria:
   pointer monitors that exist only for the life of one gesture. These are
   observation-only `NSEvent` monitors, not event taps, but the user-facing
   statement is now incomplete and needs maintainer review and rewording.
+- Reviewed Steps 1–6 against `origin/main` on both repository-standards and
+  plan-spec axes. Confirmed and fixed captured-display drift, unavailable
+  releases entering the commit path, shortcut double-actions, the missing
+  application-deactivation caller, monitor-registration failures, caption
+  clipping at display edges, and the missing app-model integration tests.
+- Added a narrow fakeable window-system seam for `BetterTileModel`. Manual and
+  Bento tests now prove that previews do not mutate windows and that commits
+  match their previews. The tests also cover ignored applications and a
+  captured window that moves to another display.
+- Implemented the Step 7 middle-button path with a dedicated public suppressing
+  session event tap. It exists only while the opt-in preference is enabled,
+  copies scalar gesture values, and reserves an unmodified physical button-2
+  gesture from down through its matching up. Other buttons and modified
+  middle-clicks pass through. Tap creation or recovery failure cancels its
+  gesture, reports an inline Settings problem, preserves the preference, and
+  leaves keyboard activation available.
+- Added `disableLayoutWheelMiddleClick` as the independent recovery default.
+  Updated `SECURITY.md`, the Setup Assistant, General Settings, and architecture
+  documentation with the benefit, event scope, failure behavior, permission
+  behavior, and disable switch. The implementation is original project code
+  and adds no dependency or private API.
+- Completed the automated portion of Step 8 ahead of the Step 7 approval gate.
+  Layout Wheel monitors now follow Accessibility permission, shortcut capture,
+  configuration, app shutdown, deactivation, wake, Space changes, and display
+  changes. Placement wireframes are shared with Bento, honor Reduce Motion, use
+  the same transient Space policy, and opt out of window sharing. Cancel,
+  commit, target loss, and lifecycle interruption remove the wheel and every
+  placement preview.
+- Automated verification after review: 490 package tests pass. The unsigned
+  Debug build passes. A signed Debug build
+  also succeeds, but its live launch reached the sibling-instance guard because
+  the installed BetterTile was already running. The installed process was left
+  untouched.
+- Step 7 remains current. Still required before it can be marked complete: a
+  dedicated signed-build session for Input Monitoring prompt/privacy-list
+  checks, browser and canvas middle-button checks before and after enablement,
+  the remaining visual and accessibility matrix, and maintainer approval of
+  the final event scope. No branch push or pull request should occur before
+  those checks and approval.

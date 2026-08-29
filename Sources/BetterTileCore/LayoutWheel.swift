@@ -223,11 +223,18 @@ public struct LayoutWheelPlacement: Equatable, Sendable {
     /// The drawn centre, which clamping can move away from the anchor.
     public var center: BTPoint
     public var diameter: Double
+    public var contentHeight: Double
 
-    public init(anchor: BTPoint, center: BTPoint, diameter: Double) {
+    public init(
+        anchor: BTPoint,
+        center: BTPoint,
+        diameter: Double,
+        contentHeight: Double? = nil
+    ) {
         self.anchor = anchor
         self.center = center
         self.diameter = diameter
+        self.contentHeight = max(diameter, contentHeight ?? diameter)
     }
 
     public var frame: BTRect {
@@ -235,7 +242,7 @@ public struct LayoutWheelPlacement: Equatable, Sendable {
             x: center.x - diameter / 2,
             y: center.y - diameter / 2,
             width: diameter,
-            height: diameter
+            height: contentHeight
         )
     }
 
@@ -248,21 +255,46 @@ public struct LayoutWheelPlacement: Equatable, Sendable {
     public static func clamped(
         anchor: BTPoint,
         diameter: Double,
+        contentHeight: Double? = nil,
         visibleFrame: BTRect
     ) -> LayoutWheelPlacement {
         let radius = diameter / 2
-        let center: BTPoint
-        if visibleFrame.size.width < diameter || visibleFrame.size.height < diameter {
-            // Too small to hold the wheel; centring keeps as much on screen as
-            // possible instead of pinning it to one edge.
-            center = visibleFrame.center
-        } else {
-            center = BTPoint(
-                x: min(max(anchor.x, visibleFrame.minX + radius), visibleFrame.maxX - radius),
-                y: min(max(anchor.y, visibleFrame.minY + radius), visibleFrame.maxY - radius)
+        let contentHeight = max(diameter, contentHeight ?? diameter)
+        let center = BTPoint(
+            x: clampedAxis(
+                anchor.x,
+                minimum: visibleFrame.minX,
+                maximum: visibleFrame.maxX,
+                before: radius,
+                after: radius
+            ),
+            y: clampedAxis(
+                anchor.y,
+                minimum: visibleFrame.minY,
+                maximum: visibleFrame.maxY,
+                before: radius,
+                after: contentHeight - radius
             )
+        )
+        return LayoutWheelPlacement(
+            anchor: anchor,
+            center: center,
+            diameter: diameter,
+            contentHeight: contentHeight
+        )
+    }
+
+    private static func clampedAxis(
+        _ value: Double,
+        minimum: Double,
+        maximum: Double,
+        before: Double,
+        after: Double
+    ) -> Double {
+        guard maximum - minimum >= before + after else {
+            return (minimum + maximum + before - after) / 2
         }
-        return LayoutWheelPlacement(anchor: anchor, center: center, diameter: diameter)
+        return min(max(value, minimum + before), maximum - after)
     }
 }
 

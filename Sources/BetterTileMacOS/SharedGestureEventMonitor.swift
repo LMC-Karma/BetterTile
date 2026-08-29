@@ -112,15 +112,29 @@ enum GestureEventLatency {
         from source: GestureEventSource,
         consumer: StaticString
     ) {
+        record(
+            timestamp: event.timestamp,
+            source: source,
+            consumer: consumer,
+            kind: event.kind.signpostName
+        )
+    }
+
+    static func record(
+        timestamp: UInt64,
+        source: GestureEventSource,
+        consumer: StaticString,
+        kind: String
+    ) {
         guard log.signpostsEnabled,
               let latency = nanoseconds(
-                  eventTimestamp: event.timestamp,
+                  eventTimestamp: timestamp,
                   deliveredAt: GestureEventClock.uptimeNanoseconds
               )
         else { return }
         signposter.emitEvent(
             "gestureDelivery",
-            "consumer=\(consumer, privacy: .public) source=\(source.signpostName, privacy: .public) kind=\(event.kind.signpostName, privacy: .public) latencyNanoseconds=\(latency, privacy: .public)"
+            "consumer=\(consumer, privacy: .public) source=\(source.signpostName, privacy: .public) kind=\(kind, privacy: .public) latencyNanoseconds=\(latency, privacy: .public)"
         )
     }
 }
@@ -472,7 +486,7 @@ private extension GlobalGestureEventKind {
     }
 }
 
-private extension ShortcutModifiers {
+extension ShortcutModifiers {
     init(_ flags: CGEventFlags) {
         var value: ShortcutModifiers = []
         if flags.contains(.maskCommand) { value.insert(.command) }

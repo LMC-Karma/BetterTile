@@ -8,6 +8,8 @@ import SwiftUI
 public struct LayoutWheelMetrics: Sendable {
     public let geometry: LayoutWheelGeometry
     public let outerRingOuterRadius: Double
+    public let captionSpacing: Double = 14
+    public let captionHeight: Double = 34
 
     public init?(
         hubRadius: Double,
@@ -38,6 +40,10 @@ public struct LayoutWheelMetrics: Sendable {
         case .one: geometry.innerRingOuterRadius * 2
         case .two: outerRingOuterRadius * 2
         }
+    }
+
+    public func presentationHeight(for levelCount: LayoutWheelLevelCount) -> Double {
+        diameter(for: levelCount) + captionSpacing + captionHeight
     }
 
     public func innerRadius(for ring: LayoutWheelRing) -> Double {
@@ -287,10 +293,11 @@ public struct LayoutWheelView: View {
     private var isHighContrast: Bool { contrast == .increased }
 
     public var body: some View {
-        VStack(spacing: 14) {
+        VStack(spacing: metrics.captionSpacing) {
             wheel
             caption
         }
+        .frame(width: diameter, height: metrics.presentationHeight(for: configuration.levelCount))
         .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: selection)
     }
 
@@ -482,6 +489,9 @@ public struct LayoutWheelView: View {
             .foregroundStyle(Color.primary)
             .padding(.horizontal, 14)
             .padding(.vertical, 7)
+            .lineLimit(1)
+            .truncationMode(.tail)
+            .frame(maxWidth: diameter - 16)
             .background {
                 if reduceTransparency {
                     Capsule().fill(Color(nsColor: .windowBackgroundColor))

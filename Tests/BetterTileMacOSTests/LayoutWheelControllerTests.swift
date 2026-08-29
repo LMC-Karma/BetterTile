@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Testing
 @testable import BetterTileCore
@@ -61,13 +62,19 @@ private struct Harness {
             box.captureCount += 1
             return capture
         }
-        controller.commitHandler = { command, windowID in box.commits.append((command, windowID)) }
+        controller.commitHandler = { command, target in
+            box.commits.append((command, target.windowID))
+        }
+        controller.unavailableHandler = { reason, target in
+            box.unavailable.append((reason, target))
+        }
         controller.gestureEndedHandler = { box.endedCount += 1 }
         self.box = box
     }
 
     final class Box {
         var commits: [(LayoutWheelCommand, WindowID)] = []
+        var unavailable: [(String, LayoutWheelTarget)] = []
         var captureCount = 0
         var endedCount = 0
     }
@@ -324,7 +331,7 @@ private struct Harness {
 }
 
 /// An unavailable command marks its sector and shows no placement. Release
-/// still goes to the model, which reports why through the result pill.
+/// emits the unavailable outcome so the app can report why without committing.
 @Test @MainActor func anUnavailableCommandPreviewsNothingButStillReports() {
     let harness = Harness()
     harness.controller.previewHandler = { command, _ in
@@ -346,7 +353,26 @@ private struct Harness {
     #expect(harness.presenter.shownPlacements.count == shownBeforeRepairBento)
 
     harness.controller.handleKey(.commit)
-    #expect(harness.box.commits.first?.0 == .repairBento)
+    #expect(harness.box.commits.isEmpty)
+    #expect(harness.box.unavailable.first?.0 == "Repair Bento needs Bento mode.")
+    #expect(harness.box.unavailable.first?.1 == target)
+}
+
+@Test @MainActor func aModifierMonitorRegistrationFailureIsReportedInline() {
+    let controller = LayoutWheelController(
+        configuration: BetterTileConfiguration(),
+        presenter: FakePresenter(),
+        addGlobalMonitor: { _, _ in nil },
+        removeMonitor: { _ in }
+    )
+    var failure: String?
+    controller.monitoringFailureHandler = { failure = $0 }
+
+    controller.start()
+
+    #expect(failure == "BetterTile could not monitor the Layout Wheel modifier trigger.")
+    #expect(!controller.isPendingActivation)
+    #expect(!controller.isOpen)
 }
 
 @Test @MainActor func availableCommandsShowTheirPlacements() {
@@ -369,4 +395,40 @@ private struct Harness {
 
     #expect(!harness.controller.isOpen)
     #expect(harness.presenter.closeCount == 1)
+}
+
+@Test @MainActor func suspendingRemovesEveryKeyboardMonitorAndResumeRestoresOnlyTheTrigger() {
+    var addedMasks: [NSEvent.EventTypeMask] = []
+    var removed = 0
+    let controller = LayoutWheelController(
+        configuration: BetterTileConfiguration(),
+        presenter: FakePresenter(),
+        pointerProvider: { anchor },
+        addGlobalMonitor: { mask, _ in
+            addedMasks.append(mask)
+            return NSObject()
+        },
+        removeMonitor: { _ in removed += 1 }
+    )
+    controller.captureHandler = { target }
+    controller.previewHandler = { _, _ in .ready(placements: []) }
+    controller.start()
+    controller.handleModifiers(trigger)
+    controller.handleActivationDeadline(generation: 1)
+
+    #expect(controller.isOpen)
+    #expect(addedMasks.contains(.flagsChanged))
+    #expect(addedMasks.contains(.keyDown))
+    #expect(addedMasks.contains { $0.contains(.mouseMoved) })
+
+    controller.suspend()
+
+    #expect(!controller.isOpen)
+    #expect(removed == 3)
+    controller.handleModifiers(trigger)
+    #expect(!controller.isPendingActivation)
+
+    controller.resume()
+    #expect(addedMasks.filter { $0 == .flagsChanged }.count == 2)
+    #expect(addedMasks.filter { $0 == .keyDown }.count == 1)
 }
