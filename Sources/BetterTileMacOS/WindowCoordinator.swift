@@ -27,6 +27,15 @@ public struct WindowPlacementPlan: Sendable {
         self.sourceFrame = sourceFrame
         self.targetFrame = targetFrame
     }
+
+    public init(_ actionPlan: WindowActionPlan) {
+        self.init(
+            windowID: actionPlan.windowID,
+            displayID: actionPlan.displayID,
+            sourceFrame: actionPlan.sourceFrame,
+            targetFrame: actionPlan.targetFrame
+        )
+    }
 }
 
 /// The terminal meaning of one window mutation. Exactly one value describes
@@ -298,6 +307,20 @@ public final class WindowCoordinator {
     ///   mutation lands, and a generation read late would miss it.
     public func verifyPlacement(
         _ plan: WindowActionPlan,
+        since generation: UInt64,
+        delay: Duration = .milliseconds(120),
+        attempts: Int = 3
+    ) async -> DelayedPlacementVerdict {
+        await verifyPlacement(
+            WindowPlacementPlan(plan),
+            since: generation,
+            delay: delay,
+            attempts: attempts
+        )
+    }
+
+    public func verifyPlacement(
+        _ plan: WindowPlacementPlan,
         since generation: UInt64,
         delay: Duration = .milliseconds(120),
         attempts: Int = 3

@@ -340,7 +340,10 @@ final class BetterTileModel {
         let resultingDisplayID = (try? system.focusedWindow())?.displayID ?? originalDisplayID
         presentActionResult(succeeded: succeeded, error: statusMessage, displayID: resultingDisplayID)
         if succeeded {
-            verifyActionLanded(actionPlan, displayID: resultingDisplayID)
+            verifyPlacementLanded(
+                WindowPlacementPlan(actionPlan),
+                displayID: resultingDisplayID
+            )
         }
     }
 
@@ -379,13 +382,15 @@ final class BetterTileModel {
             let displayID = currentDisplayID(for: plan.windowID) ?? plan.displayID
             finishLayoutWheelPlacement(outcome: outcome, displayID: displayID)
             if outcome.isApplied {
-                verifyActionLanded(plan, displayID: displayID)
+                verifyPlacementLanded(WindowPlacementPlan(plan), displayID: displayID)
             }
         case let .ready(.zone(plan)):
-            finishLayoutWheelPlacement(
-                outcome: coordinator.perform(plan),
-                displayID: currentDisplayID(for: plan.windowID) ?? plan.displayID
-            )
+            let outcome = coordinator.perform(plan)
+            let displayID = currentDisplayID(for: plan.windowID) ?? plan.displayID
+            finishLayoutWheelPlacement(outcome: outcome, displayID: displayID)
+            if outcome.isApplied {
+                verifyPlacementLanded(plan, displayID: displayID)
+            }
         case let .ready(.bento(proposal)):
             let succeeded = commitLayoutWheelBento(proposal)
             statusMessage = succeeded
@@ -693,7 +698,7 @@ final class BetterTileModel {
     /// frame it was asked for. Deliberately after the fact: an application is
     /// free to apply an Accessibility geometry change on its own run loop, so a
     /// report made at write time cannot tell a refusal from a delay.
-    private func verifyActionLanded(_ plan: WindowActionPlan, displayID: DisplayID?) {
+    private func verifyPlacementLanded(_ plan: WindowPlacementPlan, displayID: DisplayID?) {
         // Read now, not inside the task: a Bento reflow can land before the
         // task body begins, and a generation read there would not see it.
         let generation = coordinator.mutationGeneration(for: plan.windowID)

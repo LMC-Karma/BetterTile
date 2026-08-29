@@ -14,6 +14,7 @@ private final class FakeAppWindowSystem: BetterTileWindowSystem {
     )
     var enhancedUserInterfacePolicy: EnhancedUserInterfacePolicy = .disableAndRestore
     var permission = true
+    var ignoredFrameWriteWindowIDs: Set<WindowID> = []
     var availableDisplays: [DisplaySnapshot]
     var windows: [WindowSnapshot]
     var eventHandler: (@MainActor (WindowSystemEvent) -> Void)?
@@ -43,6 +44,7 @@ private final class FakeAppWindowSystem: BetterTileWindowSystem {
         guard let index = windows.firstIndex(where: { $0.id == windowID }) else {
             throw WindowSystemError.windowNotFound(windowID)
         }
+        guard !ignoredFrameWriteWindowIDs.contains(windowID) else { return }
         windows[index].frame = frame
     }
     func setMinimized(_ minimized: Bool, for windowID: WindowID) throws {
@@ -214,4 +216,87 @@ private func target(for system: FakeAppWindowSystem) -> LayoutWheelTarget {
         system.windows.first(where: { $0.id == peer.id })?.isMinimized
             == peerBaseline.isMinimized
     )
+}
+
+@Test @MainActor func customZoneCommitReportsAnIgnoredWrite() async throws {
+    let system = FakeAppWindowSystem()
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    let captured = target(for: system)
+    let zone = CustomZone(
+        name: "Focused",
+        rect: NormalizedRect(x: 0.1, y: 0.1, width: 0.6, height: 0.6)
+    )
+    model.updateConfiguration { $0.customZones = [zone] }
+    system.ignoredFrameWriteWindowIDs.insert(captured.windowID)
+
+    guard case let .ready(placements) = model.previewLayoutWheel(
+        .customZone(zone.id),
+        for: captured
+    ) else {
+        Issue.record("Expected a Custom Zone preview")
+        return
+    }
+
+    #expect(placements.count == 1)
+    model.performLayoutWheel(.customZone(zone.id), for: captured)
+    #expect(model.lastActionFeedback?.kind == .success)
+    try await Task.sleep(for: .milliseconds(500))
+    #expect(model.statusMessage == "The window did not move where it was asked to.")
+    #expect(model.lastActionFeedback?.kind == .failure)
+}
+
+@Test @MainActor func deletedCustomZoneIsUnavailable() {
+    let system = FakeAppWindowSystem()
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    let captured = target(for: system)
+    let missingZoneID = UUID()
+
+    guard case let .unavailable(reason) = model.previewLayoutWheel(
+        .customZone(missingZoneID),
+        for: captured
+    ) else {
+        Issue.record("Expected a deleted Custom Zone to be unavailable")
+        return
+    }
+
+    #expect(reason == "That Custom Zone is no longer available.")
+    model.performLayoutWheel(.customZone(missingZoneID), for: captured)
+    #expect(model.statusMessage == reason)
+    #expect(model.lastActionFeedback?.message == "Zone unavailable")
+}
+
+@Test @MainActor func repairBentoRequiresBentoAndRunsWhenAvailable() {
+    let system = FakeAppWindowSystem()
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    let captured = target(for: system)
+
+    guard case let .unavailable(reason) = model.previewLayoutWheel(
+        .repairBento,
+        for: captured
+    ) else {
+        Issue.record("Expected Repair Bento to require a Bento desktop")
+        return
+    }
+
+    #expect(reason == "Repair Bento is available only on a Bento desktop.")
+    model.performLayoutWheel(.repairBento, for: captured)
+    #expect(model.lastActionFeedback?.message == "Bento not active")
+
+    model.setActiveMode(.bento)
+    guard case let .ready(placements) = model.previewLayoutWheel(
+        .repairBento,
+        for: captured
+    ) else {
+        Issue.record("Expected Repair Bento on a Bento desktop")
+        return
+    }
+
+    #expect(placements.isEmpty)
+    model.statusMessage = "Repair did not run."
+    model.performLayoutWheel(.repairBento, for: captured)
+    #expect(model.statusMessage == nil)
+    #expect(model.lastActionFeedback?.kind == .success)
 }
