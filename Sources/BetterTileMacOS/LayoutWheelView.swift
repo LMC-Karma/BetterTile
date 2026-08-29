@@ -271,9 +271,7 @@ public struct LayoutWheelView: View {
 
     private var diameter: Double { metrics.diameter(for: configuration.levelCount) }
 
-    private var rings: [LayoutWheelRing] {
-        configuration.levelCount == .one ? [.inner] : [.inner, .outer]
-    }
+    private var rings: [LayoutWheelRing] { configuration.activeRings }
 
     private var isHighContrast: Bool { contrast == .increased }
 
@@ -310,12 +308,7 @@ public struct LayoutWheelView: View {
     // MARK: - Sectors
 
     private func slot(for selection: LayoutWheelSelection) -> LayoutWheelSlot {
-        let slots = selection.ring == .inner
-            ? configuration.innerSlots
-            : configuration.outerSlots
-        let command = slots.indices.contains(selection.sector.rawValue)
-            ? slots[selection.sector.rawValue]
-            : nil
+        let command = configuration.command(at: selection)
         let isAvailable = command.map { !unavailableCommands.contains($0) } ?? false
         return LayoutWheelSlot(
             command: command,

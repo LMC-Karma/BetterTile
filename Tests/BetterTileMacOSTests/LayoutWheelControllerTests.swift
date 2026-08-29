@@ -456,8 +456,9 @@ private struct Harness {
 
 /// Global AppKit monitors omit events delivered to BetterTile itself. The
 /// matching local monitor keeps the trigger working while Settings is active.
-@Test @MainActor func aLocalModifierEventCanOpenTheWheel() async {
-    var localFlagsHandler: ((NSEvent) -> Void)?
+@Test @MainActor func aLocalModifierEventOpensTheWheelAndWheelKeysAreConsumed() async {
+    var localFlagsHandler: (@MainActor (UInt16, ShortcutModifiers) -> Bool)?
+    var localKeyHandler: (@MainActor (UInt16, ShortcutModifiers) -> Bool)?
     let presenter = FakePresenter()
     let controller = LayoutWheelController(
         configuration: BetterTileConfiguration(),
@@ -466,6 +467,7 @@ private struct Harness {
         addGlobalMonitor: { _, _ in NSObject() },
         addLocalMonitor: { mask, handler in
             if mask == .flagsChanged { localFlagsHandler = handler }
+            if mask == .keyDown { localKeyHandler = handler }
             return NSObject()
         },
         removeMonitor: { _ in }
@@ -474,24 +476,18 @@ private struct Harness {
     controller.previewHandler = { _, _ in .ready(placements: []) }
     controller.start()
 
-    let event = NSEvent.keyEvent(
-        with: .flagsChanged,
-        location: .zero,
-        modifierFlags: [.control, .option, .shift],
-        timestamp: 0,
-        windowNumber: 0,
-        context: nil,
-        characters: "",
-        charactersIgnoringModifiers: "",
-        isARepeat: false,
-        keyCode: 56
-    )!
-    localFlagsHandler?(event)
+    #expect(localFlagsHandler?(56, trigger) == false)
     await Task.yield()
     controller.handleActivationDeadline(generation: 1)
 
     #expect(controller.isOpen)
     #expect(presenter.openCount == 1)
+
+    #expect(localKeyHandler?(124, []) == true)
+    #expect(controller.isOpen)
+    #expect(presenter.selection == LayoutWheelSelection(ring: .inner, sector: .top))
+
+    #expect(localKeyHandler?(0, []) == false)
 }
 
 @Test @MainActor func availableCommandsShowTheirPlacements() {

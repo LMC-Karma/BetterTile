@@ -61,15 +61,18 @@ share that stream. If tap creation or recovery fails, both consumers switch to
 their existing `NSEvent` monitors as one unit so one physical event has one
 owner.
 
-Layout Wheel keyboard activation uses paired local and global observation-only
-AppKit monitors, so it works whether BetterTile or another app receives the
-event. Modifier monitors follow feature enablement. Key and pointer monitors
-exist only during a pending or open gesture. The optional Middle Click trigger
-has a separate suppressing session event tap. It exists only while that
-preference is enabled, receives only other-button down, drag, and up events, and
-consumes only unmodified physical button 2. Tap failure disables that runtime
-path without disabling keyboard activation. Both tap implementations copy
-scalar position, button, modifier, timestamp, and event-kind values only.
+Layout Wheel keyboard activation uses paired local and global AppKit monitors,
+so it works whether BetterTile or another app receives the event. Modifier
+monitors follow feature enablement. Key and pointer monitors exist only during
+a pending or open gesture. Global monitors remain observation-only. While the
+wheel is open, its local monitor consumes recognized wheel-navigation keys so
+they do not also activate BetterTile's focused Settings controls; other local
+keys pass through. The optional Middle Click trigger has a separate suppressing
+session event tap. It exists only while that preference is enabled, receives
+only other-button down, drag, and up events, and consumes only unmodified
+physical button 2. Tap failure disables that runtime path without disabling
+keyboard activation. Both tap implementations copy scalar position, button,
+modifier, timestamp, and event-kind values only.
 Divider-local events, hover, Escape, and title-bar double-click handling keep
 their AppKit paths.
 

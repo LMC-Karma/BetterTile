@@ -152,13 +152,17 @@ Quit and reopen BetterTile after changing the default. Restore the tap with
 `defaults delete com.lmckarma.BetterTile disableSharedGestureEvents`.
 
 When Layout Wheel's keyboard trigger is enabled, BetterTile uses matching local
-and global observation-only AppKit monitors for modifier changes. The pair
-keeps the trigger available whether BetterTile or another app receives the
-event. Matching key monitors exist only from the start of the activation hold
-through the end of that gesture. Matching pointer monitors exist only while the
-keyboard-triggered wheel is open. These monitors do not change or retain system
-events. They forward only the modifier set, key code, or pointer position needed
-by the gesture state machine.
+and global AppKit monitors for modifier changes. The pair keeps the trigger
+available whether BetterTile or another app receives the event. Matching key
+monitors exist only from the start of the activation hold through the end of
+that gesture. Matching pointer monitors exist only while the keyboard-triggered
+wheel is open. Global monitors and the local modifier and pointer monitors are
+observation-only. While the wheel is open, the local key monitor consumes only
+Escape, Return, Tab, and arrow keys after the wheel handles them, so they do not
+also activate BetterTile's own focused Settings controls. Other local keys pass
+through, and no event delivered to another application is changed. The monitors
+retain no system events and forward only the modifier set, key code, or pointer
+position needed by the gesture state machine.
 
 Layout Wheel also has an independent, disabled-by-default Middle Click trigger.
 The user benefit is one-handed wheel activation. While the option is enabled,

@@ -120,7 +120,7 @@ public final class LayoutWheelController {
     ) -> Any?
     private let addLocalMonitor: (
         NSEvent.EventTypeMask,
-        @escaping (NSEvent) -> Void
+        @escaping @MainActor (UInt16, ShortcutModifiers) -> Bool
     ) -> Any?
     private let removeMonitor: (Any) -> Void
     private let middleClickMonitor: LayoutWheelMiddleClickMonitoring
@@ -159,11 +159,13 @@ public final class LayoutWheelController {
         },
         addLocalMonitor: @escaping (
             NSEvent.EventTypeMask,
-            @escaping (NSEvent) -> Void
+            @escaping @MainActor (UInt16, ShortcutModifiers) -> Bool
         ) -> Any? = { mask, handler in
             NSEvent.addLocalMonitorForEvents(matching: mask) { event in
-                handler(event)
-                return event
+                let keyCode = event.keyCode
+                let modifiers = ShortcutModifiers(event.modifierFlags)
+                let consumed = MainActor.assumeIsolated { handler(keyCode, modifiers) }
+                return consumed ? nil : event
             }
         },
         removeMonitor: @escaping (Any) -> Void = { NSEvent.removeMonitor($0) },
@@ -250,7 +252,10 @@ public final class LayoutWheelController {
                 flagsMonitor = addGlobalMonitor([.flagsChanged], handler)
             }
             if localFlagsMonitor == nil {
-                localFlagsMonitor = addLocalMonitor([.flagsChanged], handler)
+                localFlagsMonitor = addLocalMonitor([.flagsChanged]) { [weak self] _, modifiers in
+                    self?.handleModifiers(modifiers)
+                    return false
+                }
             }
             if flagsMonitor == nil || localFlagsMonitor == nil {
                 keyboardMonitoringFailure =
@@ -296,12 +301,16 @@ public final class LayoutWheelController {
         }
 
         if needsKeys, keyMonitor == nil || localKeyMonitor == nil {
-            let handler: (NSEvent) -> Void = { [weak self] event in
+            let globalHandler: (NSEvent) -> Void = { [weak self] event in
                 let keyCode = event.keyCode
                 Task { @MainActor in self?.handleKeyDown(keyCode: keyCode) }
             }
-            if keyMonitor == nil { keyMonitor = addGlobalMonitor([.keyDown], handler) }
-            if localKeyMonitor == nil { localKeyMonitor = addLocalMonitor([.keyDown], handler) }
+            if keyMonitor == nil { keyMonitor = addGlobalMonitor([.keyDown], globalHandler) }
+            if localKeyMonitor == nil {
+                localKeyMonitor = addLocalMonitor([.keyDown]) { [weak self] keyCode, _ in
+                    self?.handleLocalKeyDown(keyCode: keyCode) ?? false
+                }
+            }
         } else if !needsKeys {
             if let keyMonitor {
                 removeMonitor(keyMonitor)
@@ -327,7 +336,18 @@ public final class LayoutWheelController {
                 }
             }
             if pointerMonitor == nil { pointerMonitor = addGlobalMonitor(mask, handler) }
-            if localPointerMonitor == nil { localPointerMonitor = addLocalMonitor(mask, handler) }
+            if localPointerMonitor == nil {
+                localPointerMonitor = addLocalMonitor(mask) { _, _ in
+                    Task { @MainActor [weak self] in
+                        guard let self, let frame = NSScreen.screens.first?.frame else { return }
+                        handlePointer(GlobalGestureEvent.position(
+                            nsEventMouseLocation: NSEvent.mouseLocation,
+                            primaryScreenFrame: frame
+                        ))
+                    }
+                    return false
+                }
+            }
         } else if !needsPointer {
             if let pointerMonitor {
                 removeMonitor(pointerMonitor)
@@ -443,6 +463,15 @@ public final class LayoutWheelController {
             return
         }
         cancelPendingActivation()
+    }
+
+    /// A local monitor can prevent wheel navigation from also reaching
+    /// BetterTile's focused Settings controls. Global monitors remain
+    /// observation-only and cannot consume another application's events.
+    private func handleLocalKeyDown(keyCode: UInt16) -> Bool {
+        let isWheelKey = isOpen && LayoutWheelKey(keyCode: keyCode) != nil
+        handleKeyDown(keyCode: keyCode)
+        return isWheelKey
     }
 
     func handleActivationDeadline(generation: Int) {

@@ -52,7 +52,8 @@ truth.
   dead band, or an Empty sector cancels.
 - A sector can contain Empty, any exact `WindowAction`, a `CustomZone`, or
   Repair Bento. Duplicates and Empty sectors are valid.
-- Labels and SF Symbols are derived from commands. Version one has no custom
+- The visible wheel uses derived SF Symbols without command text. Command names
+  remain available to VoiceOver and in Settings. Version one has no custom
   labels, icons, wheel size, tint, opacity, or blur controls.
 - A deleted Custom Zone leaves every referencing sector Empty.
 - An unavailable command never substitutes another command. Release cancels
@@ -64,6 +65,8 @@ truth.
 - The wheel uses public macOS 26 glass/material APIs, semantic colors, and
   native SF Symbols. Reduce Transparency uses an opaque surface. Reduce Motion
   removes scale and movement.
+- The visible two-level wheel is 300 points in diameter. This matches the
+  compact reference scale while leaving the Settings editor responsive.
 
 ### Default assignments
 
@@ -105,10 +108,12 @@ inside `BetterTileMacOS`. No new dependency or private API is permitted.
 
 ## Security decision
 
-Keyboard modifier monitoring is observation-only. The optional middle-click
-trigger has a stronger invariant: the underlying app must not receive the
-reserved click. An `NSEvent` global monitor cannot enforce that invariant
-because it only receives a copy.
+Keyboard modifier monitoring is observation-only. During an open wheel, a local
+monitor consumes only the navigation keys handled by the wheel inside
+BetterTile; global key observation cannot change another application's event.
+The optional middle-click trigger has a stronger invariant: the underlying app
+must not receive the reserved click. An `NSEvent` global monitor cannot enforce
+that invariant because it only receives a copy.
 
 Implement middle-click with a dedicated public `CGEventTap` that:
 
@@ -313,8 +318,9 @@ Work:
   nonactivating panel. Keep an `NSVisualEffectView` material fallback for any
   documented glass limitation found during validation. Reduce Transparency
   uses an opaque semantic surface instead of either effect.
-- Derive concise labels and consistent SF Symbols from commands.
-- Keep the center Cancel affordance and current command label legible against
+- Derive consistent SF Symbols from commands. Keep command names in the
+  accessibility tree and Settings instead of drawing text in each sector.
+- Keep the center Cancel icon and current selection state legible against
   arbitrary desktop content.
 - Distinguish selected, unavailable, Empty, keyboard-focused, and normal states
   with shape/contrast as well as color.
@@ -581,13 +587,10 @@ Completion criteria:
   presentation data so a test can prove every `WindowAction` stays assignable
   from exactly one group. An action left out of every group would otherwise be
   silently unreachable.
-- Fixed a label-clipping fault the renderer check found. A fixed label width
-  cannot work: in the left and right sectors a label box extends radially and
-  is bounded by the ring band, while in the top and bottom sectors it extends
-  along the arc and is bounded by the chord. `labelSize(for:)` now takes the
-  smaller of the two, and the radii were rebalanced to give the outer ring a
-  wider band. Before the fix, Previous Display and Next Display overflowed the
-  wheel.
+- The first renderer used visible sector labels and required direction-aware
+  label sizing. The later compact-wheel refinement removed visible command text
+  and retained the same names as accessibility labels, which eliminated this
+  clipping class.
 - Verified: 448 package tests pass; the unsigned Debug app builds; the wheel
   was rendered offscreen in light and dark and read correctly for selected,
   unavailable, Empty, and normal sectors; and the seven required search queries
@@ -635,13 +638,14 @@ Completion criteria:
   end to end in Manual and Bento modes, glass in the live panel, and that a
   held Control + Option shortcut produces no wheel flash on real hardware. The
   automated tests cover the decision paths, not AppKit event delivery.
-- Blocking before the pull request: this step broadens BetterTile's observed
-  event scope. `SECURITY.md` and the Settings disclosure both say BetterTile
-  listens only for global left-button gesture ordering. The wheel adds a global
-  `flagsChanged` monitor while the trigger is enabled, and global `keyDown` and
-  pointer monitors that exist only for the life of one gesture. These are
-  observation-only `NSEvent` monitors, not event taps, but the user-facing
-  statement is now incomplete and needs maintainer review and rewording.
+- This step broadens BetterTile's observed event scope. The wheel uses paired
+  local and global `NSEvent` monitors: `flagsChanged` while the trigger is
+  enabled, then `keyDown` and pointer monitors only for an active gesture. The
+  local monitors cover events delivered while BetterTile is the active
+  application. While the wheel is open, recognized local navigation keys are
+  consumed after handling so they do not also activate Settings controls. Other
+  local events and all global events remain observation-only. `SECURITY.md`,
+  Settings, and the architecture guide disclose the reviewed scope.
 - Reviewed Steps 1–6 against `origin/main` on both repository-standards and
   plan-spec axes. Confirmed and fixed captured-display drift, unavailable
   releases entering the commit path, shortcut double-actions, the missing
@@ -744,3 +748,15 @@ Completion criteria:
   event arrives. Commit `6f2d30f` pins that with a regression test. Re-ran the
   checks on that final commit: the 24 focused controller tests, the 8 focused
   model tests, all 497 package tests, and the unsigned Debug build pass.
+- Refined the wheel after testing the open pull request. Paired local and global
+  monitors now make activation work when BetterTile itself is active. The
+  default two-level wheel is exactly 300 points; One Level omits the unused
+  outer ring. Both use icon-only sectors and keep full command names in
+  accessibility and Settings. Manual snap, Bento, and Layout Wheel placement
+  previews now share one subtly shaded dashed wireframe. The 44 focused
+  controller, view, and middle-button tests and all 498 package tests pass. The
+  unsigned Debug build passes. Light and Dark Xcode previews render without
+  clipping, and a signed live app opened from synthetic modifier and
+  middle-button input. Recognized local navigation keys are consumed while the
+  wheel is open; an ordinary local key still passes through. A new
+  physical-input pass was not repeated.
