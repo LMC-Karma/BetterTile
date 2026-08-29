@@ -185,15 +185,21 @@ with
 BetterTile does not call the API that requests Input Monitoring for either tap.
 Both taps have the signed-build validation recorded below.
 
-The maintainer design and least-privilege review is recorded in
-[pull request #36](https://github.com/LMC-Karma/BetterTile/pull/36). Validation
-on macOS 26.5.2 confirmed that a personally signed build with Accessibility
-granted created the tap without an Input Monitoring prompt and did not appear
-in the Input Monitoring application list. Validation on macOS 26.6.2 confirmed
-the same behavior for the suppressing middle-click tap. Middle-button events
-reached a browser canvas before enablement, were reserved while enabled, and
-reached the canvas again immediately after disablement. The Setup Assistant
-and Settings explain the observed event scope before the Accessibility request.
+Each tap has its own maintainer design and least-privilege review. The
+left-button gesture tap is recorded in
+[pull request #36](https://github.com/LMC-Karma/BetterTile/pull/36). The
+suppressing middle-click tap is recorded in
+[pull request #56](https://github.com/LMC-Karma/BetterTile/pull/56); pull
+request #36 predates that tap and does not cover it.
+
+Validation on macOS 26.5.2 confirmed that a personally signed build with
+Accessibility granted created the left-button tap without an Input Monitoring
+prompt and did not appear in the Input Monitoring application list. Validation
+on macOS 26.6.2 confirmed the same behavior for the suppressing middle-click
+tap. Middle-button events reached a browser canvas before enablement, were
+reserved while enabled, and reached the canvas again immediately after
+disablement. The Setup Assistant and Settings explain the observed event scope
+before the Accessibility request.
 
 Runtime dependencies are allowed after reviewing necessity, maintenance,
 security history, license compatibility, update strategy, and removal cost.
