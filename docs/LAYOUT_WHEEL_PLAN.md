@@ -738,3 +738,9 @@ Completion criteria:
   eight focused model tests, all 496 package tests, and the unsigned Debug build
   pass. The fixes triggered follow-up CI and automated review. Merge still
   requires maintainer approval.
+- A later review round flagged a possible double action between an open wheel's
+  arrow keys and the Control + Option shortcuts. The collision cannot happen:
+  opening the wheel suspends the Carbon hot keys synchronously before any key
+  event arrives. Commit `6f2d30f` pins that with a regression test. Re-ran the
+  checks on that final commit: the 24 focused controller tests, the 8 focused
+  model tests, all 497 package tests, and the unsigned Debug build pass.
