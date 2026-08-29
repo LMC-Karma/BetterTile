@@ -22,11 +22,19 @@ public struct ResultPillFeedback: Equatable, Sendable {
         let message: String
         if value.contains("accessibility") || value.contains("permission") {
             message = "Accessibility required"
+        } else if value.contains("ignore this app") {
+            message = "App is ignored"
+        } else if value.contains("repair bento") {
+            message = "Bento not active"
         } else if value.contains("eligible") || value.contains("focused window") {
             message = "No eligible window"
         } else if value.contains("cannot fit") || value.contains("can't fit") || value.contains("minimum size") {
             message = "Can’t fit this layout"
-        } else if value.contains("no longer matches") || value.contains("window changed") {
+        } else if value.contains("custom zone") {
+            message = "Zone unavailable"
+        } else if value.contains("no longer matches")
+            || value.contains("window changed")
+            || value.contains("captured window") {
             message = "Window changed"
         } else {
             message = "Couldn’t apply layout"

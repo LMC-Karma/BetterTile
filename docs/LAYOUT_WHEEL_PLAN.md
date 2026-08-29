@@ -2,9 +2,9 @@
 
 Status: approved design; implementation may begin
 
-Current step: **3 — Exact preview and commit planning**
+Current step: **4 — Shared glass wheel renderer**
 
-Last completed step: **2 — Commands and configuration migration**
+Last completed step: **3 — Exact preview and commit planning**
 
 Branch: `feat/layout-wheel`
 
@@ -134,7 +134,7 @@ pushed implementation is still required.
 - [x] Step 0 — Research and product decisions
 - [x] Step 1 — Core selection geometry
 - [x] Step 2 — Commands and configuration migration
-- [ ] Step 3 — Exact preview and commit planning
+- [x] Step 3 — Exact preview and commit planning
 - [ ] Step 4 — Shared glass wheel renderer
 - [ ] Step 5 — Layout Wheel settings destination
 - [ ] Step 6 — Modifier gesture and runtime panel
@@ -243,15 +243,15 @@ Completion criteria:
 
 ## Step 3 — Exact preview and commit planning
 
-Status: **in progress**
+Status: **complete**
 
 Progress:
 
 - [x] Add captured-window exact action and Custom Zone plans in
   `WindowCoordinator`.
 - [x] Prove exact previews do not cycle, record history, or mutate frames.
-- [ ] Add the model preview result and Manual/Bento placement calculation.
-- [ ] Add exact model commit routing and result-pill failures.
+- [x] Add the model preview result and Manual/Bento placement calculation.
+- [x] Add exact model commit routing and result-pill failures.
 
 Files:
 
@@ -543,5 +543,11 @@ Completion criteria:
 - Started Step 3. `WindowCoordinator` now plans exact actions and Custom Zones
   for a captured window ID without touching shortcut cycling or history. Four
   focused tests cover capture, cancel-safe preview, Custom Zone preview/commit,
-  and target loss. All 437 package tests pass. The model preview/commit routing
-  is the next subtask.
+  and target loss.
+- Completed Step 3. `BetterTileModel` now returns non-mutating exact Manual or
+  Bento previews and replans captured-window commands before commit. Manual,
+  Bento, Custom Zone, and captured-display Repair Bento commands reuse the
+  coordinator, Bento planner, rollback, settlement, and result-pill paths.
+  Known Layout Wheel failures now receive concise result-pill messages. All
+  437 package tests pass, and the unsigned Debug macOS app builds successfully
+  through XcodeBuildMCP.
