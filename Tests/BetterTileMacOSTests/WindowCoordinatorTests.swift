@@ -97,6 +97,65 @@ import Testing
     #expect(system.windows[0].frame == second.targetFrame)
 }
 
+@Test @MainActor func exactPlansTargetTheCapturedWindowWithoutCycling() throws {
+    let system = FakeWindowSystem()
+    system.addSecondWindow()
+    let capturedID = system.windows[0].id
+    system.focusedWindowID = system.windows[1].id
+    let coordinator = WindowCoordinator(system: system)
+
+    let first = try #require(coordinator.planExact(.leftHalf, for: capturedID).readyPlan)
+    let second = try #require(coordinator.planExact(.leftHalf, for: capturedID).readyPlan)
+    #expect(first.windowID == capturedID)
+    #expect(first.resolvedAction == .leftHalf)
+    #expect(second.resolvedAction == .leftHalf)
+
+    let firstKeyboardPlan = try #require(coordinator.plan(.leftHalf).readyPlan)
+    #expect(firstKeyboardPlan.windowID == system.windows[1].id)
+    #expect(firstKeyboardPlan.resolvedAction == .leftHalf)
+}
+
+@Test @MainActor func exactPreviewDoesNotRecordHistoryOrMoveTheWindow() throws {
+    let system = FakeWindowSystem()
+    let original = system.windows[0].frame
+    let id = system.windows[0].id
+    let coordinator = WindowCoordinator(system: system)
+
+    _ = try #require(coordinator.planExact(.leftHalf, for: id).readyPlan)
+    #expect(system.windows[0].frame == original)
+    #expect(coordinator.planExact(.restore, for: id).readyPlan == nil)
+}
+
+@Test @MainActor func exactCustomZonePlanCanPreviewThenCommit() throws {
+    let system = FakeWindowSystem()
+    let original = system.windows[0].frame
+    let id = system.windows[0].id
+    let coordinator = WindowCoordinator(system: system)
+    let zone = CustomZone(
+        name: "Focus",
+        rect: NormalizedRect(x: 0.1, y: 0.1, width: 0.8, height: 0.8)
+    )
+
+    let plan = try #require(coordinator.plan(zone, for: id).readyPlan)
+    #expect(plan.targetFrame == BTRect(x: 100, y: 80, width: 800, height: 640))
+    #expect(system.windows[0].frame == original)
+    #expect(coordinator.perform(plan).isApplied)
+    #expect(system.windows[0].frame == plan.targetFrame)
+    #expect(coordinator.planExact(.restore, for: id).readyPlan?.targetFrame == original)
+}
+
+@Test @MainActor func exactPlanBecomesUnavailableWhenCapturedWindowDisappears() {
+    let system = FakeWindowSystem()
+    let id = system.windows[0].id
+    let coordinator = WindowCoordinator(system: system)
+    system.windows.removeAll()
+
+    guard case .unavailable = coordinator.planExact(.leftHalf, for: id) else {
+        Issue.record("a missing captured window must be unavailable")
+        return
+    }
+}
+
 @Test @MainActor func aFailedFocusedWindowReadPlansAsFailedWithItsReason() {
     let system = FakeWindowSystem()
     system.focusedWindowReadFails = true
@@ -955,6 +1014,13 @@ import Testing
 
 private extension WindowPlanOutcome {
     var readyPlan: WindowActionPlan? {
+        if case let .ready(plan) = self { return plan }
+        return nil
+    }
+}
+
+private extension WindowPlacementPlanOutcome {
+    var readyPlan: WindowPlacementPlan? {
         if case let .ready(plan) = self { return plan }
         return nil
     }

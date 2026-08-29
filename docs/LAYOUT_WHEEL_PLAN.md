@@ -243,7 +243,15 @@ Completion criteria:
 
 ## Step 3 — Exact preview and commit planning
 
-Status: **next**
+Status: **in progress**
+
+Progress:
+
+- [x] Add captured-window exact action and Custom Zone plans in
+  `WindowCoordinator`.
+- [x] Prove exact previews do not cycle, record history, or mutate frames.
+- [ ] Add the model preview result and Manual/Bento placement calculation.
+- [ ] Add exact model commit routing and result-pill failures.
 
 Files:
 
@@ -531,4 +539,9 @@ Completion criteria:
 - Completed Step 2. Added the schema-10 Layout Wheel configuration, defaults,
   safe normalization, dangling-zone cleanup, runtime change classification,
   and migration/round-trip tests. XcodeBuildMCP reported 31 configuration
-  tests and all 433 package tests passing. Step 3 is next.
+  tests and all 433 package tests passing.
+- Started Step 3. `WindowCoordinator` now plans exact actions and Custom Zones
+  for a captured window ID without touching shortcut cycling or history. Four
+  focused tests cover capture, cancel-safe preview, Custom Zone preview/commit,
+  and target loss. All 437 package tests pass. The model preview/commit routing
+  is the next subtask.
