@@ -23,7 +23,7 @@ public enum LayoutWheelSector: Int, Codable, CaseIterable, Sendable {
     case topLeft
 }
 
-public struct LayoutWheelSelection: Equatable, Sendable {
+public struct LayoutWheelSelection: Hashable, Sendable {
     public var ring: LayoutWheelRing
     public var sector: LayoutWheelSector
 

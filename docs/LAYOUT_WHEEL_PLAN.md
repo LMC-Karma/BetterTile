@@ -2,9 +2,9 @@
 
 Status: approved design; implementation may begin
 
-Current step: **4 — Shared glass wheel renderer**
+Current step: **5 — Layout Wheel settings destination**
 
-Last completed step: **3 — Exact preview and commit planning**
+Last completed step: **4 — Shared glass wheel renderer**
 
 Branch: `feat/layout-wheel`
 
@@ -135,7 +135,7 @@ pushed implementation is still required.
 - [x] Step 1 — Core selection geometry
 - [x] Step 2 — Commands and configuration migration
 - [x] Step 3 — Exact preview and commit planning
-- [ ] Step 4 — Shared glass wheel renderer
+- [x] Step 4 — Shared glass wheel renderer
 - [ ] Step 5 — Layout Wheel settings destination
 - [ ] Step 6 — Modifier gesture and runtime panel
 - [ ] Step 7 — Opt-in middle-click reservation
@@ -297,7 +297,7 @@ Completion criteria:
 
 ## Step 4 — Shared glass wheel renderer
 
-Status: **pending**
+Status: **complete**
 
 Files:
 
@@ -332,7 +332,7 @@ Completion criteria:
 
 ## Step 5 — Layout Wheel settings destination
 
-Status: **pending**
+Status: **current**
 
 Files:
 
@@ -551,3 +551,19 @@ Completion criteria:
   Known Layout Wheel failures now receive concise result-pill messages. All
   437 package tests pass, and the unsigned Debug macOS app builds successfully
   through XcodeBuildMCP.
+- Completed Step 4. `LayoutWheelView` in `BetterTileMacOS` renders one or two
+  rings from configuration and current selection. `LayoutWheelMetrics` holds
+  the radii once and exposes the Core `LayoutWheelGeometry`, so drawing and hit
+  testing cannot drift apart. Sectors distinguish selected, unavailable, Empty,
+  keyboard-focused, and normal states by fill, stroke weight, and dash pattern
+  as well as colour, and every sector speaks its direction, ring, command, and
+  availability. Reduce Transparency swaps glass for opaque semantic surfaces
+  and Reduce Motion removes the selection scale. Passing `onSelect` makes
+  sectors focusable buttons for Settings; the runtime panel omits it. Nine
+  focused tests cover symbol resolution, slot derivation, accessibility text,
+  drawing-to-hit-testing agreement, and hosting in both an `NSHostingView` and
+  a transparent nonactivating `NSPanel`. All 446 package tests pass and the
+  unsigned Debug macOS app builds.
+- Deferred the `NSVisualEffectView` fallback. Step 4 found no glass limitation
+  to work around; Step 6 validates glass in the live panel and adds the
+  fallback only if that validation finds one.
