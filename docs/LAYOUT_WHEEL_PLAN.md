@@ -138,7 +138,7 @@ pushed implementation is still required.
 - [x] Step 4 — Shared glass wheel renderer
 - [x] Step 5 — Layout Wheel settings destination
 - [x] Step 6 — Modifier gesture and runtime panel
-- [ ] Step 7 — Opt-in middle-click reservation
+- [x] Step 7 — Opt-in middle-click reservation
 - [ ] Step 8 — App lifecycle integration and accessibility
 - [ ] Step 9 — Full verification, documentation, and pull request
 
@@ -417,7 +417,7 @@ Completion criteria:
 
 ## Step 7 — Opt-in middle-click reservation
 
-Status: **current; security approval gate**
+Status: **complete**
 
 Files:
 
@@ -459,7 +459,7 @@ Completion criteria:
 
 ## Step 8 — App lifecycle integration and accessibility
 
-Status: **pending**
+Status: **current**
 
 Files:
 
@@ -675,9 +675,15 @@ Completion criteria:
   also succeeds, but its live launch reached the sibling-instance guard because
   the installed BetterTile was already running. The installed process was left
   untouched.
-- Step 7 remains current. Still required before it can be marked complete: a
-  dedicated signed-build session for Input Monitoring prompt/privacy-list
-  checks, browser and canvas middle-button checks before and after enablement,
-  the remaining visual and accessibility matrix, and maintainer approval of
-  the final event scope. No branch push or pull request should occur before
-  those checks and approval.
+- Completed Step 7's signed-runtime gate on macOS 26.6.2. With Accessibility
+  already granted, the suppressing tap started without an Input Monitoring
+  prompt and BetterTile Debug did not appear in the Input Monitoring list
+  before or after enablement.
+- A local Brave canvas received the complete middle-button down/up/aux-click
+  sequence before enablement, received no middle-button events while BetterTile
+  reserved the gesture, and received the sequence again immediately after the
+  option was disabled. The maintainer confirmed the physical middle-click path
+  during the live browser check and approved the final event scope.
+- Middle Click was left disabled after the check. Step 8 is now current. Its
+  automated lifecycle integration is already complete; the remaining work is
+  the visual and accessibility manual matrix recorded above.

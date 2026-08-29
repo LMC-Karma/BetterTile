@@ -183,17 +183,17 @@ with
 `defaults delete com.lmckarma.BetterTile disableLayoutWheelMiddleClick`.
 
 BetterTile does not call the API that requests Input Monitoring for either tap.
-The listen-only left-button tap has the signed-build validation recorded below.
-The suppressing middle-click tap still requires the signed-build privacy-list
-and prompt checks recorded in the Layout Wheel implementation plan before it
-can ship.
+Both taps have the signed-build validation recorded below.
 
 The maintainer design and least-privilege review is recorded in
 [pull request #36](https://github.com/LMC-Karma/BetterTile/pull/36). Validation
 on macOS 26.5.2 confirmed that a personally signed build with Accessibility
 granted created the tap without an Input Monitoring prompt and did not appear
-in the Input Monitoring application list. The Setup Assistant and Settings
-explain the observed event scope before the Accessibility request.
+in the Input Monitoring application list. Validation on macOS 26.6.2 confirmed
+the same behavior for the suppressing middle-click tap. Middle-button events
+reached a browser canvas before enablement, were reserved while enabled, and
+reached the canvas again immediately after disablement. The Setup Assistant
+and Settings explain the observed event scope before the Accessibility request.
 
 Runtime dependencies are allowed after reviewing necessity, maintenance,
 security history, license compatibility, update strategy, and removal cost.
