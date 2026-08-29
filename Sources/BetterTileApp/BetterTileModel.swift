@@ -39,6 +39,7 @@ final class BetterTileModel {
     private let dragSnap: DragSnapController
     private let titleBarDoubleClick: TitleBarDoubleClickController
     private let linkedResize: LinkedResizeController
+    private let layoutWheel: LayoutWheelController
     private let sharedGestureEvents: SharedGestureEventMonitor
     private let dividerResize: DividerOverlayController
     private var resultPill: ResultPillController?
@@ -89,11 +90,17 @@ final class BetterTileModel {
         )
         titleBarDoubleClick.applicationRules = loaded.applicationRules
         linkedResize = LinkedResizeController(coordinator: coordinator, configuration: loaded)
+        layoutWheel = LayoutWheelController(configuration: loaded)
         sharedGestureEvents = SharedGestureEventMonitor()
         dividerResize = DividerOverlayController(coordinator: coordinator, configuration: loaded)
 
         shortcuts.isEnabled = loaded.keyboardShortcutsEnabled
-        shortcuts.setHandler { [weak self] action in self?.perform(action) }
+        shortcuts.setHandler { [weak self] action in
+            // The wheel and this shortcut share held modifiers. Running the
+            // shortcut means the user was never opening a wheel.
+            self?.layoutWheel.cancelPendingActivation()
+            self?.perform(action)
+        }
         dragSnap.activeModeProvider = { [weak self] displayID in self?.activeMode(for: displayID) }
         dragSnap.bentoStateProvider = { [weak self] displayID in self?.sessionStore.session(for: displayID)?.bentoState }
         dragSnap.bentoDragBeganHandler = { [weak self] displayID, sourceID in
@@ -161,6 +168,17 @@ final class BetterTileModel {
         linkedResize.layoutChangedHandler = { [weak self] _, _ in
             self?.refreshDividerBoundaries()
         }
+        layoutWheel.captureHandler = { [weak self] in self?.captureLayoutWheelTarget() }
+        layoutWheel.previewHandler = { [weak self] command, windowID in
+            guard let self else { return .unavailable(reason: "BetterTile is not available.") }
+            switch previewLayoutWheel(command, for: windowID) {
+            case let .ready(placements, _): return .ready(placements: placements)
+            case let .unavailable(reason): return .unavailable(reason: reason)
+            }
+        }
+        layoutWheel.commitHandler = { [weak self] command, windowID in
+            self?.performLayoutWheel(command, for: windowID)
+        }
         sharedGestureEvents.eventHandler = { [weak self] event in
             self?.dragSnap.handleSharedGestureEvent(event)
             self?.linkedResize.handleSharedGestureEvent(event)
@@ -173,6 +191,7 @@ final class BetterTileModel {
         dragSnap.start()
         titleBarDoubleClick.start()
         linkedResize.start()
+        layoutWheel.start()
         refreshPermission()
         installWorkspaceTriggers()
         system.startDockFootprintMonitoring { [weak self] in
@@ -338,6 +357,27 @@ final class BetterTileModel {
                 error: statusMessage,
                 displayID: proposal.display.id
             )
+        }
+    }
+
+    /// The focused eligible window and its display, taken once when the hold
+    /// succeeds. Returns nil when there is nothing the wheel may act on, which
+    /// leaves the wheel closed rather than opening over an ineligible window.
+    private func captureLayoutWheelTarget() -> LayoutWheelTarget? {
+        guard hasAccessibilityPermission else { return nil }
+        do {
+            guard let window = try system.focusedWindow(),
+                  window.isEligible,
+                  rule(for: window).allowsDirectPlacement,
+                  let display = system.displays().first(where: { $0.id == window.displayID })
+            else { return nil }
+            return LayoutWheelTarget(
+                windowID: window.id,
+                displayID: window.displayID,
+                visibleFrame: display.visibleFrame
+            )
+        } catch {
+            return nil
         }
     }
 
@@ -1120,7 +1160,10 @@ final class BetterTileModel {
         syncSharedGestureMonitoring()
 
         guard changed else { return trusted }
-        if !trusted { dragSnap.cancel() }
+        if !trusted {
+            dragSnap.cancel()
+            layoutWheel.cancel()
+        }
         system.resetCachedWindows()
         if trusted {
             isWaitingForAccessibilityPermission = false
@@ -1220,6 +1263,7 @@ final class BetterTileModel {
         shortcuts.stop()
         sharedGestureEvents.stop()
         dragSnap.stop()
+        layoutWheel.stop()
         titleBarDoubleClick.stop()
         linkedResize.stop()
         dividerResize.hideAndCancel()
@@ -1255,6 +1299,9 @@ final class BetterTileModel {
         defer { Self.signposter.endInterval("applyConfiguration", interval) }
         if !changes.isDisjoint(with: [.snapping, .bentoGeometry, .applicationRules]) {
             dragSnap.configuration = configuration
+        }
+        if changes.contains(.layoutWheel) {
+            layoutWheel.configuration = configuration
         }
         if !changes.isDisjoint(with: [.linkedResize, .applicationRules]) {
             linkedResize.configuration = configuration
@@ -1493,6 +1540,11 @@ final class BetterTileModel {
 
     private func receiveWindowSystemEvent(_ event: WindowSystemEvent) {
         guard !isStabilizingSpace else { return }
+        // A wheel aimed at a window that just went away must not fall through to
+        // whatever replaces it.
+        if let windowID = event.windowID, event.kind == .destroyed || event.kind == .minimized {
+            layoutWheel.handleTargetLost(windowID: windowID)
+        }
         if let activeBentoDrag {
             bentoDragEventBuffer.record(event)
             if let windowID = event.windowID,

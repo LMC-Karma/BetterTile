@@ -764,7 +764,7 @@ private final class SnapPreviewPanel {
 }
 
 @MainActor
-private enum BentoPreviewMetrics {
+enum BentoPreviewMetrics {
     static let cornerRadius: CGFloat = 11
     static let screenInset: CGFloat = 8
     static let cuePanelInset: CGFloat = 2
@@ -1244,7 +1244,9 @@ private final class BentoLandingView: NSView {
 }
 
 @MainActor
-private final class BentoWireframeView: NSView {
+/// Shared by Bento drop previews and the Layout Wheel so both speak the same
+/// visual language for "this window is going here".
+final class BentoWireframeView: NSView {
     override var isOpaque: Bool { false }
 
     override func draw(_ dirtyRect: NSRect) {

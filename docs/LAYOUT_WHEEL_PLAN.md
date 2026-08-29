@@ -2,9 +2,9 @@
 
 Status: approved design; implementation may begin
 
-Current step: **6 — Modifier gesture and runtime panel**
+Current step: **7 — Opt-in middle-click reservation**
 
-Last completed step: **5 — Layout Wheel settings destination**
+Last completed step: **6 — Modifier gesture and runtime panel**
 
 Branch: `feat/layout-wheel`
 
@@ -137,7 +137,7 @@ pushed implementation is still required.
 - [x] Step 3 — Exact preview and commit planning
 - [x] Step 4 — Shared glass wheel renderer
 - [x] Step 5 — Layout Wheel settings destination
-- [ ] Step 6 — Modifier gesture and runtime panel
+- [x] Step 6 — Modifier gesture and runtime panel
 - [ ] Step 7 — Opt-in middle-click reservation
 - [ ] Step 8 — App lifecycle integration and accessibility
 - [ ] Step 9 — Full verification, documentation, and pull request
@@ -372,7 +372,7 @@ Completion criteria:
 
 ## Step 6 — Modifier gesture and runtime panel
 
-Status: **current**
+Status: **complete**
 
 Files:
 
@@ -417,7 +417,7 @@ Completion criteria:
 
 ## Step 7 — Opt-in middle-click reservation
 
-Status: **pending; security approval gate**
+Status: **current; security approval gate**
 
 Files:
 
@@ -602,3 +602,43 @@ Completion criteria:
   two failures it can check itself: missing Accessibility permission, and the
   wheel being enabled with no trigger. Hot-key and event-tap registration
   failures belong to Steps 6 and 7, which own those components.
+- Completed Step 6. `LayoutWheelController` owns the gesture: a modifier hold,
+  the captured target, the panel, pointer and keyboard selection, and every way
+  the gesture ends. It never mutates a window; it asks for previews and makes at
+  most one commit request. `LayoutWheelPanelPresenter` draws the wheel in a
+  borderless nonactivating panel that ignores mouse events, and reuses the Bento
+  wireframe view for placement previews so both features speak one visual
+  language.
+- Put the deterministic parts in Core: `LayoutWheelPlacement.clamped` and
+  `LayoutWheelKeyboard`. Clamping moves only the drawn centre; the anchor stays
+  where the pointer was, so a wheel opened in a corner still reads "right" as
+  the right sector.
+- Added an arming rule the plan did not name. After a gesture ends, the trigger
+  must be released before another can start. Without it the hold that just
+  committed immediately began a second activation.
+- Left the trigger an exact modifier match. Control + Option + Command stays a
+  different combination instead of opening a wheel the user did not ask for.
+- Verified: 475 package tests pass, including 19 controller tests covering
+  pending activation, early release, a conflicting key, a successful hold,
+  pointer jitter in the hub, dead-band and Empty release, ring changes, commit,
+  Escape, target loss, trigger reconfiguration, disablement, stop, and
+  exactly-once commit under duplicate release and deactivation. The drag
+  snapping, linked resize, shortcut, and shared gesture suites all still pass.
+- Simplified two things deliberately. There is no separate pointer-ownership
+  threshold: the hub radius already is that threshold, and a second one would be
+  a second name for one concept. Preview placements drop the Bento minimized
+  window set, which the wireframe language has no way to show yet.
+- Deviated from the step's file list. The controller is wired in
+  `BetterTileModel.swift`, not `BetterTileApp.swift`, because that is where the
+  sibling controllers are owned.
+- Not verified, and outstanding for a live check: the keyboard-triggered wheel
+  end to end in Manual and Bento modes, glass in the live panel, and that a
+  held Control + Option shortcut produces no wheel flash on real hardware. The
+  automated tests cover the decision paths, not AppKit event delivery.
+- Blocking before the pull request: this step broadens BetterTile's observed
+  event scope. `SECURITY.md` and the Settings disclosure both say BetterTile
+  listens only for global left-button gesture ordering. The wheel adds a global
+  `flagsChanged` monitor while the trigger is enabled, and global `keyDown` and
+  pointer monitors that exist only for the life of one gesture. These are
+  observation-only `NSEvent` monitors, not event taps, but the user-facing
+  statement is now incomplete and needs maintainer review and rewording.

@@ -199,3 +199,122 @@ public struct LayoutWheelGeometry: Sendable {
         return LayoutWheelSelection(ring: ring, sector: sector)
     }
 }
+
+public extension LayoutWheelConfiguration {
+    /// The command a sector carries, or nil for Empty. Reading through one
+    /// accessor keeps the renderer, the runtime gesture, and Settings agreeing
+    /// about a slot list that hand-edited configuration could leave short.
+    func command(at selection: LayoutWheelSelection) -> LayoutWheelCommand? {
+        let slots = selection.ring == .inner ? innerSlots : outerSlots
+        guard slots.indices.contains(selection.sector.rawValue) else { return nil }
+        return slots[selection.sector.rawValue]
+    }
+
+    var activeRings: [LayoutWheelRing] {
+        levelCount == .one ? [.inner] : [.inner, .outer]
+    }
+}
+
+/// Where the wheel is drawn, and where pointer directions are measured from.
+public struct LayoutWheelPlacement: Equatable, Sendable {
+    /// The pointer position when the wheel opened. Selection is always measured
+    /// from here.
+    public var anchor: BTPoint
+    /// The drawn centre, which clamping can move away from the anchor.
+    public var center: BTPoint
+    public var diameter: Double
+
+    public init(anchor: BTPoint, center: BTPoint, diameter: Double) {
+        self.anchor = anchor
+        self.center = center
+        self.diameter = diameter
+    }
+
+    public var frame: BTRect {
+        BTRect(
+            x: center.x - diameter / 2,
+            y: center.y - diameter / 2,
+            width: diameter,
+            height: diameter
+        )
+    }
+
+    /// Opens the wheel under the pointer, then slides the drawing back onto the
+    /// display if it would hang off an edge.
+    ///
+    /// Clamping moves only `center`. `anchor` stays where the pointer was, so a
+    /// wheel opened near a corner still reads "right" as the right sector
+    /// instead of rotating every direction toward the display middle.
+    public static func clamped(
+        anchor: BTPoint,
+        diameter: Double,
+        visibleFrame: BTRect
+    ) -> LayoutWheelPlacement {
+        let radius = diameter / 2
+        let center: BTPoint
+        if visibleFrame.size.width < diameter || visibleFrame.size.height < diameter {
+            // Too small to hold the wheel; centring keeps as much on screen as
+            // possible instead of pinning it to one edge.
+            center = visibleFrame.center
+        } else {
+            center = BTPoint(
+                x: min(max(anchor.x, visibleFrame.minX + radius), visibleFrame.maxX - radius),
+                y: min(max(anchor.y, visibleFrame.minY + radius), visibleFrame.maxY - radius)
+            )
+        }
+        return LayoutWheelPlacement(anchor: anchor, center: center, diameter: diameter)
+    }
+}
+
+public enum LayoutWheelKey: Equatable, Sendable {
+    case escape
+    case commit
+    case switchRing
+    case previousSector
+    case nextSector
+    case outerRing
+    case innerRing
+}
+
+public enum LayoutWheelKeyboard {
+    /// Where a key moves the selection, or nil to leave it on the cancel hub.
+    ///
+    /// Left and right step around the current ring, up and down move between
+    /// rings, and Tab switches rings. With nothing selected any of them enters
+    /// the wheel at the top of the inner ring, so a keyboard user never has to
+    /// find a sector with the pointer first.
+    public static func selection(
+        for key: LayoutWheelKey,
+        from current: LayoutWheelSelection?,
+        levelCount: LayoutWheelLevelCount
+    ) -> LayoutWheelSelection? {
+        guard let current else {
+            switch key {
+            case .escape, .commit: return nil
+            default: return LayoutWheelSelection(ring: .inner, sector: .top)
+            }
+        }
+
+        let sectorCount = LayoutWheelSector.allCases.count
+        switch key {
+        case .escape, .commit:
+            return current
+        case .previousSector, .nextSector:
+            let step = key == .nextSector ? 1 : -1
+            let index = (current.sector.rawValue + step + sectorCount) % sectorCount
+            guard let sector = LayoutWheelSector(rawValue: index) else { return current }
+            return LayoutWheelSelection(ring: current.ring, sector: sector)
+        case .switchRing:
+            guard levelCount == .two else { return current }
+            return LayoutWheelSelection(
+                ring: current.ring == .inner ? .outer : .inner,
+                sector: current.sector
+            )
+        case .outerRing:
+            guard levelCount == .two else { return current }
+            return LayoutWheelSelection(ring: .outer, sector: current.sector)
+        case .innerRing:
+            return LayoutWheelSelection(ring: .inner, sector: current.sector)
+        }
+    }
+}

@@ -1,0 +1,576 @@
+import AppKit
+import BetterTileCore
+import Foundation
+import SwiftUI
+import os
+
+/// The window and display captured when the wheel opened.
+///
+/// The gesture keeps this for its whole life. Losing the window cancels the
+/// gesture rather than retargeting, so a wheel opened over one window can never
+/// apply to whatever happens to be focused by the time the user releases.
+public struct LayoutWheelTarget: Equatable, Sendable {
+    public var windowID: WindowID
+    public var displayID: DisplayID
+    public var visibleFrame: BTRect
+
+    public init(windowID: WindowID, displayID: DisplayID, visibleFrame: BTRect) {
+        self.windowID = windowID
+        self.displayID = displayID
+        self.visibleFrame = visibleFrame
+    }
+}
+
+public enum LayoutWheelPreviewOutcome: Equatable, Sendable {
+    case ready(placements: [Placement])
+    case unavailable(reason: String)
+}
+
+/// What the presenter needs to draw. A value type so tests can assert exactly
+/// what the runtime asked for without a live panel.
+public struct LayoutWheelPresentation: Equatable, Sendable {
+    public var configuration: LayoutWheelConfiguration
+    public var customZones: [CustomZone]
+    public var placement: LayoutWheelPlacement
+    public var selection: LayoutWheelSelection?
+    public var unavailableCommands: Set<LayoutWheelCommand>
+}
+
+@MainActor
+protocol LayoutWheelPresenting: AnyObject {
+    func open(_ presentation: LayoutWheelPresentation)
+    func update(_ presentation: LayoutWheelPresentation)
+    func showPlacements(_ placements: [Placement])
+    func hidePlacements()
+    func close()
+}
+
+/// Owns the Layout Wheel gesture: the activation hold, the captured target, the
+/// panel, pointer and keyboard selection, and every way the gesture can end.
+///
+/// It never mutates a window. Selection produces previews and one commit
+/// request; the model decides what those mean.
+@MainActor
+public final class LayoutWheelController {
+    public static let activationDelay: Duration = .milliseconds(220)
+
+    public var configuration: BetterTileConfiguration {
+        didSet {
+            guard configuration.layoutWheel != oldValue.layoutWheel else { return }
+            // Changing the trigger or the assignments mid-gesture would apply
+            // something the user never aimed at.
+            cancel()
+            syncMonitoring()
+        }
+    }
+
+    /// Returns the window and display to act on, or nil when nothing is
+    /// eligible. Called once, when the hold succeeds.
+    public var captureHandler: (() -> LayoutWheelTarget?)?
+    public var previewHandler: ((LayoutWheelCommand, WindowID) -> LayoutWheelPreviewOutcome)?
+    public var commitHandler: ((LayoutWheelCommand, WindowID) -> Void)?
+    public var gestureEndedHandler: (() -> Void)?
+
+    public var isOpen: Bool {
+        if case .open = phase { return true }
+        return false
+    }
+
+    public var isPendingActivation: Bool {
+        if case .pending = phase { return true }
+        return false
+    }
+
+    private static let log = Logger(
+        subsystem: "com.lmckarma.BetterTile",
+        category: "LayoutWheel"
+    )
+
+    private enum Phase {
+        case idle
+        case pending(generation: Int)
+        case open(Session)
+    }
+
+    private struct Session {
+        var target: LayoutWheelTarget
+        var placement: LayoutWheelPlacement
+        var selection: LayoutWheelSelection?
+        var unavailableCommands: Set<LayoutWheelCommand> = []
+    }
+
+    private let presenter: LayoutWheelPresenting
+    private let metrics: LayoutWheelMetrics
+    private let activationDelay: Duration
+    private let pointerProvider: @MainActor () -> BTPoint
+    private var phase = Phase.idle
+    private var activationTask: Task<Void, Never>?
+    private var activationGeneration = 0
+    /// Blocks a second gesture while the trigger is still held. Without it the
+    /// hold that just committed would immediately start another activation.
+    private var isArmed = true
+    private var isStarted = false
+    private var flagsMonitor: Any?
+    private var keyMonitor: Any?
+    private var pointerMonitor: Any?
+
+    public convenience init(configuration: BetterTileConfiguration) {
+        self.init(configuration: configuration, presenter: LayoutWheelPanelPresenter())
+    }
+
+    init(
+        configuration: BetterTileConfiguration,
+        presenter: LayoutWheelPresenting,
+        metrics: LayoutWheelMetrics = .standard,
+        activationDelay: Duration = LayoutWheelController.activationDelay,
+        pointerProvider: @escaping @MainActor () -> BTPoint = LayoutWheelController.systemPointerPosition
+    ) {
+        self.configuration = configuration
+        self.presenter = presenter
+        self.metrics = metrics
+        self.activationDelay = activationDelay
+        self.pointerProvider = pointerProvider
+    }
+
+    // MARK: - Lifecycle
+
+    public func start() {
+        isStarted = true
+        syncMonitoring()
+    }
+
+    public func stop() {
+        isStarted = false
+        cancel()
+        syncMonitoring()
+    }
+
+    private var wheel: LayoutWheelConfiguration { configuration.layoutWheel }
+
+    private var isKeyboardTriggerEnabled: Bool {
+        wheel.isEnabled && wheel.keyboardTriggerEnabled
+    }
+
+    /// Watches modifiers while the trigger is enabled, and nothing else.
+    ///
+    /// Key and pointer monitors exist only for the life of one gesture: the key
+    /// monitor from the moment the hold starts, the pointer monitor from the
+    /// moment the wheel opens. Outside a gesture BetterTile observes no
+    /// keystrokes and no pointer movement for this feature.
+    private func syncMonitoring() {
+        if isStarted, isKeyboardTriggerEnabled {
+            if flagsMonitor == nil {
+                flagsMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.flagsChanged]) { event in
+                    let modifiers = ShortcutModifiers(event.modifierFlags)
+                    Task { @MainActor [weak self] in self?.handleModifiers(modifiers) }
+                }
+            }
+        } else if let flagsMonitor {
+            NSEvent.removeMonitor(flagsMonitor)
+            self.flagsMonitor = nil
+        }
+        syncGestureMonitors()
+    }
+
+    private func syncGestureMonitors() {
+        let needsKeys: Bool
+        let needsPointer: Bool
+        switch phase {
+        case .idle:
+            needsKeys = false
+            needsPointer = false
+        case .pending:
+            needsKeys = true
+            needsPointer = false
+        case .open:
+            needsKeys = true
+            needsPointer = true
+        }
+
+        if needsKeys, keyMonitor == nil {
+            keyMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.keyDown]) { event in
+                let keyCode = event.keyCode
+                Task { @MainActor [weak self] in self?.handleKeyDown(keyCode: keyCode) }
+            }
+        } else if !needsKeys, let keyMonitor {
+            NSEvent.removeMonitor(keyMonitor)
+            self.keyMonitor = nil
+        }
+
+        if needsPointer, pointerMonitor == nil {
+            pointerMonitor = NSEvent.addGlobalMonitorForEvents(
+                matching: [.mouseMoved, .leftMouseDragged, .rightMouseDragged, .otherMouseDragged]
+            ) { _ in
+                Task { @MainActor [weak self] in
+                    guard let self, let frame = NSScreen.screens.first?.frame else { return }
+                    handlePointer(GlobalGestureEvent.position(
+                        nsEventMouseLocation: NSEvent.mouseLocation,
+                        primaryScreenFrame: frame
+                    ))
+                }
+            }
+        } else if !needsPointer, let pointerMonitor {
+            NSEvent.removeMonitor(pointerMonitor)
+            self.pointerMonitor = nil
+        }
+    }
+
+    // MARK: - Trigger
+
+    /// A modifier change either starts the activation hold, or ends whatever
+    /// the gesture was doing.
+    func handleModifiers(_ modifiers: ShortcutModifiers) {
+        let supported = modifiers.intersection(LayoutWheelConfiguration.supportedKeyboardModifiers)
+        // Exact match, so Control + Option + Command stays a different combination
+        // and does not open a wheel the user did not ask for.
+        let matchesTrigger = supported == wheel.keyboardModifiers
+
+        guard matchesTrigger else {
+            isArmed = true
+            switch phase {
+            case .idle: break
+            case .pending: cancelPendingActivation()
+            case .open: release()
+            }
+            return
+        }
+
+        guard isKeyboardTriggerEnabled, isArmed, case .idle = phase else { return }
+        beginPendingActivation()
+    }
+
+    private func beginPendingActivation() {
+        activationGeneration &+= 1
+        let generation = activationGeneration
+        phase = .pending(generation: generation)
+        syncGestureMonitors()
+        activationTask?.cancel()
+        activationTask = Task { @MainActor [weak self, activationDelay] in
+            try? await Task.sleep(for: activationDelay)
+            guard !Task.isCancelled else { return }
+            self?.handleActivationDeadline(generation: generation)
+        }
+    }
+
+    /// Any ordinary key press during the hold means the user is running a
+    /// keyboard shortcut, not opening the wheel.
+    public func cancelPendingActivation() {
+        guard case .pending = phase else { return }
+        activationTask?.cancel()
+        activationTask = nil
+        phase = .idle
+        syncGestureMonitors()
+        // The trigger modifiers are still down; do not reopen until released.
+        isArmed = false
+    }
+
+    private func handleKeyDown(keyCode: UInt16) {
+        if isOpen, let key = LayoutWheelKey(keyCode: keyCode) {
+            handleKey(key)
+            return
+        }
+        cancelPendingActivation()
+    }
+
+    func handleActivationDeadline(generation: Int) {
+        guard case let .pending(pending) = phase, pending == generation else { return }
+        activationTask = nil
+        open()
+    }
+
+    // MARK: - Session
+
+    private func open() {
+        guard let target = captureHandler?() else {
+            // Nothing eligible to act on. Do not open an empty wheel.
+            phase = .idle
+            syncGestureMonitors()
+            isArmed = false
+            return
+        }
+        let anchor = pointerProvider()
+        let placement = LayoutWheelPlacement.clamped(
+            anchor: anchor,
+            diameter: metrics.diameter(for: wheel.levelCount),
+            visibleFrame: target.visibleFrame
+        )
+        var session = Session(target: target, placement: placement)
+        session.selection = selection(for: anchor, placement: placement)
+        phase = .open(session)
+        syncGestureMonitors()
+        presenter.open(presentation(for: session))
+        refreshPreview()
+    }
+
+    func handlePointer(_ position: BTPoint) {
+        guard case var .open(session) = phase else { return }
+        let updated = selection(for: position, placement: session.placement)
+        guard updated != session.selection else { return }
+        session.selection = updated
+        phase = .open(session)
+        presenter.update(presentation(for: session))
+        refreshPreview()
+    }
+
+    func handleKey(_ key: LayoutWheelKey) {
+        guard case var .open(session) = phase else { return }
+        switch key {
+        case .escape:
+            cancel()
+        case .commit:
+            release()
+        default:
+            let updated = LayoutWheelKeyboard.selection(
+                for: key,
+                from: session.selection,
+                levelCount: wheel.levelCount
+            )
+            guard updated != session.selection else { return }
+            session.selection = updated
+            phase = .open(session)
+            presenter.update(presentation(for: session))
+            refreshPreview()
+        }
+    }
+
+    /// Selection is measured from the anchor, never from the drawn centre, so
+    /// clamping the wheel onto the display cannot rotate the directions.
+    private func selection(
+        for position: BTPoint,
+        placement: LayoutWheelPlacement
+    ) -> LayoutWheelSelection? {
+        metrics.geometry.selection(
+            for: BTPoint(
+                x: position.x - placement.anchor.x,
+                y: position.y - placement.anchor.y
+            ),
+            levelCount: wheel.levelCount
+        )
+    }
+
+    private func presentation(for session: Session) -> LayoutWheelPresentation {
+        LayoutWheelPresentation(
+            configuration: wheel,
+            customZones: configuration.customZones,
+            placement: session.placement,
+            selection: session.selection,
+            unavailableCommands: session.unavailableCommands
+        )
+    }
+
+    /// Previews are planning only. An unavailable command marks its sector and
+    /// shows nothing, so the wheel never implies a placement that cannot happen.
+    private func refreshPreview() {
+        guard case var .open(session) = phase else { return }
+        guard let selection = session.selection,
+              let command = wheel.command(at: selection)
+        else {
+            presenter.hidePlacements()
+            return
+        }
+        switch previewHandler?(command, session.target.windowID) {
+        case let .ready(placements):
+            session.unavailableCommands.remove(command)
+            phase = .open(session)
+            presenter.update(presentation(for: session))
+            presenter.showPlacements(placements)
+        case let .unavailable(reason):
+            session.unavailableCommands.insert(command)
+            phase = .open(session)
+            presenter.update(presentation(for: session))
+            presenter.hidePlacements()
+            Self.log.debug("layout wheel command unavailable: \(reason, privacy: .public)")
+        case nil:
+            presenter.hidePlacements()
+        }
+    }
+
+    // MARK: - Ending
+
+    /// Releasing the trigger. Commits the selected command exactly once, or
+    /// cancels when the release lands on the hub, the dead band, or Empty.
+    func release() {
+        guard case let .open(session) = phase else { return }
+        // Ending the phase first makes a duplicate release a no-op, so a
+        // repeated flagsChanged or a deactivation cannot commit twice.
+        finish()
+        guard let selection = session.selection,
+              let command = wheel.command(at: selection)
+        else { return }
+        commitHandler?(command, session.target.windowID)
+    }
+
+    public func cancel() {
+        guard case .open = phase else {
+            cancelPendingActivation()
+            return
+        }
+        finish()
+    }
+
+    /// The captured window went away. The gesture ends rather than moving on to
+    /// whatever replaced it.
+    public func handleTargetLost(windowID: WindowID) {
+        guard case let .open(session) = phase, session.target.windowID == windowID else { return }
+        cancel()
+    }
+
+    public func handleApplicationDeactivated() {
+        cancel()
+    }
+
+    private func finish() {
+        phase = .idle
+        activationTask?.cancel()
+        activationTask = nil
+        isArmed = false
+        syncGestureMonitors()
+        presenter.hidePlacements()
+        presenter.close()
+        gestureEndedHandler?()
+    }
+
+    static func systemPointerPosition() -> BTPoint {
+        guard let frame = NSScreen.screens.first?.frame else { return BTPoint(x: 0, y: 0) }
+        return GlobalGestureEvent.position(
+            nsEventMouseLocation: NSEvent.mouseLocation,
+            primaryScreenFrame: frame
+        )
+    }
+}
+
+extension LayoutWheelKey {
+    /// Only the keys the wheel acts on. Everything else stays an ordinary key
+    /// press for the focused application.
+    init?(keyCode: UInt16) {
+        switch keyCode {
+        case 53: self = .escape
+        case 36, 76: self = .commit
+        case 48: self = .switchRing
+        case 123: self = .previousSector
+        case 124: self = .nextSector
+        case 126: self = .outerRing
+        case 125: self = .innerRing
+        default: return nil
+        }
+    }
+}
+
+/// Presents the wheel in a borderless, nonactivating panel that never takes key
+/// focus, plus the shared wireframe preview panels.
+@MainActor
+final class LayoutWheelPanelPresenter: LayoutWheelPresenting {
+    private let panel: NSPanel
+    private var hosting: NSHostingView<LayoutWheelView>?
+    private var wireframePanels: [WindowID: NSPanel] = [:]
+    private var diameter: Double = 0
+
+    init() {
+        panel = NSPanel(
+            contentRect: .zero,
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered,
+            defer: true
+        )
+        panel.level = .statusBar
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hasShadow = false
+        // The wheel is driven by global pointer events, so it must never take a
+        // click away from the window underneath it.
+        panel.ignoresMouseEvents = true
+        panel.collectionBehavior = [.moveToActiveSpace, .transient, .ignoresCycle, .fullScreenAuxiliary]
+    }
+
+    func open(_ presentation: LayoutWheelPresentation) {
+        let view = NSHostingView(rootView: LayoutWheelView(presentation))
+        hosting = view
+        panel.contentView = view
+        diameter = presentation.placement.diameter
+        position(view: view, at: presentation.placement)
+        panel.orderFrontRegardless()
+    }
+
+    func update(_ presentation: LayoutWheelPresentation) {
+        guard let hosting else { return }
+        hosting.rootView = LayoutWheelView(presentation)
+        position(view: hosting, at: presentation.placement)
+    }
+
+    func close() {
+        panel.orderOut(nil)
+        panel.contentView = nil
+        hosting = nil
+    }
+
+    func showPlacements(_ placements: [Placement]) {
+        guard let mainFrame = NSScreen.screens.first?.frame else { return }
+        let ids = Set(placements.map(\.windowID))
+        for id in wireframePanels.keys where !ids.contains(id) {
+            wireframePanels.removeValue(forKey: id)?.orderOut(nil)
+        }
+        for placement in placements {
+            let wireframe = wireframePanels[placement.windowID] ?? makeWireframePanel(id: placement.windowID)
+            wireframe.setFrame(
+                CoordinateConverter.toAppKit(placement.frame, mainScreenFrame: mainFrame)
+                    .insetBy(
+                        dx: BentoPreviewMetrics.motionPanelInset,
+                        dy: BentoPreviewMetrics.motionPanelInset
+                    ),
+                display: true
+            )
+            wireframe.orderFrontRegardless()
+        }
+    }
+
+    func hidePlacements() {
+        for wireframe in wireframePanels.values { wireframe.orderOut(nil) }
+        wireframePanels.removeAll()
+    }
+
+    private func makeWireframePanel(id: WindowID) -> NSPanel {
+        let wireframe = NSPanel(
+            contentRect: .zero,
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered,
+            defer: true
+        )
+        wireframe.level = .floating
+        wireframe.isOpaque = false
+        wireframe.backgroundColor = .clear
+        wireframe.hasShadow = false
+        wireframe.ignoresMouseEvents = true
+        wireframe.collectionBehavior = [.moveToActiveSpace, .transient, .ignoresCycle]
+        wireframe.contentView = BentoWireframeView()
+        wireframePanels[id] = wireframe
+        return wireframe
+    }
+
+    /// The wheel's circle, not the whole view, is what sits on the placement
+    /// centre. The command caption hangs below it.
+    private func position(view: NSView, at placement: LayoutWheelPlacement) {
+        guard let mainFrame = NSScreen.screens.first?.frame else { return }
+        let size = view.fittingSize
+        let frame = BTRect(
+            x: placement.center.x - size.width / 2,
+            y: placement.center.y - placement.diameter / 2,
+            width: size.width,
+            height: size.height
+        )
+        panel.setFrame(
+            CoordinateConverter.toAppKit(frame, mainScreenFrame: mainFrame),
+            display: true
+        )
+    }
+}
+
+private extension LayoutWheelView {
+    init(_ presentation: LayoutWheelPresentation) {
+        self.init(
+            configuration: presentation.configuration,
+            customZones: presentation.customZones,
+            selection: presentation.selection,
+            unavailableCommands: presentation.unavailableCommands
+        )
+    }
+}
