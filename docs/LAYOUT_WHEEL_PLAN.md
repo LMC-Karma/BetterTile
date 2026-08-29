@@ -459,7 +459,7 @@ Completion criteria:
 
 ## Step 8 — App lifecycle integration and accessibility
 
-Status: **current**
+Status: **complete**
 
 Files:
 
@@ -477,8 +477,8 @@ Work:
 - Verify Reduce Motion removes scale/movement, Reduce Transparency is opaque,
   Increase Contrast strengthens separators, and unavailable state does not rely
   on color.
-- Ensure VoiceOver and keyboard users can configure and operate every
-  non-pointer path.
+- Ensure keyboard users can configure and operate every non-pointer path, and
+  expose complete accessibility labels for assistive technologies.
 - Ensure the wheel joins appropriate Spaces without appearing in screenshots or
   apps where BetterTile is inactive.
 
@@ -492,7 +492,7 @@ Completion criteria:
 
 ## Step 9 — Full verification, documentation, and pull request
 
-Status: **pending**
+Status: **current**
 
 Work:
 
@@ -506,8 +506,8 @@ Work:
   signing context is available.
 - Manually verify one/two levels, every trigger, every cancellation path,
   Manual/Bento previews, all display edges, Spaces, target loss, light/dark,
-  Increase Contrast, Reduce Motion, Reduce Transparency, VoiceOver, keyboard
-  operation, and the middle-click security checks.
+  Increase Contrast, Reduce Motion, Reduce Transparency, keyboard operation,
+  and the middle-click security checks.
 - Update screenshots or user documentation only if the repository already has
   a maintained destination for them.
 - Run a standards-and-spec review against `origin/main`. Fix confirmed faults.
@@ -684,6 +684,23 @@ Completion criteria:
   reserved the gesture, and received the sequence again immediately after the
   option was disabled. The maintainer confirmed the physical middle-click path
   during the live browser check and approved the final event scope.
-- Middle Click was left disabled after the check. Step 8 is now current. Its
-  automated lifecycle integration is already complete; the remaining work is
-  the visual and accessibility manual matrix recorded above.
+- Middle Click was left disabled after the check. Step 8 became current with
+  its automated lifecycle integration already complete; only the visual and
+  accessibility manual matrix remained.
+- Completed Step 8's signed-runtime matrix on macOS 26.6.2. XcodeBuildMCP
+  reported all 61 focused Layout Wheel tests passing. The 920-by-592 minimum
+  Settings window remained readable and scrollable in Light and Dark without
+  horizontal clipping, and the app-local appearance was restored to System.
+- The maintainer confirmed that the physical Control + Option hold opens the
+  wheel. Disabling and re-enabling Layout Wheel in the signed app persisted
+  both transitions immediately and restored the original enabled state;
+  shutdown coverage remains in the focused lifecycle tests.
+- Increase Contrast added stronger control outlines and sector separators.
+  Reduce Transparency replaced translucent surfaces with opaque semantic
+  surfaces. Reduce Motion removed the selected-sector scale. Each macOS
+  accessibility setting was enabled alone and restored to its original off
+  state immediately after its check.
+- The maintainer waived a live VoiceOver speech pass. Focused tests still cover
+  every sector's accessibility label, availability description, keyboard
+  selection path, and Settings button exposure. Middle Click remains disabled,
+  Layout Wheel remains enabled with Control + Option, and Step 9 is now current.
