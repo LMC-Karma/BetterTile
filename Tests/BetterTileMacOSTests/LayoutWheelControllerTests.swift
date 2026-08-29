@@ -363,6 +363,52 @@ private struct Harness {
     #expect(harness.box.commits.first?.0 == .windowAction(.maximize))
 }
 
+/// The wheel's navigation keys are the same key codes the default shortcuts
+/// bind to the halves, and a user may narrow the wheel trigger to the same
+/// Control+Option the halves use. The wheel therefore has to own those keys
+/// for as long as it is open.
+///
+/// It does, in two steps. `open` reports the gesture start before it accepts a
+/// key, and the app suspends the Carbon hot keys on that signal, so no shortcut
+/// is registered to compete. The key then selects a sector instead of ending
+/// the gesture.
+@Test @MainActor func anOpenWheelOwnsTheArrowKeysTheDefaultShortcutsAlsoBind() {
+    let arrows: [UInt16: LayoutWheelKey] = [
+        123: .previousSector, 124: .nextSector, 126: .outerRing, 125: .innerRing,
+    ]
+    for (keyCode, expected) in arrows {
+        #expect(LayoutWheelKey(keyCode: keyCode) == expected)
+    }
+    let boundArrows = Set(
+        BetterTileConfiguration.defaultShortcuts
+            .compactMap(\.shortcut?.keyCode)
+            .map(UInt16.init)
+            .filter { arrows.keys.contains($0) }
+    )
+    #expect(boundArrows == Set(arrows.keys))
+
+    var beganWhileOpen: Bool?
+    let harness = Harness()
+    harness.controller.gestureBeganHandler = { [weak controller = harness.controller] in
+        beganWhileOpen = controller?.isOpen
+    }
+    harness.activate()
+
+    // Reported from inside `open`, so the suspend lands before the first key.
+    #expect(beganWhileOpen == true)
+
+    // The first key normalizes the selection, the second steps it backwards.
+    harness.controller.handleKey(.previousSector)
+    #expect(harness.presenter.selection == LayoutWheelSelection(ring: .inner, sector: .top))
+    harness.controller.handleKey(.previousSector)
+    #expect(harness.presenter.selection == LayoutWheelSelection(ring: .inner, sector: .topLeft))
+
+    // Navigating, not ending the gesture the way a shortcut match would.
+    #expect(harness.controller.isOpen)
+    #expect(harness.box.endedCount == 0)
+    #expect(harness.box.commits.isEmpty)
+}
+
 /// An unavailable command marks its sector and shows no placement. Release
 /// emits the unavailable outcome so the app can report why without committing.
 @Test @MainActor func anUnavailableCommandPreviewsNothingButStillReports() {
