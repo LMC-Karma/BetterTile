@@ -94,6 +94,26 @@ private func target(for system: FakeAppWindowSystem) -> LayoutWheelTarget {
     )
 }
 
+/// Waits for a state the model reaches from its delayed verification task.
+///
+/// A fixed sleep cannot express this wait. The check makes three attempts
+/// 120ms apart and each one hops back to the main actor, so its total is set
+/// by how loaded the machine is, not by a constant the test can pick. Polling
+/// finishes as soon as the state arrives and only spends the timeout when the
+/// state never arrives at all.
+@MainActor
+private func waitFor(
+    timeout: Duration = .seconds(10),
+    _ condition: () -> Bool
+) async -> Bool {
+    let deadline = ContinuousClock.now.advanced(by: timeout)
+    while ContinuousClock.now < deadline {
+        if condition() { return true }
+        try? await Task.sleep(for: .milliseconds(20))
+    }
+    return condition()
+}
+
 @Test @MainActor func manualLayoutWheelPreviewIsPureAndMatchesCommit() {
     let system = FakeAppWindowSystem()
     let model = makeModel(system: system)
@@ -241,7 +261,7 @@ private func target(for system: FakeAppWindowSystem) -> LayoutWheelTarget {
     #expect(placements.count == 1)
     model.performLayoutWheel(.customZone(zone.id), for: captured)
     #expect(model.lastActionFeedback?.kind == .success)
-    try await Task.sleep(for: .milliseconds(500))
+    #expect(await waitFor { model.statusMessage != nil })
     #expect(model.statusMessage == "The window did not move where it was asked to.")
     #expect(model.lastActionFeedback?.kind == .failure)
 }
