@@ -181,10 +181,10 @@ press events. The radial controller needs paired press and release events. Keep
 that registration inside the controller unless a second hold gesture creates a
 real reason to generalize it.
 
-Ship the radial trigger disabled or unassigned by default to avoid stealing a
-system or application shortcut. Add the binding to `BetterTileConfiguration`;
-its current schema is version 9, so the change needs a migration and round-trip
-tests.
+The settled design enables a delayed Control + Option modifier trigger and
+keeps middle-click disabled. The implementation adds this to
+`BetterTileConfiguration`, migrates schema 9 to 10, and covers the change
+with round-trip tests.
 
 Do not add side-mouse-button, modifier-only, or trackpad triggers in version
 one. BetterTile's current shared event tap is intentionally limited to the left

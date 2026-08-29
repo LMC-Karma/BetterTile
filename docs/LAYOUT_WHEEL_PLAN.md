@@ -2,9 +2,9 @@
 
 Status: approved design; implementation may begin
 
-Current step: **2 — Commands and configuration migration**
+Current step: **3 — Exact preview and commit planning**
 
-Last completed step: **1 — Core selection geometry**
+Last completed step: **2 — Commands and configuration migration**
 
 Branch: `feat/layout-wheel`
 
@@ -133,7 +133,7 @@ pushed implementation is still required.
 
 - [x] Step 0 — Research and product decisions
 - [x] Step 1 — Core selection geometry
-- [ ] Step 2 — Commands and configuration migration
+- [x] Step 2 — Commands and configuration migration
 - [ ] Step 3 — Exact preview and commit planning
 - [ ] Step 4 — Shared glass wheel renderer
 - [ ] Step 5 — Layout Wheel settings destination
@@ -202,7 +202,7 @@ Completion criteria:
 
 ## Step 2 — Commands and configuration migration
 
-Status: **next**
+Status: **complete**
 
 Files:
 
@@ -212,8 +212,8 @@ Files:
 
 Work:
 
-- Add `LayoutWheelCommand`: Empty, exact `WindowAction`, Custom Zone ID, or
-  Repair Bento.
+- Add `LayoutWheelCommand`: exact `WindowAction`, Custom Zone ID, or Repair
+  Bento. An optional command represents Empty.
 - Add `LayoutWheelConfiguration` with master enablement, level count, eight
   inner slots, eight outer slots, keyboard enablement, modifier set, and
   middle-click enablement.
@@ -243,7 +243,7 @@ Completion criteria:
 
 ## Step 3 — Exact preview and commit planning
 
-Status: **pending**
+Status: **next**
 
 Files:
 
@@ -527,4 +527,8 @@ Completion criteria:
 - Created this resumable plan and branch `feat/layout-wheel`.
 - Completed Step 1. Added deterministic one/two-level geometry and six focused
   tests. XcodeBuildMCP reported 6 focused tests and all 429 package tests
-  passing. Step 2 is next.
+  passing.
+- Completed Step 2. Added the schema-10 Layout Wheel configuration, defaults,
+  safe normalization, dangling-zone cleanup, runtime change classification,
+  and migration/round-trip tests. XcodeBuildMCP reported 31 configuration
+  tests and all 433 package tests passing. Step 3 is next.

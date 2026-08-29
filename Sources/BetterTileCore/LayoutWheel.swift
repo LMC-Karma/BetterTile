@@ -33,6 +33,101 @@ public struct LayoutWheelSelection: Equatable, Sendable {
     }
 }
 
+public enum LayoutWheelCommand: Codable, Hashable, Sendable {
+    case windowAction(WindowAction)
+    case customZone(UUID)
+    case repairBento
+}
+
+public struct LayoutWheelConfiguration: Codable, Hashable, Sendable {
+    public static let slotCount = LayoutWheelSector.allCases.count
+    public static let supportedKeyboardModifiers: ShortcutModifiers = [
+        .control, .option, .shift, .command,
+    ]
+
+    public var isEnabled: Bool
+    public var levelCount: LayoutWheelLevelCount
+    /// A nil slot is the user-facing Empty assignment.
+    public var innerSlots: [LayoutWheelCommand?]
+    /// Retained while One Level hides the outer ring.
+    public var outerSlots: [LayoutWheelCommand?]
+    public var keyboardTriggerEnabled: Bool
+    public var keyboardModifiers: ShortcutModifiers
+    public var middleClickTriggerEnabled: Bool
+
+    public init(
+        isEnabled: Bool = true,
+        levelCount: LayoutWheelLevelCount = .two,
+        innerSlots: [LayoutWheelCommand?] = Self.defaultInnerSlots,
+        outerSlots: [LayoutWheelCommand?] = Self.defaultOuterSlots,
+        keyboardTriggerEnabled: Bool = true,
+        keyboardModifiers: ShortcutModifiers = [.control, .option],
+        middleClickTriggerEnabled: Bool = false
+    ) {
+        self.isEnabled = isEnabled
+        self.levelCount = levelCount
+        self.innerSlots = innerSlots
+        self.outerSlots = outerSlots
+        self.keyboardTriggerEnabled = keyboardTriggerEnabled
+        self.keyboardModifiers = keyboardModifiers
+        self.middleClickTriggerEnabled = middleClickTriggerEnabled
+    }
+
+    public static let defaultInnerSlots: [LayoutWheelCommand?] = [
+        .windowAction(.topHalf),
+        .windowAction(.topRightQuarter),
+        .windowAction(.rightHalf),
+        .windowAction(.bottomRightQuarter),
+        .windowAction(.bottomHalf),
+        .windowAction(.bottomLeftQuarter),
+        .windowAction(.leftHalf),
+        .windowAction(.topLeftQuarter),
+    ]
+
+    public static let defaultOuterSlots: [LayoutWheelCommand?] = [
+        .windowAction(.maximize),
+        .windowAction(.almostMaximize),
+        .windowAction(.nextDisplay),
+        .windowAction(.centerResize),
+        .windowAction(.restore),
+        .windowAction(.center),
+        .windowAction(.previousDisplay),
+        .repairBento,
+    ]
+
+    /// Produces safe runtime state from decoded or hand-edited configuration.
+    public func normalized(customZoneIDs: Set<UUID>) -> LayoutWheelConfiguration {
+        var result = self
+        if result.innerSlots.count != Self.slotCount {
+            result.innerSlots = Self.defaultInnerSlots
+        }
+        if result.outerSlots.count != Self.slotCount {
+            result.outerSlots = Self.defaultOuterSlots
+        }
+
+        let supportedModifiers = result.keyboardModifiers
+            .intersection(Self.supportedKeyboardModifiers)
+        result.keyboardModifiers = supportedModifiers.rawValue.nonzeroBitCount >= 2
+            ? supportedModifiers
+            : [.control, .option]
+
+        result.innerSlots = result.innerSlots.removingMissingZones(from: customZoneIDs)
+        result.outerSlots = result.outerSlots.removingMissingZones(from: customZoneIDs)
+        return result
+    }
+}
+
+private extension Array where Element == LayoutWheelCommand? {
+    func removingMissingZones(from customZoneIDs: Set<UUID>) -> Self {
+        map { command in
+            guard case let .customZone(id) = command,
+                  !customZoneIDs.contains(id)
+            else { return command }
+            return nil
+        }
+    }
+}
+
 /// Pure hit testing for the Layout Wheel.
 ///
 /// In two-level mode, the open interval between `innerRingOuterRadius` and

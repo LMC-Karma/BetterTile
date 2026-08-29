@@ -28,7 +28,7 @@ import Testing
     let migrated = try ConfigurationStore.decode(JSONSerialization.data(withJSONObject: [
         "schemaVersion": 7,
     ]))
-    #expect(migrated.schemaVersion == 9)
+    #expect(migrated.schemaVersion == 10)
     #expect(migrated.setupCompletionVersion == 0)
     #expect(!migrated.macOSTilingRecommendationAcknowledged)
     #expect(!migrated.stageManagerRecommendationAcknowledged)
@@ -75,6 +75,10 @@ import Testing
     #expect(ConfigurationChangeSet.between(original, changed) == [.titleBar])
 
     changed = original
+    changed.layoutWheel.levelCount = .one
+    #expect(ConfigurationChangeSet.between(original, changed) == [.layoutWheel])
+
+    changed = original
     changed.adjacencyTolerance = 8
     #expect(
         ConfigurationChangeSet.between(original, changed)
@@ -102,7 +106,7 @@ import Testing
         ([.snapping], { $0.snapAreaBindings[0].action = nil }),
         ([.titleBar], { $0.doubleClickTitleBarToMaximize.toggle() }),
         ([.shortcuts], { $0.shortcuts[0].shortcut = nil }),
-        ([.snapping], {
+        ([.snapping, .layoutWheel], {
             $0.customZones = [
                 CustomZone(
                     name: "Test",
@@ -110,6 +114,7 @@ import Testing
                 ),
             ]
         }),
+        ([.layoutWheel], { $0.layoutWheel.levelCount = .one }),
     ]
 
     for (expected, mutation) in mutations {
@@ -137,13 +142,91 @@ import Testing
     #expect(throws: ConfigurationError.unsupportedFutureVersion(999)) { try ConfigurationStore.decode(data) }
 }
 
+@Test func schemaTenAddsLayoutWheelDefaults() throws {
+    let migrated = try ConfigurationStore.decode(JSONSerialization.data(withJSONObject: [
+        "schemaVersion": 9,
+    ]))
+
+    #expect(migrated.schemaVersion == 10)
+    #expect(migrated.layoutWheel == LayoutWheelConfiguration())
+    #expect(migrated.layoutWheel.levelCount == .two)
+    #expect(migrated.layoutWheel.innerSlots == LayoutWheelConfiguration.defaultInnerSlots)
+    #expect(migrated.layoutWheel.outerSlots == LayoutWheelConfiguration.defaultOuterSlots)
+    #expect(migrated.layoutWheel.keyboardModifiers == [.control, .option])
+    #expect(migrated.layoutWheel.keyboardTriggerEnabled)
+    #expect(!migrated.layoutWheel.middleClickTriggerEnabled)
+}
+
+@Test func layoutWheelConfigurationRoundTrips() throws {
+    let zone = CustomZone(
+        name: "Focus",
+        rect: NormalizedRect(x: 0.1, y: 0.1, width: 0.8, height: 0.8)
+    )
+    var configuration = BetterTileConfiguration(customZones: [zone])
+    configuration.layoutWheel = LayoutWheelConfiguration(
+        isEnabled: false,
+        levelCount: .one,
+        innerSlots: [
+            .customZone(zone.id),
+            .customZone(zone.id),
+            nil, nil, nil, nil, nil, nil,
+        ],
+        outerSlots: LayoutWheelConfiguration.defaultOuterSlots,
+        keyboardTriggerEnabled: false,
+        keyboardModifiers: [.command, .shift],
+        middleClickTriggerEnabled: true
+    )
+
+    let decoded = try ConfigurationStore.decode(JSONEncoder().encode(configuration))
+    #expect(decoded == configuration)
+    #expect(decoded.layoutWheel.innerSlots[0] == .customZone(zone.id))
+    #expect(decoded.layoutWheel.innerSlots[1] == .customZone(zone.id))
+}
+
+@Test func layoutWheelConfigurationNormalizesUnsafeValues() throws {
+    var configuration = BetterTileConfiguration()
+    configuration.layoutWheel.innerSlots = [.repairBento]
+    configuration.layoutWheel.outerSlots = []
+    configuration.layoutWheel.keyboardModifiers = ShortcutModifiers(
+        rawValue: ShortcutModifiers.control.rawValue | (1 << 20)
+    )
+
+    let normalized = try configuration.validated().layoutWheel
+    #expect(normalized.innerSlots == LayoutWheelConfiguration.defaultInnerSlots)
+    #expect(normalized.outerSlots == LayoutWheelConfiguration.defaultOuterSlots)
+    #expect(normalized.keyboardModifiers == [.control, .option])
+}
+
+@Test func removedCustomZonesLeaveLayoutWheelSlotsEmpty() throws {
+    let kept = CustomZone(
+        name: "Kept",
+        rect: NormalizedRect(x: 0, y: 0, width: 0.5, height: 1)
+    )
+    let removed = CustomZone(
+        name: "Removed",
+        rect: NormalizedRect(x: 0.5, y: 0, width: 0.5, height: 1)
+    )
+    var configuration = BetterTileConfiguration(customZones: [kept])
+    configuration.layoutWheel.innerSlots = [
+        .customZone(removed.id),
+        .customZone(kept.id),
+        .customZone(removed.id),
+        nil, nil, nil, nil, nil,
+    ]
+
+    let normalized = try configuration.validated()
+    #expect(normalized.layoutWheel.innerSlots[0] == nil)
+    #expect(normalized.layoutWheel.innerSlots[1] == .customZone(kept.id))
+    #expect(normalized.layoutWheel.innerSlots[2] == nil)
+}
+
 @Test func schemaNineWidensTheSingleWindowPlacementToTheActionList() throws {
     // The three cases stored by schemas 5 to 8 map onto the wider list.
     let almost = try ConfigurationStore.decode(JSONSerialization.data(withJSONObject: [
         "schemaVersion": 8,
         "singleWindowInitialPlacement": "almostMaximize",
     ]))
-    #expect(almost.schemaVersion == 9)
+    #expect(almost.schemaVersion == 10)
     #expect(almost.singleWindowPlacement == .almostMaximize)
 
     let unchanged = try ConfigurationStore.decode(JSONSerialization.data(withJSONObject: [
@@ -203,7 +286,7 @@ import Testing
         "bentoStates": ["main": ["floatingWindowIDs": []]],
     ]
     let migrated = try ConfigurationStore.decode(JSONSerialization.data(withJSONObject: legacy))
-    #expect(migrated.schemaVersion == 9)
+    #expect(migrated.schemaVersion == 10)
     #expect(migrated.showDockIcon)
     #expect(!migrated.linkedResizeEnabled)
     #expect(migrated.defaultLayoutMode == .bento)
@@ -267,7 +350,7 @@ import Testing
         "schemaVersion": 3,
         "bentoSwapHoverDelay": 0.12,
     ]))
-    #expect(oldDefault.schemaVersion == 9)
+    #expect(oldDefault.schemaVersion == 10)
     #expect(oldDefault.bentoSwapHoverDelay == 0.12)
 
     let customized = try ConfigurationStore.decode(JSONSerialization.data(withJSONObject: [
