@@ -1,10 +1,10 @@
 # Layout Wheel implementation plan
 
-Status: approved design; implementation may begin
+Status: implementation complete; ready pull request open
 
-Current step: **9 — Full verification, documentation, and pull request**
+Current step: **Complete — Ready pull request #56**
 
-Last completed step: **8 — App lifecycle integration and accessibility**
+Last completed step: **9 — Full verification, documentation, and pull request**
 
 Branch: `feat/layout-wheel`
 
@@ -140,7 +140,7 @@ pushed implementation is still required.
 - [x] Step 6 — Modifier gesture and runtime panel
 - [x] Step 7 — Opt-in middle-click reservation
 - [x] Step 8 — App lifecycle integration and accessibility
-- [ ] Step 9 — Full verification, documentation, and pull request
+- [x] Step 9 — Full verification, documentation, and pull request
 
 ## Step 0 — Research and product decisions
 
@@ -492,7 +492,7 @@ Completion criteria:
 
 ## Step 9 — Full verification, documentation, and pull request
 
-Status: **current**
+Status: **complete**
 
 Work:
 
@@ -727,5 +727,6 @@ Completion criteria:
   package building, and the unsigned Debug app building successfully. An earlier
   signed build emitted only Sparkle's expected signed-binary stripping warning.
 - Pushed `feat/layout-wheel` and opened the ready pull request:
-  <https://github.com/LMC-Karma/BetterTile/pull/56>. Step 9 remains current until
-  CI and automated review complete. Merge still requires maintainer approval.
+  <https://github.com/LMC-Karma/BetterTile/pull/56>. CI passed. Automated review
+  completed with no confirmed faults or review threads. Step 9 is complete;
+  merge still requires maintainer approval.
