@@ -57,7 +57,7 @@ public enum UpdateIndicator {
     ///
     /// - A failed check says nothing about whether an update exists. Dropping
     ///   the indicator because a laptop woke on a captive network would hide a
-    ///   real update until the next daily check.
+    ///   real update until the next four-hour check.
     /// - Choosing Install only *begins* downloading and installing. If that
     ///   fails, the update is still available and the indicator must still say
     ///   so. A successful install quits and relaunches the app; restoration

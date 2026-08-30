@@ -63,14 +63,14 @@ to satisfy the pinned BetterTile bundle identifier and certificate requirement.
 A second certificate with the same name does not pass.
 
 The certificate gives successive releases a stable designated requirement. It
-is intended to let macOS retain one Accessibility grant, with the real 0.4.1 to
-0.4.2 update serving as the public continuity test. It is not a Developer ID
-certificate, does not attest an Apple-verified developer identity, and is not
-notarized. Gatekeeper still requires the user to approve the app with **Open
+is intended to let macOS retain one Accessibility grant. The 0.4.1 beta was the
+one-time transition from the old ad-hoc identity; later releases keep that
+identity unless the certificate changes. It is not a Developer ID certificate,
+does not attest an Apple-verified developer identity, and is not notarized.
+Gatekeeper still requires the user to approve the app with **Open
 Anyway** in System Settings → Privacy & Security.
 
-Version 0.4.1 is the one-time transition from the old ad-hoc identity. Its
-release notes must tell users to approve the app and re-add BetterTile to
+The 0.4.1 release notes told users to approve the app and re-add BetterTile to
 Accessibility once. Later releases do not require that instruction unless the
 certificate changes. Certificate loss, compromise, expiry, or replacement is
 an identity-breaking event that requires a warning and focused release tests.

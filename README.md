@@ -49,6 +49,20 @@ moves and resizes the least. Panes carry weights and locks, and you can swap,
 retarget, or float any window out of the layout. Resize a Bento pane natively
 and the tree adopts the change rather than fighting it.
 
+### Layout Wheel for quick placement
+
+Hold the configured modifiers over a focused window to open the Layout Wheel,
+move to a sector, and release to apply its exact action. The default trigger is
+Control + Option + Shift. The center, an Empty sector, Escape, or releasing in
+the gap between two rings cancels without changing the window. One Level keeps
+the wheel compact; Two Levels adds a second ring for utility actions. Every
+sector can be assigned in Settings, including Repair Bento when the display is
+using Bento mode.
+
+An optional Middle Click trigger is available for one-handed use. When enabled,
+BetterTile reserves unmodified middle-click system-wide, so other apps do not
+receive it until the option is turned off.
+
 ### Keyboard shortcuts that don't collide
 
 Global shortcuts for every standard action, with conflict detection so you find
@@ -89,7 +103,7 @@ Updates are authenticated separately: each DMG carries an EdDSA signature that
 Sparkle verifies against a public key built into the app, independently of the
 macOS code signature.
 
-BetterTile checks the repository's GitHub-hosted update feed once per day by
+BetterTile checks the repository's GitHub-hosted update feed every four hours by
 default. It shows release notes and asks before downloading or installing. You
 can turn automatic checks off in General Settings or use **Check for Updates…**
 at any time.
@@ -185,7 +199,7 @@ and share modified versions under the same license.
 ## Documentation
 
 - [Architecture](docs/ARCHITECTURE.md) — layer boundaries, coordinate model,
-  event ordering, and the Bento split tree
+  event ordering, Layout Wheel integration, and the Bento split tree
 - [Development setup](docs/DEVELOPMENT.md) — build, sign, run, and test on your
   own Mac
 - [Beta releases](docs/RELEASING.md) — version, validate, sign, and publish an
