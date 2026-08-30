@@ -46,12 +46,10 @@ public extension WindowAction {
 
 public struct SnapTarget: Equatable, Sendable {
     public var action: WindowAction?
-    public var zoneID: UUID?
     public var frame: BTRect
 
-    public init(action: WindowAction? = nil, zoneID: UUID? = nil, frame: BTRect) {
+    public init(action: WindowAction? = nil, frame: BTRect) {
         self.action = action
-        self.zoneID = zoneID
         self.frame = frame
     }
 }
@@ -68,8 +66,7 @@ public struct SnapZoneDetector: Sendable {
     public func target(
         at point: BTPoint,
         display: DisplaySnapshot,
-        snapAreas: [SnapAreaBinding] = BetterTileConfiguration.defaultSnapAreaBindings,
-        customZones: [CustomZone] = []
+        snapAreas: [SnapAreaBinding] = BetterTileConfiguration.defaultSnapAreaBindings
     ) -> SnapTarget? {
         let screenBounds = display.frame
         let placementBounds = display.visibleFrame
@@ -80,10 +77,6 @@ public struct SnapZoneDetector: Sendable {
             let placeholder = WindowSnapshot(id: .init(rawValue: "snap-preview"), processIdentifier: 0, frame: placementBounds, displayID: display.id)
             let frame = StandardActionEngine().targetFrame(for: action, window: placeholder, display: display) ?? placementBounds
             return SnapTarget(action: action, frame: frame)
-        }
-        for zone in customZones {
-            let frame = zone.rect.frame(in: placementBounds)
-            if frame.contains(point) { return SnapTarget(zoneID: zone.id, frame: frame) }
         }
         return nil
     }

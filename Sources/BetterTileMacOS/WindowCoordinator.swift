@@ -242,30 +242,6 @@ public final class WindowCoordinator {
         }
     }
 
-    /// Plans a Custom Zone for a captured window without recording history or
-    /// changing the window.
-    public func plan(
-        _ zone: CustomZone,
-        for windowID: WindowID
-    ) -> WindowPlacementPlanOutcome {
-        do {
-            guard let window = try snapshots(ids: [windowID]).first,
-                  window.isEligible
-            else { return .unavailable }
-            guard let display = system.displays().first(where: { $0.id == window.displayID }) else {
-                return .unavailable
-            }
-            return .ready(WindowPlacementPlan(
-                windowID: window.id,
-                displayID: window.displayID,
-                sourceFrame: window.frame,
-                targetFrame: zone.rect.frame(in: display.visibleFrame)
-            ))
-        } catch {
-            return .failed(reason: error.localizedDescription)
-        }
-    }
-
     public func perform(_ plan: WindowActionPlan) -> WindowMutationOutcome {
         do {
             if !plan.resolvedAction.isRestore {
@@ -363,35 +339,6 @@ public final class WindowCoordinator {
     /// tell a delayed check that its action has been superseded.
     public func mutationGeneration(for windowID: WindowID) -> UInt64 {
         generations[windowID] ?? 0
-    }
-
-    public func applyCustomZone(
-        _ zone: CustomZone,
-        applicationRules: ApplicationRuleSet
-    ) -> WindowMutationOutcome {
-        do {
-            guard let window = try system.focusedWindow(), window.isEligible else {
-                return .failed(reason: "No eligible focused window.")
-            }
-            guard applicationRules
-                .rule(for: window.bundleIdentifier)
-                .allowsDirectPlacement
-            else {
-                return .failed(reason: "BetterTile is set to ignore this app.")
-            }
-            guard let display = system.displays().first(where: { $0.id == window.displayID }) else {
-                return .failed(reason: "The window's display could not be found.")
-            }
-            history.record(window.frame, for: window.id)
-            try apply(
-                zone.rect.frame(in: display.visibleFrame),
-                to: window.id,
-                knownCurrentFrame: window.frame
-            )
-            return .applied
-        } catch {
-            return .failed(reason: error.localizedDescription)
-        }
     }
 
     public func applyPlacements(_ placements: [Placement], recordHistory: Bool = true) -> WindowMutationOutcome {

@@ -8,40 +8,87 @@ import SwiftUI
 public struct LayoutWheelMetrics: Sendable {
     public let geometry: LayoutWheelGeometry
     public let outerRingOuterRadius: Double
+    public let oneLevelInnerRingOuterRadius: Double
+
+    /// Extra room for the selected slice's lift and shadow. The panel must be
+    /// larger than the logical wheel or those effects can be clipped at its
+    /// invisible square boundary.
+    public static let presentationPadding = 18.0
 
     public init?(
         hubRadius: Double,
         innerRingOuterRadius: Double,
         outerRingInnerRadius: Double,
-        outerRingOuterRadius: Double
+        outerRingOuterRadius: Double,
+        oneLevelInnerRingOuterRadius: Double? = nil
     ) {
         guard let geometry = LayoutWheelGeometry(
             hubRadius: hubRadius,
             innerRingOuterRadius: innerRingOuterRadius,
             outerRingInnerRadius: outerRingInnerRadius
         ), outerRingOuterRadius > outerRingInnerRadius else { return nil }
+        let oneLevelRadius = oneLevelInnerRingOuterRadius ?? innerRingOuterRadius + 16
+        guard oneLevelRadius > hubRadius else { return nil }
 
         self.geometry = geometry
         self.outerRingOuterRadius = outerRingOuterRadius
+        self.oneLevelInnerRingOuterRadius = oneLevelRadius
     }
 
     public static let standard = LayoutWheelMetrics(
-        hubRadius: 30,
-        innerRingOuterRadius: 86,
-        outerRingInnerRadius: 96,
-        outerRingOuterRadius: 150
+        hubRadius: 23,
+        innerRingOuterRadius: 68,
+        outerRingInnerRadius: 76,
+        outerRingOuterRadius: 110,
+        oneLevelInnerRingOuterRadius: 84
     )!
 
     /// The drawn size. One Level omits the outer ring instead of leaving a gap.
     public func diameter(for levelCount: LayoutWheelLevelCount) -> Double {
         switch levelCount {
-        case .one: geometry.innerRingOuterRadius * 2
+        case .one: oneLevelInnerRingOuterRadius * 2
         case .two: outerRingOuterRadius * 2
         }
     }
 
     public func presentationHeight(for levelCount: LayoutWheelLevelCount) -> Double {
-        diameter(for: levelCount)
+        presentationDiameter(for: levelCount)
+    }
+
+    public func presentationDiameter(for levelCount: LayoutWheelLevelCount) -> Double {
+        diameter(for: levelCount) + Self.presentationPadding * 2
+    }
+
+    public func scaled(by requestedScale: Double) -> LayoutWheelMetrics {
+        let scale = requestedScale.isFinite
+            ? min(
+                max(requestedScale, LayoutWheelConfiguration.minimumScale),
+                LayoutWheelConfiguration.maximumScale
+            )
+            : LayoutWheelConfiguration.defaultScale
+        return LayoutWheelMetrics(
+            hubRadius: geometry.hubRadius * scale,
+            innerRingOuterRadius: geometry.innerRingOuterRadius * scale,
+            outerRingInnerRadius: geometry.outerRingInnerRadius * scale,
+            outerRingOuterRadius: outerRingOuterRadius * scale,
+            oneLevelInnerRingOuterRadius: oneLevelInnerRingOuterRadius * scale
+        )!
+    }
+
+    public func geometry(for levelCount: LayoutWheelLevelCount) -> LayoutWheelGeometry {
+        switch levelCount {
+        case .one:
+            return LayoutWheelGeometry(
+                hubRadius: geometry.hubRadius,
+                innerRingOuterRadius: oneLevelInnerRingOuterRadius,
+                outerRingInnerRadius: max(
+                    geometry.outerRingInnerRadius,
+                    oneLevelInnerRingOuterRadius + 1
+                )
+            )!
+        case .two:
+            return geometry
+        }
     }
 
     public func innerRadius(for ring: LayoutWheelRing) -> Double {
@@ -51,15 +98,22 @@ public struct LayoutWheelMetrics: Sendable {
         }
     }
 
-    public func outerRadius(for ring: LayoutWheelRing) -> Double {
+    public func outerRadius(
+        for ring: LayoutWheelRing,
+        levelCount: LayoutWheelLevelCount = .two
+    ) -> Double {
         switch ring {
-        case .inner: geometry.innerRingOuterRadius
+        case .inner:
+            levelCount == .one ? oneLevelInnerRingOuterRadius : geometry.innerRingOuterRadius
         case .outer: outerRingOuterRadius
         }
     }
 
-    func iconRadius(for ring: LayoutWheelRing) -> Double {
-        (innerRadius(for: ring) + outerRadius(for: ring)) / 2
+    func iconRadius(
+        for ring: LayoutWheelRing,
+        levelCount: LayoutWheelLevelCount = .two
+    ) -> Double {
+        (innerRadius(for: ring) + outerRadius(for: ring, levelCount: levelCount)) / 2
     }
 }
 
@@ -84,11 +138,10 @@ public struct LayoutWheelSlot: Equatable, Sendable {
         isAvailable: false
     )
 
-    /// A deleted Custom Zone renders as Empty, matching configuration
-    /// normalization, so a stale identifier never shows a broken sector.
+    /// Legacy Custom Zone assignments render as Empty. The command remains
+    /// decodable so older saved configurations migrate without a broken slot.
     public init(
         command: LayoutWheelCommand?,
-        customZones: [UUID: String],
         isAvailable: Bool = true
     ) {
         switch command {
@@ -101,21 +154,12 @@ public struct LayoutWheelSlot: Equatable, Sendable {
                 isEmpty: false,
                 isAvailable: isAvailable
             )
-        case let .customZone(id):
-            guard let name = customZones[id] else {
-                self = .empty
-                return
-            }
-            self.init(
-                label: name,
-                symbolName: "square.dashed",
-                isEmpty: false,
-                isAvailable: isAvailable
-            )
+        case .customZone:
+            self = .empty
         case .repairBento:
             self.init(
                 label: "Repair Bento",
-                symbolName: "wand.and.rays",
+                symbolName: "arrow.triangle.2.circlepath",
                 isEmpty: false,
                 isAvailable: isAvailable
             )
@@ -181,7 +225,10 @@ public extension WindowAction {
              .bottomLeftSixth, .bottomCenterSixth, .bottomRightSixth:
             "square.grid.3x2.fill"
         case .maximize: "arrow.up.left.and.arrow.down.right"
-        case .almostMaximize: "rectangle.inset.filled"
+        // Both this spelling and `rectangle.inset.filled.center` resolve on
+        // macOS 26. Use the canonical deployment-target name here; the view
+        // keeps a diagram fallback for older SF Symbols catalogs.
+        case .almostMaximize: "inset.filled.center.rectangle"
         case .center: "dot.square.fill"
         case .centerResize: "arrow.down.forward.and.arrow.up.backward"
         case .previousDisplay: "arrow.left.square"
@@ -239,7 +286,6 @@ public struct LayoutWheelActionGroup: Sendable {
 /// from the pointer.
 public struct LayoutWheelView: View {
     private let configuration: LayoutWheelConfiguration
-    private let customZones: [UUID: String]
     private let selection: LayoutWheelSelection?
     private let unavailableCommands: Set<LayoutWheelCommand>
     private let metrics: LayoutWheelMetrics
@@ -252,24 +298,29 @@ public struct LayoutWheelView: View {
 
     public init(
         configuration: LayoutWheelConfiguration,
-        customZones: [CustomZone] = [],
         selection: LayoutWheelSelection? = nil,
         unavailableCommands: Set<LayoutWheelCommand> = [],
         metrics: LayoutWheelMetrics = .standard,
         onSelect: ((LayoutWheelSelection) -> Void)? = nil
     ) {
         self.configuration = configuration
-        self.customZones = Dictionary(
-            customZones.map { ($0.id, $0.name) },
-            uniquingKeysWith: { first, _ in first }
-        )
         self.selection = selection
         self.unavailableCommands = unavailableCommands
         self.metrics = metrics
         self.onSelect = onSelect
     }
 
-    private var diameter: Double { metrics.diameter(for: configuration.levelCount) }
+    private var effectiveMetrics: LayoutWheelMetrics {
+        metrics.scaled(by: configuration.scale)
+    }
+
+    private var diameter: Double {
+        effectiveMetrics.diameter(for: configuration.levelCount)
+    }
+
+    private var presentationDiameter: Double {
+        effectiveMetrics.presentationDiameter(for: configuration.levelCount)
+    }
 
     private var rings: [LayoutWheelRing] { configuration.activeRings }
 
@@ -277,7 +328,7 @@ public struct LayoutWheelView: View {
 
     public var body: some View {
         wheel
-        .frame(width: diameter, height: metrics.presentationHeight(for: configuration.levelCount))
+        .frame(width: presentationDiameter, height: presentationDiameter)
         .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: selection)
     }
 
@@ -312,16 +363,42 @@ public struct LayoutWheelView: View {
         let isAvailable = command.map { !unavailableCommands.contains($0) } ?? false
         return LayoutWheelSlot(
             command: command,
-            customZones: customZones,
             isAvailable: isAvailable
         )
     }
 
     private func shape(for selection: LayoutWheelSelection) -> LayoutWheelSectorShape {
         LayoutWheelSectorShape(
-            innerRadius: metrics.innerRadius(for: selection.ring),
-            outerRadius: metrics.outerRadius(for: selection.ring),
+            innerRadius: visualInnerRadius(for: selection.ring),
+            outerRadius: visualOuterRadius(for: selection.ring),
             centerAngle: selection.sector.drawnCenterAngle
+        )
+    }
+
+    /// The wheel keeps its logical radii for selection, while the outer ring
+    /// is drawn inward to make the visible inter-ring gap 5pt.
+    private func visualInnerRadius(for ring: LayoutWheelRing) -> Double {
+        switch ring {
+        case .inner: effectiveMetrics.innerRadius(for: ring)
+        case .outer:
+            min(
+                effectiveMetrics.geometry.outerRingInnerRadius,
+                effectiveMetrics.geometry.innerRingOuterRadius + 5
+            )
+        }
+    }
+
+    private func visualOuterRadius(for ring: LayoutWheelRing) -> Double {
+        effectiveMetrics.outerRadius(for: ring, levelCount: configuration.levelCount)
+    }
+
+    private func hitShape(for selection: LayoutWheelSelection) -> LayoutWheelSectorShape {
+        LayoutWheelSectorShape(
+            innerRadius: effectiveMetrics.innerRadius(for: selection.ring),
+            outerRadius: effectiveMetrics.outerRadius(for: selection.ring, levelCount: configuration.levelCount),
+            centerAngle: selection.sector.drawnCenterAngle,
+            visualGap: 0,
+            cornerRadius: 0
         )
     }
 
@@ -329,6 +406,7 @@ public struct LayoutWheelView: View {
     private func sectorView(_ selection: LayoutWheelSelection) -> some View {
         let slot = slot(for: selection)
         let shape = shape(for: selection)
+        let hitShape = hitShape(for: selection)
         let isSelected = self.selection == selection
         let isFocused = focusedSelection == selection
 
@@ -340,7 +418,14 @@ public struct LayoutWheelView: View {
             )
             sectorIcon(slot, selection: selection, isSelected: isSelected)
         }
-        .contentShape(shape)
+        .scaleEffect(isSelected && !reduceMotion ? 1.045 : 1)
+        .shadow(
+            color: isSelected ? .black.opacity(reduceMotion ? 0.12 : 0.24) : .clear,
+            radius: isSelected ? 7 : 0,
+            y: isSelected ? 3 : 0
+        )
+        .zIndex(isSelected ? 1 : 0)
+        .contentShape(hitShape)
         .modifier(SectorControl(
             selection: selection,
             isEditable: onSelect != nil,
@@ -358,16 +443,21 @@ public struct LayoutWheelView: View {
         selection: LayoutWheelSelection,
         isSelected: Bool
     ) -> some View {
-        let radius = metrics.iconRadius(for: selection.ring)
+        let radius = effectiveMetrics.iconRadius(
+            for: selection.ring,
+            levelCount: configuration.levelCount
+        )
         let angle = selection.sector.drawnCenterAngle.radians
         let center = diameter / 2
+        let iconSize: CGFloat = selection.ring == .outer ? 35 : 31
+        let iconPointSize: CGFloat = selection.ring == .outer ? 18 : 16
 
-        return Image(systemName: slot.symbolName)
-            .font(.system(size: 16, weight: .semibold))
-            .symbolRenderingMode(.monochrome)
-        .foregroundStyle(labelStyle(slot: slot, isSelected: isSelected))
-        .frame(width: 32, height: 32)
-        .scaleEffect(isSelected && !reduceMotion ? 1.06 : 1)
+        return LayoutWheelIcon(
+            slot: slot,
+            tint: labelColor(slot: slot, isSelected: isSelected),
+            fontSize: iconPointSize
+        )
+        .frame(width: iconSize, height: iconSize)
         .position(x: center + cos(angle) * radius, y: center + sin(angle) * radius)
     }
 
@@ -387,7 +477,6 @@ public struct LayoutWheelView: View {
         isSelected: Bool,
         isFocused: Bool
     ) -> Color {
-        if isSelected && !slot.isAvailable { return .secondary }
         if isSelected || isFocused { return .accentColor }
         if slot.isEmpty || !slot.isAvailable {
             return .secondary.opacity(isHighContrast ? 0.7 : 0.45)
@@ -400,23 +489,26 @@ public struct LayoutWheelView: View {
         isSelected: Bool,
         isFocused: Bool
     ) -> StrokeStyle {
+        guard isSelected || isFocused else {
+            return StrokeStyle(lineWidth: 1)
+        }
         if slot.isEmpty {
-            return StrokeStyle(lineWidth: isFocused ? 3 : 1.5, dash: [1.5, 4])
+            return StrokeStyle(lineWidth: 3, dash: [1.5, 4])
         }
         if !slot.isAvailable {
-            return StrokeStyle(lineWidth: isFocused ? 3 : 1.5, dash: [5, 4])
+            return StrokeStyle(lineWidth: 3, dash: [5, 4])
         }
-        return StrokeStyle(lineWidth: isSelected || isFocused ? 3 : 1)
+        return StrokeStyle(lineWidth: 3)
     }
 
-    private func labelStyle(slot: LayoutWheelSlot, isSelected: Bool) -> some ShapeStyle {
+    private func labelColor(slot: LayoutWheelSlot, isSelected: Bool) -> Color {
         if isSelected, slot.isAvailable {
-            return AnyShapeStyle(Color.white)
+            return .white
         }
         if slot.isEmpty || !slot.isAvailable {
-            return AnyShapeStyle(Color.secondary)
+            return .secondary
         }
-        return AnyShapeStyle(Color.primary)
+        return .primary
     }
 
     // MARK: - Hub
@@ -437,8 +529,8 @@ public struct LayoutWheelView: View {
             .foregroundStyle(selection == nil ? Color.accentColor : .secondary)
         }
         .frame(
-            width: metrics.geometry.hubRadius * 2,
-            height: metrics.geometry.hubRadius * 2
+            width: effectiveMetrics.geometry.hubRadius * 2,
+            height: effectiveMetrics.geometry.hubRadius * 2
         )
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Cancel")
@@ -465,37 +557,247 @@ private struct SectorControl: ViewModifier {
     }
 }
 
-/// One annular wedge. A small angular gap keeps neighbouring sectors visually
-/// separate without changing where `LayoutWheelGeometry` places the boundary.
+/// Uses the native symbol for ordinary actions, and a compact custom diagram
+/// where the symbol alone does not communicate the selected partition clearly.
+private struct LayoutWheelIcon: View {
+    let slot: LayoutWheelSlot
+    let tint: Color
+    let fontSize: CGFloat
+
+    private var descriptor: LayoutWheelGlyphDescriptor? {
+        switch slot.symbolName {
+        case "rectangle.leadingthird.inset.filled":
+            return .partition(columns: 3, selected: [0])
+        case "rectangle.center.inset.filled":
+            return .partition(columns: 3, selected: [1])
+        case "rectangle.trailingthird.inset.filled":
+            return .partition(columns: 3, selected: [2])
+        case "rectangle.lefthalf.inset.filled":
+            return .partition(columns: 3, selected: [0, 1])
+        case "rectangle.righthalf.inset.filled":
+            return .partition(columns: 3, selected: [1, 2])
+        case "square.grid.3x2.fill":
+            let name = slot.label.lowercased()
+            var selected = name.contains("bottom") ? 3 : 0
+            if name.contains("center") { selected += 1 }
+            if name.contains("right") { selected += 2 }
+            return .grid(columns: 3, rows: 2, selected: [selected])
+        default:
+            return nil
+        }
+    }
+
+    @ViewBuilder
+    var body: some View {
+        if let descriptor {
+            LayoutWheelGlyph(descriptor: descriptor, tint: tint)
+                .scaleEffect(0.86)
+        } else if slot.symbolName == "inset.filled.center.rectangle",
+                  NSImage(systemSymbolName: slot.symbolName, accessibilityDescription: nil) == nil {
+            LayoutWheelGlyph(descriptor: .inset, tint: tint)
+        } else {
+            Image(systemName: slot.symbolName)
+                .font(.system(size: fontSize, weight: .semibold))
+                .symbolRenderingMode(.monochrome)
+                .foregroundStyle(tint)
+        }
+    }
+}
+
+private enum LayoutWheelGlyphDescriptor: Equatable {
+    case partition(columns: Int, selected: Set<Int>)
+    case grid(columns: Int, rows: Int, selected: Set<Int>)
+    case inset
+}
+
+private struct LayoutWheelGlyph: View {
+    let descriptor: LayoutWheelGlyphDescriptor
+    let tint: Color
+
+    var body: some View {
+        Canvas { context, size in
+            let outer = LayoutWheelGlyphLayout.outerRect(in: size)
+            context.stroke(
+                Path(roundedRect: outer, cornerRadius: 3.5),
+                with: .color(tint),
+                lineWidth: 1.25
+            )
+
+            switch descriptor {
+            case let .partition(columns, selected):
+                let content = LayoutWheelGlyphLayout.contentRect(in: outer)
+                let cells = LayoutWheelGlyphLayout.gridRects(
+                    columns: columns,
+                    rows: 1,
+                    in: content
+                )
+                for (index, cell) in cells.enumerated() {
+                    if selected.contains(index) { continue }
+                    context.stroke(
+                        Path(roundedRect: cell, cornerRadius: 1.8),
+                        with: .color(.white.opacity(0.95)),
+                        lineWidth: 1
+                    )
+                }
+                if let first = selected.min(),
+                   let last = selected.max(),
+                   selected == Set(first ... last),
+                   cells.indices.contains(first),
+                   cells.indices.contains(last) {
+                    let selectedRect = cells[first].union(cells[last])
+                    context.fill(
+                        Path(roundedRect: selectedRect, cornerRadius: 2.5),
+                        with: .color(.white)
+                    )
+                }
+            case let .grid(columns, rows, selected):
+                let content = LayoutWheelGlyphLayout.contentRect(in: outer)
+                let cells = LayoutWheelGlyphLayout.gridRects(
+                    columns: columns,
+                    rows: rows,
+                    in: content
+                )
+                for (index, cell) in cells.enumerated() {
+                    let path = Path(roundedRect: cell, cornerRadius: 1.8)
+                    if selected.contains(index) {
+                        context.fill(path, with: .color(.white))
+                    }
+                    context.stroke(path, with: .color(.white.opacity(0.95)), lineWidth: 1)
+                }
+            case .inset:
+                let inset = outer.insetBy(dx: outer.width * 0.22, dy: outer.height * 0.22)
+                context.fill(
+                    Path(roundedRect: inset, cornerRadius: 3),
+                    with: .color(tint.opacity(0.9))
+                )
+            }
+        }
+    }
+}
+
+/// Shared point geometry for the reference-style partition glyphs. Keeping
+/// this separate from SwiftUI layout ensures every cell is centred in the same
+/// landscape frame instead of inheriting a nested square proposal.
+struct LayoutWheelGlyphLayout {
+    static let aspectRatio = 1.35
+    static let columnGap: CGFloat = 2.5
+    static let rowGap: CGFloat = 2.5
+
+    static func outerRect(in size: CGSize) -> CGRect {
+        let width = min(max(1, size.width - 2), max(1, (size.height - 2) * aspectRatio))
+        let height = width / aspectRatio
+        return CGRect(
+            x: (size.width - width) / 2,
+            y: (size.height - height) / 2,
+            width: width,
+            height: height
+        )
+    }
+
+    static func contentRect(in outer: CGRect) -> CGRect {
+        outer.insetBy(dx: outer.width * 0.10, dy: outer.height * 0.13)
+    }
+
+    static func gridRects(columns: Int, rows: Int, in rect: CGRect) -> [CGRect] {
+        guard columns > 0, rows > 0 else { return [] }
+        let totalColumnGap = columnGap * CGFloat(columns - 1)
+        let totalRowGap = rowGap * CGFloat(rows - 1)
+        let cellWidth = (rect.width - totalColumnGap) / CGFloat(columns)
+        let cellHeight = (rect.height - totalRowGap) / CGFloat(rows)
+        return (0 ..< rows).flatMap { row in
+            (0 ..< columns).map { column in
+                CGRect(
+                    x: rect.minX + CGFloat(column) * (cellWidth + columnGap),
+                    y: rect.minY + CGFloat(row) * (cellHeight + rowGap),
+                    width: cellWidth,
+                    height: cellHeight
+                )
+            }
+        }
+    }
+}
+
+/// One annular wedge. The point-based gap keeps neighbouring sectors visually
+/// separate by the same distance at both radii without changing where
+/// `LayoutWheelGeometry` places the boundary.
 struct LayoutWheelSectorShape: Shape {
     static let sectorWidth = Angle.degrees(45)
-    static let gap = Angle.degrees(1.2)
+    static let defaultVisualGap = 5.0
+    static let defaultCornerRadius = 3.0
 
     var innerRadius: Double
     var outerRadius: Double
     var centerAngle: Angle
+    var visualGap = Self.defaultVisualGap
+    var cornerRadius = Self.defaultCornerRadius
 
     func path(in rect: CGRect) -> Path {
         let center = CGPoint(x: rect.midX, y: rect.midY)
-        let half = Self.sectorWidth / 2
-        let start = centerAngle - half + Self.gap
-        let end = centerAngle + half - Self.gap
+        let half = Self.sectorWidth.radians / 2
+        let centerRadians = centerAngle.radians
+        let outerStart = centerRadians - half + visualGap / (2 * max(outerRadius, 1))
+        let outerEnd = centerRadians + half - visualGap / (2 * max(outerRadius, 1))
+        let innerStart = centerRadians - half + visualGap / (2 * max(innerRadius, 1))
+        let innerEnd = centerRadians + half - visualGap / (2 * max(innerRadius, 1))
+        let depth = min(cornerRadius, max(0, (outerRadius - innerRadius) * 0.3))
+        let outerTrim = depth / max(outerRadius, 1)
+        let innerTrim = depth / max(innerRadius, 1)
+
+        func point(radius: Double, angle: Double) -> CGPoint {
+            CGPoint(
+                x: center.x + cos(angle) * radius,
+                y: center.y + sin(angle) * radius
+            )
+        }
+
+        func inset(_ point: CGPoint, toward target: CGPoint, by distance: Double) -> CGPoint {
+            let dx = target.x - point.x
+            let dy = target.y - point.y
+            let length = hypot(dx, dy)
+            guard length > 0 else { return point }
+            let amount = min(distance / length, 0.5)
+            return CGPoint(x: point.x + dx * amount, y: point.y + dy * amount)
+        }
+
+        let outerStartPoint = point(radius: outerRadius, angle: outerStart)
+        let outerEndPoint = point(radius: outerRadius, angle: outerEnd)
+        let innerStartPoint = point(radius: innerRadius, angle: innerStart)
+        let innerEndPoint = point(radius: innerRadius, angle: innerEnd)
 
         var path = Path()
+        path.move(to: inset(outerStartPoint, toward: innerStartPoint, by: depth))
+        path.addQuadCurve(
+            to: point(radius: outerRadius, angle: outerStart + outerTrim),
+            control: outerStartPoint
+        )
         path.addArc(
             center: center,
             radius: outerRadius,
-            startAngle: start,
-            endAngle: end,
+            startAngle: .radians(outerStart + outerTrim),
+            endAngle: .radians(outerEnd - outerTrim),
             clockwise: false
+        )
+        path.addQuadCurve(
+            to: inset(outerEndPoint, toward: innerEndPoint, by: depth),
+            control: outerEndPoint
+        )
+        path.addLine(to: inset(innerEndPoint, toward: outerEndPoint, by: depth))
+        path.addQuadCurve(
+            to: point(radius: innerRadius, angle: innerEnd - innerTrim),
+            control: innerEndPoint
         )
         path.addArc(
             center: center,
             radius: innerRadius,
-            startAngle: end,
-            endAngle: start,
+            startAngle: .radians(innerEnd - innerTrim),
+            endAngle: .radians(innerStart + innerTrim),
             clockwise: true
         )
+        path.addQuadCurve(
+            to: inset(innerStartPoint, toward: outerStartPoint, by: depth),
+            control: innerStartPoint
+        )
+        path.addLine(to: inset(outerStartPoint, toward: innerStartPoint, by: depth))
         path.closeSubpath()
         return path
     }

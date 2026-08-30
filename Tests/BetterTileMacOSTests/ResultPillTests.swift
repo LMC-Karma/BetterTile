@@ -42,8 +42,7 @@ import Testing
     #expect(ResultPillFeedback.failure("The preview no longer matches the active window transaction.").message == "Window changed")
     #expect(ResultPillFeedback.failure("The captured window is no longer available.").message == "Window changed")
     #expect(ResultPillFeedback.failure("BetterTile is set to ignore this app.").message == "App is ignored")
-    #expect(ResultPillFeedback.failure("That Custom Zone is no longer available.").message == "Zone unavailable")
-    #expect(ResultPillFeedback.failure("That Custom Zone cannot satisfy the windows' minimum sizes.").message == "Can’t fit this layout")
+    #expect(ResultPillFeedback.failure("That layout cannot satisfy the windows' minimum sizes.").message == "Can’t fit this layout")
     #expect(ResultPillFeedback.failure("Repair Bento is available only on a Bento desktop.").message == "Bento not active")
     #expect(ResultPillFeedback.failure("Something unexpected happened.").message == "Couldn’t apply layout")
 }

@@ -12,52 +12,6 @@ import Testing
     #expect(system.windows[0].frame == original)
 }
 
-@Test @MainActor func customZoneButtonsHonorApplicationRules() {
-    let system = FakeWindowSystem()
-    let original = system.windows[0].frame
-    let coordinator = WindowCoordinator(system: system)
-    let zone = CustomZone(
-        name: "Focus",
-        rect: NormalizedRect(x: 0.1, y: 0.1, width: 0.8, height: 0.8)
-    )
-    var rules = ApplicationRuleSet()
-    rules.set(.ignoreEverywhere, for: "com.example.Test")
-
-    #expect(coordinator.applyCustomZone(zone, applicationRules: rules)
-        == .failed(reason: "BetterTile is set to ignore this app."))
-    #expect(system.windows[0].frame == original)
-
-    rules.set(.excludeFromBento, for: "com.example.Test")
-    #expect(coordinator.applyCustomZone(zone, applicationRules: rules).isApplied)
-    #expect(system.windows[0].frame == BTRect(x: 100, y: 80, width: 800, height: 640))
-}
-
-@Test @MainActor func aCustomZoneWithoutAFocusedWindowNamesTheMissingWindow() {
-    let system = FakeWindowSystem()
-    system.windows.removeAll()
-    let coordinator = WindowCoordinator(system: system)
-    let zone = CustomZone(
-        name: "Focus",
-        rect: NormalizedRect(x: 0.1, y: 0.1, width: 0.8, height: 0.8)
-    )
-
-    #expect(coordinator.applyCustomZone(zone, applicationRules: ApplicationRuleSet())
-        == .failed(reason: "No eligible focused window."))
-}
-
-@Test @MainActor func aCustomZoneWithoutAResolvableDisplayNamesTheDisplay() {
-    let system = FakeWindowSystem()
-    system.availableDisplays.removeAll()
-    let coordinator = WindowCoordinator(system: system)
-    let zone = CustomZone(
-        name: "Focus",
-        rect: NormalizedRect(x: 0.1, y: 0.1, width: 0.8, height: 0.8)
-    )
-
-    #expect(coordinator.applyCustomZone(zone, applicationRules: ApplicationRuleSet())
-        == .failed(reason: "The window's display could not be found."))
-}
-
 @Test @MainActor func placementTransactionsUseTargetedWindowSnapshots() {
     let system = FakeWindowSystem()
     let coordinator = WindowCoordinator(system: system)
@@ -124,24 +78,6 @@ import Testing
     _ = try #require(coordinator.planExact(.leftHalf, for: id).readyPlan)
     #expect(system.windows[0].frame == original)
     #expect(coordinator.planExact(.restore, for: id).readyPlan == nil)
-}
-
-@Test @MainActor func exactCustomZonePlanCanPreviewThenCommit() throws {
-    let system = FakeWindowSystem()
-    let original = system.windows[0].frame
-    let id = system.windows[0].id
-    let coordinator = WindowCoordinator(system: system)
-    let zone = CustomZone(
-        name: "Focus",
-        rect: NormalizedRect(x: 0.1, y: 0.1, width: 0.8, height: 0.8)
-    )
-
-    let plan = try #require(coordinator.plan(zone, for: id).readyPlan)
-    #expect(plan.targetFrame == BTRect(x: 100, y: 80, width: 800, height: 640))
-    #expect(system.windows[0].frame == original)
-    #expect(coordinator.perform(plan).isApplied)
-    #expect(system.windows[0].frame == plan.targetFrame)
-    #expect(coordinator.planExact(.restore, for: id).readyPlan?.targetFrame == original)
 }
 
 @Test @MainActor func exactPlanBecomesUnavailableWhenCapturedWindowDisappears() {

@@ -387,8 +387,7 @@ public final class DragSnapController {
         let snapTarget = bentoDragDisplayID == nil ? nil : SnapZoneDetector().target(
                at: point,
                display: display,
-               snapAreas: configuration.snapAreaBindings,
-               customZones: configuration.customZones
+               snapAreas: configuration.snapAreaBindings
            )
         bentoSnapTarget = snapTarget
         if bentoDragDisplayID != nil,
@@ -495,8 +494,7 @@ public final class DragSnapController {
         target = snapTarget ?? SnapZoneDetector().target(
                 at: point,
                 display: display,
-                snapAreas: configuration.snapAreaBindings,
-                customZones: configuration.customZones
+                snapAreas: configuration.snapAreaBindings
         )
         if let target {
             showPreview(frame: target.frame, mainScreenFrame: mainFrame)

@@ -20,7 +20,7 @@ private enum SettingsDestination: String, CaseIterable, Identifiable {
         case .general: "gearshape"
         case .windowLayout: "rectangle.3.group"
         case .snapZones: "rectangle.split.3x3"
-        case .layoutWheel: "circle.grid.cross.fill"
+        case .layoutWheel: "circle.hexagonpath"
         case .applicationRules: "app.badge.checkmark"
         }
     }
@@ -34,11 +34,11 @@ private enum SettingsDestination: String, CaseIterable, Identifiable {
         case .windowLayout:
             "mode manual native bento resize linked divider shortcut keyboard hotkey halves thirds quarters sixths move display restore"
         case .snapZones:
-            "drag snap custom zone edge corner title bar double click maximize"
+            "drag snap edge corner title bar double click maximize"
         case .layoutWheel:
             "wheel layout radial pie ring sector hub gesture middle click mouse button "
                 + "control option shift command modifier trigger shortcut hold activation "
-                + "one level two levels repair bento custom zone empty cancel"
+                + "one level two levels repair bento empty cancel"
         case .applicationRules:
             "app application rule exclude ignore bento manage per-app exception skip leave alone"
         }
@@ -250,6 +250,16 @@ private struct GeneralSettings: View {
 
             Section("Application") {
                 Toggle("Show Dock icon", isOn: configurationBinding(\.showDockIcon))
+            }
+
+            Section("Updates") {
+                HStack {
+                    Text("Version")
+                    Spacer()
+                    Text(installedVersion)
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                }
 #if !DEBUG
                 Toggle("Automatically check for updates", isOn: $automaticallyChecksForUpdates)
                 if let update = updatePresentation.state.availableUpdate {
@@ -341,6 +351,13 @@ private struct GeneralSettings: View {
                 model.updateConfiguration { $0[keyPath: keyPath] = value }
             }
         )
+    }
+
+    private var installedVersion: String {
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "Unknown"
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String
+        guard let build, !build.isEmpty, build != version else { return version }
+        return "\(version) (\(build))"
     }
 }
 
@@ -719,49 +736,6 @@ private struct ZoneSettings: View {
                 .foregroundStyle(.secondary)
             }
 
-            Section("Custom Zones") {
-                HStack {
-                    Text(
-                        "Coordinates are normalized from 0 to 1 within a display’s visible frame."
-                    )
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    Spacer()
-                    Button("Add Zone") {
-                        model.updateConfiguration {
-                            $0.customZones.append(
-                                CustomZone(
-                                    name: "New Zone",
-                                    rect: NormalizedRect(
-                                        x: 0.1,
-                                        y: 0.1,
-                                        width: 0.8,
-                                        height: 0.8
-                                    )
-                                )
-                            )
-                        }
-                    }
-                }
-                ForEach(model.configuration.customZones) { zone in
-                    HStack {
-                        TextField("Name", text: zoneBinding(zone, \.name))
-                        normalizedField("X", zone, \.x)
-                        normalizedField("Y", zone, \.y)
-                        normalizedField("W", zone, \.width)
-                        normalizedField("H", zone, \.height)
-                        Button(role: .destructive) {
-                            model.updateConfiguration { configuration in
-                                configuration.customZones.removeAll { $0.id == zone.id }
-                            }
-                        } label: {
-                            Image(systemName: "trash")
-                        }
-                    }
-                    .padding(.vertical, 2)
-                }
-            }
-
             StatusMessage(model: model)
         }
         .formStyle(.grouped)
@@ -796,65 +770,6 @@ private struct ZoneSettings: View {
         )
     }
 
-    private func zoneBinding<Value>(
-        _ zone: CustomZone,
-        _ keyPath: WritableKeyPath<CustomZone, Value>
-    ) -> Binding<Value> {
-        Binding(
-            get: {
-                model.configuration.customZones
-                    .first(where: { $0.id == zone.id })?[keyPath: keyPath]
-                    ?? zone[keyPath: keyPath]
-            },
-            set: { value in
-                model.updateConfiguration { configuration in
-                    guard let index = configuration.customZones
-                        .firstIndex(where: { $0.id == zone.id })
-                    else { return }
-                    configuration.customZones[index][keyPath: keyPath] = value
-                }
-            }
-        )
-    }
-
-    private func normalizedField(
-        _ label: String,
-        _ zone: CustomZone,
-        _ keyPath: WritableKeyPath<NormalizedRect, Double>
-    ) -> some View {
-        HStack(spacing: 3) {
-            Text(label)
-                .font(.caption)
-            TextField(
-                label,
-                value: normalizedBinding(zone, keyPath),
-                format: .number.precision(.fractionLength(2))
-            )
-            .frame(width: 48)
-        }
-    }
-
-    private func normalizedBinding(
-        _ zone: CustomZone,
-        _ keyPath: WritableKeyPath<NormalizedRect, Double>
-    ) -> Binding<Double> {
-        Binding(
-            get: {
-                model.configuration.customZones
-                    .first(where: { $0.id == zone.id })?
-                    .rect[keyPath: keyPath]
-                    ?? zone.rect[keyPath: keyPath]
-            },
-            set: { value in
-                model.updateConfiguration { configuration in
-                    guard let index = configuration.customZones
-                        .firstIndex(where: { $0.id == zone.id })
-                    else { return }
-                    configuration.customZones[index].rect[keyPath: keyPath] = value
-                }
-            }
-        )
-    }
 }
 
 private struct StatusMessage: View {
@@ -874,7 +789,7 @@ private extension LayoutMode {
         switch self {
         case .manual: "macwindow"
         case .linked: "arrow.left.and.right"
-        case .bento: "rectangle.split.2x2"
+        case .bento: "rectangle.inset.filled.lefthalf.topright.bottomright"
         }
     }
 

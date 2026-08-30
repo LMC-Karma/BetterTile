@@ -5,8 +5,8 @@ types; code and documentation should use them consistently.
 
 ## Layout Wheel
 
-BetterTile's pointer-centered chooser for window actions, Custom Zones, and
-Repair Bento. It presents one or two concentric levels around a cancel hub.
+BetterTile's pointer-centered chooser for window actions and Repair Bento. It
+presents one or two concentric levels around a cancel hub.
 
 _Avoid_: Snap Wheel, radial menu, Layout Dial
 

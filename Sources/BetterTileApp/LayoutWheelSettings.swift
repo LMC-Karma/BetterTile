@@ -13,7 +13,6 @@ struct LayoutWheelSettings: View {
     @State private var editing = LayoutWheelSelection(ring: .inner, sector: .top)
 
     private var wheel: LayoutWheelConfiguration { model.configuration.layoutWheel }
-    private var customZones: [CustomZone] { model.configuration.customZones }
 
     var body: some View {
         Form {
@@ -40,6 +39,24 @@ struct LayoutWheelSettings: View {
                 )
                 .font(.caption)
                 .foregroundStyle(.secondary)
+                HStack {
+                    Slider(
+                        value: wheelScaleBinding,
+                        in: LayoutWheelConfiguration.minimumScale ... LayoutWheelConfiguration.maximumScale,
+                        step: 0.05
+                    )
+                    .accessibilityLabel("Wheel size")
+                    Text("\(Int(wheel.scale * 100))%")
+                        .monospacedDigit()
+                        .foregroundStyle(.secondary)
+                        .frame(width: 42, alignment: .trailing)
+                }
+                .accessibilityElement(children: .contain)
+                .accessibilityLabel("Layout Wheel size")
+                Button(action: swapWheels) {
+                    Label("Swap wheel functions", systemImage: "arrow.triangle.2.circlepath")
+                }
+                .help("Exchange all inner-ring and outer-ring assignments")
             }
 
             Section("Sectors") {
@@ -102,7 +119,6 @@ struct LayoutWheelSettings: View {
     private var editor: some View {
         LayoutWheelView(
             configuration: wheel,
-            customZones: customZones,
             selection: editing,
             onSelect: { editing = $0 }
         )
@@ -120,14 +136,6 @@ struct LayoutWheelSettings: View {
                         ForEach(group.actions) { action in
                             Text(action.title)
                                 .tag(Optional(LayoutWheelCommand.windowAction(action)))
-                        }
-                    }
-                }
-                if !customZones.isEmpty {
-                    Section("Custom Zones") {
-                        ForEach(customZones) { zone in
-                            Text(zone.name)
-                                .tag(Optional(LayoutWheelCommand.customZone(zone.id)))
                         }
                     }
                 }
@@ -158,7 +166,7 @@ struct LayoutWheelSettings: View {
         case .repairBento:
             "Available only while the window's display is in Bento mode."
         case .customZone:
-            "Deleting this zone leaves the sector Empty."
+            "This legacy assignment is no longer available."
         case .windowAction:
             "Applies exactly this layout. Wheel sectors never cycle."
         }
@@ -255,6 +263,17 @@ struct LayoutWheelSettings: View {
 
     private var middleClickBinding: Binding<Bool> {
         wheelBinding(\.middleClickTriggerEnabled)
+    }
+
+    private var wheelScaleBinding: Binding<Double> {
+        Binding(
+            get: { wheel.scale },
+            set: { scale in updateWheel { $0.scale = scale } }
+        )
+    }
+
+    private func swapWheels() {
+        updateWheel { $0.swapRings() }
     }
 
     private func modifierBinding(_ modifier: ShortcutModifiers) -> Binding<Bool> {

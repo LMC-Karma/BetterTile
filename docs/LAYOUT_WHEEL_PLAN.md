@@ -31,7 +31,7 @@ truth.
 ## Settled product contract
 
 - The user-facing term is **Layout Wheel**.
-- The wheel supports **One Level** and **Two Levels**. Two Levels is the
+- The wheel supports **One Level** and **Two Levels**. One Level is the
   default. Changing the level count hides or reveals the outer ring without
   deleting either ring's assignments.
 - Each ring has eight aligned sectors. Pointer angle chooses a sector and
@@ -50,12 +50,13 @@ truth.
   receive middle-click while it is enabled.
 - Both triggers use press, move, preview, and release. Releasing in the hub,
   dead band, or an Empty sector cancels.
-- A sector can contain Empty, any exact `WindowAction`, a `CustomZone`, or
-  Repair Bento. Duplicates and Empty sectors are valid.
+- A sector can contain Empty, any exact `WindowAction`, or Repair Bento.
+  Duplicates and Empty sectors are valid.
 - The visible wheel uses derived SF Symbols without command text. Command names
-  remain available to VoiceOver and in Settings. Version one has no custom
-  labels, icons, wheel size, tint, opacity, or blur controls.
-- A deleted Custom Zone leaves every referencing sector Empty.
+  remain available to VoiceOver and in Settings. Settings provides a persisted
+  overall wheel-size slider and a one-click swap for the two ring assignments.
+- Legacy Custom Zone assignments are discarded when an older configuration is
+  loaded. New configurations do not expose or persist Custom Zones.
 - An unavailable command never substitutes another command. Release cancels
   and the existing result pill explains why. Repair Bento is unavailable
   unless the captured display is currently in Bento mode.
@@ -65,8 +66,12 @@ truth.
 - The wheel uses public macOS 26 glass/material APIs, semantic colors, and
   native SF Symbols. Reduce Transparency uses an opaque surface. Reduce Motion
   removes scale and movement.
-- The visible two-level wheel is 300 points in diameter. This matches the
+- The visible two-level wheel is 220 points in diameter. This matches the
   compact reference scale while leaving the Settings editor responsive.
+- The one-level wheel is 168 points in diameter so it remains a substantial
+  standalone control instead of looking like the inner ring cropped from the
+  two-level wheel. The panel reserves additional transparent room for the
+  selected slice lift and shadow.
 
 ### Default assignments
 
@@ -217,19 +222,20 @@ Files:
 
 Work:
 
-- Add `LayoutWheelCommand`: exact `WindowAction`, Custom Zone ID, or Repair
-  Bento. An optional command represents Empty.
+- Add `LayoutWheelCommand`: exact `WindowAction` or Repair Bento. An optional
+  command represents Empty. Older Custom Zone commands decode only long enough
+  to be discarded during normalization.
 - Add `LayoutWheelConfiguration` with master enablement, level count, eight
   inner slots, eight outer slots, keyboard enablement, modifier set, and
   middle-click enablement.
-- Use the settled two-level defaults. Keep keyboard activation on and
+- Use the settled one-level defaults. Keep keyboard activation on and
   middle-click off.
 - Validate exactly eight slots per ring and at least two supported keyboard
   modifiers. Normalize malformed input to safe defaults during migration.
 - Increase the configuration schema from 9 to 10. A version-9 file receives
   the defaults without changing unrelated preferences.
-- When Custom Zones change, normalize dangling sector references to Empty.
-  Preserve duplicate and Empty assignments.
+- Normalize legacy Custom Zone sector references to Empty. Preserve duplicate
+  and Empty assignments.
 
 Tests:
 
@@ -237,7 +243,8 @@ Tests:
 - Version 9 receives exact Layout Wheel defaults.
 - One/two-level and trigger settings round-trip.
 - Invalid slot counts and modifier bits cannot enter runtime state.
-- Removing a Custom Zone clears all matching sectors and nothing else.
+- Removing the app-level Custom Zones feature leaves old saved configurations
+  readable and omits the removed data from new writes.
 - Duplicate assignments survive validation and encoding.
 
 Completion criteria:
@@ -252,7 +259,7 @@ Status: **complete**
 
 Progress:
 
-- [x] Add captured-window exact action and Custom Zone plans in
+- [x] Add captured-window exact action plans in
   `WindowCoordinator`.
 - [x] Prove exact previews do not cycle, record history, or mutate frames.
 - [x] Add the model preview result and Manual/Bento placement calculation.
@@ -274,12 +281,12 @@ Work:
 - Add a non-mutating exact preview path. Preview must not change shortcut-cycle
   state, history, configuration, Layout Sessions, or real frames.
 - Revalidate the captured window and display on every preview and commit.
-- Build Manual previews from the exact action or Custom Zone.
+- Build Manual previews from the exact action.
 - Build Bento previews with the existing `BentoDropPlanner`, including all
   affected placements, without committing its proposed state.
-- Add one model command entry point that routes exact actions and Custom Zones
-  through existing permission, application-rule, Manual/Bento transaction,
-  rollback, settlement, and result-pill behavior.
+- Add one model command entry point that routes exact actions through existing
+  permission, application-rule, Manual/Bento transaction, rollback, settlement,
+  and result-pill behavior.
 - Route Repair Bento to the existing repair implementation only when the
   captured display's active mode is Bento. Otherwise publish the pill error.
 
@@ -354,8 +361,8 @@ Work:
   dress.
 - Put enablement and a short hold-move-release explanation first.
 - Show the actual wheel renderer as the editor. Clicking a sector selects it;
-  an adjacent inspector assigns Empty, grouped `WindowAction`, Custom Zone,
-  or Repair Bento.
+  an adjacent inspector assigns Empty, grouped `WindowAction`, or Repair
+  Bento.
 - Add the One Level/Two Levels control. Hide rather than delete outer settings.
 - Add selectable modifier keycaps for Control, Option, Shift, and Command.
   Keep the last two selected modifiers enabled so the saved state is valid.
@@ -750,13 +757,25 @@ Completion criteria:
   model tests, all 497 package tests, and the unsigned Debug build pass.
 - Refined the wheel after testing the open pull request. Paired local and global
   monitors now make activation work when BetterTile itself is active. The
-  default two-level wheel is exactly 300 points; One Level omits the unused
+  default one-level wheel omits the unused outer ring; Two Levels is exactly
+  220 points. One Level omits the unused
   outer ring. Both use icon-only sectors and keep full command names in
-  accessibility and Settings. Manual snap, Bento, and Layout Wheel placement
-  previews now share one subtly shaded dashed wireframe. The 44 focused
+  accessibility and Settings. Partition actions use compact outlined/fill
+  glyphs so thirds, sixths, and Almost Maximize remain legible without labels;
+  the selected sector raises slightly with a restrained shadow. Manual snap,
+  Bento, and Layout Wheel placement previews now share one subtly shaded dashed
+  wireframe. The 44 focused
   controller, view, and middle-button tests and all 498 package tests pass. The
   unsigned Debug build passes. Light and Dark Xcode previews render without
   clipping, and a signed live app opened from synthetic modifier and
   middle-button input. Recognized local navigation keys are consumed while the
   wheel is open; an ordinary local key still passes through. A new
   physical-input pass was not repeated.
+- Added the follow-up visual controls: a persisted 80–130% wheel-size slider,
+  a Settings action to swap inner and outer assignments, larger standalone
+  One Level geometry, and presentation padding so selected slice lift and
+  shadow cannot be clipped by the panel. Empty and unavailable sectors use
+  neutral solid outlines at rest and blue dashed outlines only while focused
+  or selected. Partition glyphs now use opaque white cells, continuous
+  two-thirds fills, and centered six-cell layouts. Focused Layout Wheel tests
+  pass after this refinement.

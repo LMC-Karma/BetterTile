@@ -354,8 +354,6 @@ final class BetterTileModel {
         switch planLayoutWheel(command, for: target) {
         case let .ready(.action(plan)):
             return .ready(placements: [Placement(windowID: plan.windowID, frame: plan.targetFrame)])
-        case let .ready(.zone(plan)):
-            return .ready(placements: [Placement(windowID: plan.windowID, frame: plan.targetFrame)])
         case let .ready(.bento(proposal)):
             return .ready(placements: proposal.plan.placements)
         case .ready(.repairBento):
@@ -383,13 +381,6 @@ final class BetterTileModel {
             finishLayoutWheelPlacement(outcome: outcome, displayID: displayID)
             if outcome.isApplied {
                 verifyPlacementLanded(WindowPlacementPlan(plan), displayID: displayID)
-            }
-        case let .ready(.zone(plan)):
-            let outcome = coordinator.perform(plan)
-            let displayID = currentDisplayID(for: plan.windowID) ?? plan.displayID
-            finishLayoutWheelPlacement(outcome: outcome, displayID: displayID)
-            if outcome.isApplied {
-                verifyPlacementLanded(plan, displayID: displayID)
             }
         case let .ready(.bento(proposal)):
             let succeeded = commitLayoutWheelBento(proposal)
@@ -497,38 +488,11 @@ final class BetterTileModel {
             }
             return .ready(.bento(proposal))
 
-        case let .customZone(zoneID):
-            guard let zone = configuration.customZones.first(where: { $0.id == zoneID }) else {
-                return .unavailable(
-                    reason: "That Custom Zone is no longer available.",
-                    displayID: window.displayID
-                )
-            }
-            let zonePlan: WindowPlacementPlan
-            switch coordinator.plan(zone, for: target.windowID) {
-            case let .ready(plan): zonePlan = plan
-            case .unavailable:
-                return .unavailable(
-                    reason: "The captured window is no longer available.",
-                    displayID: window.displayID
-                )
-            case let .failed(reason):
-                return .unavailable(reason: reason, displayID: window.displayID)
-            }
-            guard sourceRule.allowsBentoParticipation,
-                  activeMode(for: zonePlan.displayID) == .bento
-            else { return .ready(.zone(zonePlan)) }
-            guard let proposal = layoutWheelBentoProposal(
-                intent: .customZone(id: zoneID, frame: zonePlan.targetFrame),
-                sourceWindowID: target.windowID,
-                displayID: zonePlan.displayID
-            ) else {
-                return .unavailable(
-                    reason: "That Custom Zone cannot satisfy the Bento windows' minimum sizes.",
-                    displayID: zonePlan.displayID
-                )
-            }
-            return .ready(.bento(proposal))
+        case .customZone:
+            return .unavailable(
+                reason: "Custom Zones are no longer available.",
+                displayID: window.displayID
+            )
 
         case .repairBento:
             guard activeMode(for: window.displayID) == .bento else {
@@ -809,16 +773,6 @@ final class BetterTileModel {
         return true
     }
 
-    func apply(zone: CustomZone) {
-        let displayID = (try? system.focusedWindow())?.displayID ?? activeDisplayID
-        let outcome = coordinator.applyCustomZone(
-            zone,
-            applicationRules: configuration.applicationRules
-        )
-        statusMessage = outcome.isApplied ? nil : outcome.failureReason ?? "Could not apply the zone."
-        presentActionResult(succeeded: outcome.isApplied, error: statusMessage, displayID: displayID)
-    }
-
     func tileCurrentDisplay() {
         do {
             guard let focused = try system.focusedWindow() else {
@@ -1044,7 +998,6 @@ final class BetterTileModel {
         case let .swap(targetWindowID): .pane(targetWindowID)
         case let .insert(targetWindowID, edge): .insert(targetWindowID: targetWindowID, edge: edge)
         case let .snap(action, frame): .snap(action: action, frame: frame)
-        case let .customZone(id, frame): .customZone(id: id, frame: frame)
         case .restore: nil
         }
         guard let intent else { return nil }
@@ -1072,7 +1025,6 @@ final class BetterTileModel {
         case let .swap(targetWindowID): .pane(targetWindowID)
         case let .insert(targetWindowID, edge): .insert(targetWindowID: targetWindowID, edge: edge)
         case let .snap(action, frame): .snap(action: action, frame: frame)
-        case let .customZone(id, frame): .customZone(id: id, frame: frame)
         case .restore where active.session.originalState.root?.windowIDs.contains(sourceID) != true: .automatic
         case .restore: nil
         }
@@ -2684,7 +2636,6 @@ private enum LayoutWheelPlanOutcome {
 
 private enum LayoutWheelModelPlan {
     case action(WindowActionPlan)
-    case zone(WindowPlacementPlan)
     case bento(BentoCommandProposal)
     case repairBento(displayID: DisplayID, focusedWindowID: WindowID)
 }

@@ -5,7 +5,6 @@ public enum BentoDropIntent: Equatable, Sendable {
     case pane(WindowID)
     case insert(targetWindowID: WindowID, edge: BentoPaneDropPosition)
     case snap(action: WindowAction, frame: BTRect)
-    case customZone(id: UUID, frame: BTRect)
 }
 
 public struct BentoDropPlan: Sendable {
@@ -133,25 +132,6 @@ public struct BentoDropPlanner: Sendable {
             return focusPlan(
                 sourceWindowID: sourceWindowID,
                 targetFrame: focusFrame,
-                state: state,
-                contextWindowIDs: contextWindowIDs,
-                constraints: constraints,
-                bounds: bounds
-            )
-        case let .customZone(_, frame):
-            if let partition = partitionPlan(
-                sourceWindowID: sourceWindowID,
-                targetFrame: frame,
-                state: state,
-                baselineFrames: baselineFrames,
-                constraints: constraints,
-                bounds: bounds
-            ) {
-                return partition
-            }
-            return focusPlan(
-                sourceWindowID: sourceWindowID,
-                targetFrame: frame,
                 state: state,
                 contextWindowIDs: contextWindowIDs,
                 constraints: constraints,

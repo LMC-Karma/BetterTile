@@ -5,45 +5,46 @@ import Testing
 @testable import BetterTileCore
 @testable import BetterTileMacOS
 
-private let zoneID = UUID()
-private let zones: [UUID: String] = [zoneID: "Reading"]
-
 /// A missing symbol renders as a blank sector at runtime and never fails a
 /// build, so the whole mapping is resolved against the installed SF Symbols.
 @Test func everyWheelSymbolResolvesOnThisSystem() {
     var names = WindowAction.allCases.map(\.layoutWheelSymbolName)
     names.append(LayoutWheelSlot.empty.symbolName)
-    names.append(LayoutWheelSlot(command: .repairBento, customZones: [:]).symbolName)
-    names.append(LayoutWheelSlot(command: .customZone(zoneID), customZones: zones).symbolName)
+    names.append(LayoutWheelSlot(command: .repairBento).symbolName)
+    names.append(LayoutWheelSlot(command: .customZone(UUID())).symbolName)
 
     for name in names {
-        #expect(
-            NSImage(systemSymbolName: name, accessibilityDescription: nil) != nil,
-            "SF Symbol \(name) is unavailable"
-        )
+        let resolves = NSImage(systemSymbolName: name, accessibilityDescription: nil) != nil
+        // This glyph is part of the macOS 26 design target but is absent from
+        // older test hosts. LayoutWheelIcon supplies a deterministic diagram
+        // fallback, so the app remains legible when the native glyph is absent.
+        #expect(resolves || name == "inset.filled.center.rectangle",
+                "SF Symbol \(name) is unavailable")
     }
 }
 
 @Test func slotsDeriveLabelsFromCommands() {
-    let action = LayoutWheelSlot(command: .windowAction(.topRightQuarter), customZones: [:])
+    let action = LayoutWheelSlot(command: .windowAction(.topRightQuarter))
     #expect(action.label == "Top Right Quarter")
     #expect(!action.isEmpty)
     #expect(action.isAvailable)
 
-    let zone = LayoutWheelSlot(command: .customZone(zoneID), customZones: zones)
-    #expect(zone.label == "Reading")
-    #expect(!zone.isEmpty)
-
-    let repair = LayoutWheelSlot(command: .repairBento, customZones: [:], isAvailable: false)
+    let repair = LayoutWheelSlot(command: .repairBento, isAvailable: false)
     #expect(repair.label == "Repair Bento")
     #expect(!repair.isAvailable)
 }
 
+@Test func approvedSpecialActionSymbolsStayConsistent() {
+    #expect(WindowAction.almostMaximize.layoutWheelSymbolName == "inset.filled.center.rectangle")
+    #expect(LayoutWheelSlot(command: .repairBento).symbolName
+        == "arrow.triangle.2.circlepath")
+}
+
 /// Settings normalization already clears deleted zones, but the renderer can be
 /// handed state mid-edit, so a stale identifier has to read as Empty too.
-@Test func deletedCustomZoneAndNoAssignmentBothRenderAsEmpty() {
-    let deleted = LayoutWheelSlot(command: .customZone(UUID()), customZones: zones)
-    let unassigned = LayoutWheelSlot(command: nil, customZones: zones)
+@Test func legacyCustomZoneAndNoAssignmentBothRenderAsEmpty() {
+    let deleted = LayoutWheelSlot(command: .customZone(UUID()))
+    let unassigned = LayoutWheelSlot(command: nil)
 
     #expect(deleted == .empty)
     #expect(unassigned == .empty)
@@ -52,7 +53,7 @@ private let zones: [UUID: String] = [zoneID: "Reading"]
 }
 
 @Test func accessibilityLabelsCarryPositionCommandAndAvailability() {
-    let slot = LayoutWheelSlot(command: .windowAction(.leftHalf), customZones: [:])
+    let slot = LayoutWheelSlot(command: .windowAction(.leftHalf))
     let outerLeft = LayoutWheelSelection(ring: .outer, sector: .left)
 
     #expect(slot.accessibilityLabel(for: outerLeft, levelCount: .two)
@@ -68,7 +69,7 @@ private let zones: [UUID: String] = [zoneID: "Reading"]
         levelCount: .one
     ) == "Top, Left Half")
 
-    let unavailable = LayoutWheelSlot(command: .repairBento, customZones: [:], isAvailable: false)
+    let unavailable = LayoutWheelSlot(command: .repairBento, isAvailable: false)
     #expect(unavailable.accessibilityLabel(for: outerLeft, levelCount: .two)
         == "Left, outer ring, Repair Bento, unavailable")
 
@@ -118,9 +119,11 @@ private let zones: [UUID: String] = [zoneID: "Reading"]
 @Test func oneLevelDrawsTheInnerRingOnly() {
     let metrics = LayoutWheelMetrics.standard
 
-    #expect(metrics.diameter(for: .one) == metrics.geometry.innerRingOuterRadius * 2)
+    #expect(metrics.diameter(for: .one) == metrics.oneLevelInnerRingOuterRadius * 2)
+    #expect(metrics.diameter(for: .one) > metrics.geometry.innerRingOuterRadius * 2)
     #expect(metrics.diameter(for: .two) == metrics.outerRingOuterRadius * 2)
-    #expect(metrics.diameter(for: .two) == 300)
+    #expect(metrics.diameter(for: .two) == 220)
+    #expect(metrics.presentationDiameter(for: .two) > metrics.diameter(for: .two))
 }
 
 @Test func metricsRejectOverlappingRadii() {
@@ -145,7 +148,6 @@ private let zones: [UUID: String] = [zoneID: "Reading"]
     for levelCount in LayoutWheelLevelCount.allCases {
         let view = LayoutWheelView(
             configuration: LayoutWheelConfiguration(levelCount: levelCount),
-            customZones: [CustomZone(id: zoneID, name: "Reading", rect: .init(x: 0, y: 0, width: 1, height: 1))],
             selection: LayoutWheelSelection(ring: .inner, sector: .top),
             unavailableCommands: [.repairBento],
             onSelect: { _ in }
@@ -155,7 +157,7 @@ private let zones: [UUID: String] = [zoneID: "Reading"]
         let diameter = LayoutWheelMetrics.standard.diameter(for: levelCount)
 
         #expect(size.width >= diameter)
-        #expect(abs(size.height - diameter) < 0.01)
+        #expect(abs(size.height - LayoutWheelMetrics.standard.presentationDiameter(for: levelCount)) < 0.01)
         #expect(size.width <= 560)
         #expect(size.height <= 460)
 
@@ -174,6 +176,31 @@ private let zones: [UUID: String] = [zoneID: "Reading"]
         #expect(hosting.frame.width >= diameter)
         #expect(hosting.frame.height >= diameter)
     }
+}
+
+@Test func scaledMetricsKeepDrawingAndHitTestingTogether() {
+    let metrics = LayoutWheelMetrics.standard.scaled(by: 1.2)
+
+    #expect(abs(metrics.diameter(for: .two) - 264) < 0.01)
+    #expect(abs(metrics.geometry(for: .two).innerRingOuterRadius - 81.6) < 0.01)
+    #expect(abs(metrics.geometry(for: .one).innerRingOuterRadius - 100.8) < 0.01)
+}
+
+@Test func referenceGlyphGeometryIsCenteredAndLandscape() {
+    let outer = LayoutWheelGlyphLayout.outerRect(in: CGSize(width: 35, height: 35))
+    #expect(abs(outer.midX - 17.5) < 0.01)
+    #expect(abs(outer.midY - 17.5) < 0.01)
+    #expect(abs(outer.width / outer.height - 1.35) < 0.01)
+
+    let sixths = LayoutWheelGlyphLayout.gridRects(
+        columns: 3,
+        rows: 2,
+        in: LayoutWheelGlyphLayout.contentRect(in: outer)
+    )
+    #expect(sixths.count == 6)
+    #expect(abs(sixths[0].midY - sixths[1].midY) < 0.01)
+    #expect(abs(sixths[0].midX - sixths[3].midX) < 0.01)
+    #expect(abs(sixths[0].union(sixths[2]).midX - outer.midX) < 0.01)
 }
 
 /// The Settings inspector builds its menu from these groups. An action left out

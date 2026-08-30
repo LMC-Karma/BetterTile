@@ -30,8 +30,6 @@ public struct ResultPillFeedback: Equatable, Sendable {
             message = "No eligible window"
         } else if value.contains("cannot fit") || value.contains("can't fit") || value.contains("minimum size") {
             message = "Can’t fit this layout"
-        } else if value.contains("custom zone") {
-            message = "Zone unavailable"
         } else if value.contains("no longer matches")
             || value.contains("window changed")
             || value.contains("captured window") {

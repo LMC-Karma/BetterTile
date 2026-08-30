@@ -114,7 +114,6 @@ public struct BetterTileConfiguration: Codable, Hashable, Sendable {
     /// turning it back on restores them untouched.
     public var keyboardShortcutsEnabled: Bool
     public var shortcuts: [ShortcutBinding]
-    public var customZones: [CustomZone]
     public var layoutWheel: LayoutWheelConfiguration
 
     public init(
@@ -140,7 +139,6 @@ public struct BetterTileConfiguration: Codable, Hashable, Sendable {
         applicationRules: ApplicationRuleSet = ApplicationRuleSet(),
         keyboardShortcutsEnabled: Bool = true,
         shortcuts: [ShortcutBinding] = BetterTileConfiguration.defaultShortcuts,
-        customZones: [CustomZone] = [],
         layoutWheel: LayoutWheelConfiguration = LayoutWheelConfiguration()
     ) {
         self.schemaVersion = schemaVersion
@@ -165,8 +163,7 @@ public struct BetterTileConfiguration: Codable, Hashable, Sendable {
         self.applicationRules = applicationRules
         self.keyboardShortcutsEnabled = keyboardShortcutsEnabled
         self.shortcuts = shortcuts
-        self.customZones = customZones
-        self.layoutWheel = layoutWheel.normalized(customZoneIDs: Set(customZones.map(\.id)))
+        self.layoutWheel = layoutWheel.normalized()
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -180,7 +177,7 @@ public struct BetterTileConfiguration: Codable, Hashable, Sendable {
         case snapSuppressionModifiers, adjacencyTolerance, snapAreaBindings, doubleClickTitleBarToMaximize
         case enhancedUserInterfacePolicy
         case applicationRules, keyboardShortcutsEnabled
-        case shortcuts, customZones, layoutWheel
+        case shortcuts, layoutWheel
         case layoutMode, bentoEnabled, bentoStates
     }
 
@@ -276,11 +273,10 @@ public struct BetterTileConfiguration: Codable, Hashable, Sendable {
         } else {
             shortcuts = decodedShortcuts ?? Self.defaultShortcuts
         }
-        customZones = try container.decodeIfPresent([CustomZone].self, forKey: .customZones) ?? []
         layoutWheel = try container.decodeIfPresent(
             LayoutWheelConfiguration.self,
             forKey: .layoutWheel
-        )?.normalized(customZoneIDs: Set(customZones.map(\.id))) ?? LayoutWheelConfiguration()
+        )?.normalized() ?? LayoutWheelConfiguration()
     }
 
     private static func migrateLayoutMode(_ rawValue: String, codingPath: [any CodingKey]) throws -> LayoutMode {
@@ -324,7 +320,6 @@ public struct BetterTileConfiguration: Codable, Hashable, Sendable {
         try container.encode(applicationRules, forKey: .applicationRules)
         try container.encode(keyboardShortcutsEnabled, forKey: .keyboardShortcutsEnabled)
         try container.encode(shortcuts, forKey: .shortcuts)
-        try container.encode(customZones, forKey: .customZones)
         try container.encode(layoutWheel, forKey: .layoutWheel)
     }
 
@@ -391,15 +386,12 @@ public struct BetterTileConfiguration: Codable, Hashable, Sendable {
                   binding.action.map { WindowAction.snapAssignableActions.contains($0) } ?? true
               })
         else { throw ConfigurationError.invalidSnapAreaBindings }
-        for zone in customZones { _ = try zone.rect.validated() }
         var result = self
         result.schemaVersion = Self.currentSchemaVersion
         result.defaultLayoutMode = result.defaultLayoutMode.availableMode
         result.dividerVisibility = .hoverAndDrag
         result.singleWindowPlacement = Self.normalizedSingleWindowPlacement(result.singleWindowPlacement)
-        result.layoutWheel = result.layoutWheel.normalized(
-            customZoneIDs: Set(result.customZones.map(\.id))
-        )
+        result.layoutWheel = result.layoutWheel.normalized()
         return result
     }
 }
@@ -439,8 +431,7 @@ public struct ConfigurationChangeSet: OptionSet, Hashable, Sendable {
         }
         if old.snappingEnabled != new.snappingEnabled
             || old.snapSuppressionModifiers != new.snapSuppressionModifiers
-            || old.snapAreaBindings != new.snapAreaBindings
-            || old.customZones != new.customZones {
+            || old.snapAreaBindings != new.snapAreaBindings {
             changes.insert(.snapping)
         }
         if old.linkedResizeEnabled != new.linkedResizeEnabled
@@ -469,7 +460,7 @@ public struct ConfigurationChangeSet: OptionSet, Hashable, Sendable {
         if old.doubleClickTitleBarToMaximize != new.doubleClickTitleBarToMaximize {
             changes.insert(.titleBar)
         }
-        if old.layoutWheel != new.layoutWheel || old.customZones != new.customZones {
+        if old.layoutWheel != new.layoutWheel {
             changes.insert(.layoutWheel)
         }
         return changes

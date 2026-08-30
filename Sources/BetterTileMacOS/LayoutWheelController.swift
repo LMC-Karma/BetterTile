@@ -30,7 +30,6 @@ public enum LayoutWheelPreviewOutcome: Equatable, Sendable {
 /// what the runtime asked for without a live panel.
 public struct LayoutWheelPresentation: Equatable, Sendable {
     public var configuration: LayoutWheelConfiguration
-    public var customZones: [CustomZone]
     public var placement: LayoutWheelPlacement
     public var selection: LayoutWheelSelection?
     public var unavailableCommands: Set<LayoutWheelCommand>
@@ -222,6 +221,10 @@ public final class LayoutWheelController {
     }
 
     private var wheel: LayoutWheelConfiguration { configuration.layoutWheel }
+
+    private var effectiveMetrics: LayoutWheelMetrics {
+        metrics.scaled(by: wheel.scale)
+    }
 
     private var isKeyboardTriggerEnabled: Bool {
         !isSuspended && wheel.isEnabled && wheel.keyboardTriggerEnabled
@@ -492,8 +495,8 @@ public final class LayoutWheelController {
         }
         let placement = LayoutWheelPlacement.clamped(
             anchor: anchor,
-            diameter: metrics.diameter(for: wheel.levelCount),
-            contentHeight: metrics.presentationHeight(for: wheel.levelCount),
+            diameter: effectiveMetrics.presentationDiameter(for: wheel.levelCount),
+            contentHeight: effectiveMetrics.presentationHeight(for: wheel.levelCount),
             visibleFrame: target.visibleFrame
         )
         var session = Session(target: target, trigger: trigger, placement: placement)
@@ -557,7 +560,7 @@ public final class LayoutWheelController {
         for position: BTPoint,
         placement: LayoutWheelPlacement
     ) -> LayoutWheelSelection? {
-        metrics.geometry.selection(
+        effectiveMetrics.geometry(for: wheel.levelCount).selection(
             for: BTPoint(
                 x: position.x - placement.anchor.x,
                 y: position.y - placement.anchor.y
@@ -569,7 +572,6 @@ public final class LayoutWheelController {
     private func presentation(for session: Session) -> LayoutWheelPresentation {
         LayoutWheelPresentation(
             configuration: wheel,
-            customZones: configuration.customZones,
             placement: session.placement,
             selection: session.selection,
             unavailableCommands: Set(session.unavailableReasons.keys)
@@ -750,7 +752,7 @@ final class LayoutWheelPanelPresenter: LayoutWheelPresenting {
         let size = view.fittingSize
         let frame = BTRect(
             x: placement.center.x - size.width / 2,
-            y: placement.center.y - placement.diameter / 2,
+            y: placement.center.y - size.height / 2,
             width: size.width,
             height: size.height
         )
@@ -765,7 +767,6 @@ private extension LayoutWheelView {
     init(_ presentation: LayoutWheelPresentation) {
         self.init(
             configuration: presentation.configuration,
-            customZones: presentation.customZones,
             selection: presentation.selection,
             unavailableCommands: presentation.unavailableCommands
         )

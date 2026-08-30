@@ -35,12 +35,16 @@ public struct LayoutWheelSelection: Hashable, Sendable {
 
 public enum LayoutWheelCommand: Codable, Hashable, Sendable {
     case windowAction(WindowAction)
+    /// Decoded only for compatibility with older Layout Wheel configurations.
     case customZone(UUID)
     case repairBento
 }
 
 public struct LayoutWheelConfiguration: Codable, Hashable, Sendable {
     public static let slotCount = LayoutWheelSector.allCases.count
+    public static let minimumScale = 0.8
+    public static let maximumScale = 1.3
+    public static let defaultScale = 1.0
     public static let supportedKeyboardModifiers: ShortcutModifiers = [
         .control, .option, .shift, .command,
     ]
@@ -54,15 +58,18 @@ public struct LayoutWheelConfiguration: Codable, Hashable, Sendable {
     public var keyboardTriggerEnabled: Bool
     public var keyboardModifiers: ShortcutModifiers
     public var middleClickTriggerEnabled: Bool
+    /// Overall wheel size, shared by the Settings preview and runtime wheel.
+    public var scale: Double
 
     public init(
         isEnabled: Bool = true,
-        levelCount: LayoutWheelLevelCount = .two,
+        levelCount: LayoutWheelLevelCount = .one,
         innerSlots: [LayoutWheelCommand?] = Self.defaultInnerSlots,
         outerSlots: [LayoutWheelCommand?] = Self.defaultOuterSlots,
         keyboardTriggerEnabled: Bool = true,
         keyboardModifiers: ShortcutModifiers = [.control, .option, .shift],
-        middleClickTriggerEnabled: Bool = false
+        middleClickTriggerEnabled: Bool = false,
+        scale: Double = Self.defaultScale
     ) {
         self.isEnabled = isEnabled
         self.levelCount = levelCount
@@ -71,6 +78,37 @@ public struct LayoutWheelConfiguration: Codable, Hashable, Sendable {
         self.keyboardTriggerEnabled = keyboardTriggerEnabled
         self.keyboardModifiers = keyboardModifiers
         self.middleClickTriggerEnabled = middleClickTriggerEnabled
+        self.scale = scale
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case isEnabled, levelCount, innerSlots, outerSlots
+        case keyboardTriggerEnabled, keyboardModifiers, middleClickTriggerEnabled, scale
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            isEnabled: try container.decodeIfPresent(Bool.self, forKey: .isEnabled) ?? true,
+            levelCount: try container.decodeIfPresent(LayoutWheelLevelCount.self, forKey: .levelCount) ?? .one,
+            innerSlots: try container.decodeIfPresent([LayoutWheelCommand?].self, forKey: .innerSlots)
+                ?? Self.defaultInnerSlots,
+            outerSlots: try container.decodeIfPresent([LayoutWheelCommand?].self, forKey: .outerSlots)
+                ?? Self.defaultOuterSlots,
+            keyboardTriggerEnabled: try container.decodeIfPresent(
+                Bool.self,
+                forKey: .keyboardTriggerEnabled
+            ) ?? true,
+            keyboardModifiers: try container.decodeIfPresent(
+                ShortcutModifiers.self,
+                forKey: .keyboardModifiers
+            ) ?? [.control, .option, .shift],
+            middleClickTriggerEnabled: try container.decodeIfPresent(
+                Bool.self,
+                forKey: .middleClickTriggerEnabled
+            ) ?? false,
+            scale: try container.decodeIfPresent(Double.self, forKey: .scale) ?? Self.defaultScale
+        )
     }
 
     public static let defaultInnerSlots: [LayoutWheelCommand?] = [
@@ -96,7 +134,10 @@ public struct LayoutWheelConfiguration: Codable, Hashable, Sendable {
     ]
 
     /// Produces safe runtime state from decoded or hand-edited configuration.
-    public func normalized(customZoneIDs: Set<UUID>) -> LayoutWheelConfiguration {
+    /// Normalizes persisted assignments. Legacy Custom Zone commands are kept
+    /// decodable, but the feature is no longer available and therefore cannot
+    /// remain assigned to a sector.
+    public func normalized() -> LayoutWheelConfiguration {
         var result = self
         if result.innerSlots.count != Self.slotCount {
             result.innerSlots = Self.defaultInnerSlots
@@ -111,19 +152,24 @@ public struct LayoutWheelConfiguration: Codable, Hashable, Sendable {
             ? supportedModifiers
             : [.control, .option, .shift]
 
-        result.innerSlots = result.innerSlots.removingMissingZones(from: customZoneIDs)
-        result.outerSlots = result.outerSlots.removingMissingZones(from: customZoneIDs)
+        result.scale = result.scale.isFinite
+            ? min(max(result.scale, Self.minimumScale), Self.maximumScale)
+            : Self.defaultScale
+
+        // Custom Zones were never a complete Layout Wheel surface. Keep the
+        // old enum case readable, but remove those assignments from runtime
+        // configuration instead of exposing a dead picker.
+        result.innerSlots = result.innerSlots.removingCustomZoneAssignments()
+        result.outerSlots = result.outerSlots.removingCustomZoneAssignments()
         return result
     }
 }
 
 private extension Array where Element == LayoutWheelCommand? {
-    func removingMissingZones(from customZoneIDs: Set<UUID>) -> Self {
+    func removingCustomZoneAssignments() -> Self {
         map { command in
-            guard case let .customZone(id) = command,
-                  !customZoneIDs.contains(id)
-            else { return command }
-            return nil
+            if case .customZone = command { return nil }
+            return command
         }
     }
 }
@@ -201,6 +247,11 @@ public struct LayoutWheelGeometry: Sendable {
 }
 
 public extension LayoutWheelConfiguration {
+    /// Exchanges the assignments without changing either ring's visibility.
+    mutating func swapRings() {
+        swap(&innerSlots, &outerSlots)
+    }
+
     /// The command a sector carries, or nil for Empty. Reading through one
     /// accessor keeps the renderer, the runtime gesture, and Settings agreeing
     /// about a slot list that hand-edited configuration could leave short.

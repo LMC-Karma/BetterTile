@@ -12,6 +12,9 @@ private let middleTarget = LayoutWheelTarget(
 )
 private let middleAnchor = BTPoint(x: 800, y: 500)
 private let middleKeyboardTrigger: ShortcutModifiers = [.control, .option, .shift]
+private let middleInnerSelectionOffset =
+    (LayoutWheelMetrics.standard.geometry.hubRadius
+        + LayoutWheelMetrics.standard.geometry.innerRingOuterRadius) / 2
 
 @Test func onlyUnmodifiedPhysicalButtonTwoIsReserved() {
     #expect(LayoutWheelMiddleClickEvent.reserves(button: 2, modifiers: []))
@@ -123,10 +126,10 @@ private final class MiddleClickPresenter: LayoutWheelPresenting {
 
     monitor.emit(.down, at: middleAnchor)
     #expect(controller.isOpen)
-    monitor.emit(.dragged, at: BTPoint(x: middleAnchor.x, y: middleAnchor.y - 70))
+    monitor.emit(.dragged, at: BTPoint(x: middleAnchor.x, y: middleAnchor.y - middleInnerSelectionOffset))
     #expect(presenter.presentation?.selection == .init(ring: .inner, sector: .top))
-    monitor.emit(.up, at: BTPoint(x: middleAnchor.x, y: middleAnchor.y - 70))
-    monitor.emit(.up, at: BTPoint(x: middleAnchor.x, y: middleAnchor.y - 70))
+    monitor.emit(.up, at: BTPoint(x: middleAnchor.x, y: middleAnchor.y - middleInnerSelectionOffset))
+    monitor.emit(.up, at: BTPoint(x: middleAnchor.x, y: middleAnchor.y - middleInnerSelectionOffset))
 
     #expect(commits.count == 1)
     #expect(commits.first?.0 == .windowAction(.topHalf))

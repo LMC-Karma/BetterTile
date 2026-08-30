@@ -192,31 +192,6 @@ private let dropBounds = BTRect(x: 0, y: 24, width: 1200, height: 876)
     #expect(plan.state.root == state.root)
 }
 
-@Test func customZonesPartitionWhenFeasibleAndFocusWhenTheyAreNot() throws {
-    let source = WindowID(rawValue: "source")
-    let other = WindowID(rawValue: "other")
-    let state = BentoLayoutState(root: .partition(BentoPartition(axis: .vertical, first: .leaf(source), second: .leaf(other))))
-    let frames = Dictionary(uniqueKeysWithValues: state.placements(in: dropBounds).map { ($0.windowID, $0.frame) })
-    let constraints = defaultConstraints([source, other])
-    let partitionFrame = NormalizedRect(x: 0, y: 0, width: 0.4, height: 1).frame(in: dropBounds)
-    let partition = try #require(BentoDropPlanner().plan(
-        intent: .customZone(id: UUID(), frame: partitionFrame), sourceWindowID: source,
-        state: state, baselineFrames: frames, constraints: constraints,
-        contextWindowIDs: [source, other], in: dropBounds
-    ))
-    #expect(partition.minimizedWindowIDs.isEmpty)
-    #expect(partition.placements.first(where: { $0.windowID == source })?.frame == partitionFrame)
-
-    let focusFrame = dropBounds.insetBy(dx: 40, dy: 40)
-    let focus = try #require(BentoDropPlanner().plan(
-        intent: .customZone(id: UUID(), frame: focusFrame), sourceWindowID: source,
-        state: state, baselineFrames: frames, constraints: constraints,
-        contextWindowIDs: [source, other], in: dropBounds
-    ))
-    #expect(focus.minimizedWindowIDs == [other])
-    #expect(focus.placements == [Placement(windowID: source, frame: focusFrame)])
-}
-
 @Test func impossiblePartitionRestoresInsteadOfViolatingMinimumSizes() {
     let source = WindowID(rawValue: "source")
     let other = WindowID(rawValue: "other")

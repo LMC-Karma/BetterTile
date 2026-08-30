@@ -36,6 +36,9 @@ private let target = LayoutWheelTarget(
 )
 private let anchor = BTPoint(x: 800, y: 500)
 private let trigger: ShortcutModifiers = [.control, .option, .shift]
+private let innerSelectionOffset =
+    (LayoutWheelMetrics.standard.geometry.hubRadius
+        + LayoutWheelMetrics.standard.geometry.innerRingOuterRadius) / 2
 
 @MainActor
 private struct Harness {
@@ -46,7 +49,9 @@ private struct Harness {
     var endedCount = 0
 
     init(
-        configuration: BetterTileConfiguration = BetterTileConfiguration(),
+        configuration: BetterTileConfiguration = BetterTileConfiguration(
+            layoutWheel: LayoutWheelConfiguration(levelCount: .two)
+        ),
         capture: LayoutWheelTarget? = target,
         pointer: BTPoint = anchor
     ) {
@@ -106,6 +111,25 @@ private struct Harness {
     #expect(harness.box.captureCount == 1)
 }
 
+@Test @MainActor func wheelScaleChangesPlacementAndSelectionGeometryTogether() {
+    var configuration = BetterTileConfiguration()
+    configuration.layoutWheel.levelCount = .two
+    configuration.layoutWheel.scale = 1.2
+    let harness = Harness(configuration: configuration)
+
+    harness.activate()
+
+    let expectedDiameter = LayoutWheelMetrics.standard
+        .scaled(by: 1.2)
+        .presentationDiameter(for: .two)
+    #expect(abs((harness.presenter.presentations.last?.placement.diameter ?? 0) - expectedDiameter) < 0.01)
+
+    let geometry = LayoutWheelMetrics.standard.scaled(by: 1.2).geometry(for: .two)
+    let midpoint = (geometry.hubRadius + geometry.innerRingOuterRadius) / 2
+    harness.controller.handlePointer(BTPoint(x: anchor.x, y: anchor.y - midpoint))
+    #expect(harness.presenter.selection == LayoutWheelSelection(ring: .inner, sector: .top))
+}
+
 @Test @MainActor func anOpenGestureOwnsShortcutKeysUntilItEnds() {
     let harness = Harness()
     var beganCount = 0
@@ -161,7 +185,7 @@ private struct Harness {
 @Test @MainActor func aSecondWheelNeedsTheTriggerReleasedFirst() {
     let harness = Harness()
     harness.activate()
-    harness.controller.handlePointer(BTPoint(x: anchor.x, y: anchor.y - 70))
+    harness.controller.handlePointer(BTPoint(x: anchor.x, y: anchor.y - innerSelectionOffset))
     harness.release()
     #expect(harness.presenter.openCount == 1)
 
@@ -203,7 +227,7 @@ private struct Harness {
     harness.activate()
 
     // Straight up from the anchor, inside the inner ring.
-    harness.controller.handlePointer(BTPoint(x: anchor.x, y: anchor.y - 70))
+    harness.controller.handlePointer(BTPoint(x: anchor.x, y: anchor.y - innerSelectionOffset))
     #expect(harness.presenter.selection == LayoutWheelSelection(ring: .inner, sector: .top))
 
     harness.release()
@@ -233,7 +257,7 @@ private struct Harness {
     let harness = Harness(configuration: configuration)
     harness.activate()
 
-    harness.controller.handlePointer(BTPoint(x: anchor.x, y: anchor.y - 70))
+    harness.controller.handlePointer(BTPoint(x: anchor.x, y: anchor.y - innerSelectionOffset))
     #expect(harness.presenter.selection == LayoutWheelSelection(ring: .inner, sector: .top))
 
     harness.release()
@@ -246,7 +270,7 @@ private struct Harness {
 @Test @MainActor func duplicateReleaseAndDeactivationCommitExactlyOnce() {
     let harness = Harness()
     harness.activate()
-    harness.controller.handlePointer(BTPoint(x: anchor.x, y: anchor.y - 70))
+    harness.controller.handlePointer(BTPoint(x: anchor.x, y: anchor.y - innerSelectionOffset))
 
     harness.release()
     harness.release()
@@ -261,7 +285,7 @@ private struct Harness {
 @Test @MainActor func focusedWindowChangeCancelsWithoutCommitting() {
     let harness = Harness()
     harness.activate()
-    harness.controller.handlePointer(BTPoint(x: anchor.x, y: anchor.y - 70))
+    harness.controller.handlePointer(BTPoint(x: anchor.x, y: anchor.y - innerSelectionOffset))
 
     harness.controller.handleFocusedWindowChanged()
 
@@ -274,7 +298,7 @@ private struct Harness {
 @Test @MainActor func escapeCancelsWithoutCommitting() {
     let harness = Harness()
     harness.activate()
-    harness.controller.handlePointer(BTPoint(x: anchor.x, y: anchor.y - 70))
+    harness.controller.handlePointer(BTPoint(x: anchor.x, y: anchor.y - innerSelectionOffset))
 
     harness.controller.handleKey(.escape)
 
@@ -292,7 +316,7 @@ private struct Harness {
 @Test @MainActor func losingTheCapturedWindowCancelsAndNeverRetargets() {
     let harness = Harness()
     harness.activate()
-    harness.controller.handlePointer(BTPoint(x: anchor.x, y: anchor.y - 70))
+    harness.controller.handlePointer(BTPoint(x: anchor.x, y: anchor.y - innerSelectionOffset))
 
     harness.controller.handleTargetLost(windowID: WindowID(rawValue: "other-window"))
     #expect(harness.controller.isOpen)
@@ -307,7 +331,7 @@ private struct Harness {
 @Test @MainActor func changingTheTriggerMidGestureCancels() {
     let harness = Harness()
     harness.activate()
-    harness.controller.handlePointer(BTPoint(x: anchor.x, y: anchor.y - 70))
+    harness.controller.handlePointer(BTPoint(x: anchor.x, y: anchor.y - innerSelectionOffset))
 
     var configuration = BetterTileConfiguration()
     configuration.layoutWheel.keyboardModifiers = [.control, .shift]
@@ -496,7 +520,7 @@ private struct Harness {
     harness.controller.previewHandler = { _, _ in .ready(placements: [placement]) }
     harness.activate()
 
-    harness.controller.handlePointer(BTPoint(x: anchor.x, y: anchor.y - 70))
+    harness.controller.handlePointer(BTPoint(x: anchor.x, y: anchor.y - innerSelectionOffset))
 
     #expect(harness.presenter.shownPlacements.last == [placement])
 }
