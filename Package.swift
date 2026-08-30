@@ -35,6 +35,7 @@ let package = Package(
         ),
         .testTarget(name: "BetterTileCoreTests", dependencies: ["BetterTileCore"]),
         .testTarget(name: "BetterTileMacOSTests", dependencies: ["BetterTileMacOS", "BetterTileCore"]),
+        .testTarget(name: "BetterTileAppTests", dependencies: ["BetterTileApp"]),
     ],
     swiftLanguageModes: [.v6]
 )

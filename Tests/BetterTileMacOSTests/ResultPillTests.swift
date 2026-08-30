@@ -40,6 +40,10 @@ import Testing
     #expect(ResultPillFeedback.failure("No eligible focused window.").message == "No eligible window")
     #expect(ResultPillFeedback.failure("Accessibility access was removed.").message == "Accessibility required")
     #expect(ResultPillFeedback.failure("The preview no longer matches the active window transaction.").message == "Window changed")
+    #expect(ResultPillFeedback.failure("The captured window is no longer available.").message == "Window changed")
+    #expect(ResultPillFeedback.failure("BetterTile is set to ignore this app.").message == "App is ignored")
+    #expect(ResultPillFeedback.failure("That layout cannot satisfy the windows' minimum sizes.").message == "Can’t fit this layout")
+    #expect(ResultPillFeedback.failure("Repair Bento is available only on a Bento desktop.").message == "Bento not active")
     #expect(ResultPillFeedback.failure("Something unexpected happened.").message == "Couldn’t apply layout")
 }
 

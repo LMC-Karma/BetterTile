@@ -904,9 +904,6 @@ private struct BetterTileMenuPanel: View {
                     ForEach(WindowActionGroup.allCases) { group in
                         actionGroup(group)
                     }
-                    if !model.configuration.customZones.isEmpty {
-                        customZonesCard
-                    }
                 }
                 .padding(.vertical, 1)
                 .background(OverlayScrollerConfigurator())
@@ -1050,25 +1047,6 @@ private struct BetterTileMenuPanel: View {
         .buttonStyle(.plain)
         .disabled(!model.hasAccessibilityPermission)
         .help(action.title)
-    }
-
-    private var customZonesCard: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            panelSectionTitle("Custom Zones")
-            ForEach(model.configuration.customZones) { zone in
-                Button {
-                    model.apply(zone: zone)
-                } label: {
-                    Label(zone.name, systemImage: "rectangle.dashed")
-                        .font(.system(size: 10.5, weight: .semibold))
-                        .frame(maxWidth: .infinity, minHeight: 30, alignment: .leading)
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .disabled(!model.hasAccessibilityPermission)
-            }
-        }
-        .panelCard(colorScheme: colorScheme, increaseContrast: increaseContrast)
     }
 
     private var footer: some View {

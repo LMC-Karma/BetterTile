@@ -4,7 +4,6 @@ public enum BentoDragOutcome: Equatable, Sendable {
     case swap(targetWindowID: WindowID)
     case insert(targetWindowID: WindowID, edge: BentoPaneDropPosition)
     case snap(action: WindowAction, frame: BTRect)
-    case customZone(id: UUID, frame: BTRect)
     case restore
 }
 
@@ -119,9 +118,6 @@ public struct BentoDropHoverState: Sendable {
         }
         if let snapTarget, let action = snapTarget.action {
             return .snap(action: action, frame: snapTarget.frame)
-        }
-        if let snapTarget, let zoneID = snapTarget.zoneID {
-            return .customZone(id: zoneID, frame: snapTarget.frame)
         }
         return .restore
     }

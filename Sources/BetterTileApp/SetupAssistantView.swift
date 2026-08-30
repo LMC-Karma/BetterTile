@@ -160,9 +160,11 @@ struct SetupAssistantView: View {
                 .font(.largeTitle.weight(.semibold))
             Text(
                 "BetterTile uses the public macOS Accessibility API to read, move, and resize "
-                    + "eligible windows. For snapping and linked resizing, it listens only for "
-                    + "global left-button down, drag, and up ordering. It does not request Screen "
-                    + "Recording or Input Monitoring."
+                    + "eligible windows. It observes global left-button ordering for snapping "
+                    + "and linked resizing. Layout Wheel observes its configured modifiers and, "
+                    + "only during a gesture, limited keys and pointer movement. Its optional "
+                    + "Middle Click trigger reserves unmodified middle-click system-wide while "
+                    + "enabled. BetterTile does not request Screen Recording or Input Monitoring."
             )
             .font(.body)
             .foregroundStyle(.secondary)
@@ -287,7 +289,7 @@ struct SetupAssistantView: View {
                     featurePoint(
                         "Adaptive Bento layouts",
                         detail: "Arrange visible windows into a stable split layout that adapts as windows change.",
-                        symbol: "rectangle.split.2x2"
+                        symbol: "rectangle.inset.filled.lefthalf.topright.bottomright"
                     )
                     featurePoint(
                         "Keyboard actions",

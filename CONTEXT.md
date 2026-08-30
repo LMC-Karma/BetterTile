@@ -3,6 +3,13 @@
 Shared vocabulary for BetterTile's domain. Terms here name concepts, not Swift
 types; code and documentation should use them consistently.
 
+## Layout Wheel
+
+BetterTile's pointer-centered chooser for window actions and Repair Bento. It
+presents one or two concentric levels around a cancel hub.
+
+_Avoid_: Snap Wheel, radial menu, Layout Dial
+
 ## Window mutation
 
 An operation that changes what the user sees on screen: moving or resizing one

@@ -77,7 +77,7 @@ public enum DividerVisibility: String, Codable, CaseIterable, Sendable {
 }
 
 public struct BetterTileConfiguration: Codable, Hashable, Sendable {
-    public static let currentSchemaVersion = 9
+    public static let currentSchemaVersion = 10
 
     /// The placement a lone window receives, restricted to the actions that
     /// describe a position on the display. `nil` means "leave it unchanged".
@@ -114,7 +114,7 @@ public struct BetterTileConfiguration: Codable, Hashable, Sendable {
     /// turning it back on restores them untouched.
     public var keyboardShortcutsEnabled: Bool
     public var shortcuts: [ShortcutBinding]
-    public var customZones: [CustomZone]
+    public var layoutWheel: LayoutWheelConfiguration
 
     public init(
         schemaVersion: Int = BetterTileConfiguration.currentSchemaVersion,
@@ -139,7 +139,7 @@ public struct BetterTileConfiguration: Codable, Hashable, Sendable {
         applicationRules: ApplicationRuleSet = ApplicationRuleSet(),
         keyboardShortcutsEnabled: Bool = true,
         shortcuts: [ShortcutBinding] = BetterTileConfiguration.defaultShortcuts,
-        customZones: [CustomZone] = []
+        layoutWheel: LayoutWheelConfiguration = LayoutWheelConfiguration()
     ) {
         self.schemaVersion = schemaVersion
         self.setupCompletionVersion = max(0, setupCompletionVersion)
@@ -163,7 +163,7 @@ public struct BetterTileConfiguration: Codable, Hashable, Sendable {
         self.applicationRules = applicationRules
         self.keyboardShortcutsEnabled = keyboardShortcutsEnabled
         self.shortcuts = shortcuts
-        self.customZones = customZones
+        self.layoutWheel = layoutWheel.normalized()
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -177,7 +177,7 @@ public struct BetterTileConfiguration: Codable, Hashable, Sendable {
         case snapSuppressionModifiers, adjacencyTolerance, snapAreaBindings, doubleClickTitleBarToMaximize
         case enhancedUserInterfacePolicy
         case applicationRules, keyboardShortcutsEnabled
-        case shortcuts, customZones
+        case shortcuts, layoutWheel
         case layoutMode, bentoEnabled, bentoStates
     }
 
@@ -273,7 +273,10 @@ public struct BetterTileConfiguration: Codable, Hashable, Sendable {
         } else {
             shortcuts = decodedShortcuts ?? Self.defaultShortcuts
         }
-        customZones = try container.decodeIfPresent([CustomZone].self, forKey: .customZones) ?? []
+        layoutWheel = try container.decodeIfPresent(
+            LayoutWheelConfiguration.self,
+            forKey: .layoutWheel
+        )?.normalized() ?? LayoutWheelConfiguration()
     }
 
     private static func migrateLayoutMode(_ rawValue: String, codingPath: [any CodingKey]) throws -> LayoutMode {
@@ -317,7 +320,7 @@ public struct BetterTileConfiguration: Codable, Hashable, Sendable {
         try container.encode(applicationRules, forKey: .applicationRules)
         try container.encode(keyboardShortcutsEnabled, forKey: .keyboardShortcutsEnabled)
         try container.encode(shortcuts, forKey: .shortcuts)
-        try container.encode(customZones, forKey: .customZones)
+        try container.encode(layoutWheel, forKey: .layoutWheel)
     }
 
     public static let defaultSnapAreaBindings: [SnapAreaBinding] = [
@@ -383,12 +386,12 @@ public struct BetterTileConfiguration: Codable, Hashable, Sendable {
                   binding.action.map { WindowAction.snapAssignableActions.contains($0) } ?? true
               })
         else { throw ConfigurationError.invalidSnapAreaBindings }
-        for zone in customZones { _ = try zone.rect.validated() }
         var result = self
         result.schemaVersion = Self.currentSchemaVersion
         result.defaultLayoutMode = result.defaultLayoutMode.availableMode
         result.dividerVisibility = .hoverAndDrag
         result.singleWindowPlacement = Self.normalizedSingleWindowPlacement(result.singleWindowPlacement)
+        result.layoutWheel = result.layoutWheel.normalized()
         return result
     }
 }
@@ -407,10 +410,11 @@ public struct ConfigurationChangeSet: OptionSet, Hashable, Sendable {
     public static let titleBar = Self(rawValue: 1 << 6)
     public static let accessibilityWrites = Self(rawValue: 1 << 7)
     public static let applicationRules = Self(rawValue: 1 << 8)
+    public static let layoutWheel = Self(rawValue: 1 << 9)
     public static let all: Self = [
         .shortcuts, .snapping, .linkedResize, .divider,
         .bentoGeometry, .activationPolicy, .titleBar, .accessibilityWrites,
-        .applicationRules,
+        .applicationRules, .layoutWheel,
     ]
 
     public static func between(
@@ -427,8 +431,7 @@ public struct ConfigurationChangeSet: OptionSet, Hashable, Sendable {
         }
         if old.snappingEnabled != new.snappingEnabled
             || old.snapSuppressionModifiers != new.snapSuppressionModifiers
-            || old.snapAreaBindings != new.snapAreaBindings
-            || old.customZones != new.customZones {
+            || old.snapAreaBindings != new.snapAreaBindings {
             changes.insert(.snapping)
         }
         if old.linkedResizeEnabled != new.linkedResizeEnabled
@@ -456,6 +459,9 @@ public struct ConfigurationChangeSet: OptionSet, Hashable, Sendable {
         }
         if old.doubleClickTitleBarToMaximize != new.doubleClickTitleBarToMaximize {
             changes.insert(.titleBar)
+        }
+        if old.layoutWheel != new.layoutWheel {
+            changes.insert(.layoutWheel)
         }
         return changes
     }

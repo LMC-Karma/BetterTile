@@ -10,6 +10,34 @@ public struct WindowActionPlan: Sendable {
     public let targetFrame: BTRect
 }
 
+public struct WindowPlacementPlan: Sendable {
+    public let windowID: WindowID
+    public let displayID: DisplayID
+    public let sourceFrame: BTRect
+    public let targetFrame: BTRect
+
+    public init(
+        windowID: WindowID,
+        displayID: DisplayID,
+        sourceFrame: BTRect,
+        targetFrame: BTRect
+    ) {
+        self.windowID = windowID
+        self.displayID = displayID
+        self.sourceFrame = sourceFrame
+        self.targetFrame = targetFrame
+    }
+
+    public init(_ actionPlan: WindowActionPlan) {
+        self.init(
+            windowID: actionPlan.windowID,
+            displayID: actionPlan.displayID,
+            sourceFrame: actionPlan.sourceFrame,
+            targetFrame: actionPlan.targetFrame
+        )
+    }
+}
+
 /// The terminal meaning of one window mutation. Exactly one value describes
 /// exactly one operation; nothing about it survives into the next call.
 public enum WindowMutationOutcome: Hashable, Sendable {
@@ -36,6 +64,12 @@ public enum WindowMutationOutcome: Hashable, Sendable {
 /// mean there is legitimately nothing to plan.
 public enum WindowPlanOutcome: Sendable {
     case ready(WindowActionPlan)
+    case unavailable
+    case failed(reason: String)
+}
+
+public enum WindowPlacementPlanOutcome: Sendable {
+    case ready(WindowPlacementPlan)
     case unavailable
     case failed(reason: String)
 }
@@ -185,26 +219,24 @@ public final class WindowCoordinator {
     public func plan(_ requestedAction: WindowAction) -> WindowPlanOutcome {
         do {
             guard let window = try system.focusedWindow(), window.isEligible else { return .unavailable }
-            let displays = system.displays()
-            guard let display = displays.first(where: { $0.id == window.displayID }) else { return .unavailable }
             let action = cycledAction(for: requestedAction, windowID: window.id)
-            let target: BTRect?
-            if action.isRestore {
-                target = history.restore(for: window.id)
-            } else if action.isDisplayTransfer {
-                target = transferTarget(for: action, window: window, displays: displays)
-            } else {
-                target = actionEngine.targetFrame(for: action, window: window, display: display)
-            }
-            guard let target else { return .unavailable }
-            return .ready(WindowActionPlan(
-                requestedAction: requestedAction,
-                resolvedAction: action,
-                windowID: window.id,
-                displayID: window.displayID,
-                sourceFrame: window.frame,
-                targetFrame: target
-            ))
+            return plan(requestedAction: requestedAction, resolvedAction: action, window: window)
+        } catch {
+            return .failed(reason: error.localizedDescription)
+        }
+    }
+
+    /// Plans one exact action for a captured window without advancing shortcut
+    /// cycles or recording history.
+    public func planExact(
+        _ action: WindowAction,
+        for windowID: WindowID
+    ) -> WindowPlanOutcome {
+        do {
+            guard let window = try snapshots(ids: [windowID]).first,
+                  window.isEligible
+            else { return .unavailable }
+            return plan(requestedAction: action, resolvedAction: action, window: window)
         } catch {
             return .failed(reason: error.localizedDescription)
         }
@@ -215,6 +247,16 @@ public final class WindowCoordinator {
             if !plan.resolvedAction.isRestore {
                 history.record(plan.sourceFrame, for: plan.windowID)
             }
+            try apply(plan.targetFrame, to: plan.windowID, knownCurrentFrame: plan.sourceFrame)
+            return .applied
+        } catch {
+            return .failed(reason: error.localizedDescription)
+        }
+    }
+
+    public func perform(_ plan: WindowPlacementPlan) -> WindowMutationOutcome {
+        do {
+            history.record(plan.sourceFrame, for: plan.windowID)
             try apply(plan.targetFrame, to: plan.windowID, knownCurrentFrame: plan.sourceFrame)
             return .applied
         } catch {
@@ -241,6 +283,20 @@ public final class WindowCoordinator {
     ///   mutation lands, and a generation read late would miss it.
     public func verifyPlacement(
         _ plan: WindowActionPlan,
+        since generation: UInt64,
+        delay: Duration = .milliseconds(120),
+        attempts: Int = 3
+    ) async -> DelayedPlacementVerdict {
+        await verifyPlacement(
+            WindowPlacementPlan(plan),
+            since: generation,
+            delay: delay,
+            attempts: attempts
+        )
+    }
+
+    public func verifyPlacement(
+        _ plan: WindowPlacementPlan,
         since generation: UInt64,
         delay: Duration = .milliseconds(120),
         attempts: Int = 3
@@ -283,35 +339,6 @@ public final class WindowCoordinator {
     /// tell a delayed check that its action has been superseded.
     public func mutationGeneration(for windowID: WindowID) -> UInt64 {
         generations[windowID] ?? 0
-    }
-
-    public func applyCustomZone(
-        _ zone: CustomZone,
-        applicationRules: ApplicationRuleSet
-    ) -> WindowMutationOutcome {
-        do {
-            guard let window = try system.focusedWindow(), window.isEligible else {
-                return .failed(reason: "No eligible focused window.")
-            }
-            guard applicationRules
-                .rule(for: window.bundleIdentifier)
-                .allowsDirectPlacement
-            else {
-                return .failed(reason: "BetterTile is set to ignore this app.")
-            }
-            guard let display = system.displays().first(where: { $0.id == window.displayID }) else {
-                return .failed(reason: "The window's display could not be found.")
-            }
-            history.record(window.frame, for: window.id)
-            try apply(
-                zone.rect.frame(in: display.visibleFrame),
-                to: window.id,
-                knownCurrentFrame: window.frame
-            )
-            return .applied
-        } catch {
-            return .failed(reason: error.localizedDescription)
-        }
     }
 
     public func applyPlacements(_ placements: [Placement], recordHistory: Bool = true) -> WindowMutationOutcome {
@@ -676,6 +703,34 @@ public final class WindowCoordinator {
         let offset = action == .nextDisplay ? 1 : -1
         let destinationIndex = (currentIndex + offset + ordered.count) % ordered.count
         return actionEngine.transferFrame(window.frame, from: ordered[currentIndex], to: ordered[destinationIndex])
+    }
+
+    private func plan(
+        requestedAction: WindowAction,
+        resolvedAction: WindowAction,
+        window: WindowSnapshot
+    ) -> WindowPlanOutcome {
+        let displays = system.displays()
+        guard let display = displays.first(where: { $0.id == window.displayID }) else {
+            return .unavailable
+        }
+        let target: BTRect?
+        if resolvedAction.isRestore {
+            target = history.restore(for: window.id)
+        } else if resolvedAction.isDisplayTransfer {
+            target = transferTarget(for: resolvedAction, window: window, displays: displays)
+        } else {
+            target = actionEngine.targetFrame(for: resolvedAction, window: window, display: display)
+        }
+        guard let target else { return .unavailable }
+        return .ready(WindowActionPlan(
+            requestedAction: requestedAction,
+            resolvedAction: resolvedAction,
+            windowID: window.id,
+            displayID: window.displayID,
+            sourceFrame: window.frame,
+            targetFrame: target
+        ))
     }
 
     private func cycledAction(for requested: WindowAction, windowID: WindowID) -> WindowAction {

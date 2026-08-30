@@ -387,8 +387,7 @@ public final class DragSnapController {
         let snapTarget = bentoDragDisplayID == nil ? nil : SnapZoneDetector().target(
                at: point,
                display: display,
-               snapAreas: configuration.snapAreaBindings,
-               customZones: configuration.customZones
+               snapAreas: configuration.snapAreaBindings
            )
         bentoSnapTarget = snapTarget
         if bentoDragDisplayID != nil,
@@ -495,8 +494,7 @@ public final class DragSnapController {
         target = snapTarget ?? SnapZoneDetector().target(
                 at: point,
                 display: display,
-                snapAreas: configuration.snapAreaBindings,
-                customZones: configuration.customZones
+                snapAreas: configuration.snapAreaBindings
         )
         if let target {
             showPreview(frame: target.frame, mainScreenFrame: mainFrame)
@@ -738,19 +736,20 @@ private final class SnapPreviewPanel {
         panel.ignoresMouseEvents = true
         panel.hasShadow = false
         panel.isOpaque = false
-        panel.backgroundColor = NSColor.controlAccentColor.withAlphaComponent(0.18)
+        panel.backgroundColor = .clear
         panel.collectionBehavior = [.moveToActiveSpace, .transient, .ignoresCycle]
-        panel.contentView?.wantsLayer = true
-        panel.contentView?.layer?.borderWidth = 2
-        panel.contentView?.layer?.borderColor = NSColor.controlAccentColor.withAlphaComponent(0.8).cgColor
-        panel.contentView?.layer?.cornerRadius = 12
+        panel.sharingType = .none
+        panel.contentView = PlacementWireframeView()
     }
 
     func show(frame: BTRect, mainScreenFrame: CGRect) {
         let destination = CoordinateConverter.toAppKit(
             frame,
             mainScreenFrame: mainScreenFrame
-        ).insetBy(dx: 6, dy: 6)
+        ).insetBy(
+            dx: BentoPreviewMetrics.motionPanelInset,
+            dy: BentoPreviewMetrics.motionPanelInset
+        )
         panel.setFrame(
             destination,
             display: true,
@@ -764,7 +763,7 @@ private final class SnapPreviewPanel {
 }
 
 @MainActor
-private enum BentoPreviewMetrics {
+enum BentoPreviewMetrics {
     static let cornerRadius: CGFloat = 11
     static let screenInset: CGFloat = 8
     static let cuePanelInset: CGFloat = 2
@@ -780,9 +779,9 @@ private final class BentoDropPreviewController {
 
     private let cuePanel: NSPanel
     private let cueView = BentoDropCueView()
+    private let placementPreviews = PlacementWireframeController()
     private var landingPanel: NSPanel?
     private var swapOriginPanel: NSPanel?
-    private var wireframePanels: [WindowID: NSPanel] = [:]
 
     init() {
         cuePanel = Self.makePanel()
@@ -830,47 +829,7 @@ private final class BentoDropPreviewController {
     ) {
         let interval = Self.signposter.beginInterval("showBentoWireframes")
         defer { Self.signposter.endInterval("showBentoWireframes", interval) }
-        guard let mainFrame = NSScreen.screens.first?.frame else { return }
-        let ids = Set(placements.map(\.windowID))
-        for id in wireframePanels.keys.filter({ !ids.contains($0) }) {
-            wireframePanels.removeValue(forKey: id)?.orderOut(nil)
-        }
-        for placement in placements {
-            let panel = wireframePanels[placement.windowID] ?? {
-                let panel = Self.makePanel()
-                panel.contentView = BentoWireframeView()
-                wireframePanels[placement.windowID] = panel
-                return panel
-            }()
-            let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-            let destination = CoordinateConverter.toAppKit(
-                placement.frame,
-                mainScreenFrame: mainFrame
-            ).insetBy(
-                dx: BentoPreviewMetrics.motionPanelInset,
-                dy: BentoPreviewMetrics.motionPanelInset
-            )
-            let origin = baselineFrames[placement.windowID].map {
-                CoordinateConverter.toAppKit($0, mainScreenFrame: mainFrame).insetBy(
-                    dx: BentoPreviewMetrics.motionPanelInset,
-                    dy: BentoPreviewMetrics.motionPanelInset
-                )
-            } ?? destination
-            panel.alphaValue = reduceMotion ? 1 : 0.58
-            panel.setFrame(origin, display: true)
-            panel.orderFrontRegardless()
-            if reduceMotion || origin.equalTo(destination) {
-                panel.alphaValue = 1
-                panel.setFrame(destination, display: true)
-            } else {
-                NSAnimationContext.runAnimationGroup { context in
-                    context.duration = 0.18
-                    context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-                    panel.animator().alphaValue = 1
-                    panel.animator().setFrame(destination, display: true)
-                }
-            }
-        }
+        placementPreviews.show(placements, baselineFrames: baselineFrames)
     }
 
     func hide() {
@@ -887,8 +846,7 @@ private final class BentoDropPreviewController {
         (swapOriginPanel?.contentView as? BentoLandingView)?.stopPulsing()
         swapOriginPanel?.orderOut(nil)
         swapOriginPanel = nil
-        for panel in wireframePanels.values { panel.orderOut(nil) }
-        wireframePanels.removeAll()
+        placementPreviews.hide()
     }
 
     private func showLanding(
@@ -929,6 +887,7 @@ private final class BentoDropPreviewController {
         panel.hasShadow = false
         panel.backgroundColor = .clear
         panel.collectionBehavior = [.moveToActiveSpace, .transient, .ignoresCycle]
+        panel.sharingType = .none
         return panel
     }
 }
@@ -1244,7 +1203,80 @@ private final class BentoLandingView: NSView {
 }
 
 @MainActor
-private final class BentoWireframeView: NSView {
+/// Shared by Bento drop previews and the Layout Wheel so both speak the same
+/// visual language for "this window is going here".
+final class PlacementWireframeController {
+    private var panels: [WindowID: NSPanel] = [:]
+
+    func show(
+        _ placements: [Placement],
+        baselineFrames: [WindowID: BTRect] = [:]
+    ) {
+        guard let mainFrame = NSScreen.screens.first?.frame else { return }
+        let ids = Set(placements.map(\.windowID))
+        for id in panels.keys where !ids.contains(id) {
+            panels.removeValue(forKey: id)?.orderOut(nil)
+        }
+        for placement in placements {
+            let panel = panels[placement.windowID] ?? makePanel(for: placement.windowID)
+            let destination = CoordinateConverter.toAppKit(
+                placement.frame,
+                mainScreenFrame: mainFrame
+            ).insetBy(
+                dx: BentoPreviewMetrics.motionPanelInset,
+                dy: BentoPreviewMetrics.motionPanelInset
+            )
+            let origin = baselineFrames[placement.windowID].map {
+                CoordinateConverter.toAppKit($0, mainScreenFrame: mainFrame).insetBy(
+                    dx: BentoPreviewMetrics.motionPanelInset,
+                    dy: BentoPreviewMetrics.motionPanelInset
+                )
+            } ?? destination
+            let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+            panel.alphaValue = reduceMotion ? 1 : 0.58
+            panel.setFrame(origin, display: true)
+            panel.orderFrontRegardless()
+            if reduceMotion || origin.equalTo(destination) {
+                panel.alphaValue = 1
+                panel.setFrame(destination, display: true)
+            } else {
+                NSAnimationContext.runAnimationGroup { context in
+                    context.duration = 0.18
+                    context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+                    panel.animator().alphaValue = 1
+                    panel.animator().setFrame(destination, display: true)
+                }
+            }
+        }
+    }
+
+    func hide() {
+        for panel in panels.values { panel.orderOut(nil) }
+        panels.removeAll()
+    }
+
+    private func makePanel(for id: WindowID) -> NSPanel {
+        let panel = NSPanel(
+            contentRect: .zero,
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered,
+            defer: true
+        )
+        panel.level = .floating
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hasShadow = false
+        panel.ignoresMouseEvents = true
+        panel.collectionBehavior = [.moveToActiveSpace, .transient, .ignoresCycle]
+        panel.sharingType = .none
+        panel.contentView = PlacementWireframeView()
+        panels[id] = panel
+        return panel
+    }
+}
+
+@MainActor
+final class PlacementWireframeView: NSView {
     override var isOpaque: Bool { false }
 
     override func draw(_ dirtyRect: NSRect) {
@@ -1256,10 +1288,18 @@ private final class BentoWireframeView: NSView {
             min(rect.width, rect.height) / 2
         )
         let path = NSBezierPath(roundedRect: rect, xRadius: radius, yRadius: radius)
-        path.lineWidth = 2
+        let increaseContrast = NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast
+        NSColor.controlAccentColor
+            .withAlphaComponent(increaseContrast ? 0.16 : 0.10)
+            .setFill()
+        path.fill()
+
+        path.lineWidth = increaseContrast ? 3 : 2
         let pattern: [CGFloat] = [8, 5]
         path.setLineDash(pattern, count: pattern.count, phase: 0)
-        NSColor.controlAccentColor.withAlphaComponent(0.72).setStroke()
+        NSColor.controlAccentColor
+            .withAlphaComponent(increaseContrast ? 0.95 : 0.78)
+            .setStroke()
         path.stroke()
     }
 }

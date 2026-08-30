@@ -5,6 +5,32 @@ import Foundation
 import Observation
 import os
 
+/// The macOS observations the app model coordinates. The Accessibility adapter
+/// and the deterministic app-test adapter meet at this seam.
+@MainActor
+protocol BetterTileWindowSystem: TargetedWindowSystem, WindowEventSource {
+    var enhancedUserInterfacePolicy: EnhancedUserInterfacePolicy { get set }
+    func cachedVisibleWindows(refreshing ids: Set<WindowID>) throws -> [WindowSnapshot]?
+    func nativeDesktopObservation() -> NativeDesktopObservation?
+    func refreshNativeDesktopObservation() -> NativeDesktopObservation?
+    func observeApplicationEnforcedMinimum(
+        windowID: WindowID,
+        requested: BTRect,
+        baseline: BTRect,
+        actual: BTRect
+    ) -> Bool
+    func refreshApplicationObservers()
+    func resetCachedWindows()
+    func startDockFootprintMonitoring(onChange: @escaping () -> Void)
+    func stopDockFootprintMonitoring()
+    func triggerDockFootprintCheck()
+    func startDisplayReconfigurationMonitoring(onChange: @escaping @MainActor () -> Void)
+    func stopDisplayReconfigurationMonitoring()
+    func updateManagedWindowIDs(_ ids: Set<WindowID>)
+}
+
+extension AccessibilityWindowSystem: BetterTileWindowSystem {}
+
 @Observable
 @MainActor
 final class BetterTileModel {
@@ -26,14 +52,16 @@ final class BetterTileModel {
     var statusMessage: String?
     private(set) var lastActionFeedback: ResultPillFeedback?
     private(set) var activeDisplayID: DisplayID?
+    private(set) var layoutWheelMonitoringFailure: String?
 
-    private let system: AccessibilityWindowSystem
+    private let system: any BetterTileWindowSystem
     private let coordinator: WindowCoordinator
     private let store: ConfigurationStore
     private let shortcuts: GlobalShortcutMonitor
     private let dragSnap: DragSnapController
     private let titleBarDoubleClick: TitleBarDoubleClickController
     private let linkedResize: LinkedResizeController
+    private let layoutWheel: LayoutWheelController
     private let sharedGestureEvents: SharedGestureEventMonitor
     private let dividerResize: DividerOverlayController
     private var resultPill: ResultPillController?
@@ -67,11 +95,16 @@ final class BetterTileModel {
     private var bentoDragEventBuffer = WindowEventBuffer()
     private var configurationSaveTask: Task<Void, Never>?
     private var configurationNeedsSave = false
+    private var isShortcutCaptureActive = false
 
-    init(store: ConfigurationStore = .defaultStore()) {
+    init(
+        store: ConfigurationStore = .defaultStore(),
+        system suppliedSystem: (any BetterTileWindowSystem)? = nil,
+        startRuntime: Bool = true
+    ) {
         self.store = store
         let loaded = (try? store.load()) ?? BetterTileConfiguration()
-        let windowSystem = AccessibilityWindowSystem()
+        let windowSystem: any BetterTileWindowSystem = suppliedSystem ?? AccessibilityWindowSystem()
         configuration = loaded
         windowSystem.enhancedUserInterfacePolicy = loaded.enhancedUserInterfacePolicy
         system = windowSystem
@@ -84,11 +117,18 @@ final class BetterTileModel {
         )
         titleBarDoubleClick.applicationRules = loaded.applicationRules
         linkedResize = LinkedResizeController(coordinator: coordinator, configuration: loaded)
+        layoutWheel = LayoutWheelController(configuration: loaded)
         sharedGestureEvents = SharedGestureEventMonitor()
         dividerResize = DividerOverlayController(coordinator: coordinator, configuration: loaded)
+        layoutWheel.suspend()
 
         shortcuts.isEnabled = loaded.keyboardShortcutsEnabled
-        shortcuts.setHandler { [weak self] action in self?.perform(action) }
+        shortcuts.setHandler { [weak self] action in
+            // The wheel and this shortcut share held modifiers. Running the
+            // shortcut means the user was never opening a wheel.
+            self?.layoutWheel.cancel()
+            self?.perform(action)
+        }
         dragSnap.activeModeProvider = { [weak self] displayID in self?.activeMode(for: displayID) }
         dragSnap.bentoStateProvider = { [weak self] displayID in self?.sessionStore.session(for: displayID)?.bentoState }
         dragSnap.bentoDragBeganHandler = { [weak self] displayID, sourceID in
@@ -156,6 +196,27 @@ final class BetterTileModel {
         linkedResize.layoutChangedHandler = { [weak self] _, _ in
             self?.refreshDividerBoundaries()
         }
+        layoutWheel.captureHandler = { [weak self] in self?.captureLayoutWheelTarget() }
+        layoutWheel.previewHandler = { [weak self] command, target in
+            guard let self else { return .unavailable(reason: "BetterTile is not available.") }
+            return previewLayoutWheel(command, for: target)
+        }
+        layoutWheel.commitHandler = { [weak self] command, target in
+            self?.performLayoutWheel(command, for: target)
+        }
+        layoutWheel.unavailableHandler = { [weak self] reason, target in
+            self?.presentLayoutWheelUnavailable(reason, displayID: target.displayID)
+        }
+        layoutWheel.monitoringFailureHandler = { [weak self] failure in
+            self?.layoutWheelMonitoringFailure = failure
+        }
+        layoutWheel.gestureBeganHandler = { [weak self] in
+            self?.shortcuts.suspend()
+        }
+        layoutWheel.gestureEndedHandler = { [weak self] in
+            guard let self, !self.isShortcutCaptureActive else { return }
+            self.shortcuts.resume()
+        }
         sharedGestureEvents.eventHandler = { [weak self] event in
             self?.dragSnap.handleSharedGestureEvent(event)
             self?.linkedResize.handleSharedGestureEvent(event)
@@ -165,23 +226,28 @@ final class BetterTileModel {
         }
         system.setWindowEventHandler { [weak self] event in self?.receiveWindowSystemEvent(event) }
         shortcuts.update(bindings: loaded.shortcuts)
-        dragSnap.start()
-        titleBarDoubleClick.start()
-        linkedResize.start()
-        refreshPermission()
-        installWorkspaceTriggers()
-        system.startDockFootprintMonitoring { [weak self] in
-            self?.dockFootprintChanged()
-        }
-        system.startDisplayReconfigurationMonitoring { [weak self] in
-            self?.scheduleDisplayRefresh()
-        }
-        refreshActiveWindows(force: true)
+        if startRuntime {
+            dragSnap.start()
+            titleBarDoubleClick.start()
+            linkedResize.start()
+            layoutWheel.start()
+            refreshPermission()
+            installWorkspaceTriggers()
+            system.startDockFootprintMonitoring { [weak self] in
+                self?.dockFootprintChanged()
+            }
+            system.startDisplayReconfigurationMonitoring { [weak self] in
+                self?.scheduleDisplayRefresh()
+            }
+            refreshActiveWindows(force: true)
 
-        Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .milliseconds(500))
-            guard !Task.isCancelled else { return }
-            self?.applyDockPolicy()
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(for: .milliseconds(500))
+                guard !Task.isCancelled else { return }
+                self?.applyDockPolicy()
+            }
+        } else {
+            hasAccessibilityPermission = system.requestAccessibilityPermission(prompt: false)
         }
     }
 
@@ -274,15 +340,329 @@ final class BetterTileModel {
         let resultingDisplayID = (try? system.focusedWindow())?.displayID ?? originalDisplayID
         presentActionResult(succeeded: succeeded, error: statusMessage, displayID: resultingDisplayID)
         if succeeded {
-            verifyActionLanded(actionPlan, displayID: resultingDisplayID)
+            verifyPlacementLanded(
+                WindowPlacementPlan(actionPlan),
+                displayID: resultingDisplayID
+            )
         }
+    }
+
+    func previewLayoutWheel(
+        _ command: LayoutWheelCommand,
+        for target: LayoutWheelTarget
+    ) -> LayoutWheelPreviewOutcome {
+        switch planLayoutWheel(command, for: target) {
+        case let .ready(.action(plan)):
+            return .ready(placements: [Placement(windowID: plan.windowID, frame: plan.targetFrame)])
+        case let .ready(.bento(proposal)):
+            return .ready(placements: proposal.plan.placements)
+        case .ready(.repairBento):
+            return .ready(placements: [])
+        case let .unavailable(reason, _):
+            return .unavailable(reason: reason)
+        }
+    }
+
+    /// Replans immediately before committing so a captured target can never
+    /// silently become the currently focused window.
+    func performLayoutWheel(
+        _ command: LayoutWheelCommand,
+        for target: LayoutWheelTarget
+    ) {
+        switch planLayoutWheel(command, for: target) {
+        case let .unavailable(reason, displayID):
+            statusMessage = reason
+            presentActionResult(succeeded: false, error: reason, displayID: displayID)
+        case let .ready(.repairBento(displayID, focusedWindowID)):
+            repairBento(displayID: displayID, focusedWindowID: focusedWindowID)
+        case let .ready(.action(plan)):
+            let outcome = coordinator.perform(plan)
+            let displayID = currentDisplayID(for: plan.windowID) ?? plan.displayID
+            finishLayoutWheelPlacement(outcome: outcome, displayID: displayID)
+            if outcome.isApplied {
+                verifyPlacementLanded(WindowPlacementPlan(plan), displayID: displayID)
+            }
+        case let .ready(.bento(proposal)):
+            let succeeded = commitLayoutWheelBento(proposal)
+            statusMessage = succeeded
+                ? nil
+                : statusMessage ?? "That Layout Wheel command could not be applied."
+            presentActionResult(
+                succeeded: succeeded,
+                error: statusMessage,
+                displayID: proposal.display.id
+            )
+        }
+    }
+
+    /// The focused eligible window and its display, taken once when the hold
+    /// succeeds. Returns nil when there is nothing the wheel may act on, which
+    /// leaves the wheel closed rather than opening over an ineligible window.
+    private func captureLayoutWheelTarget() -> LayoutWheelTarget? {
+        guard hasAccessibilityPermission else { return nil }
+        do {
+            guard let window = try system.focusedWindow(),
+                  window.isEligible,
+                  rule(for: window).allowsDirectPlacement,
+                  let display = system.displays().first(where: { $0.id == window.displayID })
+            else { return nil }
+            return LayoutWheelTarget(
+                windowID: window.id,
+                displayID: window.displayID,
+                visibleFrame: display.visibleFrame
+            )
+        } catch {
+            return nil
+        }
+    }
+
+    private func planLayoutWheel(
+        _ command: LayoutWheelCommand,
+        for target: LayoutWheelTarget
+    ) -> LayoutWheelPlanOutcome {
+        guard hasAccessibilityPermission || refreshPermission(recoverWindows: false) else {
+            return .unavailable(
+                reason: "Accessibility permission is required.",
+                displayID: activeDisplayID
+            )
+        }
+
+        let window: WindowSnapshot
+        do {
+            guard let captured = try system.windowSnapshots(ids: [target.windowID]).first,
+                  captured.isEligible,
+                  captured.displayID == target.displayID
+            else {
+                return .unavailable(
+                    reason: "The captured window or display is no longer available.",
+                    displayID: target.displayID
+                )
+            }
+            window = captured
+        } catch {
+            return .unavailable(reason: error.localizedDescription, displayID: target.displayID)
+        }
+
+        guard system.displays().contains(where: { $0.id == target.displayID }) else {
+            return .unavailable(
+                reason: "The captured window's display is no longer available.",
+                displayID: window.displayID
+            )
+        }
+        let sourceRule = rule(for: window)
+        guard sourceRule.allowsDirectPlacement else {
+            return .unavailable(
+                reason: "BetterTile is set to ignore this app.",
+                displayID: window.displayID
+            )
+        }
+
+        switch command {
+        case let .windowAction(action):
+            let actionPlan: WindowActionPlan
+            switch coordinator.planExact(action, for: target.windowID) {
+            case let .ready(plan): actionPlan = plan
+            case .unavailable:
+                return .unavailable(
+                    reason: "The captured window is no longer available.",
+                    displayID: window.displayID
+                )
+            case let .failed(reason):
+                return .unavailable(reason: reason, displayID: window.displayID)
+            }
+            let usesBento = BentoDropPlanner.handlesShortcut(
+                actionPlan.resolvedAction,
+                in: activeMode(for: actionPlan.displayID) ?? .manual,
+                sourceRule: sourceRule
+            )
+            guard usesBento else { return .ready(.action(actionPlan)) }
+            guard let proposal = layoutWheelBentoProposal(
+                intent: .snap(action: action, frame: actionPlan.targetFrame),
+                sourceWindowID: target.windowID,
+                displayID: actionPlan.displayID
+            ) else {
+                return .unavailable(
+                    reason: "That Layout Wheel command cannot satisfy the Bento windows' minimum sizes.",
+                    displayID: actionPlan.displayID
+                )
+            }
+            return .ready(.bento(proposal))
+
+        case .customZone:
+            return .unavailable(
+                reason: "Custom Zones are no longer available.",
+                displayID: window.displayID
+            )
+
+        case .repairBento:
+            guard activeMode(for: window.displayID) == .bento else {
+                return .unavailable(
+                    reason: "Repair Bento is available only on a Bento desktop.",
+                    displayID: window.displayID
+                )
+            }
+            return .ready(.repairBento(
+                displayID: window.displayID,
+                focusedWindowID: target.windowID
+            ))
+        }
+    }
+
+    private func presentLayoutWheelUnavailable(_ reason: String, displayID: DisplayID) {
+        statusMessage = reason
+        presentActionResult(succeeded: false, error: reason, displayID: displayID)
+    }
+
+    private func layoutWheelBentoProposal(
+        intent: BentoDropIntent,
+        sourceWindowID: WindowID,
+        displayID: DisplayID
+    ) -> BentoCommandProposal? {
+        guard var session = sessionStore.session(for: displayID),
+              session.mode == .bento,
+              let display = system.displays().first(where: { $0.id == displayID }),
+              let windows = try? system.visibleWindows()
+        else { return nil }
+        let displayWindows = bentoEligible(windows.filter {
+            $0.displayID == displayID && $0.isEligible && !$0.isFloating
+        })
+        guard displayWindows.contains(where: { $0.id == sourceWindowID }) else { return nil }
+        let baselineFrames = Dictionary(uniqueKeysWithValues: displayWindows.map { ($0.id, $0.frame) })
+        let constraints = Dictionary(uniqueKeysWithValues: displayWindows.map { ($0.id, $0.constraints) })
+        reconcileBentoSession(&session, windows: displayWindows, display: display)
+        guard let plan = BentoDropPlanner().plan(
+            intent: intent,
+            sourceWindowID: sourceWindowID,
+            state: session.bentoState,
+            baselineFrames: baselineFrames,
+            constraints: constraints,
+            contextWindowIDs: Set(displayWindows.map(\.id)),
+            in: display.visibleFrame
+        ) else { return nil }
+        return BentoCommandProposal(
+            sourceWindowID: sourceWindowID,
+            session: session,
+            plan: plan,
+            display: display,
+            windows: windows,
+            displayWindows: displayWindows,
+            baselineFrames: baselineFrames
+        )
+    }
+
+    private func commitLayoutWheelBento(_ proposal: BentoCommandProposal) -> Bool {
+        var session = proposal.session
+        if session.automaticWritesSuspended {
+            session.resumeAutomaticWrites()
+            guard let resumed = sessionStore.commit(session, replacing: session.revision) else {
+                statusMessage = "The Bento session changed before the Layout Wheel command could begin. Try again."
+                return false
+            }
+            session = resumed
+        }
+
+        let requestedFrames = Dictionary(
+            uniqueKeysWithValues: proposal.plan.placements.map { ($0.windowID, $0.frame) }
+        )
+        session.bentoState = proposal.plan.state
+        session.isBentoInitialized = true
+        session.windowIDs = Set(proposal.displayWindows.map(\.id))
+        session.recordProposedFrames(requestedFrames)
+        session.lastWorkArea = proposal.display.visibleFrame
+
+        if proposal.plan.isFocusDrop {
+            guard let placement = proposal.plan.placements.first,
+                  let sourceFrame = proposal.baselineFrames[proposal.sourceWindowID]
+            else {
+                statusMessage = "That Layout Wheel command could not form a valid Bento placement."
+                return false
+            }
+            let outcome = coordinator.applyFocusDrop(
+                placement: placement,
+                minimizing: proposal.plan.minimizedWindowIDs,
+                sourceBaselineFrame: sourceFrame
+            )
+            guard outcome.isApplied else {
+                statusMessage = outcome.failureReason ?? "That Layout Wheel command could not be applied."
+                if case let .degraded(reason) = outcome {
+                    suspendAutomaticBentoWrites(
+                        displayID: proposal.display.id,
+                        windows: proposal.windows,
+                        error: reason,
+                        surfaceFailure: false
+                    )
+                }
+                return false
+            }
+            session.excludedFocusWindowIDs.formUnion(proposal.plan.excludedWindowIDs)
+            session.excludedFocusWindowIDs.remove(proposal.sourceWindowID)
+            guard sessionStore.commit(session, replacing: session.revision) != nil else {
+                statusMessage = "The Bento layout changed while the Layout Wheel command was finishing. Try again."
+                pendingWindowEvents.recordTopologyChange()
+                schedulePendingWindowEvents()
+                return false
+            }
+            refreshDividerBoundaries(windows: proposal.windows)
+            return true
+        }
+
+        let commitResult = commitBentoProposal(
+            proposal.plan.placements,
+            session: &session,
+            display: proposal.display,
+            recordHistory: true,
+            surfaceFailure: false
+        )
+        guard commitResult.result == .committed else {
+            if commitResult.result.needsRepair {
+                suspendAutomaticBentoWrites(
+                    displayID: proposal.display.id,
+                    windows: proposal.windows,
+                    error: commitResult.failureReason
+                        ?? "The Layout Wheel command could not be rolled back.",
+                    surfaceFailure: false
+                )
+            }
+            return false
+        }
+
+        let changedWindowIDs = Set(proposal.plan.placements.compactMap { placement -> WindowID? in
+            guard let baseline = proposal.baselineFrames[placement.windowID],
+                  !baseline.approximatelyEquals(placement.frame, tolerance: 0.01)
+            else { return nil }
+            return placement.windowID
+        })
+        if !changedWindowIDs.isEmpty {
+            scheduleBentoSettlement(
+                displayID: proposal.display.id,
+                changedWindowIDs: changedWindowIDs,
+                requestedFrames: requestedFrames,
+                baselineFrames: proposal.baselineFrames
+            )
+        }
+        refreshDividerBoundaries(windows: proposal.windows)
+        return true
+    }
+
+    private func finishLayoutWheelPlacement(
+        outcome: WindowMutationOutcome,
+        displayID: DisplayID?
+    ) {
+        statusMessage = outcome.isApplied
+            ? nil
+            : outcome.failureReason ?? "That Layout Wheel command could not be applied."
+        presentActionResult(succeeded: outcome.isApplied, error: statusMessage, displayID: displayID)
+    }
+
+    private func currentDisplayID(for windowID: WindowID) -> DisplayID? {
+        try? system.windowSnapshots(ids: [windowID]).first?.displayID
     }
 
     /// Corrects the reported outcome if the window never actually reached the
     /// frame it was asked for. Deliberately after the fact: an application is
     /// free to apply an Accessibility geometry change on its own run loop, so a
     /// report made at write time cannot tell a refusal from a delay.
-    private func verifyActionLanded(_ plan: WindowActionPlan, displayID: DisplayID?) {
+    private func verifyPlacementLanded(_ plan: WindowPlacementPlan, displayID: DisplayID?) {
         // Read now, not inside the task: a Bento reflow can land before the
         // task body begins, and a generation read there would not see it.
         let generation = coordinator.mutationGeneration(for: plan.windowID)
@@ -393,27 +773,33 @@ final class BetterTileModel {
         return true
     }
 
-    func apply(zone: CustomZone) {
-        let displayID = (try? system.focusedWindow())?.displayID ?? activeDisplayID
-        let outcome = coordinator.applyCustomZone(
-            zone,
-            applicationRules: configuration.applicationRules
-        )
-        statusMessage = outcome.isApplied ? nil : outcome.failureReason ?? "Could not apply the zone."
-        presentActionResult(succeeded: outcome.isApplied, error: statusMessage, displayID: displayID)
+    func tileCurrentDisplay() {
+        do {
+            guard let focused = try system.focusedWindow() else {
+                statusMessage = "No eligible window or display."
+                presentActionResult(succeeded: false, error: statusMessage, displayID: activeDisplayID)
+                return
+            }
+            repairBento(displayID: focused.displayID, focusedWindowID: focused.id)
+        } catch {
+            statusMessage = error.localizedDescription
+            presentActionResult(succeeded: false, error: statusMessage, displayID: activeDisplayID)
+        }
     }
 
-    func tileCurrentDisplay() {
+    private func repairBento(displayID: DisplayID, focusedWindowID: WindowID) {
         do {
             let observedWindows = try system.visibleWindows()
             let nativeObservation = system.nativeDesktopObservation()
             let windows = (nativeObservation?.windowsOnCurrentSpaces(observedWindows) ?? observedWindows)
                 .filter { $0.isEligible && !$0.isFloating }
-            guard let focused = try system.focusedWindow(),
-                  let display = system.displays().first(where: { $0.id == focused.displayID })
+            guard let focused = try system.windowSnapshots(ids: [focusedWindowID]).first,
+                  focused.isEligible,
+                  focused.displayID == displayID,
+                  let display = system.displays().first(where: { $0.id == displayID })
             else {
-                statusMessage = "No eligible window or display."
-                presentActionResult(succeeded: false, error: statusMessage, displayID: activeDisplayID)
+                statusMessage = "The captured window or display is no longer available."
+                presentActionResult(succeeded: false, error: statusMessage, displayID: displayID)
                 return
             }
             let displayWindows = bentoEligible(windows.filter { $0.displayID == display.id })
@@ -513,7 +899,7 @@ final class BetterTileModel {
             refreshDividerBoundaries(windows: windows)
         } catch {
             statusMessage = error.localizedDescription
-            presentActionResult(succeeded: false, error: statusMessage, displayID: activeDisplayID)
+            presentActionResult(succeeded: false, error: statusMessage, displayID: displayID)
         }
     }
 
@@ -612,7 +998,6 @@ final class BetterTileModel {
         case let .swap(targetWindowID): .pane(targetWindowID)
         case let .insert(targetWindowID, edge): .insert(targetWindowID: targetWindowID, edge: edge)
         case let .snap(action, frame): .snap(action: action, frame: frame)
-        case let .customZone(id, frame): .customZone(id: id, frame: frame)
         case .restore: nil
         }
         guard let intent else { return nil }
@@ -640,7 +1025,6 @@ final class BetterTileModel {
         case let .swap(targetWindowID): .pane(targetWindowID)
         case let .insert(targetWindowID, edge): .insert(targetWindowID: targetWindowID, edge: edge)
         case let .snap(action, frame): .snap(action: action, frame: frame)
-        case let .customZone(id, frame): .customZone(id: id, frame: frame)
         case .restore where active.session.originalState.root?.windowIDs.contains(sourceID) != true: .automatic
         case .restore: nil
         }
@@ -780,9 +1164,13 @@ final class BetterTileModel {
         let changed = trusted != hasAccessibilityPermission
         hasAccessibilityPermission = trusted
         syncSharedGestureMonitoring()
+        syncLayoutWheelMonitoring()
 
         guard changed else { return trusted }
-        if !trusted { dragSnap.cancel() }
+        if !trusted {
+            dragSnap.cancel()
+            layoutWheel.cancel()
+        }
         system.resetCachedWindows()
         if trusted {
             isWaitingForAccessibilityPermission = false
@@ -857,7 +1245,17 @@ final class BetterTileModel {
     }
 
     func setShortcutCaptureActive(_ isActive: Bool) {
+        isShortcutCaptureActive = isActive
         isActive ? shortcuts.suspend() : shortcuts.resume()
+        syncLayoutWheelMonitoring()
+    }
+
+    private func syncLayoutWheelMonitoring() {
+        if hasAccessibilityPermission, !isShortcutCaptureActive {
+            layoutWheel.resume()
+        } else {
+            layoutWheel.suspend()
+        }
     }
 
     func flushConfiguration() {
@@ -879,6 +1277,7 @@ final class BetterTileModel {
         system.stopDockFootprintMonitoring()
         system.stopDisplayReconfigurationMonitoring()
         system.stopWindowObservation()
+        layoutWheel.stop()
         shortcuts.stop()
         sharedGestureEvents.stop()
         dragSnap.stop()
@@ -917,6 +1316,9 @@ final class BetterTileModel {
         defer { Self.signposter.endInterval("applyConfiguration", interval) }
         if !changes.isDisjoint(with: [.snapping, .bentoGeometry, .applicationRules]) {
             dragSnap.configuration = configuration
+        }
+        if changes.contains(.layoutWheel) {
+            layoutWheel.configuration = configuration
         }
         if !changes.isDisjoint(with: [.linkedResize, .applicationRules]) {
             linkedResize.configuration = configuration
@@ -993,7 +1395,10 @@ final class BetterTileModel {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            Task { @MainActor in self?.flushConfiguration() }
+            Task { @MainActor in
+                self?.layoutWheel.handleApplicationDeactivated()
+                self?.flushConfiguration()
+            }
         })
         let topologyNames: [Notification.Name] = [
             NSWorkspace.didLaunchApplicationNotification,
@@ -1005,6 +1410,7 @@ final class BetterTileModel {
                 Task { @MainActor in
                     if name == NSWorkspace.didWakeNotification {
                         self?.dragSnap.cancel()
+                        self?.layoutWheel.cancel()
                     }
                     self?.system.refreshApplicationObservers()
                     self?.system.triggerDockFootprintCheck()
@@ -1020,8 +1426,15 @@ final class BetterTileModel {
         ) { [weak self] _ in
             Task { @MainActor in self?.beginActiveSpaceStabilization() }
         })
-        notificationTokens.append(workspaceCenter.addObserver(forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main) { [weak self] _ in
-            Task { @MainActor in self?.refreshFocusedDisplayWithoutLayout() }
+        notificationTokens.append(workspaceCenter.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.layoutWheel.handleApplicationDeactivated()
+                self?.refreshFocusedDisplayWithoutLayout()
+            }
         })
         let timer = Timer(timeInterval: 10, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.watchdog() }
@@ -1042,6 +1455,7 @@ final class BetterTileModel {
     /// Coalesces Core Graphics and AppKit display notifications into the same
     /// refresh. AppKit remains the fallback when callback registration fails.
     private func scheduleDisplayRefresh() {
+        layoutWheel.cancel()
         displayRefreshDebouncer.schedule { [weak self] in
             guard let self else { return }
             self.system.triggerDockFootprintCheck()
@@ -1060,6 +1474,7 @@ final class BetterTileModel {
 
     private func beginActiveSpaceStabilization() {
         dragSnap.cancel()
+        layoutWheel.cancel()
         dividerResize.hideAndCancel()
         windowEventTask?.cancel()
         windowEventTask = nil
@@ -1155,6 +1570,11 @@ final class BetterTileModel {
 
     private func receiveWindowSystemEvent(_ event: WindowSystemEvent) {
         guard !isStabilizingSpace else { return }
+        // A wheel aimed at a window that just went away must not fall through to
+        // whatever replaces it.
+        if let windowID = event.windowID, event.kind == .destroyed || event.kind == .minimized {
+            layoutWheel.handleTargetLost(windowID: windowID)
+        }
         if let activeBentoDrag {
             bentoDragEventBuffer.record(event)
             if let windowID = event.windowID,
@@ -1197,7 +1617,7 @@ final class BetterTileModel {
             }
             pendingWindowEvents.record(event)
         case .focused:
-            break
+            layoutWheel.handleFocusedWindowChanged()
         }
         schedulePendingWindowEvents()
     }
@@ -2207,6 +2627,27 @@ final class BetterTileModel {
             self.isWaitingForAccessibilityPermission = false
         }
     }
+}
+
+private enum LayoutWheelPlanOutcome {
+    case ready(LayoutWheelModelPlan)
+    case unavailable(reason: String, displayID: DisplayID?)
+}
+
+private enum LayoutWheelModelPlan {
+    case action(WindowActionPlan)
+    case bento(BentoCommandProposal)
+    case repairBento(displayID: DisplayID, focusedWindowID: WindowID)
+}
+
+private struct BentoCommandProposal {
+    var sourceWindowID: WindowID
+    var session: LayoutSession
+    var plan: BentoDropPlan
+    var display: DisplaySnapshot
+    var windows: [WindowSnapshot]
+    var displayWindows: [WindowSnapshot]
+    var baselineFrames: [WindowID: BTRect]
 }
 
 private struct ActiveBentoDrag {
