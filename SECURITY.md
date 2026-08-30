@@ -222,11 +222,11 @@ repository and GitHub Actions.
 Public beta builds are signed with the maintainer-held, self-signed
 `BetterTile Beta` certificate. Its stable certificate requirement is intended
 to let macOS recognize successive betas as the same application for
-Accessibility. The 0.4.1 to 0.4.2 public update will validate that behavior. It
-does not provide Apple developer attestation or notarization, so first launch
-still requires **Open Anyway** in System Settings → Privacy & Security. The
-first stable-signed release changes from the old ad-hoc identity and requires
-one final Accessibility grant.
+Accessibility. The 0.4.1 beta was the transition from the old ad-hoc identity;
+later releases continue using the stable certificate unless it changes. The
+certificate does not provide Apple developer attestation or notarization, so
+first launch still requires **Open Anyway** in System Settings → Privacy &
+Security. The transition release required one final Accessibility grant.
 
 Sparkle independently authenticates update archives with the EdDSA key built
 into the application. The self-signed code-signing certificate and its private
