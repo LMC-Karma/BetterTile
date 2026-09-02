@@ -241,6 +241,26 @@ private final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSPo
         false
     }
 
+    func applicationShouldHandleReopen(
+        _ sender: NSApplication,
+        hasVisibleWindows flag: Bool
+    ) -> Bool {
+        showSettings()
+        return true
+    }
+
+    func applicationDockMenu(_ sender: NSApplication) -> NSMenu? {
+        let menu = NSMenu()
+        let settingsItem = NSMenuItem(
+            title: "Open Settings…",
+            action: #selector(showSettings),
+            keyEquivalent: ""
+        )
+        settingsItem.target = self
+        menu.addItem(settingsItem)
+        return menu
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
         if modelStarted { model.shutdown() }
     }

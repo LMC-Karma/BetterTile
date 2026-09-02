@@ -301,27 +301,69 @@ public struct BentoPlanner: Sendable {
             var stored = state
             stored.layout = canonicalized(stored.layout)
             let result = solved(stored, observation: observation, pill: .adapted("Stored Bento layout repaired"))
-            if result.writesFrames { candidates.append(result) }
+            if result.writesFrames {
+                if !hasDistinctWindowPositions(frames) { return result }
+                candidates.append(result)
+            }
         }
 
-        var automatic = state
-        automatic.layout = automaticLayout(
-            windowIDs: managed,
-            focusedWindowID: observation.focusedWindowID,
-            metrics: state.layout.metrics,
-            bounds: observation.bounds
-        )
-        let automaticResult = solved(
-            automatic,
-            observation: observation,
-            pill: .success("Bento panes retiled")
-        )
-        if automaticResult.writesFrames { candidates.append(automaticResult) }
+        let windowOrders = managed.count <= 6 ? permutations(of: managed) : [managed]
+        let trailingLeadOptions = managed.count > 1 && !managed.count.isMultiple(of: 2)
+            ? [false, true]
+            : [false]
+        for windowIDs in windowOrders {
+            for leadOnTrailingSide in trailingLeadOptions {
+                var automatic = state
+                automatic.layout = automaticLayout(
+                    windowIDs: windowIDs,
+                    focusedWindowID: nil,
+                    metrics: state.layout.metrics,
+                    bounds: observation.bounds,
+                    leadOnTrailingSide: leadOnTrailingSide
+                )
+                let result = solved(
+                    automatic,
+                    observation: observation,
+                    pill: .success("Bento panes retiled")
+                )
+                if result.writesFrames { candidates.append(result) }
+            }
+        }
 
-        return candidates.min {
-            frameDistance($0.placements, from: observation.frames, in: observation.bounds)
-                < frameDistance($1.placements, from: observation.frames, in: observation.bounds)
-        } ?? failure(state, "The pane tree cannot satisfy minimum sizes")
+        guard var closest = candidates.first else {
+            return failure(state, "The pane tree cannot satisfy minimum sizes")
+        }
+        let tolerance = 0.000_001
+        var closestDistance = frameDistance(
+            closest.placements,
+            from: observation.frames,
+            in: observation.bounds
+        )
+        var closestFocusDistance = frameDistance(
+            closest.placements.filter { $0.windowID == observation.focusedWindowID },
+            from: observation.frames,
+            in: observation.bounds
+        )
+        for candidate in candidates.dropFirst() {
+            let distance = frameDistance(
+                candidate.placements,
+                from: observation.frames,
+                in: observation.bounds
+            )
+            let focusDistance = frameDistance(
+                candidate.placements.filter { $0.windowID == observation.focusedWindowID },
+                from: observation.frames,
+                in: observation.bounds
+            )
+            if distance < closestDistance - tolerance
+                || (abs(distance - closestDistance) <= tolerance
+                    && focusDistance < closestFocusDistance - tolerance) {
+                closest = candidate
+                closestDistance = distance
+                closestFocusDistance = focusDistance
+            }
+        }
+        return closest
     }
 
     private func canonicalized(_ layout: BentoLayoutState) -> BentoLayoutState {
@@ -358,6 +400,13 @@ public struct BentoPlanner: Sendable {
                     + abs(frame.minY - current.minY)
                     + abs(frame.maxY - current.maxY)
             ) / scale
+        }
+    }
+
+    private func hasDistinctWindowPositions(_ frames: [WindowID: BTRect]) -> Bool {
+        guard let first = frames.values.first else { return false }
+        return frames.values.dropFirst().contains {
+            abs($0.midX - first.midX) > 6 || abs($0.midY - first.midY) > 6
         }
     }
 
@@ -482,7 +531,8 @@ public struct BentoPlanner: Sendable {
         windowIDs: [WindowID],
         focusedWindowID: WindowID?,
         metrics: BentoLayoutMetrics,
-        bounds: BTRect
+        bounds: BTRect,
+        leadOnTrailingSide: Bool = false
     ) -> BentoLayoutState {
         var ordered: [WindowID] = []
         if let focusedWindowID, windowIDs.contains(focusedWindowID) {
@@ -495,9 +545,22 @@ public struct BentoPlanner: Sendable {
             ? .vertical
             : .horizontal
         return BentoLayoutState(
-            root: BentoAutomaticTopology.node(for: ordered, primaryAxis: primaryAxis),
+            root: BentoAutomaticTopology.node(
+                for: ordered,
+                primaryAxis: primaryAxis,
+                leadOnTrailingSide: leadOnTrailingSide
+            ),
             metrics: metrics
         )
+    }
+
+    private func permutations(of windowIDs: [WindowID]) -> [[WindowID]] {
+        guard windowIDs.count > 1 else { return [windowIDs] }
+        return windowIDs.indices.flatMap { index in
+            var remaining = windowIDs
+            let first = remaining.remove(at: index)
+            return permutations(of: remaining).map { [first] + $0 }
+        }
     }
 
     private func reinsertionAnchor(
@@ -530,7 +593,11 @@ public struct BentoPlanner: Sendable {
 }
 
 private enum BentoAutomaticTopology {
-    static func node(for windowIDs: [WindowID], primaryAxis: SplitAxis) -> BentoNode? {
+    static func node(
+        for windowIDs: [WindowID],
+        primaryAxis: SplitAxis,
+        leadOnTrailingSide: Bool = false
+    ) -> BentoNode? {
         guard !windowIDs.isEmpty else { return nil }
         if windowIDs.count == 1 {
             return .leaf(windowIDs[0])
@@ -549,11 +616,17 @@ private enum BentoAutomaticTopology {
         guard let grid = grid(Array(windowIDs.dropFirst()), primaryAxis: primaryAxis) else {
             return .leaf(windowIDs[0])
         }
-        return partition(
-            axis: primaryAxis,
-            children: [.leaf(windowIDs[0]), grid],
-            ratios: [leadShare, 1 - leadShare]
-        )
+        return leadOnTrailingSide
+            ? partition(
+                axis: primaryAxis,
+                children: [grid, .leaf(windowIDs[0])],
+                ratios: [1 - leadShare, leadShare]
+            )
+            : partition(
+                axis: primaryAxis,
+                children: [.leaf(windowIDs[0]), grid],
+                ratios: [leadShare, 1 - leadShare]
+            )
     }
 
     private static func grid(
