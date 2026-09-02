@@ -144,6 +144,185 @@ private func plannerWindow(
     #expect(result.placements.map(\.frame.size.width).allSatisfy { abs($0 - 400) < 0.000_001 })
 }
 
+@Test func retileKeepsAFocusedRightWindowOnTheRight() throws {
+    let left = plannerWindow(
+        "left",
+        frame: BTRect(x: 0, y: 80, width: 500, height: 720)
+    )
+    let right = plannerWindow(
+        "right",
+        frame: BTRect(x: 600, y: 0, width: 600, height: 800)
+    )
+    let result = BentoPlanner().plan(
+        state: BentoRuntimeState(),
+        observation: BentoObservation(
+            bounds: plannerBounds,
+            windows: [left, right],
+            focusedWindowID: right.id
+        ),
+        intent: .retile
+    )
+
+    let rightPlacement = try #require(result.placements.first { $0.windowID == right.id })
+    #expect(rightPlacement.frame.minX >= plannerBounds.midX)
+}
+
+@Test func retileKeepsAFocusedBottomWindowOnTheBottomOfAPortraitDisplay() throws {
+    let bounds = BTRect(x: 0, y: 0, width: 800, height: 1200)
+    let top = plannerWindow(
+        "top",
+        frame: BTRect(x: 80, y: 0, width: 720, height: 500)
+    )
+    let bottom = plannerWindow(
+        "bottom",
+        frame: BTRect(x: 0, y: 600, width: 800, height: 600)
+    )
+    let result = BentoPlanner().plan(
+        state: BentoRuntimeState(),
+        observation: BentoObservation(
+            bounds: bounds,
+            windows: [top, bottom],
+            focusedWindowID: bottom.id
+        ),
+        intent: .retile
+    )
+
+    let bottomPlacement = try #require(result.placements.first { $0.windowID == bottom.id })
+    #expect(bottomPlacement.frame.minY >= bounds.midY)
+}
+
+@Test func retileUsesFocusToBreakAnEqualMovementTie() throws {
+    let wider = plannerWindow(
+        "a",
+        frame: BTRect(x: 0, y: 0, width: 600, height: 800)
+    )
+    let focused = plannerWindow(
+        "b",
+        frame: BTRect(x: 0, y: 0, width: 400, height: 800)
+    )
+    let result = BentoPlanner().plan(
+        state: BentoRuntimeState(),
+        observation: BentoObservation(
+            bounds: plannerBounds,
+            windows: [wider, focused],
+            focusedWindowID: focused.id
+        ),
+        intent: .retile
+    )
+
+    let focusedPlacement = try #require(result.placements.first { $0.windowID == focused.id })
+    #expect(focusedPlacement.frame.minX == plannerBounds.minX)
+}
+
+@Test func retilePreservesNearestAutomaticPanesThroughSixWindows() throws {
+    for count in 2...6 {
+        let windows = (0..<count).map { plannerWindow("\($0)") }
+        let canonical = BentoPlanner().plan(
+            state: BentoRuntimeState(),
+            observation: BentoObservation(
+                bounds: plannerBounds,
+                windows: windows,
+                focusedWindowID: windows[0].id
+            ),
+            intent: .activate
+        ).placements
+        let broken = canonical.map { placement in
+            var frame = placement.frame
+            if placement.windowID == windows[0].id {
+                frame.origin.y += 24
+                frame.size.height -= 24
+            }
+            return plannerWindow(placement.windowID.rawValue, frame: frame)
+        }
+        let repaired = BentoPlanner().plan(
+            state: BentoRuntimeState(),
+            observation: BentoObservation(
+                bounds: plannerBounds,
+                windows: broken,
+                focusedWindowID: windows[count - 1].id
+            ),
+            intent: .retile
+        ).placements
+
+        #expect(
+            Dictionary(uniqueKeysWithValues: repaired.map { ($0.windowID, $0.frame) })
+                == Dictionary(uniqueKeysWithValues: canonical.map { ($0.windowID, $0.frame) }),
+            "Expected the nearest canonical assignment for \(count) windows"
+        )
+    }
+}
+
+@Test func retileAllowsMirroredThreeAndFivePaneLayouts() throws {
+    for count in [3, 5] {
+        let windows = (0..<count).map { plannerWindow("\($0)") }
+        let canonical = BentoPlanner().plan(
+            state: BentoRuntimeState(),
+            observation: BentoObservation(
+                bounds: plannerBounds,
+                windows: windows,
+                focusedWindowID: windows[0].id
+            ),
+            intent: .activate
+        ).placements
+        let mirrored = canonical.map { placement in
+            var frame = placement.frame
+            frame.origin.x = plannerBounds.maxX - frame.maxX
+            if placement.windowID == windows[1].id {
+                frame.origin.y += 24
+                frame.size.height -= 24
+            }
+            return plannerWindow(placement.windowID.rawValue, frame: frame)
+        }
+        let repaired = BentoPlanner().plan(
+            state: BentoRuntimeState(),
+            observation: BentoObservation(
+                bounds: plannerBounds,
+                windows: mirrored,
+                focusedWindowID: windows[0].id
+            ),
+            intent: .retile
+        ).placements
+        let expected = Dictionary(uniqueKeysWithValues: canonical.map { placement in
+            var frame = placement.frame
+            frame.origin.x = plannerBounds.maxX - frame.maxX
+            return (placement.windowID, frame)
+        })
+
+        #expect(repaired.allSatisfy { placement in
+            expected[placement.windowID]?.approximatelyEquals(
+                placement.frame,
+                tolerance: 0.000_001
+            ) == true
+        }, "Expected the nearest mirrored assignment for \(count) windows")
+    }
+}
+
+@Test func retilePrefersStoredTopologyWhenFramesHaveNoSpatialSignal() throws {
+    let windows = (0..<3).map { plannerWindow("\($0)") }
+    let stored = BentoLayoutState(root: .partition(BentoPartition(
+        axis: .vertical,
+        children: windows.map { .leaf($0.id) }
+    )))
+    let result = BentoPlanner().plan(
+        state: BentoRuntimeState(layout: stored),
+        observation: BentoObservation(
+            bounds: plannerBounds,
+            windows: windows,
+            focusedWindowID: windows[2].id
+        ),
+        intent: .retile
+    )
+
+    guard case let .partition(root) = result.state.layout.root else {
+        Issue.record("Expected the stored three-column topology")
+        return
+    }
+    #expect(result.state.layout == stored)
+    #expect(root.axis == .vertical)
+    #expect(root.children.count == 3)
+    #expect(root.children.flatMap(\.windowIDs) == windows.map(\.id))
+}
+
 @Test func activationFallsBackToThePracticalGrid() {
     let windows = (1...4).map { plannerWindow("\($0)") }
     let result = BentoPlanner().plan(
