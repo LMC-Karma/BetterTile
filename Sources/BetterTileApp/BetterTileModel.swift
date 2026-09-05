@@ -2121,7 +2121,8 @@ final class BetterTileModel {
         changedWindowIDs: Set<WindowID>,
         requestedFrames: [WindowID: BTRect]? = nil,
         baselineFrames: [WindowID: BTRect]? = nil,
-        isAuthoritative: Bool = false
+        isAuthoritative: Bool = false,
+        workArea: BTRect? = nil
     ) {
         guard let scheduledSession = sessionStore.session(for: displayID) else { return }
         let sessionID = scheduledSession.id
@@ -2173,7 +2174,8 @@ final class BetterTileModel {
                 windows: latestWindows,
                 requestedFrames: requestedFrames,
                 baselineFrames: baselineFrames,
-                isAuthoritative: isAuthoritative
+                isAuthoritative: isAuthoritative,
+                workArea: workArea
             )
         }
     }
@@ -2186,7 +2188,8 @@ final class BetterTileModel {
         windows: [WindowSnapshot],
         requestedFrames: [WindowID: BTRect]?,
         baselineFrames: [WindowID: BTRect]?,
-        isAuthoritative: Bool
+        isAuthoritative: Bool,
+        workArea: BTRect?
     ) {
         guard sessionStore.isCurrent(sessionID, revision: revision, on: displayID),
               var session = sessionStore.session(for: displayID), session.mode == .bento,
@@ -2258,6 +2261,15 @@ final class BetterTileModel {
                     windows: settledWindows,
                     error: commitResult.failureReason ?? "Bento could not adapt to this window's minimum size."
                 )
+            } else if commitResult.result == .committed, let workArea {
+                // The corrected layout must settle before acknowledging the
+                // work-area change, just like a layout that needed no correction.
+                scheduleAuthoritativePlacementSettlement(
+                    displayID: displayID,
+                    sessionID: sessionID,
+                    workArea: workArea,
+                    placements: placements
+                )
             }
             refreshDividerBoundaries()
             return
@@ -2271,9 +2283,13 @@ final class BetterTileModel {
                 scheduleAuthoritativePlacementSettlement(
                     displayID: displayID,
                     sessionID: sessionID,
-                    workArea: display.visibleFrame,
+                    workArea: workArea ?? display.visibleFrame,
                     placements: placements
                 )
+            } else if let workArea {
+                session.lastWorkArea = workArea
+                session.recordProposedFrames(requestedFrames)
+                _ = sessionStore.commit(session, replacing: revision)
             }
             refreshDividerBoundaries(windows: settledWindows)
             return
@@ -2437,7 +2453,8 @@ final class BetterTileModel {
                         changedWindowIDs: Set(placements.map(\.windowID)),
                         requestedFrames: Dictionary(uniqueKeysWithValues: placements.map { ($0.windowID, $0.frame) }),
                         baselineFrames: Dictionary(uniqueKeysWithValues: displayWindows.map { ($0.id, $0.frame) }),
-                        isAuthoritative: true
+                        isAuthoritative: true,
+                        workArea: settleWorkArea
                     )
                 } else if settleWorkArea != nil, !result.result.needsRepair {
                     statusMessage = result.failureReason ?? "Some windows could not follow the updated screen area."
