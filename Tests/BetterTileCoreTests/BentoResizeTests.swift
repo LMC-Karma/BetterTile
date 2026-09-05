@@ -5,6 +5,63 @@ import Testing
 private let resizeBounds = BTRect(x: 0, y: 0, width: 1200, height: 800)
 private let resizeDisplay = DisplayID(rawValue: "display")
 
+@Test(arguments: [0.0, 1.0, 2.0, 6.0, 12.0], [SplitAxis.vertical, .horizontal])
+func settledBentoPanesDoNotDrift(gap: Double, axis: SplitAxis) {
+    let a = WindowID(rawValue: "a"), b = WindowID(rawValue: "b")
+    let state = BentoLayoutState(
+        root: .partition(BentoPartition(axis: axis, first: .leaf(a), second: .leaf(b))),
+        metrics: BentoLayoutMetrics(paneGap: gap)
+    )
+    let frames = Dictionary(uniqueKeysWithValues: state.placements(in: resizeBounds).map { ($0.windowID, $0.frame) })
+    for changedIDs: Set<WindowID> in [[a], [b], [a, b]] {
+        #expect(BentoLayoutFitter().fit(
+            state: state, currentFrames: frames, changedWindowIDs: changedIDs, in: resizeBounds
+        ) == nil)
+    }
+}
+
+@Test func unchangedWindowDoesNotTeachAMinimumSize() {
+    let id = WindowID(rawValue: "slow")
+    let baseline = BTRect(x: 200, y: 0, width: 800, height: 800)
+    var learner = WindowMinimumSizeLearner()
+    let learned = learner.observe(
+        windowID: id,
+        requested: BTRect(x: 500, y: 0, width: 500, height: 800),
+        baseline: baseline,
+        actual: baseline
+    )
+    #expect(!learned)
+    #expect(learner.learnedSizes.isEmpty)
+}
+
+@Test(arguments: [SplitAxis.vertical, .horizontal])
+func nativeResizeWithAGapMovesTheDividerByTheActualDelta(axis: SplitAxis) throws {
+    let a = WindowID(rawValue: "a"), b = WindowID(rawValue: "b")
+    let state = BentoLayoutState(
+        root: .partition(BentoPartition(axis: axis, first: .leaf(a), second: .leaf(b))),
+        metrics: BentoLayoutMetrics(paneGap: 12)
+    )
+    var frames = Dictionary(uniqueKeysWithValues: state.placements(in: resizeBounds).map { ($0.windowID, $0.frame) })
+    if axis == .vertical {
+        frames[a]?.size.width += 70
+    } else {
+        frames[a]?.size.height += 70
+    }
+    let result = try #require(BentoLayoutFitter(tolerance: 2).fit(
+        state: state, currentFrames: frames, changedWindowIDs: [a], in: resizeBounds
+    ))
+    let moved = Dictionary(uniqueKeysWithValues: result.placements.map { ($0.windowID, $0.frame) })
+    #expect(moved[a]?.approximatelyEquals(frames[a]!, tolerance: 0.001) == true)
+    if axis == .vertical {
+        #expect(abs(moved[b]!.minX - moved[a]!.maxX - 12) < 0.001)
+    } else {
+        #expect(abs(moved[b]!.minY - moved[a]!.maxY - 12) < 0.001)
+    }
+    #expect(BentoLayoutFitter(tolerance: 2).fit(
+        state: result.state, currentFrames: moved, changedWindowIDs: [a, b], in: resizeBounds
+    ) == nil)
+}
+
 @Test func nestedSameAxisResizeIsDerivedFromTheTreeAndStaysGapless() throws {
     let a = WindowID(rawValue: "a"), b = WindowID(rawValue: "b"), c = WindowID(rawValue: "c")
     let nestedID = UUID(), rootID = UUID()

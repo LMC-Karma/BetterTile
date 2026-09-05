@@ -877,11 +877,12 @@ final class BetterTileModel {
             )
             let applied = commitResult.result == .committed
             if applied {
-                scheduleAuthoritativePlacementSettlement(
+                scheduleBentoSettlement(
                     displayID: display.id,
-                    sessionID: session.id,
-                    workArea: display.visibleFrame,
-                    placements: placements
+                    changedWindowIDs: Set(placements.map(\.windowID)),
+                    requestedFrames: Dictionary(uniqueKeysWithValues: placements.map { ($0.windowID, $0.frame) }),
+                    baselineFrames: Dictionary(uniqueKeysWithValues: displayWindows.map { ($0.id, $0.frame) }),
+                    isAuthoritative: true
                 )
             }
             statusMessage = if !applied {
@@ -2119,7 +2120,9 @@ final class BetterTileModel {
         displayID: DisplayID,
         changedWindowIDs: Set<WindowID>,
         requestedFrames: [WindowID: BTRect]? = nil,
-        baselineFrames: [WindowID: BTRect]? = nil
+        baselineFrames: [WindowID: BTRect]? = nil,
+        isAuthoritative: Bool = false,
+        workArea: BTRect? = nil
     ) {
         guard let scheduledSession = sessionStore.session(for: displayID) else { return }
         let sessionID = scheduledSession.id
@@ -2144,13 +2147,15 @@ final class BetterTileModel {
                 try? await Task.sleep(for: .milliseconds(40))
                 guard !Task.isCancelled,
                       self.sessionStore.isCurrent(sessionID, revision: revision, on: displayID),
-                      let sampled = try? self.system.visibleWindows()
+                      let sampled = try? (self.system.cachedVisibleWindows(refreshing: scheduledSession.windowIDs)
+                        ?? self.system.visibleWindows())
                 else { return }
                 latestWindows = sampled
                 let frames = Dictionary(uniqueKeysWithValues: sampled.filter { changedWindowIDs.contains($0.id) }.map { ($0.id, $0.frame) })
-                let hasResponded = baselineFrames == nil || frames.contains { id, frame in
+                let hasResponded = baselineFrames == nil || frames.allSatisfy { id, frame in
                     guard let baseline = baselineFrames?[id] else { return false }
-                    return !frame.approximatelyEquals(baseline, tolerance: 1)
+                    return requestedFrames?[id]?.approximatelyEquals(baseline, tolerance: 1) == true
+                        || !frame.approximatelyEquals(baseline, tolerance: 1)
                 }
                 if let previous, frames.count == changedWindowIDs.count,
                    hasResponded,
@@ -2168,7 +2173,9 @@ final class BetterTileModel {
                 changedWindowIDs: changedWindowIDs,
                 windows: latestWindows,
                 requestedFrames: requestedFrames,
-                baselineFrames: baselineFrames
+                baselineFrames: baselineFrames,
+                isAuthoritative: isAuthoritative,
+                workArea: workArea
             )
         }
     }
@@ -2180,7 +2187,9 @@ final class BetterTileModel {
         changedWindowIDs: Set<WindowID>,
         windows: [WindowSnapshot],
         requestedFrames: [WindowID: BTRect]?,
-        baselineFrames: [WindowID: BTRect]?
+        baselineFrames: [WindowID: BTRect]?,
+        isAuthoritative: Bool,
+        workArea: BTRect?
     ) {
         guard sessionStore.isCurrent(sessionID, revision: revision, on: displayID),
               var session = sessionStore.session(for: displayID), session.mode == .bento,
@@ -2252,8 +2261,37 @@ final class BetterTileModel {
                     windows: settledWindows,
                     error: commitResult.failureReason ?? "Bento could not adapt to this window's minimum size."
                 )
+            } else if commitResult.result == .committed, let workArea {
+                // The corrected layout must settle before acknowledging the
+                // work-area change, just like a layout that needed no correction.
+                scheduleAuthoritativePlacementSettlement(
+                    displayID: displayID,
+                    sessionID: sessionID,
+                    workArea: workArea,
+                    placements: placements
+                )
             }
             refreshDividerBoundaries()
+            return
+        }
+        // Repair and display reflows own their requested layout. Learn a real
+        // minimum before retrying; a refused width will not improve on retry.
+        // Never interpret a partially applied reflow as a native divider drag.
+        if isAuthoritative, let requestedFrames {
+            let placements = requestedFrames.map { Placement(windowID: $0.key, frame: $0.value) }
+            if placements.contains(where: { frames[$0.windowID]?.approximatelyEquals($0.frame, tolerance: 1) != true }) {
+                scheduleAuthoritativePlacementSettlement(
+                    displayID: displayID,
+                    sessionID: sessionID,
+                    workArea: workArea ?? display.visibleFrame,
+                    placements: placements
+                )
+            } else if let workArea {
+                session.lastWorkArea = workArea
+                session.recordProposedFrames(requestedFrames)
+                _ = sessionStore.commit(session, replacing: revision)
+            }
+            refreshDividerBoundaries(windows: settledWindows)
             return
         }
         if let fitted = BentoLayoutFitter(tolerance: configuration.adjacencyTolerance).fit(
@@ -2409,18 +2447,18 @@ final class BetterTileModel {
                         error: result.failureReason ?? "Bento could not follow the desktop update."
                     )
                 }
-                if let settleWorkArea {
-                    if applied {
-                        scheduleAuthoritativePlacementSettlement(
-                            displayID: display.id,
-                            sessionID: session.id,
-                            workArea: settleWorkArea,
-                            placements: placements
-                        )
-                    } else if !result.result.needsRepair {
-                        statusMessage = result.failureReason ?? "Some windows could not follow the updated screen area."
-                        presentActionResult(succeeded: false, error: statusMessage, displayID: display.id)
-                    }
+                if applied {
+                    scheduleBentoSettlement(
+                        displayID: display.id,
+                        changedWindowIDs: Set(placements.map(\.windowID)),
+                        requestedFrames: Dictionary(uniqueKeysWithValues: placements.map { ($0.windowID, $0.frame) }),
+                        baselineFrames: Dictionary(uniqueKeysWithValues: displayWindows.map { ($0.id, $0.frame) }),
+                        isAuthoritative: true,
+                        workArea: settleWorkArea
+                    )
+                } else if settleWorkArea != nil, !result.result.needsRepair {
+                    statusMessage = result.failureReason ?? "Some windows could not follow the updated screen area."
+                    presentActionResult(succeeded: false, error: statusMessage, displayID: display.id)
                 }
             case let .observe(session):
                 let committed = sessionStore.commit(session, replacing: session.revision) != nil
