@@ -123,6 +123,8 @@ public struct WindowMinimumSizeLearner: Sendable {
         actual: BTRect,
         tolerance: Double = 2
     ) -> Bool {
+        // An unchanged frame can be an ignored or queued write, not a minimum.
+        guard !actual.approximatelyEquals(baseline, tolerance: tolerance) else { return false }
         var learned = learnedSizes[windowID] ?? .zero
         let previous = learned
         if requested.size.width + tolerance < baseline.size.width,
@@ -220,24 +222,25 @@ public struct BentoLayoutFitter: Sendable {
                   !geometry.isLocked
             else { continue }
             let expectedCoordinate = geometry.resolvedCoordinate
+            let halfGap = state.metrics.paneGap / 2
             var changedCandidates: [Double] = []
 
             for id in changedWindowIDs {
                 guard let expected = originalFrames[id], let actual = currentFrames[id] else { continue }
                 switch geometry.axis {
                 case .vertical:
-                    if geometry.before.windowIDs.contains(id), abs(expected.maxX - expectedCoordinate) <= tolerance {
-                        changedCandidates.append(actual.maxX)
+                    if geometry.before.windowIDs.contains(id), abs(expected.maxX + halfGap - expectedCoordinate) <= tolerance {
+                        changedCandidates.append(actual.maxX + halfGap)
                     }
-                    if geometry.after.windowIDs.contains(id), abs(expected.minX - expectedCoordinate) <= tolerance {
-                        changedCandidates.append(actual.minX)
+                    if geometry.after.windowIDs.contains(id), abs(expected.minX - halfGap - expectedCoordinate) <= tolerance {
+                        changedCandidates.append(actual.minX - halfGap)
                     }
                 case .horizontal:
-                    if geometry.before.windowIDs.contains(id), abs(expected.maxY - expectedCoordinate) <= tolerance {
-                        changedCandidates.append(actual.maxY)
+                    if geometry.before.windowIDs.contains(id), abs(expected.maxY + halfGap - expectedCoordinate) <= tolerance {
+                        changedCandidates.append(actual.maxY + halfGap)
                     }
-                    if geometry.after.windowIDs.contains(id), abs(expected.minY - expectedCoordinate) <= tolerance {
-                        changedCandidates.append(actual.minY)
+                    if geometry.after.windowIDs.contains(id), abs(expected.minY - halfGap - expectedCoordinate) <= tolerance {
+                        changedCandidates.append(actual.minY - halfGap)
                     }
                 }
             }
@@ -251,7 +254,7 @@ public struct BentoLayoutFitter: Sendable {
                     abs($0 - expectedCoordinate) < abs($1 - expectedCoordinate)
                 })
             } else {
-                coordinate = stableSharedCoordinate(for: geometry, frames: currentFrames)
+                coordinate = stableSharedCoordinate(for: geometry, frames: currentFrames, gap: state.metrics.paneGap)
             }
 
             guard let coordinate, abs(coordinate - expectedCoordinate) > 0.5,
@@ -276,7 +279,8 @@ public struct BentoLayoutFitter: Sendable {
 
     private func stableSharedCoordinate(
         for boundary: BentoTreeGeometry.BoundaryGeometry,
-        frames: [WindowID: BTRect]
+        frames: [WindowID: BTRect],
+        gap: Double
     ) -> Double? {
         let first = boundary.before.windowIDs.compactMap { frames[$0] }
         let second = boundary.after.windowIDs.compactMap { frames[$0] }
@@ -291,7 +295,7 @@ public struct BentoLayoutFitter: Sendable {
             firstEdge = first.map(\.maxY).max()!
             secondEdge = second.map(\.minY).min()!
         }
-        guard abs(secondEdge - firstEdge) <= tolerance else { return nil }
+        guard abs(secondEdge - firstEdge - gap) <= tolerance else { return nil }
         return (firstEdge + secondEdge) / 2
     }
 }

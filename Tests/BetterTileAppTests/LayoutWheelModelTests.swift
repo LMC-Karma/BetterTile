@@ -15,6 +15,13 @@ private final class FakeAppWindowSystem: BetterTileWindowSystem {
     var enhancedUserInterfacePolicy: EnhancedUserInterfacePolicy = .disableAndRestore
     var permission = true
     var ignoredFrameWriteWindowIDs: Set<WindowID> = []
+    var enforcedMinimumWidths: [WindowID: Double] = [:]
+    var frameWriteCounts: [WindowID: Int] = [:]
+    var completeSweepCount = 0
+    var cachedSnapshotsAvailable = true
+    var emitsFrameEvents = false
+    var frameApplicationDelays: [WindowID: Duration] = [:]
+    private var minimumSizeLearner = WindowMinimumSizeLearner()
     var availableDisplays: [DisplaySnapshot]
     var windows: [WindowSnapshot]
     var eventHandler: (@MainActor (WindowSystemEvent) -> Void)?
@@ -32,20 +39,39 @@ private final class FakeAppWindowSystem: BetterTileWindowSystem {
 
     func requestAccessibilityPermission(prompt: Bool) -> Bool { permission }
     func focusedWindow() throws -> WindowSnapshot? { windows.first }
-    func visibleWindows() throws -> [WindowSnapshot] { windows }
+    func visibleWindows() throws -> [WindowSnapshot] {
+        completeSweepCount += 1
+        return windows
+    }
     func displays() -> [DisplaySnapshot] { availableDisplays }
     func windowSnapshots(ids: Set<WindowID>) throws -> [WindowSnapshot] {
         windows.filter { ids.contains($0.id) }
     }
     func cachedVisibleWindows(refreshing ids: Set<WindowID>) throws -> [WindowSnapshot]? {
-        windows
+        cachedSnapshotsAvailable ? windows : nil
     }
     func setFrame(_ frame: BTRect, knownCurrentFrame: BTRect?, for windowID: WindowID) throws {
         guard let index = windows.firstIndex(where: { $0.id == windowID }) else {
             throw WindowSystemError.windowNotFound(windowID)
         }
+        frameWriteCounts[windowID, default: 0] += 1
         guard !ignoredFrameWriteWindowIDs.contains(windowID) else { return }
+        if let delay = frameApplicationDelays[windowID] {
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(for: delay)
+                self?.applyFrame(frame, at: index)
+            }
+            return
+        }
+        applyFrame(frame, at: index)
+    }
+    private func applyFrame(_ frame: BTRect, at index: Int) {
+        let windowID = windows[index].id
         windows[index].frame = frame
+        windows[index].frame.size.width = max(frame.size.width, enforcedMinimumWidths[windowID] ?? 0)
+        if emitsFrameEvents {
+            eventHandler?(WindowSystemEvent(kind: .resized, windowID: windowID, processIdentifier: windows[index].processIdentifier))
+        }
     }
     func setMinimized(_ minimized: Bool, for windowID: WindowID) throws {
         guard let index = windows.firstIndex(where: { $0.id == windowID }) else {
@@ -68,7 +94,15 @@ private final class FakeAppWindowSystem: BetterTileWindowSystem {
         requested: BTRect,
         baseline: BTRect,
         actual: BTRect
-    ) -> Bool { false }
+    ) -> Bool {
+        let learned = minimumSizeLearner.observe(
+            windowID: windowID, requested: requested, baseline: baseline, actual: actual
+        )
+        if let index = windows.firstIndex(where: { $0.id == windowID }) {
+            windows[index].constraints = minimumSizeLearner.merging(windows[index].constraints, for: windowID)
+        }
+        return learned
+    }
     func startDockFootprintMonitoring(onChange: @escaping () -> Void) {}
     func stopDockFootprintMonitoring() {}
     func triggerDockFootprintCheck() {}
@@ -83,6 +117,81 @@ private func makeModel(system: FakeAppWindowSystem) -> BetterTileModel {
         fileURL: URL(filePath: "/private/tmp/BetterTileAppTests-\(UUID().uuidString)/configuration.json")
     )
     return BetterTileModel(store: store, system: system, startRuntime: false)
+}
+
+@Test(arguments: [false, true]) @MainActor
+func bentoPlacementContainsAnUnreportedApplicationMinimum(automaticArrival: Bool) async {
+    let system = FakeAppWindowSystem()
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    if automaticArrival { model.setActiveMode(.bento) }
+    let peerID = WindowID(rawValue: "peer")
+    system.windows.append(WindowSnapshot(
+        id: peerID, processIdentifier: 43,
+        frame: BTRect(x: 200, y: 0, width: 800, height: 800), displayID: system.mainDisplay.id
+    ))
+    system.enforcedMinimumWidths[peerID] = 600
+    system.emitsFrameEvents = true
+    if automaticArrival {
+        system.eventHandler?(WindowSystemEvent(kind: .created, windowID: peerID, processIdentifier: 43))
+    } else {
+        model.tileCurrentDisplay()
+    }
+
+    let contained = await waitFor(timeout: .seconds(1)) {
+        let frames = system.windows.map(\.frame)
+        return frames.allSatisfy { PlacementBounds.isContained($0, in: system.mainDisplay.visibleFrame) }
+            && frames[0].intersection(frames[1]) == nil
+    }
+    #expect(contained, "Bento must adapt to the app's minimum without leaving it past the display or its neighbor.")
+    #expect(system.frameWriteCounts[peerID, default: 0] <= 2)
+    let settledFrames = system.windows.map(\.frame)
+    try? await Task.sleep(for: .milliseconds(400))
+    #expect(system.windows.map(\.frame) == settledFrames)
+    #expect(system.frameWriteCounts[peerID, default: 0] <= 2)
+}
+
+@Test @MainActor func bentoRepairWaitsForADelayedAppWithoutLearningItsOldSize() async {
+    let system = FakeAppWindowSystem()
+    let peerID = WindowID(rawValue: "peer")
+    system.windows.append(WindowSnapshot(
+        id: peerID, processIdentifier: 43,
+        frame: BTRect(x: 200, y: 0, width: 800, height: 800), displayID: system.mainDisplay.id
+    ))
+    system.frameApplicationDelays[peerID] = .milliseconds(200)
+    system.emitsFrameEvents = true
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    model.tileCurrentDisplay()
+    try? await Task.sleep(for: .milliseconds(750))
+    #expect(system.windows[1].constraints.minimumSize.width == 120)
+    #expect(abs(system.windows[0].frame.size.width - system.windows[1].frame.size.width) < 1)
+    #expect(system.frameWriteCounts[peerID, default: 0] <= 2)
+}
+
+@Test(arguments: [true, false]) @MainActor
+func snappedBentoLayoutDoesNotResizeAgainAfterItLands(cachedSnapshotsAvailable: Bool) async {
+    let system = FakeAppWindowSystem()
+    system.cachedSnapshotsAvailable = cachedSnapshotsAvailable
+    system.windows.append(WindowSnapshot(
+        id: WindowID(rawValue: "peer"), processIdentifier: 43,
+        frame: BTRect(x: 200, y: 0, width: 800, height: 800), displayID: system.mainDisplay.id
+    ))
+    system.emitsFrameEvents = true
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    model.configuration.bentoInnerGap = 6
+    model.tileCurrentDisplay()
+    model.performLayoutWheel(.windowAction(.rightHalf), for: target(for: system))
+    let landedFrames = system.windows.map(\.frame)
+    let writes = system.frameWriteCounts
+    let sweeps = system.completeSweepCount
+    try? await Task.sleep(for: .milliseconds(500))
+    #expect(system.windows.map(\.frame) == landedFrames)
+    #expect(system.frameWriteCounts == writes)
+    if cachedSnapshotsAvailable {
+        #expect(system.completeSweepCount - sweeps <= 2)
+    }
 }
 
 @MainActor
