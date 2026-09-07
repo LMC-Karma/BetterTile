@@ -11,6 +11,9 @@ public struct AmbientLayoutObservation: Sendable {
     public var isDesktopTransition: Bool
     public var confirmedGone: Set<WindowID>
     public var confirmedMinimized: Set<WindowID>
+    /// Windows whose native membership still belongs to this desktop, even
+    /// when the current on-screen Accessibility sweep cannot see them.
+    public var knownSpaceWindowIDs: Set<WindowID>
 
     public init(
         display: DisplaySnapshot,
@@ -19,7 +22,8 @@ public struct AmbientLayoutObservation: Sendable {
         previousWindowIDs: Set<WindowID>,
         isDesktopTransition: Bool,
         confirmedGone: Set<WindowID> = [],
-        confirmedMinimized: Set<WindowID> = []
+        confirmedMinimized: Set<WindowID> = [],
+        knownSpaceWindowIDs: Set<WindowID> = []
     ) {
         self.display = display
         self.windows = windows
@@ -28,6 +32,7 @@ public struct AmbientLayoutObservation: Sendable {
         self.isDesktopTransition = isDesktopTransition
         self.confirmedGone = confirmedGone
         self.confirmedMinimized = confirmedMinimized
+        self.knownSpaceWindowIDs = knownSpaceWindowIDs
     }
 }
 
@@ -59,15 +64,18 @@ public struct AmbientLayoutReconciler: Sendable {
     public var paneGap: Double
     public var adjacencyTolerance: Double
     public var singleWindowPlacement: WindowAction?
+    public var newWindowSide: BentoNewWindowSide
 
     public init(
         paneGap: Double,
         adjacencyTolerance: Double,
-        singleWindowPlacement: WindowAction?
+        singleWindowPlacement: WindowAction?,
+        newWindowSide: BentoNewWindowSide = .automatic
     ) {
         self.paneGap = paneGap
         self.adjacencyTolerance = adjacencyTolerance
         self.singleWindowPlacement = singleWindowPlacement
+        self.newWindowSide = newWindowSide
     }
 
     public func transition(
@@ -81,10 +89,60 @@ public struct AmbientLayoutReconciler: Sendable {
             !$0.approximatelyEquals(observation.display.visibleFrame, tolerance: 0.5)
         } ?? false
 
-        // This latch applies in every layout mode and deliberately advances
-        // even while writes are suspended, matching the existing sweep policy.
+        var shouldApply = false
+        if session.mode == .bento, !session.automaticWritesSuspended {
+            if observation.wasCreated {
+                shouldApply = initializeBentoSession(
+                    &session,
+                    windows: observation.windows,
+                    frames: frames,
+                    display: observation.display,
+                    previousWindowIDs: observation.previousWindowIDs
+                )
+            } else if observation.isDesktopTransition {
+                // A known desktop keeps its stored Bento tree and ratios.
+            } else if session.isBentoInitialized {
+                let transition = BentoSessionReducer().reconcile(
+                    session: session,
+                    observation: BentoObservation(
+                        bounds: observation.display.visibleFrame,
+                        windows: observation.windows,
+                        focusedWindowID: session.focusedWindowID
+                    ),
+                    paneGap: paneGap,
+                    confirmedGone: observation.confirmedGone,
+                    minimized: observation.confirmedMinimized,
+                    knownSpaceWindowIDs: observation.knownSpaceWindowIDs,
+                    newWindowSide: newWindowSide
+                )
+                if case let .update(updated, _, _) = transition {
+                    session = updated
+                }
+                shouldApply = workAreaChanged
+            } else {
+                shouldApply = initializeBentoSession(
+                    &session,
+                    windows: observation.windows,
+                    frames: frames,
+                    display: observation.display,
+                    previousWindowIDs: observation.previousWindowIDs
+                )
+            }
+        }
+
+        let stateChanged = before != session.bentoState
+        if !observation.wasCreated, !observation.isDesktopTransition, stateChanged {
+            shouldApply = true
+        }
+
+        // A temporarily missing Bento pane still belongs to the layout. Apply
+        // the single-window policy only after the reducer confirms removals,
+        // otherwise a Space transition maximizes a window and then tiles it again.
+        let eligibleWindowCount = session.mode == .bento && observation.windows.count == 1
+            ? max(observation.windows.count, session.bentoState.root?.windowIDs.count ?? 0)
+            : observation.windows.count
         let becameSingleWindow = session.shouldApplySingleWindowPlacement(
-            eligibleWindowCount: observation.windows.count
+            eligibleWindowCount: eligibleWindowCount
         )
         let singlePlacement: Placement? = if becameSingleWindow,
            !session.automaticWritesSuspended,
@@ -98,50 +156,6 @@ public struct AmbientLayoutReconciler: Sendable {
             Placement(windowID: window.id, frame: frame)
         } else {
             nil
-        }
-
-        var shouldApply = false
-        if session.mode == .bento, !session.automaticWritesSuspended {
-            if observation.wasCreated {
-                shouldApply = initializeBentoSession(
-                    &session,
-                    windows: observation.windows,
-                    frames: frames,
-                    display: observation.display
-                )
-            } else if observation.isDesktopTransition {
-                // A known desktop keeps its stored Bento tree and ratios. The
-                // global single-window policy above still has precedence.
-            } else if session.isBentoInitialized {
-                let membershipChanged = observation.previousWindowIDs != session.windowIDs
-                let transition = BentoSessionReducer().reconcile(
-                    session: session,
-                    observation: BentoObservation(
-                        bounds: observation.display.visibleFrame,
-                        windows: observation.windows,
-                        focusedWindowID: session.focusedWindowID
-                    ),
-                    paneGap: paneGap,
-                    confirmedGone: observation.confirmedGone,
-                    minimized: observation.confirmedMinimized
-                )
-                if case let .update(updated, _, _) = transition {
-                    session = updated
-                }
-                shouldApply = workAreaChanged || membershipChanged
-            } else {
-                shouldApply = initializeBentoSession(
-                    &session,
-                    windows: observation.windows,
-                    frames: frames,
-                    display: observation.display
-                )
-            }
-        }
-
-        let stateChanged = before != session.bentoState
-        if !observation.wasCreated, !observation.isDesktopTransition, stateChanged {
-            shouldApply = true
         }
         let settleWorkArea = session.mode == .bento
             && session.isBentoInitialized
@@ -180,7 +194,8 @@ public struct AmbientLayoutReconciler: Sendable {
         _ session: inout LayoutSession,
         windows: [WindowSnapshot],
         frames: [WindowID: BTRect],
-        display: DisplaySnapshot
+        display: DisplaySnapshot,
+        previousWindowIDs: Set<WindowID>
     ) -> Bool {
         guard windows.count > 1 else { return false }
         let metrics = BentoLayoutMetrics(paneGap: paneGap)
@@ -188,6 +203,22 @@ public struct AmbientLayoutReconciler: Sendable {
         // this metadata to the next sweep breaks the fixed point and makes
         // planner-created overflow indistinguishable from a user's float.
         session.bentoInsertionOrder = windows.map(\.id).sorted()
+        // A Bento desktop with one window has no tree yet. Preserve that
+        // window as the existing pane when the first newcomer arrives.
+        if newWindowSide != .automatic, previousWindowIDs.count == 1,
+           let existingID = previousWindowIDs.first,
+           windows.contains(where: { $0.id == existingID }) {
+            session.bentoState = BentoLayoutState(root: .leaf(existingID), metrics: metrics)
+            session.isBentoInitialized = true
+            let transition = BentoSessionReducer().reconcile(
+                session: session,
+                observation: BentoObservation(bounds: display.visibleFrame, windows: windows),
+                paneGap: paneGap,
+                newWindowSide: newWindowSide
+            )
+            if case let .update(updated, _, _) = transition { session = updated }
+            return true
+        }
         if let adopted = BentoLayoutAdopter(tolerance: adjacencyTolerance).adopt(
             frames: frames,
             in: display.visibleFrame,

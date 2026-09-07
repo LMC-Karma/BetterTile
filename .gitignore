@@ -22,6 +22,7 @@ BetterTile.xcarchive/
 
 # Local-only notes, research, and scratch work (never published)
 /Local/
+/website/
 
 # Local agent and tooling configuration
 /.xcodebuildmcp/

@@ -14,6 +14,13 @@ public struct LayoutWheelMetrics: Sendable {
     /// larger than the logical wheel or those effects can be clipped at its
     /// invisible square boundary.
     public static let presentationPadding = 18.0
+    static let selectedScale = 1.045
+
+    /// Only shadow space can leave the screen. Reserve the selected slice's
+    /// growth and its stroke, without clamping the whole transparent panel.
+    func overflowPadding(for levelCount: LayoutWheelLevelCount) -> Double {
+        max(0, Self.presentationPadding - diameter(for: levelCount) / 2 * (Self.selectedScale - 1) - 1)
+    }
 
     public init?(
         hubRadius: Double,
@@ -418,7 +425,7 @@ public struct LayoutWheelView: View {
             )
             sectorIcon(slot, selection: selection, isSelected: isSelected)
         }
-        .scaleEffect(isSelected && !reduceMotion ? 1.045 : 1)
+        .scaleEffect(isSelected && !reduceMotion ? LayoutWheelMetrics.selectedScale : 1)
         .shadow(
             color: isSelected ? .black.opacity(reduceMotion ? 0.12 : 0.24) : .clear,
             radius: isSelected ? 7 : 0,
@@ -563,6 +570,7 @@ private struct LayoutWheelIcon: View {
     let slot: LayoutWheelSlot
     let tint: Color
     let fontSize: CGFloat
+    var compact = false
 
     private var descriptor: LayoutWheelGlyphDescriptor? {
         switch slot.symbolName {
@@ -590,8 +598,8 @@ private struct LayoutWheelIcon: View {
     @ViewBuilder
     var body: some View {
         if let descriptor {
-            LayoutWheelGlyph(descriptor: descriptor, tint: tint)
-                .scaleEffect(0.86)
+            LayoutWheelGlyph(descriptor: descriptor, tint: tint, compact: compact)
+                .scaleEffect(compact ? 1 : 0.86)
         } else if slot.symbolName == "inset.filled.center.rectangle",
                   NSImage(systemSymbolName: slot.symbolName, accessibilityDescription: nil) == nil {
             LayoutWheelGlyph(descriptor: .inset, tint: tint)
@@ -604,6 +612,30 @@ private struct LayoutWheelIcon: View {
     }
 }
 
+/// Action glyph shared by the Layout Wheel and application-owned action
+/// pickers. The tint is explicit so the same geometry reads on light and dark
+/// surfaces.
+public struct LayoutWheelActionGlyph: View {
+    private let action: WindowAction
+    private let tint: Color
+    private let fontSize: CGFloat
+
+    public init(action: WindowAction, tint: Color = .primary, fontSize: CGFloat = 12) {
+        self.action = action
+        self.tint = tint
+        self.fontSize = fontSize
+    }
+
+    public var body: some View {
+        LayoutWheelIcon(
+            slot: LayoutWheelSlot(command: .windowAction(action)),
+            tint: tint,
+            fontSize: fontSize,
+            compact: true
+        )
+    }
+}
+
 private enum LayoutWheelGlyphDescriptor: Equatable {
     case partition(columns: Int, selected: Set<Int>)
     case grid(columns: Int, rows: Int, selected: Set<Int>)
@@ -613,14 +645,16 @@ private enum LayoutWheelGlyphDescriptor: Equatable {
 private struct LayoutWheelGlyph: View {
     let descriptor: LayoutWheelGlyphDescriptor
     let tint: Color
+    var compact = false
 
     var body: some View {
         Canvas { context, size in
             let outer = LayoutWheelGlyphLayout.outerRect(in: size)
+            let scale = compact ? min(1, outer.width / 36) : 1
             context.stroke(
-                Path(roundedRect: outer, cornerRadius: 3.5),
+                Path(roundedRect: outer, cornerRadius: 3.5 * scale),
                 with: .color(tint),
-                lineWidth: 1.25
+                lineWidth: 1.25 * scale
             )
 
             switch descriptor {
@@ -629,14 +663,15 @@ private struct LayoutWheelGlyph: View {
                 let cells = LayoutWheelGlyphLayout.gridRects(
                     columns: columns,
                     rows: 1,
-                    in: content
+                    in: content,
+                    gapScale: scale
                 )
                 for (index, cell) in cells.enumerated() {
                     if selected.contains(index) { continue }
                     context.stroke(
-                        Path(roundedRect: cell, cornerRadius: 1.8),
-                        with: .color(.white.opacity(0.95)),
-                        lineWidth: 1
+                        Path(roundedRect: cell, cornerRadius: 1.8 * scale),
+                        with: .color(tint.opacity(0.95)),
+                        lineWidth: scale
                     )
                 }
                 if let first = selected.min(),
@@ -646,8 +681,8 @@ private struct LayoutWheelGlyph: View {
                    cells.indices.contains(last) {
                     let selectedRect = cells[first].union(cells[last])
                     context.fill(
-                        Path(roundedRect: selectedRect, cornerRadius: 2.5),
-                        with: .color(.white)
+                        Path(roundedRect: selectedRect, cornerRadius: 2.5 * scale),
+                        with: .color(tint)
                     )
                 }
             case let .grid(columns, rows, selected):
@@ -655,14 +690,15 @@ private struct LayoutWheelGlyph: View {
                 let cells = LayoutWheelGlyphLayout.gridRects(
                     columns: columns,
                     rows: rows,
-                    in: content
+                    in: content,
+                    gapScale: scale
                 )
                 for (index, cell) in cells.enumerated() {
-                    let path = Path(roundedRect: cell, cornerRadius: 1.8)
+                    let path = Path(roundedRect: cell, cornerRadius: 1.8 * scale)
                     if selected.contains(index) {
-                        context.fill(path, with: .color(.white))
+                        context.fill(path, with: .color(tint))
                     }
-                    context.stroke(path, with: .color(.white.opacity(0.95)), lineWidth: 1)
+                    context.stroke(path, with: .color(tint.opacity(0.95)), lineWidth: scale)
                 }
             case .inset:
                 let inset = outer.insetBy(dx: outer.width * 0.22, dy: outer.height * 0.22)
@@ -698,8 +734,10 @@ struct LayoutWheelGlyphLayout {
         outer.insetBy(dx: outer.width * 0.10, dy: outer.height * 0.13)
     }
 
-    static func gridRects(columns: Int, rows: Int, in rect: CGRect) -> [CGRect] {
+    static func gridRects(columns: Int, rows: Int, in rect: CGRect, gapScale: CGFloat = 1) -> [CGRect] {
         guard columns > 0, rows > 0 else { return [] }
+        let columnGap = Self.columnGap * gapScale
+        let rowGap = Self.rowGap * gapScale
         let totalColumnGap = columnGap * CGFloat(columns - 1)
         let totalRowGap = rowGap * CGFloat(rows - 1)
         let cellWidth = (rect.width - totalColumnGap) / CGFloat(columns)

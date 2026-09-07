@@ -25,7 +25,8 @@ private func ambientObservation(
     previousWindowIDs: Set<WindowID>? = nil,
     isDesktopTransition: Bool = false,
     confirmedGone: Set<WindowID> = [],
-    confirmedMinimized: Set<WindowID> = []
+    confirmedMinimized: Set<WindowID> = [],
+    knownSpaceWindowIDs: Set<WindowID> = []
 ) -> AmbientLayoutObservation {
     AmbientLayoutObservation(
         display: display,
@@ -34,7 +35,8 @@ private func ambientObservation(
         previousWindowIDs: previousWindowIDs ?? Set(windows.map(\.id)),
         isDesktopTransition: isDesktopTransition,
         confirmedGone: confirmedGone,
-        confirmedMinimized: confirmedMinimized
+        confirmedMinimized: confirmedMinimized,
+        knownSpaceWindowIDs: knownSpaceWindowIDs
     )
 }
 
@@ -262,7 +264,8 @@ private let ambientThird = ambientWindow(
     #expect(!updated.hasAppliedSingleWindowPlacement)
 }
 
-@Test func aKnownDesktopTransitionKeepsItsBentoTreeReadOnly() throws {
+@Test(arguments: BentoNewWindowSide.allCases)
+func aKnownDesktopTransitionKeepsItsBentoTreeReadOnly(side: BentoNewWindowSide) throws {
     let state = horizontalPaneState([ambientLeft, ambientRight])
     let session = LayoutSession(
         displayID: ambientDisplayID,
@@ -272,7 +275,9 @@ private let ambientThird = ambientWindow(
         bentoInsertionOrder: [ambientLeft.id, ambientRight.id]
     )
 
-    let transition = ambientReconciler().transition(
+    var reconciler = ambientReconciler()
+    reconciler.newWindowSide = side
+    let transition = reconciler.transition(
         session: session,
         observation: ambientObservation(
             windows: [ambientLeft],
@@ -308,6 +313,50 @@ private let ambientThird = ambientWindow(
         Issue.record("The existing single-window precedence must survive desktop transitions")
         return
     }
+}
+
+@Test(arguments: [false, true], [false, true])
+func aTemporarilyMissingBentoPeerDoesNotMaximizeTheRemainingWindow(knownMember: Bool, minimized: Bool) {
+    let all = [ambientLeft, ambientRight]
+    var session = LayoutSession(
+        displayID: ambientDisplayID,
+        mode: .bento,
+        bentoState: horizontalPaneState(all),
+        windowIDs: [ambientLeft.id],
+        bentoInsertionOrder: all.map(\.id),
+        lastWorkArea: ambientBounds
+    )
+    let reconciler = ambientReconciler(singleWindowPlacement: .maximize)
+    for _ in 0..<(knownMember ? 8 : 2) {
+        let transition = reconciler.transition(
+            session: session,
+            observation: ambientObservation(
+                windows: [ambientLeft], previousWindowIDs: Set(all.map(\.id)),
+                knownSpaceWindowIDs: knownMember ? Set(all.map(\.id)) : []
+            )
+        )
+        guard case let .observe(updated) = transition else {
+            Issue.record("Keep the missing peer's pane instead of maximizing its neighbor")
+            return
+        }
+        #expect(!updated.hasAppliedSingleWindowPlacement)
+        session = updated
+    }
+    let removed = reconciler.transition(
+        session: session,
+        observation: ambientObservation(
+            windows: [ambientLeft],
+            confirmedGone: minimized ? [] : [ambientRight.id],
+            confirmedMinimized: minimized ? [ambientRight.id] : [],
+            knownSpaceWindowIDs: knownMember ? Set(all.map(\.id)) : []
+        )
+    )
+    guard case let .placeSingleWindow(updated, placement) = removed else {
+        Issue.record("A confirmed closure must still place the remaining window")
+        return
+    }
+    #expect(placement.frame == ambientBounds)
+    #expect(updated.hasAppliedSingleWindowPlacement)
 }
 
 @Test func confirmedRemovalChangesTheTreeEvenWithoutObservedMembershipChange() throws {
@@ -530,8 +579,8 @@ private let ambientThird = ambientWindow(
             previousWindowIDs: Set(all.map(\.id))
         )
     )
-    guard case let .applyLayout(firstSession, _, _) = first else {
-        Issue.record("The initial membership change must produce the existing write")
+    guard case let .observe(firstSession) = first else {
+        Issue.record("An unconfirmed absence must keep the existing layout without writing")
         return
     }
     #expect(firstSession.presence.pending[ambientThird.id] == 1)

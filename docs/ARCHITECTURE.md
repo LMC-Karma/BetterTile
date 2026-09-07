@@ -55,6 +55,14 @@ BetterTile operates on eligible on-screen windows exposed by its macOS integrati
 
 ## Event ordering
 
+Window identities survive off-screen and incomplete Accessibility sweeps.
+Cleanup requires closure evidence from the full public WindowServer list;
+without an exact identity, destruction or application termination owns cleanup.
+Native membership includes retained, nonhidden, nonminimized window identities.
+It keeps a temporarily missing pane in its desktop's tree. Confirmed destruction
+and minimization still remove the pane, and a window observed on another display
+is no longer protected on the old display.
+
 One listen-only session event tap forwards ordered scalar left-button values
 from a dedicated run loop to the main actor. Drag snapping and linked resizing
 share that stream. If tap creation or recovery fails, both consumers switch to
@@ -81,6 +89,14 @@ All window mutations pass through the main-actor coordinator. Multi-window opera
 ## Bento
 
 Bento uses a binary split tree held by each display's runtime `LayoutSession`. Leaves reference currently visible windows and branches carry an axis, normalized weight, and lock state. New windows are inserted by evaluating every unlocked leaf and choosing the split with the lowest movement/area-change score; closed or hidden windows are removed from the current tree. `BentoResizeEngine` changes branch weights and recursively derives all affected frames, `BentoLayoutFitter` adopts native edge changes, and `BentoBoundaryResolver` exposes only shared segments verified against current window frames.
+
+The **New window side** preference applies only to new Bento insertions.
+Automatic retains the existing insertion policy. An explicit side favors a
+constraint-valid insertion toward that edge within the existing partition tree.
+Vacancies take priority, and an unavailable preferred split uses the normal
+insertion policy. Minimized windows retain their reinsertion anchors, and
+Space transitions retain their stored layouts. Changing the preference does
+not rearrange existing windows.
 
 ## Linked resizing
 

@@ -55,6 +55,25 @@ private let testDisplay = DisplaySnapshot(
     #expect(SnapZoneDetector().target(at: BTPoint(x: 1, y: 25), display: testDisplay)?.action == .topLeftQuarter)
 }
 
+@Test func snapZoneCornersHaveAGenerousTriggerRegion() {
+    let detector = SnapZoneDetector()
+    // Exercise both axes and translated display coordinates at every corner.
+    let bounds = BTRect(x: -1200, y: 200, width: 1200, height: 800)
+    for (x, y, dx, dy, area) in [
+        (bounds.minX, bounds.minY, 1.0, 1.0, SnapArea.topLeft),
+        (bounds.maxX, bounds.minY, -1.0, 1.0, SnapArea.topRight),
+        (bounds.minX, bounds.maxY, 1.0, -1.0, SnapArea.bottomLeft),
+        (bounds.maxX, bounds.maxY, -1.0, -1.0, SnapArea.bottomRight),
+    ] {
+        #expect(detector.area(at: BTPoint(x: x + dx * 69, y: y + dy * 69), in: bounds) == area)
+        #expect(detector.area(at: BTPoint(x: x + dx * 70, y: y + dy * 69), in: bounds) == nil)
+        #expect(detector.area(at: BTPoint(x: x + dx * 69, y: y + dy * 70), in: bounds) == nil)
+        #expect(detector.area(at: BTPoint(x: x - dx, y: y - dy), in: bounds) == nil)
+    }
+    #expect(detector.target(at: BTPoint(x: 69, y: 2), display: testDisplay)?.action == .topLeftQuarter)
+    #expect(detector.target(at: BTPoint(x: 70, y: 2), display: testDisplay)?.action == .almostMaximize)
+}
+
 @Test func snapZonesWaitForThePhysicalScreenEdge() {
     let detector = SnapZoneDetector()
     #expect(detector.target(at: BTPoint(x: 600, y: testDisplay.visibleFrame.minY), display: testDisplay) == nil)

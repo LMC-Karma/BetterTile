@@ -96,6 +96,7 @@ final class BetterTileModel {
     private var configurationSaveTask: Task<Void, Never>?
     private var configurationNeedsSave = false
     private var isShortcutCaptureActive = false
+    private var isShutDown = false
 
     init(
         store: ConfigurationStore = .defaultStore(),
@@ -1266,6 +1267,13 @@ final class BetterTileModel {
     }
 
     func shutdown() {
+        guard !isShutDown else { return }
+        isShutDown = true
+        for token in notificationTokens {
+            NotificationCenter.default.removeObserver(token)
+            NSWorkspace.shared.notificationCenter.removeObserver(token)
+        }
+        notificationTokens.removeAll()
         actionVerificationTask?.cancel()
         flushConfiguration()
         watchdogTimer?.invalidate()
@@ -1369,6 +1377,7 @@ final class BetterTileModel {
     }
 
     private func applyDockPolicy() {
+        guard !isShutDown else { return }
         NSApp.setActivationPolicy(configuration.showDockIcon ? .regular : .accessory)
         guard configuration.showDockIcon,
               let icon = NSImage(named: NSImage.applicationIconName)
@@ -1377,15 +1386,19 @@ final class BetterTileModel {
         NSApp.dockTile.display()
     }
 
-    private func installWorkspaceTriggers() {
+    func installWorkspaceTriggers() {
+        guard !isShutDown else { return }
         let center = NotificationCenter.default
         let workspaceCenter = NSWorkspace.shared.notificationCenter
         notificationTokens.append(center.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in
-            Task { @MainActor in self?.scheduleDisplayRefresh() }
+            Task { @MainActor in
+                guard let self, !self.isShutDown else { return }
+                self.scheduleDisplayRefresh()
+            }
         })
         notificationTokens.append(center.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
             Task { @MainActor in
-                guard let self else { return }
+                guard let self, !self.isShutDown else { return }
                 self.titleBarDoubleClick.refreshSystemPolicy()
                 guard self.refreshPermission(recoverWindows: false) else { return }
                 self.refreshActiveWindows(force: true)
@@ -1397,8 +1410,9 @@ final class BetterTileModel {
             queue: .main
         ) { [weak self] _ in
             Task { @MainActor in
-                self?.layoutWheel.handleApplicationDeactivated()
-                self?.flushConfiguration()
+                guard let self, !self.isShutDown else { return }
+                self.layoutWheel.handleApplicationDeactivated()
+                self.flushConfiguration()
             }
         })
         let topologyNames: [Notification.Name] = [
@@ -1409,14 +1423,15 @@ final class BetterTileModel {
         for name in topologyNames {
             notificationTokens.append(workspaceCenter.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
                 Task { @MainActor in
+                    guard let self, !self.isShutDown else { return }
                     if name == NSWorkspace.didWakeNotification {
-                        self?.dragSnap.cancel()
-                        self?.layoutWheel.cancel()
+                        self.dragSnap.cancel()
+                        self.layoutWheel.cancel()
                     }
-                    self?.system.refreshApplicationObservers()
-                    self?.system.triggerDockFootprintCheck()
-                    self?.dividerResize.hideAndCancel()
-                    self?.refreshActiveWindows(force: true)
+                    self.system.refreshApplicationObservers()
+                    self.system.triggerDockFootprintCheck()
+                    self.dividerResize.hideAndCancel()
+                    self.refreshActiveWindows(force: true)
                 }
             })
         }
@@ -1425,7 +1440,10 @@ final class BetterTileModel {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            Task { @MainActor in self?.beginActiveSpaceStabilization() }
+            Task { @MainActor in
+                guard let self, !self.isShutDown else { return }
+                self.beginActiveSpaceStabilization()
+            }
         })
         notificationTokens.append(workspaceCenter.addObserver(
             forName: NSWorkspace.didActivateApplicationNotification,
@@ -1433,12 +1451,16 @@ final class BetterTileModel {
             queue: .main
         ) { [weak self] _ in
             Task { @MainActor in
-                self?.layoutWheel.handleApplicationDeactivated()
-                self?.refreshFocusedDisplayWithoutLayout()
+                guard let self, !self.isShutDown else { return }
+                self.layoutWheel.handleApplicationDeactivated()
+                self.refreshFocusedDisplayWithoutLayout()
             }
         })
         let timer = Timer(timeInterval: 10, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.watchdog() }
+            Task { @MainActor in
+                guard let self, !self.isShutDown else { return }
+                self.watchdog()
+            }
         }
         timer.tolerance = 2.5
         RunLoop.main.add(timer, forMode: .common)
@@ -1570,6 +1592,16 @@ final class BetterTileModel {
     }
 
     private func receiveWindowSystemEvent(_ event: WindowSystemEvent) {
+        guard !isShutDown else { return }
+        // Lifecycle evidence survives gesture buffering and Space stabilization.
+        // A stale scan must not restore a pane before minimization is observed.
+        if let windowID = event.windowID {
+            if event.kind == .minimized { confirmedMinimizedWindowIDs.insert(windowID) }
+            if event.kind == .restored || event.kind == .destroyed {
+                confirmedMinimizedWindowIDs.remove(windowID)
+            }
+            if event.kind == .destroyed { confirmedGoneWindowIDs.insert(windowID) }
+        }
         guard !isStabilizingSpace else { return }
         // A wheel aimed at a window that just went away must not fall through to
         // whatever replaces it.
@@ -1612,10 +1644,6 @@ final class BetterTileModel {
             }
             pendingWindowEvents.record(event)
         case .created, .destroyed, .minimized:
-            if let windowID = event.windowID {
-                if event.kind == .minimized { confirmedMinimizedWindowIDs.insert(windowID) }
-                if event.kind == .destroyed { confirmedGoneWindowIDs.insert(windowID) }
-            }
             pendingWindowEvents.record(event)
         case .focused:
             layoutWheel.handleFocusedWindowChanged()
@@ -1624,6 +1652,7 @@ final class BetterTileModel {
     }
 
     private func schedulePendingWindowEvents(after delay: Duration = WindowEventRetryBackoff.initialDelay) {
+        guard !isShutDown else { return }
         let isGestureActive = activeBentoDrag != nil || dragSnap.isGestureActive || dividerResize.isDragging
         guard pendingWindowEvents.isReadyForProcessing(
             isGestureActive: isGestureActive,
@@ -2057,7 +2086,9 @@ final class BetterTileModel {
     /// Windows Bento may lay out. Excluded applications keep their own size and
     /// position instead of becoming panes.
     private func bentoEligible(_ windows: [WindowSnapshot]) -> [WindowSnapshot] {
-        windows.filter { rule(for: $0).allowsBentoParticipation }
+        windows.filter {
+            !confirmedMinimizedWindowIDs.contains($0.id) && rule(for: $0).allowsBentoParticipation
+        }
     }
 
     /// Bento panes are derived from the whole work area, so a pane that leaves
@@ -2369,7 +2400,8 @@ final class BetterTileModel {
         let ambientReconciler = AmbientLayoutReconciler(
             paneGap: configuration.bentoInnerGap,
             adjacencyTolerance: configuration.adjacencyTolerance,
-            singleWindowPlacement: configuration.singleWindowPlacement
+            singleWindowPlacement: configuration.singleWindowPlacement,
+            newWindowSide: configuration.bentoNewWindowSide
         )
 
         for display in displays {
@@ -2406,7 +2438,9 @@ final class BetterTileModel {
                     previousWindowIDs: activation.previousWindowIDs,
                     isDesktopTransition: desktopTransition,
                     confirmedGone: consumedDestroyedWindowIDs,
-                    confirmedMinimized: consumedMinimizedWindowIDs
+                    confirmedMinimized: consumedMinimizedWindowIDs,
+                    knownSpaceWindowIDs: (nativeObservation?.exclusiveWindowIDs(on: display.id) ?? [])
+                        .subtracting(eligible.filter { $0.displayID != display.id }.map(\.id))
                 )
             )
             if shouldLogHeldAbsences {
@@ -2471,7 +2505,8 @@ final class BetterTileModel {
             // stored tree. Retain minimize evidence for the first normal sweep
             // so the reducer can still capture the pane's reinsertion anchor.
             if !desktopTransition {
-                confirmedMinimizedWindowIDs.subtract(consumedMinimizedWindowIDs)
+                let stillReportedVisible = Set(windows.filter(\.isEligible).map(\.id))
+                confirmedMinimizedWindowIDs.subtract(consumedMinimizedWindowIDs.subtracting(stillReportedVisible))
             }
         } else {
             pendingWindowEvents.recordTopologyChange()
@@ -2563,7 +2598,9 @@ final class BetterTileModel {
             ),
             paneGap: configuration.bentoInnerGap,
             confirmedGone: confirmedGone,
-            minimized: minimized
+            minimized: minimized.union(confirmedMinimizedWindowIDs),
+            knownSpaceWindowIDs: system.nativeDesktopObservation()?.exclusiveWindowIDs(on: display.id) ?? [],
+            newWindowSide: configuration.bentoNewWindowSide
         )
         guard case let .update(updated, _, _) = transition else { return }
         session = updated

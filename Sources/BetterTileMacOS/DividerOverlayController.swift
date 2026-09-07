@@ -16,6 +16,194 @@ public enum DividerHandleOcclusion {
     }
 }
 
+public enum DividerHandleArm: String, CaseIterable, Hashable, Sendable {
+    case up, down, left, right
+}
+
+public enum DividerHandleGeometry {
+    public static let restingStraightLength = 56.0
+    public static let activeStraightMultiplier = 3.0
+    public static let restingJunctionArmLength = 12.0
+    public static let activeJunctionArmLength = 36.0
+    public static let junctionAcquisitionSize = 32.0
+
+    public static func straightLength(span: ClosedRange<Double>, active: Bool) -> Double {
+        let usable = max(8, span.upperBound - span.lowerBound)
+        let resting = min(restingStraightLength, usable)
+        return min(active ? resting * activeStraightMultiplier : resting, usable)
+    }
+
+    public static func junctionAcquisitionFrame(center: BTPoint) -> BTRect {
+        BTRect(
+            x: center.x - junctionAcquisitionSize / 2,
+            y: center.y - junctionAcquisitionSize / 2,
+            width: junctionAcquisitionSize,
+            height: junctionAcquisitionSize
+        )
+    }
+
+    public static func junctionArmLengths(
+        center: BTPoint,
+        boundaries: [BoundaryDescriptor],
+        active: Bool,
+        thickness: Double
+    ) -> [DividerHandleArm: Double] {
+        let requested = active ? activeJunctionArmLength : restingJunctionArmLength
+        let half = max(1, thickness / 2)
+        var available: [DividerHandleArm: Double] = [:]
+        for boundary in boundaries {
+            switch boundary.axis {
+            case .vertical:
+                if boundary.spanStart < center.y {
+                    available[.up] = max(available[.up] ?? 0, center.y - boundary.spanStart)
+                }
+                if boundary.spanEnd > center.y {
+                    available[.down] = max(available[.down] ?? 0, boundary.spanEnd - center.y)
+                }
+            case .horizontal:
+                if boundary.spanStart < center.x {
+                    available[.left] = max(available[.left] ?? 0, center.x - boundary.spanStart)
+                }
+                if boundary.spanEnd > center.x {
+                    available[.right] = max(available[.right] ?? 0, boundary.spanEnd - center.x)
+                }
+            }
+        }
+        return available.reduce(into: [:]) { result, entry in
+            result[entry.key] = min(requested, max(0, entry.value - half))
+        }
+    }
+
+    public static func junctionFrame(
+        center: BTPoint,
+        armLengths: [DividerHandleArm: Double],
+        thickness: Double
+    ) -> BTRect {
+        let half = max(1, thickness / 2)
+        let acquisition = junctionAcquisitionFrame(center: center)
+        let minX = min(acquisition.minX, center.x - (armLengths[.left] ?? 0) - half)
+        let maxX = max(acquisition.maxX, center.x + (armLengths[.right] ?? 0) + half)
+        let minY = min(acquisition.minY, center.y - (armLengths[.up] ?? 0) - half)
+        let maxY = max(acquisition.maxY, center.y + (armLengths[.down] ?? 0) + half)
+        return BTRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
+    }
+}
+
+enum DividerInteractionResolver {
+    static func resolve(
+        at point: BTPoint,
+        in boundaries: [BoundaryDescriptor],
+        hitWidth: Double,
+        adjacencyTolerance: Double,
+        paneGap: Double = 0
+    ) -> DividerInteraction? {
+        let eligible = boundaries.filter { !$0.isLocked && $0.spanEnd - $0.spanStart >= 24 }
+        let radius = DividerHandleGeometry.junctionAcquisitionSize / 2
+        var junctions: [(
+            center: BTPoint,
+            boundaries: [BoundaryDescriptor],
+            verticalBranchID: UUID,
+            horizontalBranchID: UUID,
+            key: String
+        )] = []
+        let verticals = eligible.filter { $0.axis == .vertical && $0.branchID != nil }
+        let horizontals = eligible.filter { $0.axis == .horizontal && $0.branchID != nil }
+        let gapReach = max(0, paneGap) / 2 + 0.001
+        func reaches(_ boundary: BoundaryDescriptor, _ coordinate: Double) -> Bool {
+            boundary.spanStart - gapReach <= coordinate && coordinate <= boundary.spanEnd + gapReach
+        }
+        func participants(_ boundary: BoundaryDescriptor) -> Set<WindowID> {
+            boundary.beforeWindowIDs.union(boundary.afterWindowIDs)
+        }
+
+        for vertical in verticals {
+            for horizontal in horizontals
+                where vertical.displayID == horizontal.displayID
+                    && vertical.branchID != horizontal.branchID
+                    && reaches(horizontal, vertical.coordinate)
+                    && reaches(vertical, horizontal.coordinate) {
+                let exactIntersection = horizontal.spanStart <= vertical.coordinate
+                    && vertical.coordinate <= horizontal.spanEnd
+                    && vertical.spanStart <= horizontal.coordinate
+                    && horizontal.coordinate <= vertical.spanEnd
+                // Bridge only the configured half-gap, and only between Bento
+                // branches sharing participants. Proximity alone is not topology.
+                guard exactIntersection || !participants(vertical).isDisjoint(with: participants(horizontal)) else { continue }
+                let center = BTPoint(x: vertical.coordinate, y: horizontal.coordinate)
+                guard abs(point.x - center.x) <= radius, abs(point.y - center.y) <= radius else { continue }
+                let junctionWindows = participants(vertical).union(participants(horizontal))
+                let meeting = eligible.filter { boundary in
+                    guard boundary.displayID == vertical.displayID, boundary.branchID != nil else { return false }
+                    let crossing = boundary.axis == .vertical ? center.y : center.x
+                    let needsGapBridge = crossing < boundary.spanStart || crossing > boundary.spanEnd
+                    guard !needsGapBridge || !participants(boundary).isDisjoint(with: junctionWindows) else { return false }
+                    switch boundary.axis {
+                    case .vertical:
+                        return abs(boundary.coordinate - center.x) <= adjacencyTolerance
+                            && reaches(boundary, center.y)
+                    case .horizontal:
+                        return abs(boundary.coordinate - center.y) <= adjacencyTolerance
+                            && reaches(boundary, center.x)
+                    }
+                }
+                // A wide gap may split one branch into several observed
+                // segments. Acquire and resize that branch exactly once.
+                let unique = Dictionary(grouping: meeting, by: \.branchID).compactMap { _, segments in
+                    guard var merged = segments.sorted(by: { $0.id < $1.id }).first else { return nil as BoundaryDescriptor? }
+                    merged.spanStart = segments.map(\.spanStart).min()!
+                    merged.spanEnd = segments.map(\.spanEnd).max()!
+                    return merged
+                }
+                    .sorted { $0.id < $1.id }
+                guard let referenceVertical = unique.first(where: { $0.axis == .vertical }),
+                      let referenceHorizontal = unique.first(where: { $0.axis == .horizontal }),
+                      let verticalBranchID = referenceVertical.branchID,
+                      let horizontalBranchID = referenceHorizontal.branchID
+                else { continue }
+                junctions.append((
+                    center,
+                    unique,
+                    verticalBranchID,
+                    horizontalBranchID,
+                    unique.map(\.id).joined(separator: "|")
+                ))
+            }
+        }
+
+        if let junction = junctions.min(by: { lhs, rhs in
+            let leftDistance = hypot(lhs.center.x - point.x, lhs.center.y - point.y)
+            let rightDistance = hypot(rhs.center.x - point.x, rhs.center.y - point.y)
+            if leftDistance != rightDistance { return leftDistance < rightDistance }
+            if lhs.center.x != rhs.center.x { return lhs.center.x < rhs.center.x }
+            if lhs.center.y != rhs.center.y { return lhs.center.y < rhs.center.y }
+            return lhs.key < rhs.key
+        }) {
+            return DividerInteraction(
+                boundaries: junction.boundaries,
+                kind: .junction(
+                    verticalBranchID: junction.verticalBranchID,
+                    horizontalBranchID: junction.horizontalBranchID
+                )
+            )
+        }
+
+        let candidates = eligible.filter { $0.hitFrame(width: hitWidth).contains(point) }
+        guard let nearest = candidates.min(by: { lhs, rhs in
+            let leftDistance = boundaryDistance(lhs, point: point)
+            let rightDistance = boundaryDistance(rhs, point: point)
+            return leftDistance == rightDistance ? lhs.id < rhs.id : leftDistance < rightDistance
+        }) else { return nil }
+        return DividerInteraction(
+            boundaries: [nearest],
+            kind: nearest.axis == .vertical ? .vertical : .horizontal
+        )
+    }
+
+    private static func boundaryDistance(_ boundary: BoundaryDescriptor, point: BTPoint) -> Double {
+        boundary.axis == .vertical ? abs(boundary.coordinate - point.x) : abs(boundary.coordinate - point.y)
+    }
+}
+
 /// Presents one hover-targeted resize handle instead of placing invisible
 /// panels over every boundary. Bento gestures update split weights through the
 /// tree-aware engine; linked/manual compatibility continues using adjacency.
@@ -36,6 +224,8 @@ public final class DividerOverlayController {
     private var obscuringFrames: [BTRect] = []
     private var hoveredInteraction: DividerInteraction?
     private var activeInteraction: DividerInteraction?
+    private var baselineInteraction: DividerInteraction?
+    private var isRetracting = false
     private var handlePanel: DividerHandlePanel?
     private let ghosts = GhostFrameOverlayController()
     private var globalMouseMonitor: Any?
@@ -50,6 +240,7 @@ public final class DividerOverlayController {
     private var baselineBentoState: BentoLayoutState?
     private var proposedBentoState: BentoLayoutState?
     private var latestPlacements: [Placement] = []
+    private var latestDragPoint: CGPoint?
     private var lastLiveUpdate = Date.distantPast
     private var lastGhostUpdate = Date.distantPast
 
@@ -71,15 +262,22 @@ public final class DividerOverlayController {
     }
 
     public func refresh(boundaries: [BoundaryDescriptor], obscuringFrames: [BTRect] = []) {
-        guard !isDragging else { return }
+        // Commit callbacks can refresh while the final gesture is still active.
+        // Retain those edges for hover after shrink, without moving the grip.
         self.boundaries = boundaries.filter { !$0.isLocked && $0.spanEnd - $0.spanStart >= 24 }
         self.obscuringFrames = obscuringFrames
+        if isDragging {
+            if !activeParticipantsArePresent() { cancelActiveGesture() }
+            return
+        }
         syncHoverMonitoring()
         updateHover(at: NSEvent.mouseLocation)
     }
 
     public func hideAndCancel() {
         cancelActiveGesture()
+        isRetracting = false
+        handlePanel?.setActive(false, animated: false)
         boundaries = []
         obscuringFrames = []
         syncHoverMonitoring()
@@ -88,7 +286,7 @@ public final class DividerOverlayController {
     }
 
     private func updateHover(at appKitPoint: CGPoint) {
-        guard !isDragging else { return }
+        guard !isDragging, !isRetracting else { return }
         guard !boundaries.isEmpty else {
             hoveredInteraction = nil
             handlePanel?.orderOut(nil)
@@ -96,45 +294,15 @@ public final class DividerOverlayController {
         }
         let point = topLeftPoint(appKitPoint)
         let hitWidth = max(18, configuration.dividerThickness * 3)
-        let candidates = boundaries.filter { $0.hitFrame(width: hitWidth).contains(point) }
-        guard !candidates.isEmpty else {
+        guard let interaction = DividerInteractionResolver.resolve(
+            at: point,
+            in: boundaries,
+            hitWidth: hitWidth,
+            adjacencyTolerance: configuration.adjacencyTolerance,
+            paneGap: configuration.bentoInnerGap
+        ) else {
             hoveredInteraction = nil
             handlePanel?.orderOut(nil)
-            return
-        }
-
-        let vertical = candidates.filter { $0.axis == .vertical }.min { abs($0.coordinate - point.x) < abs($1.coordinate - point.x) }
-        let horizontal = candidates.filter { $0.axis == .horizontal }.min { abs($0.coordinate - point.y) < abs($1.coordinate - point.y) }
-        let interaction: DividerInteraction
-        if let vertical, let horizontal,
-           vertical.displayID == horizontal.displayID,
-           vertical.branchID != nil, horizontal.branchID != nil,
-           vertical.branchID != horizontal.branchID,
-           horizontal.spanStart <= vertical.coordinate, vertical.coordinate <= horizontal.spanEnd,
-           vertical.spanStart <= horizontal.coordinate, horizontal.coordinate <= vertical.spanEnd,
-           abs(point.x - vertical.coordinate) <= 11, abs(point.y - horizontal.coordinate) <= 11 {
-            // A four-pane junction can contain two independently weighted
-            // horizontal (or vertical) child branches. Move every collinear
-            // branch meeting at the junction so all four panes remain joined.
-            let verticals = candidates.filter {
-                $0.axis == .vertical
-                    && $0.branchID != nil
-                    && abs($0.coordinate - vertical.coordinate) <= configuration.adjacencyTolerance
-                    && $0.spanStart <= horizontal.coordinate
-                    && horizontal.coordinate <= $0.spanEnd
-            }
-            let horizontals = candidates.filter {
-                $0.axis == .horizontal
-                    && $0.branchID != nil
-                    && abs($0.coordinate - horizontal.coordinate) <= configuration.adjacencyTolerance
-                    && $0.spanStart <= vertical.coordinate
-                    && vertical.coordinate <= $0.spanEnd
-            }
-            let unique = Dictionary(uniqueKeysWithValues: (verticals + horizontals).map { ($0.id, $0) }).values
-            interaction = DividerInteraction(boundaries: Array(unique), mode: .junction)
-        } else if let nearest = candidates.min(by: { boundaryDistance($0, point: point) < boundaryDistance($1, point: point) }) {
-            interaction = DividerInteraction(boundaries: [nearest], mode: nearest.axis == .vertical ? .vertical : .horizontal)
-        } else {
             return
         }
 
@@ -144,7 +312,7 @@ public final class DividerOverlayController {
 
     private func presentHandle(for interaction: DividerInteraction, near point: BTPoint, active: Bool) {
         guard let mainFrame = NSScreen.screens.first?.frame else { return }
-        let topLeftFrame = handleFrame(for: interaction, near: point)
+        let topLeftFrame = handleFrame(for: interaction, near: point, active: active)
         let appKitFrame = CoordinateConverter.toAppKit(topLeftFrame, mainScreenFrame: mainFrame)
         guard active || !isCovered(topLeftFrame: topLeftFrame, appKitFrame: appKitFrame) else {
             hoveredInteraction = nil
@@ -152,36 +320,55 @@ public final class DividerOverlayController {
             return
         }
         let panel: DividerHandlePanel
+        let mode = handleMode(
+            for: interaction,
+            topLeftFrame: topLeftFrame,
+            mainScreenFrame: mainFrame
+        )
         if let existing = handlePanel {
             panel = existing
-            panel.configure(mode: interaction.mode, thickness: configuration.dividerThickness)
+            panel.configure(mode: mode, thickness: configuration.dividerThickness)
+            // The accepted divider coordinate moves immediately. Only the
+            // decoration inside this frame animates its length.
             panel.setFrame(appKitFrame, display: true)
         } else {
-            panel = DividerHandlePanel(frame: appKitFrame, mode: interaction.mode, thickness: configuration.dividerThickness)
+            panel = DividerHandlePanel(frame: appKitFrame, mode: mode, thickness: configuration.dividerThickness)
             panel.onBegin = { [weak self] in self?.beginHoveredGesture() }
             panel.onDrag = { [weak self] point in self?.drag(to: point) }
-            panel.onEnd = { [weak self] in self?.end() }
+            panel.onEnd = { [weak self] in self?.end(at: NSEvent.mouseLocation) }
             panel.onExit = { [weak self] in
                 guard self?.isDragging == false else { return }
                 self?.updateHover(at: NSEvent.mouseLocation)
             }
             handlePanel = panel
         }
-        panel.setActive(active)
-        panel.orderFrontRegardless()
+        panel.setActive(
+            active,
+            animated: panel.isActive != active
+                && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        )
+        if !panel.isVisible || !active { panel.orderFrontRegardless() }
+        panel.ignoresMouseEvents = false
     }
 
     private func beginHoveredGesture() {
-        guard let interaction = hoveredInteraction,
-              let mainFrame = NSScreen.screens.first?.frame,
+        guard let interaction = hoveredInteraction else { return }
+        beginGesture(interaction: interaction, at: currentMousePoint())
+    }
+
+    func beginGesture(interaction: DividerInteraction, at point: BTPoint) {
+        guard let mainFrame = NSScreen.screens.first?.frame,
               let display = coordinator.system.displays().first(where: { $0.id == interaction.displayID }),
               let windows = try? coordinator.system.visibleWindows()
-        else { return }
-        let point = currentMousePoint()
-        let topLeftFrame = handleFrame(for: interaction, near: point)
+        else {
+            handlePanel?.setActive(false, animated: false)
+            return
+        }
+        let topLeftFrame = handleFrame(for: interaction, near: point, active: false)
         let appKitFrame = CoordinateConverter.toAppKit(topLeftFrame, mainScreenFrame: mainFrame)
         guard !isCovered(topLeftFrame: topLeftFrame, appKitFrame: appKitFrame) else {
             hoveredInteraction = nil
+            handlePanel?.setActive(false, animated: false)
             handlePanel?.orderOut(nil)
             return
         }
@@ -201,38 +388,66 @@ public final class DividerOverlayController {
         } else {
             affected = interaction.affectedWindowIDs
         }
-        guard !affected.isEmpty, case var .started(newTransaction) = coordinator.beginTransaction(windowIDs: affected) else { return }
+        guard !affected.isEmpty,
+              case var .started(newTransaction) = coordinator.beginTransaction(windowIDs: affected)
+        else {
+            handlePanel?.setActive(false, animated: false)
+            return
+        }
 
         activeInteraction = interaction
+        baselineInteraction = interaction
         isDragging = true
         installEscapeMonitor()
         baselineWindows = windows
         displayBounds = display.visibleFrame
-        startPoint = currentMousePoint()
+        startPoint = point
         baselineBentoState = state
         proposedBentoState = state
         latestPlacements = newTransaction.proposedPlacements
-        _ = coordinator.preview(transaction: &newTransaction, placements: latestPlacements)
+        guard case .accepted = coordinator.preview(
+            transaction: &newTransaction,
+            placements: latestPlacements
+        ) else {
+            clearGesture()
+            return
+        }
         transaction = newTransaction
+        if let startPoint { presentHandle(for: interaction, near: startPoint, active: true) }
         switch configuration.resizeFeedbackMode {
         case .ghost:
-            ghosts.show(placements: latestPlacements, windows: windows)
+            ghosts.show(
+                placements: latestPlacements,
+                windows: windows,
+                below: handlePanel
+            )
         case .live:
             ghosts.hide()
         }
-        if let point = startPoint { presentHandle(for: interaction, near: point, active: true) }
     }
 
-    private func drag(to appKitPoint: CGPoint) {
-        guard let interaction = activeInteraction, let startPoint, let displayBounds, var transaction else { return }
+    func drag(to appKitPoint: CGPoint) {
+        latestDragPoint = appKitPoint
+        guard let interaction = baselineInteraction, let startPoint, let displayBounds, var transaction else { return }
+        guard activeParticipantsArePresent() else {
+            cancelActiveGesture()
+            return
+        }
+        // Keep the accepted position while throttled. Solving the full Bento
+        // tree for a sample we cannot display or apply just blocks the UI.
+        switch configuration.resizeFeedbackMode {
+        case .ghost:
+            guard Date().timeIntervalSince(lastGhostUpdate) >= 1.0 / 60.0 else { return }
+        case .live:
+            guard Date().timeIntervalSince(lastLiveUpdate) >= 1.0 / 30.0 else { return }
+        }
         let point = topLeftPoint(appKitPoint)
         let placements: [Placement]
+        let proposedInteraction: DividerInteraction
+        var proposedState = proposedBentoState
 
         if interaction.isBento, let baselineBentoState {
-            let coordinates = Dictionary(uniqueKeysWithValues: interaction.boundaries.compactMap { boundary -> (UUID, Double)? in
-                guard let id = boundary.branchID else { return nil }
-                return (id, boundary.axis == .vertical ? point.x : point.y)
-            })
+            let coordinates = interaction.branchCoordinates(from: startPoint, to: point)
             let constraints = Dictionary(uniqueKeysWithValues: baselineWindows.map { ($0.id, $0.constraints) })
             guard let result = BentoResizeEngine().resize(
                 state: baselineBentoState,
@@ -242,15 +457,25 @@ public final class DividerOverlayController {
             ) else { return }
             let affected = Set(transaction.baselineFrames.keys)
             placements = result.placements.filter { affected.contains($0.windowID) }
-            proposedBentoState = result.state
-            var movedInteraction = interaction
-            for index in movedInteraction.boundaries.indices {
-                guard let id = movedInteraction.boundaries[index].branchID,
-                      let coordinate = result.appliedCoordinates[id]
-                else { continue }
-                movedInteraction.boundaries[index].coordinate = coordinate
+            let updatedBoundaries = result.state.boundaries(
+                in: displayBounds,
+                displayID: interaction.displayID
+            )
+            let byBranch = Dictionary(uniqueKeysWithValues: updatedBoundaries.compactMap { boundary in
+                boundary.branchID.map { ($0, boundary) }
+            })
+            let participating = interaction.boundaries.compactMap { boundary in
+                boundary.branchID.flatMap { byBranch[$0] }
             }
-            presentHandle(for: movedInteraction, near: point, active: true)
+            guard participating.count == interaction.boundaries.count else {
+                cancelActiveGesture()
+                return
+            }
+            proposedInteraction = DividerInteraction(
+                boundaries: participating.sorted { $0.id < $1.id },
+                kind: interaction.kind
+            )
+            proposedState = result.state
         } else {
             guard let boundary = interaction.boundaries.first else { return }
             let delta = boundary.axis == .vertical ? point.x - startPoint.x : point.y - startPoint.y
@@ -260,27 +485,43 @@ public final class DividerOverlayController {
             placements = result.placements
             var moved = boundary
             moved.coordinate += result.appliedDelta
-            presentHandle(for: DividerInteraction(boundaries: [moved], mode: interaction.mode), near: point, active: true)
+            proposedInteraction = DividerInteraction(boundaries: [moved], kind: interaction.kind)
         }
 
-        latestPlacements = placements
         switch configuration.resizeFeedbackMode {
         case .ghost:
-            guard case .accepted = coordinator.preview(transaction: &transaction, placements: placements) else { return }
-            if Date().timeIntervalSince(lastGhostUpdate) >= 1.0 / 60.0 {
-                lastGhostUpdate = Date()
-                ghosts.show(placements: placements, windows: baselineWindows)
+            guard case .accepted = coordinator.preview(
+                transaction: &transaction,
+                placements: placements
+            ) else {
+                self.transaction = transaction
+                return
             }
+            latestPlacements = placements
+            proposedBentoState = proposedState
+            self.transaction = transaction
+            lastGhostUpdate = Date()
+            activeInteraction = proposedInteraction
+            ghosts.show(
+                placements: placements,
+                windows: baselineWindows,
+                below: handlePanel
+            )
+            presentHandle(for: proposedInteraction, near: point, active: true)
         case .live:
             ghosts.hide()
-            guard Date().timeIntervalSince(lastLiveUpdate) >= 1.0 / 30.0 else { return }
             lastLiveUpdate = Date()
             switch coordinator.applyLive(transaction: &transaction, placements: placements) {
             case .applied:
-                break
+                latestPlacements = placements
+                proposedBentoState = proposedState
+                activeInteraction = proposedInteraction
+                self.transaction = transaction
+                presentHandle(for: proposedInteraction, near: point, active: true)
             case .failed:
                 // A transient rejection keeps the gesture alive; the next drag
                 // sample proposes fresh placements.
+                self.transaction = transaction
                 return
             case .degraded:
                 reportRollbackFailure(displayID: interaction.displayID, outcome: coordinator.cancel(transaction: transaction))
@@ -288,10 +529,15 @@ public final class DividerOverlayController {
                 return
             }
         }
-        self.transaction = transaction
     }
 
-    private func end() {
+    func end(at releasePoint: CGPoint? = nil) {
+        // Release is never throttled: it must commit the final pointer position.
+        if let point = releasePoint ?? latestDragPoint, isDragging {
+            lastGhostUpdate = .distantPast
+            lastLiveUpdate = .distantPast
+            drag(to: point)
+        }
         guard let interaction = activeInteraction, var transaction else { clearGesture(); return }
         let succeeded: Bool
         switch configuration.resizeFeedbackMode {
@@ -324,7 +570,7 @@ public final class DividerOverlayController {
         clearGesture()
     }
 
-    private func cancelActiveGesture() {
+    func cancelActiveGesture() {
         if let transaction {
             let outcome = coordinator.cancel(transaction: transaction)
             if let displayID = activeInteraction?.displayID {
@@ -343,6 +589,7 @@ public final class DividerOverlayController {
         let wasDragging = isDragging
         ghosts.hide()
         activeInteraction = nil
+        baselineInteraction = nil
         isDragging = false
         transaction = nil
         baselineWindows = []
@@ -351,11 +598,21 @@ public final class DividerOverlayController {
         baselineBentoState = nil
         proposedBentoState = nil
         latestPlacements = []
+        latestDragPoint = nil
         lastLiveUpdate = .distantPast
         lastGhostUpdate = .distantPast
-        handlePanel?.setActive(false)
         removeEscapeMonitor()
-        updateHover(at: NSEvent.mouseLocation)
+        let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        isRetracting = wasDragging && !reduceMotion && handlePanel != nil
+        handlePanel?.ignoresMouseEvents = true
+        handlePanel?.setActive(
+            false,
+            animated: wasDragging && !reduceMotion
+        ) { [weak self] in
+            self?.isRetracting = false
+            self?.updateHover(at: NSEvent.mouseLocation)
+        }
+        if handlePanel == nil { updateHover(at: NSEvent.mouseLocation) }
         if wasDragging { gestureEndedHandler?() }
     }
 
@@ -395,17 +652,32 @@ public final class DividerOverlayController {
         escapeMonitor = nil
     }
 
-    private func handleFrame(for interaction: DividerInteraction, near point: BTPoint) -> BTRect {
+    private func handleFrame(
+        for interaction: DividerInteraction,
+        near point: BTPoint,
+        active: Bool
+    ) -> BTRect {
         let hitWidth = max(18, configuration.dividerThickness * 3)
-        if interaction.mode == .junction,
-           let vertical = interaction.boundaries.first(where: { $0.axis == .vertical }),
-           let horizontal = interaction.boundaries.first(where: { $0.axis == .horizontal }) {
-            return BTRect(x: vertical.coordinate - 11, y: horizontal.coordinate - 11, width: 22, height: 22)
+        if let center = junctionCenter(for: interaction) {
+            let arms = DividerHandleGeometry.junctionArmLengths(
+                center: center,
+                boundaries: interaction.boundaries,
+                active: active,
+                thickness: configuration.dividerThickness
+            )
+            return DividerHandleGeometry.junctionFrame(
+                center: center,
+                armLengths: arms,
+                thickness: configuration.dividerThickness
+            )
         }
         guard let boundary = interaction.boundaries.first else { return .init(x: point.x, y: point.y, width: 1, height: 1) }
         let usableStart = boundary.spanStart + 8
         let usableEnd = boundary.spanEnd - 8
-        let length = min(56, max(8, usableEnd - usableStart))
+        let length = DividerHandleGeometry.straightLength(
+            span: usableStart...usableEnd,
+            active: active
+        )
         if boundary.axis == .vertical {
             let center = min(max(point.y, usableStart + length / 2), usableEnd - length / 2)
             return BTRect(x: boundary.coordinate - hitWidth / 2, y: center - length / 2, width: hitWidth, height: length)
@@ -414,8 +686,81 @@ public final class DividerOverlayController {
         return BTRect(x: center - length / 2, y: boundary.coordinate - hitWidth / 2, width: length, height: hitWidth)
     }
 
-    private func boundaryDistance(_ boundary: BoundaryDescriptor, point: BTPoint) -> Double {
-        boundary.axis == .vertical ? abs(boundary.coordinate - point.x) : abs(boundary.coordinate - point.y)
+    private func handleMode(
+        for interaction: DividerInteraction,
+        topLeftFrame: BTRect,
+        mainScreenFrame: CGRect
+    ) -> DividerHandleMode {
+        switch interaction.kind {
+        case .vertical:
+            let boundary = interaction.boundaries[0]
+            let span = (boundary.spanStart + 8) ... (boundary.spanEnd - 8)
+            return .vertical(
+                restingLength: DividerHandleGeometry.straightLength(span: span, active: false),
+                activeLength: DividerHandleGeometry.straightLength(span: span, active: true)
+            )
+        case .horizontal:
+            let boundary = interaction.boundaries[0]
+            let span = (boundary.spanStart + 8) ... (boundary.spanEnd - 8)
+            return .horizontal(
+                restingLength: DividerHandleGeometry.straightLength(span: span, active: false),
+                activeLength: DividerHandleGeometry.straightLength(span: span, active: true)
+            )
+        case .junction:
+            guard let center = junctionCenter(for: interaction) else {
+                return .junction(center: .zero, resting: [:], active: [:])
+            }
+            let appKitCenter = CGPoint(
+                x: center.x,
+                y: mainScreenFrame.maxY - center.y
+            )
+            let appKitFrame = CoordinateConverter.toAppKit(
+                topLeftFrame,
+                mainScreenFrame: mainScreenFrame
+            )
+            return .junction(
+                center: CGPoint(
+                    x: appKitCenter.x - appKitFrame.minX,
+                    y: appKitCenter.y - appKitFrame.minY
+                ),
+                resting: DividerHandleGeometry.junctionArmLengths(
+                    center: center,
+                    boundaries: interaction.boundaries,
+                    active: false,
+                    thickness: configuration.dividerThickness
+                ),
+                active: DividerHandleGeometry.junctionArmLengths(
+                    center: center,
+                    boundaries: interaction.boundaries,
+                    active: true,
+                    thickness: configuration.dividerThickness
+                )
+            )
+        }
+    }
+
+    private func junctionCenter(for interaction: DividerInteraction) -> BTPoint? {
+        guard case let .junction(verticalBranchID, horizontalBranchID) = interaction.kind,
+              let vertical = interaction.boundaries.first(where: { $0.branchID == verticalBranchID }),
+              let horizontal = interaction.boundaries.first(where: { $0.branchID == horizontalBranchID })
+        else { return nil }
+        return BTPoint(x: vertical.coordinate, y: horizontal.coordinate)
+    }
+
+    private func activeParticipantsArePresent() -> Bool {
+        guard let transaction else { return false }
+        let expected = Set(transaction.baselineFrames.keys)
+        do {
+            let windows: [WindowSnapshot]
+            if let targeted = coordinator.system as? any TargetedWindowSystem {
+                windows = try targeted.windowSnapshots(ids: expected)
+            } else {
+                windows = try coordinator.system.visibleWindows().filter { expected.contains($0.id) }
+            }
+            return Set(windows.filter(\.isEligible).map(\.id)) == expected
+        } catch {
+            return false
+        }
     }
 
     private func currentMousePoint() -> BTPoint { topLeftPoint(NSEvent.mouseLocation) }
@@ -439,9 +784,9 @@ public final class DividerOverlayController {
     }
 }
 
-private struct DividerInteraction: Equatable {
+struct DividerInteraction: Equatable {
     var boundaries: [BoundaryDescriptor]
-    var mode: DividerHandleMode
+    var kind: DividerInteractionKind
     var displayID: DisplayID { boundaries[0].displayID }
     var affectedWindowIDs: Set<WindowID> {
         boundaries.reduce(into: Set<WindowID>()) { result, boundary in
@@ -450,12 +795,30 @@ private struct DividerInteraction: Equatable {
         }
     }
     var isBento: Bool { !boundaries.isEmpty && boundaries.allSatisfy { $0.branchID != nil } }
+
+    func branchCoordinates(from start: BTPoint, to point: BTPoint) -> [UUID: Double] {
+        boundaries.reduce(into: [:]) { coordinates, boundary in
+            guard let id = boundary.branchID else { return }
+            let delta = boundary.axis == .vertical ? point.x - start.x : point.y - start.y
+            coordinates[id] = boundary.coordinate + delta
+        }
+    }
 }
 
-private enum DividerHandleMode: Equatable {
+enum DividerInteractionKind: Equatable {
     case vertical
     case horizontal
-    case junction
+    case junction(verticalBranchID: UUID, horizontalBranchID: UUID)
+}
+
+enum DividerHandleMode: Equatable {
+    case vertical(restingLength: Double, activeLength: Double)
+    case horizontal(restingLength: Double, activeLength: Double)
+    case junction(
+        center: CGPoint,
+        resting: [DividerHandleArm: Double],
+        active: [DividerHandleArm: Double]
+    )
 }
 
 @MainActor
@@ -465,6 +828,7 @@ private final class DividerHandlePanel: NSPanel {
     var onEnd: (() -> Void)? { didSet { handleView.onEnd = onEnd } }
     var onExit: (() -> Void)? { didSet { handleView.onExit = onExit } }
     private let handleView: DividerHandleView
+    private(set) var isActive = false
 
     init(frame: CGRect, mode: DividerHandleMode, thickness: Double) {
         handleView = DividerHandleView(frame: CGRect(origin: .zero, size: frame.size), mode: mode, thickness: thickness)
@@ -482,11 +846,18 @@ private final class DividerHandlePanel: NSPanel {
         handleView.configure(mode: mode, thickness: thickness)
     }
 
-    func setActive(_ active: Bool) { handleView.setActive(active) }
+    func setActive(
+        _ active: Bool,
+        animated: Bool,
+        completion: (() -> Void)? = nil
+    ) {
+        isActive = active
+        handleView.setActive(active, animated: animated, completion: completion)
+    }
 }
 
 @MainActor
-private final class DividerHandleView: NSView {
+final class DividerHandleView: NSView {
     var onBegin: (() -> Void)?
     var onDrag: ((CGPoint) -> Void)?
     var onEnd: (() -> Void)?
@@ -496,6 +867,8 @@ private final class DividerHandleView: NSView {
     private var thickness: CGFloat
     private let material = NSVisualEffectView()
     private var active = false
+    private(set) var stretchProgress = 0.0
+    private var animationTask: Task<Void, Never>?
     private var tracking: NSTrackingArea?
 
     init(frame: CGRect, mode: DividerHandleMode, thickness: Double) {
@@ -516,21 +889,58 @@ private final class DividerHandleView: NSView {
         self.mode = mode
         self.thickness = CGFloat(thickness)
         needsLayout = true
+        needsDisplay = true
         window?.invalidateCursorRects(for: self)
     }
 
     override func layout() {
         super.layout()
         switch mode {
-        case .vertical:
-            material.frame = CGRect(x: (bounds.width - thickness) / 2, y: 0, width: thickness, height: bounds.height)
-        case .horizontal:
-            material.frame = CGRect(x: 0, y: (bounds.height - thickness) / 2, width: bounds.width, height: thickness)
+        case let .vertical(resting, expanded):
+            let length = interpolated(resting, expanded)
+            material.frame = CGRect(
+                x: (bounds.width - thickness) / 2,
+                y: (bounds.height - length) / 2,
+                width: thickness,
+                height: length
+            )
+        case let .horizontal(resting, expanded):
+            let length = interpolated(resting, expanded)
+            material.frame = CGRect(
+                x: (bounds.width - length) / 2,
+                y: (bounds.height - thickness) / 2,
+                width: length,
+                height: thickness
+            )
         case .junction:
-            let size = min(14, max(10, thickness * 1.7))
-            material.frame = CGRect(x: (bounds.width - size) / 2, y: (bounds.height - size) / 2, width: size, height: size)
+            material.frame = .zero
         }
         material.layer?.cornerRadius = min(material.bounds.width, material.bounds.height) / 2
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        guard case let .junction(center, resting, expanded) = mode else { return }
+        let color = gripColor
+        color.setFill()
+        let path = NSBezierPath()
+        for arm in Set(resting.keys).union(expanded.keys) {
+            let length = interpolated(resting[arm] ?? 0, expanded[arm] ?? 0)
+            let end: CGPoint
+            switch arm {
+            case .left: end = CGPoint(x: center.x - length, y: center.y)
+            case .right: end = CGPoint(x: center.x + length, y: center.y)
+            case .up: end = CGPoint(x: center.x, y: center.y + length)
+            case .down: end = CGPoint(x: center.x, y: center.y - length)
+            }
+            let rect = CGRect(
+                x: min(center.x, end.x) - thickness / 2,
+                y: min(center.y, end.y) - thickness / 2,
+                width: abs(end.x - center.x) + thickness,
+                height: abs(end.y - center.y) + thickness
+            )
+            path.append(NSBezierPath(roundedRect: rect, xRadius: thickness / 2, yRadius: thickness / 2))
+        }
+        path.fill()
     }
 
     override func updateTrackingAreas() {
@@ -556,7 +966,6 @@ private final class DividerHandleView: NSView {
     }
 
     override func mouseDown(with event: NSEvent) {
-        setActive(true)
         onBegin?()
     }
 
@@ -564,28 +973,84 @@ private final class DividerHandleView: NSView {
 
     override func mouseUp(with event: NSEvent) {
         onEnd?()
-        setActive(false)
     }
 
-    func setActive(_ active: Bool) {
+    func setActive(
+        _ active: Bool,
+        animated: Bool,
+        completion: (() -> Void)? = nil
+    ) {
+        guard self.active != active else {
+            completion?()
+            return
+        }
+        animationTask?.cancel()
         self.active = active
-        updateAppearance()
+        let target = active ? 1.0 : 0.0
+        guard animated, stretchProgress != target else {
+            stretchProgress = target
+            needsDisplay = true
+            needsLayout = true
+            updateAppearance()
+            completion?()
+            return
+        }
+        let start = stretchProgress
+        let began = CACurrentMediaTime()
+        animationTask = Task { @MainActor [weak self] in
+            while true {
+                try? await Task.sleep(for: .milliseconds(8))
+                guard let self, !Task.isCancelled else { return }
+                // Elapsed time keeps a delayed main-actor frame from slowing
+                // the whole transition. Geometry updates never restart it.
+                let fraction = min(1, (CACurrentMediaTime() - began) / 0.18)
+                let eased = 1 - pow(1 - fraction, 3)
+                self.stretchProgress = start + (target - start) * eased
+                self.needsDisplay = true
+                self.needsLayout = true
+                self.updateAppearance()
+                if fraction == 1 { break }
+            }
+            self?.animationTask = nil
+            completion?()
+        }
+    }
+
+    private func interpolated(_ resting: Double, _ expanded: Double) -> CGFloat {
+        CGFloat(resting + (expanded - resting) * stretchProgress)
     }
 
     private func updateAppearance() {
-        material.layer?.backgroundColor = (active
-            ? NSColor.controlAccentColor.withAlphaComponent(0.88)
-            : NSColor.labelColor.withAlphaComponent(0.20)).cgColor
-        material.layer?.borderWidth = active ? 1 : 0.5
-        material.layer?.borderColor = NSColor.white.withAlphaComponent(active ? 0.55 : 0.25).cgColor
+        material.layer?.backgroundColor = gripColor.cgColor
+        material.layer?.borderWidth = 0.5 + stretchProgress * 0.5
+        material.layer?.borderColor = NSColor.white.withAlphaComponent(0.25 + stretchProgress * 0.3).cgColor
+    }
+
+    private var gripColor: NSColor {
+        NSColor.secondaryLabelColor.blended(
+            withFraction: stretchProgress,
+            of: NSColor.controlAccentColor.withAlphaComponent(0.88)
+        ) ?? .controlAccentColor
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        updateAppearance()
+        needsDisplay = true
     }
 }
 
 @MainActor
-private final class GhostFrameOverlayController {
+final class GhostFrameOverlayController {
     private var panels: [WindowID: NSPanel] = [:]
+    var windowNumbers: Set<Int> { Set(panels.values.map(\.windowNumber)) }
+    private(set) var relativeOrderTargets: [WindowID: Int] = [:]
 
-    func show(placements: [Placement], windows: [WindowSnapshot]) {
+    func show(
+        placements: [Placement],
+        windows: [WindowSnapshot],
+        below handle: NSWindow?
+    ) {
         guard let mainFrame = NSScreen.screens.first?.frame else { return }
         let snapshots = Dictionary(uniqueKeysWithValues: windows.map { ($0.id, $0) })
         let ids = Set(placements.map(\.windowID))
@@ -607,13 +1072,20 @@ private final class GhostFrameOverlayController {
                 snapshot: snapshots[placement.windowID],
                 size: placement.frame.size
             )
-            panel.orderFrontRegardless()
+            if let handle, handle.windowNumber > 0 {
+                panel.order(.below, relativeTo: handle.windowNumber)
+                relativeOrderTargets[placement.windowID] = handle.windowNumber
+            } else {
+                panel.orderFrontRegardless()
+                relativeOrderTargets[placement.windowID] = nil
+            }
         }
     }
 
     func hide() {
         for panel in panels.values { panel.orderOut(nil) }
         panels.removeAll()
+        relativeOrderTargets.removeAll()
     }
 
     private func makePanel(frame: CGRect, snapshot: WindowSnapshot?) -> NSPanel {

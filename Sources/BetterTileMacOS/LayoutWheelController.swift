@@ -106,6 +106,7 @@ public final class LayoutWheelController {
         var trigger: Trigger
         var placement: LayoutWheelPlacement
         var selection: LayoutWheelSelection?
+        var hasPointerMoved = false
         var unavailableReasons: [LayoutWheelCommand: String] = [:]
     }
 
@@ -497,10 +498,10 @@ public final class LayoutWheelController {
             anchor: anchor,
             diameter: effectiveMetrics.presentationDiameter(for: wheel.levelCount),
             contentHeight: effectiveMetrics.presentationHeight(for: wheel.levelCount),
+            overflowPadding: effectiveMetrics.overflowPadding(for: wheel.levelCount),
             visibleFrame: target.visibleFrame
         )
-        var session = Session(target: target, trigger: trigger, placement: placement)
-        session.selection = selection(for: anchor, placement: placement)
+        let session = Session(target: target, trigger: trigger, placement: placement)
         phase = .open(session)
         guard syncGestureMonitors() else { return }
         gestureBeganHandler?()
@@ -525,11 +526,18 @@ public final class LayoutWheelController {
 
     func handlePointer(_ position: BTPoint) {
         guard case var .open(session) = phase else { return }
+        if !session.hasPointerMoved {
+            // Opening near an edge can place a slice under the stationary
+            // pointer. Require deliberate movement before choosing anything.
+            guard hypot(position.x - session.placement.anchor.x,
+                        position.y - session.placement.anchor.y) > 5 else { return }
+            session.hasPointerMoved = true
+        }
         let updated = selection(for: position, placement: session.placement)
-        guard updated != session.selection else { return }
+        let changed = updated != session.selection
         session.selection = updated
         phase = .open(session)
-        presenter.update(presentation(for: session))
+        guard changed else { return }
         refreshPreview()
     }
 
@@ -549,21 +557,19 @@ public final class LayoutWheelController {
             guard updated != session.selection else { return }
             session.selection = updated
             phase = .open(session)
-            presenter.update(presentation(for: session))
             refreshPreview()
         }
     }
 
-    /// Selection is measured from the anchor, never from the drawn centre, so
-    /// clamping the wheel onto the display cannot rotate the directions.
+    /// Drawing and selection share a center, including at screen edges.
     private func selection(
         for position: BTPoint,
         placement: LayoutWheelPlacement
     ) -> LayoutWheelSelection? {
         effectiveMetrics.geometry(for: wheel.levelCount).selection(
             for: BTPoint(
-                x: position.x - placement.anchor.x,
-                y: position.y - placement.anchor.y
+                x: position.x - placement.center.x,
+                y: position.y - placement.center.y
             ),
             levelCount: wheel.levelCount
         )
@@ -582,6 +588,7 @@ public final class LayoutWheelController {
     /// shows nothing, so the wheel never implies a placement that cannot happen.
     private func refreshPreview() {
         guard case var .open(session) = phase else { return }
+        defer { presenter.update(presentation(for: session)) }
         guard let selection = session.selection,
               let command = wheel.command(at: selection)
         else {
@@ -592,12 +599,10 @@ public final class LayoutWheelController {
         case let .ready(placements):
             session.unavailableReasons.removeValue(forKey: command)
             phase = .open(session)
-            presenter.update(presentation(for: session))
             presenter.showPlacements(placements)
         case let .unavailable(reason):
             session.unavailableReasons[command] = reason
             phase = .open(session)
-            presenter.update(presentation(for: session))
             presenter.hidePlacements()
             Self.log.debug("layout wheel command unavailable: \(reason, privacy: .public)")
         case nil:
@@ -698,7 +703,7 @@ extension LayoutWheelKey {
 final class LayoutWheelPanelPresenter: LayoutWheelPresenting {
     private let panel: NSPanel
     private let placementPreviews = PlacementWireframeController()
-    private var hosting: NSHostingView<LayoutWheelView>?
+    private(set) var hosting: NSHostingView<LayoutWheelView>?
 
     init() {
         panel = NSPanel(
@@ -719,9 +724,15 @@ final class LayoutWheelPanelPresenter: LayoutWheelPresenting {
     }
 
     func open(_ presentation: LayoutWheelPresentation) {
-        let view = NSHostingView(rootView: LayoutWheelView(presentation))
-        hosting = view
-        panel.contentView = view
+        let view: NSHostingView<LayoutWheelView>
+        if let hosting {
+            view = hosting
+            view.rootView = LayoutWheelView(presentation)
+        } else {
+            view = NSHostingView(rootView: LayoutWheelView(presentation))
+            hosting = view
+            panel.contentView = view
+        }
         position(view: view, at: presentation.placement)
         panel.orderFrontRegardless()
     }
@@ -734,8 +745,6 @@ final class LayoutWheelPanelPresenter: LayoutWheelPresenting {
 
     func close() {
         panel.orderOut(nil)
-        panel.contentView = nil
-        hosting = nil
     }
 
     func showPlacements(_ placements: [Placement]) {
@@ -756,10 +765,8 @@ final class LayoutWheelPanelPresenter: LayoutWheelPresenting {
             width: size.width,
             height: size.height
         )
-        panel.setFrame(
-            CoordinateConverter.toAppKit(frame, mainScreenFrame: mainFrame),
-            display: true
-        )
+        let appKitFrame = CoordinateConverter.toAppKit(frame, mainScreenFrame: mainFrame)
+        if panel.frame != appKitFrame { panel.setFrame(appKitFrame, display: true) }
     }
 }
 

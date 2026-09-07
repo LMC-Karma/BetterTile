@@ -76,8 +76,12 @@ public enum DividerVisibility: String, Codable, CaseIterable, Sendable {
     case dragOnly
 }
 
+public enum BentoNewWindowSide: String, Codable, CaseIterable, Sendable {
+    case automatic, left, right, top, bottom
+}
+
 public struct BetterTileConfiguration: Codable, Hashable, Sendable {
-    public static let currentSchemaVersion = 10
+    public static let currentSchemaVersion = 11
 
     /// The placement a lone window receives, restricted to the actions that
     /// describe a position on the display. `nil` means "leave it unchanged".
@@ -104,6 +108,7 @@ public struct BetterTileConfiguration: Codable, Hashable, Sendable {
     public var dividerThickness: Double
     public var bentoInnerGap: Double
     public var bentoSwapHoverDelay: Double
+    public var bentoNewWindowSide: BentoNewWindowSide
     public var snapSuppressionModifiers: ShortcutModifiers
     public var adjacencyTolerance: Double
     public var snapAreaBindings: [SnapAreaBinding]
@@ -115,6 +120,9 @@ public struct BetterTileConfiguration: Codable, Hashable, Sendable {
     public var keyboardShortcutsEnabled: Bool
     public var shortcuts: [ShortcutBinding]
     public var layoutWheel: LayoutWheelConfiguration
+    /// Ordered actions shown in the status-item panel. An empty value is a
+    /// valid user choice and does not affect shortcuts or the Layout Wheel.
+    public var menuBarActions: [WindowAction]
 
     public init(
         schemaVersion: Int = BetterTileConfiguration.currentSchemaVersion,
@@ -131,6 +139,7 @@ public struct BetterTileConfiguration: Codable, Hashable, Sendable {
         dividerThickness: Double = 10,
         bentoInnerGap: Double = 1,
         bentoSwapHoverDelay: Double = 0.12,
+        bentoNewWindowSide: BentoNewWindowSide = .automatic,
         snapSuppressionModifiers: ShortcutModifiers = .option,
         adjacencyTolerance: Double = 6,
         snapAreaBindings: [SnapAreaBinding] = BetterTileConfiguration.defaultSnapAreaBindings,
@@ -139,7 +148,8 @@ public struct BetterTileConfiguration: Codable, Hashable, Sendable {
         applicationRules: ApplicationRuleSet = ApplicationRuleSet(),
         keyboardShortcutsEnabled: Bool = true,
         shortcuts: [ShortcutBinding] = BetterTileConfiguration.defaultShortcuts,
-        layoutWheel: LayoutWheelConfiguration = LayoutWheelConfiguration()
+        layoutWheel: LayoutWheelConfiguration = LayoutWheelConfiguration(),
+        menuBarActions: [WindowAction] = WindowAction.menuBarDefaultOrder
     ) {
         self.schemaVersion = schemaVersion
         self.setupCompletionVersion = max(0, setupCompletionVersion)
@@ -155,6 +165,7 @@ public struct BetterTileConfiguration: Codable, Hashable, Sendable {
         self.dividerThickness = dividerThickness
         self.bentoInnerGap = min(12, max(0, bentoInnerGap))
         self.bentoSwapHoverDelay = bentoSwapHoverDelay
+        self.bentoNewWindowSide = bentoNewWindowSide
         self.snapSuppressionModifiers = snapSuppressionModifiers
         self.adjacencyTolerance = adjacencyTolerance
         self.snapAreaBindings = snapAreaBindings
@@ -164,6 +175,12 @@ public struct BetterTileConfiguration: Codable, Hashable, Sendable {
         self.keyboardShortcutsEnabled = keyboardShortcutsEnabled
         self.shortcuts = shortcuts
         self.layoutWheel = layoutWheel.normalized()
+        self.menuBarActions = Self.normalizedMenuBarActions(menuBarActions)
+    }
+
+    public static func normalizedMenuBarActions(_ actions: [WindowAction]) -> [WindowAction] {
+        var seen = Set<WindowAction>()
+        return actions.filter { seen.insert($0).inserted }
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -171,13 +188,14 @@ public struct BetterTileConfiguration: Codable, Hashable, Sendable {
         case macOSTilingRecommendationAcknowledged, stageManagerRecommendationAcknowledged
         case showDockIcon, snappingEnabled, linkedResizeEnabled
         case defaultLayoutMode, resizeFeedbackMode, dividerVisibility, dividerThickness, bentoInnerGap, bentoSwapHoverDelay
+        case bentoNewWindowSide
         case singleWindowPlacement
         case singleWindowInitialPlacement
         case dockReservationMode
         case snapSuppressionModifiers, adjacencyTolerance, snapAreaBindings, doubleClickTitleBarToMaximize
         case enhancedUserInterfacePolicy
         case applicationRules, keyboardShortcutsEnabled
-        case shortcuts, layoutWheel
+        case shortcuts, layoutWheel, menuBarActions
         case layoutMode, bentoEnabled, bentoStates
     }
 
@@ -249,6 +267,7 @@ public struct BetterTileConfiguration: Codable, Hashable, Sendable {
             bentoInnerGap = 0
         }
         _ = try container.decodeIfPresent(String.self, forKey: .dockReservationMode)
+        bentoNewWindowSide = try container.decodeIfPresent(BentoNewWindowSide.self, forKey: .bentoNewWindowSide) ?? .automatic
         let decodedSwapDelay = try container.decodeIfPresent(Double.self, forKey: .bentoSwapHoverDelay)
         bentoSwapHoverDelay = decodedSwapDelay == 0.25 ? 0.12 : decodedSwapDelay ?? 0.12
         snapSuppressionModifiers = try container.decodeIfPresent(ShortcutModifiers.self, forKey: .snapSuppressionModifiers) ?? .option
@@ -277,6 +296,11 @@ public struct BetterTileConfiguration: Codable, Hashable, Sendable {
             LayoutWheelConfiguration.self,
             forKey: .layoutWheel
         )?.normalized() ?? LayoutWheelConfiguration()
+        let decodedMenuActionIDs = try container.decodeIfPresent([String].self, forKey: .menuBarActions)
+        menuBarActions = Self.normalizedMenuBarActions(
+            decodedMenuActionIDs?.compactMap(WindowAction.init(rawValue:))
+                ?? WindowAction.menuBarDefaultOrder
+        )
     }
 
     private static func migrateLayoutMode(_ rawValue: String, codingPath: [any CodingKey]) throws -> LayoutMode {
@@ -312,6 +336,7 @@ public struct BetterTileConfiguration: Codable, Hashable, Sendable {
         try container.encode(dividerThickness, forKey: .dividerThickness)
         try container.encode(bentoInnerGap, forKey: .bentoInnerGap)
         try container.encode(bentoSwapHoverDelay, forKey: .bentoSwapHoverDelay)
+        try container.encode(bentoNewWindowSide, forKey: .bentoNewWindowSide)
         try container.encode(snapSuppressionModifiers, forKey: .snapSuppressionModifiers)
         try container.encode(adjacencyTolerance, forKey: .adjacencyTolerance)
         try container.encode(snapAreaBindings, forKey: .snapAreaBindings)
@@ -321,6 +346,7 @@ public struct BetterTileConfiguration: Codable, Hashable, Sendable {
         try container.encode(keyboardShortcutsEnabled, forKey: .keyboardShortcutsEnabled)
         try container.encode(shortcuts, forKey: .shortcuts)
         try container.encode(layoutWheel, forKey: .layoutWheel)
+        try container.encode(menuBarActions, forKey: .menuBarActions)
     }
 
     public static let defaultSnapAreaBindings: [SnapAreaBinding] = [
@@ -392,6 +418,7 @@ public struct BetterTileConfiguration: Codable, Hashable, Sendable {
         result.dividerVisibility = .hoverAndDrag
         result.singleWindowPlacement = Self.normalizedSingleWindowPlacement(result.singleWindowPlacement)
         result.layoutWheel = result.layoutWheel.normalized()
+        result.menuBarActions = Self.normalizedMenuBarActions(result.menuBarActions)
         return result
     }
 }
@@ -444,6 +471,7 @@ public struct ConfigurationChangeSet: OptionSet, Hashable, Sendable {
             || old.adjacencyTolerance != new.adjacencyTolerance {
             changes.insert(.divider)
         }
+        // New-window side is read when inserting; it must not restart an active gesture.
         if old.defaultLayoutMode != new.defaultLayoutMode
             || old.singleWindowPlacement != new.singleWindowPlacement
             || old.bentoInnerGap != new.bentoInnerGap

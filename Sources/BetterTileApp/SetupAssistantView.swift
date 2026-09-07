@@ -289,7 +289,7 @@ struct SetupAssistantView: View {
                     featurePoint(
                         "Adaptive Bento layouts",
                         detail: "Arrange visible windows into a stable split layout that adapts as windows change.",
-                        symbol: "rectangle.inset.filled.lefthalf.topright.bottomright"
+                        symbol: "rectangle.split.2x2"
                     )
                     featurePoint(
                         "Keyboard actions",
