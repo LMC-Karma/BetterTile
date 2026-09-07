@@ -1,5 +1,6 @@
 import AppKit
 import Testing
+import SwiftUI
 @testable import BetterTileCore
 @testable import BetterTileMacOS
 
@@ -221,6 +222,181 @@ func junctionGripKeepsACompactTargetAndCapsEachExistingArm(thickness: Double) {
 
     #expect(!ghosts.windowNumbers.isEmpty)
     #expect(ghosts.relativeOrderTargets[snapshot.id] == handle.windowNumber)
+}
+
+@Test(arguments: [0.0, 1.0, 6.0, 12.0], [false, true])
+func actualBentoPaneGapsStillAcquireJunctions(gap: Double, fourWay: Bool) throws {
+    let ids = ["a", "b", "c", "d"].map { WindowID(rawValue: $0) }
+    let state = BentoLayoutState(root: .partition(BentoPartition(
+        axis: .vertical,
+        first: .partition(BentoPartition(axis: .horizontal, first: .leaf(ids[0]), second: .leaf(ids[1]))),
+        second: fourWay
+            ? .partition(BentoPartition(axis: .horizontal, first: .leaf(ids[2]), second: .leaf(ids[3])))
+            : .leaf(ids[2])
+    )), metrics: BentoLayoutMetrics(paneGap: gap))
+    let bounds = BTRect(x: 0, y: 0, width: 800, height: 600)
+    let display = DisplayID(rawValue: "main")
+    let windows = state.placements(in: bounds).map {
+        WindowSnapshot(id: $0.windowID, processIdentifier: 1, frame: $0.frame, displayID: display)
+    }
+    let boundaries = BentoBoundaryResolver().boundaries(
+        state: state, windows: windows, displayID: display, bounds: bounds
+    )
+    let interaction = try #require(DividerInteractionResolver.resolve(
+        at: BTPoint(x: 400, y: 300), in: boundaries,
+        hitWidth: 18, adjacencyTolerance: 6, paneGap: gap
+    ))
+    guard case .junction = interaction.kind else {
+        Issue.record("Real pane gaps must not turn a junction into a straight divider.")
+        return
+    }
+    #expect(Set(interaction.boundaries.compactMap(\.branchID)).count == (fourWay ? 3 : 2))
+    #expect(interaction.boundaries.count == (fourWay ? 3 : 2))
+    let arms = DividerHandleGeometry.junctionArmLengths(
+        center: BTPoint(x: 400, y: 300), boundaries: interaction.boundaries,
+        active: true, thickness: 6
+    )
+    #expect(Set(arms.keys) == (fourWay ? Set(DividerHandleArm.allCases) : [.up, .down, .left]))
+}
+
+@Test @MainActor func dragUpdatesDoNotCompleteTheGripAnimationEarly() async throws {
+    let grip = DividerHandleView(
+        frame: CGRect(x: 0, y: 0, width: 20, height: 168),
+        mode: .vertical(restingLength: 56, activeLength: 168), thickness: 6
+    )
+    await withCheckedContinuation { continuation in
+        grip.setActive(true, animated: true) { continuation.resume() }
+        grip.setActive(true, animated: false)
+        #expect(grip.stretchProgress < 1)
+    }
+    #expect(grip.stretchProgress == 1)
+    await withCheckedContinuation { continuation in
+        grip.setActive(false, animated: true) { continuation.resume() }
+        grip.setActive(false, animated: false)
+        #expect(grip.stretchProgress > 0)
+    }
+    #expect(grip.stretchProgress == 0)
+}
+
+@Test func junctionGrabOffsetIsPreservedAndEachBranchMovesOnce() {
+    let v = boundary("v", axis: .vertical, coordinate: 100, start: 0, end: 200)
+    let h = boundary("h", axis: .horizontal, coordinate: 100, start: 0, end: 200)
+    let interaction = DividerInteraction(boundaries: [v, v, h], kind: .vertical)
+    let coordinates = interaction.branchCoordinates(from: BTPoint(x: 115, y: 84), to: BTPoint(x: 125, y: 104))
+    #expect(coordinates.count == 2)
+    #expect(coordinates[v.branchID!] == 110)
+    #expect(coordinates[h.branchID!] == 120)
+}
+
+@Test func paneGapCannotJoinUnrelatedOrDistantBranches() {
+    let v = boundary("v", axis: .vertical, coordinate: 100, start: 0, end: 200)
+    var h = boundary("h", axis: .horizontal, coordinate: 100, start: 0, end: 94)
+    let point = BTPoint(x: 100, y: 100)
+    #expect(DividerInteractionResolver.resolve(at: point, in: [v, h], hitWidth: 18, adjacencyTolerance: 6, paneGap: 12)?.kind == .vertical)
+    h.beforeWindowIDs = v.beforeWindowIDs
+    h.spanEnd = 93
+    #expect(DividerInteractionResolver.resolve(at: point, in: [v, h], hitWidth: 18, adjacencyTolerance: 6, paneGap: 12)?.kind == .vertical)
+}
+
+@Test(arguments: DividerPreviewShape.allCases, [0.0, 12.0])
+func previewShapesRetainTheirArmsAndFollowAcceptedGeometry(shape: DividerPreviewShape, gap: Double) {
+    let sample = shape.sample(in: BTRect(x: 0, y: 0, width: 600, height: 250), position: CGPoint(x: 0.35, y: 0.65), paneGap: gap)
+    #expect(sample.placements.count == (shape == .plus ? 4 : (shape == .vertical || shape == .horizontal ? 2 : 3)))
+    for boundary in sample.boundaries {
+        #expect(abs(boundary.coordinate - (boundary.axis == .vertical ? sample.center.x : sample.center.y)) < 0.001)
+    }
+    let expected: Set<DividerHandleArm> = switch shape {
+    case .vertical: [.up, .down]
+    case .horizontal: [.left, .right]
+    case .plus: Set(DividerHandleArm.allCases)
+    case .up: [.left, .right, .up]
+    case .down: [.left, .right, .down]
+    case .left: [.up, .down, .left]
+    case .right: [.up, .down, .right]
+    }
+    let arms = DividerHandleGeometry.junctionArmLengths(center: sample.center, boundaries: sample.boundaries, active: true, thickness: 6)
+    #expect(Set(arms.keys) == expected)
+}
+
+@Test @MainActor func nativeResizePreviewFitsAndRenders() throws {
+    let view = NSHostingView(rootView: DividerResizePreview(thickness: 6, feedback: .ghost, paneGap: 6).padding(16))
+    view.frame = CGRect(x: 0, y: 0, width: 680, height: 390)
+    let window = NSWindow(contentRect: view.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+    window.contentView = view
+    view.layoutSubtreeIfNeeded()
+    #expect(view.fittingSize.height <= 390)
+    let bitmap = try #require(view.bitmapImageRepForCachingDisplay(in: view.bounds))
+    view.cacheDisplay(in: view.bounds, to: bitmap)
+    let png = try #require(bitmap.representation(using: .png, properties: [:]))
+    #expect(png.count > 2_000)
+    if let path = ProcessInfo.processInfo.environment["BETTERTILE_PREVIEW_SNAPSHOT_PATH"] {
+        try png.write(to: URL(fileURLWithPath: path))
+    }
+}
+
+enum DividerTestEnding: CaseIterable {
+    case commit, cancel, participantLoss, failedAcquisition
+}
+
+@Test(arguments: [ResizeFeedbackMode.ghost, .live], DividerTestEnding.allCases)
+@MainActor func dividerGestureCommitsOrRollsBackWithTheFakeWindowSystem(feedback: ResizeFeedbackMode, ending: DividerTestEnding) async throws {
+    let system = FakeWindowSystem()
+    let bounds = BTRect(x: -10_000, y: -10_000, width: 800, height: 600)
+    let display = DisplayID(rawValue: "main")
+    system.availableDisplays = [DisplaySnapshot(id: display, frame: bounds, visibleFrame: bounds, isMain: true)]
+    let ids = ["a", "b", "c", "d"].map { WindowID(rawValue: $0) }
+    let state = BentoLayoutState(root: .partition(BentoPartition(
+        axis: .vertical,
+        first: .partition(BentoPartition(axis: .horizontal, first: .leaf(ids[0]), second: .leaf(ids[1]))),
+        second: .partition(BentoPartition(axis: .horizontal, first: .leaf(ids[2]), second: .leaf(ids[3])))
+    )), metrics: BentoLayoutMetrics(paneGap: 12))
+    system.windows = state.placements(in: bounds).map {
+        WindowSnapshot(id: $0.windowID, processIdentifier: 1, frame: $0.frame, displayID: display)
+    }
+    let original = system.windows.map(\.frame)
+    var config = BetterTileConfiguration()
+    config.resizeFeedbackMode = feedback
+    config.bentoInnerGap = 12
+    let controller = DividerOverlayController(coordinator: WindowCoordinator(system: system), configuration: config)
+    controller.bentoStateProvider = { _ in state }
+    let boundaries = BentoBoundaryResolver().boundaries(state: state, windows: system.windows, displayID: display, bounds: bounds)
+    let start = BTPoint(x: bounds.midX + 14, y: bounds.midY - 12)
+    let interaction = try #require(DividerInteractionResolver.resolve(at: start, in: boundaries, hitWidth: 18, adjacencyTolerance: 6, paneGap: 12))
+    system.targetedSnapshotsFail = ending == .failedAcquisition
+    controller.beginGesture(interaction: interaction, at: start)
+    defer { controller.hideAndCancel() }
+    if ending == .failedAcquisition {
+        #expect(!controller.isDragging)
+        #expect(system.frameWriteCounts.isEmpty)
+        return
+    }
+    #expect(controller.isDragging)
+    #expect(system.frameWriteCounts.isEmpty)
+    let screen = try #require(NSScreen.screens.first)
+    for delta in [20.0, 50.0] {
+        controller.drag(to: CGPoint(x: start.x + delta, y: screen.frame.maxY - (start.y + delta)))
+        try await Task.sleep(for: .milliseconds(40))
+    }
+    if feedback == .ghost { #expect(system.frameWriteCounts.isEmpty) }
+    if ending == .participantLoss {
+        system.windows.removeLast()
+        controller.drag(to: CGPoint(x: start.x + 60, y: screen.frame.maxY - (start.y + 60)))
+        #expect(!controller.isDragging)
+        return
+    } else if ending == .cancel {
+        controller.cancelActiveGesture()
+        #expect(system.windows.map(\.frame) == original)
+    } else {
+        controller.end()
+        let accepted = BentoBoundaryResolver().boundaries(state: state, windows: system.windows, displayID: display, bounds: bounds)
+        #expect(!accepted.isEmpty)
+        #expect(accepted.allSatisfy { abs($0.coordinate - (($0.axis == .vertical ? bounds.midX : bounds.midY) + 50)) < 0.001 })
+        #expect(system.windows.map(\.frame) != original)
+        let writes = system.frameWriteCounts
+        controller.end()
+        #expect(system.frameWriteCounts == writes)
+    }
+    #expect(!controller.isDragging)
 }
 
 private func boundary(

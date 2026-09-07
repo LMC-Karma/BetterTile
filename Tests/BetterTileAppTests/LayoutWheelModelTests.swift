@@ -523,7 +523,6 @@ private func waitFor(
         MenuPanelMetrics.tileWidth * 2
             + MenuPanelMetrics.gap
             + MenuPanelMetrics.padding * 2
-            + MenuPanelMetrics.scrollContentInset * 2
             == MenuPanelMetrics.width
     )
 }

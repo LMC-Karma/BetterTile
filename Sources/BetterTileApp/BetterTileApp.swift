@@ -156,7 +156,7 @@ enum MenuPanelMetrics {
     static let scrollContentInset: CGFloat = 12
     static let tileHeight: CGFloat = 60
     static let gap: CGFloat = 7
-    static let tileWidth = (width - padding * 2 - scrollContentInset * 2 - gap) / 2
+    static let tileWidth = (width - padding * 2 - gap) / 2
     static let maximumActionHeight: CGFloat = 328
     static let columns = [
         GridItem(.fixed(tileWidth), spacing: gap),
@@ -1174,6 +1174,7 @@ private struct MenuActionButtonStyle: ButtonStyle {
     @Environment(\.colorScheme) private var scheme
     @Environment(\.colorSchemeContrast) private var contrast
     @Environment(\.isEnabled) private var isEnabled
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isHovered = false
 
     func makeBody(configuration: Configuration) -> some View {
@@ -1195,6 +1196,8 @@ private struct MenuActionButtonStyle: ButtonStyle {
             }
             .opacity(isEnabled ? 1 : 0.5)
             .onHover { isHovered = $0 }
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: isHovered)
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: configuration.isPressed)
     }
 }
 

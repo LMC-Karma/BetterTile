@@ -4,6 +4,7 @@
 
 import AppKit
 import BetterTileCore
+import BetterTileMacOS
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -479,6 +480,12 @@ private struct WindowLayoutSettings: View {
                 Text("A glass handle appears when the pointer approaches a valid shared edge.")
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
+                DividerResizePreview(
+                    thickness: model.configuration.dividerThickness,
+                    feedback: model.configuration.resizeFeedbackMode,
+                    paneGap: model.configuration.bentoInnerGap
+                )
+                .padding(.vertical, 8)
             }
 
             Section("Bento Behavior") {
