@@ -27,7 +27,7 @@ import Testing
     let migrated = try ConfigurationStore.decode(JSONSerialization.data(withJSONObject: [
         "schemaVersion": 7,
     ]))
-    #expect(migrated.schemaVersion == 10)
+    #expect(migrated.schemaVersion == BetterTileConfiguration.currentSchemaVersion)
     #expect(migrated.setupCompletionVersion == 0)
     #expect(!migrated.macOSTilingRecommendationAcknowledged)
     #expect(!migrated.stageManagerRecommendationAcknowledged)
@@ -85,6 +85,35 @@ import Testing
     )
 
     #expect(ConfigurationChangeSet.between(original, original).isEmpty)
+}
+
+@Test func menuBarActionsUseTheNativeDefaultOrderAndPreserveAnEmptyChoice() throws {
+    let defaults = BetterTileConfiguration()
+    #expect(defaults.menuBarActions == WindowAction.menuBarDefaultOrder)
+    #expect(defaults.menuBarActions.count == 34)
+
+    var customized = defaults
+    customized.menuBarActions = [.rightHalf, .rightHalf, .leftHalf]
+    let decoded = try ConfigurationStore.decode(JSONEncoder().encode(customized))
+    #expect(decoded.menuBarActions == [.rightHalf, .leftHalf])
+
+    customized.menuBarActions = []
+    let empty = try ConfigurationStore.decode(JSONEncoder().encode(customized))
+    #expect(empty.menuBarActions.isEmpty)
+
+    let unknown = try ConfigurationStore.decode(JSONSerialization.data(withJSONObject: [
+        "schemaVersion": BetterTileConfiguration.currentSchemaVersion,
+        "menuBarActions": ["rightHalf", "futureAction", "rightHalf", "leftHalf"],
+    ]))
+    #expect(unknown.menuBarActions == [.rightHalf, .leftHalf])
+}
+
+@Test func olderConfigurationMigratesMissingMenuBarActionsToDefaults() throws {
+    let migrated = try ConfigurationStore.decode(JSONSerialization.data(withJSONObject: [
+        "schemaVersion": 10,
+    ]))
+    #expect(migrated.schemaVersion == BetterTileConfiguration.currentSchemaVersion)
+    #expect(migrated.menuBarActions == WindowAction.menuBarDefaultOrder)
 }
 
 @Test func everyPersistedConfigurationFieldHasARuntimeChangeDomain() {
@@ -155,7 +184,7 @@ import Testing
         "schemaVersion": 9,
     ]))
 
-    #expect(migrated.schemaVersion == 10)
+    #expect(migrated.schemaVersion == BetterTileConfiguration.currentSchemaVersion)
     #expect(migrated.layoutWheel == LayoutWheelConfiguration())
     #expect(migrated.layoutWheel.levelCount == .one)
     #expect(migrated.layoutWheel.innerSlots == LayoutWheelConfiguration.defaultInnerSlots)
@@ -248,7 +277,7 @@ import Testing
         "schemaVersion": 8,
         "singleWindowInitialPlacement": "almostMaximize",
     ]))
-    #expect(almost.schemaVersion == 10)
+    #expect(almost.schemaVersion == BetterTileConfiguration.currentSchemaVersion)
     #expect(almost.singleWindowPlacement == .almostMaximize)
 
     let unchanged = try ConfigurationStore.decode(JSONSerialization.data(withJSONObject: [
@@ -308,7 +337,7 @@ import Testing
         "bentoStates": ["main": ["floatingWindowIDs": []]],
     ]
     let migrated = try ConfigurationStore.decode(JSONSerialization.data(withJSONObject: legacy))
-    #expect(migrated.schemaVersion == 10)
+    #expect(migrated.schemaVersion == BetterTileConfiguration.currentSchemaVersion)
     #expect(migrated.showDockIcon)
     #expect(!migrated.linkedResizeEnabled)
     #expect(migrated.defaultLayoutMode == .bento)
@@ -372,7 +401,7 @@ import Testing
         "schemaVersion": 3,
         "bentoSwapHoverDelay": 0.12,
     ]))
-    #expect(oldDefault.schemaVersion == 10)
+    #expect(oldDefault.schemaVersion == BetterTileConfiguration.currentSchemaVersion)
     #expect(oldDefault.bentoSwapHoverDelay == 0.12)
 
     let customized = try ConfigurationStore.decode(JSONSerialization.data(withJSONObject: [

@@ -604,6 +604,29 @@ private struct LayoutWheelIcon: View {
     }
 }
 
+/// Action glyph shared by the Layout Wheel and application-owned action
+/// pickers. The tint is explicit so the same geometry reads on light and dark
+/// surfaces.
+public struct LayoutWheelActionGlyph: View {
+    private let action: WindowAction
+    private let tint: Color
+    private let fontSize: CGFloat
+
+    public init(action: WindowAction, tint: Color = .primary, fontSize: CGFloat = 12) {
+        self.action = action
+        self.tint = tint
+        self.fontSize = fontSize
+    }
+
+    public var body: some View {
+        LayoutWheelIcon(
+            slot: LayoutWheelSlot(command: .windowAction(action)),
+            tint: tint,
+            fontSize: fontSize
+        )
+    }
+}
+
 private enum LayoutWheelGlyphDescriptor: Equatable {
     case partition(columns: Int, selected: Set<Int>)
     case grid(columns: Int, rows: Int, selected: Set<Int>)
@@ -635,7 +658,7 @@ private struct LayoutWheelGlyph: View {
                     if selected.contains(index) { continue }
                     context.stroke(
                         Path(roundedRect: cell, cornerRadius: 1.8),
-                        with: .color(.white.opacity(0.95)),
+                        with: .color(tint.opacity(0.95)),
                         lineWidth: 1
                     )
                 }
@@ -647,7 +670,7 @@ private struct LayoutWheelGlyph: View {
                     let selectedRect = cells[first].union(cells[last])
                     context.fill(
                         Path(roundedRect: selectedRect, cornerRadius: 2.5),
-                        with: .color(.white)
+                        with: .color(tint)
                     )
                 }
             case let .grid(columns, rows, selected):
@@ -660,9 +683,9 @@ private struct LayoutWheelGlyph: View {
                 for (index, cell) in cells.enumerated() {
                     let path = Path(roundedRect: cell, cornerRadius: 1.8)
                     if selected.contains(index) {
-                        context.fill(path, with: .color(.white))
+                        context.fill(path, with: .color(tint))
                     }
-                    context.stroke(path, with: .color(.white.opacity(0.95)), lineWidth: 1)
+                    context.stroke(path, with: .color(tint.opacity(0.95)), lineWidth: 1)
                 }
             case .inset:
                 let inset = outer.insetBy(dx: outer.width * 0.22, dy: outer.height * 0.22)

@@ -28,3 +28,26 @@ import Testing
         excluding: [managed.id]
     ) == [settings])
 }
+
+@Test func dividerGripUsesThreefoldStraightGrowthAndShortSpanCap() {
+    #expect(DividerHandleGeometry.straightLength(span: 0...200, active: false) == 56)
+    #expect(DividerHandleGeometry.straightLength(span: 0...200, active: true) == 168)
+    #expect(DividerHandleGeometry.straightLength(span: 0...90, active: true) == 90)
+}
+
+@Test func junctionGripKeepsACompactTargetAndGrowsOnlyExistingArms() {
+    let arms: Set<DividerHandleArm> = [.up, .down, .left]
+    let resting = DividerHandleGeometry.junctionFrame(
+        center: .init(x: 100, y: 100), arms: arms, active: false, thickness: 6
+    )
+    let active = DividerHandleGeometry.junctionFrame(
+        center: .init(x: 100, y: 100), arms: arms, active: true, thickness: 6
+    )
+
+    #expect(resting.width == 32)
+    #expect(resting.height == 32)
+    #expect(active.minX == 64)
+    #expect(active.maxX == 103)
+    #expect(active.minY == 64)
+    #expect(active.maxY == 136)
+}

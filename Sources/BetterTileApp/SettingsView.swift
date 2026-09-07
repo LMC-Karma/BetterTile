@@ -10,6 +10,7 @@ private enum SettingsDestination: String, CaseIterable, Identifiable {
     case general = "General"
     case windowLayout = "Window Layout"
     case snapZones = "Snap Zones"
+    case menuBar = "Menu Bar"
     case layoutWheel = "Layout Wheel"
     case applicationRules = "Per-App Rules"
 
@@ -20,6 +21,7 @@ private enum SettingsDestination: String, CaseIterable, Identifiable {
         case .general: "gearshape"
         case .windowLayout: "rectangle.3.group"
         case .snapZones: "rectangle.split.3x3"
+        case .menuBar: "line.3.horizontal"
         case .layoutWheel: "circle.hexagonpath"
         case .applicationRules: "app.badge.checkmark"
         }
@@ -35,6 +37,8 @@ private enum SettingsDestination: String, CaseIterable, Identifiable {
             "mode manual native bento resize linked divider shortcut keyboard hotkey halves thirds quarters sixths move display restore"
         case .snapZones:
             "drag snap edge corner title bar double click maximize"
+        case .menuBar:
+            "menu bar actions order visibility reorder drag restore defaults"
         case .layoutWheel:
             "wheel layout radial pie ring sector hub gesture middle click mouse button "
                 + "control option shift command modifier trigger shortcut hold activation "
@@ -174,6 +178,8 @@ struct SettingsView: View {
             WindowLayoutSettings(model: model)
         case .snapZones:
             ZoneSettings(model: model)
+        case .menuBar:
+            MenuBarSettings(model: model)
         case .layoutWheel:
             LayoutWheelSettings(model: model)
         case .applicationRules:
@@ -687,24 +693,208 @@ private final class InlineKeyCaptureNSView: NSView {
     }
 }
 
+private struct MenuBarSettings: View {
+    @Bindable var model: BetterTileModel
+    @State private var draggingAction: WindowAction?
+
+    private var selectedActions: [WindowAction] {
+        model.configuration.menuBarActions
+    }
+
+    var body: some View {
+        Form {
+            Section {
+                Text("Choose actions on the left. Drag tiles in the preview to arrange the menu panel.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("Available Actions") {
+                ForEach(WindowActionGroup.allCases) { group in
+                    DisclosureGroup(group.title) {
+                        ForEach(group.actions) { action in
+                            Toggle(isOn: actionBinding(action)) {
+                                Label {
+                                    Text(action.title)
+                                } icon: {
+                                    WindowActionGlyph(action: action)
+                                        .frame(width: 20)
+                                }
+                            }
+                            .toggleStyle(.checkbox)
+                        }
+                    }
+                }
+            }
+
+            Section {
+                if selectedActions.isEmpty {
+                    ContentUnavailableView("No Window Actions", systemImage: "rectangle.dashed", description: Text("Add actions above to show them in the menu panel."))
+                } else {
+                    LazyVGrid(
+                        columns: [GridItem(.flexible()), GridItem(.flexible())],
+                        spacing: 8
+                    ) {
+                        ForEach(selectedActions) { action in
+                            MenuActionTile(action: action)
+                                .onDrag {
+                                    draggingAction = action
+                                    return NSItemProvider(object: action.rawValue as NSString)
+                                }
+                                .onDrop(
+                                    of: [.text],
+                                    delegate: MenuActionDropDelegate(
+                                        destination: action,
+                                        draggingAction: $draggingAction,
+                                        move: moveAction
+                                    )
+                                )
+                        }
+                    }
+                    .animation(.easeOut(duration: 0.18), value: selectedActions)
+                }
+            } header: {
+                HStack {
+                    Text("Menu Preview")
+                    Spacer()
+                    Text("\(selectedActions.count) actions")
+                        .foregroundStyle(.secondary)
+                }
+            } footer: {
+                Text("Drag tiles to reorder. The Layout Wheel and shortcuts keep their own assignments.")
+            }
+
+            Section {
+                HStack {
+                    Button("Restore Defaults") {
+                        model.updateConfiguration { $0.menuBarActions = WindowAction.menuBarDefaultOrder }
+                    }
+                    Spacer()
+                    Button("Deselect All") {
+                        model.updateConfiguration { $0.menuBarActions = [] }
+                    }
+                    .disabled(selectedActions.isEmpty)
+                }
+            }
+        }
+        .formStyle(.grouped)
+    }
+
+    private func actionBinding(_ action: WindowAction) -> Binding<Bool> {
+        Binding(
+            get: { selectedActions.contains(action) },
+            set: { isVisible in
+                model.updateConfiguration { configuration in
+                    if isVisible {
+                        guard !configuration.menuBarActions.contains(action) else { return }
+                        configuration.menuBarActions.append(action)
+                    } else {
+                        configuration.menuBarActions.removeAll { $0 == action }
+                    }
+                }
+            }
+        )
+    }
+
+    private func moveAction(_ source: WindowAction, _ destination: WindowAction) {
+        guard source != destination else { return }
+        model.updateConfiguration { configuration in
+            guard let sourceIndex = configuration.menuBarActions.firstIndex(of: source),
+                  let destinationIndex = configuration.menuBarActions.firstIndex(of: destination)
+            else { return }
+            let item = configuration.menuBarActions.remove(at: sourceIndex)
+            let insertionIndex = destinationIndex > sourceIndex ? destinationIndex - 1 : destinationIndex
+            configuration.menuBarActions.insert(item, at: min(insertionIndex, configuration.menuBarActions.count))
+        }
+    }
+}
+
+private struct MenuActionTile: View {
+    let action: WindowAction
+
+    var body: some View {
+        HStack(spacing: 8) {
+            WindowActionGlyph(action: action)
+                .frame(width: 24)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(action.title)
+                    .font(.subheadline.weight(.semibold))
+                Text("Drag to reorder")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(9)
+        .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
+        .background(.quaternary, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .accessibilityLabel(action.title)
+        .accessibilityHint("Drag to reorder this menu action")
+    }
+}
+
+private struct MenuActionDropDelegate: DropDelegate {
+    let destination: WindowAction
+    @Binding var draggingAction: WindowAction?
+    let move: (WindowAction, WindowAction) -> Void
+
+    func dropEntered(info: DropInfo) {
+        guard let draggingAction, draggingAction != destination else { return }
+        move(draggingAction, destination)
+    }
+
+    func dropExited(info: DropInfo) {}
+
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        DropProposal(operation: draggingAction == nil ? .forbidden : .move)
+    }
+
+    func performDrop(info: DropInfo) -> Bool {
+        draggingAction = nil
+        return true
+    }
+}
+
 private struct ZoneSettings: View {
     @Bindable var model: BetterTileModel
+    @State private var selectedArea: SnapArea = .topLeft
 
     var body: some View {
         Form {
             Section("Screen Edge Actions") {
-                ForEach(SnapArea.allCases) { area in
-                    HStack {
-                        Text(area.title)
-                        Spacer()
-                        Picker("", selection: snapActionBinding(area)) {
-                            Text("Disabled").tag(nil as WindowAction?)
-                            ForEach(WindowAction.snapAssignableActions) { action in
-                                Text(action.title).tag(Optional(action))
-                            }
+                SnapZoneDiagram(selectedArea: $selectedArea)
+                    .frame(height: 220)
+
+                HStack(alignment: .top, spacing: 14) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(selectedArea.title)
+                            .font(.headline)
+                        Text("Trigger region")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Picker("Action for \(selectedArea.title)", selection: snapActionBinding(selectedArea)) {
+                        Text("Disabled").tag(nil as WindowAction?)
+                        ForEach(WindowAction.snapAssignableActions) { action in
+                            Text(action.title).tag(Optional(action))
                         }
-                        .labelsHidden()
-                        .frame(width: 210)
+                    }
+                    .frame(width: 220)
+                }
+
+                HStack {
+                    Label("Resulting placement", systemImage: "rectangle.inset.filled")
+                    Spacer()
+                    if let action = snapActionBinding(selectedArea).wrappedValue {
+                        WindowActionGlyph(action: action)
+                            .frame(width: 24, height: 18)
+                        Text(action.title)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Text("No action")
+                            .foregroundStyle(.secondary)
                     }
                 }
                 HStack {
@@ -770,6 +960,75 @@ private struct ZoneSettings: View {
         )
     }
 
+}
+
+private struct SnapZoneDiagram: View {
+    @Binding var selectedArea: SnapArea
+
+    var body: some View {
+        GeometryReader { geometry in
+            let width = geometry.size.width
+            let height = geometry.size.height
+            ZStack {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(.quaternary)
+                    .overlay(RoundedRectangle(cornerRadius: 10).stroke(.separator))
+                    .frame(width: min(width - 120, 330), height: min(height - 34, 165))
+                RoundedRectangle(cornerRadius: 5, style: .continuous)
+                    .stroke(.tint, lineWidth: 2)
+                    .frame(width: min(width - 120, 330) * 0.52, height: min(height - 34, 165) * 0.65)
+                    .overlay(Text("Window placement").font(.caption2).foregroundStyle(.secondary))
+
+                ForEach(SnapArea.allCases) { area in
+                    Button {
+                        selectedArea = area
+                    } label: {
+                        Label(area.title, systemImage: areaSymbol(area))
+                            .labelStyle(.iconOnly)
+                            .frame(width: 30, height: 30)
+                            .background(
+                                Circle().fill(selectedArea == area ? Color.accentColor : Color.secondary.opacity(0.25))
+                            )
+                            .foregroundStyle(selectedArea == area ? .white : .primary)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(area.title)
+                    .position(position(for: area, in: CGSize(width: width, height: height)))
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
+    private func position(for area: SnapArea, in size: CGSize) -> CGPoint {
+        let x = size.width / 2
+        let y = size.height / 2
+        let horizontal = min(size.width / 2 - 38, 190)
+        let vertical = min(size.height / 2 - 22, 78)
+        return switch area {
+        case .topLeft: CGPoint(x: x - horizontal, y: y - vertical)
+        case .top: CGPoint(x: x, y: y - vertical)
+        case .topRight: CGPoint(x: x + horizontal, y: y - vertical)
+        case .left: CGPoint(x: x - horizontal, y: y)
+        case .right: CGPoint(x: x + horizontal, y: y)
+        case .bottomLeft: CGPoint(x: x - horizontal, y: y + vertical)
+        case .bottom: CGPoint(x: x, y: y + vertical)
+        case .bottomRight: CGPoint(x: x + horizontal, y: y + vertical)
+        }
+    }
+
+    private func areaSymbol(_ area: SnapArea) -> String {
+        switch area {
+        case .topLeft: "arrow.up.left"
+        case .top: "arrow.up"
+        case .topRight: "arrow.up.right"
+        case .left: "arrow.left"
+        case .right: "arrow.right"
+        case .bottomLeft: "arrow.down.left"
+        case .bottom: "arrow.down"
+        case .bottomRight: "arrow.down.right"
+        }
+    }
 }
 
 private struct StatusMessage: View {

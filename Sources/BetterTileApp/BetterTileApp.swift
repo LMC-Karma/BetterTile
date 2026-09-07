@@ -920,14 +920,21 @@ private struct BetterTileMenuPanel: View {
             controlsCard
 
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 12) {
-                    ForEach(WindowActionGroup.allCases) { group in
-                        actionGroup(group)
+                LazyVGrid(
+                    columns: [
+                        GridItem(.flexible(), spacing: 7),
+                        GridItem(.flexible(), spacing: 7),
+                    ],
+                    spacing: 7
+                ) {
+                    ForEach(model.configuration.menuBarActions) { action in
+                        actionButton(action)
                     }
                 }
                 .padding(.vertical, 1)
                 .background(OverlayScrollerConfigurator())
             }
+            .frame(maxHeight: max(150, panelHeight - 300))
             .contentMargins(.horizontal, 12, for: .scrollContent)
             .contentMargins(.trailing, 4, for: .scrollIndicators)
             .padding(.horizontal, -12)
@@ -944,7 +951,8 @@ private struct BetterTileMenuPanel: View {
             footer
         }
         .padding(12)
-        .frame(width: 332, height: panelHeight)
+        .frame(width: 332)
+        .frame(minHeight: 360, maxHeight: panelHeight)
         .background {
             Rectangle()
                 .fill(reduceTransparency ? AnyShapeStyle(Color.clear) : AnyShapeStyle(.regularMaterial))
@@ -1009,24 +1017,6 @@ private struct BetterTileMenuPanel: View {
             .buttonStyle(.borderedProminent)
             .controlSize(.regular)
             .disabled(!model.hasAccessibilityPermission)
-        }
-        .panelCard(colorScheme: colorScheme, increaseContrast: increaseContrast)
-    }
-
-    private func actionGroup(_ group: WindowActionGroup) -> some View {
-        VStack(alignment: .leading, spacing: 7) {
-            panelSectionTitle(group.title)
-            LazyVGrid(
-                columns: [
-                    GridItem(.flexible(), spacing: 7),
-                    GridItem(.flexible(), spacing: 7),
-                ],
-                spacing: 7
-            ) {
-                ForEach(group.actions) { action in
-                    actionButton(action)
-                }
-            }
         }
         .panelCard(colorScheme: colorScheme, increaseContrast: increaseContrast)
     }
@@ -1108,12 +1098,6 @@ private struct BetterTileMenuPanel: View {
         model.configuration.shortcuts.first(where: { $0.action == action })?.shortcut
     }
 
-    private func panelSectionTitle(_ title: String) -> some View {
-        Text(title.uppercased())
-            .font(.system(size: 9.5, weight: .bold))
-            .kerning(0.45)
-            .foregroundStyle(.secondary)
-    }
 }
 
 private struct OverlayScrollerConfigurator: NSViewRepresentable {
@@ -1164,87 +1148,8 @@ struct WindowActionGlyph: View {
     let action: WindowAction
 
     var body: some View {
-        Group {
-            if let footprint = action.glyphFootprint {
-                GeometryReader { geometry in
-                    let width = max(0, geometry.size.width - 2)
-                    let height = max(0, geometry.size.height - 2)
-                    ZStack(alignment: .topLeading) {
-                        RoundedRectangle(cornerRadius: 2)
-                            .stroke(.secondary, lineWidth: 1)
-                            .frame(width: width, height: height)
-                            .offset(x: 1, y: 1)
-                        RoundedRectangle(cornerRadius: 1)
-                            .fill(.primary.opacity(0.38))
-                            .frame(
-                                width: max(2, width * footprint.width),
-                                height: max(2, height * footprint.height)
-                            )
-                            .offset(
-                                x: 1 + width * footprint.x,
-                                y: 1 + height * footprint.y
-                            )
-                    }
-                }
-            } else if let symbol = action.glyphSymbol {
-                Image(
-                    systemName: NSImage(
-                        systemSymbolName: symbol,
-                        accessibilityDescription: nil
-                    ) == nil ? "rectangle" : symbol
-                )
-                .font(.system(size: 10, weight: .semibold))
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            }
-        }
+        LayoutWheelActionGlyph(action: action, tint: .primary, fontSize: 10)
         .frame(width: 20, height: 14)
         .accessibilityHidden(true)
-    }
-}
-
-private let cachedWindowActionGlyphFootprints: [WindowAction: NormalizedRect] = {
-    let bounds = BTRect(x: 0, y: 0, width: 1_000, height: 800)
-    let display = DisplaySnapshot(
-        id: DisplayID(rawValue: "glyph"),
-        frame: bounds,
-        visibleFrame: bounds
-    )
-    let window = WindowSnapshot(
-        id: WindowID(rawValue: "glyph"),
-        processIdentifier: 0,
-        frame: BTRect(x: 220, y: 176, width: 560, height: 448),
-        displayID: display.id
-    )
-    return Dictionary(uniqueKeysWithValues: WindowAction.allCases.compactMap { action in
-        guard action.glyphSymbol == nil else { return nil }
-        if action == .almostMaximize {
-            return (action, NormalizedRect(x: 0.14, y: 0.18, width: 0.72, height: 0.64))
-        }
-        return StandardActionEngine().targetFrame(
-            for: action,
-            window: window,
-            display: display
-        ).map { (action, NormalizedRect(frame: $0, in: bounds)) }
-    })
-}()
-
-private extension WindowAction {
-    var glyphFootprint: NormalizedRect? {
-        cachedWindowActionGlyphFootprints[self]
-    }
-
-    var glyphSymbol: String? {
-        switch self {
-        case .previousDisplay: "arrow.left.to.line"
-        case .nextDisplay: "arrow.right.to.line"
-        case .moveLeft: "arrow.left"
-        case .moveRight: "arrow.right"
-        case .moveUp: "arrow.up"
-        case .moveDown: "arrow.down"
-        case .growWidth, .shrinkWidth: "arrow.left.and.right"
-        case .growHeight, .shrinkHeight: "arrow.up.and.down"
-        case .restore: "arrow.uturn.backward"
-        default: nil
-        }
     }
 }

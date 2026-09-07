@@ -77,7 +77,7 @@ public enum DividerVisibility: String, Codable, CaseIterable, Sendable {
 }
 
 public struct BetterTileConfiguration: Codable, Hashable, Sendable {
-    public static let currentSchemaVersion = 10
+    public static let currentSchemaVersion = 11
 
     /// The placement a lone window receives, restricted to the actions that
     /// describe a position on the display. `nil` means "leave it unchanged".
@@ -115,6 +115,9 @@ public struct BetterTileConfiguration: Codable, Hashable, Sendable {
     public var keyboardShortcutsEnabled: Bool
     public var shortcuts: [ShortcutBinding]
     public var layoutWheel: LayoutWheelConfiguration
+    /// Ordered actions shown in the status-item panel. An empty value is a
+    /// valid user choice and does not affect shortcuts or the Layout Wheel.
+    public var menuBarActions: [WindowAction]
 
     public init(
         schemaVersion: Int = BetterTileConfiguration.currentSchemaVersion,
@@ -139,7 +142,8 @@ public struct BetterTileConfiguration: Codable, Hashable, Sendable {
         applicationRules: ApplicationRuleSet = ApplicationRuleSet(),
         keyboardShortcutsEnabled: Bool = true,
         shortcuts: [ShortcutBinding] = BetterTileConfiguration.defaultShortcuts,
-        layoutWheel: LayoutWheelConfiguration = LayoutWheelConfiguration()
+        layoutWheel: LayoutWheelConfiguration = LayoutWheelConfiguration(),
+        menuBarActions: [WindowAction] = WindowAction.menuBarDefaultOrder
     ) {
         self.schemaVersion = schemaVersion
         self.setupCompletionVersion = max(0, setupCompletionVersion)
@@ -164,6 +168,12 @@ public struct BetterTileConfiguration: Codable, Hashable, Sendable {
         self.keyboardShortcutsEnabled = keyboardShortcutsEnabled
         self.shortcuts = shortcuts
         self.layoutWheel = layoutWheel.normalized()
+        self.menuBarActions = Self.normalizedMenuBarActions(menuBarActions)
+    }
+
+    public static func normalizedMenuBarActions(_ actions: [WindowAction]) -> [WindowAction] {
+        var seen = Set<WindowAction>()
+        return actions.filter { seen.insert($0).inserted }
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -177,7 +187,7 @@ public struct BetterTileConfiguration: Codable, Hashable, Sendable {
         case snapSuppressionModifiers, adjacencyTolerance, snapAreaBindings, doubleClickTitleBarToMaximize
         case enhancedUserInterfacePolicy
         case applicationRules, keyboardShortcutsEnabled
-        case shortcuts, layoutWheel
+        case shortcuts, layoutWheel, menuBarActions
         case layoutMode, bentoEnabled, bentoStates
     }
 
@@ -277,6 +287,11 @@ public struct BetterTileConfiguration: Codable, Hashable, Sendable {
             LayoutWheelConfiguration.self,
             forKey: .layoutWheel
         )?.normalized() ?? LayoutWheelConfiguration()
+        let decodedMenuActionIDs = try container.decodeIfPresent([String].self, forKey: .menuBarActions)
+        menuBarActions = Self.normalizedMenuBarActions(
+            decodedMenuActionIDs?.compactMap(WindowAction.init(rawValue:))
+                ?? WindowAction.menuBarDefaultOrder
+        )
     }
 
     private static func migrateLayoutMode(_ rawValue: String, codingPath: [any CodingKey]) throws -> LayoutMode {
@@ -321,6 +336,7 @@ public struct BetterTileConfiguration: Codable, Hashable, Sendable {
         try container.encode(keyboardShortcutsEnabled, forKey: .keyboardShortcutsEnabled)
         try container.encode(shortcuts, forKey: .shortcuts)
         try container.encode(layoutWheel, forKey: .layoutWheel)
+        try container.encode(menuBarActions, forKey: .menuBarActions)
     }
 
     public static let defaultSnapAreaBindings: [SnapAreaBinding] = [
@@ -392,6 +408,7 @@ public struct BetterTileConfiguration: Codable, Hashable, Sendable {
         result.dividerVisibility = .hoverAndDrag
         result.singleWindowPlacement = Self.normalizedSingleWindowPlacement(result.singleWindowPlacement)
         result.layoutWheel = result.layoutWheel.normalized()
+        result.menuBarActions = Self.normalizedMenuBarActions(result.menuBarActions)
         return result
     }
 }

@@ -15,6 +15,20 @@ public enum WindowAction: String, Codable, CaseIterable, Identifiable, Sendable 
 
     public var id: String { rawValue }
 
+    /// The default order used by the menu bar. Keep this in Core so the
+    /// persisted default and every UI catalog share one source of truth.
+    public static let menuBarDefaultOrder: [WindowAction] = [
+        .leftHalf, .rightHalf, .topHalf, .bottomHalf,
+        .leftThird, .centerThird, .rightThird, .leftTwoThirds, .rightTwoThirds,
+        .topLeftQuarter, .topRightQuarter, .bottomLeftQuarter, .bottomRightQuarter,
+        .topLeftSixth, .topCenterSixth, .topRightSixth,
+        .bottomLeftSixth, .bottomCenterSixth, .bottomRightSixth,
+        .maximize, .almostMaximize, .center, .centerResize,
+        .moveLeft, .moveRight, .moveUp, .moveDown,
+        .growWidth, .shrinkWidth, .growHeight, .shrinkHeight,
+        .previousDisplay, .nextDisplay, .restore,
+    ]
+
     public var title: String {
         rawValue
             .reduce(into: "") { result, character in
