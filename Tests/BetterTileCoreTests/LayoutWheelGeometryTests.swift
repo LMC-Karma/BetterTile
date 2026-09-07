@@ -138,18 +138,15 @@ private let wheelDisplay = BTRect(x: 0, y: 0, width: 1600, height: 1000)
     #expect(placement.anchor == placement.center)
 }
 
-/// Clamping moves only the drawing. If it moved the anchor too, a wheel opened
-/// near a corner would rotate every direction toward the middle of the display
-/// and the sector under the pointer would stop matching the one drawn there.
-@Test func clampingKeepsTheAngularAnchorWherePointerWas() {
+/// Retain the opening position for movement activation while the drawing and
+/// selection share the clamped center.
+@Test func clampingKeepsTheOpeningPositionForMovementActivation() {
     let anchor = BTPoint(x: 12, y: 990)
     let placement = LayoutWheelPlacement.clamped(
         anchor: anchor,
         diameter: 356,
         visibleFrame: wheelDisplay
     )
-    let geometry = wheelGeometry
-
     #expect(placement.anchor == anchor)
     #expect(placement.center != anchor)
     #expect(placement.frame.minX >= wheelDisplay.minX)
@@ -157,9 +154,6 @@ private let wheelDisplay = BTRect(x: 0, y: 0, width: 1600, height: 1000)
     #expect(placement.frame.maxX <= wheelDisplay.maxX)
     #expect(placement.frame.maxY <= wheelDisplay.maxY)
 
-    // A pointer directly above the anchor is still the top sector.
-    let above = BTPoint(x: anchor.x - placement.anchor.x, y: anchor.y - 60 - placement.anchor.y)
-    #expect(geometry.selection(for: above, levelCount: .two)?.sector == .top)
 }
 
 /// A second display has its own origin. Clamping has to use that display's own
@@ -246,4 +240,14 @@ private let wheelDisplay = BTRect(x: 0, y: 0, width: 1600, height: 1000)
 
     configuration.innerSlots = []
     #expect(configuration.command(at: .init(ring: .inner, sector: .top)) == nil)
+}
+
+@Test func wheelShadowPaddingDoesNotPushVisibleControlsAwayFromTheEdge() {
+    let placement = LayoutWheelPlacement.clamped(
+        anchor: BTPoint(x: 105, y: 500), diameter: 236,
+        overflowPadding: 18, visibleFrame: wheelDisplay
+    )
+    #expect(placement.center == placement.anchor)
+    #expect(placement.frame.minX == -13)
+    #expect(placement.center.x - 100 >= wheelDisplay.minX)
 }

@@ -268,8 +268,7 @@ public extension LayoutWheelConfiguration {
 
 /// Where the wheel is drawn, and where pointer directions are measured from.
 public struct LayoutWheelPlacement: Equatable, Sendable {
-    /// The pointer position when the wheel opened. Selection is always measured
-    /// from here.
+    /// The pointer position when the wheel opened, used to reject opening jitter.
     public var anchor: BTPoint
     /// The drawn centre, which clamping can move away from the anchor.
     public var center: BTPoint
@@ -300,31 +299,32 @@ public struct LayoutWheelPlacement: Equatable, Sendable {
     /// Opens the wheel under the pointer, then slides the drawing back onto the
     /// display if it would hang off an edge.
     ///
-    /// Clamping moves only `center`. `anchor` stays where the pointer was, so a
-    /// wheel opened near a corner still reads "right" as the right sector
-    /// instead of rotating every direction toward the display middle.
+    /// Selection uses the drawn `center`. `anchor` records the opening position.
+    /// Transparent shadow padding may extend past the edge; visible controls stay inside.
     public static func clamped(
         anchor: BTPoint,
         diameter: Double,
         contentHeight: Double? = nil,
+        overflowPadding: Double = 0,
         visibleFrame: BTRect
     ) -> LayoutWheelPlacement {
         let radius = diameter / 2
         let contentHeight = max(diameter, contentHeight ?? diameter)
+        let padding = min(max(0, overflowPadding), radius)
         let center = BTPoint(
             x: clampedAxis(
                 anchor.x,
                 minimum: visibleFrame.minX,
                 maximum: visibleFrame.maxX,
-                before: radius,
-                after: radius
+                before: radius - padding,
+                after: radius - padding
             ),
             y: clampedAxis(
                 anchor.y,
                 minimum: visibleFrame.minY,
                 maximum: visibleFrame.maxY,
-                before: radius,
-                after: contentHeight - radius
+                before: radius - padding,
+                after: contentHeight - radius - padding
             )
         )
         return LayoutWheelPlacement(

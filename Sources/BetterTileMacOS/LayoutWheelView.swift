@@ -14,6 +14,13 @@ public struct LayoutWheelMetrics: Sendable {
     /// larger than the logical wheel or those effects can be clipped at its
     /// invisible square boundary.
     public static let presentationPadding = 18.0
+    static let selectedScale = 1.045
+
+    /// Only shadow space can leave the screen. Reserve the selected slice's
+    /// growth and its stroke, without clamping the whole transparent panel.
+    func overflowPadding(for levelCount: LayoutWheelLevelCount) -> Double {
+        max(0, Self.presentationPadding - diameter(for: levelCount) / 2 * (Self.selectedScale - 1) - 1)
+    }
 
     public init?(
         hubRadius: Double,
@@ -418,7 +425,7 @@ public struct LayoutWheelView: View {
             )
             sectorIcon(slot, selection: selection, isSelected: isSelected)
         }
-        .scaleEffect(isSelected && !reduceMotion ? 1.045 : 1)
+        .scaleEffect(isSelected && !reduceMotion ? LayoutWheelMetrics.selectedScale : 1)
         .shadow(
             color: isSelected ? .black.opacity(reduceMotion ? 0.12 : 0.24) : .clear,
             radius: isSelected ? 7 : 0,

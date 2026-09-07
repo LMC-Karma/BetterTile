@@ -259,6 +259,60 @@ private struct Harness {
     #expect(harness.presenter.closeCount == 1)
 }
 
+@Test(arguments: [LayoutWheelLevelCount.one, .two], [0.8, 1.0, 1.3])
+@MainActor func wheelNearAnEdgeSelectsTheSectorUnderThePointer(
+    levels: LayoutWheelLevelCount, scale: Double
+) throws {
+    let display = BTRect(x: -1600, y: -200, width: 1600, height: 1000)
+    let edgeTarget = LayoutWheelTarget(windowID: target.windowID, displayID: target.displayID,
+                                       visibleFrame: display)
+    let metrics = LayoutWheelMetrics.standard.scaled(by: scale)
+    for (x, y) in [(0.0, 0.0), (0.5, 0), (1, 0), (0, 0.5), (1, 0.5), (0, 1), (0.5, 1), (1, 1)] {
+        let point = BTPoint(x: display.minX + x * display.size.width,
+                            y: display.minY + y * display.size.height)
+        var configuration = BetterTileConfiguration()
+        configuration.layoutWheel.levelCount = levels
+        configuration.layoutWheel.scale = scale
+        let harness = Harness(configuration: configuration, capture: edgeTarget, pointer: point)
+        defer { harness.controller.stop() }
+        harness.activate()
+        let placement = try #require(harness.presenter.presentations.last?.placement)
+        #expect(harness.presenter.selection == nil)
+        harness.controller.handlePointer(BTPoint(x: point.x + 3, y: point.y + 4))
+        #expect(harness.presenter.selection == nil)
+        let visibleRadius = metrics.diameter(for: levels) / 2 * LayoutWheelMetrics.selectedScale
+        #expect(placement.center.x - visibleRadius >= display.minX)
+        #expect(placement.center.x + visibleRadius <= display.maxX)
+        #expect(placement.center.y - visibleRadius >= display.minY)
+        #expect(placement.center.y + visibleRadius <= display.maxY)
+        for ring in configuration.layoutWheel.activeRings {
+            let radius = (metrics.innerRadius(for: ring) + metrics.outerRadius(for: ring, levelCount: levels)) / 2
+            for sector in LayoutWheelSector.allCases {
+                let angle = Double(sector.rawValue) * .pi / 4
+                harness.controller.handlePointer(BTPoint(
+                    x: placement.center.x + sin(angle) * radius,
+                    y: placement.center.y - cos(angle) * radius
+                ))
+                #expect(harness.presenter.selection == LayoutWheelSelection(ring: ring, sector: sector))
+            }
+        }
+        harness.controller.handlePointer(placement.center)
+        #expect(harness.presenter.selection == nil)
+        harness.release()
+        #expect(harness.box.commits.isEmpty)
+    }
+}
+
+@Test @MainActor func wheelAtAnEdgeDoesNotCommitOnOpeningOrJitter() {
+    let point = BTPoint(x: 5, y: 5)
+    let harness = Harness(pointer: point)
+    defer { harness.controller.stop() }
+    harness.activate()
+    harness.controller.handlePointer(BTPoint(x: point.x + 3, y: point.y + 4))
+    harness.release()
+    #expect(harness.box.commits.isEmpty)
+}
+
 @Test @MainActor func pointerDirectionSelectsTheDrawnSectorAndCommitsOnRelease() {
     let harness = Harness()
     harness.activate()

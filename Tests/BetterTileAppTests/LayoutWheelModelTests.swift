@@ -704,7 +704,11 @@ func snapZoneLayoutKeepsTheScreenInsideAvailableSpace(width: Double) {
         let path = IndexPath(item: index, section: 0)
         let item = try #require(view.item(at: path))
         let attributes = try #require(view.collectionViewLayout?.layoutAttributesForItem(at: path))
-        #expect(item.view.frame == attributes.frame)
+        // AppKit aligns item origins to device pixels. A 1x CI display may
+        // round the half-point column origin that a 2x display represents exactly.
+        let pixelTolerance = 0.5 / window.backingScaleFactor + 0.001
+        #expect(abs(item.view.frame.minX - attributes.frame.minX) <= pixelTolerance)
+        #expect(abs(item.view.frame.minY - attributes.frame.minY) <= pixelTolerance)
         #expect(item.view.frame.width == MenuPanelMetrics.tileWidth)
         #expect(item.view.frame.height == MenuPanelMetrics.tileHeight)
     }
@@ -911,7 +915,11 @@ func shutdownIgnoresPendingWindowEvents(deliveredAfterShutdown: Bool) async thro
     coordinator.previewDrop(at: CGPoint(x: neighbor.midX, y: neighbor.midY), in: view, time: 1)
     let firstPreview = coordinator.displayed
     coordinator.previewDrop(at: CGPoint(x: neighbor.midX, y: 100), in: view, time: 1.01)
-    #expect(coordinator.displayed == firstPreview)
+    if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+        #expect(coordinator.displayed.last == .rightHalf)
+    } else {
+        #expect(coordinator.displayed == firstPreview)
+    }
     coordinator.previewDrop(at: CGPoint(x: neighbor.midX, y: 100), in: view, time: 1.2)
     #expect(coordinator.displayed.last == .rightHalf)
     coordinator.endDrag(in: view)

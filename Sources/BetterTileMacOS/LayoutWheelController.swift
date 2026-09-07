@@ -106,6 +106,7 @@ public final class LayoutWheelController {
         var trigger: Trigger
         var placement: LayoutWheelPlacement
         var selection: LayoutWheelSelection?
+        var hasPointerMoved = false
         var unavailableReasons: [LayoutWheelCommand: String] = [:]
     }
 
@@ -497,10 +498,10 @@ public final class LayoutWheelController {
             anchor: anchor,
             diameter: effectiveMetrics.presentationDiameter(for: wheel.levelCount),
             contentHeight: effectiveMetrics.presentationHeight(for: wheel.levelCount),
+            overflowPadding: effectiveMetrics.overflowPadding(for: wheel.levelCount),
             visibleFrame: target.visibleFrame
         )
-        var session = Session(target: target, trigger: trigger, placement: placement)
-        session.selection = selection(for: anchor, placement: placement)
+        let session = Session(target: target, trigger: trigger, placement: placement)
         phase = .open(session)
         guard syncGestureMonitors() else { return }
         gestureBeganHandler?()
@@ -525,10 +526,18 @@ public final class LayoutWheelController {
 
     func handlePointer(_ position: BTPoint) {
         guard case var .open(session) = phase else { return }
+        if !session.hasPointerMoved {
+            // Opening near an edge can place a slice under the stationary
+            // pointer. Require deliberate movement before choosing anything.
+            guard hypot(position.x - session.placement.anchor.x,
+                        position.y - session.placement.anchor.y) > 5 else { return }
+            session.hasPointerMoved = true
+        }
         let updated = selection(for: position, placement: session.placement)
-        guard updated != session.selection else { return }
+        let changed = updated != session.selection
         session.selection = updated
         phase = .open(session)
+        guard changed else { return }
         refreshPreview()
     }
 
@@ -552,16 +561,15 @@ public final class LayoutWheelController {
         }
     }
 
-    /// Selection is measured from the anchor, never from the drawn centre, so
-    /// clamping the wheel onto the display cannot rotate the directions.
+    /// Drawing and selection share a center, including at screen edges.
     private func selection(
         for position: BTPoint,
         placement: LayoutWheelPlacement
     ) -> LayoutWheelSelection? {
         effectiveMetrics.geometry(for: wheel.levelCount).selection(
             for: BTPoint(
-                x: position.x - placement.anchor.x,
-                y: position.y - placement.anchor.y
+                x: position.x - placement.center.x,
+                y: position.y - placement.center.y
             ),
             levelCount: wheel.levelCount
         )
