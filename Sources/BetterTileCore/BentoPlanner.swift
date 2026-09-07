@@ -117,9 +117,11 @@ public struct BentoCrossDisplayResult: Sendable {
 /// every frame and minimize/restore operation required for the next state.
 public struct BentoPlanner: Sendable {
     public var maximumManagedWindows: Int
+    public var newWindowSide: BentoNewWindowSide
 
-    public init(maximumManagedWindows: Int = 6) {
+    public init(maximumManagedWindows: Int = 6, newWindowSide: BentoNewWindowSide = .automatic) {
         self.maximumManagedWindows = max(1, maximumManagedWindows)
+        self.newWindowSide = newWindowSide
     }
 
     public func plan(
@@ -429,6 +431,9 @@ public struct BentoPlanner: Sendable {
             next.layout.setFloating(true, windowID: windowID)
             return BentoPlannerResult(state: next, pill: .overflow(bentoOverflowMessage), writesFrames: false)
         }
+        if let preferred = preferredInsertion(windowID, state: next, observation: observation) {
+            return preferred
+        }
         let existingWindowIDs = next.layout.root?.windowIDs ?? []
         let automaticRoot = automaticLayout(
             windowIDs: existingWindowIDs,
@@ -455,6 +460,48 @@ public struct BentoPlanner: Sendable {
             }
         }
         return solved(next, observation: observation, pill: .success("Pane added"))
+    }
+
+    /// Split a pane toward the preferred edge without rebuilding existing
+    /// partitions. A vacancy takes priority; size limits can use normal insertion.
+    private func preferredInsertion(
+        _ windowID: WindowID,
+        state: BentoRuntimeState,
+        observation: BentoObservation
+    ) -> BentoPlannerResult? {
+        let edge: BentoPaneDropPosition
+        switch newWindowSide {
+        case .automatic: return nil
+        case .left: edge = .left
+        case .right: edge = .right
+        case .top: edge = .top
+        case .bottom: edge = .bottom
+        }
+        if !state.layout.vacantFrames(in: observation.bounds).isEmpty {
+            var next = state
+            next.layout.setFloating(false, windowID: windowID)
+            next.layout.insert(windowID, in: observation.bounds, currentFrames: observation.frames)
+            let result = solved(next, observation: observation, pill: .success("Pane added"))
+            return result.writesFrames ? result : nil
+        }
+        var best: (distance: Double, result: BentoPlannerResult)?
+        for targetID in (state.layout.root?.windowIDs ?? []).sorted() {
+            var next = state
+            guard next.layout.reinsert(windowID, beside: targetID, edge: edge) else { continue }
+            let result = solved(next, observation: observation, pill: .success("Pane added"))
+            guard result.writesFrames,
+                  let frame = result.placements.first(where: { $0.windowID == windowID })?.frame
+            else { continue }
+            let distance: Double = switch newWindowSide {
+            case .left: frame.midX - observation.bounds.minX
+            case .right: observation.bounds.maxX - frame.midX
+            case .top: frame.midY - observation.bounds.minY
+            case .bottom: observation.bounds.maxY - frame.midY
+            case .automatic: 0
+            }
+            if best == nil || distance < best!.distance { best = (distance, result) }
+        }
+        return best?.result
     }
 
     private func remove(

@@ -335,11 +335,12 @@ func previewShapesRetainTheirArmsAndFollowAcceptedGeometry(shape: DividerPreview
 }
 
 enum DividerTestEnding: CaseIterable {
-    case commit, cancel, participantLoss, failedAcquisition
+    case commit, rapidCommit, cancel, participantLoss, failedAcquisition
 }
 
 @Test(arguments: [ResizeFeedbackMode.ghost, .live], DividerTestEnding.allCases)
 @MainActor func dividerGestureCommitsOrRollsBackWithTheFakeWindowSystem(feedback: ResizeFeedbackMode, ending: DividerTestEnding) async throws {
+    _ = NSApplication.shared
     let system = FakeWindowSystem()
     let bounds = BTRect(x: -10_000, y: -10_000, width: 800, height: 600)
     let display = DisplayID(rawValue: "main")
@@ -375,7 +376,7 @@ enum DividerTestEnding: CaseIterable {
     let screen = try #require(NSScreen.screens.first)
     for delta in [20.0, 50.0] {
         controller.drag(to: CGPoint(x: start.x + delta, y: screen.frame.maxY - (start.y + delta)))
-        try await Task.sleep(for: .milliseconds(40))
+        if ending != .rapidCommit { try await Task.sleep(for: .milliseconds(40)) }
     }
     if feedback == .ghost { #expect(system.frameWriteCounts.isEmpty) }
     if ending == .participantLoss {

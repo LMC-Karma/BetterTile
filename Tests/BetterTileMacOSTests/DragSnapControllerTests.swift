@@ -16,6 +16,7 @@ import Testing
         configuration: BetterTileConfiguration()
     )
     let bundleIdentifier = "com.example.Test"
+    controller.bentoStateProvider = { _ in BentoLayoutState(root: .leaf(window.id)) }
 
     #expect(controller.allowsBentoDrag(for: window))
 
@@ -88,6 +89,73 @@ import Testing
     ))
 
     #expect(system.windows[0].frame == BTRect(x: 0, y: 0, width: 500, height: 800))
+}
+
+@Test @MainActor func singleWindowBentoDesktopWithoutATreeStillDragSnaps() {
+    let system = FakeWindowSystem()
+    let controller = DragSnapController(
+        coordinator: WindowCoordinator(system: system),
+        configuration: BetterTileConfiguration()
+    )
+    controller.activeModeProvider = { _ in .bento }
+    controller.bentoStateProvider = { _ in BentoLayoutState() }
+    var bentoStartAttempts = 0
+    controller.bentoDragBeganHandler = { _, _ in
+        bentoStartAttempts += 1
+        // A new one-window desktop has no Bento tree to freeze.
+        return false
+    }
+    controller.setUsesSharedGestureEvents(true)
+    controller.handleSharedGestureEvent(GlobalGestureEvent(
+        kind: .leftMouseDown, position: BTPoint(x: 300, y: 220),
+        button: 0, modifiers: [], timestamp: 1
+    ))
+    system.windows[0].frame.origin.x += 3
+    controller.handleSharedGestureEvent(GlobalGestureEvent(
+        kind: .leftMouseDragged, position: BTPoint(x: 1, y: 400),
+        button: 0, modifiers: [], timestamp: 2
+    ))
+    controller.handleSharedGestureEvent(GlobalGestureEvent(
+        kind: .leftMouseUp, position: BTPoint(x: 1, y: 400),
+        button: 0, modifiers: [], timestamp: 3
+    ))
+    #expect(system.windows[0].frame == BTRect(x: 0, y: 0, width: 500, height: 800))
+    #expect(bentoStartAttempts == 0)
+    #expect(!controller.isGestureActive)
+}
+
+@Test(arguments: [1.0, 500.0, 999.0], [false, true])
+@MainActor func snapReleaseUsesItsFinalPositionAndSuppression(x: Double, suppressed: Bool) {
+    let system = FakeWindowSystem()
+    let controller = DragSnapController(coordinator: WindowCoordinator(system: system), configuration: BetterTileConfiguration())
+    controller.setUsesSharedGestureEvents(true)
+    func send(_ kind: GlobalGestureEventKind, x: Double, y: Double, modifiers: ShortcutModifiers = []) {
+        controller.handleSharedGestureEvent(GlobalGestureEvent(kind: kind, position: BTPoint(x: x, y: y), button: 0, modifiers: modifiers, timestamp: 1))
+    }
+    send(.leftMouseDown, x: 300, y: 220)
+    system.windows[0].frame.origin.x += 3
+    let dragged = system.windows[0].frame
+    send(.leftMouseDragged, x: 1, y: 400)
+    send(.leftMouseUp, x: x, y: 400, modifiers: suppressed ? .option : [])
+    if suppressed || x == 500 {
+        #expect(system.windows[0].frame == dragged)
+        #expect(system.frameWriteCounts.isEmpty)
+    } else {
+        #expect(system.windows[0].frame == BTRect(x: x == 1 ? 0 : 500, y: 0, width: 500, height: 800))
+    }
+}
+
+@Test @MainActor func centerSnapPreservesTheDraggedWindowsSize() {
+    let system = FakeWindowSystem()
+    var configuration = BetterTileConfiguration()
+    configuration.snapAreaBindings = [SnapAreaBinding(area: .left, action: .center)]
+    let controller = DragSnapController(coordinator: WindowCoordinator(system: system), configuration: configuration)
+    controller.setUsesSharedGestureEvents(true)
+    controller.handleSharedGestureEvent(GlobalGestureEvent(kind: .leftMouseDown, position: BTPoint(x: 300, y: 220), button: 0, modifiers: [], timestamp: 1))
+    system.windows[0].frame.origin.x += 3
+    controller.handleSharedGestureEvent(GlobalGestureEvent(kind: .leftMouseDragged, position: BTPoint(x: 1, y: 400), button: 0, modifiers: [], timestamp: 2))
+    controller.handleSharedGestureEvent(GlobalGestureEvent(kind: .leftMouseUp, position: BTPoint(x: 1, y: 400), button: 0, modifiers: [], timestamp: 3))
+    #expect(system.windows[0].frame == BTRect(x: 200, y: 200, width: 600, height: 400))
 }
 
 @Test @MainActor func cancellingSharedGesturePreventsSnapPlacement() {

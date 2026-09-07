@@ -8,8 +8,6 @@ import BetterTileMacOS
 import SwiftUI
 import UniformTypeIdentifiers
 
-private let menuActionDropType = UTType(exportedAs: "com.lmckarma.BetterTile.menu-action")
-
 private enum SettingsDestination: String, CaseIterable, Identifiable {
     case general = "General"
     case windowLayout = "Window Layout"
@@ -38,7 +36,7 @@ private enum SettingsDestination: String, CaseIterable, Identifiable {
                 + "keyboard shortcuts master toggle macos tiling move resize edge "
                 + "advanced enhanced user interface chromium electron voiceover"
         case .windowLayout:
-            "mode manual native bento resize linked divider shortcut keyboard hotkey halves thirds quarters sixths move display restore"
+            "mode manual native bento resize linked divider shortcut keyboard hotkey halves thirds quarters sixths move display restore new window side automatic left right top bottom"
         case .snapZones:
             "drag snap edge corner title bar double click maximize"
         case .menuBar:
@@ -489,6 +487,20 @@ private struct WindowLayoutSettings: View {
             }
 
             Section("Bento Behavior") {
+                Picker("New window side", selection: configurationBinding(\.bentoNewWindowSide)) {
+                    Text("Automatic").tag(BentoNewWindowSide.automatic)
+                    Text("Left").tag(BentoNewWindowSide.left)
+                    Text("Right").tag(BentoNewWindowSide.right)
+                    Text("Top").tag(BentoNewWindowSide.top)
+                    Text("Bottom").tag(BentoNewWindowSide.bottom)
+                }
+                Text(
+                    "Choose where new windows prefer to join a Bento layout. "
+                        + "Available space and window size limits may affect placement."
+                )
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+
                 HStack {
                     Text("Pane gap")
                     Slider(value: configurationBinding(\.bentoInnerGap), in: 0...12, step: 1)
@@ -785,10 +797,6 @@ enum MenuActionOrder {
 
 private struct MenuBarSettings: View {
     @Bindable var model: BetterTileModel
-    @State private var draggingAction: WindowAction?
-    @State private var insertionIndex: Int?
-    @FocusState private var focusedAction: WindowAction?
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var selectedActions: [WindowAction] { model.configuration.menuBarActions }
 
@@ -822,7 +830,7 @@ private struct MenuBarSettings: View {
                     Button("Deselect All") { setActions([]) }
                         .disabled(selectedActions.isEmpty)
                 }
-                Text("Window mode, drag snapping, Repair Bento, Settings, Feedback, and Quit stay in your menu.")
+                Text("Window mode, drag snapping, Repair Bento, Settings, and Quit stay in your menu.")
                     .font(.callout).foregroundStyle(.secondary)
             }
             .padding(.horizontal, 24)
@@ -894,92 +902,21 @@ private struct MenuBarSettings: View {
             .clipShape(RoundedRectangle(cornerRadius: 12))
             .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(.separator))
 
-            Text("Drop before or after a tile. Hold Option and press an arrow key to move the focused tile.")
+            Text("Move onto a neighboring tile to reorder. Hold Option and press an arrow key to move the focused tile.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
         }
     }
 
     private var actionGrid: some View {
-        LazyVGrid(
-            columns: MenuPanelMetrics.columns,
-            spacing: MenuPanelMetrics.gap
-        ) {
-            ForEach(Array(selectedActions.enumerated()), id: \.element) { index, action in
-                MenuPanelActionButton(
-                    action: action,
-                    shortcut: shortcut(for: action)
-                ) {}
-                .focused($focusedAction, equals: action)
-                .onDrag {
-                    draggingAction = action
-                    insertionIndex = nil
-                    return NSItemProvider(
-                        item: action.rawValue as NSString,
-                        typeIdentifier: menuActionDropType.identifier
-                    )
-                }
-                .onDrop(
-                    of: [menuActionDropType],
-                    delegate: MenuActionDropDelegate(
-                        destinationIndex: index,
-                        tileWidth: MenuPanelMetrics.tileWidth,
-                        selectedActions: selectedActions,
-                        draggingAction: $draggingAction,
-                        insertionIndex: $insertionIndex,
-                        commit: commitDrop
-                    )
-                )
-                .overlay(alignment: insertionIndex == index ? .leading : .trailing) {
-                    if insertionIndex == index || insertionIndex == index + 1 {
-                        Capsule()
-                            .fill(.tint)
-                            .frame(width: 3)
-                            .padding(.vertical, 4)
-                            .accessibilityHidden(true)
-                    }
-                }
-                .onKeyPress(keys: [.leftArrow, .rightArrow, .upArrow, .downArrow]) { press in
-                    guard press.modifiers.contains(.option) else { return .ignored }
-                    let offset = switch press.key {
-                    case .leftArrow: -1
-                    case .rightArrow: 1
-                    case .upArrow: -2
-                    case .downArrow: 2
-                    default: 0
-                    }
-                    move(action, by: offset)
-                    return .handled
-                }
-                .accessibilityHint("Drag to reorder. Option with arrow keys also moves this action.")
-                .accessibilityValue("Position \(index + 1) of \(selectedActions.count)")
-                .accessibilityAction(named: "Move Earlier") { move(action, by: -1) }
-                .accessibilityAction(named: "Move Later") { move(action, by: 1) }
-                .accessibilityAction(named: "Move Up One Row") { move(action, by: -2) }
-                .accessibilityAction(named: "Move Down One Row") { move(action, by: 2) }
+        MenuActionCollection(
+            actions: selectedActions,
+            shortcuts: model.configuration.shortcuts,
+            commit: { actions, moved in
+                setActions(actions)
+                announceMove(moved, actions: actions)
             }
-
-            Color.clear
-                .frame(height: 22)
-                .overlay(alignment: .bottom) {
-                    if insertionIndex == selectedActions.count {
-                        Capsule().fill(.tint).frame(height: 3)
-                    }
-                }
-                .onDrop(
-                    of: [menuActionDropType],
-                    delegate: MenuActionDropDelegate(
-                        destinationIndex: selectedActions.count,
-                        tileWidth: 0,
-                        selectedActions: selectedActions,
-                        draggingAction: $draggingAction,
-                        insertionIndex: $insertionIndex,
-                        commit: commitDrop
-                    )
-                )
-                .accessibilityHidden(true)
-        }
-        .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: selectedActions)
+        )
     }
 
     private func actionBinding(_ action: WindowAction) -> Binding<Bool> {
@@ -1002,28 +939,6 @@ private struct MenuBarSettings: View {
         model.configuration.shortcuts.first(where: { $0.action == action })?.shortcut
     }
 
-    private func commitDrop(_ source: WindowAction, _ index: Int) {
-        defer {
-            draggingAction = nil
-            insertionIndex = nil
-        }
-        guard let reordered = MenuActionOrder.moving(
-            source,
-            toInsertionIndex: index,
-            in: selectedActions
-        ) else { return }
-        setActions(reordered)
-        focusedAction = source
-        announceMove(source, actions: reordered)
-    }
-
-    private func move(_ action: WindowAction, by offset: Int) {
-        guard let reordered = MenuActionOrder.moving(action, by: offset, in: selectedActions) else { return }
-        setActions(reordered)
-        focusedAction = action
-        announceMove(action, actions: reordered)
-    }
-
     private func setActions(_ actions: [WindowAction]) {
         model.updateConfiguration { $0.menuBarActions = actions }
     }
@@ -1036,44 +951,376 @@ private struct MenuBarSettings: View {
     }
 }
 
-private struct MenuActionDropDelegate: DropDelegate {
-    let destinationIndex: Int
-    let tileWidth: CGFloat
-    let selectedActions: [WindowAction]
-    @Binding var draggingAction: WindowAction?
-    @Binding var insertionIndex: Int?
-    let commit: (WindowAction, Int) -> Void
+struct MenuActionDrag {
+    let source: WindowAction
+    let original: [WindowAction]
+    var preview: [WindowAction]
 
-    func validateDrop(info: DropInfo) -> Bool {
-        guard let draggingAction, selectedActions.contains(draggingAction) else { return false }
-        return info.hasItemsConforming(to: [menuActionDropType])
+    init(source: WindowAction, actions: [WindowAction]) {
+        self.source = source
+        original = actions
+        preview = actions
     }
 
-    func dropEntered(info: DropInfo) { updateInsertion(info) }
-
-    func dropExited(info: DropInfo) {
-        insertionIndex = nil
+    mutating func move(to insertion: Int) -> (from: Int, to: Int)? {
+        guard let from = preview.firstIndex(of: source),
+              let reordered = MenuActionOrder.moving(source, toInsertionIndex: insertion, in: preview),
+              let to = reordered.firstIndex(of: source) else { return nil }
+        preview = reordered
+        return (from, to)
     }
 
-    func dropUpdated(info: DropInfo) -> DropProposal? {
-        updateInsertion(info)
-        return DropProposal(operation: validateDrop(info: info) ? .move : .forbidden)
-    }
+    var committedOrder: [WindowAction]? { preview == original ? nil : preview }
+}
 
-    func performDrop(info: DropInfo) -> Bool {
-        guard validateDrop(info: info), let source = draggingAction else { return false }
-        commit(source, insertionIndex ?? destinationIndex)
-        return true
-    }
+/// AppKit owns the full drag session, including cancellation and edge scrolling.
+/// Hover ordering stays local; configuration is written only after a valid drop.
+struct MenuActionCollection: NSViewRepresentable {
+    var actions: [WindowAction]
+    var shortcuts: [ShortcutBinding]
+    var commit: ([WindowAction], WindowAction) -> Void
 
-    private func updateInsertion(_ info: DropInfo) {
-        guard validateDrop(info: info) else {
-            insertionIndex = nil
-            return
+    func makeCoordinator() -> Coordinator { Coordinator(parent: self) }
+
+    func makeNSView(context: Context) -> MenuPanelNativeScrollView {
+        let scroll = MenuPanelNativeScrollView(frame: .zero)
+        let view = MenuReorderCollectionView(frame: NSRect(x: 0, y: 0, width: MenuPanelMetrics.width - MenuPanelMetrics.padding * 2 + MenuPanelMetrics.scrollContentInset * 2, height: 0))
+        view.autoresizingMask = [.width]
+        let layout = NSCollectionViewFlowLayout()
+        layout.itemSize = NSSize(width: MenuPanelMetrics.tileWidth, height: MenuPanelMetrics.tileHeight)
+        layout.minimumInteritemSpacing = MenuPanelMetrics.gap
+        layout.minimumLineSpacing = MenuPanelMetrics.gap
+        layout.sectionInset = NSEdgeInsets(top: 0, left: MenuPanelMetrics.scrollContentInset,
+                                          bottom: 22, right: MenuPanelMetrics.scrollContentInset)
+        view.collectionViewLayout = layout
+        view.backgroundColors = [.clear]
+        view.isSelectable = true
+        view.allowsMultipleSelection = false
+        view.register(MenuActionCollectionItem.self, forItemWithIdentifier: Coordinator.itemID)
+        view.registerForDraggedTypes([Coordinator.dragType])
+        view.setDraggingSourceOperationMask(.move, forLocal: true)
+        view.setDraggingSourceOperationMask([], forLocal: false)
+        view.dataSource = context.coordinator
+        view.delegate = context.coordinator
+        view.reloadData()
+        view.moveSelection = { [weak coordinator = context.coordinator, weak view] offset in
+            guard let coordinator, let view,
+                  let index = view.selectionIndexPaths.first?.item,
+                  coordinator.displayed.indices.contains(index) else { return }
+            coordinator.move(coordinator.displayed[index], by: offset, in: view)
         }
-        insertionIndex = tileWidth > 0 && info.location.x >= tileWidth / 2
-            ? destinationIndex + 1
-            : destinationIndex
+        scroll.documentView = view
+        return scroll
+    }
+
+    func updateNSView(_ scroll: MenuPanelNativeScrollView, context: Context) {
+        guard let view = scroll.documentView as? MenuReorderCollectionView else { return }
+        let coordinator = context.coordinator
+        let changed = coordinator.parent.actions != actions || coordinator.parent.shortcuts != shortcuts
+        coordinator.parent = self
+        if changed {
+            coordinator.endDrag(in: view)
+        }
+    }
+
+    static func dismantleNSView(_ scroll: MenuPanelNativeScrollView, coordinator: Coordinator) {
+        (scroll.documentView as? MenuReorderCollectionView)?.stopDragFrames()
+    }
+
+    @MainActor final class Coordinator: NSObject, NSCollectionViewDataSource, NSCollectionViewDelegate {
+        static let itemID = NSUserInterfaceItemIdentifier("menu-action")
+        static let dragType = NSPasteboard.PasteboardType("com.lmckarma.BetterTile.menu-action")
+        var parent: MenuActionCollection
+        var displayed: [WindowAction]
+        var drag: MenuActionDrag?
+        private var reorderAnimationEndsAt: TimeInterval = 0
+
+        init(parent: MenuActionCollection) {
+            self.parent = parent
+            displayed = parent.actions
+        }
+
+        func collectionView(_ collectionView: NSCollectionView, numberOfItemsInSection section: Int) -> Int {
+            displayed.count
+        }
+
+        func collectionView(_ collectionView: NSCollectionView, itemForRepresentedObjectAt indexPath: IndexPath) -> NSCollectionViewItem {
+            let item = collectionView.makeItem(withIdentifier: Self.itemID, for: indexPath) as! MenuActionCollectionItem
+            let action = displayed[indexPath.item]
+            let label = MenuPanelActionButton(action: action, shortcut: parent.shortcuts.first { $0.action == action }?.shortcut) {}
+                .accessibilityHint("Drag to reorder. Option with arrow keys moves the selected action.")
+                .accessibilityValue("Position \(indexPath.item + 1) of \(displayed.count)")
+                .accessibilityAction(named: "Move Earlier") { [weak self, weak collectionView] in
+                    guard let self, let collectionView else { return }
+                    self.move(action, by: -1, in: collectionView)
+                }
+                .accessibilityAction(named: "Move Later") { [weak self, weak collectionView] in
+                    guard let self, let collectionView else { return }
+                    self.move(action, by: 1, in: collectionView)
+                }
+            item.host.rootView = AnyView(label)
+            item.isDraggingPlaceholder = drag?.source == action
+            return item
+        }
+
+        func collectionView(_ collectionView: NSCollectionView, pasteboardWriterForItemAt indexPath: IndexPath) -> NSPasteboardWriting? {
+            guard displayed.indices.contains(indexPath.item) else { return nil }
+            let writer = NSPasteboardItem()
+            writer.setString(displayed[indexPath.item].rawValue, forType: Self.dragType)
+            return writer
+        }
+
+        func collectionView(_ collectionView: NSCollectionView, draggingSession session: NSDraggingSession, willBeginAt screenPoint: NSPoint, forItemsAt indexPaths: Set<IndexPath>) {
+            guard let index = indexPaths.first?.item else { return }
+            beginDrag(at: index, in: collectionView)
+            (collectionView as? MenuReorderCollectionView)?.startDragFrames(session: session)
+        }
+
+        func beginDrag(at index: Int, in collectionView: NSCollectionView) {
+            guard displayed.indices.contains(index) else { return }
+            let source = displayed[index]
+            drag = MenuActionDrag(source: source, actions: parent.actions)
+            reorderAnimationEndsAt = 0
+            // Let AppKit capture the lifted tile before leaving an empty slot.
+            DispatchQueue.main.async { [weak self, weak collectionView] in
+                guard let self, let collectionView, self.drag?.source == source,
+                      let index = self.displayed.firstIndex(of: source) else { return }
+                (collectionView.item(at: IndexPath(item: index, section: 0)) as? MenuActionCollectionItem)?.isDraggingPlaceholder = true
+            }
+        }
+
+        func collectionView(_ collectionView: NSCollectionView, validateDrop info: any NSDraggingInfo,
+                            proposedIndexPath proposed: AutoreleasingUnsafeMutablePointer<NSIndexPath>,
+                            dropOperation operation: UnsafeMutablePointer<NSCollectionView.DropOperation>) -> NSDragOperation {
+            guard (info.draggingSource as? NSCollectionView) === collectionView, drag != nil else { return [] }
+            previewDrop(at: collectionView.convert(info.draggingLocation, from: nil), in: collectionView)
+            // Our preview already occupies the destination. Suppress AppKit's
+            // separate insertion gap, which otherwise shifts the hover target.
+            operation.pointee = .on
+            if let source = drag?.source, let index = displayed.firstIndex(of: source) {
+                proposed.pointee = NSIndexPath(forItem: index, inSection: 0)
+            }
+            return .move
+        }
+
+        func previewDrop(at point: NSPoint, in collectionView: NSCollectionView,
+                         time: TimeInterval = CACurrentMediaTime(), finishing: Bool = false) {
+            guard finishing || time >= reorderAnimationEndsAt else { return }
+            guard var drag, let sourceIndex = displayed.firstIndex(of: drag.source) else { return }
+            let target = displayed.indices.compactMap { index -> (Int, CGFloat)? in
+                guard let frame = collectionView.layoutAttributesForItem(at: IndexPath(item: index, section: 0))?.frame else { return nil }
+                let dx = point.x - frame.midX
+                let dy = point.y - frame.midY
+                return (index, dx * dx + dy * dy)
+            }.min { $0.1 < $1.1 }?.0
+            guard let target else { return }
+            let insertion = target > sourceIndex ? target + 1 : target
+            if let movement = drag.move(to: insertion) {
+                self.drag = drag
+                displayed = drag.preview
+                let duration = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0 : 0.16
+                reorderAnimationEndsAt = time + duration
+                NSAnimationContext.runAnimationGroup { context in
+                    context.duration = duration
+                    collectionView.animator().moveItem(at: IndexPath(item: movement.from, section: 0), to: IndexPath(item: movement.to, section: 0))
+                }
+            }
+        }
+
+        func collectionView(_ collectionView: NSCollectionView, acceptDrop info: any NSDraggingInfo, indexPath: IndexPath, dropOperation: NSCollectionView.DropOperation) -> Bool {
+            guard (info.draggingSource as? NSCollectionView) === collectionView, drag != nil else { return false }
+            previewDrop(at: collectionView.convert(info.draggingLocation, from: nil), in: collectionView, finishing: true)
+            guard let drag else { return false }
+            (collectionView as? MenuReorderCollectionView)?.stopDragFrames()
+            self.drag = nil
+            if let order = drag.committedOrder {
+                parent.actions = order
+                parent.commit(order, drag.source)
+            }
+            return true
+        }
+
+        func collectionView(_ collectionView: NSCollectionView, draggingSession session: NSDraggingSession, endedAt screenPoint: NSPoint, dragOperation: NSDragOperation) {
+            endDrag(in: collectionView)
+        }
+
+        func endDrag(in collectionView: NSCollectionView) {
+            (collectionView as? MenuReorderCollectionView)?.stopDragFrames()
+            reorderAnimationEndsAt = 0
+            let selected = drag?.source ?? collectionView.selectionIndexPaths.first.flatMap {
+                displayed.indices.contains($0.item) ? displayed[$0.item] : nil
+            }
+            drag = nil
+            displayed = parent.actions
+            for case let item as MenuActionCollectionItem in collectionView.visibleItems() {
+                item.isDraggingPlaceholder = false
+            }
+            collectionView.reloadData()
+            if let selected, let index = displayed.firstIndex(of: selected) {
+                collectionView.selectionIndexPaths = [IndexPath(item: index, section: 0)]
+            }
+        }
+
+        func move(_ action: WindowAction, by offset: Int, in view: NSCollectionView) {
+            guard drag == nil, let order = MenuActionOrder.moving(action, by: offset, in: parent.actions),
+                  let index = order.firstIndex(of: action) else { return }
+            displayed = order
+            parent.actions = order
+            parent.commit(order, action)
+            view.reloadData()
+            view.selectionIndexPaths = [IndexPath(item: index, section: 0)]
+            view.window?.makeFirstResponder(view)
+            // Resolve pending collection layout before asking AppKit to reveal it.
+            if let frame = view.layoutAttributesForItem(at: IndexPath(item: index, section: 0))?.frame {
+                view.scrollToVisible(frame)
+            }
+        }
+    }
+}
+
+private final class MenuDragLabelHost: NSHostingView<AnyView> {
+    // The collection view, not the decorative SwiftUI Button, owns pointer input.
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        isHidden || !frame.contains(point) ? nil : self
+    }
+    override func mouseDown(with event: NSEvent) { nextResponder?.mouseDown(with: event) }
+    override func mouseDragged(with event: NSEvent) { nextResponder?.mouseDragged(with: event) }
+    override func mouseUp(with event: NSEvent) { nextResponder?.mouseUp(with: event) }
+}
+
+private final class MenuActionCollectionItem: NSCollectionViewItem {
+    let host = MenuDragLabelHost(rootView: AnyView(EmptyView()))
+
+    override func loadView() { view = host }
+
+    var isDraggingPlaceholder = false {
+        didSet { view.alphaValue = isDraggingPlaceholder ? 0 : 1 }
+    }
+
+    override func apply(_ layoutAttributes: NSCollectionViewLayoutAttributes) {
+        super.apply(layoutAttributes)
+        view.alphaValue = isDraggingPlaceholder ? 0 : 1
+    }
+
+    override var isSelected: Bool {
+        didSet {
+            view.wantsLayer = true
+            view.layer?.cornerRadius = 8
+            view.layer?.borderColor = NSColor.controlAccentColor.cgColor
+            view.layer?.borderWidth = isSelected ? 2 : 0
+        }
+    }
+}
+
+final class MenuReorderCollectionView: NSCollectionView {
+    var lastDragScrollTime: TimeInterval?
+    private(set) var dragDisplayLink: CADisplayLink?
+    private var dragWindowPoint: NSPoint?
+    private weak var dragSession: NSDraggingSession?
+
+    override func wantsPeriodicDraggingUpdates() -> Bool { true }
+
+    override func draggingEntered(_ sender: any NSDraggingInfo) -> NSDragOperation {
+        updateDragFrames(sender)
+        return super.draggingEntered(sender)
+    }
+
+    override func draggingUpdated(_ sender: any NSDraggingInfo) -> NSDragOperation {
+        updateDragFrames(sender)
+        return super.draggingUpdated(sender)
+    }
+
+    private func updateDragFrames(_ sender: any NSDraggingInfo) {
+        guard (sender.draggingSource as? NSCollectionView) === self,
+              (delegate as? MenuActionCollection.Coordinator)?.drag != nil else { return }
+        dragWindowPoint = sender.draggingLocation
+        startDragFrames()
+    }
+
+    func startDragFrames(session: NSDraggingSession) {
+        dragSession = session
+        startDragFrames()
+    }
+
+    private func startDragFrames() {
+        guard dragDisplayLink == nil else { return }
+        let link = (window?.contentView ?? self).displayLink(target: self, selector: #selector(drawDragFrame(_:)))
+        dragDisplayLink = link
+        link.add(to: .main, forMode: .common)
+        link.add(to: .main, forMode: .eventTracking)
+    }
+
+    @objc private func drawDragFrame(_ link: CADisplayLink) {
+        advanceDragFrame(time: link.timestamp)
+    }
+
+    func advanceDragFrame(time: TimeInterval) {
+        // The source session keeps reporting the cursor after it leaves the
+        // destination, including above or below the Settings window.
+        let point = dragSession.flatMap { session in
+            window?.convertPoint(fromScreen: session.draggingLocation)
+        } ?? dragWindowPoint
+        guard let point else { return }
+        scrollDuringDrag(at: point, time: time)
+        let local = convert(point, from: nil)
+        if visibleRect.contains(local) {
+            (delegate as? MenuActionCollection.Coordinator)?.previewDrop(at: local, in: self, time: time)
+        }
+    }
+
+    func stopDragFrames() {
+        dragDisplayLink?.invalidate()
+        dragDisplayLink = nil
+        dragWindowPoint = nil
+        dragSession = nil
+        lastDragScrollTime = nil
+    }
+
+    override func viewWillMove(toWindow newWindow: NSWindow?) {
+        if newWindow == nil { stopDragFrames() }
+        super.viewWillMove(toWindow: newWindow)
+    }
+
+    func scrollDuringDrag(at windowPoint: NSPoint, time: TimeInterval) {
+        let point = convert(windowPoint, from: nil)
+        let elapsed = min(0.1, max(0, time - (lastDragScrollTime ?? time)))
+        var container = enclosingScrollView
+        var edge: CGFloat = 0
+        while let scroll = container {
+            let clip = scroll.contentView
+            let visible = convert(clip.visibleRect, from: clip)
+            let band = min(32, visible.height / 3)
+            // Each viewport owns its full width. Its vertical trigger extends
+            // beyond the frame, with speed capped even far outside the window.
+            if band > 0, point.x >= visible.minX, point.x <= visible.maxX {
+                if point.y < visible.minY + band {
+                    edge = -min(1, (visible.minY + band - point.y) / band)
+                } else if point.y > visible.maxY - band {
+                    edge = min(1, (point.y - visible.maxY + band) / band)
+                }
+            }
+            if edge != 0 {
+                let direction: CGFloat = scroll.documentView?.isFlipped == true ? 1 : -1
+                let next = clip.constrainBoundsRect(clip.bounds.offsetBy(dx: 0, dy: edge * 480 * elapsed * direction))
+                if next.origin != clip.bounds.origin {
+                    clip.scroll(to: next.origin)
+                    scroll.reflectScrolledClipView(clip)
+                    break
+                }
+            }
+            // At the list's limit, let the Settings page reveal more content.
+            container = scroll.enclosingScrollView
+        }
+        lastDragScrollTime = edge == 0 ? nil : time
+    }
+
+    var moveSelection: ((Int) -> Void)?
+    override func keyDown(with event: NSEvent) {
+        if event.modifierFlags.contains(.option), let delta = [123: -1, 124: 1, 125: 2, 126: -2][Int(event.keyCode)] {
+            moveSelection?(delta)
+        } else {
+            super.keyDown(with: event)
+        }
     }
 }
 
@@ -1129,7 +1376,7 @@ private struct ZoneSettings: View {
             } footer: {
                 Text(
                     "Assignments apply across displays. Hold the suppression modifier to bypass snapping. "
-                        + "The diagram enlarges trigger regions for selection."
+                        + "The accent marker shows where to drag. The window shows the resulting placement."
                 )
             }
 
@@ -1214,8 +1461,8 @@ enum SnapZonePreviewGeometry {
     }
 
     static func marker(for area: SnapArea, in size: CGSize) -> CGRect {
-        let corner: CGFloat = 16
-        let edge: CGFloat = 6
+        let corner: CGFloat = 22
+        let edge: CGFloat = 7
         switch area {
         case .topLeft: return CGRect(x: 0, y: 0, width: corner, height: corner)
         case .topRight: return CGRect(x: size.width - corner, y: 0, width: corner, height: corner)
@@ -1230,15 +1477,25 @@ enum SnapZonePreviewGeometry {
 
     static func trigger(for area: SnapArea) -> NormalizedRect {
         switch area {
-        case .topLeft: .init(x: 0, y: 0, width: 0.25, height: 0.3)
-        case .top: .init(x: 0.25, y: 0, width: 0.5, height: 0.12)
-        case .topRight: .init(x: 0.75, y: 0, width: 0.25, height: 0.3)
-        case .left: .init(x: 0, y: 0.3, width: 0.12, height: 0.4)
-        case .right: .init(x: 0.88, y: 0.3, width: 0.12, height: 0.4)
-        case .bottomLeft: .init(x: 0, y: 0.7, width: 0.25, height: 0.3)
-        case .bottom: .init(x: 0.25, y: 0.88, width: 0.5, height: 0.12)
-        case .bottomRight: .init(x: 0.75, y: 0.7, width: 0.25, height: 0.3)
+        case .topLeft: .init(x: 0, y: 0, width: 0.3, height: 0.36)
+        case .top: .init(x: 0.3, y: 0, width: 0.4, height: 0.12)
+        case .topRight: .init(x: 0.7, y: 0, width: 0.3, height: 0.36)
+        case .left: .init(x: 0, y: 0.36, width: 0.12, height: 0.28)
+        case .right: .init(x: 0.88, y: 0.36, width: 0.12, height: 0.28)
+        case .bottomLeft: .init(x: 0, y: 0.64, width: 0.3, height: 0.36)
+        case .bottom: .init(x: 0.3, y: 0.88, width: 0.4, height: 0.12)
+        case .bottomRight: .init(x: 0.7, y: 0.64, width: 0.3, height: 0.36)
         }
+    }
+}
+
+struct SnapZoneLayout {
+    var width: CGFloat
+    var isWide: Bool { width >= 620 }
+    var columns: Int { width >= 300 ? 2 : 1 }
+    var monitorWidth: CGFloat { max(1, min(480, isWide ? width - 280 : width)) }
+    var height: CGFloat {
+        monitorWidth / 1.6 + (isWide ? 156 : CGFloat(8 / columns) * 76 + 8) + 36
     }
 }
 
@@ -1246,48 +1503,65 @@ private struct SnapZoneDiagram: View {
     @Binding var selectedArea: SnapArea
     let bindings: [SnapAreaBinding]
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var availableWidth: CGFloat = 640
+
     var body: some View {
-        Grid(horizontalSpacing: 12, verticalSpacing: 9) {
-            GridRow {
-                zoneControl(.topLeft)
-                zoneControl(.top)
-                zoneControl(.topRight)
-            }
-            GridRow {
-                zoneControl(.left)
-                screen
-                    .frame(width: 360, height: 225)
-                zoneControl(.right)
-            }
-            GridRow {
-                zoneControl(.bottomLeft)
-                zoneControl(.bottom)
-                zoneControl(.bottomRight)
-            }
-            GridRow {
-                Color.clear.frame(width: 118, height: 1)
-                HStack(spacing: 18) {
-                    Label("Trigger region", systemImage: "square.fill").foregroundStyle(.tint)
-                    Label("Window placement", systemImage: "rectangle").foregroundStyle(.tint)
+        GeometryReader { proxy in
+            let layout = SnapZoneLayout(width: proxy.size.width)
+            VStack(spacing: 16) {
+                if layout.isWide {
+                    Grid(horizontalSpacing: 12, verticalSpacing: 10) {
+                        GridRow {
+                            zoneControl(.topLeft).frame(width: 128)
+                            zoneControl(.top).frame(width: layout.monitorWidth)
+                            zoneControl(.topRight).frame(width: 128)
+                        }
+                        GridRow {
+                            zoneControl(.left).frame(width: 128)
+                            screen.frame(width: layout.monitorWidth, height: layout.monitorWidth / 1.6)
+                            zoneControl(.right).frame(width: 128)
+                        }
+                        GridRow {
+                            zoneControl(.bottomLeft).frame(width: 128)
+                            zoneControl(.bottom).frame(width: layout.monitorWidth)
+                            zoneControl(.bottomRight).frame(width: 128)
+                        }
+                    }
+                } else {
+                    screen.frame(width: layout.monitorWidth, height: layout.monitorWidth / 1.6)
+                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: layout.columns), spacing: 8) {
+                        ForEach(SnapArea.allCases) { zoneControl($0) }
+                    }
+                }
+                HStack(spacing: 16) {
+                    Label("Drag here", systemImage: "arrow.up.left")
+                        .foregroundStyle(Color.accentColor)
+                    Label("Window placement", systemImage: "rectangle")
                 }
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
-                Color.clear.frame(width: 118, height: 1)
             }
+            .frame(maxWidth: .infinity)
         }
-        .frame(maxWidth: .infinity)
+        .frame(height: SnapZoneLayout(width: availableWidth).height)
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { availableWidth = $0 }
+    }
+
+    private func select(_ area: SnapArea) {
+        withAnimation(reduceMotion ? nil : .easeOut(duration: 0.16)) { selectedArea = area }
     }
 
     private func zoneControl(_ area: SnapArea) -> some View {
         let assignedAction = assignment(for: area)
-        return Button { selectedArea = area } label: {
+        return Button { select(area) } label: {
             HStack(spacing: 8) {
                 if let assignedAction {
                     WindowActionGlyph(action: assignedAction)
                 } else {
                     Image(systemName: "minus.rectangle")
-                        .font(.system(size: 17))
-                        .frame(width: 26, height: 22)
+                        .font(.system(size: 20))
+                        .frame(width: 30, height: 26)
                 }
                 VStack(alignment: .leading, spacing: 3) {
                     Text(area.shortTitle)
@@ -1299,9 +1573,9 @@ private struct SnapZoneDiagram: View {
                 }
             }
             .multilineTextAlignment(.leading)
-            .frame(width: 118, alignment: .leading)
-            .frame(minHeight: 58)
-            .padding(.vertical, 5)
+            .padding(.horizontal, 8)
+            .frame(maxWidth: .infinity, minHeight: 68, maxHeight: 68,
+                   alignment: area == .top || area == .bottom ? .center : .leading)
             .background(
                 selectedArea == area ? Color.accentColor.opacity(0.13) : Color.clear,
                 in: RoundedRectangle(cornerRadius: 8, style: .continuous)
@@ -1315,7 +1589,7 @@ private struct SnapZoneDiagram: View {
                     )
             )
         }
-        .buttonStyle(.plain)
+        .buttonStyle(MenuActionButtonStyle())
         .accessibilityLabel(area.title)
         .accessibilityValue(assignedAction?.title ?? "Disabled")
         .accessibilityAddTraits(selectedArea == area ? .isSelected : [])
@@ -1324,18 +1598,18 @@ private struct SnapZoneDiagram: View {
     private var screen: some View {
         GeometryReader { geometry in
             let size = geometry.size
-            let content = CGRect(x: 8, y: 14, width: size.width - 16, height: size.height - 22)
+            let content = CGRect(origin: .zero, size: size).insetBy(dx: 14, dy: 14)
             let marker = SnapZonePreviewGeometry.marker(for: selectedArea, in: size)
             ZStack(alignment: .topLeading) {
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(Color.accentColor.opacity(0.08))
-                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(.primary.opacity(0.75), lineWidth: 3))
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(.background.opacity(0.5))
+                    .overlay(RoundedRectangle(cornerRadius: 10).stroke(.secondary.opacity(0.5), lineWidth: 1.5))
 
                 if let action = assignment(for: selectedArea),
                    let placement = SnapZonePreviewGeometry.placement(for: action) {
-                    RoundedRectangle(cornerRadius: 4)
-                        .fill(Color.accentColor.opacity(0.13))
-                        .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color.accentColor, lineWidth: 1.5))
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(Color.accentColor.opacity(0.1))
+                        .overlay(RoundedRectangle(cornerRadius: 6).stroke(.secondary.opacity(0.7), lineWidth: 1))
                         .overlay { WindowActionGlyph(action: action) }
                         .frame(width: content.width * placement.width, height: content.height * placement.height)
                         .offset(x: content.minX + content.width * placement.x,
@@ -1343,9 +1617,8 @@ private struct SnapZoneDiagram: View {
                         .allowsHitTesting(false)
                 }
 
-                RoundedRectangle(cornerRadius: 3)
-                    .fill(Color.accentColor)
-                    .overlay(RoundedRectangle(cornerRadius: 3).stroke(.background, lineWidth: 1))
+                SnapTriggerMarker(area: selectedArea)
+                    .stroke(Color.accentColor, style: StrokeStyle(lineWidth: 4, lineCap: .round, lineJoin: .round))
                     .frame(width: marker.width, height: marker.height)
                     .offset(x: marker.minX, y: marker.minY)
                     .allowsHitTesting(false)
@@ -1354,7 +1627,7 @@ private struct SnapZoneDiagram: View {
                 // markers. Neither changes the actual snap detector.
                 ForEach(SnapArea.allCases) { area in
                     let trigger = SnapZonePreviewGeometry.trigger(for: area)
-                    Button { selectedArea = area } label: {
+                    Button { select(area) } label: {
                         Color.clear.contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
@@ -1372,6 +1645,37 @@ private struct SnapZoneDiagram: View {
 
     private func assignment(for area: SnapArea) -> WindowAction? {
         bindings.first(where: { $0.area == area })?.action
+    }
+}
+
+private struct SnapTriggerMarker: Shape {
+    let area: SnapArea
+
+    func path(in rect: CGRect) -> Path {
+        let bounds = rect.insetBy(dx: 2, dy: 2)
+        var path = Path()
+        let corner: (x: CGFloat, y: CGFloat, dx: CGFloat, dy: CGFloat)
+        switch area {
+        case .topLeft: corner = (bounds.minX, bounds.minY, 1, 1)
+        case .topRight: corner = (bounds.maxX, bounds.minY, -1, 1)
+        case .bottomLeft: corner = (bounds.minX, bounds.maxY, 1, -1)
+        case .bottomRight: corner = (bounds.maxX, bounds.maxY, -1, -1)
+        case .top, .bottom:
+            path.move(to: CGPoint(x: bounds.midX - bounds.width * 0.2, y: bounds.midY))
+            path.addLine(to: CGPoint(x: bounds.midX + bounds.width * 0.2, y: bounds.midY))
+            return path
+        case .left, .right:
+            path.move(to: CGPoint(x: bounds.midX, y: bounds.midY - bounds.height * 0.2))
+            path.addLine(to: CGPoint(x: bounds.midX, y: bounds.midY + bounds.height * 0.2))
+            return path
+        }
+        let radius: CGFloat = 6
+        path.move(to: CGPoint(x: corner.x + corner.dx * bounds.width, y: corner.y))
+        path.addLine(to: CGPoint(x: corner.x + corner.dx * radius, y: corner.y))
+        path.addQuadCurve(to: CGPoint(x: corner.x, y: corner.y + corner.dy * radius),
+                          control: CGPoint(x: corner.x, y: corner.y))
+        path.addLine(to: CGPoint(x: corner.x, y: corner.y + corner.dy * bounds.height))
+        return path
     }
 }
 
@@ -1407,7 +1711,7 @@ private extension LayoutMode {
         switch self {
         case .manual: "macwindow"
         case .linked: "arrow.left.and.right"
-        case .bento: "rectangle.inset.filled.lefthalf.topright.bottomright"
+        case .bento: "rectangle.split.2x2"
         }
     }
 

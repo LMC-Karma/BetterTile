@@ -56,6 +56,98 @@ import Testing
     #expect(reused != first)
 }
 
+@Test(arguments: [false, true])
+func offscreenWindowKeepsItsIdentityAcrossSweeps(exactIdentityAvailable: Bool) {
+    var registry = WindowIdentityRegistry()
+    let application = ApplicationLaunchInstance(processIdentifier: 42, generation: 1)
+    let exactID: CGWindowID? = exactIdentityAvailable ? 700 : nil
+    let original = registry.resolve(application: application, accessibilityHash: 100, exactWindowID: exactID)
+
+    // The app still lists the window, but WindowServer filters it from the
+    // active Space. It is no longer in the active managed/recent window sets.
+    for _ in 0..<4 {
+        _ = registry.pruneAfterSweep(retaining: [], observedApplications: [application: [100]], windowServer: nil)
+    }
+    let returning = registry.resolve(application: application, accessibilityHash: 100, exactWindowID: exactID)
+    #expect(returning == original)
+    #expect(registry.windowID(application: application, accessibilityHash: 100) == original)
+
+    // A failed AX enumeration or a skipped hidden app supplies no evidence
+    // that its windows closed. A successful empty list does.
+    #expect(registry.pruneAfterSweep(retaining: [], observedApplications: [:], windowServer: nil).isEmpty)
+    #expect(registry.pruneAfterSweep(retaining: [], observedApplications: [application: []], windowServer: nil).isEmpty)
+    let pruned = registry.pruneAfterSweep(
+        retaining: [], observedApplications: [application: []],
+        windowServer: WindowServerIndex(records: [])
+    )
+    if exactIdentityAvailable {
+        #expect(pruned == [original])
+    } else {
+        #expect(pruned.isEmpty)
+        // The public identity fallback waits for destruction/termination.
+        registry.remove(original)
+    }
+    #expect(registry.records.isEmpty)
+}
+
+@Test(arguments: [false, true])
+func returningWindowIdentitiesPreserveBentoOrientationAndDragging(omittedByAccessibility: Bool) throws {
+    var registry = WindowIdentityRegistry()
+    let application = ApplicationLaunchInstance(processIdentifier: 42, generation: 1)
+    let display = DisplaySnapshot(
+        id: DisplayID(rawValue: "main"),
+        frame: BTRect(x: 0, y: 0, width: 1000, height: 800),
+        visibleFrame: BTRect(x: 0, y: 0, width: 1000, height: 800)
+    )
+    let originalIDs = [100, 200].map {
+        registry.resolve(application: application, accessibilityHash: $0, exactWindowID: UInt32($0))
+    }
+    let state = BentoLayoutState(root: .partition(BentoPartition(
+        axis: .vertical, children: originalIDs.map { .leaf($0) }
+    )))
+    let originalFrames = state.placements(in: display.visibleFrame).map(\.frame)
+    var session = LayoutSession(
+        displayID: display.id, mode: .bento, bentoState: state,
+        windowIDs: Set(originalIDs), bentoInsertionOrder: originalIDs,
+        lastWorkArea: display.visibleFrame
+    )
+    let reconciler = AmbientLayoutReconciler(paneGap: 0, adjacencyTolerance: 6, singleWindowPlacement: .maximize)
+
+    for _ in 0..<4 {
+        let windowServer = WindowServerIndex(records: zip([100, 200], originalFrames).map { id, frame in
+            WindowServerRecord(windowID: UInt32(id), processIdentifier: 42, layer: 0,
+                               frame: frame, isOnscreen: false)
+        })
+        _ = registry.pruneAfterSweep(
+            retaining: [],
+            observedApplications: [application: omittedByAccessibility ? [] : [100, 200]],
+            windowServer: windowServer
+        )
+        let returningIDs = [100, 200].map {
+            registry.resolve(application: application, accessibilityHash: $0, exactWindowID: UInt32($0))
+        }
+        let windows = zip(returningIDs, originalFrames).map { id, frame in
+            WindowSnapshot(id: id, processIdentifier: 42, frame: frame, displayID: display.id)
+        }
+        // The drag path freezes the stored layout before reconciliation.
+        #expect(BentoDragSession(
+            displayID: display.id, sourceWindowID: returningIDs[0],
+            state: session.bentoState, windows: windows, workArea: display.visibleFrame
+        ) != nil)
+        let previousIDs = session.windowIDs
+        session.windowIDs = Set(returningIDs)
+        let transition = reconciler.transition(session: session, observation: AmbientLayoutObservation(
+            display: display, windows: windows, wasCreated: false,
+            previousWindowIDs: previousIDs, isDesktopTransition: false
+        ))
+        session = transition.session
+        if case .observe = transition {} else {
+            Issue.record("Returning to unchanged left/right halves must not issue a new layout")
+        }
+        #expect(session.bentoState == state)
+    }
+}
+
 @Test func exactWindowServerJoinDoesNotAcceptOverlappingSameAppFallback() {
     let frame = BTRect(x: 100, y: 100, width: 600, height: 400)
     let displayID = DisplayID(rawValue: "main")
@@ -85,6 +177,8 @@ import Testing
     #expect(index.contains(window, exactWindowID: nil))
     #expect(!index.contains(window, exactWindowID: 20))
     #expect(index.contains(window, exactWindowID: 10))
+    #expect(index.containsIdentity(20, processIdentifier: 42))
+    #expect(!index.containsIdentity(20, processIdentifier: 43))
 }
 
 @Test func targetedSnapshotCacheMergesOnlyCompleteRefreshes() throws {

@@ -42,6 +42,15 @@ public struct NativeDesktopObservation: Hashable, Sendable {
         !isFullscreenSpace(on: displayID)
     }
 
+    /// Live members of this desktop. Sticky and unknown memberships cannot
+    /// corroborate a pane's presence in one particular layout session.
+    public func exclusiveWindowIDs(on displayID: DisplayID) -> Set<WindowID> {
+        guard let space = currentSpace(on: displayID) else { return [] }
+        return Set(windowMembership.compactMap { id, spaces in
+            spaces == [space] ? id : nil
+        })
+    }
+
     /// Removes windows that are known to belong to another Space. A window on
     /// several Spaces is sticky and therefore floats instead of joining Bento.
     /// Missing membership remains unknown and preserves the public-API result.

@@ -1,6 +1,8 @@
 import BetterTileCore
 import BetterTileMacOS
 import Foundation
+import AppKit
+import SwiftUI
 import Testing
 @testable import BetterTileApp
 
@@ -21,6 +23,7 @@ private final class FakeAppWindowSystem: BetterTileWindowSystem {
     var cachedRefreshCount = 0
     var cachedSnapshotsAvailable = true
     var emitsFrameEvents = false
+    var desktopObservation: NativeDesktopObservation?
     var frameApplicationDelays: [WindowID: Duration] = [:]
     private var minimumSizeLearner = WindowMinimumSizeLearner()
     var availableDisplays: [DisplaySnapshot]
@@ -89,8 +92,8 @@ private final class FakeAppWindowSystem: BetterTileWindowSystem {
     func stopWindowObservation() {}
     func refreshApplicationObservers() {}
     func resetCachedWindows() {}
-    func nativeDesktopObservation() -> NativeDesktopObservation? { nil }
-    func refreshNativeDesktopObservation() -> NativeDesktopObservation? { nil }
+    func nativeDesktopObservation() -> NativeDesktopObservation? { desktopObservation }
+    func refreshNativeDesktopObservation() -> NativeDesktopObservation? { desktopObservation }
     func observeApplicationEnforcedMinimum(
         windowID: WindowID,
         requested: BTRect,
@@ -121,6 +124,67 @@ private func makeModel(system: FakeAppWindowSystem) -> BetterTileModel {
     return BetterTileModel(store: store, system: system, startRuntime: false)
 }
 
+@Test(arguments: [0, 4]) @MainActor
+func returningToBentoSpaceWithPartialVisibilityDoesNotMoveItsWindows(extraIncompleteSweeps: Int) async throws {
+    _ = NSApplication.shared
+    let system = FakeAppWindowSystem()
+    let firstSpace = NativeSpaceID(rawValue: 1)
+    let secondSpace = NativeSpaceID(rawValue: 2)
+    let displayID = system.mainDisplay.id
+    system.windows.append(WindowSnapshot(
+        id: WindowID(rawValue: "peer"), processIdentifier: 43,
+        frame: BTRect(x: 200, y: 0, width: 800, height: 800), displayID: displayID
+    ))
+    system.desktopObservation = NativeDesktopObservation(
+        currentSpaceByDisplay: [displayID: firstSpace],
+        knownSpacesByDisplay: [displayID: [firstSpace, secondSpace]],
+        windowMembership: Dictionary(uniqueKeysWithValues: system.windows.map { ($0.id, [firstSpace]) })
+    )
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    model.configuration.singleWindowPlacement = .maximize
+    model.tileCurrentDisplay()
+    try #require(await waitFor { system.cachedRefreshCount >= 2 })
+    let firstWindows = system.windows
+    model.installWorkspaceTriggers()
+
+    system.desktopObservation?.currentSpaceByDisplay[displayID] = secondSpace
+    system.windows = []
+    NSWorkspace.shared.notificationCenter.post(name: NSWorkspace.activeSpaceDidChangeNotification, object: nil)
+    try await Task.sleep(for: .milliseconds(200))
+
+    // macOS can expose one window before its peers during the transition.
+    system.desktopObservation?.currentSpaceByDisplay[displayID] = firstSpace
+    system.windows = [firstWindows[0]]
+    let writes = system.frameWriteCounts
+    NSWorkspace.shared.notificationCenter.post(name: NSWorkspace.activeSpaceDidChangeNotification, object: nil)
+    try await Task.sleep(for: .milliseconds(200))
+    #expect(system.windows[0].frame == firstWindows[0].frame)
+    #expect(system.frameWriteCounts == writes)
+
+    for _ in 0..<extraIncompleteSweeps {
+        system.eventHandler?(WindowSystemEvent(kind: .created, windowID: firstWindows[0].id, processIdentifier: 42))
+        try await Task.sleep(for: .milliseconds(180))
+        #expect(system.frameWriteCounts == writes)
+        #expect(system.windows[0].frame == firstWindows[0].frame)
+    }
+
+    system.windows.append(firstWindows[1])
+    system.eventHandler?(WindowSystemEvent(kind: .created, windowID: firstWindows[1].id, processIdentifier: 43))
+    try await Task.sleep(for: .milliseconds(300))
+    #expect(system.windows.map(\.frame) == firstWindows.map(\.frame))
+    #expect(system.frameWriteCounts == writes)
+
+    // Late AX events from the switch read the current frames. They must not
+    // reinterpret unchanged left/right panes as a new snap or divider move.
+    for window in firstWindows {
+        system.eventHandler?(WindowSystemEvent(kind: .resized, windowID: window.id, processIdentifier: window.processIdentifier))
+    }
+    try await Task.sleep(for: .milliseconds(200))
+    #expect(system.windows.map(\.frame) == firstWindows.map(\.frame))
+    #expect(system.frameWriteCounts == writes)
+}
+
 @Test(arguments: [false, true]) @MainActor
 func bentoPlacementContainsAnUnreportedApplicationMinimum(automaticArrival: Bool) async {
     let system = FakeAppWindowSystem()
@@ -140,7 +204,7 @@ func bentoPlacementContainsAnUnreportedApplicationMinimum(automaticArrival: Bool
         model.tileCurrentDisplay()
     }
 
-    let contained = await waitFor(timeout: .seconds(1)) {
+    let contained = await waitFor {
         let frames = system.windows.map(\.frame)
         return frames.allSatisfy { PlacementBounds.isContained($0, in: system.mainDisplay.visibleFrame) }
             && frames[0].intersection(frames[1]) == nil
@@ -165,9 +229,11 @@ func bentoPlacementContainsAnUnreportedApplicationMinimum(automaticArrival: Bool
     let model = makeModel(system: system)
     defer { model.shutdown() }
     model.tileCurrentDisplay()
-    try? await Task.sleep(for: .milliseconds(750))
+    let settled = await waitFor {
+        abs(system.windows[0].frame.size.width - system.windows[1].frame.size.width) < 1
+    }
+    #expect(settled)
     #expect(system.windows[1].constraints.minimumSize.width == 120)
-    #expect(abs(system.windows[0].frame.size.width - system.windows[1].frame.size.width) < 1)
     #expect(system.frameWriteCounts[peerID, default: 0] <= 2)
 }
 
@@ -207,7 +273,7 @@ func settledWorkAreaChangeDoesNotReapplyOnLaterSweeps(learnMinimum: Bool, delaye
     let model = makeModel(system: system)
     defer { model.shutdown() }
     model.tileCurrentDisplay()
-    try #require(await waitFor(timeout: .seconds(1)) { system.cachedRefreshCount >= 2 })
+    try #require(await waitFor { system.cachedRefreshCount >= 2 })
 
     // A topology event drives the same ambient reconciliation used for a Dock
     // or display change, without installing live workspace observers.
@@ -236,7 +302,7 @@ func settledWorkAreaChangeDoesNotReapplyOnLaterSweeps(learnMinimum: Bool, delaye
     for _ in 0..<3 {
         let sweeps = system.completeSweepCount
         system.eventHandler?(refresh)
-        try #require(await waitFor(timeout: .seconds(1)) { system.completeSweepCount > sweeps })
+        try #require(await waitFor { system.completeSweepCount > sweeps })
         #expect(system.frameWriteCounts == writes, "A settled work-area change must not apply the layout again.")
     }
     try await Task.sleep(for: .milliseconds(150))
@@ -254,13 +320,13 @@ func settledWorkAreaChangeDoesNotReapplyOnLaterSweeps(learnMinimum: Bool, delaye
     let model = makeModel(system: system)
     defer { model.shutdown() }
     model.tileCurrentDisplay()
-    try #require(await waitFor(timeout: .seconds(1)) { system.cachedRefreshCount >= 2 })
+    try #require(await waitFor { system.cachedRefreshCount >= 2 })
 
     let refresh = WindowSystemEvent(kind: .created, windowID: peerID, processIdentifier: 43)
     system.availableDisplays[0].visibleFrame.size.height = 700
     system.ignoredFrameWriteWindowIDs.insert(peerID)
     system.eventHandler?(refresh)
-    try #require(await waitFor(timeout: .seconds(2)) {
+    try #require(await waitFor {
         model.statusMessage == "One or more windows did not settle at the requested frame."
     })
     #expect(!PlacementBounds.isContained(system.windows[1].frame, in: system.availableDisplays[0].visibleFrame))
@@ -270,14 +336,14 @@ func settledWorkAreaChangeDoesNotReapplyOnLaterSweeps(learnMinimum: Bool, delaye
     system.ignoredFrameWriteWindowIDs.remove(peerID)
     let samples = system.cachedRefreshCount
     system.eventHandler?(refresh)
-    try #require(await waitFor(timeout: .seconds(1)) { system.cachedRefreshCount >= samples + 2 })
+    try #require(await waitFor { system.cachedRefreshCount >= samples + 2 })
     #expect(system.windows.allSatisfy {
         PlacementBounds.isContained($0.frame, in: system.availableDisplays[0].visibleFrame)
     })
     let writes = system.frameWriteCounts
     let sweeps = system.completeSweepCount
     system.eventHandler?(refresh)
-    try #require(await waitFor(timeout: .seconds(1)) { system.completeSweepCount > sweeps })
+    try #require(await waitFor { system.completeSweepCount > sweeps })
     #expect(system.frameWriteCounts == writes)
 }
 
@@ -527,6 +593,42 @@ private func waitFor(
     )
 }
 
+@Test func menuDragPreviewsAnOrderWithoutChangingTheSavedOrder() {
+    let original: [WindowAction] = [.leftHalf, .rightHalf, .topHalf, .bottomHalf]
+    var drag = MenuActionDrag(source: .leftHalf, actions: original)
+    #expect(drag.move(to: 4)?.to == 3)
+    #expect(drag.original == original)
+    #expect(drag.committedOrder == [.rightHalf, .topHalf, .bottomHalf, .leftHalf])
+    #expect(drag.move(to: 4) == nil)
+    #expect(drag.move(to: 0)?.to == 0)
+    #expect(drag.committedOrder == nil)
+    #expect(drag.move(to: -1) == nil)
+}
+
+@Test @MainActor func menuScrollHostOwnsItsGutterAndRetainsItsDocument() throws {
+    let scroll = MenuPanelScrollHost(content: Color.clear.frame(height: 600))
+    scroll.frame = CGRect(x: 0, y: 0, width: 328, height: 200)
+    scroll.layoutSubtreeIfNeeded()
+    let document = try #require(scroll.documentView)
+    #expect(scroll.scrollerStyle == .overlay)
+    #expect(!scroll.hasHorizontalScroller)
+    #expect(scroll.contentSize.width == 328)
+    #expect(document.frame.width == 328)
+    #expect(document.frame.height == 600)
+    scroll.update(content: Color.clear.frame(height: 700))
+    #expect(scroll.documentView === document)
+    #expect(document.frame.height == 700)
+}
+
+@Test(arguments: [260.0, 400.0, 619.0, 620.0, 900.0])
+func snapZoneLayoutKeepsTheScreenInsideAvailableSpace(width: Double) {
+    let layout = SnapZoneLayout(width: width)
+    #expect(layout.monitorWidth <= width)
+    #expect(layout.monitorWidth > 0)
+    #expect(layout.height > layout.monitorWidth / 1.6)
+    if layout.isWide { #expect(layout.monitorWidth + 280 <= width) }
+}
+
 @Test func snapZoneMarkersStayOnTheirTriggerEdgesAndSeparateFromPlacement() {
     let size = CGSize(width: 360, height: 225)
     let screen = CGRect(origin: .zero, size: size)
@@ -538,7 +640,9 @@ private func waitFor(
                                  width: target.width * size.width, height: target.height * size.height)
         #expect(targetFrame.contains(CGPoint(x: marker.midX, y: marker.midY)))
     }
-    #expect(SnapZonePreviewGeometry.marker(for: .topLeft, in: size).size == CGSize(width: 16, height: 16))
+    #expect(SnapZonePreviewGeometry.marker(for: .topLeft, in: size).size == CGSize(width: 22, height: 22))
+    #expect(SnapZonePreviewGeometry.trigger(for: .topLeft).width == 0.3)
+    #expect(SnapZonePreviewGeometry.trigger(for: .topLeft).height == 0.36)
     #expect(SnapZonePreviewGeometry.marker(for: .right, in: size).maxX == size.width)
     #expect(SnapZonePreviewGeometry.marker(for: .bottom, in: size).maxY == size.height)
 }
@@ -572,4 +676,454 @@ private func waitFor(
     #expect(system.frameWriteCounts.isEmpty)
     #expect(model.configuration.layoutWheel == wheel)
     #expect(try store.load().menuBarActions == [.rightHalf, .leftHalf])
+}
+
+@Test @MainActor func menuCollectionLaysOutEveryTileAtItsAssignedSize() throws {
+    _ = NSApplication.shared
+    let actions = WindowAction.menuBarDefaultOrder
+    let host = NSHostingView(rootView:
+        MenuActionCollection(actions: actions, shortcuts: [], commit: { _, _ in })
+    .frame(width: 328, height: 328)
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(.separator)))
+    let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 328, height: 328),
+                          styleMask: [.borderless], backing: .buffered, defer: false)
+    window.contentView = host
+    host.layoutSubtreeIfNeeded()
+    func collection(in view: NSView) -> NSCollectionView? {
+        if let found = view as? NSCollectionView { return found }
+        return view.subviews.compactMap { collection(in: $0) }.first
+    }
+    let view = try #require(collection(in: host))
+    view.layoutSubtreeIfNeeded()
+    let first = try #require(view.item(at: IndexPath(item: 0, section: 0)))
+    let point = try #require(host.superview).convert(CGPoint(x: first.view.frame.midX, y: first.view.frame.midY), from: view)
+    let hit = host.hitTest(point)
+    #expect(hit === first.view)
+    for index in view.indexPathsForVisibleItems().map(\.item) {
+        let path = IndexPath(item: index, section: 0)
+        let item = try #require(view.item(at: path))
+        let attributes = try #require(view.collectionViewLayout?.layoutAttributesForItem(at: path))
+        #expect(item.view.frame == attributes.frame)
+        #expect(item.view.frame.width == MenuPanelMetrics.tileWidth)
+        #expect(item.view.frame.height == MenuPanelMetrics.tileHeight)
+    }
+}
+
+@Test @MainActor func menuKeyboardReorderingRetainsSelectionAfterConfigurationRefresh() throws {
+    _ = NSApplication.shared
+    var actions: [WindowAction] = [.leftHalf, .rightHalf, .topHalf, .bottomHalf]
+    var commits = 0
+    func content() -> some View {
+        MenuActionCollection(actions: actions, shortcuts: [], commit: { order, _ in
+            actions = order
+            commits += 1
+        }).frame(width: 328, height: 160)
+    }
+    let host = NSHostingView(rootView: content())
+    let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 328, height: 160),
+                          styleMask: [.borderless], backing: .buffered, defer: false)
+    window.contentView = host
+    host.layoutSubtreeIfNeeded()
+    func find(in view: NSView) -> MenuReorderCollectionView? {
+        if let found = view as? MenuReorderCollectionView { return found }
+        return view.subviews.compactMap { find(in: $0) }.first
+    }
+    let collection = try #require(find(in: host))
+    collection.selectionIndexPaths = [IndexPath(item: 0, section: 0)]
+    collection.moveSelection?(1)
+    host.rootView = content()
+    host.layoutSubtreeIfNeeded()
+    #expect(collection.selectionIndexPaths == [IndexPath(item: 1, section: 0)])
+    collection.moveSelection?(1)
+    #expect(commits == 2)
+    #expect(actions == [.rightHalf, .topHalf, .leftHalf, .bottomHalf])
+}
+
+@Test(arguments: [false, true]) @MainActor
+func shutdownRemovesApplicationNotificationObservers(queuedBeforeShutdown: Bool) async {
+    _ = NSApplication.shared
+    let system = FakeAppWindowSystem()
+    let model = makeModel(system: system)
+    model.installWorkspaceTriggers()
+    if queuedBeforeShutdown {
+        NotificationCenter.default.post(name: NSApplication.didBecomeActiveNotification, object: NSApplication.shared)
+    }
+    model.shutdown()
+    let sweeps = system.completeSweepCount
+    NotificationCenter.default.post(name: NSApplication.didBecomeActiveNotification, object: NSApplication.shared)
+    try? await Task.sleep(for: .milliseconds(30))
+    #expect(system.completeSweepCount == sweeps)
+    model.shutdown()
+}
+
+@Test @MainActor func menuConfigurationRefreshCancelsActiveDrag() async throws {
+    _ = NSApplication.shared
+    let actions = WindowAction.menuBarDefaultOrder
+    let content = MenuActionCollection(actions: actions, shortcuts: [], commit: { _, _ in
+        Issue.record("An external configuration refresh must not commit the drag")
+    })
+    let host = NSHostingView(rootView: content.frame(width: 328, height: 200))
+    let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 328, height: 200),
+                          styleMask: [.borderless], backing: .buffered, defer: false)
+    window.contentView = host
+    host.layoutSubtreeIfNeeded()
+    func find(in view: NSView) -> MenuReorderCollectionView? {
+        if let found = view as? MenuReorderCollectionView { return found }
+        return view.subviews.compactMap { find(in: $0) }.first
+    }
+    let view = try #require(find(in: host))
+    let coordinator = try #require(view.delegate as? MenuActionCollection.Coordinator)
+    coordinator.beginDrag(at: 0, in: view)
+    let info = MenuTestDraggingInfo(collection: view, point: CGPoint(x: 30, y: 190))
+    _ = view.draggingUpdated(info)
+    try await Task.sleep(for: .milliseconds(20))
+    #expect(view.dragDisplayLink != nil)
+    #expect(view.visibleItems().contains { $0.view.alphaValue == 0 })
+
+    var updated = content
+    updated.actions = Array(actions.reversed())
+    host.rootView = updated.frame(width: 328, height: 200)
+    host.layoutSubtreeIfNeeded()
+    #expect(coordinator.drag == nil)
+    #expect(view.dragDisplayLink == nil)
+    #expect(coordinator.displayed == updated.actions)
+    #expect(view.visibleItems().allSatisfy { $0.view.alphaValue == 1 })
+    _ = view.draggingUpdated(info)
+    #expect(view.dragDisplayLink == nil)
+    coordinator.endDrag(in: view)
+    #expect(coordinator.displayed == updated.actions)
+}
+
+@Test(arguments: [false, true]) @MainActor
+func shutdownIgnoresPendingWindowEvents(deliveredAfterShutdown: Bool) async throws {
+    let system = FakeAppWindowSystem()
+    let model = makeModel(system: system)
+    let callback = try #require(system.eventHandler)
+    let event = WindowSystemEvent(kind: .created, windowID: system.windows[0].id, processIdentifier: 42)
+    if !deliveredAfterShutdown { callback(event) }
+    model.shutdown()
+    let sweeps = system.completeSweepCount
+    if deliveredAfterShutdown { callback(event) }
+    try await Task.sleep(for: WindowEventRetryBackoff.initialDelay + .milliseconds(100))
+    #expect(system.completeSweepCount == sweeps)
+    #expect(system.frameWriteCounts.isEmpty)
+}
+
+@Test @MainActor func menuCollectionScrollsToOffscreenTiles() throws {
+    _ = NSApplication.shared
+    let actions = WindowAction.menuBarDefaultOrder
+    let host = NSHostingView(rootView:
+        MenuActionCollection(actions: actions, shortcuts: [], commit: { _, _ in })
+    .frame(width: 328, height: 200))
+    let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 328, height: 200),
+                          styleMask: [.borderless], backing: .buffered, defer: false)
+    window.contentView = host
+    host.layoutSubtreeIfNeeded()
+    func find(in view: NSView) -> NSCollectionView? {
+        if let found = view as? NSCollectionView { return found }
+        return view.subviews.compactMap { find(in: $0) }.first
+    }
+    let view = try #require(find(in: host))
+    let last = IndexPath(item: actions.count - 1, section: 0)
+    view.layoutSubtreeIfNeeded()
+    let lastFrame = try #require(view.layoutAttributesForItem(at: last)).frame
+    view.scrollToItems(at: [last], scrollPosition: .bottom)
+    #expect(view.visibleRect.contains(lastFrame))
+    let first = IndexPath(item: 0, section: 0)
+    let firstFrame = try #require(view.layoutAttributesForItem(at: first)).frame
+    view.scrollToItems(at: [first], scrollPosition: .top)
+    #expect(view.visibleRect.contains(firstFrame))
+}
+
+@MainActor private final class MenuTestDraggingInfo: NSObject, @MainActor NSDraggingInfo {
+    let collection: NSCollectionView
+    var draggingLocation: NSPoint
+    init(collection: NSCollectionView, point: NSPoint) {
+        self.collection = collection
+        draggingLocation = collection.convert(point, to: nil)
+    }
+    var draggingDestinationWindow: NSWindow? { collection.window }
+    var draggingSourceOperationMask: NSDragOperation { .move }
+    var draggedImageLocation: NSPoint { draggingLocation }
+    var draggedImage: NSImage? { nil }
+    var draggingPasteboard: NSPasteboard { NSPasteboard(name: NSPasteboard.Name("BetterTile-menu-test")) }
+    var draggingSource: Any? { collection }
+    var draggingSequenceNumber: Int { 1 }
+    var draggingFormation: NSDraggingFormation = .none
+    var animatesToDestination = false
+    var numberOfValidItemsForDrop = 1
+    var springLoadingHighlight: NSSpringLoadingHighlight { .none }
+    func slideDraggedImage(to screenPoint: NSPoint) {}
+    nonisolated override func namesOfPromisedFilesDropped(atDestination dropDestination: URL) -> [String]? { nil }
+    func resetSpringLoading() {}
+    func enumerateDraggingItems(options enumOpts: NSDraggingItemEnumerationOptions, for view: NSView?,
+                                classes classArray: [AnyClass], searchOptions: [NSPasteboard.ReadingOptionKey: Any] = [:],
+                                using block: (NSDraggingItem, Int, UnsafeMutablePointer<ObjCBool>) -> Void) {}
+}
+
+@Test @MainActor func menuAdjacentDragSwapsOnEnteringItsNeighborAndKeepsTheAcceptedOrder() async throws {
+    _ = NSApplication.shared
+    var saved: [WindowAction] = [.leftHalf, .rightHalf, .topHalf, .bottomHalf]
+    let host = NSHostingView(rootView: MenuActionCollection(actions: saved, shortcuts: [], commit: { order, _ in
+        saved = order
+    }).frame(width: 328, height: 200))
+    let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 328, height: 200),
+                          styleMask: [.borderless], backing: .buffered, defer: false)
+    window.contentView = host
+    host.layoutSubtreeIfNeeded()
+    func find(in view: NSView) -> NSCollectionView? {
+        if let found = view as? NSCollectionView { return found }
+        return view.subviews.compactMap { find(in: $0) }.first
+    }
+    let view = try #require(find(in: host))
+    let coordinator = try #require(view.delegate as? MenuActionCollection.Coordinator)
+    let neighbor = try #require(view.layoutAttributesForItem(at: IndexPath(item: 1, section: 0))).frame
+    let info = MenuTestDraggingInfo(collection: view, point: CGPoint(x: neighbor.minX + 1, y: neighbor.midY))
+    coordinator.beginDrag(at: 0, in: view)
+    try await Task.sleep(for: .milliseconds(20))
+    #expect(view.item(at: IndexPath(item: 0, section: 0))?.view.alphaValue == 0)
+    var proposed = NSIndexPath(forItem: 1, inSection: 0)
+    var operation = NSCollectionView.DropOperation.before
+    #expect(coordinator.collectionView(view, validateDrop: info, proposedIndexPath: &proposed, dropOperation: &operation) == .move)
+    #expect(coordinator.displayed == [.rightHalf, .leftHalf, .topHalf, .bottomHalf])
+    #expect(view.item(at: IndexPath(item: 1, section: 0))?.view.alphaValue == 0)
+    // Staying over the new slot must not repeatedly flip the two neighbors.
+    _ = coordinator.collectionView(view, validateDrop: info, proposedIndexPath: &proposed, dropOperation: &operation)
+    #expect(coordinator.displayed == [.rightHalf, .leftHalf, .topHalf, .bottomHalf])
+    #expect(coordinator.collectionView(view, acceptDrop: info, indexPath: proposed as IndexPath, dropOperation: operation))
+    #expect(saved == [.rightHalf, .leftHalf, .topHalf, .bottomHalf])
+    // The drag-end callback must see the new order before SwiftUI refreshes.
+    #expect(coordinator.parent.actions == saved)
+    coordinator.endDrag(in: view)
+    #expect(coordinator.displayed == saved)
+    // A second drag starts from the accepted order, even before a SwiftUI update.
+    coordinator.drag = MenuActionDrag(source: .leftHalf, actions: coordinator.parent.actions)
+    info.draggingLocation = view.convert(CGPoint(x: 30, y: 30), to: nil)
+    _ = coordinator.collectionView(view, validateDrop: info, proposedIndexPath: &proposed, dropOperation: &operation)
+    #expect(coordinator.displayed.first == .leftHalf)
+    coordinator.endDrag(in: view) // Escape/outside drop: restore the saved order.
+    #expect(coordinator.displayed == saved)
+    #expect(coordinator.drag == nil)
+    #expect(view.visibleItems().allSatisfy { $0.view.alphaValue == 1 })
+
+    coordinator.drag = MenuActionDrag(source: .rightHalf, actions: saved)
+    coordinator.previewDrop(at: CGPoint(x: neighbor.midX, y: neighbor.midY), in: view, time: 1)
+    let firstPreview = coordinator.displayed
+    coordinator.previewDrop(at: CGPoint(x: neighbor.midX, y: 100), in: view, time: 1.01)
+    #expect(coordinator.displayed == firstPreview)
+    coordinator.previewDrop(at: CGPoint(x: neighbor.midX, y: 100), in: view, time: 1.2)
+    #expect(coordinator.displayed.last == .rightHalf)
+    coordinator.endDrag(in: view)
+    #expect(coordinator.displayed == saved)
+}
+
+@Test @MainActor func menuDragAutoscrollUsesTheEdgeVisibleInsideSettings() throws {
+    _ = NSApplication.shared
+    let host = NSHostingView(rootView: MenuActionCollection(actions: WindowAction.menuBarDefaultOrder,
+        shortcuts: [], commit: { _, _ in }).frame(width: 328, height: 400))
+    host.frame = CGRect(x: 0, y: 0, width: 328, height: 400)
+    let outer = NSScrollView(frame: CGRect(x: 0, y: 0, width: 328, height: 200))
+    outer.documentView = host
+    let window = NSWindow(contentRect: outer.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+    window.contentView = outer
+    outer.layoutSubtreeIfNeeded()
+    func find(in view: NSView) -> NSCollectionView? {
+        if let found = view as? NSCollectionView { return found }
+        return view.subviews.compactMap { find(in: $0) }.first
+    }
+    let view = try #require(find(in: host) as? MenuReorderCollectionView)
+    let scroll = try #require(view.enclosingScrollView)
+    let before = scroll.contentView.bounds.origin
+    let visible = view.visibleRect
+    #expect(visible.height == 200)
+    let coordinator = try #require(view.delegate as? MenuActionCollection.Coordinator)
+    coordinator.beginDrag(at: 0, in: view)
+    let info = MenuTestDraggingInfo(collection: view,
+        point: CGPoint(x: visible.midX, y: visible.maxY - 12))
+    #expect(view.wantsPeriodicDraggingUpdates())
+    _ = view.draggingUpdated(info)
+    #expect(scroll.contentView.bounds.origin == before)
+    #expect(view.dragDisplayLink != nil)
+    defer { view.stopDragFrames() }
+    for step in 0..<900 { view.advanceDragFrame(time: Double(step) / 60) }
+    let last = IndexPath(item: WindowAction.menuBarDefaultOrder.count - 1, section: 0)
+    let lastFrame = try #require(view.layoutAttributesForItem(at: last)).frame
+    #expect(view.visibleRect.contains(lastFrame))
+    info.draggingLocation = view.convert(CGPoint(x: view.visibleRect.midX, y: view.visibleRect.minY + 12), to: nil)
+    _ = view.draggingUpdated(info)
+    for step in 900..<1800 { view.advanceDragFrame(time: Double(step) / 60) }
+    let firstFrame = try #require(view.layoutAttributesForItem(at: IndexPath(item: 0, section: 0))).frame
+    #expect(view.visibleRect.contains(firstFrame))
+    info.draggingLocation = view.convert(CGPoint(x: view.visibleRect.midX, y: view.visibleRect.midY), to: nil)
+    let centeredOrigin = scroll.contentView.bounds.origin
+    _ = view.draggingUpdated(info)
+    view.advanceDragFrame(time: 30)
+    #expect(scroll.contentView.bounds.origin == centeredOrigin)
+    view.draggingExited(info)
+    #expect(view.dragDisplayLink != nil) // Leaving the box must not end drag scrolling.
+    view.stopDragFrames()
+    #expect(view.lastDragScrollTime == nil)
+    _ = view.draggingUpdated(info)
+    #expect(view.dragDisplayLink != nil)
+    window.contentView = nil
+    #expect(view.dragDisplayLink == nil)
+}
+
+@Test @MainActor func menuDragScrollsTheSettingsPageOutsideTheTileColumn() throws {
+    _ = NSApplication.shared
+    let host = NSHostingView(rootView: MenuActionCollection(actions: WindowAction.menuBarDefaultOrder,
+        shortcuts: [], commit: { _, _ in }).frame(width: 328, height: 400).frame(width: 600, height: 800))
+    host.frame = CGRect(x: 0, y: 0, width: 600, height: 800)
+    let outer = NSScrollView(frame: CGRect(x: 0, y: 0, width: 600, height: 300))
+    outer.documentView = host
+    let window = NSWindow(contentRect: outer.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+    window.contentView = outer
+    outer.layoutSubtreeIfNeeded()
+    func find(in view: NSView) -> MenuReorderCollectionView? {
+        if let found = view as? MenuReorderCollectionView { return found }
+        return view.subviews.compactMap { find(in: $0) }.first
+    }
+    let view = try #require(find(in: host))
+    let inner = try #require(view.enclosingScrollView)
+    let initial = outer.contentView.bounds.origin
+    let innerInitial = inner.contentView.bounds.origin
+    // Well below the window and outside the narrower tile column.
+    let bottom = NSPoint(x: 20, y: -150)
+    for step in 0..<120 { view.scrollDuringDrag(at: bottom, time: Double(step) / 60) }
+    #expect(outer.contentView.bounds.origin != initial)
+    #expect(inner.contentView.bounds.origin == innerInitial)
+    let middle = NSPoint(x: 20, y: 150)
+    let stopped = outer.contentView.bounds.origin
+    for step in 120..<180 { view.scrollDuringDrag(at: middle, time: Double(step) / 60) }
+    #expect(outer.contentView.bounds.origin == stopped)
+    let top = NSPoint(x: 20, y: 450)
+    for step in 180..<300 { view.scrollDuringDrag(at: top, time: Double(step) / 60) }
+    #expect(outer.contentView.bounds.origin == initial)
+}
+
+private final class MenuTestDraggingSession: NSDraggingSession {
+    var point: NSPoint = .zero
+    override var draggingLocation: NSPoint { point }
+}
+
+@Test @MainActor func menuSourceDragScrollsBeyondBothEdgesAndStopsOnCancellation() throws {
+    _ = NSApplication.shared
+    let actions = WindowAction.menuBarDefaultOrder
+    var commits = 0
+    let host = NSHostingView(rootView: MenuActionCollection(actions: actions,
+        shortcuts: [], commit: { _, _ in commits += 1 }).frame(width: 328, height: 200))
+    let window = NSWindow(contentRect: CGRect(x: 300, y: 250, width: 328, height: 200),
+                          styleMask: [.borderless], backing: .buffered, defer: false)
+    window.contentView = host
+    host.layoutSubtreeIfNeeded()
+    func find(in view: NSView) -> MenuReorderCollectionView? {
+        if let found = view as? MenuReorderCollectionView { return found }
+        return view.subviews.compactMap { find(in: $0) }.first
+    }
+    let view = try #require(find(in: host))
+    let coordinator = try #require(view.delegate as? MenuActionCollection.Coordinator)
+    let session = MenuTestDraggingSession()
+    coordinator.beginDrag(at: 0, in: view)
+    view.startDragFrames(session: session)
+    defer { view.stopDragFrames() }
+    session.point = window.convertPoint(toScreen: NSPoint(x: 100, y: -200))
+    view.draggingExited(nil)
+    for step in 0..<180 { view.advanceDragFrame(time: Double(step) / 60) }
+    let lastFrame = try #require(view.layoutAttributesForItem(at: IndexPath(item: actions.count - 1, section: 0))).frame
+    #expect(view.visibleRect.contains(lastFrame))
+    #expect(coordinator.displayed == actions) // Outside scrolling does not select an outside drop.
+    session.point = window.convertPoint(toScreen: NSPoint(x: 100, y: 400))
+    for step in 180..<360 { view.advanceDragFrame(time: Double(step) / 60) }
+    let firstFrame = try #require(view.layoutAttributesForItem(at: IndexPath(item: 0, section: 0))).frame
+    #expect(view.visibleRect.contains(firstFrame))
+    coordinator.endDrag(in: view)
+    #expect(view.dragDisplayLink == nil)
+    #expect(view.lastDragScrollTime == nil)
+    session.point = window.convertPoint(toScreen: NSPoint(x: 100, y: -200))
+    for step in 360..<540 { view.advanceDragFrame(time: Double(step) / 60) }
+    #expect(view.visibleRect.contains(firstFrame))
+    #expect(commits == 0)
+}
+
+@Test @MainActor func newWindowSideAppliesToFutureWindowsOnASingleWindowDesktop() async throws {
+    let system = FakeAppWindowSystem()
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    model.configuration.defaultLayoutMode = .bento
+    model.tileCurrentDisplay()
+    let frames = system.windows.map(\.frame)
+    let writes = system.frameWriteCounts
+    model.updateConfiguration { $0.bentoNewWindowSide = .right }
+    try await Task.sleep(for: .milliseconds(150))
+    #expect(system.windows.map(\.frame) == frames)
+    #expect(system.frameWriteCounts == writes)
+
+    let oldID = system.windows[0].id
+    let newID = WindowID(rawValue: "new")
+    system.windows.insert(WindowSnapshot(
+        id: newID, processIdentifier: 43,
+        frame: BTRect(x: 100, y: 100, width: 600, height: 600), displayID: system.mainDisplay.id
+    ), at: 0) // The newcomer is focused, as a newly opened app normally is.
+    system.eventHandler?(WindowSystemEvent(kind: .created, windowID: newID, processIdentifier: 43))
+    try #require(await waitFor {
+        let newFrame = system.windows.first { $0.id == newID }!.frame
+        let oldFrame = system.windows.first { $0.id == oldID }!.frame
+        return newFrame.minX >= oldFrame.maxX
+    })
+    let settled = system.windows.map(\.frame)
+    model.updateConfiguration { $0.bentoNewWindowSide = .left }
+    try await Task.sleep(for: .milliseconds(250))
+    #expect(system.windows.map(\.frame) == settled)
+}
+
+@Test(arguments: [false, true], [false, true]) @MainActor
+func minimizedRightHalfReturnsToItsOriginalSide(nativeMembership: Bool, staleMinimizeSnapshot: Bool) async throws {
+    let system = FakeAppWindowSystem()
+    system.windows.append(WindowSnapshot(
+        id: WindowID(rawValue: "peer"), processIdentifier: 43,
+        frame: BTRect(x: 0, y: 0, width: 500, height: 800), displayID: system.mainDisplay.id
+    ))
+    system.emitsFrameEvents = true
+    if nativeMembership {
+        let space = NativeSpaceID(rawValue: 1)
+        system.desktopObservation = NativeDesktopObservation(
+            currentSpaceByDisplay: [system.mainDisplay.id: space],
+            knownSpacesByDisplay: [system.mainDisplay.id: [space]],
+            windowMembership: Dictionary(uniqueKeysWithValues: system.windows.map { ($0.id, [space]) })
+        )
+    }
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    model.configuration.singleWindowPlacement = .maximize
+    model.tileCurrentDisplay()
+    model.performLayoutWheel(.windowAction(.rightHalf), for: target(for: system))
+    try await Task.sleep(for: .milliseconds(500))
+    let originalFrames = system.windows.map(\.frame)
+    try #require(originalFrames[0].minX > originalFrames[1].minX)
+
+    let restoredID = system.windows[0].id
+    if staleMinimizeSnapshot {
+        let sweeps = system.completeSweepCount
+        system.eventHandler?(WindowSystemEvent(kind: .minimized, windowID: restoredID, processIdentifier: 42))
+        try #require(await waitFor { system.completeSweepCount > sweeps })
+    }
+    system.windows[0].isMinimized = true
+    system.desktopObservation?.windowMembership.removeValue(forKey: restoredID)
+    if staleMinimizeSnapshot {
+        for _ in 0..<4 {
+            let sweeps = system.completeSweepCount
+            system.eventHandler?(WindowSystemEvent(kind: .created, windowID: system.windows[1].id, processIdentifier: 43))
+            try #require(await waitFor { system.completeSweepCount > sweeps })
+        }
+    } else {
+        system.eventHandler?(WindowSystemEvent(kind: .minimized, windowID: restoredID, processIdentifier: 42))
+    }
+    try #require(await waitFor { system.windows[1].frame.size.width == 1000 })
+    try await Task.sleep(for: .milliseconds(300))
+    system.windows[0].isMinimized = false
+    if nativeMembership { system.desktopObservation?.windowMembership[restoredID] = [NativeSpaceID(rawValue: 1)] }
+    system.eventHandler?(WindowSystemEvent(kind: .restored, windowID: restoredID, processIdentifier: 42))
+    try await Task.sleep(for: .milliseconds(700))
+    #expect(system.windows.map(\.frame) == originalFrames)
 }

@@ -1008,25 +1008,27 @@ struct MenuPanelContent<Actions: View, Notice: View>: View {
             .font(.system(size: 11))
             .foregroundStyle(.secondary)
 
-            ScrollView {
-                if model.configuration.menuBarActions.isEmpty {
-                    VStack(spacing: 6) {
-                        Text("No window actions").fontWeight(.medium)
-                        Text(isEditing ? "Choose actions on the left." : "Add actions in Menu Bar Settings.")
-                            .foregroundStyle(.secondary)
-                    }
-                    .font(.system(size: 12))
-                    .frame(maxWidth: .infinity, minHeight: 72)
-                } else {
+            Group {
+                if isEditing && !model.configuration.menuBarActions.isEmpty {
                     actions()
-                        .background(OverlayScrollerConfigurator())
+                } else {
+                    MenuPanelScrollView {
+                        if model.configuration.menuBarActions.isEmpty {
+                            VStack(spacing: 6) {
+                                Text("No window actions").fontWeight(.medium)
+                                Text(isEditing ? "Choose actions on the left." : "Add actions in Menu Bar Settings.")
+                                    .foregroundStyle(.secondary)
+                            }
+                            .font(.system(size: 12))
+                            .frame(maxWidth: .infinity, minHeight: 72)
+                        } else {
+                            actions()
+                        }
+                    }
                 }
             }
             .frame(height: actionHeight)
-            .contentMargins(.horizontal, MenuPanelMetrics.scrollContentInset, for: .scrollContent)
-            .contentMargins(.trailing, 4, for: .scrollIndicators)
             .padding(.horizontal, -MenuPanelMetrics.scrollContentInset)
-            .scrollIndicators(.automatic)
 
             Group {
                 if !isEditing, let feedback = model.lastActionFeedback {
@@ -1170,7 +1172,7 @@ struct MenuPanelActionButton: View {
     }
 }
 
-private struct MenuActionButtonStyle: ButtonStyle {
+struct MenuActionButtonStyle: ButtonStyle {
     @Environment(\.colorScheme) private var scheme
     @Environment(\.colorSchemeContrast) private var contrast
     @Environment(\.isEnabled) private var isEnabled
@@ -1276,24 +1278,60 @@ struct MenuPanelFooter: View {
     }
 }
 
-/// SwiftUI's scroller preference can inherit "Always" from macOS. Keep the
-/// narrow menu's scroller over its content so it cannot compress the tiles.
-private struct OverlayScrollerConfigurator: NSViewRepresentable {
-    func makeNSView(context: Context) -> NSView { NSView() }
+/// Own the scroll view in both hosts. An overlay scroller occupies the outer
+/// gutter; document padding leaves the tiles aligned with the panel's chrome.
+struct MenuPanelScrollView<Content: View>: NSViewRepresentable {
+    @ViewBuilder var content: () -> Content
 
-    func updateNSView(_ view: NSView, context: Context) {
-        DispatchQueue.main.async {
-            var ancestor: NSView? = view
-            while let current = ancestor {
-                if let scrollView = current as? NSScrollView {
-                    scrollView.scrollerStyle = .overlay
-                    scrollView.autohidesScrollers = true
-                    scrollView.verticalScroller?.controlSize = .small
-                    return
-                }
-                ancestor = current.superview
-            }
-        }
+    func makeNSView(context: Context) -> MenuPanelScrollHost<Content> {
+        MenuPanelScrollHost(content: content())
+    }
+
+    func updateNSView(_ view: MenuPanelScrollHost<Content>, context: Context) {
+        view.update(content: content())
+    }
+}
+
+class MenuPanelNativeScrollView: NSScrollView {
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        drawsBackground = false
+        borderType = .noBorder
+        hasVerticalScroller = true
+        hasHorizontalScroller = false
+        autohidesScrollers = true
+        scrollerStyle = .overlay
+        automaticallyAdjustsContentInsets = false
+        verticalScroller?.controlSize = .small
+    }
+
+    required init?(coder: NSCoder) { nil }
+}
+
+final class MenuPanelScrollHost<Content: View>: MenuPanelNativeScrollView {
+    private let host: NSHostingView<AnyView>
+    private static var documentWidth: CGFloat {
+        MenuPanelMetrics.width - MenuPanelMetrics.padding * 2 + MenuPanelMetrics.scrollContentInset * 2
+    }
+
+    init(content: Content) {
+        host = NSHostingView(rootView: Self.document(content))
+        super.init(frame: .zero)
+        documentView = host
+        update(content: content)
+    }
+
+    required init?(coder: NSCoder) { nil }
+
+    private static func document(_ content: Content) -> AnyView {
+        AnyView(content
+            .frame(width: MenuPanelMetrics.width - MenuPanelMetrics.padding * 2)
+            .padding(.horizontal, MenuPanelMetrics.scrollContentInset))
+    }
+
+    func update(content: Content) {
+        host.rootView = Self.document(content)
+        host.setFrameSize(NSSize(width: Self.documentWidth, height: host.fittingSize.height))
     }
 }
 
@@ -1323,8 +1361,8 @@ struct WindowActionGlyph: View {
     static func image(for action: WindowAction) -> Image {
         if let cached = images[action] { return Image(nsImage: cached) }
         let renderer = ImageRenderer(content:
-            LayoutWheelActionGlyph(action: action, tint: .black, fontSize: 17)
-                .frame(width: 26, height: 22)
+            LayoutWheelActionGlyph(action: action, tint: .black, fontSize: 20)
+                .frame(width: 30, height: 26)
         )
         renderer.scale = 2
         guard let image = renderer.nsImage else {
@@ -1337,7 +1375,7 @@ struct WindowActionGlyph: View {
 
     var body: some View {
         Self.image(for: action)
-            .frame(width: 26, height: 22)
+            .frame(width: 30, height: 26)
             .accessibilityHidden(true)
     }
 }

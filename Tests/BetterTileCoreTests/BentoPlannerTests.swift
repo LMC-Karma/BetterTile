@@ -591,3 +591,102 @@ private func plannerWindow(
     let selfExchange = layout.exchangeFloating(floater, withPaneOf: floater)
     #expect(!selfExchange)
 }
+
+@Test(arguments: [BentoNewWindowSide.left, .right, .top, .bottom])
+func newWindowSidePlacesTheNewcomerOnTheChosenSide(side: BentoNewWindowSide) throws {
+    let old = plannerWindow("old")
+    let new = plannerWindow("new")
+    let result = BentoPlanner(newWindowSide: side).plan(
+        state: BentoRuntimeState(layout: BentoLayoutState(root: .leaf(old.id))),
+        observation: BentoObservation(bounds: plannerBounds, windows: [old, new], focusedWindowID: new.id),
+        intent: .insert(new.id)
+    )
+    try #require(result.writesFrames)
+    let newFrame = try #require(result.placements.first { $0.windowID == new.id }?.frame)
+    let oldFrame = try #require(result.placements.first { $0.windowID == old.id }?.frame)
+    switch side {
+    case .left: #expect(newFrame.maxX <= oldFrame.minX)
+    case .right: #expect(newFrame.minX >= oldFrame.maxX)
+    case .top: #expect(newFrame.maxY <= oldFrame.minY)
+    case .bottom: #expect(newFrame.minY >= oldFrame.maxY)
+    case .automatic: Issue.record("Expected an explicit side")
+    }
+    #expect(newFrame.area == oldFrame.area)
+}
+
+@Test func newWindowSidePreservesACustomLayoutAndRestorationAnchor() throws {
+    let left = plannerWindow("left")
+    let right = plannerWindow("right")
+    let new = plannerWindow("new")
+    let layout = BentoLayoutState(root: .partition(BentoPartition(
+        axis: .vertical, children: [.leaf(left.id), .leaf(right.id)], ratios: [0.6, 0.4]
+    )))
+    let originalLeft = try #require(layout.placements(in: plannerBounds).first { $0.windowID == left.id }?.frame)
+    let observation = BentoObservation(bounds: plannerBounds, windows: [left, right, new], focusedWindowID: new.id)
+    let inserted = BentoPlanner(newWindowSide: .right).plan(
+        state: BentoRuntimeState(layout: layout), observation: observation, intent: .insert(new.id)
+    )
+    #expect(inserted.placements.first { $0.windowID == left.id }?.frame == originalLeft)
+    let newFrame = try #require(inserted.placements.first { $0.windowID == new.id }?.frame)
+    let rightFrame = try #require(inserted.placements.first { $0.windowID == right.id }?.frame)
+    #expect(newFrame.minX >= rightFrame.maxX)
+
+    // A restored right-hand pane keeps its anchor even after choosing Left.
+    let removed = BentoPlanner().plan(
+        state: BentoRuntimeState(layout: layout), observation: observation, intent: .remove(right.id, minimized: true)
+    )
+    let restored = BentoPlanner(newWindowSide: .left).plan(
+        state: removed.state, observation: observation, intent: .restore(right.id)
+    )
+    let restoredRight = try #require(restored.placements.first { $0.windowID == right.id }?.frame)
+    let restoredLeft = try #require(restored.placements.first { $0.windowID == left.id }?.frame)
+    #expect(restoredRight.minX >= restoredLeft.maxX)
+}
+
+@Test func newWindowSideFallsBackWhenThePreferredSplitCannotFit() throws {
+    var old = plannerWindow("old")
+    var new = plannerWindow("new")
+    old.constraints.minimumSize.height = 600
+    new.constraints.minimumSize.height = 600
+    let result = BentoPlanner(newWindowSide: .top).plan(
+        state: BentoRuntimeState(layout: BentoLayoutState(root: .leaf(old.id))),
+        observation: BentoObservation(bounds: plannerBounds, windows: [old, new], focusedWindowID: new.id),
+        intent: .insert(new.id)
+    )
+    #expect(result.writesFrames)
+    #expect(result.placements.count == 2)
+    #expect(result.placements.allSatisfy { $0.frame.size.height == plannerBounds.size.height })
+}
+
+@Test(arguments: [BentoNewWindowSide.left, .right, .top, .bottom])
+func newWindowSideRemainsConsistentThroughSixWindows(side: BentoNewWindowSide) throws {
+    let windows = (1...7).map { plannerWindow("window-\($0)") }
+    let planner = BentoPlanner(newWindowSide: side)
+    var state = BentoRuntimeState(layout: BentoLayoutState(root: .leaf(windows[0].id)))
+    for count in 2...6 {
+        let newID = windows[count - 1].id
+        let result = planner.plan(
+            state: state,
+            observation: BentoObservation(bounds: plannerBounds, windows: Array(windows.prefix(count)), focusedWindowID: newID),
+            intent: .insert(newID)
+        )
+        try #require(result.writesFrames)
+        let frame = try #require(result.placements.first { $0.windowID == newID }?.frame)
+        let peers = result.placements.filter { $0.windowID != newID }.map(\.frame)
+        switch side {
+        case .left: #expect(peers.allSatisfy { frame.midX < $0.midX })
+        case .right: #expect(peers.allSatisfy { frame.midX > $0.midX })
+        case .top: #expect(peers.allSatisfy { frame.midY < $0.midY })
+        case .bottom: #expect(peers.allSatisfy { frame.midY > $0.midY })
+        case .automatic: Issue.record("Expected an explicit side")
+        }
+        state = result.state
+    }
+    let capped = planner.plan(
+        state: state, observation: BentoObservation(bounds: plannerBounds, windows: windows),
+        intent: .insert(windows[6].id)
+    )
+    #expect(!capped.writesFrames)
+    #expect(capped.state.layout.root == state.layout.root)
+    #expect(capped.state.layout.floatingWindowIDs.contains(windows[6].id))
+}

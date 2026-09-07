@@ -58,7 +58,7 @@ public struct SnapZoneDetector: Sendable {
     public var edgeActivationDistance: Double
     public var cornerActivationSize: Double
 
-    public init(edgeActivationDistance: Double = 5, cornerActivationSize: Double = 20) {
+    public init(edgeActivationDistance: Double = 5, cornerActivationSize: Double = 64) {
         self.edgeActivationDistance = edgeActivationDistance
         self.cornerActivationSize = cornerActivationSize
     }
@@ -66,7 +66,8 @@ public struct SnapZoneDetector: Sendable {
     public func target(
         at point: BTPoint,
         display: DisplaySnapshot,
-        snapAreas: [SnapAreaBinding] = BetterTileConfiguration.defaultSnapAreaBindings
+        snapAreas: [SnapAreaBinding] = BetterTileConfiguration.defaultSnapAreaBindings,
+        window: WindowSnapshot? = nil
     ) -> SnapTarget? {
         let screenBounds = display.frame
         let placementBounds = display.visibleFrame
@@ -75,7 +76,7 @@ public struct SnapZoneDetector: Sendable {
         if let area = area(at: point, in: screenBounds) {
             guard let action = snapAreas.first(where: { $0.area == area })?.action else { return nil }
             let placeholder = WindowSnapshot(id: .init(rawValue: "snap-preview"), processIdentifier: 0, frame: placementBounds, displayID: display.id)
-            let frame = StandardActionEngine().targetFrame(for: action, window: placeholder, display: display) ?? placementBounds
+            let frame = StandardActionEngine().targetFrame(for: action, window: window ?? placeholder, display: display) ?? placementBounds
             return SnapTarget(action: action, frame: frame)
         }
         return nil

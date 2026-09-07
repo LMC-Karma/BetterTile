@@ -111,6 +111,43 @@ private struct Harness {
     #expect(harness.box.captureCount == 1)
 }
 
+@Test @MainActor func wheelSelectionRendersOnceAndRepeatedPointerSamplesDoNoWork() {
+    let harness = Harness()
+    defer { harness.controller.stop() }
+    harness.activate()
+    let before = harness.presenter.presentations.count
+    let point = BTPoint(x: anchor.x, y: anchor.y - innerSelectionOffset)
+    harness.controller.handlePointer(point)
+    #expect(harness.presenter.presentations.count - before == 1)
+    let previews = harness.presenter.shownPlacements.count
+    let after = harness.presenter.presentations.count
+    for _ in 0..<100 { harness.controller.handlePointer(point) }
+    #expect(harness.presenter.presentations.count == after)
+    #expect(harness.presenter.shownPlacements.count == previews)
+    harness.controller.handlePointer(anchor)
+    #expect(harness.presenter.selection == nil)
+}
+
+@Test @MainActor func wheelPresenterReusesItsHostingViewBetweenSessions() throws {
+    let harness = Harness()
+    defer { harness.controller.stop() }
+    harness.activate()
+    var presentation = try #require(harness.presenter.presentations.last)
+    presentation = LayoutWheelPresentation(
+        configuration: presentation.configuration,
+        placement: LayoutWheelPlacement.clamped(anchor: BTPoint(x: -5000, y: -5000), diameter: 300,
+            visibleFrame: BTRect(x: -6000, y: -6000, width: 1200, height: 1000)),
+        selection: nil, unavailableCommands: []
+    )
+    let presenter = LayoutWheelPanelPresenter()
+    presenter.open(presentation)
+    let original = try #require(presenter.hosting)
+    presenter.close()
+    presenter.open(presentation)
+    #expect(presenter.hosting === original)
+    presenter.close()
+}
+
 @Test @MainActor func wheelScaleChangesPlacementAndSelectionGeometryTogether() {
     var configuration = BetterTileConfiguration()
     configuration.layoutWheel.levelCount = .two

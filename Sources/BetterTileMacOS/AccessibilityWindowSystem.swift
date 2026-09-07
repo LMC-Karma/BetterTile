@@ -255,13 +255,13 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         let interval = Self.signposter.beginInterval("completeSweep")
         defer { Self.signposter.endInterval("completeSweep", interval) }
         try ensurePermission()
-        let windowServer = onscreenWindowIndex()
-        let hasWindowServerSnapshot = !windowServer.isEmpty
+        let windowServer = windowServerIndex()
         // Enumerated once per sweep. Resolving the containing display per
         // window used to re-read every NSScreen for every window.
         let availableDisplays = displays()
         var snapshots: [WindowSnapshot] = []
         var refreshedElements: [WindowID: AXUIElement] = [:]
+        var observedApplications: [ApplicationLaunchInstance: Set<CFHashCode>] = [:]
         for application in NSWorkspace.shared.runningApplications where Self.shouldManageApplication(
             processIdentifier: application.processIdentifier,
             ownProcessIdentifier: getpid(),
@@ -271,7 +271,8 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         ) {
             let applicationInstance = applicationInstance(for: application)
             let appElement = makeApplicationElement(pid: application.processIdentifier)
-            let windows: [AXUIElement] = value(kAXWindowsAttribute, from: appElement) ?? []
+            guard let windows: [AXUIElement] = value(kAXWindowsAttribute, from: appElement) else { continue }
+            observedApplications[applicationInstance] = Set(windows.map { CFHash($0) })
             for window in windows {
                 guard let snapshot = snapshot(
                     window,
@@ -279,7 +280,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
                     bundleIdentifier: application.bundleIdentifier,
                     displays: availableDisplays
                 ) else { continue }
-                if hasWindowServerSnapshot,
+                if let windowServer,
                    !windowServer.contains(
                        snapshot,
                        exactWindowID: identities.exactWindowID(for: snapshot.id)
@@ -295,8 +296,11 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         elements = elements.filter { retainedIDs.contains($0.key) }
         elements.merge(refreshedElements) { _, latest in latest }
         let observedIDs = Set(snapshots.map(\.id))
-        for staleID in Set(identities.records.keys).subtracting(retainedIDs.union(observedIDs)) {
-            identities.remove(staleID)
+        for staleID in identities.pruneAfterSweep(
+            retaining: retainedIDs.union(observedIDs),
+            observedApplications: observedApplications,
+            windowServer: windowServer
+        ) {
             minimumSizeLearner.remove(staleID)
         }
         let sorted = snapshots.sorted { $0.id < $1.id }
@@ -453,9 +457,15 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
     /// Space notifications change topology without changing the snapshot
     /// cache. Force a fresh read before selecting the exact runtime session.
     public func refreshNativeDesktopObservation() -> NativeDesktopObservation? {
-        let windows = snapshotCache.snapshots.map { Array($0.keys) } ?? Array(elements.keys)
-        let exactWindowIDs = Dictionary(uniqueKeysWithValues: windows.compactMap { windowID in
-            identities.exactWindowID(for: windowID).map { (windowID, $0) }
+        // Retained identities include windows temporarily omitted by AX and
+        // windows on inactive Spaces. Their membership corroborates presence.
+        let hiddenPIDs = Set(NSWorkspace.shared.runningApplications.filter(\.isHidden).map(\.processIdentifier))
+        let exactWindowIDs = Dictionary(uniqueKeysWithValues: identities.records.values.compactMap { record -> (WindowID, CGWindowID)? in
+            guard !hiddenPIDs.contains(record.application.processIdentifier),
+                  !minimizedWindowIDs.contains(record.windowID),
+                  let exactID = record.exactWindowID
+            else { return nil }
+            return (record.windowID, exactID)
         })
         let observation = nativeDesktopProvider.observation(
             displays: displays(),
@@ -863,7 +873,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
             frame: frame,
             displayID: display.id,
             constraints: constraints,
-            isMinimized: attributes.minimized,
+            isMinimized: attributes.minimized || minimizedWindowIDs.contains(id),
             isFullScreen: attributes.fullScreen,
             isHidden: false,
             isFloating: WindowFloatingClassifier.isFloating(subrole: attributes.subrole)
@@ -1081,12 +1091,12 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         snapshotCache.invalidate()
     }
 
-    private func onscreenWindowIndex() -> WindowServerIndex {
+    private func windowServerIndex() -> WindowServerIndex? {
         guard let info = CGWindowListCopyWindowInfo(
-            [.optionOnScreenOnly, .excludeDesktopElements],
+            [.optionAll, .excludeDesktopElements],
             kCGNullWindowID
-        ) as? [[CFString: Any]] else { return WindowServerIndex(records: []) }
-        return WindowServerIndex(records: windowServerRecords(from: info, defaultOnscreen: true))
+        ) as? [[CFString: Any]] else { return nil }
+        return WindowServerIndex(records: windowServerRecords(from: info, defaultOnscreen: false))
     }
 
     private func targetedWindowServerIndex(ids: Set<CGWindowID>) -> WindowServerIndex? {

@@ -121,6 +121,28 @@ struct WindowIdentityRegistry {
         exactIDs.removeAll()
     }
 
+    /// Accessibility can omit another Space's windows even on a successful
+    /// read. Require WindowServer closure evidence as well. Without exact
+    /// identity, destruction and application termination own cleanup.
+    mutating func pruneAfterSweep(
+        retaining retainedIDs: Set<WindowID>,
+        observedApplications: [ApplicationLaunchInstance: Set<CFHashCode>],
+        windowServer: WindowServerIndex?
+    ) -> Set<WindowID> {
+        let removed = Set(records.values.compactMap { record -> WindowID? in
+            guard !retainedIDs.contains(record.windowID),
+                  let hashes = observedApplications[record.application],
+                  record.accessibilityHashes.isDisjoint(with: hashes),
+                  let exactID = record.exactWindowID,
+                  let windowServer,
+                  !windowServer.containsIdentity(exactID, processIdentifier: record.application.processIdentifier)
+            else { return nil }
+            return record.windowID
+        })
+        for windowID in removed { remove(windowID) }
+        return removed
+    }
+
     private mutating func bind(_ exactWindowID: CGWindowID?, to windowID: WindowID) {
         guard let exactWindowID, var record = records[windowID] else { return }
         let key = ExactKey(application: record.application, exactWindowID: exactWindowID)
@@ -213,6 +235,10 @@ struct WindowServerIndex {
     }
 
     var isEmpty: Bool { framesByPID.isEmpty }
+
+    func containsIdentity(_ windowID: CGWindowID, processIdentifier: pid_t) -> Bool {
+        recordsByID[windowID]?.processIdentifier == processIdentifier
+    }
 
     func contains(_ snapshot: WindowSnapshot, exactWindowID: CGWindowID?) -> Bool {
         if let exactWindowID {

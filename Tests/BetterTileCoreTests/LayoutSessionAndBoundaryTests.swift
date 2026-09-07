@@ -590,6 +590,8 @@ private let sessionDisplay = DisplayID(rawValue: "main")
     #expect(Set(visible.map(\.id)) == [currentWindow.id, stickyWindow.id, unknownWindow.id])
     #expect(visible.first(where: { $0.id == stickyWindow.id })?.isFloating == true)
     #expect(visible.first(where: { $0.id == unknownWindow.id })?.isFloating == false)
+    #expect(observation.exclusiveWindowIDs(on: sessionDisplay) == [currentWindow.id])
+    #expect(observation.exclusiveWindowIDs(on: DisplayID(rawValue: "missing")).isEmpty)
 }
 
 @Test func nativeFullscreenSpaceDisablesOnlyAutomaticLayout() {

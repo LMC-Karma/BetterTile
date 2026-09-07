@@ -548,3 +548,17 @@ import Testing
     #expect(throws: ConfigurationError.shortcutConflict) { try configuration.validated() }
     #expect(ShortcutValidator.conflicts(in: configuration.shortcuts).first?.actions == [.leftHalf, .rightHalf])
 }
+
+@Test func newWindowSideDefaultsAndRoundTripsWithoutReconfiguringCurrentWindows() throws {
+    let legacy = try ConfigurationStore.decode(JSONSerialization.data(withJSONObject: [
+        "schemaVersion": BetterTileConfiguration.currentSchemaVersion,
+    ]))
+    #expect(legacy.bentoNewWindowSide == .automatic)
+    for side in BentoNewWindowSide.allCases {
+        var changed = legacy
+        changed.bentoNewWindowSide = side
+        #expect(try ConfigurationStore.decode(JSONEncoder().encode(changed)).bentoNewWindowSide == side)
+        // Read at insertion time; changing it must not restart gestures or reflow.
+        #expect(ConfigurationChangeSet.between(legacy, changed).isEmpty)
+    }
+}

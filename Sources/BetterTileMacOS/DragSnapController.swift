@@ -128,6 +128,8 @@ public final class DragSnapController {
     private var target: SnapTarget?
     private var dragGate = WindowDragGate()
     private var draggedWindowID: WindowID?
+    private var snapSourceWindow: WindowSnapshot?
+    private var targetDisplayID: DisplayID?
     private var bentoDragDisplayID: DisplayID?
     private var bentoSnapTarget: SnapTarget?
     private var bentoHover = BentoDropHoverState()
@@ -271,9 +273,12 @@ public final class DragSnapController {
     }
 
     func allowsBentoDrag(for window: WindowSnapshot) -> Bool {
-        !window.isFloating && configuration.applicationRules
-            .rule(for: window.bundleIdentifier)
-            .allowsBentoParticipation
+        // A new one-window Bento desktop has no tree yet. Keep ordinary
+        // drag snapping available until there is a layout to freeze.
+        bentoStateProvider?(window.displayID)?.root != nil
+            && !window.isFloating && configuration.applicationRules
+                .rule(for: window.bundleIdentifier)
+                .allowsBentoParticipation
     }
 
     private func receive(_ event: NSEvent, kind: GlobalGestureEventKind) {
@@ -294,7 +299,11 @@ public final class DragSnapController {
             ) else { return }
             mousePressed(event)
         case .leftMouseDragged where isGestureActive: mouseDragged(event)
-        case .leftMouseUp where isGestureActive: mouseReleased()
+        case .leftMouseUp where isGestureActive:
+            // The final position/modifiers can differ from the last delivered
+            // drag sample. Never commit a stale edge or a suppressed snap.
+            mouseDragged(event)
+            mouseReleased()
         case .leftMouseDragged, .leftMouseUp: return
         }
     }
@@ -371,12 +380,14 @@ public final class DragSnapController {
         }
         if draggedWindowID == nil {
             guard let candidateWindowID = dragGate.candidateWindowID,
-                  let windowID = dragGate.activate(with: windowSnapshot(id: candidateWindowID))
+                  let snapshot = windowSnapshot(id: candidateWindowID),
+                  let windowID = dragGate.activate(with: snapshot)
             else {
                 clearTargets()
                 return
             }
             draggedWindowID = windowID
+            snapSourceWindow = snapshot
         }
         let displays = coordinator.system.displays()
         guard let display = displays.first(where: { $0.frame.contains(point) }) else { clearTargets(); return }
@@ -384,19 +395,20 @@ public final class DragSnapController {
             clearTargets()
             return
         }
+        targetDisplayID = display.id
         let snapTarget = bentoDragDisplayID == nil ? nil : SnapZoneDetector().target(
                at: point,
                display: display,
-               snapAreas: configuration.snapAreaBindings
+               snapAreas: configuration.snapAreaBindings,
+               window: snapSourceWindow
            )
         bentoSnapTarget = snapTarget
-        if bentoDragDisplayID != nil,
-           activeModeProvider?(display.id) == .bento,
-           let draggedWindowID,
-           let state = bentoStateProvider?(display.id),
-           let placement = state.placements(in: display.visibleFrame).first(where: { $0.windowID != draggedWindowID && $0.frame.contains(point) }) {
+        let bentoPlacements = bentoDragDisplayID != nil && activeModeProvider?(display.id) == .bento
+            ? bentoStateProvider?(display.id)?.placements(in: display.visibleFrame) ?? [] : []
+        if let draggedWindowID,
+           let placement = bentoPlacements.first(where: { $0.windowID != draggedWindowID && $0.frame.contains(point) }) {
             let baselineFrames = Dictionary(
-                uniqueKeysWithValues: state.placements(in: display.visibleFrame).map {
+                uniqueKeysWithValues: bentoPlacements.map {
                     ($0.windowID, $0.frame)
                 }
             )
@@ -494,7 +506,8 @@ public final class DragSnapController {
         target = snapTarget ?? SnapZoneDetector().target(
                 at: point,
                 display: display,
-                snapAreas: configuration.snapAreaBindings
+                snapAreas: configuration.snapAreaBindings,
+                window: snapSourceWindow
         )
         if let target {
             showPreview(frame: target.frame, mainScreenFrame: mainFrame)
@@ -579,7 +592,7 @@ public final class DragSnapController {
             return
         }
         guard let target, let windowID = draggedWindowID else { return }
-        let displayID = (try? coordinator.system.visibleWindows().first(where: { $0.id == windowID }))?.displayID
+        let displayID = targetDisplayID
         let outcome = coordinator.applyPlacements([Placement(windowID: windowID, frame: target.frame)])
         if let displayID {
             actionResultHandler?(displayID, outcome.isApplied, outcome.failureReason)
@@ -591,6 +604,7 @@ public final class DragSnapController {
         clearTargets()
         dragGate.reset()
         draggedWindowID = nil
+        snapSourceWindow = nil
         bentoDragDisplayID = nil
         mouseDownPoint = nil
         resolvedDragTarget = false
@@ -600,6 +614,7 @@ public final class DragSnapController {
 
     private func clearTargets() {
         target = nil
+        targetDisplayID = nil
         bentoSnapTarget = nil
         bentoHoverPreviewTask?.cancel()
         bentoHoverPreviewTask = nil
@@ -653,6 +668,9 @@ public final class DragSnapController {
     private func windowSnapshot(id: WindowID) -> WindowSnapshot? {
         if let system = coordinator.system as? AccessibilityWindowSystem {
             return try? system.windowSnapshot(id: id)
+        }
+        if let system = coordinator.system as? any TargetedWindowSystem {
+            return try? system.windowSnapshots(ids: [id]).first
         }
         return try? coordinator.system.visibleWindows().first(where: { $0.id == id })
     }

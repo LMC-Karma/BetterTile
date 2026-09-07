@@ -240,6 +240,7 @@ public final class DividerOverlayController {
     private var baselineBentoState: BentoLayoutState?
     private var proposedBentoState: BentoLayoutState?
     private var latestPlacements: [Placement] = []
+    private var latestDragPoint: CGPoint?
     private var lastLiveUpdate = Date.distantPast
     private var lastGhostUpdate = Date.distantPast
 
@@ -334,7 +335,7 @@ public final class DividerOverlayController {
             panel = DividerHandlePanel(frame: appKitFrame, mode: mode, thickness: configuration.dividerThickness)
             panel.onBegin = { [weak self] in self?.beginHoveredGesture() }
             panel.onDrag = { [weak self] point in self?.drag(to: point) }
-            panel.onEnd = { [weak self] in self?.end() }
+            panel.onEnd = { [weak self] in self?.end(at: NSEvent.mouseLocation) }
             panel.onExit = { [weak self] in
                 guard self?.isDragging == false else { return }
                 self?.updateHover(at: NSEvent.mouseLocation)
@@ -426,10 +427,19 @@ public final class DividerOverlayController {
     }
 
     func drag(to appKitPoint: CGPoint) {
+        latestDragPoint = appKitPoint
         guard let interaction = baselineInteraction, let startPoint, let displayBounds, var transaction else { return }
         guard activeParticipantsArePresent() else {
             cancelActiveGesture()
             return
+        }
+        // Keep the accepted position while throttled. Solving the full Bento
+        // tree for a sample we cannot display or apply just blocks the UI.
+        switch configuration.resizeFeedbackMode {
+        case .ghost:
+            guard Date().timeIntervalSince(lastGhostUpdate) >= 1.0 / 60.0 else { return }
+        case .live:
+            guard Date().timeIntervalSince(lastLiveUpdate) >= 1.0 / 30.0 else { return }
         }
         let point = topLeftPoint(appKitPoint)
         let placements: [Placement]
@@ -480,7 +490,6 @@ public final class DividerOverlayController {
 
         switch configuration.resizeFeedbackMode {
         case .ghost:
-            guard Date().timeIntervalSince(lastGhostUpdate) >= 1.0 / 60.0 else { return }
             guard case .accepted = coordinator.preview(
                 transaction: &transaction,
                 placements: placements
@@ -501,7 +510,6 @@ public final class DividerOverlayController {
             presentHandle(for: proposedInteraction, near: point, active: true)
         case .live:
             ghosts.hide()
-            guard Date().timeIntervalSince(lastLiveUpdate) >= 1.0 / 30.0 else { return }
             lastLiveUpdate = Date()
             switch coordinator.applyLive(transaction: &transaction, placements: placements) {
             case .applied:
@@ -523,7 +531,13 @@ public final class DividerOverlayController {
         }
     }
 
-    func end() {
+    func end(at releasePoint: CGPoint? = nil) {
+        // Release is never throttled: it must commit the final pointer position.
+        if let point = releasePoint ?? latestDragPoint, isDragging {
+            lastGhostUpdate = .distantPast
+            lastLiveUpdate = .distantPast
+            drag(to: point)
+        }
         guard let interaction = activeInteraction, var transaction else { clearGesture(); return }
         let succeeded: Bool
         switch configuration.resizeFeedbackMode {
@@ -584,6 +598,7 @@ public final class DividerOverlayController {
         baselineBentoState = nil
         proposedBentoState = nil
         latestPlacements = []
+        latestDragPoint = nil
         lastLiveUpdate = .distantPast
         lastGhostUpdate = .distantPast
         removeEscapeMonitor()

@@ -529,7 +529,6 @@ public final class LayoutWheelController {
         guard updated != session.selection else { return }
         session.selection = updated
         phase = .open(session)
-        presenter.update(presentation(for: session))
         refreshPreview()
     }
 
@@ -549,7 +548,6 @@ public final class LayoutWheelController {
             guard updated != session.selection else { return }
             session.selection = updated
             phase = .open(session)
-            presenter.update(presentation(for: session))
             refreshPreview()
         }
     }
@@ -582,6 +580,7 @@ public final class LayoutWheelController {
     /// shows nothing, so the wheel never implies a placement that cannot happen.
     private func refreshPreview() {
         guard case var .open(session) = phase else { return }
+        defer { presenter.update(presentation(for: session)) }
         guard let selection = session.selection,
               let command = wheel.command(at: selection)
         else {
@@ -592,12 +591,10 @@ public final class LayoutWheelController {
         case let .ready(placements):
             session.unavailableReasons.removeValue(forKey: command)
             phase = .open(session)
-            presenter.update(presentation(for: session))
             presenter.showPlacements(placements)
         case let .unavailable(reason):
             session.unavailableReasons[command] = reason
             phase = .open(session)
-            presenter.update(presentation(for: session))
             presenter.hidePlacements()
             Self.log.debug("layout wheel command unavailable: \(reason, privacy: .public)")
         case nil:
@@ -698,7 +695,7 @@ extension LayoutWheelKey {
 final class LayoutWheelPanelPresenter: LayoutWheelPresenting {
     private let panel: NSPanel
     private let placementPreviews = PlacementWireframeController()
-    private var hosting: NSHostingView<LayoutWheelView>?
+    private(set) var hosting: NSHostingView<LayoutWheelView>?
 
     init() {
         panel = NSPanel(
@@ -719,9 +716,15 @@ final class LayoutWheelPanelPresenter: LayoutWheelPresenting {
     }
 
     func open(_ presentation: LayoutWheelPresentation) {
-        let view = NSHostingView(rootView: LayoutWheelView(presentation))
-        hosting = view
-        panel.contentView = view
+        let view: NSHostingView<LayoutWheelView>
+        if let hosting {
+            view = hosting
+            view.rootView = LayoutWheelView(presentation)
+        } else {
+            view = NSHostingView(rootView: LayoutWheelView(presentation))
+            hosting = view
+            panel.contentView = view
+        }
         position(view: view, at: presentation.placement)
         panel.orderFrontRegardless()
     }
@@ -734,8 +737,6 @@ final class LayoutWheelPanelPresenter: LayoutWheelPresenting {
 
     func close() {
         panel.orderOut(nil)
-        panel.contentView = nil
-        hosting = nil
     }
 
     func showPlacements(_ placements: [Placement]) {
@@ -756,10 +757,8 @@ final class LayoutWheelPanelPresenter: LayoutWheelPresenting {
             width: size.width,
             height: size.height
         )
-        panel.setFrame(
-            CoordinateConverter.toAppKit(frame, mainScreenFrame: mainFrame),
-            display: true
-        )
+        let appKitFrame = CoordinateConverter.toAppKit(frame, mainScreenFrame: mainFrame)
+        if panel.frame != appKitFrame { panel.setFrame(appKitFrame, display: true) }
     }
 }
 
