@@ -141,11 +141,37 @@ enum WindowActionGroup: String, CaseIterable, Identifiable {
 
     static func assertComplete() {
 #if DEBUG
-        let grouped = allCases.flatMap(\.actions)
+        let grouped = flattenedActions
         assert(grouped.count == Set(grouped).count, "Window actions must appear in one UI group only.")
         assert(Set(grouped) == Set(WindowAction.allCases), "Every window action must appear in the UI.")
 #endif
     }
+
+    static var flattenedActions: [WindowAction] { allCases.flatMap(\.actions) }
+}
+
+enum MenuPanelMetrics {
+    static let width: CGFloat = 332
+    static let padding: CGFloat = 14
+    static let tileHeight: CGFloat = 60
+    static let gap: CGFloat = 7
+    static let tileWidth = (width - padding * 2 - gap) / 2
+    static let maximumActionHeight: CGFloat = 328
+    static let columns = [
+        GridItem(.fixed(tileWidth), spacing: gap),
+        GridItem(.fixed(tileWidth), spacing: gap),
+    ]
+
+    static func actionHeight(actionCount: Int, editing: Bool = false) -> CGFloat {
+        let rows = CGFloat((max(0, actionCount) + 1) / 2)
+        return rows == 0 ? 72 : rows * tileHeight + max(0, rows - 1) * gap + (editing ? 22 + gap : 0)
+    }
+
+    static func viewportHeight(actionCount: Int, editing: Bool, availableHeight: CGFloat, chromeHeight: CGFloat) -> CGFloat {
+        min(actionHeight(actionCount: actionCount, editing: editing), maximumActionHeight,
+            max(0, availableHeight - chromeHeight))
+    }
+
 }
 
 @main
@@ -403,13 +429,14 @@ private final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSPo
         let visibleHeight = button.window?.screen?.visibleFrame.height
             ?? NSScreen.main?.visibleFrame.height
             ?? 760
-        let panelHeight = max(360, visibleHeight - 24)
+        let panelHeight = max(0, visibleHeight - 24)
 #if DEBUG
         let panel = BetterTileMenuPanel(
             model: model,
             panelHeight: panelHeight,
             openSetup: { [weak self] in self?.showSetupAssistant() },
             openSettings: { [weak self] in self?.showSettings() },
+            sendFeedback: { [weak self] in self?.sendFeedback() },
             quit: { NSApp.terminate(nil) }
         )
 #else
@@ -420,6 +447,7 @@ private final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSPo
             checkForUpdates: { [weak self] in self?.checkForUpdates(nil) },
             openSetup: { [weak self] in self?.showSetupAssistant() },
             openSettings: { [weak self] in self?.showSettings() },
+            sendFeedback: { [weak self] in self?.sendFeedback() },
             quit: { NSApp.terminate(nil) }
         )
 #endif
@@ -587,8 +615,8 @@ private final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSPo
             let window = NSWindow(contentViewController: host)
             window.title = "\(BetterTileVariant.displayName) Settings"
             window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
-            window.contentMinSize = NSSize(width: 820, height: 560)
-            window.setContentSize(NSSize(width: 920, height: 640))
+            window.contentMinSize = NSSize(width: 980, height: 640)
+            window.setContentSize(NSSize(width: 1060, height: 760))
             window.level = .floating
             window.isReleasedWhenClosed = false
             window.hidesOnDeactivate = false
@@ -852,25 +880,13 @@ private final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSPo
 extension BetterTileAppDelegate: SPUUpdaterDelegate, @preconcurrency SPUStandardUserDriverDelegate {}
 #endif
 
-private enum PanelSurface {
-    static func base(for scheme: ColorScheme, reduceTransparency: Bool) -> Color {
-        if reduceTransparency {
-            return scheme == .light ? Color(nsColor: .windowBackgroundColor) : Color(white: 0.08)
-        }
-        return scheme == .light ? Color.white.opacity(0.72) : Color.black.opacity(0.48)
-    }
-
+enum PanelSurface {
     static func card(for scheme: ColorScheme) -> Color {
-        scheme == .light ? Color.white.opacity(0.52) : Color.white.opacity(0.075)
-    }
-
-    static func control(for scheme: ColorScheme) -> Color {
-        scheme == .light ? Color.black.opacity(0.055) : Color.white.opacity(0.09)
+        scheme == .light ? .white : Color(nsColor: .underPageBackgroundColor)
     }
 
     static func border(for scheme: ColorScheme, increaseContrast: Bool) -> Color {
-        let opacity = increaseContrast ? 0.24 : 0.11
-        return scheme == .light ? Color.black.opacity(opacity) : Color.white.opacity(opacity)
+        Color.primary.opacity(increaseContrast ? 0.4 : 0.14)
     }
 }
 
@@ -883,23 +899,30 @@ private struct BetterTileMenuPanel: View {
 #endif
     let openSetup: () -> Void
     let openSettings: () -> Void
+    let sendFeedback: () -> Void
     let quit: () -> Void
 
-    @Environment(\.colorScheme) private var colorScheme
-    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
-    @Environment(\.colorSchemeContrast) private var colorSchemeContrast
-
-    private var increaseContrast: Bool {
-        colorSchemeContrast == .increased
-    }
-
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("BetterTile")
-                .font(.system(size: 18, weight: .bold, design: .rounded))
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 5)
-
+        MenuPanelContent(
+            model: model,
+            availableHeight: panelHeight,
+            openSetup: openSetup,
+            openSettings: openSettings,
+            sendFeedback: sendFeedback,
+            quit: quit
+        ) {
+            LazyVGrid(columns: MenuPanelMetrics.columns, spacing: MenuPanelMetrics.gap) {
+                ForEach(model.configuration.menuBarActions) { action in
+                    MenuPanelActionButton(
+                        action: action,
+                        shortcut: model.configuration.shortcuts.first(where: { $0.action == action })?.shortcut,
+                        isEnabled: model.hasAccessibilityPermission
+                    ) {
+                        model.perform(action)
+                    }
+                }
+            }
+        } notice: {
 #if !DEBUG
             if let update = updatePresentation.state.availableUpdate {
                 Button(action: checkForUpdates) {
@@ -908,77 +931,157 @@ private struct BetterTileMenuPanel: View {
                         Spacer()
                         UpdateVersionBadge(version: update.displayVersion)
                     }
-                    .font(.system(size: 11, weight: .semibold))
                 }
                 .buttonStyle(.plain)
-                .panelCard(colorScheme: colorScheme, increaseContrast: increaseContrast)
                 .accessibilityLabel("View update, version \(update.displayVersion)")
-                .help("Open the BetterTile \(update.displayVersion) update")
             }
 #endif
-
-            controlsCard
-
-            ScrollView {
-                LazyVGrid(
-                    columns: [
-                        GridItem(.flexible(), spacing: 7),
-                        GridItem(.flexible(), spacing: 7),
-                    ],
-                    spacing: 7
-                ) {
-                    ForEach(model.configuration.menuBarActions) { action in
-                        actionButton(action)
-                    }
-                }
-                .padding(.vertical, 1)
-                .background(OverlayScrollerConfigurator())
-            }
-            .frame(maxHeight: max(150, panelHeight - 300))
-            .contentMargins(.horizontal, 12, for: .scrollContent)
-            .contentMargins(.trailing, 4, for: .scrollIndicators)
-            .padding(.horizontal, -12)
-            .scrollIndicators(.automatic)
-
-            if let feedback = model.lastActionFeedback {
-                Label(feedback.message, systemImage: "\(feedback.symbolName).circle.fill")
-                    .font(.system(size: 10.5, weight: .semibold))
-                    .foregroundStyle(feedback.kind == .success ? Color.green : Color.orange)
-                    .lineLimit(1)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-
-            footer
-        }
-        .padding(12)
-        .frame(width: 332)
-        .frame(minHeight: 360, maxHeight: panelHeight)
-        .background {
-            Rectangle()
-                .fill(reduceTransparency ? AnyShapeStyle(Color.clear) : AnyShapeStyle(.regularMaterial))
-                .overlay(PanelSurface.base(for: colorScheme, reduceTransparency: reduceTransparency))
         }
     }
+}
 
-    private var controlsCard: some View {
+/// The real menu and its editor share all presentation. Only the action grid
+/// and callbacks differ: editing a preview cannot operate on the desktop.
+struct MenuPanelContent<Actions: View, Notice: View>: View {
+    @Bindable var model: BetterTileModel
+    var isEditing = false
+    var availableHeight: CGFloat = 760
+    var openSetup: (() -> Void)?
+    var openSettings: (() -> Void)?
+    var sendFeedback: (() -> Void)?
+    var quit: (() -> Void)?
+    @ViewBuilder let actions: () -> Actions
+    @ViewBuilder let notice: () -> Notice
+    @State private var chromeHeight: CGFloat = 286
+
+    private var actionHeight: CGFloat {
+        MenuPanelMetrics.viewportHeight(actionCount: model.configuration.menuBarActions.count, editing: isEditing,
+                                        availableHeight: availableHeight, chromeHeight: chromeHeight)
+    }
+
+    private var controls: some View {
+            MenuPanelControls(
+                hasAccessibilityPermission: isEditing || model.hasAccessibilityPermission,
+                activeMode: model.activeLayoutMode,
+                contextDescription: model.activeContextDescription,
+                snappingEnabled: model.configuration.snappingEnabled,
+                setMode: isEditing ? nil : { model.setActiveMode($0) },
+                setSnappingEnabled: isEditing ? nil : { value in
+                    model.updateConfiguration { $0.snappingEnabled = value }
+                },
+                repairBento: isEditing ? nil : { model.tileCurrentDisplay() },
+                openSetup: openSetup
+            )
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 8) {
+                Image(systemName: "rectangle.split.2x1")
+                    .font(.system(size: 20, weight: .medium))
+                    .foregroundStyle(.tint)
+                Text("BetterTile").font(.system(size: 15, weight: .semibold))
+                Spacer()
+                Text(model.activeLayoutMode.title)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .overlay(Capsule().strokeBorder(.separator))
+            }
+
+            notice()
+
+            controls
+
+            HStack {
+                Text("Window actions")
+                Spacer()
+                Text("\(model.configuration.menuBarActions.count) selected")
+            }
+            .font(.system(size: 11))
+            .foregroundStyle(.secondary)
+
+            ScrollView {
+                if model.configuration.menuBarActions.isEmpty {
+                    VStack(spacing: 6) {
+                        Text("No window actions").fontWeight(.medium)
+                        Text(isEditing ? "Choose actions on the left." : "Add actions in Menu Bar Settings.")
+                            .foregroundStyle(.secondary)
+                    }
+                    .font(.system(size: 12))
+                    .frame(maxWidth: .infinity, minHeight: 72)
+                } else {
+                    actions()
+                        .background(OverlayScrollerConfigurator())
+                }
+            }
+            .frame(height: actionHeight)
+            .scrollIndicators(.hidden)
+
+            Group {
+                if !isEditing, let feedback = model.lastActionFeedback {
+                    Label(feedback.message, systemImage: "\(feedback.symbolName).circle.fill")
+                        .foregroundStyle(feedback.kind == .success ? Color.green : Color.orange)
+                } else {
+                    Text(isEditing ? "Drag window actions into your preferred order." : "Choose an action for the focused window.")
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .font(.system(size: 11))
+            .fixedSize(horizontal: false, vertical: true)
+
+            Divider()
+            MenuPanelFooter(openSettings: openSettings, sendFeedback: sendFeedback, quit: quit)
+        }
+        .padding(MenuPanelMetrics.padding)
+        .frame(width: MenuPanelMetrics.width)
+        .fixedSize(horizontal: false, vertical: true)
+        .background(Color(nsColor: .windowBackgroundColor))
+        .onGeometryChange(for: CGFloat.self) { [actionHeight] proxy in
+            proxy.size.height - actionHeight
+        } action: { height in
+            if abs(chromeHeight - height) > 0.5 { chromeHeight = height }
+        }
+    }
+}
+
+struct MenuPanelControls: View {
+    let hasAccessibilityPermission: Bool
+    let activeMode: LayoutMode
+    let contextDescription: String
+    let snappingEnabled: Bool
+    let setMode: ((LayoutMode) -> Void)?
+    let setSnappingEnabled: ((Bool) -> Void)?
+    let repairBento: (() -> Void)?
+    let openSetup: (() -> Void)?
+
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.colorSchemeContrast) private var colorSchemeContrast
+
+    private var isInteractive: Bool {
+        setMode != nil || setSnappingEnabled != nil || repairBento != nil || openSetup != nil
+    }
+
+    var body: some View {
         VStack(alignment: .leading, spacing: 9) {
-            if !model.hasAccessibilityPermission {
+            if !hasAccessibilityPermission {
                 HStack {
                     Label("Accessibility required", systemImage: "hand.raised.fill")
                         .foregroundStyle(.orange)
                     Spacer()
-                    Button("Setup…", action: openSetup)
+                    Button("Setup…") { openSetup?() }
                         .controlSize(.small)
                 }
             }
 
             HStack {
                 Text("Window mode")
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(.system(size: 12))
                 Spacer()
                 Picker("Window mode", selection: Binding(
-                    get: { model.activeLayoutMode },
-                    set: { model.setActiveMode($0) }
+                    get: { activeMode },
+                    set: { setMode?($0) }
                 )) {
                     ForEach(LayoutMode.availableModes, id: \.self) { mode in
                         Text(mode.title).tag(mode)
@@ -986,29 +1089,24 @@ private struct BetterTileMenuPanel: View {
                 }
                 .labelsHidden()
                 .pickerStyle(.segmented)
-                .frame(width: 150)
+                .frame(width: 138)
             }
 
-            Text(model.activeContextDescription)
-                .font(.system(size: 9.5))
+            Text(contextDescription)
+                .font(.system(size: 11))
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
 
             Toggle(
-                "Enable drag snapping",
-                isOn: Binding(
-                    get: { model.configuration.snappingEnabled },
-                    set: { value in
-                        model.updateConfiguration { $0.snappingEnabled = value }
-                    }
-                )
+                "Drag snapping",
+                isOn: Binding(get: { snappingEnabled }, set: { setSnappingEnabled?($0) })
             )
-            .toggleStyle(.checkbox)
+            .toggleStyle(SettingsSwitchStyle())
             .controlSize(.small)
-            .font(.system(size: 10.5, weight: .medium))
+            .font(.system(size: 12))
 
             Button {
-                model.tileCurrentDisplay()
+                repairBento?()
             } label: {
                 Label("Repair Current Bento Layout", systemImage: "arrow.triangle.2.circlepath")
                     .font(.system(size: 12, weight: .semibold))
@@ -1016,109 +1114,149 @@ private struct BetterTileMenuPanel: View {
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.regular)
-            .disabled(!model.hasAccessibilityPermission)
+            .disabled(!hasAccessibilityPermission)
         }
-        .panelCard(colorScheme: colorScheme, increaseContrast: increaseContrast)
+        .allowsHitTesting(isInteractive)
+        .accessibilityHidden(!isInteractive)
+        .panelCard(
+            colorScheme: colorScheme,
+            increaseContrast: colorSchemeContrast == .increased
+        )
     }
+}
 
-    private func actionButton(_ action: WindowAction) -> some View {
-        Button {
-            model.perform(action)
-        } label: {
-            VStack(spacing: 3) {
-                HStack(spacing: 6) {
-                    WindowActionGlyph(action: action)
+struct MenuPanelActionButton: View {
+    let action: WindowAction
+    let shortcut: BetterTileCore.KeyboardShortcut?
+    var isEnabled = true
+    let perform: () -> Void
+
+    var body: some View {
+        Button(action: perform) {
+            HStack(spacing: 8) {
+                WindowActionGlyph(action: action)
+                VStack(alignment: .leading, spacing: 4) {
                     Text(action.title)
-                        .font(.system(size: 10.5, weight: .semibold))
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.78)
+                        .font(.system(size: 12, weight: .medium))
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                    ShortcutLabel(shortcut: shortcut)
                 }
-                Text(shortcut(for: action)?.displayText ?? " ")
-                    .font(.system(size: 9, weight: .medium, design: .rounded))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .accessibilityHidden(shortcut(for: action) == nil)
+                Spacer(minLength: 0)
             }
-            .frame(maxWidth: .infinity, minHeight: 38)
-            .padding(.horizontal, 5)
-            .background(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(PanelSurface.control(for: colorScheme))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .strokeBorder(
-                        PanelSurface.border(for: colorScheme, increaseContrast: increaseContrast),
-                        lineWidth: 0.8
-                    )
-            )
-            .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .padding(.horizontal, 8)
+            .frame(maxWidth: .infinity, minHeight: MenuPanelMetrics.tileHeight,
+                   maxHeight: MenuPanelMetrics.tileHeight, alignment: .leading)
+            .contentShape(RoundedRectangle(cornerRadius: 8))
         }
-        .buttonStyle(.plain)
-        .disabled(!model.hasAccessibilityPermission)
+        .buttonStyle(MenuActionButtonStyle())
+        .disabled(!isEnabled)
+        .accessibilityLabel(action.title)
+        .accessibilityValue(shortcut?.displayText ?? "No shortcut")
         .help(action.title)
     }
+}
 
-    private var footer: some View {
-        HStack(spacing: 8) {
+private struct MenuActionButtonStyle: ButtonStyle {
+    @Environment(\.colorScheme) private var scheme
+    @Environment(\.colorSchemeContrast) private var contrast
+    @Environment(\.isEnabled) private var isEnabled
+    @State private var isHovered = false
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .background {
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(PanelSurface.card(for: scheme))
+                    .overlay {
+                        if isEnabled && (isHovered || configuration.isPressed) {
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(Color.accentColor.opacity(configuration.isPressed ? 0.2 : 0.08))
+                        }
+                    }
+            }
+            .overlay {
+                RoundedRectangle(cornerRadius: 8)
+                    .strokeBorder(isEnabled && isHovered ? Color.accentColor :
+                        PanelSurface.border(for: scheme, increaseContrast: contrast == .increased))
+            }
+            .opacity(isEnabled ? 1 : 0.5)
+            .onHover { isHovered = $0 }
+    }
+}
+
+struct ShortcutLabel: View {
+    let shortcut: BetterTileCore.KeyboardShortcut?
+    var emptyLabel = "No shortcut"
+    var size: CGFloat = 11
+
+    var body: some View {
+        HStack(spacing: 4) {
+            if let shortcut {
+                if !shortcut.modifiers.isEmpty { Text(shortcut.modifiers.displayText) }
+                Text(shortcut.keyLabel.uppercased())
+            } else {
+                Text(emptyLabel)
+            }
+        }
+        .font(.system(size: size, weight: .medium))
+        .foregroundStyle(.secondary)
+        .fixedSize()
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(shortcut?.displayText ?? emptyLabel)
+    }
+}
+
+struct MenuPanelFooter: View {
+    let openSettings: (() -> Void)?
+    let sendFeedback: (() -> Void)?
+    let quit: (() -> Void)?
+
+    private var isInteractive: Bool {
+        openSettings != nil || sendFeedback != nil || quit != nil
+    }
+
+    var body: some View {
+        HStack(spacing: 7) {
             footerButton("Settings", systemImage: "gearshape", action: openSettings)
+            footerButton("Feedback", systemImage: "bubble.left", action: sendFeedback)
             footerButton("Quit", systemImage: "power", action: quit)
         }
         .frame(height: 30)
         .padding(.top, 2)
+        .allowsHitTesting(isInteractive)
+        .accessibilityHidden(!isInteractive)
     }
 
     private func footerButton(
         _ title: String,
         systemImage: String,
-        action: @escaping () -> Void
+        action: (() -> Void)?
     ) -> some View {
-        Button(action: action) {
+        Button { action?() } label: {
             Label(title, systemImage: systemImage)
                 .font(.system(size: 11, weight: .medium))
+                .lineLimit(1)
                 .frame(maxWidth: .infinity, minHeight: 28)
-                .background(
-                    RoundedRectangle(cornerRadius: 7, style: .continuous)
-                        .fill(PanelSurface.card(for: colorScheme))
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 7, style: .continuous)
-                        .strokeBorder(
-                            PanelSurface.border(for: colorScheme, increaseContrast: increaseContrast),
-                            lineWidth: 0.8
-                        )
-                )
                 .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
         }
         .buttonStyle(.plain)
         .foregroundStyle(.secondary)
     }
-
-    private func shortcut(for action: WindowAction) -> BetterTileCore.KeyboardShortcut? {
-        model.configuration.shortcuts.first(where: { $0.action == action })?.shortcut
-    }
-
 }
 
+/// SwiftUI's scroller preference can inherit "Always" from macOS. Keep the
+/// narrow menu's scroller over its content so it cannot compress the tiles.
 private struct OverlayScrollerConfigurator: NSViewRepresentable {
-    func makeNSView(context: Context) -> NSView {
-        let view = NSView()
-        configureWhenAttached(view)
-        return view
-    }
+    func makeNSView(context: Context) -> NSView { NSView() }
 
-    func updateNSView(_ nsView: NSView, context: Context) {
-        configureWhenAttached(nsView)
-    }
-
-    private func configureWhenAttached(_ view: NSView) {
+    func updateNSView(_ view: NSView, context: Context) {
         DispatchQueue.main.async {
             var ancestor: NSView? = view
             while let current = ancestor {
                 if let scrollView = current as? NSScrollView {
                     scrollView.scrollerStyle = .overlay
                     scrollView.autohidesScrollers = true
-                    scrollView.verticalScroller?.controlSize = .small
                     return
                 }
                 ancestor = current.superview
@@ -1146,10 +1284,28 @@ private extension View {
 
 struct WindowActionGlyph: View {
     let action: WindowAction
+    private static var images: [WindowAction: NSImage] = [:]
+
+    /// A template image also works in AppKit-backed Picker menus, where a
+    /// Canvas label cannot reliably supply an NSMenuItem image.
+    static func image(for action: WindowAction) -> Image {
+        if let cached = images[action] { return Image(nsImage: cached) }
+        let renderer = ImageRenderer(content:
+            LayoutWheelActionGlyph(action: action, tint: .black, fontSize: 17)
+                .frame(width: 26, height: 22)
+        )
+        renderer.scale = 2
+        guard let image = renderer.nsImage else {
+            return Image(systemName: action.layoutWheelSymbolName)
+        }
+        image.isTemplate = true
+        images[action] = image
+        return Image(nsImage: image)
+    }
 
     var body: some View {
-        LayoutWheelActionGlyph(action: action, tint: .primary, fontSize: 10)
-        .frame(width: 20, height: 14)
-        .accessibilityHidden(true)
+        Self.image(for: action)
+            .frame(width: 26, height: 22)
+            .accessibilityHidden(true)
     }
 }

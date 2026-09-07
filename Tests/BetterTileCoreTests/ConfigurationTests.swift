@@ -112,8 +112,29 @@ import Testing
     let migrated = try ConfigurationStore.decode(JSONSerialization.data(withJSONObject: [
         "schemaVersion": 10,
     ]))
+    let explicitNull = try ConfigurationStore.decode(JSONSerialization.data(withJSONObject: [
+        "schemaVersion": 10,
+        "menuBarActions": NSNull(),
+    ]))
     #expect(migrated.schemaVersion == BetterTileConfiguration.currentSchemaVersion)
     #expect(migrated.menuBarActions == WindowAction.menuBarDefaultOrder)
+    #expect(explicitNull.menuBarActions == WindowAction.menuBarDefaultOrder)
+}
+
+@Test func malformedMenuBarActionContainersFollowTheConfigurationErrorPath() throws {
+    let objects: [[String: Any]] = [
+        ["menuBarActions": ["leftHalf", 7]],
+        ["menuBarActions": ["action": "leftHalf"]],
+    ]
+    for var object in objects {
+        object["schemaVersion"] = BetterTileConfiguration.currentSchemaVersion
+        do {
+            _ = try ConfigurationStore.decode(JSONSerialization.data(withJSONObject: object))
+            Issue.record("Malformed menu action data must not reset the rest of the configuration.")
+        } catch ConfigurationError.invalidFile {
+            // The normal decoding error path is the expected result.
+        }
+    }
 }
 
 @Test func everyPersistedConfigurationFieldHasARuntimeChangeDomain() {
@@ -142,6 +163,10 @@ import Testing
         mutation(&changed)
         #expect(ConfigurationChangeSet.between(original, changed) == expected)
     }
+
+    var menuOnly = original
+    menuOnly.menuBarActions = [.rightHalf, .leftHalf]
+    #expect(ConfigurationChangeSet.between(original, menuOnly).isEmpty)
 }
 
 @Test func internalConfigurationStorageIsCompact() throws {

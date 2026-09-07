@@ -225,3 +225,31 @@ import Testing
         #expect(radius < metrics.outerRadius(for: ring))
     }
 }
+
+/// Render the actual compact glyphs. Geometry-only checks miss blank Canvas
+/// output and partitions whose strokes consume the selected cell at menu size.
+@Test @MainActor func compactActionGlyphsRemainVisibleAndDistinct() throws {
+    for scale: CGFloat in [1, 2] {
+        var sixthImages = Set<Data>()
+        for action in WindowAction.allCases {
+            let renderer = ImageRenderer(content:
+                LayoutWheelActionGlyph(action: action, tint: .black, fontSize: 17)
+                    .frame(width: 26, height: 22)
+            )
+            renderer.scale = scale
+            let image = try #require(renderer.cgImage, "No rendered glyph for \(action)")
+            let bitmap = NSBitmapImageRep(cgImage: image)
+            var visiblePixels = 0
+            for y in 0..<bitmap.pixelsHigh {
+                for x in 0..<bitmap.pixelsWide {
+                    if (bitmap.colorAt(x: x, y: y)?.alphaComponent ?? 0) > 0.5 { visiblePixels += 1 }
+                }
+            }
+            #expect(visiblePixels > 12, "Glyph is blank or too faint: \(action)")
+            if action.layoutWheelSymbolName == "square.grid.3x2.fill" {
+                sixthImages.insert(try #require(bitmap.representation(using: .png, properties: [:])))
+            }
+        }
+        #expect(sixthImages.count == 6, "Each sixth must identify a different selected cell")
+    }
+}

@@ -23,7 +23,7 @@ struct LayoutWheelSettings: View {
                         + "pointer to a sector, then release to apply that layout. Release in "
                         + "the middle, or press Escape, to cancel."
                 )
-                .font(.caption)
+                .font(.system(size: 12))
                 .foregroundStyle(.secondary)
             }
 
@@ -37,7 +37,7 @@ struct LayoutWheelSettings: View {
                     "One Level hides the outer ring and keeps everything assigned to it, "
                         + "ready for when you switch back."
                 )
-                .font(.caption)
+                .font(.system(size: 12))
                 .foregroundStyle(.secondary)
                 HStack {
                     Slider(
@@ -74,7 +74,7 @@ struct LayoutWheelSettings: View {
                 }
                 HStack {
                     Text("Sectors you leave Empty cancel the gesture when you release on them.")
-                        .font(.caption)
+                        .font(.system(size: 12))
                         .foregroundStyle(.secondary)
                     Spacer()
                     Button("Restore Defaults", action: restoreDefaults)
@@ -89,7 +89,7 @@ struct LayoutWheelSettings: View {
                         + "other key cancels it, so your existing \(wheel.keyboardModifiers.displayText) "
                         + "shortcuts keep working."
                 )
-                .font(.caption)
+                .font(.system(size: 12))
                 .foregroundStyle(.secondary)
 
                 Toggle("Middle click", isOn: middleClickBinding)
@@ -98,12 +98,12 @@ struct LayoutWheelSettings: View {
                         + "will not receive middle-click until you turn this off.",
                     systemImage: "exclamationmark.triangle.fill"
                 )
-                .font(.caption)
+                .font(.system(size: 12))
                 .foregroundStyle(.secondary)
 
                 ForEach(activationProblems, id: \.self) { problem in
                     Label(problem, systemImage: "exclamationmark.triangle.fill")
-                        .font(.caption)
+                        .font(.system(size: 12))
                         .foregroundStyle(Color(nsColor: .systemOrange))
                 }
                 if !model.hasAccessibilityPermission {
@@ -111,7 +111,7 @@ struct LayoutWheelSettings: View {
                 }
             }
         }
-        .formStyle(.grouped)
+        .modifier(SettingsFormPresentation())
     }
 
     // MARK: - Editor
@@ -134,7 +134,11 @@ struct LayoutWheelSettings: View {
                 ForEach(LayoutWheelActionGroup.all, id: \.title) { group in
                     Section(group.title) {
                         ForEach(group.actions) { action in
-                            Text(action.title)
+                            Label {
+                                Text(action.title)
+                            } icon: {
+                                WindowActionGlyph.image(for: action)
+                            }
                                 .tag(Optional(LayoutWheelCommand.windowAction(action)))
                         }
                     }
@@ -146,7 +150,7 @@ struct LayoutWheelSettings: View {
             .labelsHidden()
             .accessibilityLabel("Command for \(sectorTitle)")
             Text(assignmentExplanation)
-                .font(.caption)
+                .font(.system(size: 12))
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }

@@ -467,3 +467,104 @@ private func waitFor(
     #expect(model.statusMessage == nil)
     #expect(model.lastActionFeedback?.kind == .success)
 }
+
+@Test func menuBarDefaultOrderMatchesTheNativeCatalogExactly() {
+    #expect(WindowActionGroup.flattenedActions == WindowAction.menuBarDefaultOrder)
+    #expect(Set(WindowActionGroup.flattenedActions) == Set(WindowAction.allCases))
+    #expect(WindowActionGroup.flattenedActions.count == 34)
+}
+
+@Test func menuActionOrderingCommitsOneValidatedInsertion() {
+    let actions: [WindowAction] = [.leftHalf, .rightHalf, .topHalf, .bottomHalf]
+    #expect(
+        MenuActionOrder.moving(.leftHalf, toInsertionIndex: 3, in: actions)
+            == [.rightHalf, .topHalf, .leftHalf, .bottomHalf]
+    )
+    #expect(
+        MenuActionOrder.moving(.bottomHalf, toInsertionIndex: 0, in: actions)
+            == [.bottomHalf, .leftHalf, .rightHalf, .topHalf]
+    )
+    #expect(MenuActionOrder.moving(.leftHalf, toInsertionIndex: 0, in: actions) == nil)
+    #expect(MenuActionOrder.moving(.leftHalf, toInsertionIndex: 1, in: actions) == nil)
+    #expect(MenuActionOrder.moving(.restore, toInsertionIndex: 2, in: actions) == nil)
+    #expect(MenuActionOrder.moving(.leftHalf, toInsertionIndex: 99, in: actions) == nil)
+}
+
+@Test func menuActionKeyboardMovesRespectRowsAndBounds() {
+    let actions: [WindowAction] = [.leftHalf, .rightHalf, .topHalf, .bottomHalf]
+    #expect(MenuActionOrder.moving(.leftHalf, by: -1, in: actions) == nil)
+    #expect(MenuActionOrder.moving(.bottomHalf, by: 1, in: actions) == nil)
+    #expect(
+        MenuActionOrder.moving(.topHalf, by: -2, in: actions)
+            == [.topHalf, .leftHalf, .rightHalf, .bottomHalf]
+    )
+    #expect(
+        MenuActionOrder.moving(.rightHalf, by: 2, in: actions)
+            == [.leftHalf, .topHalf, .bottomHalf, .rightHalf]
+    )
+}
+
+@Test func menuPanelHeightTracksItsContentAndCapsToTheDisplay() {
+    let empty = MenuPanelMetrics.viewportHeight(actionCount: 0, editing: false, availableHeight: 700, chromeHeight: 280)
+    let one = MenuPanelMetrics.viewportHeight(actionCount: 1, editing: false, availableHeight: 700, chromeHeight: 280)
+    let three = MenuPanelMetrics.viewportHeight(actionCount: 3, editing: false, availableHeight: 700, chromeHeight: 280)
+    let all = MenuPanelMetrics.viewportHeight(actionCount: 34, editing: false, availableHeight: 700, chromeHeight: 280)
+    #expect(empty == 72)
+    #expect(one == MenuPanelMetrics.tileHeight)
+    #expect(three == MenuPanelMetrics.tileHeight * 2 + MenuPanelMetrics.gap)
+    #expect(all == MenuPanelMetrics.maximumActionHeight)
+    // Additional permission/update/feedback chrome reduces only the scroll area.
+    #expect(MenuPanelMetrics.viewportHeight(actionCount: 34, editing: false,
+                                           availableHeight: 500, chromeHeight: 350) == 150)
+    #expect(MenuPanelMetrics.viewportHeight(actionCount: 34, editing: false,
+                                           availableHeight: 200, chromeHeight: 350) == 0)
+    #expect(MenuPanelMetrics.actionHeight(actionCount: 3, editing: true) > three)
+    #expect(MenuPanelMetrics.tileWidth * 2 + MenuPanelMetrics.gap + MenuPanelMetrics.padding * 2 == MenuPanelMetrics.width)
+}
+
+@Test func snapZoneMarkersStayOnTheirTriggerEdgesAndSeparateFromPlacement() {
+    let size = CGSize(width: 360, height: 225)
+    let screen = CGRect(origin: .zero, size: size)
+    for area in SnapArea.allCases {
+        let marker = SnapZonePreviewGeometry.marker(for: area, in: size)
+        #expect(screen.contains(marker))
+        let target = SnapZonePreviewGeometry.trigger(for: area)
+        let targetFrame = CGRect(x: target.x * size.width, y: target.y * size.height,
+                                 width: target.width * size.width, height: target.height * size.height)
+        #expect(targetFrame.contains(CGPoint(x: marker.midX, y: marker.midY)))
+    }
+    #expect(SnapZonePreviewGeometry.marker(for: .topLeft, in: size).size == CGSize(width: 16, height: 16))
+    #expect(SnapZonePreviewGeometry.marker(for: .right, in: size).maxX == size.width)
+    #expect(SnapZonePreviewGeometry.marker(for: .bottom, in: size).maxY == size.height)
+}
+
+@Test func snapZonePreviewKeepsCenterDistinctFromCenterResize() throws {
+    let centered = try #require(SnapZonePreviewGeometry.placement(for: .center))
+    let resized = try #require(SnapZonePreviewGeometry.placement(for: .centerResize))
+    #expect(centered.x == 0.3)
+    #expect(centered.y == 0.3)
+    #expect(centered.width == 0.4)
+    #expect(centered.height == 0.4)
+    #expect(resized.x == 0.1)
+    #expect(resized.y == 0.1)
+    #expect(resized.width == 0.8)
+    #expect(resized.height == 0.8)
+    #expect(SnapZonePreviewGeometry.placement(for: nil) == nil)
+}
+
+@Test @MainActor func menuOnlyConfigurationPersistsWithoutWindowWritesOrWheelChanges() throws {
+    let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let store = ConfigurationStore(fileURL: directory.appending(path: "configuration.json"))
+    let system = FakeAppWindowSystem()
+    let model = BetterTileModel(store: store, system: system, startRuntime: false)
+    defer { model.shutdown() }
+    let wheel = model.configuration.layoutWheel
+
+    model.updateConfiguration { $0.menuBarActions = [.rightHalf, .leftHalf] }
+    model.flushConfiguration()
+
+    #expect(system.frameWriteCounts.isEmpty)
+    #expect(model.configuration.layoutWheel == wheel)
+    #expect(try store.load().menuBarActions == [.rightHalf, .leftHalf])
+}
