@@ -1628,49 +1628,10 @@ private struct ApplicationPickerSheet: View {
 struct SettingsFormPresentation: ViewModifier {
     func body(content: Content) -> some View {
         content
-            .formStyle(SettingsCardFormStyle())
+            .formStyle(.grouped)
             .toggleStyle(SettingsSwitchStyle())
             .controlSize(.regular)
             .font(.system(size: 13))
-    }
-}
-
-private struct SettingsCardFormStyle: FormStyle {
-    @Environment(\.colorScheme) private var scheme
-    @Environment(\.colorSchemeContrast) private var contrast
-
-    func makeBody(configuration: Configuration) -> some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 24) {
-                ForEach(sections: configuration.content) { section in
-                    VStack(alignment: .leading, spacing: 10) {
-                        if !section.header.isEmpty {
-                            HStack {
-                                ForEach(section.header) { $0 }
-                            }
-                            .font(.system(size: 13, weight: .semibold))
-                        }
-                        VStack(alignment: .leading, spacing: 14) {
-                            ForEach(section.content) { row in
-                                row.frame(maxWidth: .infinity, alignment: .leading)
-                            }
-                        }
-                        .padding(16)
-                        .background(PanelSurface.card(for: scheme), in: RoundedRectangle(cornerRadius: 10))
-                        .overlay {
-                            RoundedRectangle(cornerRadius: 10)
-                                .strokeBorder(PanelSurface.border(for: scheme, increaseContrast: contrast == .increased))
-                        }
-                        ForEach(section.footer) { $0 }
-                            .font(.system(size: 12))
-                            .foregroundStyle(.secondary)
-                    }
-                }
-            }
-            .padding(.horizontal, 24)
-            .padding(.top, 8)
-            .padding(.bottom, 24)
-        }
     }
 }
 

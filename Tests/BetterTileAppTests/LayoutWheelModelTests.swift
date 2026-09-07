@@ -519,7 +519,13 @@ private func waitFor(
     #expect(MenuPanelMetrics.viewportHeight(actionCount: 34, editing: false,
                                            availableHeight: 200, chromeHeight: 350) == 0)
     #expect(MenuPanelMetrics.actionHeight(actionCount: 3, editing: true) > three)
-    #expect(MenuPanelMetrics.tileWidth * 2 + MenuPanelMetrics.gap + MenuPanelMetrics.padding * 2 == MenuPanelMetrics.width)
+    #expect(
+        MenuPanelMetrics.tileWidth * 2
+            + MenuPanelMetrics.gap
+            + MenuPanelMetrics.padding * 2
+            + MenuPanelMetrics.scrollContentInset * 2
+            == MenuPanelMetrics.width
+    )
 }
 
 @Test func snapZoneMarkersStayOnTheirTriggerEdgesAndSeparateFromPlacement() {

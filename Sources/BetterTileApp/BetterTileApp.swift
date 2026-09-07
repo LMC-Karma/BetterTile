@@ -153,9 +153,10 @@ enum WindowActionGroup: String, CaseIterable, Identifiable {
 enum MenuPanelMetrics {
     static let width: CGFloat = 332
     static let padding: CGFloat = 14
+    static let scrollContentInset: CGFloat = 12
     static let tileHeight: CGFloat = 60
     static let gap: CGFloat = 7
-    static let tileWidth = (width - padding * 2 - gap) / 2
+    static let tileWidth = (width - padding * 2 - scrollContentInset * 2 - gap) / 2
     static let maximumActionHeight: CGFloat = 328
     static let columns = [
         GridItem(.fixed(tileWidth), spacing: gap),
@@ -879,12 +880,20 @@ extension BetterTileAppDelegate: SPUUpdaterDelegate, @preconcurrency SPUStandard
 #endif
 
 enum PanelSurface {
+    static func base(for scheme: ColorScheme, reduceTransparency: Bool) -> Color {
+        if reduceTransparency {
+            return scheme == .light ? Color(nsColor: .windowBackgroundColor) : Color(white: 0.08)
+        }
+        return scheme == .light ? Color.white.opacity(0.72) : Color.black.opacity(0.48)
+    }
+
     static func card(for scheme: ColorScheme) -> Color {
-        scheme == .light ? .white : Color(nsColor: .underPageBackgroundColor)
+        scheme == .light ? Color.white.opacity(0.52) : Color.white.opacity(0.075)
     }
 
     static func border(for scheme: ColorScheme, increaseContrast: Bool) -> Color {
-        Color.primary.opacity(increaseContrast ? 0.4 : 0.14)
+        let opacity = increaseContrast ? 0.24 : 0.11
+        return scheme == .light ? Color.black.opacity(opacity) : Color.white.opacity(opacity)
     }
 }
 
@@ -947,6 +956,8 @@ struct MenuPanelContent<Actions: View, Notice: View>: View {
     var quit: (() -> Void)?
     @ViewBuilder let actions: () -> Actions
     @ViewBuilder let notice: () -> Notice
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @State private var chromeHeight: CGFloat = 286
 
     private var actionHeight: CGFloat {
@@ -1012,7 +1023,10 @@ struct MenuPanelContent<Actions: View, Notice: View>: View {
                 }
             }
             .frame(height: actionHeight)
-            .scrollIndicators(.hidden)
+            .contentMargins(.horizontal, MenuPanelMetrics.scrollContentInset, for: .scrollContent)
+            .contentMargins(.trailing, 4, for: .scrollIndicators)
+            .padding(.horizontal, -MenuPanelMetrics.scrollContentInset)
+            .scrollIndicators(.automatic)
 
             Group {
                 if !isEditing, let feedback = model.lastActionFeedback {
@@ -1032,7 +1046,11 @@ struct MenuPanelContent<Actions: View, Notice: View>: View {
         .padding(MenuPanelMetrics.padding)
         .frame(width: MenuPanelMetrics.width)
         .fixedSize(horizontal: false, vertical: true)
-        .background(Color(nsColor: .windowBackgroundColor))
+        .background {
+            Rectangle()
+                .fill(reduceTransparency ? AnyShapeStyle(Color.clear) : AnyShapeStyle(.regularMaterial))
+                .overlay(PanelSurface.base(for: colorScheme, reduceTransparency: reduceTransparency))
+        }
         .onGeometryChange(for: CGFloat.self) { [actionHeight] proxy in
             proxy.size.height - actionHeight
         } action: { height in
@@ -1206,6 +1224,9 @@ struct MenuPanelFooter: View {
     let openSettings: (() -> Void)?
     let quit: (() -> Void)?
 
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.colorSchemeContrast) private var colorSchemeContrast
+
     private var isInteractive: Bool {
         openSettings != nil || quit != nil
     }
@@ -1231,6 +1252,20 @@ struct MenuPanelFooter: View {
                 .font(.system(size: 11, weight: .medium))
                 .lineLimit(1)
                 .frame(maxWidth: .infinity, minHeight: 28)
+                .background(
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .fill(PanelSurface.card(for: colorScheme))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .strokeBorder(
+                            PanelSurface.border(
+                                for: colorScheme,
+                                increaseContrast: colorSchemeContrast == .increased
+                            ),
+                            lineWidth: 0.8
+                        )
+                )
                 .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
         }
         .buttonStyle(.plain)
@@ -1250,6 +1285,7 @@ private struct OverlayScrollerConfigurator: NSViewRepresentable {
                 if let scrollView = current as? NSScrollView {
                     scrollView.scrollerStyle = .overlay
                     scrollView.autohidesScrollers = true
+                    scrollView.verticalScroller?.controlSize = .small
                     return
                 }
                 ancestor = current.superview
