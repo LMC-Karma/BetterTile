@@ -237,12 +237,16 @@ public final class DividerOverlayController {
               let mainFrame = NSScreen.screens.first?.frame,
               let display = coordinator.system.displays().first(where: { $0.id == interaction.displayID }),
               let windows = try? coordinator.system.visibleWindows()
-        else { return }
+        else {
+            handlePanel?.setActive(false)
+            return
+        }
         let point = currentMousePoint()
         let topLeftFrame = handleFrame(for: interaction, near: point)
         let appKitFrame = CoordinateConverter.toAppKit(topLeftFrame, mainScreenFrame: mainFrame)
         guard !isCovered(topLeftFrame: topLeftFrame, appKitFrame: appKitFrame) else {
             hoveredInteraction = nil
+            handlePanel?.setActive(false)
             handlePanel?.orderOut(nil)
             return
         }
@@ -262,7 +266,12 @@ public final class DividerOverlayController {
         } else {
             affected = interaction.affectedWindowIDs
         }
-        guard !affected.isEmpty, case var .started(newTransaction) = coordinator.beginTransaction(windowIDs: affected) else { return }
+        guard !affected.isEmpty,
+              case var .started(newTransaction) = coordinator.beginTransaction(windowIDs: affected)
+        else {
+            handlePanel?.setActive(false)
+            return
+        }
 
         activeInteraction = interaction
         isDragging = true
