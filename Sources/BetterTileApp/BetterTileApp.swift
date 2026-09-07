@@ -436,7 +436,6 @@ private final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSPo
             panelHeight: panelHeight,
             openSetup: { [weak self] in self?.showSetupAssistant() },
             openSettings: { [weak self] in self?.showSettings() },
-            sendFeedback: { [weak self] in self?.sendFeedback() },
             quit: { NSApp.terminate(nil) }
         )
 #else
@@ -447,7 +446,6 @@ private final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSPo
             checkForUpdates: { [weak self] in self?.checkForUpdates(nil) },
             openSetup: { [weak self] in self?.showSetupAssistant() },
             openSettings: { [weak self] in self?.showSettings() },
-            sendFeedback: { [weak self] in self?.sendFeedback() },
             quit: { NSApp.terminate(nil) }
         )
 #endif
@@ -899,7 +897,6 @@ private struct BetterTileMenuPanel: View {
 #endif
     let openSetup: () -> Void
     let openSettings: () -> Void
-    let sendFeedback: () -> Void
     let quit: () -> Void
 
     var body: some View {
@@ -908,7 +905,6 @@ private struct BetterTileMenuPanel: View {
             availableHeight: panelHeight,
             openSetup: openSetup,
             openSettings: openSettings,
-            sendFeedback: sendFeedback,
             quit: quit
         ) {
             LazyVGrid(columns: MenuPanelMetrics.columns, spacing: MenuPanelMetrics.gap) {
@@ -948,7 +944,6 @@ struct MenuPanelContent<Actions: View, Notice: View>: View {
     var availableHeight: CGFloat = 760
     var openSetup: (() -> Void)?
     var openSettings: (() -> Void)?
-    var sendFeedback: (() -> Void)?
     var quit: (() -> Void)?
     @ViewBuilder let actions: () -> Actions
     @ViewBuilder let notice: () -> Notice
@@ -1032,7 +1027,7 @@ struct MenuPanelContent<Actions: View, Notice: View>: View {
             .fixedSize(horizontal: false, vertical: true)
 
             Divider()
-            MenuPanelFooter(openSettings: openSettings, sendFeedback: sendFeedback, quit: quit)
+            MenuPanelFooter(openSettings: openSettings, quit: quit)
         }
         .padding(MenuPanelMetrics.padding)
         .frame(width: MenuPanelMetrics.width)
@@ -1209,17 +1204,15 @@ struct ShortcutLabel: View {
 
 struct MenuPanelFooter: View {
     let openSettings: (() -> Void)?
-    let sendFeedback: (() -> Void)?
     let quit: (() -> Void)?
 
     private var isInteractive: Bool {
-        openSettings != nil || sendFeedback != nil || quit != nil
+        openSettings != nil || quit != nil
     }
 
     var body: some View {
         HStack(spacing: 7) {
             footerButton("Settings", systemImage: "gearshape", action: openSettings)
-            footerButton("Feedback", systemImage: "bubble.left", action: sendFeedback)
             footerButton("Quit", systemImage: "power", action: quit)
         }
         .frame(height: 30)
