@@ -46,3 +46,6 @@ links open the BetterTile GitHub repository.
 The Layout Wheel sector geometry and default actions follow BetterTile's
 `LayoutWheelView.swift` and `LayoutWheel.swift`. The browser draws SVG action
 diagrams; it does not run the native app or control real windows.
+The animated resize grip follows `DividerHandleView` in
+`DividerOverlayController.swift`: a 56-point rounded bar that stretches to
+168 points and uses the accent color during a drag.

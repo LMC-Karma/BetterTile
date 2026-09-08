@@ -55,10 +55,12 @@
     snap.style.opacity = value > .1 && value < .9 ? String(Math.sin(value * Math.PI) * .8) : '0';
     seam.style.left = `${frame[1][0] + frame[1][2] + 1}%`;
     seam.style.opacity = value >= 1.2 && value < 2.7 ? '1' : '0';
+    seam.classList.toggle('dragging', value >= 1.2 && value < 2.15);
+    pointer.classList.toggle('resizing', value >= 1.2 && value < 2.7);
     wheel.style.opacity = value > 3.5 ? String((value - 3.5) * 2) : '0';
     Object.assign(pointer.style, {
       left: value > 3.5 ? '35%' : value > 1.2 ? seam.style.left : `${frame[1][0] + 25}%`,
-      top: value > 3.5 ? '33%' : value > 1.2 ? '52%' : `${frame[1][1] + 3}%`,
+      top: value > 3.5 ? 'calc(44% - 5.7cqw)' : value > 1.2 ? '52%' : `${frame[1][1] + 3}%`,
       opacity: value > .1 && value < 2.7 || value > 3.5 ? '1' : '0'
     });
   }

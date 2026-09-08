@@ -14,7 +14,7 @@
 .app-wheel-cancel path{fill:none;stroke:#929495;stroke-width:2;stroke-linecap:round}
 .app-wheel-cancel.selected circle,.app-wheel-cancel:focus-visible circle{stroke:#78a9ff;stroke-width:3}
 .app-wheel-cancel:hover circle{fill:#303235}
-.story-wheel{width:38cqw;height:38cqw;border:0;background:none;box-shadow:none}
+.story-wheel{width:32cqw;height:32cqw;border:0;background:none;box-shadow:none}
 .wheel-demo{grid-template-columns:minmax(0,1fr) 155px;gap:20px;padding:12px;background:#242627;min-height:370px}
 .wheel-demo>.app-wheel{max-width:440px;margin:auto}
 .wheel-demo>p small{font-size:12px;line-height:1.7;color:var(--app-muted);margin-top:12px}
