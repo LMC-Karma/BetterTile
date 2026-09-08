@@ -14,7 +14,16 @@ The first release is:
 - tag `v0.1.0-beta`
 - release title `BetterTile 0.1.0 Beta`
 
-Increase both the marketing version and numeric build for every later release.
+Increase the numeric build for every later release. Sparkle compares
+`CFBundleVersion` / `sparkle:version` to determine update order. The marketing
+version (`CFBundleShortVersionString` / `sparkle:shortVersionString`) is a
+unique, three-component numeric display label; it must not reuse an existing
+feed version or release tag.
+
+For example, `0.4.6` (build `12`) follows `0.4.51` (build `11`). The display
+labels do not determine update order. The release script rejects a build that
+is less than or equal to any published build, even with a different label.
+See [Sparkle's internal build number documentation](https://sparkle-project.org/documentation/publishing/#internal-build-numbers).
 
 ## Three signing contexts
 

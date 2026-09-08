@@ -184,36 +184,9 @@ project_build="$(awk -F ' = ' '/^[[:space:]]*CURRENT_PROJECT_VERSION = / { print
 
 mkdir -p "$archive_dir"
 
-version_is_greater() {
-    local candidate_major candidate_minor candidate_patch
-    local existing_major existing_minor existing_patch
-    IFS=. read -r candidate_major candidate_minor candidate_patch <<< "$1"
-    IFS=. read -r existing_major existing_minor existing_patch <<< "$2"
-    (( candidate_major > existing_major )) && return 0
-    (( candidate_major < existing_major )) && return 1
-    (( candidate_minor > existing_minor )) && return 0
-    (( candidate_minor < existing_minor )) && return 1
-    (( candidate_patch > existing_patch ))
-}
-
 fetch_existing_appcast "$feed_url" "$archive_dir/appcast.xml"
 if [[ -f "$archive_dir/appcast.xml" ]]; then
-    newest_feed_build="$(appcast_builds "$archive_dir/appcast.xml" | sort -n | tail -1)"
-    if [[ -n "$newest_feed_build" && "$project_build" -le "$newest_feed_build" ]]; then
-        echo "Project build $project_build must be newer than appcast build $newest_feed_build." >&2
-        exit 1
-    fi
-    if appcast_contains_version "$archive_dir/appcast.xml" "$version"; then
-        echo "Version $version already exists in the appcast." >&2
-        exit 1
-    fi
-    while IFS= read -r feed_version; do
-        [[ "$feed_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || continue
-        version_is_greater "$version" "$feed_version" || {
-            echo "Version $version must be newer than appcast version $feed_version." >&2
-            exit 1
-        }
-    done < <(appcast_versions "$archive_dir/appcast.xml")
+    validate_appcast_release "$archive_dir/appcast.xml" "$version" "$project_build"
 fi
 
 echo "Running tests and builds..."
