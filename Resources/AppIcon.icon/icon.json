@@ -23,6 +23,15 @@
         "enabled" : true,
         "value" : 0.5
       }
+    },
+    {
+      "layers" : [
+        {
+          "image-name" : "00-TrafficLights.svg",
+          "name" : "Traffic Lights"
+        }
+      ],
+      "name" : "Traffic Lights"
     }
   ],
   "supported-platforms" : {
