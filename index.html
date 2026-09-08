@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f6f7fb">
+  <script>
+    try {
+      document.documentElement.dataset.theme = localStorage.getItem('bettertile-theme') || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+    } catch { document.documentElement.dataset.theme = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'; }
+  </script>
+  <title>BetterTile — A better way to tile your Mac</title>
+  <meta name="description" content="A free, open-source macOS window manager. Resize neighbors together, snap windows into place, and let Bento adapt your layout.">
+  <link rel="icon" href="assets/app-icon.png">
+  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="story.css">
+  <link rel="stylesheet" href="app-visuals.css">
+  <script src="app-visuals.js" defer></script>
+  <script src="story.js" defer></script>
+  <script src="main.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="header shell">
+    <a class="brand" href="#" aria-label="BetterTile home"><img src="assets/app-icon.png" width="40" height="40" alt=""><span>BetterTile</span></a>
+    <nav aria-label="Primary navigation"><a href="#story">How it works</a><a href="#demo">Try it</a><a href="#about">Open source</a></nav>
+    <div class="header-actions"><button class="theme-toggle" type="button" aria-label="Dark mode" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M20 15a8 8 0 0 1-11-11 8 8 0 1 0 11 11Z"/></svg></button><a class="button small" href="https://github.com/LMC-Karma/BetterTile/releases/latest">Get the beta <span aria-hidden="true">↗</span></a></div>
+  </header>
+  <main id="main">
+    <section class="hero shell" aria-labelledby="hero-title">
+      <img class="hero-icon" src="assets/app-icon.png" alt="" width="104" height="104">
+      <p class="eyebrow"><i class="status-dot" aria-hidden="true"></i> Free &amp; open source. Made for macOS.</p>
+      <h1 id="hero-title">A little less arranging.<br><span>A lot more doing.</span></h1>
+      <p class="hero-description">Snap into place. Resize together. Make room for what’s next.<br>BetterTile makes your windows work together.</p>
+      <div class="hero-actions"><a class="button" href="https://github.com/LMC-Karma/BetterTile/releases/latest">Download the beta <span aria-hidden="true">↗</span></a><a class="text-link" href="#story">See it in motion <span aria-hidden="true">↓</span></a></div>
+      <p class="requirements">Apple Silicon <span aria-hidden="true">·</span> macOS 26+</p>
+    </section>
+    <section class="desktop-story shell" id="story" aria-label="See how BetterTile arranges a desktop">
+      <div class="story-visual">
+        <div class="desktop" role="img" aria-label="Illustrative desktop with overlapping Notes and Studio windows" data-desktop>
+          <div class="desktop-menubar" aria-hidden="true"><strong>BetterTile</strong><span>File &nbsp; Edit &nbsp; View</span><span class="menubar-right">Mon 9:41</span></div>
+          <div class="desktop-workspace" aria-hidden="true">
+            <div class="snap-outline"></div>
+            <div class="story-window studio-window" data-story-window>
+              <div class="window-toolbar"><div class="traffic-lights"><i></i><i></i><i></i></div><span>Studio</span><span>＋</span></div>
+              <div class="studio-content"><span class="window-eyebrow">A little space to think</span><h3>Make something<br>worth making.</h3><div class="studio-art"><i></i><i></i><i></i></div><div class="studio-footer"><span>Ideas in progress</span><span>↗</span></div></div>
+            </div>
+            <div class="story-window notes-window" data-story-window>
+              <div class="window-toolbar"><div class="traffic-lights"><i></i><i></i><i></i></div><span>Notes</span><span>⋯</span></div>
+              <div class="notes-content"><span class="window-eyebrow">Today, with a little more focus</span><h3>Good things<br>take space.</h3><p>A clear desk.<br>A fresh perspective.<br>Room for the next idea.</p><div class="note-task"><span>✓</span> Find your flow</div><div class="note-task"><span>○</span> Make it your own</div><div class="note-line"></div></div>
+            </div>
+            <div class="story-window music-window" data-story-window>
+              <div class="window-toolbar"><div class="traffic-lights"><i></i><i></i><i></i></div><span>Music</span><span>⋯</span></div>
+              <div class="music-content"><div class="album-art">〰</div><div><span class="window-eyebrow">A soundtrack for the afternoon</span><h3>In good company</h3><p>Focus mix · 24 tracks</p><span class="music-play">ⅠⅠ &nbsp; ━━━━━━ ───</span></div></div>
+            </div>
+            <div class="story-seam"><span>↔</span></div>
+            <div class="story-wheel"></div>
+            <svg class="story-pointer" viewBox="0 0 24 32"><path d="M2 2v23l6-6 5 11 5-2-5-10h9Z"/></svg>
+          </div>
+          <div class="desktop-badge" aria-hidden="true"><span class="status-dot"></span><span data-story-status>Your desktop. A little more together.</span></div>
+        </div>
+        <div class="story-controls" aria-label="Desktop demonstrations">
+          <button type="button" data-story-step="0" aria-pressed="true">Overview</button><button type="button" data-story-step="1" aria-pressed="false">Snap</button><button type="button" data-story-step="2" aria-pressed="false">Resize</button><button type="button" data-story-step="3" aria-pressed="false">Bento</button><button type="button" data-story-step="4" aria-pressed="false">Wheel</button>
+        </div>
+        <p class="story-caption">Illustrative animation · Explore the Settings demo below</p>
+      </div>
+      <div class="story-chapters">
+        <article class="story-chapter active" id="story-overview"><p class="eyebrow">Your windows, working together</p><h2>A place for<br>everything.</h2><p>Your notes, your next project, your afternoon soundtrack. Give them all a little room.</p><a class="text-link" href="#story-snap">Scroll to see how <span aria-hidden="true">↓</span></a></article>
+        <article class="story-chapter" id="story-snap"><p class="eyebrow">01 / Drag snapping</p><h2>From here.<br>To just right.</h2><p>Drag a title bar toward an edge or corner. Preview the placement. Let go, and get back to it.</p><span class="chapter-detail">Preview first. Place with confidence.</span></article>
+        <article class="story-chapter" id="story-resize"><p class="eyebrow">02 / Linked resizing</p><h2>Make room.<br>Stay together.</h2><p>Need more space for an idea? Move the shared boundary. Neighboring windows resize together.</p><span class="chapter-detail">One movement. Both sides.</span></article>
+        <article class="story-chapter" id="story-bento"><p class="eyebrow">03 / Adaptive Bento</p><h2>One more window.<br>Still your flow.</h2><p>Open something new. Bento adapts the layout to make space. Swap, lock, or float windows to make it yours.</p><span class="chapter-detail">A layout that changes with your work.</span></article>
+        <article class="story-chapter" id="story-wheel"><p class="eyebrow">04 / Layout Wheel</p><h2>Your next move.<br>Right here.</h2><p>Hold Control + Option + Shift over a focused window. Move to a sector, then release to place it.</p><div class="shortcut" aria-label="Control plus Option plus Shift"><kbd>⌃ <span>control</span></kbd><kbd>⌥ <span>option</span></kbd><kbd>⇧ <span>shift</span></kbd></div></article>
+      </div>
+    </section>
+    <section class="demo-section shell" id="demo" aria-labelledby="demo-title">
+      <div class="section-heading"><div><p class="eyebrow">Interactive product demo</p><h2 id="demo-title">Meet BetterTile.<br><span>Before you install.</span></h2></div><p>Explore BetterTile’s layout modes, menu actions, snap zones, and dividers. Everything here uses sample windows.</p></div>
+      <div class="native-demo" data-product-demo>
+        <div class="native-titlebar"><div class="traffic-lights" aria-hidden="true"><i></i><i></i><i></i></div><strong>BetterTile Settings</strong><span>Product demo</span></div>
+        <div class="native-app">
+          <aside class="native-sidebar" aria-label="Demo pages">
+            <div class="native-brand"><img src="assets/app-icon.png" width="30" height="30" alt=""><strong>BetterTile</strong></div>
+            <div class="native-search">⌕ <span>Search settings</span></div>
+            <p>Essentials</p><button type="button" data-demo-page="general" aria-pressed="false"><i aria-hidden="true"></i>General</button>
+            <p>Window Management</p><button type="button" class="active" data-demo-page="layout" aria-pressed="true"><i aria-hidden="true"></i>Window Layout</button><button type="button" data-demo-page="snap" aria-pressed="false"><i aria-hidden="true"></i>Snap Zones</button><button type="button" data-demo-page="menu" aria-pressed="false"><i aria-hidden="true"></i>Menu Bar</button><button type="button" data-demo-page="wheel" aria-pressed="false"><i aria-hidden="true"></i>Layout Wheel</button>
+            <p>Advanced</p><span class="native-disabled"><i aria-hidden="true"></i>Per-App Rules</span>
+          </aside>
+          <div class="native-content" aria-live="polite">
+            <section class="native-page active" data-page-panel="layout" aria-labelledby="layout-demo-title">
+              <header><h3 id="layout-demo-title">Window Layout</h3><p>Choose how windows arrange and how shared boundaries respond.</p></header>
+              <h4>Window Mode</h4><div class="native-card mode-grid"><button type="button" class="mode-choice" data-mode="Native" aria-pressed="false"><span class="mode-icon" aria-hidden="true"></span><strong>Native</strong><small>You place windows. BetterTile links adjacent edges.</small></button><button type="button" class="mode-choice selected" data-mode="Bento" aria-pressed="true"><span class="mode-icon" aria-hidden="true"></span><strong>Bento</strong><small>Adapts the layout as windows change.</small></button><div class="native-row"><span>Current context</span><small data-context-output>Active display · 4 visible windows</small></div><div class="native-row"><span>Default mode</span><strong data-mode-output>Bento</strong></div></div>
+              <h4>Resize Interaction</h4><div class="native-card"><div class="native-row"><span><strong>Window feedback</strong><small>Preview the arrangement before you release.</small></span><div class="native-segment"><button type="button" data-feedback="ghost" aria-pressed="true">Ghost Preview</button><button type="button" data-feedback="live" aria-pressed="false">Live Resize</button></div></div><div class="native-row"><label for="divider-width">Divider width</label><span><input id="divider-width" type="range" min="2" max="12" value="6"><output for="divider-width">6 pt</output></span></div>
+                <div class="divider-preview" data-divider-preview data-layout-mode="bento"><div class="preview-window one"></div><div class="preview-window two"></div><div class="preview-window three"></div><div class="preview-window four"></div><button type="button" class="native-divider" data-divider role="slider" aria-label="Bento divider" aria-valuemin="25" aria-valuemax="75" aria-valuenow="50"><i class="up"></i><i class="right"></i><i class="down"></i><i class="left"></i></button></div>
+                <div class="preview-help"><span>Drag the divider to resize.</span><span data-feedback-output>Ghost Preview</span></div>
+              </div>
+            </section>
+            <section class="native-page" data-page-panel="snap" aria-labelledby="snap-demo-title"><header><h3 id="snap-demo-title">Snap Zones</h3><p>Choose what happens when a window reaches an edge or corner.</p></header><div data-native-page-content="snap"></div></section>
+            <section class="native-page" data-page-panel="menu" aria-labelledby="menu-demo-title"><header><h3 id="menu-demo-title">Menu Bar</h3><p>Choose the actions you reach for. Arrange them in the native app.</p></header><div data-native-page-content="menu"></div></section>
+            <section class="native-page" data-page-panel="wheel" aria-labelledby="wheel-demo-title"><header><h3 id="wheel-demo-title">Layout Wheel</h3><p>Put window actions around the pointer for quick access.</p></header><div data-native-page-content="wheel"></div></section>
+            <section class="native-page" data-page-panel="general" aria-labelledby="general-demo-title"><header><h3 id="general-demo-title">General</h3><p>A few essentials. Everything else, just where you need it.</p></header><div data-native-page-content="general"></div></section>
+          </div>
+        </div>
+      </div>
+      <div class="demo-caption"><span>Browser simulation. No app settings or real windows are changed.</span><span>Based on BetterTile 0.4.6.</span></div>
+    </section>
+    <section class="features shell" id="features" aria-labelledby="features-title">
+      <div class="section-heading"><div><p class="eyebrow">Less window work. More actual work.</p><h2 id="features-title">Tile your windows.<br>Keep working.</h2></div><p>From a quick snap to a full Bento layout, arrange your desktop around what you’re doing.</p></div>
+      <div class="feature-grid">
+        <article class="feature-card"><div class="card-top"><span class="eyebrow">Drag snapping</span><svg viewBox="0 0 32 32" aria-hidden="true"><rect x="3" y="5" width="26" height="22" rx="3"/><path d="M16 5v22M7 9h5v14H7z"/></svg></div><h3>Put it where<br>you want it.</h3><p>Drag a title bar toward an edge or corner. See the zone before you let go. Work inside a window without triggering a snap.</p><div class="card-note">Preview first. Place with confidence.</div></article>
+        <article class="feature-card"><div class="card-top"><span class="eyebrow">Linked resizing</span><svg viewBox="0 0 32 32" aria-hidden="true"><rect x="3" y="5" width="26" height="22" rx="3"/><path d="M16 5v22M9 13l-3 3 3 3m14-6 3 3-3 3M6 16h20"/></svg></div><h3>Make room.<br>Stay together.</h3><p>Drag the shared boundary between adjacent windows. Both sides resize together, with a ghost preview or live updates as you move.</p><div class="card-note">One movement. Two windows.</div></article>
+        <article class="feature-card bento-card"><div class="card-top"><span class="eyebrow">Adaptive Bento</span><svg viewBox="0 0 32 32" aria-hidden="true"><rect x="3" y="5" width="26" height="22" rx="3"/><path d="M14 5v22m0-11h15"/></svg></div><h3>A new window.<br>A natural fit.</h3><p>Bento places new windows where they move and resize the least. Swap, lock, or float a window to make the layout your own.</p><div class="card-note">Adapts as your workspace changes.</div></article>
+        <article class="feature-card wheel-card"><div class="card-top"><span class="eyebrow">Layout Wheel</span><svg viewBox="0 0 32 32" aria-hidden="true"><circle cx="16" cy="16" r="12"/><circle cx="16" cy="16" r="4"/><path d="M16 4v8m4 4h8M16 20v8M4 16h8"/></svg></div><h3>Your next move.<br>At your pointer.</h3><p>Hold Control + Option + Shift over a focused window. Move to a sector, then release to place it. Customize each action in Settings.</p><div class="shortcut" aria-label="Control plus Option plus Shift"><kbd>⌃ <span>control</span></kbd><kbd>⌥ <span>option</span></kbd><kbd>⇧ <span>shift</span></kbd></div></article>
+      </div>
+      <div class="feature-foot"><span>Also built in</span><p>Keyboard shortcuts with conflict detection <span aria-hidden="true">·</span> Per-window undo</p></div>
+    </section>
+    <section class="about" id="about" aria-labelledby="about-title"><div class="shell">
+      <p class="eyebrow">A small app. Clear principles.</p><div class="about-heading"><h2 id="about-title">OPEN SOURCE.<br><span>LOCAL FIRST.</span></h2><div><p>Your window data stays on your Mac. No account, no behavioral tracking, and no paid tier.</p><a class="text-link" href="https://github.com/LMC-Karma/BetterTile">Look inside on GitHub <span aria-hidden="true">↗</span></a></div></div>
+      <div class="trust-grid"><div><span class="eyebrow">Built for your Mac</span><h3>Native Swift + SwiftUI</h3><p>Window management built around macOS.</p></div><div><span class="eyebrow">Free, forever</span><h3>GPL v3 or later</h3><p>Read it. Fork it. Help make it better.</p></div><div><span class="eyebrow">One permission</span><h3>Accessibility</h3><p>To move and resize windows, explained before you grant access.</p></div></div>
+    </div></section>
+    <section class="questions shell" id="questions" aria-labelledby="questions-title"><div><p class="eyebrow">Before you start</p><h2 id="questions-title">Good questions.<br>Straight answers.</h2></div><div class="faq-list">
+      <details><summary>What do I need to run BetterTile?<span aria-hidden="true">+</span></summary><p>An Apple Silicon Mac running macOS 26 or later. BetterTile needs Accessibility permission to move and resize windows from other apps.</p></details>
+      <details><summary>How do I install the public beta?<span aria-hidden="true">+</span></summary><p>Download the latest beta disk image from <a href="https://github.com/LMC-Karma/BetterTile/releases/latest">GitHub Releases</a>, open it, and drag BetterTile into Applications.</p><p>The beta is self-signed and is not Apple-notarized. After attempting the first launch, open System Settings → Privacy &amp; Security and choose Open Anyway. Only do this after confirming your download came from the official repository.</p></details>
+      <details><summary>Does BetterTile collect my data?<span aria-hidden="true">+</span></summary><p>BetterTile does not send window data, configuration, analytics, telemetry, or crash reports. Settings stay in a local JSON file.</p><p>Update checks contact GitHub and can be turned off. GitHub receives ordinary connection metadata. Read the <a href="https://github.com/LMC-Karma/BetterTile/blob/main/SECURITY.md">security and privacy policy</a> for the full details.</p></details>
+      <details><summary>Can I use it with macOS tiling?<span aria-hidden="true">+</span></summary><p>Yes. BetterTile can work with windows arranged by macOS tiling. Bento can recognize the arrangement and continue resizing it with BetterTile’s dividers. For edge dragging, choose either BetterTile Drag Snapping or macOS edge tiling to avoid competing previews.</p></details>
+      <details><summary>Is it really free?<span aria-hidden="true">+</span></summary><p>Yes. No trial, subscription, paid tier, or features held behind a purchase. BetterTile is free software under the GNU GPL v3 or later.</p></details>
+    </div></section>
+    <section class="download shell" aria-labelledby="download-title"><img src="assets/app-icon.png" alt="" width="80" height="80" loading="lazy"><p class="eyebrow">Meet your new window manager</p><h2 id="download-title">YOUR SCREEN.<br><span>UNDER CONTROL.</span></h2><div class="download-actions"><a class="button" href="https://github.com/LMC-Karma/BetterTile/releases/latest">Download for macOS <span aria-hidden="true">↗</span></a><a class="button secondary" href="https://github.com/LMC-Karma/BetterTile"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 .5a12 12 0 0 0-3.79 23.39c.6.11.82-.26.82-.58v-2.04c-3.34.73-4.04-1.61-4.04-1.61-.55-1.39-1.34-1.76-1.34-1.76-1.09-.75.08-.74.08-.74 1.2.09 1.83 1.23 1.83 1.23 1.07 1.82 2.8 1.29 3.49.99.11-.77.42-1.29.76-1.59-2.67-.3-5.47-1.34-5.47-5.95 0-1.31.47-2.38 1.23-3.22-.12-.3-.53-1.52.12-3.18 0 0 1-.32 3.3 1.23A11.5 11.5 0 0 1 12 6.03c1.02 0 2.05.14 3.01.42 2.29-1.55 3.29-1.23 3.29-1.23.66 1.66.25 2.88.13 3.18.76.84 1.22 1.91 1.22 3.22 0 4.62-2.81 5.64-5.49 5.94.43.37.81 1.1.81 2.22v3.29c0 .32.22.69.83.57A12 12 0 0 0 12 .5Z"/></svg>View source</a></div><p class="requirements">Public beta <span aria-hidden="true">·</span> Apple Silicon <span aria-hidden="true">·</span> macOS 26+</p></section>
+  </main>
+  <footer class="footer shell"><a class="brand" href="#"><img src="assets/app-icon.png" width="28" height="28" alt=""><span>BetterTile</span></a><span>Free software. A better workspace.</span><div><a href="https://github.com/LMC-Karma/BetterTile/blob/main/SECURITY.md">Privacy</a><a href="https://github.com/LMC-Karma/BetterTile/blob/main/LICENSE">License</a><a href="https://github.com/LMC-Karma/BetterTile">GitHub <span aria-hidden="true">↗</span></a></div></footer>
+</body>
+</html>

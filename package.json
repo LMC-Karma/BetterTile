@@ -1,0 +1,10 @@
+{
+  "name": "bettertile-website",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "build": "node --check main.js && node check.cjs && node build.mjs",
+    "test": "node check.cjs",
+    "dev": "python3 -u -m http.server 4175 --bind 127.0.0.1"
+  }
+}
