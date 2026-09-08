@@ -27,6 +27,15 @@
     {
       "layers" : [
         {
+          "image-name" : "00-TrafficLights.svg",
+          "name" : "Traffic Lights"
+        }
+      ],
+      "name" : "Traffic Lights"
+    },
+    {
+      "layers" : [
+        {
           "image-name" : "03-DebugBadge.svg",
           "name" : "Debug Badge"
         }
