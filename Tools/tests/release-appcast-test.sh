@@ -114,6 +114,36 @@ else
     pass "rejects a build or version that only shares a prefix"
 fi
 
+release_feed="$scratch/release-feed.xml"
+printf '%s\n' '<rss><channel>' \
+    '<item><sparkle:version>11</sparkle:version><sparkle:shortVersionString>0.4.51</sparkle:shortVersionString></item>' \
+    '<item><sparkle:version>9</sparkle:version><sparkle:shortVersionString>0.4.4</sparkle:shortVersionString></item>' \
+    '</channel></rss>' > "$release_feed"
+
+echo "release ordering follows the internal build, independently of the display label"
+if validate_appcast_release "$release_feed" 0.4.6 12; then
+    pass "accepts build 12 after build 11 with the intended 0.4.6 label"
+else
+    fail "accepts build 12 after build 11 with the intended 0.4.6 label"
+fi
+for candidate_build in 10 11; do
+    if validate_appcast_release "$release_feed" 0.4.6 "$candidate_build" 2>/dev/null; then
+        fail "rejects non-increasing build $candidate_build"
+    else
+        pass "rejects non-increasing build $candidate_build"
+    fi
+done
+if validate_appcast_release "$release_feed" 0.4.51 12 2>/dev/null; then
+    fail "rejects a reused display version even with a new build"
+else
+    pass "rejects a reused display version even with a new build"
+fi
+if validate_appcast_release "$legacy_format" 0.4.1 6; then
+    pass "validates ordering against a legacy feed"
+else
+    fail "validates ordering against a legacy feed"
+fi
+
 if [[ "$failures" -eq 0 ]]; then
     echo "release appcast tests passed"
 else

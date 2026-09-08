@@ -49,3 +49,20 @@ appcast_contains_version() {
     done < <(appcast_versions "$1")
     return 1
 }
+
+# Sparkle orders updates by CFBundleVersion. The marketing version is a
+# unique display label and need not sort numerically after older labels.
+validate_appcast_release() {
+    local appcast="$1" version="$2" project_build="$3"
+    local newest_feed_build
+    newest_feed_build="$(appcast_builds "$appcast" | sort -n | tail -1)"
+    if [[ -n "$newest_feed_build" && "$project_build" -le "$newest_feed_build" ]]; then
+        echo "Project build $project_build must be newer than appcast build $newest_feed_build." >&2
+        return 1
+    fi
+    if appcast_contains_version "$appcast" "$version"; then
+        echo "Version $version already exists in the appcast." >&2
+        return 1
+    fi
+    return 0
+}
