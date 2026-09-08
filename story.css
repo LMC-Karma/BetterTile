@@ -1,3 +1,5 @@
+@font-face{font-family:Inter;src:url("assets/fonts/Inter-variable.ttf") format("truetype");font-style:normal;font-weight:100 900;font-display:swap}
+@font-face{font-family:"Instrument Serif";src:url("assets/fonts/InstrumentSerif-Italic.ttf") format("truetype");font-style:italic;font-weight:400;font-display:swap}
 /* The product story shares one desktop across five scroll chapters. */
 :root{--paper:#f6f7fb;--ink:#182137;--green:#2855d9;--lime:#b6f1dc;--muted:#596379;--line:#d9dfeb}
 body{background:radial-gradient(ellipse 65% 600px at 50% 350px,#e6edff 0,transparent 100%),var(--paper)}
@@ -9,7 +11,9 @@ body{background:radial-gradient(ellipse 65% 600px at 50% 350px,#e6edff 0,transpa
 .hero-icon{display:block;width:84px;height:84px;margin:0 auto 18px;object-fit:contain;filter:drop-shadow(0 12px 15px #315bce26)}
 .hero>.eyebrow{font-size:11px;letter-spacing:.075em;color:var(--muted)}
 .hero .status-dot{background:#168966;margin-right:7px}
-.hero h1{font-size:clamp(44px,6.4vw,86px);line-height:1.03;letter-spacing:-.065em;margin:25px 0 24px;font-weight:730}
+.hero h1{font-size:clamp(44px,6.4vw,86px);line-height:1.08;letter-spacing:-.04em;margin:25px 0 24px;font-weight:780;font-family:Inter,-apple-system,BlinkMacSystemFont,sans-serif;font-optical-sizing:auto}
+.hero h1 em,.story-chapter h2 em{font-family:"Instrument Serif",Georgia,serif;font-weight:400;font-style:italic;letter-spacing:0;padding-right:.07em}
+.story-chapter h2{font-family:Inter,-apple-system,BlinkMacSystemFont,sans-serif}
 .hero h1 span{color:var(--green)}
 .hero-description{font-size:18px;line-height:1.65;color:var(--muted);margin:0 auto;max-width:650px}
 .hero-actions{flex-direction:row;justify-content:center;gap:26px;margin-top:27px}
@@ -77,7 +81,7 @@ body{background:radial-gradient(ellipse 65% 600px at 50% 350px,#e6edff 0,transpa
 .story-chapters{grid-column:1;grid-row:1}
 .story-chapter{min-height:85svh;display:flex;flex-direction:column;justify-content:center;align-items:flex-start;padding:70px 0}
 .story-chapter .eyebrow{font-size:10px;color:var(--green);letter-spacing:.055em;margin:0 0 20px}
-.story-chapter h2{font-size:clamp(34px,3.7vw,51px);line-height:1.04;letter-spacing:-.055em;font-weight:680;margin:0 0 24px}
+.story-chapter h2{font-size:clamp(34px,3.7vw,51px);line-height:1.1;letter-spacing:-.04em;font-weight:750;margin:0 0 24px}
 .story-chapter>p:not(.eyebrow){font-size:17px;line-height:1.7;color:var(--muted);margin:0 0 22px;max-width:320px}
 .chapter-detail{font-size:12px;color:#287460;border-top:1px solid var(--line);padding-top:20px;width:100%;line-height:1.6}
 .story-chapter .shortcut{margin-top:0}

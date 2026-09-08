@@ -23,7 +23,7 @@ The interactive windows and Settings are browser simulations.
 4. Open the deployment URL reported by the workflow.
 
 Pull requests run the build checks. Only `main` publishes. The workflow uploads
-`dist/`, which contains only the site's HTML, CSS, JavaScript, and app icon.
+`dist/`, which contains only the site's HTML, CSS, JavaScript, app icon, and licensed font files.
 GitHub Actions uses its short-lived repository token; no custom secret is needed.
 
 ## Custom domain
@@ -49,3 +49,9 @@ diagrams; it does not run the native app or control real windows.
 The animated resize grip follows `DividerHandleView` in
 `DividerOverlayController.swift`: a 56-point rounded bar that stretches to
 168 points and uses the accent color during a drag.
+
+
+Marketing headlines use self-hosted Inter and Instrument Serif Italic. Settings
+and window simulations retain the platform system font. Font files and their
+SIL Open Font Licenses are in `assets/fonts/`; see its README for provenance.
+No request to a third-party font service is made.

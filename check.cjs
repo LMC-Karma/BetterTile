@@ -1,6 +1,6 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
-const { clamp, keyMove } = require('./main.js');
+const { clamp, keyMove, matchingPages } = require('./main.js');
 const { storyFrame } = require('./story.js');
 const { sectorPath, wheelMarkup, innerActions, outerActions, placements } = require('./app-visuals.js');
 assert.equal(new Set([...innerActions, ...outerActions]).size, 16, 'Two distinct rings of eight actions');
@@ -49,4 +49,12 @@ assert.deepEqual([...pageButtons].sort(), [...pagePanels].sort(), 'Every demo na
 assert.ok(html.includes('Native') && html.includes('Bento'));
 assert.ok(html.includes('No app settings or real windows are changed.'));
 
-console.log('Passed: story geometry, demo bounds, keyboard movement, page mapping, anchors, and assets.');
+assert.deepEqual(matchingPages('  SINGLE   WINDOW '), ['layout'], 'Search is case-insensitive and matches all terms');
+assert.deepEqual(matchingPages('no-such-setting'), [], 'Unmatched search has no destination');
+assert.ok(matchingPages('Bento').includes('apps'), 'Search finds per-app exceptions');
+assert.deepEqual(matchingPages(' ').sort(), [...pagePanels].sort(), 'Clearing search restores every page');
+for (const asset of ['Inter-variable.ttf', 'InstrumentSerif-Italic.ttf', 'Inter-OFL.txt', 'InstrumentSerif-OFL.txt']) {
+  assert.ok(fs.statSync(`assets/fonts/${asset}`).size > 1000, `Font or license missing: ${asset}`);
+}
+
+console.log('Passed: settings search, fonts, licenses, story geometry, demo bounds, keyboard movement, page mapping, anchors, and assets.');

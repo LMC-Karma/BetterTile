@@ -7,7 +7,19 @@
     const moves = { ArrowLeft: [-step, 0], ArrowRight: [step, 0], ArrowUp: [0, -step], ArrowDown: [0, step], Home: [50 - x, 50 - y] };
     return moves[key] ? [clamp(x + moves[key][0]), clamp(y + moves[key][1])] : null;
   };
-  if (typeof module !== 'undefined') module.exports = { clamp, keyMove };
+  const demoPages = {
+    general: 'General permission accessibility appearance dark system shortcuts update keyboard drag snapping',
+    layout: 'Window Layout native bento resize linked divider keyboard single window placement default mode',
+    snap: 'Snap Zones drag edge corner title bar double click maximize',
+    menu: 'Menu Bar actions order visibility reorder',
+    wheel: 'Layout Wheel radial ring sector hub control option shift middle click activation',
+    apps: 'Per-App Rules application exclude ignore bento exception manage normally'
+  };
+  function matchingPages(query) {
+    const terms = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
+    return Object.keys(demoPages).filter(name => terms.every(term => demoPages[name].toLowerCase().includes(term)));
+  }
+  if (typeof module !== 'undefined') module.exports = { clamp, keyMove, matchingPages };
   if (typeof document === 'undefined') return;
 
   const themeToggle = document.querySelector('.theme-toggle');
@@ -43,7 +55,7 @@
     wheel: [0, 1, 2, 3, 4, 5].map(i => `<circle cx="${12 + Math.sin(i * Math.PI / 3) * 8}" cy="${12 + Math.cos(i * Math.PI / 3) * 8}" r="2.5"/>`).join('') + '<circle cx="12" cy="12" r="2"/>',
     apps: '<path d="M12 21H6a4 4 0 0 1-4-4V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4v6"/><circle cx="18" cy="18" r="5"/><path d="m15 18 2 2 4-4"/>'
   };
-  demo.querySelectorAll('.native-sidebar button, .native-disabled').forEach(button => {
+  demo.querySelectorAll('[data-demo-page]').forEach(button => {
     button.querySelector('i').outerHTML = `<svg class="sidebar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${navIcons[button.dataset.demoPage || 'apps']}</svg>`;
   });
   const zoneNames = ['Top left corner', 'Top edge', 'Top right corner', 'Left edge', 'Right edge', 'Bottom left corner', 'Bottom edge', 'Bottom right corner'];
@@ -83,7 +95,9 @@
 
   renderMenu();
 
+  let activePage = 'layout';
   function showPage(name) {
+    if (name) activePage = name;
     panels.forEach((panel) => panel.classList.toggle('active', panel.dataset.pagePanel === name));
     pageButtons.forEach((button) => {
       const active = button.dataset.demoPage === name;
@@ -92,7 +106,41 @@
     });
   }
 
+  const search = demo.querySelector('[data-demo-search]');
+  const empty = demo.querySelector('[data-search-empty]');
+  function filterPages() {
+    const matches = matchingPages(search.value);
+    pageButtons.forEach(button => { button.hidden = !matches.includes(button.dataset.demoPage); });
+    demo.querySelectorAll('.native-sidebar > p').forEach(label => { label.hidden = Boolean(search.value.trim()); });
+    empty.hidden = matches.length > 0;
+    showPage(matches.includes(activePage) ? activePage : matches[0]);
+  }
+  search.addEventListener('input', filterPages);
+  function clearSearch() { search.value = ''; filterPages(); search.focus(); }
+  search.addEventListener('keydown', event => { if (event.key === 'Escape') clearSearch(); });
+  demo.querySelector('[data-clear-search]').addEventListener('click', clearSearch);
   pageButtons.forEach((button) => button.addEventListener('click', () => showPage(button.dataset.demoPage)));
+
+  const singlePlacement = demo.querySelector('[data-single-placement]');
+  singlePlacement.innerHTML = ['Leave Unchanged', ...Object.keys(actionPlacements)].map(action => `<option ${action === 'Maximize' ? 'selected' : ''}>${action}</option>`).join('');
+  function updateSingleWindow() {
+    const rectangle = actionPlacements[singlePlacement.value] || [.15, .15, .6, .65];
+    const [left, top, width, height] = rectangle.map(value => `${value * 100}%`);
+    Object.assign(demo.querySelector('[data-single-window]').style, { left, top, width, height });
+    demo.querySelector('[data-single-output]').textContent = singlePlacement.value === 'Leave Unchanged' ? 'Notes keeps its existing size and position.' : `Notes uses ${singlePlacement.value} when it becomes the only window.`;
+  }
+  singlePlacement.addEventListener('change', updateSingleWindow);
+  updateSingleWindow();
+  demo.querySelector('#default-mode').addEventListener('change', event => {
+    demo.querySelector('[data-default-help]').textContent = `New desktops start in ${event.target.value} mode.`;
+  });
+  function updateLinkedResize() {
+    const native = demo.querySelector('[data-mode="Native"]').getAttribute('aria-pressed') === 'true';
+    const linked = demo.querySelector('[data-linked-resize]').getAttribute('aria-checked') === 'true';
+    demo.querySelector('[data-linked-help]').textContent = native
+      ? linked ? 'Native windows resize with their neighbors.' : 'Native windows resize independently.'
+      : 'Saved for Native mode. Bento manages its own shared boundaries.';
+  }
 
   demo.addEventListener('click', (event) => {
     const mode = event.target.closest('[data-mode]');
@@ -102,10 +150,11 @@
         button.classList.toggle('selected', active);
         button.setAttribute('aria-pressed', String(active));
       });
-      demo.querySelector('[data-mode-output]').textContent = mode.dataset.mode;
       demo.querySelector('[data-context-output]').textContent = `Active display · ${mode.dataset.mode === 'Native' ? 2 : 4} visible windows`;
       demo.querySelector('[data-divider-preview]').dataset.layoutMode = mode.dataset.mode.toLowerCase();
       demo.querySelector('[data-divider]').setAttribute('aria-label', mode.dataset.mode === 'Native' ? 'Linked resize divider' : 'Bento divider');
+      setDivider(x, mode.dataset.mode === 'Native' ? 50 : y);
+      updateLinkedResize();
     }
 
     const feedback = event.target.closest('[data-feedback]');
@@ -139,6 +188,7 @@
       const on = toggle.getAttribute('aria-checked') !== 'true';
       toggle.setAttribute('aria-checked', String(on));
       toggle.classList.toggle('on', on);
+      if (toggle.matches('[data-linked-resize]')) updateLinkedResize();
     }
   });
 
@@ -189,14 +239,23 @@
   const divider = demo.querySelector('[data-divider]');
   let x = 50;
   let y = 50;
+  let dragStart = null;
+  for (const pane of preview.querySelectorAll('.preview-window')) {
+    const committed = pane.cloneNode(true);
+    committed.classList.add('committed');
+    committed.setAttribute('aria-hidden', 'true');
+    preview.insertBefore(committed, divider);
+  }
   function setDivider(nextX, nextY) {
     x = clamp(nextX);
     y = clamp(nextY);
     preview.style.setProperty('--x', `${x}%`);
     preview.style.setProperty('--y', `${y}%`);
     divider.setAttribute('aria-valuenow', String(x));
-    divider.setAttribute('aria-valuetext', `${x}% across, ${y}% down`);
+    divider.setAttribute('aria-valuetext', preview.dataset.layoutMode === 'native' ? `Native divider: ${x}% across` : `Bento divider: ${x}% across, ${y}% down`);
   }
+  demo.querySelector('[data-reset-divider]').addEventListener('click', () => setDivider(50, 50));
+  setDivider(x, y);
   function moveDivider(event) {
     const bounds = preview.getBoundingClientRect();
     setDivider(((event.clientX - bounds.left) / bounds.width) * 100, preview.dataset.layoutMode === 'native' ? 50 : ((event.clientY - bounds.top) / bounds.height) * 100);
@@ -205,20 +264,29 @@
     if (!event.isPrimary || event.button !== 0) return;
     event.preventDefault();
     divider.focus({ preventScroll: true });
+    dragStart = [x, y];
+    preview.style.setProperty('--committed-x', `${x}%`);
+    preview.style.setProperty('--committed-y', `${y}%`);
+    preview.classList.toggle('ghost-drag', demo.querySelector('[data-feedback="ghost"]').getAttribute('aria-pressed') === 'true');
     divider.setPointerCapture(event.pointerId);
     divider.classList.add('dragging');
     moveDivider(event);
   });
   divider.addEventListener('pointermove', (event) => {
-    if (divider.hasPointerCapture(event.pointerId)) moveDivider(event);
+    if (dragStart && divider.hasPointerCapture(event.pointerId)) moveDivider(event);
   });
   function release(event) {
-    if (divider.hasPointerCapture(event.pointerId)) divider.releasePointerCapture(event.pointerId);
+    if (dragStart && event.type !== 'pointerup') setDivider(...dragStart);
+    dragStart = null;
+    preview.classList.remove('ghost-drag');
     divider.classList.remove('dragging');
+    if (event.pointerId !== undefined && divider.hasPointerCapture(event.pointerId)) divider.releasePointerCapture(event.pointerId);
   }
   divider.addEventListener('pointerup', release);
   divider.addEventListener('pointercancel', release);
+  divider.addEventListener('lostpointercapture', release);
   divider.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && dragStart) { event.preventDefault(); release(event); return; }
     if (preview.dataset.layoutMode === 'native' && (event.key === 'ArrowUp' || event.key === 'ArrowDown')) return;
     const next = keyMove(x, y, event.key, event.shiftKey);
     if (!next) return;
