@@ -17,14 +17,28 @@ The interactive windows and Settings are browser simulations.
 
 ## GitHub Pages
 
-1. In the website repository, open **Settings → Pages**.
-2. Set **Build and deployment → Source** to **GitHub Actions**.
-3. Push to `main`, or run **Website checks and GitHub Pages** from **Actions**.
-4. Open the deployment URL reported by the workflow.
+This website lives on the `gh-pages` branch of
+[LMC-Karma/BetterTile](https://github.com/LMC-Karma/BetterTile/tree/gh-pages).
+The app stays on `main`. The two branches have separate histories; do not merge
+`gh-pages` into `main`.
 
-Pull requests run the build checks. Only `main` publishes. The workflow uploads
-`dist/`, which contains only the site's HTML, CSS, JavaScript, app icon, and licensed font files.
-GitHub Actions uses its short-lived repository token; no custom secret is needed.
+Live site: https://lmc-karma.github.io/BetterTile/
+
+In repository **Settings → Pages**, use **Deploy from a branch**,
+branch **gh-pages**, folder **/ (root)**. The `.nojekyll` file makes GitHub
+serve the static files directly. The HTML, CSS, JavaScript and font files at
+the branch root are the site; `dist/` is only a local build output.
+
+For future changes, branch from `gh-pages`, run `npm run build`, and open a pull
+request targeting `gh-pages`. The Website checks workflow validates pushes and
+pull requests to that branch. Merging an approved change into `gh-pages`
+publishes it automatically. No app build or release is involved.
+
+This branch preserves the website history from `LMC-Karma/bettertile-website`,
+including its native-control and typography/demo improvements. The migration
+changes hosting only: no analytics, permissions, runtime dependencies, native
+app behavior, or update distribution change. The earlier repository remains
+available as migration history.
 
 ## Custom domain
 
