@@ -459,13 +459,20 @@ public final class WindowCoordinator {
         }
     }
 
-    public func applyLive(transaction: inout WindowFrameTransaction, placements: [Placement]) -> WindowMutationOutcome {
+    public func applyLive(
+        transaction: inout WindowFrameTransaction,
+        placements: [Placement],
+        validateParticipants: Bool = true
+    ) -> WindowMutationOutcome {
         if case let .failed(reason) = preview(transaction: &transaction, placements: placements) {
             return .failed(reason: reason)
         }
         do {
-            try validate(transaction.proposedPlacements)
-            try applyAtomically(transaction.proposedPlacements, rollbackFrames: transaction.lastAppliedFrames)
+            if validateParticipants { try validate(transaction.proposedPlacements) }
+            let changed = transaction.proposedPlacements.filter {
+                transaction.lastAppliedFrames[$0.windowID]?.approximatelyEquals($0.frame, tolerance: 0.01) != true
+            }
+            try applyAtomically(changed, rollbackFrames: transaction.lastAppliedFrames)
             transaction.lastAppliedFrames = Dictionary(uniqueKeysWithValues: placements.map { ($0.windowID, $0.frame) })
             transaction.hasLiveChanges = true
             transaction.hasDegradedApply = false
@@ -592,7 +599,7 @@ public final class WindowCoordinator {
         }
     }
 
-    private func validate(_ placements: [Placement]) throws {
+    private func validate(_ placements: [Placement], sizeTolerance: Double = 0) throws {
         let ids = Set(placements.map(\.windowID))
         let snapshots = Dictionary(uniqueKeysWithValues: try snapshots(ids: ids).map { ($0.id, $0) })
         let displays = Dictionary(uniqueKeysWithValues: system.displays().map { ($0.id, $0) })
@@ -601,8 +608,8 @@ public final class WindowCoordinator {
             guard snapshot.isEligible, snapshot.constraints.isMovable, snapshot.constraints.isResizable else {
                 throw WindowSystemError.unsupportedWindow(placement.windowID)
             }
-            guard placement.frame.size.width >= snapshot.constraints.minimumSize.width,
-                  placement.frame.size.height >= snapshot.constraints.minimumSize.height
+            guard placement.frame.size.width + sizeTolerance >= snapshot.constraints.minimumSize.width,
+                  placement.frame.size.height + sizeTolerance >= snapshot.constraints.minimumSize.height
             else { throw WindowSystemError.operationFailed("A window reached its minimum size.") }
             // A legal size is not enough: a stale display frame or a split
             // driven to an edge can produce a placement that leaves nothing on
@@ -749,5 +756,92 @@ public final class WindowCoordinator {
         }
         lastCycle = (windowID, requested, nextIndex, now)
         return sequence[nextIndex]
+    }
+}
+
+extension WindowCoordinator {
+    /// A bounded frame/order transaction. Windows remain on-screen and are
+    /// never minimized. Session validity is checked again after each await.
+    public func applyTabbed(
+        placements: [Placement],
+        selected: [WindowID],
+        previousSelected: [WindowID],
+        focus: WindowID?,
+        onSizeMismatch: (@MainActor (WindowID, BTRect, BTRect, BTRect) -> Void)? = nil,
+        isCurrent: @MainActor () -> Bool
+    ) async -> WindowMutationOutcome {
+        guard let tabSystem = system as? any TabbedWindowSystem else {
+            return .failed(reason: "This window system does not support Tabbed actions.")
+        }
+        guard isCurrent(), !Task.isCancelled else { return .failed(reason: "The desktop changed.") }
+        let ids = Set(placements.map(\.windowID))
+        let baseline: [WindowID: BTRect]
+        let oldFocus = try? system.focusedWindow()?.id
+        do {
+            try validate(placements, sizeTolerance: 0.001)
+            baseline = Dictionary(uniqueKeysWithValues: try snapshots(ids: ids).map { ($0.id, $0.frame) })
+        } catch { return .failed(reason: error.localizedDescription) }
+        var touched = false
+        do {
+            let changed = placements.filter { !(baseline[$0.windowID]?.approximatelyEquals($0.frame, tolerance: 0.5) ?? false) }
+            touched = !changed.isEmpty
+            try applyAtomically(changed, rollbackFrames: baseline)
+            if let focus {
+                touched = true
+                try tabSystem.raiseWindow(focus, activate: true)
+            }
+            for id in selected where id != focus {
+                touched = true
+                try tabSystem.raiseWindow(id, activate: false)
+            }
+            if let focus { try tabSystem.raiseWindow(focus, activate: false) }
+            var previousFrames: [WindowID: BTRect] = [:]
+            for attempt in 0..<4 {
+                guard isCurrent(), !Task.isCancelled else {
+                    return touched ? .degraded(reason: "The desktop changed during Tabbed placement. Return to that desktop and use Repair Tabbed.") : .failed(reason: "The desktop changed.")
+                }
+                let actual = Dictionary(uniqueKeysWithValues: try snapshots(ids: ids).map { ($0.id, $0.frame) })
+                let framesMatch = placements.allSatisfy { actual[$0.windowID]?.approximatelyEquals($0.frame, tolerance: 2) == true }
+                let focusMatches = try focus == nil || system.focusedWindow()?.id == focus
+                if framesMatch && focusMatches { return .applied }
+                // Only width refusals with stable frames and accepted heights
+                // can inform a retry. Report before rollback loses the evidence.
+                if attempt == 3, focusMatches, placements.allSatisfy({ placement in
+                    guard let frame = actual[placement.windowID] else { return false }
+                    return abs(frame.size.height - placement.frame.size.height) <= 2
+                        && previousFrames[placement.windowID]?.approximatelyEquals(frame, tolerance: 1) == true
+                }) {
+                    for placement in placements {
+                        if let frame = actual[placement.windowID], let before = baseline[placement.windowID] {
+                            onSizeMismatch?(placement.windowID, placement.frame, before, frame)
+                        }
+                    }
+                }
+                previousFrames = actual
+                if attempt < 3 { try await Task.sleep(for: .milliseconds(50)) }
+            }
+            throw WindowSystemError.operationFailed("A window did not accept the Tabbed size or focus. Choose a larger pane or try Repair Tabbed.")
+        } catch {
+            guard isCurrent() else { return .degraded(reason: "The desktop changed before Tabbed could restore its windows.") }
+            var failed = false
+            for (id, frame) in baseline.sorted(by: { $0.key < $1.key }) {
+                do { try apply(frame, to: id) } catch { failed = true }
+            }
+            if touched {
+                for id in previousSelected { do { try tabSystem.raiseWindow(id, activate: false) } catch { failed = true } }
+                if let oldFocus, ids.contains(oldFocus) {
+                    do { try tabSystem.raiseWindow(oldFocus, activate: true) } catch { failed = true }
+                }
+            }
+            let restored = (try? snapshots(ids: ids)) ?? []
+            if baseline.contains(where: { id, frame in !restored.contains { $0.id == id && $0.frame.approximatelyEquals(frame, tolerance: 2) } }) { failed = true }
+            return failed ? .degraded(reason: "Tabbed could not fully restore the previous arrangement. Use Repair Tabbed or switch to Native.") : .failed(reason: error.localizedDescription)
+        }
+    }
+
+    public func closeTabbedWindow(_ id: WindowID) -> WindowMutationOutcome {
+        guard let tabSystem = system as? any TabbedWindowSystem else { return .failed(reason: "Window closure is unavailable.") }
+        do { try tabSystem.requestCloseWindow(id); return .applied }
+        catch { return .failed(reason: error.localizedDescription) }
     }
 }

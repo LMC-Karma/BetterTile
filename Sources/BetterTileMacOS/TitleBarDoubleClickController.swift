@@ -19,6 +19,7 @@ public final class TitleBarDoubleClickController {
     /// Consulted so a double click never places a window the user has asked
     /// BetterTile to leave alone.
     public var applicationRules = ApplicationRuleSet()
+    public var isTabbedMember: ((WindowID) -> Bool)?
 
     public init(coordinator: WindowCoordinator, isEnabled: Bool = true) {
         self.coordinator = coordinator
@@ -42,6 +43,7 @@ public final class TitleBarDoubleClickController {
     func allowsDoubleClickPlacement(for window: WindowSnapshot) -> Bool {
         isEnabled
             && window.processIdentifier != ProcessInfo.processInfo.processIdentifier
+            && isTabbedMember?(window.id) != true
             && window.isEligible
             && window.constraints.isResizable
             && applicationRules.rule(for: window.bundleIdentifier).allowsDirectPlacement

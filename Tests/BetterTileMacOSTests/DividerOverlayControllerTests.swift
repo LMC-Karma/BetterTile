@@ -382,6 +382,7 @@ enum DividerTestEnding: CaseIterable {
     if ending == .participantLoss {
         system.windows.removeLast()
         controller.drag(to: CGPoint(x: start.x + 60, y: screen.frame.maxY - (start.y + 60)))
+        controller.displayTick()
         #expect(!controller.isDragging)
         return
     } else if ending == .cancel {
@@ -398,6 +399,76 @@ enum DividerTestEnding: CaseIterable {
         #expect(system.frameWriteCounts == writes)
     }
     #expect(!controller.isDragging)
+}
+
+@Test @MainActor func liveDividerAppliesOnlyTheLatestSampleOnEachDisplayTickAndFlushesRelease() throws {
+    _ = NSApplication.shared
+    let system = FakeWindowSystem()
+    let bounds = BTRect(x: -10_000, y: -10_000, width: 800, height: 600)
+    let display = DisplayID(rawValue: "main")
+    system.availableDisplays = [DisplaySnapshot(id: display, frame: bounds, visibleFrame: bounds, isMain: true)]
+    let left = WindowID(rawValue: "left")
+    let right = WindowID(rawValue: "right")
+    system.windows = [
+        WindowSnapshot(
+            id: left,
+            processIdentifier: 1,
+            frame: BTRect(x: bounds.minX, y: bounds.minY, width: 400, height: 600),
+            displayID: display
+        ),
+        WindowSnapshot(
+            id: right,
+            processIdentifier: 2,
+            frame: BTRect(x: bounds.midX, y: bounds.minY, width: 400, height: 600),
+            displayID: display
+        ),
+    ]
+    var configuration = BetterTileConfiguration()
+    configuration.resizeFeedbackMode = .live
+    let displayTicks = ResizeDisplayLink(automatic: false)
+    let controller = DividerOverlayController(
+        coordinator: WindowCoordinator(system: system),
+        configuration: configuration,
+        displayTicks: displayTicks
+    )
+    let boundary = BoundaryDescriptor(
+        id: "live-test",
+        displayID: display,
+        axis: .vertical,
+        coordinate: bounds.midX,
+        spanStart: bounds.minY,
+        spanEnd: bounds.maxY,
+        beforeWindowIDs: [left],
+        afterWindowIDs: [right]
+    )
+    let interaction = DividerInteraction(boundaries: [boundary], kind: .vertical)
+    let start = BTPoint(x: bounds.midX, y: bounds.midY)
+    let screen = try #require(NSScreen.screens.first)
+    func appKitPoint(delta: Double) -> CGPoint {
+        CGPoint(x: start.x + delta, y: screen.frame.maxY - start.y)
+    }
+
+    controller.beginGesture(interaction: interaction, at: start)
+    defer { controller.hideAndCancel() }
+    for delta in 1...120 {
+        controller.drag(to: appKitPoint(delta: Double(delta) / 2))
+    }
+
+    #expect(system.frameWriteCounts.isEmpty)
+    displayTicks.fire()
+    #expect(system.frameWriteCounts == [left: 1, right: 1])
+    #expect(system.windows.first(where: { $0.id == left })?.frame.maxX == bounds.midX + 60)
+    #expect(system.windows.first(where: { $0.id == right })?.frame.minX == bounds.midX + 60)
+
+    for delta in 121...240 {
+        controller.drag(to: appKitPoint(delta: Double(delta) / 2))
+    }
+    #expect(system.frameWriteCounts == [left: 1, right: 1])
+
+    controller.end(at: appKitPoint(delta: 140))
+    #expect(system.frameWriteCounts == [left: 2, right: 2])
+    #expect(system.windows.first(where: { $0.id == left })?.frame.maxX == bounds.midX + 140)
+    #expect(system.windows.first(where: { $0.id == right })?.frame.minX == bounds.midX + 140)
 }
 
 private func boundary(

@@ -17,6 +17,7 @@ public final class LinkedResizeController {
     public var isEnabledForDisplay: ((DisplayID) -> Bool)?
 
     private let coordinator: WindowCoordinator
+    private let displayTicks: ResizeDisplayLink
     private var mouseDownMonitor: Any?
     private var dragMonitor: Any?
     private var mouseUpMonitor: Any?
@@ -24,12 +25,25 @@ public final class LinkedResizeController {
     private var eventTapHandoff = GestureEventSourceHandoff()
     private var baselineWindows: [WindowSnapshot] = []
     private var sourceID: WindowID?
+    private var transaction: WindowFrameTransaction?
     private var isLeftButtonDown = false
     private var isStarted = false
+    private var hasPendingDisplayUpdate = false
 
     public init(coordinator: WindowCoordinator, configuration: BetterTileConfiguration) {
         self.coordinator = coordinator
         self.configuration = configuration
+        displayTicks = ResizeDisplayLink()
+    }
+
+    init(
+        coordinator: WindowCoordinator,
+        configuration: BetterTileConfiguration,
+        displayTicks: ResizeDisplayLink
+    ) {
+        self.coordinator = coordinator
+        self.configuration = configuration
+        self.displayTicks = displayTicks
     }
 
     public func start() {
@@ -151,9 +165,10 @@ public final class LinkedResizeController {
             }
         case .leftMouseDragged:
             if sourceID == nil, isLeftButtonDown { beginGesture() }
-            continueGesture()
+            hasPendingDisplayUpdate = sourceID != nil
         case .leftMouseUp:
             isLeftButtonDown = false
+            displayTick(validateParticipants: true)
             endGesture()
         }
     }
@@ -179,12 +194,21 @@ public final class LinkedResizeController {
             }
             sourceID = focused.id
             installGestureMonitors()
+            displayTicks.start(screen: screen(for: focused.displayID), maximumFramesPerSecond: 60) { [weak self] in
+                self?.displayTick()
+            }
         } catch {
             endGesture()
         }
     }
 
-    private func continueGesture() {
+    func displayTick(validateParticipants: Bool = false) {
+        guard hasPendingDisplayUpdate else { return }
+        hasPendingDisplayUpdate = false
+        continueGesture(validateParticipants: validateParticipants)
+    }
+
+    private func continueGesture(validateParticipants: Bool) {
         guard configuration.linkedResizeEnabled, let sourceID,
               let baseline = baselineWindows.first(where: { $0.id == sourceID }),
               isEnabledForDisplay?(baseline.displayID) == true,
@@ -200,7 +224,26 @@ public final class LinkedResizeController {
               )
         else { return }
 
-        guard coordinator.applyPlacements(result.placements, recordHistory: false).isApplied else { return }
+        let peerPlacements = result.placements.filter { $0.windowID != sourceID }
+        guard !peerPlacements.isEmpty else { return }
+        var transaction: WindowFrameTransaction
+        if let active = self.transaction {
+            transaction = active
+        } else {
+            guard case let .started(started) = coordinator.beginTransaction(
+                windowIDs: Set(peerPlacements.map(\.windowID))
+            ) else { return }
+            transaction = started
+        }
+        guard coordinator.applyLive(
+            transaction: &transaction,
+            placements: peerPlacements,
+            validateParticipants: validateParticipants
+        ).isApplied else {
+            self.transaction = transaction
+            return
+        }
+        self.transaction = transaction
         let frames = Dictionary(uniqueKeysWithValues: result.placements.map { ($0.windowID, $0.frame) })
         for index in baselineWindows.indices {
             if let frame = frames[baselineWindows[index].id] { baselineWindows[index].frame = frame }
@@ -209,11 +252,22 @@ public final class LinkedResizeController {
     }
 
     private func endGesture() {
+        if let transaction { coordinator.finishLive(transaction: transaction, recordHistory: false) }
         isLeftButtonDown = false
         baselineWindows = []
         sourceID = nil
+        transaction = nil
+        hasPendingDisplayUpdate = false
+        displayTicks.stop()
         removeGestureMonitors()
         applyPendingEventTapHandoff()
+    }
+
+    private func screen(for displayID: DisplayID) -> NSScreen? {
+        NSScreen.screens.first { screen in
+            let number = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber
+            return DisplayID(rawValue: number?.stringValue ?? String(screen.hash)) == displayID
+        } ?? NSScreen.main
     }
 
     private func dominantResizeChange(from before: BTRect, to after: BTRect) -> (edge: WindowEdge, delta: Double)? {

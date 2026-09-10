@@ -81,7 +81,7 @@ public enum BentoNewWindowSide: String, Codable, CaseIterable, Sendable {
 }
 
 public struct BetterTileConfiguration: Codable, Hashable, Sendable {
-    public static let currentSchemaVersion = 11
+    public static let currentSchemaVersion = 12
 
     /// The placement a lone window receives, restricted to the actions that
     /// describe a position on the display. `nil` means "leave it unchanged".
@@ -101,6 +101,7 @@ public struct BetterTileConfiguration: Codable, Hashable, Sendable {
     public var showDockIcon: Bool
     public var snappingEnabled: Bool
     public var linkedResizeEnabled: Bool
+    public var defaultTabbedPreset: TabbedPreset = .single
     public var defaultLayoutMode: LayoutMode
     public var singleWindowPlacement: WindowAction?
     public var resizeFeedbackMode: ResizeFeedbackMode
@@ -187,6 +188,7 @@ public struct BetterTileConfiguration: Codable, Hashable, Sendable {
         case schemaVersion, setupCompletionVersion
         case macOSTilingRecommendationAcknowledged, stageManagerRecommendationAcknowledged
         case showDockIcon, snappingEnabled, linkedResizeEnabled
+        case defaultTabbedPreset
         case defaultLayoutMode, resizeFeedbackMode, dividerVisibility, dividerThickness, bentoInnerGap, bentoSwapHoverDelay
         case bentoNewWindowSide
         case singleWindowPlacement
@@ -205,6 +207,7 @@ public struct BetterTileConfiguration: Codable, Hashable, Sendable {
         guard version <= Self.currentSchemaVersion else { throw ConfigurationError.unsupportedFutureVersion(version) }
 
         schemaVersion = Self.currentSchemaVersion
+        defaultTabbedPreset = try container.decodeIfPresent(TabbedPreset.self, forKey: .defaultTabbedPreset) ?? .single
         setupCompletionVersion = max(
             0,
             try container.decodeIfPresent(Int.self, forKey: .setupCompletionVersion) ?? 0
@@ -330,6 +333,7 @@ public struct BetterTileConfiguration: Codable, Hashable, Sendable {
         try container.encode(snappingEnabled, forKey: .snappingEnabled)
         try container.encode(linkedResizeEnabled, forKey: .linkedResizeEnabled)
         try container.encode(defaultLayoutMode, forKey: .defaultLayoutMode)
+        try container.encode(defaultTabbedPreset, forKey: .defaultTabbedPreset)
         try container.encodeIfPresent(singleWindowPlacement, forKey: .singleWindowPlacement)
         try container.encode(resizeFeedbackMode, forKey: .resizeFeedbackMode)
         try container.encode(dividerVisibility, forKey: .dividerVisibility)

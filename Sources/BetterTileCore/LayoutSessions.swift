@@ -31,6 +31,9 @@ public struct LayoutSession: Hashable, Sendable {
     public var displayID: DisplayID
     public var nativeSpaceID: NativeSpaceID?
     public var mode: LayoutMode
+    public var tabbedState: TabbedLayoutState?
+    public var tabbedHasEntryBaseline = false
+    public var tabbedBaselineFrames: [WindowID: BTRect] = [:]
     public var bentoState: BentoLayoutState
     public var windowIDs: Set<WindowID>
     public var focusedWindowID: WindowID?
@@ -358,6 +361,22 @@ public struct LayoutSessionStore: Sendable {
         committed.advanceRevision()
         storedSessions[proposed.displayID]?[proposed.id] = committed
         return committed
+    }
+
+    /// Closure evidence updates retained Tabbed sessions without moving any
+    /// inactive desktop's windows. Incomplete sweeps never use this operation.
+    public mutating func removeClosedTabbedWindow(_ windowID: WindowID) {
+        for displayID in Array(storedSessions.keys) {
+            for id in Array(storedSessions[displayID]?.keys ?? Dictionary<DesktopSessionID, LayoutSession>().keys) {
+                guard var session = storedSessions[displayID]?[id],
+                      session.tabbedState?.windowIDs.contains(windowID) == true else { continue }
+                session.tabbedState?.remove(windowID)
+                session.tabbedBaselineFrames.removeValue(forKey: windowID)
+                session.windowIDs.remove(windowID)
+                session.advanceRevision()
+                storedSessions[displayID]?[id] = session
+            }
+        }
     }
 
     public mutating func removeMissingDisplays(_ displayIDs: Set<DisplayID>) {

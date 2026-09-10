@@ -71,6 +71,71 @@ import Testing
     #expect(system.windows[1].frame.minX > 500)
 }
 
+@Test @MainActor func linkedResizeAppliesTheLatestObservedFrameOnDisplayTickAndFlushesRelease() async {
+    let system = FakeWindowSystem()
+    let focused = WindowID(rawValue: "focused")
+    let second = WindowID(rawValue: "second")
+    system.windows = [
+        WindowSnapshot(
+            id: focused,
+            processIdentifier: 42,
+            frame: BTRect(x: 0, y: 0, width: 500, height: 800),
+            displayID: DisplayID(rawValue: "main")
+        ),
+        WindowSnapshot(
+            id: second,
+            processIdentifier: 43,
+            frame: BTRect(x: 500, y: 0, width: 500, height: 800),
+            displayID: DisplayID(rawValue: "main")
+        ),
+    ]
+    system.focusedWindowID = focused
+    var configuration = BetterTileConfiguration()
+    configuration.linkedResizeEnabled = true
+    let displayTicks = ResizeDisplayLink(automatic: false)
+    let controller = LinkedResizeController(
+        coordinator: WindowCoordinator(system: system),
+        configuration: configuration,
+        displayTicks: displayTicks
+    )
+    controller.isEnabledForDisplay = { _ in true }
+    controller.setUsesSharedGestureEvents(true)
+
+    func event(_ kind: GlobalGestureEventKind, timestamp: UInt64) -> GlobalGestureEvent {
+        GlobalGestureEvent(
+            kind: kind,
+            position: BTPoint(x: 500, y: 400),
+            button: 0,
+            modifiers: [],
+            timestamp: timestamp
+        )
+    }
+
+    controller.handleSharedGestureEvent(event(.leftMouseDown, timestamp: 1))
+    controller.handleSharedGestureEvent(event(.leftMouseDragged, timestamp: 2))
+    displayTicks.fire()
+    for width in 501...620 {
+        system.windows[0].frame.size.width = Double(width)
+        controller.handleSharedGestureEvent(event(.leftMouseDragged, timestamp: UInt64(width)))
+    }
+
+    #expect(system.frameWriteCounts[second] == nil)
+    displayTicks.fire()
+    #expect(system.frameWriteCounts[second] == 1)
+    #expect(system.frameWriteCounts[focused] == nil)
+    #expect(system.targetedSnapshotRequests == 1)
+    #expect(system.windows[1].frame == BTRect(x: 620, y: 0, width: 380, height: 800))
+
+    system.windows[0].frame.size.width = 650
+    controller.handleSharedGestureEvent(event(.leftMouseDragged, timestamp: 700))
+    #expect(system.frameWriteCounts[second] == 1)
+    controller.handleSharedGestureEvent(event(.leftMouseUp, timestamp: 701))
+
+    #expect(system.frameWriteCounts[second] == 2)
+    #expect(system.targetedSnapshotRequests == 2)
+    #expect(system.windows[1].frame == BTRect(x: 650, y: 0, width: 350, height: 800))
+}
+
 @Test @MainActor func failedTapHandsActiveLinkedResizeToNSEvent() async {
     let system = FakeWindowSystem()
     system.windows = [
@@ -207,6 +272,7 @@ import Testing
     controller.setUsesSharedGestureEvents(false)
     system.windows[0].frame.size.width = 510
     controller.receive(event(.leftMouseDragged, timestamp: 2), from: .nsEvent)
+    controller.displayTick()
     #expect(system.windows[1].frame.minX == 510)
 
     // The tap becomes available again while that NSEvent resize is still running.
@@ -218,6 +284,7 @@ import Testing
 
     // The NSEvent events keep driving the gesture until it ends.
     controller.receive(event(.leftMouseDragged, timestamp: 5), from: .nsEvent)
+    controller.displayTick()
     #expect(system.windows[1].frame == BTRect(x: 560, y: 0, width: 440, height: 800))
     controller.receive(event(.leftMouseUp, timestamp: 6), from: .nsEvent)
     await Task.yield()

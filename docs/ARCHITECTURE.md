@@ -86,6 +86,19 @@ their AppKit paths.
 
 All window mutations pass through the main-actor coordinator. Multi-window operations preflight every participant, apply in deterministic order, and roll back already-applied frames when a later Accessibility write fails. Ghost resize transactions do not mutate real windows before commit; live transactions can restore their original baseline on cancellation. AX move/resize events are debounced, while events matching a recent coordinator generation and expected frame are suppressed to prevent feedback loops.
 
+Continuous resize gestures keep only the newest pointer or observed-window
+sample and consume it on an AppKit display-link tick. Live Accessibility batches
+run at no more than 60 Hz; ghost-only feedback may follow the display's native
+rate. Intermediate ticks reuse one frame transaction, skip unchanged targets,
+and avoid repeated participant sweeps. Mouse-up bypasses coalescing, validates
+the participants, and applies the exact final geometry. Tabbed divider resizing
+also defers ordering and authoritative frame settlement until release, so the
+drag path changes frames without repeatedly raising every tab.
+Tabbed chrome updates only its pane and divider geometry during those ticks.
+It preserves panel visibility and ordering and avoids another focused-window
+read. Pointer gestures retain their initial grab offset and use the mouse-up
+position for the final resize or tab destination.
+
 ## Bento
 
 Bento uses a binary split tree held by each display's runtime `LayoutSession`. Leaves reference currently visible windows and branches carry an axis, normalized weight, and lock state. New windows are inserted by evaluating every unlocked leaf and choosing the split with the lowest movement/area-change score; closed or hidden windows are removed from the current tree. `BentoResizeEngine` changes branch weights and recursively derives all affected frames, `BentoLayoutFitter` adopts native edge changes, and `BentoBoundaryResolver` exposes only shared segments verified against current window frames.
