@@ -101,6 +101,14 @@ adapter restores each application's original setting before the batch returns,
 including error exits. This avoids toggling the same application's setting for
 each of its windows. No suspension is held across an event-loop turn.
 
+Tabbed divider resizing uses the same pacing. It also defers ordering and
+authoritative frame settlement until release, so the drag path changes frames
+without repeatedly raising every tab.
+Tabbed chrome updates only its pane and divider geometry during those ticks.
+It preserves panel visibility and ordering and avoids another focused-window
+read. Pointer gestures retain their initial grab offset and use the mouse-up
+position for the final resize or tab destination.
+
 ## Bento
 
 Bento uses a binary split tree held by each display's runtime `LayoutSession`. Leaves reference currently visible windows and branches carry an axis, normalized weight, and lock state. New windows are inserted by evaluating every unlocked leaf and choosing the split with the lowest movement/area-change score; closed or hidden windows are removed from the current tree. `BentoResizeEngine` changes branch weights and recursively derives all affected frames, `BentoLayoutFitter` adopts native edge changes, and `BentoBoundaryResolver` exposes only shared segments verified against current window frames.

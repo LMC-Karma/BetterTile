@@ -7,7 +7,7 @@ import Testing
 @testable import BetterTileApp
 
 @MainActor
-private final class FakeAppWindowSystem: BetterTileWindowSystem {
+final class FakeAppWindowSystem: BetterTileWindowSystem, TabbedWindowSystem {
     let mainDisplay = DisplaySnapshot(
         id: DisplayID(rawValue: "main"),
         frame: BTRect(x: 0, y: 0, width: 1000, height: 800),
@@ -18,7 +18,9 @@ private final class FakeAppWindowSystem: BetterTileWindowSystem {
     var permission = true
     var ignoredFrameWriteWindowIDs: Set<WindowID> = []
     var enforcedMinimumWidths: [WindowID: Double] = [:]
+    var enforcedMinimumHeights: [WindowID: Double] = [:]
     var frameWriteCounts: [WindowID: Int] = [:]
+    var failedFrameWriteNumbers: [WindowID: Set<Int>] = [:]
     var completeSweepCount = 0
     var cachedRefreshCount = 0
     var cachedSnapshotsAvailable = true
@@ -42,7 +44,15 @@ private final class FakeAppWindowSystem: BetterTileWindowSystem {
     }
 
     func requestAccessibilityPermission(prompt: Bool) -> Bool { permission }
-    func focusedWindow() throws -> WindowSnapshot? { windows.first }
+    var focusedID: WindowID?
+    var focusRequests: [WindowID] = []
+    var raiseRequests: [(WindowID, Bool)] = []
+    func raiseWindow(_ id: WindowID, activate: Bool) throws {
+        raiseRequests.append((id, activate))
+        if activate { focusedID = id; focusRequests.append(id) }
+    }
+    func requestCloseWindow(_ id: WindowID) throws {}
+    func focusedWindow() throws -> WindowSnapshot? { windows.first { $0.id == focusedID } ?? windows.first }
     func visibleWindows() throws -> [WindowSnapshot] {
         completeSweepCount += 1
         return windows
@@ -60,6 +70,9 @@ private final class FakeAppWindowSystem: BetterTileWindowSystem {
             throw WindowSystemError.windowNotFound(windowID)
         }
         frameWriteCounts[windowID, default: 0] += 1
+        if failedFrameWriteNumbers[windowID]?.contains(frameWriteCounts[windowID, default: 0]) == true {
+            throw WindowSystemError.operationFailed("Injected frame write failure.")
+        }
         guard !ignoredFrameWriteWindowIDs.contains(windowID) else { return }
         if let delay = frameApplicationDelays[windowID] {
             Task { @MainActor [weak self] in
@@ -74,6 +87,7 @@ private final class FakeAppWindowSystem: BetterTileWindowSystem {
         let windowID = windows[index].id
         windows[index].frame = frame
         windows[index].frame.size.width = max(frame.size.width, enforcedMinimumWidths[windowID] ?? 0)
+        windows[index].frame.size.height = max(frame.size.height, enforcedMinimumHeights[windowID] ?? 0)
         if emitsFrameEvents {
             eventHandler?(WindowSystemEvent(kind: .resized, windowID: windowID, processIdentifier: windows[index].processIdentifier))
         }
@@ -117,7 +131,7 @@ private final class FakeAppWindowSystem: BetterTileWindowSystem {
 }
 
 @MainActor
-private func makeModel(system: FakeAppWindowSystem) -> BetterTileModel {
+func makeModel(system: FakeAppWindowSystem) -> BetterTileModel {
     let store = ConfigurationStore(
         fileURL: URL(filePath: "/private/tmp/BetterTileAppTests-\(UUID().uuidString)/configuration.json")
     )
@@ -364,7 +378,7 @@ private func target(for system: FakeAppWindowSystem) -> LayoutWheelTarget {
 /// finishes as soon as the state arrives and only spends the timeout when the
 /// state never arrives at all.
 @MainActor
-private func waitFor(
+func waitFor(
     timeout: Duration = .seconds(10),
     _ condition: () -> Bool
 ) async -> Bool {

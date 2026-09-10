@@ -426,6 +426,13 @@ private struct WindowLayoutSettings: View {
                         Text(mode.title).tag(mode)
                     }
                 }
+                if LayoutMode.availableModes.contains(.tabbed) {
+                    Picker("Default Tabbed layout", selection: configurationBinding(\.defaultTabbedPreset)) {
+                        ForEach(TabbedPreset.allCases, id: \.self) { preset in
+                            Text(preset.title).tag(preset)
+                        }
+                    }
+                }
                 Picker(
                     "When a desktop has one window",
                     selection: configurationBinding(\.singleWindowPlacement)
@@ -1712,6 +1719,7 @@ private extension LayoutMode {
         case .manual: "macwindow"
         case .linked: "arrow.left.and.right"
         case .bento: "rectangle.split.2x2"
+        case .tabbed: "rectangle.stack"
         }
     }
 
@@ -1720,6 +1728,7 @@ private extension LayoutMode {
         case .manual: "Use macOS windows with BetterTile snapping."
         case .linked: "Adjacent snapped windows share resize boundaries."
         case .bento: "Windows join a stable adaptive split layout."
+        case .tabbed: "Group windows in resizable panes with tabs. Experimental; turn off Stage Manager."
         }
     }
 }

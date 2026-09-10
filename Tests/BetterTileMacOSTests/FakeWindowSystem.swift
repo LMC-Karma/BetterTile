@@ -6,7 +6,7 @@ import Testing
 /// BetterTileMacOS test suite. Failure knobs simulate rejected, ignored,
 /// numbered-failing, clamped, and late-settling Accessibility writes.
 @MainActor
-final class FakeWindowSystem: WindowSystem, TargetedWindowSystem, WindowEventSource {
+final class FakeWindowSystem: WindowSystem, TargetedWindowSystem, WindowEventSource, TabbedWindowSystem {
     var availableDisplays = [DisplaySnapshot(
         id: DisplayID(rawValue: "main"),
         frame: BTRect(x: 0, y: 0, width: 1000, height: 800),
@@ -14,6 +14,17 @@ final class FakeWindowSystem: WindowSystem, TargetedWindowSystem, WindowEventSou
         isMain: true
     )]
     var windows: [WindowSnapshot]
+    var raisedWindows: [(WindowID, Bool)] = []
+    var failingRaiseWindowID: WindowID?
+    var ignoredRaise = false
+    var closedWindowRequests: [WindowID] = []
+    func raiseWindow(_ id: WindowID, activate: Bool) throws {
+        if failingRaiseWindowID == id { throw WindowSystemError.operationFailed("Simulated raise failure") }
+        guard windows.contains(where: { $0.id == id }) else { throw WindowSystemError.windowNotFound(id) }
+        raisedWindows.append((id, activate))
+        if activate && !ignoredRaise { focusedWindowID = id }
+    }
+    func requestCloseWindow(_ id: WindowID) throws { closedWindowRequests.append(id) }
     var failingWindowID: WindowID?
     var ignoredFrameWriteCounts: [WindowID: Int] = [:]
     var frameWriteCounts: [WindowID: Int] = [:]

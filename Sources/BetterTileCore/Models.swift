@@ -118,15 +118,23 @@ public enum LayoutMode: String, Codable, CaseIterable, Sendable {
     case manual
     case linked
     case bento
+    case tabbed = "tabbed-v1"
 
     /// Modes currently available in the product UI. Linked mode remains
     /// decodable so older configuration files and runtime tests stay valid.
-    public static let availableModes: [LayoutMode] = [.manual, .bento]
+    public static let availableModes: [LayoutMode] = {
+        #if DEBUG
+        [.manual, .bento, .tabbed]
+        #else
+        [.manual, .bento]
+        #endif
+    }()
 
     public var availableMode: LayoutMode {
         switch self {
         case .linked: .manual
         case .manual, .bento: self
+        case .tabbed: Self.availableModes.contains(self) ? self : .manual
         }
     }
 
@@ -135,6 +143,7 @@ public enum LayoutMode: String, Codable, CaseIterable, Sendable {
         case .manual: "Native"
         case .linked: "Linked"
         case .bento: "Bento"
+        case .tabbed: "Tabbed (Test)"
         }
     }
 }

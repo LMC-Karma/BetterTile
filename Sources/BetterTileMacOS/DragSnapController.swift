@@ -107,6 +107,7 @@ public final class DragSnapController {
     public var bentoDragBeganHandler: ((DisplayID, WindowID) -> Bool)?
     public var bentoPreviewHandler: ((DisplayID, WindowID, BentoDragOutcome) -> [Placement]?)?
     public var bentoDragEndedHandler: ((DisplayID, WindowID, BentoDragOutcome) -> Void)?
+    public var isTabbedMember: ((WindowID) -> Bool)?
     public var activeModeProvider: ((DisplayID) -> LayoutMode?)?
     public var bentoStateProvider: ((DisplayID) -> BentoLayoutState?)?
     public var gestureEndedHandler: (() -> Void)?
@@ -342,6 +343,7 @@ public final class DragSnapController {
             mouseDownPoint = nil
             return
         }
+        guard isTabbedMember?(window.id) != true else { mouseDownPoint = nil; return }
         dragGate.begin(with: window)
         installGestureMonitors()
     }
@@ -366,6 +368,7 @@ public final class DragSnapController {
                 clear()
                 return
             }
+            guard isTabbedMember?(window.id) != true else { clear(); return }
             if window.id != dragGate.candidateWindowID {
                 dragGate.begin(with: window)
             }

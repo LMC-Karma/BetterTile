@@ -1271,3 +1271,37 @@ public enum OnscreenWindowMatcher {
         return overlap / min(accessibilityFrame.area, windowServerFrame.area) >= 0.5
     }
 }
+
+extension AccessibilityWindowSystem: TabbedWindowSystem {
+    public func raiseWindow(_ id: WindowID, activate: Bool) throws {
+        try ensurePermission()
+        guard let element = elements[id] ?? refreshElement(for: id) else { throw WindowSystemError.windowNotFound(id) }
+        if activate {
+            var pid: pid_t = 0
+            guard AXUIElementGetPid(element, &pid) == .success,
+                  let app = NSRunningApplication(processIdentifier: pid),
+                  app.activate(options: []) else {
+                throw WindowSystemError.operationFailed("The application could not be activated.")
+            }
+            let application = makeApplicationElement(pid: pid)
+            let focusResult = AXUIElementSetAttributeValue(application, kAXFocusedWindowAttribute as CFString, element)
+            if focusResult != .success && focusResult != .attributeUnsupported {
+                throw WindowSystemError.operationFailed("The application rejected window focus.")
+            }
+        }
+        guard AXUIElementPerformAction(element, kAXRaiseAction as CFString) == .success else {
+            throw WindowSystemError.operationFailed("The application rejected window ordering.")
+        }
+    }
+
+    public func requestCloseWindow(_ id: WindowID) throws {
+        try ensurePermission()
+        guard let element = elements[id] ?? refreshElement(for: id) else { throw WindowSystemError.windowNotFound(id) }
+        var button: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, kAXCloseButtonAttribute as CFString, &button) == .success,
+              let button, CFGetTypeID(button) == AXUIElementGetTypeID(),
+              AXUIElementPerformAction(unsafeDowncast(button, to: AXUIElement.self), kAXPressAction as CFString) == .success else {
+            throw WindowSystemError.operationFailed("This window could not be closed. Use its application's close command.")
+        }
+    }
+}

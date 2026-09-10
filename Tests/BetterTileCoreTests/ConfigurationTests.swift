@@ -476,7 +476,7 @@ import Testing
     let configuration = try ConfigurationStore.decode(data)
     #expect(configuration.defaultLayoutMode == .manual)
     #expect(configuration.linkedResizeEnabled)
-    #expect(LayoutMode.availableModes == [.manual, .bento])
+    #expect(LayoutMode.availableModes == [.manual, .bento, .tabbed])
 
     let roundTrip = try ConfigurationStore.decode(JSONEncoder().encode(configuration))
     #expect(roundTrip.linkedResizeEnabled)
