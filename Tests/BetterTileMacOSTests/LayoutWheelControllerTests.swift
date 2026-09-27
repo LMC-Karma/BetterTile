@@ -671,3 +671,34 @@ private struct Harness {
     #expect(addedGlobalMasks.filter { $0 == .keyDown }.count == 1)
     #expect(addedLocalMasks.filter { $0 == .keyDown }.count == 1)
 }
+
+/// AppKit keeps monitor handlers until removal. They must not keep the
+/// controller alive while the keyboard-triggered wheel is open.
+@Test @MainActor func installedMonitorHandlersDoNotRetainTheController() {
+    var retainedHandlers: [Any] = []
+    var controller: LayoutWheelController? = LayoutWheelController(
+        configuration: BetterTileConfiguration(),
+        presenter: FakePresenter(),
+        pointerProvider: { anchor },
+        addGlobalMonitor: { _, handler in
+            retainedHandlers.append(handler)
+            return NSObject()
+        },
+        addLocalMonitor: { _, handler in
+            retainedHandlers.append(handler)
+            return NSObject()
+        },
+        removeMonitor: { _ in }
+    )
+    controller?.captureHandler = { target }
+    controller?.previewHandler = { _, _ in .ready(placements: []) }
+    controller?.start()
+    controller?.handleModifiers(trigger)
+    controller?.handleActivationDeadline(generation: 1)
+    #expect(controller?.isOpen == true)
+    weak let released = controller
+    controller = nil
+
+    #expect(released == nil)
+    #expect(!retainedHandlers.isEmpty)
+}

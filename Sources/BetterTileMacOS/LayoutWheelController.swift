@@ -341,7 +341,7 @@ public final class LayoutWheelController {
             }
             if pointerMonitor == nil { pointerMonitor = addGlobalMonitor(mask, handler) }
             if localPointerMonitor == nil {
-                localPointerMonitor = addLocalMonitor(mask) { _, _ in
+                localPointerMonitor = addLocalMonitor(mask) { [weak self] _, _ in
                     Task { @MainActor [weak self] in
                         guard let self, let frame = NSScreen.screens.first?.frame else { return }
                         handlePointer(GlobalGestureEvent.position(
