@@ -52,7 +52,11 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, TabbedWindowSystem {
         if activate { focusedID = id; focusRequests.append(id) }
     }
     func requestCloseWindow(_ id: WindowID) throws {}
-    func focusedWindow() throws -> WindowSnapshot? { windows.first { $0.id == focusedID } ?? windows.first }
+    var focusedWindowReadFails = false
+    func focusedWindow() throws -> WindowSnapshot? {
+        if focusedWindowReadFails { throw WindowSystemError.operationFailed("Simulated focused-window failure") }
+        return windows.first { $0.id == focusedID } ?? windows.first
+    }
     func visibleWindows() throws -> [WindowSnapshot] {
         completeSweepCount += 1
         return windows

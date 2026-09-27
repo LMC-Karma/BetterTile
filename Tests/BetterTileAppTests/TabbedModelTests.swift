@@ -61,6 +61,20 @@ func tabSelectionDoesNotRearrangeOrRefitOtherWindows(sharedApplication: Bool) as
     #expect(model.activeTabbedState?.activePaneID == emptyPane)
 }
 
+@Test @MainActor func failedTabbedFocusReadDoesNotLeaveARefreshPending() async throws {
+    _ = NSApplication.shared
+    let system = FakeAppWindowSystem()
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    model.setActiveMode(.tabbed)
+    try #require(await waitFor { model.activeTabbedState?.windowIDs.count == 1 })
+    try await Task.sleep(for: .milliseconds(350))
+    system.focusedWindowReadFails = true
+    system.eventHandler?(WindowSystemEvent(kind: .focused, windowID: system.windows[0].id, processIdentifier: system.windows[0].processIdentifier))
+    #expect(model.tabbedNeedsFocusRefresh)
+    #expect(await waitFor(timeout: .seconds(1)) { !model.tabbedNeedsFocusRefresh })
+}
+
 @Test(arguments: [false, true]) @MainActor
 func tabbedRetainsExternalFocusChangesDuringPlacementSuppression(duringResize: Bool) async throws {
     _ = NSApplication.shared

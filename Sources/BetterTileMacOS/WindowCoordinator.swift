@@ -799,7 +799,9 @@ extension WindowCoordinator {
             }
             if let focus { try tabSystem.raiseWindow(focus, activate: false) }
             var previousFrames: [WindowID: BTRect] = [:]
-            for attempt in 0..<4 {
+            // Frames settle within four samples. Activation can take longer,
+            // so accepted frames keep waiting for focus instead of rolling back.
+            for attempt in 0..<12 {
                 guard isCurrent(), !Task.isCancelled else {
                     return touched ? .degraded(reason: "The desktop changed during Tabbed placement. Return to that desktop and use Repair Tabbed.") : .failed(reason: "The desktop changed.")
                 }
@@ -807,6 +809,13 @@ extension WindowCoordinator {
                 let framesMatch = placements.allSatisfy { actual[$0.windowID]?.approximatelyEquals($0.frame, tolerance: 2) == true }
                 let focusMatches = try focus == nil || system.focusedWindow()?.id == focus
                 if framesMatch && focusMatches { return .applied }
+                if framesMatch {
+                    // The window was raised and its frame accepted. A focus
+                    // that never arrives is left to the focus observer.
+                    if attempt == 11 { return .applied }
+                    try await Task.sleep(for: .milliseconds(50))
+                    continue
+                }
                 // Only width refusals with stable frames and accepted heights
                 // can inform a retry. Report before rollback loses the evidence.
                 if attempt == 3, focusMatches, placements.allSatisfy({ placement in
@@ -821,9 +830,10 @@ extension WindowCoordinator {
                     }
                 }
                 previousFrames = actual
-                if attempt < 3 { try await Task.sleep(for: .milliseconds(50)) }
+                if attempt >= 3 { break }
+                try await Task.sleep(for: .milliseconds(50))
             }
-            throw WindowSystemError.operationFailed("A window did not accept the Tabbed size or focus. Choose a larger pane or try Repair Tabbed.")
+            throw WindowSystemError.operationFailed("A window did not accept its Tabbed size. Choose a larger pane or try Repair Tabbed.")
         } catch {
             guard isCurrent() else { return .degraded(reason: "The desktop changed before Tabbed could restore its windows.") }
             var failed = false

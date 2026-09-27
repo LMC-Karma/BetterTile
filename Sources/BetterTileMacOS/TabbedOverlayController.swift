@@ -18,7 +18,8 @@ public final class TabbedOverlayController {
     private var state = TabbedLayoutState()
     private var bounds = BTRect(x: 0, y: 0, width: 1, height: 1)
     private var windows: [WindowID: WindowSnapshot] = [:]
-    private var applicationIcons: [String: NSImage] = [:]
+    /// Includes failed lookups as nil so they are not repeated on refresh.
+    private var applicationIcons: [String: NSImage?] = [:]
     private var panes: [UUID: NSPanel] = [:]
     private var handles: [UUID: NSPanel] = [:]
     private var preview: NSPanel?
@@ -84,10 +85,10 @@ public final class TabbedOverlayController {
             }
             view.icons = pane.tabs.map { id in
                 guard let bundleID = self.windows[id]?.bundleIdentifier else { return nil }
-                if let icon = applicationIcons[bundleID] { return icon }
-                guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else { return nil }
-                let icon = NSWorkspace.shared.icon(forFile: url.path)
-                applicationIcons[bundleID] = icon
+                if let cached = applicationIcons[bundleID] { return cached }
+                let icon = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID)
+                    .map { NSWorkspace.shared.icon(forFile: $0.path) }
+                applicationIcons[bundleID] = .some(icon)
                 return icon
             }
             panel.contentView = view
@@ -208,7 +209,7 @@ public final class TabbedOverlayController {
                 if index > 0 { item("Move Tab Left", .move(id, pane: pane.id, index: index - 1), in: menu) }
                 if index + 1 < pane.tabs.count { item("Move Tab Right", .move(id, pane: pane.id, index: index + 1), in: menu) }
             }
-            for edge in TabbedEdge.allCases { item("Split \(edge.rawValue.capitalized)", .split(id, pane: pane.id, edge: edge), enabled: state.panes.count < 12, in: menu) }
+            for edge in TabbedEdge.allCases { item("Split \(edge.rawValue.capitalized)", .split(id, pane: pane.id, edge: edge), enabled: state.panes.count < TabbedLayoutState.maximumPaneCount, in: menu) }
             menu.addItem(.separator())
         } else if !pane.tabs.isEmpty {
             menu.addItem(NSMenuItem.sectionHeader(title: "Tabs in This Pane"))
@@ -301,7 +302,7 @@ public final class TabbedOverlayController {
                     else if point.y < content.minY + 28 { edge = .top }
                     else if point.y > content.maxY - 28 { edge = .bottom }
                     else { edge = nil }
-                    if let edge, state.panes.count < 12 {
+                    if let edge, state.panes.count < TabbedLayoutState.maximumPaneCount {
                         dropIntent = .split(id, pane: pane.id, edge: edge)
                         destinationLabel = "Split \(edge.rawValue.capitalized) · Pane \(index + 1)"
                         highlight = BTRect(x: edge == .right ? content.midX : content.minX,
@@ -458,7 +459,7 @@ struct TabbedStripLayout {
     let hiddenCount: Int
 
     init(width: Double, count: Int, selectedIndex: Int?) {
-        menuFrame = NSRect(x: max(32, width - 42), y: 0, width: min(42, max(0, width - 32)), height: 34)
+        menuFrame = NSRect(x: max(32, width - 42), y: 0, width: min(42, max(0, width - 32)), height: TabbedLayoutState.headerHeight)
         let available = max(0, menuFrame.minX - 32)
         let visible = min(count, max(1, Int(available / 110)))
         tabWidth = min(210, available / Double(max(1, visible)))
@@ -468,12 +469,12 @@ struct TabbedStripLayout {
     }
 
     func tabFrame(_ index: Int) -> NSRect {
-        NSRect(x: 32 + Double(index - visibleRange.lowerBound) * tabWidth, y: 0, width: tabWidth, height: 34)
+        NSRect(x: 32 + Double(index - visibleRange.lowerBound) * tabWidth, y: 0, width: tabWidth, height: TabbedLayoutState.headerHeight)
     }
 
     func closeFrame(_ index: Int) -> NSRect {
         let tab = tabFrame(index)
-        return NSRect(x: tab.maxX - 24, y: 0, width: 24, height: 34)
+        return NSRect(x: tab.maxX - 24, y: 0, width: 24, height: TabbedLayoutState.headerHeight)
     }
 
     func tabIndex(at point: NSPoint) -> Int? {
@@ -533,7 +534,7 @@ struct TabbedStripLayout {
 
     func updateToolTips() {
         removeAllToolTips()
-        addToolTip(NSRect(x: 0, y: 0, width: 32, height: 34), owner: "Use this pane for new windows" as NSString, userData: nil)
+        addToolTip(NSRect(x: 0, y: 0, width: 32, height: TabbedLayoutState.headerHeight), owner: "Use this pane for new windows" as NSString, userData: nil)
         addToolTip(strip.menuFrame, owner: "Show all tabs and layout actions" as NSString, userData: nil)
         for index in strip.visibleRange {
             let title = titles.indices.contains(index) ? titles[index] : "Window"
@@ -549,7 +550,7 @@ struct TabbedStripLayout {
         configureTabbedGlass(self, cornerRadius: 7)
         NSColor.windowBackgroundColor.setFill()
         NSBezierPath(rect: bounds).fill()
-        let header = NSRect(x: 0, y: 0, width: bounds.width, height: 34)
+        let header = NSRect(x: 0, y: 0, width: bounds.width, height: TabbedLayoutState.headerHeight)
         NSColor.controlBackgroundColor.withAlphaComponent(0.35).setFill()
         NSBezierPath(rect: header).fill()
         if active {
@@ -603,7 +604,7 @@ struct TabbedStripLayout {
             drawSymbol("ellipsis", in: NSRect(x: strip.menuFrame.midX - 8, y: 9, width: 16, height: 16), color: .labelColor)
         }
         if pane.tabs.isEmpty {
-            let centerY = max(52, (bounds.height + 34) / 2)
+            let centerY = max(52, (bounds.height + TabbedLayoutState.headerHeight) / 2)
             if bounds.width >= 200 && bounds.height >= 170 {
                 drawSymbol("rectangle.stack.badge.plus", in: NSRect(x: bounds.midX - 15, y: centerY - 54, width: 30, height: 30), color: .secondaryLabelColor)
             }
@@ -653,7 +654,7 @@ struct TabbedStripLayout {
             if let window { element.setAccessibilityFrame(window.convertToScreen(convert(rect, to: nil))) }
             children.append(element)
         }
-        button("Use pane \(number) for new windows", rect: NSRect(x: 0, y: 0, width: 30, height: 34)) { [weak self] in
+        button("Use pane \(number) for new windows", rect: NSRect(x: 0, y: 0, width: 30, height: TabbedLayoutState.headerHeight)) { [weak self] in
             guard let self else { return }; owner?.send(.activate(pane.id))
         }
         let strip = strip
@@ -667,7 +668,7 @@ struct TabbedStripLayout {
         }
         button("Pane \(number) layout and tab actions", rect: strip.menuFrame) { [weak self] in
             guard let self, let owner else { return }
-            owner.menu(pane: pane, windowID: nil).popUp(positioning: nil, at: NSPoint(x: strip.menuFrame.minX, y: 34), in: self)
+            owner.menu(pane: pane, windowID: nil).popUp(positioning: nil, at: NSPoint(x: strip.menuFrame.minX, y: TabbedLayoutState.headerHeight), in: self)
         }
         setAccessibilityChildren(children)
     }

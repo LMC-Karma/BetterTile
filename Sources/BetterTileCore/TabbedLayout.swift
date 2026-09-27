@@ -50,6 +50,8 @@ public struct TabbedLayoutState: Hashable, Sendable {
     public private(set) var activePaneID: UUID
     public private(set) var floatingWindowIDs: Set<WindowID> = []
     public static let headerHeight = 34.0
+    /// Edge splits stop at this many panes in the test build.
+    public static let maximumPaneCount = 12
     public static let gap = 6.0
 
     public init(preset: TabbedPreset = .single) {
@@ -154,7 +156,7 @@ public struct TabbedLayoutState: Hashable, Sendable {
     }
 
     public mutating func split(paneID: UUID, moving windowID: WindowID, edge: TabbedEdge) {
-        guard panes.count < 12, panes.contains(where: { $0.id == paneID }), self.windowIDs.contains(windowID) else { return }
+        guard panes.count < Self.maximumPaneCount, panes.contains(where: { $0.id == paneID }), self.windowIDs.contains(windowID) else { return }
         let pane = TabbedPane()
         func replacing(_ node: TabbedNode) -> TabbedNode {
             switch node {

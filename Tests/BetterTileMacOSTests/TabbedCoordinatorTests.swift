@@ -18,6 +18,38 @@ import Testing
     #expect(system.minimizeWriteCounts.isEmpty)
 }
 
+@Test @MainActor func tabbedCoordinatorWaitsForSlowFocusWithoutRollingBack() async {
+    let system = FakeWindowSystem()
+    system.addSecondWindow()
+    let first = system.windows[0].id, second = system.windows[1].id
+    system.focusedWindowID = first
+    system.delayedFocusReads = 6
+    let frame = BTRect(x: 0, y: 34, width: 600, height: 600)
+    let result = await WindowCoordinator(system: system).applyTabbed(
+        placements: [Placement(windowID: first, frame: frame), Placement(windowID: second, frame: frame)],
+        selected: [second], previousSelected: [first], focus: second, isCurrent: { true })
+    #expect(result.isApplied)
+    #expect(system.windows.allSatisfy { $0.frame == frame })
+    #expect(system.focusedWindowID == second)
+}
+
+@Test @MainActor func tabbedCoordinatorKeepsAcceptedFramesWhenFocusNeverArrives() async {
+    let system = FakeWindowSystem()
+    system.addSecondWindow()
+    let first = system.windows[0].id, second = system.windows[1].id
+    system.focusedWindowID = first
+    system.ignoredRaise = true
+    let frame = BTRect(x: 0, y: 34, width: 600, height: 600)
+    let result = await WindowCoordinator(system: system).applyTabbed(
+        placements: [Placement(windowID: first, frame: frame), Placement(windowID: second, frame: frame)],
+        selected: [second], previousSelected: [first], focus: second, isCurrent: { true })
+    // The frames were accepted and the window was raised. Focus is left to
+    // the focus observer instead of undoing a correct arrangement.
+    #expect(result.isApplied)
+    #expect(system.windows.allSatisfy { $0.frame == frame })
+    #expect(system.raisedWindows.last?.0 == second)
+}
+
 @Test @MainActor func tabbedCoordinatorRollsBackFrameAndFocusWhenRaiseFails() async {
     let system = FakeWindowSystem()
     system.addSecondWindow()

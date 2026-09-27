@@ -47,6 +47,14 @@ import Testing
     #expect(ResultPillFeedback.failure("Something unexpected happened.").message == "Couldn’t apply layout")
 }
 
+@Test func resultPillNamesTabbedFailures() {
+    #expect(ResultPillFeedback.failure("A window did not accept its Tabbed size. Choose a larger pane or try Repair Tabbed.").message == "Window refused this size")
+    #expect(ResultPillFeedback.failure("Tabbed could not fully restore the previous arrangement. Use Repair Tabbed or switch to Native.").message == "Use Repair Tabbed")
+    #expect(ResultPillFeedback.failure("The desktop changed before Tabbed could restore its windows.").message == "Use Repair Tabbed")
+    #expect(ResultPillFeedback.failure("The desktop changed.").message == "Desktop changed")
+    #expect(ResultPillFeedback.failure("That window is no longer available.").message == "Window changed")
+}
+
 @Test func resultPillIsCenteredBelowTheDisplayWorkAreaTop() {
     let display = DisplaySnapshot(
         id: DisplayID(rawValue: "secondary"),

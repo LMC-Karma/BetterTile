@@ -30,9 +30,16 @@ public struct ResultPillFeedback: Equatable, Sendable {
             message = "No eligible window"
         } else if value.contains("cannot fit") || value.contains("can't fit") || value.contains("minimum size") {
             message = "Can’t fit this layout"
+        } else if value.contains("tabbed size") {
+            message = "Window refused this size"
+        } else if value.contains("repair tabbed") || (value.contains("tabbed") && value.contains("restore")) {
+            message = "Use Repair Tabbed"
+        } else if value.contains("desktop changed") {
+            message = "Desktop changed"
         } else if value.contains("no longer matches")
             || value.contains("window changed")
-            || value.contains("captured window") {
+            || value.contains("captured window")
+            || value.contains("no longer available") {
             message = "Window changed"
         } else {
             message = "Couldn’t apply layout"

@@ -82,7 +82,7 @@ final class BetterTileModel {
     private var tabbedResizeEnds: [DisplayID: Bool] = [:]
     private let presentsTabbedChrome: Bool
     private var tabbedFocusTask: Task<Void, Never>?
-    private var tabbedNeedsFocusRefresh = false
+    private(set) var tabbedNeedsFocusRefresh = false
     private var tabbedFocusSuppressedUntil = Date.distantPast
 
     private var watchdogTimer: Timer?
@@ -3338,9 +3338,14 @@ extension BetterTileModel {
         let delay = max(0.08, tabbedFocusSuppressedUntil.timeIntervalSinceNow)
         tabbedFocusTask = Task { @MainActor [weak self] in
             try? await Task.sleep(for: .seconds(delay))
-            guard let self, !Task.isCancelled, !self.isStabilizingSpace,
-                  let focused = try? self.system.focusedWindow(),
-                  self.tabbedTasks[focused.displayID] == nil,
+            guard let self, !Task.isCancelled, !self.isStabilizingSpace else { return }
+            // An unreadable focus cannot become readable by retrying after each
+            // placement, so only busy displays keep the refresh pending.
+            guard let focused = (try? self.system.focusedWindow()) ?? nil else {
+                self.tabbedNeedsFocusRefresh = false
+                return
+            }
+            guard self.tabbedTasks[focused.displayID] == nil,
                   self.tabbedResizes[focused.displayID] == nil else { return }
             self.tabbedNeedsFocusRefresh = false
             guard let session = self.sessionStore.session(for: focused.displayID), session.mode == .tabbed,

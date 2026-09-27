@@ -17,12 +17,18 @@ final class FakeWindowSystem: WindowSystem, TargetedWindowSystem, WindowEventSou
     var raisedWindows: [(WindowID, Bool)] = []
     var failingRaiseWindowID: WindowID?
     var ignoredRaise = false
+    /// Focused-window reads that still report the old focus after an
+    /// activating raise, simulating an application that is slow to activate.
+    var delayedFocusReads = 0
+    private var pendingFocusWindowID: WindowID?
     var closedWindowRequests: [WindowID] = []
     func raiseWindow(_ id: WindowID, activate: Bool) throws {
         if failingRaiseWindowID == id { throw WindowSystemError.operationFailed("Simulated raise failure") }
         guard windows.contains(where: { $0.id == id }) else { throw WindowSystemError.windowNotFound(id) }
         raisedWindows.append((id, activate))
-        if activate && !ignoredRaise { focusedWindowID = id }
+        if activate && !ignoredRaise {
+            if delayedFocusReads > 0 { pendingFocusWindowID = id } else { focusedWindowID = id }
+        }
     }
     func requestCloseWindow(_ id: WindowID) throws { closedWindowRequests.append(id) }
     var failingWindowID: WindowID?
@@ -82,6 +88,9 @@ final class FakeWindowSystem: WindowSystem, TargetedWindowSystem, WindowEventSou
     func requestAccessibilityPermission(prompt: Bool) -> Bool { true }
     func focusedWindow() throws -> WindowSnapshot? {
         if focusedWindowReadFails { throw WindowSystemError.operationFailed("Simulated focused-window failure") }
+        if let pending = pendingFocusWindowID {
+            if delayedFocusReads > 0 { delayedFocusReads -= 1 } else { focusedWindowID = pending; pendingFocusWindowID = nil }
+        }
         return focusedWindowID.flatMap { id in windows.first(where: { $0.id == id }) } ?? windows.first
     }
     func visibleWindows() throws -> [WindowSnapshot] {

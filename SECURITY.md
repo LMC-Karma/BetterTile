@@ -164,6 +164,13 @@ through, and no event delivered to another application is changed. The monitors
 retain no system events and forward only the modifier set, key code, or pointer
 position needed by the gesture state machine.
 
+The experimental Tabbed mode, available only in Debug builds, installs local
+and global AppKit key monitors while a tab drag or pane divider resize is in
+progress. They are removed when the gesture ends, is cancelled, or the pane
+overlay hides. Both forward only the key code. Escape cancels the gesture; the
+global monitor only observes it, and the local monitor consumes Escape and
+passes other keys through. No other keys are acted on or retained.
+
 Layout Wheel also has an independent, disabled-by-default Middle Click trigger.
 The user benefit is one-handed wheel activation. While the option is enabled,
 BetterTile creates a dedicated public session `CGEventTap` for
