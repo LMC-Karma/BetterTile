@@ -165,14 +165,15 @@ must not be distributed. The release script still builds and validates
 > **Note:** If the checkout is in iCloud Drive or another synced folder,
 > `swift test` can fail at `CodeSign` with "resource fork, Finder information,
 > or similar detritus not allowed". The sync service adds extended attributes
-> to build products. Put the build output outside the synced folder:
+> to the build products in `.build/`. Put SwiftPM's build output outside the
+> synced folder:
 >
 > ```sh
 > swift test --scratch-path /tmp/bettertile-build
-> xcodebuild -project BetterTile.xcodeproj -scheme BetterTile \
->   -configuration Debug -derivedDataPath /tmp/bettertile-dd \
->   CODE_SIGNING_ALLOWED=NO build
 > ```
+>
+> `xcodebuild` is not affected by default because it writes to
+> `~/Library/Developer/Xcode/DerivedData`.
 >
 > Check the command's exit status. Piping the output through `tail` hides a
 > failed build.
