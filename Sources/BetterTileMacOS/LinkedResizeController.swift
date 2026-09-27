@@ -168,7 +168,12 @@ public final class LinkedResizeController {
             hasPendingDisplayUpdate = sourceID != nil
         case .leftMouseUp:
             isLeftButtonDown = false
-            displayTick(validateParticipants: true)
+            // A display tick has usually consumed the last sample already.
+            // Release still validates and applies the final source frame.
+            if sourceID != nil {
+                hasPendingDisplayUpdate = false
+                continueGesture(validateParticipants: true)
+            }
             endGesture()
         }
     }
