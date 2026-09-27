@@ -77,7 +77,8 @@ struct LayoutWheelSettings: View {
                         .font(.system(size: 12))
                         .foregroundStyle(.secondary)
                     Spacer()
-                    Button("Restore Defaults", action: restoreDefaults)
+                    Button("Reset Sector Assignments", action: resetSectorAssignments)
+                        .help("Restore commands in both rings. Wheel size, levels, and triggers stay unchanged.")
                 }
             }
 
@@ -311,9 +312,11 @@ struct LayoutWheelSettings: View {
         model.updateConfiguration { update(&$0.layoutWheel) }
     }
 
-    private func restoreDefaults() {
-        updateWheel { $0 = LayoutWheelConfiguration() }
-        editing = LayoutWheelSelection(ring: .inner, sector: .top)
+    private func resetSectorAssignments() {
+        updateWheel {
+            $0.innerSlots = LayoutWheelConfiguration.defaultInnerSlots
+            $0.outerSlots = LayoutWheelConfiguration.defaultOuterSlots
+        }
     }
 }
 
