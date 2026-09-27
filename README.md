@@ -12,12 +12,22 @@
 [![Swift](https://img.shields.io/badge/Swift-6.3-orange.svg)](https://swift.org)
 [![Free forever](https://img.shields.io/badge/price-free%20forever-brightgreen.svg)](#bettertile-is-free)
 
+[**Download the latest beta**](https://github.com/LMC-Karma/BetterTile/releases/latest)
+· [Website](https://lmc-karma.github.io/BetterTile/)
+· [Build from source](#install)
+
+Requires macOS 26 or later and Accessibility permission. The public beta is self-signed and not notarized; see
+[Install](#install) before opening it for the first time.
+
 BetterTile is built with Swift, SwiftUI, AppKit, and the macOS Accessibility
-API. Public Apple APIs are preferred; any private API proposal requires an
-explicit project-fit, safety, compatibility, and fallback review before
-adoption. No code injection, no SIP workarounds, and no behavioral tracking.
-Sparkle is the only runtime dependency and provides secure update checks.
-BetterTile currently asks for one permission and explains why before it does.
+API. Public Apple APIs control windows. A small, documented set of reviewed,
+read-only private observations improves exact window identity, minimum-size
+handling, Spaces, and Stage Manager behavior; each is validated and has a
+public fallback. BetterTile uses no code injection or SIP workaround and does
+no behavioral tracking. Sparkle is the only runtime dependency and provides
+secure update checks. BetterTile asks for one permission and explains why
+before it does. See [Security and privacy](SECURITY.md) for the full design and
+fallback details.
 
 ---
 
@@ -63,10 +73,10 @@ An optional Middle Click trigger is available for one-handed use. When enabled,
 BetterTile reserves unmodified middle-click system-wide, so other apps do not
 receive it until the option is turned off.
 
-### Keyboard shortcuts that don't collide
+### Keyboard shortcuts with duplicate checks
 
-Global shortcuts for every standard action, with conflict detection so you find
-out at assignment time instead of the first time a shortcut silently fails.
+Global shortcuts are available for every standard action. BetterTile prevents
+the same shortcut from being assigned to more than one of its actions.
 
 ### Undo the placement, not just the window
 
@@ -92,28 +102,27 @@ Public beta builds are distributed as disk images from
 the latest `BetterTile-*-beta.dmg`, open it, and drag BetterTile into the
 Applications shortcut before launching it.
 
-The beta application is **ad-hoc signed**: it carries a valid macOS code
-signature, but it is **not signed with a Developer ID**. macOS therefore cannot
-identify the developer and will refuse the first launch. Open **System Settings
-→ Privacy & Security**, find the message about BetterTile, and choose **Open
-Anyway**, after confirming that the download came from this repository. You can
-also check the download against the `.sha256` file published beside it.
+The beta application is signed with the stable, self-signed **BetterTile Beta**
+certificate. It is **not signed with an Apple Developer ID and is not
+notarized**, so macOS cannot identify the developer and will refuse the first
+launch. Open **System Settings → Privacy & Security**, find the message about
+BetterTile, and choose **Open Anyway**, after confirming that the download came
+from this repository. You can also check the download against the `.sha256`
+file published beside it.
 
-Updates are authenticated separately: each DMG carries an EdDSA signature that
-Sparkle verifies against a public key built into the app, independently of the
-macOS code signature.
+Updates are authenticated separately: Sparkle verifies each DMG's EdDSA
+signature against a public key built into the app, independently of the macOS
+code signature.
 
 BetterTile checks the repository's GitHub-hosted update feed every four hours by
 default. It shows release notes and asks before downloading or installing. You
 can turn automatic checks off in General Settings or use **Check for Updates…**
 at any time.
 
-> **Public beta limitation.** Ad-hoc signatures differ from build to build, so
-> macOS treats an updated BetterTile as a new application and **the
-> Accessibility permission does not survive an update**. After installing an
-> update, open **System Settings → Privacy & Security → Accessibility**, remove
-> BetterTile with the **–** button, and add it again. Signing with a Developer
-> ID certificate is what removes this step.
+Public betas since 0.4.1 use the same self-signed certificate so normal updates
+keep a stable code-signing identity and do not require you to grant
+Accessibility again. If a future release must change that identity, its release
+notes will include the one-time permission steps.
 
 To build it from source instead:
 
@@ -161,16 +170,19 @@ rebuilds signed by the same team keep the grant.
 
 ## Private by default
 
-BetterTile reads window geometry through the public Accessibility API and does
-nothing else with it. It does not send window data, configuration, analytics,
-telemetry, or crash reports anywhere. Your configuration is a plain JSON file
-on your own disk.
+BetterTile uses the Accessibility API to identify eligible windows and read,
+move, and resize them. It observes limited pointer and keyboard input needed for
+drag snapping, linked resizing, and the Layout Wheel. It can also use the
+documented read-only private observations described above. It does not send
+window data, configuration, analytics, telemetry, or crash reports anywhere.
+Your configuration is a plain JSON file on your own disk.
 
 Update checks contact GitHub to fetch the public Sparkle appcast and release
 archive. They do not include BetterTile window data, configuration, diagnostics,
 analytics, telemetry, crash reports, or a Sparkle system profile. See the
 [security and privacy policy](SECURITY.md) for the review requirements that
-apply to any future network, data, dependency, or permission change.
+apply to current behavior and any future network, data, dependency, or
+permission change.
 
 Accessibility is currently the sole mandatory permission, and BetterTile
 explains what it is for in-product before requesting it.
