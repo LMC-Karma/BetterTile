@@ -626,21 +626,28 @@ public final class WindowCoordinator {
     private func applyAtomically(_ placements: [Placement], rollbackFrames: [WindowID: BTRect]) throws {
         guard !placements.isEmpty else { return }
         try system.withFrameWriteBatch {
-            var applied: [WindowID] = []
+            var attempted: [WindowID] = []
             do {
                 for placement in placements.sorted(by: { $0.windowID < $1.windowID }) {
+                    attempted.append(placement.windowID)
                     try apply(
                         placement.frame,
                         to: placement.windowID,
                         knownCurrentFrame: rollbackFrames[placement.windowID]
                     )
-                    applied.append(placement.windowID)
                 }
             } catch {
+                // A size write can succeed before a position write fails. Read
+                // the failing window before deciding whether it needs rollback.
+                let failedID = attempted.last
+                let failedFrame = failedID.flatMap { (try? snapshots(ids: [$0]))?.first?.frame }
                 var rollbackFailures: [WindowID] = []
-                for id in applied.reversed() {
+                for id in attempted.reversed() {
                     guard let frame = rollbackFrames[id] else { continue }
-                    let appliedFrame = placements.first(where: { $0.windowID == id })?.frame
+                    if id == failedID, failedFrame?.approximatelyEquals(frame, tolerance: 0.01) == true { continue }
+                    let appliedFrame = id == failedID
+                        ? failedFrame
+                        : placements.first(where: { $0.windowID == id })?.frame
                     do {
                         try apply(frame, to: id, knownCurrentFrame: appliedFrame)
                     } catch {

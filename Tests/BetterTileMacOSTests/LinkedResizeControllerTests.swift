@@ -24,6 +24,38 @@ import Testing
     #expect(!controller.allowsLinkedResize(for: window))
 }
 
+@Test @MainActor func linkedResizeDoesNotMoveAnIgnoredNeighbor() {
+    let system = FakeWindowSystem()
+    system.addSecondWindow()
+    system.windows[0].frame = BTRect(x: 0, y: 0, width: 500, height: 800)
+    system.windows[1].frame = BTRect(x: 500, y: 0, width: 500, height: 800)
+    let neighbor = system.windows[1]
+    var configuration = BetterTileConfiguration()
+    configuration.linkedResizeEnabled = true
+    configuration.applicationRules.set(.ignoreEverywhere, for: "com.example.Second")
+    let ticks = ResizeDisplayLink(automatic: false)
+    let controller = LinkedResizeController(
+        coordinator: WindowCoordinator(system: system),
+        configuration: configuration,
+        displayTicks: ticks
+    )
+    controller.isEnabledForDisplay = { _ in true }
+    controller.setUsesSharedGestureEvents(true)
+    func event(_ kind: GlobalGestureEventKind) -> GlobalGestureEvent {
+        GlobalGestureEvent(kind: kind, position: BTPoint(x: 500, y: 400), button: 0, modifiers: [], timestamp: 1)
+    }
+
+    controller.handleSharedGestureEvent(event(.leftMouseDown))
+    controller.handleSharedGestureEvent(event(.leftMouseDragged))
+    system.windows[0].frame.size.width = 600
+    controller.handleSharedGestureEvent(event(.leftMouseDragged))
+    ticks.fire()
+    controller.handleSharedGestureEvent(event(.leftMouseUp))
+
+    #expect(system.windows[1].frame == neighbor.frame)
+    #expect(system.frameWriteCounts[neighbor.id] == nil)
+}
+
 @Test @MainActor func sharedGestureBurstStartsLinkedResizeBeforeMouseUp() async {
     let system = FakeWindowSystem()
     system.windows = [

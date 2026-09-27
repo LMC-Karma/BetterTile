@@ -45,6 +45,8 @@ final class FakeWindowSystem: WindowSystem, TargetedWindowSystem, WindowEventSou
         try updates()
     }
     var failedFrameWriteNumbers: [WindowID: Set<Int>] = [:]
+    /// The size write succeeds before the position write fails.
+    var partiallyFailedFrameWriteNumbers: [WindowID: Set<Int>] = [:]
     var failingMinimizeWindowID: WindowID?
     var minimizeWriteCounts: [WindowID: Int] = [:]
     var failedMinimizeWriteNumbers: [WindowID: Set<Int>] = [:]
@@ -118,6 +120,10 @@ final class FakeWindowSystem: WindowSystem, TargetedWindowSystem, WindowEventSou
             throw WindowSystemError.operationFailed("Simulated numbered Accessibility failure")
         }
         guard let index = windows.firstIndex(where: { $0.id == windowID }) else { throw WindowSystemError.windowNotFound(windowID) }
+        if partiallyFailedFrameWriteNumbers[windowID]?.contains(frameWriteCounts[windowID, default: 0]) == true {
+            windows[index].frame.size = frame.size
+            throw WindowSystemError.operationFailed("Simulated partial Accessibility failure")
+        }
         if ignoredFrameWriteCounts[windowID, default: 0] > 0 {
             ignoredFrameWriteCounts[windowID, default: 0] -= 1
             return

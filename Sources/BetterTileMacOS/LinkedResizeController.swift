@@ -191,7 +191,7 @@ public final class LinkedResizeController {
                 return
             }
             baselineWindows = try coordinator.system.visibleWindows().filter {
-                $0.displayID == focused.displayID && $0.isEligible && !$0.isFloating
+                $0.displayID == focused.displayID && allowsLinkedResize(for: $0)
             }
             guard baselineWindows.contains(where: { $0.id == focused.id }) else {
                 endGesture()
