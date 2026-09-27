@@ -334,6 +334,9 @@ public final class DividerOverlayController {
         self.boundaries = boundaries.filter { !$0.isLocked && $0.spanEnd - $0.spanStart >= 24 }
         self.obscuringFrames = obscuringFrames
         if isDragging {
+            // A participant can close while the pointer is still, so a
+            // window-list refresh must end the gesture without another sample.
+            if !activeParticipantsArePresent() { cancelActiveGesture() }
             return
         }
         syncHoverMonitoring()

@@ -335,7 +335,7 @@ func previewShapesRetainTheirArmsAndFollowAcceptedGeometry(shape: DividerPreview
 }
 
 enum DividerTestEnding: CaseIterable {
-    case commit, rapidCommit, cancel, participantLoss, failedAcquisition
+    case commit, rapidCommit, cancel, participantLoss, stationaryParticipantLoss, failedAcquisition
 }
 
 @Test(arguments: [ResizeFeedbackMode.ghost, .live], DividerTestEnding.allCases)
@@ -383,6 +383,12 @@ enum DividerTestEnding: CaseIterable {
         system.windows.removeLast()
         controller.drag(to: CGPoint(x: start.x + 60, y: screen.frame.maxY - (start.y + 60)))
         controller.displayTick()
+        #expect(!controller.isDragging)
+        return
+    } else if ending == .stationaryParticipantLoss {
+        // A window-list refresh reports the closure without a pointer sample.
+        system.windows.removeLast()
+        controller.refresh(boundaries: boundaries)
         #expect(!controller.isDragging)
         return
     } else if ending == .cancel {
