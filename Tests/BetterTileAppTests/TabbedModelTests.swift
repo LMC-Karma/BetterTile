@@ -5,6 +5,91 @@ import Testing
 @testable import BetterTileApp
 
 @Test(arguments: [false, true]) @MainActor
+func tabSelectionDoesNotRearrangeOrRefitOtherWindows(sharedApplication: Bool) async throws {
+    _ = NSApplication.shared
+    let system = FakeAppWindowSystem()
+    for index in 1...3 {
+        var window = system.windows[0]
+        window.id = WindowID(rawValue: "tab-\(index)")
+        window.processIdentifier += Int32(index)
+        system.windows.append(window)
+    }
+    if sharedApplication { system.windows[2].processIdentifier = system.windows[1].processIdentifier }
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    model.configuration.defaultTabbedPreset = .columns
+    model.setActiveMode(.tabbed)
+    try #require(await waitFor { model.activeTabbedState?.windowIDs.count == 4 })
+    let right = try #require(model.activeTabbedState?.panes[1].id)
+    model.performTabbed(.move(system.windows[2].id, pane: right, index: nil))
+    try #require(await waitFor { model.activeTabbedState?.panes[1].selected == system.windows[2].id })
+    model.performTabbed(.move(system.windows[3].id, pane: right, index: nil))
+    try #require(await waitFor { model.activeTabbedState?.panes[1].selected == system.windows[3].id })
+    let previous = try #require(model.activeTabbedState)
+    // Another app has changed its constraints and frame. A tab click must not
+    // refit that pane or fail because that unrelated app cannot be resized.
+    system.windows[3].constraints.isResizable = false
+    system.windows[3].constraints.minimumSize.width = 900
+    system.windows[3].frame = BTRect(x: 550, y: 70, width: 400, height: 600)
+    let frames = system.windows.map(\.frame)
+    let writes = system.frameWriteCounts
+    let raises = system.raiseRequests.count
+    let target = system.windows[1].id
+    model.performTabbed(.select(target))
+    #expect(await waitFor(timeout: .seconds(1)) { model.activeTabbedState?.activeWindowID == target })
+    #expect(model.activeTabbedState?.root == previous.root)
+    #expect(model.activeTabbedState?.panes[1] == previous.panes[1])
+    #expect(system.windows.map(\.frame) == frames)
+    #expect(system.frameWriteCounts == writes)
+    #expect(system.focusedID == target)
+    let raisedOtherPane = system.raiseRequests.dropFirst(raises).contains { $0.0 == system.windows[3].id }
+    #expect(raisedOtherPane == sharedApplication)
+}
+
+@Test @MainActor func activatingEmptyTabbedPaneCancelsAnOlderFocusNotification() async throws {
+    _ = NSApplication.shared
+    let system = FakeAppWindowSystem()
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    model.configuration.defaultTabbedPreset = .columns
+    model.setActiveMode(.tabbed)
+    try #require(await waitFor { model.activeTabbedState?.panes.count == 2 })
+    let emptyPane = try #require(model.activeTabbedState?.panes[1].id)
+    system.eventHandler?(WindowSystemEvent(kind: .focused, windowID: system.windows[0].id, processIdentifier: system.windows[0].processIdentifier))
+    model.performTabbed(.activate(emptyPane))
+    try await Task.sleep(for: .milliseconds(400))
+    #expect(model.activeTabbedState?.activePaneID == emptyPane)
+}
+
+@Test(arguments: [false, true]) @MainActor
+func tabbedRetainsExternalFocusChangesDuringPlacementSuppression(duringResize: Bool) async throws {
+    _ = NSApplication.shared
+    let system = FakeAppWindowSystem()
+    var second = system.windows[0]
+    second.id = WindowID(rawValue: "second")
+    system.windows.append(second)
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    model.configuration.defaultTabbedPreset = .columns
+    model.setActiveMode(.tabbed)
+    try #require(await waitFor { model.activeTabbedState?.windowIDs.count == 2 })
+    #expect(model.activeTabbedState?.activeWindowID != second.id)
+    if duringResize {
+        let divider = try #require(model.activeTabbedState?.dividers(in: system.mainDisplay.visibleFrame).first)
+        model.performTabbed(.beginResize)
+        model.performTabbed(.resize(divider.id, 0.6))
+    }
+    system.focusedID = second.id
+    system.eventHandler?(WindowSystemEvent(kind: .focused, windowID: second.id, processIdentifier: second.processIdentifier))
+    if duringResize {
+        try await Task.sleep(for: .milliseconds(400))
+        #expect(model.activeTabbedState?.activeWindowID != second.id)
+        model.performTabbed(.endResize)
+    }
+    #expect(await waitFor(timeout: .seconds(1)) { model.activeTabbedState?.activeWindowID == second.id })
+}
+
+@Test(arguments: [false, true]) @MainActor
 func degradedTabbedResizeRestoresItsBaselineOrStopsAutomaticPlacement(failRestore: Bool) async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
@@ -65,6 +150,11 @@ func degradedTabbedResizeRestoresItsBaselineOrStopsAutomaticPlacement(failRestor
     try #require(await waitFor { model.activeTabbedState?.windowIDs.contains(added.id) == true })
     #expect(system.frameWriteCounts == writes)
     #expect(system.windows.last?.frame == added.frame)
+
+    system.focusedID = added.id
+    system.eventHandler?(WindowSystemEvent(kind: .focused, windowID: added.id, processIdentifier: added.processIdentifier))
+    try await Task.sleep(for: .milliseconds(400))
+    #expect(system.frameWriteCounts == writes)
 
     model.performTabbed(.repair)
     #expect(await waitFor { system.windows.last?.frame != added.frame })
@@ -368,6 +458,78 @@ func tabbedLearnedWidthFailureDoesNotCommitOrRetryDegradedRestoration(failRestor
     try #require(await waitFor { model.activeLayoutMode == .tabbed && model.activeTabbedState?.panes[0].id == originalPane })
 }
 
+@Test(arguments: [false, true]) @MainActor
+func nativeSpaceChangeCancelsActiveTabbedResizeBeforeReturning(destroyedDuringResize: Bool) async throws {
+    _ = NSApplication.shared
+    let system = FakeAppWindowSystem()
+    let display = system.mainDisplay.id
+    let firstSpace = NativeSpaceID(rawValue: 1)
+    let secondSpace = NativeSpaceID(rawValue: 2)
+    var second = system.windows[0]
+    second.id = WindowID(rawValue: "second")
+    second.processIdentifier = 43
+    system.windows.append(second)
+    system.desktopObservation = NativeDesktopObservation(
+        currentSpaceByDisplay: [display: firstSpace],
+        knownSpacesByDisplay: [display: [firstSpace, secondSpace]],
+        windowMembership: Dictionary(uniqueKeysWithValues: system.windows.map { ($0.id, [firstSpace]) })
+    )
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    model.configuration.singleWindowPlacement = nil
+    model.setActiveMode(.tabbed)
+    try #require(await waitFor { model.activeTabbedState?.panes.count == 1 })
+    let singlePaneState = try #require(model.activeTabbedState)
+    model.performTabbed(.preset(.columns))
+    try #require(await waitFor { model.activeTabbedState?.panes.count == 2 })
+    let baselineState = try #require(model.activeTabbedState)
+    let baselineFrames = Dictionary(uniqueKeysWithValues: system.windows.map { ($0.id, $0.frame) })
+    var expectedReturnState = baselineState
+    var expectedReturnFrames = baselineFrames
+    let divider = try #require(baselineState.dividers(in: system.mainDisplay.visibleFrame).first)
+
+    model.performTabbed(.beginResize)
+    model.performTabbed(.resize(divider.id, 0.65))
+    try #require(await waitFor { model.activeTabbedState?.dividers(in: system.mainDisplay.visibleFrame).first?.ratio == 0.65 })
+    #expect(model.activeTabbedState != baselineState)
+    let writesAfterResize = system.frameWriteCounts
+
+    if destroyedDuringResize {
+        system.windows.removeAll { $0.id == second.id }
+        system.desktopObservation?.windowMembership.removeValue(forKey: second.id)
+        system.eventHandler?(WindowSystemEvent(
+            kind: .destroyed,
+            windowID: second.id,
+            processIdentifier: second.processIdentifier
+        ))
+        expectedReturnState.removeClosedWindow(second.id)
+        expectedReturnFrames.removeValue(forKey: second.id)
+    }
+
+    model.installWorkspaceTriggers()
+    system.desktopObservation?.currentSpaceByDisplay[display] = secondSpace
+    let departureSweep = system.completeSweepCount
+    NSWorkspace.shared.notificationCenter.post(name: NSWorkspace.activeSpaceDidChangeNotification, object: nil)
+    try #require(await waitFor {
+        model.activeLayoutMode == .manual && system.completeSweepCount >= departureSweep + 2
+    })
+    #expect(system.frameWriteCounts == writesAfterResize)
+
+    system.desktopObservation?.currentSpaceByDisplay[display] = firstSpace
+    NSWorkspace.shared.notificationCenter.post(name: NSWorkspace.activeSpaceDidChangeNotification, object: nil)
+    try #require(await waitFor(timeout: .seconds(2)) {
+        model.activeLayoutMode == .tabbed
+            && model.activeTabbedState == expectedReturnState
+            && Dictionary(uniqueKeysWithValues: system.windows.map { ($0.id, $0.frame) }) == expectedReturnFrames
+    })
+
+    model.performTabbed(.undo)
+    try #require(await waitFor { model.activeTabbedState?.panes.count == 1 })
+    var expectedUndoState = singlePaneState
+    if destroyedDuringResize { expectedUndoState.removeClosedWindow(second.id) }
+    #expect(model.activeTabbedState == expectedUndoState)
+}
+
 @Test @MainActor func tabbedModelFloatCanBeReattachedAndPresetUndoRestoresAssignments() async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
@@ -391,6 +553,37 @@ func tabbedLearnedWidthFailureDoesNotCommitOrRetryDegradedRestoration(failRestor
     try #require(await waitFor { model.activeTabbedState?.panes.count == 1 })
     #expect(model.activeTabbedState?.panes[0].id == pane)
     #expect(model.activeTabbedState?.windowIDs.count == 2)
+}
+
+@Test @MainActor func destroyedFloatingTabbedWindowIsRemovedFromStateAndUndo() async throws {
+    _ = NSApplication.shared
+    let system = FakeAppWindowSystem()
+    let first = system.windows[0]
+    var second = first
+    second.id = WindowID(rawValue: "second")
+    system.windows.append(second)
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+
+    model.setActiveMode(.tabbed)
+    try #require(await waitFor { model.activeTabbedState?.windowIDs.count == 2 })
+    model.performTabbed(.float(first.id))
+    try #require(await waitFor { model.activeTabbedState?.floatingWindowIDs.contains(first.id) == true })
+    model.performTabbed(.preset(.columns))
+    try #require(await waitFor { model.activeTabbedState?.panes.count == 2 })
+
+    system.windows.removeAll { $0.id == first.id }
+    system.eventHandler?(WindowSystemEvent(
+        kind: .destroyed,
+        windowID: first.id,
+        processIdentifier: first.processIdentifier
+    ))
+
+    try #require(await waitFor { model.activeTabbedState?.floatingWindowIDs.contains(first.id) == false })
+    model.performTabbed(.undo)
+    try #require(await waitFor { model.activeTabbedState?.panes.count == 1 })
+    #expect(model.activeTabbedState?.windowIDs.contains(first.id) == false)
+    #expect(model.activeTabbedState?.floatingWindowIDs.contains(first.id) == false)
 }
 
 @Test @MainActor func tabbedEmptyActivationDoesNotCaptureNewWindowAsPreexistingBaseline() async throws {

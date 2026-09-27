@@ -48,6 +48,30 @@ import Testing
     #expect(state.panes.flatMap(\.tabs).count == state.windowIDs.count)
 }
 
+@Test func tabbedReconcileRemovalRetainsFloatingMembership() {
+    let temporarilyAbsent = WindowID(rawValue: "temporarily-absent-floating")
+    var state = TabbedLayoutState()
+    state.reconcile(windowIDs: [temporarilyAbsent], removed: [], focused: temporarilyAbsent)
+    state.float(temporarilyAbsent)
+
+    state.reconcile(windowIDs: [temporarilyAbsent], removed: [temporarilyAbsent], focused: nil)
+
+    #expect(state.floatingWindowIDs.contains(temporarilyAbsent))
+    #expect(!state.windowIDs.contains(temporarilyAbsent))
+}
+
+@Test func tabbedRemovingClosedFloatingWindowClearsItsMembership() {
+    let closed = WindowID(rawValue: "closed-floating")
+    var state = TabbedLayoutState()
+    state.reconcile(windowIDs: [closed], removed: [], focused: closed)
+    state.float(closed)
+
+    state.removeClosedWindow(closed)
+
+    #expect(!state.floatingWindowIDs.contains(closed))
+    #expect(!state.windowIDs.contains(closed))
+}
+
 @Test func tabbedPresetAddsEmptyPanesAndMergesWithoutReorderingGroups() {
     let a = WindowID(rawValue: "a"), b = WindowID(rawValue: "b")
     var state = TabbedLayoutState()

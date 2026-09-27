@@ -32,6 +32,7 @@ protocol BetterTileWindowSystem: TargetedWindowSystem, WindowEventSource {
 extension AccessibilityWindowSystem: BetterTileWindowSystem {}
 
 private struct ActiveTabbedResize {
+    let sessionID: DesktopSessionID
     let baselineState: TabbedLayoutState
     var transaction: WindowFrameTransaction?
     var windows: [WindowSnapshot]
@@ -81,6 +82,7 @@ final class BetterTileModel {
     private var tabbedResizeEnds: [DisplayID: Bool] = [:]
     private let presentsTabbedChrome: Bool
     private var tabbedFocusTask: Task<Void, Never>?
+    private var tabbedNeedsFocusRefresh = false
     private var tabbedFocusSuppressedUntil = Date.distantPast
 
     private var watchdogTimer: Timer?
@@ -1556,6 +1558,24 @@ final class BetterTileModel {
     private func beginActiveSpaceStabilization() {
         tabbedFocusTask?.cancel()
         tabbedQueuedIntents.removeAll()
+        for (displayID, resize) in tabbedResizes {
+            guard let session = sessionStore.session(for: displayID),
+                  session.id == resize.sessionID,
+                  session.mode == .tabbed
+            else { continue }
+            let baselineMembers = resize.baselineState.windowIDs.union(resize.baselineState.floatingWindowIDs)
+            let currentMembers = session.tabbedState.map {
+                $0.windowIDs.union($0.floatingWindowIDs)
+            } ?? []
+            let removed = baselineMembers.subtracting(currentMembers).union(confirmedGoneWindowIDs)
+            var restoredState = resize.baselineState
+            for windowID in removed { restoredState.removeClosedWindow(windowID) }
+            sessionStore.update(displayID) {
+                guard $0.id == resize.sessionID else { return }
+                $0.tabbedState = restoredState
+                $0.windowIDs = restoredState.windowIDs
+            }
+        }
         tabbedResizes.removeAll()
         tabbedResizeEnds.removeAll()
         tabbedNeedsRefresh.removeAll()
@@ -1669,7 +1689,7 @@ final class BetterTileModel {
                 confirmedGoneWindowIDs.insert(windowID)
                 sessionStore.removeClosedTabbedWindow(windowID)
                 tabbedUndo = tabbedUndo.mapValues { histories in
-                    histories.map { original in var state = original; state.remove(windowID); return state }
+                    histories.map { original in var state = original; state.removeClosedWindow(windowID); return state }
                 }
             }
         }
@@ -2876,11 +2896,20 @@ extension BetterTileModel {
 
     private func applyTabbedState(
         _ state: TabbedLayoutState, session original: LayoutSession, display: DisplaySnapshot,
-        windows: [WindowSnapshot], focus: WindowID?, rememberUndo: Bool = false, consumeUndo: Bool = false
+        windows: [WindowSnapshot], focus: WindowID?, rememberUndo: Bool = false, consumeUndo: Bool = false,
+        selectionOnly: Bool = false
     ) {
         guard tabbedTasks[display.id] == nil else { return }
         let previous = sessionStore.session(for: display.id)?.tabbedState
         func prepare(_ windows: [WindowSnapshot]) throws -> (state: TabbedLayoutState, placements: [Placement]) {
+            if selectionOnly {
+                guard let focus, windows.contains(where: { $0.id == focus && $0.isEligible }),
+                      let pane = state.panes.first(where: { $0.tabs.contains(focus) }),
+                      let frame = state.frames(in: display.visibleFrame)[pane.id] else {
+                    throw WindowSystemError.operationFailed("That window is no longer available.")
+                }
+                return (state, [Placement(windowID: focus, frame: TabbedLayoutState.contentFrame(frame))])
+            }
             let fitted = try state.fittingMinimumWidths(in: display.visibleFrame, windows: windows)
             var proposed = try fitted.placements(in: display.visibleFrame, windows: windows)
             let detached = (previous?.windowIDs ?? []).subtracting(state.windowIDs).intersection(state.floatingWindowIDs)
@@ -2909,14 +2938,24 @@ extension BetterTileModel {
             var outcome: WindowMutationOutcome = .failed(reason: "The desktop changed.")
             for attempt in 0..<2 {
                 self.tabbedFocusSuppressedUntil = Date().addingTimeInterval(0.3)
-                let eligibleIDs = Set(proposal.placements.map(\.windowID))
+                let eligibleIDs = selectionOnly
+                    ? Set(windows.filter(\.isEligible).map(\.id))
+                    : Set(proposal.placements.map(\.windowID))
+                var selected = proposal.state.selectedWindowIDs.filter(eligibleIDs.contains)
+                if selectionOnly, let process = windows.first(where: { $0.id == focus })?.processIdentifier {
+                    let applicationWindows = Set(windows.filter { $0.processIdentifier == process }.map(\.id))
+                    // Activating an app can expose its inactive tabs in other
+                    // panes. Restore only those panes' selected windows.
+                    selected = proposal.state.panes.filter { $0.tabs.contains(where: applicationWindows.contains) }
+                        .compactMap(\.selected).filter(eligibleIDs.contains)
+                }
                 var learnedWidth = false
                 outcome = await self.coordinator.applyTabbed(
-                    placements: proposal.placements, selected: proposal.state.selectedWindowIDs.filter(eligibleIDs.contains),
+                    placements: proposal.placements, selected: selected,
                     previousSelected: previous?.selectedWindowIDs.filter(eligibleIDs.contains) ?? [],
                     focus: focus.flatMap { eligibleIDs.contains($0) ? $0 : nil },
                     onSizeMismatch: { id, requested, baseline, actual in
-                        guard proposal.state.windowIDs.contains(id), actual.size.width > requested.size.width + 2 else { return }
+                        guard !selectionOnly, proposal.state.windowIDs.contains(id), actual.size.width > requested.size.width + 2 else { return }
                         learnedWidth = self.system.observeApplicationEnforcedMinimum(
                             windowID: id, requested: requested, baseline: baseline, actual: actual
                         ) || learnedWidth
@@ -2949,9 +2988,13 @@ extension BetterTileModel {
                 proposed.tabbedState = state
                 proposed.windowIDs = state.windowIDs
                 proposed.lastWorkArea = display.visibleFrame
-                proposed.lastObservedFrames = Dictionary(uniqueKeysWithValues: placements.map { ($0.windowID, $0.frame) })
+                let placedFrames = Dictionary(uniqueKeysWithValues: placements.map { ($0.windowID, $0.frame) })
+                proposed.lastObservedFrames = selectionOnly
+                    ? original.lastObservedFrames.merging(placedFrames) { _, new in new }
+                    : placedFrames
                 proposed.resumeAutomaticWrites()
                 if let committed = self.sessionStore.commit(proposed, replacing: original.revision) {
+                    self.statusMessage = nil
                     if consumeUndo { self.tabbedUndo[original.id]?.removeLast() }
                     if rememberUndo, let previous, previous != state { self.rememberTabbedUndo(previous, sessionID: original.id) }
                     self.showTabbed(session: committed, display: display, windows: windows)
@@ -2970,6 +3013,7 @@ extension BetterTileModel {
             } else if self.tabbedNeedsRefresh.remove(display.id) != nil {
                 self.refreshActiveWindows(force: false)
             }
+            if self.tabbedNeedsFocusRefresh { self.handleTabbedFocus() }
         }
     }
 
@@ -3010,9 +3054,12 @@ extension BetterTileModel {
         var focus: WindowID?
         var undo = true
         var consumeUndo = false
+        var selectionOnly = false
         switch intent {
-        case let .select(id): state.select(id); focus = id; undo = false
+        case let .select(id): state.select(id); focus = id; undo = false; selectionOnly = true
         case let .activate(id):
+            tabbedFocusTask?.cancel()
+            tabbedNeedsFocusRefresh = false
             state.activatePane(id)
             session.tabbedState = state
             _ = sessionStore.commit(session, replacing: session.revision)
@@ -3039,17 +3086,18 @@ extension BetterTileModel {
             focus = state.activeWindowID; undo = false
         case let .removePane(id): state.removeEmptyPane(id)
         case .beginResize:
-            beginTabbedResize(state: state, windows: windows, display: display)
+            beginTabbedResize(state: state, sessionID: session.id, windows: windows, display: display)
             return
         case .resize, .endResize, .cancelResize:
             return
         }
         applyTabbedState(state, session: session, display: display, windows: windows, focus: focus,
-                         rememberUndo: undo, consumeUndo: consumeUndo)
+                         rememberUndo: undo, consumeUndo: consumeUndo, selectionOnly: selectionOnly)
     }
 
     private func beginTabbedResize(
         state: TabbedLayoutState,
+        sessionID: DesktopSessionID,
         windows: [WindowSnapshot],
         display: DisplaySnapshot
     ) {
@@ -3068,6 +3116,7 @@ extension BetterTileModel {
                 return
             }
             tabbedResizes[display.id] = ActiveTabbedResize(
+                sessionID: sessionID,
                 baselineState: state,
                 transaction: transaction,
                 windows: windows
@@ -3141,6 +3190,7 @@ extension BetterTileModel {
         cancelled: Bool
     ) {
         guard let resize = tabbedResizes.removeValue(forKey: display.id) else { return }
+        defer { if tabbedNeedsFocusRefresh { handleTabbedFocus() } }
         var finalSession = session
         var windows = resize.windows
         if cancelled {
@@ -3230,6 +3280,7 @@ extension BetterTileModel {
                 } else if self.tabbedNeedsRefresh.remove(display.id) != nil {
                     self.refreshActiveWindows(force: false)
                 }
+                if self.tabbedNeedsFocusRefresh { self.handleTabbedFocus() }
             }
             let outcome = await self.coordinator.settleAuthoritativePlacements(placements)
             guard !Task.isCancelled,
@@ -3281,14 +3332,19 @@ extension BetterTileModel {
     }
 
     private func handleTabbedFocus() {
-        guard !isStabilizingSpace, Date() >= tabbedFocusSuppressedUntil else { return }
+        guard !isStabilizingSpace, sessionStore.sessions.values.contains(where: { $0.mode == .tabbed }) else { return }
+        tabbedNeedsFocusRefresh = true
         tabbedFocusTask?.cancel()
+        let delay = max(0.08, tabbedFocusSuppressedUntil.timeIntervalSinceNow)
         tabbedFocusTask = Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .milliseconds(80))
+            try? await Task.sleep(for: .seconds(delay))
             guard let self, !Task.isCancelled, !self.isStabilizingSpace,
                   let focused = try? self.system.focusedWindow(),
                   self.tabbedTasks[focused.displayID] == nil,
-                  let session = self.sessionStore.session(for: focused.displayID), session.mode == .tabbed,
+                  self.tabbedResizes[focused.displayID] == nil else { return }
+            self.tabbedNeedsFocusRefresh = false
+            guard let session = self.sessionStore.session(for: focused.displayID), session.mode == .tabbed,
+                  !session.automaticWritesSuspended,
                   let state = session.tabbedState else { return }
             if state.windowIDs.contains(focused.id), state.activeWindowID != focused.id {
                 self.handleTabbed(.select(focused.id), on: focused.displayID)

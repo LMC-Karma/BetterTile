@@ -211,6 +211,92 @@ func tabbedStripFitsNarrowAndCrowdedPanes(width: Double, count: Int) {
     guard case .endResize = intents[3] else { Issue.record("Resize did not end"); return }
 }
 
+@Test(arguments: [true, false]) @MainActor
+func tabbedEscapeCancelsResizeFromEitherKeyMonitor(useLocalMonitor: Bool) {
+    var globalHandler: (@MainActor (UInt16) -> Void)?
+    var localHandler: (@MainActor (UInt16) -> Bool)?
+    var removedMonitors = 0
+    let overlay = TabbedOverlayController(
+        displayTicks: ResizeDisplayLink(automatic: false),
+        addGlobalKeyMonitor: { handler in
+            globalHandler = handler
+            return NSObject()
+        },
+        addLocalKeyMonitor: { handler in
+            localHandler = handler
+            return NSObject()
+        },
+        removeMonitor: { _ in removedMonitors += 1 }
+    )
+    var intents: [TabbedUIIntent] = []
+    overlay.onIntent = { intents.append($0) }
+
+    overlay.beginResize()
+    #expect(overlay.isInteracting)
+    #expect(localHandler?(42) == false)
+    #expect(overlay.isInteracting)
+
+    if useLocalMonitor {
+        #expect(localHandler?(53) == true)
+    } else {
+        globalHandler?(53)
+    }
+
+    #expect(!overlay.isInteracting)
+    #expect(removedMonitors == 2)
+    #expect(intents.contains { if case .beginResize = $0 { true } else { false } })
+    #expect(intents.contains { if case .cancelResize = $0 { true } else { false } })
+    #expect(!intents.contains { if case .endResize = $0 { true } else { false } })
+    overlay.endResize()
+    #expect(!intents.contains { if case .endResize = $0 { true } else { false } })
+}
+
+@Test @MainActor func tabbedGlobalEscapeCancelsDragWithoutReleaseCommit() throws {
+    _ = NSApplication.shared
+    let bounds = BTRect(x: 12000, y: 0, width: 1000, height: 800)
+    var state = TabbedLayoutState(preset: .columns)
+    let id = WindowID(rawValue: "escape-drag")
+    state.reconcile(windowIDs: [id], removed: [], focused: id)
+    var globalHandler: (@MainActor (UInt16) -> Void)?
+    var localHandler: (@MainActor (UInt16) -> Bool)?
+    var removedMonitors = 0
+    let overlay = TabbedOverlayController(
+        displayTicks: ResizeDisplayLink(automatic: false),
+        addGlobalKeyMonitor: { handler in
+            globalHandler = handler
+            return NSObject()
+        },
+        addLocalKeyMonitor: { handler in
+            localHandler = handler
+            return NSObject()
+        },
+        removeMonitor: { _ in removedMonitors += 1 }
+    )
+    defer { overlay.hide() }
+    overlay.refresh(state: state, bounds: bounds, windows: [])
+    let view = try #require(NSApp.windows.compactMap(\.contentView).compactMap { $0 as? TabbedPaneView }.first { $0.pane.id == state.panes[0].id })
+    let panel = try #require(view.window)
+    var moves = 0
+    overlay.onIntent = { intent in if case .move = intent { moves += 1 } }
+    func event(_ type: NSEvent.EventType, point: BTPoint) throws -> NSEvent {
+        let screen = NSPoint(x: point.x, y: NSScreen.screens.first!.frame.maxY - point.y)
+        return try #require(NSEvent.mouseEvent(with: type, location: panel.convertPoint(fromScreen: screen), modifierFlags: [],
+                                             timestamp: 0, windowNumber: panel.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1))
+    }
+
+    view.mouseDown(with: try event(.leftMouseDown, point: BTPoint(x: 12060, y: 17)))
+    view.mouseDragged(with: try event(.leftMouseDragged, point: BTPoint(x: 12250, y: 400)))
+    #expect(overlay.isInteracting)
+    #expect(localHandler?(42) == false)
+
+    globalHandler?(53)
+    view.mouseUp(with: try event(.leftMouseUp, point: BTPoint(x: 12750, y: 400)))
+
+    #expect(!overlay.isInteracting)
+    #expect(moves == 0)
+    #expect(removedMonitors == 2)
+}
+
 @Test @MainActor func tabbedChromePreview() throws {
     // Render only our own views. No app launch, desktop capture, or input posting.
     guard let directory = ProcessInfo.processInfo.environment["BETTERTILE_TAB_PREVIEW_DIR"] else { return }
@@ -232,6 +318,7 @@ func tabbedStripFitsNarrowAndCrowdedPanes(width: Double, count: Int) {
                 view.pane.tabs = (0..<count).map { WindowID(rawValue: "render-\($0)") }
                 view.pane.selected = view.pane.tabs.isEmpty ? nil : view.pane.tabs[selected]
                 view.titles = (0..<count).map { $0 == 0 ? "Project notes — Long document title" : "Document \($0 + 1)" }
+                view.icons = (0..<count).map { NSImage(systemSymbolName: ["doc.text", "globe", "terminal"][$0 % 3], accessibilityDescription: nil) }
                 guard let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) else {
                     Issue.record("Could not render Tabbed preview")
                     continue
@@ -245,6 +332,66 @@ func tabbedStripFitsNarrowAndCrowdedPanes(width: Double, count: Int) {
         }
         let bitmap = try #require(image.tiffRepresentation.flatMap(NSBitmapImageRep.init(data:)))
         try bitmap.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: directory).appendingPathComponent("tabbed-chrome-\(name).png"))
+    }
+}
+
+@Test @MainActor func tabbedFloatTargetPreview() throws {
+    guard let directory = ProcessInfo.processInfo.environment["BETTERTILE_TAB_PREVIEW_DIR"] else { return }
+    _ = NSApplication.shared
+    let bounds = BTRect(x: 12000, y: 0, width: 1000, height: 800)
+    let display = DisplayID(rawValue: "float-preview")
+
+    func containsFloatLabel(_ view: NSView) -> Bool {
+        if let label = view as? NSTextField, label.stringValue == "Float window" { return true }
+        return view.subviews.contains(where: containsFloatLabel)
+    }
+
+    for (name, appearanceName) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
+        let appearance = try #require(NSAppearance(named: appearanceName))
+        do {
+            let id = WindowID(rawValue: "float-preview-\(name)")
+            var state = TabbedLayoutState()
+            state.reconcile(windowIDs: [id], removed: [], focused: id)
+            let window = WindowSnapshot(id: id, processIdentifier: 1, title: "Float preview", frame: bounds, displayID: display)
+            let overlay = TabbedOverlayController()
+            defer { overlay.hide() }
+            overlay.refresh(state: state, bounds: bounds, windows: [window])
+            let paneView = try #require(NSApp.windows.compactMap(\.contentView).compactMap { $0 as? TabbedPaneView }.first { $0.pane.tabs.contains(id) })
+            let panePanel = try #require(paneView.window)
+            paneView.appearance = appearance
+
+            func event(_ type: NSEvent.EventType, point: BTPoint) throws -> NSEvent {
+                let screen = NSPoint(x: point.x, y: NSScreen.screens.first!.frame.maxY - point.y)
+                return try #require(NSEvent.mouseEvent(with: type, location: panePanel.convertPoint(fromScreen: screen),
+                                                      modifierFlags: [], timestamp: 0, windowNumber: panePanel.windowNumber,
+                                                      context: nil, eventNumber: 0, clickCount: 1, pressure: 1))
+            }
+
+            paneView.mouseDown(with: try event(.leftMouseDown, point: BTPoint(x: 12060, y: 17)))
+            paneView.mouseDragged(with: try event(.leftMouseDragged, point: BTPoint(x: 12250, y: 400)))
+            let floatPanel = try #require(NSApp.windows.first { $0.isVisible && containsFloatLabel($0.contentView ?? NSView()) })
+            let floatView = try #require(floatPanel.contentView)
+            floatPanel.appearance = appearance
+            floatView.appearance = appearance
+            guard let bitmap = floatView.bitmapImageRepForCachingDisplay(in: floatView.bounds) else {
+                Issue.record("Could not render Float window target")
+                continue
+            }
+            let image = NSImage(size: NSSize(width: 500, height: 180))
+            appearance.performAsCurrentDrawingAppearance {
+                image.lockFocus()
+                NSColor.windowBackgroundColor.setFill()
+                NSRect(x: 0, y: 0, width: 500, height: 180).fill()
+                floatView.cacheDisplay(in: floatView.bounds, to: bitmap)
+                let rendered = NSImage(size: floatView.bounds.size)
+                rendered.addRepresentation(bitmap)
+                rendered.draw(in: NSRect(x: 155, y: 66, width: floatView.bounds.width, height: floatView.bounds.height),
+                              from: .zero, operation: .sourceOver, fraction: 1)
+                image.unlockFocus()
+            }
+            let output = try #require(image.tiffRepresentation.flatMap(NSBitmapImageRep.init(data:)))
+            try output.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: directory).appendingPathComponent("tabbed-float-target-\(name).png"))
+        }
     }
 }
 
@@ -295,6 +442,125 @@ func tabbedStripFitsNarrowAndCrowdedPanes(width: Double, count: Int) {
     view.mouseDown(with: try event(.leftMouseDown, at: point))
     view.mouseUp(with: try event(.leftMouseUp, at: point))
     #expect(closed == [id])
+}
+
+@Test @MainActor func tabbedTabSelectionRequiresReleaseInsideOriginalTab() throws {
+    _ = NSApplication.shared
+    let panel = NSPanel(contentRect: NSRect(x: 12000, y: 0, width: 330, height: 34),
+                        styleMask: [.borderless], backing: .buffered, defer: false)
+    let overlay = TabbedOverlayController()
+    let view = TabbedPaneView()
+    let first = WindowID(rawValue: "selection-first")
+    let second = WindowID(rawValue: "selection-second")
+    view.owner = overlay
+    view.pane.tabs = [first, second]
+    view.pane.selected = second
+    view.titles = ["First", "Second"]
+    panel.contentView = view
+    defer { panel.orderOut(nil) }
+
+    func event(_ type: NSEvent.EventType, at point: NSPoint) throws -> NSEvent {
+        try #require(NSEvent.mouseEvent(with: type, location: point, modifierFlags: [], timestamp: 0,
+                                       windowNumber: panel.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1))
+    }
+
+    let firstTab = view.strip.tabFrame(0)
+    let secondTab = view.strip.tabFrame(1)
+    let firstClose = view.strip.closeFrame(0)
+    let secondClose = view.strip.closeFrame(1)
+    let press = NSPoint(x: firstTab.minX + 20, y: firstTab.midY)
+    let releases = [
+        NSPoint(x: 5, y: firstTab.midY),
+        NSPoint(x: firstTab.midX, y: -1),
+        NSPoint(x: firstClose.midX, y: firstClose.midY),
+        NSPoint(x: secondTab.midX, y: secondTab.midY),
+        NSPoint(x: secondClose.midX, y: secondClose.midY),
+    ]
+    var selections: [WindowID] = []
+    overlay.onIntent = { intent in
+        if case let .select(id) = intent { selections.append(id) }
+    }
+
+    for release in releases {
+        view.mouseDown(with: try event(.leftMouseDown, at: press))
+        view.mouseUp(with: try event(.leftMouseUp, at: release))
+    }
+    #expect(selections.isEmpty)
+
+    view.mouseDown(with: try event(.leftMouseDown, at: press))
+    view.mouseUp(with: try event(.leftMouseUp, at: press))
+    #expect(selections == [first])
+}
+
+@Test @MainActor func tabbedDragAtPaneLimitDoesNotOfferSplitButKeepsCenterMove() throws {
+    _ = NSApplication.shared
+    let bounds = BTRect(x: 12000, y: 0, width: 2400, height: 1800)
+    let id = WindowID(rawValue: "pane-limit-drag")
+    var state = TabbedLayoutState()
+    state.reconcile(windowIDs: [id], removed: [], focused: id)
+    let sourcePaneID = state.panes[0].id
+    while state.panes.count < 12 {
+        let frames = state.frames(in: bounds)
+        let target = state.panes
+            .filter { $0.tabs.isEmpty }
+            .max { (frames[$0.id]?.size.width ?? 0) * (frames[$0.id]?.size.height ?? 0) <
+                  (frames[$1.id]?.size.width ?? 0) * (frames[$1.id]?.size.height ?? 0) }
+            ?? state.panes[0]
+        let targetFrame = try #require(frames[target.id])
+        state.split(paneID: target.id, moving: id, edge: targetFrame.size.width >= targetFrame.size.height ? .right : .bottom)
+        state.move(id, to: sourcePaneID)
+    }
+    #expect(state.panes.count == 12)
+
+    let window = WindowSnapshot(id: id, processIdentifier: 1, title: "Pane limit", frame: bounds,
+                               displayID: DisplayID(rawValue: "preview"))
+    let overlay = TabbedOverlayController()
+    defer { overlay.hide() }
+    var intents: [TabbedUIIntent] = []
+    overlay.onIntent = { intents.append($0) }
+    overlay.refresh(state: state, bounds: bounds, windows: [window])
+    let view = try #require(NSApp.windows.compactMap(\.contentView).compactMap { $0 as? TabbedPaneView }.first { $0.pane.tabs.contains(id) })
+    let panel = try #require(view.window)
+    let frames = state.frames(in: bounds)
+    let sourceFrame = try #require(frames[sourcePaneID])
+
+    func event(_ type: NSEvent.EventType, screenPoint point: BTPoint) throws -> NSEvent {
+        let screen = NSPoint(x: point.x, y: NSScreen.screens.first!.frame.maxY - point.y)
+        return try #require(NSEvent.mouseEvent(with: type, location: panel.convertPoint(fromScreen: screen),
+                                              modifierFlags: [], timestamp: 0, windowNumber: panel.windowNumber,
+                                              context: nil, eventNumber: 0, clickCount: 1, pressure: 1))
+    }
+    func labels(in view: NSView) -> [String] {
+        var values = (view as? NSTextField).map { [$0.stringValue] } ?? []
+        for child in view.subviews { values += labels(in: child) }
+        return values
+    }
+
+    let press = BTPoint(x: sourceFrame.minX + 60, y: sourceFrame.minY + 17)
+    let intermediate = BTPoint(x: press.x + 20, y: press.y + 60)
+    let edge = BTPoint(x: sourceFrame.maxX - 4, y: sourceFrame.minY + TabbedLayoutState.headerHeight + 120)
+    view.mouseDown(with: try event(.leftMouseDown, screenPoint: press))
+    view.mouseDragged(with: try event(.leftMouseDragged, screenPoint: intermediate))
+    view.mouseDragged(with: try event(.leftMouseDragged, screenPoint: edge))
+    #expect(!NSApp.windows.filter(\.isVisible).flatMap { labels(in: $0.contentView ?? NSView()) }.contains { $0.contains("Split") })
+    view.mouseUp(with: try event(.leftMouseUp, screenPoint: edge))
+    #expect(!intents.contains { if case .split = $0 { true } else { false } })
+
+    intents.removeAll()
+    let destination = try #require(state.panes.first { $0.id != sourcePaneID && (frames[$0.id]?.size.width ?? 0) > 100 })
+    let destinationFrame = try #require(frames[destination.id])
+    let center = BTPoint(x: destinationFrame.midX, y: destinationFrame.minY + TabbedLayoutState.headerHeight + 120)
+    view.mouseDown(with: try event(.leftMouseDown, screenPoint: press))
+    view.mouseDragged(with: try event(.leftMouseDragged, screenPoint: intermediate))
+    view.mouseDragged(with: try event(.leftMouseDragged, screenPoint: center))
+    view.mouseUp(with: try event(.leftMouseUp, screenPoint: center))
+    guard case let .move(movedID, pane, index) = intents.last else {
+        Issue.record("Center drag did not emit a move intent")
+        return
+    }
+    #expect(movedID == id)
+    #expect(pane == destination.id)
+    #expect(index == nil)
 }
 
 @Test @MainActor func tabbedEmptyPaneHasAccessibleDestinationAndLayoutActions() throws {

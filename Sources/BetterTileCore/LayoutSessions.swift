@@ -369,8 +369,12 @@ public struct LayoutSessionStore: Sendable {
         for displayID in Array(storedSessions.keys) {
             for id in Array(storedSessions[displayID]?.keys ?? Dictionary<DesktopSessionID, LayoutSession>().keys) {
                 guard var session = storedSessions[displayID]?[id],
-                      session.tabbedState?.windowIDs.contains(windowID) == true else { continue }
-                session.tabbedState?.remove(windowID)
+                      let state = session.tabbedState,
+                      state.windowIDs.contains(windowID)
+                        || state.floatingWindowIDs.contains(windowID)
+                        || session.tabbedBaselineFrames[windowID] != nil
+                else { continue }
+                session.tabbedState?.removeClosedWindow(windowID)
                 session.tabbedBaselineFrames.removeValue(forKey: windowID)
                 session.windowIDs.remove(windowID)
                 session.advanceRevision()

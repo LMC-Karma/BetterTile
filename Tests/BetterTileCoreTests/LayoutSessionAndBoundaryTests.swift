@@ -33,6 +33,41 @@ private let sessionDisplay = DisplayID(rawValue: "main")
     #expect(afterClose.mode == .bento)
 }
 
+@Test func closingFloatingTabbedWindowClearsRetainedMembershipAndBaseline() throws {
+    let closed = WindowID(rawValue: "closed-floating")
+    let visible = WindowID(rawValue: "visible")
+    let baselineOnly = WindowID(rawValue: "baseline-only")
+    let frame = BTRect(x: 10, y: 20, width: 300, height: 400)
+    var tabbed = TabbedLayoutState()
+    tabbed.reconcile(windowIDs: [closed, visible], removed: [], focused: visible)
+    tabbed.float(closed)
+
+    var store = LayoutSessionStore()
+    let original = store.refresh(
+        displayID: sessionDisplay,
+        windowIDs: tabbed.windowIDs,
+        focusedWindowID: visible,
+        defaultMode: .tabbed
+    )
+    var proposal = original
+    proposal.tabbedState = tabbed
+    proposal.windowIDs = tabbed.windowIDs
+    proposal.tabbedBaselineFrames = [closed: frame, visible: frame, baselineOnly: frame]
+    #expect(store.commit(proposal, replacing: original.revision) != nil)
+
+    store.removeClosedTabbedWindow(closed)
+
+    let retained = try #require(store.session(for: sessionDisplay))
+    #expect(retained.tabbedState?.floatingWindowIDs.contains(closed) == false)
+    #expect(retained.tabbedState?.windowIDs.contains(closed) == false)
+    #expect(retained.tabbedBaselineFrames[closed] == nil)
+    #expect(retained.tabbedBaselineFrames[baselineOnly] != nil)
+
+    store.removeClosedTabbedWindow(baselineOnly)
+    let afterBaselineCleanup = try #require(store.session(for: sessionDisplay))
+    #expect(afterBaselineCleanup.tabbedBaselineFrames[baselineOnly] == nil)
+}
+
 @Test func displaysHaveIndependentSessions() {
     var store = LayoutSessionStore()
     let second = DisplayID(rawValue: "second")

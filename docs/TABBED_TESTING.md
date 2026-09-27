@@ -24,10 +24,13 @@ empty. Click an empty pane to send newly opened windows there.
 ## Controls
 
 - Click a tab to select and focus its window.
+  Releasing outside the original tab body cancels selection, including release
+  over its close button or another tab.
 - Drag within a strip to reorder. Drag into a pane's center to join its tabs.
 - Drag to a pane edge to create a split. A preview shows the proposed destination.
   Center and edge previews name the destination pane and action. The release
   position determines the destination, including after a fast drag.
+  At the 12-pane limit, edge drops are unavailable; center moves still work.
 - Drop on **Float window** to detach. Escape or an invalid drop cancels.
 - Drag a divider to resize. All stacked members follow the pane so inactive
   windows do not retain a larger frame behind it. Side-by-side splits adjust
@@ -42,14 +45,18 @@ empty. Click an empty pane to send newly opened windows there.
   Grabbing either side of a divider preserves the pointer's offset. A stationary
   grab does not move the divider. If cancellation cannot restore the previous
   arrangement, automatic placement stops until Repair or an explicit layout action.
+  Changing Spaces during an active divider drag cancels its stored geometry.
+  Frames are restored when returning to that Space, without restoration writes
+  on departure. The cancelled drag does not add an Undo entry.
 - Use the pane's **…** menu for Change Layout, Undo, Repair Tabbed, and empty-pane
   removal. Right-click a tab for close, move, split, and float commands.
 - Use **Add Floating Window Here** in a pane menu to reattach a detached window.
 - When tabs do not fit, the menu shows a hidden-tab count. It lists every tab
   and checks the selected one. Selecting a hidden tab brings it into the strip.
   Hover over a truncated title to read it in full.
-- VoiceOver exposes pane destinations, visible tabs, close buttons, pane menus,
-  and divider adjustment in five-percent steps.
+- Pane destinations, visible tabs, close buttons, pane menus, and dividers keep
+  accessibility labels and actions. Dividers adjust in five-percent steps.
+  Automated tests cover these; manual VoiceOver testing is not required.
 - A close-button press can be cancelled by releasing outside that button.
   The main Repair controls repair Tabbed while Tabbed is active.
 - Closing a tab requests normal application closure. The tab remains until the
@@ -89,8 +96,8 @@ system; the checks below validate real application and macOS behavior.
 - Try each preset, move groups between panes, reduce the pane count, and Undo.
 - Crowd a strip with nine tabs. Select hidden tabs through its menu, inspect
   tooltips, and cancel a close click by dragging away before release.
-- Adjust a divider through accessibility and check Undo after resizing. Test
-  both main Repair controls while Tabbed is active. Inspect light and dark mode.
+- Resize a divider and check Undo. Test both main Repair controls while
+  Tabbed is active. Inspect light and dark mode.
 - Float a window, use it, and reattach it. Check that pane UI does not cover it.
 - Switch to Native, switch back, and quit Debug. Confirm windows remain reachable.
 - Exercise multiple displays, fullscreen transitions, and a Space change during

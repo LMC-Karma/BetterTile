@@ -832,7 +832,7 @@ extension WindowCoordinator {
             }
             if touched {
                 for id in previousSelected { do { try tabSystem.raiseWindow(id, activate: false) } catch { failed = true } }
-                if let oldFocus, ids.contains(oldFocus) {
+                if let oldFocus, ids.contains(oldFocus) || previousSelected.contains(oldFocus) {
                     do { try tabSystem.raiseWindow(oldFocus, activate: true) } catch { failed = true }
                 }
             }

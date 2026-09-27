@@ -84,6 +84,12 @@ modifier, timestamp, and event-kind values only.
 Divider-local events, hover, Escape, and title-bar double-click handling keep
 their AppKit paths.
 
+Tabbed drag and resize gestures install local and global AppKit key monitors
+until release, cancellation, or overlay hiding. Both forward only the key code.
+Escape cancels synchronously on the main actor, including when a managed app
+retains keyboard focus. The global monitor only observes the event; the local
+monitor consumes Escape and passes other keys through.
+
 All window mutations pass through the main-actor coordinator. Multi-window operations preflight every participant, apply in deterministic order, and roll back already-applied frames when a later Accessibility write fails. Ghost resize transactions do not mutate real windows before commit; live transactions can restore their original baseline on cancellation. AX move/resize events are debounced, while events matching a recent coordinator generation and expected frame are suppressed to prevent feedback loops.
 
 Continuous resize gestures keep only the newest pointer or observed-window
@@ -108,6 +114,17 @@ Tabbed chrome updates only its pane and divider geometry during those ticks.
 It preserves panel visibility and ordering and avoids another focused-window
 read. Pointer gestures retain their initial grab offset and use the mouse-up
 position for the final resize or tab destination.
+
+A Space change cancels an active Tabbed divider gesture in its source session.
+It restores the stored pane geometry while preserving confirmed window closure.
+It makes no restoration writes on departure. The normal reconciliation restores
+frames when the source Space returns. Cancellation adds no Undo entry and does
+not treat the last requested frames as confirmed observations.
+
+Tabbed selection preserves pane topology and other windows' frames. Only the
+selected window is fitted to its existing pane; it does not rerun the full
+layout minimum-size solver. Activation restores ordering in other panes only
+when they contain a window from the activated application.
 
 ## Bento
 

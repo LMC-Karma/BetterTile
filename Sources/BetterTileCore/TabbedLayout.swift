@@ -108,6 +108,12 @@ public struct TabbedLayoutState: Hashable, Sendable {
         }
     }
 
+    /// Removes a window after direct closure evidence, including a floated window.
+    public mutating func removeClosedWindow(_ id: WindowID) {
+        remove(id)
+        floatingWindowIDs.remove(id)
+    }
+
     public mutating func float(_ id: WindowID) {
         guard windowIDs.contains(id) else { return }
         remove(id)

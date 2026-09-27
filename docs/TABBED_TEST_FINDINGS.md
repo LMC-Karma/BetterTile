@@ -89,7 +89,8 @@ disabled. The overlay now explicitly marks those controls enabled. The
 off-screen overlay test checks that state. A rebuilt live app exposed enabled
 tab controls, and its pane menu opened through Accessibility.
 
-This does not establish full VoiceOver or keyboard-navigation coverage.
+This does not establish keyboard-navigation coverage. Manual VoiceOver testing
+is not required.
 
 ### T-03: Failed Undo discarded its history entry
 
@@ -143,8 +144,8 @@ Tests cover 120-, 240-, 330-, and 1024-point strip widths, overflow selection,
 accessibility bounds, close cancellation, menu actions, and divider intents.
 Light and dark previews cover regular, crowded, minimum-width, and empty panes.
 At 120 points the title truncates heavily; its full text remains available in
-the tooltip and pane menu. Native hover timing, VoiceOver navigation, real
-dragging, and menu placement still need live checks.
+the tooltip and pane menu. Native hover timing, real dragging, and menu
+placement still need live checks.
 
 ### T-06: Main Repair controls invoked Bento in Tabbed mode
 
@@ -315,6 +316,121 @@ restores the gesture's original state and frames. Failed recovery suspends
 automatic placement and shows Repair Tabbed or Native as recovery actions.
 Tests reproduce both outcomes and confirm that Repair permits placement again.
 
+### T-12: Recent external focus changes were discarded
+
+Status: fixed; fake-window regressions pass; live focus retest pending.
+
+Focus notifications received within 300 ms of placement were discarded to
+avoid responding to BetterTile's own ordering requests. An external window
+selection in that interval could therefore leave the wrong tab selected.
+The regression reproduced a selection that stayed stale for ten seconds.
+
+Focus handling now waits until the suppression interval ends and reads the
+current focused window. Activating an empty pane cancels an older pending
+notification. Focus events cannot resume a session suspended after failed
+restoration or interrupt an active resize. Tests cover these cases.
+
+### T-13: Selection depended on unrelated windows
+
+Status: fixed locally; fake-window regressions pass; live retest pending.
+
+A tab click ran the full minimum-size fitter and placement transaction. An
+unrelated pane's window becoming non-resizable or changing its minimum size
+could reject the click. The four-window/two-pane regression reproduced that
+failure without a change to the requested tab.
+
+Selection now uses the existing pane frame and validates placement of only the
+selected window. It preserves the other panes' geometry and restores their
+ordering only if activating the target application could expose one of that
+application's inactive tabs there. Tests cover both shared and separate apps.
+
+### T-14: Repeated application setup during multi-window writes
+
+Status: implemented locally; batch and rollback regressions pass; live timing
+comparison pending.
+
+Each frame write independently disabled and restored enhanced accessibility.
+Resizing several windows from one application therefore repeated setup and
+restoration within one tick. Multi-window transactions now share one
+synchronous setup scope. The Accessibility adapter caches that scope per PID
+and restores each saved value on exit, including errors and rollback. Existing
+single-window and Leave Disabled behavior are retained. No suspension crosses
+an asynchronous wait or event-loop turn.
+
+This reduces repeated Accessibility setup. It is not a measured native
+frame-pacing result. Tests exercise the coordinator's real placement and
+rollback paths with the fake window system.
+
+### T-15: Pane interface revision
+
+Status: implemented locally; light and dark synthetic visual checks pass.
+
+Pane chrome uses native semantic surfaces instead of HUD styling and a heavy
+grey fill. Selected tabs use a distinct surface and accent underline. Tabs
+include application icons where space allows. Close and menu controls use
+system symbols. Empty panes show a drop symbol, a clear destination label,
+and guidance for choosing where new windows open. The existing close-release,
+overflow, tooltip, drag, and keyboard behavior is retained.
+
+### T-16: Escape could not cancel while a managed app had focus
+
+Status: fixed locally; focused overlay regressions pass; live retest pending.
+
+Tabbed panels do not activate BetterTile. The previous Escape handler monitored
+only events sent to BetterTile, so it missed Escape sent to the managed app.
+Tab drags and divider resizes now install both local and global AppKit monitors
+for the gesture. Cancellation runs synchronously on the main actor. Both
+monitors are removed when the interaction ends. Global events remain
+observation-only; other local keys pass through. The existing Accessibility
+grant covers global key observation; no new permission or private API was added.
+
+Injected-monitor tests cover both Escape sources for resize, global Escape for
+tab drag, non-Escape local pass-through, cleanup, and release after cancellation.
+They do not establish native keyboard delivery or real-window rollback.
+
+### T-17: Closed floating windows remained in session and Undo state
+
+Status: fixed locally; pure and fake-window regressions pass.
+
+Closing a floated window previously retained its floating exclusion and
+pre-entry frame. Undo snapshots also retained that ID. Confirmed destruction now
+removes both pane membership and floating state, and clears retained restoration
+frames even when the window has already left the pane. Undo uses the same
+closure-specific removal. Ordinary reconciliation keeps floating exclusions
+when a window is temporarily absent, minimized, or ineligible.
+
+Regressions cover floated-window closure, restoration-only entries, temporary
+removal, and closure followed by completed Undo. The initial checks failed on
+the previous cleanup path; all 53 focused lifecycle/Tabbed checks then passed.
+
+### T-18: Tab selection accepted a cancelled release
+
+Status: fixed locally; AppKit event regression passes; native retest pending.
+
+A press on a tab body previously selected it even when mouse-up landed outside
+that tab. Selection now requires release inside the same tab body, excluding
+its close button. The drag path still uses the final release destination.
+
+### T-19: Dragging offered unavailable pane splits
+
+Status: fixed locally; AppKit event regression and light/dark preview checks pass.
+
+At the 12-pane limit, edge dragging previously showed a split preview and
+emitted an action that Core rejected without changing the layout. Edge drops
+now offer no split at that limit. Center moves remain available. The Float
+window target uses a native window symbol and a separate text label.
+
+### T-20: A Space change kept an unfinished divider resize
+
+Status: fixed locally; focused fake-window regressions pass; native retest pending.
+
+Space stabilization previously discarded the active resize transaction while
+keeping its intermediate pane ratio. It now restores stored geometry only for
+the gesture's source session. Closed windows remain removed. No frame writes
+occur on departure; returning to the source Space reconciles the saved layout.
+The interrupted gesture adds no Undo entry. Tests reproduce the previous ratio
+on return and cover both surviving and destroyed windows during the gesture.
+
 ## Validation record
 
 Environment for the initial live smoke test: macOS 26.6.2 (25G83), BetterTile
@@ -325,7 +441,14 @@ each test build.
 
 | Check | Result | Evidence and limits |
 | --- | --- | --- |
-| Pointer and recovery follow-up | Passed: 617 tests | Full Swift package suite; includes regressions for actual view event delivery, chrome geometry, and failed resize restoration. |
+| Tabbed UI interaction follow-up | Passed: 631 tests | Full suite includes cancelled tab presses, pane-limit drops, and Space-interrupted resize with closure and Undo. Fake-window and own-view tests do not establish native stacking or performance. |
+| UI follow-up Debug build and previews | Passed | Unsigned BetterTile Debug build; fresh light/dark tab strips and Float window renders inspected. A test-only compositing correction passed its focused render check afterward. App not launched. |
+| Escape and closed-window cleanup continuation | Passed: 627 tests | Full Swift package suite with the native build system. New checks cover cancellation handlers, closure cleanup, temporary floating-window absence, and Undo. |
+| Continuation unsigned Debug build | Passed | BetterTile scheme, Debug, `CODE_SIGNING_ALLOWED=NO`. Existing Layout Wheel capture and Sparkle stripping warnings. App not launched; native checks remain open. |
+| Selection and batching investigation | Passed: 621 tests | Full Swift package suite, including the four-window/two-pane selection regression and shared placement/rollback batch regression. |
+| Revised pane UI | Passed | Inspected light and dark synthetic renders; corrected symbol proportions and template-icon contrast. Full live desktop appearance is not established. |
+| Local solution build | Passed, unsigned and personally signed Debug | BetterTile scheme; strict deep signature verification. The running public app was not replaced or controlled during this investigation. |
+| Pointer, recovery, and focus follow-up | Passed: 619 tests | Full Swift package suite; includes regressions for actual view event delivery, chrome geometry, failed resize restoration, and delayed focus. |
 | Follow-up Debug builds | Passed, unsigned and personally signed | BetterTile scheme, Debug. Signature verification passed. Existing Sparkle stripping warnings remain. App not launched; no live window or native smoothness result is claimed. |
 | Follow-up UI previews | Passed | Off-screen light and dark strips, crowded tabs, narrow panes, and empty panes. |
 | Initial full Swift package suite | Passed: 588 tests | Before the Undo regression was added. |
@@ -380,11 +503,11 @@ different panes, and include another app in at least one pane.
    until the application actually closes its window.
 9. Verify exact frame restoration on Native exit and Debug quit. Include new
    windows that did not exist at entry.
-10. Check multiple displays, fullscreen transitions, accessibility navigation,
-    and live performance separately.
+10. Check multiple displays, fullscreen transitions, and live performance
+    separately.
 11. Crowd a strip with nine tabs. Select a hidden tab from the count menu and
     confirm it appears. Check full-title tooltips, close press/drag-away/release,
-    menu placement, divider accessibility adjustment, and Undo enablement.
+    menu placement, and Undo enablement.
 12. Use both main Repair controls while Tabbed is active. Confirm neither
     changes the mode or pane groups. Check the controls in light and dark mode.
 
@@ -404,4 +527,6 @@ testing must establish how delayed or unusual application responses behave.
 Automated results do not establish real window ordering, focus, or visibility.
 
 Unrelated README edits were already in the workspace and were preserved.
-No commit, push, pull request, or release was made during this continuation.
+PR #65 was opened prematurely and then closed after the maintainer objected.
+Its branch had already been pushed; nothing was merged. Further investigation
+and changes remain local until the maintainer explicitly requests publication.
