@@ -282,7 +282,11 @@ public final class DividerOverlayController {
     private let ghosts = GhostFrameOverlayController()
     private var globalMouseMonitor: Any?
     private var localMouseMonitor: Any?
-    private var escapeMonitor: Any?
+    private var globalKeyMonitor: Any?
+    private var localKeyMonitor: Any?
+    private let addGlobalKeyMonitor: (@escaping @MainActor (UInt16) -> Void) -> Any?
+    private let addLocalKeyMonitor: (@escaping @MainActor (UInt16) -> Bool) -> Any?
+    private let removeKeyMonitor: (Any) -> Void
     private var ownWindowObservationTask: Task<Void, Never>?
 
     private var transaction: WindowFrameTransaction?
@@ -295,21 +299,35 @@ public final class DividerOverlayController {
     private var latestDragPoint: CGPoint?
     private var hasPendingDisplayUpdate = false
 
-    public init(coordinator: WindowCoordinator, configuration: BetterTileConfiguration) {
-        self.coordinator = coordinator
-        self.configuration = configuration
-        displayTicks = ResizeDisplayLink()
-        observeOwnWindows()
+    public convenience init(coordinator: WindowCoordinator, configuration: BetterTileConfiguration) {
+        self.init(coordinator: coordinator, configuration: configuration, displayTicks: ResizeDisplayLink())
     }
 
     init(
         coordinator: WindowCoordinator,
         configuration: BetterTileConfiguration,
-        displayTicks: ResizeDisplayLink
+        displayTicks: ResizeDisplayLink,
+        addGlobalKeyMonitor: @escaping (@escaping @MainActor (UInt16) -> Void) -> Any? = { handler in
+            NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { event in
+                let keyCode = event.keyCode
+                MainActor.assumeIsolated { handler(keyCode) }
+            }
+        },
+        addLocalKeyMonitor: @escaping (@escaping @MainActor (UInt16) -> Bool) -> Any? = { handler in
+            NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+                let keyCode = event.keyCode
+                let consumed = MainActor.assumeIsolated { handler(keyCode) }
+                return consumed ? nil : event
+            }
+        },
+        removeKeyMonitor: @escaping (Any) -> Void = { NSEvent.removeMonitor($0) }
     ) {
         self.coordinator = coordinator
         self.configuration = configuration
         self.displayTicks = displayTicks
+        self.addGlobalKeyMonitor = addGlobalKeyMonitor
+        self.addLocalKeyMonitor = addLocalKeyMonitor
+        self.removeKeyMonitor = removeKeyMonitor
         observeOwnWindows()
     }
 
@@ -720,16 +738,23 @@ public final class DividerOverlayController {
     }
 
     private func installEscapeMonitor() {
-        guard escapeMonitor == nil else { return }
-        escapeMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            guard event.keyCode == 53 else { return }
-            Task { @MainActor in self?.cancelActiveGesture() }
+        guard globalKeyMonitor == nil, localKeyMonitor == nil else { return }
+        globalKeyMonitor = addGlobalKeyMonitor { [weak self] keyCode in
+            guard keyCode == 53 else { return }
+            self?.cancelActiveGesture()
+        }
+        localKeyMonitor = addLocalKeyMonitor { [weak self] keyCode in
+            guard keyCode == 53 else { return false }
+            self?.cancelActiveGesture()
+            return true
         }
     }
 
     private func removeEscapeMonitor() {
-        if let escapeMonitor { NSEvent.removeMonitor(escapeMonitor) }
-        escapeMonitor = nil
+        if let globalKeyMonitor { removeKeyMonitor(globalKeyMonitor) }
+        if let localKeyMonitor { removeKeyMonitor(localKeyMonitor) }
+        globalKeyMonitor = nil
+        localKeyMonitor = nil
     }
 
     private func handleFrame(

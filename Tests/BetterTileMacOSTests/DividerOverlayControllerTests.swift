@@ -477,6 +477,78 @@ enum DividerTestEnding: CaseIterable {
     #expect(system.windows.first(where: { $0.id == right })?.frame.minX == bounds.midX + 140)
 }
 
+@Test(arguments: [ResizeFeedbackMode.ghost, .live], [true, false]) @MainActor
+func dividerEscapeCancelsBeforeReleaseFromEitherKeyMonitor(feedback: ResizeFeedbackMode, useLocalMonitor: Bool) throws {
+    _ = NSApplication.shared
+    let system = FakeWindowSystem()
+    let bounds = BTRect(x: -10_000, y: -10_000, width: 800, height: 600)
+    let display = DisplayID(rawValue: "escape-display")
+    system.availableDisplays = [DisplaySnapshot(id: display, frame: bounds, visibleFrame: bounds, isMain: true)]
+    let state = BentoLayoutState(root: .partition(BentoPartition(
+        axis: .vertical,
+        first: .leaf(WindowID(rawValue: "left")),
+        second: .leaf(WindowID(rawValue: "right"))
+    )))
+    system.windows = state.placements(in: bounds).map {
+        WindowSnapshot(id: $0.windowID, processIdentifier: 1, frame: $0.frame, displayID: display)
+    }
+    let baseline = system.windows.map(\.frame)
+    var configuration = BetterTileConfiguration()
+    configuration.resizeFeedbackMode = feedback
+    let displayTicks = ResizeDisplayLink(automatic: false)
+    var globalHandler: (@MainActor (UInt16) -> Void)?
+    var localHandler: (@MainActor (UInt16) -> Bool)?
+    var removedMonitors = 0
+    let controller = DividerOverlayController(
+        coordinator: WindowCoordinator(system: system),
+        configuration: configuration,
+        displayTicks: displayTicks,
+        addGlobalKeyMonitor: { handler in
+            globalHandler = handler
+            return NSObject()
+        },
+        addLocalKeyMonitor: { handler in
+            localHandler = handler
+            return NSObject()
+        },
+        removeKeyMonitor: { _ in removedMonitors += 1 }
+    )
+    controller.bentoStateProvider = { _ in state }
+    var commits = 0
+    controller.bentoStateChangedHandler = { _, _, _, _ in commits += 1 }
+    let boundaries = state.boundaries(in: bounds, displayID: display)
+    let start = BTPoint(x: bounds.midX, y: bounds.midY)
+    let interaction = try #require(DividerInteractionResolver.resolve(
+        at: start, in: boundaries, hitWidth: 18, adjacencyTolerance: 6
+    ))
+    let screen = try #require(NSScreen.screens.first)
+    let dragPoint = CGPoint(x: start.x + 60, y: screen.frame.maxY - start.y)
+    controller.beginGesture(interaction: interaction, at: start)
+    defer { controller.hideAndCancel() }
+    #expect(controller.isDragging)
+    controller.drag(to: dragPoint)
+    displayTicks.fire()
+    #expect((system.windows.map(\.frame) != baseline) == (feedback == .live))
+    #expect(localHandler?(42) == false)
+    globalHandler?(42)
+    #expect(controller.isDragging)
+
+    if useLocalMonitor {
+        #expect(localHandler?(53) == true)
+    } else {
+        globalHandler?(53)
+    }
+    // Cancellation must complete before the next AppKit event can commit.
+    #expect(!controller.isDragging)
+    controller.end(at: dragPoint)
+    displayTicks.fire()
+
+    #expect(system.windows.map(\.frame) == baseline)
+    #expect(commits == 0)
+    #expect(removedMonitors == 2)
+    if feedback == .ghost { #expect(system.frameWriteCounts.isEmpty) }
+}
+
 private func boundary(
     _ id: String,
     display: String = "main",
