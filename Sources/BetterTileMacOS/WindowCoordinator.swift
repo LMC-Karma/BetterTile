@@ -469,9 +469,14 @@ public final class WindowCoordinator {
         }
         do {
             if validateParticipants { try validate(transaction.proposedPlacements) }
-            let changed = transaction.proposedPlacements.filter {
-                transaction.lastAppliedFrames[$0.windowID]?.approximatelyEquals($0.frame, tolerance: 0.01) != true
-            }
+            // Intermediate ticks skip frames already requested. A validated
+            // apply resends every frame: an application can accept a write
+            // and ignore it, so the last request is not proof of its frame.
+            let changed = validateParticipants
+                ? transaction.proposedPlacements
+                : transaction.proposedPlacements.filter {
+                    transaction.lastAppliedFrames[$0.windowID]?.approximatelyEquals($0.frame, tolerance: 0.01) != true
+                }
             try applyAtomically(changed, rollbackFrames: transaction.lastAppliedFrames)
             transaction.lastAppliedFrames = Dictionary(uniqueKeysWithValues: placements.map { ($0.windowID, $0.frame) })
             transaction.hasLiveChanges = true
