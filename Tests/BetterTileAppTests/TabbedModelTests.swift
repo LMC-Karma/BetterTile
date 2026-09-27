@@ -4,6 +4,29 @@ import BetterTileMacOS
 import Testing
 @testable import BetterTileApp
 
+@Test(arguments: [TabbedPreset.rows, .focus], [0.01, 0.99]) @MainActor
+func tabbedRowResizeClampsAtMinimumInsteadOfFreezing(preset: TabbedPreset, ratio: Double) async throws {
+    _ = NSApplication.shared
+    let system = FakeAppWindowSystem()
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    model.configuration.defaultTabbedPreset = preset
+    model.setActiveMode(.tabbed)
+    try #require(await waitFor { model.activeTabbedState?.panes.count == preset.paneCount })
+    let before = try #require(model.activeTabbedState)
+    let divider = try #require(before.dividers(in: system.mainDisplay.visibleFrame).first { !$0.vertical })
+    model.performTabbed(.beginResize)
+    model.performTabbed(.resize(divider.id, ratio))
+    let resized = try #require(model.activeTabbedState)
+    let actual = try #require(resized.dividers(in: system.mainDisplay.visibleFrame).first { $0.id == divider.id })
+    #expect(ratio < 0.5 ? actual.ratio < 0.5 : actual.ratio > 0.5)
+    let frames = resized.frames(in: system.mainDisplay.visibleFrame)
+    #expect(frames.values.allSatisfy { $0.size.height + 0.001 >= 114 })
+    #expect(resized.panes == before.panes)
+    model.performTabbed(.cancelResize)
+    #expect(model.activeTabbedState == before)
+}
+
 @Test(arguments: [false, true]) @MainActor
 func tabSelectionDoesNotRearrangeOrRefitOtherWindows(sharedApplication: Bool) async throws {
     _ = NSApplication.shared
@@ -200,6 +223,30 @@ func degradedTabbedResizeRestoresItsBaselineOrStopsAutomaticPlacement(failRestor
     #expect(system.raiseRequests.count == raiseCountBefore)
 
     model.performTabbed(.endResize)
+}
+
+@Test @MainActor func tabbedDividerBalanceAfterResizeReleaseWaitsForSettlementAndCanUndo() async throws {
+    _ = NSApplication.shared
+    let system = FakeAppWindowSystem()
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    model.configuration.defaultTabbedPreset = .columns
+    model.setActiveMode(.tabbed)
+    try #require(await waitFor { model.activeTabbedState?.panes.count == 2 })
+    let divider = try #require(model.activeTabbedState?.dividers(in: system.mainDisplay.visibleFrame).first)
+
+    model.performTabbed(.beginResize)
+    model.performTabbed(.resize(divider.id, 0.65))
+    model.performTabbed(.endResize)
+    model.performTabbed(.balanceDivider(divider.id))
+
+    try #require(await waitFor(timeout: .seconds(2)) {
+        model.activeTabbedState?.dividers(in: system.mainDisplay.visibleFrame).first?.ratio == 0.5
+    })
+    model.performTabbed(.undo)
+    #expect(await waitFor(timeout: .seconds(2)) {
+        model.activeTabbedState?.dividers(in: system.mainDisplay.visibleFrame).first?.ratio == 0.65
+    })
 }
 
 @Test @MainActor func cancellingTabbedLiveResizeRestoresTheStateAndRealWindowFrames() async throws {

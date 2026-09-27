@@ -3088,6 +3088,14 @@ extension BetterTileModel {
         case .beginResize:
             beginTabbedResize(state: state, sessionID: session.id, windows: windows, display: display)
             return
+        case let .balanceDivider(id):
+            guard state.dividers(in: display.visibleFrame).contains(where: { $0.id == id }) else { return }
+            beginTabbedResize(state: state, sessionID: session.id, windows: windows, display: display)
+            guard tabbedResizes[displayID] != nil else { return }
+            updateTabbedResize(id: id, ratio: 0.5, session: session, display: display)
+            guard let updated = sessionStore.session(for: displayID) else { return }
+            finishTabbedResize(session: updated, display: display, cancelled: false)
+            return
         case .resize, .endResize, .cancelResize:
             return
         }
@@ -3136,7 +3144,7 @@ extension BetterTileModel {
         state.resize(dividerID: id, ratio: ratio)
         let placements: [Placement]
         do {
-            state = try state.fittingMinimumWidths(in: display.visibleFrame, windows: resize.windows)
+            state = try state.fittingMinimumWidths(in: display.visibleFrame, windows: resize.windows, resizingDividerID: id)
             placements = try state.placements(in: display.visibleFrame, windows: resize.windows)
         } catch {
             statusMessage = error.localizedDescription

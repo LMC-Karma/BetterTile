@@ -84,7 +84,7 @@ modifier, timestamp, and event-kind values only.
 Divider-local events, hover, Escape, and title-bar double-click handling keep
 their AppKit paths.
 
-Tabbed drag and resize gestures install local and global AppKit key monitors
+Divider and Tabbed drag gestures install local and global AppKit key monitors
 until release, cancellation, or overlay hiding. Both forward only the key code.
 Escape cancels synchronously on the main actor, including when a managed app
 retains keyboard focus. The global monitor only observes the event; the local

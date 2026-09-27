@@ -5,6 +5,29 @@ import Testing
 private let resizeBounds = BTRect(x: 0, y: 0, width: 1200, height: 800)
 private let resizeDisplay = DisplayID(rawValue: "display")
 
+@Test(arguments: [SplitAxis.vertical, .horizontal], [-100.0, 900.0])
+func unlockedBentoDividerClampsWithoutMovingLockedNeighbor(axis: SplitAxis, coordinate: Double) throws {
+    let ids = ["a", "b", "c"].map { WindowID(rawValue: $0) }
+    let moving = UUID(), locked = UUID()
+    let bounds = BTRect(x: 0, y: 0, width: 1200, height: 1200)
+    let state = BentoLayoutState(root: .partition(BentoPartition(
+        axis: axis, children: ids.map(BentoNode.leaf),
+        boundaryIDs: [moving, locked], lockedBoundaryIDs: [locked]
+    )))
+    let constraints = Dictionary(uniqueKeysWithValues: ids.map {
+        ($0, WindowConstraints(minimumSize: BTSize(width: 120, height: 120)))
+    })
+    let before = state.placements(in: bounds, constraints: constraints)
+    let result = try #require(BentoResizeEngine().resize(
+        state: state, branchCoordinates: [moving: coordinate], in: bounds, constraints: constraints
+    ))
+    #expect(result.placements.last == before.last)
+    let first = try #require(result.placements.first).frame
+    #expect(abs((axis == .vertical ? first.size.width : first.size.height) - (coordinate < 0 ? 120 : 680)) < 0.001)
+    let boundary = try #require(result.state.boundaries(in: bounds, displayID: resizeDisplay).first { $0.branchID == locked })
+    #expect(abs(boundary.coordinate - 800) < 0.001)
+}
+
 @Test(arguments: [0.0, 1.0, 2.0, 6.0, 12.0], [SplitAxis.vertical, .horizontal])
 func settledBentoPanesDoNotDrift(gap: Double, axis: SplitAxis) {
     let a = WindowID(rawValue: "a"), b = WindowID(rawValue: "b")

@@ -70,14 +70,21 @@ public struct BentoConstraintSolver: Sendable {
                 let lowerBounds = minimumExtents.map { max(0, $0 / available) }
                 let currentExtents = partition.ratios.map { $0 * available }
                 if !zip(currentExtents, minimumExtents).allSatisfy({ $0 + tolerance >= $1 }) {
-                    guard partition.lockedBoundaryIDs.isEmpty else { return nil }
                     var ratios = partition.ratios
                     for index in ratios.indices where ratios[index] + tolerance / available < lowerBounds[index] {
+                        // A locked boundary fixes the total extent on each side.
+                        // Borrow only from children in the same unlocked run.
+                        let start = partition.boundaryIDs.indices.last {
+                            $0 < index && partition.lockedBoundaryIDs.contains(partition.boundaryIDs[$0])
+                        }.map { $0 + 1 } ?? 0
+                        let end = partition.boundaryIDs.indices.first {
+                            $0 >= index && partition.lockedBoundaryIDs.contains(partition.boundaryIDs[$0])
+                        }.map { $0 + 1 } ?? ratios.count
                         var deficit = lowerBounds[index] - ratios[index]
                         ratios[index] = lowerBounds[index]
                         for distance in 1..<ratios.count where deficit > tolerance / available {
                             for donor in [index - distance, index + distance]
-                            where ratios.indices.contains(donor) && deficit > tolerance / available {
+                            where (start..<end).contains(donor) && deficit > tolerance / available {
                                 let availableExcess = max(0, ratios[donor] - lowerBounds[donor])
                                 let transfer = min(deficit, availableExcess)
                                 ratios[donor] -= transfer

@@ -37,8 +37,10 @@ reviewed separately in pull request #67.
   including inactive tabs. Empty panes keep a 120-point minimum.
 - Side-by-side dividers adjust to satisfy those minimums. Ratios that already
   fit are kept. A requested 50/50 split can become 40/60.
-- Row ratios do not change. An operation is rejected if a minimum height cannot
-  fit below the tab strip or the combined minimum widths exceed the area.
+- Presets and tab moves keep row ratios. During a divider gesture, the dragged
+  row divider clamps to the minimum heights of both subtrees, including tab
+  strips. Other row ratios stay unchanged. An operation is rejected if the
+  combined minimum sizes cannot fit.
 - An unreported width minimum can cause one retry after a complete rollback.
   Height refusals, stale sessions, cancellation, and degraded restoration do
   not retry.
@@ -73,6 +75,21 @@ real applications on a real desktop.
 | T-21 | A window slow to take focus rolled back a correct layout | Fixed | Pending |
 | T-22 | Tabbed failures showed a generic "Couldn't apply layout" | Fixed | Pending |
 | T-23 | A failed focus read left a focus refresh pending | Fixed | Not needed |
+| T-24 | Selecting a visible tab shifted a crowded strip under the pointer | Fixed | Pending |
+| T-25 | Row divider overshoot froze the layout instead of clamping | Fixed | Pending |
+| T-26 | Narrow tabs showed only an ellipsis; divider states were hard to distinguish | Revised; light and dark renders checked | Pending |
+| T-27 | Settings did not show preset geometry or explain how defaults apply | Revised; light and dark renders checked | Pending |
+
+The polish pass also fixes Bento clamping beside locked boundaries, divider
+Escape handling with either app focused, ignored linked-resize neighbors,
+rollback after a partial frame write, and stale result-pill dismissal. Core
+and fake-window regressions reproduce these failures before their fixes.
+
+Tabbed dividers now support double-click balancing through the same resize
+transaction and minimum-size limits as a drag. Crowded strips retain their
+visible range until selection moves outside it. Drag insertion uses that same
+range. Compact tabs keep their application icon, full-title tooltip, and close
+control.
 
 ### T-21: Slow focus rolled back a correct layout
 

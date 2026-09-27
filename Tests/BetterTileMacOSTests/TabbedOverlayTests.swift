@@ -3,6 +3,50 @@ import BetterTileCore
 import Testing
 @testable import BetterTileMacOS
 
+@Test @MainActor func tabbedDividerDoubleClickBalancesThroughResizeTransaction() throws {
+    _ = NSApplication.shared
+    let overlay = TabbedOverlayController()
+    defer { overlay.hide() }
+    let state = TabbedLayoutState(preset: .columns)
+    let view = TabbedDividerView()
+    view.owner = overlay
+    view.divider = try #require(state.dividers(in: BTRect(x: 0, y: 0, width: 1000, height: 800)).first)
+    var actions: [String] = []
+    overlay.onIntent = { intent in
+        switch intent {
+        case let .balanceDivider(id): actions.append("balance"); #expect(id == view.divider?.id)
+        default: Issue.record("Unexpected action")
+        }
+    }
+    view.mouseDown(with: try #require(NSEvent.mouseEvent(
+        with: .leftMouseDown, location: .zero, modifierFlags: [], timestamp: 0,
+        windowNumber: 0, context: nil, eventNumber: 0, clickCount: 2, pressure: 1
+    )))
+    #expect(actions == ["balance"])
+    #expect(!overlay.isInteracting)
+}
+
+@Test @MainActor func selectingVisibleTabKeepsCrowdedStripPositions() throws {
+    _ = NSApplication.shared
+    let overlay = TabbedOverlayController()
+    defer { overlay.hide() }
+    let bounds = BTRect(x: 12000, y: 0, width: 330, height: 500)
+    let ids = (0..<9).map { WindowID(rawValue: "stable-tab-\($0)") }
+    var state = TabbedLayoutState()
+    state.reconcile(windowIDs: ids, removed: [], focused: ids[8])
+    overlay.refresh(state: state, bounds: bounds, windows: [])
+    let view = try #require(NSApp.windows.compactMap(\.contentView).compactMap { $0 as? TabbedPaneView }
+        .first { $0.pane.id == state.panes[0].id })
+    let before = view.strip.tabFrame(7)
+    state.select(ids[7])
+    overlay.refresh(state: state, bounds: bounds, windows: [])
+    #expect(view.strip.tabFrame(7) == before)
+    #expect(view.strip.visibleRange == 7..<9)
+    state.select(ids[0])
+    overlay.refresh(state: state, bounds: bounds, windows: [])
+    #expect(view.strip.visibleRange.contains(0))
+}
+
 @Test @MainActor func tabbedResizeChromeKeepsPaneViewsAndAccessibleFrames() throws {
     _ = NSApplication.shared
     let bounds = BTRect(x: 12000, y: 0, width: 1000, height: 800)

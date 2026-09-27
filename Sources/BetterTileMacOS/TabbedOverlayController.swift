@@ -6,7 +6,7 @@ public enum TabbedUIIntent {
     case move(WindowID, pane: UUID, index: Int?)
     case split(WindowID, pane: UUID, edge: TabbedEdge)
     case preset(TabbedPreset), undo, repair, removePane(UUID)
-    case beginResize, resize(UUID, Double), endResize, cancelResize
+    case beginResize, resize(UUID, Double), balanceDivider(UUID), endResize, cancelResize
 }
 
 /// AppKit chrome only. It knows pane values and emits intents; it never writes
@@ -121,7 +121,7 @@ public final class TabbedOverlayController {
             view.setAccessibilityMinValue(5)
             view.setAccessibilityMaxValue(95)
             view.setAccessibilityHelp("Adjust the first pane's share of the layout in five percent steps.")
-            view.toolTip = "Drag to resize panes"
+            view.toolTip = "Drag to resize panes. Double-click to balance. Escape cancels."
             view.needsDisplay = true
             panel.invalidateCursorRects(for: view)
             if obscuringFrames.contains(where: { $0.intersection(divider.frame) != nil }) { panel.orderOut(nil) }
@@ -287,7 +287,8 @@ public final class TabbedOverlayController {
             for (index, pane) in state.panes.enumerated() {
                 guard let frame = frames[pane.id], frame.contains(point) else { continue }
                 if point.y < frame.minY + TabbedLayoutState.headerHeight {
-                    let strip = TabbedStripLayout(width: frame.size.width, count: pane.tabs.count,
+                    let strip = (panes[pane.id]?.contentView as? TabbedPaneView)?.strip
+                        ?? TabbedStripLayout(width: frame.size.width, count: pane.tabs.count,
                                                  selectedIndex: pane.tabs.firstIndex(where: { $0 == pane.selected }))
                     let insertion = strip.insertion(at: point.x - frame.minX)
                     var index = insertion.index
@@ -399,6 +400,7 @@ public final class TabbedOverlayController {
         pendingResize = nil
         displayTicks.stop()
         isInteracting = false; isResizing = false
+        for panel in handles.values { panel.contentView?.needsDisplay = true }
     }
 
     private func installEscape() {
@@ -458,12 +460,13 @@ struct TabbedStripLayout {
     let menuFrame: NSRect
     let hiddenCount: Int
 
-    init(width: Double, count: Int, selectedIndex: Int?) {
+    init(width: Double, count: Int, selectedIndex: Int?, startIndex: Int = 0) {
         menuFrame = NSRect(x: max(32, width - 42), y: 0, width: min(42, max(0, width - 32)), height: TabbedLayoutState.headerHeight)
         let available = max(0, menuFrame.minX - 32)
         let visible = min(count, max(1, Int(available / 110)))
         tabWidth = min(210, available / Double(max(1, visible)))
-        let start = min(max(0, (selectedIndex ?? 0) - visible + 1), count - visible)
+        let selected = min(max(0, selectedIndex ?? 0), max(0, count - 1))
+        let start = min(max(0, count - visible), max(selected - visible + 1, min(max(0, startIndex), selected)))
         visibleRange = start..<(start + visible)
         hiddenCount = count - visible
     }
@@ -499,6 +502,7 @@ struct TabbedStripLayout {
     private var downClose: WindowID?
     private var dragging = false
     private var hoverPoint: NSPoint?
+    private var firstVisibleIndex = 0
     override var isFlipped: Bool { true }
     override var acceptsFirstResponder: Bool { true }
     override var wantsUpdateLayer: Bool { false }
@@ -513,7 +517,8 @@ struct TabbedStripLayout {
 
     var strip: TabbedStripLayout {
         TabbedStripLayout(width: bounds.width, count: pane.tabs.count,
-                          selectedIndex: pane.tabs.firstIndex(where: { $0 == pane.selected }))
+                          selectedIndex: pane.tabs.firstIndex(where: { $0 == pane.selected }),
+                          startIndex: firstVisibleIndex)
     }
     private func tabIndex(at point: NSPoint) -> Int? {
         strip.tabIndex(at: point)
@@ -535,7 +540,10 @@ struct TabbedStripLayout {
     func updateToolTips() {
         removeAllToolTips()
         addToolTip(NSRect(x: 0, y: 0, width: 32, height: TabbedLayoutState.headerHeight), owner: "Use this pane for new windows" as NSString, userData: nil)
-        addToolTip(strip.menuFrame, owner: "Show all tabs and layout actions" as NSString, userData: nil)
+        let menuHelp = strip.hiddenCount > 0
+            ? "\(strip.hiddenCount) more tabs. Show all tabs and layout actions"
+            : "Show all tabs and layout actions"
+        addToolTip(strip.menuFrame, owner: menuHelp as NSString, userData: nil)
         for index in strip.visibleRange {
             let title = titles.indices.contains(index) ? titles[index] : "Window"
             var label = strip.tabFrame(index)
@@ -564,7 +572,7 @@ struct TabbedStripLayout {
             let tab = strip.tabFrame(index)
             let rect = tab.insetBy(dx: 1, dy: 3)
             if pane.selected == id {
-                NSColor.labelColor.withAlphaComponent(0.07).setFill()
+                NSColor.controlAccentColor.withAlphaComponent(active ? 0.10 : 0.05).setFill()
                 let capsule = NSBezierPath(roundedRect: rect, xRadius: 7, yRadius: 7)
                 capsule.fill()
                 NSColor.separatorColor.withAlphaComponent(0.2).setStroke()
@@ -577,16 +585,21 @@ struct TabbedStripLayout {
                 NSBezierPath(roundedRect: rect, xRadius: 5, yRadius: 5).fill()
             }
             var titleFrame = rect.insetBy(dx: 8, dy: 6)
-            if tab.width >= 110, icons.indices.contains(index), let icon = icons[index] {
+            let compact = tab.width < 80
+            let tabIcon = icons.indices.contains(index) ? icons[index] : nil
+            if tab.width >= 110 || compact,
+               let icon = tabIcon ?? (compact ? NSImage(systemSymbolName: "macwindow", accessibilityDescription: nil) : nil) {
                 let displayedIcon = icon.isTemplate
                     ? icon.withSymbolConfiguration(NSImage.SymbolConfiguration(paletteColors: [.labelColor])) ?? icon
                     : icon
-                displayedIcon.draw(in: NSRect(x: rect.minX + 8, y: 9, width: 16, height: 16),
+                displayedIcon.draw(in: NSRect(x: rect.minX + (compact ? 4 : 8), y: 9, width: 16, height: 16),
                           from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
                 titleFrame.origin.x += 22
                 titleFrame.size.width -= 22
             }
-            drawText(titles.indices.contains(index) ? titles[index] : "Window", in: titleFrame, color: .labelColor, bold: pane.selected == id, trailing: 17)
+            if !compact {
+                drawText(titles.indices.contains(index) ? titles[index] : "Window", in: titleFrame, color: .labelColor, bold: pane.selected == id, trailing: 17)
+            }
             let close = strip.closeFrame(index)
             if let hoverPoint, close.contains(hoverPoint) {
                 NSColor.labelColor.withAlphaComponent(downClose == id ? 0.18 : 0.09).setFill()
@@ -642,6 +655,7 @@ struct TabbedStripLayout {
     }
 
     func updateAccessibility() {
+        firstVisibleIndex = strip.visibleRange.lowerBound
         setAccessibilityElement(true)
         setAccessibilityRole(.group)
         var children: [TabbedAccessibilityButton] = []
@@ -666,7 +680,8 @@ struct TabbedStripLayout {
             button("\(title)\(pane.selected == id ? ", selected" : "")", rect: rect) { [weak self] in self?.owner?.send(.select(id)) }
             button("Close \(title)", rect: strip.closeFrame(index)) { [weak self] in self?.owner?.send(.close(id)) }
         }
-        button("Pane \(number) layout and tab actions", rect: strip.menuFrame) { [weak self] in
+        let menuLabel = "Pane \(number) layout and tab actions" + (strip.hiddenCount > 0 ? ", \(strip.hiddenCount) more tabs" : "")
+        button(menuLabel, rect: strip.menuFrame) { [weak self] in
             guard let self, let owner else { return }
             owner.menu(pane: pane, windowID: nil).popUp(positioning: nil, at: NSPoint(x: strip.menuFrame.minX, y: TabbedLayoutState.headerHeight), in: self)
         }
@@ -731,6 +746,7 @@ struct TabbedStripLayout {
     weak var owner: TabbedOverlayController?
     var divider: TabbedDivider? { didSet { needsDisplay = true } }
     private var dragStart: (divider: TabbedDivider, point: BTPoint)?
+    private var hovered = false { didSet { needsDisplay = true } }
     override var wantsUpdateLayer: Bool { false }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
@@ -744,19 +760,33 @@ struct TabbedStripLayout {
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
         configureTabbedGlass(self, cornerRadius: 3)
-        NSColor.controlAccentColor.withAlphaComponent(owner?.isInteracting == true ? 0.5 : 0.16).setFill()
+        let active = dragStart != nil && owner?.isInteracting == true
+        (active || hovered ? NSColor.controlAccentColor.withAlphaComponent(active ? 0.3 : 0.15)
+            : NSColor.separatorColor.withAlphaComponent(0.12)).setFill()
         bounds.fill()
-        NSColor.labelColor.withAlphaComponent(0.64).setFill()
+        (active || hovered ? NSColor.controlAccentColor : NSColor.secondaryLabelColor).setFill()
         let grip = divider?.vertical == true
             ? NSRect(x: bounds.midX - 1, y: bounds.midY - 12, width: 2, height: min(24, bounds.height))
             : NSRect(x: bounds.midX - 12, y: bounds.midY - 1, width: min(24, bounds.width), height: 2)
         NSBezierPath(roundedRect: grip, xRadius: 1, yRadius: 1).fill()
     }
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        trackingAreas.forEach(removeTrackingArea)
+        addTrackingArea(NSTrackingArea(rect: .zero, options: [.activeAlways, .inVisibleRect, .mouseEnteredAndExited], owner: self, userInfo: nil))
+    }
+    override func mouseEntered(with event: NSEvent) { hovered = true }
+    override func mouseExited(with event: NSEvent) { hovered = false }
     override func resetCursorRects() { addCursorRect(bounds, cursor: divider?.vertical == true ? .resizeLeftRight : .resizeUpDown) }
     override func mouseDown(with event: NSEvent) {
         guard let divider, let owner, !owner.isInteracting else { return }
+        if event.clickCount == 2 {
+            owner.send(.balanceDivider(divider.id))
+            return
+        }
         dragStart = (divider, owner.screenPoint(event))
         owner.beginResize()
+        needsDisplay = true
     }
     override func mouseDragged(with event: NSEvent) {
         updateResize(with: event)

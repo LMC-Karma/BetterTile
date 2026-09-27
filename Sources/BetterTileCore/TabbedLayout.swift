@@ -208,49 +208,67 @@ public struct TabbedLayoutState: Hashable, Sendable {
     }
 
     /// Moves side-by-side dividers only as far as required by all member tabs.
-    /// Row heights, pane identities, membership, and selection stay unchanged.
-    public func fittingMinimumWidths(in bounds: BTRect, windows: [WindowSnapshot]) throws -> Self {
+    /// During a divider gesture, also clamp that row divider to subtree heights.
+    /// Other row ratios, pane identities, membership, and selection stay unchanged.
+    public func fittingMinimumWidths(
+        in bounds: BTRect, windows: [WindowSnapshot], resizingDividerID: UUID? = nil
+    ) throws -> Self {
         guard [bounds.minX, bounds.minY, bounds.size.width, bounds.size.height].allSatisfy(\.isFinite),
               !bounds.isEmpty else { throw TabbedLayoutError.panesTooSmall }
         let snapshots = Dictionary(uniqueKeysWithValues: windows.map { ($0.id, $0) })
-        var paneMinimums: [UUID: Double] = [:]
+        var paneMinimums: [UUID: BTSize] = [:]
         for pane in panes {
             var width = 120.0
+            var height = 80.0
             for id in pane.tabs {
                 guard let window = snapshots[id], window.isEligible else { continue }
                 let minimum = window.constraints.minimumSize
                 guard minimum.width.isFinite, minimum.height.isFinite,
                       minimum.width >= 0, minimum.height >= 0 else { throw TabbedLayoutError.panesTooSmall }
                 width = max(width, minimum.width)
-                if !window.constraints.isResizable { width = max(width, window.frame.size.width) }
+                height = max(height, minimum.height)
+                if !window.constraints.isResizable {
+                    width = max(width, window.frame.size.width)
+                    height = max(height, window.frame.size.height)
+                }
             }
-            paneMinimums[pane.id] = width
+            paneMinimums[pane.id] = BTSize(width: width, height: height + Self.headerHeight)
         }
-        var branchMinimums: [UUID: (first: Double, second: Double)] = [:]
-        func minimumWidth(_ node: TabbedNode) -> Double {
+        var branchMinimums: [UUID: (first: BTSize, second: BTSize)] = [:]
+        func minimumSize(_ node: TabbedNode) -> BTSize {
             switch node {
             case let .pane(id): return paneMinimums[id]!
-            case let .split(id, vertical, _, first, second):
-                let a = minimumWidth(first), b = minimumWidth(second)
+            case let .split(id, vertical, ratio, first, second):
+                let a = minimumSize(first), b = minimumSize(second)
                 branchMinimums[id] = (a, b)
-                return vertical ? a + Self.gap + b : max(a, b)
+                let rowHeight = id == resizingDividerID
+                    ? a.height + b.height
+                    : max(a.height / ratio, b.height / (1 - ratio))
+                return BTSize(width: vertical ? a.width + Self.gap + b.width : max(a.width, b.width),
+                              height: vertical ? max(a.height, b.height) : rowHeight + Self.gap)
             }
         }
-        guard minimumWidth(root) <= bounds.size.width else { throw TabbedLayoutError.panesTooSmall }
-        func fit(_ node: TabbedNode, width: Double) -> TabbedNode {
+        let minimum = minimumSize(root)
+        guard minimum.width <= bounds.size.width, minimum.height <= bounds.size.height else { throw TabbedLayoutError.panesTooSmall }
+        func fit(_ node: TabbedNode, size: BTSize) -> TabbedNode {
             guard case let .split(id, vertical, ratio, first, second) = node else { return node }
             let minimums = branchMinimums[id]!
-            let available = width - Self.gap
-            let adjusted = vertical
-                ? min(1 - minimums.second / available, max(minimums.first / available, ratio))
+            let available = (vertical ? size.width : size.height) - Self.gap
+            let firstMinimum = vertical ? minimums.first.width : minimums.first.height
+            let secondMinimum = vertical ? minimums.second.width : minimums.second.height
+            let adjusted = vertical || id == resizingDividerID
+                ? min(1 - secondMinimum / available, max(firstMinimum / available, ratio))
                 : ratio
-            let firstWidth = vertical ? available * adjusted : width
-            let secondWidth = vertical ? available - firstWidth : width
+            let firstExtent = available * adjusted
+            let secondExtent = available - firstExtent
             return .split(id: id, vertical: vertical, ratio: adjusted,
-                          first: fit(first, width: firstWidth), second: fit(second, width: secondWidth))
+                          first: fit(first, size: BTSize(width: vertical ? firstExtent : size.width,
+                                                       height: vertical ? size.height : firstExtent)),
+                          second: fit(second, size: BTSize(width: vertical ? secondExtent : size.width,
+                                                         height: vertical ? size.height : secondExtent)))
         }
         var result = self
-        result.root = fit(root, width: bounds.size.width)
+        result.root = fit(root, size: bounds.size)
         // Validate height including the tab strip, and exact sizes for fixed windows.
         _ = try result.placements(in: bounds, windows: windows)
         return result
@@ -286,11 +304,11 @@ public struct TabbedLayoutState: Hashable, Sendable {
         var result: [Placement] = []
         for pane in panes {
             let frame = Self.contentFrame(paneFrames[pane.id]!)
-            guard frame.size.width + 0.001 >= 120, frame.size.height >= 80 else { throw TabbedLayoutError.panesTooSmall }
+            guard frame.size.width + 0.001 >= 120, frame.size.height + 0.001 >= 80 else { throw TabbedLayoutError.panesTooSmall }
             for id in pane.tabs {
                 guard let window = snapshots[id], window.isEligible else { continue }
                 guard frame.size.width + 0.001 >= window.constraints.minimumSize.width,
-                      frame.size.height >= window.constraints.minimumSize.height,
+                      frame.size.height + 0.001 >= window.constraints.minimumSize.height,
                       window.constraints.isResizable || frame.size == window.frame.size else { throw TabbedLayoutError.panesTooSmall }
                 result.append(Placement(windowID: id, frame: frame))
             }

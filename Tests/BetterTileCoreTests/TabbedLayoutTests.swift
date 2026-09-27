@@ -2,6 +2,26 @@ import Foundation
 import Testing
 @testable import BetterTileCore
 
+@Test func tabbedParentRowResizeRespectsFrozenNestedRowRatios() throws {
+    let bounds = BTRect(x: 0, y: 0, width: 1200, height: 1200)
+    var state = TabbedLayoutState(preset: .rows)
+    let ids = ["a", "b", "c"].map { WindowID(rawValue: $0) }
+    let windows = ids.map {
+        WindowSnapshot(id: $0, processIdentifier: 1, frame: bounds, displayID: DisplayID(rawValue: "main"),
+                       constraints: WindowConstraints(minimumSize: BTSize(width: 120, height: 80)))
+    }
+    state.reconcile(windowIDs: ids, removed: [], focused: ids[0])
+    let parent = state.dividers(in: bounds)[0].id
+    state.split(paneID: state.panes[0].id, moving: ids[1], edge: .bottom)
+    let nested = try #require(state.dividers(in: bounds).first { $0.id != parent })
+    state.resize(dividerID: nested.id, ratio: 0.75)
+    state.resize(dividerID: parent, ratio: 0.1)
+    let fitted = try state.fittingMinimumWidths(in: bounds, windows: windows, resizingDividerID: parent)
+    #expect(fitted.dividers(in: bounds).first { $0.id == nested.id }?.ratio == 0.75)
+    #expect(abs(try #require(fitted.dividers(in: bounds).first { $0.id == parent }).frame.minY - 462) < 0.001)
+    #expect(try fitted.placements(in: bounds, windows: windows).allSatisfy { $0.frame.size.height + 0.001 >= 80 })
+}
+
 @Test func tabbedActivationCollectsWindowsInFirstPaneAndKeepsEmptyPanes() throws {
     let a = WindowID(rawValue: "a")
     let b = WindowID(rawValue: "b")

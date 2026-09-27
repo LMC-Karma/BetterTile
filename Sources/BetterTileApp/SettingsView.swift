@@ -36,7 +36,7 @@ private enum SettingsDestination: String, CaseIterable, Identifiable {
                 + "keyboard shortcuts master toggle macos tiling move resize edge "
                 + "advanced enhanced user interface chromium electron voiceover"
         case .windowLayout:
-            "mode manual native bento resize linked divider shortcut keyboard hotkey halves thirds quarters sixths move display restore new window side automatic left right top bottom"
+            "mode manual native bento tabbed tabs pane preset resize linked divider shortcut keyboard hotkey halves thirds quarters sixths move display restore new window side automatic left right top bottom"
         case .snapZones:
             "drag snap edge corner title bar double click maximize"
         case .menuBar:
@@ -88,6 +88,7 @@ struct SettingsView: View {
     let openSetup: () -> Void
     @State private var selection: SettingsDestination = .general
     @State private var search = ""
+    @FocusState private var searchFocused: Bool
 
     var body: some View {
         NavigationSplitView {
@@ -108,6 +109,12 @@ struct SettingsView: View {
                 }
                 .listStyle(.sidebar)
                 .scrollContentBackground(.hidden)
+                .overlay {
+                    if !SettingsDestination.allCases.contains(where: matchesSearch) {
+                        ContentUnavailableView.search(text: search)
+                            .padding(.horizontal, 8)
+                    }
+                }
             }
             .navigationSplitViewColumnWidth(min: 198, ideal: 210, max: 240)
         } detail: {
@@ -122,6 +129,16 @@ struct SettingsView: View {
         .controlSize(.regular)
         .navigationSplitViewStyle(.balanced)
         .frame(minWidth: 980, minHeight: 640)
+        .onChange(of: search) {
+            if !matchesSearch(selection), let match = SettingsDestination.allCases.first(where: matchesSearch) {
+                selection = match
+            }
+        }
+        .background {
+            Button("Search settings") { searchFocused = true }
+                .keyboardShortcut("f", modifiers: .command)
+                .hidden()
+        }
     }
 
     private var searchField: some View {
@@ -130,6 +147,8 @@ struct SettingsView: View {
                 .foregroundStyle(.secondary)
             TextField("Search settings", text: $search)
                 .textFieldStyle(.plain)
+                .focused($searchFocused)
+                .accessibilityLabel("Search settings")
                 .onExitCommand { search = "" }
             if !search.isEmpty {
                 Button {
@@ -408,9 +427,10 @@ private struct GeneralSettings: View {
     }
 }
 
-private struct WindowLayoutSettings: View {
+struct WindowLayoutSettings: View {
     @Bindable var model: BetterTileModel
     @State private var recordingAction: WindowAction?
+    @State private var shortcutError: (action: WindowAction, message: String)?
 
     var body: some View {
         Form {
@@ -424,13 +444,6 @@ private struct WindowLayoutSettings: View {
                 Picker("Default mode", selection: configurationBinding(\.defaultLayoutMode)) {
                     ForEach(LayoutMode.availableModes, id: \.self) { mode in
                         Text(mode.title).tag(mode)
-                    }
-                }
-                if LayoutMode.availableModes.contains(.tabbed) {
-                    Picker("Default Tabbed layout", selection: configurationBinding(\.defaultTabbedPreset)) {
-                        ForEach(TabbedPreset.allCases, id: \.self) { preset in
-                            Text(preset.title).tag(preset)
-                        }
                     }
                 }
                 Picker(
@@ -455,6 +468,37 @@ private struct WindowLayoutSettings: View {
                 .foregroundStyle(.secondary)
             }
 
+            if LayoutMode.availableModes.contains(.tabbed) {
+                Section("Tabbed Layout") {
+                    HStack(alignment: .center, spacing: 20) {
+                        TabbedPresetPreview(preset: model.configuration.defaultTabbedPreset)
+                            .frame(width: 184, height: 116)
+                            .accessibilityHidden(true)
+                        VStack(alignment: .leading, spacing: 10) {
+                            Picker("Starting layout", selection: configurationBinding(\.defaultTabbedPreset)) {
+                                ForEach(TabbedPreset.allCases, id: \.self) { preset in
+                                    Text(preset.title).tag(preset)
+                                }
+                            }
+                            Text("Used when a desktop first enters Tabbed. Existing panes keep their layout.")
+                                .font(.callout)
+                                .foregroundStyle(.secondary)
+                            if model.activeLayoutMode == .tabbed {
+                                Button("Apply to This Desktop") {
+                                    model.performTabbed(.preset(model.configuration.defaultTabbedPreset))
+                                }
+                            }
+                        }
+                    }
+                    Label("Select a tab to focus its window. Drag tabs between panes or onto an edge to split.", systemImage: "rectangle.on.rectangle")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                    Label("Drag a divider to resize. Double-click to balance. Escape cancels the drag.", systemImage: "arrow.left.and.right")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
             Section("Resize Interaction") {
                 Toggle(
                     "Resize adjacent windows together",
@@ -462,7 +506,7 @@ private struct WindowLayoutSettings: View {
                 )
                 Text(
                     "When windows share an edge, resizing one adjusts its neighbor. "
-                        + "Available in Manual mode only."
+                        + "Available in Native mode only."
                 )
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
@@ -471,6 +515,9 @@ private struct WindowLayoutSettings: View {
                     Text("Live Resize").tag(ResizeFeedbackMode.live)
                 }
                 .pickerStyle(.segmented)
+                Text("Controls shared dividers in Native and Bento. Tabbed panes always resize live.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
                 HStack {
                     Text("Divider width")
                     Slider(
@@ -478,6 +525,8 @@ private struct WindowLayoutSettings: View {
                         in: 2...12,
                         step: 1
                     )
+                    .accessibilityLabel("Divider width")
+                    .accessibilityValue("\(Int(model.configuration.dividerThickness)) points")
                     Text("\(Int(model.configuration.dividerThickness)) pt")
                         .monospacedDigit()
                         .frame(width: 42)
@@ -511,6 +560,8 @@ private struct WindowLayoutSettings: View {
                 HStack {
                     Text("Pane gap")
                     Slider(value: configurationBinding(\.bentoInnerGap), in: 0...12, step: 1)
+                        .accessibilityLabel("Bento pane gap")
+                        .accessibilityValue("\(Int(model.configuration.bentoInnerGap)) points")
                     Text("\(Int(model.configuration.bentoInnerGap)) pt")
                         .monospacedDigit()
                         .frame(width: 42)
@@ -522,6 +573,7 @@ private struct WindowLayoutSettings: View {
                         in: 0...1,
                         step: 0.01
                     )
+                    .accessibilityLabel("Bento swap delay")
                     Text(
                         model.configuration.bentoSwapHoverDelay
                             .formatted(.number.precision(.fractionLength(2))) + "s"
@@ -554,8 +606,15 @@ private struct WindowLayoutSettings: View {
                             action: action,
                             isRecording: recordingAction == action
                         ) {
+                            shortcutError = nil
                             model.setShortcutCaptureActive(true)
                             recordingAction = action
+                        }
+                        if let error = shortcutError, error.action == action {
+                            Label(error.message, systemImage: "exclamationmark.circle")
+                                .font(.callout)
+                                .foregroundStyle(.red)
+                                .fixedSize(horizontal: false, vertical: true)
                         }
                     }
                 }
@@ -573,6 +632,10 @@ private struct WindowLayoutSettings: View {
                 capture: { captured in
                     guard let recordingAction else { return }
                     model.assign(shortcut: captured, to: recordingAction)
+                    if model.configuration.shortcuts.first(where: { $0.action == recordingAction })?.shortcut != captured,
+                       let message = model.statusMessage {
+                        shortcutError = (recordingAction, message)
+                    }
                     self.recordingAction = nil
                     model.setShortcutCaptureActive(false)
                 },
@@ -597,11 +660,16 @@ private struct WindowLayoutSettings: View {
             model.setActiveMode(mode)
         } label: {
             VStack(alignment: .leading, spacing: 8) {
-                Image(systemName: mode.icon)
-                    .font(.title2)
-                    .foregroundStyle(
-                        model.activeLayoutMode == mode ? Color.accentColor : Color.secondary
-                    )
+                HStack {
+                    Image(systemName: mode.icon)
+                        .font(.title2)
+                        .foregroundStyle(model.activeLayoutMode == mode ? Color.accentColor : Color.secondary)
+                    Spacer()
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundStyle(Color.accentColor)
+                        .opacity(model.activeLayoutMode == mode ? 1 : 0)
+                        .accessibilityHidden(true)
+                }
                 Text(mode.title)
                     .font(.headline)
                 Text(mode.explanation)
@@ -628,6 +696,9 @@ private struct WindowLayoutSettings: View {
             )
         }
         .buttonStyle(.plain)
+        .accessibilityLabel(mode.title)
+        .accessibilityValue(model.activeLayoutMode == mode ? "Selected" : "")
+        .help(mode.explanation)
     }
 
     private func configurationBinding<Value>(
@@ -639,6 +710,29 @@ private struct WindowLayoutSettings: View {
                 model.updateConfiguration { $0[keyPath: keyPath] = value }
             }
         )
+    }
+}
+
+private struct TabbedPresetPreview: View {
+    let preset: TabbedPreset
+
+    var body: some View {
+        Canvas { context, size in
+            // Use the actual pane geometry so the preview matches the preset.
+            let state = TabbedLayoutState(preset: preset)
+            let frames = state.frames(in: BTRect(x: 4, y: 4, width: size.width - 8, height: size.height - 8))
+            for (index, pane) in state.panes.enumerated() {
+                guard let frame = frames[pane.id] else { continue }
+                let rect = CGRect(x: frame.minX, y: frame.minY, width: frame.size.width, height: frame.size.height)
+                let path = Path(roundedRect: rect, cornerRadius: 5)
+                context.fill(path, with: .color(index == 0 ? .accentColor.opacity(0.12) : Color(nsColor: .controlBackgroundColor)))
+                context.stroke(path, with: .color(index == 0 ? .accentColor.opacity(0.7) : .secondary.opacity(0.3)), lineWidth: 1)
+                let header = CGRect(x: rect.minX + 5, y: rect.minY + 5, width: max(0, rect.width - 10), height: 8)
+                context.fill(Path(roundedRect: header, cornerRadius: 2), with: .color(index == 0 ? .accentColor.opacity(0.3) : .secondary.opacity(0.15)))
+                context.draw(Text("\(index + 1)").font(.system(size: 12, weight: .medium)).foregroundColor(.secondary),
+                             at: CGPoint(x: rect.midX, y: rect.midY + 5))
+            }
+        }
     }
 }
 
