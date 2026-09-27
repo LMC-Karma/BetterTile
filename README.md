@@ -87,7 +87,6 @@ one step back rather than a manual reconstruction.
 
 ## What you need
 
-- Apple Silicon Mac
 - macOS 26 or later
 - Accessibility permission (the only permission BetterTile requests)
 
