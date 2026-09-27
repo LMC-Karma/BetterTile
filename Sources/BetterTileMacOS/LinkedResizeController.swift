@@ -172,7 +172,7 @@ public final class LinkedResizeController {
             // Release still validates and applies the final source frame.
             if sourceID != nil {
                 hasPendingDisplayUpdate = false
-                continueGesture(validateParticipants: true)
+                if !continueGesture(validateParticipants: true) { resendFinalPlacements() }
             }
             endGesture()
         }
@@ -207,13 +207,26 @@ public final class LinkedResizeController {
         }
     }
 
-    func displayTick(validateParticipants: Bool = false) {
+    func displayTick() {
         guard hasPendingDisplayUpdate else { return }
         hasPendingDisplayUpdate = false
-        continueGesture(validateParticipants: validateParticipants)
+        continueGesture(validateParticipants: false)
     }
 
-    private func continueGesture(validateParticipants: Bool) {
+    /// Resends the last requested neighbor frames when release brings no new
+    /// source change. An application may have ignored the earlier request.
+    private func resendFinalPlacements() {
+        guard var transaction, transaction.hasLiveChanges else { return }
+        _ = coordinator.applyLive(
+            transaction: &transaction,
+            placements: transaction.proposedPlacements,
+            validateParticipants: true
+        )
+        self.transaction = transaction
+    }
+
+    @discardableResult
+    private func continueGesture(validateParticipants: Bool) -> Bool {
         guard configuration.linkedResizeEnabled, let sourceID,
               let baseline = baselineWindows.first(where: { $0.id == sourceID }),
               isEnabledForDisplay?(baseline.displayID) == true,
@@ -227,17 +240,17 @@ public final class LinkedResizeController {
                 windows: baselineWindows,
                 bounds: display.visibleFrame
               )
-        else { return }
+        else { return false }
 
         let peerPlacements = result.placements.filter { $0.windowID != sourceID }
-        guard !peerPlacements.isEmpty else { return }
+        guard !peerPlacements.isEmpty else { return false }
         var transaction: WindowFrameTransaction
         if let active = self.transaction {
             transaction = active
         } else {
             guard case let .started(started) = coordinator.beginTransaction(
                 windowIDs: Set(peerPlacements.map(\.windowID))
-            ) else { return }
+            ) else { return false }
             transaction = started
         }
         guard coordinator.applyLive(
@@ -246,7 +259,7 @@ public final class LinkedResizeController {
             validateParticipants: validateParticipants
         ).isApplied else {
             self.transaction = transaction
-            return
+            return false
         }
         self.transaction = transaction
         let frames = Dictionary(uniqueKeysWithValues: result.placements.map { ($0.windowID, $0.frame) })
@@ -254,6 +267,7 @@ public final class LinkedResizeController {
             if let frame = frames[baselineWindows[index].id] { baselineWindows[index].frame = frame }
         }
         layoutChangedHandler?(display.id, frames)
+        return true
     }
 
     private func endGesture() {

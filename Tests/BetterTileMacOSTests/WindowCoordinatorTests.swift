@@ -1035,3 +1035,24 @@ func multiWindowFrameWritesShareOneBatchIncludingRollback(fail: Bool) {
     #expect(result.isApplied == !fail)
     #expect(system.frameWriteBatches == [fail ? [first, second, first] : [first, second]])
 }
+
+@Test @MainActor func validatedLiveApplyResendsFramesThatIntermediateTicksSkip() throws {
+    let system = FakeWindowSystem()
+    system.addSecondWindow()
+    let ids = system.windows.map(\.id)
+    let coordinator = WindowCoordinator(system: system)
+    guard case var .started(transaction) = coordinator.beginTransaction(windowIDs: Set(ids)) else {
+        Issue.record("Expected a transaction"); return
+    }
+    let target = system.windows.map { Placement(windowID: $0.id, frame: $0.frame.offsetBy(dx: -20, dy: 0)) }
+    system.ignoredFrameWriteCounts[ids[1]] = 1
+    #expect(coordinator.applyLive(transaction: &transaction, placements: target, validateParticipants: false).isApplied)
+    #expect(system.windows[1].frame != target[1].frame)
+
+    let writes = system.frameWriteCounts
+    #expect(coordinator.applyLive(transaction: &transaction, placements: target, validateParticipants: false).isApplied)
+    #expect(system.frameWriteCounts == writes)
+
+    #expect(coordinator.applyLive(transaction: &transaction, placements: target, validateParticipants: true).isApplied)
+    #expect(system.windows.map(\.frame) == target.map(\.frame))
+}

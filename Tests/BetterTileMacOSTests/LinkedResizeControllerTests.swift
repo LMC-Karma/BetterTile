@@ -377,3 +377,42 @@ import Testing
     #expect(system.windows[1].frame == BTRect(x: 640, y: 0, width: 360, height: 800))
     #expect(system.targetedSnapshotRequests > snapshots)
 }
+
+/// An application can accept a frame write and ignore it. Release at the same
+/// position must resend the final frame instead of trusting the last request.
+@Test @MainActor func linkedResizeReleaseResendsAFrameThatAnApplicationIgnored() {
+    let system = FakeWindowSystem()
+    let focused = WindowID(rawValue: "focused")
+    let second = WindowID(rawValue: "second")
+    system.windows = [
+        WindowSnapshot(id: focused, processIdentifier: 42, frame: BTRect(x: 0, y: 0, width: 500, height: 800), displayID: DisplayID(rawValue: "main")),
+        WindowSnapshot(id: second, processIdentifier: 43, frame: BTRect(x: 500, y: 0, width: 500, height: 800), displayID: DisplayID(rawValue: "main")),
+    ]
+    system.focusedWindowID = focused
+    var configuration = BetterTileConfiguration()
+    configuration.linkedResizeEnabled = true
+    let displayTicks = ResizeDisplayLink(automatic: false)
+    let controller = LinkedResizeController(
+        coordinator: WindowCoordinator(system: system),
+        configuration: configuration,
+        displayTicks: displayTicks
+    )
+    controller.isEnabledForDisplay = { _ in true }
+    controller.setUsesSharedGestureEvents(true)
+    func event(_ kind: GlobalGestureEventKind, timestamp: UInt64) -> GlobalGestureEvent {
+        GlobalGestureEvent(kind: kind, position: BTPoint(x: 500, y: 400), button: 0, modifiers: [], timestamp: timestamp)
+    }
+
+    controller.handleSharedGestureEvent(event(.leftMouseDown, timestamp: 1))
+    controller.handleSharedGestureEvent(event(.leftMouseDragged, timestamp: 2))
+    displayTicks.fire()
+    system.windows[0].frame.size.width = 600
+    system.ignoredFrameWriteCounts[second] = 1
+    controller.handleSharedGestureEvent(event(.leftMouseDragged, timestamp: 3))
+    displayTicks.fire()
+    #expect(system.windows[1].frame == BTRect(x: 500, y: 0, width: 500, height: 800))
+
+    controller.handleSharedGestureEvent(event(.leftMouseUp, timestamp: 4))
+
+    #expect(system.windows[1].frame == BTRect(x: 600, y: 0, width: 400, height: 800))
+}
