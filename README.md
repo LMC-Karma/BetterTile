@@ -171,8 +171,9 @@ rebuilds signed by the same team keep the grant.
 
 BetterTile uses the Accessibility API to identify eligible windows and read,
 move, and resize them. It observes limited pointer input for drag snapping,
-linked resizing, and the Layout Wheel, and limited keyboard input for Escape
-during drag snapping and for the Layout Wheel. It can also use the
+divider and linked resizing, and the Layout Wheel, and limited keyboard input
+for Escape during drag snapping and divider resizing, and for the Layout Wheel.
+It can also use the
 documented read-only private observations described above. It does not send
 window data, configuration, analytics, telemetry, or crash reports anywhere.
 Your configuration is a plain JSON file on your own disk.
