@@ -67,6 +67,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
     /// How frame writes treat `AXEnhancedUserInterface`. Owned by the app layer
     /// and refreshed from configuration.
     public var enhancedUserInterfacePolicy: EnhancedUserInterfacePolicy = .disableAndRestore
+    private var frameWriteSuspensions: [pid_t: EnhancedUserInterfaceSuspension]?
 
     public init() {
         let privateAPIsDisabled = UserDefaults.standard.bool(forKey: "disablePrivateAPIs")
@@ -496,7 +497,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         // requested frame. Disable it for the duration of the write. The
         // attribute is only ever touched when the application had it enabled.
         let enhancedUserInterface = suspendEnhancedUserInterfaceIfNeeded(for: element)
-        defer { enhancedUserInterface.restore() }
+        defer { if frameWriteSuspensions == nil { enhancedUserInterface.restore() } }
 
         // A frame write deserves more patience than a bulk read. Passing 0
         // returns this element to the process-wide default afterwards.
@@ -526,6 +527,17 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
                 "macOS rejected the window frame update (\(errors.map { String($0.rawValue) }.joined(separator: ", ")))."
             )
         }
+    }
+
+    public func withFrameWriteBatch(_ updates: () throws -> Void) rethrows {
+        if frameWriteSuspensions != nil { try updates(); return }
+        frameWriteSuspensions = [:]
+        defer {
+            let suspensions = frameWriteSuspensions ?? [:]
+            frameWriteSuspensions = nil
+            for suspension in suspensions.values { suspension.restore() }
+        }
+        try updates()
     }
 
     /// Result of a suspend request. `restore` is a no-op unless BetterTile
@@ -577,6 +589,9 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         guard AXUIElementGetPid(window, &pid) == .success else {
             return EnhancedUserInterfaceSuspension(applicationElement: nil, shouldRestore: false)
         }
+        if let existing = frameWriteSuspensions?[pid] { return existing }
+        var suspension = EnhancedUserInterfaceSuspension(applicationElement: nil, shouldRestore: false)
+        defer { frameWriteSuspensions?[pid] = suspension }
         let applicationElement = makeApplicationElement(pid: pid)
         let isEnabled: Bool = value(
             Self.enhancedUserInterfaceAttribute,
@@ -598,11 +613,12 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
                 "Could not disable AXEnhancedUserInterface (\(error.rawValue, privacy: .public)); frame may land imprecisely."
             )
         }
-        return EnhancedUserInterfaceSuspension(
+        suspension = EnhancedUserInterfaceSuspension(
             applicationElement: applicationElement,
             // Only ask for a restore if the disable actually took.
             shouldRestore: decision.shouldRestoreAfterWrite && error == .success
         )
+        return suspension
     }
 
     public func setMinimized(_ minimized: Bool, for windowID: WindowID) throws {

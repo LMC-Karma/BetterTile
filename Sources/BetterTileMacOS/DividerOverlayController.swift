@@ -204,6 +204,57 @@ enum DividerInteractionResolver {
     }
 }
 
+@MainActor
+final class ResizeDisplayLink: NSObject {
+    private let automatic: Bool
+    private var link: CADisplayLink?
+    private var tickHandler: (() -> Void)?
+
+    init(automatic: Bool = true) {
+        self.automatic = automatic
+    }
+
+    func start(
+        on view: NSView? = nil,
+        screen: NSScreen? = nil,
+        maximumFramesPerSecond: Int? = nil,
+        tick: @escaping () -> Void
+    ) {
+        stop()
+        tickHandler = tick
+        guard automatic else { return }
+        let displayLink = view?.displayLink(target: self, selector: #selector(handleTick(_:)))
+            ?? screen?.displayLink(target: self, selector: #selector(handleTick(_:)))
+        guard let displayLink else { return }
+        link = displayLink
+        if let maximumFramesPerSecond {
+            let displayMaximum = (view?.window?.screen ?? screen)?.maximumFramesPerSecond ?? maximumFramesPerSecond
+            let preferred = Float(max(1, min(displayMaximum, maximumFramesPerSecond)))
+            displayLink.preferredFrameRateRange = CAFrameRateRange(
+                minimum: min(20, preferred),
+                maximum: preferred,
+                preferred: preferred
+            )
+        }
+        displayLink.add(to: .main, forMode: .common)
+        displayLink.add(to: .main, forMode: .eventTracking)
+    }
+
+    func fire() {
+        tickHandler?()
+    }
+
+    func stop() {
+        link?.invalidate()
+        link = nil
+        tickHandler = nil
+    }
+
+    @objc private func handleTick(_ link: CADisplayLink) {
+        tickHandler?()
+    }
+}
+
 /// Presents one hover-targeted resize handle instead of placing invisible
 /// panels over every boundary. Bento gestures update split weights through the
 /// tree-aware engine; linked/manual compatibility continues using adjacency.
@@ -220,6 +271,7 @@ public final class DividerOverlayController {
     public private(set) var isDragging = false
 
     private let coordinator: WindowCoordinator
+    private let displayTicks: ResizeDisplayLink
     private var boundaries: [BoundaryDescriptor] = []
     private var obscuringFrames: [BTRect] = []
     private var hoveredInteraction: DividerInteraction?
@@ -241,12 +293,27 @@ public final class DividerOverlayController {
     private var proposedBentoState: BentoLayoutState?
     private var latestPlacements: [Placement] = []
     private var latestDragPoint: CGPoint?
-    private var lastLiveUpdate = Date.distantPast
-    private var lastGhostUpdate = Date.distantPast
+    private var hasPendingDisplayUpdate = false
 
     public init(coordinator: WindowCoordinator, configuration: BetterTileConfiguration) {
         self.coordinator = coordinator
         self.configuration = configuration
+        displayTicks = ResizeDisplayLink()
+        observeOwnWindows()
+    }
+
+    init(
+        coordinator: WindowCoordinator,
+        configuration: BetterTileConfiguration,
+        displayTicks: ResizeDisplayLink
+    ) {
+        self.coordinator = coordinator
+        self.configuration = configuration
+        self.displayTicks = displayTicks
+        observeOwnWindows()
+    }
+
+    private func observeOwnWindows() {
         ownWindowObservationTask = Task { @MainActor [weak self] in
             for await notification in NotificationCenter.default.notifications(
                 named: NSWindow.didBecomeKeyNotification
@@ -267,7 +334,6 @@ public final class DividerOverlayController {
         self.boundaries = boundaries.filter { !$0.isLocked && $0.spanEnd - $0.spanStart >= 24 }
         self.obscuringFrames = obscuringFrames
         if isDragging {
-            if !activeParticipantsArePresent() { cancelActiveGesture() }
             return
         }
         syncHoverMonitoring()
@@ -414,6 +480,12 @@ public final class DividerOverlayController {
         }
         transaction = newTransaction
         if let startPoint { presentHandle(for: interaction, near: startPoint, active: true) }
+        displayTicks.start(
+            on: handlePanel?.contentView,
+            maximumFramesPerSecond: configuration.resizeFeedbackMode == .live ? 60 : nil
+        ) { [weak self] in
+            self?.displayTick()
+        }
         switch configuration.resizeFeedbackMode {
         case .ghost:
             ghosts.show(
@@ -428,18 +500,20 @@ public final class DividerOverlayController {
 
     func drag(to appKitPoint: CGPoint) {
         latestDragPoint = appKitPoint
+        hasPendingDisplayUpdate = true
+    }
+
+    func displayTick() {
+        guard hasPendingDisplayUpdate, let latestDragPoint else { return }
+        hasPendingDisplayUpdate = false
+        applyDrag(to: latestDragPoint, validateParticipants: false)
+    }
+
+    private func applyDrag(to appKitPoint: CGPoint, validateParticipants: Bool) {
         guard let interaction = baselineInteraction, let startPoint, let displayBounds, var transaction else { return }
-        guard activeParticipantsArePresent() else {
+        guard configuration.resizeFeedbackMode == .live || activeParticipantsArePresent() else {
             cancelActiveGesture()
             return
-        }
-        // Keep the accepted position while throttled. Solving the full Bento
-        // tree for a sample we cannot display or apply just blocks the UI.
-        switch configuration.resizeFeedbackMode {
-        case .ghost:
-            guard Date().timeIntervalSince(lastGhostUpdate) >= 1.0 / 60.0 else { return }
-        case .live:
-            guard Date().timeIntervalSince(lastLiveUpdate) >= 1.0 / 30.0 else { return }
         }
         let point = topLeftPoint(appKitPoint)
         let placements: [Placement]
@@ -500,7 +574,6 @@ public final class DividerOverlayController {
             latestPlacements = placements
             proposedBentoState = proposedState
             self.transaction = transaction
-            lastGhostUpdate = Date()
             activeInteraction = proposedInteraction
             ghosts.show(
                 placements: placements,
@@ -510,8 +583,11 @@ public final class DividerOverlayController {
             presentHandle(for: proposedInteraction, near: point, active: true)
         case .live:
             ghosts.hide()
-            lastLiveUpdate = Date()
-            switch coordinator.applyLive(transaction: &transaction, placements: placements) {
+            switch coordinator.applyLive(
+                transaction: &transaction,
+                placements: placements,
+                validateParticipants: validateParticipants
+            ) {
             case .applied:
                 latestPlacements = placements
                 proposedBentoState = proposedState
@@ -522,6 +598,7 @@ public final class DividerOverlayController {
                 // A transient rejection keeps the gesture alive; the next drag
                 // sample proposes fresh placements.
                 self.transaction = transaction
+                if !activeParticipantsArePresent() { cancelActiveGesture() }
                 return
             case .degraded:
                 reportRollbackFailure(displayID: interaction.displayID, outcome: coordinator.cancel(transaction: transaction))
@@ -532,11 +609,11 @@ public final class DividerOverlayController {
     }
 
     func end(at releasePoint: CGPoint? = nil) {
-        // Release is never throttled: it must commit the final pointer position.
+        // Release bypasses display coalescing and applies the exact pointer.
         if let point = releasePoint ?? latestDragPoint, isDragging {
-            lastGhostUpdate = .distantPast
-            lastLiveUpdate = .distantPast
-            drag(to: point)
+            latestDragPoint = point
+            hasPendingDisplayUpdate = false
+            applyDrag(to: point, validateParticipants: true)
         }
         guard let interaction = activeInteraction, var transaction else { clearGesture(); return }
         let succeeded: Bool
@@ -599,8 +676,8 @@ public final class DividerOverlayController {
         proposedBentoState = nil
         latestPlacements = []
         latestDragPoint = nil
-        lastLiveUpdate = .distantPast
-        lastGhostUpdate = .distantPast
+        hasPendingDisplayUpdate = false
+        displayTicks.stop()
         removeEscapeMonitor()
         let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         isRetracting = wasDragging && !reduceMotion && handlePanel != nil

@@ -459,13 +459,20 @@ public final class WindowCoordinator {
         }
     }
 
-    public func applyLive(transaction: inout WindowFrameTransaction, placements: [Placement]) -> WindowMutationOutcome {
+    public func applyLive(
+        transaction: inout WindowFrameTransaction,
+        placements: [Placement],
+        validateParticipants: Bool = true
+    ) -> WindowMutationOutcome {
         if case let .failed(reason) = preview(transaction: &transaction, placements: placements) {
             return .failed(reason: reason)
         }
         do {
-            try validate(transaction.proposedPlacements)
-            try applyAtomically(transaction.proposedPlacements, rollbackFrames: transaction.lastAppliedFrames)
+            if validateParticipants { try validate(transaction.proposedPlacements) }
+            let changed = transaction.proposedPlacements.filter {
+                transaction.lastAppliedFrames[$0.windowID]?.approximatelyEquals($0.frame, tolerance: 0.01) != true
+            }
+            try applyAtomically(changed, rollbackFrames: transaction.lastAppliedFrames)
             transaction.lastAppliedFrames = Dictionary(uniqueKeysWithValues: placements.map { ($0.windowID, $0.frame) })
             transaction.hasLiveChanges = true
             transaction.hasDegradedApply = false
@@ -617,33 +624,36 @@ public final class WindowCoordinator {
     }
 
     private func applyAtomically(_ placements: [Placement], rollbackFrames: [WindowID: BTRect]) throws {
-        var applied: [WindowID] = []
-        do {
-            for placement in placements.sorted(by: { $0.windowID < $1.windowID }) {
-                try apply(
-                    placement.frame,
-                    to: placement.windowID,
-                    knownCurrentFrame: rollbackFrames[placement.windowID]
-                )
-                applied.append(placement.windowID)
-            }
-        } catch {
-            var rollbackFailures: [WindowID] = []
-            for id in applied.reversed() {
-                guard let frame = rollbackFrames[id] else { continue }
-                let appliedFrame = placements.first(where: { $0.windowID == id })?.frame
-                do {
-                    try apply(frame, to: id, knownCurrentFrame: appliedFrame)
-                } catch {
-                    rollbackFailures.append(id)
+        guard !placements.isEmpty else { return }
+        try system.withFrameWriteBatch {
+            var applied: [WindowID] = []
+            do {
+                for placement in placements.sorted(by: { $0.windowID < $1.windowID }) {
+                    try apply(
+                        placement.frame,
+                        to: placement.windowID,
+                        knownCurrentFrame: rollbackFrames[placement.windowID]
+                    )
+                    applied.append(placement.windowID)
                 }
+            } catch {
+                var rollbackFailures: [WindowID] = []
+                for id in applied.reversed() {
+                    guard let frame = rollbackFrames[id] else { continue }
+                    let appliedFrame = placements.first(where: { $0.windowID == id })?.frame
+                    do {
+                        try apply(frame, to: id, knownCurrentFrame: appliedFrame)
+                    } catch {
+                        rollbackFailures.append(id)
+                    }
+                }
+                if !rollbackFailures.isEmpty {
+                    throw DegradedApplyError(
+                        message: "A window update failed and the previous layout could not be fully restored."
+                    )
+                }
+                throw error
             }
-            if !rollbackFailures.isEmpty {
-                throw DegradedApplyError(
-                    message: "A window update failed and the previous layout could not be fully restored."
-                )
-            }
-            throw error
         }
     }
 

@@ -978,3 +978,16 @@ private extension WindowCoordinator {
         return perform(plan).isApplied
     }
 }
+
+@Test(arguments: [false, true]) @MainActor
+func multiWindowFrameWritesShareOneBatchIncludingRollback(fail: Bool) {
+    let system = FakeWindowSystem()
+    system.addSecondWindow()
+    let first = system.windows[0].id, second = system.windows[1].id
+    if fail { system.failingWindowID = second }
+    let result = WindowCoordinator(system: system).applyPlacements(system.windows.map {
+        Placement(windowID: $0.id, frame: $0.frame.offsetBy(dx: -20, dy: 0))
+    })
+    #expect(result.isApplied == !fail)
+    #expect(system.frameWriteBatches == [fail ? [first, second, first] : [first, second]])
+}
