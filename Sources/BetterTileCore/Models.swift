@@ -159,6 +159,9 @@ public protocol WindowSystem: AnyObject {
     ///   redundant Accessibility writes; passing `nil` always performs the full
     ///   write sequence. See `FrameWritePlanner`.
     func setFrame(_ frame: BTRect, knownCurrentFrame: BTRect?, for windowID: WindowID) throws
+    /// An intermediate sample of a continuous gesture. Implementations may
+    /// skip the clamp-correcting trailing write; the release uses `setFrame`.
+    func setIntermediateFrame(_ frame: BTRect, knownCurrentFrame: BTRect?, for windowID: WindowID) throws
     /// Shares adapter setup across a synchronous group of frame writes and
     /// restores it before returning, including when a write or rollback fails.
     func withFrameWriteBatch(_ updates: () throws -> Void) rethrows
@@ -167,6 +170,10 @@ public protocol WindowSystem: AnyObject {
 
 public extension WindowSystem {
     func withFrameWriteBatch(_ updates: () throws -> Void) rethrows { try updates() }
+
+    func setIntermediateFrame(_ frame: BTRect, knownCurrentFrame: BTRect?, for windowID: WindowID) throws {
+        try setFrame(frame, knownCurrentFrame: knownCurrentFrame, for: windowID)
+    }
 
     func setFrame(_ frame: BTRect, for windowID: WindowID) throws {
         try setFrame(frame, knownCurrentFrame: nil, for: windowID)

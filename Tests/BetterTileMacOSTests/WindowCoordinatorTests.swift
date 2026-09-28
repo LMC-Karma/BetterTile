@@ -1056,3 +1056,21 @@ func multiWindowFrameWritesShareOneBatchIncludingRollback(fail: Bool) {
     #expect(coordinator.applyLive(transaction: &transaction, placements: target, validateParticipants: true).isApplied)
     #expect(system.windows.map(\.frame) == target.map(\.frame))
 }
+
+@Test @MainActor func liveGestureTicksUseIntermediateWritesAndReleaseUsesFullWrites() throws {
+    let system = FakeWindowSystem()
+    let id = system.windows[0].id
+    let coordinator = WindowCoordinator(system: system)
+    guard case var .started(transaction) = coordinator.beginTransaction(windowIDs: [id]) else {
+        Issue.record("Transaction did not start")
+        return
+    }
+    var frame = system.windows[0].frame
+    frame.size.width -= 40
+    #expect(coordinator.applyLive(transaction: &transaction, placements: [Placement(windowID: id, frame: frame)], validateParticipants: false).isApplied)
+    #expect(system.intermediateFrameWriteCounts[id] == 1)
+    frame.size.width -= 40
+    #expect(coordinator.applyLive(transaction: &transaction, placements: [Placement(windowID: id, frame: frame)], validateParticipants: true).isApplied)
+    #expect(system.intermediateFrameWriteCounts[id] == 1)
+    #expect(system.frameWriteCounts[id] == 2)
+}
