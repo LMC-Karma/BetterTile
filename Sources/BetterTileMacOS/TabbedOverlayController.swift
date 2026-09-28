@@ -419,7 +419,74 @@ struct TabbedStripLayout {
     }
 }
 
-@MainActor final class TabbedPaneView: NSVisualEffectView {
+/// A tab strip on real Liquid Glass. The glass is a background sibling that
+/// only draws; the strip content above it handles every event in its own
+/// coordinates, so clicks never depend on the glass view's internal layout.
+@MainActor final class TabbedPaneView: NSView {
+    private let glass = NSGlassEffectView()
+    private let content = TabbedPaneContentView()
+
+    weak var owner: TabbedOverlayController? { didSet { content.owner = owner } }
+    var pane: TabbedPane { get { content.pane } set { content.pane = newValue } }
+    var number: Int { get { content.number } set { content.number = newValue } }
+    var active: Bool { get { content.active } set { content.active = newValue } }
+    var titles: [String] { get { content.titles } set { content.titles = newValue } }
+    var icons: [NSImage?] { get { content.icons } set { content.icons = newValue } }
+    var strip: TabbedStripLayout { content.strip }
+
+    override var isFlipped: Bool { true }
+    override var acceptsFirstResponder: Bool { true }
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        glass.cornerRadius = 7
+        glass.style = .regular
+        for view in [glass, content] as [NSView] {
+            view.frame = bounds
+            view.autoresizingMask = [.width, .height]
+            addSubview(view)
+        }
+        refreshAppearance()
+    }
+
+    required init?(coder: NSCoder) { nil }
+
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        glass.frame = bounds
+        content.frame = bounds
+    }
+
+    func refreshAppearance() {
+        let workspace = NSWorkspace.shared
+        let solid = workspace.accessibilityDisplayShouldReduceTransparency
+            || workspace.accessibilityDisplayShouldIncreaseContrast
+        glass.isHidden = solid
+        content.usesSolidSurface = solid
+        content.needsDisplay = true
+    }
+
+    override var needsDisplay: Bool {
+        didSet { if needsDisplay { content.needsDisplay = true } }
+    }
+
+    var stripLayout: TabbedStripLayout { content.strip }
+    func updateToolTips() { content.updateToolTips() }
+    func updateAccessibility() {
+        setAccessibilityElement(true)
+        setAccessibilityRole(.group)
+        setAccessibilityChildren(content.accessibilityButtons(parent: self))
+    }
+
+    override func mouseDown(with event: NSEvent) { content.mouseDown(with: event) }
+    override func mouseDragged(with event: NSEvent) { content.mouseDragged(with: event) }
+    override func mouseUp(with event: NSEvent) { content.mouseUp(with: event) }
+    override func rightMouseDown(with event: NSEvent) { content.rightMouseDown(with: event) }
+    override func keyDown(with event: NSEvent) { content.keyDown(with: event) }
+}
+
+@MainActor final class TabbedPaneContentView: NSView {
     weak var owner: TabbedOverlayController?
     var pane = TabbedPane()
     var number = 1
@@ -434,12 +501,12 @@ struct TabbedStripLayout {
     private var firstVisibleIndex = 0
     override var isFlipped: Bool { true }
     override var acceptsFirstResponder: Bool { true }
+    var usesSolidSurface = false
     override var wantsUpdateLayer: Bool { false }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
-        configureTabbedGlass(self, cornerRadius: 7)
     }
 
     required init?(coder: NSCoder) { nil }
@@ -484,12 +551,15 @@ struct TabbedStripLayout {
 
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
-        configureTabbedGlass(self, cornerRadius: 7)
-        NSColor.windowBackgroundColor.setFill()
-        NSBezierPath(rect: bounds).fill()
+        if usesSolidSurface {
+            NSColor.windowBackgroundColor.setFill()
+            NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 7, yRadius: 7).fill()
+        }
         let header = NSRect(x: 0, y: 0, width: bounds.width, height: TabbedLayoutState.headerHeight)
-        NSColor.controlBackgroundColor.withAlphaComponent(0.35).setFill()
-        NSBezierPath(rect: header).fill()
+        if usesSolidSurface {
+            NSColor.controlBackgroundColor.withAlphaComponent(0.48).setFill()
+            NSBezierPath(rect: header).fill()
+        }
         if active {
             NSColor.controlAccentColor.withAlphaComponent(0.16).setFill()
             NSBezierPath(roundedRect: NSRect(x: 4, y: 6, width: 24, height: 22), xRadius: 6, yRadius: 6).fill()
@@ -556,7 +626,7 @@ struct TabbedStripLayout {
             }
         }
         let outline = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.75, dy: 0.75), xRadius: 7, yRadius: 7)
-        outline.lineWidth = active ? 1.5 : 0.75
+        outline.lineWidth = active ? 1.5 : (usesSolidSurface ? 1 : 0.75)
         (active
             ? NSColor.controlAccentColor.withAlphaComponent(owner?.isInteracting == true ? 0.72 : 0.32)
             : NSColor.separatorColor.withAlphaComponent(0.5)
@@ -583,17 +653,15 @@ struct TabbedStripLayout {
         ])
     }
 
-    func updateAccessibility() {
+    fileprivate func accessibilityButtons(parent: NSView) -> [TabbedAccessibilityButton] {
         firstVisibleIndex = strip.visibleRange.lowerBound
-        setAccessibilityElement(true)
-        setAccessibilityRole(.group)
         var children: [TabbedAccessibilityButton] = []
         func button(_ label: String, rect: NSRect, action: @escaping @MainActor @Sendable () -> Void) {
             let element = TabbedAccessibilityButton(action: action)
             element.setAccessibilityRole(.button)
             element.setAccessibilityEnabled(true)
             element.setAccessibilityLabel(label)
-            element.setAccessibilityParent(self)
+            element.setAccessibilityParent(parent)
             if let window { element.setAccessibilityFrame(window.convertToScreen(convert(rect, to: nil))) }
             children.append(element)
         }
@@ -614,7 +682,7 @@ struct TabbedStripLayout {
             guard let self, let owner else { return }
             owner.menu(pane: pane, windowID: nil).popUp(positioning: nil, at: NSPoint(x: strip.menuFrame.minX, y: TabbedLayoutState.headerHeight), in: self)
         }
-        setAccessibilityChildren(children)
+        return children
     }
 
     override func mouseDown(with event: NSEvent) {
