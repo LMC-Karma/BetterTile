@@ -1065,6 +1065,25 @@ struct MenuPanelControls: View {
     let hasAccessibilityPermission: Bool
     let activeMode: LayoutMode
     let contextDescription: String
+
+    /// Native has no layout to repair; the same action arranges its windows
+    /// with Bento, so the label names that effect.
+    private var repairTitle: String {
+        switch activeMode {
+        case .tabbed: "Repair Tabbed"
+        case .bento: "Repair Bento"
+        case .manual, .linked: "Arrange with Bento"
+        }
+    }
+
+    private var repairHelp: String {
+        switch activeMode {
+        case .tabbed: "Rebuild this desktop's panes and tabs from its current windows."
+        case .bento: "Re-tile this desktop's windows into a clean Bento layout."
+        case .manual, .linked:
+            "Tile this display's windows with Bento. A single window moves to its configured placement."
+        }
+    }
     let snappingEnabled: Bool
     let setMode: ((LayoutMode) -> Void)?
     let setSnappingEnabled: ((Bool) -> Void)?
@@ -1111,6 +1130,7 @@ struct MenuPanelControls: View {
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
+                .help(contextDescription)
 
             Toggle(
                 "Drag snapping",
@@ -1123,10 +1143,11 @@ struct MenuPanelControls: View {
             Button {
                 repairLayout?()
             } label: {
-                Label(activeMode == .tabbed ? "Repair Current Tabbed Layout" : "Repair Current Bento Layout", systemImage: "arrow.triangle.2.circlepath")
+                Label(repairTitle, systemImage: "arrow.triangle.2.circlepath")
                     .font(.system(size: 12, weight: .semibold))
                     .frame(maxWidth: .infinity, minHeight: 28)
             }
+            .help(repairHelp)
             .buttonStyle(.borderedProminent)
             .controlSize(.regular)
             .disabled(!hasAccessibilityPermission)
