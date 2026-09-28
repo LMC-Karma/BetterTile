@@ -160,6 +160,13 @@ public struct WindowMinimumSizeLearner: Sendable {
     public mutating func remove(_ windowID: WindowID) {
         learnedSizes.removeValue(forKey: windowID)
     }
+
+    /// A learned minimum only explains one refused write. Applications change
+    /// their minimum with their content, so a new user gesture starts again
+    /// from the reported minimum instead of an old refusal.
+    public mutating func removeAll() {
+        learnedSizes.removeAll()
+    }
 }
 
 /// Resizes Bento split branches by changing tree weights, then deriving every

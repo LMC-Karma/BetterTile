@@ -14,6 +14,8 @@ public final class LinkedResizeController {
         }
     }
     public var layoutChangedHandler: ((DisplayID, [WindowID: BTRect]) -> Void)?
+    /// Runs before the gesture reads its windows, so it sees fresh minimums.
+    public var gestureWillBeginHandler: (() -> Void)?
     public var isEnabledForDisplay: ((DisplayID) -> Bool)?
 
     private let coordinator: WindowCoordinator
@@ -179,6 +181,7 @@ public final class LinkedResizeController {
     }
 
     private func beginGesture() {
+        gestureWillBeginHandler?()
         guard configuration.linkedResizeEnabled else {
             endGesture()
             return

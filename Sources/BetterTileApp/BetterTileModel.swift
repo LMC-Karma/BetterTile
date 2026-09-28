@@ -19,6 +19,9 @@ protocol BetterTileWindowSystem: TargetedWindowSystem, WindowEventSource {
         baseline: BTRect,
         actual: BTRect
     ) -> Bool
+    /// Clears minimums learned from refused writes. Called when the user
+    /// starts a new resize or drag, so an old refusal never becomes a floor.
+    func forgetLearnedMinimums()
     func refreshApplicationObservers()
     func resetCachedWindows()
     func startDockFootprintMonitoring(onChange: @escaping () -> Void)
@@ -162,7 +165,8 @@ final class BetterTileModel {
         dragSnap.activeModeProvider = { [weak self] displayID in self?.activeMode(for: displayID) }
         dragSnap.bentoStateProvider = { [weak self] displayID in self?.sessionStore.session(for: displayID)?.bentoState }
         dragSnap.bentoDragBeganHandler = { [weak self] displayID, sourceID in
-            self?.beginBentoDrag(displayID: displayID, sourceID: sourceID) ?? false
+            self?.system.forgetLearnedMinimums()
+            return self?.beginBentoDrag(displayID: displayID, sourceID: sourceID) ?? false
         }
         dragSnap.bentoPreviewHandler = { [weak self] displayID, sourceID, outcome in
             self?.previewBentoDrag(displayID: displayID, sourceID: sourceID, outcome: outcome)
@@ -215,6 +219,8 @@ final class BetterTileModel {
                 self.presentActionResult(succeeded: false, error: message, displayID: displayID)
             }
         }
+        dividerResize.gestureWillBeginHandler = { [weak self] in self?.system.forgetLearnedMinimums() }
+        linkedResize.gestureWillBeginHandler = { [weak self] in self?.system.forgetLearnedMinimums() }
         dividerResize.gestureEndedHandler = { [weak self] in
             self?.performDeferredDockReflow()
             self?.schedulePendingWindowEvents()
