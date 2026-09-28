@@ -25,6 +25,14 @@ struct LayoutWheelSettings: View {
                 )
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
+                if !wheel.isEnabled {
+                    Label(
+                        "The Layout Wheel is off. You can still edit it; changes apply when you turn it on.",
+                        systemImage: "info.circle"
+                    )
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                }
             }
 
             Section("Rings") {
@@ -40,6 +48,7 @@ struct LayoutWheelSettings: View {
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
                 HStack {
+                    Text("Wheel size")
                     Slider(
                         value: wheelScaleBinding,
                         in: LayoutWheelConfiguration.minimumScale ... LayoutWheelConfiguration.maximumScale,
@@ -54,9 +63,12 @@ struct LayoutWheelSettings: View {
                 .accessibilityElement(children: .contain)
                 .accessibilityLabel("Layout Wheel size")
                 Button(action: swapWheels) {
-                    Label("Swap wheel functions", systemImage: "arrow.triangle.2.circlepath")
+                    Label("Swap Inner and Outer Rings", systemImage: "arrow.triangle.2.circlepath")
                 }
-                .help("Exchange all inner-ring and outer-ring assignments")
+                .help(
+                    "Exchange all inner-ring and outer-ring assignments. In One Level, this "
+                        + "also exchanges them with the hidden outer ring."
+                )
             }
 
             Section("Sectors") {

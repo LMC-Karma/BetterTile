@@ -118,10 +118,24 @@ struct SettingsView: View {
             }
             .navigationSplitViewColumnWidth(min: 198, ideal: 210, max: 240)
         } detail: {
-            VStack(alignment: .leading, spacing: 0) {
-                SettingsPageHeader(destination: selection)
-                detail
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            Group {
+                if SettingsDestination.allCases.contains(where: matchesSearch) {
+                    VStack(alignment: .leading, spacing: 0) {
+                        SettingsPageHeader(destination: selection)
+                        detail
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    }
+                } else {
+                    // A zero-result search must not leave an unrelated page on screen.
+                    ContentUnavailableView {
+                        Label("No Matching Settings", systemImage: "magnifyingglass")
+                    } description: {
+                        Text("No settings page matches “\(search)”.")
+                    } actions: {
+                        Button("Clear Search") { search = "" }
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
             }
             .background(Color(nsColor: .windowBackgroundColor))
         }
@@ -940,7 +954,7 @@ private struct MenuBarSettings: View {
                     Button("Deselect All") { setActions([]) }
                         .disabled(selectedActions.isEmpty)
                 }
-                Text("Window mode, drag snapping, Repair Bento, Settings, and Quit stay in your menu.")
+                Text("Window mode, drag snapping, the Repair or Arrange action, Settings, and Quit stay in your menu.")
                     .font(.callout).foregroundStyle(.secondary)
             }
             .padding(.horizontal, 24)
@@ -1440,6 +1454,21 @@ private struct ZoneSettings: View {
 
     var body: some View {
         Form {
+            if !model.configuration.snappingEnabled {
+                Section {
+                    HStack {
+                        Label(
+                            "Drag snapping is off. Edits here are saved but have no effect until you turn it on.",
+                            systemImage: "info.circle"
+                        )
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                        Spacer()
+                        Button("Turn On") { model.updateConfiguration { $0.snappingEnabled = true } }
+                            .accessibilityLabel("Turn on drag snapping")
+                    }
+                }
+            }
             Section {
                 SnapZoneDiagram(
                     selectedArea: $selectedArea,
@@ -1858,13 +1887,14 @@ private struct ApplicationRuleSettings: View {
                                     .foregroundStyle(.secondary)
                             }
                             Spacer()
-                            Picker("", selection: ruleBinding(entry.bundleIdentifier)) {
+                            Picker("Rule for \(entry.name)", selection: ruleBinding(entry.bundleIdentifier)) {
                                 ForEach(ApplicationRule.allCases) { rule in
                                     Text(rule.title).tag(rule)
                                 }
                             }
                             .labelsHidden()
                             .frame(width: 190)
+                            .help("How BetterTile manages \(entry.name)")
                             Button {
                                 model.clearRule(for: entry.bundleIdentifier)
                             } label: {
@@ -1872,7 +1902,8 @@ private struct ApplicationRuleSettings: View {
                                     .foregroundStyle(.secondary)
                             }
                             .buttonStyle(.plain)
-                            .help("Manage this app normally again")
+                            .help("Manage \(entry.name) normally again")
+                            .accessibilityLabel("Remove rule for \(entry.name)")
                         }
                         .padding(.vertical, 2)
                     }
