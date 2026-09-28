@@ -572,3 +572,80 @@ private func boundary(
         branchID: branchID
     )
 }
+
+enum DividerLimitCase: CaseIterable { case straight, junction, linked }
+
+@Test(arguments: [ResizeFeedbackMode.ghost, .live], DividerLimitCase.allCases)
+@MainActor func dividerTurnsOrangeWhenANeighborIsAlreadyAtItsMinimum(feedback: ResizeFeedbackMode, shape: DividerLimitCase) throws {
+    _ = NSApplication.shared
+    let system = FakeWindowSystem()
+    let bounds = BTRect(x: -10_000, y: -10_000, width: 800, height: 600)
+    let display = DisplayID(rawValue: "main")
+    system.availableDisplays = [DisplaySnapshot(id: display, frame: bounds, visibleFrame: bounds, isMain: true)]
+    let ids = ["a", "b", "c", "d"].map { WindowID(rawValue: $0) }
+    let state = BentoLayoutState(root: .partition(BentoPartition(
+        axis: .vertical,
+        first: .partition(BentoPartition(axis: .horizontal, first: .leaf(ids[0]), second: .leaf(ids[1]))),
+        second: .partition(BentoPartition(axis: .horizontal, first: .leaf(ids[2]), second: .leaf(ids[3])))
+    )), metrics: BentoLayoutMetrics(paneGap: 12))
+    let linked = shape == .linked
+    system.windows = linked
+        ? [
+            WindowSnapshot(id: ids[0], processIdentifier: 1, frame: BTRect(x: bounds.minX, y: bounds.minY, width: 400, height: 600), displayID: display),
+            WindowSnapshot(id: ids[2], processIdentifier: 1, frame: BTRect(x: bounds.minX + 400, y: bounds.minY, width: 400, height: 600), displayID: display),
+        ]
+        : state.placements(in: bounds).map { WindowSnapshot(id: $0.windowID, processIdentifier: 1, frame: $0.frame, displayID: display) }
+    // The right column already sits at its minimum width.
+    for index in system.windows.indices where [ids[2], ids[3]].contains(system.windows[index].id) {
+        system.windows[index].constraints = WindowConstraints(minimumSize: BTSize(width: system.windows[index].frame.size.width, height: 80))
+    }
+    var config = BetterTileConfiguration()
+    config.resizeFeedbackMode = feedback
+    config.bentoInnerGap = 12
+    let controller = DividerOverlayController(coordinator: WindowCoordinator(system: system), configuration: config)
+    if !linked { controller.bentoStateProvider = { _ in state } }
+    let boundaries = linked
+        ? [BoundaryDescriptor(
+            id: "native", displayID: display, axis: .vertical, coordinate: bounds.minX + 400,
+            spanStart: bounds.minY, spanEnd: bounds.maxY, beforeWindowIDs: [ids[0]], afterWindowIDs: [ids[2]]
+        )]
+        : BentoBoundaryResolver().boundaries(state: state, windows: system.windows, displayID: display, bounds: bounds)
+    let start = shape == .junction
+        ? BTPoint(x: bounds.midX, y: bounds.midY)
+        : BTPoint(x: bounds.midX, y: bounds.minY + 80)
+    let interaction = try #require(DividerInteractionResolver.resolve(at: start, in: boundaries, hitWidth: 18, adjacencyTolerance: 6, paneGap: linked ? 0 : 12))
+    if shape == .junction { guard case .junction = interaction.kind else { Issue.record("Expected a junction"); return } }
+    let screen = try #require(NSScreen.screens.first)
+
+    controller.beginGesture(interaction: interaction, at: start)
+    defer { controller.hideAndCancel() }
+    #expect(!controller.dragLimit.isLimited)
+    // Moving away from the minimum is not limited.
+    controller.drag(to: CGPoint(x: start.x - 30, y: screen.frame.maxY - start.y))
+    controller.displayTick()
+    #expect(!controller.dragLimit.isLimited)
+    // Pushing into the window at its minimum turns the drag orange.
+    controller.drag(to: CGPoint(x: start.x + 50, y: screen.frame.maxY - start.y))
+    controller.displayTick()
+    #expect(controller.dragLimit.width)
+    #expect(controller.dragLimit.blockedTowardPositive)
+    if feedback == .ghost {
+        #expect(controller.limitedGhostWindowIDs.contains(ids[2]))
+        #expect(!controller.limitedGhostWindowIDs.contains(ids[0]))
+    }
+    controller.end()
+    #expect(!controller.dragLimit.isLimited)
+    #expect(controller.limitedGhostWindowIDs.isEmpty)
+}
+
+@Test @MainActor func limitedDividerCursorShowsOnlyTheOpenDirection() {
+    let grip = DividerHandleView(
+        frame: CGRect(x: 0, y: 0, width: 20, height: 168),
+        mode: .vertical(restingLength: 56, activeLength: 168), thickness: 6
+    )
+    #expect(grip.cursor == .columnResize)
+    grip.setLimit(DragLimit(width: true, blockedTowardPositive: true))
+    #expect(grip.cursor == .columnResize(directions: .left))
+    grip.setLimit(DragLimit())
+    #expect(grip.cursor == .columnResize)
+}
