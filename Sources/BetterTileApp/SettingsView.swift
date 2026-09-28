@@ -534,6 +534,15 @@ struct WindowLayoutSettings: View {
                 Text("A glass handle appears when the pointer approaches a valid shared edge.")
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
+#if DEBUG
+                Toggle("Native-led divider resize (experiment)", isOn: $model.nativeLedResizeExperiment)
+                Text(
+                    "Debug only. Dividers pass the click to the window edge, so macOS resizes "
+                        + "that window. Other windows show ghosts until release. Escape cancels."
+                )
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+#endif
                 DividerResizePreview(
                     thickness: model.configuration.dividerThickness,
                     feedback: model.configuration.resizeFeedbackMode,

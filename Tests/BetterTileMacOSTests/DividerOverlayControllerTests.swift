@@ -572,3 +572,60 @@ private func boundary(
         branchID: branchID
     )
 }
+
+@Test(arguments: [false, true])
+@MainActor func nativeLedDividerGhostsNeighborsAndCommitsOrRestoresOnRelease(cancel: Bool) throws {
+    _ = NSApplication.shared
+    let system = FakeWindowSystem()
+    let bounds = BTRect(x: -10_000, y: -10_000, width: 800, height: 600)
+    let display = DisplayID(rawValue: "main")
+    system.availableDisplays = [DisplaySnapshot(id: display, frame: bounds, visibleFrame: bounds, isMain: true)]
+    let ids = ["a", "b", "c", "d"].map { WindowID(rawValue: $0) }
+    let state = BentoLayoutState(root: .partition(BentoPartition(
+        axis: .vertical,
+        first: .partition(BentoPartition(axis: .horizontal, first: .leaf(ids[0]), second: .leaf(ids[1]))),
+        second: .partition(BentoPartition(axis: .horizontal, first: .leaf(ids[2]), second: .leaf(ids[3])))
+    )), metrics: BentoLayoutMetrics(paneGap: 12))
+    system.windows = state.placements(in: bounds).map {
+        WindowSnapshot(id: $0.windowID, processIdentifier: 1, frame: $0.frame, displayID: display)
+    }
+    let original = system.windows.map(\.frame)
+    var config = BetterTileConfiguration()
+    config.resizeFeedbackMode = .live // A native gesture still ghosts its neighbors.
+    config.bentoInnerGap = 12
+    let controller = DividerOverlayController(coordinator: WindowCoordinator(system: system), configuration: config)
+    controller.bentoStateProvider = { _ in state }
+    let boundaries = BentoBoundaryResolver().boundaries(state: state, windows: system.windows, displayID: display, bounds: bounds)
+    let start = BTPoint(x: bounds.midX + 14, y: bounds.midY - 12)
+    let interaction = try #require(DividerInteractionResolver.resolve(at: start, in: boundaries, hitWidth: 18, adjacencyTolerance: 6, paneGap: 12))
+    let screen = try #require(NSScreen.screens.first)
+    let release = CGPoint(x: start.x + 50, y: screen.frame.maxY - (start.y + 50))
+
+    controller.beginGesture(interaction: interaction, at: start, native: true)
+    defer { controller.hideAndCancel() }
+    #expect(controller.isDragging)
+    // The application resizes the grabbed window itself during the drag.
+    system.windows[0].frame.size.width += 50
+    system.windows[0].frame.size.height += 50
+    controller.drag(to: release)
+    controller.displayTick()
+    #expect(system.frameWriteCounts.isEmpty)
+    #expect(controller.nativeSourceID == ids[0])
+
+    if cancel {
+        controller.cancelActiveGesture()
+        #expect(!controller.isDragging)
+        // The button is still down; the grabbed window returns at release.
+        #expect(system.windows[0].frame != original[0])
+        #expect(controller.pendingNativeRestore != nil)
+        controller.receiveNativeMouse(.leftMouseUp, at: release)
+        #expect(system.windows.map(\.frame) == original)
+        #expect(controller.pendingNativeRestore == nil)
+    } else {
+        controller.receiveNativeMouse(.leftMouseUp, at: release)
+        #expect(!controller.isDragging)
+        let accepted = BentoBoundaryResolver().boundaries(state: state, windows: system.windows, displayID: display, bounds: bounds)
+        #expect(!accepted.isEmpty)
+        #expect(accepted.allSatisfy { abs($0.coordinate - (($0.axis == .vertical ? bounds.midX : bounds.midY) + 50)) < 0.001 })
+    }
+}

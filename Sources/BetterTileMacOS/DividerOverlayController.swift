@@ -269,6 +269,16 @@ public final class DividerOverlayController {
     public var rollbackFailureHandler: ((DisplayID, String?) -> Void)?
     public var gestureEndedHandler: (() -> Void)?
     public private(set) var isDragging = false
+    /// Debug experiment. The handle only draws: the click reaches the real
+    /// window edge, macOS resizes that window natively, and the other
+    /// participants show ghosts until release commits the whole layout.
+    public var nativeLedResize = false {
+        didSet {
+            guard nativeLedResize != oldValue, !isDragging else { return }
+            syncHoverMonitoring()
+            updateHover(at: NSEvent.mouseLocation)
+        }
+    }
 
     private let coordinator: WindowCoordinator
     private let displayTicks: ResizeDisplayLink
@@ -298,6 +308,18 @@ public final class DividerOverlayController {
     private var latestPlacements: [Placement] = []
     private var latestDragPoint: CGPoint?
     private var hasPendingDisplayUpdate = false
+    private var nativeMouseMonitors: [Any] = []
+    private var isNativeGesture = false
+    private(set) var nativeSourceID: WindowID?
+    /// Frames to restore at mouse-up after a cancelled native gesture. The
+    /// application keeps resizing its window until the button is released.
+    private(set) var pendingNativeRestore: [WindowID: BTRect]?
+
+    /// A native gesture always uses ghosts: only the grabbed window is live,
+    /// and the application moves that one itself.
+    private var feedbackMode: ResizeFeedbackMode {
+        isNativeGesture ? .ghost : configuration.resizeFeedbackMode
+    }
 
     public convenience init(coordinator: WindowCoordinator, configuration: BetterTileConfiguration) {
         self.init(coordinator: coordinator, configuration: configuration, displayTicks: ResizeDisplayLink())
@@ -435,7 +457,7 @@ public final class DividerOverlayController {
                 && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         )
         if !panel.isVisible || !active { panel.orderFrontRegardless() }
-        panel.ignoresMouseEvents = false
+        panel.ignoresMouseEvents = nativeLedResize
     }
 
     private func beginHoveredGesture() {
@@ -443,7 +465,7 @@ public final class DividerOverlayController {
         beginGesture(interaction: interaction, at: currentMousePoint())
     }
 
-    func beginGesture(interaction: DividerInteraction, at point: BTPoint) {
+    func beginGesture(interaction: DividerInteraction, at point: BTPoint, native: Bool = false) {
         guard let mainFrame = NSScreen.screens.first?.frame,
               let display = coordinator.system.displays().first(where: { $0.id == interaction.displayID }),
               let windows = try? coordinator.system.visibleWindows()
@@ -485,6 +507,8 @@ public final class DividerOverlayController {
         activeInteraction = interaction
         baselineInteraction = interaction
         isDragging = true
+        isNativeGesture = native
+        nativeSourceID = nil
         installEscapeMonitor()
         baselineWindows = windows
         displayBounds = display.visibleFrame
@@ -503,11 +527,11 @@ public final class DividerOverlayController {
         if let startPoint { presentHandle(for: interaction, near: startPoint, active: true) }
         displayTicks.start(
             on: handlePanel?.contentView,
-            maximumFramesPerSecond: configuration.resizeFeedbackMode == .live ? 60 : nil
+            maximumFramesPerSecond: feedbackMode == .live ? 60 : nil
         ) { [weak self] in
             self?.displayTick()
         }
-        switch configuration.resizeFeedbackMode {
+        switch feedbackMode {
         case .ghost:
             ghosts.show(
                 placements: latestPlacements,
@@ -532,7 +556,7 @@ public final class DividerOverlayController {
 
     private func applyDrag(to appKitPoint: CGPoint, validateParticipants: Bool) {
         guard let interaction = baselineInteraction, let startPoint, let displayBounds, var transaction else { return }
-        guard configuration.resizeFeedbackMode == .live || activeParticipantsArePresent() else {
+        guard feedbackMode == .live || activeParticipantsArePresent() else {
             cancelActiveGesture()
             return
         }
@@ -583,7 +607,7 @@ public final class DividerOverlayController {
             proposedInteraction = DividerInteraction(boundaries: [moved], kind: interaction.kind)
         }
 
-        switch configuration.resizeFeedbackMode {
+        switch feedbackMode {
         case .ghost:
             guard case .accepted = coordinator.preview(
                 transaction: &transaction,
@@ -596,8 +620,9 @@ public final class DividerOverlayController {
             proposedBentoState = proposedState
             self.transaction = transaction
             activeInteraction = proposedInteraction
+            if isNativeGesture { identifyNativeSource() }
             ghosts.show(
-                placements: placements,
+                placements: placements.filter { $0.windowID != nativeSourceID },
                 windows: baselineWindows,
                 below: handlePanel
             )
@@ -638,7 +663,7 @@ public final class DividerOverlayController {
         }
         guard let interaction = activeInteraction, var transaction else { clearGesture(); return }
         let succeeded: Bool
-        switch configuration.resizeFeedbackMode {
+        switch feedbackMode {
         case .ghost:
             let outcome = coordinator.commit(transaction: &transaction, placements: latestPlacements)
             succeeded = outcome.isApplied
@@ -664,11 +689,18 @@ public final class DividerOverlayController {
                 bentoStateChangedHandler?(interaction.displayID, proposedBentoState, frames, transaction.baselineFrames)
             }
             layoutChangedHandler?(interaction.displayID, frames)
+        } else if isNativeGesture {
+            // The application already moved the grabbed window. A rejected
+            // commit must not leave it overlapping the unchanged neighbors.
+            restore(transaction.baselineFrames)
         }
         clearGesture()
     }
 
     func cancelActiveGesture() {
+        if isNativeGesture, let transaction {
+            pendingNativeRestore = transaction.baselineFrames
+        }
         if let transaction {
             let outcome = coordinator.cancel(transaction: transaction)
             if let displayID = activeInteraction?.displayID {
@@ -698,6 +730,8 @@ public final class DividerOverlayController {
         latestPlacements = []
         latestDragPoint = nil
         hasPendingDisplayUpdate = false
+        isNativeGesture = false
+        nativeSourceID = nil
         displayTicks.stop()
         removeEscapeMonitor()
         let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
@@ -715,6 +749,7 @@ public final class DividerOverlayController {
     }
 
     private func syncHoverMonitoring() {
+        syncNativeMouseMonitoring()
         if boundaries.isEmpty {
             if let globalMouseMonitor { NSEvent.removeMonitor(globalMouseMonitor) }
             if let localMouseMonitor { NSEvent.removeMonitor(localMouseMonitor) }
@@ -735,6 +770,71 @@ public final class DividerOverlayController {
                 return event
             }
         }
+    }
+
+    private func syncNativeMouseMonitoring() {
+        let needed = (nativeLedResize && !boundaries.isEmpty) || isNativeGesture || pendingNativeRestore != nil
+        if !needed {
+            nativeMouseMonitors.forEach(NSEvent.removeMonitor)
+            nativeMouseMonitors = []
+            return
+        }
+        guard nativeMouseMonitors.isEmpty else { return }
+        // Global monitors see the click because the handle ignores it; the
+        // application under the pointer receives and handles the edge drag.
+        nativeMouseMonitors = [NSEvent.EventTypeMask.leftMouseDown, .leftMouseDragged, .leftMouseUp].compactMap { mask in
+            NSEvent.addGlobalMonitorForEvents(matching: mask) { [weak self] event in
+                let type = event.type
+                let location = NSEvent.mouseLocation
+                Task { @MainActor in self?.receiveNativeMouse(type, at: location) }
+            }
+        }
+    }
+
+    func receiveNativeMouse(_ type: NSEvent.EventType, at location: CGPoint) {
+        switch type {
+        case .leftMouseDown:
+            guard nativeLedResize, !isDragging, pendingNativeRestore == nil else { return }
+            updateHover(at: location)
+            guard let interaction = hoveredInteraction else { return }
+            beginGesture(interaction: interaction, at: topLeftPoint(location), native: true)
+            syncNativeMouseMonitoring()
+        case .leftMouseDragged:
+            if isNativeGesture { drag(to: location) }
+        case .leftMouseUp:
+            if let frames = pendingNativeRestore {
+                pendingNativeRestore = nil
+                restore(frames)
+                syncHoverMonitoring()
+            } else if isNativeGesture {
+                end(at: location)
+                syncHoverMonitoring()
+            }
+        default:
+            break
+        }
+    }
+
+    /// The window that changed from its baseline is the one the application
+    /// is resizing. Reads stop once it is known.
+    private func identifyNativeSource() {
+        guard nativeSourceID == nil, let transaction else { return }
+        let ids = Set(transaction.baselineFrames.keys)
+        let current: [WindowSnapshot]? = if let targeted = coordinator.system as? any TargetedWindowSystem {
+            try? targeted.windowSnapshots(ids: ids)
+        } else {
+            try? coordinator.system.visibleWindows().filter { ids.contains($0.id) }
+        }
+        nativeSourceID = current?.first { snapshot in
+            transaction.baselineFrames[snapshot.id].map { !snapshot.frame.approximatelyEquals($0, tolerance: 1) } ?? false
+        }?.id
+    }
+
+    private func restore(_ frames: [WindowID: BTRect]) {
+        _ = coordinator.applyPlacements(
+            frames.map { Placement(windowID: $0.key, frame: $0.value) }.sorted { $0.windowID < $1.windowID },
+            recordHistory: false
+        )
     }
 
     private func installEscapeMonitor() {

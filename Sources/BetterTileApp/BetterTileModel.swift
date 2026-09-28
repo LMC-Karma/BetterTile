@@ -66,6 +66,15 @@ final class BetterTileModel {
     private(set) var lastActionFeedback: ResultPillFeedback?
     private(set) var activeDisplayID: DisplayID?
     private(set) var layoutWheelMonitoringFailure: String?
+#if DEBUG
+    /// Debug-only experiment; not part of the persisted configuration.
+    var nativeLedResizeExperiment = UserDefaults.standard.bool(forKey: "NativeLedResizeExperiment") {
+        didSet {
+            UserDefaults.standard.set(nativeLedResizeExperiment, forKey: "NativeLedResizeExperiment")
+            dividerResize.nativeLedResize = nativeLedResizeExperiment
+        }
+    }
+#endif
 
     private let system: any BetterTileWindowSystem
     private let coordinator: WindowCoordinator
@@ -148,6 +157,9 @@ final class BetterTileModel {
         layoutWheel = LayoutWheelController(configuration: loaded)
         sharedGestureEvents = SharedGestureEventMonitor()
         dividerResize = DividerOverlayController(coordinator: coordinator, configuration: loaded)
+#if DEBUG
+        dividerResize.nativeLedResize = nativeLedResizeExperiment
+#endif
         layoutWheel.suspend()
 
         shortcuts.isEnabled = loaded.keyboardShortcutsEnabled
