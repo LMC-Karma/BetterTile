@@ -135,6 +135,7 @@ func degradedTabbedResizeRestoresItsBaselineOrStopsAutomaticPlacement(failRestor
     system.windows.append(second)
     let model = makeModel(system: system)
     defer { model.shutdown() }
+    model.configuration.resizeFeedbackMode = .live
     model.configuration.defaultTabbedPreset = .columns
     model.setActiveMode(.tabbed)
     try #require(await waitFor { model.activeTabbedState?.windowIDs.count == 2 })
@@ -166,6 +167,7 @@ func degradedTabbedResizeRestoresItsBaselineOrStopsAutomaticPlacement(failRestor
     let system = FakeAppWindowSystem()
     let model = makeModel(system: system)
     defer { model.shutdown() }
+    model.configuration.resizeFeedbackMode = .live
     model.configuration.defaultTabbedPreset = .columns
     model.setActiveMode(.tabbed)
     try #require(await waitFor { model.activeTabbedState?.panes.count == 2 })
@@ -202,6 +204,7 @@ func degradedTabbedResizeRestoresItsBaselineOrStopsAutomaticPlacement(failRestor
     let system = FakeAppWindowSystem()
     let model = makeModel(system: system)
     defer { model.shutdown() }
+    model.configuration.resizeFeedbackMode = .live
     model.configuration.defaultTabbedPreset = .columns
     model.setActiveMode(.tabbed)
     try #require(await waitFor { model.activeTabbedState?.panes.count == 2 })
@@ -321,6 +324,7 @@ func degradedTabbedResizeRestoresItsBaselineOrStopsAutomaticPlacement(failRestor
     let system = FakeAppWindowSystem()
     let model = makeModel(system: system)
     defer { model.shutdown() }
+    model.configuration.resizeFeedbackMode = .live
     model.configuration.defaultTabbedPreset = .columns
     model.setActiveMode(.tabbed)
     try #require(await waitFor { model.activeTabbedState?.panes.count == 2 })
@@ -366,6 +370,7 @@ func degradedTabbedResizeRestoresItsBaselineOrStopsAutomaticPlacement(failRestor
     let system = FakeAppWindowSystem()
     let model = makeModel(system: system)
     defer { model.shutdown() }
+    model.configuration.resizeFeedbackMode = .live
     model.configuration.defaultTabbedPreset = .columns
     model.setActiveMode(.tabbed)
     try #require(await waitFor { model.activeTabbedState?.panes.count == 2 })
@@ -604,6 +609,7 @@ func nativeSpaceChangeCancelsActiveTabbedResizeBeforeReturning(destroyedDuringRe
     )
     let model = makeModel(system: system)
     defer { model.shutdown() }
+    model.configuration.resizeFeedbackMode = .live
     model.configuration.singleWindowPlacement = nil
     model.setActiveMode(.tabbed)
     try #require(await waitFor { model.activeTabbedState?.panes.count == 1 })
@@ -731,4 +737,44 @@ func nativeSpaceChangeCancelsActiveTabbedResizeBeforeReturning(destroyedDuringRe
     model.setActiveMode(.manual)
     try #require(await waitFor { model.activeLayoutMode == .manual })
     #expect(system.windows[0].frame == frame)
+}
+
+@Test @MainActor func ghostTabbedDividerDragWritesNothingUntilReleaseAndCancelKeepsFrames() async throws {
+    _ = NSApplication.shared
+    let system = FakeAppWindowSystem()
+    var second = system.windows[0]
+    second.id = WindowID(rawValue: "second")
+    system.windows.append(second)
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    model.configuration.resizeFeedbackMode = .ghost
+    model.configuration.defaultTabbedPreset = .columns
+    model.setActiveMode(.tabbed)
+    try #require(await waitFor { model.activeTabbedState?.windowIDs.count == 2 })
+    let baseline = try #require(model.activeTabbedState)
+    let divider = try #require(baseline.dividers(in: system.mainDisplay.visibleFrame).first)
+    let settledFrames = system.windows.map(\.frame)
+
+    // Cancel: no window ever moves.
+    let writes = system.frameWriteCounts
+    model.performTabbed(.beginResize)
+    model.performTabbed(.resize(divider.id, 0.7))
+    #expect(system.frameWriteCounts == writes)
+    model.performTabbed(.cancelResize)
+    #expect(system.windows.map(\.frame) == settledFrames)
+    #expect(model.activeTabbedState == baseline)
+
+    // Release: the proposed layout is written once and settles.
+    model.performTabbed(.beginResize)
+    model.performTabbed(.resize(divider.id, 0.65))
+    #expect(system.frameWriteCounts == writes)
+    model.performTabbed(.endResize)
+    try #require(await waitFor(timeout: .seconds(2)) {
+        model.activeTabbedState?.dividers(in: system.mainDisplay.visibleFrame).first?.ratio == 0.65
+    })
+    let released = try #require(model.activeTabbedState)
+    let expected = try released.placements(in: system.mainDisplay.visibleFrame, windows: system.windows)
+    #expect(await waitFor(timeout: .seconds(2)) {
+        expected.allSatisfy { placement in system.windows.first(where: { $0.id == placement.windowID })?.frame == placement.frame }
+    })
 }

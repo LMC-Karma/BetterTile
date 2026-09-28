@@ -837,18 +837,12 @@ public final class DividerOverlayController {
         }?.id
     }
 
-    /// Windows this drag has shrunk to their minimum size. The engines
-    /// clamp at the minimum, so reaching it means the divider cannot go on.
     private func limitedWindowIDs(in placements: [Placement]) -> Set<WindowID> {
-        let baseline = Dictionary(baselineWindows.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        return Set(placements.compactMap { placement in
-            guard let window = baseline[placement.windowID] else { return nil }
-            let minimum = window.constraints.minimumSize
-            let size = placement.frame.size
-            let atWidth = size.width < window.frame.size.width - 0.5 && size.width <= minimum.width + 0.5
-            let atHeight = size.height < window.frame.size.height - 0.5 && size.height <= minimum.height + 0.5
-            return atWidth || atHeight ? placement.windowID : nil
-        })
+        ResizeLimits.windowsAtMinimum(
+            placements,
+            windows: baselineWindows,
+            baselineFrames: transaction?.baselineFrames ?? [:]
+        )
     }
 
     private func restore(_ frames: [WindowID: BTRect]) {

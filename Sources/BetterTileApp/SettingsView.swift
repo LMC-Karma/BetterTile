@@ -515,7 +515,7 @@ struct WindowLayoutSettings: View {
                     Text("Live Resize").tag(ResizeFeedbackMode.live)
                 }
                 .pickerStyle(.segmented)
-                Text("Controls shared dividers in Native and Bento. Tabbed panes always resize live.")
+                Text("Controls divider drags in Native, Bento, and Tabbed.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                 HStack {

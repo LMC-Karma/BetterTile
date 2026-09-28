@@ -36,6 +36,8 @@ public final class TabbedOverlayController {
     private var canUndo = false
     private let displayTicks: ResizeDisplayLink
     private var pendingResize: (id: UUID, ratio: Double)?
+    private let ghosts = GhostFrameOverlayController()
+    private var resizingDividerID: UUID?
 
     public convenience init() {
         self.init(displayTicks: ResizeDisplayLink())
@@ -135,6 +137,7 @@ public final class TabbedOverlayController {
 
     public func hide() {
         cancelInteraction()
+        ghosts.hide()
         for panel in Array(panes.values) + Array(handles.values) { panel.orderOut(nil) }
     }
 
@@ -368,6 +371,22 @@ public final class TabbedOverlayController {
         let length = (divider.vertical ? divider.bounds.size.width : divider.bounds.size.height) - TabbedLayoutState.gap
         let offset = divider.vertical ? point.x - divider.bounds.minX : point.y - divider.bounds.minY
         pendingResize = (divider.id, offset / max(1, length))
+        resizingDividerID = divider.id
+    }
+
+    /// Ghost-mode Tabbed resizing: the panes' windows stay put while ghosts
+    /// and the tab strips show the proposed layout.
+    public func showResizeGhosts(placements: [Placement], windows: [WindowSnapshot], limitedWindowIDs: Set<WindowID> = []) {
+        ghosts.show(
+            placements: placements,
+            windows: windows,
+            below: resizingDividerID.flatMap { handles[$0] },
+            limitedWindowIDs: limitedWindowIDs
+        )
+    }
+
+    public func hideResizeGhosts(retractingTo baselineFrames: [WindowID: BTRect]? = nil) {
+        ghosts.hide(retractingTo: baselineFrames)
     }
 
     func displayTick() {

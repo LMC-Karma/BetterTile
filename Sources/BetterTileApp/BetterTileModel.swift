@@ -3182,7 +3182,22 @@ extension BetterTileModel {
             statusMessage = error.localizedDescription
             return
         }
-        if var transaction = resize.transaction {
+        if var transaction = resize.transaction, configuration.resizeFeedbackMode == .ghost {
+            // Ghost Preview: windows stay put until release; the release path
+            // below writes the proposed placements and settles them.
+            if case let .failed(reason) = coordinator.preview(transaction: &transaction, placements: placements) {
+                statusMessage = reason
+                return
+            }
+            resize.transaction = transaction
+            tabbedOverlays[display.id]?.showResizeGhosts(
+                placements: placements,
+                windows: resize.windows,
+                limitedWindowIDs: ResizeLimits.windowsAtMinimum(
+                    placements, windows: resize.windows, baselineFrames: transaction.baselineFrames
+                )
+            )
+        } else if var transaction = resize.transaction {
             switch coordinator.applyLive(
                 transaction: &transaction,
                 placements: placements,
@@ -3231,6 +3246,7 @@ extension BetterTileModel {
     ) {
         guard let resize = tabbedResizes.removeValue(forKey: display.id) else { return }
         defer { if tabbedNeedsFocusRefresh { handleTabbedFocus() } }
+        tabbedOverlays[display.id]?.hideResizeGhosts(retractingTo: cancelled ? resize.transaction?.baselineFrames : nil)
         var finalSession = session
         var windows = resize.windows
         if cancelled {
