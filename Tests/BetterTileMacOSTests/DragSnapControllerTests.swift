@@ -400,3 +400,32 @@ import Testing
     #expect(!controller.isGestureActive)
     #expect(system.windows[0].frame == BTRect(x: 203, y: 200, width: 600, height: 400))
 }
+
+@Test @MainActor func dragSnapEvaluatesOnlyTheNewestSampleEachDisplayFrameAndFlushesRelease() {
+    let system = FakeWindowSystem()
+    let controller = DragSnapController(
+        coordinator: WindowCoordinator(system: system),
+        configuration: BetterTileConfiguration(),
+        displayTicks: ResizeDisplayLink(automatic: false)
+    )
+    controller.setUsesSharedGestureEvents(true)
+    func send(_ kind: GlobalGestureEventKind, x: Double) {
+        controller.handleSharedGestureEvent(GlobalGestureEvent(kind: kind, position: BTPoint(x: x, y: 400), button: 0, modifiers: [], timestamp: 1))
+    }
+    controller.handleSharedGestureEvent(GlobalGestureEvent(kind: .leftMouseDown, position: BTPoint(x: 300, y: 220), button: 0, modifiers: [], timestamp: 1))
+    system.windows[0].frame.origin.x += 3
+    send(.leftMouseDragged, x: 400)
+    // The first sample resolves the window immediately.
+    #expect(controller.isGestureActive)
+    #expect(!controller.hasPendingDragSample)
+    send(.leftMouseDragged, x: 200)
+    send(.leftMouseDragged, x: 1)
+    #expect(controller.hasPendingDragSample)
+    controller.displayTick()
+    #expect(!controller.hasPendingDragSample)
+    // Release applies its own position even when a sample is still queued.
+    send(.leftMouseDragged, x: 500)
+    send(.leftMouseUp, x: 1)
+    #expect(system.windows[0].frame == BTRect(x: 0, y: 0, width: 500, height: 800))
+    #expect(!controller.hasPendingDragSample)
+}

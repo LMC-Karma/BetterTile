@@ -143,13 +143,22 @@ public final class DragSnapController {
     private var mouseDownPoint: BTPoint?
     private var resolvedDragTarget = false
     private var isStarted = false
+    private let displayTicks: ResizeDisplayLink
+    /// The newest drag sample not yet evaluated. A high-rate pointer sends
+    /// events faster than the display can show a new preview.
+    private var pendingDragEvent: GlobalGestureEvent?
 
     private static let bentoCueArmDelay = 0.12
     private static let bentoReflowPreviewDelay = 0.22
 
-    public init(coordinator: WindowCoordinator, configuration: BetterTileConfiguration) {
+    public convenience init(coordinator: WindowCoordinator, configuration: BetterTileConfiguration) {
+        self.init(coordinator: coordinator, configuration: configuration, displayTicks: ResizeDisplayLink())
+    }
+
+    init(coordinator: WindowCoordinator, configuration: BetterTileConfiguration, displayTicks: ResizeDisplayLink) {
         self.coordinator = coordinator
         self.configuration = configuration
+        self.displayTicks = displayTicks
     }
 
     public func start() {
@@ -298,10 +307,21 @@ public final class DragSnapController {
                 pressedMouseButtons: NSEvent.pressedMouseButtons
             ) else { return }
             mousePressed(event)
-        case .leftMouseDragged where isGestureActive: mouseDragged(event)
+        case .leftMouseDragged where isGestureActive:
+            // The first sample resolves the dragged window at once. Later
+            // samples keep only the newest and run once per display frame.
+            if resolvedDragTarget {
+                pendingDragEvent = event
+            } else {
+                mouseDragged(event)
+                if isGestureActive {
+                    displayTicks.start(screen: NSScreen.main) { [weak self] in self?.displayTick() }
+                }
+            }
         case .leftMouseUp where isGestureActive:
             // The final position/modifiers can differ from the last delivered
             // drag sample. Never commit a stale edge or a suppressed snap.
+            pendingDragEvent = nil
             mouseDragged(event)
             mouseReleased()
         case .leftMouseDragged, .leftMouseUp: return
@@ -313,6 +333,14 @@ public final class DragSnapController {
         pressedMouseButtons: Int
     ) -> Bool {
         source == .eventTap || pressedMouseButtons & 1 == 1
+    }
+
+    var hasPendingDragSample: Bool { pendingDragEvent != nil }
+
+    func displayTick() {
+        guard let event = pendingDragEvent else { return }
+        pendingDragEvent = nil
+        mouseDragged(event)
     }
 
     private func mousePressed(_ event: GlobalGestureEvent) {
@@ -608,6 +636,8 @@ public final class DragSnapController {
         bentoDragDisplayID = nil
         mouseDownPoint = nil
         resolvedDragTarget = false
+        pendingDragEvent = nil
+        displayTicks.stop()
         removeGestureMonitors()
         applyPendingEventTapHandoff()
     }
