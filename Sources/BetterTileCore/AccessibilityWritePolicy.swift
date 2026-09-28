@@ -72,8 +72,10 @@ public enum EnhancedUserInterfaceCoordinator {
 /// The size/position/size sequence exists because several applications clamp a
 /// requested position against their current size. When the size is not changing
 /// the leading size write is provably redundant: it asks the window for the
-/// value it already has. The trailing size write is kept in every case because
-/// it is what corrects an application that clamped during the position write.
+/// value it already has. The trailing size write corrects an application that
+/// clamped during the position write. Intermediate samples of a continuous
+/// gesture skip it: the next sample or the release corrects any clamp, and a
+/// size write costs several position writes.
 public struct FrameWritePlan: Hashable, Sendable {
     public var writesInitialSize: Bool
     public var writesPosition: Bool
@@ -99,17 +101,18 @@ public enum FrameWritePlanner {
     public static func plan(
         target: BTRect,
         knownCurrentFrame: BTRect?,
-        tolerance: Double = defaultSizeTolerance
+        tolerance: Double = defaultSizeTolerance,
+        correctsClamping: Bool = true
     ) -> FrameWritePlan {
         guard let knownCurrentFrame else {
-            return FrameWritePlan(writesInitialSize: true, writesPosition: true, writesFinalSize: true)
+            return FrameWritePlan(writesInitialSize: true, writesPosition: true, writesFinalSize: correctsClamping)
         }
         let sizeIsUnchanged = abs(knownCurrentFrame.size.width - target.size.width) <= tolerance
             && abs(knownCurrentFrame.size.height - target.size.height) <= tolerance
         return FrameWritePlan(
             writesInitialSize: !sizeIsUnchanged,
             writesPosition: true,
-            writesFinalSize: true
+            writesFinalSize: correctsClamping
         )
     }
 }

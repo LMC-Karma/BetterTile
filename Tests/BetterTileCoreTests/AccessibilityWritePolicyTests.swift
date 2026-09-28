@@ -115,3 +115,28 @@ private let target = BTRect(x: 100, y: 100, width: 600, height: 400)
     let changes = ConfigurationChangeSet.between(BetterTileConfiguration(), updated)
     #expect(changes.contains(.accessibilityWrites))
 }
+
+@Test func intermediateGestureSamplesSkipTheClampCorrectingSizeWrite() {
+    let target = BTRect(x: 10, y: 20, width: 300, height: 200)
+    let changing = FrameWritePlanner.plan(
+        target: target,
+        knownCurrentFrame: BTRect(x: 0, y: 20, width: 310, height: 200),
+        correctsClamping: false
+    )
+    #expect(changing == FrameWritePlan(writesInitialSize: true, writesPosition: true, writesFinalSize: false))
+    let unknown = FrameWritePlanner.plan(target: target, knownCurrentFrame: nil, correctsClamping: false)
+    #expect(unknown.writeCount == 2)
+}
+
+@Test func minimumSizeLimitNamesOnlyWindowsThatShrankToTheirMinimum() {
+    let display = DisplayID(rawValue: "d")
+    var narrow = WindowSnapshot(id: WindowID(rawValue: "narrow"), processIdentifier: 1, frame: BTRect(x: 0, y: 0, width: 500, height: 400), displayID: display)
+    narrow.constraints = WindowConstraints(minimumSize: BTSize(width: 300, height: 80))
+    let wide = WindowSnapshot(id: WindowID(rawValue: "wide"), processIdentifier: 1, frame: BTRect(x: 500, y: 0, width: 500, height: 400), displayID: display)
+    let baseline = [narrow.id: narrow.frame, wide.id: wide.frame]
+    let placements = [
+        Placement(windowID: narrow.id, frame: BTRect(x: 0, y: 0, width: 300, height: 400)),
+        Placement(windowID: wide.id, frame: BTRect(x: 300, y: 0, width: 700, height: 400)),
+    ]
+    #expect(ResizeLimits.windowsAtMinimum(placements, windows: [narrow, wide], baselineFrames: baseline) == [narrow.id])
+}

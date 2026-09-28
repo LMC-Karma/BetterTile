@@ -96,7 +96,8 @@ Continuous resize gestures keep only the newest pointer or observed-window
 sample and consume it on an AppKit display-link tick. Live Accessibility batches
 run at no more than 60 Hz; ghost-only feedback may follow the display's native
 rate. Intermediate ticks reuse one frame transaction, skip unchanged targets,
-and avoid repeated participant sweeps. Mouse-up bypasses coalescing, validates
+and avoid repeated participant sweeps. They also skip the trailing
+clamp-correcting size write; the next tick or the release corrects a clamp. Mouse-up bypasses coalescing, validates
 the participants, and applies the exact final geometry. Linked resizing writes
 only the neighboring windows; the application keeps control of the window the
 user is resizing.
