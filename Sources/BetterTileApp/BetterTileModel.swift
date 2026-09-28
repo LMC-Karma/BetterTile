@@ -38,6 +38,12 @@ private struct ActiveTabbedResize {
     var windows: [WindowSnapshot]
 }
 
+private struct QueuedTabbedResize {
+    let sessionID: DesktopSessionID
+    var sample: (id: UUID, ratio: Double)?
+    var ended = false
+}
+
 @Observable
 @MainActor
 final class BetterTileModel {
@@ -76,6 +82,7 @@ final class BetterTileModel {
     private var tabbedOverlays: [DisplayID: TabbedOverlayController] = [:]
     private var tabbedTasks: [DisplayID: Task<Void, Never>] = [:]
     private var tabbedQueuedIntents: [DisplayID: TabbedUIIntent] = [:]
+    private var tabbedQueuedResizes: [DisplayID: QueuedTabbedResize] = [:]
     private var tabbedUndo: [DesktopSessionID: [TabbedLayoutState]] = [:]
     private var tabbedResizes: [DisplayID: ActiveTabbedResize] = [:]
     private var tabbedNeedsRefresh: Set<DisplayID> = []
@@ -1558,6 +1565,7 @@ final class BetterTileModel {
     private func beginActiveSpaceStabilization() {
         tabbedFocusTask?.cancel()
         tabbedQueuedIntents.removeAll()
+        tabbedQueuedResizes.removeAll()
         for (displayID, resize) in tabbedResizes {
             guard let session = sessionStore.session(for: displayID),
                   session.id == resize.sessionID,
@@ -3006,13 +3014,7 @@ extension BetterTileModel {
                 }
                 self.presentActionResult(succeeded: false, error: outcome.failureReason, displayID: display.id)
             }
-            if let next = self.tabbedQueuedIntents.removeValue(forKey: display.id) {
-                self.handleTabbed(next, on: display.id)
-            } else if let cancelled = self.tabbedResizeEnds.removeValue(forKey: display.id) {
-                self.handleTabbed(cancelled ? .cancelResize : .endResize, on: display.id)
-            } else if self.tabbedNeedsRefresh.remove(display.id) != nil {
-                self.refreshActiveWindows(force: false)
-            }
+            self.drainTabbedQueuedIntent(on: display.id, sessionID: original.id)
             if self.tabbedNeedsFocusRefresh { self.handleTabbedFocus() }
         }
     }
@@ -3038,11 +3040,29 @@ extension BetterTileModel {
         }
         if tabbedTasks[displayID] != nil {
             switch intent {
-            case .endResize: tabbedResizeEnds[displayID] = false
-            case .cancelResize:
+            case .beginResize:
                 tabbedQueuedIntents.removeValue(forKey: displayID)
-                tabbedResizeEnds[displayID] = true
-            default: tabbedQueuedIntents[displayID] = intent
+                tabbedResizeEnds.removeValue(forKey: displayID)
+                tabbedQueuedResizes[displayID] = QueuedTabbedResize(sessionID: session.id)
+            case let .resize(id, ratio):
+                if var queued = tabbedQueuedResizes[displayID], !queued.ended {
+                    queued.sample = (id, ratio)
+                    tabbedQueuedResizes[displayID] = queued
+                }
+            case .endResize:
+                if var queued = tabbedQueuedResizes[displayID] {
+                    queued.ended = true
+                    tabbedQueuedResizes[displayID] = queued
+                } else {
+                    tabbedResizeEnds[displayID] = false
+                }
+            case .cancelResize:
+                tabbedQueuedResizes.removeValue(forKey: displayID)
+                tabbedQueuedIntents.removeValue(forKey: displayID)
+                tabbedResizeEnds.removeValue(forKey: displayID)
+            default:
+                tabbedQueuedResizes.removeValue(forKey: displayID)
+                tabbedQueuedIntents[displayID] = intent
             }
             return
         }
@@ -3283,11 +3303,7 @@ extension BetterTileModel {
             guard let self else { return }
             defer {
                 self.tabbedTasks[display.id] = nil
-                if let next = self.tabbedQueuedIntents.removeValue(forKey: display.id) {
-                    self.handleTabbed(next, on: display.id)
-                } else if self.tabbedNeedsRefresh.remove(display.id) != nil {
-                    self.refreshActiveWindows(force: false)
-                }
+                self.drainTabbedQueuedIntent(on: display.id, sessionID: session.id)
                 if self.tabbedNeedsFocusRefresh { self.handleTabbedFocus() }
             }
             let outcome = await self.coordinator.settleAuthoritativePlacements(placements)
@@ -3323,6 +3339,29 @@ extension BetterTileModel {
             }
             self.statusMessage = outcome.failureReason
             self.presentActionResult(succeeded: false, error: outcome.failureReason, displayID: display.id)
+        }
+    }
+
+    private func drainTabbedQueuedIntent(on displayID: DisplayID, sessionID: DesktopSessionID) {
+        let queuedResize = tabbedQueuedResizes.removeValue(forKey: displayID)
+        let queuedIntent = tabbedQueuedIntents.removeValue(forKey: displayID)
+        let resizeEnd = tabbedResizeEnds.removeValue(forKey: displayID)
+        let needsRefresh = tabbedNeedsRefresh.remove(displayID) != nil
+        guard !Task.isCancelled, !isStabilizingSpace, !isShutDown,
+              sessionStore.session(for: displayID)?.id == sessionID,
+              activeMode(for: displayID) == .tabbed else { return }
+        if let queuedResize, queuedResize.sessionID == sessionID {
+            handleTabbed(.beginResize, on: displayID)
+            if let sample = queuedResize.sample {
+                handleTabbed(.resize(sample.id, sample.ratio), on: displayID)
+            }
+            if queuedResize.ended { handleTabbed(.endResize, on: displayID) }
+        } else if let queuedIntent {
+            handleTabbed(queuedIntent, on: displayID)
+        } else if let resizeEnd {
+            handleTabbed(resizeEnd ? .cancelResize : .endResize, on: displayID)
+        } else if needsRefresh {
+            refreshActiveWindows(force: false)
         }
     }
 
@@ -3370,6 +3409,8 @@ extension BetterTileModel {
 
     private func leaveTabbed(displayID: DisplayID, destination: LayoutMode) {
         tabbedQueuedIntents.removeValue(forKey: displayID)
+        tabbedQueuedResizes.removeValue(forKey: displayID)
+        tabbedResizeEnds.removeValue(forKey: displayID)
         let pending = tabbedTasks[displayID]
         pending?.cancel()
         Task { @MainActor [weak self] in
