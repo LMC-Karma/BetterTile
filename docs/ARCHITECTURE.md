@@ -109,6 +109,7 @@ without changing the partition ratios, boundary identities, or locks. Removing
 the last tab leaves the pane in place.
 
 Adopting a Bento layout preserves its pane boundaries and floating windows.
+An empty Bento layout starts with one empty pane so it can receive a tab.
 Content frames reserve a caller-supplied strip height above each window. This
 shortens the window's content frame; it does not promise unchanged window
 frames when entering Tabbed. Minimum-size fitting uses the selected tab only,
