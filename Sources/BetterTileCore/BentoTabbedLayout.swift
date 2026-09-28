@@ -19,8 +19,10 @@ public struct BentoTabbedLayoutState: Hashable, Sendable {
     public private(set) var layout: BentoLayoutState
     public private(set) var panes: [BentoTabbedPane]
 
-    public init?(adopting layout: BentoLayoutState) {
+    /// - Parameter contentTopInset: Space for the tab strip above each window.
+    public init?(adopting layout: BentoLayoutState, contentTopInset: Double = 0) {
         var adopted = layout
+        adopted.metrics.contentTopInset = BentoLayoutMetrics(contentTopInset: contentTopInset).contentTopInset
         var panes: [BentoTabbedPane] = []
         var windowIDs = Set<WindowID>()
         var paneIDs = Set<UUID>()
@@ -92,7 +94,7 @@ public struct BentoTabbedLayoutState: Hashable, Sendable {
     /// Full pane frames, including the area reserved for the tab strip.
     public func paneFrames(in bounds: BTRect) -> [UUID: BTRect]? {
         guard Self.valid(bounds) else { return nil }
-        let occupied = Dictionary(uniqueKeysWithValues: layout.placements(in: bounds).map { ($0.windowID, $0.frame) })
+        let occupied = layout.paneFrames(in: bounds)
         let vacant = layout.vacantFrames(in: bounds)
         var result: [UUID: BTRect] = [:]
         for pane in panes {
@@ -102,28 +104,24 @@ public struct BentoTabbedLayoutState: Hashable, Sendable {
         return result
     }
 
-    /// Window frames below the strip. Empty panes may have zero content height.
-    public func contentFrames(in bounds: BTRect, stripHeight: Double) -> [UUID: BTRect]? {
-        guard stripHeight.isFinite, stripHeight >= 0, let frames = paneFrames(in: bounds) else { return nil }
-        return frames.mapValues { frame in
-            BTRect(x: frame.minX, y: frame.minY + min(stripHeight, frame.size.height),
-                   width: frame.size.width, height: max(0, frame.size.height - stripHeight))
-        }
+    /// Window frames below the strip, from the layout's content reserve.
+    /// Empty panes may have zero content height.
+    public func contentFrames(in bounds: BTRect) -> [UUID: BTRect]? {
+        paneFrames(in: bounds)?.mapValues { layout.metrics.contentFrame(forPane: $0) }
     }
 
-    /// Fits selected minimum sizes using Bento's solver. A strip is reserved
-    /// inside each occupied pane; hidden tabs contribute no minimum. Exact and
-    /// maximum sizes, including fixed-size windows, require runtime validation.
-    public func fitted(in bounds: BTRect, constraints: [WindowID: WindowConstraints], stripHeight: Double) -> Self? {
-        guard Self.valid(bounds), stripHeight.isFinite, stripHeight >= 0 else { return nil }
+    /// Fits selected minimum sizes using Bento's solver, which adds the strip
+    /// reserve to each pane's minimum height. Hidden tabs contribute no
+    /// minimum. Exact and maximum sizes, including fixed-size windows, require
+    /// runtime validation.
+    public func fitted(in bounds: BTRect, constraints: [WindowID: WindowConstraints]) -> Self? {
+        guard Self.valid(bounds) else { return nil }
         var selectedConstraints: [WindowID: WindowConstraints] = [:]
         for id in panes.compactMap(\.selected) {
-            var value = constraints[id] ?? WindowConstraints()
+            let value = constraints[id] ?? WindowConstraints()
             let minimum = value.minimumSize
             guard minimum.width.isFinite, minimum.height.isFinite,
-                  minimum.width >= 0, minimum.height >= 0,
-                  (minimum.height + stripHeight).isFinite else { return nil }
-            value.minimumSize.height += stripHeight
+                  minimum.width >= 0, minimum.height >= 0 else { return nil }
             selectedConstraints[id] = value
         }
         guard let solved = BentoConstraintSolver().solve(state: layout, in: bounds, constraints: selectedConstraints) else { return nil }

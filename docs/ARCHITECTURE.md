@@ -110,11 +110,14 @@ the last tab leaves the pane in place.
 
 Adopting a Bento layout preserves its pane boundaries and floating windows.
 An empty Bento layout starts with one empty pane so it can receive a tab.
-Content frames reserve a caller-supplied strip height above each window. This
-shortens the window's content frame; it does not promise unchanged window
-frames when entering Tabbed. Minimum-size fitting uses the selected tab only,
-adds the strip height, and delegates to `BentoConstraintSolver`. Hidden tabs do
-not constrain this calculation. Empty panes retain Bento's vacancy behavior;
+The tab strip is a Bento content reserve: `BentoLayoutMetrics.contentTopInset`.
+Every Bento path then leaves room for it. Placements start each window below
+its pane's reserve, the constraint solver adds the reserve to each pane's
+minimum height, and the boundary resolver expects the reserve between stacked
+windows. Pane geometry and boundary identities do not change. Entering Tabbed
+therefore shortens each window's frame. Minimum-size fitting uses the selected
+tab only and delegates to `BentoConstraintSolver`. Hidden tabs do not
+constrain this calculation. With a zero reserve, Bento behaves as before. Empty panes retain Bento's vacancy behavior;
 a minimum size for empty Tabbed panes is not implemented in this slice.
 The fit checks minimum geometry only. Window eligibility, fixed sizes, and
 maximum sizes still need validation at the window-mutation boundary.

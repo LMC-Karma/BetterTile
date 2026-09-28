@@ -107,7 +107,7 @@ private func window(_ name: String) -> WindowID { WindowID(rawValue: name) }
     let left = window("left"), right = window("right"), hidden = window("hidden")
     let source = BentoLayoutState(root: .partition(BentoPartition(axis: .vertical,
                                                                   children: [.leaf(left), .leaf(right)])))
-    var state = try #require(BentoTabbedLayoutState(adopting: source))
+    var state = try #require(BentoTabbedLayoutState(adopting: source, contentTopInset: 34))
     let added = state.add(hidden, to: state.panes[1].id)
     let selected = state.select(right)
     #expect(added)
@@ -116,19 +116,20 @@ private func window(_ name: String) -> WindowID { WindowID(rawValue: name) }
         right: WindowConstraints(minimumSize: BTSize(width: 600, height: 100)),
         hidden: WindowConstraints(minimumSize: BTSize(width: 900, height: 500)),
     ]
-    let fitted = try #require(state.fitted(in: tabbedBounds, constraints: constraints, stripHeight: 34))
+    let fitted = try #require(state.fitted(in: tabbedBounds, constraints: constraints))
     let panes = try #require(fitted.paneFrames(in: tabbedBounds))
-    let contents = try #require(fitted.contentFrames(in: tabbedBounds, stripHeight: 34))
+    let contents = try #require(fitted.contentFrames(in: tabbedBounds))
     #expect(abs(panes[fitted.panes[1].id]!.size.width - 600) < 0.01)
     #expect(contents[fitted.panes[1].id]!.minY == panes[fitted.panes[1].id]!.minY + 34)
     #expect(contents[fitted.panes[1].id]!.size.height == 566)
-    #expect(state.layout == source)
-    #expect(fitted.fitted(in: tabbedBounds, constraints: constraints, stripHeight: -.infinity) == nil)
+    #expect(state.layout.root == source.root)
+    // The window's placement is the content frame: Bento reserves the strip.
+    #expect(fitted.layout.placements(in: tabbedBounds).first { $0.windowID == right }?.frame == contents[fitted.panes[1].id])
+    #expect(BentoTabbedLayoutState(adopting: source, contentTopInset: -.infinity)?.layout.metrics.contentTopInset == 0)
     #expect(fitted.fitted(in: BTRect(x: 0, y: 0, width: .infinity, height: 600),
-                          constraints: constraints, stripHeight: 34) == nil)
+                          constraints: constraints) == nil)
     #expect(fitted.fitted(in: tabbedBounds,
-                          constraints: [right: WindowConstraints(minimumSize: BTSize(width: -1, height: 100))],
-                          stripHeight: 34) == nil)
+                          constraints: [right: WindowConstraints(minimumSize: BTSize(width: -1, height: 100))]) == nil)
 }
 
 @Test func rowFitReservesStripAndLockedBoundaryCanReject() throws {
@@ -137,7 +138,7 @@ private func window(_ name: String) -> WindowID { WindowID(rawValue: name) }
     let branchID = UUID()
     let root = BentoNode.partition(BentoPartition(id: branchID, axis: .horizontal,
                                                   first: .leaf(top), second: .leaf(bottom)))
-    var state = try #require(BentoTabbedLayoutState(adopting: BentoLayoutState(root: root)))
+    var state = try #require(BentoTabbedLayoutState(adopting: BentoLayoutState(root: root), contentTopInset: 34))
     let added = state.add(hidden, to: state.panes[1].id)
     let selected = state.select(bottom)
     #expect(added && selected)
@@ -145,7 +146,7 @@ private func window(_ name: String) -> WindowID { WindowID(rawValue: name) }
         bottom: WindowConstraints(minimumSize: BTSize(width: 120, height: 250)),
         hidden: WindowConstraints(minimumSize: BTSize(width: 120, height: 390)),
     ]
-    let fitted = try #require(state.fitted(in: bounds, constraints: constraints, stripHeight: 34))
+    let fitted = try #require(state.fitted(in: bounds, constraints: constraints))
     let frames = try #require(fitted.paneFrames(in: bounds))
     #expect(abs(frames[fitted.panes[1].id]!.size.height - 284) < 0.01)
     #expect(abs(frames[fitted.panes[0].id]!.size.height - 116) < 0.01)
@@ -153,11 +154,11 @@ private func window(_ name: String) -> WindowID { WindowID(rawValue: name) }
         id: branchID, axis: .horizontal, weight: 0.5, isLocked: true,
         first: .leaf(top), second: .leaf(bottom)
     ))
-    var locked = try #require(BentoTabbedLayoutState(adopting: BentoLayoutState(root: lockedRoot)))
+    var locked = try #require(BentoTabbedLayoutState(adopting: BentoLayoutState(root: lockedRoot), contentTopInset: 34))
     let lockedAdded = locked.add(hidden, to: locked.panes[1].id)
     let lockedSelected = locked.select(bottom)
     #expect(lockedAdded && lockedSelected)
-    #expect(locked.fitted(in: bounds, constraints: constraints, stripHeight: 34) == nil)
+    #expect(locked.fitted(in: bounds, constraints: constraints) == nil)
     #expect(locked.layout.root == lockedRoot)
 }
 
@@ -177,4 +178,31 @@ private func window(_ name: String) -> WindowID { WindowID(rawValue: name) }
     #expect(state.panes[0].tabs == [a])
     #expect(state.panes[0].selected == a)
     #expect(state.layout.root == .leaf(a))
+}
+
+@Test func contentReserveKeepsBentoBoundariesAndPaneMinimums() throws {
+    let top = window("top"), bottom = window("bottom")
+    let bounds = BTRect(x: 0, y: 0, width: 800, height: 600)
+    let display = DisplayID(rawValue: "d")
+    let state = BentoLayoutState(
+        root: .partition(BentoPartition(axis: .horizontal, first: .leaf(top), second: .leaf(bottom))),
+        metrics: BentoLayoutMetrics(paneGap: 6, contentTopInset: 34)
+    )
+    let placements = Dictionary(uniqueKeysWithValues: state.placements(in: bounds).map { ($0.windowID, $0.frame) })
+    let panes = state.paneFrames(in: bounds)
+    // Each window starts below its pane's reserve; panes keep their geometry.
+    #expect(placements[top]?.minY == panes[top]!.minY + 34)
+    #expect(placements[bottom]?.minY == panes[bottom]!.minY + 34)
+    #expect(placements[bottom]?.maxY == panes[bottom]?.maxY)
+    // The horizontal boundary is still found from real window frames, at the pane gap.
+    let windows = [top, bottom].map { WindowSnapshot(id: $0, processIdentifier: 1, frame: placements[$0]!, displayID: display) }
+    let boundaries = BentoBoundaryResolver().boundaries(state: state, windows: windows, displayID: display, bounds: bounds)
+    #expect(boundaries.count == 1)
+    #expect(abs(boundaries[0].coordinate - (panes[top]!.maxY + 3)) < 0.001)
+    // A window minimum of 300 needs a 334-point pane.
+    let constraints = [bottom: WindowConstraints(minimumSize: BTSize(width: 120, height: 300))]
+    let solved = try #require(BentoConstraintSolver().solve(state: state, in: bounds, constraints: constraints))
+    #expect(abs(solved.paneFrames(in: bounds)[bottom]!.size.height - 334) < 0.01)
+    #expect(BentoConstraintSolver().solve(state: state, in: BTRect(x: 0, y: 0, width: 800, height: 400),
+                                          constraints: [top: constraints[bottom]!, bottom: constraints[bottom]!]) == nil)
 }

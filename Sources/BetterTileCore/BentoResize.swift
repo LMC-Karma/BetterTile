@@ -30,6 +30,7 @@ public struct BentoConstraintSolver: Sendable {
         guard let root = state.root else { return state }
         let workingRoot = BentoLayoutState.normalized(root)
         let gap = state.metrics.paneGap
+        let constraints = state.metrics.paneConstraints(constraints, for: workingRoot.windowIDs)
 
         func childRects(_ partition: BentoPartition, in rect: BTRect) -> [BTRect] {
             let extent = partition.axis == .vertical ? rect.size.width : rect.size.height
@@ -349,8 +350,10 @@ public struct BentoBoundaryResolver: Sendable {
                                 start = max(firstFrame.minY, secondFrame.minY)
                                 end = min(firstFrame.maxY, secondFrame.maxY)
                             case .horizontal:
-                                guard abs((secondFrame.minY - firstFrame.maxY) - state.metrics.paneGap) <= tolerance else { continue }
-                                coordinate = (firstFrame.maxY + secondFrame.minY) / 2
+                                // The lower window starts below its pane's content reserve.
+                                let reserve = state.metrics.contentTopInset
+                                guard abs((secondFrame.minY - firstFrame.maxY) - state.metrics.paneGap - reserve) <= tolerance else { continue }
+                                coordinate = firstFrame.maxY + state.metrics.paneGap / 2
                                 start = max(firstFrame.minX, secondFrame.minX)
                                 end = min(firstFrame.maxX, secondFrame.maxX)
                             }
