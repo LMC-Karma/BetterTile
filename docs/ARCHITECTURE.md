@@ -115,6 +115,8 @@ frames when entering Tabbed. Minimum-size fitting uses the selected tab only,
 adds the strip height, and delegates to `BentoConstraintSolver`. Hidden tabs do
 not constrain this calculation. Empty panes retain Bento's vacancy behavior;
 a minimum size for empty Tabbed panes is not implemented in this slice.
+The fit checks minimum geometry only. Window eligibility, fixed sizes, and
+maximum sizes still need validation at the window-mutation boundary.
 
 This component owns no window mutations, persistence, or hiding policy. The
 existing Bento model and runtime behavior remain unchanged. Application
