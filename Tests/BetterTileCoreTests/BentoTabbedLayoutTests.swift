@@ -206,3 +206,104 @@ private func window(_ name: String) -> WindowID { WindowID(rawValue: name) }
     #expect(BentoConstraintSolver().solve(state: state, in: BTRect(x: 0, y: 0, width: 800, height: 400),
                                           constraints: [top: constraints[bottom]!, bottom: constraints[bottom]!]) == nil)
 }
+
+private func twoPaneGroup() throws -> (BentoTabbedLayoutState, WindowID, WindowID, WindowID) {
+    let a = window("a"), b = window("b"), c = window("c")
+    var state = try #require(BentoTabbedLayoutState(adopting: BentoLayoutState(root: .partition(BentoPartition(
+        axis: .vertical, children: [.leaf(a), .leaf(c)]
+    ))), contentTopInset: 34))
+    let added = state.add(b, to: state.panes[0].id)
+    let selected = state.select(a)
+    #expect(added && selected)
+    return (state, a, b, c)
+}
+
+@Test func swappingSelectedWindowsCarriesTheirTabGroups() throws {
+    var (state, a, b, c) = try twoPaneGroup()
+    let before = state.layout.paneFrames(in: tabbedBounds)
+    var swapped = state.layout
+    swapped.swap(a, c)
+    let orphans = state.synchronize(with: swapped)
+    #expect(orphans.isEmpty)
+    #expect(state.pane(containing: a)?.tabs == [a, b])
+    #expect(state.pane(containing: c)?.tabs == [c])
+    #expect(state.layout.paneFrames(in: tabbedBounds)[a] == before[c])
+}
+
+@Test func synchronizeReturnsTabsWhoseGroupLostItsPlace() throws {
+    var (state, a, b, c) = try twoPaneGroup()
+    var closed = state.layout
+    closed.remove(a)
+    let orphans = state.synchronize(with: closed)
+    #expect(orphans == [b])
+    #expect(state.panes.map(\.tabs) == [[c]])
+    #expect(!state.windowIDs.contains(b))
+}
+
+@Test func synchronizeGivesNewLeavesTheirOwnPaneAndDropsFloatingTabs() throws {
+    var (state, a, b, c) = try twoPaneGroup()
+    let d = window("d")
+    var next = state.layout
+    next.split(c, inserting: d, in: tabbedBounds)
+    next.floatingWindowIDs.insert(b)
+    let nextOrphans = state.synchronize(with: next)
+    #expect(nextOrphans.isEmpty)
+    #expect(state.pane(containing: d)?.tabs == [d])
+    #expect(state.pane(containing: a)?.tabs == [a])
+    #expect(state.pane(containing: b) == nil)
+    // A hidden tab placed elsewhere in the tree leads its own pane.
+    var (other, a2, b2, c2) = try twoPaneGroup()
+    var placed = other.layout
+    placed.split(c2, inserting: b2, in: tabbedBounds)
+    let placedOrphans = other.synchronize(with: placed)
+    #expect(placedOrphans.isEmpty)
+    #expect(other.pane(containing: a2)?.tabs == [a2])
+    #expect(other.pane(containing: b2)?.tabs == [b2])
+}
+
+@Test func detachingATabLeavesTheRestOfItsGroupInPlace() throws {
+    var (state, a, b, c) = try twoPaneGroup()
+    let frame = state.layout.paneFrames(in: tabbedBounds)[a]
+    let detached = state.detach(a)
+    #expect(detached)
+    #expect(state.pane(containing: b)?.selected == b)
+    #expect(state.layout.paneFrames(in: tabbedBounds)[b] == frame)
+    #expect(state.pane(containing: a) == nil)
+    #expect(state.layout.root?.windowIDs.contains(a) == false)
+    // A lone tab moves with ordinary Bento operations instead.
+    let loneDetached = state.detach(c)
+    #expect(!loneDetached)
+    #expect(state.pane(containing: c)?.tabs == [c])
+}
+
+@Test func reorderingTabsKeepsSelectionAndGeometry() throws {
+    var (state, a, b, _) = try twoPaneGroup()
+    let layout = state.layout
+    let reordered = state.reorder(b, to: 0)
+    #expect(reordered)
+    #expect(state.pane(containing: a)?.tabs == [b, a])
+    #expect(state.pane(containing: a)?.selected == a)
+    #expect(state.layout == layout)
+}
+
+@Test func unstackingGivesEveryHiddenTabAPaneAndRemovesTheReserve() throws {
+    let (state, a, b, c) = try twoPaneGroup()
+    let bento = state.unstacked(in: tabbedBounds)
+    #expect(bento.metrics.contentTopInset == 0)
+    #expect(Set(bento.root?.windowIDs ?? []) == [a, b, c])
+    let frames = bento.paneFrames(in: tabbedBounds)
+    // The group's pane splits along its longer side: a and b share a's column.
+    #expect(abs(frames[a]!.minY - frames[b]!.minY) > 1 || abs(frames[a]!.minX - frames[b]!.minX) > 1)
+    #expect(frames[a]!.maxX <= frames[c]!.minX + 0.001)
+    #expect(frames[b]!.maxX <= frames[c]!.minX + 0.001)
+}
+
+@Test func restoringMembershipFollowsTheCurrentLayout() throws {
+    let (state, a, b, c) = try twoPaneGroup()
+    var swapped = state.layout
+    swapped.swap(a, c)
+    let restored = BentoTabbedLayoutState(layout: swapped, panes: state.panes)
+    #expect(restored.pane(containing: a)?.tabs == [a, b])
+    #expect(restored.hiddenWindowIDs == [b])
+    #expect(restored.layout == swapped)
+}

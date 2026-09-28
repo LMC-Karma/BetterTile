@@ -91,6 +91,107 @@ public struct BentoTabbedLayoutState: Hashable, Sendable {
         return true
     }
 
+    /// Restores tab membership saved beside a layout that Bento may have
+    /// changed since (reconciliation, drops, swaps). See `synchronize`.
+    public init(layout: BentoLayoutState, panes: [BentoTabbedPane]) {
+        self.layout = layout
+        self.panes = panes
+        synchronize(with: layout)
+    }
+
+    public var windowIDs: Set<WindowID> { Set(panes.flatMap(\.tabs)) }
+    public var hiddenWindowIDs: Set<WindowID> {
+        Set(panes.flatMap { pane in pane.tabs.filter { $0 != pane.selected } })
+    }
+
+    public func pane(containing id: WindowID) -> BentoTabbedPane? {
+        panes.first { $0.tabs.contains(id) }
+    }
+
+    /// Adopts a layout produced by a Bento operation. A pane follows its
+    /// selected window, so swaps and drops carry the whole tab group. New
+    /// leaves become one-tab panes. A pane whose selected window left the
+    /// tree loses its place; its other tabs are returned for the caller to
+    /// place, since the tree no longer holds a position for them.
+    @discardableResult
+    public mutating func synchronize(with layout: BentoLayoutState) -> [WindowID] {
+        let leaves = layout.root?.windowIDs ?? []
+        let leafSet = Set(leaves)
+        let vacancies = Set(layout.root.map(Self.vacancyIDs) ?? [])
+        var orphans: [WindowID] = []
+        var kept: [BentoTabbedPane] = []
+        var claimed = Set<WindowID>()
+        for var pane in panes {
+            pane.tabs.removeAll { layout.floatingWindowIDs.contains($0) || claimed.contains($0) }
+            if let selected = pane.selected, leafSet.contains(selected), pane.tabs.contains(selected) {
+                // A hidden tab that became a leaf elsewhere now leads its own pane.
+                pane.tabs.removeAll { $0 != selected && leafSet.contains($0) }
+                claimed.formUnion(pane.tabs)
+                kept.append(pane)
+            } else if pane.selected == nil, pane.tabs.isEmpty, vacancies.contains(pane.id) {
+                kept.append(pane)
+            } else {
+                orphans += pane.tabs.filter { $0 != pane.selected && !leafSet.contains($0) }
+            }
+        }
+        for id in leaves where !claimed.contains(id) {
+            kept.append(BentoTabbedPane(id: UUID(), tabs: [id]))
+            claimed.insert(id)
+        }
+        self.layout = layout
+        self.panes = kept
+        return orphans.filter { !claimed.contains($0) }
+    }
+
+    /// Removes a window from its tab group without touching the other tabs.
+    /// A selected window hands its leaf to the next tab. The window ends up
+    /// outside the tree and every pane, ready for a Bento drop or to float.
+    /// A lone tab is not detached: moving it is an ordinary Bento operation.
+    @discardableResult
+    public mutating func detach(_ id: WindowID) -> Bool {
+        guard let index = panes.firstIndex(where: { $0.tabs.contains(id) }),
+              panes[index].tabs.count > 1 else { return false }
+        return remove(id)
+    }
+
+    /// Moves a tab within its pane. Selection and geometry do not change.
+    @discardableResult
+    public mutating func reorder(_ id: WindowID, to position: Int) -> Bool {
+        guard let index = panes.firstIndex(where: { $0.tabs.contains(id) }),
+              let from = panes[index].tabs.firstIndex(of: id) else { return false }
+        panes[index].tabs.remove(at: from)
+        panes[index].tabs.insert(id, at: min(max(0, position), panes[index].tabs.count))
+        return true
+    }
+
+    /// The Bento layout for leaving Tabbed: every hidden tab gets its own
+    /// pane, split from its group's pane along that pane's longer side, and
+    /// the strip reserve is removed.
+    public func unstacked(in bounds: BTRect) -> BentoLayoutState {
+        var result = layout
+        result.metrics.contentTopInset = 0
+        for pane in panes {
+            guard let selected = pane.selected else { continue }
+            var anchor = selected
+            for hidden in pane.tabs where hidden != selected {
+                let frame = result.paneFrames(in: bounds)[anchor] ?? bounds
+                result.split(anchor, inserting: hidden,
+                             axis: frame.size.width >= frame.size.height ? .vertical : .horizontal,
+                             in: bounds)
+                anchor = hidden
+            }
+        }
+        return result
+    }
+
+    private static func vacancyIDs(_ node: BentoNode) -> [UUID] {
+        switch node {
+        case .leaf: []
+        case let .vacant(id): [id]
+        case let .partition(partition): partition.children.flatMap(vacancyIDs)
+        }
+    }
+
     /// Full pane frames, including the area reserved for the tab strip.
     public func paneFrames(in bounds: BTRect) -> [UUID: BTRect]? {
         guard Self.valid(bounds) else { return nil }
