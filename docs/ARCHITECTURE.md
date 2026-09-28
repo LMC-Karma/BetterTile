@@ -138,6 +138,37 @@ insertion policy. Minimized windows retain their reinsertion anchors, and
 Space transitions retain their stored layouts. Changing the preference does
 not rearrange existing windows.
 
+### Tabbed Core foundation
+
+`BentoTabbedLayoutState` is the first Core component for building Tabbed on
+Bento. It is not connected to the application yet. Ordered tab membership and
+stable pane identities live beside a `BentoLayoutState`. Each occupied pane
+projects its selected window into the Bento tree. An empty pane projects a
+vacancy with the pane's identity. Selection changes the representative window,
+without changing the partition ratios, boundary identities, or locks. Removing
+the last tab leaves the pane in place.
+
+Adopting a Bento layout preserves its pane boundaries and floating windows.
+An empty Bento layout starts with one empty pane so it can receive a tab.
+The tab strip is a Bento content reserve: `BentoLayoutMetrics.contentTopInset`.
+Every Bento path then leaves room for it. Placements start each window below
+its pane's reserve, the constraint solver adds the reserve to each pane's
+minimum height, and the boundary resolver expects the reserve between stacked
+windows. Pane geometry and boundary identities do not change. Entering Tabbed
+therefore shortens each window's frame. Minimum-size fitting uses the selected
+tab only and delegates to `BentoConstraintSolver`. Hidden tabs do not
+constrain this calculation. With a zero reserve, Bento behaves as before. Empty panes retain Bento's vacancy behavior;
+a minimum size for empty Tabbed panes is not implemented in this slice.
+The fit checks minimum geometry only. Window eligibility, fixed sizes, and
+maximum sizes still need validation at the window-mutation boundary.
+
+This component owns no window mutations, persistence, or hiding policy. The
+existing Bento model and runtime behavior remain unchanged. Application
+integration still needs a policy for hidden windows that refuse the pane's
+size, live validation of stacking across applications, and transitions back
+to Bento and Native. Those steps must preserve all tab membership and route
+window mutations through `WindowCoordinator`.
+
 ## Linked resizing
 
 The linked-resize engine detects and merges shared boundary segments within a configurable tolerance. Linked and Bento boundaries share the same overlay interaction model, but Bento resizing stays tree-aware instead of applying flat per-window deltas. The requested operation clamps against recursive subtree minimum sizes and visible bounds.
