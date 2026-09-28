@@ -48,9 +48,13 @@ public struct BentoConstraintSolver: Sendable {
             }
         }
 
+        let vacantMinimum = state.metrics.vacantMinimumSize
         func solveNode(_ node: BentoNode, rect: BTRect) -> BentoNode? {
             switch node {
             case .vacant:
+                guard rect.size.width + tolerance >= vacantMinimum.width,
+                      rect.size.height + tolerance >= vacantMinimum.height
+                else { return nil }
                 return node
             case let .leaf(id):
                 let minimum = constraints[id]?.minimumSize ?? WindowConstraints().minimumSize
@@ -62,7 +66,8 @@ public struct BentoConstraintSolver: Sendable {
                 let extent = partition.axis == .vertical ? rect.size.width : rect.size.height
                 let available = extent - gap * Double(partition.children.count - 1)
                 let minimumExtents = partition.children.map {
-                    BentoTreeGeometry.minimumExtent($0, axis: partition.axis, constraints: constraints, gap: gap)
+                    BentoTreeGeometry.minimumExtent($0, axis: partition.axis, constraints: constraints, gap: gap,
+                                                    vacantMinimum: vacantMinimum)
                 }
                 guard available > 0,
                       minimumExtents.reduce(0, +) <= available + tolerance
@@ -481,16 +486,19 @@ private enum BentoTreeGeometry {
         _ node: BentoNode,
         axis: SplitAxis,
         constraints: [WindowID: WindowConstraints],
-        gap: Double = 0
+        gap: Double = 0,
+        vacantMinimum: BTSize = BTSize(width: 0, height: 0)
     ) -> Double {
         switch node {
         case .vacant:
-            return 0
+            return axis == .vertical ? vacantMinimum.width : vacantMinimum.height
         case let .leaf(id):
             let minimum = constraints[id]?.minimumSize ?? WindowConstraints().minimumSize
             return axis == .vertical ? minimum.width : minimum.height
         case let .partition(partition):
-            let values = partition.children.map { minimumExtent($0, axis: axis, constraints: constraints, gap: gap) }
+            let values = partition.children.map {
+                minimumExtent($0, axis: axis, constraints: constraints, gap: gap, vacantMinimum: vacantMinimum)
+            }
             return partition.axis == axis
                 ? values.reduce(0, +) + gap * Double(max(0, values.count - 1))
                 : values.max() ?? 0

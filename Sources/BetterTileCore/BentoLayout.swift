@@ -25,10 +25,17 @@ public struct BentoLayoutMetrics: Hashable, Sendable {
     /// window's frame starts below the reserve, and each pane's minimum height
     /// includes it.
     public var contentTopInset: Double
+    /// The smallest an empty pane may become. Bento lets vacancies collapse;
+    /// Tabbed keeps empty panes large enough to receive a tab.
+    public var vacantMinimumSize: BTSize
 
-    public init(paneGap: Double = 0, contentTopInset: Double = 0) {
+    public init(paneGap: Double = 0, contentTopInset: Double = 0, vacantMinimumSize: BTSize = BTSize(width: 0, height: 0)) {
         self.paneGap = min(12, max(0, paneGap))
         self.contentTopInset = contentTopInset.isFinite ? min(120, max(0, contentTopInset)) : 0
+        self.vacantMinimumSize = BTSize(
+            width: vacantMinimumSize.width.isFinite ? max(0, vacantMinimumSize.width) : 0,
+            height: vacantMinimumSize.height.isFinite ? max(0, vacantMinimumSize.height) : 0
+        )
     }
 
     public static let gapless = BentoLayoutMetrics()

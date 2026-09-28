@@ -6,11 +6,11 @@ public enum TabbedUIIntent {
     case move(WindowID, pane: UUID, index: Int?)
     case split(WindowID, pane: UUID, edge: TabbedEdge)
     case preset(TabbedPreset), undo, repair, removePane(UUID)
-    case beginResize, resize(UUID, Double), balanceDivider(UUID), endResize, cancelResize
 }
 
-/// AppKit chrome only. It knows pane values and emits intents; it never writes
-/// Accessibility attributes or owns layout sessions.
+/// AppKit chrome only: tab strips and empty-pane targets. It knows pane values
+/// and emits intents; it never writes Accessibility attributes or owns layout
+/// sessions. Pane dividers belong to Bento's divider overlay.
 @MainActor
 public final class TabbedOverlayController {
     public var onIntent: ((TabbedUIIntent) -> Void)?
@@ -21,7 +21,6 @@ public final class TabbedOverlayController {
     /// Includes failed lookups as nil so they are not repeated on refresh.
     private var applicationIcons: [String: NSImage?] = [:]
     private var panes: [UUID: NSPanel] = [:]
-    private var handles: [UUID: NSPanel] = [:]
     private var preview: NSPanel?
     private var floatTarget: NSPanel?
     private var globalKeyMonitor: Any?
@@ -31,18 +30,19 @@ public final class TabbedOverlayController {
     private let removeMonitor: (Any) -> Void
     private var draggedWindow: WindowID?
     private var dropIntent: TabbedUIIntent?
-    private var isResizing = false
     private var cancelled = false
     private var canUndo = false
-    private let displayTicks: ResizeDisplayLink
-    private var pendingResize: (id: UUID, ratio: Double)?
 
     public convenience init() {
-        self.init(displayTicks: ResizeDisplayLink())
+        self.init(addGlobalKeyMonitor: { handler in
+            NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { event in
+                let keyCode = event.keyCode
+                MainActor.assumeIsolated { handler(keyCode) }
+            }
+        })
     }
 
     init(
-        displayTicks: ResizeDisplayLink,
         addGlobalKeyMonitor: @escaping (@escaping @MainActor (UInt16) -> Void) -> Any? = { handler in
             NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { event in
                 let keyCode = event.keyCode
@@ -58,7 +58,6 @@ public final class TabbedOverlayController {
         },
         removeMonitor: @escaping (Any) -> Void = { NSEvent.removeMonitor($0) }
     ) {
-        self.displayTicks = displayTicks
         self.addGlobalKeyMonitor = addGlobalKeyMonitor
         self.addLocalKeyMonitor = addLocalKeyMonitor
         self.removeMonitor = removeMonitor
@@ -103,36 +102,11 @@ public final class TabbedOverlayController {
             else { panel.orderFrontRegardless() }
             panes[pane.id] = panel
         }
-        let dividers = state.dividers(in: bounds)
-        let dividerIDs = Set(dividers.map(\.id))
-        for id in handles.keys.filter({ !dividerIDs.contains($0) }) { handles.removeValue(forKey: id)?.orderOut(nil) }
-        for divider in dividers {
-            let panel = handles[divider.id] ?? makePanel()
-            let view = panel.contentView as? TabbedDividerView ?? TabbedDividerView()
-            view.owner = self
-            view.divider = divider
-            panel.contentView = view
-            panel.setFrame(appKit(divider.frame), display: true)
-            view.setAccessibilityLabel("Resize panes")
-            view.setAccessibilityElement(true)
-            view.setAccessibilityRole(.slider)
-            view.setAccessibilityEnabled(true)
-            view.setAccessibilityValue(divider.ratio * 100)
-            view.setAccessibilityMinValue(5)
-            view.setAccessibilityMaxValue(95)
-            view.setAccessibilityHelp("Adjust the first pane's share of the layout in five percent steps.")
-            view.toolTip = "Drag to resize panes. Double-click to balance. Escape cancels."
-            view.needsDisplay = true
-            panel.invalidateCursorRects(for: view)
-            if obscuringFrames.contains(where: { $0.intersection(divider.frame) != nil }) { panel.orderOut(nil) }
-            else { panel.orderFrontRegardless() }
-            handles[divider.id] = panel
-        }
     }
 
     public func hide() {
         cancelInteraction()
-        for panel in Array(panes.values) + Array(handles.values) { panel.orderOut(nil) }
+        for panel in panes.values { panel.orderOut(nil) }
     }
 
     /// A resize changes geometry only. Keep panel ordering and content views
@@ -150,12 +124,6 @@ public final class TabbedOverlayController {
             view.updateAccessibility()
             view.updateToolTips()
             view.needsDisplay = true
-        }
-        for divider in state.dividers(in: bounds) {
-            guard let panel = handles[divider.id], let view = panel.contentView as? TabbedDividerView else { continue }
-            view.divider = divider
-            panel.setFrame(appKit(divider.frame), display: false)
-            view.setAccessibilityValue(divider.ratio * 100)
         }
     }
 
@@ -348,45 +316,9 @@ public final class TabbedOverlayController {
         if let intent { send(intent) }
     }
 
-    func beginResize() {
-        guard !isInteracting else { return }
-        isInteracting = true
-        isResizing = true
-        cancelled = false
-        installEscape()
-        displayTicks.start(on: handles.values.first?.contentView, maximumFramesPerSecond: 60) { [weak self] in
-            self?.displayTick()
-        }
-        send(.beginResize)
-    }
-
-    func resize(_ divider: TabbedDivider, point: BTPoint) {
-        guard isResizing, !cancelled else { return }
-        let length = (divider.vertical ? divider.bounds.size.width : divider.bounds.size.height) - TabbedLayoutState.gap
-        let offset = divider.vertical ? point.x - divider.bounds.minX : point.y - divider.bounds.minY
-        pendingResize = (divider.id, offset / max(1, length))
-    }
-
-    func displayTick() {
-        guard let pendingResize else { return }
-        self.pendingResize = nil
-        send(.resize(pendingResize.id, pendingResize.ratio))
-    }
-
-    func endResize() {
-        guard isResizing else { return }
-        let wasCancelled = cancelled
-        if !wasCancelled { displayTick() }
-        finishInteraction()
-        if !wasCancelled { send(.endResize) }
-    }
-
     public func cancelInteraction() {
-        let resize = isResizing
         cancelled = true
-        pendingResize = nil
         finishInteraction()
-        if resize { send(.cancelResize) }
     }
 
     private func finishInteraction() {
@@ -397,10 +329,7 @@ public final class TabbedOverlayController {
         globalKeyMonitor = nil
         localKeyMonitor = nil
         draggedWindow = nil; dropIntent = nil
-        pendingResize = nil
-        displayTicks.stop()
-        isInteracting = false; isResizing = false
-        for panel in handles.values { panel.contentView?.needsDisplay = true }
+        isInteracting = false
     }
 
     private func installEscape() {
@@ -739,86 +668,6 @@ struct TabbedStripLayout {
             let next = (index + (event.keyCode == 123 ? -1 : 1) + pane.tabs.count) % pane.tabs.count
             owner?.send(.select(pane.tabs[next]))
         } else { super.keyDown(with: event) }
-    }
-}
-
-@MainActor final class TabbedDividerView: NSVisualEffectView {
-    weak var owner: TabbedOverlayController?
-    var divider: TabbedDivider? { didSet { needsDisplay = true } }
-    private var dragStart: (divider: TabbedDivider, point: BTPoint)?
-    private var hovered = false { didSet { needsDisplay = true } }
-    override var wantsUpdateLayer: Bool { false }
-    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
-
-    override init(frame frameRect: NSRect) {
-        super.init(frame: frameRect)
-        configureTabbedGlass(self, cornerRadius: 3)
-    }
-
-    required init?(coder: NSCoder) { nil }
-
-    override func draw(_ dirtyRect: NSRect) {
-        super.draw(dirtyRect)
-        configureTabbedGlass(self, cornerRadius: 3)
-        let active = dragStart != nil && owner?.isInteracting == true
-        (active || hovered ? NSColor.controlAccentColor.withAlphaComponent(active ? 0.3 : 0.15)
-            : NSColor.separatorColor.withAlphaComponent(0.12)).setFill()
-        bounds.fill()
-        (active || hovered ? NSColor.controlAccentColor : NSColor.secondaryLabelColor).setFill()
-        let grip = divider?.vertical == true
-            ? NSRect(x: bounds.midX - 1, y: bounds.midY - 12, width: 2, height: min(24, bounds.height))
-            : NSRect(x: bounds.midX - 12, y: bounds.midY - 1, width: min(24, bounds.width), height: 2)
-        NSBezierPath(roundedRect: grip, xRadius: 1, yRadius: 1).fill()
-    }
-    override func updateTrackingAreas() {
-        super.updateTrackingAreas()
-        trackingAreas.forEach(removeTrackingArea)
-        addTrackingArea(NSTrackingArea(rect: .zero, options: [.activeAlways, .inVisibleRect, .mouseEnteredAndExited], owner: self, userInfo: nil))
-    }
-    override func mouseEntered(with event: NSEvent) { hovered = true }
-    override func mouseExited(with event: NSEvent) { hovered = false }
-    override func resetCursorRects() { addCursorRect(bounds, cursor: divider?.vertical == true ? .resizeLeftRight : .resizeUpDown) }
-    override func mouseDown(with event: NSEvent) {
-        guard let divider, let owner, !owner.isInteracting else { return }
-        if event.clickCount == 2 {
-            owner.send(.balanceDivider(divider.id))
-            return
-        }
-        dragStart = (divider, owner.screenPoint(event))
-        owner.beginResize()
-        needsDisplay = true
-    }
-    override func mouseDragged(with event: NSEvent) {
-        updateResize(with: event)
-    }
-    override func mouseUp(with event: NSEvent) {
-        guard dragStart != nil else { return }
-        updateResize(with: event)
-        dragStart = nil
-        owner?.endResize()
-    }
-
-    private func updateResize(with event: NSEvent) {
-        guard let dragStart, let owner else { return }
-        let divider = dragStart.divider
-        let point = owner.screenPoint(event)
-        let length = (divider.vertical ? divider.bounds.size.width : divider.bounds.size.height) - TabbedLayoutState.gap
-        // Keep the grab offset and original split bounds while the handle moves.
-        let translated = BTPoint(
-            x: divider.bounds.minX + divider.ratio * length + point.x - dragStart.point.x,
-            y: divider.bounds.minY + divider.ratio * length + point.y - dragStart.point.y
-        )
-        owner.resize(divider, point: translated)
-    }
-    override func accessibilityPerformIncrement() -> Bool { adjust(by: 0.05) }
-    override func accessibilityPerformDecrement() -> Bool { adjust(by: -0.05) }
-
-    private func adjust(by delta: Double) -> Bool {
-        guard let divider, let owner, !owner.isInteracting else { return false }
-        owner.beginResize()
-        owner.send(.resize(divider.id, min(0.95, max(0.05, divider.ratio + delta))))
-        owner.endResize()
-        return true
     }
 }
 

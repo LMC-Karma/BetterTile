@@ -2,29 +2,16 @@ import Foundation
 import Testing
 @testable import BetterTileCore
 
-@Test func tabbedParentRowResizeRespectsFrozenNestedRowRatios() throws {
-    let bounds = BTRect(x: 0, y: 0, width: 1200, height: 1200)
-    var state = TabbedLayoutState(preset: .rows)
-    let ids = ["a", "b", "c"].map { WindowID(rawValue: $0) }
-    let windows = ids.map {
-        WindowSnapshot(id: $0, processIdentifier: 1, frame: bounds, displayID: DisplayID(rawValue: "main"),
-                       constraints: WindowConstraints(minimumSize: BTSize(width: 120, height: 80)))
-    }
-    state.reconcile(windowIDs: ids, removed: [], focused: ids[0])
-    let parent = state.dividers(in: bounds)[0].id
-    state.split(paneID: state.panes[0].id, moving: ids[1], edge: .bottom)
-    let nested = try #require(state.dividers(in: bounds).first { $0.id != parent })
-    state.resize(dividerID: nested.id, ratio: 0.75)
-    state.resize(dividerID: parent, ratio: 0.1)
-    let fitted = try state.fittingMinimumWidths(in: bounds, windows: windows, resizingDividerID: parent)
-    #expect(fitted.dividers(in: bounds).first { $0.id == nested.id }?.ratio == 0.75)
-    #expect(abs(try #require(fitted.dividers(in: bounds).first { $0.id == parent }).frame.minY - 462) < 0.001)
-    #expect(try fitted.placements(in: bounds, windows: windows).allSatisfy { $0.frame.size.height + 0.001 >= 80 })
+private func id(_ name: String) -> WindowID { WindowID(rawValue: name) }
+private func snapshot(_ name: String, minimum: BTSize = BTSize(width: 120, height: 80)) -> WindowSnapshot {
+    var window = WindowSnapshot(id: id(name), processIdentifier: 1, frame: BTRect(x: 0, y: 0, width: 400, height: 400),
+                                displayID: DisplayID(rawValue: "d"))
+    window.constraints = WindowConstraints(minimumSize: minimum)
+    return window
 }
 
-@Test func tabbedActivationCollectsWindowsInFirstPaneAndKeepsEmptyPanes() throws {
-    let a = WindowID(rawValue: "a")
-    let b = WindowID(rawValue: "b")
+@Test func tabbedActivationCollectsWindowsInFirstPaneAndKeepsEmptyPanes() {
+    let a = id("a"), b = id("b")
     var state = TabbedLayoutState(preset: .focus)
     state.reconcile(windowIDs: [a, b], removed: [], focused: b)
     #expect(state.panes.count == 3)
@@ -32,24 +19,28 @@ import Testing
     #expect(state.panes[0].selected == b)
     #expect(state.panes[1].tabs.isEmpty)
     #expect(state.panes[2].tabs.isEmpty)
+    // Tabbed runs on a Bento tree that reserves the strip above each window.
+    #expect(state.layout.metrics.contentTopInset == TabbedLayoutState.headerHeight)
+    #expect(state.layout.root?.windowIDs == [b])
 }
 
-@Test func tabbedEmptyPaneCanReceiveNewWindowsAndLastCloseKeepsPane() {
-    let a = WindowID(rawValue: "a"), b = WindowID(rawValue: "b")
+@Test func tabbedEmptyPaneReceivesNewWindowsAndLastCloseKeepsThePane() {
+    let a = id("a"), b = id("b")
     var state = TabbedLayoutState(preset: .columns)
-    state.reconcile(windowIDs: [a], removed: [], focused: a)
-    let empty = state.panes[1].id
-    state.activatePane(empty)
+    state.activatePane(state.panes[1].id)
+    state.reconcile(windowIDs: [a], removed: [], focused: nil)
+    #expect(state.panes[1].tabs == [a])
     state.reconcile(windowIDs: [a, b], removed: [], focused: nil)
-    #expect(state.panes[1].tabs == [b])
-    #expect(state.activeWindowID == b)
-    state.reconcile(windowIDs: [a], removed: [b], focused: nil)
-    #expect(state.panes[1].id == empty)
-    #expect(state.panes[1].selected == nil)
+    #expect(state.panes[1].tabs == [a, b])
+    #expect(state.panes[1].selected == b)
+    state.removeClosedWindow(a)
+    state.removeClosedWindow(b)
+    #expect(state.panes.count == 2)
+    #expect(state.panes[1].tabs.isEmpty)
 }
 
 @Test func tabbedMoveReorderSplitAndFloatPreserveUniqueMembership() {
-    let a = WindowID(rawValue: "a"), b = WindowID(rawValue: "b"), c = WindowID(rawValue: "c")
+    let a = id("a"), b = id("b"), c = id("c")
     var state = TabbedLayoutState(preset: .columns)
     state.reconcile(windowIDs: [a, b, c], removed: [], focused: a)
     state.move(c, to: state.panes[0].id, at: 0)
@@ -61,6 +52,9 @@ import Testing
     #expect(state.panes[1].id == right)
     #expect(state.panes[1].tabs.isEmpty)
     #expect(state.panes[2].tabs == [b])
+    // The split is a Bento partition: the new pane sits below the empty one.
+    let frames = state.frames(in: BTRect(x: 0, y: 0, width: 1000, height: 800))
+    #expect(frames[state.panes[2].id]!.minY > frames[right]!.minY)
     state.float(a)
     state.reconcile(windowIDs: [a, b, c], removed: [], focused: nil)
     #expect(!state.windowIDs.contains(a))
@@ -68,32 +62,20 @@ import Testing
     #expect(state.panes.flatMap(\.tabs).count == state.windowIDs.count)
 }
 
-@Test func tabbedReconcileRemovalRetainsFloatingMembership() {
-    let temporarilyAbsent = WindowID(rawValue: "temporarily-absent-floating")
+@Test func tabbedReconcileKeepsFloatingMembershipUntilClosed() {
+    let a = id("a"), b = id("b")
     var state = TabbedLayoutState()
-    state.reconcile(windowIDs: [temporarilyAbsent], removed: [], focused: temporarilyAbsent)
-    state.float(temporarilyAbsent)
-
-    state.reconcile(windowIDs: [temporarilyAbsent], removed: [temporarilyAbsent], focused: nil)
-
-    #expect(state.floatingWindowIDs.contains(temporarilyAbsent))
-    #expect(!state.windowIDs.contains(temporarilyAbsent))
-}
-
-@Test func tabbedRemovingClosedFloatingWindowClearsItsMembership() {
-    let closed = WindowID(rawValue: "closed-floating")
-    var state = TabbedLayoutState()
-    state.reconcile(windowIDs: [closed], removed: [], focused: closed)
-    state.float(closed)
-
-    state.removeClosedWindow(closed)
-
-    #expect(!state.floatingWindowIDs.contains(closed))
-    #expect(!state.windowIDs.contains(closed))
+    state.reconcile(windowIDs: [a, b], removed: [], focused: a)
+    state.float(b)
+    state.reconcile(windowIDs: [a], removed: [], focused: nil)
+    #expect(state.floatingWindowIDs == [b])
+    state.removeClosedWindow(b)
+    #expect(state.floatingWindowIDs.isEmpty)
+    #expect(state.windowIDs == [a])
 }
 
 @Test func tabbedPresetAddsEmptyPanesAndMergesWithoutReorderingGroups() {
-    let a = WindowID(rawValue: "a"), b = WindowID(rawValue: "b")
+    let a = id("a"), b = id("b")
     var state = TabbedLayoutState()
     state.reconcile(windowIDs: [a, b], removed: [], focused: a)
     let first = state.panes[0].id
@@ -103,38 +85,96 @@ import Testing
     #expect(state.panes.dropFirst().allSatisfy { $0.tabs.isEmpty })
     state.move(b, to: state.panes[2].id)
     state.applyPreset(.single)
+    #expect(state.panes.count == 1)
     #expect(state.panes[0].tabs == [a, b])
     #expect(state.panes[0].selected == a)
 }
 
 @Test func tabbedClosingSelectedTabChoosesRightThenLeftAndMissingSweepDoesNotClose() {
-    let a = WindowID(rawValue: "a"), b = WindowID(rawValue: "b"), c = WindowID(rawValue: "c")
+    let a = id("a"), b = id("b"), c = id("c")
     var state = TabbedLayoutState()
     state.reconcile(windowIDs: [a, b, c], removed: [], focused: b)
     state.reconcile(windowIDs: [], removed: [], focused: nil)
     #expect(state.panes[0].tabs == [a, b, c])
-    state.remove(b)
+    state.removeClosedWindow(b)
     #expect(state.activeWindowID == c)
-    state.remove(c)
+    state.removeClosedWindow(c)
     #expect(state.activeWindowID == a)
 }
 
-@Test func tabbedStackingContainsAllMembersAndRejectsShrinkingBelowInactiveMinimum() throws {
-    let display = DisplayID(rawValue: "main")
-    let a = WindowSnapshot(id: WindowID(rawValue: "a"), processIdentifier: 1, frame: BTRect(x: 0, y: 0, width: 600, height: 400), displayID: display)
-    var b = a
-    b.id = WindowID(rawValue: "b")
-    b.constraints.minimumSize = BTSize(width: 500, height: 200)
+@Test func hiddenTabsNeverMakeAHalfScreenSplitTooSmall() throws {
+    // The reported failure: dragging a tab to half the screen said the layout
+    // could not apply, because a hidden tab's minimum counted.
+    let bounds = BTRect(x: 0, y: 0, width: 1400, height: 900)
+    let a = id("a"), wide = id("wide"), b = id("b")
+    var state = TabbedLayoutState()
+    state.reconcile(windowIDs: [a, wide, b], removed: [], focused: a)
+    state.split(paneID: state.panes[0].id, moving: b, edge: .right)
+    let windows = [snapshot("a"), snapshot("wide", minimum: BTSize(width: 1000, height: 80)), snapshot("b")]
+    let fitted = try state.fittingMinimumWidths(in: bounds, windows: windows)
+    let placements = try fitted.placements(in: bounds, windows: windows)
+    #expect(placements.count == 3)
+    // The hidden wide tab stacks behind the selected one at the same frame.
+    let frames = Dictionary(uniqueKeysWithValues: placements.map { ($0.windowID, $0.frame) })
+    #expect(frames[wide] == frames[a])
+    #expect(abs(frames[a]!.size.width - frames[b]!.size.width) < 1)
+    // A selected tab that cannot fit is still rejected.
+    var selectedWide = fitted
+    selectedWide.select(wide)
+    let tooWide = [snapshot("a"), snapshot("wide", minimum: BTSize(width: 1400, height: 80)), snapshot("b")]
+    #expect(throws: TabbedLayoutError.self) { try selectedWide.fittingMinimumWidths(in: bounds, windows: tooWide) }
+}
+
+@Test func tabbedMinimumFittingUsesBentoAndOnlySelectedTabs() throws {
+    let bounds = BTRect(x: 0, y: 0, width: 1000, height: 800)
+    let a = id("a"), b = id("b"), hidden = id("hidden")
     var state = TabbedLayoutState(preset: .columns)
-    state.reconcile(windowIDs: [a.id, b.id], removed: [], focused: a.id)
-    let bounds = BTRect(x: 0, y: 0, width: 1200, height: 800)
-    let placements = try state.placements(in: bounds, windows: [a, b])
-    #expect(placements.count == 2)
-    #expect(placements[0].frame == BTRect(x: 0, y: 34, width: 597, height: 766))
-    #expect(placements[0].frame == placements[1].frame)
-    #expect(state.selectedWindowIDs == [a.id])
-    state.resize(dividerID: state.dividers(in: bounds)[0].id, ratio: 0.3)
-    #expect(throws: TabbedLayoutError.self) { try state.placements(in: bounds, windows: [a, b]) }
+    state.reconcile(windowIDs: [a], removed: [], focused: a)
+    state.activatePane(state.panes[1].id)
+    state.reconcile(windowIDs: [a, hidden, b], removed: [], focused: nil)
+    state.select(b)
+    let windows = [snapshot("a"), snapshot("b", minimum: BTSize(width: 650, height: 80)),
+                   snapshot("hidden", minimum: BTSize(width: 900, height: 80))]
+    let fitted = try state.fittingMinimumWidths(in: bounds, windows: windows)
+    let frames = fitted.frames(in: bounds)
+    #expect(abs(frames[fitted.panes[1].id]!.size.width - 650) < 0.5)
+    // Minimum heights include the strip.
+    let tall = [snapshot("a"), snapshot("b", minimum: BTSize(width: 120, height: 790))]
+    #expect(throws: TabbedLayoutError.self) { try state.fittingMinimumWidths(in: bounds, windows: tall) }
+}
+
+@Test func tabbedFollowsATreeThatBentoChanged() {
+    let bounds = BTRect(x: 0, y: 0, width: 1000, height: 800)
+    let a = id("a"), b = id("b"), c = id("c")
+    var state = TabbedLayoutState(preset: .columns)
+    state.reconcile(windowIDs: [a, b], removed: [], focused: a)
+    state.activatePane(state.panes[1].id)
+    state.reconcile(windowIDs: [a, b, c], removed: [], focused: nil)
+    // A Bento divider drag moves the boundary; groups and selection stay.
+    var moved = state.layout
+    let boundary = moved.boundaries(in: bounds, displayID: DisplayID(rawValue: "d")).first!
+    let didMove = moved.setBoundaryCoordinate(700, branchID: boundary.branchID!, in: bounds)
+    #expect(didMove)
+    state.synchronize(with: moved)
+    #expect(state.panes[0].tabs == [a, b])
+    #expect(abs(state.frames(in: bounds)[state.panes[0].id]!.maxX - 697) < 1)
+}
+
+@Test func tabbedAdoptsBentoAndUnstacksWhenLeaving() {
+    let bounds = BTRect(x: 0, y: 0, width: 1000, height: 800)
+    let a = id("a"), b = id("b"), c = id("c")
+    let bento = BentoLayoutState(root: .partition(BentoPartition(axis: .vertical, children: [.leaf(a), .leaf(b)])),
+                                 metrics: BentoLayoutMetrics(paneGap: 6))
+    guard var state = TabbedLayoutState(adopting: bento) else {
+        Issue.record("Adoption failed")
+        return
+    }
+    #expect(state.panes.map(\.tabs) == [[a], [b]])
+    state.reconcile(windowIDs: [a, b, c], removed: [], focused: nil)
+    #expect(state.panes[0].tabs == [a, c])
+    let back = state.unstacked(in: bounds)
+    #expect(Set(back.root?.windowIDs ?? []) == [a, b, c])
+    #expect(back.metrics.contentTopInset == 0)
 }
 
 @Test func tabbedConfigurationRoundTripDoesNotReviveHistoricalTabbedMode() throws {
@@ -146,103 +186,4 @@ import Testing
     #expect(restored.defaultTabbedPreset == .focus)
     let legacy = Data(#"{"schemaVersion":7,"defaultLayoutMode":"tabbed"}"#.utf8)
     #expect(try JSONDecoder().decode(BetterTileConfiguration.self, from: legacy).defaultLayoutMode == .bento)
-}
-
-@Test func tabbedWidthFitGivesAnInactiveRightTabSixtyPercent() throws {
-    let bounds = BTRect(x: -1006, y: 24, width: 1006, height: 800)
-    let windows = tabbedWidthTestWindows(widths: [200, 200, 600], bounds: bounds)
-    var state = TabbedLayoutState(preset: .columns)
-    state.reconcile(windowIDs: windows.map(\.id), removed: [], focused: nil)
-    let right = state.panes[1].id
-    state.move(windows[2].id, to: right)
-    state.move(windows[1].id, to: right)
-    let fitted = try state.fittingMinimumWidths(in: bounds, windows: windows)
-    let frames = fitted.frames(in: bounds)
-    #expect(abs(frames[state.panes[0].id]!.size.width - 400) < 0.001)
-    #expect(abs(frames[right]!.size.width - 600) < 0.001)
-    #expect(fitted.panes == state.panes)
-    #expect(fitted.activePaneID == state.activePaneID)
-    #expect(fitted.dividers(in: bounds).map(\.id) == state.dividers(in: bounds).map(\.id))
-    let placements = try fitted.placements(in: bounds, windows: windows)
-    #expect(placements[1].frame == placements[2].frame)
-    #expect(placements.allSatisfy { $0.frame.minY == bounds.minY + 34 && $0.frame.size.height == 766 })
-    #expect(try fitted.fittingMinimumWidths(in: bounds, windows: windows) == fitted)
-}
-
-@Test func tabbedWidthFitAdjustsNestedAncestorsWithoutChangingRowHeights() throws {
-    let bounds = BTRect(x: 0, y: 0, width: 1200, height: 800)
-    var windows = tabbedWidthTestWindows(widths: [450, 300, 350], bounds: bounds)
-    var state = TabbedLayoutState()
-    state.reconcile(windowIDs: windows.map(\.id), removed: [], focused: nil)
-    let left = state.panes[0].id
-    state.split(paneID: left, moving: windows[1].id, edge: .right)
-    state.split(paneID: left, moving: windows[2].id, edge: .right)
-    let fitted = try state.fittingMinimumWidths(in: bounds, windows: windows)
-    let placements = try fitted.placements(in: bounds, windows: windows)
-    #expect(abs(placements.first { $0.windowID == windows[0].id }!.frame.size.width - 450) < 0.001)
-    #expect(abs(placements.first { $0.windowID == windows[2].id }!.frame.size.width - 350) < 0.001)
-    #expect(fitted.panes == state.panes)
-
-    state.applyPreset(.focus)
-    state.move(windows[0].id, to: state.panes[2].id)
-    windows[0].constraints.minimumSize.width = 650
-    let before = state.dividers(in: bounds).filter { !$0.vertical }
-    let focus = try state.fittingMinimumWidths(in: bounds, windows: windows)
-    #expect(abs(focus.frames(in: bounds)[state.panes[2].id]!.size.width - 650) < 0.001)
-    #expect(focus.dividers(in: bounds).filter { !$0.vertical }.map(\.ratio) == before.map(\.ratio))
-    #expect(focus.frames(in: bounds)[state.panes[1].id]!.size.height == state.frames(in: bounds)[state.panes[1].id]!.size.height)
-}
-
-@Test func tabbedWidthFitClampsDividerAndLeavesValidRatiosAlone() throws {
-    let bounds = BTRect(x: 0, y: 0, width: 1006, height: 800)
-    let windows = tabbedWidthTestWindows(widths: [200, 600], bounds: bounds)
-    var state = TabbedLayoutState(preset: .columns)
-    state.reconcile(windowIDs: windows.map(\.id), removed: [], focused: nil)
-    state.move(windows[1].id, to: state.panes[1].id)
-    let divider = state.dividers(in: bounds)[0].id
-    state.resize(dividerID: divider, ratio: 0.9)
-    let clamped = try state.fittingMinimumWidths(in: bounds, windows: windows)
-    #expect(abs(clamped.dividers(in: bounds)[0].ratio - 0.4) < 0.001)
-    state.resize(dividerID: divider, ratio: 0.3)
-    #expect(try state.fittingMinimumWidths(in: bounds, windows: windows) == state)
-}
-
-@Test func tabbedWidthFitRejectsImpossibleWidthAndHeightWithoutChangingState() throws {
-    let bounds = BTRect(x: 0, y: 0, width: 1006, height: 800)
-    var windows = tabbedWidthTestWindows(widths: [500, 600], bounds: bounds)
-    var state = TabbedLayoutState(preset: .columns)
-    state.reconcile(windowIDs: windows.map(\.id), removed: [], focused: nil)
-    state.move(windows[1].id, to: state.panes[1].id)
-    let original = state
-    #expect(throws: TabbedLayoutError.self) { try state.fittingMinimumWidths(in: bounds, windows: windows) }
-    windows[0].constraints.minimumSize.width = 200
-    windows[1].constraints.minimumSize.height = 767
-    #expect(throws: TabbedLayoutError.self) { try state.fittingMinimumWidths(in: bounds, windows: windows) }
-    #expect(state == original)
-    windows[1].constraints.minimumSize.height = 766
-    _ = try state.fittingMinimumWidths(in: bounds, windows: windows)
-
-    state.applyPreset(.rows)
-    windows[1].constraints.minimumSize.height = 400
-    #expect(throws: TabbedLayoutError.self) { try state.fittingMinimumWidths(in: bounds, windows: windows) }
-}
-
-@Test func tabbedWidthFitKeepsEmptyPanesAndRejectsResizingFixedWindows() throws {
-    let bounds = BTRect(x: 0, y: 0, width: 1006, height: 800)
-    var windows = tabbedWidthTestWindows(widths: [600], bounds: bounds)
-    var state = TabbedLayoutState(preset: .columns)
-    state.reconcile(windowIDs: windows.map(\.id), removed: [], focused: nil)
-    let fitted = try state.fittingMinimumWidths(in: bounds, windows: windows)
-    #expect(fitted.panes[1].tabs.isEmpty)
-    #expect(abs(fitted.frames(in: bounds)[state.panes[1].id]!.size.width - 400) < 0.001)
-    windows[0].constraints.isResizable = false
-    #expect(throws: TabbedLayoutError.self) { try state.fittingMinimumWidths(in: bounds, windows: windows) }
-}
-
-private func tabbedWidthTestWindows(widths: [Double], bounds: BTRect) -> [WindowSnapshot] {
-    widths.enumerated().map { index, width in
-        WindowSnapshot(id: WindowID(rawValue: "width-\(index)"), processIdentifier: 1,
-                       frame: bounds, displayID: DisplayID(rawValue: "test"),
-                       constraints: WindowConstraints(minimumSize: BTSize(width: width, height: 100)))
-    }
 }
