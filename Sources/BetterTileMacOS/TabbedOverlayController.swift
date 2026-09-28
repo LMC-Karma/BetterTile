@@ -112,6 +112,9 @@ public final class TabbedOverlayController {
             view.owner = self
             view.divider = divider
             panel.contentView = view
+            // The gap is mostly transparent now; an explicit value keeps the
+            // whole strip clickable instead of only the drawn capsule.
+            panel.ignoresMouseEvents = false
             panel.setFrame(appKit(divider.frame), display: true)
             view.setAccessibilityLabel("Resize panes")
             view.setAccessibilityElement(true)
@@ -742,33 +745,32 @@ struct TabbedStripLayout {
     }
 }
 
-@MainActor final class TabbedDividerView: NSVisualEffectView {
+@MainActor final class TabbedDividerView: NSView {
     weak var owner: TabbedOverlayController?
     var divider: TabbedDivider? { didSet { needsDisplay = true } }
     private var dragStart: (divider: TabbedDivider, point: BTPoint)?
     private var hovered = false { didSet { needsDisplay = true } }
-    override var wantsUpdateLayer: Bool { false }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
-        configureTabbedGlass(self, cornerRadius: 3)
     }
 
     required init?(coder: NSCoder) { nil }
 
+    /// The shared handle: quiet at rest, stronger on hover, accent while
+    /// dragging. The gap itself stays clear so pane chrome reads as one edge.
     override func draw(_ dirtyRect: NSRect) {
-        super.draw(dirtyRect)
-        configureTabbedGlass(self, cornerRadius: 3)
         let active = dragStart != nil && owner?.isInteracting == true
-        (active || hovered ? NSColor.controlAccentColor.withAlphaComponent(active ? 0.3 : 0.15)
-            : NSColor.separatorColor.withAlphaComponent(0.12)).setFill()
-        bounds.fill()
-        (active || hovered ? NSColor.controlAccentColor : NSColor.secondaryLabelColor).setFill()
-        let grip = divider?.vertical == true
-            ? NSRect(x: bounds.midX - 1, y: bounds.midY - 12, width: 2, height: min(24, bounds.height))
-            : NSRect(x: bounds.midX - 12, y: bounds.midY - 1, width: min(24, bounds.width), height: 2)
-        NSBezierPath(roundedRect: grip, xRadius: 1, yRadius: 1).fill()
+        let vertical = divider?.vertical == true
+        let span = vertical ? bounds.height : bounds.width
+        let length = min(span - 8, active ? min(120, span * 0.5) : hovered ? 48 : 28)
+        let width: CGFloat = active ? 6 : hovered ? 5 : 4
+        guard length > 0 else { return }
+        let rect = vertical
+            ? NSRect(x: bounds.midX - width / 2, y: bounds.midY - length / 2, width: width, height: length)
+            : NSRect(x: bounds.midX - length / 2, y: bounds.midY - width / 2, width: length, height: width)
+        ResizeHandleStyle.drawCapsule(rect, progress: active ? 1 : 0, baseline: hovered ? .hover : .rest)
     }
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
@@ -777,7 +779,9 @@ struct TabbedStripLayout {
     }
     override func mouseEntered(with event: NSEvent) { hovered = true }
     override func mouseExited(with event: NSEvent) { hovered = false }
-    override func resetCursorRects() { addCursorRect(bounds, cursor: divider?.vertical == true ? .resizeLeftRight : .resizeUpDown) }
+    override func resetCursorRects() {
+        addCursorRect(bounds, cursor: ResizeHandleStyle.cursor(verticalDivider: divider?.vertical == true))
+    }
     override func mouseDown(with event: NSEvent) {
         guard let divider, let owner, !owner.isInteracting else { return }
         if event.clickCount == 2 {

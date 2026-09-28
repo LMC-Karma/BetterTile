@@ -629,3 +629,83 @@ private func boundary(
         #expect(accepted.allSatisfy { abs($0.coordinate - (($0.axis == .vertical ? bounds.midX : bounds.midY) + 50)) < 0.001 })
     }
 }
+
+@Test(arguments: [
+    (360.0, 240.0, GhostPreviewView.CaptionLevel.full),
+    (180.0, 240.0, .iconAndSize),
+    (140.0, 30.0, .size),
+    (80.0, 240.0, .stacked),
+    (30.0, 240.0, .widthOnly),
+])
+@MainActor func ghostCaptionStepsDownToFitItsFrame(width: Double, height: Double, expected: GhostPreviewView.CaptionLevel) {
+    _ = NSApplication.shared
+    // The running test process supplies a real application icon.
+    let snapshot = WindowSnapshot(
+        id: WindowID(rawValue: "w"), processIdentifier: ProcessInfo.processInfo.processIdentifier,
+        title: "Safari", frame: .init(x: 0, y: 0, width: 1, height: 1), displayID: DisplayID(rawValue: "d")
+    )
+    let view = GhostPreviewView(frame: CGRect(x: 0, y: 0, width: width, height: height), snapshot: snapshot)
+    view.update(snapshot: snapshot, size: BTSize(width: 1180, height: 1320))
+    view.layout()
+    #expect(view.captionLevel == expected)
+    // The caption never extends past the ghost frame.
+    let platter = view.subviews.first { $0.layer?.shadowRadius == 14 }
+    #expect(platter.map { view.bounds.contains($0.frame) || $0.frame.width <= view.bounds.width } == true)
+}
+
+@Test @MainActor func ghostsMarkNeighborsShrunkToTheirMinimum() throws {
+    _ = NSApplication.shared
+    let bounds = BTRect(x: -10_000, y: -10_000, width: 800, height: 600)
+    let display = DisplayID(rawValue: "main")
+    var small = WindowSnapshot(id: WindowID(rawValue: "small"), processIdentifier: 1, frame: bounds, displayID: display)
+    small.constraints = WindowConstraints(minimumSize: BTSize(width: 300, height: 80))
+    let ghosts = GhostFrameOverlayController()
+    defer { ghosts.hide() }
+    ghosts.show(
+        placements: [Placement(windowID: small.id, frame: BTRect(x: bounds.minX, y: bounds.minY, width: 300, height: 600))],
+        windows: [small],
+        below: nil,
+        limitedWindowIDs: [small.id]
+    )
+    #expect(ghosts.ghostedWindowIDs == [small.id])
+    ghosts.hide(retractingTo: [small.id: bounds])
+    #expect(ghosts.ghostedWindowIDs.isEmpty)
+}
+
+@Test @MainActor func resizeVisualsPreview() throws {
+    // Opt-in render of our own views only. No app launch or desktop capture.
+    guard let directory = ProcessInfo.processInfo.environment["BETTERTILE_TAB_PREVIEW_DIR"] else { return }
+    _ = NSApplication.shared
+    for (name, appearanceName) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
+        let appearance = try #require(NSAppearance(named: appearanceName))
+        let canvas = NSView(frame: NSRect(x: 0, y: 0, width: 900, height: 300))
+        canvas.appearance = appearance
+        canvas.wantsLayer = true
+        canvas.layer?.backgroundColor = NSColor(calibratedRed: 0.55, green: 0.65, blue: 0.85, alpha: 1).cgColor
+        var limited = WindowSnapshot(id: WindowID(rawValue: "n"), processIdentifier: 1, title: "Notes — Release plan", frame: .init(x: 0, y: 0, width: 1, height: 1), displayID: DisplayID(rawValue: "d"))
+        limited.constraints = WindowConstraints(minimumSize: BTSize(width: 480, height: 80))
+        let specs: [(CGRect, String, BTSize, Bool)] = [
+            (CGRect(x: 10, y: 10, width: 420, height: 280), "Visual Studio Code — BetterTileModel.swift", BTSize(width: 1387, height: 1040), false),
+            (CGRect(x: 440, y: 10, width: 150, height: 280), "Safari", BTSize(width: 680, height: 1320), false),
+            (CGRect(x: 600, y: 10, width: 60, height: 280), "Terminal", BTSize(width: 380, height: 1320), false),
+            (CGRect(x: 670, y: 10, width: 220, height: 280), "Notes", BTSize(width: 480, height: 1320), true),
+        ]
+        for (frame, title, size, isLimited) in specs {
+            let view = GhostPreviewView(frame: frame, snapshot: nil)
+            var snapshot = isLimited ? limited : WindowSnapshot(id: WindowID(rawValue: title), processIdentifier: 1, title: title, frame: .init(x: 0, y: 0, width: 1, height: 1), displayID: DisplayID(rawValue: "d"))
+            snapshot.title = title
+            view.update(snapshot: snapshot, size: size, limited: isLimited)
+            canvas.addSubview(view)
+        }
+        for (x, active, limitedHandle) in [(435.0, true, false), (665.0, true, true)] {
+            let handle = DividerHandleView(frame: CGRect(x: x - 15, y: 70, width: 30, height: 168), mode: .vertical(restingLength: 56, activeLength: 168), thickness: 10)
+            handle.setActive(active, animated: false)
+            handle.setLimited(limitedHandle)
+            canvas.addSubview(handle)
+        }
+        canvas.layoutSubtreeIfNeeded()
+        let bitmap = try #require(canvas.bitmapImageRepForCachingDisplay(in: canvas.bounds))
+        canvas.cacheDisplay(in: canvas.bounds, to: bitmap)
+        try bitmap.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: directory).appendingPathComponent("resize-visuals-app-\(name).png"))
+    }
+}

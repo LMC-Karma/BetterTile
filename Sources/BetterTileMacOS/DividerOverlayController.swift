@@ -621,12 +621,15 @@ public final class DividerOverlayController {
             self.transaction = transaction
             activeInteraction = proposedInteraction
             if isNativeGesture { identifyNativeSource() }
+            let limited = limitedWindowIDs(in: placements)
             ghosts.show(
                 placements: placements.filter { $0.windowID != nativeSourceID },
                 windows: baselineWindows,
-                below: handlePanel
+                below: handlePanel,
+                limitedWindowIDs: limited
             )
             presentHandle(for: proposedInteraction, near: point, active: true)
+            handlePanel?.setLimited(!limited.isEmpty)
         case .live:
             ghosts.hide()
             switch coordinator.applyLive(
@@ -640,6 +643,7 @@ public final class DividerOverlayController {
                 activeInteraction = proposedInteraction
                 self.transaction = transaction
                 presentHandle(for: proposedInteraction, near: point, active: true)
+                handlePanel?.setLimited(!limitedWindowIDs(in: placements).isEmpty)
             case .failed:
                 // A transient rejection keeps the gesture alive; the next drag
                 // sample proposes fresh placements.
@@ -701,6 +705,8 @@ public final class DividerOverlayController {
         if isNativeGesture, let transaction {
             pendingNativeRestore = transaction.baselineFrames
         }
+        // Ghosts retract to the frames the windows keep.
+        ghosts.hide(retractingTo: transaction?.baselineFrames)
         if let transaction {
             let outcome = coordinator.cancel(transaction: transaction)
             if let displayID = activeInteraction?.displayID {
@@ -732,6 +738,7 @@ public final class DividerOverlayController {
         hasPendingDisplayUpdate = false
         isNativeGesture = false
         nativeSourceID = nil
+        handlePanel?.setLimited(false)
         displayTicks.stop()
         removeEscapeMonitor()
         let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
@@ -828,6 +835,20 @@ public final class DividerOverlayController {
         nativeSourceID = current?.first { snapshot in
             transaction.baselineFrames[snapshot.id].map { !snapshot.frame.approximatelyEquals($0, tolerance: 1) } ?? false
         }?.id
+    }
+
+    /// Windows this drag has shrunk to their minimum size. The engines
+    /// clamp at the minimum, so reaching it means the divider cannot go on.
+    private func limitedWindowIDs(in placements: [Placement]) -> Set<WindowID> {
+        let baseline = Dictionary(baselineWindows.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        return Set(placements.compactMap { placement in
+            guard let window = baseline[placement.windowID] else { return nil }
+            let minimum = window.constraints.minimumSize
+            let size = placement.frame.size
+            let atWidth = size.width < window.frame.size.width - 0.5 && size.width <= minimum.width + 0.5
+            let atHeight = size.height < window.frame.size.height - 0.5 && size.height <= minimum.height + 0.5
+            return atWidth || atHeight ? placement.windowID : nil
+        })
     }
 
     private func restore(_ frames: [WindowID: BTRect]) {
@@ -1051,6 +1072,9 @@ private final class DividerHandlePanel: NSPanel {
         handleView.configure(mode: mode, thickness: thickness)
     }
 
+    func setLimited(_ limited: Bool) { handleView.setLimited(limited) }
+    var isLimited: Bool { handleView.isLimited }
+
     func setActive(
         _ active: Bool,
         animated: Bool,
@@ -1070,8 +1094,9 @@ final class DividerHandleView: NSView {
 
     private var mode: DividerHandleMode
     private var thickness: CGFloat
-    private let material = NSVisualEffectView()
     private var active = false
+    /// A neighbor reached its minimum size; the active handle turns orange.
+    private(set) var isLimited = false
     private(set) var stretchProgress = 0.0
     private var animationTask: Task<Void, Never>?
     private var tracking: NSTrackingArea?
@@ -1080,12 +1105,6 @@ final class DividerHandleView: NSView {
         self.mode = mode
         self.thickness = CGFloat(thickness)
         super.init(frame: frame)
-        material.material = .hudWindow
-        material.blendingMode = .withinWindow
-        material.state = .active
-        material.wantsLayer = true
-        addSubview(material)
-        updateAppearance()
     }
 
     required init?(coder: NSCoder) { nil }
@@ -1098,32 +1117,33 @@ final class DividerHandleView: NSView {
         window?.invalidateCursorRects(for: self)
     }
 
-    override func layout() {
-        super.layout()
-        switch mode {
-        case let .vertical(resting, expanded):
-            let length = interpolated(resting, expanded)
-            material.frame = CGRect(
-                x: (bounds.width - thickness) / 2,
-                y: (bounds.height - length) / 2,
-                width: thickness,
-                height: length
-            )
-        case let .horizontal(resting, expanded):
-            let length = interpolated(resting, expanded)
-            material.frame = CGRect(
-                x: (bounds.width - length) / 2,
-                y: (bounds.height - thickness) / 2,
-                width: length,
-                height: thickness
-            )
-        case .junction:
-            material.frame = .zero
-        }
-        material.layer?.cornerRadius = min(material.bounds.width, material.bounds.height) / 2
+    func setLimited(_ limited: Bool) {
+        guard isLimited != limited else { return }
+        isLimited = limited
+        needsDisplay = true
     }
 
     override func draw(_ dirtyRect: NSRect) {
+        // The shared capsule leaves room at each end for its glow.
+        let width = ResizeHandleStyle.capsuleWidth(thickness: thickness, progress: stretchProgress)
+        switch mode {
+        case let .vertical(resting, expanded):
+            let length = max(width, interpolated(resting, expanded) - 8)
+            ResizeHandleStyle.drawCapsule(
+                CGRect(x: bounds.midX - width / 2, y: bounds.midY - length / 2, width: width, height: length),
+                progress: stretchProgress, baseline: .hover, limited: isLimited
+            )
+            return
+        case let .horizontal(resting, expanded):
+            let length = max(width, interpolated(resting, expanded) - 8)
+            ResizeHandleStyle.drawCapsule(
+                CGRect(x: bounds.midX - length / 2, y: bounds.midY - width / 2, width: length, height: width),
+                progress: stretchProgress, baseline: .hover, limited: isLimited
+            )
+            return
+        case .junction:
+            break
+        }
         guard case let .junction(center, resting, expanded) = mode else { return }
         let color = gripColor
         color.setFill()
@@ -1158,9 +1178,9 @@ final class DividerHandleView: NSView {
 
     override func resetCursorRects() {
         let cursor: NSCursor = switch mode {
-        case .vertical: .resizeLeftRight
-        case .horizontal: .resizeUpDown
-        case .junction: .crosshair
+        case .vertical: ResizeHandleStyle.cursor(verticalDivider: true)
+        case .horizontal: ResizeHandleStyle.cursor(verticalDivider: false)
+        case .junction: ResizeHandleStyle.junctionCursor
         }
         addCursorRect(bounds, cursor: cursor)
     }
@@ -1226,9 +1246,7 @@ final class DividerHandleView: NSView {
     }
 
     private func updateAppearance() {
-        material.layer?.backgroundColor = gripColor.cgColor
-        material.layer?.borderWidth = 0.5 + stretchProgress * 0.5
-        material.layer?.borderColor = NSColor.white.withAlphaComponent(0.25 + stretchProgress * 0.3).cgColor
+        needsDisplay = true
     }
 
     private var gripColor: NSColor {
@@ -1248,13 +1266,19 @@ final class DividerHandleView: NSView {
 @MainActor
 final class GhostFrameOverlayController {
     private var panels: [WindowID: NSPanel] = [:]
+    /// Panels still fading or retracting after their gesture ended.
+    private var departing: [NSPanel] = []
     var windowNumbers: Set<Int> { Set(panels.values.map(\.windowNumber)) }
+    var ghostedWindowIDs: Set<WindowID> { Set(panels.keys) }
     private(set) var relativeOrderTargets: [WindowID: Int] = [:]
+
+    private var reduceMotion: Bool { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
 
     func show(
         placements: [Placement],
         windows: [WindowSnapshot],
-        below handle: NSWindow?
+        below handle: NSWindow?,
+        limitedWindowIDs: Set<WindowID> = []
     ) {
         guard let mainFrame = NSScreen.screens.first?.frame else { return }
         let snapshots = Dictionary(uniqueKeysWithValues: windows.map { ($0.id, $0) })
@@ -1268,14 +1292,18 @@ final class GhostFrameOverlayController {
             let panel: NSPanel
             if let existing = panels[placement.windowID] {
                 panel = existing
+                // Frames follow the pointer on every display tick; animating
+                // them would only add lag.
                 panel.setFrame(frame, display: true)
             } else {
                 panel = makePanel(frame: frame, snapshot: snapshots[placement.windowID])
                 panels[placement.windowID] = panel
+                fadeIn(panel)
             }
             (panel.contentView as? GhostPreviewView)?.update(
                 snapshot: snapshots[placement.windowID],
-                size: placement.frame.size
+                size: placement.frame.size,
+                limited: limitedWindowIDs.contains(placement.windowID)
             )
             if let handle, handle.windowNumber > 0 {
                 panel.order(.below, relativeTo: handle.windowNumber)
@@ -1287,10 +1315,46 @@ final class GhostFrameOverlayController {
         }
     }
 
-    func hide() {
-        for panel in panels.values { panel.orderOut(nil) }
+    /// Ends the preview. Committed ghosts fade out over the windows that
+    /// now occupy their frames. Cancelled ghosts first retract to the
+    /// frames the windows kept, so the cancellation is visible.
+    func hide(retractingTo baselineFrames: [WindowID: BTRect]? = nil) {
+        let ending = panels
         panels.removeAll()
         relativeOrderTargets.removeAll()
+        guard !reduceMotion, let mainFrame = NSScreen.screens.first?.frame else {
+            for panel in ending.values { panel.orderOut(nil) }
+            return
+        }
+        departing.append(contentsOf: ending.values)
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = baselineFrames == nil ? 0.14 : 0.2
+            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            for (id, panel) in ending {
+                if let frame = baselineFrames?[id] {
+                    panel.animator().setFrame(
+                        CoordinateConverter.toAppKit(frame, mainScreenFrame: mainFrame).insetBy(dx: 3, dy: 3),
+                        display: true
+                    )
+                }
+                panel.animator().alphaValue = 0
+            }
+        } completionHandler: { [weak self] in
+            MainActor.assumeIsolated {
+                for panel in ending.values { panel.orderOut(nil) }
+                self?.departing.removeAll { panel in ending.values.contains { $0 === panel } }
+            }
+        }
+    }
+
+    private func fadeIn(_ panel: NSPanel) {
+        guard !reduceMotion else { return }
+        panel.alphaValue = 0
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.12
+            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            panel.animator().alphaValue = 1
+        }
     }
 
     private func makePanel(frame: CGRect, snapshot: WindowSnapshot?) -> NSPanel {
@@ -1303,51 +1367,5 @@ final class GhostFrameOverlayController {
         panel.collectionBehavior = [.moveToActiveSpace, .transient, .ignoresCycle]
         panel.contentView = GhostPreviewView(frame: CGRect(origin: .zero, size: frame.size), snapshot: snapshot)
         return panel
-    }
-}
-
-@MainActor
-private final class GhostPreviewView: NSVisualEffectView {
-    private let iconView = NSImageView()
-    private let titleLabel = NSTextField(labelWithString: "")
-    private let sizeLabel = NSTextField(labelWithString: "")
-
-    init(frame: CGRect, snapshot: WindowSnapshot?) {
-        super.init(frame: frame)
-        material = .hudWindow
-        blendingMode = .withinWindow
-        state = .active
-        wantsLayer = true
-        layer?.cornerRadius = 12
-        layer?.borderWidth = 2
-        layer?.borderColor = NSColor.controlAccentColor.withAlphaComponent(0.78).cgColor
-        addSubview(iconView)
-        addSubview(titleLabel)
-        addSubview(sizeLabel)
-        titleLabel.font = .systemFont(ofSize: 13, weight: .semibold)
-        titleLabel.lineBreakMode = .byTruncatingTail
-        sizeLabel.font = .monospacedDigitSystemFont(ofSize: 11, weight: .medium)
-        sizeLabel.textColor = .secondaryLabelColor
-        update(snapshot: snapshot, size: BTSize(width: frame.width, height: frame.height))
-    }
-
-    required init?(coder: NSCoder) { nil }
-
-    override func layout() {
-        super.layout()
-        let cardWidth = min(300, max(120, bounds.width - 28))
-        let x = (bounds.width - cardWidth) / 2
-        let y = (bounds.height - 44) / 2
-        iconView.frame = CGRect(x: x, y: y + 8, width: 28, height: 28)
-        titleLabel.frame = CGRect(x: x + 38, y: y + 22, width: cardWidth - 38, height: 18)
-        sizeLabel.frame = CGRect(x: x + 38, y: y + 4, width: cardWidth - 38, height: 16)
-    }
-
-    func update(snapshot: WindowSnapshot?, size: BTSize) {
-        titleLabel.stringValue = snapshot?.title.isEmpty == false ? snapshot!.title : snapshot?.bundleIdentifier ?? "Window"
-        sizeLabel.stringValue = "\(Int(size.width.rounded())) × \(Int(size.height.rounded()))"
-        if let pid = snapshot?.processIdentifier {
-            iconView.image = NSRunningApplication(processIdentifier: pid)?.icon
-        }
     }
 }
