@@ -649,3 +649,41 @@ func tabbedEscapeCancelsResizeFromEitherKeyMonitor(useLocalMonitor: Bool) {
         try bitmap.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: directory).appendingPathComponent("tabbed-pane-preview.png"))
     }
 }
+
+@Test func tabStripKeepsItsVisibleRangeWhenSelectingAVisibleTab() {
+    let first = TabbedStripLayout(width: 500, count: 9, selectedIndex: 6)
+    let visible = first.visibleRange
+    #expect(visible.contains(6))
+    // Selecting another visible tab must not scroll the strip under the pointer.
+    for index in visible {
+        let next = TabbedStripLayout(width: 500, count: 9, selectedIndex: index, startIndex: visible.lowerBound)
+        #expect(next.visibleRange == visible)
+    }
+    // Selecting a hidden tab scrolls just far enough to show it.
+    let after = TabbedStripLayout(width: 500, count: 9, selectedIndex: visible.upperBound, startIndex: visible.lowerBound)
+    #expect(after.visibleRange.upperBound == visible.upperBound + 1)
+}
+
+@Test(arguments: [180.0, 420.0, 900.0])
+func tabStripInsertionPointsMatchRenderedTabEdges(width: Double) {
+    let strip = TabbedStripLayout(width: width, count: 12, selectedIndex: 5, startIndex: 3)
+    for index in strip.visibleRange {
+        let frame = strip.tabFrame(index)
+        // Just inside a tab's leading or trailing half inserts at the edge drawn there.
+        #expect(abs(strip.insertion(at: frame.minX + frame.width * 0.25).x - frame.minX) < 0.001)
+        #expect(strip.insertion(at: frame.minX + frame.width * 0.25).index == index)
+        #expect(abs(strip.insertion(at: frame.maxX - frame.width * 0.25).x - frame.maxX) < 0.001)
+        #expect(strip.insertion(at: frame.maxX - frame.width * 0.25).index == index + 1)
+        #expect(strip.tabIndex(at: NSPoint(x: frame.midX, y: frame.midY)) == index)
+        #expect(frame.maxX <= strip.menuFrame.minX + 0.001)
+    }
+}
+
+@Test func tabStripStaysValidWhenNarrowerThanOneTab() {
+    let strip = TabbedStripLayout(width: 60, count: 4, selectedIndex: 2)
+    #expect(strip.visibleRange.count == 1)
+    #expect(strip.visibleRange.contains(2))
+    #expect(strip.hiddenCount == 3)
+    #expect(strip.tabWidth >= 0)
+    #expect(strip.insertion(at: 40).index >= strip.visibleRange.lowerBound)
+}
