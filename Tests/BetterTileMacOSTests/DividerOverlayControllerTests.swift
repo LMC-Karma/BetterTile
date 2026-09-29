@@ -705,3 +705,18 @@ enum DividerLimitCase: CaseIterable { case straight, junction, linked }
     #expect(willBegin == 2)
     controller.cancelActiveGesture()
 }
+
+@Test @MainActor func junctionCursorFollowsTheJunctionShape() {
+    func cursor(_ arms: [DividerHandleArm]) -> NSCursor {
+        let lengths = Dictionary(uniqueKeysWithValues: arms.map { ($0, 12.0) })
+        return DividerHandleView(
+            frame: CGRect(x: 0, y: 0, width: 80, height: 80),
+            mode: .junction(center: CGPoint(x: 40, y: 40), resting: lengths, active: lengths), thickness: 6
+        ).cursor
+    }
+    #expect(cursor([.up, .down, .left, .right]) == .frameResize(position: .topLeft, directions: .all))
+    // Arms up and left only: the junction ends both dividers at its bottom right.
+    #expect(cursor([.up, .left, .right]) == .frameResize(position: .bottomLeft, directions: .all))
+    #expect(cursor([.up, .down, .left]) == .frameResize(position: .topRight, directions: .all))
+    #expect(cursor([.up, .left]) == .frameResize(position: .bottomRight, directions: .all))
+}
