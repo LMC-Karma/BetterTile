@@ -347,11 +347,12 @@ func tabbedStripFitsNarrowAndCrowdedPanes(width: Double, count: Int) {
     let sourcePaneID = state.panes[0].id
     while state.panes.count < 12 {
         let frames = state.frames(in: bounds)
-        let target = state.panes
-            .filter { $0.tabs.isEmpty }
-            .max { (frames[$0.id]?.size.width ?? 0) * (frames[$0.id]?.size.height ?? 0) <
-                  (frames[$1.id]?.size.width ?? 0) * (frames[$1.id]?.size.height ?? 0) }
-            ?? state.panes[0]
+        func area(_ pane: TabbedPane) -> Double {
+            guard let frame = frames[pane.id] else { return 0 }
+            return frame.size.width * frame.size.height
+        }
+        let empty = state.panes.filter { $0.tabs.isEmpty }
+        let target = empty.max { area($0) < area($1) } ?? state.panes[0]
         let targetFrame = try #require(frames[target.id])
         state.split(paneID: target.id, moving: id, edge: targetFrame.size.width >= targetFrame.size.height ? .right : .bottom)
         state.move(id, to: sourcePaneID)
