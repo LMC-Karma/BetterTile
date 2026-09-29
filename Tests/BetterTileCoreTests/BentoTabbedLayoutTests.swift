@@ -307,3 +307,22 @@ private func twoPaneGroup() throws -> (BentoTabbedLayoutState, WindowID, WindowI
     #expect(restored.hiddenWindowIDs == [b])
     #expect(restored.layout == swapped)
 }
+
+@Test func horizontalBoundaryAveragesObservedEdgesWithAndWithoutReserve() {
+    let top = window("top"), bottom = window("bottom")
+    let display = DisplayID(rawValue: "d")
+    let bounds = BTRect(x: 0, y: 0, width: 800, height: 600)
+    for reserve in [0.0, 34.0] {
+        let state = BentoLayoutState(
+            root: .partition(BentoPartition(axis: .horizontal, first: .leaf(top), second: .leaf(bottom))),
+            metrics: BentoLayoutMetrics(paneGap: 6, contentTopInset: reserve)
+        )
+        // The applications settled 2 points off the exact fit, within tolerance.
+        let windows = [
+            WindowSnapshot(id: top, processIdentifier: 1, frame: BTRect(x: 0, y: reserve, width: 800, height: 297 - reserve), displayID: display),
+            WindowSnapshot(id: bottom, processIdentifier: 1, frame: BTRect(x: 0, y: 305 + reserve, width: 800, height: 295 - reserve), displayID: display),
+        ]
+        let boundary = BentoBoundaryResolver().boundaries(state: state, windows: windows, displayID: display, bounds: bounds).first
+        #expect(boundary.map { abs($0.coordinate - 301) < 0.001 } == true)
+    }
+}
