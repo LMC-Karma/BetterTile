@@ -93,3 +93,38 @@ import Testing
     #expect(system.closedWindowRequests == [id])
     #expect(system.windows.count == 1)
 }
+
+@Test @MainActor func hiddenTabsAreWrittenOnlyWhenMovedAndInTheSameBatch() async {
+    let system = FakeWindowSystem()
+    system.addSecondWindow()
+    var third = system.windows[1]
+    third.id = WindowID(rawValue: "third")
+    third.processIdentifier = 44
+    system.windows.append(third)
+    let shown = system.windows[0].id, still = system.windows[1].id, moved = system.windows[2].id
+    let frame = BTRect(x: 0, y: 34, width: 600, height: 600)
+    system.windows[1].frame = frame
+    let coordinator = WindowCoordinator(system: system)
+    let placements = [shown, still, moved].map { Placement(windowID: $0, frame: frame) }
+    let result = await coordinator.applyTabbed(
+        placements: placements, required: [shown], selected: [shown],
+        previousSelected: [], focus: shown, isCurrent: { true })
+    #expect(result.isApplied)
+    #expect(system.frameWriteCounts[still] == nil)
+    #expect(system.frameWriteCounts[moved] == 1)
+    #expect(system.frameWriteBatches.contains { Set($0) == [shown, moved] })
+}
+
+@Test @MainActor func failedTabbedLayoutReturnsMovedHiddenTabs() async {
+    let system = FakeWindowSystem()
+    system.addSecondWindow()
+    let shown = system.windows[0].id, hidden = system.windows[1].id
+    let hiddenBefore = system.windows[1].frame
+    system.clampWidth = 300
+    let frame = BTRect(x: 0, y: 34, width: 600, height: 600)
+    let result = await WindowCoordinator(system: system).applyTabbed(
+        placements: [Placement(windowID: shown, frame: frame), Placement(windowID: hidden, frame: frame)],
+        required: [shown], selected: [shown], previousSelected: [], focus: nil, isCurrent: { true })
+    #expect(!result.isApplied)
+    #expect(system.windows[1].frame == hiddenBefore)
+}

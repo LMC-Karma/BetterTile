@@ -490,3 +490,22 @@ func tabStripInsertionPointsMatchRenderedTabEdges(width: Double) {
     #expect(strip.tabWidth >= 0)
     #expect(strip.insertion(at: 40).index >= strip.visibleRange.lowerBound)
 }
+
+@Test @MainActor func tabbedDividersStayAdjustableWithVoiceOver() throws {
+    _ = NSApplication.shared
+    let bounds = BTRect(x: 12000, y: 0, width: 1000, height: 800)
+    var state = TabbedLayoutState(preset: .columns)
+    let id = WindowID(rawValue: "voiceover-divider")
+    state.reconcile(windowIDs: [id], removed: [], focused: id)
+    let overlay = TabbedOverlayController()
+    defer { overlay.hide() }
+    var adjustments: [Double] = []
+    overlay.onIntent = { if case let .adjustDivider(_, delta) = $0 { adjustments.append(delta) } }
+    overlay.refresh(state: state, bounds: bounds, windows: [])
+    let slider = try #require(NSApp.windows.compactMap { $0.contentView as? TabbedDividerAccessibilityView }.first)
+    #expect(slider.accessibilityRole() == .slider)
+    #expect(slider.window?.ignoresMouseEvents == true)
+    #expect(slider.accessibilityPerformIncrement())
+    #expect(slider.accessibilityPerformDecrement())
+    #expect(adjustments == [0.05, -0.05])
+}

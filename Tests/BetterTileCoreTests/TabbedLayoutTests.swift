@@ -187,3 +187,16 @@ private func snapshot(_ name: String, minimum: BTSize = BTSize(width: 120, heigh
     let legacy = Data(#"{"schemaVersion":7,"defaultLayoutMode":"tabbed"}"#.utf8)
     #expect(try JSONDecoder().decode(BetterTileConfiguration.self, from: legacy).defaultLayoutMode == .bento)
 }
+
+@Test func voiceOverAdjustsABentoDividerByAShareOfItsArea() throws {
+    let bounds = BTRect(x: 0, y: 0, width: 1000, height: 800)
+    var state = TabbedLayoutState(preset: .columns)
+    let divider = try #require(state.dividers(in: bounds).first)
+    let branchID = try #require(divider.branchID)
+    let adjusted = state.adjustDivider(branchID, by: 0.05, in: bounds)
+    #expect(adjusted)
+    let moved = try #require(state.dividers(in: bounds).first)
+    #expect(abs(moved.coordinate - (divider.coordinate + 50)) < 0.5)
+    let missing = state.adjustDivider(UUID(), by: 0.05, in: bounds)
+    #expect(!missing)
+}

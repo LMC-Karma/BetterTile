@@ -3116,6 +3116,8 @@ extension BetterTileModel {
             state.reconcile(windowIDs: windows.map(\.id), removed: state.windowIDs.subtracting(windows.map(\.id)), focused: nil)
             focus = state.activeWindowID; undo = false
         case let .removePane(id): state.removeEmptyPane(id)
+        case let .adjustDivider(id, delta):
+            guard state.adjustDivider(id, by: delta, in: display.visibleFrame) else { return }
         }
         applyTabbedState(state, session: session, display: display, windows: windows, focus: focus,
                          rememberUndo: undo, consumeUndo: consumeUndo, selectionOnly: selectionOnly)

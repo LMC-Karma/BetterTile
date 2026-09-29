@@ -6,6 +6,8 @@ public enum TabbedUIIntent {
     case move(WindowID, pane: UUID, index: Int?)
     case split(WindowID, pane: UUID, edge: TabbedEdge)
     case preset(TabbedPreset), undo, repair, removePane(UUID)
+    /// VoiceOver moves a Bento pane divider by a fraction of its area.
+    case adjustDivider(UUID, by: Double)
 }
 
 /// AppKit chrome only: tab strips and empty-pane targets. It knows pane values
@@ -21,6 +23,9 @@ public final class TabbedOverlayController {
     /// Includes failed lookups as nil so they are not repeated on refresh.
     private var applicationIcons: [String: NSImage?] = [:]
     private var panes: [UUID: NSPanel] = [:]
+    /// Accessibility-only divider controls. Pointer resizing uses Bento's
+    /// divider overlay, so these panels ignore the mouse.
+    private var dividerControls: [UUID: NSPanel] = [:]
     private var preview: NSPanel?
     private var floatTarget: NSPanel?
     private var globalKeyMonitor: Any?
@@ -102,11 +107,36 @@ public final class TabbedOverlayController {
             else { panel.orderFrontRegardless() }
             panes[pane.id] = panel
         }
+        refreshDividerControls()
     }
 
     public func hide() {
         cancelInteraction()
-        for panel in panes.values { panel.orderOut(nil) }
+        for panel in Array(panes.values) + Array(dividerControls.values) { panel.orderOut(nil) }
+    }
+
+    private func refreshDividerControls() {
+        let dividers = state.dividers(in: bounds)
+        let ids = Set(dividers.compactMap(\.branchID))
+        for id in dividerControls.keys where !ids.contains(id) { dividerControls.removeValue(forKey: id)?.orderOut(nil) }
+        for divider in dividers {
+            guard let branchID = divider.branchID, let parent = divider.parentBounds else { continue }
+            let panel = dividerControls[branchID] ?? makePanel()
+            panel.ignoresMouseEvents = true
+            let view = panel.contentView as? TabbedDividerAccessibilityView ?? TabbedDividerAccessibilityView()
+            view.onAdjust = { [weak self] delta in self?.send(.adjustDivider(branchID, by: delta)) }
+            let extent = divider.axis == .vertical ? parent.size.width : parent.size.height
+            let start = divider.axis == .vertical ? parent.minX : parent.minY
+            view.setAccessibilityValue(((divider.coordinate - start) / max(1, extent) * 100).rounded())
+            panel.contentView = view
+            let gap = TabbedLayoutState.gap
+            let frame = divider.axis == .vertical
+                ? BTRect(x: divider.coordinate - gap / 2, y: divider.spanStart, width: gap, height: divider.spanEnd - divider.spanStart)
+                : BTRect(x: divider.spanStart, y: divider.coordinate - gap / 2, width: divider.spanEnd - divider.spanStart, height: gap)
+            panel.setFrame(appKit(frame), display: false)
+            panel.orderFrontRegardless()
+            dividerControls[branchID] = panel
+        }
     }
 
     /// A resize changes geometry only. Keep panel ordering and content views
@@ -125,6 +155,7 @@ public final class TabbedOverlayController {
             view.updateToolTips()
             view.needsDisplay = true
         }
+        refreshDividerControls()
     }
 
     private func makePanel() -> NSPanel {
@@ -750,4 +781,26 @@ private final class TabbedAccessibilityButton: NSAccessibilityElement {
         MainActor.assumeIsolated { action() }
         return true
     }
+}
+
+/// A VoiceOver slider over a Bento pane divider. It draws nothing and takes no
+/// clicks; pointer resizing belongs to Bento's divider handle.
+@MainActor final class TabbedDividerAccessibilityView: NSView {
+    var onAdjust: ((Double) -> Void)?
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        setAccessibilityElement(true)
+        setAccessibilityRole(.slider)
+        setAccessibilityEnabled(true)
+        setAccessibilityLabel("Resize panes")
+        setAccessibilityMinValue(5)
+        setAccessibilityMaxValue(95)
+        setAccessibilityHelp("Adjust the first pane's share in five percent steps.")
+    }
+
+    required init?(coder: NSCoder) { nil }
+
+    override func accessibilityPerformIncrement() -> Bool { onAdjust?(0.05); return onAdjust != nil }
+    override func accessibilityPerformDecrement() -> Bool { onAdjust?(-0.05); return onAdjust != nil }
 }
