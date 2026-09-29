@@ -704,6 +704,8 @@ enum DividerLimitCase: CaseIterable { case straight, junction, linked }
     controller.beginGesture(interaction: interaction, at: BTPoint(x: rightFrame.minX, y: start.y))
     #expect(willBegin == 2)
     controller.cancelActiveGesture()
+}
+
 @Test @MainActor func junctionCursorFollowsTheJunctionShape() {
     func cursor(_ arms: [DividerHandleArm]) -> NSCursor {
         let lengths = Dictionary(uniqueKeysWithValues: arms.map { ($0, 12.0) })
