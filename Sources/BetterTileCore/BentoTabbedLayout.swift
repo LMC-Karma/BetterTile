@@ -518,6 +518,26 @@ public struct TabbedLayoutState: Hashable, Sendable {
     /// Full pane frames, including the tab strip.
     public func frames(in bounds: BTRect) -> [UUID: BTRect] { groups.paneFrames(in: bounds) ?? [:] }
 
+    /// Pane dividers from the Bento tree, for accessibility controls.
+    public func dividers(in bounds: BTRect) -> [BoundaryDescriptor] {
+        layout.boundaries(in: bounds, displayID: DisplayID(rawValue: "tabbed")).filter { !$0.isLocked }
+    }
+
+    /// Moves one Bento divider by a fraction of the area it splits, as
+    /// VoiceOver increment and decrement do. Minimum sizes are fitted later.
+    @discardableResult
+    public mutating func adjustDivider(_ branchID: UUID, by fraction: Double, in bounds: BTRect) -> Bool {
+        guard fraction.isFinite,
+              let divider = dividers(in: bounds).first(where: { $0.branchID == branchID }),
+              let parent = divider.parentBounds else { return false }
+        let extent = divider.axis == .vertical ? parent.size.width : parent.size.height
+        var next = layout
+        guard next.setBoundaryCoordinate(divider.coordinate + fraction * extent, branchID: branchID, in: bounds)
+        else { return false }
+        synchronize(with: next)
+        return true
+    }
+
     /// The Bento layout for leaving Tabbed: every hidden tab gets a pane.
     public func unstacked(in bounds: BTRect) -> BentoLayoutState { groups.unstacked(in: bounds) }
 

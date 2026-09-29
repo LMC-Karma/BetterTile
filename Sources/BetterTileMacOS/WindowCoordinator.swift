@@ -802,14 +802,24 @@ extension WindowCoordinator {
             try validate(placements, sizeTolerance: 0.001)
             baseline = Dictionary(uniqueKeysWithValues: try snapshots(ids: ids).map { ($0.id, $0.frame) })
         } catch { return .failed(reason: error.localizedDescription) }
+        // Hidden tabs are best effort: read what is readable, and write only
+        // frames that change, in the same batch as the required writes.
+        let bestEffortBaseline = Dictionary(
+            ((try? snapshots(ids: Set(bestEffort.map(\.windowID)))) ?? []).map { ($0.id, $0.frame) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        let changedBestEffort = bestEffort.filter { placement in
+            bestEffortBaseline[placement.windowID].map { !$0.approximatelyEquals(placement.frame, tolerance: 0.5) } ?? false
+        }
         var touched = false
         do {
             let changed = placements.filter { !(baseline[$0.windowID]?.approximatelyEquals($0.frame, tolerance: 0.5) ?? false) }
-            touched = !changed.isEmpty
-            try applyAtomically(changed, rollbackFrames: baseline)
-            for placement in bestEffort {
-                touched = true
-                try? apply(placement.frame, to: placement.windowID)
+            touched = !changed.isEmpty || !changedBestEffort.isEmpty
+            try system.withFrameWriteBatch {
+                try applyAtomically(changed, rollbackFrames: baseline)
+                for placement in changedBestEffort {
+                    try? apply(placement.frame, to: placement.windowID, knownCurrentFrame: bestEffortBaseline[placement.windowID])
+                }
             }
             if let focus {
                 touched = true
@@ -861,6 +871,10 @@ extension WindowCoordinator {
             var failed = false
             for (id, frame) in baseline.sorted(by: { $0.key < $1.key }) {
                 do { try apply(frame, to: id) } catch { failed = true }
+            }
+            // Hidden tabs return too, without affecting the outcome.
+            for placement in changedBestEffort {
+                if let frame = bestEffortBaseline[placement.windowID] { try? apply(frame, to: placement.windowID) }
             }
             if touched {
                 for id in previousSelected { do { try tabSystem.raiseWindow(id, activate: false) } catch { failed = true } }

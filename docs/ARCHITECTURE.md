@@ -144,13 +144,17 @@ change a Bento operation made to the tree; writing it also writes the tree.
 - Only selected tabs count toward minimum sizes. Hidden tabs are placed at
   their pane's window frame, stacked behind the selected tab, as best effort
   (`WindowCoordinator.applyTabbed(required:)`): a hidden tab that refuses the
-  size never fails the layout.
+  size never fails the layout. Only hidden tabs whose frame changes are
+  written, in the same frame-write batch, and they return if the layout fails.
 - Bento owns every layout interaction in Tabbed: divider drags (including the
   minimum-size state), window drags, and minimum-size solving. After a Bento
   commit, Tabbed re-applies its state so hidden tabs follow their pane and the
   strips move. A window drag first tears the tab out of its group when the
   group has other tabs; a center drop adds the window to that pane as a tab,
   and a torn tab dropped nowhere returns to its group.
+- Bento's divider handle appears only on hover, so the Tabbed overlay adds a
+  VoiceOver slider over each divider. The slider ignores the mouse; increment
+  and decrement move the Bento divider by five percent of the area it splits.
 - New windows join the active pane as its selected tab. Entering Tabbed from
   Bento adopts the tree, so every pane stays where it was. Leaving for Bento
   gives every hidden tab its own pane (`unstacked(in:)`) and removes the
