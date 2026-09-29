@@ -353,7 +353,9 @@ public struct BentoBoundaryResolver: Sendable {
                                 // The lower window starts below its pane's content reserve.
                                 let reserve = state.metrics.contentTopInset
                                 guard abs((secondFrame.minY - firstFrame.maxY) - state.metrics.paneGap - reserve) <= tolerance else { continue }
-                                coordinate = firstFrame.maxY + state.metrics.paneGap / 2
+                                // Average the observed edges, as before; with a reserve,
+                                // the lower pane starts above its window.
+                                coordinate = (firstFrame.maxY + secondFrame.minY - reserve) / 2
                                 start = max(firstFrame.minX, secondFrame.minX)
                                 end = min(firstFrame.maxX, secondFrame.maxX)
                             }
