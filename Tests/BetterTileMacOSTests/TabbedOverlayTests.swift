@@ -514,7 +514,8 @@ func tabStripInsertionPointsMatchRenderedTabEdges(width: Double) {
     _ = NSApplication.shared
     let view = TabbedPaneView(frame: NSRect(x: 0, y: 0, width: 300, height: 34))
     var reduceTransparency = false
-    view.displayOptions = { (reduceTransparency, false) }
+    var increaseContrast = false
+    view.displayOptions = { (reduceTransparency, increaseContrast) }
     view.refreshAppearance()
     #expect(view.showsGlass)
     reduceTransparency = true
@@ -522,5 +523,12 @@ func tabStripInsertionPointsMatchRenderedTabEdges(width: Double) {
     #expect(!view.showsGlass)
     reduceTransparency = false
     NSWorkspace.shared.notificationCenter.post(name: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification, object: nil)
+    #expect(view.showsGlass)
+    // Increase Contrast alone also selects the solid surface.
+    increaseContrast = true
+    NSWorkspace.shared.notificationCenter.post(name: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification, object: nil)
+    #expect(!view.showsGlass)
+    increaseContrast = false
+    view.refreshAppearance()
     #expect(view.showsGlass)
 }
