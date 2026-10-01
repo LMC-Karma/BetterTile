@@ -6,7 +6,7 @@ import Testing
 /// BetterTileMacOS test suite. Failure knobs simulate rejected, ignored,
 /// numbered-failing, clamped, and late-settling Accessibility writes.
 @MainActor
-final class FakeWindowSystem: WindowSystem, TargetedWindowSystem, WindowEventSource {
+final class FakeWindowSystem: WindowSystem, TargetedWindowSystem, WindowEventSource, TabbedWindowSystem {
     var availableDisplays = [DisplaySnapshot(
         id: DisplayID(rawValue: "main"),
         frame: BTRect(x: 0, y: 0, width: 1000, height: 800),
@@ -14,12 +14,31 @@ final class FakeWindowSystem: WindowSystem, TargetedWindowSystem, WindowEventSou
         isMain: true
     )]
     var windows: [WindowSnapshot]
+    var raisedWindows: [(WindowID, Bool)] = []
+    var failingRaiseWindowID: WindowID?
+    var ignoredRaise = false
+    /// Focused-window reads that still report the old focus after an
+    /// activating raise, simulating an application that is slow to activate.
+    var delayedFocusReads = 0
+    private var pendingFocusWindowID: WindowID?
+    var closedWindowRequests: [WindowID] = []
+    func raiseWindow(_ id: WindowID, activate: Bool) throws {
+        if failingRaiseWindowID == id { throw WindowSystemError.operationFailed("Simulated raise failure") }
+        guard windows.contains(where: { $0.id == id }) else { throw WindowSystemError.windowNotFound(id) }
+        raisedWindows.append((id, activate))
+        if activate && !ignoredRaise {
+            if delayedFocusReads > 0 { pendingFocusWindowID = id } else { focusedWindowID = id }
+        }
+    }
+    func requestCloseWindow(_ id: WindowID) throws { closedWindowRequests.append(id) }
     var failingWindowID: WindowID?
     var ignoredFrameWriteCounts: [WindowID: Int] = [:]
     var frameWriteCounts: [WindowID: Int] = [:]
     var frameWriteBatches: [[WindowID]] = []
     private var currentFrameWriteBatch: [WindowID]?
     func withFrameWriteBatch(_ updates: () throws -> Void) rethrows {
+        // Like the Accessibility adapter, a nested batch joins the outer one.
+        if currentFrameWriteBatch != nil { try updates(); return }
         currentFrameWriteBatch = []
         defer {
             frameWriteBatches.append(currentFrameWriteBatch ?? [])
@@ -28,6 +47,8 @@ final class FakeWindowSystem: WindowSystem, TargetedWindowSystem, WindowEventSou
         try updates()
     }
     var failedFrameWriteNumbers: [WindowID: Set<Int>] = [:]
+    /// The size write succeeds before the position write fails.
+    var partiallyFailedFrameWriteNumbers: [WindowID: Set<Int>] = [:]
     var failingMinimizeWindowID: WindowID?
     var minimizeWriteCounts: [WindowID: Int] = [:]
     var failedMinimizeWriteNumbers: [WindowID: Set<Int>] = [:]
@@ -41,6 +62,9 @@ final class FakeWindowSystem: WindowSystem, TargetedWindowSystem, WindowEventSou
     var recordedKnownCurrentFrames: [WindowID: [BTRect?]] = [:]
     /// Simulates an application that refuses to grow beyond a fixed width.
     var clampWidth: Double?
+    /// Simulates applications whose real minimum sizes are not reported.
+    var enforcedMinimumWidths: [WindowID: Double] = [:]
+    var enforcedMinimumHeights: [WindowID: Double] = [:]
     /// Simulates an application that applies a geometry change on its own run
     /// loop: the write is accepted, but the new frame is only observable after
     /// this many reads.
@@ -71,6 +95,9 @@ final class FakeWindowSystem: WindowSystem, TargetedWindowSystem, WindowEventSou
     func requestAccessibilityPermission(prompt: Bool) -> Bool { true }
     func focusedWindow() throws -> WindowSnapshot? {
         if focusedWindowReadFails { throw WindowSystemError.operationFailed("Simulated focused-window failure") }
+        if let pending = pendingFocusWindowID {
+            if delayedFocusReads > 0 { delayedFocusReads -= 1 } else { focusedWindowID = pending; pendingFocusWindowID = nil }
+        }
         return focusedWindowID.flatMap { id in windows.first(where: { $0.id == id }) } ?? windows.first
     }
     func visibleWindows() throws -> [WindowSnapshot] {
@@ -98,12 +125,25 @@ final class FakeWindowSystem: WindowSystem, TargetedWindowSystem, WindowEventSou
             throw WindowSystemError.operationFailed("Simulated numbered Accessibility failure")
         }
         guard let index = windows.firstIndex(where: { $0.id == windowID }) else { throw WindowSystemError.windowNotFound(windowID) }
+        if partiallyFailedFrameWriteNumbers[windowID]?.contains(frameWriteCounts[windowID, default: 0]) == true {
+            windows[index].frame.size = frame.size
+            throw WindowSystemError.operationFailed("Simulated partial Accessibility failure")
+        }
         if ignoredFrameWriteCounts[windowID, default: 0] > 0 {
             ignoredFrameWriteCounts[windowID, default: 0] -= 1
             return
         }
         var applied = frame
         if let clampWidth { applied.size.width = min(applied.size.width, clampWidth) }
+        if let minimum = enforcedMinimumWidths[windowID], applied.size.width < minimum {
+            // A refused shrink keeps the window's edge nearest its old frame.
+            if applied.minX > windows[index].frame.minX + 0.5 { applied.origin.x = applied.maxX - minimum }
+            applied.size.width = minimum
+        }
+        if let minimum = enforcedMinimumHeights[windowID], applied.size.height < minimum {
+            if applied.minY > windows[index].frame.minY + 0.5 { applied.origin.y = applied.maxY - minimum }
+            applied.size.height = minimum
+        }
         if readsBeforeSettling > 0 {
             pendingFrames[windowID] = (applied, readsBeforeSettling)
             return

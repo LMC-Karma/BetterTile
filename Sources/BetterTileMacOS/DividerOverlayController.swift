@@ -268,7 +268,11 @@ public final class DividerOverlayController {
     public var bentoStateChangedHandler: ((DisplayID, BentoLayoutState, [WindowID: BTRect], [WindowID: BTRect]) -> Void)?
     public var rollbackFailureHandler: ((DisplayID, String?) -> Void)?
     public var gestureEndedHandler: (() -> Void)?
+    /// Runs before the gesture reads its windows, so it sees fresh minimums.
+    public var gestureWillBeginHandler: (() -> Void)?
     public private(set) var isDragging = false
+    var dragLimit: DragLimit { handlePanel?.limit ?? DragLimit() }
+    var limitedGhostWindowIDs: Set<WindowID> { ghosts.limitedWindowIDs }
 
     private let coordinator: WindowCoordinator
     private let displayTicks: ResizeDisplayLink
@@ -282,7 +286,11 @@ public final class DividerOverlayController {
     private let ghosts = GhostFrameOverlayController()
     private var globalMouseMonitor: Any?
     private var localMouseMonitor: Any?
-    private var escapeMonitor: Any?
+    private var globalKeyMonitor: Any?
+    private var localKeyMonitor: Any?
+    private let addGlobalKeyMonitor: (@escaping @MainActor (UInt16) -> Void) -> Any?
+    private let addLocalKeyMonitor: (@escaping @MainActor (UInt16) -> Bool) -> Any?
+    private let removeKeyMonitor: (Any) -> Void
     private var ownWindowObservationTask: Task<Void, Never>?
 
     private var transaction: WindowFrameTransaction?
@@ -294,22 +302,39 @@ public final class DividerOverlayController {
     private var latestPlacements: [Placement] = []
     private var latestDragPoint: CGPoint?
     private var hasPendingDisplayUpdate = false
+    /// Consecutive live ticks on which a window held its size while asked to
+    /// shrink. One tick is not proof: an application can apply a write late.
+    private var heldSizeTicks: [WindowID: (size: BTSize, count: Int)] = [:]
 
-    public init(coordinator: WindowCoordinator, configuration: BetterTileConfiguration) {
-        self.coordinator = coordinator
-        self.configuration = configuration
-        displayTicks = ResizeDisplayLink()
-        observeOwnWindows()
+    public convenience init(coordinator: WindowCoordinator, configuration: BetterTileConfiguration) {
+        self.init(coordinator: coordinator, configuration: configuration, displayTicks: ResizeDisplayLink())
     }
 
     init(
         coordinator: WindowCoordinator,
         configuration: BetterTileConfiguration,
-        displayTicks: ResizeDisplayLink
+        displayTicks: ResizeDisplayLink,
+        addGlobalKeyMonitor: @escaping (@escaping @MainActor (UInt16) -> Void) -> Any? = { handler in
+            NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { event in
+                let keyCode = event.keyCode
+                MainActor.assumeIsolated { handler(keyCode) }
+            }
+        },
+        addLocalKeyMonitor: @escaping (@escaping @MainActor (UInt16) -> Bool) -> Any? = { handler in
+            NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+                let keyCode = event.keyCode
+                let consumed = MainActor.assumeIsolated { handler(keyCode) }
+                return consumed ? nil : event
+            }
+        },
+        removeKeyMonitor: @escaping (Any) -> Void = { NSEvent.removeMonitor($0) }
     ) {
         self.coordinator = coordinator
         self.configuration = configuration
         self.displayTicks = displayTicks
+        self.addGlobalKeyMonitor = addGlobalKeyMonitor
+        self.addLocalKeyMonitor = addLocalKeyMonitor
+        self.removeKeyMonitor = removeKeyMonitor
         observeOwnWindows()
     }
 
@@ -426,6 +451,7 @@ public final class DividerOverlayController {
     }
 
     func beginGesture(interaction: DividerInteraction, at point: BTPoint) {
+        gestureWillBeginHandler?()
         guard let mainFrame = NSScreen.screens.first?.frame,
               let display = coordinator.system.displays().first(where: { $0.id == interaction.displayID }),
               let windows = try? coordinator.system.visibleWindows()
@@ -522,6 +548,7 @@ public final class DividerOverlayController {
         let placements: [Placement]
         let proposedInteraction: DividerInteraction
         var proposedState = proposedBentoState
+        var limit = DragLimit()
 
         if interaction.isBento, let baselineBentoState {
             let coordinates = interaction.branchCoordinates(from: startPoint, to: point)
@@ -553,6 +580,12 @@ public final class DividerOverlayController {
                 kind: interaction.kind
             )
             proposedState = result.state
+            for boundary in participating {
+                guard let branchID = boundary.branchID, let requested = coordinates[branchID],
+                      abs(requested - boundary.coordinate) > 0.5 else { continue }
+                if boundary.axis == .vertical { limit.width = true } else { limit.height = true }
+                limit.blockedTowardPositive = requested > boundary.coordinate
+            }
         } else {
             guard let boundary = interaction.boundaries.first else { return }
             let delta = boundary.axis == .vertical ? point.x - startPoint.x : point.y - startPoint.y
@@ -560,6 +593,10 @@ public final class DividerOverlayController {
                 boundary: boundary, delta: delta, windows: baselineWindows, bounds: displayBounds
             ) else { return }
             placements = result.placements
+            if abs(result.appliedDelta - delta) > 0.5 {
+                if boundary.axis == .vertical { limit.width = true } else { limit.height = true }
+                limit.blockedTowardPositive = delta > result.appliedDelta
+            }
             var moved = boundary
             moved.coordinate += result.appliedDelta
             proposedInteraction = DividerInteraction(boundaries: [moved], kind: interaction.kind)
@@ -581,9 +618,13 @@ public final class DividerOverlayController {
             ghosts.show(
                 placements: placements,
                 windows: baselineWindows,
-                below: handlePanel
+                below: handlePanel,
+                limitedWindowIDs: ResizeLimits.windowsAtMinimum(
+                    placements, windows: baselineWindows, widthLimited: limit.width, heightLimited: limit.height
+                )
             )
             presentHandle(for: proposedInteraction, near: point, active: true)
+            handlePanel?.setLimit(limit)
         case .live:
             ghosts.hide()
             switch coordinator.applyLive(
@@ -596,7 +637,16 @@ public final class DividerOverlayController {
                 proposedBentoState = proposedState
                 activeInteraction = proposedInteraction
                 self.transaction = transaction
+                let refused = recordRefusedMinimums(placements)
+                if refused.width || refused.height {
+                    // The application held its size: the next sample uses that
+                    // minimum and the handle turns orange.
+                    limit.width = limit.width || refused.width
+                    limit.height = limit.height || refused.height
+                    limit.blockedTowardPositive = refused.width ? point.x > startPoint.x : point.y > startPoint.y
+                }
                 presentHandle(for: proposedInteraction, near: point, active: true)
+                handlePanel?.setLimit(limit)
             case .failed:
                 // A transient rejection keeps the gesture alive; the next drag
                 // sample proposes fresh placements.
@@ -650,6 +700,54 @@ public final class DividerOverlayController {
         clearGesture()
     }
 
+    /// Reads back the windows a live tick asked to shrink. A window that holds
+    /// the same larger size for two ticks has refused; its size becomes its
+    /// minimum for the rest of this gesture only.
+    private func recordRefusedMinimums(_ placements: [Placement]) -> (width: Bool, height: Bool) {
+        let baseline = Dictionary(baselineWindows.map { ($0.id, $0.frame.size) }, uniquingKeysWith: { first, _ in first })
+        let shrinking = placements.filter { placement in
+            guard let start = baseline[placement.windowID] else { return false }
+            return placement.frame.size.width < start.width - 2 || placement.frame.size.height < start.height - 2
+        }
+        let shrinkingIDs = Set(shrinking.map(\.windowID))
+        heldSizeTicks = heldSizeTicks.filter { shrinkingIDs.contains($0.key) }
+        guard !shrinking.isEmpty,
+              let targeted = coordinator.system as? any TargetedWindowSystem,
+              let actual = try? targeted.windowSnapshots(ids: shrinkingIDs)
+        else {
+            heldSizeTicks = [:]
+            return (false, false)
+        }
+        let actualSizes = Dictionary(actual.map { ($0.id, $0.frame.size) }, uniquingKeysWith: { first, _ in first })
+        var refused = (width: false, height: false)
+        for placement in shrinking {
+            guard let size = actualSizes[placement.windowID] else {
+                heldSizeTicks[placement.windowID] = nil
+                continue
+            }
+            let heldWidth = size.width > placement.frame.size.width + 2
+            let heldHeight = size.height > placement.frame.size.height + 2
+            guard heldWidth || heldHeight else {
+                heldSizeTicks[placement.windowID] = nil
+                continue
+            }
+            let previous = heldSizeTicks[placement.windowID]
+            let unchanged = previous.map {
+                abs($0.size.width - size.width) <= 1 && abs($0.size.height - size.height) <= 1
+            } ?? false
+            let count = unchanged ? (previous?.count ?? 0) + 1 : 1
+            heldSizeTicks[placement.windowID] = (size, count)
+            guard count >= 2, let index = baselineWindows.firstIndex(where: { $0.id == placement.windowID }) else { continue }
+            var minimum = baselineWindows[index].constraints.minimumSize
+            if heldWidth { minimum.width = max(minimum.width, size.width) }
+            if heldHeight { minimum.height = max(minimum.height, size.height) }
+            baselineWindows[index].constraints.minimumSize = minimum
+            refused.width = refused.width || heldWidth
+            refused.height = refused.height || heldHeight
+        }
+        return refused
+    }
+
     func cancelActiveGesture() {
         if let transaction {
             let outcome = coordinator.cancel(transaction: transaction)
@@ -680,6 +778,8 @@ public final class DividerOverlayController {
         latestPlacements = []
         latestDragPoint = nil
         hasPendingDisplayUpdate = false
+        heldSizeTicks = [:]
+        handlePanel?.setLimit(DragLimit())
         displayTicks.stop()
         removeEscapeMonitor()
         let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
@@ -720,16 +820,23 @@ public final class DividerOverlayController {
     }
 
     private func installEscapeMonitor() {
-        guard escapeMonitor == nil else { return }
-        escapeMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            guard event.keyCode == 53 else { return }
-            Task { @MainActor in self?.cancelActiveGesture() }
+        guard globalKeyMonitor == nil, localKeyMonitor == nil else { return }
+        globalKeyMonitor = addGlobalKeyMonitor { [weak self] keyCode in
+            guard keyCode == 53 else { return }
+            self?.cancelActiveGesture()
+        }
+        localKeyMonitor = addLocalKeyMonitor { [weak self] keyCode in
+            guard keyCode == 53 else { return false }
+            self?.cancelActiveGesture()
+            return true
         }
     }
 
     private func removeEscapeMonitor() {
-        if let escapeMonitor { NSEvent.removeMonitor(escapeMonitor) }
-        escapeMonitor = nil
+        if let globalKeyMonitor { removeKeyMonitor(globalKeyMonitor) }
+        if let localKeyMonitor { removeKeyMonitor(localKeyMonitor) }
+        globalKeyMonitor = nil
+        localKeyMonitor = nil
     }
 
     private func handleFrame(
@@ -891,6 +998,15 @@ enum DividerInteractionKind: Equatable {
     case junction(verticalBranchID: UUID, horizontalBranchID: UUID)
 }
 
+/// Which axes of a divider drag reached a window's minimum size, and on
+/// which side, in top-left coordinates.
+struct DragLimit: Equatable {
+    var width = false
+    var height = false
+    var blockedTowardPositive = false
+    var isLimited: Bool { width || height }
+}
+
 enum DividerHandleMode: Equatable {
     case vertical(restingLength: Double, activeLength: Double)
     case horizontal(restingLength: Double, activeLength: Double)
@@ -926,6 +1042,9 @@ private final class DividerHandlePanel: NSPanel {
         handleView.configure(mode: mode, thickness: thickness)
     }
 
+    func setLimit(_ limit: DragLimit) { handleView.setLimit(limit) }
+    var limit: DragLimit { handleView.limit }
+
     func setActive(
         _ active: Bool,
         animated: Bool,
@@ -947,6 +1066,9 @@ final class DividerHandleView: NSView {
     private var thickness: CGFloat
     private let material = NSVisualEffectView()
     private var active = false
+    /// A neighbor is at its minimum size: the handle turns orange and the
+    /// cursor shows only the direction the divider can still move.
+    private(set) var limit = DragLimit()
     private(set) var stretchProgress = 0.0
     private var animationTask: Task<Void, Never>?
     private var tracking: NSTrackingArea?
@@ -1031,13 +1153,42 @@ final class DividerHandleView: NSView {
         tracking = area
     }
 
+    func setLimit(_ limit: DragLimit) {
+        guard self.limit != limit else { return }
+        self.limit = limit
+        updateAppearance()
+        needsDisplay = true
+        window?.invalidateCursorRects(for: self)
+    }
+
     override func resetCursorRects() {
-        let cursor: NSCursor = switch mode {
-        case .vertical: .resizeLeftRight
-        case .horizontal: .resizeUpDown
-        case .junction: .crosshair
-        }
         addCursorRect(bounds, cursor: cursor)
+    }
+
+    /// macOS 15 divider cursors. At a limit, only the open direction shows.
+    var cursor: NSCursor {
+        switch mode {
+        case .vertical:
+            guard limit.width else { return .columnResize }
+            return .columnResize(directions: limit.blockedTowardPositive ? .left : .right)
+        case .horizontal:
+            guard limit.height else { return .rowResize }
+            // Top-left coordinates: positive movement is downward.
+            return .rowResize(directions: limit.blockedTowardPositive ? .up : .down)
+        case let .junction(_, resting, active):
+            // A T-junction is the end of one divider: point the corner cursor
+            // at that end. A plus junction uses the top-left diagonal.
+            let arms = Set(resting.merging(active) { max($0, $1) }.filter { $0.value > 0 }.keys)
+            let atBottom = arms.contains(.up) && !arms.contains(.down)
+            let atRight = arms.contains(.left) && !arms.contains(.right)
+            let position: NSCursor.FrameResizePosition = switch (atBottom, atRight) {
+            case (true, true): .bottomRight
+            case (true, false): .bottomLeft
+            case (false, true): .topRight
+            case (false, false): .topLeft
+            }
+            return .frameResize(position: position, directions: limit.isLimited ? .inward : .all)
+        }
     }
 
     override func mouseExited(with event: NSEvent) {
@@ -1107,10 +1258,11 @@ final class DividerHandleView: NSView {
     }
 
     private var gripColor: NSColor {
-        NSColor.secondaryLabelColor.blended(
+        let active: NSColor = limit.isLimited ? .systemOrange : .controlAccentColor
+        return NSColor.secondaryLabelColor.blended(
             withFraction: stretchProgress,
-            of: NSColor.controlAccentColor.withAlphaComponent(0.88)
-        ) ?? .controlAccentColor
+            of: active.withAlphaComponent(0.88)
+        ) ?? active
     }
 
     override func viewDidChangeEffectiveAppearance() {
@@ -1125,14 +1277,17 @@ final class GhostFrameOverlayController {
     private var panels: [WindowID: NSPanel] = [:]
     var windowNumbers: Set<Int> { Set(panels.values.map(\.windowNumber)) }
     private(set) var relativeOrderTargets: [WindowID: Int] = [:]
+    private(set) var limitedWindowIDs: Set<WindowID> = []
 
     func show(
         placements: [Placement],
         windows: [WindowSnapshot],
-        below handle: NSWindow?
+        below handle: NSWindow?,
+        limitedWindowIDs: Set<WindowID> = []
     ) {
         guard let mainFrame = NSScreen.screens.first?.frame else { return }
         let snapshots = Dictionary(uniqueKeysWithValues: windows.map { ($0.id, $0) })
+        self.limitedWindowIDs = limitedWindowIDs
         let ids = Set(placements.map(\.windowID))
         let staleIDs = panels.keys.filter { !ids.contains($0) }
         for id in staleIDs {
@@ -1150,7 +1305,8 @@ final class GhostFrameOverlayController {
             }
             (panel.contentView as? GhostPreviewView)?.update(
                 snapshot: snapshots[placement.windowID],
-                size: placement.frame.size
+                size: placement.frame.size,
+                limited: limitedWindowIDs.contains(placement.windowID)
             )
             if let handle, handle.windowNumber > 0 {
                 panel.order(.below, relativeTo: handle.windowNumber)
@@ -1163,6 +1319,7 @@ final class GhostFrameOverlayController {
     }
 
     func hide() {
+        limitedWindowIDs = []
         for panel in panels.values { panel.orderOut(nil) }
         panels.removeAll()
         relativeOrderTargets.removeAll()
@@ -1218,9 +1375,19 @@ private final class GhostPreviewView: NSVisualEffectView {
         sizeLabel.frame = CGRect(x: x + 38, y: y + 4, width: cardWidth - 38, height: 16)
     }
 
-    func update(snapshot: WindowSnapshot?, size: BTSize) {
+    private(set) var isLimited = false
+
+    func update(snapshot: WindowSnapshot?, size: BTSize, limited: Bool = false) {
         titleLabel.stringValue = snapshot?.title.isEmpty == false ? snapshot!.title : snapshot?.bundleIdentifier ?? "Window"
         sizeLabel.stringValue = "\(Int(size.width.rounded())) × \(Int(size.height.rounded()))"
+        if isLimited != limited {
+            isLimited = limited
+            let color: NSColor = limited ? .systemOrange : .controlAccentColor
+            effectiveAppearance.performAsCurrentDrawingAppearance {
+                layer?.borderColor = color.withAlphaComponent(limited ? 0.95 : 0.78).cgColor
+            }
+            sizeLabel.textColor = limited ? .systemOrange : .secondaryLabelColor
+        }
         if let pid = snapshot?.processIdentifier {
             iconView.image = NSRunningApplication(processIdentifier: pid)?.icon
         }

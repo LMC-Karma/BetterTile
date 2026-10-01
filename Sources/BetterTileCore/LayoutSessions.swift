@@ -31,6 +31,23 @@ public struct LayoutSession: Hashable, Sendable {
     public var displayID: DisplayID
     public var nativeSpaceID: NativeSpaceID?
     public var mode: LayoutMode
+    /// Tab membership saved beside the Bento tree. See `tabbedState`.
+    private var storedTabbedState: TabbedLayoutState?
+    /// Tabbed runs on this session's Bento tree. Reading follows any change a
+    /// Bento operation made to `bentoState`; writing also writes the tree.
+    public var tabbedState: TabbedLayoutState? {
+        get {
+            guard var state = storedTabbedState else { return nil }
+            if state.layout != bentoState { state.synchronize(with: bentoState) }
+            return state
+        }
+        set {
+            storedTabbedState = newValue
+            if let newValue { bentoState = newValue.layout }
+        }
+    }
+    public var tabbedHasEntryBaseline = false
+    public var tabbedBaselineFrames: [WindowID: BTRect] = [:]
     public var bentoState: BentoLayoutState
     public var windowIDs: Set<WindowID>
     public var focusedWindowID: WindowID?
@@ -358,6 +375,26 @@ public struct LayoutSessionStore: Sendable {
         committed.advanceRevision()
         storedSessions[proposed.displayID]?[proposed.id] = committed
         return committed
+    }
+
+    /// Closure evidence updates retained Tabbed sessions without moving any
+    /// inactive desktop's windows. Incomplete sweeps never use this operation.
+    public mutating func removeClosedTabbedWindow(_ windowID: WindowID) {
+        for displayID in Array(storedSessions.keys) {
+            for id in Array(storedSessions[displayID]?.keys ?? Dictionary<DesktopSessionID, LayoutSession>().keys) {
+                guard var session = storedSessions[displayID]?[id],
+                      let state = session.tabbedState,
+                      state.windowIDs.contains(windowID)
+                        || state.floatingWindowIDs.contains(windowID)
+                        || session.tabbedBaselineFrames[windowID] != nil
+                else { continue }
+                session.tabbedState?.removeClosedWindow(windowID)
+                session.tabbedBaselineFrames.removeValue(forKey: windowID)
+                session.windowIDs.remove(windowID)
+                session.advanceRevision()
+                storedSessions[displayID]?[id] = session
+            }
+        }
     }
 
     public mutating func removeMissingDisplays(_ displayIDs: Set<DisplayID>) {

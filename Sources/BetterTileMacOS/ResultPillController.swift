@@ -30,9 +30,16 @@ public struct ResultPillFeedback: Equatable, Sendable {
             message = "No eligible window"
         } else if value.contains("cannot fit") || value.contains("can't fit") || value.contains("minimum size") {
             message = "Can’t fit this layout"
+        } else if value.contains("tabbed size") {
+            message = "Window refused this size"
+        } else if value.contains("repair tabbed") || (value.contains("tabbed") && value.contains("restore")) {
+            message = "Use Repair Tabbed"
+        } else if value.contains("desktop changed") {
+            message = "Desktop changed"
         } else if value.contains("no longer matches")
             || value.contains("window changed")
-            || value.contains("captured window") {
+            || value.contains("captured window")
+            || value.contains("no longer available") {
             message = "Window changed"
         } else {
             message = "Couldn’t apply layout"
@@ -66,14 +73,19 @@ public final class ResultPillController {
     private let icon = NSImageView()
     private let label = NSTextField(labelWithString: "")
     private var dismissalTask: Task<Void, Never>?
+    private var presentationID = UUID()
 
-    public init() {
-        panel = NSPanel(
+    public convenience init() {
+        self.init(panel: NSPanel(
             contentRect: .zero,
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: true
-        )
+        ))
+    }
+
+    init(panel: NSPanel) {
+        self.panel = panel
         panel.level = .statusBar
         panel.isOpaque = false
         panel.backgroundColor = .clear
@@ -88,6 +100,7 @@ public final class ResultPillController {
         defer { Self.signposter.endInterval("showResultPill", interval) }
         guard let mainFrame = NSScreen.screens.first?.frame else { return }
         dismissalTask?.cancel()
+        presentationID = UUID()
 
         label.stringValue = feedback.message
         icon.image = NSImage(
@@ -120,15 +133,24 @@ public final class ResultPillController {
                 self.panel.orderOut(nil)
                 return
             }
+            let completion = self.dismissalCompletion()
             let exit = self.panel.frame.offsetBy(dx: 0, dy: 8)
             NSAnimationContext.runAnimationGroup { context in
                 context.duration = 0.18
                 context.timingFunction = CAMediaTimingFunction(name: .easeIn)
                 self.panel.animator().alphaValue = 0
                 self.panel.animator().setFrame(exit, display: true)
-            } completionHandler: { [weak self] in
-                Task { @MainActor in self?.panel.orderOut(nil) }
+            } completionHandler: {
+                Task { @MainActor in completion() }
             }
+        }
+    }
+
+    func dismissalCompletion() -> @MainActor @Sendable () -> Void {
+        let presentationID = presentationID
+        return { [weak self] in
+            guard let self, self.presentationID == presentationID else { return }
+            self.panel.orderOut(nil)
         }
     }
 
@@ -136,6 +158,7 @@ public final class ResultPillController {
         let interval = Self.signposter.beginInterval("hideResultPill")
         defer { Self.signposter.endInterval("hideResultPill", interval) }
         dismissalTask?.cancel()
+        presentationID = UUID()
         panel.orderOut(nil)
     }
 

@@ -381,13 +381,13 @@ private final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSPo
         guard let repairButton = repairStatusItem.button else { return }
         let repairImage = NSImage(
             systemSymbolName: "arrow.triangle.2.circlepath",
-            accessibilityDescription: "Repair Bento Layout"
+            accessibilityDescription: "Repair Current Layout"
         )?.withSymbolConfiguration(.init(pointSize: 12, weight: .semibold))
         repairImage?.isTemplate = true
         repairButton.image = repairImage
         repairButton.target = self
         repairButton.action = #selector(repairCurrentLayout)
-        repairButton.toolTip = "Repair Bento Layout"
+        repairButton.toolTip = "Repair Current Layout"
     }
 
     private static func statusImage(availableUpdate: AvailableUpdate?) -> NSImage? {
@@ -690,7 +690,7 @@ private final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSPo
 
     @objc private func repairCurrentLayout() {
         closePopover()
-        model.tileCurrentDisplay()
+        model.repairCurrentLayout()
     }
 
     @objc private func quitApplication() {
@@ -975,7 +975,7 @@ struct MenuPanelContent<Actions: View, Notice: View>: View {
                 setSnappingEnabled: isEditing ? nil : { value in
                     model.updateConfiguration { $0.snappingEnabled = value }
                 },
-                repairBento: isEditing ? nil : { model.tileCurrentDisplay() },
+                repairLayout: isEditing ? nil : { model.repairCurrentLayout() },
                 openSetup: openSetup
             )
     }
@@ -1065,17 +1065,36 @@ struct MenuPanelControls: View {
     let hasAccessibilityPermission: Bool
     let activeMode: LayoutMode
     let contextDescription: String
+
+    /// Native has no layout to repair; the same action arranges its windows
+    /// with Bento, so the label names that effect.
+    private var repairTitle: String {
+        switch activeMode {
+        case .tabbed: "Repair Tabbed"
+        case .bento: "Repair Bento"
+        case .manual, .linked: "Arrange with Bento"
+        }
+    }
+
+    private var repairHelp: String {
+        switch activeMode {
+        case .tabbed: "Rebuild this desktop's panes and tabs from its current windows."
+        case .bento: "Re-tile this desktop's windows into a clean Bento layout."
+        case .manual, .linked:
+            "Tile this display's windows with Bento. A single window moves to its configured placement."
+        }
+    }
     let snappingEnabled: Bool
     let setMode: ((LayoutMode) -> Void)?
     let setSnappingEnabled: ((Bool) -> Void)?
-    let repairBento: (() -> Void)?
+    let repairLayout: (() -> Void)?
     let openSetup: (() -> Void)?
 
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.colorSchemeContrast) private var colorSchemeContrast
 
     private var isInteractive: Bool {
-        setMode != nil || setSnappingEnabled != nil || repairBento != nil || openSetup != nil
+        setMode != nil || setSnappingEnabled != nil || repairLayout != nil || openSetup != nil
     }
 
     var body: some View {
@@ -1104,13 +1123,14 @@ struct MenuPanelControls: View {
                 }
                 .labelsHidden()
                 .pickerStyle(.segmented)
-                .frame(width: 138)
+                .frame(width: LayoutMode.availableModes.contains(.tabbed) ? 230 : 138)
             }
 
             Text(contextDescription)
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
+                .help(contextDescription)
 
             Toggle(
                 "Drag snapping",
@@ -1121,12 +1141,13 @@ struct MenuPanelControls: View {
             .font(.system(size: 12))
 
             Button {
-                repairBento?()
+                repairLayout?()
             } label: {
-                Label("Repair Current Bento Layout", systemImage: "arrow.triangle.2.circlepath")
+                Label(repairTitle, systemImage: "arrow.triangle.2.circlepath")
                     .font(.system(size: 12, weight: .semibold))
                     .frame(maxWidth: .infinity, minHeight: 28)
             }
+            .help(repairHelp)
             .buttonStyle(.borderedProminent)
             .controlSize(.regular)
             .disabled(!hasAccessibilityPermission)

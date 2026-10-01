@@ -604,7 +604,7 @@ public final class WindowCoordinator {
         }
     }
 
-    private func validate(_ placements: [Placement]) throws {
+    private func validate(_ placements: [Placement], sizeTolerance: Double = 0) throws {
         let ids = Set(placements.map(\.windowID))
         let snapshots = Dictionary(uniqueKeysWithValues: try snapshots(ids: ids).map { ($0.id, $0) })
         let displays = Dictionary(uniqueKeysWithValues: system.displays().map { ($0.id, $0) })
@@ -613,8 +613,8 @@ public final class WindowCoordinator {
             guard snapshot.isEligible, snapshot.constraints.isMovable, snapshot.constraints.isResizable else {
                 throw WindowSystemError.unsupportedWindow(placement.windowID)
             }
-            guard placement.frame.size.width >= snapshot.constraints.minimumSize.width,
-                  placement.frame.size.height >= snapshot.constraints.minimumSize.height
+            guard placement.frame.size.width + sizeTolerance >= snapshot.constraints.minimumSize.width,
+                  placement.frame.size.height + sizeTolerance >= snapshot.constraints.minimumSize.height
             else { throw WindowSystemError.operationFailed("A window reached its minimum size.") }
             // A legal size is not enough: a stale display frame or a split
             // driven to an edge can produce a placement that leaves nothing on
@@ -631,21 +631,28 @@ public final class WindowCoordinator {
     private func applyAtomically(_ placements: [Placement], rollbackFrames: [WindowID: BTRect]) throws {
         guard !placements.isEmpty else { return }
         try system.withFrameWriteBatch {
-            var applied: [WindowID] = []
+            var attempted: [WindowID] = []
             do {
                 for placement in placements.sorted(by: { $0.windowID < $1.windowID }) {
+                    attempted.append(placement.windowID)
                     try apply(
                         placement.frame,
                         to: placement.windowID,
                         knownCurrentFrame: rollbackFrames[placement.windowID]
                     )
-                    applied.append(placement.windowID)
                 }
             } catch {
+                // A size write can succeed before a position write fails. Read
+                // the failing window before deciding whether it needs rollback.
+                let failedID = attempted.last
+                let failedFrame = failedID.flatMap { (try? snapshots(ids: [$0]))?.first?.frame }
                 var rollbackFailures: [WindowID] = []
-                for id in applied.reversed() {
+                for id in attempted.reversed() {
                     guard let frame = rollbackFrames[id] else { continue }
-                    let appliedFrame = placements.first(where: { $0.windowID == id })?.frame
+                    if id == failedID, failedFrame?.approximatelyEquals(frame, tolerance: 0.01) == true { continue }
+                    let appliedFrame = id == failedID
+                        ? failedFrame
+                        : placements.first(where: { $0.windowID == id })?.frame
                     do {
                         try apply(frame, to: id, knownCurrentFrame: appliedFrame)
                     } catch {
@@ -764,5 +771,126 @@ public final class WindowCoordinator {
         }
         lastCycle = (windowID, requested, nextIndex, now)
         return sequence[nextIndex]
+    }
+}
+
+extension WindowCoordinator {
+    /// A bounded frame/order transaction. Windows remain on-screen and are
+    /// never minimized. Session validity is checked again after each await.
+    /// - Parameter required: Windows whose frames must fit and settle. Other
+    ///   placements (hidden tabs stacked behind their pane's selected tab) are
+    ///   best effort: a refusal never fails the layout. Nil requires all.
+    public func applyTabbed(
+        placements allPlacements: [Placement],
+        required: Set<WindowID>? = nil,
+        selected: [WindowID],
+        previousSelected: [WindowID],
+        focus: WindowID?,
+        onSizeMismatch: (@MainActor (WindowID, BTRect, BTRect, BTRect) -> Void)? = nil,
+        isCurrent: @MainActor () -> Bool
+    ) async -> WindowMutationOutcome {
+        let placements = required.map { ids in allPlacements.filter { ids.contains($0.windowID) } } ?? allPlacements
+        let bestEffort = required.map { ids in allPlacements.filter { !ids.contains($0.windowID) } } ?? []
+        guard let tabSystem = system as? any TabbedWindowSystem else {
+            return .failed(reason: "This window system does not support Tabbed actions.")
+        }
+        guard isCurrent(), !Task.isCancelled else { return .failed(reason: "The desktop changed.") }
+        let ids = Set(placements.map(\.windowID))
+        let baseline: [WindowID: BTRect]
+        let oldFocus = try? system.focusedWindow()?.id
+        do {
+            try validate(placements, sizeTolerance: 0.001)
+            baseline = Dictionary(uniqueKeysWithValues: try snapshots(ids: ids).map { ($0.id, $0.frame) })
+        } catch { return .failed(reason: error.localizedDescription) }
+        // Hidden tabs are best effort: read what is readable, and write only
+        // frames that change, in the same batch as the required writes.
+        let bestEffortBaseline = Dictionary(
+            ((try? snapshots(ids: Set(bestEffort.map(\.windowID)))) ?? []).map { ($0.id, $0.frame) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        let changedBestEffort = bestEffort.filter { placement in
+            bestEffortBaseline[placement.windowID].map { !$0.approximatelyEquals(placement.frame, tolerance: 0.5) } ?? false
+        }
+        var touched = false
+        do {
+            let changed = placements.filter { !(baseline[$0.windowID]?.approximatelyEquals($0.frame, tolerance: 0.5) ?? false) }
+            touched = !changed.isEmpty || !changedBestEffort.isEmpty
+            try system.withFrameWriteBatch {
+                try applyAtomically(changed, rollbackFrames: baseline)
+                for placement in changedBestEffort {
+                    try? apply(placement.frame, to: placement.windowID, knownCurrentFrame: bestEffortBaseline[placement.windowID])
+                }
+            }
+            if let focus {
+                touched = true
+                try tabSystem.raiseWindow(focus, activate: true)
+            }
+            for id in selected where id != focus {
+                touched = true
+                try tabSystem.raiseWindow(id, activate: false)
+            }
+            if let focus { try tabSystem.raiseWindow(focus, activate: false) }
+            var previousFrames: [WindowID: BTRect] = [:]
+            // Frames settle within four samples. Activation can take longer,
+            // so accepted frames keep waiting for focus instead of rolling back.
+            for attempt in 0..<12 {
+                guard isCurrent(), !Task.isCancelled else {
+                    return touched ? .degraded(reason: "The desktop changed during Tabbed placement. Return to that desktop and use Repair Tabbed.") : .failed(reason: "The desktop changed.")
+                }
+                let actual = Dictionary(uniqueKeysWithValues: try snapshots(ids: ids).map { ($0.id, $0.frame) })
+                let framesMatch = placements.allSatisfy { actual[$0.windowID]?.approximatelyEquals($0.frame, tolerance: 2) == true }
+                let focusMatches = try focus == nil || system.focusedWindow()?.id == focus
+                if framesMatch && focusMatches { return .applied }
+                if framesMatch {
+                    // The window was raised and its frame accepted. A focus
+                    // that never arrives is left to the focus observer.
+                    if attempt == 11 { return .applied }
+                    try await Task.sleep(for: .milliseconds(50))
+                    continue
+                }
+                // Only width refusals with stable frames and accepted heights
+                // can inform a retry. Report before rollback loses the evidence.
+                if attempt == 3, focusMatches, placements.allSatisfy({ placement in
+                    guard let frame = actual[placement.windowID] else { return false }
+                    return abs(frame.size.height - placement.frame.size.height) <= 2
+                        && previousFrames[placement.windowID]?.approximatelyEquals(frame, tolerance: 1) == true
+                }) {
+                    for placement in placements {
+                        if let frame = actual[placement.windowID], let before = baseline[placement.windowID] {
+                            onSizeMismatch?(placement.windowID, placement.frame, before, frame)
+                        }
+                    }
+                }
+                previousFrames = actual
+                if attempt >= 3 { break }
+                try await Task.sleep(for: .milliseconds(50))
+            }
+            throw WindowSystemError.operationFailed("A window did not accept its Tabbed size. Choose a larger pane or try Repair Tabbed.")
+        } catch {
+            guard isCurrent() else { return .degraded(reason: "The desktop changed before Tabbed could restore its windows.") }
+            var failed = false
+            for (id, frame) in baseline.sorted(by: { $0.key < $1.key }) {
+                do { try apply(frame, to: id) } catch { failed = true }
+            }
+            // Hidden tabs return too, without affecting the outcome.
+            for placement in changedBestEffort {
+                if let frame = bestEffortBaseline[placement.windowID] { try? apply(frame, to: placement.windowID) }
+            }
+            if touched {
+                for id in previousSelected { do { try tabSystem.raiseWindow(id, activate: false) } catch { failed = true } }
+                if let oldFocus, ids.contains(oldFocus) || previousSelected.contains(oldFocus) {
+                    do { try tabSystem.raiseWindow(oldFocus, activate: true) } catch { failed = true }
+                }
+            }
+            let restored = (try? snapshots(ids: ids)) ?? []
+            if baseline.contains(where: { id, frame in !restored.contains { $0.id == id && $0.frame.approximatelyEquals(frame, tolerance: 2) } }) { failed = true }
+            return failed ? .degraded(reason: "Tabbed could not fully restore the previous arrangement. Use Repair Tabbed or switch to Native.") : .failed(reason: error.localizedDescription)
+        }
+    }
+
+    public func closeTabbedWindow(_ id: WindowID) -> WindowMutationOutcome {
+        guard let tabSystem = system as? any TabbedWindowSystem else { return .failed(reason: "Window closure is unavailable.") }
+        do { try tabSystem.requestCloseWindow(id); return .applied }
+        catch { return .failed(reason: error.localizedDescription) }
     }
 }

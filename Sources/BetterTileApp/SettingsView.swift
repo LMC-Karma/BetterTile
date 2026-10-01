@@ -36,7 +36,7 @@ private enum SettingsDestination: String, CaseIterable, Identifiable {
                 + "keyboard shortcuts master toggle macos tiling move resize edge "
                 + "advanced enhanced user interface chromium electron voiceover"
         case .windowLayout:
-            "mode manual native bento resize linked divider shortcut keyboard hotkey halves thirds quarters sixths move display restore new window side automatic left right top bottom"
+            "mode manual native bento tabbed tabs pane preset resize linked divider shortcut keyboard hotkey halves thirds quarters sixths move display restore new window side automatic left right top bottom"
         case .snapZones:
             "drag snap edge corner title bar double click maximize"
         case .menuBar:
@@ -88,6 +88,7 @@ struct SettingsView: View {
     let openSetup: () -> Void
     @State private var selection: SettingsDestination = .general
     @State private var search = ""
+    @FocusState private var searchFocused: Bool
 
     var body: some View {
         NavigationSplitView {
@@ -108,13 +109,33 @@ struct SettingsView: View {
                 }
                 .listStyle(.sidebar)
                 .scrollContentBackground(.hidden)
+                .overlay {
+                    if !SettingsDestination.allCases.contains(where: matchesSearch) {
+                        ContentUnavailableView.search(text: search)
+                            .padding(.horizontal, 8)
+                    }
+                }
             }
             .navigationSplitViewColumnWidth(min: 198, ideal: 210, max: 240)
         } detail: {
-            VStack(alignment: .leading, spacing: 0) {
-                SettingsPageHeader(destination: selection)
-                detail
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            Group {
+                if SettingsDestination.allCases.contains(where: matchesSearch) {
+                    VStack(alignment: .leading, spacing: 0) {
+                        SettingsPageHeader(destination: selection)
+                        detail
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    }
+                } else {
+                    // A zero-result search must not leave an unrelated page on screen.
+                    ContentUnavailableView {
+                        Label("No Matching Settings", systemImage: "magnifyingglass")
+                    } description: {
+                        Text("No settings page matches “\(search)”.")
+                    } actions: {
+                        Button("Clear Search") { search = "" }
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
             }
             .background(Color(nsColor: .windowBackgroundColor))
         }
@@ -122,6 +143,16 @@ struct SettingsView: View {
         .controlSize(.regular)
         .navigationSplitViewStyle(.balanced)
         .frame(minWidth: 980, minHeight: 640)
+        .onChange(of: search) {
+            if !matchesSearch(selection), let match = SettingsDestination.allCases.first(where: matchesSearch) {
+                selection = match
+            }
+        }
+        .background {
+            Button("Search settings") { searchFocused = true }
+                .keyboardShortcut("f", modifiers: .command)
+                .hidden()
+        }
     }
 
     private var searchField: some View {
@@ -130,6 +161,8 @@ struct SettingsView: View {
                 .foregroundStyle(.secondary)
             TextField("Search settings", text: $search)
                 .textFieldStyle(.plain)
+                .focused($searchFocused)
+                .accessibilityLabel("Search settings")
                 .onExitCommand { search = "" }
             if !search.isEmpty {
                 Button {
@@ -408,9 +441,10 @@ private struct GeneralSettings: View {
     }
 }
 
-private struct WindowLayoutSettings: View {
+struct WindowLayoutSettings: View {
     @Bindable var model: BetterTileModel
     @State private var recordingAction: WindowAction?
+    @State private var shortcutError: (action: WindowAction, message: String)?
 
     var body: some View {
         Form {
@@ -448,6 +482,37 @@ private struct WindowLayoutSettings: View {
                 .foregroundStyle(.secondary)
             }
 
+            if LayoutMode.availableModes.contains(.tabbed) {
+                Section("Tabbed Layout") {
+                    HStack(alignment: .center, spacing: 20) {
+                        TabbedPresetPreview(preset: model.configuration.defaultTabbedPreset)
+                            .frame(width: 184, height: 116)
+                            .accessibilityHidden(true)
+                        VStack(alignment: .leading, spacing: 10) {
+                            Picker("Starting layout", selection: configurationBinding(\.defaultTabbedPreset)) {
+                                ForEach(TabbedPreset.allCases, id: \.self) { preset in
+                                    Text(preset.title).tag(preset)
+                                }
+                            }
+                            Text("Used when a desktop first enters Tabbed. Existing panes keep their layout.")
+                                .font(.callout)
+                                .foregroundStyle(.secondary)
+                            if model.activeLayoutMode == .tabbed {
+                                Button("Apply to This Desktop") {
+                                    model.performTabbed(.preset(model.configuration.defaultTabbedPreset))
+                                }
+                            }
+                        }
+                    }
+                    Label("Select a tab to focus its window. Drag tabs between panes or onto an edge to split.", systemImage: "rectangle.on.rectangle")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                    Label("Drag a divider to resize. Double-click to balance. Escape cancels the drag.", systemImage: "arrow.left.and.right")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
             Section("Resize Interaction") {
                 Toggle(
                     "Resize adjacent windows together",
@@ -455,7 +520,7 @@ private struct WindowLayoutSettings: View {
                 )
                 Text(
                     "When windows share an edge, resizing one adjusts its neighbor. "
-                        + "Available in Manual mode only."
+                        + "Available in Native mode only."
                 )
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
@@ -464,6 +529,9 @@ private struct WindowLayoutSettings: View {
                     Text("Live Resize").tag(ResizeFeedbackMode.live)
                 }
                 .pickerStyle(.segmented)
+                Text("Controls shared dividers in Native and Bento. Tabbed panes always resize live.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
                 HStack {
                     Text("Divider width")
                     Slider(
@@ -471,6 +539,8 @@ private struct WindowLayoutSettings: View {
                         in: 2...12,
                         step: 1
                     )
+                    .accessibilityLabel("Divider width")
+                    .accessibilityValue("\(Int(model.configuration.dividerThickness)) points")
                     Text("\(Int(model.configuration.dividerThickness)) pt")
                         .monospacedDigit()
                         .frame(width: 42)
@@ -504,6 +574,8 @@ private struct WindowLayoutSettings: View {
                 HStack {
                     Text("Pane gap")
                     Slider(value: configurationBinding(\.bentoInnerGap), in: 0...12, step: 1)
+                        .accessibilityLabel("Bento pane gap")
+                        .accessibilityValue("\(Int(model.configuration.bentoInnerGap)) points")
                     Text("\(Int(model.configuration.bentoInnerGap)) pt")
                         .monospacedDigit()
                         .frame(width: 42)
@@ -515,6 +587,7 @@ private struct WindowLayoutSettings: View {
                         in: 0...1,
                         step: 0.01
                     )
+                    .accessibilityLabel("Bento swap delay")
                     Text(
                         model.configuration.bentoSwapHoverDelay
                             .formatted(.number.precision(.fractionLength(2))) + "s"
@@ -547,8 +620,15 @@ private struct WindowLayoutSettings: View {
                             action: action,
                             isRecording: recordingAction == action
                         ) {
+                            shortcutError = nil
                             model.setShortcutCaptureActive(true)
                             recordingAction = action
+                        }
+                        if let error = shortcutError, error.action == action {
+                            Label(error.message, systemImage: "exclamationmark.circle")
+                                .font(.callout)
+                                .foregroundStyle(.red)
+                                .fixedSize(horizontal: false, vertical: true)
                         }
                     }
                 }
@@ -566,6 +646,10 @@ private struct WindowLayoutSettings: View {
                 capture: { captured in
                     guard let recordingAction else { return }
                     model.assign(shortcut: captured, to: recordingAction)
+                    if model.configuration.shortcuts.first(where: { $0.action == recordingAction })?.shortcut != captured,
+                       let message = model.statusMessage {
+                        shortcutError = (recordingAction, message)
+                    }
                     self.recordingAction = nil
                     model.setShortcutCaptureActive(false)
                 },
@@ -590,11 +674,16 @@ private struct WindowLayoutSettings: View {
             model.setActiveMode(mode)
         } label: {
             VStack(alignment: .leading, spacing: 8) {
-                Image(systemName: mode.icon)
-                    .font(.title2)
-                    .foregroundStyle(
-                        model.activeLayoutMode == mode ? Color.accentColor : Color.secondary
-                    )
+                HStack {
+                    Image(systemName: mode.icon)
+                        .font(.title2)
+                        .foregroundStyle(model.activeLayoutMode == mode ? Color.accentColor : Color.secondary)
+                    Spacer()
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundStyle(Color.accentColor)
+                        .opacity(model.activeLayoutMode == mode ? 1 : 0)
+                        .accessibilityHidden(true)
+                }
                 Text(mode.title)
                     .font(.headline)
                 Text(mode.explanation)
@@ -621,6 +710,9 @@ private struct WindowLayoutSettings: View {
             )
         }
         .buttonStyle(.plain)
+        .accessibilityLabel(mode.title)
+        .accessibilityValue(model.activeLayoutMode == mode ? "Selected" : "")
+        .help(mode.explanation)
     }
 
     private func configurationBinding<Value>(
@@ -632,6 +724,29 @@ private struct WindowLayoutSettings: View {
                 model.updateConfiguration { $0[keyPath: keyPath] = value }
             }
         )
+    }
+}
+
+private struct TabbedPresetPreview: View {
+    let preset: TabbedPreset
+
+    var body: some View {
+        Canvas { context, size in
+            // Use the actual pane geometry so the preview matches the preset.
+            let state = TabbedLayoutState(preset: preset)
+            let frames = state.frames(in: BTRect(x: 4, y: 4, width: size.width - 8, height: size.height - 8))
+            for (index, pane) in state.panes.enumerated() {
+                guard let frame = frames[pane.id] else { continue }
+                let rect = CGRect(x: frame.minX, y: frame.minY, width: frame.size.width, height: frame.size.height)
+                let path = Path(roundedRect: rect, cornerRadius: 5)
+                context.fill(path, with: .color(index == 0 ? .accentColor.opacity(0.12) : Color(nsColor: .controlBackgroundColor)))
+                context.stroke(path, with: .color(index == 0 ? .accentColor.opacity(0.7) : .secondary.opacity(0.3)), lineWidth: 1)
+                let header = CGRect(x: rect.minX + 5, y: rect.minY + 5, width: max(0, rect.width - 10), height: 8)
+                context.fill(Path(roundedRect: header, cornerRadius: 2), with: .color(index == 0 ? .accentColor.opacity(0.3) : .secondary.opacity(0.15)))
+                context.draw(Text("\(index + 1)").font(.system(size: 12, weight: .medium)).foregroundColor(.secondary),
+                             at: CGPoint(x: rect.midX, y: rect.midY + 5))
+            }
+        }
     }
 }
 
@@ -830,7 +945,7 @@ private struct MenuBarSettings: View {
                     Button("Deselect All") { setActions([]) }
                         .disabled(selectedActions.isEmpty)
                 }
-                Text("Window mode, drag snapping, Repair Bento, Settings, and Quit stay in your menu.")
+                Text("Window mode, drag snapping, the Repair or Arrange action, Settings, and Quit stay in your menu.")
                     .font(.callout).foregroundStyle(.secondary)
             }
             .padding(.horizontal, 24)
@@ -1330,6 +1445,21 @@ private struct ZoneSettings: View {
 
     var body: some View {
         Form {
+            if !model.configuration.snappingEnabled {
+                Section {
+                    HStack {
+                        Label(
+                            "Drag snapping is off. Edits here are saved but have no effect until you turn it on.",
+                            systemImage: "info.circle"
+                        )
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                        Spacer()
+                        Button("Turn On") { model.updateConfiguration { $0.snappingEnabled = true } }
+                            .accessibilityLabel("Turn on drag snapping")
+                    }
+                }
+            }
             Section {
                 SnapZoneDiagram(
                     selectedArea: $selectedArea,
@@ -1712,6 +1842,7 @@ private extension LayoutMode {
         case .manual: "macwindow"
         case .linked: "arrow.left.and.right"
         case .bento: "rectangle.split.2x2"
+        case .tabbed: "rectangle.stack"
         }
     }
 
@@ -1720,6 +1851,7 @@ private extension LayoutMode {
         case .manual: "Use macOS windows with BetterTile snapping."
         case .linked: "Adjacent snapped windows share resize boundaries."
         case .bento: "Windows join a stable adaptive split layout."
+        case .tabbed: "Group windows in resizable panes with tabs. Experimental; turn off Stage Manager."
         }
     }
 }
@@ -1746,13 +1878,14 @@ private struct ApplicationRuleSettings: View {
                                     .foregroundStyle(.secondary)
                             }
                             Spacer()
-                            Picker("", selection: ruleBinding(entry.bundleIdentifier)) {
+                            Picker("Rule for \(entry.name)", selection: ruleBinding(entry.bundleIdentifier)) {
                                 ForEach(ApplicationRule.allCases) { rule in
                                     Text(rule.title).tag(rule)
                                 }
                             }
                             .labelsHidden()
                             .frame(width: 190)
+                            .help("How BetterTile manages \(entry.name)")
                             Button {
                                 model.clearRule(for: entry.bundleIdentifier)
                             } label: {
@@ -1760,7 +1893,8 @@ private struct ApplicationRuleSettings: View {
                                     .foregroundStyle(.secondary)
                             }
                             .buttonStyle(.plain)
-                            .help("Manage this app normally again")
+                            .help("Manage \(entry.name) normally again")
+                            .accessibilityLabel("Remove rule for \(entry.name)")
                         }
                         .padding(.vertical, 2)
                     }

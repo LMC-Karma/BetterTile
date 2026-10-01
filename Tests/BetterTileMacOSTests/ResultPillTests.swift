@@ -1,3 +1,4 @@
+import AppKit
 import Testing
 @testable import BetterTileCore
 @testable import BetterTileMacOS
@@ -47,6 +48,14 @@ import Testing
     #expect(ResultPillFeedback.failure("Something unexpected happened.").message == "Couldn’t apply layout")
 }
 
+@Test func resultPillNamesTabbedFailures() {
+    #expect(ResultPillFeedback.failure("A window did not accept its Tabbed size. Choose a larger pane or try Repair Tabbed.").message == "Window refused this size")
+    #expect(ResultPillFeedback.failure("Tabbed could not fully restore the previous arrangement. Use Repair Tabbed or switch to Native.").message == "Use Repair Tabbed")
+    #expect(ResultPillFeedback.failure("The desktop changed before Tabbed could restore its windows.").message == "Use Repair Tabbed")
+    #expect(ResultPillFeedback.failure("The desktop changed.").message == "Desktop changed")
+    #expect(ResultPillFeedback.failure("That window is no longer available.").message == "Window changed")
+}
+
 @Test func resultPillIsCenteredBelowTheDisplayWorkAreaTop() {
     let display = DisplaySnapshot(
         id: DisplayID(rawValue: "secondary"),
@@ -78,4 +87,38 @@ import Testing
     #expect(frame.size.width >= 172)
     #expect(frame.size.width <= 240)
     #expect(frame.midX == display.visibleFrame.midX)
+}
+
+@MainActor
+@Test(arguments: [false, true])
+func resultPillIgnoresPreviousDismissalCompletion(hideBetweenResults: Bool) {
+    let panel = ResultPillTestPanel()
+    let controller = ResultPillController(panel: panel)
+    defer { controller.hide() }
+    let display = DisplaySnapshot(
+        id: DisplayID(rawValue: "main"),
+        frame: BTRect(x: 0, y: 0, width: 1440, height: 900),
+        visibleFrame: BTRect(x: 0, y: 24, width: 1440, height: 840)
+    )
+
+    controller.show(.success(), on: display)
+    let finishPreviousDismissal = controller.dismissalCompletion()
+    if hideBetweenResults { controller.hide() }
+    controller.show(.failure("No eligible focused window."), on: display)
+    #expect(panel.isPresented)
+
+    // An AppKit completion can arrive after its dismissal task was cancelled.
+    finishPreviousDismissal()
+    #expect(panel.isPresented)
+
+    controller.dismissalCompletion()()
+    #expect(!panel.isPresented)
+}
+
+@MainActor
+private final class ResultPillTestPanel: NSPanel {
+    private(set) var isPresented = false
+
+    override func orderFrontRegardless() { isPresented = true }
+    override func orderOut(_ sender: Any?) { isPresented = false }
 }

@@ -217,6 +217,50 @@ import Testing
     #expect(system.windows.map(\.frame) == original)
 }
 
+@Test(arguments: [false, true]) @MainActor
+func partiallyFailedFrameWriteRestoresTheFailingWindow(rollbackFails: Bool) throws {
+    let system = FakeWindowSystem()
+    system.addSecondWindow()
+    let coordinator = WindowCoordinator(system: system)
+    let original = system.windows.map(\.frame)
+    let firstID = system.windows[0].id
+    let secondID = system.windows[1].id
+    let target = BTRect(x: 500, y: 0, width: 500, height: 800)
+    var transaction = try #require(coordinator.beginTransaction(windowIDs: [firstID, secondID]).startedTransaction)
+    system.partiallyFailedFrameWriteNumbers[secondID] = [1]
+    if rollbackFails { system.failedFrameWriteNumbers[secondID] = [2] }
+
+    let outcome = coordinator.applyLive(transaction: &transaction, placements: [
+        Placement(windowID: firstID, frame: BTRect(x: 0, y: 0, width: 500, height: 800)),
+        Placement(windowID: secondID, frame: target),
+    ])
+
+    #expect(system.windows[0].frame == original[0])
+    #expect(system.frameWriteCounts[secondID] == 2)
+    let partialFrame = BTRect(
+        x: original[1].minX, y: original[1].minY,
+        width: target.size.width, height: target.size.height
+    )
+    #expect(system.recordedKnownCurrentFrames[secondID]?.last == partialFrame)
+    if rollbackFails {
+        guard case .degraded = outcome else {
+            Issue.record("A partially changed window that cannot be restored must report degraded.")
+            return
+        }
+        #expect(transaction.hasDegradedApply)
+        #expect(system.windows[1].frame == partialFrame)
+        system.failedFrameWriteNumbers.removeAll()
+        #expect(coordinator.cancel(transaction: transaction).isApplied)
+    } else {
+        guard case .failed = outcome else {
+            Issue.record("Restoring every changed frame must report a clean failure.")
+            return
+        }
+        #expect(!transaction.hasDegradedApply)
+    }
+    #expect(system.windows.map(\.frame) == original)
+}
+
 @Test @MainActor func authoritativeSettlementRetriesOnlyAcceptedButUnappliedFrames() async throws {
     let system = FakeWindowSystem()
     system.addSecondWindow()
