@@ -143,13 +143,23 @@ public final class DragSnapController {
     private var mouseDownPoint: BTPoint?
     private var resolvedDragTarget = false
     private var isStarted = false
+    private let displayTicks: ResizeDisplayLink
+    /// The newest drag sample not yet evaluated. A high-rate pointer sends
+    /// events faster than the display can show a new preview.
+    private var pendingDragEvent: GlobalGestureEvent?
+    private(set) var pacingDisplayID: DisplayID?
 
     private static let bentoCueArmDelay = 0.12
     private static let bentoReflowPreviewDelay = 0.22
 
-    public init(coordinator: WindowCoordinator, configuration: BetterTileConfiguration) {
+    public convenience init(coordinator: WindowCoordinator, configuration: BetterTileConfiguration) {
+        self.init(coordinator: coordinator, configuration: configuration, displayTicks: ResizeDisplayLink())
+    }
+
+    init(coordinator: WindowCoordinator, configuration: BetterTileConfiguration, displayTicks: ResizeDisplayLink) {
         self.coordinator = coordinator
         self.configuration = configuration
+        self.displayTicks = displayTicks
     }
 
     public func start() {
@@ -298,10 +308,19 @@ public final class DragSnapController {
                 pressedMouseButtons: NSEvent.pressedMouseButtons
             ) else { return }
             mousePressed(event)
-        case .leftMouseDragged where isGestureActive: mouseDragged(event)
+        case .leftMouseDragged where isGestureActive:
+            // The first sample resolves the dragged window at once. Later
+            // samples keep only the newest and run once per display frame.
+            if resolvedDragTarget {
+                pendingDragEvent = event
+            } else {
+                mouseDragged(event)
+            }
+            if isGestureActive { startDisplayTicks(at: event.position) }
         case .leftMouseUp where isGestureActive:
             // The final position/modifiers can differ from the last delivered
             // drag sample. Never commit a stale edge or a suppressed snap.
+            pendingDragEvent = nil
             mouseDragged(event)
             mouseReleased()
         case .leftMouseDragged, .leftMouseUp: return
@@ -313,6 +332,25 @@ public final class DragSnapController {
         pressedMouseButtons: Int
     ) -> Bool {
         source == .eventTap || pressedMouseButtons & 1 == 1
+    }
+
+    var hasPendingDragSample: Bool { pendingDragEvent != nil }
+
+    private func startDisplayTicks(at point: BTPoint) {
+        guard let display = coordinator.system.displays().first(where: { $0.frame.contains(point) }),
+              pacingDisplayID != display.id else { return }
+        pacingDisplayID = display.id
+        let screen = NSScreen.screens.first { screen in
+            let number = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber
+            return DisplayID(rawValue: number?.stringValue ?? String(screen.hash)) == display.id
+        } ?? NSScreen.main
+        displayTicks.start(screen: screen) { [weak self] in self?.displayTick() }
+    }
+
+    func displayTick() {
+        guard let event = pendingDragEvent else { return }
+        pendingDragEvent = nil
+        mouseDragged(event)
     }
 
     private func mousePressed(_ event: GlobalGestureEvent) {
@@ -608,6 +646,9 @@ public final class DragSnapController {
         bentoDragDisplayID = nil
         mouseDownPoint = nil
         resolvedDragTarget = false
+        pendingDragEvent = nil
+        pacingDisplayID = nil
+        displayTicks.stop()
         removeGestureMonitors()
         applyPendingEventTapHandoff()
     }
@@ -686,10 +727,8 @@ public final class DragSnapController {
               allowsBentoDrag(for: window),
               bentoDragBeganHandler?(window.displayID, window.id) == true
         else { return false }
-        dragGate.begin(with: window)
-        resolvedDragTarget = true
         bentoDragDisplayID = window.displayID
-        clearRestoredDragRetry()
+        beginExposedWindowDrag(with: window)
         return true
     }
 
@@ -730,10 +769,15 @@ public final class DragSnapController {
             guard bentoDragBeganHandler?(window.displayID, window.id) == true else { return false }
             bentoDragDisplayID = window.displayID
         }
+        beginExposedWindowDrag(with: window)
+        return true
+    }
+
+    /// Dock and Stage Manager exposure can resolve before the first drag sample.
+    func beginExposedWindowDrag(with window: WindowSnapshot) {
         dragGate.begin(with: window)
         resolvedDragTarget = true
         clearRestoredDragRetry()
-        return true
     }
 
     private func clearRestoredDragRetry() {
