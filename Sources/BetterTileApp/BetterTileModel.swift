@@ -172,6 +172,7 @@ final class BetterTileModel {
         }
         dividerResize.bentoStateChangedHandler = { [weak self] displayID, state, frames, baselineFrames in
             guard let self, var session = self.sessionStore.session(for: displayID) else { return }
+            let tabbedBefore = session.mode == .tabbed ? session.tabbedState : nil
             session.resumeAutomaticWrites()
             session.bentoState = state
             session.recordProposedFrames(frames)
@@ -181,7 +182,7 @@ final class BetterTileModel {
                 return
             }
             if session.mode == .tabbed {
-                self.refreshTabbedAfterBentoChange(displayID: displayID)
+                self.refreshTabbedAfterBentoChange(displayID: displayID, undoBaseline: tabbedBefore)
                 return
             }
             self.scheduleBentoSettlement(
@@ -1009,6 +1010,7 @@ final class BetterTileModel {
         else { return false }
         // Dragging one tab of a group moves only that window.
         var tabbedOrigin: UUID?
+        let tabbedUndoBaseline = layoutSession.mode == .tabbed ? layoutSession.tabbedState : nil
         if layoutSession.mode == .tabbed, var tabbed = layoutSession.tabbedState {
             tabbedOrigin = tabbed.tearOff(sourceID)
             if tabbedOrigin != nil { layoutSession.tabbedState = tabbed }
@@ -1042,7 +1044,8 @@ final class BetterTileModel {
             session: dragSession,
             layoutSession: resumedSession,
             transaction: transaction,
-            tabbedOrigin: tabbedOrigin
+            tabbedOrigin: tabbedOrigin,
+            tabbedUndoBaseline: tabbedUndoBaseline
         )
         dividerResize.refresh(boundaries: [])
         return true
@@ -1110,6 +1113,9 @@ final class BetterTileModel {
                in: active.session.workArea
             ) else {
                 statusMessage = "That Bento drop cannot satisfy the windows’ minimum sizes."
+                if active.tabbedOrigin != nil {
+                    _ = finishTabbedDrop(active, sourceID: sourceID, outcome: .restore)
+                }
                 let recoveryFailurePresented = restoreBentoDragIfNeeded(active.session)
                 if !recoveryFailurePresented {
                     presentActionResult(succeeded: false, error: statusMessage, displayID: displayID)
@@ -1168,7 +1174,7 @@ final class BetterTileModel {
                         return placement.windowID
                     })
                     if proposed.mode == .tabbed {
-                        refreshTabbedAfterBentoChange(displayID: displayID)
+                        refreshTabbedAfterBentoChange(displayID: displayID, undoBaseline: active.tabbedUndoBaseline)
                     } else if !plan.isFocusDrop, !changedWindowIDs.isEmpty {
                         scheduleBentoSettlement(
                             displayID: displayID,
@@ -1194,6 +1200,9 @@ final class BetterTileModel {
 
         if !committed, !frameTransactionCommitted {
             recoveryFailurePresented = restoreBentoDragIfNeeded(active.session)
+        }
+        if !committed, active.tabbedOrigin != nil {
+            _ = finishTabbedDrop(active, sourceID: sourceID, outcome: .restore)
         }
         if intent != nil, !recoveryFailurePresented {
             presentActionResult(
@@ -1235,6 +1244,9 @@ final class BetterTileModel {
         _ = coordinator.cancel(transaction: active.transaction)
         state.move(sourceID, to: destination)
         session.tabbedState = state
+        if let baseline = active.tabbedUndoBaseline, baseline != state {
+            rememberTabbedUndo(baseline, sessionID: session.id)
+        }
         guard let committed = sessionStore.commit(session, replacing: session.revision),
               let windows = try? system.visibleWindows()
         else { return true }
@@ -2886,6 +2898,8 @@ private struct ActiveBentoDrag {
     var transaction: WindowFrameTransaction
     /// The tab group a dragged Tabbed tab was torn from.
     var tabbedOrigin: UUID?
+    /// The Tabbed state before the drag, for Undo.
+    var tabbedUndoBaseline: TabbedLayoutState?
 }
 
 // MARK: - Experimental Tabbed sessions
@@ -3126,12 +3140,15 @@ extension BetterTileModel {
     /// A Bento operation (divider drag, drop) changed a Tabbed tree. Hidden
     /// tabs follow their pane's new frame, stacked behind the selected tab,
     /// and the strips move.
-    private func refreshTabbedAfterBentoChange(displayID: DisplayID) {
+    private func refreshTabbedAfterBentoChange(displayID: DisplayID, undoBaseline: TabbedLayoutState? = nil) {
         guard let session = sessionStore.session(for: displayID), session.mode == .tabbed,
               let state = session.tabbedState,
               let display = system.displays().first(where: { $0.id == displayID }),
               let windows = try? system.visibleWindows()
         else { return }
+        // The Bento change already committed, so the state from before it is
+        // the Undo step.
+        if let undoBaseline, undoBaseline != state { rememberTabbedUndo(undoBaseline, sessionID: session.id) }
         let displayWindows = bentoEligible(windows.filter { $0.displayID == displayID && $0.isEligible && !$0.isFloating })
         applyTabbedState(state, session: session, display: display, windows: displayWindows, focus: nil)
     }

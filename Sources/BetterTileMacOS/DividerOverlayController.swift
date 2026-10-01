@@ -1167,8 +1167,19 @@ final class DividerHandleView: NSView {
             guard limit.height else { return .rowResize }
             // Top-left coordinates: positive movement is downward.
             return .rowResize(directions: limit.blockedTowardPositive ? .up : .down)
-        case .junction:
-            return .frameResize(position: .bottomRight, directions: limit.isLimited ? .inward : .all)
+        case let .junction(_, resting, active):
+            // A T-junction is the end of one divider: point the corner cursor
+            // at that end. A plus junction uses the top-left diagonal.
+            let arms = Set(resting.merging(active) { max($0, $1) }.filter { $0.value > 0 }.keys)
+            let atBottom = arms.contains(.up) && !arms.contains(.down)
+            let atRight = arms.contains(.left) && !arms.contains(.right)
+            let position: NSCursor.FrameResizePosition = switch (atBottom, atRight) {
+            case (true, true): .bottomRight
+            case (true, false): .bottomLeft
+            case (false, true): .topRight
+            case (false, false): .topLeft
+            }
+            return .frameResize(position: position, directions: limit.isLimited ? .inward : .all)
         }
     }
 
