@@ -200,3 +200,14 @@ private func snapshot(_ name: String, minimum: BTSize = BTSize(width: 120, heigh
     let missing = state.adjustDivider(UUID(), by: 0.05, in: bounds)
     #expect(!missing)
 }
+
+@Test func tabbedAdoptsLargeBentoLayoutsButStopsFurtherSplits() throws {
+    let ids = (0..<14).map { WindowID(rawValue: "w\($0)") }
+    let bento = BentoLayoutState(root: .partition(BentoPartition(axis: .vertical, children: ids.map { .leaf($0) })))
+    var state = try #require(TabbedLayoutState(adopting: bento))
+    #expect(state.panes.count == 14)
+    let extra = WindowID(rawValue: "extra")
+    state.reconcile(windowIDs: ids + [extra], removed: [], focused: nil)
+    state.split(paneID: state.panes[0].id, moving: extra, edge: .right)
+    #expect(state.panes.count == 14)
+}

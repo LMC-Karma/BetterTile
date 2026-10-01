@@ -1230,30 +1230,41 @@ final class BetterTileModel {
     /// to that pane as a tab. A torn-off tab dropped nowhere returns to its
     /// group. Returns false to let Bento handle splits and snaps.
     private func finishTabbedDrop(_ active: ActiveBentoDrag, sourceID: WindowID, outcome: BentoDragOutcome) -> Bool {
-        guard var session = sessionStore.session(for: active.session.displayID),
-              var state = session.tabbedState,
-              let display = system.displays().first(where: { $0.id == active.session.displayID })
+        guard let display = system.displays().first(where: { $0.id == active.session.displayID }),
+              let initial = sessionStore.session(for: active.session.displayID)?.tabbedState
         else { return false }
         let destination: UUID?
         switch outcome {
-        case let .swap(targetWindowID): destination = state.paneID(containing: targetWindowID)
+        case let .swap(targetWindowID): destination = initial.paneID(containing: targetWindowID)
         case .restore: destination = active.tabbedOrigin
         case .insert, .snap: destination = nil
         }
         guard let destination else { return false }
         _ = coordinator.cancel(transaction: active.transaction)
-        state.move(sourceID, to: destination)
-        session.tabbedState = state
-        if let baseline = active.tabbedUndoBaseline, baseline != state {
-            rememberTabbedUndo(baseline, sessionID: session.id)
+        // A concurrent update can replace the session between reading and
+        // committing. Retry once against the current session so the dragged
+        // tab is never left floating.
+        for _ in 0..<2 {
+            guard var session = sessionStore.session(for: active.session.displayID),
+                  var state = session.tabbedState else { break }
+            state.move(sourceID, to: destination)
+            session.tabbedState = state
+            guard let committed = sessionStore.commit(session, replacing: session.revision) else { continue }
+            if let baseline = active.tabbedUndoBaseline, baseline != state {
+                rememberTabbedUndo(baseline, sessionID: committed.id)
+            }
+            if let windows = try? system.visibleWindows() {
+                let displayWindows = bentoEligible(windows.filter {
+                    $0.displayID == display.id && $0.isEligible && !$0.isFloating
+                })
+                applyTabbedState(state, session: committed, display: display, windows: displayWindows, focus: sourceID)
+            }
+            return true
         }
-        guard let committed = sessionStore.commit(session, replacing: session.revision),
-              let windows = try? system.visibleWindows()
-        else { return true }
-        let displayWindows = bentoEligible(windows.filter {
-            $0.displayID == display.id && $0.isEligible && !$0.isFloating
-        })
-        applyTabbedState(state, session: committed, display: display, windows: displayWindows, focus: sourceID)
+        statusMessage = "The desktop changed during the drop. Use Repair Tabbed to return the window to a pane."
+        presentActionResult(succeeded: false, error: statusMessage, displayID: display.id)
+        pendingWindowEvents.recordTopologyChange()
+        schedulePendingWindowEvents()
         return true
     }
 
