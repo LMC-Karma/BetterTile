@@ -193,6 +193,7 @@ public struct BentoTabbedLayoutState: Hashable, Sendable {
     public func unstacked(in bounds: BTRect) -> BentoLayoutState {
         var result = layout
         result.metrics.contentTopInset = 0
+        result.metrics.vacantMinimumSize = BTSize(width: 0, height: 0)
         for pane in panes {
             guard let selected = pane.selected else { continue }
             var anchor = selected

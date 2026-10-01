@@ -432,3 +432,35 @@ func tabbedLearnedWidthFailureDoesNotCommitOrRetryDegradedRestoration(failRestor
     try #require(await waitFor { model.activeTabbedState?.pane(containing: torn)?.id == group.id })
     _ = a; _ = c
 }
+
+@Test @MainActor func tabbedPointerDropsRecordUndo() async throws {
+    _ = NSApplication.shared
+    let system = FakeAppWindowSystem()
+    _ = tabbedWindows(system, ["a", "b", "c"])
+    let b = WindowID(rawValue: "b")
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    model.configuration.defaultTabbedPreset = .columns
+    model.setActiveMode(.tabbed)
+    try #require(await waitFor { model.activeTabbedState?.windowIDs.count == 3 })
+    let right = try #require(model.activeTabbedState?.panes[1].id)
+    model.performTabbed(.move(b, pane: right, index: nil))
+    try #require(await waitFor { model.activeTabbedState?.panes[1].tabs == [b] })
+    let before = try #require(model.activeTabbedState)
+    let torn = try #require(before.panes[0].selected)
+    // An edge drop is a Bento split; Undo returns the torn tab to its group.
+    #expect(model.completeBentoDrag(displayID: system.mainDisplay.id, sourceID: torn,
+                                    outcome: .insert(targetWindowID: b, edge: .bottom)))
+    try #require(await waitFor { model.activeTabbedState?.panes.count == 3 })
+    try #require(await waitFor { model.activeTabbedState?.pane(containing: torn)?.tabs == [torn] })
+    model.performTabbed(.undo)
+    #expect(await waitFor { model.activeTabbedState?.pane(containing: torn)?.id == before.panes[0].id })
+}
+
+@Test func leavingTabbedForBentoRestoresPlainBentoMetrics() {
+    var state = TabbedLayoutState(preset: .columns)
+    state.reconcile(windowIDs: [WindowID(rawValue: "a")], removed: [], focused: nil)
+    let bento = state.unstacked(in: BTRect(x: 0, y: 0, width: 1000, height: 800))
+    #expect(bento.metrics.contentTopInset == 0)
+    #expect(bento.metrics.vacantMinimumSize == BTSize(width: 0, height: 0))
+}
