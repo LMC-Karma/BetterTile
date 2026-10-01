@@ -637,14 +637,13 @@ public final class DividerOverlayController {
                 proposedBentoState = proposedState
                 activeInteraction = proposedInteraction
                 self.transaction = transaction
-                if recordRefusedMinimums(placements) {
+                let refused = recordRefusedMinimums(placements)
+                if refused.width || refused.height {
                     // The application held its size: the next sample uses that
                     // minimum and the handle turns orange.
-                    let vertical = proposedInteraction.boundaries.contains { $0.axis == .vertical }
-                    let horizontal = proposedInteraction.boundaries.contains { $0.axis == .horizontal }
-                    if vertical { limit.width = true }
-                    if horizontal { limit.height = true }
-                    limit.blockedTowardPositive = vertical ? point.x > startPoint.x : point.y > startPoint.y
+                    limit.width = limit.width || refused.width
+                    limit.height = limit.height || refused.height
+                    limit.blockedTowardPositive = refused.width ? point.x > startPoint.x : point.y > startPoint.y
                 }
                 presentHandle(for: proposedInteraction, near: point, active: true)
                 handlePanel?.setLimit(limit)
@@ -704,20 +703,28 @@ public final class DividerOverlayController {
     /// Reads back the windows a live tick asked to shrink. A window that holds
     /// the same larger size for two ticks has refused; its size becomes its
     /// minimum for the rest of this gesture only.
-    private func recordRefusedMinimums(_ placements: [Placement]) -> Bool {
+    private func recordRefusedMinimums(_ placements: [Placement]) -> (width: Bool, height: Bool) {
         let baseline = Dictionary(baselineWindows.map { ($0.id, $0.frame.size) }, uniquingKeysWith: { first, _ in first })
         let shrinking = placements.filter { placement in
             guard let start = baseline[placement.windowID] else { return false }
             return placement.frame.size.width < start.width - 2 || placement.frame.size.height < start.height - 2
         }
+        let shrinkingIDs = Set(shrinking.map(\.windowID))
+        heldSizeTicks = heldSizeTicks.filter { shrinkingIDs.contains($0.key) }
         guard !shrinking.isEmpty,
               let targeted = coordinator.system as? any TargetedWindowSystem,
-              let actual = try? targeted.windowSnapshots(ids: Set(shrinking.map(\.windowID)))
-        else { return false }
+              let actual = try? targeted.windowSnapshots(ids: shrinkingIDs)
+        else {
+            heldSizeTicks = [:]
+            return (false, false)
+        }
         let actualSizes = Dictionary(actual.map { ($0.id, $0.frame.size) }, uniquingKeysWith: { first, _ in first })
-        var refused = false
+        var refused = (width: false, height: false)
         for placement in shrinking {
-            guard let size = actualSizes[placement.windowID] else { continue }
+            guard let size = actualSizes[placement.windowID] else {
+                heldSizeTicks[placement.windowID] = nil
+                continue
+            }
             let heldWidth = size.width > placement.frame.size.width + 2
             let heldHeight = size.height > placement.frame.size.height + 2
             guard heldWidth || heldHeight else {
@@ -735,7 +742,8 @@ public final class DividerOverlayController {
             if heldWidth { minimum.width = max(minimum.width, size.width) }
             if heldHeight { minimum.height = max(minimum.height, size.height) }
             baselineWindows[index].constraints.minimumSize = minimum
-            refused = true
+            refused.width = refused.width || heldWidth
+            refused.height = refused.height || heldHeight
         }
         return refused
     }

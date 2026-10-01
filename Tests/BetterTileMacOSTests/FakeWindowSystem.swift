@@ -60,8 +60,9 @@ final class FakeWindowSystem: WindowSystem, TargetedWindowSystem, WindowEventSou
     var recordedKnownCurrentFrames: [WindowID: [BTRect?]] = [:]
     /// Simulates an application that refuses to grow beyond a fixed width.
     var clampWidth: Double?
-    /// Simulates applications whose real minimum width is not reported.
+    /// Simulates applications whose real minimum sizes are not reported.
     var enforcedMinimumWidths: [WindowID: Double] = [:]
+    var enforcedMinimumHeights: [WindowID: Double] = [:]
     /// Simulates an application that applies a geometry change on its own run
     /// loop: the write is accepted, but the new frame is only observable after
     /// this many reads.
@@ -136,6 +137,10 @@ final class FakeWindowSystem: WindowSystem, TargetedWindowSystem, WindowEventSou
             // A refused shrink keeps the window's edge nearest its old frame.
             if applied.minX > windows[index].frame.minX + 0.5 { applied.origin.x = applied.maxX - minimum }
             applied.size.width = minimum
+        }
+        if let minimum = enforcedMinimumHeights[windowID], applied.size.height < minimum {
+            if applied.minY > windows[index].frame.minY + 0.5 { applied.origin.y = applied.maxY - minimum }
+            applied.size.height = minimum
         }
         if readsBeforeSettling > 0 {
             pendingFrames[windowID] = (applied, readsBeforeSettling)
