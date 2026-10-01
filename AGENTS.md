@@ -149,8 +149,10 @@ comments, commit messages, and technical documentation.
 - Merge a stack from the bottom up. Never merge a pull request into another
   pull request's branch. The repository deletes a branch when its pull request
   merges, so GitHub then retargets the child to `main`. Rebase the child with
-  `git rebase --onto origin/main <old-parent-tip> <child>`. The rebase needs a
-  force-push, so ask first. Merge the child only after its own CI and review
+  `git rebase --onto origin/main <old-parent-tip> <child>`. `<old-parent-tip>`
+  is the parent pull request's last commit. Get it with
+  `gh pr view <parent-number> --json headRefOid`, because the parent's branch
+  no longer exists. The rebase needs a force-push, so ask first. Merge the child only after its own CI and review
   pass.
 - If automated review cannot run, report the failure and wait for a retry or a
   maintainer decision.

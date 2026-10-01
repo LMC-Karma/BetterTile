@@ -73,7 +73,9 @@ pull request.
    git push --force-with-lease
    ```
 
-   `<old-parent-tip>` is the last commit of the other pull request's branch.
+   `<old-parent-tip>` is the other pull request's last commit. Its branch is
+   deleted on merge, so get the commit with
+   `gh pr view <other-number> --json headRefOid`.
    Your pull request merges only after its own CI and review pass.
 
 ---
