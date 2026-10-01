@@ -14,6 +14,10 @@ public final class LinkedResizeController {
         }
     }
     public var layoutChangedHandler: ((DisplayID, [WindowID: BTRect]) -> Void)?
+    /// Runs when a drag first resizes a window, not on every click. The
+    /// gesture then re-reads its windows' minimums.
+    public var gestureWillBeginHandler: (() -> Void)?
+    private var hasStartedResizing = false
     public var isEnabledForDisplay: ((DisplayID) -> Bool)?
 
     private let coordinator: WindowCoordinator
@@ -242,6 +246,20 @@ public final class LinkedResizeController {
               )
         else { return false }
 
+        if !hasStartedResizing {
+            // The first real edge movement starts a resize. Forget minimums
+            // learned from old refusals, read fresh ones, and solve again.
+            hasStartedResizing = true
+            gestureWillBeginHandler?()
+            if let targeted = coordinator.system as? any TargetedWindowSystem,
+               let fresh = try? targeted.windowSnapshots(ids: Set(baselineWindows.map(\.id))) {
+                let constraints = Dictionary(fresh.map { ($0.id, $0.constraints) }, uniquingKeysWith: { first, _ in first })
+                for index in baselineWindows.indices {
+                    if let value = constraints[baselineWindows[index].id] { baselineWindows[index].constraints = value }
+                }
+            }
+            return continueGesture(validateParticipants: validateParticipants)
+        }
         let peerPlacements = result.placements.filter { $0.windowID != sourceID }
         guard !peerPlacements.isEmpty else { return false }
         var transaction: WindowFrameTransaction
@@ -271,6 +289,7 @@ public final class LinkedResizeController {
     }
 
     private func endGesture() {
+        hasStartedResizing = false
         if let transaction { coordinator.finishLive(transaction: transaction, recordHistory: false) }
         isLeftButtonDown = false
         baselineWindows = []

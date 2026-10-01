@@ -84,7 +84,7 @@ modifier, timestamp, and event-kind values only.
 Divider-local events, hover, Escape, and title-bar double-click handling keep
 their AppKit paths.
 
-Divider and Tabbed drag gestures install local and global AppKit key monitors
+Divider and Tabbed tab-drag gestures install local and global AppKit key monitors
 until release, cancellation, or overlay hiding. Both forward only the key code.
 Escape cancels synchronously on the main actor, including when a managed app
 retains keyboard focus. The global monitor only observes the event; the local
@@ -108,23 +108,9 @@ adapter restores each application's original setting before the batch returns,
 including error exits. This avoids toggling the same application's setting for
 each of its windows. No suspension is held across an event-loop turn.
 
-Tabbed divider resizing uses the same pacing. It also defers ordering and
-authoritative frame settlement until release, so the drag path changes frames
-without repeatedly raising every tab.
-Tabbed chrome updates only its pane and divider geometry during those ticks.
-It preserves panel visibility and ordering and avoids another focused-window
-read. Pointer gestures retain their initial grab offset and use the mouse-up
-position for the final resize or tab destination.
-
-A Space change cancels an active Tabbed divider gesture in its source session.
-It restores the stored pane geometry while preserving confirmed window closure.
-It makes no restoration writes on departure. The normal reconciliation restores
-frames when the source Space returns. Cancellation adds no Undo entry and does
-not treat the last requested frames as confirmed observations.
-
-Tabbed selection preserves pane topology and other windows' frames. Only the
-selected window is fitted to its existing pane; it does not rerun the full
-layout minimum-size solver. Activation restores ordering in other panes only
+Tabbed selection preserves pane geometry and other windows' frames. It swaps
+which window the pane's Bento leaf holds and fits only that window; it does not
+rerun the minimum-size solver. Activation restores ordering in other panes only
 when they contain a window from the activated application.
 
 ## Bento
@@ -138,6 +124,43 @@ Vacancies take priority, and an unavailable preferred split uses the normal
 insertion policy. Minimized windows retain their reinsertion anchors, and
 Space transitions retain their stored layouts. Changing the preference does
 not rearrange existing windows.
+
+### Tabbed on Bento
+
+Tabbed is Bento with tab groups. A Tabbed desktop's `bentoState` is its layout;
+`LayoutSession.tabbedState` adds only tab membership (`BentoTabbedLayoutState`)
+and the pane that receives new windows. Reading `tabbedState` follows any
+change a Bento operation made to the tree; writing it also writes the tree.
+
+- Each pane is a Bento leaf holding its selected tab, or a vacancy with the
+  pane's identity when empty. A pane follows its selected window, so a swap
+  carries the whole group. Selecting a tab replaces the leaf's window without
+  moving a boundary.
+- The tab strip is a Bento content reserve,
+  `BentoLayoutMetrics.contentTopInset`. Placements start each window below it,
+  the constraint solver adds it to each pane's minimum height, and the
+  boundary resolver expects it between stacked windows. Tabbed also sets
+  `vacantMinimumSize` so empty panes stay large enough to receive a tab. With
+  both at zero, Bento behaves as before.
+- Only selected tabs count toward minimum sizes. Hidden tabs are placed at
+  their pane's window frame, stacked behind the selected tab, as best effort
+  (`WindowCoordinator.applyTabbed(required:)`): a hidden tab that refuses the
+  size never fails the layout. Only hidden tabs whose frame changes are
+  written, in the same frame-write batch, and they return if the layout fails.
+- Bento owns every layout interaction in Tabbed: divider drags (including the
+  minimum-size state), window drags, and minimum-size solving. After a Bento
+  commit, Tabbed re-applies its state so hidden tabs follow their pane and the
+  strips move. A window drag first tears the tab out of its group when the
+  group has other tabs; a center drop adds the window to that pane as a tab,
+  and a torn tab dropped nowhere returns to its group.
+- Bento's divider handle appears only on hover, so the Tabbed overlay adds a
+  VoiceOver slider over each divider. The slider ignores the mouse; increment
+  and decrement move the Bento divider by five percent of the area it splits.
+- New windows join the active pane as its selected tab. Entering Tabbed from
+  Bento adopts the tree, so every pane stays where it was. Leaving for Bento
+  gives every hidden tab its own pane (`unstacked(in:)`) and removes the
+  reserve. Leaving for Native restores the pre-Tabbed frames and keeps the tab
+  groups for the next Tabbed visit.
 
 ## Linked resizing
 

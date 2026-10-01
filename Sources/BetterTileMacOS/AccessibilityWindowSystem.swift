@@ -193,6 +193,11 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         )
     }
 
+    public func forgetLearnedMinimums() {
+        minimumSizeLearner.removeAll()
+        snapshotGeneration &+= 1
+    }
+
     public func focusedWindow() throws -> WindowSnapshot? {
         let interval = Self.signposter.beginInterval("focusedWindow")
         defer { Self.signposter.endInterval("focusedWindow", interval) }

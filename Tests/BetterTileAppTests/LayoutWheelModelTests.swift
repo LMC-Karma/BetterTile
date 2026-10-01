@@ -122,9 +122,19 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, TabbedWindowSystem {
             windowID: windowID, requested: requested, baseline: baseline, actual: actual
         )
         if let index = windows.firstIndex(where: { $0.id == windowID }) {
+            if reportedConstraints[windowID] == nil { reportedConstraints[windowID] = windows[index].constraints }
             windows[index].constraints = minimumSizeLearner.merging(windows[index].constraints, for: windowID)
         }
         return learned
+    }
+    var reportedConstraints: [WindowID: WindowConstraints] = [:]
+    var forgetLearnedMinimumsCount = 0
+    func forgetLearnedMinimums() {
+        forgetLearnedMinimumsCount += 1
+        minimumSizeLearner.removeAll()
+        for index in windows.indices {
+            if let reported = reportedConstraints[windows[index].id] { windows[index].constraints = reported }
+        }
     }
     func startDockFootprintMonitoring(onChange: @escaping () -> Void) {}
     func stopDockFootprintMonitoring() {}

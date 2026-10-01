@@ -340,3 +340,18 @@ private func window(_ id: WindowID, x: Double, y: Double, width: Double, height:
         displayID: resizeDisplay
     )
 }
+
+@Test func learnedMinimumsCanBeForgottenForANewGesture() {
+    var learner = WindowMinimumSizeLearner()
+    let id = WindowID(rawValue: "w")
+    let learned = learner.observe(
+        windowID: id,
+        requested: BTRect(x: 0, y: 0, width: 200, height: 400),
+        baseline: BTRect(x: 0, y: 0, width: 500, height: 400),
+        actual: BTRect(x: 0, y: 0, width: 360, height: 400)
+    )
+    #expect(learned)
+    #expect(learner.merging(WindowConstraints(), for: id).minimumSize.width == 360)
+    learner.removeAll()
+    #expect(learner.merging(WindowConstraints(), for: id).minimumSize.width == WindowConstraints().minimumSize.width)
+}

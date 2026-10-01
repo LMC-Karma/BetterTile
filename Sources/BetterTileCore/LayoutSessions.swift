@@ -31,7 +31,21 @@ public struct LayoutSession: Hashable, Sendable {
     public var displayID: DisplayID
     public var nativeSpaceID: NativeSpaceID?
     public var mode: LayoutMode
-    public var tabbedState: TabbedLayoutState?
+    /// Tab membership saved beside the Bento tree. See `tabbedState`.
+    private var storedTabbedState: TabbedLayoutState?
+    /// Tabbed runs on this session's Bento tree. Reading follows any change a
+    /// Bento operation made to `bentoState`; writing also writes the tree.
+    public var tabbedState: TabbedLayoutState? {
+        get {
+            guard var state = storedTabbedState else { return nil }
+            if state.layout != bentoState { state.synchronize(with: bentoState) }
+            return state
+        }
+        set {
+            storedTabbedState = newValue
+            if let newValue { bentoState = newValue.layout }
+        }
+    }
     public var tabbedHasEntryBaseline = false
     public var tabbedBaselineFrames: [WindowID: BTRect] = [:]
     public var bentoState: BentoLayoutState

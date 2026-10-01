@@ -400,3 +400,98 @@ import Testing
     #expect(!controller.isGestureActive)
     #expect(system.windows[0].frame == BTRect(x: 203, y: 200, width: 600, height: 400))
 }
+
+@Test @MainActor func dragSnapEvaluatesOnlyTheNewestSampleEachDisplayFrameAndFlushesRelease() {
+    let system = FakeWindowSystem()
+    let controller = DragSnapController(
+        coordinator: WindowCoordinator(system: system),
+        configuration: BetterTileConfiguration(),
+        displayTicks: ResizeDisplayLink(automatic: false)
+    )
+    controller.setUsesSharedGestureEvents(true)
+    func send(_ kind: GlobalGestureEventKind, x: Double) {
+        controller.handleSharedGestureEvent(GlobalGestureEvent(kind: kind, position: BTPoint(x: x, y: 400), button: 0, modifiers: [], timestamp: 1))
+    }
+    controller.handleSharedGestureEvent(GlobalGestureEvent(kind: .leftMouseDown, position: BTPoint(x: 300, y: 220), button: 0, modifiers: [], timestamp: 1))
+    system.windows[0].frame.origin.x += 3
+    send(.leftMouseDragged, x: 400)
+    // The first sample resolves the window immediately.
+    #expect(controller.isGestureActive)
+    #expect(!controller.hasPendingDragSample)
+    send(.leftMouseDragged, x: 200)
+    send(.leftMouseDragged, x: 1)
+    #expect(controller.hasPendingDragSample)
+    controller.displayTick()
+    #expect(!controller.hasPendingDragSample)
+    // Release applies its own position even when a sample is still queued.
+    send(.leftMouseDragged, x: 500)
+    send(.leftMouseUp, x: 1)
+    #expect(system.windows[0].frame == BTRect(x: 0, y: 0, width: 500, height: 800))
+    #expect(!controller.hasPendingDragSample)
+}
+
+@Test @MainActor func exposedDragStartsDisplayTicksBeforeConsumingQueuedSamples() {
+    let system = FakeWindowSystem()
+    let ticks = ResizeDisplayLink(automatic: false)
+    let controller = DragSnapController(
+        coordinator: WindowCoordinator(system: system),
+        configuration: BetterTileConfiguration(), displayTicks: ticks
+    )
+    controller.setUsesSharedGestureEvents(true)
+    // Both Dock and Stage Manager use this admission after resolving exposure.
+    controller.beginExposedWindowDrag(with: system.windows[0])
+    system.windows[0].frame.origin.x += 3
+    controller.handleSharedGestureEvent(GlobalGestureEvent(
+        kind: .leftMouseDragged, position: BTPoint(x: 1, y: 400),
+        button: 0, modifiers: [], timestamp: 1
+    ))
+    #expect(controller.hasPendingDragSample)
+    ticks.fire()
+    #expect(!controller.hasPendingDragSample)
+    #expect(system.frameWriteCounts.isEmpty)
+    controller.handleSharedGestureEvent(GlobalGestureEvent(
+        kind: .leftMouseUp, position: BTPoint(x: 1, y: 400),
+        button: 0, modifiers: [], timestamp: 2
+    ))
+    #expect(system.windows[0].frame == BTRect(x: 0, y: 0, width: 500, height: 800))
+    controller.cancel()
+    ticks.fire()
+    #expect(!controller.hasPendingDragSample)
+}
+
+@Test @MainActor func dragPacingFollowsTheDisplayUnderThePointer() {
+    let system = FakeWindowSystem()
+    let secondaryID = DisplayID(rawValue: "secondary")
+    system.availableDisplays.append(DisplaySnapshot(
+        id: secondaryID,
+        frame: BTRect(x: 1000, y: 0, width: 1000, height: 800),
+        visibleFrame: BTRect(x: 1000, y: 0, width: 1000, height: 800),
+        isMain: false
+    ))
+    let ticks = ResizeDisplayLink(automatic: false)
+    let controller = DragSnapController(
+        coordinator: WindowCoordinator(system: system),
+        configuration: BetterTileConfiguration(), displayTicks: ticks
+    )
+    controller.setUsesSharedGestureEvents(true)
+    controller.beginExposedWindowDrag(with: system.windows[0])
+    func drag(at x: Double) {
+        controller.handleSharedGestureEvent(GlobalGestureEvent(
+            kind: .leftMouseDragged, position: BTPoint(x: x, y: 400),
+            button: 0, modifiers: [], timestamp: 1
+        ))
+    }
+    drag(at: 1500)
+    #expect(controller.pacingDisplayID == secondaryID)
+    ticks.fire()
+    #expect(!controller.hasPendingDragSample)
+    drag(at: 1501)
+    ticks.fire()
+    #expect(!controller.hasPendingDragSample)
+    drag(at: 500)
+    #expect(controller.pacingDisplayID == system.availableDisplays[0].id)
+    ticks.fire()
+    #expect(!controller.hasPendingDragSample)
+    controller.cancel()
+    #expect(controller.pacingDisplayID == nil)
+}

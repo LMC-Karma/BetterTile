@@ -30,6 +30,7 @@ public struct BentoConstraintSolver: Sendable {
         guard let root = state.root else { return state }
         let workingRoot = BentoLayoutState.normalized(root)
         let gap = state.metrics.paneGap
+        let constraints = state.metrics.paneConstraints(constraints, for: workingRoot.windowIDs)
 
         func childRects(_ partition: BentoPartition, in rect: BTRect) -> [BTRect] {
             let extent = partition.axis == .vertical ? rect.size.width : rect.size.height
@@ -47,9 +48,13 @@ public struct BentoConstraintSolver: Sendable {
             }
         }
 
+        let vacantMinimum = state.metrics.vacantMinimumSize
         func solveNode(_ node: BentoNode, rect: BTRect) -> BentoNode? {
             switch node {
             case .vacant:
+                guard rect.size.width + tolerance >= vacantMinimum.width,
+                      rect.size.height + tolerance >= vacantMinimum.height
+                else { return nil }
                 return node
             case let .leaf(id):
                 let minimum = constraints[id]?.minimumSize ?? WindowConstraints().minimumSize
@@ -61,7 +66,8 @@ public struct BentoConstraintSolver: Sendable {
                 let extent = partition.axis == .vertical ? rect.size.width : rect.size.height
                 let available = extent - gap * Double(partition.children.count - 1)
                 let minimumExtents = partition.children.map {
-                    BentoTreeGeometry.minimumExtent($0, axis: partition.axis, constraints: constraints, gap: gap)
+                    BentoTreeGeometry.minimumExtent($0, axis: partition.axis, constraints: constraints, gap: gap,
+                                                    vacantMinimum: vacantMinimum)
                 }
                 guard available > 0,
                       minimumExtents.reduce(0, +) <= available + tolerance
@@ -159,6 +165,13 @@ public struct WindowMinimumSizeLearner: Sendable {
 
     public mutating func remove(_ windowID: WindowID) {
         learnedSizes.removeValue(forKey: windowID)
+    }
+
+    /// A learned minimum only explains one refused write. Applications change
+    /// their minimum with their content, so a new user gesture starts again
+    /// from the reported minimum instead of an old refusal.
+    public mutating func removeAll() {
+        learnedSizes.removeAll()
     }
 }
 
@@ -356,8 +369,12 @@ public struct BentoBoundaryResolver: Sendable {
                                 start = max(firstFrame.minY, secondFrame.minY)
                                 end = min(firstFrame.maxY, secondFrame.maxY)
                             case .horizontal:
-                                guard abs((secondFrame.minY - firstFrame.maxY) - state.metrics.paneGap) <= tolerance else { continue }
-                                coordinate = (firstFrame.maxY + secondFrame.minY) / 2
+                                // The lower window starts below its pane's content reserve.
+                                let reserve = state.metrics.contentTopInset
+                                guard abs((secondFrame.minY - firstFrame.maxY) - state.metrics.paneGap - reserve) <= tolerance else { continue }
+                                // Average the observed edges, as before; with a reserve,
+                                // the lower pane starts above its window.
+                                coordinate = (firstFrame.maxY + secondFrame.minY - reserve) / 2
                                 start = max(firstFrame.minX, secondFrame.minX)
                                 end = min(firstFrame.maxX, secondFrame.maxX)
                             }
@@ -471,16 +488,19 @@ private enum BentoTreeGeometry {
         _ node: BentoNode,
         axis: SplitAxis,
         constraints: [WindowID: WindowConstraints],
-        gap: Double = 0
+        gap: Double = 0,
+        vacantMinimum: BTSize = BTSize(width: 0, height: 0)
     ) -> Double {
         switch node {
         case .vacant:
-            return 0
+            return axis == .vertical ? vacantMinimum.width : vacantMinimum.height
         case let .leaf(id):
             let minimum = constraints[id]?.minimumSize ?? WindowConstraints().minimumSize
             return axis == .vertical ? minimum.width : minimum.height
         case let .partition(partition):
-            let values = partition.children.map { minimumExtent($0, axis: axis, constraints: constraints, gap: gap) }
+            let values = partition.children.map {
+                minimumExtent($0, axis: axis, constraints: constraints, gap: gap, vacantMinimum: vacantMinimum)
+            }
             return partition.axis == axis
                 ? values.reduce(0, +) + gap * Double(max(0, values.count - 1))
                 : values.max() ?? 0
