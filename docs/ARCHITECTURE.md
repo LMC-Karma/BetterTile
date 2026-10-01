@@ -86,6 +86,21 @@ their AppKit paths.
 
 All window mutations pass through the main-actor coordinator. Multi-window operations preflight every participant, apply in deterministic order, and roll back already-applied frames when a later Accessibility write fails. Ghost resize transactions do not mutate real windows before commit; live transactions can restore their original baseline on cancellation. AX move/resize events are debounced, while events matching a recent coordinator generation and expected frame are suppressed to prevent feedback loops.
 
+Continuous resize gestures keep only the newest pointer or observed-window
+sample and consume it on an AppKit display-link tick. Live Accessibility batches
+run at no more than 60 Hz; ghost-only feedback may follow the display's native
+rate. Intermediate ticks reuse one frame transaction, skip unchanged targets,
+and avoid repeated participant sweeps. Mouse-up bypasses coalescing, validates
+the participants, and applies the exact final geometry. Linked resizing writes
+only the neighboring windows; the application keeps control of the window the
+user is resizing.
+
+Frame batches share enhanced-accessibility setup per application. The
+coordinator keeps placement and rollback in one synchronous batch. The macOS
+adapter restores each application's original setting before the batch returns,
+including error exits. This avoids toggling the same application's setting for
+each of its windows. No suspension is held across an event-loop turn.
+
 ## Bento
 
 Bento uses a binary split tree held by each display's runtime `LayoutSession`. Leaves reference currently visible windows and branches carry an axis, normalized weight, and lock state. New windows are inserted by evaluating every unlocked leaf and choosing the split with the lowest movement/area-change score; closed or hidden windows are removed from the current tree. `BentoResizeEngine` changes branch weights and recursively derives all affected frames, `BentoLayoutFitter` adopts native edge changes, and `BentoBoundaryResolver` exposes only shared segments verified against current window frames.

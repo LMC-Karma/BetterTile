@@ -17,6 +17,16 @@ final class FakeWindowSystem: WindowSystem, TargetedWindowSystem, WindowEventSou
     var failingWindowID: WindowID?
     var ignoredFrameWriteCounts: [WindowID: Int] = [:]
     var frameWriteCounts: [WindowID: Int] = [:]
+    var frameWriteBatches: [[WindowID]] = []
+    private var currentFrameWriteBatch: [WindowID]?
+    func withFrameWriteBatch(_ updates: () throws -> Void) rethrows {
+        currentFrameWriteBatch = []
+        defer {
+            frameWriteBatches.append(currentFrameWriteBatch ?? [])
+            currentFrameWriteBatch = nil
+        }
+        try updates()
+    }
     var failedFrameWriteNumbers: [WindowID: Set<Int>] = [:]
     var failingMinimizeWindowID: WindowID?
     var minimizeWriteCounts: [WindowID: Int] = [:]
@@ -80,6 +90,7 @@ final class FakeWindowSystem: WindowSystem, TargetedWindowSystem, WindowEventSou
     func emit(_ event: WindowSystemEvent) { eventHandler?(event) }
 
     func setFrame(_ frame: BTRect, knownCurrentFrame: BTRect?, for windowID: WindowID) throws {
+        currentFrameWriteBatch?.append(windowID)
         recordedKnownCurrentFrames[windowID, default: []].append(knownCurrentFrame)
         frameWriteCounts[windowID, default: 0] += 1
         if failingWindowID == windowID { throw WindowSystemError.operationFailed("Simulated Accessibility failure") }

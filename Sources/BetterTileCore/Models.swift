@@ -150,10 +150,15 @@ public protocol WindowSystem: AnyObject {
     ///   redundant Accessibility writes; passing `nil` always performs the full
     ///   write sequence. See `FrameWritePlanner`.
     func setFrame(_ frame: BTRect, knownCurrentFrame: BTRect?, for windowID: WindowID) throws
+    /// Shares adapter setup across a synchronous group of frame writes and
+    /// restores it before returning, including when a write or rollback fails.
+    func withFrameWriteBatch(_ updates: () throws -> Void) rethrows
     func setMinimized(_ minimized: Bool, for windowID: WindowID) throws
 }
 
 public extension WindowSystem {
+    func withFrameWriteBatch(_ updates: () throws -> Void) rethrows { try updates() }
+
     func setFrame(_ frame: BTRect, for windowID: WindowID) throws {
         try setFrame(frame, knownCurrentFrame: nil, for: windowID)
     }
