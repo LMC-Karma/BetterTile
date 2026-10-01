@@ -4,29 +4,6 @@ import BetterTileMacOS
 import Testing
 @testable import BetterTileApp
 
-@Test(arguments: [TabbedPreset.rows, .focus], [0.01, 0.99]) @MainActor
-func tabbedRowResizeClampsAtMinimumInsteadOfFreezing(preset: TabbedPreset, ratio: Double) async throws {
-    _ = NSApplication.shared
-    let system = FakeAppWindowSystem()
-    let model = makeModel(system: system)
-    defer { model.shutdown() }
-    model.configuration.defaultTabbedPreset = preset
-    model.setActiveMode(.tabbed)
-    try #require(await waitFor { model.activeTabbedState?.panes.count == preset.paneCount })
-    let before = try #require(model.activeTabbedState)
-    let divider = try #require(before.dividers(in: system.mainDisplay.visibleFrame).first { !$0.vertical })
-    model.performTabbed(.beginResize)
-    model.performTabbed(.resize(divider.id, ratio))
-    let resized = try #require(model.activeTabbedState)
-    let actual = try #require(resized.dividers(in: system.mainDisplay.visibleFrame).first { $0.id == divider.id })
-    #expect(ratio < 0.5 ? actual.ratio < 0.5 : actual.ratio > 0.5)
-    let frames = resized.frames(in: system.mainDisplay.visibleFrame)
-    #expect(frames.values.allSatisfy { $0.size.height + 0.001 >= 114 })
-    #expect(resized.panes == before.panes)
-    model.performTabbed(.cancelResize)
-    #expect(model.activeTabbedState == before)
-}
-
 @Test(arguments: [false, true]) @MainActor
 func tabSelectionDoesNotRearrangeOrRefitOtherWindows(sharedApplication: Bool) async throws {
     _ = NSApplication.shared
@@ -60,7 +37,8 @@ func tabSelectionDoesNotRearrangeOrRefitOtherWindows(sharedApplication: Bool) as
     let target = system.windows[1].id
     model.performTabbed(.select(target))
     #expect(await waitFor(timeout: .seconds(1)) { model.activeTabbedState?.activeWindowID == target })
-    #expect(model.activeTabbedState?.root == previous.root)
+    // Selecting swaps which window a pane shows; pane geometry stays put.
+    #expect(model.activeTabbedState?.frames(in: system.mainDisplay.visibleFrame) == previous.frames(in: system.mainDisplay.visibleFrame))
     #expect(model.activeTabbedState?.panes[1] == previous.panes[1])
     #expect(system.windows.map(\.frame) == frames)
     #expect(system.frameWriteCounts == writes)
@@ -98,293 +76,6 @@ func tabSelectionDoesNotRearrangeOrRefitOtherWindows(sharedApplication: Bool) as
     #expect(await waitFor(timeout: .seconds(1)) { !model.tabbedNeedsFocusRefresh })
 }
 
-@Test(arguments: [false, true]) @MainActor
-func tabbedRetainsExternalFocusChangesDuringPlacementSuppression(duringResize: Bool) async throws {
-    _ = NSApplication.shared
-    let system = FakeAppWindowSystem()
-    var second = system.windows[0]
-    second.id = WindowID(rawValue: "second")
-    system.windows.append(second)
-    let model = makeModel(system: system)
-    defer { model.shutdown() }
-    model.configuration.defaultTabbedPreset = .columns
-    model.setActiveMode(.tabbed)
-    try #require(await waitFor { model.activeTabbedState?.windowIDs.count == 2 })
-    #expect(model.activeTabbedState?.activeWindowID != second.id)
-    if duringResize {
-        let divider = try #require(model.activeTabbedState?.dividers(in: system.mainDisplay.visibleFrame).first)
-        model.performTabbed(.beginResize)
-        model.performTabbed(.resize(divider.id, 0.6))
-    }
-    system.focusedID = second.id
-    system.eventHandler?(WindowSystemEvent(kind: .focused, windowID: second.id, processIdentifier: second.processIdentifier))
-    if duringResize {
-        try await Task.sleep(for: .milliseconds(400))
-        #expect(model.activeTabbedState?.activeWindowID != second.id)
-        model.performTabbed(.endResize)
-    }
-    #expect(await waitFor(timeout: .seconds(1)) { model.activeTabbedState?.activeWindowID == second.id })
-}
-
-@Test(arguments: [false, true]) @MainActor
-func degradedTabbedResizeRestoresItsBaselineOrStopsAutomaticPlacement(failRestore: Bool) async throws {
-    _ = NSApplication.shared
-    let system = FakeAppWindowSystem()
-    var second = system.windows[0]
-    second.id = WindowID(rawValue: "second")
-    system.windows.append(second)
-    let model = makeModel(system: system)
-    defer { model.shutdown() }
-    model.configuration.defaultTabbedPreset = .columns
-    model.setActiveMode(.tabbed)
-    try #require(await waitFor { model.activeTabbedState?.windowIDs.count == 2 })
-    let before = try #require(model.activeTabbedState)
-    let frames = system.windows.map(\.frame)
-    let divider = try #require(before.dividers(in: system.mainDisplay.visibleFrame).first)
-    model.performTabbed(.beginResize)
-    model.performTabbed(.resize(divider.id, 0.6))
-    let first = system.windows[0].id
-    let writes = system.frameWriteCounts[first, default: 0]
-    system.failedFrameWriteNumbers[second.id] = [system.frameWriteCounts[second.id, default: 0] + 1]
-    system.failedFrameWriteNumbers[first] = failRestore ? [writes + 2, writes + 3] : [writes + 2]
-    model.performTabbed(.resize(divider.id, 0.65))
-    if !failRestore {
-        #expect(model.activeTabbedState == before)
-        #expect(system.windows.map(\.frame) == frames)
-    }
-    var added = second
-    added.id = WindowID(rawValue: "after-degraded-resize")
-    system.windows.append(added)
-    let counts = system.frameWriteCounts
-    system.eventHandler?(WindowSystemEvent(kind: .created, windowID: added.id, processIdentifier: added.processIdentifier))
-    try #require(await waitFor { model.activeTabbedState?.windowIDs.contains(added.id) == true })
-    if failRestore { #expect(system.frameWriteCounts == counts) }
-}
-
-@Test @MainActor func failedTabbedResizeCancellationStopsAutomaticPlacementUntilRepair() async throws {
-    _ = NSApplication.shared
-    let system = FakeAppWindowSystem()
-    let model = makeModel(system: system)
-    defer { model.shutdown() }
-    model.configuration.defaultTabbedPreset = .columns
-    model.setActiveMode(.tabbed)
-    try #require(await waitFor { model.activeTabbedState?.panes.count == 2 })
-    let before = try #require(model.activeTabbedState)
-    let divider = try #require(before.dividers(in: system.mainDisplay.visibleFrame).first)
-    let id = system.windows[0].id
-    model.performTabbed(.beginResize)
-    model.performTabbed(.resize(divider.id, 0.65))
-    system.failedFrameWriteNumbers[id] = [system.frameWriteCounts[id, default: 0] + 1]
-    model.performTabbed(.cancelResize)
-    #expect(model.statusMessage != nil)
-
-    var added = system.windows[0]
-    added.id = WindowID(rawValue: "after-cancel-failure")
-    added.frame = BTRect(x: 100, y: 100, width: 500, height: 400)
-    system.windows.append(added)
-    let writes = system.frameWriteCounts
-    system.eventHandler?(WindowSystemEvent(kind: .created, windowID: added.id, processIdentifier: added.processIdentifier))
-    try #require(await waitFor { model.activeTabbedState?.windowIDs.contains(added.id) == true })
-    #expect(system.frameWriteCounts == writes)
-    #expect(system.windows.last?.frame == added.frame)
-
-    system.focusedID = added.id
-    system.eventHandler?(WindowSystemEvent(kind: .focused, windowID: added.id, processIdentifier: added.processIdentifier))
-    try await Task.sleep(for: .milliseconds(400))
-    #expect(system.frameWriteCounts == writes)
-
-    model.performTabbed(.repair)
-    #expect(await waitFor { system.windows.last?.frame != added.frame })
-}
-
-@Test @MainActor func tabbedDividerResizeUsesLiveFramesWithoutRestackingWindows() async throws {
-    _ = NSApplication.shared
-    let system = FakeAppWindowSystem()
-    let model = makeModel(system: system)
-    defer { model.shutdown() }
-    model.configuration.defaultTabbedPreset = .columns
-    model.setActiveMode(.tabbed)
-    try #require(await waitFor { model.activeTabbedState?.panes.count == 2 })
-    let before = try #require(model.activeTabbedState)
-    let divider = try #require(before.dividers(in: system.mainDisplay.visibleFrame).first)
-    let raiseCountBefore = system.raiseRequests.count
-
-    model.performTabbed(.beginResize)
-    model.performTabbed(.resize(divider.id, 0.65))
-    try #require(await waitFor {
-        model.activeTabbedState?.dividers(in: system.mainDisplay.visibleFrame).first?.ratio == 0.65
-    })
-
-    let resized = try #require(model.activeTabbedState)
-    let expected = try resized.placements(in: system.mainDisplay.visibleFrame, windows: system.windows)
-    #expect(expected.allSatisfy { placement in
-        system.windows.first(where: { $0.id == placement.windowID })?.frame == placement.frame
-    })
-    #expect(system.raiseRequests.count == raiseCountBefore)
-
-    model.performTabbed(.endResize)
-}
-
-@Test @MainActor func tabbedDividerBalanceAfterResizeReleaseWaitsForSettlementAndCanUndo() async throws {
-    _ = NSApplication.shared
-    let system = FakeAppWindowSystem()
-    let model = makeModel(system: system)
-    defer { model.shutdown() }
-    model.configuration.defaultTabbedPreset = .columns
-    model.setActiveMode(.tabbed)
-    try #require(await waitFor { model.activeTabbedState?.panes.count == 2 })
-    let divider = try #require(model.activeTabbedState?.dividers(in: system.mainDisplay.visibleFrame).first)
-
-    model.performTabbed(.beginResize)
-    model.performTabbed(.resize(divider.id, 0.65))
-    model.performTabbed(.endResize)
-    model.performTabbed(.balanceDivider(divider.id))
-
-    try #require(await waitFor(timeout: .seconds(2)) {
-        model.activeTabbedState?.dividers(in: system.mainDisplay.visibleFrame).first?.ratio == 0.5
-    })
-    model.performTabbed(.undo)
-    #expect(await waitFor(timeout: .seconds(2)) {
-        model.activeTabbedState?.dividers(in: system.mainDisplay.visibleFrame).first?.ratio == 0.65
-    })
-}
-
-@Test @MainActor func rapidTabbedDividerDragsKeepBothReleasesAndUndoSteps() async throws {
-    _ = NSApplication.shared
-    let system = FakeAppWindowSystem()
-    var second = system.windows[0]
-    second.id = WindowID(rawValue: "second")
-    system.windows.append(second)
-    let model = makeModel(system: system)
-    defer { model.shutdown() }
-    model.configuration.defaultTabbedPreset = .columns
-    model.setActiveMode(.tabbed)
-    try #require(await waitFor { model.activeTabbedState?.windowIDs.count == 2 })
-    let baseline = try #require(model.activeTabbedState)
-    let divider = try #require(baseline.dividers(in: system.mainDisplay.visibleFrame).first)
-
-    model.performTabbed(.beginResize)
-    model.performTabbed(.resize(divider.id, 0.65))
-    model.performTabbed(.endResize)
-    model.performTabbed(.beginResize)
-    model.performTabbed(.resize(divider.id, 0.35))
-    model.performTabbed(.endResize)
-
-    try #require(await waitFor(timeout: .seconds(2)) {
-        model.activeTabbedState?.dividers(in: system.mainDisplay.visibleFrame).first?.ratio == 0.35
-    })
-    let released = try #require(model.activeTabbedState)
-    let expectedFrames = try released.placements(in: system.mainDisplay.visibleFrame, windows: system.windows)
-    #expect(expectedFrames.allSatisfy { placement in
-        system.windows.first(where: { $0.id == placement.windowID })?.frame == placement.frame
-    })
-    model.performTabbed(.undo)
-    try #require(await waitFor(timeout: .seconds(2)) {
-        model.activeTabbedState?.dividers(in: system.mainDisplay.visibleFrame).first?.ratio == 0.65
-    })
-    model.performTabbed(.undo)
-    #expect(await waitFor(timeout: .seconds(2)) { model.activeTabbedState == baseline })
-}
-
-@Test @MainActor func cancellingQueuedTabbedDividerDragKeepsFirstReleaseAndOneUndo() async throws {
-    _ = NSApplication.shared
-    let system = FakeAppWindowSystem()
-    let model = makeModel(system: system)
-    defer { model.shutdown() }
-    model.configuration.defaultTabbedPreset = .columns
-    model.setActiveMode(.tabbed)
-    try #require(await waitFor { model.activeTabbedState?.panes.count == 2 })
-    let baseline = try #require(model.activeTabbedState)
-    let divider = try #require(baseline.dividers(in: system.mainDisplay.visibleFrame).first)
-
-    model.performTabbed(.beginResize)
-    model.performTabbed(.resize(divider.id, 0.65))
-    model.performTabbed(.endResize)
-    model.performTabbed(.beginResize)
-    model.performTabbed(.resize(divider.id, 0.35))
-    model.performTabbed(.cancelResize)
-    // Undo queues behind the first release's settlement. A replayed cancelled
-    // drag would leave a second Undo step, so this Undo would stop at 0.65.
-    model.performTabbed(.undo)
-
-    try #require(await waitFor(timeout: .seconds(2)) { model.activeTabbedState == baseline })
-    let expectedFrames = try baseline.placements(in: system.mainDisplay.visibleFrame, windows: system.windows)
-    #expect(expectedFrames.allSatisfy { placement in
-        system.windows.first(where: { $0.id == placement.windowID })?.frame == placement.frame
-    })
-    model.performTabbed(.undo)
-    #expect(await waitFor(timeout: .seconds(2)) { model.activeTabbedState == baseline })
-}
-
-@Test @MainActor func cancellingTabbedLiveResizeRestoresTheStateAndRealWindowFrames() async throws {
-    _ = NSApplication.shared
-    let system = FakeAppWindowSystem()
-    let model = makeModel(system: system)
-    defer { model.shutdown() }
-    model.configuration.defaultTabbedPreset = .columns
-    model.setActiveMode(.tabbed)
-    try #require(await waitFor { model.activeTabbedState?.panes.count == 2 })
-    let before = try #require(model.activeTabbedState)
-    let framesBefore = Dictionary(uniqueKeysWithValues: system.windows.map { ($0.id, $0.frame) })
-    let divider = try #require(before.dividers(in: system.mainDisplay.visibleFrame).first)
-
-    model.performTabbed(.beginResize)
-    model.performTabbed(.resize(divider.id, 0.65))
-    #expect(system.windows.contains { framesBefore[$0.id] != $0.frame })
-    model.performTabbed(.cancelResize)
-
-    #expect(model.activeTabbedState == before)
-    #expect(system.windows.allSatisfy { framesBefore[$0.id] == $0.frame })
-}
-
-@Test @MainActor func rejectedTabbedLiveResizeSnapsBackAfterFinalSettlement() async throws {
-    _ = NSApplication.shared
-    let system = FakeAppWindowSystem()
-    let model = makeModel(system: system)
-    defer { model.shutdown() }
-    model.configuration.defaultTabbedPreset = .columns
-    model.setActiveMode(.tabbed)
-    try #require(await waitFor { model.activeTabbedState?.panes.count == 2 })
-    let before = try #require(model.activeTabbedState)
-    let framesBefore = Dictionary(uniqueKeysWithValues: system.windows.map { ($0.id, $0.frame) })
-    let divider = try #require(before.dividers(in: system.mainDisplay.visibleFrame).first)
-    system.ignoredFrameWriteWindowIDs = Set(system.windows.map(\.id))
-    model.statusMessage = nil
-
-    model.performTabbed(.beginResize)
-    model.performTabbed(.resize(divider.id, 0.65))
-    model.performTabbed(.endResize)
-
-    try #require(await waitFor(timeout: .seconds(2)) {
-        model.statusMessage != nil && model.activeTabbedState == before
-    })
-    #expect(system.windows.allSatisfy { framesBefore[$0.id] == $0.frame })
-}
-
-@Test @MainActor func invalidTabbedParticipantAtReleaseRestoresStateAndFrames() async throws {
-    _ = NSApplication.shared
-    let system = FakeAppWindowSystem()
-    let model = makeModel(system: system)
-    defer { model.shutdown() }
-    model.configuration.defaultTabbedPreset = .columns
-    model.setActiveMode(.tabbed)
-    try #require(await waitFor { model.activeTabbedState?.panes.count == 2 })
-    let before = try #require(model.activeTabbedState)
-    let framesBefore = Dictionary(uniqueKeysWithValues: system.windows.map { ($0.id, $0.frame) })
-    let divider = try #require(before.dividers(in: system.mainDisplay.visibleFrame).first)
-
-    model.performTabbed(.beginResize)
-    model.performTabbed(.resize(divider.id, 0.65))
-    #expect(system.windows.contains { framesBefore[$0.id] != $0.frame })
-    system.windows[0].isHidden = true
-    model.statusMessage = nil
-    model.performTabbed(.endResize)
-
-    #expect(model.statusMessage != nil)
-    #expect(model.activeTabbedState == before)
-    #expect(system.windows.allSatisfy { framesBefore[$0.id] == $0.frame })
-}
-
 @Test @MainActor func repairCurrentLayoutRestoresTabbedFramesAndPreservesGroups() async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
@@ -418,8 +109,12 @@ func tabbedModelAdaptsReportedAndLearnedWidthsAndRetainsThemThroughUndo(learnWid
     model.configuration.defaultTabbedPreset = .columns
     model.setActiveMode(.tabbed)
     try #require(await waitFor { model.activeTabbedState?.windowIDs.count == 2 })
-    #expect(system.windows.allSatisfy { abs($0.frame.size.width - minimumWidth) < 0.001 && $0.frame.minY == 34 })
-    #expect(system.frameWriteCounts[wide.id] == (learnWidth ? 3 : 1))
+    // Both tabs share one pane below the strip. The hidden wide tab does not
+    // widen the pane: only the selected tab's minimum counts.
+    #expect(system.windows.allSatisfy { $0.frame.minY == 34 })
+    let shown = try #require(model.activeTabbedState?.panes[0].selected)
+    #expect(shown != wide.id)
+    #expect(abs((system.windows.first { $0.id == shown }?.frame.size.width ?? 0) - 497) < 0.001)
 
     let right = try #require(model.activeTabbedState?.panes[1].id)
     model.performTabbed(.move(wide.id, pane: right, index: nil))
@@ -586,78 +281,6 @@ func tabbedLearnedWidthFailureDoesNotCommitOrRetryDegradedRestoration(failRestor
     try #require(await waitFor { model.activeLayoutMode == .tabbed && model.activeTabbedState?.panes[0].id == originalPane })
 }
 
-@Test(arguments: [false, true]) @MainActor
-func nativeSpaceChangeCancelsActiveTabbedResizeBeforeReturning(destroyedDuringResize: Bool) async throws {
-    _ = NSApplication.shared
-    let system = FakeAppWindowSystem()
-    let display = system.mainDisplay.id
-    let firstSpace = NativeSpaceID(rawValue: 1)
-    let secondSpace = NativeSpaceID(rawValue: 2)
-    var second = system.windows[0]
-    second.id = WindowID(rawValue: "second")
-    second.processIdentifier = 43
-    system.windows.append(second)
-    system.desktopObservation = NativeDesktopObservation(
-        currentSpaceByDisplay: [display: firstSpace],
-        knownSpacesByDisplay: [display: [firstSpace, secondSpace]],
-        windowMembership: Dictionary(uniqueKeysWithValues: system.windows.map { ($0.id, [firstSpace]) })
-    )
-    let model = makeModel(system: system)
-    defer { model.shutdown() }
-    model.configuration.singleWindowPlacement = nil
-    model.setActiveMode(.tabbed)
-    try #require(await waitFor { model.activeTabbedState?.panes.count == 1 })
-    let singlePaneState = try #require(model.activeTabbedState)
-    model.performTabbed(.preset(.columns))
-    try #require(await waitFor { model.activeTabbedState?.panes.count == 2 })
-    let baselineState = try #require(model.activeTabbedState)
-    let baselineFrames = Dictionary(uniqueKeysWithValues: system.windows.map { ($0.id, $0.frame) })
-    var expectedReturnState = baselineState
-    var expectedReturnFrames = baselineFrames
-    let divider = try #require(baselineState.dividers(in: system.mainDisplay.visibleFrame).first)
-
-    model.performTabbed(.beginResize)
-    model.performTabbed(.resize(divider.id, 0.65))
-    try #require(await waitFor { model.activeTabbedState?.dividers(in: system.mainDisplay.visibleFrame).first?.ratio == 0.65 })
-    #expect(model.activeTabbedState != baselineState)
-    let writesAfterResize = system.frameWriteCounts
-
-    if destroyedDuringResize {
-        system.windows.removeAll { $0.id == second.id }
-        system.desktopObservation?.windowMembership.removeValue(forKey: second.id)
-        system.eventHandler?(WindowSystemEvent(
-            kind: .destroyed,
-            windowID: second.id,
-            processIdentifier: second.processIdentifier
-        ))
-        expectedReturnState.removeClosedWindow(second.id)
-        expectedReturnFrames.removeValue(forKey: second.id)
-    }
-
-    model.installWorkspaceTriggers()
-    system.desktopObservation?.currentSpaceByDisplay[display] = secondSpace
-    let departureSweep = system.completeSweepCount
-    NSWorkspace.shared.notificationCenter.post(name: NSWorkspace.activeSpaceDidChangeNotification, object: nil)
-    try #require(await waitFor {
-        model.activeLayoutMode == .manual && system.completeSweepCount >= departureSweep + 2
-    })
-    #expect(system.frameWriteCounts == writesAfterResize)
-
-    system.desktopObservation?.currentSpaceByDisplay[display] = firstSpace
-    NSWorkspace.shared.notificationCenter.post(name: NSWorkspace.activeSpaceDidChangeNotification, object: nil)
-    try #require(await waitFor(timeout: .seconds(2)) {
-        model.activeLayoutMode == .tabbed
-            && model.activeTabbedState == expectedReturnState
-            && Dictionary(uniqueKeysWithValues: system.windows.map { ($0.id, $0.frame) }) == expectedReturnFrames
-    })
-
-    model.performTabbed(.undo)
-    try #require(await waitFor { model.activeTabbedState?.panes.count == 1 })
-    var expectedUndoState = singlePaneState
-    if destroyedDuringResize { expectedUndoState.removeClosedWindow(second.id) }
-    #expect(model.activeTabbedState == expectedUndoState)
-}
-
 @Test @MainActor func tabbedModelFloatCanBeReattachedAndPresetUndoRestoresAssignments() async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
@@ -731,4 +354,113 @@ func nativeSpaceChangeCancelsActiveTabbedResizeBeforeReturning(destroyedDuringRe
     model.setActiveMode(.manual)
     try #require(await waitFor { model.activeLayoutMode == .manual })
     #expect(system.windows[0].frame == frame)
+}
+
+@MainActor private func tabbedWindows(_ system: FakeAppWindowSystem, _ names: [String]) -> [WindowSnapshot] {
+    let base = system.windows[0]
+    system.windows = names.enumerated().map { index, name in
+        var window = base
+        window.id = WindowID(rawValue: name)
+        window.processIdentifier = pid_t(100 + index)
+        window.frame = BTRect(x: 20 * Double(index), y: 20, width: 500, height: 400)
+        return window
+    }
+    return system.windows
+}
+
+@Test @MainActor func tabbedHalfScreenSplitIgnoresAHiddenTabsMinimum() async throws {
+    // Reported failure: a tab dragged to half the screen said the layout
+    // could not apply because a hidden wide tab counted.
+    _ = NSApplication.shared
+    let system = FakeAppWindowSystem()
+    var windows = tabbedWindows(system, ["a", "b", "wide"])
+    windows[2].constraints.minimumSize.width = 900
+    system.windows = windows
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    model.setActiveMode(.tabbed)
+    try #require(await waitFor { model.activeTabbedState?.windowIDs.count == 3 })
+    let state = try #require(model.activeTabbedState)
+    let b = WindowID(rawValue: "b")
+    if state.activeWindowID == WindowID(rawValue: "wide") { model.performTabbed(.select(WindowID(rawValue: "a"))) }
+    try #require(await waitFor { model.activeTabbedState?.activeWindowID != WindowID(rawValue: "wide") })
+    model.statusMessage = nil
+    model.performTabbed(.split(b, pane: state.panes[0].id, edge: .right))
+    try #require(await waitFor { model.activeTabbedState?.panes.count == 2 })
+    #expect(model.statusMessage == nil)
+    let frames = Dictionary(uniqueKeysWithValues: system.windows.map { ($0.id, $0.frame) })
+    #expect(abs(frames[b]!.size.width - 497) < 1)
+    #expect(frames[b]!.minX > 500)
+}
+
+@Test @MainActor func tabbedWindowDragsUseBentoAndCenterDropsAddATab() async throws {
+    _ = NSApplication.shared
+    let system = FakeAppWindowSystem()
+    _ = tabbedWindows(system, ["a", "b", "c"])
+    let a = WindowID(rawValue: "a"), b = WindowID(rawValue: "b"), c = WindowID(rawValue: "c")
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    model.configuration.defaultTabbedPreset = .columns
+    model.setActiveMode(.tabbed)
+    try #require(await waitFor { model.activeTabbedState?.windowIDs.count == 3 })
+    let right = try #require(model.activeTabbedState?.panes[1].id)
+    model.performTabbed(.move(b, pane: right, index: nil))
+    try #require(await waitFor { model.activeTabbedState?.panes[1].tabs == [b] })
+    let display = system.mainDisplay.id
+
+    // Tear one tab out of the left group and drop it on the right pane's edge:
+    // Bento splits, and the rest of the group stays where it was.
+    let left = try #require(model.activeTabbedState?.panes[0])
+    let torn = try #require(left.selected)
+    let remaining = try #require(left.tabs.first { $0 != torn })
+    #expect(model.completeBentoDrag(displayID: display, sourceID: torn, outcome: .insert(targetWindowID: b, edge: .bottom)))
+    try #require(await waitFor { model.activeTabbedState?.panes.count == 3 })
+    #expect(model.activeTabbedState?.panes[0].tabs == [remaining])
+    #expect(model.activeTabbedState?.panes.first { $0.tabs == [torn] } != nil)
+    #expect(model.activeTabbedState?.layout.metrics.contentTopInset == TabbedLayoutState.headerHeight)
+
+    // A center drop adds the window to that pane as a tab.
+    #expect(model.completeBentoDrag(displayID: display, sourceID: torn, outcome: .swap(targetWindowID: b)))
+    try #require(await waitFor { model.activeTabbedState?.pane(containing: b)?.tabs.contains(torn) == true })
+    #expect(model.activeTabbedState?.pane(containing: b)?.selected == torn)
+    let bFrame = system.windows.first { $0.id == b }?.frame
+    #expect(await waitFor { system.windows.first { $0.id == torn }?.frame == bFrame })
+
+    // A torn tab dropped nowhere returns to its group.
+    let group = try #require(model.activeTabbedState?.pane(containing: b))
+    #expect(model.completeBentoDrag(displayID: display, sourceID: torn, outcome: .restore))
+    try #require(await waitFor { model.activeTabbedState?.pane(containing: torn)?.id == group.id })
+    _ = a; _ = c
+}
+
+@Test @MainActor func tabbedPointerDropsRecordUndo() async throws {
+    _ = NSApplication.shared
+    let system = FakeAppWindowSystem()
+    _ = tabbedWindows(system, ["a", "b", "c"])
+    let b = WindowID(rawValue: "b")
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    model.configuration.defaultTabbedPreset = .columns
+    model.setActiveMode(.tabbed)
+    try #require(await waitFor { model.activeTabbedState?.windowIDs.count == 3 })
+    let right = try #require(model.activeTabbedState?.panes[1].id)
+    model.performTabbed(.move(b, pane: right, index: nil))
+    try #require(await waitFor { model.activeTabbedState?.panes[1].tabs == [b] })
+    let before = try #require(model.activeTabbedState)
+    let torn = try #require(before.panes[0].selected)
+    // An edge drop is a Bento split; Undo returns the torn tab to its group.
+    #expect(model.completeBentoDrag(displayID: system.mainDisplay.id, sourceID: torn,
+                                    outcome: .insert(targetWindowID: b, edge: .bottom)))
+    try #require(await waitFor { model.activeTabbedState?.panes.count == 3 })
+    try #require(await waitFor { model.activeTabbedState?.pane(containing: torn)?.tabs == [torn] })
+    model.performTabbed(.undo)
+    #expect(await waitFor { model.activeTabbedState?.pane(containing: torn)?.id == before.panes[0].id })
+}
+
+@Test func leavingTabbedForBentoRestoresPlainBentoMetrics() {
+    var state = TabbedLayoutState(preset: .columns)
+    state.reconcile(windowIDs: [WindowID(rawValue: "a")], removed: [], focused: nil)
+    let bento = state.unstacked(in: BTRect(x: 0, y: 0, width: 1000, height: 800))
+    #expect(bento.metrics.contentTopInset == 0)
+    #expect(bento.metrics.vacantMinimumSize == BTSize(width: 0, height: 0))
 }

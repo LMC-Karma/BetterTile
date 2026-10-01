@@ -3,29 +3,6 @@ import BetterTileCore
 import Testing
 @testable import BetterTileMacOS
 
-@Test @MainActor func tabbedDividerDoubleClickBalancesThroughResizeTransaction() throws {
-    _ = NSApplication.shared
-    let overlay = TabbedOverlayController()
-    defer { overlay.hide() }
-    let state = TabbedLayoutState(preset: .columns)
-    let view = TabbedDividerView()
-    view.owner = overlay
-    view.divider = try #require(state.dividers(in: BTRect(x: 0, y: 0, width: 1000, height: 800)).first)
-    var actions: [String] = []
-    overlay.onIntent = { intent in
-        switch intent {
-        case let .balanceDivider(id): actions.append("balance"); #expect(id == view.divider?.id)
-        default: Issue.record("Unexpected action")
-        }
-    }
-    view.mouseDown(with: try #require(NSEvent.mouseEvent(
-        with: .leftMouseDown, location: .zero, modifierFlags: [], timestamp: 0,
-        windowNumber: 0, context: nil, eventNumber: 0, clickCount: 2, pressure: 1
-    )))
-    #expect(actions == ["balance"])
-    #expect(!overlay.isInteracting)
-}
-
 @Test @MainActor func selectingVisibleTabKeepsCrowdedStripPositions() throws {
     _ = NSApplication.shared
     let overlay = TabbedOverlayController()
@@ -45,79 +22,6 @@ import Testing
     state.select(ids[0])
     overlay.refresh(state: state, bounds: bounds, windows: [])
     #expect(view.strip.visibleRange.contains(0))
-}
-
-@Test @MainActor func tabbedResizeChromeKeepsPaneViewsAndAccessibleFrames() throws {
-    _ = NSApplication.shared
-    let bounds = BTRect(x: 12000, y: 0, width: 1000, height: 800)
-    var state = TabbedLayoutState(preset: .columns)
-    let windows = (0..<4).map {
-        WindowSnapshot(id: WindowID(rawValue: "resize-chrome-\($0)"), processIdentifier: 1,
-                       title: "Document \($0)", frame: bounds, displayID: DisplayID(rawValue: "preview"))
-    }
-    state.reconcile(windowIDs: windows.map(\.id), removed: [], focused: windows[0].id)
-    for window in windows.suffix(2) { state.move(window.id, to: state.panes[1].id) }
-    let overlay = TabbedOverlayController()
-    defer { overlay.hide() }
-    overlay.refresh(state: state, bounds: bounds, windows: windows)
-    let views = NSApp.windows.compactMap(\.contentView).compactMap { $0 as? TabbedPaneView }
-        .filter { view in state.panes.contains { $0.id == view.pane.id } }
-    #expect(views.count == 2)
-    let obscuredPanel = try #require(views.last?.window)
-    obscuredPanel.orderOut(nil)
-    let divider = try #require(state.dividers(in: bounds).first)
-    let clock = ContinuousClock()
-    let elapsed = clock.measure {
-        for tick in 0..<120 {
-            state.resize(dividerID: divider.id, ratio: 0.4 + Double(tick) / 600)
-            overlay.refreshResize(state: state, bounds: bounds)
-        }
-    }
-    print("Tabbed chrome, two panes/four windows, 120 updates: \(elapsed)")
-    #expect(!obscuredPanel.isVisible)
-    for view in views {
-        let panel = try #require(view.window)
-        #expect(panel.contentView === view)
-        let frame = try #require(state.frames(in: bounds)[view.pane.id])
-        #expect(abs(panel.frame.width - frame.size.width) < 1)
-        let children = try #require(view.accessibilityChildren() as? [NSAccessibilityElement])
-        #expect(children.allSatisfy { panel.frame.contains($0.accessibilityFrame()) })
-        #expect(children.contains { $0.accessibilityLabel()?.contains(", selected") == true })
-    }
-}
-
-@Test(arguments: [TabbedPreset.columns, .rows]) @MainActor
-func tabbedDividerPointerPreservesGrabOffsetAndUsesReleasePosition(preset: TabbedPreset) throws {
-    _ = NSApplication.shared
-    let bounds = BTRect(x: 12000, y: 0, width: 1000, height: 800)
-    let divider = try #require(TabbedLayoutState(preset: preset).dividers(in: bounds).first)
-    let overlay = TabbedOverlayController(displayTicks: ResizeDisplayLink(automatic: false))
-    defer { overlay.hide() }
-    let panel = NSPanel(contentRect: CoordinateConverter.toAppKit(divider.frame, mainScreenFrame: NSScreen.screens.first!.frame),
-                        styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
-    let view = TabbedDividerView()
-    view.owner = overlay
-    view.divider = divider
-    panel.contentView = view
-    #expect(view.acceptsFirstMouse(for: nil))
-    var ratios: [Double] = []
-    overlay.onIntent = { if case let .resize(_, ratio) = $0 { ratios.append(ratio) } }
-    let start = BTPoint(x: divider.frame.midX, y: divider.frame.midY)
-    func event(_ type: NSEvent.EventType, delta: Double) throws -> NSEvent {
-        let point = BTPoint(x: start.x + (divider.vertical ? delta : 0), y: start.y + (divider.vertical ? 0 : delta))
-        let screen = NSPoint(x: point.x, y: NSScreen.screens.first!.frame.maxY - point.y)
-        return try #require(NSEvent.mouseEvent(with: type, location: panel.convertPoint(fromScreen: screen), modifierFlags: [],
-                                             timestamp: 0, windowNumber: panel.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1))
-    }
-    view.mouseDown(with: try event(.leftMouseDown, delta: 0))
-    view.mouseDragged(with: try event(.leftMouseDragged, delta: 0))
-    overlay.displayTick()
-    #expect(abs(try #require(ratios.last) - divider.ratio) < 0.0001)
-    view.mouseDragged(with: try event(.leftMouseDragged, delta: 40))
-    view.mouseUp(with: try event(.leftMouseUp, delta: 100))
-    let length = (divider.vertical ? bounds.size.width : bounds.size.height) - TabbedLayoutState.gap
-    #expect(abs(try #require(ratios.last) - (divider.ratio + 100 / length)) < 0.0001)
-    #expect(!overlay.isInteracting)
 }
 
 @Test(arguments: [false, true]) @MainActor
@@ -194,107 +98,6 @@ func tabbedStripFitsNarrowAndCrowdedPanes(width: Double, count: Int) {
     #expect(overlay.menu(pane: pane, windowID: pane.selected).item(withTitle: "Move to Pane") == nil)
 }
 
-@Test @MainActor func tabbedDividerAccessibilityUsesResizeTransaction() throws {
-    let state = TabbedLayoutState(preset: .columns)
-    let divider = try #require(state.dividers(in: BTRect(x: 0, y: 0, width: 1200, height: 800)).first)
-    let overlay = TabbedOverlayController()
-    let view = TabbedDividerView()
-    view.owner = overlay
-    view.divider = divider
-    var actions: [String] = []
-    var ratios: [Double] = []
-    overlay.onIntent = {
-        switch $0 {
-        case .beginResize: actions.append("begin")
-        case let .resize(id, ratio):
-            #expect(id == divider.id)
-            actions.append("resize"); ratios.append(ratio)
-        case .endResize: actions.append("end")
-        default: Issue.record("Unexpected divider action")
-        }
-    }
-    #expect(view.accessibilityPerformIncrement())
-    #expect(view.accessibilityPerformDecrement())
-    #expect(actions == ["begin", "resize", "end", "begin", "resize", "end"])
-    #expect(ratios == [0.55, 0.45])
-    #expect(!overlay.isInteracting)
-}
-
-@Test @MainActor func tabbedDividerCoalescesRawDragSamplesAtTheDisplayRateAndFlushesRelease() throws {
-    let state = TabbedLayoutState(preset: .columns)
-    let divider = try #require(state.dividers(in: BTRect(x: 0, y: 0, width: 1000, height: 800)).first)
-    let displayTicks = ResizeDisplayLink(automatic: false)
-    let overlay = TabbedOverlayController(displayTicks: displayTicks)
-    var intents: [TabbedUIIntent] = []
-    overlay.onIntent = { intents.append($0) }
-
-    overlay.beginResize()
-    for x in 1...120 {
-        overlay.resize(divider, point: BTPoint(x: Double(x) * 5, y: 400))
-    }
-    #expect(intents.count == 1)
-
-    displayTicks.fire()
-    #expect(intents.count == 2)
-    guard case let .resize(id, ratio) = intents[1] else {
-        Issue.record("The display tick did not emit a resize intent")
-        return
-    }
-    #expect(id == divider.id)
-    #expect(abs(ratio - (600 / 994)) < 0.001)
-
-    overlay.resize(divider, point: BTPoint(x: 700, y: 400))
-    overlay.endResize()
-    #expect(intents.count == 4)
-    guard case let .resize(finalID, finalRatio) = intents[2] else {
-        Issue.record("Release did not flush the final resize intent")
-        return
-    }
-    #expect(finalID == divider.id)
-    #expect(abs(finalRatio - (700 / 994)) < 0.001)
-    guard case .endResize = intents[3] else { Issue.record("Resize did not end"); return }
-}
-
-@Test(arguments: [true, false]) @MainActor
-func tabbedEscapeCancelsResizeFromEitherKeyMonitor(useLocalMonitor: Bool) {
-    var globalHandler: (@MainActor (UInt16) -> Void)?
-    var localHandler: (@MainActor (UInt16) -> Bool)?
-    var removedMonitors = 0
-    let overlay = TabbedOverlayController(
-        displayTicks: ResizeDisplayLink(automatic: false),
-        addGlobalKeyMonitor: { handler in
-            globalHandler = handler
-            return NSObject()
-        },
-        addLocalKeyMonitor: { handler in
-            localHandler = handler
-            return NSObject()
-        },
-        removeMonitor: { _ in removedMonitors += 1 }
-    )
-    var intents: [TabbedUIIntent] = []
-    overlay.onIntent = { intents.append($0) }
-
-    overlay.beginResize()
-    #expect(overlay.isInteracting)
-    #expect(localHandler?(42) == false)
-    #expect(overlay.isInteracting)
-
-    if useLocalMonitor {
-        #expect(localHandler?(53) == true)
-    } else {
-        globalHandler?(53)
-    }
-
-    #expect(!overlay.isInteracting)
-    #expect(removedMonitors == 2)
-    #expect(intents.contains { if case .beginResize = $0 { true } else { false } })
-    #expect(intents.contains { if case .cancelResize = $0 { true } else { false } })
-    #expect(!intents.contains { if case .endResize = $0 { true } else { false } })
-    overlay.endResize()
-    #expect(!intents.contains { if case .endResize = $0 { true } else { false } })
-}
-
 @Test @MainActor func tabbedGlobalEscapeCancelsDragWithoutReleaseCommit() throws {
     _ = NSApplication.shared
     let bounds = BTRect(x: 12000, y: 0, width: 1000, height: 800)
@@ -305,7 +108,6 @@ func tabbedEscapeCancelsResizeFromEitherKeyMonitor(useLocalMonitor: Bool) {
     var localHandler: (@MainActor (UInt16) -> Bool)?
     var removedMonitors = 0
     let overlay = TabbedOverlayController(
-        displayTicks: ResizeDisplayLink(automatic: false),
         addGlobalKeyMonitor: { handler in
             globalHandler = handler
             return NSObject()
@@ -687,4 +489,59 @@ func tabStripInsertionPointsMatchRenderedTabEdges(width: Double) {
     #expect(strip.hiddenCount == 3)
     #expect(strip.tabWidth >= 0)
     #expect(strip.insertion(at: 40).index >= strip.visibleRange.lowerBound)
+}
+
+@Test @MainActor func tabbedDividersStayAdjustableWithVoiceOver() throws {
+    _ = NSApplication.shared
+    let bounds = BTRect(x: 12000, y: 0, width: 1000, height: 800)
+    var state = TabbedLayoutState(preset: .columns)
+    let id = WindowID(rawValue: "voiceover-divider")
+    state.reconcile(windowIDs: [id], removed: [], focused: id)
+    let overlay = TabbedOverlayController()
+    defer { overlay.hide() }
+    var adjustments: [Double] = []
+    overlay.onIntent = { if case let .adjustDivider(_, delta) = $0 { adjustments.append(delta) } }
+    overlay.refresh(state: state, bounds: bounds, windows: [])
+    let slider = try #require(NSApp.windows.compactMap { $0.contentView as? TabbedDividerAccessibilityView }.first)
+    #expect(slider.accessibilityRole() == .slider)
+    #expect(slider.window?.ignoresMouseEvents == true)
+    #expect(slider.accessibilityPerformIncrement())
+    #expect(slider.accessibilityPerformDecrement())
+    #expect(adjustments == [0.05, -0.05])
+}
+
+@Test @MainActor func tabStripFollowsLiveAccessibilityDisplayChanges() {
+    _ = NSApplication.shared
+    let view = TabbedPaneView(frame: NSRect(x: 0, y: 0, width: 300, height: 34))
+    var reduceTransparency = false
+    var increaseContrast = false
+    view.displayOptions = { (reduceTransparency, increaseContrast) }
+    view.refreshAppearance()
+    #expect(view.showsGlass)
+    reduceTransparency = true
+    NSWorkspace.shared.notificationCenter.post(name: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification, object: nil)
+    #expect(!view.showsGlass)
+    reduceTransparency = false
+    NSWorkspace.shared.notificationCenter.post(name: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification, object: nil)
+    #expect(view.showsGlass)
+    // Increase Contrast alone also selects the solid surface.
+    increaseContrast = true
+    NSWorkspace.shared.notificationCenter.post(name: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification, object: nil)
+    #expect(!view.showsGlass)
+    increaseContrast = false
+    view.refreshAppearance()
+    #expect(view.showsGlass)
+}
+
+@Test @MainActor func realClicksHitTheStripContentAboveTheGlass() throws {
+    // Clicks are hit-tested, not forwarded: nothing may sit above the strip.
+    _ = NSApplication.shared
+    let panel = NSPanel(contentRect: NSRect(x: 12000, y: 0, width: 330, height: 34),
+                        styleMask: [.borderless], backing: .buffered, defer: false)
+    let view = TabbedPaneView()
+    panel.contentView = view
+    for x in stride(from: 4.0, to: 330.0, by: 40) {
+        let point = view.convert(NSPoint(x: x, y: 17), to: view.superview)
+        #expect(view.hitTest(point) is TabbedPaneContentView)
+    }
 }
