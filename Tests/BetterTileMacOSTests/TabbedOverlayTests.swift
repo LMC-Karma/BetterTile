@@ -532,3 +532,16 @@ func tabStripInsertionPointsMatchRenderedTabEdges(width: Double) {
     view.refreshAppearance()
     #expect(view.showsGlass)
 }
+
+@Test @MainActor func realClicksHitTheStripContentAboveTheGlass() throws {
+    // Clicks are hit-tested, not forwarded: nothing may sit above the strip.
+    _ = NSApplication.shared
+    let panel = NSPanel(contentRect: NSRect(x: 12000, y: 0, width: 330, height: 34),
+                        styleMask: [.borderless], backing: .buffered, defer: false)
+    let view = TabbedPaneView()
+    panel.contentView = view
+    for x in stride(from: 4.0, to: 330.0, by: 40) {
+        let point = view.convert(NSPoint(x: x, y: 17), to: view.superview)
+        #expect(view.hitTest(point) is TabbedPaneContentView)
+    }
+}
