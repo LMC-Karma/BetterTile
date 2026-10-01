@@ -509,3 +509,39 @@ func tabStripInsertionPointsMatchRenderedTabEdges(width: Double) {
     #expect(slider.accessibilityPerformDecrement())
     #expect(adjustments == [0.05, -0.05])
 }
+
+@Test @MainActor func tabStripFollowsLiveAccessibilityDisplayChanges() {
+    _ = NSApplication.shared
+    let view = TabbedPaneView(frame: NSRect(x: 0, y: 0, width: 300, height: 34))
+    var reduceTransparency = false
+    var increaseContrast = false
+    view.displayOptions = { (reduceTransparency, increaseContrast) }
+    view.refreshAppearance()
+    #expect(view.showsGlass)
+    reduceTransparency = true
+    NSWorkspace.shared.notificationCenter.post(name: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification, object: nil)
+    #expect(!view.showsGlass)
+    reduceTransparency = false
+    NSWorkspace.shared.notificationCenter.post(name: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification, object: nil)
+    #expect(view.showsGlass)
+    // Increase Contrast alone also selects the solid surface.
+    increaseContrast = true
+    NSWorkspace.shared.notificationCenter.post(name: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification, object: nil)
+    #expect(!view.showsGlass)
+    increaseContrast = false
+    view.refreshAppearance()
+    #expect(view.showsGlass)
+}
+
+@Test @MainActor func realClicksHitTheStripContentAboveTheGlass() throws {
+    // Clicks are hit-tested, not forwarded: nothing may sit above the strip.
+    _ = NSApplication.shared
+    let panel = NSPanel(contentRect: NSRect(x: 12000, y: 0, width: 330, height: 34),
+                        styleMask: [.borderless], backing: .buffered, defer: false)
+    let view = TabbedPaneView()
+    panel.contentView = view
+    for x in stride(from: 4.0, to: 330.0, by: 40) {
+        let point = view.convert(NSPoint(x: x, y: 17), to: view.superview)
+        #expect(view.hitTest(point) is TabbedPaneContentView)
+    }
+}
