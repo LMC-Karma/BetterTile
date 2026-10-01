@@ -2,14 +2,22 @@ name: CI
 
 on:
   pull_request:
+  # A pull request is tested on its own branch. Two pull requests that each
+  # pass can still break `main` together, so the merged result is tested too.
+  push:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
   contents: read
 
+# A new push to a pull request replaces its older run. Other runs are grouped by
+# commit, because a shared group keeps only the newest waiting run. That way
+# each merge to `main` gets its own complete run, even when merges land close
+# together.
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   # `test` is a required status check. A workflow skipped by a `paths-ignore`
@@ -33,8 +41,8 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Anything that is not a pull request (a manual dispatch) gets the
-          # full run, because there is no base commit to compare against.
+          # Anything that is not a pull request (a push to `main` or a manual
+          # dispatch) gets the full run.
           if [ "${{ github.event_name }}" != "pull_request" ]; then
             echo "code=true" >> "$GITHUB_OUTPUT"
             exit 0
