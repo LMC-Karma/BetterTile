@@ -97,7 +97,8 @@ public enum FrameWritePlanner {
 
     /// - Parameter knownCurrentFrame: The caller's most recent reading of the
     ///   window's frame, or `nil` when the caller has no fresh reading. A `nil`
-    ///   reading always produces the full three-write sequence.
+    ///   reading writes size and position. It also writes the final size when
+    ///   `correctsClamping` is `true`.
     public static func plan(
         target: BTRect,
         knownCurrentFrame: BTRect?,
