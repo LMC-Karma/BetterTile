@@ -326,3 +326,23 @@ private func twoPaneGroup() throws -> (BentoTabbedLayoutState, WindowID, WindowI
         #expect(boundary.map { abs($0.coordinate - 301) < 0.001 } == true)
     }
 }
+
+@Test(arguments: [0.0, 34.0])
+func fitterReadsALowerPaneEdgeBelowItsContentReserve(reserve: Double) throws {
+    let top = window("top"), bottom = window("bottom")
+    let state = BentoLayoutState(
+        root: .partition(BentoPartition(axis: .horizontal, first: .leaf(top), second: .leaf(bottom))),
+        metrics: BentoLayoutMetrics(paneGap: 6, contentTopInset: reserve)
+    )
+    let frames = Dictionary(uniqueKeysWithValues: state.placements(in: tabbedBounds).map { ($0.windowID, $0.frame) })
+    let upper = try #require(frames[top])
+    var lower = try #require(frames[bottom])
+    // The user drags the lower window's top edge 50 points down.
+    lower = BTRect(x: lower.minX, y: lower.minY + 50, width: lower.size.width, height: lower.size.height - 50)
+    let fitted = try #require(BentoLayoutFitter().fit(
+        state: state, currentFrames: [top: upper, bottom: lower], changedWindowIDs: [bottom], in: tabbedBounds
+    ))
+    let after = Dictionary(uniqueKeysWithValues: fitted.placements.map { ($0.windowID, $0.frame) })
+    #expect(try abs(#require(after[bottom]).minY - lower.minY) < 0.5)
+    #expect(try abs(#require(after[top]).maxY - (upper.maxY + 50)) < 0.5)
+}

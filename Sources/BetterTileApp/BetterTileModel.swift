@@ -80,6 +80,10 @@ final class BetterTileModel {
     private var tabbedFocusTask: Task<Void, Never>?
     private(set) var tabbedNeedsFocusRefresh = false
     private var tabbedFocusSuppressedUntil = Date.distantPast
+    /// Tabbed reads a window-edge resize only after the user lets go, so it
+    /// never fights the drag. Tests replace this.
+    var primaryButtonIsPressed: () -> Bool = { NSEvent.pressedMouseButtons & 1 == 1 }
+    private var tabbedResizeReleaseTask: Task<Void, Never>?
 
     private var watchdogTimer: Timer?
     private var pendingDockReflow = false
@@ -191,6 +195,9 @@ final class BetterTileModel {
                 requestedFrames: frames,
                 baselineFrames: baselineFrames
             )
+        }
+        dividerResize.bentoStateLiveHandler = { [weak self] displayID, state, bounds in
+            self?.followTabbedDividerDrag(displayID: displayID, layout: state, bounds: bounds)
         }
         dividerResize.layoutChangedHandler = { [weak self] displayID, _ in
             self?.refreshDividerBoundaries()
@@ -1412,6 +1419,7 @@ final class BetterTileModel {
         }
         tabbedTasks.values.forEach { $0.cancel() }
         tabbedFocusTask?.cancel()
+        tabbedResizeReleaseTask?.cancel()
         tabbedOverlays.values.forEach { $0.hide() }
         isShutDown = true
         for token in notificationTokens {
@@ -1642,6 +1650,8 @@ final class BetterTileModel {
 
     private func beginActiveSpaceStabilization() {
         tabbedFocusTask?.cancel()
+        tabbedResizeReleaseTask?.cancel()
+        tabbedResizeReleaseTask = nil
         tabbedQueuedIntents.removeAll()
         tabbedNeedsRefresh.removeAll()
         tabbedNeedsReapply.removeAll()
@@ -1886,6 +1896,10 @@ final class BetterTileModel {
             // A BetterTile divider commit owns its read-back settlement. Do
             // not start a second adoption cycle from the same AX callbacks.
             guard settlementTasks[displayID] == nil else { continue }
+            if let session = sessionStore.session(for: displayID), session.mode == .tabbed {
+                adoptTabbedResize(of: externalIDs, session: session, windows: windows)
+                continue
+            }
             guard var session = sessionStore.session(for: displayID),
                   session.mode == .bento,
                   !session.automaticWritesSuspended,
@@ -3085,6 +3099,8 @@ extension BetterTileModel {
             }
             self.drainTabbedQueuedIntent(on: display.id, sessionID: original.id)
             if self.tabbedNeedsFocusRefresh { self.handleTabbedFocus() }
+            // An edge resize released during this placement is read now.
+            self.schedulePendingWindowEvents()
         }
     }
 
@@ -3146,6 +3162,64 @@ extension BetterTileModel {
         }
         applyTabbedState(state, session: session, display: display, windows: windows, focus: focus,
                          rememberUndo: undo, consumeUndo: consumeUndo, selectionOnly: selectionOnly)
+    }
+
+    /// The user resized a selected window by its edge. As in Bento, a shared
+    /// pane edge moves that divider, stopping at each pane's minimum, and any
+    /// other change snaps back. Hidden tabs and strips then follow the panes.
+    private func adoptTabbedResize(of externalIDs: Set<WindowID>, session: LayoutSession, windows: [WindowSnapshot]) {
+        guard !session.automaticWritesSuspended,
+              let state = session.tabbedState,
+              let display = system.displays().first(where: { $0.id == session.displayID })
+        else { return }
+        let selected = Set(state.selectedWindowIDs)
+        let paneWindows = windows.filter { selected.contains($0.id) && $0.displayID == display.id }
+        let changed = Set(paneWindows.filter { window in
+            externalIDs.contains(window.id)
+                && session.lastObservedFrames[window.id]?.approximatelyEquals(window.frame, tolerance: 1) != true
+        }.map(\.id))
+        guard !changed.isEmpty else { return }
+        // A placement in progress reschedules these changes when it finishes.
+        if tabbedTasks[display.id] != nil {
+            pendingWindowEvents.recordFrameChanges(changed)
+            return
+        }
+        if primaryButtonIsPressed() {
+            pendingWindowEvents.recordFrameChanges(changed)
+            guard tabbedResizeReleaseTask == nil else { return }
+            tabbedResizeReleaseTask = Task { @MainActor [weak self] in
+                while !Task.isCancelled, self?.primaryButtonIsPressed() == true {
+                    try? await Task.sleep(for: .milliseconds(50))
+                }
+                guard let self, !Task.isCancelled else { return }
+                self.tabbedResizeReleaseTask = nil
+                self.schedulePendingWindowEvents()
+            }
+            return
+        }
+        guard let adopted = state.adoptingResize(
+            of: changed,
+            frames: Dictionary(uniqueKeysWithValues: paneWindows.map { ($0.id, $0.frame) }),
+            constraints: Dictionary(uniqueKeysWithValues: paneWindows.map { ($0.id, $0.constraints) }),
+            in: display.visibleFrame,
+            tolerance: configuration.adjacencyTolerance
+        ) else {
+            refreshTabbedAfterBentoChange(displayID: display.id)
+            return
+        }
+        var proposed = session
+        proposed.tabbedState = adopted
+        guard sessionStore.commit(proposed, replacing: session.revision) != nil else { return }
+        refreshTabbedAfterBentoChange(displayID: display.id, undoBaseline: state)
+    }
+
+    /// Tab strips follow a divider during its drag. Windows follow at release.
+    private func followTabbedDividerDrag(displayID: DisplayID, layout: BentoLayoutState, bounds: BTRect) {
+        guard var session = sessionStore.session(for: displayID), session.mode == .tabbed,
+              let overlay = tabbedOverlays[displayID] else { return }
+        session.bentoState = layout
+        guard let state = session.tabbedState else { return }
+        overlay.refreshResize(state: state, bounds: bounds)
     }
 
     /// A Bento operation (divider drag, drop) changed a Tabbed tree. Hidden

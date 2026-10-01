@@ -540,6 +540,36 @@ public struct TabbedLayoutState: Hashable, Sendable {
         return true
     }
 
+    /// Reads a user's edge resize of selected windows as Bento does. A drag on
+    /// a shared pane edge moves that divider, stopping at each pane's minimum.
+    /// Returns nil for anything else (an outer edge, a move, a macOS
+    /// destination), and the caller puts the windows back. Hidden tabs follow
+    /// their pane, so their frames are not read.
+    public func adoptingResize(
+        of changed: Set<WindowID>,
+        frames: [WindowID: BTRect],
+        constraints: [WindowID: WindowConstraints],
+        in bounds: BTRect,
+        tolerance: Double
+    ) -> Self? {
+        let expected = Dictionary(uniqueKeysWithValues: layout.placements(in: bounds).map { ($0.windowID, $0.frame) })
+        var classifications: [WindowID: ExternalWindowChange] = [:]
+        for id in changed.intersection(selectedWindowIDs) {
+            guard let expectedFrame = expected[id], let observed = frames[id] else { continue }
+            classifications[id] = ExternalWindowChangeClassifier.classify(
+                expected: expectedFrame, observed: observed, in: bounds, edgeTolerance: tolerance
+            )
+        }
+        guard case let .fitDividers(ids) = ExternalChangeRouter.route(classifications),
+              let fitted = BentoLayoutFitter(tolerance: tolerance).fit(
+                  state: layout, currentFrames: frames, changedWindowIDs: ids, in: bounds, constraints: constraints
+              )
+        else { return nil }
+        var result = self
+        result.synchronize(with: fitted.state)
+        return result
+    }
+
     /// The Bento layout for leaving Tabbed: every hidden tab gets a pane.
     public func unstacked(in bounds: BTRect) -> BentoLayoutState { groups.unstacked(in: bounds) }
 

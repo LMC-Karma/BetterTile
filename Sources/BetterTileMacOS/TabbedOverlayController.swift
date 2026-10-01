@@ -135,7 +135,9 @@ public final class TabbedOverlayController {
                 ? BTRect(x: divider.coordinate - gap / 2, y: divider.spanStart, width: gap, height: divider.spanEnd - divider.spanStart)
                 : BTRect(x: divider.spanStart, y: divider.coordinate - gap / 2, width: divider.spanEnd - divider.spanStart, height: gap)
             panel.setFrame(appKit(frame), display: false)
-            panel.orderFrontRegardless()
+            // A divider drag refreshes on every display tick. These panels
+            // draw nothing, so ordering them once is enough.
+            if !panel.isVisible { panel.orderFrontRegardless() }
             dividerControls[branchID] = panel
         }
     }

@@ -266,6 +266,10 @@ public final class DividerOverlayController {
     public var layoutChangedHandler: ((DisplayID, [WindowID: BTRect]) -> Void)?
     public var bentoStateProvider: ((DisplayID) -> BentoLayoutState?)?
     public var bentoStateChangedHandler: ((DisplayID, BentoLayoutState, [WindowID: BTRect], [WindowID: BTRect]) -> Void)?
+    /// Runs with the tree of each accepted Bento drag sample, and with the
+    /// starting tree when the drag ends without a commit. Tabbed moves its
+    /// tab strips with it.
+    public var bentoStateLiveHandler: ((DisplayID, BentoLayoutState, BTRect) -> Void)?
     public var rollbackFailureHandler: ((DisplayID, String?) -> Void)?
     public var gestureEndedHandler: (() -> Void)?
     /// Runs before the gesture reads its windows, so it sees fresh minimums.
@@ -300,6 +304,7 @@ public final class DividerOverlayController {
     private var baselineBentoState: BentoLayoutState?
     private var proposedBentoState: BentoLayoutState?
     private var latestPlacements: [Placement] = []
+    private var reportedLiveBentoState = false
     private var latestDragPoint: CGPoint?
     private var hasPendingDisplayUpdate = false
     /// Consecutive live ticks on which a window held its size while asked to
@@ -615,6 +620,7 @@ public final class DividerOverlayController {
             proposedBentoState = proposedState
             self.transaction = transaction
             activeInteraction = proposedInteraction
+            reportLiveBentoState(interaction)
             ghosts.show(
                 placements: placements,
                 windows: baselineWindows,
@@ -637,6 +643,7 @@ public final class DividerOverlayController {
                 proposedBentoState = proposedState
                 activeInteraction = proposedInteraction
                 self.transaction = transaction
+                reportLiveBentoState(interaction)
                 let refused = recordRefusedMinimums(placements)
                 if refused.width || refused.height {
                     // The application held its size: the next sample uses that
@@ -697,7 +704,13 @@ public final class DividerOverlayController {
             }
             layoutChangedHandler?(interaction.displayID, frames)
         }
-        clearGesture()
+        clearGesture(committed: succeeded)
+    }
+
+    private func reportLiveBentoState(_ interaction: DividerInteraction) {
+        guard interaction.isBento, let proposedBentoState, let displayBounds else { return }
+        reportedLiveBentoState = true
+        bentoStateLiveHandler?(interaction.displayID, proposedBentoState, displayBounds)
     }
 
     /// Reads back the windows a live tick asked to shrink. A window that holds
@@ -763,8 +776,13 @@ public final class DividerOverlayController {
         rollbackFailureHandler?(displayID, reason)
     }
 
-    private func clearGesture() {
+    private func clearGesture(committed: Bool = false) {
         let wasDragging = isDragging
+        if reportedLiveBentoState, !committed, let baselineBentoState, let displayBounds,
+           let displayID = baselineInteraction?.displayID {
+            bentoStateLiveHandler?(displayID, baselineBentoState, displayBounds)
+        }
+        reportedLiveBentoState = false
         ghosts.hide()
         activeInteraction = nil
         baselineInteraction = nil

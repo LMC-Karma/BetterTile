@@ -817,3 +817,61 @@ enum DividerLimitCase: CaseIterable { case straight, junction, linked }
     #expect(cursor([.up, .down, .left]) == .frameResize(position: .topRight, directions: .all))
     #expect(cursor([.up, .left]) == .frameResize(position: .bottomRight, directions: .all))
 }
+
+@Test(arguments: [ResizeFeedbackMode.ghost, .live], [false, true]) @MainActor
+func bentoDividerReportsLiveTreesAndRestoresTheStartWithoutACommit(feedback: ResizeFeedbackMode, commit: Bool) throws {
+    _ = NSApplication.shared
+    let system = FakeWindowSystem()
+    let bounds = BTRect(x: -10_000, y: -10_000, width: 800, height: 600)
+    let display = DisplayID(rawValue: "live-tree-display")
+    system.availableDisplays = [DisplaySnapshot(id: display, frame: bounds, visibleFrame: bounds, isMain: true)]
+    let state = BentoLayoutState(root: .partition(BentoPartition(
+        axis: .vertical,
+        first: .leaf(WindowID(rawValue: "left")),
+        second: .leaf(WindowID(rawValue: "right"))
+    )))
+    system.windows = state.placements(in: bounds).map {
+        WindowSnapshot(id: $0.windowID, processIdentifier: 1, frame: $0.frame, displayID: display)
+    }
+    var configuration = BetterTileConfiguration()
+    configuration.resizeFeedbackMode = feedback
+    let displayTicks = ResizeDisplayLink(automatic: false)
+    let controller = DividerOverlayController(
+        coordinator: WindowCoordinator(system: system),
+        configuration: configuration,
+        displayTicks: displayTicks
+    )
+    controller.bentoStateProvider = { _ in state }
+    var reported: [(display: DisplayID, tree: BentoLayoutState, bounds: BTRect)] = []
+    controller.bentoStateLiveHandler = { reported.append(($0, $1, $2)) }
+    var committed: BentoLayoutState?
+    controller.bentoStateChangedHandler = { _, tree, _, _ in committed = tree }
+    let start = BTPoint(x: bounds.midX, y: bounds.midY)
+    let interaction = try #require(DividerInteractionResolver.resolve(
+        at: start, in: state.boundaries(in: bounds, displayID: display), hitWidth: 18, adjacencyTolerance: 6
+    ))
+    let screen = try #require(NSScreen.screens.first)
+    let dragPoint = CGPoint(x: start.x + 60, y: screen.frame.maxY - start.y)
+    controller.beginGesture(interaction: interaction, at: start)
+    defer { controller.hideAndCancel() }
+    #expect(reported.isEmpty)
+    controller.drag(to: dragPoint)
+    displayTicks.fire()
+    // Tabbed strips follow each accepted sample, before any commit.
+    let moved = try #require(reported.last)
+    #expect(moved.display == display)
+    #expect(moved.bounds == bounds)
+    #expect(committed == nil)
+    let coordinate = try #require(moved.tree.boundaries(in: bounds, displayID: display).first?.coordinate)
+    #expect(abs(coordinate - (bounds.midX + 60)) < 0.5)
+
+    if commit {
+        controller.end(at: dragPoint)
+        #expect(committed == moved.tree)
+        #expect(reported.last?.tree == moved.tree)
+    } else {
+        controller.cancelActiveGesture()
+        #expect(committed == nil)
+        #expect(reported.last?.tree == state)
+    }
+}

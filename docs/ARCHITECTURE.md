@@ -150,9 +150,15 @@ change a Bento operation made to the tree; writing it also writes the tree.
 - Bento owns every layout interaction in Tabbed: divider drags (including the
   minimum-size state), window drags, and minimum-size solving. After a Bento
   commit, Tabbed re-applies its state so hidden tabs follow their pane and the
-  strips move. A window drag first tears the tab out of its group when the
-  group has other tabs; a center drop adds the window to that pane as a tab,
-  and a torn tab dropped nowhere returns to its group.
+  strips move. During a divider drag, the strips follow each accepted sample;
+  hidden tabs follow at release. A window drag first tears the tab out of its
+  group when the group has other tabs; a center drop adds the window to that
+  pane as a tab, and a torn tab dropped nowhere returns to its group.
+- A user's edge resize of a selected window follows Bento's rule
+  (`TabbedLayoutState.adoptingResize`), read only after the mouse button is
+  released. A shared pane edge moves that divider, stopping at each pane's
+  minimum. Any other change, including One Pane, an outer edge, a move, or a
+  macOS destination, puts the windows back. Hidden tabs and strips then follow.
 - Bento's divider handle appears only on hover, so the Tabbed overlay adds a
   VoiceOver slider over each divider. The slider ignores the mouse; increment
   and decrement move the Bento divider by five percent of the area it splits.

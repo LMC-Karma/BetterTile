@@ -545,3 +545,30 @@ func tabStripInsertionPointsMatchRenderedTabEdges(width: Double) {
         #expect(view.hitTest(point) is TabbedPaneContentView)
     }
 }
+
+@Test @MainActor func tabStripsFollowALiveDividerResize() throws {
+    _ = NSApplication.shared
+    let bounds = BTRect(x: 12000, y: 0, width: 1000, height: 800)
+    var state = TabbedLayoutState(preset: .columns)
+    let left = WindowID(rawValue: "live-left"), right = WindowID(rawValue: "live-right")
+    state.reconcile(windowIDs: [left], removed: [], focused: left)
+    state.activatePane(state.panes[1].id)
+    state.reconcile(windowIDs: [left, right], removed: [], focused: nil)
+    let overlay = TabbedOverlayController()
+    defer { overlay.hide() }
+    overlay.refresh(state: state, bounds: bounds, windows: [])
+    func stripFrames() -> [NSRect] {
+        NSApp.windows.filter { $0.isVisible && $0.contentView is TabbedPaneView }.map(\.frame).sorted { $0.minX < $1.minX }
+    }
+    let before = stripFrames()
+    #expect(before.count == 2)
+    var moved = state
+    let divider = try #require(moved.dividers(in: bounds).first?.branchID)
+    let adjusted = moved.adjustDivider(divider, by: 0.1, in: bounds)
+    #expect(adjusted)
+    overlay.refreshResize(state: moved, bounds: bounds)
+    let after = stripFrames()
+    #expect(after.count == 2)
+    #expect(abs(after[0].width - (before[0].width + 100)) < 0.5)
+    #expect(abs(after[1].minX - (before[1].minX + 100)) < 0.5)
+}
