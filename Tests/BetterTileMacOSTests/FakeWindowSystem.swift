@@ -116,6 +116,13 @@ final class FakeWindowSystem: WindowSystem, TargetedWindowSystem, WindowEventSou
     func stopWindowObservation() {}
     func emit(_ event: WindowSystemEvent) { eventHandler?(event) }
 
+    var intermediateFrameWriteCounts: [WindowID: Int] = [:]
+
+    func setIntermediateFrame(_ frame: BTRect, knownCurrentFrame: BTRect?, for windowID: WindowID) throws {
+        intermediateFrameWriteCounts[windowID, default: 0] += 1
+        try setFrame(frame, knownCurrentFrame: knownCurrentFrame, for: windowID)
+    }
+
     func setFrame(_ frame: BTRect, knownCurrentFrame: BTRect?, for windowID: WindowID) throws {
         currentFrameWriteBatch?.append(windowID)
         recordedKnownCurrentFrames[windowID, default: []].append(knownCurrentFrame)

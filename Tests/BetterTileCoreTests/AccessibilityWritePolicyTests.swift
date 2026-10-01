@@ -115,3 +115,15 @@ private let target = BTRect(x: 100, y: 100, width: 600, height: 400)
     let changes = ConfigurationChangeSet.between(BetterTileConfiguration(), updated)
     #expect(changes.contains(.accessibilityWrites))
 }
+
+@Test func intermediateGestureSamplesSkipTheClampCorrectingSizeWrite() {
+    let target = BTRect(x: 10, y: 20, width: 300, height: 200)
+    let changing = FrameWritePlanner.plan(
+        target: target,
+        knownCurrentFrame: BTRect(x: 0, y: 20, width: 310, height: 200),
+        correctsClamping: false
+    )
+    #expect(changing == FrameWritePlan(writesInitialSize: true, writesPosition: true, writesFinalSize: false))
+    let unknown = FrameWritePlanner.plan(target: target, knownCurrentFrame: nil, correctsClamping: false)
+    #expect(unknown.writeCount == 2)
+}

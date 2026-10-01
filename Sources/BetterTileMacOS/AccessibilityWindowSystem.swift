@@ -483,6 +483,19 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
     }
 
     public func setFrame(_ frame: BTRect, knownCurrentFrame: BTRect?, for windowID: WindowID) throws {
+        try writeFrame(frame, knownCurrentFrame: knownCurrentFrame, for: windowID, correctsClamping: true)
+    }
+
+    public func setIntermediateFrame(_ frame: BTRect, knownCurrentFrame: BTRect?, for windowID: WindowID) throws {
+        try writeFrame(frame, knownCurrentFrame: knownCurrentFrame, for: windowID, correctsClamping: false)
+    }
+
+    private func writeFrame(
+        _ frame: BTRect,
+        knownCurrentFrame: BTRect?,
+        for windowID: WindowID,
+        correctsClamping: Bool
+    ) throws {
         try ensurePermission()
         guard let element = elements[windowID] ?? refreshElement(for: windowID) else {
             throw WindowSystemError.windowNotFound(windowID)
@@ -513,7 +526,11 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         // sequence is size, position, size. When the size is not changing the
         // leading write asks for the value the window already has, so it is
         // skipped; the trailing write still corrects any clamping.
-        let plan = FrameWritePlanner.plan(target: frame, knownCurrentFrame: knownCurrentFrame)
+        let plan = FrameWritePlanner.plan(
+            target: frame,
+            knownCurrentFrame: knownCurrentFrame,
+            correctsClamping: correctsClamping
+        )
         var errors: [AXError] = []
         if plan.writesInitialSize {
             errors.append(AXUIElementSetAttributeValue(element, kAXSizeAttribute as CFString, sizeValue))

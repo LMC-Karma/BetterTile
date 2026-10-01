@@ -477,7 +477,11 @@ public final class WindowCoordinator {
                 : transaction.proposedPlacements.filter {
                     transaction.lastAppliedFrames[$0.windowID]?.approximatelyEquals($0.frame, tolerance: 0.01) != true
                 }
-            try applyAtomically(changed, rollbackFrames: transaction.lastAppliedFrames)
+            try applyAtomically(
+                changed,
+                rollbackFrames: transaction.lastAppliedFrames,
+                intermediate: !validateParticipants
+            )
             transaction.lastAppliedFrames = Dictionary(uniqueKeysWithValues: placements.map { ($0.windowID, $0.frame) })
             transaction.hasLiveChanges = true
             transaction.hasDegradedApply = false
@@ -590,14 +594,19 @@ public final class WindowCoordinator {
     private func apply(
         _ frame: BTRect,
         to windowID: WindowID,
-        knownCurrentFrame: BTRect? = nil
+        knownCurrentFrame: BTRect? = nil,
+        intermediate: Bool = false
     ) throws {
         let generation = (generations[windowID] ?? 0) &+ 1
         generations[windowID] = generation
         guard generations[windowID] == generation else { return }
         expect(frame, for: windowID, generation: generation)
         do {
-            try system.setFrame(frame, knownCurrentFrame: knownCurrentFrame, for: windowID)
+            if intermediate {
+                try system.setIntermediateFrame(frame, knownCurrentFrame: knownCurrentFrame, for: windowID)
+            } else {
+                try system.setFrame(frame, knownCurrentFrame: knownCurrentFrame, for: windowID)
+            }
         } catch {
             cancelExpectedMutation(for: windowID, generation: generation)
             throw error
@@ -628,7 +637,13 @@ public final class WindowCoordinator {
         }
     }
 
-    private func applyAtomically(_ placements: [Placement], rollbackFrames: [WindowID: BTRect]) throws {
+    /// - Parameter intermediate: The placements are an unvalidated sample of
+    ///   a continuous gesture. Rollback writes always use the full sequence.
+    private func applyAtomically(
+        _ placements: [Placement],
+        rollbackFrames: [WindowID: BTRect],
+        intermediate: Bool = false
+    ) throws {
         guard !placements.isEmpty else { return }
         try system.withFrameWriteBatch {
             var attempted: [WindowID] = []
@@ -638,7 +653,8 @@ public final class WindowCoordinator {
                     try apply(
                         placement.frame,
                         to: placement.windowID,
-                        knownCurrentFrame: rollbackFrames[placement.windowID]
+                        knownCurrentFrame: rollbackFrames[placement.windowID],
+                        intermediate: intermediate
                     )
                 }
             } catch {
