@@ -20,12 +20,48 @@ func stableUUID(_ source: String) -> UUID {
 
 public struct BentoLayoutMetrics: Hashable, Sendable {
     public var paneGap: Double
+    /// Space reserved at the top of every pane, above its window. Tabbed uses
+    /// it for the tab strip. Pane geometry and boundaries do not change; the
+    /// window's frame starts below the reserve, and each pane's minimum height
+    /// includes it.
+    public var contentTopInset: Double
+    /// The smallest an empty pane may become. Bento lets vacancies collapse;
+    /// Tabbed keeps empty panes large enough to receive a tab.
+    public var vacantMinimumSize: BTSize
 
-    public init(paneGap: Double = 0) {
+    public init(paneGap: Double = 0, contentTopInset: Double = 0, vacantMinimumSize: BTSize = BTSize(width: 0, height: 0)) {
         self.paneGap = min(12, max(0, paneGap))
+        self.contentTopInset = contentTopInset.isFinite ? min(120, max(0, contentTopInset)) : 0
+        self.vacantMinimumSize = BTSize(
+            width: vacantMinimumSize.width.isFinite ? max(0, vacantMinimumSize.width) : 0,
+            height: vacantMinimumSize.height.isFinite ? max(0, vacantMinimumSize.height) : 0
+        )
     }
 
     public static let gapless = BentoLayoutMetrics()
+
+    /// The window frame inside a pane frame.
+    public func contentFrame(forPane frame: BTRect) -> BTRect {
+        guard contentTopInset > 0 else { return frame }
+        let inset = min(contentTopInset, frame.size.height)
+        return BTRect(x: frame.minX, y: frame.minY + inset, width: frame.size.width, height: frame.size.height - inset)
+    }
+
+    /// Window minimums expressed as pane minimums: the reserve is added to
+    /// each window's minimum height.
+    public func paneConstraints(
+        _ constraints: [WindowID: WindowConstraints],
+        for windowIDs: [WindowID]
+    ) -> [WindowID: WindowConstraints] {
+        guard contentTopInset > 0 else { return constraints }
+        var result = constraints
+        for id in windowIDs {
+            var value = constraints[id] ?? WindowConstraints()
+            value.minimumSize.height += contentTopInset
+            result[id] = value
+        }
+        return result
+    }
 }
 
 /// An ordered, same-axis partition. Ratios describe each child's share of the
@@ -553,8 +589,20 @@ public struct BentoLayoutState: Hashable, Sendable {
     public func placements(in bounds: BTRect, constraints: [WindowID: WindowConstraints] = [:]) -> [Placement] {
         guard let root else { return [] }
         return frames(for: root, in: bounds)
-            .map { id, frame in Placement(windowID: id, frame: frame.clamped(to: bounds, minimumSize: constraints[id]?.minimumSize ?? .zero)) }
+            .map { id, frame in
+                Placement(
+                    windowID: id,
+                    frame: metrics.contentFrame(forPane: frame)
+                        .clamped(to: bounds, minimumSize: constraints[id]?.minimumSize ?? .zero)
+                )
+            }
             .sorted { $0.windowID < $1.windowID }
+    }
+
+    /// Full pane frames of occupied leaves, including any content reserve.
+    public func paneFrames(in bounds: BTRect) -> [WindowID: BTRect] {
+        guard let root else { return [:] }
+        return frames(for: root, in: bounds)
     }
 
     public func vacantFrames(in bounds: BTRect) -> [UUID: BTRect] {

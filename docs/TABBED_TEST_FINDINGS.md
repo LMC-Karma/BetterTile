@@ -1,6 +1,6 @@
 # Tabbed testing findings
 
-Last updated: 2026-09-27.
+Last updated: 2026-09-28.
 
 This is the status record for the experimental Tabbed implementation. Update
 the relevant row after each test or fix. An attempted action is not a passed
@@ -14,8 +14,11 @@ stacks inactive windows behind the selected one, and no live experiment has yet
 shown that stacking keeps the right window in front across applications. That
 experiment is the first remaining check below.
 
-Divider and linked resize pacing is shared with Native and Bento and is
-reviewed separately in pull request #67.
+Tabbed now runs on the Bento engine (see "Tabbed on Bento" in
+[ARCHITECTURE.md](ARCHITECTURE.md)). Pane geometry, divider drags, window drags,
+and minimum sizes come from Bento; the earlier Tabbed divider, resize, and
+fitting code is gone. Live checks recorded below predate this change and need
+repeating.
 
 ## Intended behavior
 
@@ -25,22 +28,23 @@ reviewed separately in pull request #67.
 - Initial activation uses the chosen default layout. Existing windows join the
   first pane, with the previously focused eligible window selected.
 - New windows join the last-used pane and become selected.
+- Dragging a window by its title bar uses Bento drops. A center drop adds it to
+  that pane as a tab; an edge drop splits; a tab torn from a group and dropped
+  nowhere returns to its group.
 - Adding panes preserves groups and adds empty panes. Removing panes merges
   removed groups into the nearest remaining pane. One pane collects all tabs.
 - Layout changes support Undo. Returning to Tabbed restores surviving runtime
-  assignments and selections. Native restores pre-entry frames; Bento arranges
-  windows with its own layout.
+  assignments and selections after a Native visit. Native restores pre-entry
+  frames. Leaving for Bento gives every hidden tab its own pane.
 
-### Minimum-width policy
+### Minimum-size policy
 
-- A pane's minimum width is the greatest minimum width among its tabs,
-  including inactive tabs. Empty panes keep a 120-point minimum.
-- Side-by-side dividers adjust to satisfy those minimums. Ratios that already
-  fit are kept. A requested 50/50 split can become 40/60.
-- Presets and tab moves keep row ratios. During a divider gesture, the dragged
-  row divider clamps to the minimum heights of both subtrees, including tab
-  strips. Other row ratios stay unchanged. An operation is rejected if the
-  combined minimum sizes cannot fit.
+- Only a pane's selected tab counts. A hidden tab never makes a layout too
+  small; it is stacked behind the selected tab at best effort and may stay
+  larger if its application refuses the size. Empty panes keep a
+  120-point-wide minimum.
+- Bento's constraint solver fits minimums, including the tab strip height.
+- Divider drags stop at a minimum and turn orange, as in Bento.
 - An unreported width minimum can cause one retry after a complete rollback.
   Height refusals, stale sessions, cancellation, and degraded restoration do
   not retry.
@@ -85,11 +89,10 @@ Escape handling with either app focused, ignored linked-resize neighbors,
 rollback after a partial frame write, and stale result-pill dismissal. Core
 and fake-window regressions reproduce these failures before their fixes.
 
-Tabbed dividers now support double-click balancing through the same resize
-transaction and minimum-size limits as a drag. Crowded strips retain their
-visible range until selection moves outside it. Drag insertion uses that same
-range. Compact tabs keep their application icon, full-title tooltip, and close
-control.
+Tabbed pane dividers are now Bento's dividers, with the same hover handle,
+minimum-size stop, and orange limit. Crowded strips retain their visible range
+until selection moves outside it. Drag insertion uses that same range. Compact
+tabs keep their application icon, full-title tooltip, and close control.
 
 ### T-21: Slow focus rolled back a correct layout
 
@@ -154,6 +157,5 @@ the selected window; nothing is parked off-screen, minimized, or moved between
 Spaces. Stage Manager must be off.
 
 Pane assignments and the last 20 layout changes are runtime-only. Edge splits
-stop at 12 panes. Title-bar drag integration and cross-display tab dragging are
-not implemented. Ordinary snap actions are disabled for Tabbed members until
-they are floated.
+stop at 12 panes. Cross-display tab dragging is not implemented. Tab strips
+follow a divider at release, not during the drag.

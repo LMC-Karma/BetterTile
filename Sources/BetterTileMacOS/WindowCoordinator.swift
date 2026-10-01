@@ -777,14 +777,20 @@ public final class WindowCoordinator {
 extension WindowCoordinator {
     /// A bounded frame/order transaction. Windows remain on-screen and are
     /// never minimized. Session validity is checked again after each await.
+    /// - Parameter required: Windows whose frames must fit and settle. Other
+    ///   placements (hidden tabs stacked behind their pane's selected tab) are
+    ///   best effort: a refusal never fails the layout. Nil requires all.
     public func applyTabbed(
-        placements: [Placement],
+        placements allPlacements: [Placement],
+        required: Set<WindowID>? = nil,
         selected: [WindowID],
         previousSelected: [WindowID],
         focus: WindowID?,
         onSizeMismatch: (@MainActor (WindowID, BTRect, BTRect, BTRect) -> Void)? = nil,
         isCurrent: @MainActor () -> Bool
     ) async -> WindowMutationOutcome {
+        let placements = required.map { ids in allPlacements.filter { ids.contains($0.windowID) } } ?? allPlacements
+        let bestEffort = required.map { ids in allPlacements.filter { !ids.contains($0.windowID) } } ?? []
         guard let tabSystem = system as? any TabbedWindowSystem else {
             return .failed(reason: "This window system does not support Tabbed actions.")
         }
@@ -796,11 +802,25 @@ extension WindowCoordinator {
             try validate(placements, sizeTolerance: 0.001)
             baseline = Dictionary(uniqueKeysWithValues: try snapshots(ids: ids).map { ($0.id, $0.frame) })
         } catch { return .failed(reason: error.localizedDescription) }
+        // Hidden tabs are best effort: read what is readable, and write only
+        // frames that change, in the same batch as the required writes.
+        let bestEffortBaseline = Dictionary(
+            ((try? snapshots(ids: Set(bestEffort.map(\.windowID)))) ?? []).map { ($0.id, $0.frame) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        let changedBestEffort = bestEffort.filter { placement in
+            bestEffortBaseline[placement.windowID].map { !$0.approximatelyEquals(placement.frame, tolerance: 0.5) } ?? false
+        }
         var touched = false
         do {
             let changed = placements.filter { !(baseline[$0.windowID]?.approximatelyEquals($0.frame, tolerance: 0.5) ?? false) }
-            touched = !changed.isEmpty
-            try applyAtomically(changed, rollbackFrames: baseline)
+            touched = !changed.isEmpty || !changedBestEffort.isEmpty
+            try system.withFrameWriteBatch {
+                try applyAtomically(changed, rollbackFrames: baseline)
+                for placement in changedBestEffort {
+                    try? apply(placement.frame, to: placement.windowID, knownCurrentFrame: bestEffortBaseline[placement.windowID])
+                }
+            }
             if let focus {
                 touched = true
                 try tabSystem.raiseWindow(focus, activate: true)
@@ -851,6 +871,10 @@ extension WindowCoordinator {
             var failed = false
             for (id, frame) in baseline.sorted(by: { $0.key < $1.key }) {
                 do { try apply(frame, to: id) } catch { failed = true }
+            }
+            // Hidden tabs return too, without affecting the outcome.
+            for placement in changedBestEffort {
+                if let frame = bestEffortBaseline[placement.windowID] { try? apply(frame, to: placement.windowID) }
             }
             if touched {
                 for id in previousSelected { do { try tabSystem.raiseWindow(id, activate: false) } catch { failed = true } }

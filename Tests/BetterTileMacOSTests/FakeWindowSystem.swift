@@ -37,6 +37,8 @@ final class FakeWindowSystem: WindowSystem, TargetedWindowSystem, WindowEventSou
     var frameWriteBatches: [[WindowID]] = []
     private var currentFrameWriteBatch: [WindowID]?
     func withFrameWriteBatch(_ updates: () throws -> Void) rethrows {
+        // Like the Accessibility adapter, a nested batch joins the outer one.
+        if currentFrameWriteBatch != nil { try updates(); return }
         currentFrameWriteBatch = []
         defer {
             frameWriteBatches.append(currentFrameWriteBatch ?? [])
