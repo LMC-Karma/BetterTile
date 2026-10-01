@@ -62,6 +62,22 @@ pull request.
    the final pushed version. If automated review cannot run, report the failure
    and wait for a retry or a maintainer decision.
 
+   The maintainer squash-merges each pull request. If your pull request depends
+   on another open pull request, it merges only after that one is on `main`.
+   Never merge a pull request into another pull request's branch. After the
+   other pull request merges, rebase yours so it contains only your commits:
+
+   ```sh
+   git fetch origin
+   git rebase --onto origin/main <old-parent-tip> <your-branch>
+   git push --force-with-lease
+   ```
+
+   `<old-parent-tip>` is the other pull request's last commit. Its branch is
+   deleted on merge, so get the commit with
+   `gh pr view <other-number> --json headRefOid`.
+   Your pull request merges only after its own CI and review pass.
+
 ---
 
 ## Current architecture

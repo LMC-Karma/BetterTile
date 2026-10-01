@@ -142,6 +142,18 @@ comments, commit messages, and technical documentation.
   Fix confirmed faults. Explain false alarms and infrastructure failures.
 - Merge only after CI passes, review is complete, review threads are resolved,
   and the maintainer approves the final pushed version.
+- Merge with squash. The pull-request title becomes the commit subject on
+  `main`, so write it as a summary of the change.
+- Prefer independent pull requests against `main`. Stack a pull request on
+  another only when it needs changes that have not merged.
+- Merge a stack from the bottom up. Never merge a pull request into another
+  pull request's branch. The repository deletes a branch when its pull request
+  merges, so GitHub then retargets the child to `main`. Rebase the child with
+  `git rebase --onto origin/main <old-parent-tip> <child>`. `<old-parent-tip>`
+  is the parent pull request's last commit. Get it with
+  `gh pr view <parent-number> --json headRefOid`, because the parent's branch
+  no longer exists. The rebase needs a force-push, so ask first. Merge the child only after its own CI and review
+  pass.
 - If automated review cannot run, report the failure and wait for a retry or a
   maintainer decision.
 - When abandoning work, close its pull request and return the workspace to
