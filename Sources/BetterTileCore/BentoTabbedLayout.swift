@@ -334,8 +334,9 @@ public struct TabbedLayoutState: Hashable, Sendable {
     public init?(adopting bento: BentoLayoutState) {
         var bento = bento
         bento.metrics = Self.tabbedMetrics(bento.metrics)
-        guard let groups = BentoTabbedLayoutState(adopting: bento, contentTopInset: Self.headerHeight),
-              groups.panes.count <= Self.maximumPaneCount else { return nil }
+        // The pane cap limits Tabbed's own splits; an existing Bento layout
+        // keeps every pane, however many.
+        guard let groups = BentoTabbedLayoutState(adopting: bento, contentTopInset: Self.headerHeight) else { return nil }
         self.groups = groups
         activePaneID = groups.panes[0].id
     }
