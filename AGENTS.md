@@ -147,8 +147,8 @@ comments, commit messages, and technical documentation.
 - Prefer independent pull requests against `main`. Stack a pull request on
   another only when it needs changes that have not merged.
 - Merge a stack from the bottom up. Never merge a pull request into another
-  pull request's branch. After the parent merges, GitHub retargets the child to
-  `main`. Rebase the child with
+  pull request's branch. The repository deletes a branch when its pull request
+  merges, so GitHub then retargets the child to `main`. Rebase the child with
   `git rebase --onto origin/main <old-parent-tip> <child>`. The rebase needs a
   force-push, so ask first. Merge the child only after its own CI and review
   pass.
