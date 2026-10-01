@@ -79,6 +79,7 @@ public final class TabbedOverlayController {
             guard let frame = frames[pane.id] else { continue }
             let panel = panes[pane.id] ?? makePanel()
             let view = panel.contentView as? TabbedPaneView ?? TabbedPaneView()
+            view.refreshAppearance()
             view.owner = self
             view.pane = pane
             view.number = index + 1
@@ -479,6 +480,16 @@ struct TabbedStripLayout {
             addSubview(view)
         }
         refreshAppearance()
+        // Reduce Transparency and Increase Contrast can change while the
+        // strip is on screen.
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self, selector: #selector(accessibilityDisplayOptionsChanged),
+            name: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification, object: nil
+        )
+    }
+
+    @objc private func accessibilityDisplayOptionsChanged() {
+        refreshAppearance()
     }
 
     required init?(coder: NSCoder) { nil }
@@ -489,10 +500,17 @@ struct TabbedStripLayout {
         content.frame = bounds
     }
 
-    func refreshAppearance() {
+    /// Test seam for the accessibility display options.
+    var displayOptions: () -> (reduceTransparency: Bool, increaseContrast: Bool) = {
         let workspace = NSWorkspace.shared
-        let solid = workspace.accessibilityDisplayShouldReduceTransparency
-            || workspace.accessibilityDisplayShouldIncreaseContrast
+        return (workspace.accessibilityDisplayShouldReduceTransparency,
+                workspace.accessibilityDisplayShouldIncreaseContrast)
+    }
+    var showsGlass: Bool { !glass.isHidden }
+
+    func refreshAppearance() {
+        let options = displayOptions()
+        let solid = options.reduceTransparency || options.increaseContrast
         glass.isHidden = solid
         content.usesSolidSurface = solid
         content.needsDisplay = true

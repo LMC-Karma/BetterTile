@@ -509,3 +509,18 @@ func tabStripInsertionPointsMatchRenderedTabEdges(width: Double) {
     #expect(slider.accessibilityPerformDecrement())
     #expect(adjustments == [0.05, -0.05])
 }
+
+@Test @MainActor func tabStripFollowsLiveAccessibilityDisplayChanges() {
+    _ = NSApplication.shared
+    let view = TabbedPaneView(frame: NSRect(x: 0, y: 0, width: 300, height: 34))
+    var reduceTransparency = false
+    view.displayOptions = { (reduceTransparency, false) }
+    view.refreshAppearance()
+    #expect(view.showsGlass)
+    reduceTransparency = true
+    NSWorkspace.shared.notificationCenter.post(name: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification, object: nil)
+    #expect(!view.showsGlass)
+    reduceTransparency = false
+    NSWorkspace.shared.notificationCenter.post(name: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification, object: nil)
+    #expect(view.showsGlass)
+}
