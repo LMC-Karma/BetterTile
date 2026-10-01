@@ -6,11 +6,13 @@ public enum TabbedUIIntent {
     case move(WindowID, pane: UUID, index: Int?)
     case split(WindowID, pane: UUID, edge: TabbedEdge)
     case preset(TabbedPreset), undo, repair, removePane(UUID)
-    case beginResize, resize(UUID, Double), balanceDivider(UUID), endResize, cancelResize
+    /// VoiceOver moves a Bento pane divider by a fraction of its area.
+    case adjustDivider(UUID, by: Double)
 }
 
-/// AppKit chrome only. It knows pane values and emits intents; it never writes
-/// Accessibility attributes or owns layout sessions.
+/// AppKit chrome only: tab strips and empty-pane targets. It knows pane values
+/// and emits intents; it never writes Accessibility attributes or owns layout
+/// sessions. Pane dividers belong to Bento's divider overlay.
 @MainActor
 public final class TabbedOverlayController {
     public var onIntent: ((TabbedUIIntent) -> Void)?
@@ -21,7 +23,9 @@ public final class TabbedOverlayController {
     /// Includes failed lookups as nil so they are not repeated on refresh.
     private var applicationIcons: [String: NSImage?] = [:]
     private var panes: [UUID: NSPanel] = [:]
-    private var handles: [UUID: NSPanel] = [:]
+    /// Accessibility-only divider controls. Pointer resizing uses Bento's
+    /// divider overlay, so these panels ignore the mouse.
+    private var dividerControls: [UUID: NSPanel] = [:]
     private var preview: NSPanel?
     private var floatTarget: NSPanel?
     private var globalKeyMonitor: Any?
@@ -31,18 +35,19 @@ public final class TabbedOverlayController {
     private let removeMonitor: (Any) -> Void
     private var draggedWindow: WindowID?
     private var dropIntent: TabbedUIIntent?
-    private var isResizing = false
     private var cancelled = false
     private var canUndo = false
-    private let displayTicks: ResizeDisplayLink
-    private var pendingResize: (id: UUID, ratio: Double)?
 
     public convenience init() {
-        self.init(displayTicks: ResizeDisplayLink())
+        self.init(addGlobalKeyMonitor: { handler in
+            NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { event in
+                let keyCode = event.keyCode
+                MainActor.assumeIsolated { handler(keyCode) }
+            }
+        })
     }
 
     init(
-        displayTicks: ResizeDisplayLink,
         addGlobalKeyMonitor: @escaping (@escaping @MainActor (UInt16) -> Void) -> Any? = { handler in
             NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { event in
                 let keyCode = event.keyCode
@@ -58,7 +63,6 @@ public final class TabbedOverlayController {
         },
         removeMonitor: @escaping (Any) -> Void = { NSEvent.removeMonitor($0) }
     ) {
-        self.displayTicks = displayTicks
         self.addGlobalKeyMonitor = addGlobalKeyMonitor
         self.addLocalKeyMonitor = addLocalKeyMonitor
         self.removeMonitor = removeMonitor
@@ -75,6 +79,7 @@ public final class TabbedOverlayController {
             guard let frame = frames[pane.id] else { continue }
             let panel = panes[pane.id] ?? makePanel()
             let view = panel.contentView as? TabbedPaneView ?? TabbedPaneView()
+            view.refreshAppearance()
             view.owner = self
             view.pane = pane
             view.number = index + 1
@@ -103,36 +108,36 @@ public final class TabbedOverlayController {
             else { panel.orderFrontRegardless() }
             panes[pane.id] = panel
         }
-        let dividers = state.dividers(in: bounds)
-        let dividerIDs = Set(dividers.map(\.id))
-        for id in handles.keys.filter({ !dividerIDs.contains($0) }) { handles.removeValue(forKey: id)?.orderOut(nil) }
-        for divider in dividers {
-            let panel = handles[divider.id] ?? makePanel()
-            let view = panel.contentView as? TabbedDividerView ?? TabbedDividerView()
-            view.owner = self
-            view.divider = divider
-            panel.contentView = view
-            panel.setFrame(appKit(divider.frame), display: true)
-            view.setAccessibilityLabel("Resize panes")
-            view.setAccessibilityElement(true)
-            view.setAccessibilityRole(.slider)
-            view.setAccessibilityEnabled(true)
-            view.setAccessibilityValue(divider.ratio * 100)
-            view.setAccessibilityMinValue(5)
-            view.setAccessibilityMaxValue(95)
-            view.setAccessibilityHelp("Adjust the first pane's share of the layout in five percent steps.")
-            view.toolTip = "Drag to resize panes. Double-click to balance. Escape cancels."
-            view.needsDisplay = true
-            panel.invalidateCursorRects(for: view)
-            if obscuringFrames.contains(where: { $0.intersection(divider.frame) != nil }) { panel.orderOut(nil) }
-            else { panel.orderFrontRegardless() }
-            handles[divider.id] = panel
-        }
+        refreshDividerControls()
     }
 
     public func hide() {
         cancelInteraction()
-        for panel in Array(panes.values) + Array(handles.values) { panel.orderOut(nil) }
+        for panel in Array(panes.values) + Array(dividerControls.values) { panel.orderOut(nil) }
+    }
+
+    private func refreshDividerControls() {
+        let dividers = state.dividers(in: bounds)
+        let ids = Set(dividers.compactMap(\.branchID))
+        for id in dividerControls.keys where !ids.contains(id) { dividerControls.removeValue(forKey: id)?.orderOut(nil) }
+        for divider in dividers {
+            guard let branchID = divider.branchID, let parent = divider.parentBounds else { continue }
+            let panel = dividerControls[branchID] ?? makePanel()
+            panel.ignoresMouseEvents = true
+            let view = panel.contentView as? TabbedDividerAccessibilityView ?? TabbedDividerAccessibilityView()
+            view.onAdjust = { [weak self] delta in self?.send(.adjustDivider(branchID, by: delta)) }
+            let extent = divider.axis == .vertical ? parent.size.width : parent.size.height
+            let start = divider.axis == .vertical ? parent.minX : parent.minY
+            view.setAccessibilityValue(((divider.coordinate - start) / max(1, extent) * 100).rounded())
+            panel.contentView = view
+            let gap = TabbedLayoutState.gap
+            let frame = divider.axis == .vertical
+                ? BTRect(x: divider.coordinate - gap / 2, y: divider.spanStart, width: gap, height: divider.spanEnd - divider.spanStart)
+                : BTRect(x: divider.spanStart, y: divider.coordinate - gap / 2, width: divider.spanEnd - divider.spanStart, height: gap)
+            panel.setFrame(appKit(frame), display: false)
+            panel.orderFrontRegardless()
+            dividerControls[branchID] = panel
+        }
     }
 
     /// A resize changes geometry only. Keep panel ordering and content views
@@ -151,12 +156,7 @@ public final class TabbedOverlayController {
             view.updateToolTips()
             view.needsDisplay = true
         }
-        for divider in state.dividers(in: bounds) {
-            guard let panel = handles[divider.id], let view = panel.contentView as? TabbedDividerView else { continue }
-            view.divider = divider
-            panel.setFrame(appKit(divider.frame), display: false)
-            view.setAccessibilityValue(divider.ratio * 100)
-        }
+        refreshDividerControls()
     }
 
     private func makePanel() -> NSPanel {
@@ -348,45 +348,9 @@ public final class TabbedOverlayController {
         if let intent { send(intent) }
     }
 
-    func beginResize() {
-        guard !isInteracting else { return }
-        isInteracting = true
-        isResizing = true
-        cancelled = false
-        installEscape()
-        displayTicks.start(on: handles.values.first?.contentView, maximumFramesPerSecond: 60) { [weak self] in
-            self?.displayTick()
-        }
-        send(.beginResize)
-    }
-
-    func resize(_ divider: TabbedDivider, point: BTPoint) {
-        guard isResizing, !cancelled else { return }
-        let length = (divider.vertical ? divider.bounds.size.width : divider.bounds.size.height) - TabbedLayoutState.gap
-        let offset = divider.vertical ? point.x - divider.bounds.minX : point.y - divider.bounds.minY
-        pendingResize = (divider.id, offset / max(1, length))
-    }
-
-    func displayTick() {
-        guard let pendingResize else { return }
-        self.pendingResize = nil
-        send(.resize(pendingResize.id, pendingResize.ratio))
-    }
-
-    func endResize() {
-        guard isResizing else { return }
-        let wasCancelled = cancelled
-        if !wasCancelled { displayTick() }
-        finishInteraction()
-        if !wasCancelled { send(.endResize) }
-    }
-
     public func cancelInteraction() {
-        let resize = isResizing
         cancelled = true
-        pendingResize = nil
         finishInteraction()
-        if resize { send(.cancelResize) }
     }
 
     private func finishInteraction() {
@@ -397,10 +361,7 @@ public final class TabbedOverlayController {
         globalKeyMonitor = nil
         localKeyMonitor = nil
         draggedWindow = nil; dropIntent = nil
-        pendingResize = nil
-        displayTicks.stop()
-        isInteracting = false; isResizing = false
-        for panel in handles.values { panel.contentView?.needsDisplay = true }
+        isInteracting = false
     }
 
     private func installEscape() {
@@ -490,7 +451,91 @@ struct TabbedStripLayout {
     }
 }
 
-@MainActor final class TabbedPaneView: NSVisualEffectView {
+/// A tab strip on real Liquid Glass. The glass is a background sibling that
+/// only draws; the strip content above it handles every event in its own
+/// coordinates, so clicks never depend on the glass view's internal layout.
+@MainActor final class TabbedPaneView: NSView {
+    private let glass = NSGlassEffectView()
+    private let content = TabbedPaneContentView()
+
+    weak var owner: TabbedOverlayController? { didSet { content.owner = owner } }
+    var pane: TabbedPane { get { content.pane } set { content.pane = newValue } }
+    var number: Int { get { content.number } set { content.number = newValue } }
+    var active: Bool { get { content.active } set { content.active = newValue } }
+    var titles: [String] { get { content.titles } set { content.titles = newValue } }
+    var icons: [NSImage?] { get { content.icons } set { content.icons = newValue } }
+    var strip: TabbedStripLayout { content.strip }
+
+    override var isFlipped: Bool { true }
+    override var acceptsFirstResponder: Bool { true }
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        glass.cornerRadius = 7
+        glass.style = .regular
+        for view in [glass, content] as [NSView] {
+            view.frame = bounds
+            view.autoresizingMask = [.width, .height]
+            addSubview(view)
+        }
+        refreshAppearance()
+        // Reduce Transparency and Increase Contrast can change while the
+        // strip is on screen.
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self, selector: #selector(accessibilityDisplayOptionsChanged),
+            name: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification, object: nil
+        )
+    }
+
+    @objc private func accessibilityDisplayOptionsChanged() {
+        refreshAppearance()
+    }
+
+    required init?(coder: NSCoder) { nil }
+
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        glass.frame = bounds
+        content.frame = bounds
+    }
+
+    /// Test seam for the accessibility display options.
+    var displayOptions: () -> (reduceTransparency: Bool, increaseContrast: Bool) = {
+        let workspace = NSWorkspace.shared
+        return (workspace.accessibilityDisplayShouldReduceTransparency,
+                workspace.accessibilityDisplayShouldIncreaseContrast)
+    }
+    var showsGlass: Bool { !glass.isHidden }
+
+    func refreshAppearance() {
+        let options = displayOptions()
+        let solid = options.reduceTransparency || options.increaseContrast
+        glass.isHidden = solid
+        content.usesSolidSurface = solid
+        content.needsDisplay = true
+    }
+
+    override var needsDisplay: Bool {
+        didSet { if needsDisplay { content.needsDisplay = true } }
+    }
+
+    var stripLayout: TabbedStripLayout { content.strip }
+    func updateToolTips() { content.updateToolTips() }
+    func updateAccessibility() {
+        setAccessibilityElement(true)
+        setAccessibilityRole(.group)
+        setAccessibilityChildren(content.accessibilityButtons(parent: self))
+    }
+
+    override func mouseDown(with event: NSEvent) { content.mouseDown(with: event) }
+    override func mouseDragged(with event: NSEvent) { content.mouseDragged(with: event) }
+    override func mouseUp(with event: NSEvent) { content.mouseUp(with: event) }
+    override func rightMouseDown(with event: NSEvent) { content.rightMouseDown(with: event) }
+    override func keyDown(with event: NSEvent) { content.keyDown(with: event) }
+}
+
+@MainActor final class TabbedPaneContentView: NSView {
     weak var owner: TabbedOverlayController?
     var pane = TabbedPane()
     var number = 1
@@ -505,12 +550,12 @@ struct TabbedStripLayout {
     private var firstVisibleIndex = 0
     override var isFlipped: Bool { true }
     override var acceptsFirstResponder: Bool { true }
+    var usesSolidSurface = false
     override var wantsUpdateLayer: Bool { false }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
-        configureTabbedGlass(self, cornerRadius: 7)
     }
 
     required init?(coder: NSCoder) { nil }
@@ -555,12 +600,15 @@ struct TabbedStripLayout {
 
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
-        configureTabbedGlass(self, cornerRadius: 7)
-        NSColor.windowBackgroundColor.setFill()
-        NSBezierPath(rect: bounds).fill()
+        if usesSolidSurface {
+            NSColor.windowBackgroundColor.setFill()
+            NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 7, yRadius: 7).fill()
+        }
         let header = NSRect(x: 0, y: 0, width: bounds.width, height: TabbedLayoutState.headerHeight)
-        NSColor.controlBackgroundColor.withAlphaComponent(0.35).setFill()
-        NSBezierPath(rect: header).fill()
+        if usesSolidSurface {
+            NSColor.controlBackgroundColor.withAlphaComponent(0.48).setFill()
+            NSBezierPath(rect: header).fill()
+        }
         if active {
             NSColor.controlAccentColor.withAlphaComponent(0.16).setFill()
             NSBezierPath(roundedRect: NSRect(x: 4, y: 6, width: 24, height: 22), xRadius: 6, yRadius: 6).fill()
@@ -627,7 +675,7 @@ struct TabbedStripLayout {
             }
         }
         let outline = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.75, dy: 0.75), xRadius: 7, yRadius: 7)
-        outline.lineWidth = active ? 1.5 : 0.75
+        outline.lineWidth = active ? 1.5 : (usesSolidSurface ? 1 : 0.75)
         (active
             ? NSColor.controlAccentColor.withAlphaComponent(owner?.isInteracting == true ? 0.72 : 0.32)
             : NSColor.separatorColor.withAlphaComponent(0.5)
@@ -654,17 +702,15 @@ struct TabbedStripLayout {
         ])
     }
 
-    func updateAccessibility() {
+    fileprivate func accessibilityButtons(parent: NSView) -> [TabbedAccessibilityButton] {
         firstVisibleIndex = strip.visibleRange.lowerBound
-        setAccessibilityElement(true)
-        setAccessibilityRole(.group)
         var children: [TabbedAccessibilityButton] = []
         func button(_ label: String, rect: NSRect, action: @escaping @MainActor @Sendable () -> Void) {
             let element = TabbedAccessibilityButton(action: action)
             element.setAccessibilityRole(.button)
             element.setAccessibilityEnabled(true)
             element.setAccessibilityLabel(label)
-            element.setAccessibilityParent(self)
+            element.setAccessibilityParent(parent)
             if let window { element.setAccessibilityFrame(window.convertToScreen(convert(rect, to: nil))) }
             children.append(element)
         }
@@ -685,7 +731,7 @@ struct TabbedStripLayout {
             guard let self, let owner else { return }
             owner.menu(pane: pane, windowID: nil).popUp(positioning: nil, at: NSPoint(x: strip.menuFrame.minX, y: TabbedLayoutState.headerHeight), in: self)
         }
-        setAccessibilityChildren(children)
+        return children
     }
 
     override func mouseDown(with event: NSEvent) {
@@ -742,86 +788,6 @@ struct TabbedStripLayout {
     }
 }
 
-@MainActor final class TabbedDividerView: NSVisualEffectView {
-    weak var owner: TabbedOverlayController?
-    var divider: TabbedDivider? { didSet { needsDisplay = true } }
-    private var dragStart: (divider: TabbedDivider, point: BTPoint)?
-    private var hovered = false { didSet { needsDisplay = true } }
-    override var wantsUpdateLayer: Bool { false }
-    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
-
-    override init(frame frameRect: NSRect) {
-        super.init(frame: frameRect)
-        configureTabbedGlass(self, cornerRadius: 3)
-    }
-
-    required init?(coder: NSCoder) { nil }
-
-    override func draw(_ dirtyRect: NSRect) {
-        super.draw(dirtyRect)
-        configureTabbedGlass(self, cornerRadius: 3)
-        let active = dragStart != nil && owner?.isInteracting == true
-        (active || hovered ? NSColor.controlAccentColor.withAlphaComponent(active ? 0.3 : 0.15)
-            : NSColor.separatorColor.withAlphaComponent(0.12)).setFill()
-        bounds.fill()
-        (active || hovered ? NSColor.controlAccentColor : NSColor.secondaryLabelColor).setFill()
-        let grip = divider?.vertical == true
-            ? NSRect(x: bounds.midX - 1, y: bounds.midY - 12, width: 2, height: min(24, bounds.height))
-            : NSRect(x: bounds.midX - 12, y: bounds.midY - 1, width: min(24, bounds.width), height: 2)
-        NSBezierPath(roundedRect: grip, xRadius: 1, yRadius: 1).fill()
-    }
-    override func updateTrackingAreas() {
-        super.updateTrackingAreas()
-        trackingAreas.forEach(removeTrackingArea)
-        addTrackingArea(NSTrackingArea(rect: .zero, options: [.activeAlways, .inVisibleRect, .mouseEnteredAndExited], owner: self, userInfo: nil))
-    }
-    override func mouseEntered(with event: NSEvent) { hovered = true }
-    override func mouseExited(with event: NSEvent) { hovered = false }
-    override func resetCursorRects() { addCursorRect(bounds, cursor: divider?.vertical == true ? .resizeLeftRight : .resizeUpDown) }
-    override func mouseDown(with event: NSEvent) {
-        guard let divider, let owner, !owner.isInteracting else { return }
-        if event.clickCount == 2 {
-            owner.send(.balanceDivider(divider.id))
-            return
-        }
-        dragStart = (divider, owner.screenPoint(event))
-        owner.beginResize()
-        needsDisplay = true
-    }
-    override func mouseDragged(with event: NSEvent) {
-        updateResize(with: event)
-    }
-    override func mouseUp(with event: NSEvent) {
-        guard dragStart != nil else { return }
-        updateResize(with: event)
-        dragStart = nil
-        owner?.endResize()
-    }
-
-    private func updateResize(with event: NSEvent) {
-        guard let dragStart, let owner else { return }
-        let divider = dragStart.divider
-        let point = owner.screenPoint(event)
-        let length = (divider.vertical ? divider.bounds.size.width : divider.bounds.size.height) - TabbedLayoutState.gap
-        // Keep the grab offset and original split bounds while the handle moves.
-        let translated = BTPoint(
-            x: divider.bounds.minX + divider.ratio * length + point.x - dragStart.point.x,
-            y: divider.bounds.minY + divider.ratio * length + point.y - dragStart.point.y
-        )
-        owner.resize(divider, point: translated)
-    }
-    override func accessibilityPerformIncrement() -> Bool { adjust(by: 0.05) }
-    override func accessibilityPerformDecrement() -> Bool { adjust(by: -0.05) }
-
-    private func adjust(by delta: Double) -> Bool {
-        guard let divider, let owner, !owner.isInteracting else { return false }
-        owner.beginResize()
-        owner.send(.resize(divider.id, min(0.95, max(0.05, divider.ratio + delta))))
-        owner.endResize()
-        return true
-    }
-}
-
 private final class TabbedAccessibilityButton: NSAccessibilityElement {
     nonisolated let action: @MainActor @Sendable () -> Void
     init(action: @escaping @MainActor @Sendable () -> Void) {
@@ -833,4 +799,26 @@ private final class TabbedAccessibilityButton: NSAccessibilityElement {
         MainActor.assumeIsolated { action() }
         return true
     }
+}
+
+/// A VoiceOver slider over a Bento pane divider. It draws nothing and takes no
+/// clicks; pointer resizing belongs to Bento's divider handle.
+@MainActor final class TabbedDividerAccessibilityView: NSView {
+    var onAdjust: ((Double) -> Void)?
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        setAccessibilityElement(true)
+        setAccessibilityRole(.slider)
+        setAccessibilityEnabled(true)
+        setAccessibilityLabel("Resize panes")
+        setAccessibilityMinValue(5)
+        setAccessibilityMaxValue(95)
+        setAccessibilityHelp("Adjust the first pane's share in five percent steps.")
+    }
+
+    required init?(coder: NSCoder) { nil }
+
+    override func accessibilityPerformIncrement() -> Bool { onAdjust?(0.05); return onAdjust != nil }
+    override func accessibilityPerformDecrement() -> Bool { onAdjust?(-0.05); return onAdjust != nil }
 }

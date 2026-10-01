@@ -155,7 +155,8 @@ import Testing
     displayTicks.fire()
     #expect(system.frameWriteCounts[second] == 1)
     #expect(system.frameWriteCounts[focused] == nil)
-    #expect(system.targetedSnapshotRequests == 1)
+    // One read refreshes minimums when resizing starts; one validates the tick.
+    #expect(system.targetedSnapshotRequests == 2)
     #expect(system.windows[1].frame == BTRect(x: 620, y: 0, width: 380, height: 800))
 
     system.windows[0].frame.size.width = 650
@@ -164,7 +165,7 @@ import Testing
     controller.handleSharedGestureEvent(event(.leftMouseUp, timestamp: 701))
 
     #expect(system.frameWriteCounts[second] == 2)
-    #expect(system.targetedSnapshotRequests == 2)
+    #expect(system.targetedSnapshotRequests == 3)
     #expect(system.windows[1].frame == BTRect(x: 650, y: 0, width: 350, height: 800))
 }
 
@@ -415,4 +416,44 @@ import Testing
     controller.handleSharedGestureEvent(event(.leftMouseUp, timestamp: 4))
 
     #expect(system.windows[1].frame == BTRect(x: 600, y: 0, width: 400, height: 800))
+}
+
+@Test @MainActor func linkedResizeForgetsLearnedMinimumsOnlyWhenAWindowResizes() {
+    let system = FakeWindowSystem()
+    system.addSecondWindow()
+    system.windows[0].frame = BTRect(x: 0, y: 0, width: 500, height: 800)
+    system.windows[1].frame = BTRect(x: 500, y: 0, width: 500, height: 800)
+    var configuration = BetterTileConfiguration()
+    configuration.linkedResizeEnabled = true
+    let ticks = ResizeDisplayLink(automatic: false)
+    let controller = LinkedResizeController(
+        coordinator: WindowCoordinator(system: system), configuration: configuration, displayTicks: ticks
+    )
+    controller.isEnabledForDisplay = { _ in true }
+    controller.setUsesSharedGestureEvents(true)
+    var forgets = 0
+    controller.gestureWillBeginHandler = { forgets += 1 }
+    func event(_ kind: GlobalGestureEventKind) -> GlobalGestureEvent {
+        GlobalGestureEvent(kind: kind, position: BTPoint(x: 500, y: 400), button: 0, modifiers: [], timestamp: 1)
+    }
+
+    // A plain click or a drag that resizes nothing keeps learned minimums.
+    controller.handleSharedGestureEvent(event(.leftMouseDown))
+    controller.handleSharedGestureEvent(event(.leftMouseDragged))
+    ticks.fire()
+    controller.handleSharedGestureEvent(event(.leftMouseUp))
+    #expect(forgets == 0)
+
+    // An edge drag forgets them once, when the window first resizes.
+    controller.handleSharedGestureEvent(event(.leftMouseDown))
+    controller.handleSharedGestureEvent(event(.leftMouseDragged))
+    system.windows[0].frame.size.width = 560
+    controller.handleSharedGestureEvent(event(.leftMouseDragged))
+    ticks.fire()
+    system.windows[0].frame.size.width = 600
+    controller.handleSharedGestureEvent(event(.leftMouseDragged))
+    ticks.fire()
+    controller.handleSharedGestureEvent(event(.leftMouseUp))
+    #expect(forgets == 1)
+    #expect(system.windows[1].frame.minX == 600)
 }
