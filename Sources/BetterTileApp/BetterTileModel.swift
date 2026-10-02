@@ -66,7 +66,7 @@ final class BetterTileModel {
     private let linkedResize: LinkedResizeController
     private let layoutWheel: LayoutWheelController
     private let sharedGestureEvents: SharedGestureEventMonitor
-    private let dividerResize: DividerOverlayController
+    let dividerResize: DividerOverlayController
     private var resultPill: ResultPillController?
     private var sessionStore = LayoutSessionStore()
     private var tabbedOverlays: [DisplayID: TabbedOverlayController] = [:]
@@ -100,9 +100,9 @@ final class BetterTileModel {
     private var confirmedMinimizedWindowIDs: Set<WindowID> = []
     private var actionVerificationTask: Task<Void, Never>?
     private var pendingRestoredWindowDeadlines: [WindowID: Date] = [:]
-    private var windowEventTask: Task<Void, Never>?
+    private(set) var windowEventTask: Task<Void, Never>?
     private var windowEventRetryBackoff = WindowEventRetryBackoff()
-    private var settlementTasks: [DisplayID: Task<Void, Never>] = [:]
+    private(set) var settlementTasks: [DisplayID: Task<Void, Never>] = [:]
     private var settlementTaskGenerations: [DisplayID: UInt64] = [:]
     private var spaceStabilizationTask: Task<Void, Never>?
     private let displayRefreshDebouncer = DisplayRefreshDebouncer()
@@ -1393,13 +1393,16 @@ final class BetterTileModel {
 
     func shutdown() {
         guard !isShutDown else { return }
+        // A held divider can roll back to pane frames. Finish that rollback
+        // before restoring the windows' Native entry frames.
+        dividerResize.hideAndCancel()
         for (displayID, session) in sessionStore.sessions where session.mode == .tabbed {
             if let display = system.displays().first(where: { $0.id == displayID }),
                let windows = try? system.visibleWindows() {
-                let visible = Set(windows.filter { $0.displayID == displayID && $0.isEligible }.map(\.id))
-                _ = coordinator.applyPlacements(session.tabbedBaselineFrames.compactMap { id, frame in
-                    visible.contains(id) ? Placement(windowID: id, frame: frame.clamped(to: display.visibleFrame)) : nil
-                }, recordHistory: false)
+                _ = coordinator.applyPlacements(
+                    tabbedRestorationPlacements(for: session, on: display, windows: windows),
+                    recordHistory: false
+                )
             }
         }
         tabbedTasks.values.forEach { $0.cancel() }
@@ -1430,7 +1433,6 @@ final class BetterTileModel {
         dragSnap.stop()
         titleBarDoubleClick.stop()
         linkedResize.stop()
-        dividerResize.hideAndCancel()
         resultPill?.hide()
         resultPill = nil
     }
@@ -3388,21 +3390,43 @@ extension BetterTileModel {
         return order
     }
 
+    private func tabbedRestorationPlacements(
+        for session: LayoutSession,
+        on display: DisplaySnapshot,
+        windows: [WindowSnapshot]
+    ) -> [Placement] {
+        let visible = Dictionary(uniqueKeysWithValues: windows.filter {
+            $0.displayID == display.id && $0.isEligible
+        }.map { ($0.id, $0) })
+        return session.tabbedBaselineFrames.compactMap { id, frame -> Placement? in
+            guard let window = visible[id] else { return nil }
+            var restored = frame
+            restored.size.width = max(frame.size.width, window.constraints.minimumSize.width)
+            restored.size.height = max(frame.size.height, window.constraints.minimumSize.height)
+            if restored != frame || !PlacementBounds.isReachable(frame, in: display.visibleFrame) {
+                // Native windows may exceed the work area. Keep their minimum size
+                // and move the origin into reach instead of shrinking the frame.
+                let bounds = display.visibleFrame
+                restored.origin.x = min(max(restored.minX, bounds.minX), max(bounds.minX, bounds.maxX - restored.size.width))
+                restored.origin.y = min(max(restored.minY, bounds.minY), max(bounds.minY, bounds.maxY - restored.size.height))
+            }
+            return Placement(windowID: id, frame: restored)
+        }
+    }
+
     private func leaveTabbed(displayID: DisplayID, destination: LayoutMode) {
         tabbedQueuedIntents.removeValue(forKey: displayID)
         let pending = tabbedTasks[displayID]
         pending?.cancel()
         Task { @MainActor [weak self] in
             await pending?.value
-            guard let self, var session = self.sessionStore.session(for: displayID),
+            guard let self, !self.isShutDown,
+                  var session = self.sessionStore.session(for: displayID),
                   session.mode == .tabbed, !self.isStabilizingSpace,
                   let display = self.system.displays().first(where: { $0.id == displayID }),
                   let windows = try? self.system.visibleWindows() else { return }
             if destination == .manual {
-                let visible = Set(windows.filter { $0.displayID == displayID && $0.isEligible }.map(\.id))
-                let placements = session.tabbedBaselineFrames.compactMap { id, frame in
-                    visible.contains(id) ? Placement(windowID: id, frame: frame.clamped(to: display.visibleFrame)) : nil
-                }
+                let placements = self.tabbedRestorationPlacements(for: session, on: display, windows: windows)
                 let outcome: WindowMutationOutcome = placements.isEmpty ? .applied : self.coordinator.applyPlacements(placements, recordHistory: false)
                 if !outcome.isApplied { self.statusMessage = outcome.failureReason; return }
             }

@@ -15,11 +15,6 @@ private func finalState(
     events.reduce(start) { UpdateIndicator.state(after: $1, from: $0) }
 }
 
-private func feedbackURLComponents() throws -> URLComponents {
-    let url = try #require(FeedbackLink.url(version: "0.1.0", build: "2"))
-    return try #require(URLComponents(url: url, resolvingAgainstBaseURL: false))
-}
-
 @Test func validUpdateTurnsTheIndicatorOn() {
     #expect(UpdateIndicator.state(after: .foundValidUpdate(update042), from: .idle) == .updateAvailable(update042))
     #expect(
@@ -44,12 +39,14 @@ private func feedbackURLComponents() throws -> URLComponents {
     #expect(UpdateIndicator.state(after: .confirmedNoUpdate, from: .idle) == .idle)
 }
 
-@Test func aFailedCheckPreservesWhicheverStateWasAlreadyShown() {
-    #expect(
-        UpdateIndicator.state(after: .checkFailed, from: .updateAvailable(update042))
-            == .updateAvailable(update042)
-    )
-    #expect(UpdateIndicator.state(after: .checkFailed, from: .idle) == .idle)
+@Test(arguments: [
+    ([UpdateIndicatorEvent](), UpdateIndicatorState.idle),
+    ([.foundValidUpdate(update042)], .updateAvailable(update042)),
+    ([.foundValidUpdate(update042), .userBeganInstallingUpdate], .updateAvailable(update042)),
+    ([.foundValidUpdate(update042), .userDeferredUpdate], .updateAvailable(update042)),
+])
+func aFailedCheckPreservesWhicheverStateWasAlreadyShown(scenario: ([UpdateIndicatorEvent], UpdateIndicatorState)) {
+    #expect(finalState(after: scenario.0 + [.checkFailed]) == scenario.1)
 }
 
 @Test func beginningAnInstallKeepsTheIndicatorUntilTheAppRelaunches() {
@@ -59,20 +56,6 @@ private func feedbackURLComponents() throws -> URLComponents {
     // available update unadvertised.
     #expect(
         UpdateIndicator.state(after: .userBeganInstallingUpdate, from: .updateAvailable(update042))
-            == .updateAvailable(update042)
-    )
-}
-
-@Test func anInstallThatFailsLeavesTheUpdateAdvertised() {
-    #expect(
-        finalState(after: [.foundValidUpdate(update042), .userBeganInstallingUpdate, .checkFailed])
-            == .updateAvailable(update042)
-    )
-}
-
-@Test func deferringThenFailingStillAdvertisesTheUpdate() {
-    #expect(
-        finalState(after: [.foundValidUpdate(update042), .userDeferredUpdate, .checkFailed])
             == .updateAvailable(update042)
     )
 }
@@ -101,50 +84,32 @@ private func feedbackURLComponents() throws -> URLComponents {
 
 // MARK: - Feedback link
 
-@Test func feedbackURLSelectsTheBugFormAndCarriesTheRunningVersion() throws {
-    let components = try feedbackURLComponents()
+@Test(arguments: [
+    ("0.1.0", "2", "[Bug] BetterTile 0.1.0 (2): "),
+    ("1.2 β?&=#", "2 +&=#", "[Bug] BetterTile 1.2 β?&=# (2 +&=#): "),
+])
+func feedbackURLContainsOnlyTheBugTemplateAndEscapedRunningVersion(scenario: (String, String, String)) throws {
+    let url = try #require(FeedbackLink.url(version: scenario.0, build: scenario.1))
+    let components = try #require(URLComponents(url: url, resolvingAgainstBaseURL: false))
     let items = try #require(components.queryItems)
 
     #expect(components.scheme == "https")
     #expect(components.host == "github.com")
     #expect(components.path == "/LMC-Karma/BetterTile/issues/new")
+    #expect(components.port == nil)
+    #expect(components.user == nil)
+    #expect(components.password == nil)
+    #expect(components.fragment == nil)
+    #expect(items.count == 2)
     #expect(items.contains(URLQueryItem(name: "template", value: "bug.yml")))
-    let title = try #require(items.first { $0.name == "title" }?.value)
-    #expect(title.contains("0.1.0"))
-    #expect(title.contains("(2)"))
-}
-
-@Test func feedbackURLCarriesNothingBeyondTheTemplateAndTitle() throws {
-    let components = try feedbackURLComponents()
-    let items = try #require(components.queryItems)
-
-    #expect(Set(items.map(\.name)) == ["template", "title"])
-}
-
-@Test func feedbackURLLeaksNoConfigurationWindowOrDiagnosticData() throws {
-    // The feedback form is the app's only user-triggered outbound link, so it is
-    // asserted against by content, not just by shape.
-    let url = try #require(feedbackURLComponents().url)
-    let lowercased = url.absoluteString.lowercased()
-
-    for forbidden in [
-        "window", "frame", "display", "screen", "bento", "layout", "shortcut",
-        "config", "preference", "diagnostic", "analytics", "telemetry", "profile",
-        "serial", "uuid", "hostname", "user",
-    ] {
-        #expect(!lowercased.contains(forbidden), "feedback URL must not mention \(forbidden)")
-    }
+    #expect(items.contains(URLQueryItem(name: "title", value: scenario.2)))
 }
 
 // MARK: - Application volume
 
-@Test func aReadOnlyApplicationVolumeRequiresRelocation() {
-    #expect(ApplicationVolume.requiresRelocation(volumeIsReadOnly: true))
-}
-
-@Test func aWritableOrUnknownVolumeDoesNotRequireRelocation() {
-    #expect(!ApplicationVolume.requiresRelocation(volumeIsReadOnly: false))
-    #expect(!ApplicationVolume.requiresRelocation(volumeIsReadOnly: nil))
+@Test(arguments: [(true as Bool?, true), (false, false), (nil, false)])
+func onlyAReadOnlyApplicationVolumeRequiresRelocation(scenario: (Bool?, Bool)) {
+    #expect(ApplicationVolume.requiresRelocation(volumeIsReadOnly: scenario.0) == scenario.1)
 }
 
 // MARK: - Sibling application launch

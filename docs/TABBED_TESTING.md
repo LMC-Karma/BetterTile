@@ -29,8 +29,11 @@ Record results and unresolved observations in
 3. In Settings, choose the default Tabbed layout under Window Mode.
 4. On the desktop you want to test, choose **Tabbed (Test)** in the mode picker.
 
-Existing eligible windows become tabs in the first pane. Other panes start
-empty. Click an empty pane to send newly opened windows there.
+On a desktop entering Tabbed from Native for the first time, existing eligible
+windows become tabs in the first pane of the chosen default layout. Other panes
+start empty. Entering from Bento instead adopts its existing panes, with each
+window as that pane's selected tab. Returning from Native restores surviving
+runtime tab groups. Click an empty pane to send newly opened windows there.
 
 ## Overlay appearance
 
@@ -106,13 +109,17 @@ performance require an on-screen check.
 - Closing a tab requests normal application closure. The tab remains until the
   window closes, including while a save confirmation is open.
 - Switching to Native restores pre-entry frames for surviving windows. Windows
-  opened during Tabbed keep their current frame. Switching to Bento tiles the
-  windows. Returning to Tabbed restores the runtime pane assignments.
+  opened during Tabbed keep their current frame. Switching to Bento gives every
+  tab its own pane. Returning from Native to Tabbed restores runtime assignments;
+  entering from Bento adopts the current Bento panes.
 
 Pane assignments and Undo history are runtime-only. Relaunch starts from the
 chosen default. The history holds the last 20 layout changes. Edge splits are
-limited to 12 panes in this test build. Title-bar drag integration and
-cross-display tab dragging are not implemented; use the tab strip on one display.
+limited to 12 panes in this test build. Dragging a managed window by its native
+title bar uses Bento drops: a center drop adds it to a pane's tabs, and an edge
+drop splits the pane. This tracks the window's native drag; dragging a tab strip
+starts BetterTile's separate tab drag. Cross-display tab dragging is not
+implemented. Keep these checks on one display.
 Ordinary BetterTile snap actions are disabled for Tabbed members. Float the
 window first to use those actions.
 

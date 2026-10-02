@@ -59,14 +59,8 @@ private func wheelVector(angle: Double, radius: Double = 60) -> BTPoint {
             )?.sector == next
         )
     }
-}
-
-@Test func wheelAngleWraparoundStaysInTopSector() {
-    let justClockwise = wheelVector(angle: -.pi / 8 + 0.000_001)
-    let justCounterclockwise = wheelVector(angle: 2 * .pi - .pi / 8 - 0.000_001)
-
-    #expect(wheelGeometry.selection(for: justClockwise, levelCount: .one)?.sector == .top)
-    #expect(wheelGeometry.selection(for: justCounterclockwise, levelCount: .one)?.sector == .topLeft)
+    #expect(wheelGeometry.selection(for: wheelVector(angle: -.pi / 8 + epsilon), levelCount: .one)?.sector == .top)
+    #expect(wheelGeometry.selection(for: wheelVector(angle: 2 * .pi - .pi / 8 - epsilon), levelCount: .one)?.sector == .topLeft)
 }
 
 @Test func wheelTwoLevelRadiiHaveExplicitOwnership() {

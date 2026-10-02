@@ -121,25 +121,14 @@ func everyRecognisedDestinationIsMatchedWithAndWithoutMargins(action: WindowActi
 
 // MARK: - Unrecognised movement
 
-/// Dragged by its title bar to somewhere arbitrary: both edges on both axes
-/// moved and it matches nothing, so the layout has to re-derive rather than
-/// pretend a divider moved.
-@Test func aFreeDragIsARelocation() {
-    let change = ExternalWindowChangeClassifier.classify(
-        expected: partition(.leftHalf),
-        observed: BTRect(x: 300, y: 200, width: 960, height: 983),
-        in: bounds
-    )
-    #expect(change == .relocation)
-}
-
-@Test func aWindowCarriedWithoutResizingIsARelocation() {
-    let change = ExternalWindowChangeClassifier.classify(
-        expected: BTRect(x: 0, y: 0, width: 400, height: 400),
-        observed: BTRect(x: 700, y: 300, width: 400, height: 400),
-        in: bounds
-    )
-    #expect(change == .relocation)
+/// A title-bar drag moves both edges without changing size, regardless of
+/// whether the window began in a tiled pane or at an arbitrary frame.
+@Test(arguments: [
+    (BTRect(x: 0, y: 0, width: 960, height: 983), BTRect(x: 300, y: 200, width: 960, height: 983)),
+    (BTRect(x: 0, y: 0, width: 400, height: 400), BTRect(x: 700, y: 300, width: 400, height: 400)),
+])
+func aWindowCarriedWithoutResizingIsARelocation(frames: (BTRect, BTRect)) {
+    #expect(ExternalWindowChangeClassifier.classify(expected: frames.0, observed: frames.1, in: bounds) == .relocation)
 }
 
 // MARK: - Matching hygiene
@@ -269,31 +258,6 @@ private let minimums: [WindowID: WindowConstraints] = [
     WindowID(rawValue: "B"): WindowConstraints(minimumSize: BTSize(width: 120, height: 80)),
 ]
 
-/// What the old code did, kept as an executable record of the defect. The
-/// fitter reads the relocated window's new far edge as a divider position and
-/// drives the split to the display edge, leaving the neighbour at its minimum
-/// width. If the classifier is ever removed, the test above goes red and this
-/// one explains why.
-@Test func theDividerFitterAloneStillCollapsesTheNeighbour() throws {
-    let a = WindowID(rawValue: "A")
-    let b = WindowID(rawValue: "B")
-    let state = twoPaneState(a, b)
-    let observed: [WindowID: BTRect] = [a: partition(.rightHalf), b: partition(.rightHalf)]
-
-    let fitted = try #require(
-        BentoLayoutFitter(tolerance: 6).fit(
-            state: state,
-            currentFrames: observed,
-            changedWindowIDs: [a],
-            in: bounds,
-            constraints: minimums
-        )
-    )
-    let widths = Dictionary(uniqueKeysWithValues: fitted.placements.map { ($0.windowID, $0.frame.size.width) })
-    #expect(widths[b] == 120, "the neighbour collapses to its minimum width")
-    #expect(widths[a] == 1800)
-}
-
 /// The fix, end to end: classification routes the same observation to the
 /// planner a BetterTile shortcut uses, which swaps the panes and leaves both at
 /// half width.
@@ -369,12 +333,14 @@ private let w3 = WindowID(rawValue: "w3")
 
 /// Two snaps in one flush must not depend on dictionary ordering.
 @Test func competingSnapsResolveDeterministically() {
-    let changes: [WindowID: ExternalWindowChange] = [
-        w3: .snapDestination(.leftHalf),
-        w1: .snapDestination(.rightHalf),
-        w2: .snapDestination(.maximize),
+    let entries: [(WindowID, ExternalWindowChange)] = [
+        (w3, .snapDestination(.leftHalf)),
+        (w1, .snapDestination(.rightHalf)),
+        (w2, .snapDestination(.maximize)),
     ]
-    for _ in 0..<50 {
+    for order in [entries, Array(entries.reversed())] {
+        var changes: [WindowID: ExternalWindowChange] = [:]
+        for (id, change) in order { changes[id] = change }
         #expect(ExternalChangeRouter.route(changes) == .snap(windowID: w1, action: .rightHalf))
     }
 }

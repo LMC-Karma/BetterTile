@@ -240,5 +240,6 @@ BetterTileApp  →  BetterTileMacOS  →  BetterTileCore
 
 `BetterTileCore` is pure, deterministic placement policy with **no** AppKit or
 Accessibility imports — that's what makes it directly testable. `BetterTileMacOS`
-owns every side effect and all coordinate conversion. `BetterTileApp` is SwiftUI
-scenes only. Full detail in [docs/ARCHITECTURE.md](ARCHITECTURE.md).
+owns window-system integration, window mutations, and coordinate conversion.
+`BetterTileApp` owns application lifecycle, SwiftUI UI, AppKit UI integrations,
+and Sparkle. Full detail in [docs/ARCHITECTURE.md](ARCHITECTURE.md).

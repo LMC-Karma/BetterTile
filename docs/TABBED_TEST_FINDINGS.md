@@ -199,8 +199,8 @@ without coming forward and selects the pane's selected window.
 
 ### Shared curtain and sizing follow-up
 
-A disposable AppKit experiment confirmed cross-process panel ordering on this
-Mac: a floating fixture window stayed above both selected fixture windows,
+A disposable AppKit experiment confirmed cross-process panel ordering in an
+isolated fixture: a floating fixture window stayed above both selected windows,
 which stayed above the shared curtain and an oversized inactive fixture.
 The curtain was visible and non-key. All fixture windows were closed. This
 checks public panel ordering and coverage geometry. It does not establish

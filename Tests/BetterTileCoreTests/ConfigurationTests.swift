@@ -45,6 +45,12 @@ func invalidGlassStrengthIsRejected(strength: Double) {
     configuration.singleWindowPlacement = .almostMaximize
     try store.save(configuration)
     #expect(try store.load() == configuration)
+    #expect(!(try Data(contentsOf: store.fileURL)).contains(0x0A))
+    configuration.showDockIcon = false
+    configuration.singleWindowPlacement = .center
+    try store.save(configuration)
+    #expect(try store.load() == configuration)
+    #expect(!(try Data(contentsOf: store.fileURL)).contains(0x0A))
 }
 
 @Test func schemaEightAddsPersistentSetupProgressWithoutRuntimeSideEffects() throws {
@@ -64,51 +70,6 @@ func invalidGlassStrengthIsRejected(strength: Double) {
     let roundTrip = try ConfigurationStore.decode(JSONEncoder().encode(completed))
     #expect(roundTrip == completed)
     #expect(ConfigurationChangeSet.between(migrated, completed).isEmpty)
-}
-
-@Test func configurationChangesClassifyOnlyAffectedRuntimeDomains() {
-    let original = BetterTileConfiguration()
-
-    var changed = original
-    changed.shortcuts[0].shortcut = nil
-    #expect(ConfigurationChangeSet.between(original, changed) == [.shortcuts])
-
-    changed = original
-    changed.snappingEnabled.toggle()
-    #expect(ConfigurationChangeSet.between(original, changed) == [.snapping])
-
-    changed = original
-    changed.linkedResizeEnabled.toggle()
-    #expect(ConfigurationChangeSet.between(original, changed) == [.linkedResize])
-
-    changed = original
-    changed.dividerThickness = 8
-    #expect(ConfigurationChangeSet.between(original, changed) == [.divider])
-
-    changed = original
-    changed.bentoInnerGap = 4
-    #expect(ConfigurationChangeSet.between(original, changed) == [.bentoGeometry])
-
-    changed = original
-    changed.showDockIcon.toggle()
-    #expect(ConfigurationChangeSet.between(original, changed) == [.activationPolicy])
-
-    changed = original
-    changed.doubleClickTitleBarToMaximize.toggle()
-    #expect(ConfigurationChangeSet.between(original, changed) == [.titleBar])
-
-    changed = original
-    changed.layoutWheel.levelCount = .two
-    #expect(ConfigurationChangeSet.between(original, changed) == [.layoutWheel])
-
-    changed = original
-    changed.adjacencyTolerance = 8
-    #expect(
-        ConfigurationChangeSet.between(original, changed)
-            == [.linkedResize, .divider, .bentoGeometry]
-    )
-
-    #expect(ConfigurationChangeSet.between(original, original).isEmpty)
 }
 
 @Test func menuBarActionsUseTheNativeDefaultOrderAndPreserveAnEmptyChoice() throws {
@@ -161,7 +122,7 @@ func invalidGlassStrengthIsRejected(strength: Double) {
     }
 }
 
-@Test func everyPersistedConfigurationFieldHasARuntimeChangeDomain() {
+@Test func configurationMutationsSelectOnlyTheirRuntimeDomains() {
     let original = BetterTileConfiguration()
     let mutations: [(ConfigurationChangeSet, (inout BetterTileConfiguration) -> Void)] = [
         ([.activationPolicy], { $0.showDockIcon.toggle() }),
@@ -181,6 +142,14 @@ func invalidGlassStrengthIsRejected(strength: Double) {
         ([.snapping], { $0.snapAreaBindings[0].action = nil }),
         ([.titleBar], { $0.doubleClickTitleBarToMaximize.toggle() }),
         ([.shortcuts], { $0.shortcuts[0].shortcut = nil }),
+        ([.shortcuts], { $0.keyboardShortcutsEnabled = false }),
+        ([.applicationRules], { $0.applicationRules.set(.ignoreEverywhere, for: "test.application") }),
+        ([.accessibilityWrites], { $0.enhancedUserInterfacePolicy = .disableOnly }),
+        ([], { $0.defaultTabbedPreset = .columns }),
+        ([], { $0.bentoNewWindowSide = .left }),
+        ([], { $0.setupCompletionVersion = 1 }),
+        ([], { $0.macOSTilingRecommendationAcknowledged = true }),
+        ([], { $0.stageManagerRecommendationAcknowledged = true }),
         ([.layoutWheel], { $0.layoutWheel.levelCount = .two }),
     ]
 
@@ -190,22 +159,11 @@ func invalidGlassStrengthIsRejected(strength: Double) {
         #expect(ConfigurationChangeSet.between(original, changed) == expected)
     }
 
+    #expect(ConfigurationChangeSet.between(original, original).isEmpty)
+
     var menuOnly = original
     menuOnly.menuBarActions = [.rightHalf, .leftHalf]
     #expect(ConfigurationChangeSet.between(original, menuOnly).isEmpty)
-}
-
-@Test func internalConfigurationStorageIsCompact() throws {
-    let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
-    defer { try? FileManager.default.removeItem(at: directory) }
-    let storeURL = directory.appending(path: "configuration.json")
-    let store = ConfigurationStore(fileURL: storeURL)
-
-    try store.save(BetterTileConfiguration())
-
-    let internalData = try Data(contentsOf: storeURL)
-    #expect(!internalData.contains(0x0A))
-    #expect(try store.load() == BetterTileConfiguration())
 }
 
 @Test func futureConfigurationIsRejected() throws {

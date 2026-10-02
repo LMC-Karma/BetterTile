@@ -342,6 +342,13 @@ private func plannerWindow(
     #expect(result.writesFrames)
     #expect(Set(result.placements.map(\.windowID)) == Set(windows.map(\.id)))
     #expect(Set(result.placements.map(\.frame.size)) == [BTSize(width: 600, height: 400)])
+    #expect(result.placements.count == 4)
+    for (index, left) in result.placements.enumerated() {
+        #expect(PlacementBounds.isContained(left.frame, in: plannerBounds))
+        for right in result.placements.dropFirst(index + 1) {
+            #expect((left.frame.intersection(right.frame)?.area ?? 0) < 0.001)
+        }
+    }
 }
 
 @Test func focusedInsertionUsesPracticalThreePaneLayout() throws {
@@ -393,6 +400,16 @@ private func plannerWindow(
             intent: .insert(windows[count - 1].id)
         ).state
 
+        #expect(Set(state.layout.root?.windowIDs ?? []) == Set(windows.prefix(count).map(\.id)))
+        let placements = state.layout.placements(in: plannerBounds)
+        #expect(placements.count == count)
+        #expect(abs(placements.reduce(0) { $0 + $1.frame.area } - plannerBounds.area) < 0.001)
+        for (index, left) in placements.enumerated() {
+            #expect(PlacementBounds.isContained(left.frame, in: plannerBounds))
+            for right in placements.dropFirst(index + 1) {
+                #expect((left.frame.intersection(right.frame)?.area ?? 0) < 0.001)
+            }
+        }
         let frames = Dictionary(
             uniqueKeysWithValues: state.layout.placements(in: plannerBounds)
                 .map { ($0.windowID, $0.frame) }

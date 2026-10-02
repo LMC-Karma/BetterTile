@@ -115,6 +115,7 @@ private final class MiddleClickPresenter: LayoutWheelPresenting {
         configuration: configuration,
         presenter: presenter,
         addGlobalMonitor: { _, _ in NSObject() },
+        addLocalMonitor: { _, _ in NSObject() },
         removeMonitor: { _ in },
         middleClickMonitor: monitor
     )
@@ -145,6 +146,7 @@ private final class MiddleClickPresenter: LayoutWheelPresenting {
         configuration: configuration,
         presenter: MiddleClickPresenter(),
         addGlobalMonitor: { _, _ in NSObject() },
+        addLocalMonitor: { _, _ in NSObject() },
         removeMonitor: { _ in },
         middleClickMonitor: monitor
     )
@@ -173,6 +175,7 @@ private final class MiddleClickPresenter: LayoutWheelPresenting {
         configuration: configuration,
         presenter: MiddleClickPresenter(),
         addGlobalMonitor: { _, _ in NSObject() },
+        addLocalMonitor: { _, _ in NSObject() },
         removeMonitor: { _ in },
         middleClickMonitor: monitor
     )

@@ -244,22 +244,29 @@ func tabbedStripFitsNarrowAndCrowdedPanes(width: Double, count: Int) {
     let bounds = BTRect(x: 12000, y: 0, width: 330, height: 500)
     let windows = (0..<9).map { index in
         WindowSnapshot(id: WindowID(rawValue: "menu-\(index)"), processIdentifier: 1,
-                       title: "Document \(index)", frame: bounds, displayID: DisplayID(rawValue: "preview"))
+                       title: index < 2 ? "Shared document — a full title that can exceed the menu width" : "Document \(index)",
+                       frame: bounds, displayID: DisplayID(rawValue: "preview"))
     }
     var state = TabbedLayoutState()
     state.reconcile(windowIDs: windows.map(\.id), removed: [], focused: windows.last?.id)
     let pane = try #require(state.panes.first)
     overlay.refresh(state: state, bounds: bounds, windows: windows)
     let menu = overlay.menu(pane: pane, windowID: nil)
-    #expect(windows.allSatisfy { menu.item(withTitle: $0.title) != nil })
+    let tabItems = Array(menu.items.dropFirst().prefix(windows.count))
+    #expect(tabItems.map(\.title) == pane.tabs.map { id in windows.first { $0.id == id }?.title })
+    #expect(tabItems.allSatisfy { $0.toolTip == $0.title })
+    // Identical labels still carry distinct window actions, including a tab
+    // hidden by the strip's overflow range.
+    #expect(tabItems.filter { $0.title == windows[0].title }.count == 2)
     #expect(menu.item(withTitle: "Document 8")?.state == .on)
     #expect(menu.item(withTitle: "Undo Layout Change")?.isEnabled == false)
     #expect(menu.item(withTitle: "Change Layout")?.submenu?.items.count == TabbedPreset.allCases.count)
     var selected: WindowID?
     overlay.onIntent = { if case let .select(id) = $0 { selected = id } }
-    let item = try #require(menu.item(withTitle: "Document 0"))
-    #expect(NSApp.sendAction(try #require(item.action), to: item.target, from: item))
-    #expect(selected == windows.first?.id)
+    for (index, item) in tabItems.enumerated() {
+        #expect(NSApp.sendAction(try #require(item.action), to: item.target, from: item))
+        #expect(selected == pane.tabs[index])
+    }
     overlay.refresh(state: state, bounds: bounds, windows: windows, canUndo: true)
     #expect(overlay.menu(pane: pane, windowID: nil).item(withTitle: "Undo Layout Change")?.isEnabled == true)
     #expect(overlay.menu(pane: pane, windowID: pane.selected).item(withTitle: "Move to Pane") == nil)

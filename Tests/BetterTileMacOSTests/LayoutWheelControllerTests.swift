@@ -58,7 +58,10 @@ private struct Harness {
         controller = LayoutWheelController(
             configuration: configuration,
             presenter: presenter,
-            pointerProvider: { pointer }
+            pointerProvider: { pointer },
+            addGlobalMonitor: { _, _ in NSObject() },
+            addLocalMonitor: { _, _ in NSObject() },
+            removeMonitor: { _ in }
         )
         controller.previewHandler = { _, _ in .ready(placements: []) }
         controller.start()
@@ -557,6 +560,7 @@ private struct Harness {
         configuration: BetterTileConfiguration(),
         presenter: FakePresenter(),
         addGlobalMonitor: { _, _ in nil },
+        addLocalMonitor: { _, _ in NSObject() },
         removeMonitor: { _ in }
     )
     var failure: String?
@@ -719,7 +723,9 @@ private struct Harness {
 func queuedWheelModifiersCannotStartAfterMonitorRetirement(retirement: String) async throws {
     var flags: ((NSEvent) -> Void)?
     let controller = LayoutWheelController(
-        configuration: BetterTileConfiguration(), presenter: FakePresenter(), pointerProvider: { anchor },
+        configuration: BetterTileConfiguration(), presenter: FakePresenter(),
+        // Hold the pending phase while this test checks queued monitor events.
+        activationDelay: .seconds(60), pointerProvider: { anchor },
         addGlobalMonitor: { mask, handler in
             if mask.contains(.flagsChanged) { flags = handler }
             return NSObject()
