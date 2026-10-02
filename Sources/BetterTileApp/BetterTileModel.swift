@@ -155,7 +155,7 @@ final class BetterTileModel {
         dragSnap.activeModeProvider = { [weak self] displayID in self?.activeMode(for: displayID) }
         dragSnap.bentoStateProvider = { [weak self] displayID in self?.sessionStore.session(for: displayID)?.bentoState }
         dragSnap.bentoDragBeganHandler = { [weak self] displayID, sourceID in
-            self?.prepareWindowGesture(on: displayID)
+            self?.prepareWindowGesture()
             return self?.beginBentoDrag(displayID: displayID, sourceID: sourceID) ?? false
         }
         dragSnap.bentoPreviewHandler = { [weak self] displayID, sourceID, outcome in
@@ -220,8 +220,8 @@ final class BetterTileModel {
                 self.presentActionResult(succeeded: false, error: message, displayID: displayID)
             }
         }
-        dividerResize.gestureWillBeginHandler = { [weak self] displayID in self?.prepareWindowGesture(on: displayID) }
-        linkedResize.gestureWillBeginHandler = { [weak self] in self?.system.forgetLearnedMinimums() }
+        dividerResize.gestureWillBeginHandler = { [weak self] in self?.prepareWindowGesture() }
+        linkedResize.gestureWillBeginHandler = { [weak self] in self?.prepareWindowGesture() }
         dividerResize.gestureEndedHandler = { [weak self] in
             self?.performDeferredDockReflow()
             self?.schedulePendingWindowEvents()
@@ -2825,10 +2825,13 @@ final class BetterTileModel {
         }.joined(separator: "|")
     }
 
-    func prepareWindowGesture(on displayID: DisplayID) {
-        // A Tabbed gesture must not erase evidence for inactive tabs whose
-        // current frame is already clamped at their minimum.
-        if activeMode(for: displayID) != .tabbed { system.forgetLearnedMinimums() }
+    func prepareWindowGesture() {
+        // The learner resets globally. Preserve evidence for retained Tabbed
+        // groups on every display and Space, including after a Native visit.
+        let retainsTabs = system.displays().contains { display in
+            sessionStore.allSessions(for: display.id).contains { $0.tabbedState != nil }
+        }
+        if !retainsTabs { system.forgetLearnedMinimums() }
     }
 
     private func refreshDividerBoundaries(windows suppliedWindows: [WindowSnapshot]? = nil) {
