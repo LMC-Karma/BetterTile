@@ -3,6 +3,117 @@ import BetterTileCore
 import Testing
 @testable import BetterTileMacOS
 
+@Test @MainActor func tabbedCurtainCoversContentBelowItsSelectedWindow() throws {
+    _ = NSApplication.shared
+    let id = WindowID(rawValue: "curtain-selected")
+    var state = TabbedLayoutState(preset: .columns)
+    state.reconcile(windowIDs: [id], removed: [], focused: id)
+    var ordered: [(NSPanel, Int)] = []
+    let overlay = TabbedOverlayController(orderCurtain: { ordered.append(($0, $1)) })
+    defer { overlay.hide() }
+    overlay.refresh(state: state, bounds: BTRect(x: 12000, y: 100, width: 1000, height: 800),
+                    windows: [], curtainWindowNumbers: [id: 123])
+
+    let (panel, number) = try #require(ordered.first)
+    #expect(ordered.count == 1) // The other pane is empty.
+    #expect(number == 123)
+    #expect(panel.level == .normal)
+    #expect(panel.ignoresMouseEvents)
+    #expect(!panel.canBecomeKey && !panel.canBecomeMain)
+    #expect(!panel.isAccessibilityElement())
+    #expect(panel.collectionBehavior.contains([.transient, .ignoresCycle]))
+    #expect(!panel.collectionBehavior.contains(.canJoinAllSpaces))
+    let frame = CoordinateConverter.toTopLeft(panel.frame, mainScreenFrame: NSScreen.screens.first!.frame)
+    #expect(frame == BTRect(x: 12000, y: 134, width: 497, height: 766))
+}
+
+@Test @MainActor func tabbedCurtainFollowsResizeAndSelectionAndHidesWithoutAnExactWindow() throws {
+    _ = NSApplication.shared
+    let bounds = BTRect(x: 12000, y: 0, width: 1000, height: 800)
+    let first = WindowID(rawValue: "curtain-first"), second = WindowID(rawValue: "curtain-second")
+    var state = TabbedLayoutState(preset: .columns)
+    state.reconcile(windowIDs: [first, second], removed: [], focused: first)
+    // Real AppKit ordering against our own off-screen windows. Cross-app
+    // ordering still needs the maintainer's live experiment.
+    let targets = (0..<2).map { _ in
+        NSPanel(contentRect: CoordinateConverter.toAppKit(bounds, mainScreenFrame: NSScreen.screens.first!.frame),
+                styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+    }
+    defer { targets.forEach { $0.orderOut(nil) } }
+    targets.forEach { $0.orderFrontRegardless() }
+    let numbers = [first: targets[0].windowNumber, second: targets[1].windowNumber]
+    var ordered: [(NSPanel, Int)] = []
+    let overlay = TabbedOverlayController(orderCurtain: { panel, number in
+        ordered.append((panel, number))
+        panel.order(.below, relativeTo: number)
+    })
+    defer { overlay.hide() }
+    overlay.refresh(state: state, bounds: bounds, windows: [], curtainWindowNumbers: numbers)
+    let curtain = try #require(ordered.first?.0)
+    #expect(curtain.isVisible)
+    let divider = try #require(state.dividers(in: bounds).first?.branchID)
+    let adjusted = state.adjustDivider(divider, by: 0.1, in: bounds)
+    #expect(adjusted)
+    overlay.refreshResize(state: state, bounds: bounds)
+    let frame = CoordinateConverter.toTopLeft(curtain.frame, mainScreenFrame: NSScreen.screens.first!.frame)
+    #expect(frame == BTRect(x: 12000, y: 34, width: 597, height: 766))
+    #expect(ordered.count == 1) // Resizing does not raise or reorder tabs.
+
+    state.select(second)
+    overlay.refresh(state: state, bounds: bounds, windows: [], curtainWindowNumbers: numbers)
+    #expect(ordered.last?.0 === curtain)
+    #expect(ordered.last?.1 == targets[1].windowNumber)
+    overlay.refresh(state: state, bounds: bounds, windows: [], curtainWindowNumbers: [second: 0])
+    #expect(!curtain.isVisible)
+    #expect(ordered.count == 2)
+    overlay.refresh(state: state, bounds: bounds, windows: [], curtainWindowNumbers: numbers)
+    let replacement = try #require(ordered.last?.0)
+    state.reconcile(windowIDs: [], removed: [first, second], focused: nil)
+    overlay.refresh(state: state, bounds: bounds, windows: [], curtainWindowNumbers: numbers)
+    #expect(!replacement.isVisible)
+
+    state.reconcile(windowIDs: [first], removed: [], focused: first)
+    overlay.refresh(state: state, bounds: bounds, windows: [], curtainWindowNumbers: numbers)
+    let final = try #require(ordered.last?.0)
+    overlay.hide()
+    overlay.refreshResize(state: state, bounds: bounds)
+    #expect(!final.isVisible)
+}
+
+@Test(arguments: [(false, false), (true, false), (false, true)]) @MainActor
+func tabbedCurtainUsesSolidAccessibilityFallback(options: (Bool, Bool)) {
+    _ = NSApplication.shared
+    let view = TabbedCurtainView(frame: NSRect(x: 0, y: 0, width: 400, height: 300))
+    view.displayOptions = { (options.0, options.1) }
+    view.refreshAppearance()
+    #expect(view.showsGlass == !(options.0 || options.1))
+    #expect(!view.isAccessibilityElement())
+    let plate = view.subviews.last?.layer?.backgroundColor
+    #expect(plate?.alpha == (options.0 || options.1 ? 1 : 0.96))
+}
+
+@Test @MainActor func tabbedCurtainFrostFollowsLightAndDarkAppearance() throws {
+    _ = NSApplication.shared
+    let view = TabbedCurtainView(frame: NSRect(x: 0, y: 0, width: 400, height: 300))
+    view.displayOptions = { (false, false) }
+    var brightness: [CGFloat] = []
+    for (name, appearanceName) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
+        view.appearance = try #require(NSAppearance(named: appearanceName))
+        view.refreshAppearance()
+        let color = try #require(view.subviews.last?.layer?.backgroundColor)
+        brightness.append(try #require(NSColor(cgColor: color)?.usingColorSpace(.sRGB)).redComponent)
+        if let directory = ProcessInfo.processInfo.environment["BETTERTILE_TAB_PREVIEW_DIR"] {
+            // Render only our own surface; no foreign-window content.
+            let bitmap = try #require(view.bitmapImageRepForCachingDisplay(in: view.bounds))
+            view.cacheDisplay(in: view.bounds, to: bitmap)
+            let png = try #require(bitmap.representation(using: .png, properties: [:]))
+            try png.write(to: URL(fileURLWithPath: directory).appendingPathComponent("curtain-\(name).png"))
+        }
+    }
+    #expect(brightness[0] > 0.5)
+    #expect(brightness[1] < 0.5)
+}
+
 @Test @MainActor func selectingVisibleTabKeepsCrowdedStripPositions() throws {
     _ = NSApplication.shared
     let overlay = TabbedOverlayController()

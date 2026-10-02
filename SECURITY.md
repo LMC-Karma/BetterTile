@@ -55,6 +55,13 @@ only to correlate observer callbacks. Logs contain capability availability and
 one-time fallback reasons, never titles, AX identifiers, raw desktop topology,
 or Stage Manager contents.
 
+Debug Tabbed pane curtains reuse the approved exact window identity to order
+BetterTile's own panels below selected windows with public AppKit. The adapter
+checks the owning PID, layer zero, and on-screen record before returning a
+window number. If the identity is unavailable or invalid, the pane has no
+curtain and keeps ordinary window stacking. This adds no private symbols,
+permissions, screen capture, or stored window identifiers.
+
 The `defaults` commands below use the public app's domain. For BetterTile Debug,
 replace `com.lmckarma.BetterTile` with
 `com.lmckarma.BetterTile.debug`; its preferences are intentionally separate.

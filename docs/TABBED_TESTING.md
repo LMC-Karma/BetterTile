@@ -5,6 +5,13 @@ on-screen window stacking. Inactive tabs remain open behind their pane's selecte
 window. Nothing is parked off-screen, minimized, or moved between native Spaces.
 Turn off Stage Manager before testing this mode.
 
+This build tests a pane curtain below each selected window. Its frosted surface
+covers inactive tabs when a selected window is smaller than its pane. The
+curtain follows divider drags while inactive tabs follow at release. It uses
+the selected window's validated exact identity; when that identity is
+unavailable, the pane keeps ordinary stacking without a curtain. This is an
+experiment to evaluate live before deciding whether to keep it.
+
 Record results and unresolved observations in
 [TABBED_TEST_FINDINGS.md](TABBED_TEST_FINDINGS.md).
 
@@ -32,10 +39,10 @@ empty. Click an empty pane to send newly opened windows there.
   position determines the destination, including after a fast drag.
   At the 12-pane limit, edge drops are unavailable; center moves still work.
 - Drop on **Float window** to detach. Escape or an invalid drop cancels.
-- Drag a divider to resize. Tab strips follow the divider during the drag.
+- Drag a divider to resize. Tab strips and pane curtains follow the divider during the drag.
   At release, all stacked members follow the pane so inactive windows do not
   retain a larger frame behind it. Side-by-side splits adjust
-  to the greatest minimum width of each pane's tabs. A requested 50/50 split
+  to each pane's selected tab's minimum width. A requested 50/50 split
   can become 40/60 when the right pane needs more width. Row ratios remain
   unchanged; minimum heights must fit below the tab strip. Impossible layouts
   are rejected. The real windows update from the latest pointer sample on each
@@ -85,6 +92,21 @@ system; the checks below validate real application and macOS behavior.
 
 - Put two windows from the same app in different panes, with another app selected
   in one pane. Select tabs repeatedly and confirm the other pane stays correct.
+- Test curtains with Safari, Finder, Terminal, and VS Code. Shrink a selected
+  window by its native edge and drag a divider. Confirm the frosted surface
+  hides inactive-tab detail, the selected window stays above it, and the
+  curtain follows the pane. Repeat with light and dark appearance, Reduce
+  Transparency, and Increase Contrast.
+- Switch apps with Cmd-Tab and Dock clicks, including an already selected tab.
+  Confirm other panes keep their selected windows above their curtains.
+  Repeat with windows from the same app on two displays.
+- Confirm curtains do not appear as windows in Cmd-Tab, Mission Control, or
+  App Exposé and do not take keyboard focus or block a floating window.
+- Change Spaces, enter fullscreen, disconnect a display, leave Tabbed, and quit
+  Debug. Confirm no curtain remains on an unrelated desktop or display.
+- Relaunch Debug with `disablePrivateAPIs` enabled as described in
+  [SECURITY.md](../SECURITY.md). Confirm Tabbed still works with ordinary
+  stacking and no curtains. Restore the default after this comparison.
 - Type after selecting a tab. Confirm input reaches the selected window.
 - Open Mission Control and App Exposé. Select an inactive window and confirm its
   tab becomes selected without another pane changing.
@@ -123,7 +145,10 @@ Core, fake-window coordinator, and app-model tests cover activation, membership,
 geometry, layout changes, focus requests, restoration, and session isolation.
 They also verify display-tick coalescing, exact release geometry, cancellation,
 final-frame rejection, and the absence of repeated tab ordering during a live
-resize. An off-screen pane rendering test checks accessibility actions without
+resize. Curtain tests cover content geometry, resize following, selected-window
+ordering requests, missing identities, cleanup, and solid accessibility
+fallbacks. Off-screen AppKit ordering tests use BetterTile's own windows and
+cannot prove cross-application ordering. An off-screen pane rendering test checks accessibility actions without
 capturing foreign windows. Real-app stacking, Mission Control/App Exposé, live
 performance, and display/Space transition behavior require the manual checks
 above. This test build is not evidence that those platform checks have passed.

@@ -22,6 +22,7 @@ final class FakeWindowSystem: WindowSystem, TargetedWindowSystem, WindowEventSou
     var delayedFocusReads = 0
     private var pendingFocusWindowID: WindowID?
     var closedWindowRequests: [WindowID] = []
+    func windowNumbers(for windows: [WindowSnapshot]) -> [WindowID: Int] { [:] }
     func raiseWindow(_ id: WindowID, activate: Bool) throws {
         if failingRaiseWindowID == id { throw WindowSystemError.operationFailed("Simulated raise failure") }
         guard windows.contains(where: { $0.id == id }) else { throw WindowSystemError.windowNotFound(id) }

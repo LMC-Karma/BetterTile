@@ -8,10 +8,11 @@ test. Use [TABBED_TESTING.md](TABBED_TESTING.md) for the manual procedure.
 
 ## Current assessment
 
-The implementation passes automated tests and builds. Real-window behavior is
-only partly verified. The inactive-tab strategy is still undecided: Tabbed
-stacks inactive windows behind the selected one, and no live experiment has yet
-shown that stacking keeps the right window in front across applications. That
+Real-window behavior is only partly verified. The inactive-tab strategy is
+still undecided. Debug now tests a frosted pane curtain below each selected
+window. Inactive windows stay stacked behind it; nothing is parked or
+minimized. Automated and off-screen checks cannot prove that cross-application
+ordering keeps the curtain between selected and inactive windows. That live
 experiment is the first remaining check below.
 
 Tabbed now runs on the Bento engine (see "Tabbed on Bento" in
@@ -85,6 +86,9 @@ real applications on a real desktop.
 | T-27 | Settings did not show preset geometry or explain how defaults apply | Revised; light and dark renders checked | Pending |
 | T-28 | A window-edge resize was ignored: hidden tabs showed and strips misaligned until Repair | Fixed | Pending |
 | T-29 | Tab strips followed a divider only at release | Fixed | Pending |
+| T-30 | Inactive tabs showed while a selected window was smaller than its pane | Curtain experiment; geometry, ordering requests, fallback, and cleanup covered | Pending |
+| T-31 | Activating an already selected app could expose its inactive tabs in another pane | Fixed; fake-window regression | Pending |
+| T-32 | Tabbed on two displays repeated placement for unrelated removal IDs | Fixed; unchanged displays settle once in model regression | Pending |
 
 The polish pass also fixes Bento clamping beside locked boundaries, divider
 Escape handling with either app focused, ignored linked-resize neighbors,
@@ -135,10 +139,13 @@ fake-window, and model regressions reproduce each failure before the fix.
 Start with two panes and two tabs per pane. Put windows from the same app in
 different panes, and include another app in at least one pane.
 
-1. **Stacking decision.** Make 100 tab selections for each app setup: Safari
-   or Chrome, Finder, Terminal, VS Code, and one slow app. Confirm that the
-   wrong window never shows and other panes do not change. Record whether
-   Tabbed keeps stacking or needs minimize-backed tabs.
+1. **Curtain decision.** Test Safari, Finder, Terminal, and VS Code with
+   repeated tab selections, Cmd-Tab, Dock clicks, native edge resizes, and
+   divider drags. Confirm inactive-window detail stays hidden, the selected
+   window stays above the curtain, and other panes do not change. Confirm
+   curtains are absent from Cmd-Tab, Mission Control, and App Exposé. Repeat
+   across a Space change and two displays, and compare the public fallback
+   with private APIs disabled. Record whether to keep or revise the curtain.
 2. Type after selecting a tab. Confirm input reaches the selected window.
 3. Try the 50/50 case where a right-hand tab needs about 60% width, including
    an inactive tab imposing the limit. Confirm inactive windows stay covered.
@@ -172,6 +179,8 @@ Spaces. Stage Manager must be off.
 
 Pane assignments and the last 20 layout changes are runtime-only. Edge splits
 stop at 12 panes. Cross-display tab dragging is not implemented. Hidden tabs
-follow a divider at release, not during the drag. While a selected window is
-smaller than its pane, during a divider drag or before an edge resize is
-released, the hidden tabs behind it can show.
+follow a divider at release, not during the drag. Curtains follow during the
+drag, but their cross-application ordering and visual coverage remain unproven.
+Without a validated exact identity, no curtain appears and hidden tabs can
+still show while a selected window is smaller than its pane. Curtains have no
+parking fallback.

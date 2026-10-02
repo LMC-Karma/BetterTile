@@ -71,6 +71,11 @@ frame. The selected tab's window is in front; the others stay open behind it.
 
 _Avoid_: native tab (the tabs inside one application's window)
 
+## Pane curtain
+
+A frosted surface behind a pane's selected window that covers inactive tabs
+when the selected window leaves part of the pane exposed.
+
 ## Floating window
 
 A window on a managed desktop that the active layout leaves in place. The user
