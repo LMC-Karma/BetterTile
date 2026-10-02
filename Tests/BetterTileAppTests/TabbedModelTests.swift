@@ -4,7 +4,8 @@ import BetterTileMacOS
 import Testing
 @testable import BetterTileApp
 
-@Test @MainActor func activatingFloatingTabbedAppKeepsItInFrontOfRepairedPanes() async throws {
+@Test(arguments: [false, true]) @MainActor
+func activatingFloatingTabbedAppKeepsItInFrontOfRepairedPanes(failOrdering: Bool) async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
     addTabbedWindows(2, to: system)
@@ -23,6 +24,7 @@ import Testing
     let raises = system.raiseRequests.count
 
     system.focusedID = floating
+    if failOrdering { system.failingNextRaiseWindowID = selected }
     model.handleApplicationActivation()
     #expect(await waitFor(timeout: .seconds(1)) {
         system.raiseRequests.dropFirst(raises).contains { $0.0 == selected && !$0.1 }
@@ -32,6 +34,7 @@ import Testing
     #expect(system.focusedID == floating)
     #expect(system.windows.map(\.frame) == frames)
     #expect(system.frameWriteCounts == writes)
+    #expect((model.statusMessage != nil) == failOrdering)
 }
 
 @Test(arguments: [false, true]) @MainActor
@@ -73,7 +76,8 @@ func activatingAppRestoresHiddenTabsOnOtherTabbedDisplays(focusedDisplayTabbed: 
     #expect(system.frameWriteCounts == writes)
 }
 
-@Test @MainActor func tabbedCurtainsResolveOnlySelectedWindowsAfterPlacementAndFocus() async throws {
+@Test(arguments: [false, true]) @MainActor
+func tabbedCurtainsResolveOnlySelectedWindowsAfterPlacementAndFocus(failSelection: Bool) async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
     addTabbedWindows(1, to: system)
@@ -88,13 +92,18 @@ func activatingAppRestoresHiddenTabsOnOtherTabbedDisplays(focusedDisplayTabbed: 
     try #require(await waitFor { model.activeTabbedState?.windowIDs.count == 2 })
     #expect(system.windowNumberRequests.last == [system.windows[0].id])
     let hidden = system.windows[1].id
+    let initialRequests = system.windowNumberRequests.count
+    if failSelection { system.failingNextRaiseWindowID = hidden }
     model.performTabbed(.select(hidden))
-    try #require(await waitFor { model.activeTabbedState?.activeWindowID == hidden })
-    #expect(system.windowNumberRequests.last == [hidden])
+    let shown = failSelection ? system.windows[0].id : hidden
+    if failSelection { try #require(await waitFor { model.statusMessage != nil }) }
+    else { try #require(await waitFor { model.activeTabbedState?.activeWindowID == shown }) }
+    #expect(system.windowNumberRequests.count > initialRequests) // Rollback reorders curtains too.
+    #expect(system.windowNumberRequests.last == [shown])
     let requests = system.windowNumberRequests.count
     model.handleApplicationActivation()
     #expect(await waitFor(timeout: .seconds(1)) { system.windowNumberRequests.count > requests })
-    #expect(system.windowNumberRequests.last == [hidden])
+    #expect(system.windowNumberRequests.last == [shown])
     #expect(model.statusMessage == nil) // Missing IDs do not reject the layout.
 }
 

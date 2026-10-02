@@ -3047,6 +3047,7 @@ extension BetterTileModel {
                     ? Set(windows.filter(\.isEligible).map(\.id))
                     : Set(proposal.placements.map(\.windowID))
                 var selected = proposal.state.selectedWindowIDs.filter(eligibleIDs.contains)
+                var previousSelected = previous?.selectedWindowIDs.filter(eligibleIDs.contains) ?? []
                 if selectionOnly, let process = orderingProcessIdentifier ?? windows.first(where: { $0.id == focus })?.processIdentifier {
                     let applicationWindows = Set(windows.filter { $0.processIdentifier == process }.map(\.id))
                     // Activating an app can expose its inactive tabs in other
@@ -3061,6 +3062,8 @@ extension BetterTileModel {
                     // activating an app or changing keyboard focus.
                     selected.removeAll { $0 == front.id }
                     selected.append(front.id)
+                    previousSelected.removeAll { $0 == front.id }
+                    previousSelected.append(front.id)
                 }
                 var learnedWidth = false
                 outcome = await self.coordinator.applyTabbed(
@@ -3069,7 +3072,7 @@ extension BetterTileModel {
                     // what the user sees must fit.
                     required: selectionOnly ? nil : Set(proposal.state.selectedWindowIDs),
                     selected: selected,
-                    previousSelected: previous?.selectedWindowIDs.filter(eligibleIDs.contains) ?? [],
+                    previousSelected: previousSelected,
                     focus: focus.flatMap { eligibleIDs.contains($0) ? $0 : nil },
                     onSizeMismatch: { id, requested, baseline, actual in
                         guard !selectionOnly, proposal.state.windowIDs.contains(id), actual.size.width > requested.size.width + 2 else { return }
@@ -3098,7 +3101,7 @@ extension BetterTileModel {
             let state = proposal.state
             let placements = proposal.placements
             self.tabbedTasks[display.id] = nil
-            guard self.sessionStore.session(for: display.id)?.id == original.id,
+            guard !self.isShutDown, self.sessionStore.session(for: display.id)?.id == original.id,
                   self.activeMode(for: display.id) == .tabbed else { return }
             if outcome.isApplied {
                 var proposed = original
@@ -3120,6 +3123,10 @@ extension BetterTileModel {
                 self.statusMessage = outcome.failureReason
                 if case .degraded = outcome {
                     self.sessionStore.update(display.id) { $0.suspendAutomaticWrites(observing: windows) }
+                } else if let restored = self.sessionStore.session(for: display.id) {
+                    // A complete rollback raised the previous selections.
+                    // Put their curtains below them again as well.
+                    self.showTabbed(session: restored, display: display, windows: windows)
                 }
                 self.presentActionResult(succeeded: false, error: outcome.failureReason, displayID: display.id)
             }

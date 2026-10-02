@@ -47,12 +47,17 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, TabbedWindowSystem {
     var focusedID: WindowID?
     var focusRequests: [WindowID] = []
     var raiseRequests: [(WindowID, Bool)] = []
+    var failingNextRaiseWindowID: WindowID?
     var windowNumberRequests: [Set<WindowID>] = []
     func windowNumbers(for windows: [WindowSnapshot]) -> [WindowID: Int] {
         windowNumberRequests.append(Set(windows.map(\.id)))
         return [:] // Simulate unavailable exact identities without live AX.
     }
     func raiseWindow(_ id: WindowID, activate: Bool) throws {
+        if failingNextRaiseWindowID == id {
+            failingNextRaiseWindowID = nil
+            throw WindowSystemError.operationFailed("Injected window ordering failure.")
+        }
         raiseRequests.append((id, activate))
         if activate { focusedID = id; focusRequests.append(id) }
     }

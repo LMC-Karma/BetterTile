@@ -895,7 +895,10 @@ extension WindowCoordinator {
             if touched {
                 for id in previousSelected { do { try tabSystem.raiseWindow(id, activate: false) } catch { failed = true } }
                 if let oldFocus, ids.contains(oldFocus) || previousSelected.contains(oldFocus) {
-                    do { try tabSystem.raiseWindow(oldFocus, activate: true) } catch { failed = true }
+                    // Ordering-only repair never changed keyboard focus. Do
+                    // not reactivate its floating window during rollback.
+                    let needsFocus = (try? system.focusedWindow()?.id) != oldFocus
+                    do { try tabSystem.raiseWindow(oldFocus, activate: needsFocus) } catch { failed = true }
                 }
             }
             let restored = (try? snapshots(ids: ids)) ?? []
