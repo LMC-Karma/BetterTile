@@ -58,8 +58,8 @@ empty. Click an empty pane to send newly opened windows there.
   restores the windows and the Tabbed state. A stable refusal in either
   dimension can cause one retry after complete
   rollback. Ignored size writes do not become minimum sizes. Gestures on any
-  display retain observed limits while Tabbed groups remain stored. A later accepted smaller size
-  lowers that learned limit.
+  display retain observed limits while Tabbed groups remain stored. Two
+  consecutive stable readings of a later smaller size lower that learned limit.
   Grabbing either side of a divider preserves the pointer's offset. A stationary
   grab does not move the divider. If cancellation cannot restore the previous
   arrangement, automatic placement stops until Repair or an explicit layout action.

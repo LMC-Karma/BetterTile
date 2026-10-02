@@ -52,7 +52,8 @@ repeating.
   minimum. Stale sessions, cancellation, and degraded restoration do not retry.
 - Gesture starts preserve learned limits while any display or stored desktop
   retains Tabbed groups, including during a Native visit. A gesture on another
-  display must not erase an inactive tab's limits. An observed smaller window size lowers the learned bound.
+  display must not erase an inactive tab's limits. Two consecutive stable
+  smaller size readings lower the learned bound.
   A content change alone does not prove that a smaller size will be accepted.
 - Repair rereads window constraints and fits the current pane groups.
 
