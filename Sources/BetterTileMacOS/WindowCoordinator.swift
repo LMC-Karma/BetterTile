@@ -650,6 +650,7 @@ public final class WindowCoordinator {
     private func applyAtomically(
         _ placements: [Placement],
         rollbackFrames: [WindowID: BTRect],
+        currentFrames: [WindowID: BTRect]? = nil,
         intermediate: Bool = false
     ) throws {
         guard !placements.isEmpty else { return }
@@ -661,7 +662,7 @@ public final class WindowCoordinator {
                     try apply(
                         placement.frame,
                         to: placement.windowID,
-                        knownCurrentFrame: rollbackFrames[placement.windowID],
+                        knownCurrentFrame: (currentFrames ?? rollbackFrames)[placement.windowID],
                         intermediate: intermediate
                     )
                 }
@@ -799,6 +800,48 @@ public final class WindowCoordinator {
 }
 
 extension WindowCoordinator {
+    /// Restores a previously verified Tabbed resize checkpoint. New size hints
+    /// must not prevent attempting that restoration; actual readback decides
+    /// whether it succeeded. Hidden tabs remain best effort.
+    public func restoreTabbedFrames(
+        _ frames: [WindowID: BTRect], required: Set<WindowID>, on displayID: DisplayID,
+        isCurrent: @MainActor () -> Bool
+    ) async -> WindowMutationOutcome {
+        let degraded = WindowMutationOutcome.degraded(reason: "Tabbed could not fully restore the previous arrangement. Use Repair Tabbed or switch to Native.")
+        guard isCurrent(), !Task.isCancelled,
+              let display = system.displays().first(where: { $0.id == displayID }),
+              let snapshots = try? snapshots(ids: Set(frames.keys)) else { return degraded }
+        // Size hints can change after a resize. Bypass only those hints;
+        // never write an unreadable, ineligible, or relocated participant.
+        let current = Dictionary(snapshots.filter {
+            $0.isEligible && $0.constraints.isResizable && $0.displayID == displayID
+                && frames[$0.id].map { PlacementBounds.isReachable($0, in: display.visibleFrame) } == true
+        }.map { ($0.id, $0.frame) }, uniquingKeysWith: { first, _ in first })
+        guard isCurrent(), !Task.isCancelled, !required.isEmpty,
+              required.isSubset(of: Set(current.keys)) else { return degraded }
+        system.withFrameWriteBatch {
+            for (id, frame) in frames.sorted(by: { $0.key < $1.key })
+                where current[id] != nil && current[id]?.approximatelyEquals(frame, tolerance: 1) != true {
+                guard isCurrent(), !Task.isCancelled else { break }
+                try? apply(frame, to: id, knownCurrentFrame: current[id])
+            }
+        }
+        for attempt in 0..<4 {
+            guard isCurrent(), !Task.isCancelled,
+                  let restored = try? self.snapshots(ids: required),
+                  isCurrent(), !Task.isCancelled else { return degraded }
+            if required.allSatisfy({ id in
+                guard let frame = frames[id] else { return false }
+                return restored.contains { $0.id == id && $0.isEligible && $0.displayID == displayID
+                    && $0.frame.approximatelyEquals(frame, tolerance: 2) }
+            }) { return .applied }
+            guard attempt < 3 else { break }
+            do { try await Task.sleep(for: .milliseconds(50)) }
+            catch { return degraded }
+        }
+        return degraded
+    }
+
     /// A bounded frame/order transaction. Windows remain on-screen and are
     /// never minimized. Session validity is checked again after each await.
     /// - Parameter required: Windows whose frames must fit and settle. Other
@@ -806,6 +849,8 @@ extension WindowCoordinator {
     ///   best effort: a refusal never fails the layout. Nil requires all.
     public func applyTabbed(
         placements allPlacements: [Placement],
+        rollbackFrames: [WindowID: BTRect]? = nil,
+        rollbackDisplayID: DisplayID? = nil,
         required: Set<WindowID>? = nil,
         selected: [WindowID],
         previousSelected: [WindowID],
@@ -819,30 +864,55 @@ extension WindowCoordinator {
             return .failed(reason: "This window system does not support Tabbed actions.")
         }
         guard isCurrent(), !Task.isCancelled else { return .failed(reason: "The desktop changed.") }
-        let ids = Set(placements.map(\.windowID))
+        let ids = required ?? Set(placements.map(\.windowID))
         let baseline: [WindowID: BTRect]
+        let currentFrames: [WindowID: BTRect]
+        let participantDisplayID: DisplayID?
         let oldFocus = try? system.focusedWindow()?.id
         do {
+            guard ids == Set(placements.map(\.windowID)) else {
+                throw WindowSystemError.operationFailed("One or more selected tabs are no longer available.")
+            }
             try validate(placements, sizeTolerance: 0.001)
-            baseline = Dictionary(uniqueKeysWithValues: try snapshots(ids: ids).map { ($0.id, $0.frame) })
-        } catch { return .failed(reason: error.localizedDescription) }
+            let participants = try snapshots(ids: ids)
+            guard isCurrent(), !Task.isCancelled,
+                  participants.count == ids.count,
+                  participants.allSatisfy({ $0.isEligible && $0.constraints.isResizable
+                      && (rollbackDisplayID == nil || $0.displayID == rollbackDisplayID) }) else {
+                throw WindowSystemError.operationFailed("The Tabbed participants changed.")
+            }
+            participantDisplayID = rollbackDisplayID ?? participants.first?.displayID
+            currentFrames = Dictionary(uniqueKeysWithValues: participants.map { ($0.id, $0.frame) })
+            // A resize has already changed real frames. Keep its verified
+            // checkpoint for refusal evidence and rollback, not that partial
+            // arrangement. Writes still compare against the current frames.
+            baseline = currentFrames.merging(rollbackFrames?.filter { ids.contains($0.key) } ?? [:]) { _, checkpoint in checkpoint }
+        } catch {
+            if let rollbackFrames, let rollbackDisplayID {
+                let restored = await restoreTabbedFrames(rollbackFrames, required: ids, on: rollbackDisplayID, isCurrent: isCurrent)
+                if case .degraded = restored { return restored }
+            }
+            return .failed(reason: error.localizedDescription)
+        }
         // Hidden tabs are best effort: read what is readable, and write only
         // frames that change, in the same batch as the required writes.
-        let bestEffortBaseline = Dictionary(
+        let bestEffortCurrent = Dictionary(
             ((try? snapshots(ids: Set(bestEffort.map(\.windowID)))) ?? []).map { ($0.id, $0.frame) },
             uniquingKeysWith: { first, _ in first }
         )
+        let hiddenIDs = Set(bestEffort.map(\.windowID))
+        let bestEffortBaseline = bestEffortCurrent.merging(rollbackFrames?.filter { hiddenIDs.contains($0.key) } ?? [:]) { _, checkpoint in checkpoint }
         let changedBestEffort = bestEffort.filter { placement in
-            bestEffortBaseline[placement.windowID].map { !$0.approximatelyEquals(placement.frame, tolerance: 0.5) } ?? false
+            bestEffortCurrent[placement.windowID].map { !$0.approximatelyEquals(placement.frame, tolerance: 0.5) } ?? false
         }
         var touched = false
         do {
-            let changed = placements.filter { !(baseline[$0.windowID]?.approximatelyEquals($0.frame, tolerance: 0.5) ?? false) }
+            let changed = placements.filter { !(currentFrames[$0.windowID]?.approximatelyEquals($0.frame, tolerance: 0.5) ?? false) }
             touched = !changed.isEmpty || !changedBestEffort.isEmpty
             try system.withFrameWriteBatch {
-                try applyAtomically(changed, rollbackFrames: baseline)
+                try applyAtomically(changed, rollbackFrames: baseline, currentFrames: currentFrames)
                 for placement in changedBestEffort {
-                    try? apply(placement.frame, to: placement.windowID, knownCurrentFrame: bestEffortBaseline[placement.windowID])
+                    try? apply(placement.frame, to: placement.windowID, knownCurrentFrame: bestEffortCurrent[placement.windowID])
                 }
             }
             if let focus {
@@ -915,14 +985,14 @@ extension WindowCoordinator {
             throw WindowSystemError.operationFailed("A window did not accept its Tabbed size. Choose a larger pane or try Repair Tabbed.")
         } catch {
             guard isCurrent() else { return .degraded(reason: "The desktop changed before Tabbed could restore its windows.") }
-            var failed = false
-            for (id, frame) in baseline.sorted(by: { $0.key < $1.key }) {
-                do { try apply(frame, to: id) } catch { failed = true }
+            guard let participantDisplayID else { return .failed(reason: error.localizedDescription) }
+            let restoration = await restoreTabbedFrames(
+                baseline.merging(bestEffortBaseline) { before, _ in before }, required: ids,
+                on: participantDisplayID, isCurrent: isCurrent)
+            guard isCurrent(), !Task.isCancelled else {
+                return .degraded(reason: "The desktop changed before Tabbed could restore its windows.")
             }
-            // Hidden tabs return too, without affecting the outcome.
-            for placement in changedBestEffort {
-                if let frame = bestEffortBaseline[placement.windowID] { try? apply(frame, to: placement.windowID) }
-            }
+            var failed = !restoration.isApplied
             if touched {
                 for id in previousSelected { do { try tabSystem.raiseWindow(id, activate: false) } catch { failed = true } }
                 if let oldFocus, ids.contains(oldFocus) || previousSelected.contains(oldFocus) {

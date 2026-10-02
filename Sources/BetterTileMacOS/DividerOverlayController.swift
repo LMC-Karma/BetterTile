@@ -334,7 +334,7 @@ public final class DividerOverlayController {
     private var hasPendingDisplayUpdate = false
     /// Consecutive live ticks on which a window held its size while asked to
     /// shrink. One tick is not proof: an application can apply a write late.
-    private var heldSizeTicks: [WindowID: (size: BTSize, count: Int)] = [:]
+    private var heldSizeTicks: [WindowID: (size: BTSize, widthCount: Int, heightCount: Int)] = [:]
 
     public convenience init(coordinator: WindowCoordinator, configuration: BetterTileConfiguration) {
         self.init(coordinator: coordinator, configuration: configuration, displayTicks: ResizeDisplayLink())
@@ -571,7 +571,7 @@ public final class DividerOverlayController {
         applyDrag(to: latestDragPoint, validateParticipants: false)
     }
 
-    private func applyDrag(to appKitPoint: CGPoint, validateParticipants: Bool) {
+    private func applyDrag(to appKitPoint: CGPoint, validateParticipants: Bool, minimumCorrections: Int = 0) {
         guard let interaction = baselineInteraction, let startPoint, let displayBounds, var transaction else { return }
         guard configuration.resizeFeedbackMode == .live || activeParticipantsArePresent() else {
             cancelActiveGesture()
@@ -674,15 +674,42 @@ public final class DividerOverlayController {
                 reportLiveBentoState(interaction)
                 let refused = recordRefusedMinimums(placements)
                 if refused.width || refused.height {
+                    if validateParticipants {
+                        // Correcting one axis can establish the other axis's
+                        // minimum. Allow two new-constraint solves at release;
+                        // further changes restore the gesture checkpoint.
+                        guard minimumCorrections < 2 else {
+                            cancelActiveGesture()
+                            return
+                        }
+                        applyDrag(to: appKitPoint, validateParticipants: true, minimumCorrections: minimumCorrections + 1)
+                        return
+                    }
                     // The application held its size: the next sample uses that
                     // minimum and the handle turns orange.
                     limit.width = limit.width || refused.width
                     limit.height = limit.height || refused.height
                     limit.blockedTowardPositive = refused.width ? point.x > startPoint.x : point.y > startPoint.y
                 }
+                if validateParticipants, minimumCorrections > 0 {
+                    // A final correction may first cross another limit before
+                    // two samples can establish it. Do not commit that overlap.
+                    guard let targeted = coordinator.system as? any TargetedWindowSystem,
+                          let actual = try? targeted.windowSnapshots(ids: Set(placements.map(\.windowID))),
+                          placements.allSatisfy({ placement in
+                              actual.contains { $0.id == placement.windowID && $0.frame.approximatelyEquals(placement.frame, tolerance: 2) }
+                          }) else {
+                        cancelActiveGesture()
+                        return
+                    }
+                }
                 presentHandle(for: proposedInteraction, near: point, active: true)
                 handlePanel?.setLimit(limit)
             case .failed:
+                if minimumCorrections > 0 {
+                    cancelActiveGesture()
+                    return
+                }
                 // A transient rejection keeps the gesture alive; the next drag
                 // sample proposes fresh placements.
                 self.transaction = transaction
@@ -774,18 +801,20 @@ public final class DividerOverlayController {
                 continue
             }
             let previous = heldSizeTicks[placement.windowID]
-            let unchanged = previous.map {
-                abs($0.size.width - size.width) <= 1 && abs($0.size.height - size.height) <= 1
-            } ?? false
-            let count = unchanged ? (previous?.count ?? 0) + 1 : 1
-            heldSizeTicks[placement.windowID] = (size, count)
-            guard count >= 2, let index = baselineWindows.firstIndex(where: { $0.id == placement.windowID }) else { continue }
+            // A junction can keep shrinking one axis while the other grows.
+            // Refusal evidence belongs to each axis, not the complete size.
+            let widthCount = heldWidth ? (previous.map { abs($0.size.width - size.width) <= 1 ? $0.widthCount + 1 : 1 } ?? 1) : 0
+            let heightCount = heldHeight ? (previous.map { abs($0.size.height - size.height) <= 1 ? $0.heightCount + 1 : 1 } ?? 1) : 0
+            heldSizeTicks[placement.windowID] = (size, widthCount, heightCount)
+            guard let index = baselineWindows.firstIndex(where: { $0.id == placement.windowID }) else { continue }
             var minimum = baselineWindows[index].constraints.minimumSize
-            if heldWidth { minimum.width = max(minimum.width, size.width) }
-            if heldHeight { minimum.height = max(minimum.height, size.height) }
+            let learnedWidth = widthCount >= 2 && size.width > minimum.width
+            let learnedHeight = heightCount >= 2 && size.height > minimum.height
+            if learnedWidth { minimum.width = size.width }
+            if learnedHeight { minimum.height = size.height }
             baselineWindows[index].constraints.minimumSize = minimum
-            refused.width = refused.width || heldWidth
-            refused.height = refused.height || heldHeight
+            refused.width = refused.width || learnedWidth
+            refused.height = refused.height || learnedHeight
         }
         return refused
     }

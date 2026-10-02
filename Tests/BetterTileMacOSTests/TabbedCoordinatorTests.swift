@@ -153,3 +153,75 @@ import Testing
     #expect(result.isApplied)
     #expect(learner.learnedSizes.isEmpty)
 }
+
+@Test @MainActor func tabbedResizeUsesActualFramesAsWriteHintsInsteadOfItsCheckpoint() async throws {
+    let system = FakeWindowSystem()
+    let id = system.windows[0].id
+    let checkpoint = system.windows[0].frame
+    system.windows[0].frame.size.width += 150
+    let actual = system.windows[0].frame
+    let target = checkpoint.offsetBy(dx: 50, dy: 0)
+    let result = await WindowCoordinator(system: system).applyTabbed(
+        placements: [Placement(windowID: id, frame: target)], rollbackFrames: [id: checkpoint], rollbackDisplayID: system.availableDisplays[0].id,
+        selected: [id], previousSelected: [id], focus: nil, isCurrent: { true })
+    #expect(result.isApplied)
+    #expect(system.recordedKnownCurrentFrames[id]?.first == actual)
+}
+
+@Test(arguments: ["stale", "unreadable", "minimized", "missing", "immovable", "display"])
+@MainActor func tabbedCheckpointPreflightNeverWritesUnvalidatedParticipants(failure: String) async {
+    let system = FakeWindowSystem()
+    let id = system.windows[0].id
+    let checkpoint = system.windows[0].frame
+    system.windows[0].frame.size.width += 150
+    var current = true
+    system.targetedSnapshotHandler = { _ in
+        switch failure {
+        case "stale": current = false; system.targetedSnapshotsFail = true
+        case "unreadable": system.targetedSnapshotsFail = true
+        case "minimized": system.windows[0].isMinimized = true
+        case "missing": system.windows = []
+        case "immovable": system.windows[0].constraints.isMovable = false
+        default: system.windows[0].displayID = DisplayID(rawValue: "other")
+        }
+    }
+    let result = await WindowCoordinator(system: system).applyTabbed(
+        placements: [Placement(windowID: id, frame: checkpoint)], rollbackFrames: [id: checkpoint], rollbackDisplayID: system.availableDisplays[0].id,
+        selected: [id], previousSelected: [id], focus: nil, isCurrent: { current })
+    #expect(!result.isApplied)
+    #expect(system.frameWriteCounts.isEmpty)
+    #expect(system.raisedWindows.isEmpty)
+}
+
+@Test(arguments: [false, true]) @MainActor
+func tabbedCheckpointVerificationStopsWhenItsDesktopOrTaskChanges(cancelled: Bool) async {
+    let system = FakeWindowSystem()
+    let id = system.windows[0].id
+    let checkpoint = system.windows[0].frame
+    system.windows[0].frame.size.width += 150
+    system.ignoredFrameWriteCounts[id] = 1
+    var current = true
+    let task = Task { @MainActor in
+        await WindowCoordinator(system: system).restoreTabbedFrames([id: checkpoint], required: [id],
+            on: system.availableDisplays[0].id, isCurrent: { current })
+    }
+    while system.frameWriteCounts.isEmpty { await Task.yield() }
+    if cancelled { task.cancel() } else { current = false }
+    let outcome = await task.value
+    #expect(!outcome.isApplied)
+    #expect(system.frameWriteCounts[id] == 1)
+    #expect(system.windows[0].frame != checkpoint)
+    #expect(system.raisedWindows.isEmpty)
+}
+
+@Test @MainActor func tabbedRequiredSelectionsCannotBeOmittedFromPlacement() async {
+    let system = FakeWindowSystem()
+    system.addSecondWindow()
+    let first = system.windows[0].id, second = system.windows[1].id
+    let outcome = await WindowCoordinator(system: system).applyTabbed(
+        placements: [Placement(windowID: first, frame: system.windows[0].frame)],
+        required: [first, second], selected: [first, second], previousSelected: [], focus: nil, isCurrent: { true })
+    #expect(!outcome.isApplied)
+    #expect(system.frameWriteCounts.isEmpty)
+    #expect(system.raisedWindows.isEmpty)
+}
