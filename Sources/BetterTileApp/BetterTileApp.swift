@@ -686,6 +686,11 @@ private final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSPo
         let interval = Self.signposter.beginInterval("closeWindow")
         defer { Self.signposter.endInterval("closeWindow", interval) }
         model.flushConfiguration()
+        if window === setupWindow {
+            // A new request starts at its requested page. Retaining the closed
+            // hosting controller would retain the previous SwiftUI page state.
+            setupWindow = nil
+        }
     }
 
     @objc private func repairCurrentLayout() {

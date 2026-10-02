@@ -140,6 +140,17 @@ private let dropBounds = BTRect(x: 0, y: 24, width: 1200, height: 876)
             contextWindowIDs: [source, other, third],
             in: dropBounds
         ), "Expected \(action.rawValue) to produce a gapped Bento layout")
+        #expect(Set(plan.placements.map(\.windowID)) == [source, other, third])
+        #expect(plan.placements.count == 3)
+        for (index, left) in plan.placements.enumerated() {
+            for right in plan.placements.dropFirst(index + 1) {
+                #expect(left.frame.maxX + 8 <= right.frame.minX + 0.001
+                    || right.frame.maxX + 8 <= left.frame.minX + 0.001
+                    || left.frame.maxY + 8 <= right.frame.minY + 0.001
+                    || right.frame.maxY + 8 <= left.frame.minY + 0.001,
+                    "Expected separate gapped panes for \(action)")
+            }
+        }
         #expect(plan.placements.allSatisfy {
             $0.frame.minX >= dropBounds.minX
                 && $0.frame.maxX <= dropBounds.maxX

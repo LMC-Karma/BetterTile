@@ -49,28 +49,18 @@ import Testing
     #expect(GestureEventTapRecovery.action(isEnabledAfterRecovery: false) == .fallBack)
 }
 
-@Test func sharedGestureEventContainsOnlyScalarInputData() {
-    let event = GlobalGestureEvent(
-        kind: .leftMouseDragged,
-        position: BTPoint(x: 20, y: 30),
-        button: 0,
-        modifiers: [.command, .shift],
-        timestamp: 42
-    )
+@Test(arguments: [false, true]) @MainActor
+func sharedGestureMonitorStopsAnInjectedWorkerWhetherStartSucceeds(canStart: Bool) {
+    let log = GestureEventTapWorkerLog()
+    log.canStart = canStart
+    let monitor = makeCooldownMonitor(log: log, clock: GestureEventTapTestClock())
 
-    #expect(event.position == BTPoint(x: 20, y: 30))
-    #expect(event.button == 0)
-    #expect(event.modifiers == [.command, .shift])
-    #expect(event.timestamp == 42)
-}
-
-@Test @MainActor func sharedGestureMonitorStopsCleanlyWithOrWithoutTapAccess() {
-    let monitor = SharedGestureEventMonitor()
-    let started = monitor.start()
-
-    #expect(monitor.isUsingEventTap == started)
+    #expect(monitor.start() == canStart)
+    #expect(monitor.isUsingEventTap == canStart)
+    let stopsBefore = log.stops
     monitor.stop()
     #expect(!monitor.isUsingEventTap)
+    #expect(log.stops == stopsBefore + (canStart ? 1 : 0))
 }
 
 @Test func gestureSourceHandoffDefersOnlyTheSwitchToTheEventTap() {
@@ -243,15 +233,12 @@ private final class FakeGestureEventTapWorker: GestureEventTapWorking {
     }
 }
 
-@Test func gestureClockPreservesCGEventTimestampNanoseconds() {
+@Test func gestureLatencyMeasuresTheDeliveryIntervalWithTheCGEventClock() {
     let timestamp: CGEventTimestamp = 1_000
 
     #expect(GestureEventClock.nanoseconds(cgEventTimestamp: timestamp) == timestamp)
-}
-
-@Test func gestureLatencyMeasuresTheDeliveryInterval() {
     #expect(GestureEventLatency.nanoseconds(
-        eventTimestamp: 1_000,
+        eventTimestamp: GestureEventClock.nanoseconds(cgEventTimestamp: timestamp),
         deliveredAt: 3_500
     ) == 2_500)
 }
