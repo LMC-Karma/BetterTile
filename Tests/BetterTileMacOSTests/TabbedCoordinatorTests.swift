@@ -142,7 +142,7 @@ import Testing
     system.targetedSnapshotHandler = { ids in
         guard ids.contains(hidden), system.frameWriteCounts[hidden, default: 0] > 0 else { return }
         hiddenReads += 1
-        if hiddenReads == 2 { system.windows[1].frame = target }
+        if hiddenReads == 3 { system.windows[1].frame = target }
     }
     let result = await WindowCoordinator(system: system).applyTabbed(
         placements: [Placement(windowID: shown, frame: target), Placement(windowID: hidden, frame: target)],
