@@ -71,6 +71,7 @@ final class BetterTileModel {
     private var sessionStore = LayoutSessionStore()
     private var tabbedOverlays: [DisplayID: TabbedOverlayController] = [:]
     private var tabbedTasks: [DisplayID: Task<Void, Never>] = [:]
+    private var tabbedTaskIDs: [DisplayID: UUID] = [:]
     private var tabbedQueuedIntents: [DisplayID: TabbedUIIntent] = [:]
     private var tabbedUndo: [DesktopSessionID: [TabbedLayoutState]] = [:]
     private var tabbedNeedsRefresh: Set<DisplayID> = []
@@ -180,17 +181,24 @@ final class BetterTileModel {
         }
         dividerResize.bentoStateChangedHandler = { [weak self] displayID, state, frames, baselineFrames in
             guard let self, var session = self.sessionStore.session(for: displayID) else { return }
-            let tabbedBefore = session.mode == .tabbed ? session.tabbedState : nil
+            if session.mode == .tabbed {
+                var proposal = session
+                proposal.bentoState = state
+                guard let tabbed = proposal.tabbedState,
+                      let display = self.system.displays().first(where: { $0.id == displayID }),
+                      let windows = try? self.system.visibleWindows() else { return }
+                self.applyTabbedState(tabbed, session: session, display: display,
+                    windows: self.bentoEligible(windows.filter { $0.displayID == displayID && $0.isEligible && !$0.isFloating }),
+                    focus: nil, rememberUndo: true,
+                    rollbackFrames: baselineFrames.merging(session.lastObservedFrames) { _, verified in verified })
+                return
+            }
             session.resumeAutomaticWrites()
             session.bentoState = state
             session.recordProposedFrames(frames)
             guard self.sessionStore.commit(session, replacing: session.revision) != nil else {
                 self.pendingWindowEvents.recordFrameChanges(Set(frames.keys))
                 self.schedulePendingWindowEvents()
-                return
-            }
-            if session.mode == .tabbed {
-                self.refreshTabbedAfterBentoChange(displayID: displayID, undoBaseline: tabbedBefore)
                 return
             }
             self.scheduleBentoSettlement(
@@ -2546,6 +2554,7 @@ final class BetterTileModel {
         for id in tabbedOverlays.keys.filter({ !displayIDs.contains($0) }) {
             tabbedOverlays.removeValue(forKey: id)?.hide()
             tabbedTasks.removeValue(forKey: id)?.cancel()
+            tabbedTaskIDs.removeValue(forKey: id)
         }
         sessionStore.removeMissingDisplays(displayIDs)
         if let nativeObservation {
@@ -3013,12 +3022,29 @@ extension BetterTileModel {
     private func applyTabbedState(
         _ state: TabbedLayoutState, session original: LayoutSession, display: DisplaySnapshot,
         windows: [WindowSnapshot], focus: WindowID?, rememberUndo: Bool = false, consumeUndo: Bool = false,
-        selectionOnly: Bool = false
+        selectionOnly: Bool = false, rollbackFrames: [WindowID: BTRect]? = nil
     ) {
         guard tabbedTasks[display.id] == nil else {
             tabbedNeedsReapply.insert(display.id)
             return
         }
+        guard sessionStore.isCurrent(original.id, revision: original.revision, on: display.id) else { return }
+        let isSameDesktop = { @MainActor [weak self] in
+            guard let self, !self.isShutDown, !self.isStabilizingSpace, self.hasAccessibilityPermission,
+                  !self.nativeFullscreenDisplayIDs.contains(display.id),
+                  self.activeMode(for: display.id) == .tabbed,
+                  self.system.displays().first(where: { $0.id == display.id })?.visibleFrame == display.visibleFrame else { return false }
+            if let observation = self.system.refreshNativeDesktopObservation() {
+                guard observation.allowsAutomaticLayout(on: display.id) else { return false }
+                if let space = original.nativeSpaceID,
+                   observation.currentSpace(on: display.id) != space { return false }
+            }
+            return self.sessionStore.session(for: display.id)?.id == original.id
+        }
+        let isCurrent = { @MainActor [weak self] in
+            isSameDesktop() && self?.sessionStore.isCurrent(original.id, revision: original.revision, on: display.id) == true
+        }
+        guard isCurrent() else { return }
         let previous = sessionStore.session(for: display.id)?.tabbedState
         let detached = (previous?.windowIDs ?? []).subtracting(state.windowIDs).intersection(state.floatingWindowIDs)
         var selectionOnly = selectionOnly
@@ -3037,6 +3063,9 @@ extension BetterTileModel {
                 }
                 selectionOnly = false
             }
+            guard Set(state.selectedWindowIDs).isSubset(of: Set(windows.filter { $0.isEligible && $0.displayID == display.id }.map(\.id))) else {
+                throw WindowSystemError.operationFailed("One or more selected tabs are no longer available.")
+            }
             let fitted = try state.fittingMinimumWidths(in: display.visibleFrame, windows: windows)
             var proposed = try fitted.placements(in: display.visibleFrame, windows: windows)
             let baselineFrames = Dictionary(uniqueKeysWithValues: windows.filter { detached.contains($0.id) }.map {
@@ -3048,9 +3077,45 @@ extension BetterTileModel {
             ))
             return (fitted, proposed)
         }
+        let taskID = UUID()
         let initial: (state: TabbedLayoutState, placements: [Placement])
         do { initial = try prepare(windows) }
-        catch { statusMessage = error.localizedDescription; return }
+        catch {
+            let reason = error.localizedDescription
+            guard let rollbackFrames else { statusMessage = reason; return }
+            tabbedTaskIDs[display.id] = taskID
+            tabbedOverlays[display.id]?.acceptsTabDrags = false
+            tabbedTasks[display.id] = Task { @MainActor [weak self] in
+                guard let self else { return }
+                defer {
+                    if self.tabbedTasks[display.id] == nil, self.tabbedQueuedIntents[display.id] == nil {
+                        self.tabbedOverlays[display.id]?.completeDrop()
+                        self.tabbedOverlays[display.id]?.acceptsTabDrags = true
+                    }
+                }
+                let restored = await self.coordinator.restoreTabbedFrames(rollbackFrames,
+                    required: Set(previous?.selectedWindowIDs ?? []), on: display.id, isCurrent: isCurrent)
+                guard self.tabbedTaskIDs[display.id] == taskID else { return }
+                self.tabbedTaskIDs.removeValue(forKey: display.id)
+                self.tabbedTasks[display.id] = nil
+                guard isSameDesktop(), !Task.isCancelled else { return }
+                guard isCurrent() else {
+                    self.drainTabbedQueuedIntent(on: display.id, sessionID: original.id)
+                    self.schedulePendingWindowEvents()
+                    return
+                }
+                if case let .degraded(reason) = restored {
+                    self.suspendAutomaticBentoWrites(displayID: display.id, windows: windows, error: reason)
+                } else {
+                    self.statusMessage = reason
+                    self.showTabbed(session: original, display: display, windows: windows)
+                }
+                self.drainTabbedQueuedIntent(on: display.id, sessionID: original.id)
+                self.schedulePendingWindowEvents()
+            }
+            return
+        }
+        tabbedTaskIDs[display.id] = taskID
         tabbedOverlays[display.id]?.acceptsTabDrags = false
         tabbedTasks[display.id] = Task { @MainActor [weak self] in
             guard let self else { return }
@@ -3066,14 +3131,6 @@ extension BetterTileModel {
             // selection raises only panes that activation really exposed.
             let repairsStackingAfterSelection = selectionOnly
                 && (self.system as? any TabbedWindowSystem)?.stackingOrder(for: windows, excluding: []) != nil
-            let isCurrent = { @MainActor [weak self] in
-                guard let self, !self.isShutDown, !self.isStabilizingSpace,
-                      self.activeMode(for: display.id) == .tabbed else { return false }
-                if let observation = self.system.refreshNativeDesktopObservation(),
-                   let space = original.nativeSpaceID,
-                   observation.currentSpace(on: display.id) != space { return false }
-                return self.sessionStore.isCurrent(original.id, revision: original.revision, on: display.id)
-            }
             var outcome: WindowMutationOutcome = .failed(reason: "The desktop changed.")
             for attempt in 0..<2 {
                 self.tabbedFocusSuppressedUntil = Date().addingTimeInterval(0.3)
@@ -3094,6 +3151,8 @@ extension BetterTileModel {
                 var learnedSize = false
                 outcome = await self.coordinator.applyTabbed(
                     placements: proposal.placements,
+                    rollbackFrames: rollbackFrames,
+                    rollbackDisplayID: rollbackFrames == nil ? nil : display.id,
                     // Selected tabs and newly floating windows must settle;
                     // hidden tabs stack behind their pane at best effort.
                     required: selectionOnly ? nil : Set(proposal.state.selectedWindowIDs).union(detached),
@@ -3127,9 +3186,15 @@ extension BetterTileModel {
             }
             let state = proposal.state
             let placements = proposal.placements
+            guard self.tabbedTaskIDs[display.id] == taskID else { return }
+            self.tabbedTaskIDs.removeValue(forKey: display.id)
             self.tabbedTasks[display.id] = nil
-            guard !self.isShutDown, self.sessionStore.session(for: display.id)?.id == original.id,
-                  self.activeMode(for: display.id) == .tabbed else { return }
+            guard !Task.isCancelled, isSameDesktop() else { return }
+            guard isCurrent() else {
+                self.drainTabbedQueuedIntent(on: display.id, sessionID: original.id)
+                self.schedulePendingWindowEvents()
+                return
+            }
             if outcome.isApplied {
                 var proposed = original
                 proposed.tabbedState = state
@@ -3264,13 +3329,15 @@ extension BetterTileModel {
             in: display.visibleFrame,
             tolerance: configuration.adjacencyTolerance
         ) else {
-            refreshTabbedAfterBentoChange(displayID: display.id)
+            applyTabbedState(state, session: session, display: display, windows: windows,
+                             focus: nil, rollbackFrames: session.lastObservedFrames)
             return
         }
-        var proposed = session
-        proposed.tabbedState = adopted
-        guard sessionStore.commit(proposed, replacing: session.revision) != nil else { return }
-        refreshTabbedAfterBentoChange(displayID: display.id, undoBaseline: state)
+        // Native resizing changed one real window already. Publish the new
+        // tree only after all selected tabs settle, and restore the verified
+        // layout rather than that externally changed frame on failure.
+        applyTabbedState(adopted, session: session, display: display, windows: windows,
+                         focus: nil, rememberUndo: true, rollbackFrames: session.lastObservedFrames)
     }
 
     /// Tab strips and curtains follow a divider during its drag. Hidden tabs

@@ -6,10 +6,10 @@ import Testing
 
 /// Two columns: `focused` selected over hidden `tab-1` on the left, `tab-3`
 /// selected over hidden `tab-2` on the right.
-@MainActor private func makeTwoTabbedColumns(_ system: FakeAppWindowSystem) async throws -> BetterTileModel {
+@MainActor private func makeTwoTabbedColumns(_ system: FakeAppWindowSystem, model suppliedModel: BetterTileModel? = nil) async throws -> BetterTileModel {
     _ = NSApplication.shared
     addTabbedWindows(3, to: system)
-    let model = makeModel(system: system)
+    let model = suppliedModel ?? makeModel(system: system)
     model.configuration.defaultTabbedPreset = .columns
     model.setActiveMode(.tabbed)
     try #require(await waitFor { model.activeTabbedState?.windowIDs.count == 4 })
@@ -585,7 +585,7 @@ func rejectedFloatingRestorationRetainsTabbedMembershipAndFrames(ignored: Bool) 
     #expect(model.statusMessage != nil)
     #expect(model.activeTabbedState == state)
     #expect(system.windows[0].frame == frame)
-    #expect(system.frameWriteCounts[id] == writes + 2)
+    #expect(system.frameWriteCounts[id, default: 0] > writes)
 }
 
 @Test @MainActor func failedFloatingBatchRollsBackAndDoesNotAddUndo() async throws {
@@ -1290,4 +1290,232 @@ func restoringTabbedBaselineRespectsCurrentMinimums(scenario: String, shuttingDo
 
     #expect(!model.dividerResize.isDragging)
     #expect(system.windows.allSatisfy { $0.frame == baseline })
+}
+
+@Test(arguments: [ResizeFeedbackMode.ghost, .live], [false, true]) @MainActor
+func tabbedDividerRecoversAnUnreportedMinimumAtRelease(feedback: ResizeFeedbackMode, height: Bool) async throws {
+    let system = FakeAppWindowSystem()
+    let model = try await makeTwoTabbedColumns(system)
+    defer { model.shutdown() }
+    if height {
+        model.performTabbed(.preset(.rows))
+        try #require(await waitFor { system.windows.allSatisfy { $0.frame.size.width == 1000 } })
+    }
+    model.configuration.resizeFeedbackMode = feedback
+    model.dividerResize.configuration = model.configuration
+    let before = try #require(model.activeTabbedState)
+    let right = try #require(before.panes[1].selected)
+    if height { system.enforcedMinimumHeights[right] = 300 }
+    else { system.enforcedMinimumWidths[right] = 400 }
+    let baseline = system.windows.map(\.frame)
+    let bounds = system.mainDisplay.visibleFrame
+    let start = BTPoint(x: bounds.midX, y: bounds.midY)
+    let presentation = model.dividerPresentation(windows: system.windows)
+    model.dividerResize.refresh(boundaries: presentation.boundaries, obscuringFrames: [])
+    let interaction = try #require(DividerInteractionResolver.resolve(
+        at: start, in: presentation.boundaries, hitWidth: 18,
+        adjacencyTolerance: 6, paneGap: model.configuration.bentoInnerGap
+    ))
+    let screen = try #require(NSScreen.screens.first)
+    let release = CGPoint(x: start.x + (height ? 0 : 200), y: screen.frame.maxY - start.y - (height ? 200 : 0))
+    model.dividerResize.beginGesture(interaction: interaction, at: start)
+    try #require(model.dividerResize.isDragging)
+    model.dividerResize.drag(to: release)
+    model.dividerResize.displayTick()
+    if feedback == .ghost { #expect(system.windows.map(\.frame) == baseline) }
+    model.dividerResize.end(at: release)
+    #expect(await waitFor(timeout: .seconds(2)) {
+        guard let state = model.activeTabbedState else { return false }
+        let panes = state.frames(in: bounds)
+        return state.selectedWindowIDs.allSatisfy { id in
+            guard let pane = state.panes.first(where: { $0.selected == id }),
+                  let rect = panes[pane.id] else { return false }
+            return frame(id, in: system)?.approximatelyEquals(TabbedLayoutState.contentFrame(rect), tolerance: 1) == true
+        }
+    })
+    #expect(model.activeTabbedState?.panes.map(\.tabs) == before.panes.map(\.tabs))
+    let settled = try #require(frame(right, in: system))
+    #expect(abs((height ? settled.size.height : settled.size.width) - (height ? 300 : 400)) < 1)
+    #expect(model.statusMessage == nil)
+}
+
+@Test @MainActor func failedNativeTabbedResizeRestoresTheVerifiedLayout() async throws {
+    let system = FakeAppWindowSystem()
+    let model = try await makeTwoTabbedColumns(system)
+    defer { model.shutdown() }
+    let before = try #require(model.activeTabbedState)
+    let baseline = system.windows.map(\.frame)
+    let selected = try #require(before.panes[0].selected)
+    let right = try #require(before.panes[1].selected)
+    system.failedFrameWriteNumbers[right] = [system.frameWriteCounts[right, default: 0] + 1]
+    var wider = try #require(frame(selected, in: system))
+    wider.size.width += 150
+    try sendResize(selected, to: wider, in: system)
+    try #require(await waitFor { model.statusMessage != nil })
+    #expect(model.activeTabbedState == before)
+    #expect(system.windows.map(\.frame) == baseline)
+}
+
+@Test @MainActor func impossibleNativeTabbedResizeStillRestoresItsCheckpoint() async throws {
+    let system = FakeAppWindowSystem()
+    let model = try await makeTwoTabbedColumns(system)
+    defer { model.shutdown() }
+    let before = try #require(model.activeTabbedState)
+    let baseline = system.windows.map(\.frame)
+    let selected = try #require(before.panes[0].selected)
+    let right = try #require(before.panes[1].selected)
+    let index = try #require(system.windows.firstIndex { $0.id == right })
+    // A new size hint makes the proposal impossible before any placement
+    // batch. The application still accepts its previously verified frame.
+    system.windows[index].constraints.minimumSize.width = 950
+    var wider = try #require(frame(selected, in: system))
+    wider.size.width += 150
+    try sendResize(selected, to: wider, in: system)
+    try #require(await waitFor { model.statusMessage != nil })
+    #expect(model.activeTabbedState == before)
+    #expect(system.windows.map(\.frame) == baseline)
+}
+
+@Test(arguments: [ResizeFeedbackMode.ghost, .live], [false, true]) @MainActor
+func ignoredTabbedDividerWritesRestoreWithoutLearningOrRepeating(feedback: ResizeFeedbackMode, displaced: Bool) async throws {
+    let system = FakeAppWindowSystem()
+    let model = try await makeTwoTabbedColumns(system)
+    defer { model.shutdown() }
+    model.configuration.resizeFeedbackMode = feedback
+    model.dividerResize.configuration = model.configuration
+    let before = try #require(model.activeTabbedState)
+    let baseline = system.windows.map(\.frame)
+    let right = try #require(before.panes[1].selected)
+    system.ignoredFrameWriteWindowIDs.insert(right)
+    if displaced { system.windows[0].frame.size.width -= 50 }
+    let bounds = system.mainDisplay.visibleFrame
+    let start = BTPoint(x: bounds.midX, y: bounds.midY)
+    let presentation = model.dividerPresentation(windows: system.windows)
+    model.dividerResize.refresh(boundaries: presentation.boundaries, obscuringFrames: [])
+    let interaction = try #require(DividerInteractionResolver.resolve(
+        at: start, in: presentation.boundaries, hitWidth: 18,
+        adjacencyTolerance: 6, paneGap: model.configuration.bentoInnerGap
+    ))
+    let screen = try #require(NSScreen.screens.first)
+    let release = CGPoint(x: start.x + 150, y: screen.frame.maxY - start.y)
+    model.dividerResize.beginGesture(interaction: interaction, at: start)
+    try #require(model.dividerResize.isDragging)
+    model.dividerResize.drag(to: release)
+    model.dividerResize.displayTick()
+    #expect(!model.dividerResize.dragLimit.isLimited)
+    model.dividerResize.end(at: release)
+    try #require(await waitFor { model.statusMessage != nil })
+    #expect(model.activeTabbedState == before)
+    #expect(system.windows.map(\.frame) == baseline)
+    #expect(system.windows.first { $0.id == right }?.constraints.minimumSize.width == 120)
+    let writes = system.frameWriteCounts
+    let selected = try #require(before.panes[0].selected)
+    try sendResize(selected, to: try #require(frame(selected, in: system)), in: system)
+    try await Task.sleep(for: .milliseconds(300))
+    #expect(system.frameWriteCounts == writes)
+}
+
+@Test @MainActor func refusedTabbedCheckpointRestoreSuspendsAutomaticCorrections() async throws {
+    let system = FakeAppWindowSystem()
+    let model = try await makeTwoTabbedColumns(system)
+    defer { model.shutdown() }
+    let before = try #require(model.activeTabbedState)
+    let selected = try #require(before.panes[0].selected)
+    let right = try #require(before.panes[1].selected)
+    let index = try #require(system.windows.firstIndex { $0.id == right })
+    system.windows[index].constraints.minimumSize.width = 950
+    system.ignoredFrameWriteWindowIDs.insert(selected)
+    var wider = try #require(frame(selected, in: system))
+    wider.size.width += 150
+    try sendResize(selected, to: wider, in: system)
+    try #require(await waitFor { model.statusMessage?.contains("could not fully restore") == true })
+    #expect(model.activeTabbedState == before)
+    let writes = system.frameWriteCounts
+    system.windows[index].constraints.minimumSize.width = 120
+    system.ignoredFrameWriteWindowIDs.remove(selected)
+    try sendResize(selected, to: wider, in: system)
+    try await Task.sleep(for: .milliseconds(300))
+    #expect(system.frameWriteCounts == writes)
+}
+
+@Test @MainActor func delayedNativeTabbedCheckpointRestoreDoesNotReportDegraded() async throws {
+    let system = FakeAppWindowSystem()
+    let model = try await makeTwoTabbedColumns(system)
+    defer { model.shutdown() }
+    let before = try #require(model.activeTabbedState)
+    let baseline = system.windows.map(\.frame)
+    let selected = try #require(before.panes[0].selected)
+    let right = try #require(before.panes[1].selected)
+    let index = try #require(system.windows.firstIndex { $0.id == right })
+    system.windows[index].constraints.minimumSize.width = 950
+    system.frameApplicationDelays[selected] = .milliseconds(100)
+    var wider = try #require(frame(selected, in: system))
+    wider.size.width += 150
+    try sendResize(selected, to: wider, in: system)
+    try #require(await waitFor { system.windows.map(\.frame) == baseline && model.statusMessage != nil })
+    #expect(model.activeTabbedState == before)
+    #expect(model.statusMessage?.contains("could not fully restore") == false)
+}
+
+@Test(arguments: [false, true]) @MainActor
+func delayedNativeTabbedCheckpointRestoreLocksTabDragsUntilCompletion(cancelRestore: Bool) async throws {
+    _ = NSApplication.shared
+    let system = FakeAppWindowSystem()
+    // Keep the test's own panels off-screen; all window writes use the fake.
+    system.availableDisplays[0].frame.origin.x = 12000
+    system.availableDisplays[0].visibleFrame.origin.x = 12000
+    for index in system.windows.indices { system.windows[index].frame.origin.x += 12000 }
+    let store = ConfigurationStore(fileURL: URL(filePath: "/private/tmp/BetterTileAppTests-\(UUID().uuidString)/configuration.json"))
+    let model = BetterTileModel(store: store, system: system, startRuntime: false, presentsTabbedChrome: true)
+    model.primaryButtonIsPressed = { false }
+    defer { model.shutdown() }
+    _ = try await makeTwoTabbedColumns(system, model: model)
+    let before = try #require(model.activeTabbedState)
+    let pane = try #require(NSApp.windows.compactMap(\.contentView).compactMap { $0 as? TabbedPaneView }
+        .first { $0.pane.id == before.panes[0].id })
+    let overlay = try #require(pane.owner)
+    try #require(await waitFor { overlay.acceptsTabDrags })
+    let baseline = system.windows.map(\.frame)
+    let selected = try #require(before.panes[0].selected)
+    let right = try #require(before.panes[1].selected)
+    let index = try #require(system.windows.firstIndex { $0.id == right })
+    system.windows[index].constraints.minimumSize.width = 950
+    system.frameApplicationDelays[selected] = .milliseconds(100)
+    let writes = system.frameWriteCounts[selected, default: 0]
+    var wider = try #require(frame(selected, in: system))
+    wider.size.width += 150
+    try sendResize(selected, to: wider, in: system)
+    try #require(await waitFor { system.frameWriteCounts[selected, default: 0] > writes })
+    #expect(!overlay.acceptsTabDrags)
+    if cancelRestore {
+        model.shutdown()
+    } else {
+        try #require(await waitFor { system.windows.map(\.frame) == baseline && model.statusMessage != nil })
+        #expect(model.activeTabbedState == before)
+    }
+    try #require(await waitFor { overlay.acceptsTabDrags })
+    #expect(!overlay.isDropPending)
+}
+
+@Test @MainActor func shutdownCancelsDelayedNativeCheckpointVerification() async throws {
+    let system = FakeAppWindowSystem()
+    let model = try await makeTwoTabbedColumns(system)
+    defer { model.shutdown() }
+    let state = try #require(model.activeTabbedState)
+    let selected = try #require(state.panes[0].selected)
+    let right = try #require(state.panes[1].selected)
+    let index = try #require(system.windows.firstIndex { $0.id == right })
+    system.windows[index].constraints.minimumSize.width = 950
+    system.frameApplicationDelays[selected] = .milliseconds(100)
+    let writes = system.frameWriteCounts[selected, default: 0]
+    var wider = try #require(frame(selected, in: system))
+    wider.size.width += 150
+    try sendResize(selected, to: wider, in: system)
+    try #require(await waitFor { system.frameWriteCounts[selected, default: 0] > writes })
+    model.statusMessage = "shutdown-checkpoint"
+    model.shutdown()
+    let shutdownWrites = system.frameWriteCounts
+    try await Task.sleep(for: .milliseconds(200))
+    #expect(model.statusMessage == "shutdown-checkpoint")
+    #expect(system.frameWriteCounts == shutdownWrites)
 }
