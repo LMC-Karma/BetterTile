@@ -100,9 +100,9 @@ final class BetterTileModel {
     private var confirmedMinimizedWindowIDs: Set<WindowID> = []
     private var actionVerificationTask: Task<Void, Never>?
     private var pendingRestoredWindowDeadlines: [WindowID: Date] = [:]
-    private var windowEventTask: Task<Void, Never>?
+    private(set) var windowEventTask: Task<Void, Never>?
     private var windowEventRetryBackoff = WindowEventRetryBackoff()
-    private var settlementTasks: [DisplayID: Task<Void, Never>] = [:]
+    private(set) var settlementTasks: [DisplayID: Task<Void, Never>] = [:]
     private var settlementTaskGenerations: [DisplayID: UInt64] = [:]
     private var spaceStabilizationTask: Task<Void, Never>?
     private let displayRefreshDebouncer = DisplayRefreshDebouncer()

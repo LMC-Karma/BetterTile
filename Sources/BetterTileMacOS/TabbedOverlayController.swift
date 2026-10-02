@@ -257,7 +257,8 @@ public final class TabbedOverlayController {
     func menu(pane: TabbedPane, windowID: WindowID?) -> NSMenu {
         let menu = NSMenu()
         menu.autoenablesItems = false
-        func item(_ title: String, _ intent: TabbedUIIntent, enabled: Bool = true, selected: Bool = false, in menu: NSMenu) {
+        @discardableResult
+        func item(_ title: String, _ intent: TabbedUIIntent, enabled: Bool = true, selected: Bool = false, in menu: NSMenu) -> NSMenuItem {
             let action = TabbedMenuAction { [weak self] in self?.send(intent) }
             let entry = NSMenuItem(title: title, action: #selector(TabbedMenuAction.invoke), keyEquivalent: "")
             entry.target = action
@@ -265,6 +266,7 @@ public final class TabbedOverlayController {
             entry.isEnabled = enabled
             entry.state = selected ? .on : .off
             menu.addItem(entry)
+            return entry
         }
         if let id = windowID {
             item("Select Tab", .select(id), in: menu)
@@ -288,7 +290,12 @@ public final class TabbedOverlayController {
             for id in pane.tabs {
                 let window = windows[id]
                 let title = window.map { $0.title.isEmpty ? ($0.bundleIdentifier ?? "Window") : $0.title } ?? "Unavailable window"
-                item(title, .select(id), selected: pane.selected == id, in: menu)
+                let entry = item(title, .select(id), selected: pane.selected == id, in: menu)
+                entry.toolTip = title
+                if let bundleID = window?.bundleIdentifier {
+                    entry.image = (applicationIcons[bundleID] ?? nil)?.copy() as? NSImage
+                    entry.image?.size = NSSize(width: 16, height: 16)
+                }
             }
             menu.addItem(.separator())
         }
