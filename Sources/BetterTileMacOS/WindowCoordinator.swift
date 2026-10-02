@@ -243,22 +243,30 @@ public final class WindowCoordinator {
     }
 
     public func perform(_ plan: WindowActionPlan) -> WindowMutationOutcome {
-        do {
-            if !plan.resolvedAction.isRestore {
-                history.record(plan.sourceFrame, for: plan.windowID)
-            }
-            try apply(plan.targetFrame, to: plan.windowID, knownCurrentFrame: plan.sourceFrame)
-            return .applied
-        } catch {
-            return .failed(reason: error.localizedDescription)
-        }
+        perform(WindowPlacementPlan(plan), restoringHistory: plan.resolvedAction.isRestore)
     }
 
     public func perform(_ plan: WindowPlacementPlan) -> WindowMutationOutcome {
+        perform(plan, restoringHistory: false)
+    }
+
+    private func perform(_ plan: WindowPlacementPlan, restoringHistory: Bool) -> WindowMutationOutcome {
+        if restoringHistory, history.peek(for: plan.windowID) != plan.targetFrame {
+            return .failed(reason: "The restore history changed before the action could be applied.")
+        }
         do {
-            history.record(plan.sourceFrame, for: plan.windowID)
-            try apply(plan.targetFrame, to: plan.windowID, knownCurrentFrame: plan.sourceFrame)
+            try applyAtomically(
+                [Placement(windowID: plan.windowID, frame: plan.targetFrame)],
+                rollbackFrames: [plan.windowID: plan.sourceFrame]
+            )
+            if restoringHistory {
+                _ = history.restore(for: plan.windowID)
+            } else {
+                history.record(plan.sourceFrame, for: plan.windowID)
+            }
             return .applied
+        } catch let error as DegradedApplyError {
+            return .degraded(reason: error.message)
         } catch {
             return .failed(reason: error.localizedDescription)
         }
@@ -472,7 +480,7 @@ public final class WindowCoordinator {
             // Intermediate ticks skip frames already requested. A validated
             // apply resends every frame: an application can accept a write
             // and ignore it, so the last request is not proof of its frame.
-            let changed = validateParticipants
+            let changed = validateParticipants || transaction.hasDegradedApply
                 ? transaction.proposedPlacements
                 : transaction.proposedPlacements.filter {
                     transaction.lastAppliedFrames[$0.windowID]?.approximatelyEquals($0.frame, tolerance: 0.01) != true
@@ -754,7 +762,7 @@ public final class WindowCoordinator {
         }
         let target: BTRect?
         if resolvedAction.isRestore {
-            target = history.restore(for: window.id)
+            target = history.peek(for: window.id)
         } else if resolvedAction.isDisplayTransfer {
             target = transferTarget(for: resolvedAction, window: window, displays: displays)
         } else {

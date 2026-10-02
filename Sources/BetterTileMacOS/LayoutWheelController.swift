@@ -131,6 +131,9 @@ public final class LayoutWheelController {
     /// hold that just committed would immediately start another activation.
     private var isArmed = true
     private var isStarted = false
+    private var flagsMonitorGeneration: UInt64 = 0
+    private var keyMonitorGeneration: UInt64 = 0
+    private var pointerMonitorGeneration: UInt64 = 0
     private var isSuspended = false
     private var keyboardMonitoringFailure: String?
     private var middleClickMonitoringFailure: String?
@@ -248,16 +251,21 @@ public final class LayoutWheelController {
     /// keystrokes and no pointer movement for this feature.
     private func syncMonitoring() {
         if isStarted, isKeyboardTriggerEnabled {
+            let generation = flagsMonitorGeneration
             let handler: (NSEvent) -> Void = { [weak self] event in
                 let modifiers = ShortcutModifiers(event.modifierFlags)
-                Task { @MainActor in self?.handleModifiers(modifiers) }
+                Task { @MainActor in
+                    guard let self, self.isStarted, self.flagsMonitorGeneration == generation else { return }
+                    self.handleModifiers(modifiers)
+                }
             }
             if flagsMonitor == nil {
                 flagsMonitor = addGlobalMonitor([.flagsChanged], handler)
             }
             if localFlagsMonitor == nil {
                 localFlagsMonitor = addLocalMonitor([.flagsChanged]) { [weak self] _, modifiers in
-                    self?.handleModifiers(modifiers)
+                    guard let self, self.isStarted, self.flagsMonitorGeneration == generation else { return false }
+                    self.handleModifiers(modifiers)
                     return false
                 }
             }
@@ -267,6 +275,7 @@ public final class LayoutWheelController {
                 publishMonitoringFailure()
             }
         } else {
+            flagsMonitorGeneration &+= 1
             if let flagsMonitor {
                 removeMonitor(flagsMonitor)
                 self.flagsMonitor = nil
@@ -305,17 +314,23 @@ public final class LayoutWheelController {
         }
 
         if needsKeys, keyMonitor == nil || localKeyMonitor == nil {
+            let generation = keyMonitorGeneration
             let globalHandler: (NSEvent) -> Void = { [weak self] event in
                 let keyCode = event.keyCode
-                Task { @MainActor in self?.handleKeyDown(keyCode: keyCode) }
+                Task { @MainActor in
+                    guard let self, self.keyMonitorGeneration == generation else { return }
+                    self.handleKeyDown(keyCode: keyCode)
+                }
             }
             if keyMonitor == nil { keyMonitor = addGlobalMonitor([.keyDown], globalHandler) }
             if localKeyMonitor == nil {
                 localKeyMonitor = addLocalMonitor([.keyDown]) { [weak self] keyCode, _ in
-                    self?.handleLocalKeyDown(keyCode: keyCode) ?? false
+                    guard let self, self.keyMonitorGeneration == generation else { return false }
+                    return self.handleLocalKeyDown(keyCode: keyCode)
                 }
             }
         } else if !needsKeys {
+            keyMonitorGeneration &+= 1
             if let keyMonitor {
                 removeMonitor(keyMonitor)
                 self.keyMonitor = nil
@@ -327,12 +342,13 @@ public final class LayoutWheelController {
         }
 
         if needsPointer, pointerMonitor == nil || localPointerMonitor == nil {
+            let generation = pointerMonitorGeneration
             let mask: NSEvent.EventTypeMask = [
                 .mouseMoved, .leftMouseDragged, .rightMouseDragged, .otherMouseDragged,
             ]
             let handler: (NSEvent) -> Void = { [weak self] _ in
                 Task { @MainActor [weak self] in
-                    guard let self, let frame = NSScreen.screens.first?.frame else { return }
+                    guard let self, pointerMonitorGeneration == generation, let frame = NSScreen.screens.first?.frame else { return }
                     handlePointer(GlobalGestureEvent.position(
                         nsEventMouseLocation: NSEvent.mouseLocation,
                         primaryScreenFrame: frame
@@ -343,7 +359,7 @@ public final class LayoutWheelController {
             if localPointerMonitor == nil {
                 localPointerMonitor = addLocalMonitor(mask) { [weak self] _, _ in
                     Task { @MainActor [weak self] in
-                        guard let self, let frame = NSScreen.screens.first?.frame else { return }
+                        guard let self, pointerMonitorGeneration == generation, let frame = NSScreen.screens.first?.frame else { return }
                         handlePointer(GlobalGestureEvent.position(
                             nsEventMouseLocation: NSEvent.mouseLocation,
                             primaryScreenFrame: frame
@@ -353,6 +369,7 @@ public final class LayoutWheelController {
                 }
             }
         } else if !needsPointer {
+            pointerMonitorGeneration &+= 1
             if let pointerMonitor {
                 removeMonitor(pointerMonitor)
                 self.pointerMonitor = nil

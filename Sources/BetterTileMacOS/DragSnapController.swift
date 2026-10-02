@@ -143,6 +143,13 @@ public final class DragSnapController {
     private var mouseDownPoint: BTPoint?
     private var resolvedDragTarget = false
     private var isStarted = false
+    private var mouseDownMonitorGeneration: UInt64 = 0
+    private var fallbackMonitorGeneration: UInt64 = 0
+    private var escapeMonitorGeneration: UInt64 = 0
+    var addGlobalMonitor: (NSEvent.EventTypeMask, @escaping (NSEvent) -> Void) -> Any? = {
+        NSEvent.addGlobalMonitorForEvents(matching: $0, handler: $1)
+    }
+    var removeEventMonitor: (Any) -> Void = { NSEvent.removeMonitor($0) }
     private let displayTicks: ResizeDisplayLink
     /// The newest drag sample not yet evaluated. A high-rate pointer sends
     /// events faster than the display can show a new preview.
@@ -214,43 +221,61 @@ public final class DragSnapController {
     }
 
     private func installMouseDownMonitor() {
+        let generation = mouseDownMonitorGeneration
         guard !gestureEventSource.usesEventTap, mouseDownMonitor == nil else { return }
-        mouseDownMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown]) { [weak self] event in
-            Task { @MainActor in self?.receive(event, kind: .leftMouseDown) }
+        mouseDownMonitor = addGlobalMonitor([.leftMouseDown]) { [weak self] event in
+            Task { @MainActor in
+                guard let self, self.isStarted, self.mouseDownMonitorGeneration == generation else { return }
+                self.receive(event, kind: .leftMouseDown)
+            }
         }
     }
 
     private func installGestureMonitors() {
+        let generation = fallbackMonitorGeneration
         if !gestureEventSource.usesEventTap, dragMonitor == nil {
-            dragMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDragged]) { [weak self] event in
-                Task { @MainActor in self?.receive(event, kind: .leftMouseDragged) }
+            dragMonitor = addGlobalMonitor([.leftMouseDragged]) { [weak self] event in
+                Task { @MainActor in
+                    guard let self, self.isStarted, self.fallbackMonitorGeneration == generation else { return }
+                    self.receive(event, kind: .leftMouseDragged)
+                }
             }
-            mouseUpMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseUp]) { [weak self] event in
-                Task { @MainActor in self?.receive(event, kind: .leftMouseUp) }
+            mouseUpMonitor = addGlobalMonitor([.leftMouseUp]) { [weak self] event in
+                Task { @MainActor in
+                    guard let self, self.isStarted, self.fallbackMonitorGeneration == generation else { return }
+                    self.receive(event, kind: .leftMouseUp)
+                }
             }
         }
         if escapeMonitor == nil {
-            escapeMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.keyDown]) { [weak self] event in
+            let generation = escapeMonitorGeneration
+            escapeMonitor = addGlobalMonitor([.keyDown]) { [weak self] event in
                 guard event.keyCode == 53 else { return }
-                Task { @MainActor in self?.cancel() }
+                Task { @MainActor in
+                    guard let self, self.isStarted, self.escapeMonitorGeneration == generation else { return }
+                    self.cancel()
+                }
             }
         }
     }
 
     private func removeMouseDownMonitor() {
-        if let mouseDownMonitor { NSEvent.removeMonitor(mouseDownMonitor) }
+        mouseDownMonitorGeneration &+= 1
+        if let mouseDownMonitor { removeEventMonitor(mouseDownMonitor) }
         mouseDownMonitor = nil
     }
 
     private func removeGestureMonitors() {
+        escapeMonitorGeneration &+= 1
         removeFallbackGestureMonitors()
-        if let escapeMonitor { NSEvent.removeMonitor(escapeMonitor) }
+        if let escapeMonitor { removeEventMonitor(escapeMonitor) }
         escapeMonitor = nil
     }
 
     private func removeFallbackGestureMonitors() {
-        if let dragMonitor { NSEvent.removeMonitor(dragMonitor) }
-        if let mouseUpMonitor { NSEvent.removeMonitor(mouseUpMonitor) }
+        fallbackMonitorGeneration &+= 1
+        if let dragMonitor { removeEventMonitor(dragMonitor) }
+        if let mouseUpMonitor { removeEventMonitor(mouseUpMonitor) }
         dragMonitor = nil
         mouseUpMonitor = nil
     }
