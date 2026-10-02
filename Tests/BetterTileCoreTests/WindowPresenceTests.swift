@@ -176,23 +176,14 @@ private let requested = BTRect(x: 960, y: 30, width: 960, height: 983)
 /// The case behind the reported confusion: the window is where it was asked to
 /// be but kept a size of its own. Reported as resisted, not as failure, because
 /// the position is right and the layout can adapt.
-@Test func aWindowThatKeptItsOwnSizeIsResistedNotFailed() {
-    let actual = BTRect(x: 960, y: 30, width: 655, height: 800)
+@Test(arguments: [BTRect(x: 960, y: 30, width: 655, height: 800), BTRect(x: 960, y: 30, width: 700, height: 983)])
+func aWindowThatKeptItsOwnSizeIsResistedNotFailed(actual: BTRect) {
     #expect(PlacementVerifier.outcome(requested: requested, actual: actual) == .resisted(actual: actual))
 }
 
-@Test func aWindowInTheWrongPlaceFails() {
-    let actual = BTRect(x: 0, y: 30, width: 960, height: 983)
+@Test(arguments: [BTRect(x: 0, y: 30, width: 960, height: 983), BTRect(x: 900, y: 30, width: 960, height: 983)])
+func aWindowInTheWrongPlaceFails(actual: BTRect) {
     #expect(PlacementVerifier.outcome(requested: requested, actual: actual) == .failed(actual: actual))
-}
-
-/// Position is judged more strictly than size: a window in the wrong place is
-/// the failure people notice, a window of the wrong size usually is not.
-@Test func positionIsJudgedMoreStrictlyThanSize() {
-    let wrongSizeOnly = BTRect(x: 960, y: 30, width: 700, height: 983)
-    let wrongPlaceOnly = BTRect(x: 900, y: 30, width: 960, height: 983)
-    #expect(PlacementVerifier.outcome(requested: requested, actual: wrongSizeOnly) != .failed(actual: wrongSizeOnly))
-    #expect(PlacementVerifier.outcome(requested: requested, actual: wrongPlaceOnly) == .failed(actual: wrongPlaceOnly))
 }
 
 // MARK: - Bento containment
