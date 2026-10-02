@@ -5,19 +5,16 @@ on-screen window stacking. Inactive tabs remain open behind their pane's selecte
 window. Nothing is parked off-screen, minimized, or moved between native Spaces.
 Turn off Stage Manager before testing this mode.
 
-This build tests a pane curtain below each selected window. Its frosted surface
-covers inactive tabs when a selected window is smaller than its pane. The
-curtain follows divider drags while inactive tabs follow at release. A click
-on the curtain brings the selected window forward. It uses the selected
-window's validated exact identity; when that identity is unavailable, the pane
-keeps ordinary stacking without a curtain. This is an experiment to evaluate
-live before deciding whether to keep it.
+This build tests one Tabbed curtain across each display's work area, behind
+all selected tabs. Its frosted surface covers inactive tabs across pane
+boundaries and gaps. A click selects that pane's selected window or activates
+an empty pane. The curtain needs validated exact identities for every tab
+and a verified safe window order. Missing identities or unsafe ordering
+hide it. This experiment still needs live checks with real applications.
 
-With the same identity, tab strips sit in the normal window stack directly
-above their selected window, so Settings and other windows in front of a pane
-cover its strip. After an app switch, BetterTile reads the window order and
-puts a hidden tab back only if it came in front of its selected tab. It never
-activates an app to do this.
+Tab strips sit directly above their selected windows. Settings and floating
+windows in front retain their order. After an app switch, BetterTile repairs
+inactive tabs above any selected tab without activating an application.
 
 Record results and unresolved observations in
 [TABBED_TEST_FINDINGS.md](TABBED_TEST_FINDINGS.md).
@@ -37,7 +34,9 @@ empty. Click an empty pane to send newly opened windows there.
 
 ## Controls
 
-- Click a tab to select and focus its window.
+- Click a tab to select and focus its window. Pane sizes stay stable when it
+  fits. A larger minimum can move dividers. An impossible arrangement keeps
+  the previous selection and explains the conflict.
   Releasing outside the original tab body cancels selection, including release
   over its close button or another tab.
 - Drag within a strip to reorder. Drag into a pane's center to join its tabs.
@@ -46,17 +45,19 @@ empty. Click an empty pane to send newly opened windows there.
   position determines the destination, including after a fast drag.
   At the 12-pane limit, edge drops are unavailable; center moves still work.
 - Drop on **Float window** to detach. Escape or an invalid drop cancels.
-- Drag a divider to resize. Tab strips and pane curtains follow the divider during the drag.
-  At release, all stacked members follow the pane so inactive windows do not
-  retain a larger frame behind it. Side-by-side splits adjust
+- Drag a divider to resize. Tab strips follow the divider during the drag.
+  The shared curtain keeps covering the work area. At release, inactive tabs
+  follow the requested frame at best effort. Apps can refuse that size.
+  Side-by-side splits adjust
   to each pane's selected tab's minimum width. A requested 50/50 split
-  can become 40/60 when the right pane needs more width. Row ratios remain
-  unchanged; minimum heights must fit below the tab strip. Impossible layouts
+  can become 40/60 when the right pane needs more width. Row splits also
+  adjust to minimum heights, including the tab strip. Impossible layouts
   are rejected. The real windows update from the latest pointer sample on each
   display tick, up to 60 times per second. Release applies the exact final
   position, then checks the frames accepted by each app. A rejected final frame
-  restores the windows and the Tabbed state. An unreported width minimum can
-  cause one retry after rollback.
+  restores the windows and the Tabbed state. A stable refusal in either
+  dimension can cause one retry after complete
+  rollback. Ignored size writes do not become minimum sizes.
   Grabbing either side of a divider preserves the pointer's offset. A stationary
   grab does not move the divider. If cancellation cannot restore the previous
   arrangement, automatic placement stops until Repair or an explicit layout action.
@@ -102,10 +103,11 @@ system; the checks below validate real application and macOS behavior.
 - Test curtains with Safari, Finder, Terminal, and VS Code. Shrink a selected
   window by its native edge and drag a divider. Confirm the frosted surface
   hides inactive-tab detail, the selected window stays above it, and the
-  curtain follows the pane. Repeat with light and dark appearance, Reduce
+  curtain covers the work area, including gaps and oversized inactive tabs.
+  Repeat with light and dark appearance, Reduce
   Transparency, and Increase Contrast.
 - Switch apps with Cmd-Tab and Dock clicks, including an already selected tab.
-  Confirm other panes keep their selected windows above their curtains.
+  Confirm other panes keep their selected windows above the shared curtain.
   Repeat with windows from the same app on two displays.
 - Confirm curtains do not appear as windows in Cmd-Tab, Mission Control, or
   App Exposé and do not take keyboard focus or block a floating window. Click
@@ -160,12 +162,13 @@ Core, fake-window coordinator, and app-model tests cover activation, membership,
 geometry, layout changes, focus requests, restoration, and session isolation.
 They also verify display-tick coalescing, exact release geometry, cancellation,
 final-frame rejection, and the absence of repeated tab ordering during a live
-resize. Curtain tests cover content geometry, resize following, selected-window
-ordering requests, clicks, missing identities, cleanup, and solid accessibility
+resize. Curtain tests cover work-area geometry, selected-window
+ordering requests, pane clicks, missing identities, cleanup, and solid accessibility
 fallbacks. Stacking tests cover the order repair, windows kept in front,
 unreadable windows, other displays, strip ordering, and focus while BetterTile
-is in front. Off-screen AppKit ordering tests use BetterTile's own windows and
-cannot prove cross-application ordering. An off-screen pane rendering test checks accessibility actions without
+is in front. Off-screen AppKit tests use BetterTile's own windows and cannot prove
+real-application ordering. An off-screen pane rendering test checks
+accessibility actions without
 capturing foreign windows. Real-app stacking, Mission Control/App Exposé, live
 performance, and display/Space transition behavior require the manual checks
 above. This test build is not evidence that those platform checks have passed.

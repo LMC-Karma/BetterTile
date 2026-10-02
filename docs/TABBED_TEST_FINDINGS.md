@@ -8,12 +8,10 @@ test. Use [TABBED_TESTING.md](TABBED_TESTING.md) for the manual procedure.
 
 ## Current assessment
 
-Real-window behavior is only partly verified. The inactive-tab strategy is
-still undecided. Debug now tests a frosted pane curtain below each selected
-window. Inactive windows stay stacked behind it; nothing is parked or
-minimized. Automated and off-screen checks cannot prove that cross-application
-ordering keeps the curtain between selected and inactive windows. That live
-experiment is the first remaining check below.
+Real-window behavior is only partly verified. The approved design uses one
+Tabbed curtain behind all selected tabs on each display. Inactive windows stay
+open behind it; nothing is parked or minimized. Automated checks validate the
+policy and owned AppKit panels. The real-application matrix below remains open.
 
 Tabbed now runs on the Bento engine (see "Tabbed on Bento" in
 [ARCHITECTURE.md](ARCHITECTURE.md)). Pane geometry, divider drags, window drags,
@@ -46,9 +44,13 @@ repeating.
   120-point-wide minimum.
 - Bento's constraint solver fits minimums, including the tab strip height.
 - Divider drags stop at a minimum and turn orange, as in Bento.
-- An unreported width minimum can cause one retry after a complete rollback.
-  Height refusals, stale sessions, cancellation, and degraded restoration do
-  not retry.
+- Selection, resizing, and Repair check both minimum dimensions. Selecting a
+  tab keeps boundaries stable when it fits; otherwise the solver adjusts them.
+  An impossible selection retains the previous tab.
+- A stable refusal in width or height can cause one retry after complete
+  rollback. A position-only move or unchanged size is not evidence of a
+  minimum. Stale sessions, cancellation, and degraded restoration do not retry.
+- Repair rereads window constraints and fits the current pane groups.
 
 ## Findings
 
@@ -92,6 +94,9 @@ real applications on a real desktop.
 | T-33 | Opening BetterTile Settings handed focus back to the last Tabbed window | Fixed; model regression reproduced the activation before the fix | Pending |
 | T-34 | Tab strips covered BetterTile Settings and floating windows | Fixed when exact identities are available | Pending |
 | T-35 | A click on a curtain selected the hidden tab behind it | Fixed | Pending |
+| T-36 | Displaced selected windows removed pane dividers; inactive tabs and own panels could suppress handles | Fixed; Core and fake-window regressions pass | Pending |
+| T-37 | Selection skipped the size solver; recovery excluded height refusals | Fixed; Core and fake-window regressions pass | Pending |
+| T-38 | Pane curtains could not cover oversized inactive tabs across boundaries or gaps | Shared display curtain; order, identity, coverage geometry, and readback checks pass | Pending |
 
 The polish pass also fixes Bento clamping beside locked boundaries, divider
 Escape handling with either app focused, ignored linked-resize neighbors,
@@ -148,10 +153,10 @@ other panes' selected tabs without checking the window order, so a floating or
 ignored window could end up behind them.
 
 A focus change now selects a tab only when that window's application is
-frontmost. Activation, focus changes, and selection run one repair that reads
-the WindowServer order. It raises a selected tab only when one of its pane's
-hidden tabs is in front of it, then raises again any window that was in front
-of it and overlaps it. It never activates an application or changes focus. A
+frontmost. Activation, focus changes, and selection repair the WindowServer
+order so every selected tab stays above every inactive tab. Floating windows
+already in front stay above the shared curtain, including in pane gaps.
+The repair never activates an application or changes focus. A
 fake-window model test reproduced the activating raise before the fix. Core
 and model tests cover a correct order, an exposed pane, a floating window kept
 in front, an unreadable window left alone, a second display, and selection
@@ -173,19 +178,35 @@ The curtain ignored the mouse, so a click on its frosted area reached the
 hidden tab behind it and selected that tab. The curtain now takes the click
 without coming forward and selects the pane's selected window.
 
+### Shared curtain and sizing follow-up
+
+A disposable AppKit experiment confirmed cross-process panel ordering on this
+Mac: a floating fixture window stayed above both selected fixture windows,
+which stayed above the shared curtain and an oversized inactive fixture.
+The curtain was visible and non-key. All fixture windows were closed. This
+checks public panel ordering and coverage geometry. It does not establish
+visual frost coverage, real-app Accessibility raising, or live Tabbed resizing.
+
+Fake-window regressions cover both minimum dimensions on selection and Repair,
+ignored writes, stable hidden-size readbacks, pane boundaries despite displaced
+selected windows, floating windows in gaps, and ignored raise actions. A
+missing inactive-tab identity now prevents a curtain as well. These checks do
+not close the real-application findings below.
+
 ## Remaining live checks
 
 Start with two panes and two tabs per pane. Put windows from the same app in
 different panes, and include another app in at least one pane.
 
-1. **Curtain decision.** Test Safari, Finder, Terminal, and VS Code with
+1. **Shared curtain.** Test Safari, Finder, Terminal, and VS Code with
    repeated tab selections, Cmd-Tab, Dock clicks, native edge resizes, and
    divider drags. Confirm inactive-window detail stays hidden, the selected
    window stays above the curtain, and other panes do not change. Confirm
    curtains are absent from Cmd-Tab, Mission Control, and App Exposé. Repeat
    across a Space change and two displays, and compare the public fallback
    with private APIs disabled. Click the frosted area and confirm the selected
-   window comes forward. Record whether to keep or revise the curtain.
+   window comes forward. Record coverage across pane boundaries and gaps,
+   including oversized inactive tabs.
 2. **Windows in front of panes.** Open BetterTile Settings over a pane and
    click between Settings, other apps, and tabs. Confirm Settings keeps focus
    and stays above the tab strips. Put a window from an Ignore Everywhere app
@@ -194,7 +215,8 @@ different panes, and include another app in at least one pane.
    stays in front. Repeat with Spotlight and a menu-bar app's window.
 3. Type after selecting a tab. Confirm input reaches the selected window.
 4. Try the 50/50 case where a right-hand tab needs about 60% width, including
-   an inactive tab imposing the limit. Confirm inactive windows stay covered.
+   selecting an inactive tab that needs more width. Confirm inactive windows
+   stay covered.
 5. Resize toward a width limit. Check clamping, release, Escape, and Undo.
    Try an impossible width and a minimum-height conflict.
 6. Use Mission Control and App Exposé to select an inactive window. Confirm its
@@ -225,8 +247,9 @@ Spaces. Stage Manager must be off.
 
 Pane assignments and the last 20 layout changes are runtime-only. Edge splits
 stop at 12 panes. Cross-display tab dragging is not implemented. Hidden tabs
-follow a divider at release, not during the drag. Curtains follow during the
-drag, but their cross-application ordering and visual coverage remain unproven.
+follow a divider at release, not during the drag. The shared curtain covers
+the work area throughout the drag; its real-application ordering and visual
+coverage remain unverified.
 Without a validated exact identity, no curtain appears and hidden tabs can
 still show while a selected window is smaller than its pane. Curtains have no
 parking fallback.

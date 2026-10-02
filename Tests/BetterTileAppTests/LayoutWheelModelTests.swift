@@ -56,6 +56,7 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, TabbedWindowSystem {
     /// WindowServer order, front to back. Nil simulates unavailable exact
     /// identities. Raises move a window to the front, as AXRaise does.
     var stack: [TabbedStackEntry]?
+    var updatesStackOnRaise = true
     func stackingOrder(for windows: [WindowSnapshot], excluding windowNumbers: Set<Int>) -> [TabbedStackEntry]? { stack }
     /// Simulates BetterTile or an unreadable app in front; otherwise the
     /// focused window's app is frontmost.
@@ -70,7 +71,7 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, TabbedWindowSystem {
         }
         raiseRequests.append((id, activate))
         if activate { focusedID = id; focusRequests.append(id) }
-        if let index = stack?.firstIndex(where: { $0.windowID == id }), let entry = stack?.remove(at: index) {
+        if updatesStackOnRaise, let index = stack?.firstIndex(where: { $0.windowID == id }), let entry = stack?.remove(at: index) {
             stack?.insert(entry, at: 0)
         }
     }

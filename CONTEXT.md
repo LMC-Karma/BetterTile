@@ -66,15 +66,15 @@ opened windows.
 
 ## Tab
 
-A window that belongs to a pane. Every tab in a pane shares the pane's content
-frame. The selected tab's window is in front; the others stay open behind it.
+A window that belongs to a pane. The pane's content region is shared by its
+tabs. The selected tab's window is in front; the others stay open behind it.
 
 _Avoid_: native tab (the tabs inside one application's window)
 
-## Pane curtain
+## Tabbed curtain
 
-A frosted surface behind a pane's selected window that covers inactive tabs
-when the selected window leaves part of the pane exposed.
+A single frosted surface behind all selected tabs on a Tabbed display. It
+covers inactive tabs, including portions that extend beyond their panes.
 
 ## Floating window
 
