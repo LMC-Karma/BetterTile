@@ -333,3 +333,13 @@ func invalidAccessibilityElementConfirmsClosureOnlyAfterSuccessfulAbsentInventor
     #expect(replacement != first && replacement != second)
     #expect(registry.windowID(application: other, accessibilityHash: 100) == survivor)
 }
+
+@Test func windowServerQueryEncodesRawWindowIDsWithoutObjectBridging() {
+    for ids in [Set<CGWindowID>(), Set<CGWindowID>([1, 700, .max])] {
+        let array = makeWindowServerIDArray(ids)
+        #expect(CFArrayGetCount(array) == ids.count)
+        for (index, id) in ids.sorted().enumerated() {
+            #expect(UInt(bitPattern: CFArrayGetValueAtIndex(array, index)) == UInt(id))
+        }
+    }
+}

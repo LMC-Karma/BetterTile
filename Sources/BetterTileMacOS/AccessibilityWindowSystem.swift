@@ -1186,7 +1186,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
     private func targetedWindowServerRecords(ids: Set<CGWindowID>) -> [WindowServerRecord]? {
         guard !ids.isEmpty,
               let info = CGWindowListCreateDescriptionFromArray(
-                  ids.sorted().map { NSNumber(value: $0) } as CFArray
+                  makeWindowServerIDArray(ids)
               ) as? [[CFString: Any]]
         else { return nil }
         return windowServerRecords(from: info, defaultOnscreen: false)

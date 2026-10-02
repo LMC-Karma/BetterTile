@@ -211,6 +211,15 @@ final class ExactWindowIDResolver {
     }
 }
 
+func makeWindowServerIDArray(_ ids: Set<CGWindowID>) -> CFArray {
+    // Core Graphics expects raw CGWindowID entries, not CFNumber objects.
+    // Nil callbacks keep Core Foundation from retaining those numeric values.
+    var values = ids.sorted().map { UnsafeRawPointer(bitPattern: UInt($0)) }
+    return values.withUnsafeMutableBufferPointer {
+        CFArrayCreate(kCFAllocatorDefault, $0.baseAddress, $0.count, nil)
+    }
+}
+
 struct WindowServerRecord: Equatable {
     var windowID: CGWindowID
     var processIdentifier: pid_t
