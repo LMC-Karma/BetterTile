@@ -715,9 +715,9 @@ public final class DividerOverlayController {
         bentoStateLiveHandler?(interaction.displayID, proposedBentoState, displayBounds)
     }
 
-    /// Reads back the windows a live tick asked to shrink. A window that holds
-    /// the same larger size for two ticks has refused; its size becomes its
-    /// minimum for the rest of this gesture only.
+    /// Learns a held size only after that axis actually shrank from its
+    /// gesture baseline. An unchanged window can mean ignored AX writes.
+    /// Two held ticks establish a minimum for this gesture only.
     private func recordRefusedMinimums(_ placements: [Placement]) -> (width: Bool, height: Bool) {
         let baseline = Dictionary(baselineWindows.map { ($0.id, $0.frame.size) }, uniquingKeysWith: { first, _ in first })
         let shrinking = placements.filter { placement in
@@ -740,8 +740,9 @@ public final class DividerOverlayController {
                 heldSizeTicks[placement.windowID] = nil
                 continue
             }
-            let heldWidth = size.width > placement.frame.size.width + 2
-            let heldHeight = size.height > placement.frame.size.height + 2
+            guard let start = baseline[placement.windowID] else { continue }
+            let heldWidth = size.width < start.width - 2 && size.width > placement.frame.size.width + 2
+            let heldHeight = size.height < start.height - 2 && size.height > placement.frame.size.height + 2
             guard heldWidth || heldHeight else {
                 heldSizeTicks[placement.windowID] = nil
                 continue
