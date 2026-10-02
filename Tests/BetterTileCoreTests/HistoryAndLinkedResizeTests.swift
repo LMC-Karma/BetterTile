@@ -5,11 +5,14 @@ import Testing
     let id = WindowID(rawValue: "window")
     var history = FrameHistory(capacity: 3)
     for index in 0..<5 { history.record(BTRect(x: Double(index), y: 0, width: 100, height: 100), for: id) }
+    #expect(history.peek(for: id)?.minX == 4)
+    #expect(history.peek(for: id)?.minX == 4)
     #expect(history.count(for: id) == 3)
     #expect(history.restore(for: id)?.minX == 4)
     #expect(history.restore(for: id)?.minX == 3)
     #expect(history.restore(for: id)?.minX == 2)
     #expect(history.restore(for: id) == nil)
+    #expect(history.peek(for: id) == nil)
 }
 
 @Test func adjacencyAndLinkedResize() {

@@ -17,6 +17,9 @@ public struct FrameHistory: Sendable {
         framesByWindow[windowID] = frames
     }
 
+    /// Returns the next restore frame without consuming it.
+    public func peek(for windowID: WindowID) -> BTRect? { framesByWindow[windowID]?.last }
+
     public mutating func restore(for windowID: WindowID) -> BTRect? {
         guard var frames = framesByWindow[windowID], let result = frames.popLast() else { return nil }
         framesByWindow[windowID] = frames

@@ -15,6 +15,16 @@ public final class TitleBarDoubleClickController {
     private var monitor: Any?
     private var lastEventNumber: Int?
     private var isStarted = false
+    private var lifecycleGeneration: UInt64 = 0
+    var addGlobalMonitor: (NSEvent.EventTypeMask, @escaping (NSEvent) -> Void) -> Any? = {
+        NSEvent.addGlobalMonitorForEvents(matching: $0, handler: $1)
+    }
+    var removeEventMonitor: (Any) -> Void = { NSEvent.removeMonitor($0) }
+    var systemDoubleClickActionIsDisabled: () -> Bool = { macOSDoubleClickActionIsDisabled }
+    var pointerLocation: () -> BTPoint? = {
+        guard let frame = NSScreen.screens.first?.frame else { return nil }
+        return CoordinateConverter.pointToTopLeft(NSEvent.mouseLocation, mainScreenFrame: frame)
+    }
 
     /// Consulted so a double click never places a window the user has asked
     /// BetterTile to leave alone.
@@ -50,7 +60,7 @@ public final class TitleBarDoubleClickController {
     }
 
     private func syncMonitoring() {
-        if isStarted, isEnabled, Self.macOSDoubleClickActionIsDisabled {
+        if isStarted, isEnabled, systemDoubleClickActionIsDisabled() {
             installMonitor()
         } else {
             removeMonitor()
@@ -59,13 +69,18 @@ public final class TitleBarDoubleClickController {
 
     private func installMonitor() {
         guard monitor == nil else { return }
-        monitor = NSEvent.addGlobalMonitorForEvents(matching: .leftMouseUp) { [weak self] event in
-            Task { @MainActor in self?.handle(event) }
+        let generation = lifecycleGeneration
+        monitor = addGlobalMonitor(.leftMouseUp) { [weak self] event in
+            Task { @MainActor in
+                guard let self, self.isStarted, self.lifecycleGeneration == generation else { return }
+                self.handle(event)
+            }
         }
     }
 
     private func removeMonitor() {
-        if let monitor { NSEvent.removeMonitor(monitor) }
+        lifecycleGeneration &+= 1
+        if let monitor { removeEventMonitor(monitor) }
         monitor = nil
         lastEventNumber = nil
     }
@@ -73,13 +88,12 @@ public final class TitleBarDoubleClickController {
     private func handle(_ event: NSEvent) {
         guard event.clickCount == 2,
               event.eventNumber != lastEventNumber,
-              Self.macOSDoubleClickActionIsDisabled,
-              let mainFrame = NSScreen.screens.first?.frame,
+              systemDoubleClickActionIsDisabled(),
+              let point = pointerLocation(),
               let window = try? coordinator.system.focusedWindow(),
               allowsDoubleClickPlacement(for: window)
         else { return }
 
-        let point = CoordinateConverter.pointToTopLeft(NSEvent.mouseLocation, mainScreenFrame: mainFrame)
         let titleBarDepth = min(56, window.frame.size.height * 0.2)
         guard window.frame.contains(point), point.y <= window.frame.minY + titleBarDepth else { return }
         lastEventNumber = event.eventNumber
