@@ -667,7 +667,7 @@ enum DividerLimitCase: CaseIterable { case straight, junction, linked }
     config.resizeFeedbackMode = .live
     let controller = DividerOverlayController(coordinator: WindowCoordinator(system: system), configuration: config)
     var willBegin = 0
-    controller.gestureWillBeginHandler = { willBegin += 1 }
+    controller.gestureWillBeginHandler = { _ in willBegin += 1 }
     let boundary = BoundaryDescriptor(
         id: "native", displayID: display, axis: .vertical, coordinate: bounds.minX + 400,
         spanStart: bounds.minY, spanEnd: bounds.maxY, beforeWindowIDs: [left], afterWindowIDs: [right]
@@ -723,7 +723,7 @@ enum DividerLimitCase: CaseIterable { case straight, junction, linked }
     config.resizeFeedbackMode = .live
     let controller = DividerOverlayController(coordinator: WindowCoordinator(system: system), configuration: config)
     var willBegin = 0
-    controller.gestureWillBeginHandler = { willBegin += 1 }
+    controller.gestureWillBeginHandler = { _ in willBegin += 1 }
     let boundary = BoundaryDescriptor(
         id: "native", displayID: display, axis: .vertical, coordinate: bounds.minX + 400,
         spanStart: bounds.minY, spanEnd: bounds.maxY, beforeWindowIDs: [left], afterWindowIDs: [right]

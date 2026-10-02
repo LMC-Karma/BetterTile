@@ -83,14 +83,26 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, TabbedWindowSystem {
     }
     func visibleWindows() throws -> [WindowSnapshot] {
         completeSweepCount += 1
+        refreshLearnedConstraints()
         return windows
     }
     func displays() -> [DisplaySnapshot] { availableDisplays }
     func windowSnapshots(ids: Set<WindowID>) throws -> [WindowSnapshot] {
-        windows.filter { ids.contains($0.id) }
+        refreshLearnedConstraints()
+        return windows.filter { ids.contains($0.id) }
+    }
+    private func refreshLearnedConstraints() {
+        for index in windows.indices {
+            let id = windows[index].id
+            minimumSizeLearner.observeAcceptedSize(windowID: id, size: windows[index].frame.size)
+            if let reported = reportedConstraints[id] {
+                windows[index].constraints = minimumSizeLearner.merging(reported, for: id)
+            }
+        }
     }
     func cachedVisibleWindows(refreshing ids: Set<WindowID>) throws -> [WindowSnapshot]? {
         cachedRefreshCount += 1
+        refreshLearnedConstraints()
         return cachedSnapshotsAvailable ? windows : nil
     }
     func setFrame(_ frame: BTRect, knownCurrentFrame: BTRect?, for windowID: WindowID) throws {

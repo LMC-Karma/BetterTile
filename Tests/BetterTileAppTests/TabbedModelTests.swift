@@ -906,3 +906,67 @@ func tabbedDividerPresentationSurvivesDisplacedWindowsAndExcludesInactiveTabs() 
     #expect(presentation.boundaries == expected)
     #expect(presentation.obscuringFrames == [floating.frame])
 }
+
+@Test(arguments: [false, true]) @MainActor
+func tabbedDividerUsesVerifiedFloatingOrderAcrossApps(floatingInFront: Bool) async throws {
+    let system = FakeAppWindowSystem()
+    let model = try await makeTwoTabbedColumns(system)
+    defer { model.shutdown() }
+    var floating = system.windows[0]
+    floating.id = WindowID(rawValue: "inactive-app-floating")
+    if floatingInFront { floating.processIdentifier += 500 }
+    floating.isFloating = true
+    system.windows.append(floating)
+    let managed = [0, 3, 1, 2].map { stackEntry(system.windows[$0]) }
+    system.stack = floatingInFront ? [stackEntry(floating)] + managed : managed + [stackEntry(floating)]
+    #expect(model.dividerPresentation(windows: system.windows).obscuringFrames.contains(floating.frame) == floatingInFront)
+}
+
+@Test(arguments: [false, true]) @MainActor
+func tabbedGesturesRetainEvidenceForAnAlreadyClampedInactiveTab(height: Bool) async throws {
+    _ = NSApplication.shared
+    let system = FakeAppWindowSystem()
+    var hidden = system.windows[0]
+    hidden.id = WindowID(rawValue: "already-clamped")
+    hidden.frame.size = BTSize(width: 800, height: 600)
+    system.windows.append(hidden)
+    if height { system.enforcedMinimumHeights[hidden.id] = 450 }
+    else { system.enforcedMinimumWidths[hidden.id] = 600 }
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    model.configuration.defaultTabbedPreset = height ? .rows : .columns
+    model.setActiveMode(.tabbed)
+    try #require(await waitFor {
+        height ? system.windows[1].constraints.minimumSize.height >= 450
+               : system.windows[1].constraints.minimumSize.width >= 600
+    })
+    model.prepareWindowGesture(on: system.mainDisplay.id)
+    #expect(system.forgetLearnedMinimumsCount == 0)
+    model.performTabbed(.select(hidden.id))
+    try #require(await waitFor { model.activeTabbedState?.activeWindowID == hidden.id })
+    #expect(model.statusMessage == nil)
+    #expect(height ? system.windows[1].frame.size.height >= 450 : system.windows[1].frame.size.width >= 600)
+}
+
+@Test @MainActor
+func observedSmallerInactiveTabNoLongerForcesItsPreviousMinimum() async throws {
+    _ = NSApplication.shared
+    let system = FakeAppWindowSystem()
+    var hidden = system.windows[0]
+    hidden.id = WindowID(rawValue: "content-minimum-changed")
+    hidden.frame.size.width = 800
+    system.windows.append(hidden)
+    system.enforcedMinimumWidths[hidden.id] = 600
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    model.configuration.defaultTabbedPreset = .columns
+    model.setActiveMode(.tabbed)
+    try #require(await waitFor { system.windows[1].constraints.minimumSize.width >= 600 })
+    let previous = try #require(model.activeTabbedState).frames(in: system.mainDisplay.visibleFrame)
+    system.enforcedMinimumWidths[hidden.id] = 400
+    system.windows[1].frame.size.width = 400 // The app has actually accepted a smaller size.
+    model.performTabbed(.select(hidden.id))
+    try #require(await waitFor { model.activeTabbedState?.activeWindowID == hidden.id })
+    #expect(model.activeTabbedState?.frames(in: system.mainDisplay.visibleFrame) == previous)
+    #expect(model.statusMessage == nil)
+}

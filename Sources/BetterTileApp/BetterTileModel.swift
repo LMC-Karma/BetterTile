@@ -155,7 +155,7 @@ final class BetterTileModel {
         dragSnap.activeModeProvider = { [weak self] displayID in self?.activeMode(for: displayID) }
         dragSnap.bentoStateProvider = { [weak self] displayID in self?.sessionStore.session(for: displayID)?.bentoState }
         dragSnap.bentoDragBeganHandler = { [weak self] displayID, sourceID in
-            self?.system.forgetLearnedMinimums()
+            self?.prepareWindowGesture(on: displayID)
             return self?.beginBentoDrag(displayID: displayID, sourceID: sourceID) ?? false
         }
         dragSnap.bentoPreviewHandler = { [weak self] displayID, sourceID, outcome in
@@ -220,7 +220,7 @@ final class BetterTileModel {
                 self.presentActionResult(succeeded: false, error: message, displayID: displayID)
             }
         }
-        dividerResize.gestureWillBeginHandler = { [weak self] in self?.system.forgetLearnedMinimums() }
+        dividerResize.gestureWillBeginHandler = { [weak self] displayID in self?.prepareWindowGesture(on: displayID) }
         linkedResize.gestureWillBeginHandler = { [weak self] in self?.system.forgetLearnedMinimums() }
         dividerResize.gestureEndedHandler = { [weak self] in
             self?.performDeferredDockReflow()
@@ -2825,6 +2825,12 @@ final class BetterTileModel {
         }.joined(separator: "|")
     }
 
+    func prepareWindowGesture(on displayID: DisplayID) {
+        // A Tabbed gesture must not erase evidence for inactive tabs whose
+        // current frame is already clamped at their minimum.
+        if activeMode(for: displayID) != .tabbed { system.forgetLearnedMinimums() }
+    }
+
     private func refreshDividerBoundaries(windows suppliedWindows: [WindowSnapshot]? = nil) {
         let presentation = dividerPresentation(windows: suppliedWindows ?? ((try? system.visibleWindows()) ?? []))
         dividerResize.refresh(boundaries: presentation.boundaries, obscuringFrames: presentation.obscuringFrames)
@@ -2834,6 +2840,11 @@ final class BetterTileModel {
         let displays = Dictionary(uniqueKeysWithValues: system.displays().map { ($0.id, $0) })
         var boundaries: [BoundaryDescriptor] = []
         var managedWindowIDs: Set<WindowID> = []
+        var tabbedObscuringFrames: [BTRect] = []
+        let chrome = tabbedOverlays.values.reduce(into: Set<Int>()) { $0.formUnion($1.windowNumbers) }
+        let order = sessionStore.sessions.values.contains(where: { $0.mode == .tabbed })
+            ? (system as? any TabbedWindowSystem)?.stackingOrder(for: windows, excluding: chrome) : nil
+        var displaysWithVerifiedOrder: Set<DisplayID> = []
         for (displayID, session) in sessionStore.sessions {
             guard !nativeFullscreenDisplayIDs.contains(displayID) else { continue }
             guard let display = displays[displayID] else { continue }
@@ -2853,6 +2864,16 @@ final class BetterTileModel {
                 // its selected window. Inactive tabs are layout members too.
                 managedWindowIDs.formUnion(session.tabbedState?.windowIDs ?? [])
                 boundaries += session.bentoState.boundaries(in: display.visibleFrame, displayID: displayID)
+                if let state = session.tabbedState, let order {
+                    let selected = Set(state.selectedWindowIDs)
+                    let selectedIndices = order.indices.filter { order[$0].windowID.map(selected.contains) == true }
+                    if selectedIndices.count == selected.count, let backmost = selectedIndices.max() {
+                        displaysWithVerifiedOrder.insert(displayID)
+                        tabbedObscuringFrames += order.prefix(backmost).filter {
+                            $0.windowID.map { !state.windowIDs.contains($0) } ?? true
+                        }.map(\.frame).filter { $0.intersection(display.visibleFrame) != nil }
+                    }
+                }
             case .bento:
                 managedWindowIDs.formUnion(session.bentoState.root?.windowIDs ?? [])
                 boundaries += BentoBoundaryResolver(tolerance: configuration.adjacencyTolerance).boundaries(
@@ -2867,8 +2888,10 @@ final class BetterTileModel {
         }
         let frontmostPID = (system as? any TabbedWindowSystem)?.frontmostProcessIdentifier
             ?? NSWorkspace.shared.frontmostApplication?.processIdentifier
-        return (boundaries, DividerHandleOcclusion.obscuringFrames(
-            in: windows.filter { $0.processIdentifier == frontmostPID },
+        return (boundaries, tabbedObscuringFrames + DividerHandleOcclusion.obscuringFrames(
+            in: windows.filter {
+                $0.processIdentifier == frontmostPID && !displaysWithVerifiedOrder.contains($0.displayID)
+            },
             excluding: managedWindowIDs
         ))
     }

@@ -50,6 +50,9 @@ repeating.
 - A stable refusal in width or height can cause one retry after complete
   rollback. A position-only move or unchanged size is not evidence of a
   minimum. Stale sessions, cancellation, and degraded restoration do not retry.
+- Tabbed gestures retain learned limits for inactive tabs already clamped at
+  those limits. An observed smaller window size lowers the learned bound.
+  A content change alone does not prove that a smaller size will be accepted.
 - Repair rereads window constraints and fits the current pane groups.
 
 ## Findings
@@ -156,6 +159,7 @@ A focus change now selects a tab only when that window's application is
 frontmost. Activation, focus changes, and selection repair the WindowServer
 order so every selected tab stays above every inactive tab. Floating windows
 already in front stay above the shared curtain, including in pane gaps.
+Divider occlusion uses verified order across applications when available.
 The repair never activates an application or changes focus. A
 fake-window model test reproduced the activating raise before the fix. Core
 and model tests cover a correct order, an exposed pane, a floating window kept
