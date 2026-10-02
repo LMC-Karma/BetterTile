@@ -28,7 +28,7 @@ public enum DividerHandleGeometry {
     public static let junctionAcquisitionSize = 32.0
 
     static func renderedThickness(_ thickness: Double, useLiquidGlass: Bool) -> Double {
-        useLiquidGlass ? max(6, thickness) : thickness
+        useLiquidGlass ? min(min(16, max(12, thickness + 4)) + 6, max(18, 3 * thickness) - 2) : thickness
     }
 
     public static func straightLength(span: ClosedRange<Double>, active: Bool) -> Double {
@@ -54,6 +54,14 @@ public enum DividerHandleGeometry {
     ) -> [DividerHandleArm: Double] {
         let requested = active ? activeJunctionArmLength : restingJunctionArmLength
         let half = max(1, thickness / 2)
+        return junctionTrackRoom(center: center, boundaries: boundaries).reduce(into: [:]) { result, entry in
+            result[entry.key] = min(requested, max(0, entry.value - half))
+        }
+    }
+
+    static func junctionTrackRoom(
+        center: BTPoint, boundaries: [BoundaryDescriptor]
+    ) -> [DividerHandleArm: Double] {
         var available: [DividerHandleArm: Double] = [:]
         for boundary in boundaries {
             switch boundary.axis {
@@ -73,9 +81,7 @@ public enum DividerHandleGeometry {
                 }
             }
         }
-        return available.reduce(into: [:]) { result, entry in
-            result[entry.key] = min(requested, max(0, entry.value - half))
-        }
+        return available
     }
 
     public static func junctionFrame(
@@ -449,15 +455,17 @@ public final class DividerOverlayController {
             topLeftFrame: topLeftFrame,
             mainScreenFrame: mainFrame
         )
+        let trackRoom = handleTrackRoom(for: interaction, topLeftFrame: topLeftFrame)
         if let existing = handlePanel {
             panel = existing
-            panel.configure(mode: mode, thickness: configuration.dividerThickness)
+            panel.configure(mode: mode, thickness: configuration.dividerThickness, trackRoom: trackRoom)
             panel.overlayAppearance = configuration.overlayAppearance
             // The accepted divider coordinate moves immediately. Only the
             // decoration inside this frame animates its length.
             panel.setFrame(appKitFrame, display: true)
         } else {
             panel = DividerHandlePanel(frame: appKitFrame, mode: mode, thickness: configuration.dividerThickness)
+            panel.configure(mode: mode, thickness: configuration.dividerThickness, trackRoom: trackRoom)
             panel.overlayAppearance = configuration.overlayAppearance
             panel.onBegin = { [weak self] in self?.beginHoveredGesture() }
             panel.onDrag = { [weak self] point in self?.drag(to: point) }
@@ -553,7 +561,7 @@ public final class DividerOverlayController {
             ghosts.show(
                 placements: latestPlacements,
                 windows: windows,
-                below: handlePanel
+                below: handlePanel?.decorationWindow ?? handlePanel
             )
         case .live:
             ghosts.hide()
@@ -652,7 +660,7 @@ public final class DividerOverlayController {
             ghosts.show(
                 placements: placements,
                 windows: baselineWindows,
-                below: handlePanel,
+                below: handlePanel?.decorationWindow ?? handlePanel,
                 limitedWindowIDs: ResizeLimits.windowsAtMinimum(
                     placements, windows: baselineWindows, widthLimited: limit.width, heightLimited: limit.height
                 )
@@ -949,6 +957,22 @@ public final class DividerOverlayController {
         return BTRect(x: center - length / 2, y: boundary.coordinate - hitWidth / 2, width: length, height: hitWidth)
     }
 
+    func handleTrackRoom(
+        for interaction: DividerInteraction, topLeftFrame: BTRect
+    ) -> [DividerHandleArm: Double] {
+        if let center = junctionCenter(for: interaction) {
+            let room = DividerHandleGeometry.junctionTrackRoom(center: center, boundaries: interaction.boundaries)
+            return Dictionary(uniqueKeysWithValues: DividerHandleArm.allCases.map { ($0, room[$0] ?? 0) })
+        }
+        guard let boundary = interaction.boundaries.first else { return [:] }
+        if boundary.axis == .vertical {
+            return [.up: topLeftFrame.midY - (boundary.spanStart + 8),
+                    .down: boundary.spanEnd - 8 - topLeftFrame.midY]
+        }
+        return [.left: topLeftFrame.midX - (boundary.spanStart + 8),
+                .right: boundary.spanEnd - 8 - topLeftFrame.midX]
+    }
+
     func handleMode(
         for interaction: DividerInteraction,
         topLeftFrame: BTRect,
@@ -1102,17 +1126,22 @@ enum DividerHandleMode: Equatable {
 }
 
 @MainActor
-private final class DividerHandlePanel: NSPanel {
+final class DividerHandlePanel: NSPanel {
     var onBegin: (() -> Void)? { didSet { handleView.onBegin = onBegin } }
     var onDrag: ((CGPoint) -> Void)? { didSet { handleView.onDrag = onDrag } }
     var onEnd: (() -> Void)? { didSet { handleView.onEnd = onEnd } }
     var onExit: (() -> Void)? { didSet { handleView.onExit = onExit } }
     var overlayAppearance = OverlayAppearance() { didSet { handleView.overlayAppearance = overlayAppearance } }
     private let handleView: DividerHandleView
+    let decorationWindow: NSPanel
+    private var decorationMargins: CGPoint
     private(set) var isActive = false
 
     init(frame: CGRect, mode: DividerHandleMode, thickness: Double) {
         handleView = DividerHandleView(frame: CGRect(origin: .zero, size: frame.size), mode: mode, thickness: thickness)
+        decorationMargins = mode.decorationMargins
+        decorationWindow = NSPanel(contentRect: frame.insetBy(dx: -decorationMargins.x, dy: -decorationMargins.y),
+                                   styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         super.init(contentRect: frame, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         level = .floating
         isOpaque = false
@@ -1121,10 +1150,41 @@ private final class DividerHandlePanel: NSPanel {
         becomesKeyOnlyIfNeeded = true
         collectionBehavior = [.moveToActiveSpace, .transient, .ignoresCycle]
         contentView = handleView
+        decorationWindow.level = level
+        decorationWindow.ignoresMouseEvents = true
+        decorationWindow.isOpaque = false
+        decorationWindow.backgroundColor = .clear
+        decorationWindow.hasShadow = false
+        decorationWindow.collectionBehavior = collectionBehavior
+        let decoration = DividerLensDecorationView(frame: CGRect(origin: .zero, size: decorationWindow.frame.size),
+                                                   lensLayers: handleView.lensLayers)
+        decorationWindow.contentView = decoration
+        handleView.decorationView = decoration
+        addChildWindow(decorationWindow, ordered: .below)
+        handleView.layoutSubtreeIfNeeded()
     }
 
-    func configure(mode: DividerHandleMode, thickness: Double) {
-        handleView.configure(mode: mode, thickness: thickness)
+    func configure(mode: DividerHandleMode, thickness: Double, trackRoom: [DividerHandleArm: Double] = [:]) {
+        decorationMargins = mode.decorationMargins
+        handleView.configure(mode: mode, thickness: thickness, trackRoom: trackRoom)
+        decorationWindow.setFrame(frame.insetBy(dx: -decorationMargins.x, dy: -decorationMargins.y), display: true)
+    }
+
+    override func setFrame(_ frameRect: NSRect, display flag: Bool) {
+        super.setFrame(frameRect, display: flag)
+        decorationWindow.setFrame(frameRect.insetBy(dx: -decorationMargins.x, dy: -decorationMargins.y), display: flag)
+        handleView.needsLayout = true
+        handleView.layoutSubtreeIfNeeded()
+    }
+
+    override func orderOut(_ sender: Any?) {
+        decorationWindow.orderOut(sender)
+        super.orderOut(sender)
+    }
+
+    override func orderFrontRegardless() {
+        super.orderFrontRegardless()
+        decorationWindow.order(.below, relativeTo: windowNumber)
     }
 
     func setLimit(_ limit: DragLimit) { handleView.setLimit(limit) }
@@ -1149,13 +1209,23 @@ final class DividerHandleView: NSView {
 
     private var mode: DividerHandleMode
     private var thickness: CGFloat
-    private let glassContainer = NSGlassEffectContainerView()
-    private let glassContent = NSView()
-    private let surfaces = (0..<2).map { _ in OverlayGlassView() }
+    let lensLayers = DividerLensLayers()
+    private let solidLayer = CAShapeLayer()
+    weak var decorationView: DividerLensDecorationView? { didSet { updateAppearance() } }
+    private(set) var trackRoom: [DividerHandleArm: Double] = [:]
+    private(set) var knobRects: [CGRect] = []
+    private(set) var knobOutline: CGPath?
+    private(set) var trackRects: [CGRect] = []
+    private(set) var lensTint = NSColor.controlAccentColor
+    var showsSolid: Bool { !solidLayer.isHidden }
     var overlayAppearance = OverlayAppearance() {
         didSet { updateAppearance(); needsLayout = true }
     }
-    var showsGlass: Bool { surfaces[0].showsGlass }
+    var displayOptions: () -> (reduceTransparency: Bool, increaseContrast: Bool) = {
+        (NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency,
+         NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast)
+    } { didSet { updateAppearance() } }
+    var showsGlass: Bool { !lensLayers.handleLayer.isHidden }
     var renderedThickness: CGFloat {
         CGFloat(DividerHandleGeometry.renderedThickness(Double(thickness), useLiquidGlass: overlayAppearance.useLiquidGlass))
     }
@@ -1172,20 +1242,25 @@ final class DividerHandleView: NSView {
         self.mode = mode
         self.thickness = CGFloat(thickness)
         super.init(frame: frame)
-        glassContainer.contentView = glassContent
-        glassContainer.spacing = 2
-        glassContainer.frame = bounds
-        glassContainer.autoresizingMask = [.width, .height]
-        addSubview(glassContainer)
-        for surface in surfaces { glassContent.addSubview(surface) }
+        wantsLayer = true
+        layer?.addSublayer(lensLayers.handleLayer)
+        layer?.addSublayer(solidLayer)
         updateAppearance()
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self, selector: #selector(updateAppearance),
+            name: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification, object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(updateAppearance), name: NSColor.systemColorsDidChangeNotification, object: nil
+        )
     }
 
     required init?(coder: NSCoder) { nil }
 
-    func configure(mode: DividerHandleMode, thickness: Double) {
+    func configure(mode: DividerHandleMode, thickness: Double, trackRoom: [DividerHandleArm: Double] = [:]) {
         self.mode = mode
         self.thickness = CGFloat(thickness)
+        self.trackRoom = trackRoom
         needsLayout = true
         needsDisplay = true
         window?.invalidateCursorRects(for: self)
@@ -1195,37 +1270,7 @@ final class DividerHandleView: NSView {
 
     override func layout() {
         super.layout()
-        glassContainer.frame = bounds
-        glassContent.frame = glassContainer.bounds
-        let width = renderedThickness
-        var frames: [CGRect] = []
-        switch mode {
-        case let .vertical(resting, expanded):
-            let length = interpolated(resting, expanded)
-            frames = [CGRect(x: (bounds.width - width) / 2, y: (bounds.height - length) / 2,
-                             width: width, height: length)]
-        case let .horizontal(resting, expanded):
-            let length = interpolated(resting, expanded)
-            frames = [CGRect(x: (bounds.width - length) / 2, y: (bounds.height - width) / 2,
-                             width: length, height: width)]
-        case let .junction(center, resting, expanded):
-            let left = interpolated(resting[.left] ?? 0, expanded[.left] ?? 0)
-            let right = interpolated(resting[.right] ?? 0, expanded[.right] ?? 0)
-            let up = interpolated(resting[.up] ?? 0, expanded[.up] ?? 0)
-            let down = interpolated(resting[.down] ?? 0, expanded[.down] ?? 0)
-            frames = [
-                CGRect(x: center.x - left - width / 2, y: center.y - width / 2,
-                       width: left + right + width, height: width),
-                CGRect(x: center.x - width / 2, y: center.y - down - width / 2,
-                       width: width, height: up + down + width),
-            ]
-        }
-        for (index, surface) in surfaces.enumerated() {
-            surface.isHidden = index >= frames.count
-            guard index < frames.count else { continue }
-            surface.frame = frames[index]
-            surface.cornerRadius = width / 2
-        }
+        updateAppearance()
     }
 
     override func updateTrackingAreas() {
@@ -1330,30 +1375,68 @@ final class DividerHandleView: NSView {
         }
     }
 
-    private func interpolated(_ resting: Double, _ expanded: Double) -> CGFloat {
-        CGFloat(resting + (expanded - resting) * stretchProgress)
-    }
-
-    private func updateAppearance() {
-        for surface in surfaces {
-            surface.isLight = true
-            surface.highlightsTop = true
-            surface.overlayAppearance = overlayAppearance
-            surface.tint = gripColor
-            surface.solidColor = gripColor.withAlphaComponent(1)
-            surface.layer?.shadowColor = gripColor.cgColor
-            surface.layer?.shadowOpacity = Float(0.12 + stretchProgress * 0.12)
-            surface.layer?.shadowRadius = 3
-            surface.layer?.shadowOffset = .zero
+    @objc private func updateAppearance() {
+        guard bounds.width > 0, bounds.height > 0 else { return }
+        let options = displayOptions()
+        let solid = !overlayAppearance.useLiquidGlass || options.reduceTransparency || options.increaseContrast
+        let geometry = DividerLensGeometry(
+            bounds: bounds, mode: mode, thickness: thickness, progress: stretchProgress,
+            trackRoom: trackRoom, useLiquidGlass: overlayAppearance.useLiquidGlass
+        )
+        knobRects = geometry.capsules
+        knobOutline = geometry.outline
+        trackRects = geometry.trackRects
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        lensLayers.handleLayer.isHidden = solid
+        lensLayers.decorationLayer.isHidden = solid
+        solidLayer.isHidden = !solid
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            lensTint = (limit.isLimited ? NSColor.systemOrange : NSColor.controlAccentColor).usingColorSpace(.deviceRGB)
+                ?? (limit.isLimited ? .systemOrange : .controlAccentColor)
+            let dark = effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+            if solid {
+                let path = CGMutablePath()
+                for rect in geometry.capsules { path.addPath(capsulePath(rect)) }
+                solidLayer.path = path
+                solidLayer.fillColor = gripColor.withAlphaComponent(1).cgColor
+                solidLayer.strokeColor = lensTint.withAlphaComponent(options.increaseContrast ? 1 : 0.45).cgColor
+                solidLayer.lineWidth = options.increaseContrast ? 1.5 : 0.7
+            } else {
+                lensLayers.apply(geometry: geometry, tint: lensTint, dark: dark,
+                                 frost: 0.5 + overlayAppearance.strength, limited: limit.isLimited, p: stretchProgress)
+                let decorationGeometry = DividerLensGeometry(
+                    bounds: bounds, mode: mode, thickness: thickness, progress: stretchProgress,
+                    trackRoom: trackRoom, originOffset: mode.decorationMargins
+                )
+                lensLayers.applyDecoration(geometry: decorationGeometry, tint: lensTint, dark: dark, p: stretchProgress)
+            }
         }
+        updateContentsScale()
+        CATransaction.commit()
     }
 
     private var gripColor: NSColor {
-        let active: NSColor = limit.isLimited ? .systemOrange : .controlAccentColor
+        if limit.isLimited { return .systemOrange }
         return NSColor.secondaryLabelColor.blended(
-            withFraction: stretchProgress,
-            of: active.withAlphaComponent(0.88)
-        ) ?? active
+            withFraction: stretchProgress, of: NSColor.controlAccentColor.withAlphaComponent(0.88)
+        ) ?? .controlAccentColor
+    }
+
+    private func updateContentsScale() {
+        let scale = window?.backingScaleFactor ?? 1
+        lensLayers.setContentsScale(scale)
+        solidLayer.contentsScale = scale
+    }
+
+    override func viewDidChangeBackingProperties() {
+        super.viewDidChangeBackingProperties()
+        updateContentsScale()
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        updateAppearance()
     }
 
     override func viewDidChangeEffectiveAppearance() {

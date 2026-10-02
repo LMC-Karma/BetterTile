@@ -56,7 +56,7 @@ public struct DividerResizePreview: View {
                         }
                     }
                     PreviewGrip(
-                        mode: sample.mode(thickness: thickness), thickness: thickness,
+                        mode: sample.mode(thickness: thickness), thickness: thickness, trackRoom: sample.trackRoom,
                         active: dragStart != nil, reduceMotion: reduceMotion, overlayAppearance: overlayAppearance
                     )
                     .frame(width: 180, height: 180)
@@ -192,6 +192,17 @@ struct DividerPreviewSample {
     var placements: [Placement]
     var boundaries: [BoundaryDescriptor]
 
+    var trackRoom: [DividerHandleArm: Double] {
+        if shape == .vertical, let boundary = boundaries.first {
+            return [.up: center.y - (boundary.spanStart + 8), .down: boundary.spanEnd - 8 - center.y]
+        }
+        if shape == .horizontal, let boundary = boundaries.first {
+            return [.left: center.x - (boundary.spanStart + 8), .right: boundary.spanEnd - 8 - center.x]
+        }
+        let room = DividerHandleGeometry.junctionTrackRoom(center: center, boundaries: boundaries)
+        return Dictionary(uniqueKeysWithValues: DividerHandleArm.allCases.map { ($0, room[$0] ?? 0) })
+    }
+
     func mode(thickness: Double) -> DividerHandleMode {
         if shape == .vertical || shape == .horizontal, let boundary = boundaries.first {
             let span = (boundary.spanStart + 8)...(boundary.spanEnd - 8)
@@ -211,17 +222,57 @@ struct DividerPreviewSample {
 private struct PreviewGrip: NSViewRepresentable {
     let mode: DividerHandleMode
     let thickness: Double
+    let trackRoom: [DividerHandleArm: Double]
     let active: Bool
     let reduceMotion: Bool
     let overlayAppearance: OverlayAppearance
 
-    func makeNSView(context: Context) -> DividerHandleView {
-        DividerHandleView(frame: CGRect(x: 0, y: 0, width: 180, height: 180), mode: mode, thickness: thickness)
+    func makeNSView(context: Context) -> DividerLensPreviewView {
+        DividerLensPreviewView(frame: CGRect(x: 0, y: 0, width: 180, height: 180),
+                               mode: mode, thickness: thickness, trackRoom: trackRoom)
     }
 
-    func updateNSView(_ view: DividerHandleView, context: Context) {
-        view.overlayAppearance = overlayAppearance
-        view.configure(mode: mode, thickness: thickness)
-        view.setActive(active, animated: !reduceMotion)
+    func updateNSView(_ view: DividerLensPreviewView, context: Context) {
+        view.handleView.overlayAppearance = overlayAppearance
+        view.configure(mode: mode, thickness: thickness, trackRoom: trackRoom)
+        view.handleView.setActive(active, animated: !reduceMotion)
     }
+}
+
+@MainActor
+final class DividerLensPreviewView: NSView {
+    let handleView: DividerHandleView
+    let decorationView: DividerLensDecorationView
+    private var margins: CGPoint
+
+    init(frame: CGRect, mode: DividerHandleMode, thickness: Double, trackRoom: [DividerHandleArm: Double] = [:]) {
+        margins = mode.decorationMargins
+        handleView = DividerHandleView(frame: CGRect(origin: .zero, size: frame.size), mode: mode, thickness: thickness)
+        decorationView = DividerLensDecorationView(
+            frame: CGRect(origin: .zero, size: frame.size).insetBy(dx: -margins.x, dy: -margins.y),
+            lensLayers: handleView.lensLayers
+        )
+        super.init(frame: frame)
+        clipsToBounds = false
+        addSubview(decorationView)
+        addSubview(handleView)
+        handleView.decorationView = decorationView
+        handleView.configure(mode: mode, thickness: thickness, trackRoom: trackRoom)
+    }
+
+    required init?(coder: NSCoder) { nil }
+
+    func configure(mode: DividerHandleMode, thickness: Double, trackRoom: [DividerHandleArm: Double] = [:]) {
+        margins = mode.decorationMargins
+        handleView.configure(mode: mode, thickness: thickness, trackRoom: trackRoom)
+        needsLayout = true
+    }
+
+    override func layout() {
+        super.layout()
+        decorationView.frame = bounds.insetBy(dx: -margins.x, dy: -margins.y)
+        handleView.frame = bounds
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
 }

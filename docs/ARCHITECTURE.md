@@ -238,8 +238,8 @@ changes update visible views without placing windows or cancelling a gesture.
 
 `OverlayGlassView` uses native AppKit glass with a light semantic-color plate.
 The slider changes only that plate, continuously from 22 percent to zero.
-Text-bearing surfaces retain regular glass. Divider capsules and empty panes
-use clear glass with half that added frosting. Disabling glass, Reduce
+Text-bearing surfaces retain regular glass. Empty panes use clear glass with
+half that added frosting. Disabling glass, Reduce
 Transparency, or Increase Contrast selects an opaque surface. Display-option
 changes apply while views are visible. Decorative glass never owns pointer
 events. The Tabbed curtain conceals inactive windows independently of this
@@ -250,9 +250,17 @@ the shared frosting or accessibility fallback over it; Clear removes this
 additional layer. The Layout Wheel uses the same backing over one native glass
 surface. Its hub does not add a second glass material.
 
-Divider capsules use `NSGlassEffectContainerView` to merge junction arms.
-Their glass width is at least six points; the existing hit area, cursor,
-minimum-size indication, and resize engine remain responsible for interaction.
+Divider handles draw their lens with public Core Animation layers. Native
+glass blurs at this size without providing the required lens optics. The lens
+draws a magnified accent track, reflections, and one rounded junction outline.
+A separate click-through panel below the handle supplies the fading track and
+outer shadow. Resize ghosts sit below both panels. The track stops within the
+usable divider span. Glass transparency controls the lens body's frosting.
+Straight hit areas, cursors, and minimum-size feedback keep their existing
+behavior. Junction hit frames grow to contain the wider lens: at the default
+thickness, the resting four-way frame is 44 points square instead of 34.
+Glass off, Reduce Transparency, and Increase Contrast select the solid capsule.
+The settings preview uses the same handle and decoration views.
 The preference also covers tab strips, Tabbed drop targets, resize ghosts,
 the Layout Wheel, the menu bar popover, and result feedback. Snap and Bento
 placement/swap previews retain their light outlines, tint, and pulse.
