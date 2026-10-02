@@ -66,7 +66,7 @@ final class BetterTileModel {
     private let linkedResize: LinkedResizeController
     private let layoutWheel: LayoutWheelController
     private let sharedGestureEvents: SharedGestureEventMonitor
-    private let dividerResize: DividerOverlayController
+    let dividerResize: DividerOverlayController
     private var resultPill: ResultPillController?
     private var sessionStore = LayoutSessionStore()
     private var tabbedOverlays: [DisplayID: TabbedOverlayController] = [:]
@@ -1412,6 +1412,9 @@ final class BetterTileModel {
 
     func shutdown() {
         guard !isShutDown else { return }
+        // A held divider can roll back to pane frames. Finish that rollback
+        // before restoring the windows' Native entry frames.
+        dividerResize.hideAndCancel()
         for (displayID, session) in sessionStore.sessions where session.mode == .tabbed {
             if let display = system.displays().first(where: { $0.id == displayID }),
                let windows = try? system.visibleWindows() {
@@ -1449,7 +1452,6 @@ final class BetterTileModel {
         dragSnap.stop()
         titleBarDoubleClick.stop()
         linkedResize.stop()
-        dividerResize.hideAndCancel()
         resultPill?.hide()
         resultPill = nil
     }

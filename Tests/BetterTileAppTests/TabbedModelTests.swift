@@ -1,6 +1,6 @@
 import AppKit
 import BetterTileCore
-import BetterTileMacOS
+@testable import BetterTileMacOS
 import Testing
 @testable import BetterTileApp
 
@@ -1102,4 +1102,33 @@ func restoringTabbedBaselineRespectsCurrentMinimums(scenario: String, shuttingDo
     #expect(system.windows.map(\.frame) == frames)
     #expect(system.frameWriteCounts[first] == writes[first, default: 0] + 2)
     #expect(system.frameWriteCounts[second] == writes[second, default: 0] + 1)
+}
+
+@Test @MainActor func shutdownRestoresEntryFramesAfterCancellingLiveDivider() async throws {
+    let system = FakeAppWindowSystem()
+    let baseline = system.windows[0].frame
+    let model = try await makeTwoTabbedColumns(system)
+    defer { model.shutdown() }
+    model.configuration.resizeFeedbackMode = .live
+    model.dividerResize.configuration = model.configuration
+    let bounds = system.mainDisplay.visibleFrame
+    let start = BTPoint(x: bounds.midX, y: bounds.midY)
+    let presentation = model.dividerPresentation(windows: system.windows)
+    model.dividerResize.refresh(boundaries: presentation.boundaries, obscuringFrames: presentation.obscuringFrames)
+    let interaction = try #require(DividerInteractionResolver.resolve(
+        at: start, in: presentation.boundaries,
+        hitWidth: 18, adjacencyTolerance: 6, paneGap: model.configuration.bentoInnerGap
+    ))
+    let screen = try #require(NSScreen.screens.first)
+    model.dividerResize.beginGesture(interaction: interaction, at: start)
+    try #require(model.dividerResize.isDragging)
+    let paneFrames = system.windows.map(\.frame)
+    model.dividerResize.drag(to: CGPoint(x: start.x + 60, y: screen.frame.maxY - start.y))
+    model.dividerResize.displayTick()
+    try #require(system.windows.map(\.frame) != paneFrames)
+
+    model.shutdown()
+
+    #expect(!model.dividerResize.isDragging)
+    #expect(system.windows.allSatisfy { $0.frame == baseline })
 }
