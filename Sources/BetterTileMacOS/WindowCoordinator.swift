@@ -847,6 +847,7 @@ extension WindowCoordinator {
             }
             if let focus { try tabSystem.raiseWindow(focus, activate: false) }
             var previousFrames: [WindowID: BTRect] = [:]
+            var previousHiddenFrames: [WindowID: BTRect] = [:]
             // Frames settle within four samples. Activation can take longer,
             // so accepted frames keep waiting for focus instead of rolling back.
             for attempt in 0..<12 {
@@ -856,7 +857,30 @@ extension WindowCoordinator {
                 let actual = Dictionary(uniqueKeysWithValues: try snapshots(ids: ids).map { ($0.id, $0.frame) })
                 let framesMatch = placements.allSatisfy { actual[$0.windowID]?.approximatelyEquals($0.frame, tolerance: 2) == true }
                 let focusMatches = try focus == nil || system.focusedWindow()?.id == focus
-                if framesMatch && focusMatches { return .applied }
+                if framesMatch && focusMatches {
+                    // Hidden writes are best effort, but a transient partial
+                    // resize is not evidence of a minimum. Only mismatches
+                    // need another sample; ordinary accepted frames return now.
+                    let hiddenFrames = onSizeMismatch == nil ? []
+                        : ((try? snapshots(ids: Set(changedBestEffort.map(\.windowID)))) ?? [])
+                    var unsettledHidden = false
+                    for window in hiddenFrames {
+                        guard let placement = changedBestEffort.first(where: { $0.windowID == window.id }),
+                              let before = bestEffortBaseline[window.id],
+                              !window.frame.approximatelyEquals(placement.frame, tolerance: 2) else { continue }
+                        if attempt >= 3, previousHiddenFrames[window.id]?.approximatelyEquals(window.frame, tolerance: 1) == true {
+                            onSizeMismatch?(window.id, placement.frame, before, window.frame)
+                        } else {
+                            unsettledHidden = true
+                        }
+                    }
+                    previousHiddenFrames = Dictionary(uniqueKeysWithValues: hiddenFrames.map { ($0.id, $0.frame) })
+                    if unsettledHidden, attempt < 3 {
+                        try await Task.sleep(for: .milliseconds(50))
+                        continue
+                    }
+                    return .applied
+                }
                 if framesMatch {
                     // The window was raised and its frame accepted. A focus
                     // that never arrives is left to the focus observer.
@@ -864,12 +888,11 @@ extension WindowCoordinator {
                     try await Task.sleep(for: .milliseconds(50))
                     continue
                 }
-                // Only width refusals with stable frames and accepted heights
-                // can inform a retry. Report before rollback loses the evidence.
+                // Stable size refusals in either axis can inform a retry.
+                // Report before rollback loses the evidence.
                 if attempt == 3, focusMatches, placements.allSatisfy({ placement in
                     guard let frame = actual[placement.windowID] else { return false }
-                    return abs(frame.size.height - placement.frame.size.height) <= 2
-                        && previousFrames[placement.windowID]?.approximatelyEquals(frame, tolerance: 1) == true
+                    return previousFrames[placement.windowID]?.approximatelyEquals(frame, tolerance: 1) == true
                 }) {
                     for placement in placements {
                         if let frame = actual[placement.windowID], let before = baseline[placement.windowID] {
@@ -895,13 +918,29 @@ extension WindowCoordinator {
             if touched {
                 for id in previousSelected { do { try tabSystem.raiseWindow(id, activate: false) } catch { failed = true } }
                 if let oldFocus, ids.contains(oldFocus) || previousSelected.contains(oldFocus) {
-                    do { try tabSystem.raiseWindow(oldFocus, activate: true) } catch { failed = true }
+                    // Reactivate only if focus moved, so a rollback never takes
+                    // focus from BetterTile or an app it cannot read.
+                    let needsFocus = (try? system.focusedWindow()?.id) != oldFocus
+                    do { try tabSystem.raiseWindow(oldFocus, activate: needsFocus) } catch { failed = true }
                 }
             }
             let restored = (try? snapshots(ids: ids)) ?? []
             if baseline.contains(where: { id, frame in !restored.contains { $0.id == id && $0.frame.approximatelyEquals(frame, tolerance: 2) } }) { failed = true }
             return failed ? .degraded(reason: "Tabbed could not fully restore the previous arrangement. Use Repair Tabbed or switch to Native.") : .failed(reason: error.localizedDescription)
         }
+    }
+
+    /// Restores Tabbed stacking without moving a window, activating an app,
+    /// or changing keyboard focus. Raises in the given order, back to front.
+    public func raiseTabbedWindows(_ ids: [WindowID]) -> WindowMutationOutcome {
+        guard let tabSystem = system as? any TabbedWindowSystem else {
+            return .failed(reason: "This window system does not support Tabbed actions.")
+        }
+        var failed = false
+        for id in ids {
+            do { try tabSystem.raiseWindow(id, activate: false) } catch { failed = true }
+        }
+        return failed ? .failed(reason: "Tabbed could not restore window order. Select the tab again or use Repair Tabbed.") : .applied
     }
 
     public func closeTabbedWindow(_ id: WindowID) -> WindowMutationOutcome {

@@ -22,6 +22,9 @@ final class FakeWindowSystem: WindowSystem, TargetedWindowSystem, WindowEventSou
     var delayedFocusReads = 0
     private var pendingFocusWindowID: WindowID?
     var closedWindowRequests: [WindowID] = []
+    func windowNumbers(for windows: [WindowSnapshot]) -> [WindowID: Int] { [:] }
+    func stackingOrder(for windows: [WindowSnapshot], excluding windowNumbers: Set<Int>) -> [TabbedStackEntry]? { nil }
+    var frontmostProcessIdentifier: Int32? { nil }
     func raiseWindow(_ id: WindowID, activate: Bool) throws {
         if failingRaiseWindowID == id { throw WindowSystemError.operationFailed("Simulated raise failure") }
         guard windows.contains(where: { $0.id == id }) else { throw WindowSystemError.windowNotFound(id) }
@@ -57,6 +60,7 @@ final class FakeWindowSystem: WindowSystem, TargetedWindowSystem, WindowEventSou
     var eventHandler: (@MainActor (WindowSystemEvent) -> Void)?
     var targetedSnapshotRequests = 0
     var targetedSnapshotsFail = false
+    var targetedSnapshotHandler: ((Set<WindowID>) -> Void)?
     /// Every `knownCurrentFrame` hint the coordinator supplied, per window, in
     /// call order. `nil` means the coordinator had no fresh reading.
     var recordedKnownCurrentFrames: [WindowID: [BTRect?]] = [:]
@@ -106,6 +110,7 @@ final class FakeWindowSystem: WindowSystem, TargetedWindowSystem, WindowEventSou
     }
     func windowSnapshots(ids: Set<WindowID>) throws -> [WindowSnapshot] {
         targetedSnapshotRequests += 1
+        targetedSnapshotHandler?(ids)
         if targetedSnapshotsFail { throw WindowSystemError.operationFailed("Simulated snapshot failure") }
         settlePendingFrames()
         return windows.filter { ids.contains($0.id) }

@@ -108,10 +108,25 @@ adapter restores each application's original setting before the batch returns,
 including error exits. This avoids toggling the same application's setting for
 each of its windows. No suspension is held across an event-loop turn.
 
-Tabbed selection preserves pane geometry and other windows' frames. It swaps
-which window the pane's Bento leaf holds and fits only that window; it does not
-rerun the minimum-size solver. Activation restores ordering in other panes only
-when they contain a window from the activated application.
+Tabbed selection preserves pane geometry when the selected window fits. It swaps
+which window the pane's Bento leaf holds and checks both minimum dimensions.
+If it needs more space, Bento's constraint solver adjusts the pane boundaries.
+An impossible arrangement retains the previous selection. A focus change
+selects a tab only when that
+window's application is frontmost. While BetterTile or an application it cannot
+read is in front, `focusedWindow()` reports the last managed application's
+window, and selecting it would take focus away.
+
+After a focus change, application activation, or tab selection,
+`TabbedLayoutState.sharedCurtainStackingRepair` compares the WindowServer
+front-to-back order with every tab on the display. It puts all selected tabs
+above all inactive tabs. Windows already in front, including floating windows
+in pane gaps, are raised again when needed to keep them above the shared
+curtain. If a tab's identity is missing or a protected window cannot be raised,
+no repair runs and the curtain hides. The repair never activates an
+application, changes keyboard focus or selection, or moves a window. Without
+a readable order, selection still raises the selected tabs of panes that
+share the selected window's application, and activation changes nothing.
 
 ## Bento
 
@@ -134,8 +149,8 @@ change a Bento operation made to the tree; writing it also writes the tree.
 
 - Each pane is a Bento leaf holding its selected tab, or a vacancy with the
   pane's identity when empty. A pane follows its selected window, so a swap
-  carries the whole group. Selecting a tab replaces the leaf's window without
-  moving a boundary.
+  carries the whole group. Selecting a tab replaces the leaf's window.
+  Boundaries move only when the selected window needs more space.
 - The tab strip is a Bento content reserve,
   `BentoLayoutMetrics.contentTopInset`. Placements start each window below it,
   the constraint solver adds it to each pane's minimum height, and the
@@ -147,11 +162,34 @@ change a Bento operation made to the tree; writing it also writes the tree.
   (`WindowCoordinator.applyTabbed(required:)`): a hidden tab that refuses the
   size never fails the layout. Only hidden tabs whose frame changes are
   written, in the same frame-write batch, and they return if the layout fails.
+- In the Debug experiment, one Tabbed curtain covers the display's work area.
+  It sits below every selected tab and above inactive tabs, including portions
+  that extend outside their panes. `TabbedOverlayController` orders this
+  normal-level, nonactivating panel below the backmost selected window with
+  public `NSWindow.order(_:relativeTo:)`. The model verifies the WindowServer
+  order and every tab identity before supplying that anchor. Missing
+  identities or unsafe ordering hide the curtain. It never guesses from a
+  frame or parks a window. A frosted plate over Liquid Glass hides underlying
+  detail, with a solid surface for Reduce Transparency or Increase Contrast.
+  A click selects the selected tab in that pane, or activates an empty pane;
+  it does not reach an inactive tab. Curtains have no accessibility navigation.
+  They hide with the overlay on mode exit, Space changes, fullscreen, display
+  removal, and shutdown.
+- With the same identity, tab strips and empty panes are normal-level panels
+  ordered directly above the selected window, or above the active pane's
+  selected window for an empty pane. Any window in front of the selected tab,
+  including BetterTile's floating Settings window, therefore covers them.
+  Without the identity, they float above normal windows and hide only under
+  the focused window, as before. `AccessibilityWindowSystem.stackingOrder`
+  reads on-screen normal-level windows with `CGWindowListCopyWindowInfo` and
+  skips BetterTile's Tabbed panels. Cross-application ordering still needs
+  live validation.
 - Bento owns every layout interaction in Tabbed: divider drags (including the
   minimum-size state), window drags, and minimum-size solving. After a Bento
   commit, Tabbed re-applies its state so hidden tabs follow their pane and the
-  strips move. During a divider drag, the strips follow each accepted sample;
-  hidden tabs follow at release. A window drag first tears the tab out of its
+  strips move. During a divider drag, the strips and curtains follow each
+  accepted sample without repeating tab ordering; hidden tabs follow at
+  release. A window drag first tears the tab out of its
   group when the group has other tabs; a center drop adds the window to that
   pane as a tab, and a torn tab dropped nowhere returns to its group.
 - A user's edge resize of a selected window follows Bento's rule
@@ -159,7 +197,12 @@ change a Bento operation made to the tree; writing it also writes the tree.
   released. A shared pane edge moves that divider, stopping at each pane's
   minimum. Any other change, including One Pane, an outer edge, a move, or a
   macOS destination, puts the windows back. Hidden tabs and strips then follow.
-- Bento's divider handle appears only on hover, so the Tabbed overlay adds a
+- Tabbed's pointer dividers use pane boundaries even when an application has
+  displaced its selected window. Inactive tabs and BetterTile panels do not
+  suppress the handle. Verified window order determines which floating
+  windows are in front and can suppress it; without that order, the
+  frontmost application's floating windows provide the fallback. Bento's divider
+  handle appears only on hover, so the Tabbed overlay adds a
   VoiceOver slider over each divider. The slider ignores the mouse; increment
   and decrement move the Bento divider by five percent of the area it splits.
 - New windows join the active pane as its selected tab. Entering Tabbed from

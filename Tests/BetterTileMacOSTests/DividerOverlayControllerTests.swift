@@ -706,6 +706,52 @@ enum DividerLimitCase: CaseIterable { case straight, junction, linked }
     controller.cancelActiveGesture()
 }
 
+@Test @MainActor func ignoredLiveResizesDoNotBecomeMinimumSizes() throws {
+    _ = NSApplication.shared
+    let system = FakeWindowSystem()
+    let bounds = BTRect(x: -10_000, y: -10_000, width: 800, height: 600)
+    let display = DisplayID(rawValue: "main")
+    system.availableDisplays = [DisplaySnapshot(id: display, frame: bounds, visibleFrame: bounds, isMain: true)]
+    let left = WindowID(rawValue: "left"), right = WindowID(rawValue: "right")
+    system.windows = [
+        WindowSnapshot(id: left, processIdentifier: 1, frame: BTRect(x: bounds.minX, y: bounds.minY, width: 400, height: 600), displayID: display),
+        WindowSnapshot(id: right, processIdentifier: 2, frame: BTRect(x: bounds.minX + 400, y: bounds.minY, width: 400, height: 600), displayID: display),
+    ]
+    // A successful AX call can leave the application window unchanged.
+    system.ignoredFrameWriteCounts[right] = 100
+    var config = BetterTileConfiguration()
+    config.resizeFeedbackMode = .live
+    let controller = DividerOverlayController(coordinator: WindowCoordinator(system: system), configuration: config)
+    var willBegin = 0
+    controller.gestureWillBeginHandler = { willBegin += 1 }
+    let boundary = BoundaryDescriptor(
+        id: "native", displayID: display, axis: .vertical, coordinate: bounds.minX + 400,
+        spanStart: bounds.minY, spanEnd: bounds.maxY, beforeWindowIDs: [left], afterWindowIDs: [right]
+    )
+    let start = BTPoint(x: bounds.minX + 400, y: bounds.minY + 80)
+    let interaction = try #require(DividerInteractionResolver.resolve(at: start, in: [boundary], hitWidth: 18, adjacencyTolerance: 6, paneGap: 0))
+    let screen = try #require(NSScreen.screens.first)
+    func drag(_ dx: Double) {
+        controller.drag(to: CGPoint(x: start.x + dx, y: screen.frame.maxY - start.y))
+        controller.displayTick()
+    }
+
+    controller.beginGesture(interaction: interaction, at: start)
+    defer { controller.hideAndCancel() }
+    #expect(willBegin == 1)
+    drag(20)
+    #expect(!controller.dragLimit.isLimited)
+    drag(90)
+    drag(100)
+    #expect(!controller.dragLimit.isLimited)
+    // Once writes work again the pane can shrink below its unchanged baseline.
+    system.ignoredFrameWriteCounts[right] = 0
+    drag(120)
+    #expect(!controller.dragLimit.isLimited)
+    #expect(system.windows.first { $0.id == right }?.frame.size.width == 280)
+
+}
+
 @Test(arguments: [SplitAxis.vertical, .horizontal])
 @MainActor func liveJunctionRefusalLimitsOnlyTheHeldAxis(axis: SplitAxis) throws {
     _ = NSApplication.shared
@@ -818,8 +864,9 @@ enum DividerLimitCase: CaseIterable { case straight, junction, linked }
     #expect(cursor([.up, .left]) == .frameResize(position: .bottomRight, directions: .all))
 }
 
-@Test(arguments: [ResizeFeedbackMode.ghost, .live], [false, true]) @MainActor
-func bentoDividerReportsLiveTreesAndRestoresTheStartWithoutACommit(feedback: ResizeFeedbackMode, commit: Bool) throws {
+@Test(arguments: [ResizeFeedbackMode.ghost, .live], [(false, false), (false, true), (true, false), (true, true)]) @MainActor
+func bentoDividerReportsLiveTreesAndRestoresTheStartWithoutACommit(feedback: ResizeFeedbackMode, scenario: (commit: Bool, displaced: Bool)) throws {
+    let (commit, displaced) = scenario
     _ = NSApplication.shared
     let system = FakeWindowSystem()
     let bounds = BTRect(x: -10_000, y: -10_000, width: 800, height: 600)
@@ -832,6 +879,11 @@ func bentoDividerReportsLiveTreesAndRestoresTheStartWithoutACommit(feedback: Res
     )))
     system.windows = state.placements(in: bounds).map {
         WindowSnapshot(id: $0.windowID, processIdentifier: 1, frame: $0.frame, displayID: display)
+    }
+    if displaced {
+        // A native edge resize can leave the selected tab away from its pane
+        // edge. Pane-derived handles must still acquire a Bento transaction.
+        system.windows[0].frame.size.width -= 80
     }
     var configuration = BetterTileConfiguration()
     configuration.resizeFeedbackMode = feedback
@@ -874,4 +926,24 @@ func bentoDividerReportsLiveTreesAndRestoresTheStartWithoutACommit(feedback: Res
         #expect(committed == nil)
         #expect(reported.last?.tree == state)
     }
+}
+
+@MainActor
+@Test func tabbedChromeDoesNotOccludeDividerButSettingsDoes() {
+    let frame = CGRect(x: 490, y: 300, width: 20, height: 56)
+    let chrome = VisibleDividerTestWindow(contentRect: frame, styleMask: .borderless, backing: .buffered, defer: true)
+    let settings = VisibleDividerTestWindow(contentRect: frame, styleMask: .borderless, backing: .buffered, defer: true)
+    chrome.testNumber = 101
+    settings.testNumber = 102
+    #expect(!DividerOverlayController.ownWindowCoversHandle(frame, windows: [chrome], excluding: [chrome.windowNumber]))
+    #expect(DividerOverlayController.ownWindowCoversHandle(frame, windows: [chrome, settings], excluding: [chrome.windowNumber]))
+    settings.ignoresMouseEvents = true
+    #expect(!DividerOverlayController.ownWindowCoversHandle(frame, windows: [chrome, settings], excluding: [chrome.windowNumber]))
+}
+
+@MainActor
+private final class VisibleDividerTestWindow: NSWindow {
+    var testNumber = 0
+    override var windowNumber: Int { testNumber }
+    override var isVisible: Bool { true }
 }

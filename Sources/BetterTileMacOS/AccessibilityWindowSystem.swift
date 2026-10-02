@@ -895,6 +895,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
             hints: attributes.minimumSizes,
             displaySize: display.frame.size
         )
+        minimumSizeLearner.observeAcceptedSize(windowID: id, size: frame.size)
         let constraints = minimumSizeLearner.merging(
             WindowConstraints(
                 minimumSize: minimumSize,
@@ -1295,6 +1296,38 @@ public enum OnscreenWindowMatcher {
 }
 
 extension AccessibilityWindowSystem: TabbedWindowSystem {
+    public func windowNumbers(for windows: [WindowSnapshot]) -> [WindowID: Int] {
+        let exactIDs = Dictionary(uniqueKeysWithValues: windows.compactMap { window in
+            identities.exactWindowID(for: window.id).map { (window.id, $0) }
+        })
+        guard let index = targetedWindowServerIndex(ids: Set(exactIDs.values)) else { return [:] }
+        return windows.reduce(into: [:]) { result, window in
+            guard window.isEligible, let number = exactIDs[window.id], number != 0,
+                  index.contains(window, exactWindowID: number) else { return }
+            result[window.id] = Int(number)
+        }
+    }
+
+    public func stackingOrder(for windows: [WindowSnapshot], excluding windowNumbers: Set<Int>) -> [TabbedStackEntry]? {
+        var managed: [CGWindowID: WindowSnapshot] = [:]
+        for window in windows {
+            if let number = identities.exactWindowID(for: window.id), number != 0 { managed[number] = window }
+        }
+        guard !managed.isEmpty,
+              let info = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
+                as? [[CFString: Any]] else { return nil }
+        return windowServerRecords(from: info, defaultOnscreen: true).compactMap { record in
+            guard record.layer == 0, record.isOnscreen, !windowNumbers.contains(Int(record.windowID)) else { return nil }
+            // An identity whose process no longer matches is not addressable.
+            let window = managed[record.windowID].flatMap { $0.processIdentifier == record.processIdentifier ? $0 : nil }
+            return TabbedStackEntry(windowID: window?.id, frame: record.frame)
+        }
+    }
+
+    public var frontmostProcessIdentifier: Int32? {
+        NSWorkspace.shared.frontmostApplication?.processIdentifier
+    }
+
     public func raiseWindow(_ id: WindowID, activate: Bool) throws {
         try ensurePermission()
         guard let element = elements[id] ?? refreshElement(for: id) else { throw WindowSystemError.windowNotFound(id) }

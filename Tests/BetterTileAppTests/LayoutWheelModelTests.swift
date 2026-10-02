@@ -47,9 +47,33 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, TabbedWindowSystem {
     var focusedID: WindowID?
     var focusRequests: [WindowID] = []
     var raiseRequests: [(WindowID, Bool)] = []
+    var failingNextRaiseWindowID: WindowID?
+    var windowNumberRequests: [Set<WindowID>] = []
+    func windowNumbers(for windows: [WindowSnapshot]) -> [WindowID: Int] {
+        windowNumberRequests.append(Set(windows.map(\.id)))
+        return [:] // Simulate unavailable exact identities without live AX.
+    }
+    /// WindowServer order, front to back. Nil simulates unavailable exact
+    /// identities. Raises move a window to the front, as AXRaise does.
+    var stack: [TabbedStackEntry]?
+    var updatesStackOnRaise = true
+    func stackingOrder(for windows: [WindowSnapshot], excluding windowNumbers: Set<Int>) -> [TabbedStackEntry]? { stack }
+    /// Simulates BetterTile or an unreadable app in front; otherwise the
+    /// focused window's app is frontmost.
+    var frontmostOverride: Int32?
+    var frontmostProcessIdentifier: Int32? {
+        frontmostOverride ?? (windows.first { $0.id == focusedID } ?? windows.first)?.processIdentifier
+    }
     func raiseWindow(_ id: WindowID, activate: Bool) throws {
+        if failingNextRaiseWindowID == id {
+            failingNextRaiseWindowID = nil
+            throw WindowSystemError.operationFailed("Injected window ordering failure.")
+        }
         raiseRequests.append((id, activate))
         if activate { focusedID = id; focusRequests.append(id) }
+        if updatesStackOnRaise, let index = stack?.firstIndex(where: { $0.windowID == id }), let entry = stack?.remove(at: index) {
+            stack?.insert(entry, at: 0)
+        }
     }
     func requestCloseWindow(_ id: WindowID) throws {}
     var focusedWindowReadFails = false
@@ -59,14 +83,26 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, TabbedWindowSystem {
     }
     func visibleWindows() throws -> [WindowSnapshot] {
         completeSweepCount += 1
+        refreshLearnedConstraints()
         return windows
     }
     func displays() -> [DisplaySnapshot] { availableDisplays }
     func windowSnapshots(ids: Set<WindowID>) throws -> [WindowSnapshot] {
-        windows.filter { ids.contains($0.id) }
+        refreshLearnedConstraints()
+        return windows.filter { ids.contains($0.id) }
+    }
+    private func refreshLearnedConstraints() {
+        for index in windows.indices {
+            let id = windows[index].id
+            minimumSizeLearner.observeAcceptedSize(windowID: id, size: windows[index].frame.size)
+            if let reported = reportedConstraints[id] {
+                windows[index].constraints = minimumSizeLearner.merging(reported, for: id)
+            }
+        }
     }
     func cachedVisibleWindows(refreshing ids: Set<WindowID>) throws -> [WindowSnapshot]? {
         cachedRefreshCount += 1
+        refreshLearnedConstraints()
         return cachedSnapshotsAvailable ? windows : nil
     }
     func setFrame(_ frame: BTRect, knownCurrentFrame: BTRect?, for windowID: WindowID) throws {
