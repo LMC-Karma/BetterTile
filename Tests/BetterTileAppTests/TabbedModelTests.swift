@@ -48,7 +48,7 @@ func activationWithBetterTileInFrontNeverSelectsOrActivatesATab(staleFocusIsHidd
 }
 
 @Test(arguments: [false, true]) @MainActor
-func activationRaisesOnlyAPaneWhoseHiddenTabCameForward(failOrdering: Bool) async throws {
+func activationRaisesSelectionsAboveAllInactiveTabs(failOrdering: Bool) async throws {
     let system = FakeAppWindowSystem()
     let model = try await makeTwoTabbedColumns(system)
     defer { model.shutdown() }
@@ -69,13 +69,15 @@ func activationRaisesOnlyAPaneWhoseHiddenTabCameForward(failOrdering: Bool) asyn
                                           processIdentifier: system.windows[0].processIdentifier))
     if failOrdering {
         #expect(await waitFor(timeout: .seconds(1)) { model.statusMessage != nil })
-        #expect(system.raiseRequests.count == raises)
+        // Ordering is best effort. Later safe raises still run when one
+        // selected tab refuses, but no verified curtain anchor is returned.
+        #expect(system.raiseRequests.dropFirst(raises).map(\.0) == [system.windows[0].id])
     } else {
         #expect(await waitFor(timeout: .seconds(1)) { system.raiseRequests.count > raises })
         try await Task.sleep(for: .milliseconds(200))
-        #expect(system.raiseRequests.dropFirst(raises).map(\.0) == [system.windows[3].id])
+        #expect(system.raiseRequests.dropFirst(raises).map(\.0) == [system.windows[3].id, system.windows[0].id])
         #expect(!system.raiseRequests.dropFirst(raises).contains { $0.1 })
-        #expect(system.stack?.map(\.windowID) == [3, 2, 0, 1].map { system.windows[$0].id })
+        #expect(system.stack?.map(\.windowID) == [0, 3, 2, 1].map { system.windows[$0].id })
     }
     #expect(system.focusedID == system.windows[0].id)
     #expect(system.windows.map(\.frame) == frames)
@@ -101,7 +103,7 @@ func stackingRepairKeepsAWindowInFrontOrLeavesAnUnreadableOneAlone(readable: Boo
     model.handleApplicationActivation()
     try await Task.sleep(for: .milliseconds(500))
     let raised = system.raiseRequests.dropFirst(raises)
-    #expect(raised.map(\.0) == (readable ? [system.windows[3].id, floating] : []))
+    #expect(raised.map(\.0) == (readable ? [system.windows[0].id, system.windows[3].id, floating] : []))
     #expect(!raised.contains { $0.1 })
 }
 
@@ -148,7 +150,7 @@ func activationRepairsHiddenTabsOnAnotherTabbedDisplay(focusedDisplayTabbed: Boo
 }
 
 @Test(arguments: [false, true]) @MainActor
-func tabSelectionRaisesAnotherPaneOnlyWhenItsHiddenTabIsInFront(readableOrder: Bool) async throws {
+func tabSelectionPreservesFloatingOrderWhenRepairingTheSharedCurtain(readableOrder: Bool) async throws {
     let system = FakeAppWindowSystem()
     let model = try await makeTwoTabbedColumns(system)
     defer { model.shutdown() }
@@ -166,9 +168,10 @@ func tabSelectionRaisesAnotherPaneOnlyWhenItsHiddenTabIsInFront(readableOrder: B
     #expect(await waitFor(timeout: .seconds(1)) { model.activeTabbedState?.activeWindowID == target })
     try await Task.sleep(for: .milliseconds(600)) // The stacking check follows the selection.
     let raised = Set(system.raiseRequests.dropFirst(raises).map(\.0))
-    // Without the window order, panes sharing the selected tab's app are
-    // raised as before. With it, nothing exposed a hidden tab there.
-    #expect(raised == (readableOrder ? [target] : [target, system.windows[3].id]))
+    // The formerly selected left tab is now inactive above the right
+    // selection. Repair puts both selected tabs above it, preserving floating.
+    #expect(raised == (readableOrder ? [target, system.windows[3].id, floating.windowID!]
+                                    : [target, system.windows[3].id]))
 }
 
 @Test(arguments: [false, true]) @MainActor
@@ -828,4 +831,78 @@ func impossibleTabSelectionPreservesSelectionAndFrames(height: Bool) async throw
     #expect(model.activeTabbedState == before)
     #expect(system.windows.map(\.frame) == frames)
     #expect(system.frameWriteCounts == writes)
+}
+
+@Test @MainActor
+func activationRepairsAnInactiveTabAboveAnotherPanesSelection() async throws {
+    let system = FakeAppWindowSystem()
+    let model = try await makeTwoTabbedColumns(system)
+    defer { model.shutdown() }
+    // Each pane's selected tab is above its own inactive tab, but the left
+    // inactive tab still sits above the right selection and shared curtain.
+    system.stack = [0, 1, 3, 2].map { stackEntry(system.windows[$0]) }
+    system.focusedID = system.windows[0].id
+    let raises = system.raiseRequests.count
+    model.handleApplicationActivation()
+    #expect(await waitFor { system.raiseRequests.count > raises })
+    #expect(system.raiseRequests.dropFirst(raises).map(\.0) == [system.windows[3].id])
+    let selected = Set(try #require(model.activeTabbedState).selectedWindowIDs)
+    let order = try #require(system.stack).compactMap(\.windowID)
+    #expect(Set(order.prefix(2)) == selected)
+    #expect(!system.raiseRequests.dropFirst(raises).contains { $0.1 })
+}
+
+@Test @MainActor
+func sharedCurtainRepairKeepsAFloatingWindowInThePaneGapInFront() async throws {
+    let system = FakeAppWindowSystem()
+    let model = try await makeTwoTabbedColumns(system)
+    defer { model.shutdown() }
+    let state = try #require(model.activeTabbedState)
+    let bounds = system.mainDisplay.visibleFrame
+    let left = try #require(state.frames(in: bounds)[state.panes[0].id])
+    let floating = WindowID(rawValue: "gap-floating")
+    let gap = TabbedStackEntry(windowID: floating,
+        frame: BTRect(x: left.maxX + 1, y: bounds.minY + 100, width: 2, height: 100))
+    system.stack = [0, 1].map { stackEntry(system.windows[$0]) }
+        + [gap] + [3, 2].map { stackEntry(system.windows[$0]) }
+    let raises = system.raiseRequests.count
+    model.handleApplicationActivation()
+    #expect(await waitFor { system.raiseRequests.count > raises })
+    #expect(system.raiseRequests.dropFirst(raises).map(\.0) == [system.windows[3].id, floating])
+    #expect(system.stack?.first?.windowID == floating)
+    #expect(!system.raiseRequests.dropFirst(raises).contains { $0.1 })
+}
+
+@Test @MainActor
+func sharedCurtainRequiresVerifiedOrderAfterAnIgnoredRaise() async throws {
+    let system = FakeAppWindowSystem()
+    let model = try await makeTwoTabbedColumns(system)
+    defer { model.shutdown() }
+    let state = try #require(model.activeTabbedState)
+    system.stack = [0, 1, 3, 2].map { stackEntry(system.windows[$0]) }
+    system.updatesStackOnRaise = false
+    #expect(model.repairTabbedOrder(state: state, windows: system.windows,
+        bounds: system.mainDisplay.visibleFrame) == nil)
+}
+
+@Test @MainActor
+func tabbedDividerPresentationSurvivesDisplacedWindowsAndExcludesInactiveTabs() async throws {
+    let system = FakeAppWindowSystem()
+    let model = try await makeTwoTabbedColumns(system)
+    defer { model.shutdown() }
+    let state = try #require(model.activeTabbedState)
+    let bounds = system.mainDisplay.visibleFrame
+    let expected = state.layout.boundaries(in: bounds, displayID: system.mainDisplay.id)
+    let hidden = try #require(state.panes[0].tabs.first { $0 != state.panes[0].selected })
+    let index = try #require(system.windows.firstIndex { $0.id == hidden })
+    system.windows[index].processIdentifier = system.windows[0].processIdentifier
+    system.windows[0].frame.size.width -= 200
+    // A frontmost floating window still suppresses a handle it overlaps.
+    var floating = system.windows[0]
+    floating.id = WindowID(rawValue: "divider-floating")
+    floating.isFloating = true
+    system.windows.append(floating)
+    let presentation = model.dividerPresentation(windows: system.windows)
+    #expect(presentation.boundaries == expected)
+    #expect(presentation.obscuringFrames == [floating.frame])
 }

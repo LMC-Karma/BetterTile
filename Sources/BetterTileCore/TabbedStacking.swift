@@ -14,20 +14,18 @@ public struct TabbedStackEntry: Hashable, Sendable {
 }
 
 public extension TabbedLayoutState {
-    func stackingRepair(order: [TabbedStackEntry]) -> [WindowID] {
-        sharedCurtainStackingRepair(order: order) ?? []
-    }
-
     /// A back-to-front raise plan that puts all selected tabs above all
     /// inactive tabs on this display. Nil means the order cannot be repaired
     /// safely; an empty plan means a shared curtain can already be inserted.
-    func sharedCurtainStackingRepair(order: [TabbedStackEntry], curtainBounds: BTRect? = nil) -> [WindowID]? {
+    func sharedCurtainStackingRepair(order: [TabbedStackEntry], curtainBounds: BTRect) -> [WindowID]? {
         var position: [WindowID: Int] = [:]
         for (index, entry) in order.enumerated() {
             if let id = entry.windowID, position[id] == nil { position[id] = index }
         }
         let selected = Set(selectedWindowIDs)
-        guard !selected.isEmpty, selected.allSatisfy({ position[$0] != nil }) else { return nil }
+        // Missing inactive identities could conceal an exposed tab among
+        // unreadable windows. A curtain needs verified order for every tab.
+        guard !selected.isEmpty, windowIDs.allSatisfy({ position[$0] != nil }) else { return nil }
         let hidden = Set(panes.flatMap(\.tabs)).subtracting(selected)
         let selectedIndices = selected.compactMap { position[$0] }
         guard let backmost = selectedIndices.max() else { return nil }
@@ -42,12 +40,10 @@ public extension TabbedLayoutState {
         var rank: [Int: Int] = [:]
         for (targetRank, index) in target.enumerated() { rank[index] = targetRank }
         var raised = Set(selectedIndices.filter { index in exposed.contains { $0 < index } })
-        if let curtainBounds {
-            for index in order.indices where index < backmost {
-                let id = order[index].windowID
-                if id.map({ !hidden.contains($0) && !selected.contains($0) }) ?? true,
-                   order[index].frame.intersection(curtainBounds) != nil { raised.insert(index) }
-            }
+        for index in order.indices where index < backmost {
+            let id = order[index].windowID
+            if id.map({ !hidden.contains($0) && !selected.contains($0) }) ?? true,
+               order[index].frame.intersection(curtainBounds) != nil { raised.insert(index) }
         }
         var grew = true
         while grew {

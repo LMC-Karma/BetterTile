@@ -172,6 +172,9 @@ final class BetterTileModel {
         dragSnap.actionResultHandler = { [weak self] displayID, succeeded, error in
             self?.presentActionResult(succeeded: succeeded, error: error, displayID: displayID)
         }
+        dividerResize.nonOccludingWindowNumbersProvider = { [weak self] in
+            self?.tabbedOverlays.values.reduce(into: Set<Int>()) { $0.formUnion($1.windowNumbers) } ?? []
+        }
         dividerResize.bentoStateProvider = { [weak self] displayID in
             self?.sessionStore.session(for: displayID)?.bentoState
         }
@@ -2823,7 +2826,11 @@ final class BetterTileModel {
     }
 
     private func refreshDividerBoundaries(windows suppliedWindows: [WindowSnapshot]? = nil) {
-        let windows = suppliedWindows ?? ((try? system.visibleWindows()) ?? [])
+        let presentation = dividerPresentation(windows: suppliedWindows ?? ((try? system.visibleWindows()) ?? []))
+        dividerResize.refresh(boundaries: presentation.boundaries, obscuringFrames: presentation.obscuringFrames)
+    }
+
+    func dividerPresentation(windows: [WindowSnapshot]) -> (boundaries: [BoundaryDescriptor], obscuringFrames: [BTRect]) {
         let displays = Dictionary(uniqueKeysWithValues: system.displays().map { ($0.id, $0) })
         var boundaries: [BoundaryDescriptor] = []
         var managedWindowIDs: Set<WindowID> = []
@@ -2841,7 +2848,12 @@ final class BetterTileModel {
                     managedWindowIDs.formUnion(boundary.afterWindowIDs)
                 }
                 boundaries += linkedBoundaries
-            case .bento, .tabbed:
+            case .tabbed:
+                // Pane boundaries stay usable when an app clamps or displaces
+                // its selected window. Inactive tabs are layout members too.
+                managedWindowIDs.formUnion(session.tabbedState?.windowIDs ?? [])
+                boundaries += session.bentoState.boundaries(in: display.visibleFrame, displayID: displayID)
+            case .bento:
                 managedWindowIDs.formUnion(session.bentoState.root?.windowIDs ?? [])
                 boundaries += BentoBoundaryResolver(tolerance: configuration.adjacencyTolerance).boundaries(
                     state: session.bentoState,
@@ -2853,15 +2865,12 @@ final class BetterTileModel {
                 break
             }
         }
-        dividerResize.refresh(
-            boundaries: boundaries,
-            obscuringFrames: DividerHandleOcclusion.obscuringFrames(
-                in: NSWorkspace.shared.frontmostApplication.map { frontmost in
-                    windows.filter { $0.processIdentifier == frontmost.processIdentifier }
-                } ?? [],
-                excluding: managedWindowIDs
-            )
-        )
+        let frontmostPID = (system as? any TabbedWindowSystem)?.frontmostProcessIdentifier
+            ?? NSWorkspace.shared.frontmostApplication?.processIdentifier
+        return (boundaries, DividerHandleOcclusion.obscuringFrames(
+            in: windows.filter { $0.processIdentifier == frontmostPID },
+            excluding: managedWindowIDs
+        ))
     }
 
     private func windowSignature(_ windows: [WindowSnapshot]) -> String {
@@ -2988,7 +2997,11 @@ extension BetterTileModel {
         overlay.refresh(state: state, bounds: display.visibleFrame, windows: windows,
                         obscuringFrames: obscuring.map { [$0] } ?? [],
                         canUndo: !(tabbedUndo[session.id]?.isEmpty ?? true),
-                        selectedWindowNumbers: windowNumbers)
+                        selectedWindowNumbers: windowNumbers,
+                        curtainAnchorWindowNumber: repairTabbedOrder(state: state, windows: windows, bounds: display.visibleFrame)
+                            .flatMap { order in
+                                order.last(where: { $0.windowID.map(selected.contains) == true })?.windowID
+                            }.flatMap { windowNumbers[$0] })
         tabbedOverlays[display.id] = overlay
     }
 
@@ -3324,7 +3337,7 @@ extension BetterTileModel {
                 self.handleTabbed(.select(focused.id), on: focused.displayID)
                 return
             }
-            self.repairTabbedStacking(refreshing: focused?.displayID)
+            self.repairTabbedStacking()
         }
     }
 
@@ -3342,27 +3355,39 @@ extension BetterTileModel {
     /// what must move. It never activates an application, changes a
     /// selection, or moves a window. Chrome then reorders around the
     /// selected tabs.
-    private func repairTabbedStacking(refreshing focusedDisplayID: DisplayID?) {
+    private func repairTabbedStacking() {
         guard let windows = try? system.visibleWindows() else { return }
         let displays = system.displays()
-        let chrome = tabbedOverlays.values.reduce(into: Set<Int>()) { $0.formUnion($1.windowNumbers) }
-        // Never raise windows under a divider drag or an unreleased edge resize.
-        let order = dividerResize.isDragging || tabbedResizeReleaseTask != nil ? nil
-            : (system as? any TabbedWindowSystem)?.stackingOrder(for: windows, excluding: chrome)
         for session in sessionStore.sessions.values where session.mode == .tabbed {
             guard !session.automaticWritesSuspended, tabbedTasks[session.displayID] == nil,
                   !nativeFullscreenDisplayIDs.contains(session.displayID),
                   let state = session.tabbedState,
                   let display = displays.first(where: { $0.id == session.displayID }) else { continue }
-            let plan = order.map { state.stackingRepair(order: $0) } ?? []
-            if !plan.isEmpty {
-                let outcome = coordinator.raiseTabbedWindows(plan)
-                if !outcome.isApplied { statusMessage = outcome.failureReason }
-            }
-            if !plan.isEmpty || display.id == focusedDisplayID {
+            if presentsTabbedChrome {
                 showTabbed(session: session, display: display, windows: windows)
+            } else {
+                _ = repairTabbedOrder(state: state, windows: windows, bounds: display.visibleFrame)
             }
         }
+    }
+
+    /// A shared curtain needs every selected tab above every inactive tab.
+    /// Verify the readback after raising; never expose a curtain on intent alone.
+    func repairTabbedOrder(state: TabbedLayoutState, windows: [WindowSnapshot], bounds: BTRect) -> [TabbedStackEntry]? {
+        guard let system = system as? any TabbedWindowSystem else { return nil }
+        let chrome = tabbedOverlays.values.reduce(into: Set<Int>()) { $0.formUnion($1.windowNumbers) }
+        guard var order = system.stackingOrder(for: windows, excluding: chrome),
+              let plan = state.sharedCurtainStackingRepair(order: order, curtainBounds: bounds) else { return nil }
+        if !plan.isEmpty {
+            // Never reorder foreign windows during a held resize.
+            guard !dividerResize.isDragging, tabbedResizeReleaseTask == nil else { return nil }
+            let outcome = coordinator.raiseTabbedWindows(plan)
+            guard outcome.isApplied else { statusMessage = outcome.failureReason; return nil }
+            guard let readback = system.stackingOrder(for: windows, excluding: chrome) else { return nil }
+            order = readback
+        }
+        guard state.sharedCurtainStackingRepair(order: order, curtainBounds: bounds)?.isEmpty == true else { return nil }
+        return order
     }
 
     private func leaveTabbed(displayID: DisplayID, destination: LayoutMode) {
