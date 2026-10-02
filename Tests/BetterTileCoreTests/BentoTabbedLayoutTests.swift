@@ -346,3 +346,23 @@ func fitterReadsALowerPaneEdgeBelowItsContentReserve(reserve: Double) throws {
     #expect(try abs(#require(after[bottom]).minY - lower.minY) < 0.5)
     #expect(try abs(#require(after[top]).maxY - (upper.maxY + 50)) < 0.5)
 }
+
+@Test func synchronizingNewVacanciesCreatesTheirEmptyPaneMembership() throws {
+    let occupied = WindowID(rawValue: "occupied")
+    let vacancy = UUID()
+    let initial = BentoLayoutState(root: .leaf(occupied))
+    var state = try #require(BentoTabbedLayoutState(adopting: initial))
+    let occupiedPane = try #require(state.pane(containing: occupied))
+    let changed = BentoLayoutState(root: .partition(BentoPartition(
+        axis: .vertical, children: [.leaf(occupied), .vacant(vacancy)]
+    )))
+    #expect(state.synchronize(with: changed).isEmpty)
+    #expect(state.panes.count == 2)
+    #expect(state.pane(containing: occupied)?.id == occupiedPane.id)
+    let empty = try #require(state.panes.first { $0.id == vacancy })
+    #expect(empty.tabs.isEmpty)
+    #expect(empty.selected == nil)
+    #expect(state.paneFrames(in: tabbedBounds)?.count == 2)
+    #expect(state.synchronize(with: changed).isEmpty)
+    #expect(state.panes.count == 2)
+}

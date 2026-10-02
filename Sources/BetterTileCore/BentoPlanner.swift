@@ -210,6 +210,8 @@ public struct BentoPlanner: Sendable {
             return BentoPlannerResult(state: next, writesFrames: false)
         }
         let managed = Array(ids.prefix(maximumManagedWindows))
+        let overflow = Set(ids.dropFirst(managed.count))
+        let overflowPill: BentoPillResult? = overflow.isEmpty ? nil : .overflow(bentoOverflowMessage)
         let frames = Dictionary(uniqueKeysWithValues: managed.compactMap { id in
             observation.frames[id].map { (id, $0) }
         })
@@ -219,9 +221,10 @@ public struct BentoPlanner: Sendable {
             metrics: next.layout.metrics
         ) {
             next.layout = adopted
+            next.layout.floatingWindowIDs = overflow
             return BentoPlannerResult(
                 state: next,
-                pill: .success("Existing panes adopted"),
+                pill: overflowPill ?? .success("Existing panes adopted"),
                 writesFrames: false
             )
         }
@@ -234,8 +237,9 @@ public struct BentoPlanner: Sendable {
                metrics: .gapless
            ) {
             adopted.metrics = next.layout.metrics
+            adopted.floatingWindowIDs = overflow
             next.layout = adopted
-            return solved(next, observation: observation, pill: .adapted("Existing panes adopted"))
+            return solved(next, observation: observation, pill: overflowPill ?? .adapted("Existing panes adopted"))
         }
 
         next.layout = automaticLayout(
@@ -244,7 +248,6 @@ public struct BentoPlanner: Sendable {
             metrics: next.layout.metrics,
             bounds: observation.bounds
         )
-        let overflow = ids.filter { !managed.contains($0) }
         if !overflow.isEmpty {
             // Overflow stays visible and floating. It is not minimized and it
             // does not displace the six panes: a window the user can still see
@@ -528,6 +531,16 @@ public struct BentoPlanner: Sendable {
         observation: BentoObservation
     ) -> BentoPlannerResult {
         var next = state
+        let treeIDs = next.layout.root?.windowIDs ?? []
+        if !treeIDs.contains(windowID), treeIDs.count >= maximumManagedWindows {
+            next.layout.setFloating(true, windowID: windowID)
+            return BentoPlannerResult(
+                state: next,
+                restoreWindowIDs: [windowID],
+                pill: .overflow(bentoOverflowMessage),
+                writesFrames: false
+            )
+        }
         if let anchor = next.reinsertionAnchors.removeValue(forKey: windowID),
            next.layout.root?.windowIDs.contains(anchor.neighborWindowID) == true {
             _ = next.layout.reinsert(windowID, beside: anchor.neighborWindowID, edge: anchor.edge)

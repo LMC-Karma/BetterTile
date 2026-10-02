@@ -374,3 +374,44 @@ private extension BentoSessionTransition {
     #expect(update.session.bentoReinsertionAnchors[a.id]?.neighborWindowID == b.id)
     #expect(update.session.bentoReinsertionAnchors[b.id]?.neighborWindowID == c.id)
 }
+
+@Test func aRestoredWindowWaitsForSpaceAndMembershipReachesAFixedPoint() throws {
+    let windows = (0..<7).map { reducerWindow("\($0)") }
+    let initial = BentoPlanner().plan(state: BentoRuntimeState(),
+        observation: BentoObservation(bounds: reducerBounds, windows: Array(windows.prefix(6))), intent: .activate)
+    let reducer = BentoSessionReducer()
+    var session = LayoutSession(displayID: reducerDisplay, mode: .bento,
+        bentoState: initial.state.layout, windowIDs: Set(windows.prefix(6).map(\.id)),
+        bentoInsertionOrder: Array(windows.prefix(6).map(\.id)))
+    let minimized = try #require(reducer.reconcile(session: session,
+        observation: BentoObservation(bounds: reducerBounds, windows: Array(windows[1..<6])),
+        paneGap: 0, minimized: [windows[0].id]).update)
+    session = minimized.session
+    let filled = try #require(reducer.reconcile(session: session,
+        observation: BentoObservation(bounds: reducerBounds, windows: Array(windows[1...])), paneGap: 0).update)
+    session = filled.session
+    let fullRoot = session.bentoState.root
+    let all = BentoObservation(bounds: reducerBounds, windows: windows)
+    let restored = try #require(reducer.reconcile(session: session, observation: all, paneGap: 0).update)
+    session = restored.session
+    #expect(session.bentoState.root == fullRoot)
+    #expect(restored.placements.count == 6)
+    #expect(session.bentoState.floatingWindowIDs == [windows[0].id])
+    #expect(session.automaticallyFloatingWindowIDs == [windows[0].id])
+    #expect(session.bentoReinsertionAnchors[windows[0].id] != nil)
+    guard case .none = reducer.reconcile(session: session, observation: all, paneGap: 0) else {
+        Issue.record("A restored overflow window must settle in one membership transition")
+        return
+    }
+    let available = BentoObservation(bounds: reducerBounds, windows: Array(windows.prefix(6)))
+    let rejoined = try #require(reducer.reconcile(session: session, observation: available,
+        paneGap: 0, confirmedGone: [windows[6].id]).update)
+    #expect(rejoined.session.bentoState.root?.windowIDs.count == 6)
+    #expect(rejoined.session.bentoState.root?.windowIDs.contains(windows[0].id) == true)
+    #expect(rejoined.session.bentoState.floatingWindowIDs.isEmpty)
+    #expect(rejoined.session.bentoReinsertionAnchors[windows[0].id] == nil)
+    guard case .none = reducer.reconcile(session: rejoined.session, observation: available, paneGap: 0) else {
+        Issue.record("Rejoining through the saved anchor must reach a fixed point")
+        return
+    }
+}
