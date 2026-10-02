@@ -120,21 +120,22 @@ struct WindowIdentityRegistry {
     }
 
     /// Accessibility can omit another Space's windows even on a successful
-    /// read. Require WindowServer closure evidence as well. Without exact
-    /// identity, destruction and application termination own cleanup. Managed
-    /// and recent windows need the same closure evidence as other windows.
+    /// read. Require either WindowServer absence or an invalid cached AX element
+    /// to confirm closure. An AX read failure alone does not prove destruction.
     mutating func removeClosedWindowsAfterSweep(
         observedApplications: [ApplicationLaunchInstance: Set<CFHashCode>],
-        windowServer: WindowServerIndex?
+        windowServer: WindowServerIndex?,
+        accessibilityStatus: (WindowID) -> AXError? = { _ in nil }
     ) -> [WindowIdentityRecord] {
         let removed = records.values.filter { record in
             guard let hashes = observedApplications[record.application],
-                  record.accessibilityHashes.isDisjoint(with: hashes),
-                  let exactID = record.exactWindowID,
-                  let windowServer,
-                  !windowServer.containsIdentity(exactID, processIdentifier: record.application.processIdentifier)
+                  record.accessibilityHashes.isDisjoint(with: hashes)
             else { return false }
-            return true
+            if let exactID = record.exactWindowID, let windowServer,
+               !windowServer.containsIdentity(exactID, processIdentifier: record.application.processIdentifier) {
+                return true
+            }
+            return accessibilityStatus(record.windowID) == .invalidUIElement
         }
         for record in removed { remove(record.windowID) }
         return removed

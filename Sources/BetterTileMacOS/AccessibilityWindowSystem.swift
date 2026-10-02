@@ -318,7 +318,12 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         elements.merge(refreshedElements) { _, latest in latest }
         removeCachedState(for: identities.removeClosedWindowsAfterSweep(
             observedApplications: observedApplications,
-            windowServer: windowServer
+            windowServer: windowServer,
+            accessibilityStatus: { windowID in
+                guard let element = elements[windowID] else { return nil }
+                var role: CFTypeRef?
+                return AXUIElementCopyAttributeValue(element, kAXRoleAttribute as CFString, &role)
+            }
         ), notifyClosure: true)
         let sorted = snapshots.sorted { $0.id < $1.id }
         snapshotCache.recordFullSweep(sorted)

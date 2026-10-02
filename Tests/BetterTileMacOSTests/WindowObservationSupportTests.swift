@@ -283,6 +283,37 @@ func retainedWindowClosureRequiresBothSuccessfulNativeSources(evidence: String) 
     #expect(registry.removeClosedWindowsAfterSweep(observedApplications: observations, windowServer: index).isEmpty)
 }
 
+@Test(arguments: ["invalid", "cannot-complete", "unsupported", "success", "missing-element", "ax-present", "unread-app"], [false, true])
+func invalidAccessibilityElementConfirmsClosureOnlyAfterSuccessfulAbsentInventory(evidence: String, exact: Bool) {
+    var registry = WindowIdentityRegistry()
+    let application = ApplicationLaunchInstance(processIdentifier: 42, generation: 1)
+    let id = registry.resolve(application: application, accessibilityHash: 100, exactWindowID: exact ? 700 : nil)
+    let observations: [ApplicationLaunchInstance: Set<CFHashCode>] = evidence == "unread-app"
+        ? [:] : [application: evidence == "ax-present" ? [100] : []]
+    // WindowServer can retain an offscreen record after its AX element is destroyed.
+    let index = WindowServerIndex(records: [
+        WindowServerRecord(windowID: 700, processIdentifier: 42, layer: 0,
+                           frame: BTRect(x: 0, y: 0, width: 500, height: 400), isOnscreen: false),
+    ])
+    var reads = 0
+    let closed = registry.removeClosedWindowsAfterSweep(observedApplications: observations, windowServer: index) { requested in
+        #expect(requested == id)
+        reads += 1
+        switch evidence {
+        case "cannot-complete": return .cannotComplete
+        case "unsupported": return .attributeUnsupported
+        case "success": return .success
+        case "missing-element": return nil
+        default: return .invalidUIElement
+        }
+    }
+    let shouldClose = evidence == "invalid"
+    #expect(closed.map(\.windowID) == (shouldClose ? [id] : []))
+    #expect((registry.records[id] == nil) == shouldClose)
+    #expect(reads == (["ax-present", "unread-app"].contains(evidence) ? 0 : 1))
+    #expect(registry.removeClosedWindowsAfterSweep(observedApplications: observations, windowServer: index).isEmpty)
+}
+
 @Test func terminatedLaunchReturnsEveryIdentityOnceAndKeepsOtherApplications() {
     var registry = WindowIdentityRegistry()
     let terminated = ApplicationLaunchInstance(processIdentifier: 42, generation: 1)
