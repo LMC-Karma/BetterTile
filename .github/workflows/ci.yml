@@ -104,6 +104,8 @@ jobs:
         run: Tools/tests/release-appcast-test.sh
       - name: Test release signing policy
         run: Tools/tests/release-signing-policy-test.sh
+      - name: Test release source target
+        run: Tools/tests/release-source-test.sh
       - name: Build release
         run: swift build -c release
       - name: Build application bundle

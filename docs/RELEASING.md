@@ -186,6 +186,10 @@ The command refuses to publish unless `main` is clean and matches
 the tag and release are unused, GitHub CLI authentication works, the EdDSA key
 matches the public key in the app, and all validation succeeds.
 
+Publication creates the tag at the exact commit validated before packaging.
+If remote `main` advances during validation, the tag still names the source
+used to build the artifacts.
+
 It publishes the DMG, SHA-256 checksum, notes, and `appcast.xml` as a public
 GitHub release marked Latest. Sparkle reads the appcast through GitHub's stable
 Latest-release asset URL:
