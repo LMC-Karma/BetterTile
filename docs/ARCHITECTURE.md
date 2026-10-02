@@ -201,6 +201,16 @@ change a Bento operation made to the tree; writing it also writes the tree.
   released. A shared pane edge moves that divider, stopping at each pane's
   minimum. Any other change, including One Pane, an outer edge, a move, or a
   macOS destination, puts the windows back. Hidden tabs and strips then follow.
+- Divider and native-edge resize proposals remain provisional until every
+  selected window accepts its frame. Recovery uses the session's last verified
+  frames, even when a divider gesture begins with a displaced window. Current
+  observed frames remain separate inputs to the Accessibility write planner.
+  Minima learned on live release allow at most two corrective solves before
+  completion. Width and height retain independent refusal evidence. Failed or
+  unsettled corrections restore the gesture checkpoint.
+  Rejected proposals restore the checkpoint only while its desktop, display,
+  and participants remain valid. Bounded readback lets accepted restoration
+  settle before classifying an incomplete restore as degraded.
 - Tabbed's pointer dividers use pane boundaries even when an application has
   displaced its selected window. Inactive tabs and BetterTile panels do not
   suppress the handle. Verified window order determines which floating

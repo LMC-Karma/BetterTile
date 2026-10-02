@@ -1067,3 +1067,41 @@ private final class VisibleDividerTestWindow: NSWindow {
     override var windowNumber: Int { testNumber }
     override var isVisible: Bool { true }
 }
+
+@Test(arguments: [false, true]) @MainActor
+func liveDividerReleaseRecomputesANewlyLearnedMinimum(height: Bool) throws {
+    _ = NSApplication.shared
+    let system = FakeWindowSystem()
+    let bounds = BTRect(x: -10_000, y: -10_000, width: 800, height: 600)
+    let display = DisplayID(rawValue: "release-minimum")
+    let left = WindowID(rawValue: "left"), right = WindowID(rawValue: "right")
+    system.availableDisplays = [DisplaySnapshot(id: display, frame: bounds, visibleFrame: bounds)]
+    system.windows = [
+        WindowSnapshot(id: left, processIdentifier: 1, frame: BTRect(x: bounds.minX, y: bounds.minY, width: height ? 800 : 400, height: height ? 300 : 600), displayID: display),
+        WindowSnapshot(id: right, processIdentifier: 2, frame: BTRect(x: bounds.minX + (height ? 0 : 400), y: bounds.minY + (height ? 300 : 0), width: height ? 800 : 400, height: height ? 300 : 600), displayID: display),
+    ]
+    if height { system.enforcedMinimumHeights[right] = 240 }
+    else { system.enforcedMinimumWidths[right] = 340 }
+    var config = BetterTileConfiguration()
+    config.resizeFeedbackMode = .live
+    let controller = DividerOverlayController(coordinator: WindowCoordinator(system: system), configuration: config)
+    defer { controller.hideAndCancel() }
+    let boundary = BoundaryDescriptor(id: "native", displayID: display, axis: height ? .horizontal : .vertical,
+        coordinate: height ? bounds.midY : bounds.midX,
+        spanStart: height ? bounds.minX : bounds.minY, spanEnd: height ? bounds.maxX : bounds.maxY,
+        beforeWindowIDs: [left], afterWindowIDs: [right])
+    let start = BTPoint(x: bounds.midX, y: bounds.midY)
+    let interaction = try #require(DividerInteractionResolver.resolve(at: start, in: [boundary], hitWidth: 18, adjacencyTolerance: 6))
+    let screen = try #require(NSScreen.screens.first)
+    controller.beginGesture(interaction: interaction, at: start)
+    try #require(controller.isDragging)
+    controller.drag(to: CGPoint(x: start.x + (height ? 0 : 90), y: screen.frame.maxY - start.y - (height ? 90 : 0)))
+    controller.displayTick()
+    // Release is the second held sample. No subsequent display tick can
+    // repair geometry after the gesture has ended.
+    controller.end(at: CGPoint(x: start.x + (height ? 0 : 100), y: screen.frame.maxY - start.y - (height ? 100 : 0)))
+    let leftFrame = try #require(system.windows.first { $0.id == left }?.frame)
+    let rightFrame = try #require(system.windows.first { $0.id == right }?.frame)
+    #expect(height ? rightFrame.size.height == 240 : rightFrame.size.width == 340)
+    #expect(height ? abs(leftFrame.maxY - rightFrame.minY) < 0.5 : abs(leftFrame.maxX - rightFrame.minX) < 0.5)
+}

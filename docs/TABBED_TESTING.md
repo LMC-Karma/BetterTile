@@ -79,7 +79,9 @@ performance require an on-screen check.
   are rejected. The real windows update from the latest pointer sample on each
   display tick, up to 60 times per second. Release applies the exact final
   position, then checks the frames accepted by each app. A rejected final frame
-  restores the windows and the Tabbed state. A stable refusal in either
+  restores the last verified windows and Tabbed state. A minimum learned on
+  live release is applied before completion, without requiring another drag
+  sample. A stable refusal in either
   dimension can cause one retry after complete
   rollback. Ignored size writes do not become minimum sizes. Gestures on any
   display retain observed limits while Tabbed groups remain stored. Two
@@ -161,6 +163,12 @@ system; the checks below validate real application and macOS behavior.
   their modes and assignments remain independent.
 - Resize toward each app's minimum size. Look for exposed inactive windows,
   flicker, delayed frame changes, or a divider continuing to move after release.
+- In Ghost Preview and Live Resize, drag past a minimum and release immediately.
+  Repeat for width, height, and a junction. Confirm selected windows, strips,
+  and dividers settle to one valid layout without leaving Tabbed. Repeat after
+  an app has displaced a selected window, and with a native shared-edge resize.
+  A refusal should clamp or restore the verified layout. An app that accepts
+  restoration after a short delay should not leave automatic placement suspended.
 - Resize a selected window by each edge in One Pane and Two Columns, including
   into a neighbor at its minimum width. Confirm nothing moves before release,
   then the window snaps back or the divider moves and stops at the minimum,
