@@ -895,6 +895,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
             hints: attributes.minimumSizes,
             displaySize: display.frame.size
         )
+        minimumSizeLearner.observeAcceptedSize(windowID: id, size: frame.size)
         let constraints = minimumSizeLearner.merging(
             WindowConstraints(
                 minimumSize: minimumSize,
