@@ -115,7 +115,7 @@ matrix below.
 | T-44 | Closed retained tabs and terminated applications left unavailable entries | Fixed; authoritative closure, read failures, offscreen windows, launch reuse, and raw WindowServer query IDs covered | Passed with fixtures: selected close chooses survivor; last close leaves empty pane; new-window join and quit cleanup |
 | T-45 | Increased minimums prevented Native exit | Fixed; Native exit and shutdown regressions cover grown minimums and exact reachable baselines; failed Native exit rolls back | Passed with fixtures: Native exit and idle shutdown restore frames with grown width and height minimums; unchanged baseline restored exactly |
 | T-46 | Shutdown cancelled an active divider after restoration and overwrote restored frames | Fixed; fake-window regression reproduced the overwrite; divider cancellation now precedes final restoration | Pending for a held native gesture |
-| T-47 | Floating a tab restored undersized frames or committed after a failed write | Fixed; current and learned minimums, exact reachable baselines, new-window fallback, rollback, Undo, and bounded retry covered | Pending; failure paths checked with fake windows |
+| T-47 | Floating a tab restored undersized frames or committed after a failed write | Fixed; current and learned minimums, exact reachable baselines, new-window fallback, rollback, Undo, and bounded retry covered | Passed with a fixture: grown width and height minimums restore a floating frame; failure paths checked with fake windows |
 
 The polish pass also fixes Bento clamping beside locked boundaries, divider
 Escape handling with either app focused, ignored linked-resize neighbors,
