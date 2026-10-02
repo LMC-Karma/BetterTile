@@ -40,44 +40,38 @@ private let notes = "com.apple.Notes"
     #expect(rules.isEmpty)
 }
 
-@Test func entriesAreSortedForAStableList() {
-    var rules = ApplicationRuleSet()
-    rules.set(.excludeFromBento, for: notes)
-    rules.set(.ignoreEverywhere, for: safari)
-    rules.set(.excludeFromBento, for: figma)
-    #expect(rules.entries.map(\.bundleIdentifier) == [safari, notes, figma].sorted())
-}
-
 // MARK: - Deterministic migration and storage
 
-/// Dictionary key order is undefined, so storing rules as a dictionary would
-/// reorder the file between writes. The entry sequence is what this type
-/// controls, and it has to be stable regardless of the order rules were added.
+/// Rule order stays stable regardless of insertion order, with each rule
+/// still attached to its application.
 @Test func theEntrySequenceDoesNotDependOnInsertionOrder() {
     let identifiers = [figma, safari, notes, "com.tinyspeck.slackmacgap", "com.google.Chrome"]
     var forwards = ApplicationRuleSet()
-    for identifier in identifiers { forwards.set(.excludeFromBento, for: identifier) }
+    for identifier in identifiers { forwards.set(identifier == safari ? .ignoreEverywhere : .excludeFromBento, for: identifier) }
     var backwards = ApplicationRuleSet()
-    for identifier in identifiers.reversed() { backwards.set(.excludeFromBento, for: identifier) }
+    for identifier in identifiers.reversed() { backwards.set(identifier == safari ? .ignoreEverywhere : .excludeFromBento, for: identifier) }
 
     #expect(forwards.entries.map(\.bundleIdentifier) == backwards.entries.map(\.bundleIdentifier))
+    #expect(forwards.entries.map(\.rule) == backwards.entries.map(\.rule))
     #expect(forwards.entries.map(\.bundleIdentifier) == identifiers.sorted())
 }
 
-/// The written file has to be byte-identical between saves of the same
-/// configuration, or an exported configuration is neither diffable nor
-/// comparable. Uses the encoder settings the configuration store writes with;
-/// a bare JSONEncoder does not order the keys inside an object.
-@Test func theStoredConfigurationIsByteIdenticalAcrossRepeatedWrites() throws {
-    var configuration = BetterTileConfiguration()
-    for identifier in [figma, safari, notes, "com.google.Chrome"] {
-        configuration.applicationRules.set(.excludeFromBento, for: identifier)
-    }
-    let encoder = JSONEncoder()
-    encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
-    let first = try encoder.encode(configuration)
-    for _ in 0..<20 {
-        #expect(try encoder.encode(configuration) == first)
+/// Store output is stable across opposite rule insertion orders.
+@Test func storedConfigurationDoesNotDependOnRuleInsertionOrder() throws {
+    let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let store = ConfigurationStore(fileURL: directory.appending(path: "configuration.json"))
+    let identifiers = [figma, safari, notes, "com.google.Chrome"]
+    var first: Data?
+    for order in [identifiers, Array(identifiers.reversed())] {
+        var configuration = BetterTileConfiguration()
+        for identifier in order {
+            configuration.applicationRules.set(identifier == safari ? .ignoreEverywhere : .excludeFromBento, for: identifier)
+        }
+        try store.save(configuration)
+        let data = try Data(contentsOf: store.fileURL)
+        if let first { #expect(data == first) } else { first = data }
+        #expect(try store.load() == configuration)
     }
 }
 
@@ -94,18 +88,16 @@ private let notes = "com.apple.Notes"
     #expect(decoded.rule(for: figma) == .excludeFromBento)
 }
 
-/// A hand-edited file that repeats an identifier must resolve the same way
-/// every time rather than depending on decode order.
-@Test func aRepeatedIdentifierResolvesDeterministically() throws {
-    let json = Data("""
-    [
-      {"bundleIdentifier":"com.apple.Safari","rule":"excludeFromBento"},
-      {"bundleIdentifier":"com.apple.Safari","rule":"ignoreEverywhere"}
-    ]
-    """.utf8)
-    for _ in 0..<20 {
+/// Repeated identifiers use the last entry in either source order.
+@Test func aRepeatedIdentifierUsesTheLastEntry() throws {
+    let rules: [ApplicationRule] = [.excludeFromBento, .ignoreEverywhere]
+    for order in [rules, Array(rules.reversed())] {
+        let json = try JSONSerialization.data(withJSONObject: order.map {
+            ["bundleIdentifier": safari, "rule": $0.rawValue]
+        })
         let decoded = try JSONDecoder().decode(ApplicationRuleSet.self, from: json)
-        #expect(decoded.rule(for: safari) == .ignoreEverywhere, "the last entry wins, every time")
+        #expect(decoded.rule(for: safari) == order.last)
+        #expect(decoded.entries.count == 1)
     }
 }
 

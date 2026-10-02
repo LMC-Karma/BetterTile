@@ -21,21 +21,54 @@ private let testDisplay = DisplaySnapshot(
     }
 }
 
-@Test func standardCatalogStaysInsideVisibleFrame() {
+@Test func standardCatalogUsesTheExpectedFramesInsideVisibleFrame() throws {
     let window = WindowSnapshot(
         id: WindowID(rawValue: "w"), processIdentifier: 1,
         frame: BTRect(x: 100, y: 100, width: 500, height: 400), displayID: testDisplay.id
     )
-    let engine = StandardActionEngine()
-    for action in WindowAction.allCases where !action.isDisplayTransfer && !action.isRestore {
-        let target = engine.targetFrame(for: action, window: window, display: testDisplay)
-        #expect(target != nil, "Missing frame for \(action)")
-        if let target {
-            #expect(target.minX >= testDisplay.visibleFrame.minX)
-            #expect(target.minY >= testDisplay.visibleFrame.minY)
-            #expect(target.maxX <= testDisplay.visibleFrame.maxX + 0.001)
-            #expect(target.maxY <= testDisplay.visibleFrame.maxY + 0.001)
-        }
+    let expected: [WindowAction: BTRect] = [
+        .leftHalf: BTRect(x: 0, y: 24, width: 600, height: 876),
+        .rightHalf: BTRect(x: 600, y: 24, width: 600, height: 876),
+        .topHalf: BTRect(x: 0, y: 24, width: 1200, height: 438),
+        .bottomHalf: BTRect(x: 0, y: 462, width: 1200, height: 438),
+        .leftThird: BTRect(x: 0, y: 24, width: 400, height: 876),
+        .centerThird: BTRect(x: 400, y: 24, width: 400, height: 876),
+        .rightThird: BTRect(x: 800, y: 24, width: 400, height: 876),
+        .leftTwoThirds: BTRect(x: 0, y: 24, width: 800, height: 876),
+        .rightTwoThirds: BTRect(x: 400, y: 24, width: 800, height: 876),
+        .topLeftQuarter: BTRect(x: 0, y: 24, width: 600, height: 438),
+        .topRightQuarter: BTRect(x: 600, y: 24, width: 600, height: 438),
+        .bottomLeftQuarter: BTRect(x: 0, y: 462, width: 600, height: 438),
+        .bottomRightQuarter: BTRect(x: 600, y: 462, width: 600, height: 438),
+        .topLeftSixth: BTRect(x: 0, y: 24, width: 400, height: 438),
+        .topCenterSixth: BTRect(x: 400, y: 24, width: 400, height: 438),
+        .topRightSixth: BTRect(x: 800, y: 24, width: 400, height: 438),
+        .bottomLeftSixth: BTRect(x: 0, y: 462, width: 400, height: 438),
+        .bottomCenterSixth: BTRect(x: 400, y: 462, width: 400, height: 438),
+        .bottomRightSixth: BTRect(x: 800, y: 462, width: 400, height: 438),
+        .maximize: testDisplay.visibleFrame,
+        .almostMaximize: BTRect(x: 24, y: 48, width: 1152, height: 828),
+        .center: BTRect(x: 350, y: 262, width: 500, height: 400),
+        .centerResize: BTRect(x: 120, y: 111.6, width: 960, height: 700.8),
+        .moveLeft: BTRect(x: 60, y: 100, width: 500, height: 400),
+        .moveRight: BTRect(x: 140, y: 100, width: 500, height: 400),
+        .moveUp: BTRect(x: 100, y: 60, width: 500, height: 400),
+        .moveDown: BTRect(x: 100, y: 140, width: 500, height: 400),
+        .growWidth: BTRect(x: 100, y: 100, width: 540, height: 400),
+        .shrinkWidth: BTRect(x: 100, y: 100, width: 460, height: 400),
+        .growHeight: BTRect(x: 100, y: 100, width: 500, height: 440),
+        .shrinkHeight: BTRect(x: 100, y: 100, width: 500, height: 360),
+    ]
+    let actions = WindowAction.allCases.filter { !$0.isDisplayTransfer && !$0.isRestore }
+    #expect(Set(expected.keys) == Set(actions))
+    for action in actions {
+        let target = try #require(StandardActionEngine().targetFrame(for: action, window: window, display: testDisplay))
+        let frame = try #require(expected[action])
+        #expect(target.approximatelyEquals(frame, tolerance: 0.001), "Incorrect frame for \(action)")
+        #expect(target.minX >= testDisplay.visibleFrame.minX)
+        #expect(target.minY >= testDisplay.visibleFrame.minY)
+        #expect(target.maxX <= testDisplay.visibleFrame.maxX + 0.001)
+        #expect(target.maxY <= testDisplay.visibleFrame.maxY + 0.001)
     }
 }
 
@@ -51,12 +84,9 @@ private let testDisplay = DisplaySnapshot(
     #expect(NormalizedRect(frame: transferred, in: second.visibleFrame) == expected)
 }
 
-@Test func snapZonesPreferCorners() {
-    #expect(SnapZoneDetector().target(at: BTPoint(x: 1, y: 25), display: testDisplay)?.action == .topLeftQuarter)
-}
-
 @Test func snapZoneCornersHaveAGenerousTriggerRegion() {
     let detector = SnapZoneDetector()
+    #expect(detector.target(at: BTPoint(x: 1, y: 25), display: testDisplay)?.action == .topLeftQuarter)
     // Exercise both axes and translated display coordinates at every corner.
     let bounds = BTRect(x: -1200, y: 200, width: 1200, height: 800)
     for (x, y, dx, dy, area) in [

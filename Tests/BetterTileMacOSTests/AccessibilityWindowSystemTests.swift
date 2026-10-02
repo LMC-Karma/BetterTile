@@ -3,15 +3,6 @@ import Testing
 @testable import BetterTileCore
 @testable import BetterTileMacOS
 
-@Test @MainActor func fakeEventSourceEmitsDeterministicNativeResizeEvent() {
-    let system = FakeWindowSystem()
-    var received: WindowSystemEvent?
-    system.setWindowEventHandler { received = $0 }
-    let event = WindowSystemEvent(kind: .resized, windowID: system.windows[0].id, processIdentifier: 42)
-    system.emit(event)
-    #expect(received == event)
-}
-
 @Test func stageManagerThumbnailFramesAreRejected() {
     let full = BTRect(x: 100, y: 100, width: 800, height: 600)
     let decorated = BTRect(x: 100, y: 99, width: 800, height: 601)

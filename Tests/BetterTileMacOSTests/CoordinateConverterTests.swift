@@ -41,32 +41,14 @@ private let rects: [(name: String, rect: CGRect)] = [
     }
 }
 
-@Test func conversionFlipsVerticallyAroundTheMainScreenTop() {
+@Test(arguments: [
+    (CGRect(x: 0, y: 0, width: 400, height: 300), BTRect(x: 0, y: 780, width: 400, height: 300)),
+    (CGRect(x: 0, y: 780, width: 400, height: 300), BTRect(x: 0, y: 0, width: 400, height: 300)),
+    (CGRect(x: -500, y: 100, width: 200, height: 200), BTRect(x: -500, y: 780, width: 200, height: 200)),
+])
+func conversionPreservesHorizontalAndFlipsVerticalCoordinates(frames: (CGRect, BTRect)) {
     let main = CGRect(x: 0, y: 0, width: 1920, height: 1080)
-    // An AppKit rect sitting on the bottom edge is at the top-left bottom.
-    let bottomEdge = CoordinateConverter.toTopLeft(
-        CGRect(x: 0, y: 0, width: 400, height: 300),
-        mainScreenFrame: main
-    )
-    #expect(bottomEdge.minY == 780)
-    #expect(bottomEdge.maxY == 1080)
-
-    // An AppKit rect flush with the top edge is at the top-left origin.
-    let topEdge = CoordinateConverter.toTopLeft(
-        CGRect(x: 0, y: 780, width: 400, height: 300),
-        mainScreenFrame: main
-    )
-    #expect(topEdge.minY == 0)
-}
-
-@Test func horizontalCoordinatesAreNeverFlipped() {
-    let main = CGRect(x: 0, y: 0, width: 1920, height: 1080)
-    let converted = CoordinateConverter.toTopLeft(
-        CGRect(x: -500, y: 100, width: 200, height: 200),
-        mainScreenFrame: main
-    )
-    #expect(converted.minX == -500)
-    #expect(converted.size.width == 200)
+    #expect(CoordinateConverter.toTopLeft(frames.0, mainScreenFrame: main) == frames.1)
 }
 
 @Test func aDisplayAboveTheMainScreenProducesNegativeTopLeftCoordinates() {
