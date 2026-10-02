@@ -310,9 +310,11 @@ func tabbedStripFitsNarrowAndCrowdedPanes(width: Double, count: Int) {
     #expect(removedMonitors == 2)
 }
 
-@Test @MainActor func tabbedChromePreview() throws {
+@Test(.enabled(if: ProcessInfo.processInfo.environment["BETTERTILE_TAB_PREVIEW_DIR"] != nil,
+               "Requires an explicit Tabbed preview output directory."))
+@MainActor func tabbedChromePreview() throws {
     // Render only our own views. No app launch, desktop capture, or input posting.
-    guard let directory = ProcessInfo.processInfo.environment["BETTERTILE_TAB_PREVIEW_DIR"] else { return }
+    let directory = try #require(ProcessInfo.processInfo.environment["BETTERTILE_TAB_PREVIEW_DIR"])
     _ = NSApplication.shared
     for (name, appearanceName) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
         let appearance = try #require(NSAppearance(named: appearanceName))
@@ -348,8 +350,10 @@ func tabbedStripFitsNarrowAndCrowdedPanes(width: Double, count: Int) {
     }
 }
 
-@Test @MainActor func tabbedFloatTargetPreview() throws {
-    guard let directory = ProcessInfo.processInfo.environment["BETTERTILE_TAB_PREVIEW_DIR"] else { return }
+@Test(.enabled(if: ProcessInfo.processInfo.environment["BETTERTILE_TAB_PREVIEW_DIR"] != nil,
+               "Requires an explicit Tabbed preview output directory."))
+@MainActor func tabbedFloatTargetPreview() throws {
+    let directory = try #require(ProcessInfo.processInfo.environment["BETTERTILE_TAB_PREVIEW_DIR"])
     _ = NSApplication.shared
     let bounds = BTRect(x: 12000, y: 0, width: 1000, height: 800)
     let display = DisplayID(rawValue: "float-preview")

@@ -91,8 +91,10 @@ func glassDividerLaysOutStraightAndJunctionCapsules(active: Bool) throws {
     #expect(surface.cornerRadius == 6)
 }
 
-@Test @MainActor func sharedGlassAppearancePreviews() throws {
-    guard let directory = ProcessInfo.processInfo.environment["BETTERTILE_TAB_PREVIEW_DIR"] else { return }
+@Test(.enabled(if: ProcessInfo.processInfo.environment["BETTERTILE_TAB_PREVIEW_DIR"] != nil,
+               "Requires an explicit glass preview output directory."))
+@MainActor func sharedGlassAppearancePreviews() throws {
+    let directory = try #require(ProcessInfo.processInfo.environment["BETTERTILE_TAB_PREVIEW_DIR"])
     _ = NSApplication.shared
     for (name, appearanceName) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
         let appearance = try #require(NSAppearance(named: appearanceName))
