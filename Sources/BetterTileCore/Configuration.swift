@@ -80,6 +80,16 @@ public enum BentoNewWindowSide: String, Codable, CaseIterable, Sendable {
     case automatic, left, right, top, bottom
 }
 
+public struct OverlayAppearance: Codable, Hashable, Sendable {
+    public var useLiquidGlass: Bool
+    public var strength: Double
+
+    public init(useLiquidGlass: Bool = true, strength: Double = 0.5) {
+        self.useLiquidGlass = useLiquidGlass
+        self.strength = strength
+    }
+}
+
 public struct BetterTileConfiguration: Codable, Hashable, Sendable {
     public static let currentSchemaVersion = 12
 
@@ -107,6 +117,7 @@ public struct BetterTileConfiguration: Codable, Hashable, Sendable {
     public var resizeFeedbackMode: ResizeFeedbackMode
     public var dividerVisibility: DividerVisibility
     public var dividerThickness: Double
+    public var overlayAppearance: OverlayAppearance
     public var bentoInnerGap: Double
     public var bentoSwapHoverDelay: Double
     public var bentoNewWindowSide: BentoNewWindowSide
@@ -138,6 +149,7 @@ public struct BetterTileConfiguration: Codable, Hashable, Sendable {
         resizeFeedbackMode: ResizeFeedbackMode = .ghost,
         dividerVisibility: DividerVisibility = .hoverAndDrag,
         dividerThickness: Double = 10,
+        overlayAppearance: OverlayAppearance = .init(),
         bentoInnerGap: Double = 1,
         bentoSwapHoverDelay: Double = 0.12,
         bentoNewWindowSide: BentoNewWindowSide = .automatic,
@@ -164,6 +176,7 @@ public struct BetterTileConfiguration: Codable, Hashable, Sendable {
         self.resizeFeedbackMode = resizeFeedbackMode
         self.dividerVisibility = dividerVisibility
         self.dividerThickness = dividerThickness
+        self.overlayAppearance = overlayAppearance
         self.bentoInnerGap = min(12, max(0, bentoInnerGap))
         self.bentoSwapHoverDelay = bentoSwapHoverDelay
         self.bentoNewWindowSide = bentoNewWindowSide
@@ -191,6 +204,7 @@ public struct BetterTileConfiguration: Codable, Hashable, Sendable {
         case defaultTabbedPreset
         case defaultLayoutMode, resizeFeedbackMode, dividerVisibility, dividerThickness, bentoInnerGap, bentoSwapHoverDelay
         case bentoNewWindowSide
+        case overlayAppearance
         case singleWindowPlacement
         case singleWindowInitialPlacement
         case dockReservationMode
@@ -258,6 +272,7 @@ public struct BetterTileConfiguration: Codable, Hashable, Sendable {
         _ = try container.decodeIfPresent(DividerVisibility.self, forKey: .dividerVisibility)
         dividerVisibility = .hoverAndDrag
         dividerThickness = try container.decodeIfPresent(Double.self, forKey: .dividerThickness) ?? 6
+        overlayAppearance = try container.decodeIfPresent(OverlayAppearance.self, forKey: .overlayAppearance) ?? .init()
         if version >= 6 {
             bentoInnerGap = min(
                 12,
@@ -338,6 +353,7 @@ public struct BetterTileConfiguration: Codable, Hashable, Sendable {
         try container.encode(resizeFeedbackMode, forKey: .resizeFeedbackMode)
         try container.encode(dividerVisibility, forKey: .dividerVisibility)
         try container.encode(dividerThickness, forKey: .dividerThickness)
+        try container.encode(overlayAppearance, forKey: .overlayAppearance)
         try container.encode(bentoInnerGap, forKey: .bentoInnerGap)
         try container.encode(bentoSwapHoverDelay, forKey: .bentoSwapHoverDelay)
         try container.encode(bentoNewWindowSide, forKey: .bentoNewWindowSide)
@@ -407,6 +423,7 @@ public struct BetterTileConfiguration: Codable, Hashable, Sendable {
         guard schemaVersion <= Self.currentSchemaVersion else { throw ConfigurationError.unsupportedFutureVersion(schemaVersion) }
         guard adjacencyTolerance >= 0, adjacencyTolerance <= 40 else { throw ConfigurationError.invalidAdjacencyTolerance }
         guard dividerThickness.isFinite, (2...12).contains(dividerThickness) else { throw ConfigurationError.invalidDividerThickness }
+        guard overlayAppearance.strength.isFinite, (0...1).contains(overlayAppearance.strength) else { throw ConfigurationError.invalidGlassStrength }
         guard bentoInnerGap.isFinite, (0...12).contains(bentoInnerGap) else { throw ConfigurationError.invalidBentoInnerGap }
         guard bentoSwapHoverDelay.isFinite, (0...1).contains(bentoSwapHoverDelay) else { throw ConfigurationError.invalidBentoSwapHoverDelay }
         guard ShortcutValidator.conflicts(in: shortcuts).isEmpty else { throw ConfigurationError.shortcutConflict }
@@ -442,10 +459,11 @@ public struct ConfigurationChangeSet: OptionSet, Hashable, Sendable {
     public static let accessibilityWrites = Self(rawValue: 1 << 7)
     public static let applicationRules = Self(rawValue: 1 << 8)
     public static let layoutWheel = Self(rawValue: 1 << 9)
+    public static let overlayAppearance = Self(rawValue: 1 << 10)
     public static let all: Self = [
         .shortcuts, .snapping, .linkedResize, .divider,
         .bentoGeometry, .activationPolicy, .titleBar, .accessibilityWrites,
-        .applicationRules, .layoutWheel,
+        .applicationRules, .layoutWheel, .overlayAppearance,
     ]
 
     public static func between(
@@ -453,6 +471,9 @@ public struct ConfigurationChangeSet: OptionSet, Hashable, Sendable {
         _ new: BetterTileConfiguration
     ) -> Self {
         var changes: Self = []
+        if old.overlayAppearance != new.overlayAppearance {
+            changes.insert(.overlayAppearance)
+        }
         if old.shortcuts != new.shortcuts
             || old.keyboardShortcutsEnabled != new.keyboardShortcutsEnabled {
             changes.insert(.shortcuts)
@@ -503,6 +524,7 @@ public enum ConfigurationError: Error, LocalizedError, Equatable {
     case unsupportedFutureVersion(Int)
     case invalidAdjacencyTolerance
     case invalidDividerThickness
+    case invalidGlassStrength
     case invalidBentoInnerGap
     case invalidBentoSwapHoverDelay
     case invalidSnapAreaBindings
@@ -514,6 +536,7 @@ public enum ConfigurationError: Error, LocalizedError, Equatable {
         case let .unsupportedFutureVersion(version): "This file uses unsupported configuration version \(version)."
         case .invalidAdjacencyTolerance: "Adjacency tolerance must be between 0 and 40 points."
         case .invalidDividerThickness: "Divider thickness must be between 2 and 12 points."
+        case .invalidGlassStrength: "Glass strength must be between 0 and 1."
         case .invalidBentoInnerGap: "Bento inner gap must be between 0 and 12 points."
         case .invalidBentoSwapHoverDelay: "Bento swap delay must be between 0 and 1 second."
         case .invalidSnapAreaBindings: "Snap areas must contain one valid action or Disabled setting for every screen edge and corner."

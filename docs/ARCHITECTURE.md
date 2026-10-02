@@ -211,6 +211,26 @@ change a Bento operation made to the tree; writing it also writes the tree.
   reserve. Leaving for Native restores the pre-Tabbed frames and keeps the tab
   groups for the next Tabbed visit.
 
+## Overlay appearance
+
+`OverlayAppearance` stores the shared Liquid Glass preference and strength.
+Older configurations default to glass enabled at half strength. Invalid
+strength values fail configuration validation. Appearance changes update
+existing overlay views without starting a placement or cancelling a gesture.
+
+`OverlayGlassView` owns the native AppKit glass and a semantic-color plate.
+The strength changes that plate, not a private blur parameter. Empty panes
+use clear glass and a lighter plate. The shared Tabbed curtain keeps at least
+96 percent plate opacity. Disabling glass, Reduce Transparency, or Increase
+Contrast selects an opaque surface. Display-option changes apply while views
+are visible. Decorative glass never owns pointer events.
+
+Divider capsules use `NSGlassEffectContainerView` to merge junction arms.
+Their glass width is at least six points; the existing hit area, cursor,
+minimum-size indication, and resize engine remain responsible for interaction.
+The preference also covers tab strips, drop and placement previews, resize
+ghosts, the Layout Wheel, and result feedback.
+
 ## Linked resizing
 
 The linked-resize engine detects and merges shared boundary segments within a configurable tolerance. Linked and Bento boundaries share the same overlay interaction model, but Bento resizing stays tree-aware instead of applying flat per-window deltas. The requested operation clamps against recursive subtree minimum sizes and visible bounds.

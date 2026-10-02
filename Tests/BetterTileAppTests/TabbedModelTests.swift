@@ -1016,3 +1016,19 @@ func gestureOnAnotherDisplayPreservesAnInactiveTabbedMinimum(nativeVisit: Bool) 
     try #require(await waitFor { model.activeTabbedState?.activeWindowID == hidden.id })
     #expect(model.statusMessage == nil)
 }
+
+@Test @MainActor func glassPreferenceDoesNotMoveOrRaiseTabbedWindows() async throws {
+    let system = FakeAppWindowSystem()
+    let model = try await makeTwoTabbedColumns(system)
+    defer { model.shutdown() }
+    let state = model.activeTabbedState
+    let frames = system.windows.map(\.frame)
+    let writes = system.frameWriteCounts
+    let raises = system.raiseRequests.count
+    model.updateConfiguration { $0.overlayAppearance = .init(useLiquidGlass: false, strength: 0.8) }
+    #expect(model.configuration.overlayAppearance == OverlayAppearance(useLiquidGlass: false, strength: 0.8))
+    #expect(model.activeTabbedState == state)
+    #expect(system.windows.map(\.frame) == frames)
+    #expect(system.frameWriteCounts == writes)
+    #expect(system.raiseRequests.count == raises)
+}

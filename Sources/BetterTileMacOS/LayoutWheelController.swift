@@ -30,6 +30,7 @@ public enum LayoutWheelPreviewOutcome: Equatable, Sendable {
 /// what the runtime asked for without a live panel.
 public struct LayoutWheelPresentation: Equatable, Sendable {
     public var configuration: LayoutWheelConfiguration
+    public var overlayAppearance: OverlayAppearance = .init()
     public var placement: LayoutWheelPlacement
     public var selection: LayoutWheelSelection?
     public var unavailableCommands: Set<LayoutWheelCommand>
@@ -55,7 +56,12 @@ public final class LayoutWheelController {
 
     public var configuration: BetterTileConfiguration {
         didSet {
-            guard configuration.layoutWheel != oldValue.layoutWheel else { return }
+            guard configuration.layoutWheel != oldValue.layoutWheel else {
+                if configuration.overlayAppearance != oldValue.overlayAppearance, case let .open(session) = phase {
+                    presenter.update(presentation(for: session))
+                }
+                return
+            }
             // Changing the trigger or the assignments mid-gesture would apply
             // something the user never aimed at.
             cancel()
@@ -578,6 +584,7 @@ public final class LayoutWheelController {
     private func presentation(for session: Session) -> LayoutWheelPresentation {
         LayoutWheelPresentation(
             configuration: wheel,
+            overlayAppearance: configuration.overlayAppearance,
             placement: session.placement,
             selection: session.selection,
             unavailableCommands: Set(session.unavailableReasons.keys)
@@ -724,6 +731,7 @@ final class LayoutWheelPanelPresenter: LayoutWheelPresenting {
     }
 
     func open(_ presentation: LayoutWheelPresentation) {
+        placementPreviews.overlayAppearance = presentation.overlayAppearance
         let view: NSHostingView<LayoutWheelView>
         if let hosting {
             view = hosting
@@ -738,6 +746,7 @@ final class LayoutWheelPanelPresenter: LayoutWheelPresenting {
     }
 
     func update(_ presentation: LayoutWheelPresentation) {
+        placementPreviews.overlayAppearance = presentation.overlayAppearance
         guard let hosting else { return }
         hosting.rootView = LayoutWheelView(presentation)
         position(view: hosting, at: presentation.placement)
@@ -774,6 +783,7 @@ private extension LayoutWheelView {
     init(_ presentation: LayoutWheelPresentation) {
         self.init(
             configuration: presentation.configuration,
+            overlayAppearance: presentation.overlayAppearance,
             selection: presentation.selection,
             unavailableCommands: presentation.unavailableCommands
         )

@@ -199,6 +199,21 @@ selected windows, floating windows in gaps, and ignored raise actions. A
 missing inactive-tab identity now prevents a curtain as well. These checks do
 not close the real-application findings below.
 
+## Shared Liquid Glass controls
+
+The appearance preference covers tab strips, every mode's divider, empty panes,
+the shared curtain, drop and resize previews, the Layout Wheel, and result
+feedback. Configuration tests cover migration, round trips, invalid strength,
+and the appearance-only runtime change. Overlay tests cover the solid fallback,
+curtain frost floor, clear empty panes, and divider hit ownership. A fake-window
+model test checks that changing appearance does not move or raise tabs. A wheel
+controller test checks that it updates an open gesture without cancelling it.
+
+Light/dark rendering checks inspect BetterTile's own views only. They do not
+establish native glass blur over foreign windows. Live appearance, resizing,
+and coverage remain pending; no real application windows were moved for this
+change.
+
 ## Remaining live checks
 
 Start with two panes and two tabs per pane. Put windows from the same app in

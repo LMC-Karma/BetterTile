@@ -261,7 +261,11 @@ final class ResizeDisplayLink: NSObject {
 @MainActor
 public final class DividerOverlayController {
     public var configuration: BetterTileConfiguration {
-        didSet { updateHover(at: NSEvent.mouseLocation) }
+        didSet {
+            handlePanel?.overlayAppearance = configuration.overlayAppearance
+            ghosts.overlayAppearance = configuration.overlayAppearance
+            updateHover(at: NSEvent.mouseLocation)
+        }
     }
     public var layoutChangedHandler: ((DisplayID, [WindowID: BTRect]) -> Void)?
     /// Tabbed panels are layout chrome, not floating windows that hide a grip.
@@ -429,11 +433,13 @@ public final class DividerOverlayController {
         if let existing = handlePanel {
             panel = existing
             panel.configure(mode: mode, thickness: configuration.dividerThickness)
+            panel.overlayAppearance = configuration.overlayAppearance
             // The accepted divider coordinate moves immediately. Only the
             // decoration inside this frame animates its length.
             panel.setFrame(appKitFrame, display: true)
         } else {
             panel = DividerHandlePanel(frame: appKitFrame, mode: mode, thickness: configuration.dividerThickness)
+            panel.overlayAppearance = configuration.overlayAppearance
             panel.onBegin = { [weak self] in self?.beginHoveredGesture() }
             panel.onDrag = { [weak self] point in self?.drag(to: point) }
             panel.onEnd = { [weak self] in self?.end(at: NSEvent.mouseLocation) }
@@ -522,6 +528,7 @@ public final class DividerOverlayController {
         ) { [weak self] in
             self?.displayTick()
         }
+        ghosts.overlayAppearance = configuration.overlayAppearance
         switch configuration.resizeFeedbackMode {
         case .ghost:
             ghosts.show(
@@ -1052,6 +1059,7 @@ private final class DividerHandlePanel: NSPanel {
     var onDrag: ((CGPoint) -> Void)? { didSet { handleView.onDrag = onDrag } }
     var onEnd: (() -> Void)? { didSet { handleView.onEnd = onEnd } }
     var onExit: (() -> Void)? { didSet { handleView.onExit = onExit } }
+    var overlayAppearance = OverlayAppearance() { didSet { handleView.overlayAppearance = overlayAppearance } }
     private let handleView: DividerHandleView
     private(set) var isActive = false
 
@@ -1093,7 +1101,14 @@ final class DividerHandleView: NSView {
 
     private var mode: DividerHandleMode
     private var thickness: CGFloat
-    private let material = NSVisualEffectView()
+    private let glassContainer = NSGlassEffectContainerView()
+    private let glassContent = NSView()
+    private let surfaces = (0..<2).map { _ in OverlayGlassView() }
+    var overlayAppearance = OverlayAppearance() {
+        didSet { updateAppearance(); needsLayout = true }
+    }
+    var showsGlass: Bool { surfaces[0].showsGlass }
+    var renderedThickness: CGFloat { overlayAppearance.useLiquidGlass ? max(6, thickness) : thickness }
     private var active = false
     /// A neighbor is at its minimum size: the handle turns orange and the
     /// cursor shows only the direction the divider can still move.
@@ -1106,11 +1121,12 @@ final class DividerHandleView: NSView {
         self.mode = mode
         self.thickness = CGFloat(thickness)
         super.init(frame: frame)
-        material.material = .hudWindow
-        material.blendingMode = .withinWindow
-        material.state = .active
-        material.wantsLayer = true
-        addSubview(material)
+        glassContainer.contentView = glassContent
+        glassContainer.spacing = 2
+        glassContainer.frame = bounds
+        glassContainer.autoresizingMask = [.width, .height]
+        addSubview(glassContainer)
+        for surface in surfaces { glassContent.addSubview(surface) }
         updateAppearance()
     }
 
@@ -1124,54 +1140,41 @@ final class DividerHandleView: NSView {
         window?.invalidateCursorRects(for: self)
     }
 
+    override func hitTest(_ point: NSPoint) -> NSView? { frame.contains(point) ? self : nil }
+
     override func layout() {
         super.layout()
+        glassContainer.frame = bounds
+        glassContent.frame = glassContainer.bounds
+        let width = renderedThickness
+        var frames: [CGRect] = []
         switch mode {
         case let .vertical(resting, expanded):
             let length = interpolated(resting, expanded)
-            material.frame = CGRect(
-                x: (bounds.width - thickness) / 2,
-                y: (bounds.height - length) / 2,
-                width: thickness,
-                height: length
-            )
+            frames = [CGRect(x: (bounds.width - width) / 2, y: (bounds.height - length) / 2,
+                             width: width, height: length)]
         case let .horizontal(resting, expanded):
             let length = interpolated(resting, expanded)
-            material.frame = CGRect(
-                x: (bounds.width - length) / 2,
-                y: (bounds.height - thickness) / 2,
-                width: length,
-                height: thickness
-            )
-        case .junction:
-            material.frame = .zero
+            frames = [CGRect(x: (bounds.width - length) / 2, y: (bounds.height - width) / 2,
+                             width: length, height: width)]
+        case let .junction(center, resting, expanded):
+            let left = interpolated(resting[.left] ?? 0, expanded[.left] ?? 0)
+            let right = interpolated(resting[.right] ?? 0, expanded[.right] ?? 0)
+            let up = interpolated(resting[.up] ?? 0, expanded[.up] ?? 0)
+            let down = interpolated(resting[.down] ?? 0, expanded[.down] ?? 0)
+            frames = [
+                CGRect(x: center.x - left - width / 2, y: center.y - width / 2,
+                       width: left + right + width, height: width),
+                CGRect(x: center.x - width / 2, y: center.y - down - width / 2,
+                       width: width, height: up + down + width),
+            ]
         }
-        material.layer?.cornerRadius = min(material.bounds.width, material.bounds.height) / 2
-    }
-
-    override func draw(_ dirtyRect: NSRect) {
-        guard case let .junction(center, resting, expanded) = mode else { return }
-        let color = gripColor
-        color.setFill()
-        let path = NSBezierPath()
-        for arm in Set(resting.keys).union(expanded.keys) {
-            let length = interpolated(resting[arm] ?? 0, expanded[arm] ?? 0)
-            let end: CGPoint
-            switch arm {
-            case .left: end = CGPoint(x: center.x - length, y: center.y)
-            case .right: end = CGPoint(x: center.x + length, y: center.y)
-            case .up: end = CGPoint(x: center.x, y: center.y + length)
-            case .down: end = CGPoint(x: center.x, y: center.y - length)
-            }
-            let rect = CGRect(
-                x: min(center.x, end.x) - thickness / 2,
-                y: min(center.y, end.y) - thickness / 2,
-                width: abs(end.x - center.x) + thickness,
-                height: abs(end.y - center.y) + thickness
-            )
-            path.append(NSBezierPath(roundedRect: rect, xRadius: thickness / 2, yRadius: thickness / 2))
+        for (index, surface) in surfaces.enumerated() {
+            surface.isHidden = index >= frames.count
+            guard index < frames.count else { continue }
+            surface.frame = frames[index]
+            surface.cornerRadius = width / 2
         }
-        path.fill()
     }
 
     override func updateTrackingAreas() {
@@ -1247,7 +1250,7 @@ final class DividerHandleView: NSView {
         animationTask?.cancel()
         self.active = active
         let target = active ? 1.0 : 0.0
-        guard animated, stretchProgress != target else {
+        guard animated, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion, stretchProgress != target else {
             stretchProgress = target
             needsDisplay = true
             needsLayout = true
@@ -1281,9 +1284,16 @@ final class DividerHandleView: NSView {
     }
 
     private func updateAppearance() {
-        material.layer?.backgroundColor = gripColor.cgColor
-        material.layer?.borderWidth = 0.5 + stretchProgress * 0.5
-        material.layer?.borderColor = NSColor.white.withAlphaComponent(0.25 + stretchProgress * 0.3).cgColor
+        for surface in surfaces {
+            surface.highlightsTop = true
+            surface.overlayAppearance = overlayAppearance
+            surface.tint = gripColor
+            surface.solidColor = gripColor.withAlphaComponent(1)
+            surface.layer?.shadowColor = gripColor.cgColor
+            surface.layer?.shadowOpacity = Float(0.12 + stretchProgress * 0.12)
+            surface.layer?.shadowRadius = 3
+            surface.layer?.shadowOffset = .zero
+        }
     }
 
     private var gripColor: NSColor {
@@ -1303,6 +1313,9 @@ final class DividerHandleView: NSView {
 
 @MainActor
 final class GhostFrameOverlayController {
+    var overlayAppearance = OverlayAppearance() {
+        didSet { for panel in panels.values { (panel.contentView as? GhostPreviewView)?.overlayAppearance = overlayAppearance } }
+    }
     private var panels: [WindowID: NSPanel] = [:]
     var windowNumbers: Set<Int> { Set(panels.values.map(\.windowNumber)) }
     private(set) var relativeOrderTargets: [WindowID: Int] = [:]
@@ -1362,24 +1375,23 @@ final class GhostFrameOverlayController {
         panel.hasShadow = false
         panel.backgroundColor = .clear
         panel.collectionBehavior = [.moveToActiveSpace, .transient, .ignoresCycle]
-        panel.contentView = GhostPreviewView(frame: CGRect(origin: .zero, size: frame.size), snapshot: snapshot)
+        let view = GhostPreviewView(frame: CGRect(origin: .zero, size: frame.size), snapshot: snapshot)
+        view.overlayAppearance = overlayAppearance
+        panel.contentView = view
         return panel
     }
 }
 
 @MainActor
-private final class GhostPreviewView: NSVisualEffectView {
+private final class GhostPreviewView: OverlayGlassView {
     private let iconView = NSImageView()
     private let titleLabel = NSTextField(labelWithString: "")
     private let sizeLabel = NSTextField(labelWithString: "")
 
     init(frame: CGRect, snapshot: WindowSnapshot?) {
         super.init(frame: frame)
-        material = .hudWindow
-        blendingMode = .withinWindow
-        state = .active
-        wantsLayer = true
-        layer?.cornerRadius = 12
+        cornerRadius = 12
+        tint = .controlAccentColor
         layer?.borderWidth = 2
         layer?.borderColor = NSColor.controlAccentColor.withAlphaComponent(0.78).cgColor
         addSubview(iconView)
@@ -1412,6 +1424,7 @@ private final class GhostPreviewView: NSVisualEffectView {
         if isLimited != limited {
             isLimited = limited
             let color: NSColor = limited ? .systemOrange : .controlAccentColor
+            tint = color
             effectiveAppearance.performAsCurrentDrawingAppearance {
                 layer?.borderColor = color.withAlphaComponent(limited ? 0.95 : 0.78).cgColor
             }

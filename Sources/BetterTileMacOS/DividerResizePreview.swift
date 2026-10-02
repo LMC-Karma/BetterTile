@@ -8,6 +8,7 @@ public struct DividerResizePreview: View {
     public var thickness: Double
     public var feedback: ResizeFeedbackMode
     public var paneGap: Double
+    public var overlayAppearance: OverlayAppearance
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var shape = DividerPreviewShape.plus
@@ -16,10 +17,11 @@ public struct DividerResizePreview: View {
     @State private var dragStart: CGPoint?
     @FocusState private var gripFocused: Bool
 
-    public init(thickness: Double, feedback: ResizeFeedbackMode, paneGap: Double) {
+    public init(thickness: Double, feedback: ResizeFeedbackMode, paneGap: Double, overlayAppearance: OverlayAppearance = .init()) {
         self.thickness = thickness
         self.feedback = feedback
         self.paneGap = paneGap
+        self.overlayAppearance = overlayAppearance
     }
 
     public var body: some View {
@@ -55,7 +57,7 @@ public struct DividerResizePreview: View {
                     }
                     PreviewGrip(
                         mode: sample.mode(thickness: thickness), thickness: thickness,
-                        active: dragStart != nil, reduceMotion: reduceMotion
+                        active: dragStart != nil, reduceMotion: reduceMotion, overlayAppearance: overlayAppearance
                     )
                     .frame(width: 180, height: 180)
                     .position(x: sample.center.x, y: sample.center.y)
@@ -211,12 +213,14 @@ private struct PreviewGrip: NSViewRepresentable {
     let thickness: Double
     let active: Bool
     let reduceMotion: Bool
+    let overlayAppearance: OverlayAppearance
 
     func makeNSView(context: Context) -> DividerHandleView {
         DividerHandleView(frame: CGRect(x: 0, y: 0, width: 180, height: 180), mode: mode, thickness: thickness)
     }
 
     func updateNSView(_ view: DividerHandleView, context: Context) {
+        view.overlayAppearance = overlayAppearance
         view.configure(mode: mode, thickness: thickness)
         view.setActive(active, animated: !reduceMotion)
     }

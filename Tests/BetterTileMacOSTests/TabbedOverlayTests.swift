@@ -143,7 +143,9 @@ func tabbedCurtainUsesSolidAccessibilityFallback(options: (Bool, Bool)) {
     #expect(view.showsGlass == !(options.0 || options.1))
     #expect(!view.isAccessibilityElement())
     let plate = view.subviews.last?.layer?.backgroundColor
-    #expect(plate?.alpha == (options.0 || options.1 ? 1 : 0.96))
+    #expect(plate?.alpha == CGFloat(view.plateOpacity))
+    #expect(view.plateOpacity >= 0.96)
+    if options.0 || options.1 { #expect(view.plateOpacity == 1) }
 }
 
 @Test @MainActor func tabbedCurtainFrostFollowsLightAndDarkAppearance() throws {
