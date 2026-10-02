@@ -507,7 +507,7 @@ struct WindowLayoutSettings: View {
                     Label("Select a tab to focus its window. Drag tabs between panes or onto an edge to split.", systemImage: "rectangle.on.rectangle")
                         .font(.callout)
                         .foregroundStyle(.secondary)
-                    Label("Drag a divider to resize. Double-click to balance. Escape cancels the drag.", systemImage: "arrow.left.and.right")
+                    Label("Drag a divider to resize. Escape cancels the drag.", systemImage: "arrow.left.and.right")
                         .font(.callout)
                         .foregroundStyle(.secondary)
                 }
