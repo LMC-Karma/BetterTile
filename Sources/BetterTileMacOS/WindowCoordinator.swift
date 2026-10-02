@@ -895,8 +895,8 @@ extension WindowCoordinator {
             if touched {
                 for id in previousSelected { do { try tabSystem.raiseWindow(id, activate: false) } catch { failed = true } }
                 if let oldFocus, ids.contains(oldFocus) || previousSelected.contains(oldFocus) {
-                    // Ordering-only repair never changed keyboard focus. Do
-                    // not reactivate its floating window during rollback.
+                    // Reactivate only if focus moved, so a rollback never takes
+                    // focus from BetterTile or an app it cannot read.
                     let needsFocus = (try? system.focusedWindow()?.id) != oldFocus
                     do { try tabSystem.raiseWindow(oldFocus, activate: needsFocus) } catch { failed = true }
                 }
@@ -905,6 +905,19 @@ extension WindowCoordinator {
             if baseline.contains(where: { id, frame in !restored.contains { $0.id == id && $0.frame.approximatelyEquals(frame, tolerance: 2) } }) { failed = true }
             return failed ? .degraded(reason: "Tabbed could not fully restore the previous arrangement. Use Repair Tabbed or switch to Native.") : .failed(reason: error.localizedDescription)
         }
+    }
+
+    /// Restores Tabbed stacking without moving a window, activating an app,
+    /// or changing keyboard focus. Raises in the given order, back to front.
+    public func raiseTabbedWindows(_ ids: [WindowID]) -> WindowMutationOutcome {
+        guard let tabSystem = system as? any TabbedWindowSystem else {
+            return .failed(reason: "This window system does not support Tabbed actions.")
+        }
+        var failed = false
+        for id in ids {
+            do { try tabSystem.raiseWindow(id, activate: false) } catch { failed = true }
+        }
+        return failed ? .failed(reason: "Tabbed could not restore window order. Select the tab again or use Repair Tabbed.") : .applied
     }
 
     public func closeTabbedWindow(_ id: WindowID) -> WindowMutationOutcome {

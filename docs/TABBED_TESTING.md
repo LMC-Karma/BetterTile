@@ -7,10 +7,17 @@ Turn off Stage Manager before testing this mode.
 
 This build tests a pane curtain below each selected window. Its frosted surface
 covers inactive tabs when a selected window is smaller than its pane. The
-curtain follows divider drags while inactive tabs follow at release. It uses
-the selected window's validated exact identity; when that identity is
-unavailable, the pane keeps ordinary stacking without a curtain. This is an
-experiment to evaluate live before deciding whether to keep it.
+curtain follows divider drags while inactive tabs follow at release. A click
+on the curtain brings the selected window forward. It uses the selected
+window's validated exact identity; when that identity is unavailable, the pane
+keeps ordinary stacking without a curtain. This is an experiment to evaluate
+live before deciding whether to keep it.
+
+With the same identity, tab strips sit in the normal window stack directly
+above their selected window, so Settings and other windows in front of a pane
+cover its strip. After an app switch, BetterTile reads the window order and
+puts a hidden tab back only if it came in front of its selected tab. It never
+activates an app to do this.
 
 Record results and unresolved observations in
 [TABBED_TEST_FINDINGS.md](TABBED_TEST_FINDINGS.md).
@@ -101,7 +108,15 @@ system; the checks below validate real application and macOS behavior.
   Confirm other panes keep their selected windows above their curtains.
   Repeat with windows from the same app on two displays.
 - Confirm curtains do not appear as windows in Cmd-Tab, Mission Control, or
-  App Exposé and do not take keyboard focus or block a floating window.
+  App Exposé and do not take keyboard focus or block a floating window. Click
+  the frosted area around a smaller selected window. Confirm that window comes
+  forward and no hidden tab is selected.
+- Open BetterTile Settings over a pane. Click between Settings, other apps, and
+  tabs. Confirm Settings keeps focus and stays above the tab strips.
+- Put a window from an Ignore Everywhere app over a pane. Cmd-Tab to an app
+  with a hidden tab in that pane. Confirm the hidden tab goes back behind the
+  selected tab and the ignored window stays in front. Repeat with Spotlight and
+  a menu-bar app's window in front.
 - Change Spaces, enter fullscreen, disconnect a display, leave Tabbed, and quit
   Debug. Confirm no curtain remains on an unrelated desktop or display.
 - Relaunch Debug with `disablePrivateAPIs` enabled as described in
@@ -146,8 +161,10 @@ geometry, layout changes, focus requests, restoration, and session isolation.
 They also verify display-tick coalescing, exact release geometry, cancellation,
 final-frame rejection, and the absence of repeated tab ordering during a live
 resize. Curtain tests cover content geometry, resize following, selected-window
-ordering requests, missing identities, cleanup, and solid accessibility
-fallbacks. Off-screen AppKit ordering tests use BetterTile's own windows and
+ordering requests, clicks, missing identities, cleanup, and solid accessibility
+fallbacks. Stacking tests cover the order repair, windows kept in front,
+unreadable windows, other displays, strip ordering, and focus while BetterTile
+is in front. Off-screen AppKit ordering tests use BetterTile's own windows and
 cannot prove cross-application ordering. An off-screen pane rendering test checks accessibility actions without
 capturing foreign windows. Real-app stacking, Mission Control/App Exposé, live
 performance, and display/Space transition behavior require the manual checks

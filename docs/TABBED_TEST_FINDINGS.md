@@ -87,8 +87,11 @@ real applications on a real desktop.
 | T-28 | A window-edge resize was ignored: hidden tabs showed and strips misaligned until Repair | Fixed | Pending |
 | T-29 | Tab strips followed a divider only at release | Fixed | Pending |
 | T-30 | Inactive tabs showed while a selected window was smaller than its pane | Curtain experiment; geometry, ordering requests, fallback, and cleanup covered | Pending |
-| T-31 | App activation could expose inactive tabs in another pane, including with floating focus | Fixed; fake-window regressions on one and two displays | Pending |
+| T-31 | App activation could expose inactive tabs in another pane, including with floating focus | Reworked as an order-checked repair (see T-33); fake-window regressions on one and two displays | Pending |
 | T-32 | Tabbed on two displays repeated placement for unrelated removal IDs | Fixed; unchanged displays settle once in model regression | Pending |
+| T-33 | Opening BetterTile Settings handed focus back to the last Tabbed window | Fixed; model regression reproduced the activation before the fix | Pending |
+| T-34 | Tab strips covered BetterTile Settings and floating windows | Fixed when exact identities are available | Pending |
+| T-35 | A click on a curtain selected the hidden tab behind it | Fixed | Pending |
 
 The polish pass also fixes Bento clamping beside locked boundaries, divider
 Escape handling with either app focused, ignored linked-resize neighbors,
@@ -134,6 +137,42 @@ edge reader also ignored the tab strip above a lower pane's window, so stacked
 panes always snapped back; it now subtracts the content reserve. Core,
 fake-window, and model regressions reproduce each failure before the fix.
 
+### T-33: Settings lost focus to a Tabbed window
+
+Every application activation re-selected the focused Tabbed window and
+activated its application. `focusedWindow()` skips BetterTile and
+applications it cannot read, and reports the last managed application's window
+instead. Opening BetterTile Settings, Spotlight, or a menu-bar window therefore
+handed focus straight back to the last Tabbed window. Activation also raised
+other panes' selected tabs without checking the window order, so a floating or
+ignored window could end up behind them.
+
+A focus change now selects a tab only when that window's application is
+frontmost. Activation, focus changes, and selection run one repair that reads
+the WindowServer order. It raises a selected tab only when one of its pane's
+hidden tabs is in front of it, then raises again any window that was in front
+of it and overlaps it. It never activates an application or changes focus. A
+fake-window model test reproduced the activating raise before the fix. Core
+and model tests cover a correct order, an exposed pane, a floating window kept
+in front, an unreadable window left alone, a second display, and selection
+with and without a readable order.
+
+### T-34: Tab strips covered Settings and floating windows
+
+Tab strips and empty panes floated above every normal window. BetterTile's
+Settings window floats at the same level, so each refresh put the strips above
+Settings. The strips hid only under the focused window, which BetterTile's own
+windows never are. With an exact identity, the strips and empty panes now sit
+in the normal window stack directly above their pane's selected window. A
+window in front of the selected tab covers its strip as well. Without the
+identity, they float as before.
+
+### T-35: A curtain click reached a hidden tab
+
+The curtain ignored the mouse, so a click on its frosted area reached the
+hidden tab behind it and selected that tab. The curtain now takes the click
+without coming forward and selects the pane's selected window.
+
 ## Remaining live checks
 
 Start with two panes and two tabs per pane. Put windows from the same app in
@@ -145,27 +184,34 @@ different panes, and include another app in at least one pane.
    window stays above the curtain, and other panes do not change. Confirm
    curtains are absent from Cmd-Tab, Mission Control, and App Exposé. Repeat
    across a Space change and two displays, and compare the public fallback
-   with private APIs disabled. Record whether to keep or revise the curtain.
-2. Type after selecting a tab. Confirm input reaches the selected window.
-3. Try the 50/50 case where a right-hand tab needs about 60% width, including
+   with private APIs disabled. Click the frosted area and confirm the selected
+   window comes forward. Record whether to keep or revise the curtain.
+2. **Windows in front of panes.** Open BetterTile Settings over a pane and
+   click between Settings, other apps, and tabs. Confirm Settings keeps focus
+   and stays above the tab strips. Put a window from an Ignore Everywhere app
+   over a pane, then Cmd-Tab to an app with a hidden tab in that pane. Confirm
+   the hidden tab goes back behind the selected tab and the ignored window
+   stays in front. Repeat with Spotlight and a menu-bar app's window.
+3. Type after selecting a tab. Confirm input reaches the selected window.
+4. Try the 50/50 case where a right-hand tab needs about 60% width, including
    an inactive tab imposing the limit. Confirm inactive windows stay covered.
-4. Resize toward a width limit. Check clamping, release, Escape, and Undo.
+5. Resize toward a width limit. Check clamping, release, Escape, and Undo.
    Try an impossible width and a minimum-height conflict.
-5. Use Mission Control and App Exposé to select an inactive window. Confirm its
+6. Use Mission Control and App Exposé to select an inactive window. Confirm its
    tab becomes selected without another pane changing.
-6. Switch among Tabbed, Native, and Bento desktops, including a Space change
+7. Switch among Tabbed, Native, and Bento desktops, including a Space change
    during a pending write.
-7. Test tab moves, edge splits, presets, group merging, Undo, float, and
+8. Test tab moves, edge splits, presets, group merging, Undo, float, and
    reattachment. Revisit T-04 by hand.
-8. Close selected and last tabs. Cancel a save prompt and confirm the tab stays
+9. Close selected and last tabs. Cancel a save prompt and confirm the tab stays
    until the window closes.
-9. Verify exact frame restoration on Native exit and Debug quit, including
-   windows opened during Tabbed.
-10. Check multiple displays, fullscreen transitions, and sustained drag
+10. Verify exact frame restoration on Native exit and Debug quit, including
+    windows opened during Tabbed.
+11. Check multiple displays, fullscreen transitions, and sustained drag
     performance separately.
-11. Crowd a strip with nine tabs. Check the hidden-tab menu, tooltips, close
+12. Crowd a strip with nine tabs. Check the hidden-tab menu, tooltips, close
     press, drag-away, release, and menu placement.
-12. Use both main Repair controls while Tabbed is active, in light and dark
+13. Use both main Repair controls while Tabbed is active, in light and dark
     mode.
 
 Manual VoiceOver testing is not required. Accessibility labels and actions are

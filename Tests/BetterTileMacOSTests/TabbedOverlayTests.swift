@@ -8,23 +8,77 @@ import Testing
     let id = WindowID(rawValue: "curtain-selected")
     var state = TabbedLayoutState(preset: .columns)
     state.reconcile(windowIDs: [id], removed: [], focused: id)
-    var ordered: [(NSPanel, Int)] = []
-    let overlay = TabbedOverlayController(orderCurtain: { ordered.append(($0, $1)) })
+    var ordered: [(NSPanel, NSWindow.OrderingMode, Int)] = []
+    let overlay = TabbedOverlayController(orderPanel: { ordered.append(($0, $1, $2)) })
     defer { overlay.hide() }
     overlay.refresh(state: state, bounds: BTRect(x: 12000, y: 100, width: 1000, height: 800),
-                    windows: [], curtainWindowNumbers: [id: 123])
+                    windows: [], selectedWindowNumbers: [id: 123])
 
-    let (panel, number) = try #require(ordered.first)
-    #expect(ordered.count == 1) // The other pane is empty.
+    let curtains = ordered.filter { $0.1 == .below }
+    #expect(curtains.count == 1) // The other pane is empty.
+    let (panel, _, number) = try #require(curtains.first)
     #expect(number == 123)
     #expect(panel.level == .normal)
-    #expect(panel.ignoresMouseEvents)
+    #expect(!panel.ignoresMouseEvents) // Clicks must not reach a hidden tab.
     #expect(!panel.canBecomeKey && !panel.canBecomeMain)
     #expect(!panel.isAccessibilityElement())
     #expect(panel.collectionBehavior.contains([.transient, .ignoresCycle]))
     #expect(!panel.collectionBehavior.contains(.canJoinAllSpaces))
+    #expect(overlay.windowNumbers.contains(panel.windowNumber))
     let frame = CoordinateConverter.toTopLeft(panel.frame, mainScreenFrame: NSScreen.screens.first!.frame)
     #expect(frame == BTRect(x: 12000, y: 134, width: 497, height: 766))
+}
+
+@Test @MainActor func tabbedChromeJoinsTheNormalStackAboveSelectedWindows() throws {
+    _ = NSApplication.shared
+    let id = WindowID(rawValue: "anchored-selected")
+    var state = TabbedLayoutState(preset: .columns)
+    state.reconcile(windowIDs: [id], removed: [], focused: id)
+    var ordered: [(NSPanel, NSWindow.OrderingMode, Int)] = []
+    let overlay = TabbedOverlayController(orderPanel: { ordered.append(($0, $1, $2)) })
+    defer { overlay.hide() }
+    let bounds = BTRect(x: 12000, y: 100, width: 1000, height: 800)
+    overlay.refresh(state: state, bounds: bounds, windows: [], selectedWindowNumbers: [id: 123])
+
+    // The strip and the empty pane sit directly above the selected window,
+    // so any window in front of it, such as Settings, also covers them.
+    let chrome = ordered.filter { $0.1 == .above }
+    #expect(chrome.count == 2)
+    #expect(chrome.allSatisfy { $0.0.level == .normal && $0.2 == 123 })
+    #expect(Set(chrome.map(\.0.windowNumber)).isSubset(of: overlay.windowNumbers))
+
+    // Without an exact identity, chrome floats as before.
+    ordered.removeAll()
+    overlay.refresh(state: state, bounds: bounds, windows: [])
+    #expect(ordered.isEmpty)
+    let strips = NSApp.windows.compactMap { $0 as? NSPanel }.filter { panel in
+        chrome.contains { $0.0 === panel }
+    }
+    #expect(strips.count == 2)
+    #expect(strips.allSatisfy { $0.level == .floating && $0.isVisible })
+}
+
+@Test @MainActor func clickingATabbedCurtainSelectsItsPanesSelectedWindow() throws {
+    _ = NSApplication.shared
+    let first = WindowID(rawValue: "click-first"), second = WindowID(rawValue: "click-second")
+    var state = TabbedLayoutState()
+    state.reconcile(windowIDs: [first, second], removed: [], focused: first)
+    var curtain: NSPanel?
+    let overlay = TabbedOverlayController(orderPanel: { panel, mode, _ in if mode == .below { curtain = panel } })
+    defer { overlay.hide() }
+    overlay.refresh(state: state, bounds: BTRect(x: 12000, y: 0, width: 1000, height: 800),
+                    windows: [], selectedWindowNumbers: [first: 7, second: 8])
+    let panel = try #require(curtain)
+    let view = try #require(panel.contentView as? TabbedCurtainView)
+    #expect(view.acceptsFirstMouse(for: nil))
+    #expect(view.hitTest(NSPoint(x: 10, y: 10)) === view)
+    var selected: [WindowID] = []
+    overlay.onIntent = { if case let .select(id) = $0 { selected.append(id) } }
+    let event = try #require(NSEvent.mouseEvent(with: .leftMouseDown, location: NSPoint(x: 10, y: 10), modifierFlags: [],
+                                                timestamp: 0, windowNumber: panel.windowNumber, context: nil,
+                                                eventNumber: 0, clickCount: 1, pressure: 1))
+    view.mouseDown(with: event)
+    #expect(selected == [first])
 }
 
 @Test @MainActor func tabbedCurtainFollowsResizeAndSelectionAndHidesWithoutAnExactWindow() throws {
@@ -43,12 +97,12 @@ import Testing
     targets.forEach { $0.orderFrontRegardless() }
     let numbers = [first: targets[0].windowNumber, second: targets[1].windowNumber]
     var ordered: [(NSPanel, Int)] = []
-    let overlay = TabbedOverlayController(orderCurtain: { panel, number in
-        ordered.append((panel, number))
-        panel.order(.below, relativeTo: number)
+    let overlay = TabbedOverlayController(orderPanel: { panel, mode, number in
+        if mode == .below { ordered.append((panel, number)) }
+        panel.order(mode, relativeTo: number)
     })
     defer { overlay.hide() }
-    overlay.refresh(state: state, bounds: bounds, windows: [], curtainWindowNumbers: numbers)
+    overlay.refresh(state: state, bounds: bounds, windows: [], selectedWindowNumbers: numbers)
     let curtain = try #require(ordered.first?.0)
     #expect(curtain.isVisible)
     let divider = try #require(state.dividers(in: bounds).first?.branchID)
@@ -60,20 +114,20 @@ import Testing
     #expect(ordered.count == 1) // Resizing does not raise or reorder tabs.
 
     state.select(second)
-    overlay.refresh(state: state, bounds: bounds, windows: [], curtainWindowNumbers: numbers)
+    overlay.refresh(state: state, bounds: bounds, windows: [], selectedWindowNumbers: numbers)
     #expect(ordered.last?.0 === curtain)
     #expect(ordered.last?.1 == targets[1].windowNumber)
-    overlay.refresh(state: state, bounds: bounds, windows: [], curtainWindowNumbers: [second: 0])
+    overlay.refresh(state: state, bounds: bounds, windows: [], selectedWindowNumbers: [second: 0])
     #expect(!curtain.isVisible)
     #expect(ordered.count == 2)
-    overlay.refresh(state: state, bounds: bounds, windows: [], curtainWindowNumbers: numbers)
+    overlay.refresh(state: state, bounds: bounds, windows: [], selectedWindowNumbers: numbers)
     let replacement = try #require(ordered.last?.0)
     state.reconcile(windowIDs: [], removed: [first, second], focused: nil)
-    overlay.refresh(state: state, bounds: bounds, windows: [], curtainWindowNumbers: numbers)
+    overlay.refresh(state: state, bounds: bounds, windows: [], selectedWindowNumbers: numbers)
     #expect(!replacement.isVisible)
 
     state.reconcile(windowIDs: [first], removed: [], focused: first)
-    overlay.refresh(state: state, bounds: bounds, windows: [], curtainWindowNumbers: numbers)
+    overlay.refresh(state: state, bounds: bounds, windows: [], selectedWindowNumbers: numbers)
     let final = try #require(ordered.last?.0)
     overlay.hide()
     overlay.refreshResize(state: state, bounds: bounds)
@@ -98,7 +152,7 @@ func tabbedCurtainUsesSolidAccessibilityFallback(options: (Bool, Bool)) {
     view.displayOptions = { (false, false) }
     var brightness: [CGFloat] = []
     for (name, appearanceName) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
-        view.appearance = try #require(NSAppearance(named: appearanceName))
+        view.appearance = NSAppearance(named: appearanceName)
         view.refreshAppearance()
         let color = try #require(view.subviews.last?.layer?.backgroundColor)
         brightness.append(try #require(NSColor(cgColor: color)?.usingColorSpace(.sRGB)).redComponent)
