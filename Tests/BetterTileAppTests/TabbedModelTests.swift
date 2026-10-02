@@ -378,7 +378,7 @@ func tabbedLearnedWidthFailureDoesNotCommitOrRetryDegradedRestoration(failRestor
     if !failRestore { #expect(system.windows[0].frame == frame) }
 }
 
-@Test @MainActor func tabbedHeightRefusalDoesNotTriggerWidthAdaptation() async throws {
+@Test @MainActor func tabbedImpossibleHeightRefusalLearnsBothAxesAndPreservesFrames() async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
     let id = system.windows[0].id
@@ -397,7 +397,8 @@ func tabbedLearnedWidthFailureDoesNotCommitOrRetryDegradedRestoration(failRestor
     #expect(model.activeTabbedState == nil)
     #expect(system.windows[0].frame == before)
     #expect(system.frameWriteCounts[id] == writes + 2)
-    #expect(system.windows[0].constraints.minimumSize.width < 600)
+    #expect(system.windows[0].constraints.minimumSize.width == 600)
+    #expect(system.windows[0].constraints.minimumSize.height == 780)
 }
 
 @Test @MainActor func tabbedFailedUndoCanBeRetried() async throws {
@@ -761,4 +762,70 @@ func tabbedSharedEdgeResizeMovesThePaneItsHiddenTabsAndItsNeighbor(neighborMinim
     #expect(await waitFor(timeout: .seconds(2)) {
         frame(selected, in: system)?.approximatelyEquals(left, tolerance: 1) == true
     })
+}
+
+@Test(arguments: [false, true], [false, true]) @MainActor
+func tabSelectionRefitsForReportedMinimumInBothAxes(height: Bool, learned: Bool) async throws {
+    _ = NSApplication.shared
+    let system = FakeAppWindowSystem()
+    var other = system.windows[0]
+    other.id = WindowID(rawValue: "larger-tab")
+    system.windows.append(other)
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    model.configuration.defaultTabbedPreset = height ? .rows : .columns
+    model.setActiveMode(.tabbed)
+    try #require(await waitFor { model.activeTabbedState?.windowIDs.count == 2 })
+    let target = other.id
+    if learned {
+        if height { system.enforcedMinimumHeights[target] = 450 }
+        else { system.enforcedMinimumWidths[target] = 600 }
+        system.windows[1].frame.size = BTSize(width: 800, height: 600)
+    } else if height { system.windows[1].constraints.minimumSize.height = 450 }
+    else { system.windows[1].constraints.minimumSize.width = 600 }
+    model.performTabbed(.select(target))
+    try #require(await waitFor { model.activeTabbedState?.activeWindowID == target })
+    #expect(height ? system.windows[1].frame.size.height >= 450 : system.windows[1].frame.size.width >= 600)
+    #expect(model.statusMessage == nil)
+}
+
+@Test @MainActor func repairTabbedLearnsHeightAndRestoresDisplacedWindow() async throws {
+    _ = NSApplication.shared
+    let system = FakeAppWindowSystem()
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    model.configuration.defaultTabbedPreset = .rows
+    model.setActiveMode(.tabbed)
+    try #require(await waitFor { model.activeTabbedState != nil && system.windows[0].frame.minY == 34 })
+    let id = system.windows[0].id
+    system.windows[0].frame = BTRect(x: 100, y: 50, width: 800, height: 600)
+    system.enforcedMinimumHeights[id] = 450
+    model.repairCurrentLayout()
+    try #require(await waitFor { system.windows[0].frame.minX == 0 && system.windows[0].constraints.minimumSize.height >= 450 })
+    #expect(model.statusMessage == nil)
+    #expect(system.windows[0].constraints.minimumSize.height >= 450)
+}
+
+@Test(arguments: [false, true]) @MainActor
+func impossibleTabSelectionPreservesSelectionAndFrames(height: Bool) async throws {
+    _ = NSApplication.shared
+    let system = FakeAppWindowSystem()
+    var other = system.windows[0]
+    other.id = WindowID(rawValue: "impossible-tab")
+    system.windows.append(other)
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    model.configuration.defaultTabbedPreset = height ? .rows : .columns
+    model.setActiveMode(.tabbed)
+    try #require(await waitFor { model.activeTabbedState?.windowIDs.count == 2 })
+    let before = try #require(model.activeTabbedState)
+    let frames = system.windows.map(\.frame)
+    let writes = system.frameWriteCounts
+    if height { system.windows[1].constraints.minimumSize.height = 780 }
+    else { system.windows[1].constraints.minimumSize.width = 950 }
+    model.performTabbed(.select(other.id))
+    #expect(model.statusMessage != nil)
+    #expect(model.activeTabbedState == before)
+    #expect(system.windows.map(\.frame) == frames)
+    #expect(system.frameWriteCounts == writes)
 }

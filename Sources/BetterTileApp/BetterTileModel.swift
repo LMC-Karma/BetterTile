@@ -3002,14 +3002,21 @@ extension BetterTileModel {
             return
         }
         let previous = sessionStore.session(for: display.id)?.tabbedState
+        var selectionOnly = selectionOnly
         func prepare(_ windows: [WindowSnapshot]) throws -> (state: TabbedLayoutState, placements: [Placement]) {
             if selectionOnly {
-                guard let focus, windows.contains(where: { $0.id == focus && $0.isEligible }),
+                guard let focus, let window = windows.first(where: { $0.id == focus && $0.isEligible }),
                       let pane = state.panes.first(where: { $0.tabs.contains(focus) }),
                       let frame = state.frames(in: display.visibleFrame)[pane.id] else {
                     throw WindowSystemError.operationFailed("That window is no longer available.")
                 }
-                return (state, [Placement(windowID: focus, frame: TabbedLayoutState.contentFrame(frame))])
+                let content = TabbedLayoutState.contentFrame(frame)
+                let minimum = window.constraints.minimumSize
+                if content.size.width + 0.001 >= minimum.width,
+                   content.size.height + 0.001 >= minimum.height {
+                    return (state, [Placement(windowID: focus, frame: content)])
+                }
+                selectionOnly = false
             }
             let fitted = try state.fittingMinimumWidths(in: display.visibleFrame, windows: windows)
             var proposed = try fitted.placements(in: display.visibleFrame, windows: windows)
@@ -3057,7 +3064,7 @@ extension BetterTileModel {
                     selected = proposal.state.panes.filter { $0.tabs.contains(where: applicationWindows.contains) }
                         .compactMap(\.selected).filter(eligibleIDs.contains)
                 }
-                var learnedWidth = false
+                var learnedSize = false
                 outcome = await self.coordinator.applyTabbed(
                     placements: proposal.placements,
                     // Hidden tabs stack behind their pane at best effort; only
@@ -3067,22 +3074,23 @@ extension BetterTileModel {
                     previousSelected: previous?.selectedWindowIDs.filter(eligibleIDs.contains) ?? [],
                     focus: focus.flatMap { eligibleIDs.contains($0) ? $0 : nil },
                     onSizeMismatch: { id, requested, baseline, actual in
-                        guard !selectionOnly, proposal.state.windowIDs.contains(id), actual.size.width > requested.size.width + 2 else { return }
-                        learnedWidth = self.system.observeApplicationEnforcedMinimum(
+                        guard proposal.state.windowIDs.contains(id) else { return }
+                        learnedSize = self.system.observeApplicationEnforcedMinimum(
                             windowID: id, requested: requested, baseline: baseline, actual: actual
-                        ) || learnedWidth
+                        ) || learnedSize
                     },
                     isCurrent: isCurrent
                 )
-                // Retry once, only after a complete rollback and a new width
+                // Retry once, only after a complete rollback and a new size
                 // observation. Ignored writes and degraded outcomes never retry.
-                guard case .failed = outcome, attempt == 0, learnedWidth,
+                guard case .failed = outcome, attempt == 0, learnedSize,
                       !Task.isCancelled, isCurrent() else { break }
                 do {
                     let ids = Set(windows.map(\.id))
                     let refreshed = try self.system.windowSnapshots(ids: ids)
                     guard Set(refreshed.map(\.id)) == ids,
                           refreshed.allSatisfy({ $0.displayID == display.id && $0.isEligible }) else { break }
+                    selectionOnly = false
                     proposal = try prepare(refreshed)
                     windows = refreshed
                 } catch {

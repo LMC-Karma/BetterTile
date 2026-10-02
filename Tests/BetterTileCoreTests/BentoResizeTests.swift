@@ -355,3 +355,12 @@ private func window(_ id: WindowID, x: Double, y: Double, width: Double, height:
     learner.removeAll()
     #expect(learner.merging(WindowConstraints(), for: id).minimumSize.width == WindowConstraints().minimumSize.width)
 }
+
+@Test func positionOnlyChangesDoNotProveApplicationMinimums() {
+    var learner = WindowMinimumSizeLearner()
+    let baseline = BTRect(x: 100, y: 100, width: 600, height: 500)
+    let learned = learner.observe(windowID: WindowID(rawValue: "ignored-size"),
+        requested: BTRect(x: 0, y: 34, width: 400, height: 300), baseline: baseline,
+        actual: BTRect(x: 0, y: 34, width: 600, height: 500))
+    #expect(!learned)
+}
