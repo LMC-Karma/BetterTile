@@ -140,7 +140,8 @@ public struct BentoTabbedLayoutState: Hashable, Sendable {
     public mutating func synchronize(with layout: BentoLayoutState) -> [WindowID] {
         let leaves = layout.root?.windowIDs ?? []
         let leafSet = Set(leaves)
-        let vacancies = Set(layout.root.map(Self.vacancyIDs) ?? [])
+        let vacancyIDs = layout.root.map(Self.vacancyIDs) ?? []
+        let vacancies = Set(vacancyIDs)
         var orphans: [WindowID] = []
         var kept: [BentoTabbedPane] = []
         var claimed = Set<WindowID>()
@@ -160,6 +161,10 @@ public struct BentoTabbedLayoutState: Hashable, Sendable {
         for id in leaves where !claimed.contains(id) {
             kept.append(BentoTabbedPane(id: UUID(), tabs: [id]))
             claimed.insert(id)
+        }
+        let keptPaneIDs = Set(kept.map(\.id))
+        for id in vacancyIDs where !keptPaneIDs.contains(id) {
+            kept.append(BentoTabbedPane(id: id, tabs: []))
         }
         self.layout = layout
         self.panes = kept

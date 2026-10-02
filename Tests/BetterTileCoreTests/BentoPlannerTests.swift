@@ -226,6 +226,7 @@ private func plannerWindow(
             ),
             intent: .activate
         ).placements
+        #expect(canonical.count == count)
         let broken = canonical.map { placement in
             var frame = placement.frame
             if placement.windowID == windows[0].id {
@@ -244,6 +245,7 @@ private func plannerWindow(
             intent: .retile
         ).placements
 
+        #expect(repaired.count == count)
         #expect(
             Dictionary(uniqueKeysWithValues: repaired.map { ($0.windowID, $0.frame) })
                 == Dictionary(uniqueKeysWithValues: canonical.map { ($0.windowID, $0.frame) }),
@@ -264,6 +266,7 @@ private func plannerWindow(
             ),
             intent: .activate
         ).placements
+        #expect(canonical.count == count)
         let mirrored = canonical.map { placement in
             var frame = placement.frame
             frame.origin.x = plannerBounds.maxX - frame.maxX
@@ -288,6 +291,7 @@ private func plannerWindow(
             return (placement.windowID, frame)
         })
 
+        #expect(repaired.count == count)
         #expect(repaired.allSatisfy { placement in
             expected[placement.windowID]?.approximatelyEquals(
                 placement.frame,
@@ -336,6 +340,7 @@ private func plannerWindow(
     )
 
     #expect(result.writesFrames)
+    #expect(Set(result.placements.map(\.windowID)) == Set(windows.map(\.id)))
     #expect(Set(result.placements.map(\.frame.size)) == [BTSize(width: 600, height: 400)])
 }
 
@@ -467,10 +472,7 @@ private func plannerWindow(
     #expect(eighth.minimizeWindowIDs.isEmpty, "nothing is hidden to make room")
     #expect(eighth.state.layout.floatingWindowIDs.isSuperset(of: [windows[6].id, windows[7].id]))
     #expect(eighth.placements.isEmpty, "an overflow window keeps its own frame")
-}
-
-@Test func theOverflowMessageNamesTheCapAndTheOutcome() {
-    #expect(bentoOverflowMessage == "Bento manages up to six panes. This window will remain floating.")
+    #expect(eighth.pill == .overflow("Bento manages up to six panes. This window will remain floating."))
 }
 
 /// Activating a desktop that already holds more than six windows floats the
@@ -689,4 +691,42 @@ func newWindowSideRemainsConsistentThroughSixWindows(side: BentoNewWindowSide) t
     #expect(!capped.writesFrames)
     #expect(capped.state.layout.root == state.layout.root)
     #expect(capped.state.layout.floatingWindowIDs.contains(windows[6].id))
+}
+
+@Test func restoringIntoAFullLayoutFloatsWithoutConsumingItsAnchor() throws {
+    let windows = (0..<7).map { plannerWindow("\($0)") }
+    let planner = BentoPlanner()
+    let observation = BentoObservation(bounds: plannerBounds, windows: windows)
+    let activated = planner.plan(state: BentoRuntimeState(),
+        observation: BentoObservation(bounds: plannerBounds, windows: Array(windows.prefix(6))), intent: .activate)
+    let removed = planner.plan(state: activated.state, observation: observation,
+        intent: .remove(windows[0].id, minimized: true))
+    let full = planner.plan(state: removed.state, observation: observation, intent: .insert(windows[6].id))
+    #expect(full.state.layout.root?.windowIDs.count == 6)
+    let anchor = try #require(full.state.reinsertionAnchors[windows[0].id])
+    let restored = planner.plan(state: full.state, observation: observation, intent: .restore(windows[0].id))
+    #expect(restored.state.layout.root == full.state.layout.root)
+    #expect(restored.state.layout.floatingWindowIDs.contains(windows[0].id))
+    #expect(restored.state.reinsertionAnchors[windows[0].id] == anchor)
+    #expect(restored.pill == .overflow(bentoOverflowMessage))
+    #expect(restored.restoreWindowIDs == [windows[0].id])
+    #expect(!restored.writesFrames)
+    #expect(restored.placements.isEmpty)
+}
+
+@Test(arguments: [0.0, 8.0])
+func adoptingSixExistingPanesStillRegistersOverflow(paneGap: Double) {
+    let windows = (0..<6).map { index in
+        plannerWindow("\(index)", frame: BTRect(x: Double(index) * 200, y: 0, width: 200, height: 800))
+    }
+    let extra = plannerWindow("extra")
+    let result = BentoPlanner().plan(
+        state: BentoRuntimeState(layout: BentoLayoutState(metrics: BentoLayoutMetrics(paneGap: paneGap))),
+        observation: BentoObservation(bounds: plannerBounds, windows: windows + [extra]), intent: .activate)
+    #expect(Set(result.state.layout.root?.windowIDs ?? []) == Set(windows.map(\.id)))
+    #expect(result.state.layout.floatingWindowIDs == [extra.id])
+    #expect(result.pill == .overflow(bentoOverflowMessage))
+    #expect(result.minimizeWindowIDs.isEmpty)
+    #expect(result.writesFrames == (paneGap > 0))
+    #expect(!result.placements.contains { $0.windowID == extra.id })
 }

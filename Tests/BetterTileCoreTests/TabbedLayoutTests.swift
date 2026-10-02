@@ -302,3 +302,29 @@ private func resizing(_ frame: BTRect, minX: Double = 0, minY: Double = 0, maxX:
     let pane = try #require(adopted.frames(in: resizeBounds)[adopted.panes[1].id])
     #expect(abs(TabbedLayoutState.contentFrame(pane).minY - (lower.minY + 60)) < 0.5)
 }
+
+@Test func synchronizingAnEmptyBentoTreeKeepsAUsableTabbedPane() throws {
+    let bounds = BTRect(x: 0, y: 0, width: 1200, height: 800)
+    var state = TabbedLayoutState()
+    state.synchronize(with: BentoLayoutState())
+    let pane = try #require(state.panes.first)
+    #expect(state.panes.count == 1)
+    #expect(state.activePaneID == pane.id)
+    #expect(state.frames(in: bounds)[pane.id] == bounds)
+    let incoming = WindowID(rawValue: "incoming")
+    state.reconcile(windowIDs: [incoming], removed: [], focused: nil)
+    #expect(state.windowIDs == [incoming])
+}
+
+@Test func synchronizingAVacancyOnlyTreeRehomesOrphanedHiddenTabs() throws {
+    let first = id("first"), hidden = id("hidden")
+    var state = TabbedLayoutState()
+    state.reconcile(windowIDs: [first, hidden], removed: [], focused: first)
+    let vacancy = UUID()
+    state.synchronize(with: BentoLayoutState(root: .vacant(vacancy)))
+    #expect(state.panes.count == 1)
+    #expect(state.activePaneID == vacancy)
+    #expect(state.panes[0].tabs == [hidden])
+    #expect(state.panes[0].selected == hidden)
+    #expect(state.layout.root?.windowIDs == [hidden])
+}
