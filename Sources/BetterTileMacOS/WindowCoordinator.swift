@@ -856,7 +856,19 @@ extension WindowCoordinator {
                 let actual = Dictionary(uniqueKeysWithValues: try snapshots(ids: ids).map { ($0.id, $0.frame) })
                 let framesMatch = placements.allSatisfy { actual[$0.windowID]?.approximatelyEquals($0.frame, tolerance: 2) == true }
                 let focusMatches = try focus == nil || system.focusedWindow()?.id == focus
-                if framesMatch && focusMatches { return .applied }
+                if framesMatch && focusMatches {
+                    // A hidden tab may already be clamped at its minimum by
+                    // the time it is selected. Preserve accepted size-change
+                    // evidence from this best-effort placement.
+                    let hiddenFrames = (try? snapshots(ids: Set(changedBestEffort.map(\.windowID)))) ?? []
+                    for window in hiddenFrames {
+                        if let placement = changedBestEffort.first(where: { $0.windowID == window.id }),
+                           let before = bestEffortBaseline[window.id] {
+                            onSizeMismatch?(window.id, placement.frame, before, window.frame)
+                        }
+                    }
+                    return .applied
+                }
                 if framesMatch {
                     // The window was raised and its frame accepted. A focus
                     // that never arrives is left to the focus observer.
@@ -864,12 +876,11 @@ extension WindowCoordinator {
                     try await Task.sleep(for: .milliseconds(50))
                     continue
                 }
-                // Only width refusals with stable frames and accepted heights
-                // can inform a retry. Report before rollback loses the evidence.
+                // Stable size refusals in either axis can inform a retry.
+                // Report before rollback loses the evidence.
                 if attempt == 3, focusMatches, placements.allSatisfy({ placement in
                     guard let frame = actual[placement.windowID] else { return false }
-                    return abs(frame.size.height - placement.frame.size.height) <= 2
-                        && previousFrames[placement.windowID]?.approximatelyEquals(frame, tolerance: 1) == true
+                    return previousFrames[placement.windowID]?.approximatelyEquals(frame, tolerance: 1) == true
                 }) {
                     for placement in placements {
                         if let frame = actual[placement.windowID], let before = baseline[placement.windowID] {

@@ -142,12 +142,12 @@ public struct WindowMinimumSizeLearner: Sendable {
         let previous = learned
         if requested.size.width + tolerance < baseline.size.width,
            actual.size.width > requested.size.width + tolerance,
-           actual.size.width <= baseline.size.width + tolerance {
+           actual.size.width < baseline.size.width - tolerance {
             learned.width = max(learned.width, actual.size.width)
         }
         if requested.size.height + tolerance < baseline.size.height,
            actual.size.height > requested.size.height + tolerance,
-           actual.size.height <= baseline.size.height + tolerance {
+           actual.size.height < baseline.size.height - tolerance {
             learned.height = max(learned.height, actual.size.height)
         }
         guard learned != previous else { return false }
