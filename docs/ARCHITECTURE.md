@@ -173,8 +173,11 @@ change a Bento operation made to the tree; writing it also writes the tree.
   public `NSWindow.order(_:relativeTo:)`. The model verifies the WindowServer
   order and every tab identity before supplying that anchor. Missing
   identities or unsafe ordering hide the curtain. It never guesses from a
-  frame or parks a window. A frosted plate over Liquid Glass hides underlying
-  detail, with a solid surface for Reduce Transparency or Increase Contrast.
+  frame or parks a window. An opaque, bright neutral gradient conceals inactive
+  windows. Rounded cutouts exclude occupied tab strips, including during
+  resizing. The curtain keeps its rectangular input surface; the strips above
+  it own tab interaction. Reduce Transparency and Increase Contrast use a
+  uniform opaque surface.
   A click selects the selected tab in that pane, or activates an empty pane;
   it does not reach an inactive tab. Curtains have no accessibility navigation.
   They hide with the overlay on mode exit, Space changes, fullscreen, display
@@ -217,23 +220,41 @@ change a Bento operation made to the tree; writing it also writes the tree.
 
 ## Overlay appearance
 
-`OverlayAppearance` stores the shared Liquid Glass preference and strength.
-Older configurations default to glass enabled at half strength. Invalid
-strength values fail configuration validation. Appearance changes update
-existing overlay views without starting a placement or cancelling a gesture.
+`OverlayAppearance` stores the shared Liquid Glass preference and frosting
+strength. Settings presents its inverse as **Glass transparency**, from
+Frosted to Clear. The persisted value keeps its existing meaning; no migration
+is needed. Invalid strength values fail configuration validation. Appearance
+changes update visible views without placing windows or cancelling a gesture.
 
-`OverlayGlassView` owns the native AppKit glass and a semantic-color plate.
-The strength changes that plate, not a private blur parameter. Empty panes
-use clear glass and a lighter plate. The shared Tabbed curtain keeps at least
-96 percent plate opacity. Disabling glass, Reduce Transparency, or Increase
-Contrast selects an opaque surface. Display-option changes apply while views
-are visible. Decorative glass never owns pointer events.
+`OverlayGlassView` uses native AppKit glass with a light semantic-color plate.
+The slider changes only that plate, continuously from 22 percent to zero.
+Text-bearing surfaces retain regular glass. Divider capsules and empty panes
+use clear glass with half that added frosting. Disabling glass, Reduce
+Transparency, or Increase Contrast selects an opaque surface. Display-option
+changes apply while views are visible. Decorative glass never owns pointer
+events. The Tabbed curtain conceals inactive windows independently of this
+preference.
+
+The menu bar popover uses the system's native glass. `GlassBacking` adds only
+the shared frosting or accessibility fallback over it; Clear removes this
+additional layer. The Layout Wheel uses the same backing over one native glass
+surface. Its hub does not add a second glass material.
 
 Divider capsules use `NSGlassEffectContainerView` to merge junction arms.
 Their glass width is at least six points; the existing hit area, cursor,
 minimum-size indication, and resize engine remain responsible for interaction.
-The preference also covers tab strips, drop and placement previews, resize
-ghosts, the Layout Wheel, and result feedback.
+The preference also covers tab strips, Tabbed drop targets, resize ghosts,
+the Layout Wheel, the menu bar popover, and result feedback. Snap and Bento
+placement/swap previews retain their light outlines, tint, and pulse.
+
+Tab dragging changes a provisional display order, without mutating the layout.
+The lifted tab follows the pointer and native layer springs move its neighbors.
+Insertion uses stable target geometry, not animated positions. Held edge
+positions scroll crowded strips. Mouse-up recomputes the destination and emits
+one intent. The released tab stays at its destination until that placement
+completes; failure restores the committed order. New tab drags wait for any
+pending placement to finish. Escape, hiding, or a layout change clears the
+provisional order, springs, and scrolling. Reduce Motion disables the springs.
 
 ## Linked resizing
 

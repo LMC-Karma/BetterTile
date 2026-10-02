@@ -84,6 +84,12 @@ public struct OverlayAppearance: Codable, Hashable, Sendable {
     public var useLiquidGlass: Bool
     public var strength: Double
 
+    /// Keep the persisted frosting value compatible with earlier versions.
+    public var transparency: Double {
+        get { 1 - strength }
+        set { strength = 1 - newValue }
+    }
+
     public init(useLiquidGlass: Bool = true, strength: Double = 0.5) {
         self.useLiquidGlass = useLiquidGlass
         self.strength = strength

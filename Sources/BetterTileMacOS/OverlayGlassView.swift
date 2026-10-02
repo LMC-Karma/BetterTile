@@ -1,5 +1,31 @@
 import AppKit
 import BetterTileCore
+import SwiftUI
+
+extension OverlayAppearance {
+    /// Additional frosting only. The system owns the native material and optics.
+    public var glassBackingOpacity: Double {
+        (strength.isFinite ? min(1, max(0, strength)) : 0.5) * 0.22
+    }
+}
+
+/// Used over the system popover material as well as our custom glass surfaces.
+public struct GlassBacking: View {
+    private let appearance: OverlayAppearance
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.colorSchemeContrast) private var contrast
+
+    public init(_ appearance: OverlayAppearance) { self.appearance = appearance }
+
+    public var body: some View {
+        Color(nsColor: .windowBackgroundColor).opacity(
+            !appearance.useLiquidGlass || reduceTransparency || contrast == .increased
+                ? 1 : appearance.glassBackingOpacity
+        )
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+}
 
 /// Shared decorative glass. Controls stay in sibling views so glass never
 /// changes hit testing. Strength changes the plate over native glass; AppKit
@@ -15,7 +41,6 @@ class OverlayGlassView: NSView {
     var tint: NSColor? { didSet { refreshAppearance() } }
     var solidColor: NSColor? { didSet { refreshAppearance() } }
     var isLight = false { didSet { refreshAppearance() } }
-    var frostFloor: Double = 0 { didSet { refreshAppearance() } }
     var displayOptions: () -> (reduceTransparency: Bool, increaseContrast: Bool) = {
         (NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency,
          NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast)
@@ -74,13 +99,10 @@ class OverlayGlassView: NSView {
     @objc func refreshAppearance() {
         let options = displayOptions()
         let solid = !overlayAppearance.useLiquidGlass || options.reduceTransparency || options.increaseContrast
-        let strength = overlayAppearance.strength.isFinite ? min(1, max(0, overlayAppearance.strength)) : 0.5
         glass.isHidden = solid
-        glass.style = isLight || strength < 0.35 ? .clear : .regular
-        glass.tintColor = tint?.withAlphaComponent(0.10 + strength * 0.12)
-        plateOpacity = solid ? 1 : (frostFloor > 0
-            ? frostFloor + strength * (1 - frostFloor) * 0.75
-            : (isLight ? 0.03 : 0.08) + strength * (isLight ? 0.18 : 0.44))
+        glass.style = isLight ? .clear : .regular
+        glass.tintColor = tint?.withAlphaComponent(0.06)
+        plateOpacity = solid ? 1 : overlayAppearance.glassBackingOpacity * (isLight ? 0.5 : 1)
         effectiveAppearance.performAsCurrentDrawingAppearance {
             plate.layer?.backgroundColor = (solid ? (solidColor ?? .windowBackgroundColor) : .windowBackgroundColor).withAlphaComponent(plateOpacity).cgColor
             plate.layer?.borderWidth = options.increaseContrast ? 1.5 : 0.7

@@ -97,8 +97,6 @@ enum WindowExposureRetry {
 public final class DragSnapController {
     public var configuration: BetterTileConfiguration {
         didSet {
-            preview?.overlayAppearance = configuration.overlayAppearance
-            bentoPreview?.overlayAppearance = configuration.overlayAppearance
             if !configuration.snappingEnabled {
                 eventTapHandoff.clear()
                 cancel()
@@ -702,7 +700,6 @@ public final class DragSnapController {
         if let bentoPreview { return bentoPreview }
         let controller = BentoDropPreviewController()
         bentoPreview = controller
-        controller.overlayAppearance = configuration.overlayAppearance
         return controller
     }
 
@@ -717,7 +714,6 @@ public final class DragSnapController {
     private func showPreview(frame: BTRect, mainScreenFrame: CGRect) {
         let panel = preview ?? SnapPreviewPanel()
         preview = panel
-        panel.overlayAppearance = configuration.overlayAppearance
         panel.show(frame: frame, mainScreenFrame: mainScreenFrame)
     }
 
@@ -825,9 +821,6 @@ public final class DragSnapController {
 
 @MainActor
 private final class SnapPreviewPanel {
-    var overlayAppearance = OverlayAppearance() {
-        didSet { (panel.contentView as? OverlayGlassView)?.overlayAppearance = overlayAppearance }
-    }
     private let panel: NSPanel
 
     init() {
@@ -839,7 +832,7 @@ private final class SnapPreviewPanel {
         panel.backgroundColor = .clear
         panel.collectionBehavior = [.moveToActiveSpace, .transient, .ignoresCycle]
         panel.sharingType = .none
-        panel.contentView = OverlayGlassView(content: PlacementWireframeView(), appearance: overlayAppearance)
+        panel.contentView = PlacementWireframeView()
     }
 
     func show(frame: BTRect, mainScreenFrame: CGRect) {
@@ -872,14 +865,6 @@ enum BentoPreviewMetrics {
 
 @MainActor
 private final class BentoDropPreviewController {
-    var overlayAppearance = OverlayAppearance() {
-        didSet {
-            placementPreviews.overlayAppearance = overlayAppearance
-            for panel in [cuePanel, landingPanel, swapOriginPanel].compactMap({ $0 }) {
-                (panel.contentView as? OverlayGlassView)?.overlayAppearance = overlayAppearance
-            }
-        }
-    }
     private static let signposter = OSSignposter(
         subsystem: "com.lmckarma.BetterTile",
         category: "Overlay"
@@ -893,7 +878,7 @@ private final class BentoDropPreviewController {
 
     init() {
         cuePanel = Self.makePanel()
-        cuePanel.contentView = OverlayGlassView(content: cueView, appearance: overlayAppearance)
+        cuePanel.contentView = cueView
     }
 
     func showCue(
@@ -948,10 +933,10 @@ private final class BentoDropPreviewController {
     }
 
     private func hideMotionPreviews() {
-        (landingPanel?.contentView?.subviews.compactMap { $0 as? BentoLandingView }.first)?.stopPulsing()
+        (landingPanel?.contentView as? BentoLandingView)?.stopPulsing()
         landingPanel?.orderOut(nil)
         landingPanel = nil
-        (swapOriginPanel?.contentView?.subviews.compactMap { $0 as? BentoLandingView }.first)?.stopPulsing()
+        (swapOriginPanel?.contentView as? BentoLandingView)?.stopPulsing()
         swapOriginPanel?.orderOut(nil)
         swapOriginPanel = nil
         placementPreviews.hide()
@@ -967,7 +952,7 @@ private final class BentoDropPreviewController {
             panel = existing
         } else {
             let created = Self.makePanel()
-            created.contentView = OverlayGlassView(content: BentoLandingView(), appearance: overlayAppearance)
+            created.contentView = BentoLandingView()
             panel = created
         }
         panel.setFrame(
@@ -978,7 +963,7 @@ private final class BentoDropPreviewController {
             display: true
         )
         panel.orderFrontRegardless()
-        (panel.contentView?.subviews.compactMap { $0 as? BentoLandingView }.first)?.startPulsing()
+        (panel.contentView as? BentoLandingView)?.startPulsing()
         return panel
     }
 
@@ -1314,9 +1299,6 @@ private final class BentoLandingView: NSView {
 /// Shared by Bento drop previews and the Layout Wheel so both speak the same
 /// visual language for "this window is going here".
 final class PlacementWireframeController {
-    var overlayAppearance = OverlayAppearance() {
-        didSet { for panel in panels.values { (panel.contentView as? OverlayGlassView)?.overlayAppearance = overlayAppearance } }
-    }
     private var panels: [WindowID: NSPanel] = [:]
 
     func show(
@@ -1380,7 +1362,7 @@ final class PlacementWireframeController {
         panel.ignoresMouseEvents = true
         panel.collectionBehavior = [.moveToActiveSpace, .transient, .ignoresCycle]
         panel.sharingType = .none
-        panel.contentView = OverlayGlassView(content: PlacementWireframeView(), appearance: overlayAppearance)
+        panel.contentView = PlacementWireframeView()
         panels[id] = panel
         return panel
     }
