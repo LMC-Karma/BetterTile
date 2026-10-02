@@ -10,7 +10,7 @@ public enum TabbedUIIntent {
     case adjustDivider(UUID, by: Double)
 }
 
-/// AppKit chrome only: tab strips, empty-pane targets, and pane curtains.
+/// AppKit chrome only: tab strips, empty-pane targets, and a shared display curtain.
 /// It knows pane values and emits intents; it never writes Accessibility
 /// attributes or owns layout sessions. Pane dividers belong to Bento's overlay.
 @MainActor
@@ -23,7 +23,7 @@ public final class TabbedOverlayController {
     /// Includes failed lookups as nil so they are not repeated on refresh.
     private var applicationIcons: [String: NSImage?] = [:]
     private var panes: [UUID: NSPanel] = [:]
-    private var curtains: [UUID: NSPanel] = [:]
+    private var curtain: NSPanel?
     /// Accessibility-only divider controls. Pointer resizing uses Bento's
     /// divider overlay, so these panels ignore the mouse.
     private var dividerControls: [UUID: NSPanel] = [:]
@@ -77,7 +77,7 @@ public final class TabbedOverlayController {
     /// normal window stack beside that window, so a window in front of the
     /// selected tab also covers its strip. Without one, chrome floats and
     /// hides only under `obscuringFrames`.
-    public func refresh(state: TabbedLayoutState, bounds: BTRect, windows: [WindowSnapshot], obscuringFrames: [BTRect] = [], canUndo: Bool = false, selectedWindowNumbers: [WindowID: Int] = [:]) {
+    public func refresh(state: TabbedLayoutState, bounds: BTRect, windows: [WindowSnapshot], obscuringFrames: [BTRect] = [], canUndo: Bool = false, selectedWindowNumbers: [WindowID: Int] = [:], curtainAnchorWindowNumber: Int? = nil) {
         self.state = state
         self.bounds = bounds
         self.canUndo = canUndo
@@ -128,51 +128,52 @@ public final class TabbedOverlayController {
             }
             panes[pane.id] = panel
         }
-        refreshCurtains(windowNumbers: numbers)
+        let hasSelectedIdentities = !state.selectedWindowIDs.isEmpty
+            && state.selectedWindowIDs.allSatisfy { numbers[$0] != nil }
+        let anchor = curtainAnchorWindowNumber.flatMap { number in
+            hasSelectedIdentities && state.selectedWindowIDs.contains(where: { numbers[$0] == number }) ? number : nil
+        }
+        refreshCurtain(anchor: anchor)
         refreshDividerControls()
     }
 
     /// WindowServer numbers of this overlay's panels, which Tabbed's stacking
     /// repair must not treat as application windows.
     public var windowNumbers: Set<Int> {
-        let panels = Array(panes.values) + Array(curtains.values) + Array(dividerControls.values) + [preview, floatTarget].compactMap { $0 }
+        let panels = Array(panes.values) + [curtain].compactMap { $0 } + Array(dividerControls.values) + [preview, floatTarget].compactMap { $0 }
         return Set(panels.map(\.windowNumber).filter { $0 > 0 })
     }
 
     public func hide() {
         cancelInteraction()
-        for panel in Array(panes.values) + Array(dividerControls.values) + Array(curtains.values) { panel.orderOut(nil) }
-        curtains.removeAll()
+        for panel in Array(panes.values) + Array(dividerControls.values) + [curtain].compactMap({ $0 }) { panel.orderOut(nil) }
+        curtain = nil
     }
 
-    private func refreshCurtains(windowNumbers: [WindowID: Int]) {
-        let frames = state.frames(in: bounds)
-        var covered: Set<UUID> = []
-        for pane in state.panes {
-            guard let selected = pane.selected, let number = windowNumbers[selected], number > 0,
-                  let frame = frames[pane.id] else { continue }
-            covered.insert(pane.id)
-            let panel = curtains[pane.id] ?? makePanel()
-            panel.level = .normal
-            panel.isExcludedFromWindowsMenu = true
-            panel.setAccessibilityElement(false)
-            panel.animationBehavior = .none
-            let view = panel.contentView as? TabbedCurtainView ?? TabbedCurtainView()
-            view.refreshAppearance()
-            // A click on the curtain must not reach the hidden tab behind it.
-            let paneID = pane.id
-            view.onClick = { [weak self] in
-                guard let self, let selected = self.state.panes.first(where: { $0.id == paneID })?.selected else { return }
-                self.send(.select(selected))
-            }
-            panel.contentView = view
-            panel.setFrame(appKit(TabbedLayoutState.contentFrame(frame)), display: false)
-            // Never order a curtain to the front. A missing exact identity
-            // leaves ordinary stacking in place for the Debug experiment.
-            orderPanel(panel, .below, number)
-            curtains[pane.id] = panel
+    /// The caller verifies all selected windows are above inactive tabs, then
+    /// supplies the exact number of the backmost selected window.
+    private func refreshCurtain(anchor: Int?) {
+        guard let anchor, anchor > 0 else { curtain?.orderOut(nil); return }
+        let panel = curtain ?? makePanel()
+        panel.level = .normal
+        panel.isExcludedFromWindowsMenu = true
+        panel.setAccessibilityElement(false)
+        panel.animationBehavior = .none
+        let view = panel.contentView as? TabbedCurtainView ?? TabbedCurtainView()
+        view.refreshAppearance()
+        view.onClick = { [weak self, weak panel] point in
+            guard let self, let panel else { return }
+            let screen = panel.convertPoint(toScreen: point)
+            let point = CoordinateConverter.pointToTopLeft(screen, mainScreenFrame: NSScreen.screens.first?.frame ?? .zero)
+            let frames = self.state.frames(in: self.bounds)
+            guard let pane = self.state.panes.first(where: { frames[$0.id]?.contains(point) == true }) else { return }
+            if let selected = pane.selected { self.send(.select(selected)) }
+            else { self.send(.activate(pane.id)) }
         }
-        for id in curtains.keys.filter({ !covered.contains($0) }) { curtains.removeValue(forKey: id)?.orderOut(nil) }
+        panel.contentView = view
+        panel.setFrame(appKit(bounds), display: false)
+        orderPanel(panel, .below, anchor)
+        curtain = panel
     }
 
     private func refreshDividerControls() {
@@ -216,10 +217,9 @@ public final class TabbedOverlayController {
             view.updateAccessibility()
             view.updateToolTips()
             view.needsDisplay = true
-            if let curtain = curtains[pane.id] {
-                curtain.setFrame(appKit(TabbedLayoutState.contentFrame(frame)), display: false)
-            }
+
         }
+        curtain?.setFrame(appKit(bounds), display: false)
         refreshDividerControls()
     }
 
@@ -448,7 +448,7 @@ public final class TabbedOverlayController {
 @MainActor final class TabbedCurtainView: NSView {
     private let glass = NSGlassEffectView()
     private let frost = NSView()
-    var onClick: (() -> Void)?
+    var onClick: ((NSPoint) -> Void)?
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -478,7 +478,7 @@ public final class TabbedOverlayController {
     override func mouseDown(with event: NSEvent) {
         // Stay behind the selected window; the click only brings it forward.
         NSApp.preventWindowOrdering()
-        onClick?()
+        onClick?(convert(event.locationInWindow, from: nil))
     }
 
     var displayOptions: () -> (reduceTransparency: Bool, increaseContrast: Bool) = {

@@ -12,7 +12,7 @@ import Testing
     let overlay = TabbedOverlayController(orderPanel: { ordered.append(($0, $1, $2)) })
     defer { overlay.hide() }
     overlay.refresh(state: state, bounds: BTRect(x: 12000, y: 100, width: 1000, height: 800),
-                    windows: [], selectedWindowNumbers: [id: 123])
+                    windows: [], selectedWindowNumbers: [id: 123], curtainAnchorWindowNumber: 123)
 
     let curtains = ordered.filter { $0.1 == .below }
     #expect(curtains.count == 1) // The other pane is empty.
@@ -26,7 +26,7 @@ import Testing
     #expect(!panel.collectionBehavior.contains(.canJoinAllSpaces))
     #expect(overlay.windowNumbers.contains(panel.windowNumber))
     let frame = CoordinateConverter.toTopLeft(panel.frame, mainScreenFrame: NSScreen.screens.first!.frame)
-    #expect(frame == BTRect(x: 12000, y: 134, width: 497, height: 766))
+    #expect(frame == BTRect(x: 12000, y: 100, width: 1000, height: 800))
 }
 
 @Test @MainActor func tabbedChromeJoinsTheNormalStackAboveSelectedWindows() throws {
@@ -38,7 +38,7 @@ import Testing
     let overlay = TabbedOverlayController(orderPanel: { ordered.append(($0, $1, $2)) })
     defer { overlay.hide() }
     let bounds = BTRect(x: 12000, y: 100, width: 1000, height: 800)
-    overlay.refresh(state: state, bounds: bounds, windows: [], selectedWindowNumbers: [id: 123])
+    overlay.refresh(state: state, bounds: bounds, windows: [], selectedWindowNumbers: [id: 123], curtainAnchorWindowNumber: 123)
 
     // The strip and the empty pane sit directly above the selected window,
     // so any window in front of it, such as Settings, also covers them.
@@ -67,7 +67,7 @@ import Testing
     let overlay = TabbedOverlayController(orderPanel: { panel, mode, _ in if mode == .below { curtain = panel } })
     defer { overlay.hide() }
     overlay.refresh(state: state, bounds: BTRect(x: 12000, y: 0, width: 1000, height: 800),
-                    windows: [], selectedWindowNumbers: [first: 7, second: 8])
+                    windows: [], selectedWindowNumbers: [first: 7, second: 8], curtainAnchorWindowNumber: 7)
     let panel = try #require(curtain)
     let view = try #require(panel.contentView as? TabbedCurtainView)
     #expect(view.acceptsFirstMouse(for: nil))
@@ -102,7 +102,7 @@ import Testing
         panel.order(mode, relativeTo: number)
     })
     defer { overlay.hide() }
-    overlay.refresh(state: state, bounds: bounds, windows: [], selectedWindowNumbers: numbers)
+    overlay.refresh(state: state, bounds: bounds, windows: [], selectedWindowNumbers: numbers, curtainAnchorWindowNumber: state.selectedWindowIDs.first.flatMap { numbers[$0] })
     let curtain = try #require(ordered.first?.0)
     #expect(curtain.isVisible)
     let divider = try #require(state.dividers(in: bounds).first?.branchID)
@@ -110,24 +110,24 @@ import Testing
     #expect(adjusted)
     overlay.refreshResize(state: state, bounds: bounds)
     let frame = CoordinateConverter.toTopLeft(curtain.frame, mainScreenFrame: NSScreen.screens.first!.frame)
-    #expect(frame == BTRect(x: 12000, y: 34, width: 597, height: 766))
+    #expect(frame == bounds)
     #expect(ordered.count == 1) // Resizing does not raise or reorder tabs.
 
     state.select(second)
-    overlay.refresh(state: state, bounds: bounds, windows: [], selectedWindowNumbers: numbers)
+    overlay.refresh(state: state, bounds: bounds, windows: [], selectedWindowNumbers: numbers, curtainAnchorWindowNumber: state.selectedWindowIDs.first.flatMap { numbers[$0] })
     #expect(ordered.last?.0 === curtain)
     #expect(ordered.last?.1 == targets[1].windowNumber)
     overlay.refresh(state: state, bounds: bounds, windows: [], selectedWindowNumbers: [second: 0])
     #expect(!curtain.isVisible)
     #expect(ordered.count == 2)
-    overlay.refresh(state: state, bounds: bounds, windows: [], selectedWindowNumbers: numbers)
+    overlay.refresh(state: state, bounds: bounds, windows: [], selectedWindowNumbers: numbers, curtainAnchorWindowNumber: state.selectedWindowIDs.first.flatMap { numbers[$0] })
     let replacement = try #require(ordered.last?.0)
     state.reconcile(windowIDs: [], removed: [first, second], focused: nil)
-    overlay.refresh(state: state, bounds: bounds, windows: [], selectedWindowNumbers: numbers)
+    overlay.refresh(state: state, bounds: bounds, windows: [], selectedWindowNumbers: numbers, curtainAnchorWindowNumber: state.selectedWindowIDs.first.flatMap { numbers[$0] })
     #expect(!replacement.isVisible)
 
     state.reconcile(windowIDs: [first], removed: [], focused: first)
-    overlay.refresh(state: state, bounds: bounds, windows: [], selectedWindowNumbers: numbers)
+    overlay.refresh(state: state, bounds: bounds, windows: [], selectedWindowNumbers: numbers, curtainAnchorWindowNumber: state.selectedWindowIDs.first.flatMap { numbers[$0] })
     let final = try #require(ordered.last?.0)
     overlay.hide()
     overlay.refreshResize(state: state, bounds: bounds)
@@ -736,4 +736,27 @@ func tabStripInsertionPointsMatchRenderedTabEdges(width: Double) {
     #expect(after.count == 2)
     #expect(abs(after[0].width - (before[0].width + 100)) < 0.5)
     #expect(abs(after[1].minX - (before[1].minX + 100)) < 0.5)
+}
+
+@Test @MainActor func sharedCurtainRequiresAnExplicitValidatedSelectedAnchor() {
+    _ = NSApplication.shared
+    let first = WindowID(rawValue: "shared-first"), second = WindowID(rawValue: "shared-second")
+    var state = TabbedLayoutState(preset: .columns)
+    state.reconcile(windowIDs: [first], removed: [], focused: first)
+    state.activatePane(state.panes[1].id)
+    state.reconcile(windowIDs: [first, second], removed: [], focused: second)
+    var curtains: [NSPanel] = []
+    let overlay = TabbedOverlayController(orderPanel: { panel, mode, _ in
+        if mode == .below { curtains.append(panel) }
+    })
+    defer { overlay.hide() }
+    let bounds = BTRect(x: 12000, y: 0, width: 1000, height: 800)
+    overlay.refresh(state: state, bounds: bounds, windows: [], selectedWindowNumbers: [first: 7, second: 8])
+    #expect(curtains.isEmpty)
+    overlay.refresh(state: state, bounds: bounds, windows: [], selectedWindowNumbers: [first: 7], curtainAnchorWindowNumber: 7)
+    #expect(curtains.isEmpty)
+    overlay.refresh(state: state, bounds: bounds, windows: [], selectedWindowNumbers: [first: 7, second: 8], curtainAnchorWindowNumber: 99)
+    #expect(curtains.isEmpty)
+    overlay.refresh(state: state, bounds: bounds, windows: [], selectedWindowNumbers: [first: 7, second: 8], curtainAnchorWindowNumber: 8)
+    #expect(curtains.count == 1)
 }

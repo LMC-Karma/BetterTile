@@ -24,55 +24,56 @@ private func entry(_ name: String?, _ frame: BTRect) -> TabbedStackEntry {
 
 @Test func tabbedStackingLeavesACorrectOrderAlone() {
     let state = twoPanes()
-    #expect(state.panes.map(\.tabs) == [[id("a"), id("b")], [id("c"), id("d")]])
     let order = [entry("c", right), entry("a", left), entry("d", right), entry("b", left)]
-    #expect(state.stackingRepair(order: order).isEmpty)
-    // A window outside Tabbed in front of a selected tab is not a fault.
-    #expect(state.stackingRepair(order: [entry(nil, left)] + order).isEmpty)
+    #expect(state.sharedCurtainStackingRepair(order: order) == [])
+    #expect(state.sharedCurtainStackingRepair(order: [entry(nil, left)] + order) == [])
 }
 
-@Test func tabbedStackingRaisesOnlyThePaneWhoseHiddenTabCameForward() {
+@Test func sharedCurtainRequiresEverySelectedWindowAboveEveryInactiveTab() {
     let state = twoPanes()
-    // Activating the app that owns `d` brought it over `c`.
-    let order = [entry("a", left), entry("d", right), entry("c", right), entry("b", left)]
-    #expect(state.stackingRepair(order: order) == [id("c")])
+    let oversized = BTRect(x: 0, y: 0, width: 1000, height: 800)
+    let order = [entry("a", left), entry("b", oversized), entry("c", right), entry("d", right)]
+    #expect(state.sharedCurtainStackingRepair(order: order) == [id("c")])
 }
 
-@Test func tabbedStackingKeepsAFloatingWindowInFrontOfTheRepairedPane() {
-    let state = twoPanes()
-    let floating = BTRect(x: 600, y: 200, width: 300, height: 200)
-    // The floating window was in front of `c` before the hidden tab came forward.
-    let order = [entry("d", right), entry("floating", floating), entry("c", right), entry("a", left)]
-    #expect(state.stackingRepair(order: order) == [id("c"), id("floating")])
-    // Behind `c` it stays behind; elsewhere it is not touched.
-    let behindSelected = [entry("d", right), entry("c", right), entry("floating", floating)]
-    #expect(state.stackingRepair(order: behindSelected) == [id("c")])
-    let elsewhere = [entry("floating", BTRect(x: 0, y: 900, width: 100, height: 100)),
-                     entry("d", right), entry("c", right)]
-    #expect(state.stackingRepair(order: elsewhere) == [id("c")])
-}
-
-@Test func tabbedStackingRaisesWindowsThatMustStayInFrontOfARaisedWindow() {
+@Test func sharedCurtainPreservesOverlappingFloatingAndDialogWindows() {
     let state = twoPanes()
     let floating = BTRect(x: 600, y: 200, width: 300, height: 200)
-    let dialog = BTRect(x: 850, y: 350, width: 400, height: 200) // Overlaps only the floating window.
-    let order = [entry("dialog", dialog), entry("d", right), entry("floating", floating), entry("c", right)]
-    #expect(state.stackingRepair(order: order) == [id("c"), id("floating"), id("dialog")])
+    let dialog = BTRect(x: 850, y: 350, width: 400, height: 200)
+    let order = [entry("dialog", dialog), entry("d", right), entry("floating", floating),
+                 entry("c", right), entry("a", left), entry("b", left)]
+    let plan = state.sharedCurtainStackingRepair(order: order)
+    #expect(plan == [id("a"), id("c"), id("floating"), id("dialog")])
+    var repaired = order
+    for window in plan ?? [] {
+        let index = repaired.firstIndex { $0.windowID == window }!
+        repaired.insert(repaired.remove(at: index), at: 0)
+    }
+    #expect(state.sharedCurtainStackingRepair(order: repaired) == [])
 }
 
-@Test func tabbedStackingNeverCoversAWindowItCannotRaise() {
+@Test func sharedCurtainNeverCoversAWindowItCannotRaise() {
     let state = twoPanes()
     let unreadable = BTRect(x: 600, y: 200, width: 300, height: 200)
-    let order = [entry("d", right), entry(nil, unreadable), entry("c", right)]
-    #expect(state.stackingRepair(order: order).isEmpty)
-    // An unreadable window that does not overlap the pane does not block it.
-    let apart = [entry(nil, BTRect(x: 0, y: 900, width: 100, height: 100)), entry("d", right), entry("c", right)]
-    #expect(state.stackingRepair(order: apart) == [id("c")])
+    #expect(state.sharedCurtainStackingRepair(order: [entry("d", right), entry(nil, unreadable),
+                entry("c", right), entry("a", left)]) == nil)
+    let apart = [entry(nil, BTRect(x: 0, y: 900, width: 100, height: 100)),
+                 entry("d", right), entry("c", right), entry("a", left)]
+    #expect(state.sharedCurtainStackingRepair(order: apart) == [id("a"), id("c")])
 }
 
-@Test func tabbedStackingIgnoresWindowsMissingFromTheOrder() {
+@Test func sharedCurtainRequiresAllSelectedIdentities() {
     let state = twoPanes()
-    // Without the selected tab's position there is nothing to compare.
-    #expect(state.stackingRepair(order: [entry("d", right), entry("b", left)]).isEmpty)
-    #expect(state.stackingRepair(order: []).isEmpty)
+    #expect(state.sharedCurtainStackingRepair(order: [entry("d", right), entry("c", right)]) == nil)
+    #expect(state.sharedCurtainStackingRepair(order: []) == nil)
+}
+
+@Test func sharedCurtainPreservesFloatingWindowsInPaneGaps() {
+    let state = twoPanes()
+    let bounds = BTRect(x: 0, y: 0, width: 1000, height: 800)
+    let gap = BTRect(x: 498, y: 100, width: 4, height: 100)
+    let order = [entry("a", left), entry("b", bounds), entry("floating", gap), entry("c", right), entry("d", right)]
+    #expect(state.sharedCurtainStackingRepair(order: order, curtainBounds: bounds) == [id("c"), id("floating")])
+    let unknown = [entry("a", left), entry("b", bounds), entry(nil, gap), entry("c", right), entry("d", right)]
+    #expect(state.sharedCurtainStackingRepair(order: unknown, curtainBounds: bounds) == nil)
 }
