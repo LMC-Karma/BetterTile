@@ -703,6 +703,18 @@ private struct Harness {
     #expect(!retainedHandlers.isEmpty)
 }
 
+@Test @MainActor func glassPreferenceUpdatesAnOpenWheelWithoutCancellingItsGesture() throws {
+    let harness = Harness()
+    defer { harness.controller.stop() }
+    harness.activate()
+    let placement = try #require(harness.presenter.presentations.last?.placement)
+    harness.controller.configuration.overlayAppearance = .init(useLiquidGlass: false, strength: 0.9)
+    let updated = try #require(harness.presenter.presentations.last)
+    #expect(updated.overlayAppearance == OverlayAppearance(useLiquidGlass: false, strength: 0.9))
+    #expect(updated.placement == placement)
+    #expect(harness.box.endedCount == 0)
+}
+
 @Test(arguments: ["stop", "restart", "configuration", "suspension"]) @MainActor
 func queuedWheelModifiersCannotStartAfterMonitorRetirement(retirement: String) async throws {
     var flags: ((NSEvent) -> Void)?
@@ -740,4 +752,3 @@ func queuedWheelModifiersCannotStartAfterMonitorRetirement(retirement: String) a
         #expect(controller.isPendingActivation)
     }
 }
-

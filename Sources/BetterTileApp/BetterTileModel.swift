@@ -1461,10 +1461,10 @@ final class BetterTileModel {
     private func applyRuntimeConfiguration(_ changes: ConfigurationChangeSet) {
         let interval = Self.signposter.beginInterval("applyConfiguration")
         defer { Self.signposter.endInterval("applyConfiguration", interval) }
-        if !changes.isDisjoint(with: [.snapping, .bentoGeometry, .applicationRules]) {
+        if !changes.isDisjoint(with: [.snapping, .bentoGeometry, .applicationRules, .overlayAppearance]) {
             dragSnap.configuration = configuration
         }
-        if changes.contains(.layoutWheel) {
+        if !changes.isDisjoint(with: [.layoutWheel, .overlayAppearance]) {
             layoutWheel.configuration = configuration
         }
         if !changes.isDisjoint(with: [.linkedResize, .applicationRules]) {
@@ -1473,8 +1473,12 @@ final class BetterTileModel {
         if !changes.isDisjoint(with: [.snapping, .linkedResize]) {
             syncSharedGestureMonitoring()
         }
-        if !changes.isDisjoint(with: [.divider, .bentoGeometry]) {
+        if !changes.isDisjoint(with: [.divider, .bentoGeometry, .overlayAppearance]) {
             dividerResize.configuration = configuration
+        }
+        if changes.contains(.overlayAppearance) {
+            tabbedOverlays.values.forEach { $0.overlayAppearance = configuration.overlayAppearance }
+            resultPill?.overlayAppearance = configuration.overlayAppearance
         }
         if changes.contains(.shortcuts) {
             shortcuts.isEnabled = configuration.keyboardShortcutsEnabled
@@ -2886,6 +2890,7 @@ final class BetterTileModel {
         else { return }
         let controller = resultPill ?? ResultPillController()
         resultPill = controller
+        controller.overlayAppearance = configuration.overlayAppearance
         controller.show(feedback, on: display)
     }
 
@@ -2973,6 +2978,7 @@ extension BetterTileModel {
         guard presentsTabbedChrome, session.mode == .tabbed, let state = session.tabbedState, !isStabilizingSpace,
               !nativeFullscreenDisplayIDs.contains(display.id) else { return }
         let overlay = tabbedOverlays[display.id] ?? TabbedOverlayController()
+        overlay.overlayAppearance = configuration.overlayAppearance
         let sessionID = session.id
         overlay.onIntent = { [weak self] intent in
             guard let self, self.sessionStore.session(for: display.id)?.id == sessionID else { return }

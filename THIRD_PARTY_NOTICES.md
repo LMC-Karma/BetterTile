@@ -23,6 +23,13 @@ BetterTile contains portions adapted from Vorssaint's SwiftUI settings and
 menu-panel presentation code. Vorssaint's demand-based service ownership and
 teardown patterns also informed BetterTile's runtime lifecycle.
 
+The Liquid Glass divider's tinted capsule, rim, top highlight, and glow are
+adapted from `LiquidGlassMixerSlider` in `UI/MenuPanel/MixerSection.swift` at
+commit `2641eb1c01cc92c0a671717ad2b39415e7082a69`. The shared glass preference
+and accessibility fallback follow the `HUDBackdrop` pattern in
+`UI/SharedUI.swift` at that revision. BetterTile implements these surfaces
+with native AppKit glass and its own divider geometry.
+
 BetterTile is distributed under the GNU General Public License v3.0 or later.
 The complete license terms are provided in [LICENSE](LICENSE).
 

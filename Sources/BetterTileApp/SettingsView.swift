@@ -36,7 +36,7 @@ private enum SettingsDestination: String, CaseIterable, Identifiable {
                 + "keyboard shortcuts master toggle macos tiling move resize edge "
                 + "advanced enhanced user interface chromium electron voiceover"
         case .windowLayout:
-            "mode manual native bento tabbed tabs pane preset resize linked divider shortcut keyboard hotkey halves thirds quarters sixths move display restore new window side automatic left right top bottom"
+            "mode manual native bento tabbed tabs pane preset resize linked divider liquid glass strength clear frosted shortcut keyboard hotkey halves thirds quarters sixths move display restore new window side automatic left right top bottom"
         case .snapZones:
             "drag snap edge corner title bar double click maximize"
         case .menuBar:
@@ -529,7 +529,7 @@ struct WindowLayoutSettings: View {
                     Text("Live Resize").tag(ResizeFeedbackMode.live)
                 }
                 .pickerStyle(.segmented)
-                Text("Controls shared dividers in Native and Bento. Tabbed panes always resize live.")
+                Text("Controls shared dividers in Native, Bento, and Tabbed.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                 HStack {
@@ -545,13 +545,27 @@ struct WindowLayoutSettings: View {
                         .monospacedDigit()
                         .frame(width: 42)
                 }
-                Text("A glass handle appears when the pointer approaches a valid shared edge.")
+                Toggle("Use Liquid Glass", isOn: configurationBinding(\.overlayAppearance.useLiquidGlass))
+                HStack {
+                    Text("Glass strength")
+                    Text("Clear").foregroundStyle(.secondary)
+                    Slider(value: configurationBinding(\.overlayAppearance.strength), in: 0...1)
+                        .accessibilityLabel("Glass strength")
+                        .accessibilityValue("\(Int((model.configuration.overlayAppearance.strength * 100).rounded())) percent")
+                    Text("Frosted").foregroundStyle(.secondary)
+                }
+                .disabled(!model.configuration.overlayAppearance.useLiquidGlass)
+                Text("Applies to BetterTile overlays. The Tabbed curtain stays frosted to cover inactive tabs. Accessibility display settings take priority.")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                Text("A handle appears when the pointer approaches a valid shared edge. Glass handles keep a minimum visible width of 6 points.")
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
                 DividerResizePreview(
                     thickness: model.configuration.dividerThickness,
                     feedback: model.configuration.resizeFeedbackMode,
-                    paneGap: model.configuration.bentoInnerGap
+                    paneGap: model.configuration.bentoInnerGap,
+                    overlayAppearance: model.configuration.overlayAppearance
                 )
                 .padding(.vertical, 8)
             }

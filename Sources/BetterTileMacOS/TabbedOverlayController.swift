@@ -16,6 +16,14 @@ public enum TabbedUIIntent {
 @MainActor
 public final class TabbedOverlayController {
     public var onIntent: ((TabbedUIIntent) -> Void)?
+    public var overlayAppearance = OverlayAppearance() {
+        didSet {
+            for panel in panes.values { (panel.contentView as? TabbedPaneView)?.overlayAppearance = overlayAppearance }
+            for panel in [curtain, preview, floatTarget].compactMap({ $0 }) {
+                (panel.contentView as? OverlayGlassView)?.overlayAppearance = overlayAppearance
+            }
+        }
+    }
     public private(set) var isInteracting = false
     private var state = TabbedLayoutState()
     private var bounds = BTRect(x: 0, y: 0, width: 1, height: 1)
@@ -93,7 +101,7 @@ public final class TabbedOverlayController {
             guard let frame = frames[pane.id] else { continue }
             let panel = panes[pane.id] ?? makePanel()
             let view = panel.contentView as? TabbedPaneView ?? TabbedPaneView()
-            view.refreshAppearance()
+            view.overlayAppearance = overlayAppearance
             view.owner = self
             view.pane = pane
             view.number = index + 1
@@ -160,7 +168,7 @@ public final class TabbedOverlayController {
         panel.setAccessibilityElement(false)
         panel.animationBehavior = .none
         let view = panel.contentView as? TabbedCurtainView ?? TabbedCurtainView()
-        view.refreshAppearance()
+        view.overlayAppearance = overlayAppearance
         view.onClick = { [weak self, weak panel] point in
             guard let self, let panel else { return }
             let screen = panel.convertPoint(toScreen: point)
@@ -314,7 +322,7 @@ public final class TabbedOverlayController {
         draggedWindow = id
         installEscape()
         let panel = makePanel()
-        let view = tabbedGlassSurface(cornerRadius: 10, tint: .controlAccentColor)
+        let view = tabbedGlassSurface(cornerRadius: 10, tint: .controlAccentColor, appearance: overlayAppearance)
         if let image = NSImage(systemSymbolName: "rectangle.on.rectangle", accessibilityDescription: "Float window") {
             let icon = NSImageView(image: image)
             icon.imageScaling = .scaleProportionallyUpOrDown
@@ -387,7 +395,7 @@ public final class TabbedOverlayController {
             let panel = preview ?? makePanel()
             panel.ignoresMouseEvents = true
             if preview == nil {
-                let surface = tabbedGlassSurface(cornerRadius: 8, tint: .controlAccentColor)
+                let surface = tabbedGlassSurface(cornerRadius: 8, tint: .controlAccentColor, appearance: overlayAppearance)
                 let label = NSTextField(labelWithString: "")
                 label.alignment = .center
                 label.font = .systemFont(ofSize: 15, weight: .semibold)
@@ -396,7 +404,7 @@ public final class TabbedOverlayController {
                 panel.contentView = surface
             }
             panel.setFrame(appKit(highlight), display: true)
-            if let label = panel.contentView?.subviews.first as? NSTextField {
+            if let label = panel.contentView?.subviews.compactMap({ $0 as? NSTextField }).first {
                 label.stringValue = destinationLabel
                 label.isHidden = destinationLabel.isEmpty || highlight.size.width < 170 || highlight.size.height < 48
                 label.frame = NSRect(x: 8, y: max(0, (highlight.size.height - 22) / 2), width: max(0, highlight.size.width - 16), height: 22)
@@ -445,86 +453,31 @@ public final class TabbedOverlayController {
 /// A frosted plate covers the glass so a hidden tab cannot read clearly
 /// through it. A click brings the pane's selected window forward; the curtain
 /// has no accessibility controls.
-@MainActor final class TabbedCurtainView: NSView {
-    private let glass = NSGlassEffectView()
-    private let frost = NSView()
+@MainActor final class TabbedCurtainView: OverlayGlassView {
     var onClick: ((NSPoint) -> Void)?
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
-        glass.style = .regular
-        glass.cornerRadius = 0
-        frost.wantsLayer = true
-        for view in [glass, frost] as [NSView] {
-            view.frame = bounds
-            view.autoresizingMask = [.width, .height]
-            view.setAccessibilityElement(false)
-            addSubview(view)
-        }
-        setAccessibilityElement(false)
-        refreshAppearance()
-        NSWorkspace.shared.notificationCenter.addObserver(
-            self, selector: #selector(refreshAppearance),
-            name: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification, object: nil
-        )
+        cornerRadius = 0
+        frostFloor = 0.96
     }
 
     required init?(coder: NSCoder) { nil }
-
-    override func viewDidChangeEffectiveAppearance() { refreshAppearance() }
-    override func hitTest(_ point: NSPoint) -> NSView? { super.hitTest(point) == nil ? nil : self }
+    override func hitTest(_ point: NSPoint) -> NSView? { frame.contains(point) ? self : nil }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
     override func mouseDown(with event: NSEvent) {
-        // Stay behind the selected window; the click only brings it forward.
         NSApp.preventWindowOrdering()
         onClick?(convert(event.locationInWindow, from: nil))
     }
-
-    var displayOptions: () -> (reduceTransparency: Bool, increaseContrast: Bool) = {
-        let workspace = NSWorkspace.shared
-        return (workspace.accessibilityDisplayShouldReduceTransparency,
-                workspace.accessibilityDisplayShouldIncreaseContrast)
-    }
-    var showsGlass: Bool { !glass.isHidden }
-
-    @objc func refreshAppearance() {
-        let options = displayOptions()
-        let solid = options.reduceTransparency || options.increaseContrast
-        glass.isHidden = solid
-        effectiveAppearance.performAsCurrentDrawingAppearance {
-            frost.layer?.backgroundColor = NSColor.windowBackgroundColor.withAlphaComponent(solid ? 1 : 0.96).cgColor
-        }
-    }
 }
 
 @MainActor
-private func configureTabbedGlass(
-    _ view: NSVisualEffectView,
-    cornerRadius: CGFloat,
-    tint: NSColor? = nil
-) {
-    view.material = .headerView
-    view.blendingMode = .withinWindow
-    view.state = .active
-    view.wantsLayer = true
-    view.layer?.cornerCurve = .continuous
-    view.layer?.cornerRadius = cornerRadius
-    view.layer?.masksToBounds = true
-    let workspace = NSWorkspace.shared
-    if workspace.accessibilityDisplayShouldReduceTransparency {
-        view.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
-    } else {
-        view.layer?.backgroundColor = tint?.withAlphaComponent(0.18).cgColor
-    }
-    view.layer?.borderWidth = workspace.accessibilityDisplayShouldIncreaseContrast ? 1 : 0.5
-    view.layer?.borderColor = NSColor.separatorColor.withAlphaComponent(0.7).cgColor
-}
-
-@MainActor
-private func tabbedGlassSurface(cornerRadius: CGFloat, tint: NSColor? = nil) -> NSVisualEffectView {
-    let view = NSVisualEffectView()
-    configureTabbedGlass(view, cornerRadius: cornerRadius, tint: tint)
+private func tabbedGlassSurface(cornerRadius: CGFloat, tint: NSColor? = nil, appearance: OverlayAppearance) -> OverlayGlassView {
+    let view = OverlayGlassView()
+    view.cornerRadius = cornerRadius
+    view.tint = tint
+    view.overlayAppearance = appearance
     return view
 }
 
@@ -575,11 +528,12 @@ struct TabbedStripLayout {
 /// only draws; the strip content above it handles every event in its own
 /// coordinates, so clicks never depend on the glass view's internal layout.
 @MainActor final class TabbedPaneView: NSView {
-    private let glass = NSGlassEffectView()
+    private let glass = OverlayGlassView()
     private let content = TabbedPaneContentView()
 
     weak var owner: TabbedOverlayController? { didSet { content.owner = owner } }
-    var pane: TabbedPane { get { content.pane } set { content.pane = newValue } }
+    var pane: TabbedPane { get { content.pane } set { content.pane = newValue; refreshAppearance() } }
+    var overlayAppearance = OverlayAppearance() { didSet { refreshAppearance() } }
     var number: Int { get { content.number } set { content.number = newValue } }
     var active: Bool { get { content.active } set { content.active = newValue } }
     var titles: [String] { get { content.titles } set { content.titles = newValue } }
@@ -593,7 +547,6 @@ struct TabbedStripLayout {
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         glass.cornerRadius = 7
-        glass.style = .regular
         for view in [glass, content] as [NSView] {
             view.frame = bounds
             view.autoresizingMask = [.width, .height]
@@ -626,13 +579,13 @@ struct TabbedStripLayout {
         return (workspace.accessibilityDisplayShouldReduceTransparency,
                 workspace.accessibilityDisplayShouldIncreaseContrast)
     }
-    var showsGlass: Bool { !glass.isHidden }
+    var showsGlass: Bool { glass.showsGlass }
 
     func refreshAppearance() {
-        let options = displayOptions()
-        let solid = options.reduceTransparency || options.increaseContrast
-        glass.isHidden = solid
-        content.usesSolidSurface = solid
+        glass.displayOptions = displayOptions
+        glass.isLight = pane.tabs.isEmpty
+        glass.cornerRadius = pane.tabs.isEmpty ? 16 : 7
+        glass.overlayAppearance = overlayAppearance
         content.needsDisplay = true
     }
 
@@ -670,7 +623,6 @@ struct TabbedStripLayout {
     private var firstVisibleIndex = 0
     override var isFlipped: Bool { true }
     override var acceptsFirstResponder: Bool { true }
-    var usesSolidSurface = false
     override var wantsUpdateLayer: Bool { false }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
@@ -720,15 +672,6 @@ struct TabbedStripLayout {
 
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
-        if usesSolidSurface {
-            NSColor.windowBackgroundColor.setFill()
-            NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 7, yRadius: 7).fill()
-        }
-        let header = NSRect(x: 0, y: 0, width: bounds.width, height: TabbedLayoutState.headerHeight)
-        if usesSolidSurface {
-            NSColor.controlBackgroundColor.withAlphaComponent(0.48).setFill()
-            NSBezierPath(rect: header).fill()
-        }
         if active {
             NSColor.controlAccentColor.withAlphaComponent(0.16).setFill()
             NSBezierPath(roundedRect: NSRect(x: 4, y: 6, width: 24, height: 22), xRadius: 6, yRadius: 6).fill()
@@ -786,6 +729,10 @@ struct TabbedStripLayout {
         }
         if pane.tabs.isEmpty {
             let centerY = max(52, (bounds.height + TabbedLayoutState.headerHeight) / 2)
+            let plate = NSRect(x: max(8, bounds.midX - 165), y: centerY - 64,
+                               width: min(330, max(0, bounds.width - 16)), height: min(112, max(0, bounds.height - centerY + 64)))
+            NSColor.windowBackgroundColor.withAlphaComponent(0.82).setFill()
+            NSBezierPath(roundedRect: plate, xRadius: 12, yRadius: 12).fill()
             if bounds.width >= 200 && bounds.height >= 170 {
                 drawSymbol("rectangle.stack.badge.plus", in: NSRect(x: bounds.midX - 15, y: centerY - 54, width: 30, height: 30), color: .secondaryLabelColor)
             }
@@ -794,8 +741,8 @@ struct TabbedStripLayout {
                 drawText(active ? "New windows open in this pane" : "Click to use this pane for new windows", in: NSRect(x: 12, y: centerY + 15, width: max(0, bounds.width - 24), height: 20), color: .secondaryLabelColor, centered: true)
             }
         }
-        let outline = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.75, dy: 0.75), xRadius: 7, yRadius: 7)
-        outline.lineWidth = active ? 1.5 : (usesSolidSurface ? 1 : 0.75)
+        let outline = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.75, dy: 0.75), xRadius: pane.tabs.isEmpty ? 16 : 7, yRadius: pane.tabs.isEmpty ? 16 : 7)
+        outline.lineWidth = active ? 1.5 : 0.75
         (active
             ? NSColor.controlAccentColor.withAlphaComponent(owner?.isInteracting == true ? 0.72 : 0.32)
             : NSColor.separatorColor.withAlphaComponent(0.5)

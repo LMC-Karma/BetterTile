@@ -32,6 +32,27 @@ Record results and unresolved observations in
 Existing eligible windows become tabs in the first pane. Other panes start
 empty. Click an empty pane to send newly opened windows there.
 
+## Overlay appearance
+
+Settings → Window Layout → Resize Interaction has **Use Liquid Glass** and
+**Glass strength**. Glass defaults on. The strength runs from Clear to Frosted
+and applies to tab strips, dividers in every mode, empty panes, curtains, drop
+and resize previews, the Layout Wheel, and result feedback. Empty panes stay
+lighter; the curtain retains enough frost to obscure inactive windows.
+
+Turning glass off uses solid surfaces. Reduce Transparency and Increase
+Contrast also select solid surfaces, including when changed while overlays
+are visible. The strength slider is disabled when glass is off. Changes do not
+move windows or cancel a drag. Glass dividers keep a six-point minimum visual
+width, while their existing hit areas remain unchanged.
+
+Check light and dark appearances at both strength endpoints, with glass off,
+and with each accessibility display option. Confirm labels stay readable,
+minimum-size orange feedback remains visible, and tab clicks and divider drags
+still reach the intended control. Check the curtain over oversized inactive
+tabs at Clear as well as Frosted. Native glass rendering and sustained drag
+performance require an on-screen check.
+
 ## Controls
 
 - Click a tab to select and focus its window. Pane sizes stay stable when it

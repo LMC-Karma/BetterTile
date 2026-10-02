@@ -264,6 +264,7 @@ func actualBentoPaneGapsStillAcquireJunctions(gap: Double, fourWay: Bool) throws
         frame: CGRect(x: 0, y: 0, width: 20, height: 168),
         mode: .vertical(restingLength: 56, activeLength: 168), thickness: 6
     )
+    grip.reduceMotion = { false }
     await withCheckedContinuation { continuation in
         grip.setActive(true, animated: true) { continuation.resume() }
         grip.setActive(true, animated: false)
@@ -276,6 +277,125 @@ func actualBentoPaneGapsStillAcquireJunctions(gap: Double, fourWay: Bool) throws
         #expect(grip.stretchProgress > 0)
     }
     #expect(grip.stretchProgress == 0)
+}
+
+@Test @MainActor func reducedMotionCompletesGripTransitionsImmediately() {
+    let grip = DividerHandleView(
+        frame: CGRect(x: 0, y: 0, width: 20, height: 168),
+        mode: .vertical(restingLength: 56, activeLength: 168), thickness: 6
+    )
+    grip.reduceMotion = { true }
+    var completions = 0
+    grip.setActive(true, animated: true) { completions += 1 }
+    #expect(grip.stretchProgress == 1)
+    #expect(completions == 1)
+    grip.setActive(false, animated: true) { completions += 1 }
+    #expect(grip.stretchProgress == 0)
+    #expect(completions == 2)
+}
+
+@Test(arguments: [2.0, 6.0, 12.0], [false, true]) @MainActor
+func junctionPanelContainsRenderedCapsules(thickness: Double, glass: Bool) throws {
+    let center = BTPoint(x: 100, y: 100)
+    let mainFrame = CGRect(x: 0, y: 0, width: 1000, height: 800)
+    var configuration = BetterTileConfiguration()
+    configuration.dividerThickness = thickness
+    configuration.overlayAppearance.useLiquidGlass = glass
+    let controller = DividerOverlayController(
+        coordinator: WindowCoordinator(system: FakeWindowSystem()), configuration: configuration
+    )
+    for fourWay in [false, true] {
+        for span in [24.0, 200.0] {
+            let boundaries = [
+                boundary("v", axis: .vertical, coordinate: 100, start: 100 - span, end: 100 + span),
+                boundary("h", axis: .horizontal, coordinate: 100, start: 100 - span,
+                         end: fourWay ? 100 + span : 100),
+            ]
+            let interaction = try #require(DividerInteractionResolver.resolve(
+                at: center, in: boundaries, hitWidth: max(18, thickness * 3), adjacencyTolerance: 6
+            ))
+            for active in [false, true] {
+                let frame = controller.handleFrame(for: interaction, near: center, active: active)
+                let appKitFrame = CoordinateConverter.toAppKit(frame, mainScreenFrame: mainFrame)
+                let mode = controller.handleMode(for: interaction, topLeftFrame: frame, mainScreenFrame: mainFrame)
+                let view = DividerHandleView(frame: CGRect(origin: .zero, size: appKitFrame.size),
+                                             mode: mode, thickness: thickness)
+                view.overlayAppearance = configuration.overlayAppearance
+                view.setActive(active, animated: false)
+                view.layoutSubtreeIfNeeded()
+                let container = try #require(view.subviews.first as? NSGlassEffectContainerView)
+                let surfaces = try #require(container.contentView).subviews.filter { !$0.isHidden }
+                #expect(surfaces.count == 2)
+                #expect(surfaces.allSatisfy { view.bounds.contains($0.frame) })
+                if case let .junction(localCenter, _, _) = mode {
+                    #expect(localCenter.x + appKitFrame.minX == CGFloat(center.x))
+                    #expect(localCenter.y + appKitFrame.minY == mainFrame.maxY - CGFloat(center.y))
+                } else { Issue.record("Expected a junction handle.") }
+                if active && span == 200 {
+                    let width = glass ? max(6, thickness) : thickness
+                    #expect(frame.size.width == (fourWay ? 72 + width : 52 + width / 2))
+                }
+                if span == 24 {
+                    #expect(surfaces.allSatisfy {
+                        $0.frame.minX + appKitFrame.minX >= center.x - span
+                            && $0.frame.maxX + appKitFrame.minX <= center.x + span
+                            && $0.frame.minY + appKitFrame.minY >= mainFrame.maxY - center.y - span
+                            && $0.frame.maxY + appKitFrame.minY <= mainFrame.maxY - center.y + span
+                    })
+                }
+            }
+        }
+    }
+}
+
+@Test @MainActor func changingGlassDuringJunctionDragRefreshesChromeWithoutWindowWrites() throws {
+    _ = NSApplication.shared
+    let system = FakeWindowSystem()
+    let display = DisplayID(rawValue: "main")
+    let bounds = BTRect(x: -10_000, y: -10_000, width: 800, height: 600)
+    system.availableDisplays = [DisplaySnapshot(id: display, frame: bounds, visibleFrame: bounds, isMain: true)]
+    let ids = ["a", "b", "c"].map { WindowID(rawValue: $0) }
+    let state = BentoLayoutState(root: .partition(BentoPartition(
+        axis: .vertical,
+        first: .partition(BentoPartition(axis: .horizontal, first: .leaf(ids[0]), second: .leaf(ids[1]))),
+        second: .leaf(ids[2])
+    )))
+    system.windows = state.placements(in: bounds).map {
+        WindowSnapshot(id: $0.windowID, processIdentifier: 1, frame: $0.frame, displayID: display)
+    }
+    var configuration = BetterTileConfiguration()
+    configuration.dividerThickness = 2
+    configuration.overlayAppearance.useLiquidGlass = false
+    let controller = DividerOverlayController(coordinator: WindowCoordinator(system: system), configuration: configuration)
+    controller.bentoStateProvider = { _ in state }
+    let boundaries = BentoBoundaryResolver().boundaries(state: state, windows: system.windows, displayID: display, bounds: bounds)
+    let center = BTPoint(x: bounds.midX, y: bounds.midY)
+    let interaction = try #require(DividerInteractionResolver.resolve(
+        at: center, in: boundaries, hitWidth: 18, adjacencyTolerance: 6
+    ))
+    controller.beginGesture(interaction: interaction, at: center)
+    defer { controller.hideAndCancel() }
+    #expect(controller.isDragging)
+    let view = try #require(controller.visibleHandleView)
+    let panel = try #require(view.window)
+    view.setActive(false, animated: false)
+    view.setActive(true, animated: false)
+    let frames = system.windows.map(\.frame)
+    let writes = system.frameWriteCounts
+    let originalFrame = panel.frame
+    for glass in [true, false] {
+        controller.configuration.overlayAppearance.useLiquidGlass = glass
+        #expect(controller.isDragging)
+        #expect(system.windows.map(\.frame) == frames)
+        #expect(system.frameWriteCounts == writes)
+        #expect(panel.frame.size.height == (glass ? 78 : 74))
+        #expect(panel.frame.midY == originalFrame.midY)
+        view.setActive(true, animated: false)
+        view.layoutSubtreeIfNeeded()
+        let container = try #require(view.subviews.first as? NSGlassEffectContainerView)
+        #expect(try #require(container.contentView).subviews.filter { !$0.isHidden }
+            .allSatisfy { view.bounds.contains($0.frame) })
+    }
 }
 
 @Test func junctionGrabOffsetIsPreservedAndEachBranchMovesOnce() {

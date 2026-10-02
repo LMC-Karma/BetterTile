@@ -3,8 +3,10 @@ import SwiftUI
 import Testing
 @testable import BetterTileApp
 
-@Test @MainActor func windowLayoutSettingsPreview() throws {
-    guard let directory = ProcessInfo.processInfo.environment["BETTERTILE_TAB_PREVIEW_DIR"] else { return }
+@Test(.enabled(if: ProcessInfo.processInfo.environment["BETTERTILE_TAB_PREVIEW_DIR"] != nil,
+               "Requires an explicit settings preview output directory."))
+@MainActor func windowLayoutSettingsPreview() throws {
+    let directory = try #require(ProcessInfo.processInfo.environment["BETTERTILE_TAB_PREVIEW_DIR"])
     _ = NSApplication.shared
     let model = makeModel(system: FakeAppWindowSystem())
     defer { model.shutdown() }
