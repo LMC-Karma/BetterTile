@@ -2,6 +2,30 @@ import Foundation
 import Testing
 @testable import BetterTileCore
 
+@Test func legacyConfigurationEnablesSharedLiquidGlass() throws {
+    let config = try ConfigurationStore.decode(Data(#"{"schemaVersion":12}"#.utf8))
+    let json = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(config)) as? [String: Any])
+    let appearance = try #require(json["overlayAppearance"] as? [String: Any])
+    #expect(appearance["useLiquidGlass"] as? Bool == true)
+    #expect(appearance["strength"] as? Double == 0.5)
+}
+
+@Test func liquidGlassPreferencesRoundTripWithoutRestartingGestures() throws {
+    let original = BetterTileConfiguration()
+    var changed = original
+    changed.overlayAppearance = .init(useLiquidGlass: false, strength: 0.8)
+    let restored = try ConfigurationStore.decode(JSONEncoder().encode(changed))
+    #expect(restored.overlayAppearance == changed.overlayAppearance)
+    #expect(ConfigurationChangeSet.between(original, changed) == [.overlayAppearance])
+}
+
+@Test(arguments: [-0.1, 1.1, Double.infinity, Double.nan])
+func invalidGlassStrengthIsRejected(strength: Double) {
+    var config = BetterTileConfiguration()
+    config.overlayAppearance.strength = strength
+    #expect(throws: ConfigurationError.invalidGlassStrength) { try config.validated() }
+}
+
 @Test func defaultConfigurationStoreCanUseAVariantDirectory() {
     let store = ConfigurationStore.defaultStore(directoryName: "BetterTile Debug")
 
@@ -148,6 +172,8 @@ import Testing
         ([.divider], { $0.resizeFeedbackMode = .live }),
         ([.divider], { $0.dividerVisibility = .dragOnly }),
         ([.divider], { $0.dividerThickness = 8 }),
+        ([.overlayAppearance], { $0.overlayAppearance.useLiquidGlass = false }),
+        ([.overlayAppearance], { $0.overlayAppearance.strength = 0.8 }),
         ([.bentoGeometry], { $0.bentoInnerGap = 4 }),
         ([.bentoGeometry], { $0.bentoSwapHoverDelay = 0.3 }),
         ([.snapping], { $0.snapSuppressionModifiers = .command }),

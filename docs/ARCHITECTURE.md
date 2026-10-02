@@ -56,8 +56,12 @@ BetterTile operates on eligible on-screen windows exposed by its macOS integrati
 ## Event ordering
 
 Window identities survive off-screen and incomplete Accessibility sweeps.
-Cleanup requires closure evidence from the full public WindowServer list;
-without an exact identity, destruction or application termination owns cleanup.
+After a successful application Accessibility inventory omits a window, cleanup
+requires either its exact identity to be absent from the full public WindowServer
+list or its cached Accessibility element to report `invalidUIElement`. The latter
+confirms closure without an exact WindowServer identity. Other Accessibility read
+failures do not confirm closure. Destruction events and application termination
+also remove window identities.
 Native membership includes retained, nonhidden, nonminimized window identities.
 It keeps a temporarily missing pane in its desktop's tree. Confirmed destruction
 and minimization still remove the pane, and a window observed on another display
@@ -210,6 +214,26 @@ change a Bento operation made to the tree; writing it also writes the tree.
   gives every hidden tab its own pane (`unstacked(in:)`) and removes the
   reserve. Leaving for Native restores the pre-Tabbed frames and keeps the tab
   groups for the next Tabbed visit.
+
+## Overlay appearance
+
+`OverlayAppearance` stores the shared Liquid Glass preference and strength.
+Older configurations default to glass enabled at half strength. Invalid
+strength values fail configuration validation. Appearance changes update
+existing overlay views without starting a placement or cancelling a gesture.
+
+`OverlayGlassView` owns the native AppKit glass and a semantic-color plate.
+The strength changes that plate, not a private blur parameter. Empty panes
+use clear glass and a lighter plate. The shared Tabbed curtain keeps at least
+96 percent plate opacity. Disabling glass, Reduce Transparency, or Increase
+Contrast selects an opaque surface. Display-option changes apply while views
+are visible. Decorative glass never owns pointer events.
+
+Divider capsules use `NSGlassEffectContainerView` to merge junction arms.
+Their glass width is at least six points; the existing hit area, cursor,
+minimum-size indication, and resize engine remain responsible for interaction.
+The preference also covers tab strips, drop and placement previews, resize
+ghosts, the Layout Wheel, and result feedback.
 
 ## Linked resizing
 

@@ -68,6 +68,9 @@ public final class ResultPillController {
         category: "Overlay"
     )
 
+    public var overlayAppearance = OverlayAppearance() {
+        didSet { (panel.contentView as? OverlayGlassView)?.overlayAppearance = overlayAppearance }
+    }
     private let panel: NSPanel
     private let stack = NSStackView()
     private let icon = NSImageView()
@@ -163,15 +166,9 @@ public final class ResultPillController {
     }
 
     private func makeContentView() -> NSView {
-        let effect = NSVisualEffectView()
-        effect.material = .hudWindow
-        effect.blendingMode = .behindWindow
-        effect.state = .active
-        effect.wantsLayer = true
-        effect.layer?.cornerRadius = 20
-        effect.layer?.cornerCurve = .continuous
-        effect.layer?.borderWidth = 0.7
-        effect.layer?.borderColor = NSColor.white.withAlphaComponent(0.18).cgColor
+        let effect = OverlayGlassView()
+        effect.cornerRadius = 20
+        effect.overlayAppearance = overlayAppearance
 
         icon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 17, weight: .semibold)
         icon.setContentHuggingPriority(.required, for: .horizontal)

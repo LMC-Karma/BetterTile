@@ -293,6 +293,7 @@ public struct LayoutWheelActionGroup: Sendable {
 /// from the pointer.
 public struct LayoutWheelView: View {
     private let configuration: LayoutWheelConfiguration
+    private let overlayAppearance: OverlayAppearance
     private let selection: LayoutWheelSelection?
     private let unavailableCommands: Set<LayoutWheelCommand>
     private let metrics: LayoutWheelMetrics
@@ -305,12 +306,14 @@ public struct LayoutWheelView: View {
 
     public init(
         configuration: LayoutWheelConfiguration,
+        overlayAppearance: OverlayAppearance = .init(),
         selection: LayoutWheelSelection? = nil,
         unavailableCommands: Set<LayoutWheelCommand> = [],
         metrics: LayoutWheelMetrics = .standard,
         onSelect: ((LayoutWheelSelection) -> Void)? = nil
     ) {
         self.configuration = configuration
+        self.overlayAppearance = overlayAppearance
         self.selection = selection
         self.unavailableCommands = unavailableCommands
         self.metrics = metrics
@@ -356,10 +359,11 @@ public struct LayoutWheelView: View {
 
     @ViewBuilder
     private var backdrop: some View {
-        if reduceTransparency {
+        if reduceTransparency || isHighContrast || !overlayAppearance.useLiquidGlass {
             Circle().fill(Color(nsColor: .windowBackgroundColor))
         } else {
-            Circle().fill(.clear).glassEffect(.regular, in: .circle)
+            Circle().fill(.clear).glassEffect(overlayAppearance.strength < 0.35 ? .clear : .regular, in: .circle)
+                    .overlay(Circle().fill(Color(nsColor: .windowBackgroundColor).opacity(0.08 + overlayAppearance.strength * 0.44)))
         }
     }
 
@@ -522,10 +526,11 @@ public struct LayoutWheelView: View {
 
     private var hub: some View {
         ZStack {
-            if reduceTransparency {
+            if reduceTransparency || isHighContrast || !overlayAppearance.useLiquidGlass {
                 Circle().fill(Color(nsColor: .controlBackgroundColor))
             } else {
-                Circle().fill(.clear).glassEffect(.regular, in: .circle)
+                Circle().fill(.clear).glassEffect(overlayAppearance.strength < 0.35 ? .clear : .regular, in: .circle)
+                    .overlay(Circle().fill(Color(nsColor: .windowBackgroundColor).opacity(0.08 + overlayAppearance.strength * 0.44)))
             }
             Circle().stroke(
                 selection == nil ? Color.accentColor : .primary.opacity(0.2),

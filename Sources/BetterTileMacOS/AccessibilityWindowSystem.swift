@@ -28,6 +28,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
     private var nextLaunchGeneration: UInt64 = 0
     private var loggedBatchFallback = false
     private var observers: [pid_t: AXObserver] = [:]
+    private var observationCallbackContext: AccessibilityCallbackContext?
     private struct Registration: Hashable {
         var windowID: WindowID?
         var accessibilityHash: CFHashCode?
@@ -44,6 +45,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
     private var activationObserver: NSObjectProtocol?
     private var displayReconfigurationHandler: (@MainActor () -> Void)?
     private var isMonitoringDisplayReconfiguration = false
+    private var displayCallbackContext: AccessibilityCallbackContext?
 
     /// The process-wide default, set once on the system-wide element. Reads are
     /// the bulk of the traffic and a stalled application should be skipped
@@ -91,6 +93,13 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         }
     }
 
+    isolated deinit {
+        stopWindowObservation()
+        stopDisplayReconfigurationMonitoring()
+        dockFootprintMonitor.stop()
+        if let activationObserver { NSWorkspace.shared.notificationCenter.removeObserver(activationObserver) }
+    }
+
     public func startDockFootprintMonitoring(onChange: @escaping () -> Void) {
         dockFootprintMonitor.start(onChange: onChange)
     }
@@ -108,26 +117,30 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
     ) {
         displayReconfigurationHandler = onChange
         guard !isMonitoringDisplayReconfiguration else { return }
+        let context = AccessibilityCallbackContext(system: self)
         let result = CGDisplayRegisterReconfigurationCallback(
             betterTileDisplayReconfigurationCallback,
-            Unmanaged.passUnretained(self).toOpaque()
+            Unmanaged.passUnretained(context).toOpaque()
         )
         guard result == .success else {
             Self.log.notice("display callback unavailable; retaining AppKit screen notifications")
             return
         }
+        displayCallbackContext = context
         isMonitoringDisplayReconfiguration = true
     }
 
     public func stopDisplayReconfigurationMonitoring() {
-        guard isMonitoringDisplayReconfiguration else {
+        guard isMonitoringDisplayReconfiguration, let context = displayCallbackContext else {
             displayReconfigurationHandler = nil
             return
         }
         CGDisplayRemoveReconfigurationCallback(
             betterTileDisplayReconfigurationCallback,
-            Unmanaged.passUnretained(self).toOpaque()
+            Unmanaged.passUnretained(context).toOpaque()
         )
+        context.system = nil
+        displayCallbackContext = nil
         isMonitoringDisplayReconfiguration = false
         displayReconfigurationHandler = nil
     }
@@ -151,11 +164,13 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
     }
 
     public func stopWindowObservation() {
+        observationCallbackContext?.system = nil
         for observer in observers.values {
             CFRunLoopRemoveSource(CFRunLoopGetMain(), AXObserverGetRunLoopSource(observer), .commonModes)
         }
         observers.removeAll()
         registrations.removeAll()
+        observationCallbackContext = nil
     }
 
     public func requestAccessibilityPermission(prompt: Bool) -> Bool {
@@ -301,14 +316,15 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         let retainedIDs = managedWindowIDs.union(recentWindowIDs).union(minimizedWindowIDs)
         elements = elements.filter { retainedIDs.contains($0.key) }
         elements.merge(refreshedElements) { _, latest in latest }
-        let observedIDs = Set(snapshots.map(\.id))
-        for staleID in identities.pruneAfterSweep(
-            retaining: retainedIDs.union(observedIDs),
+        removeCachedState(for: identities.removeClosedWindowsAfterSweep(
             observedApplications: observedApplications,
-            windowServer: windowServer
-        ) {
-            minimumSizeLearner.remove(staleID)
-        }
+            windowServer: windowServer,
+            accessibilityStatus: { windowID in
+                guard let element = elements[windowID] else { return nil }
+                var role: CFTypeRef?
+                return AXUIElementCopyAttributeValue(element, kAXRoleAttribute as CFString, &role)
+            }
+        ), notifyClosure: true)
         let sorted = snapshots.sorted { $0.id < $1.id }
         snapshotCache.recordFullSweep(sorted)
         snapshotGeneration &+= 1
@@ -690,7 +706,16 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
     private func synchronizeObservers() {
         let interval = Self.signposter.beginInterval("synchronizeObservers")
         defer { Self.signposter.endInterval("synchronizeObservers", interval) }
-        let applications = NSWorkspace.shared.runningApplications.filter {
+        let runningApplications = NSWorkspace.shared.runningApplications
+        let runningPIDs = Set(runningApplications.map(\.processIdentifier))
+        // A failed observer installation must not prevent termination cleanup.
+        // Hidden or policy-filtered running applications are not terminated.
+        let knownPIDs = Set(launchRecords.keys).union(identities.records.values.map { $0.application.processIdentifier })
+        for pid in knownPIDs.subtracting(runningPIDs) {
+            removeCachedState(for: identities.remove(processIdentifier: pid), notifyClosure: true)
+            launchRecords.removeValue(forKey: pid)
+        }
+        let applications = runningApplications.filter {
             Self.shouldManageApplication(
                 processIdentifier: $0.processIdentifier,
                 ownProcessIdentifier: getpid(),
@@ -783,7 +808,9 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
             notification: notification
         )
         guard registrations[pid, default: []].insert(registration).inserted else { return }
-        let pointer = Unmanaged.passUnretained(self).toOpaque()
+        let context = observationCallbackContext ?? AccessibilityCallbackContext(system: self)
+        observationCallbackContext = context
+        let pointer = Unmanaged.passUnretained(context).toOpaque()
         let result = AXObserverAddNotification(observer, element, notification as CFString, pointer)
         if result != .success, result != .notificationAlreadyRegistered {
             registrations[pid]?.remove(registration)
@@ -799,6 +826,9 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
             retainRecent(windowID)
         }
         if event.kind == .destroyed, let windowID = event.windowID {
+            if let element = elements[windowID] {
+                unregisterWindowNotifications(element, windowID: windowID)
+            }
             elements.removeValue(forKey: windowID)
             identities.remove(windowID)
             recentWindowIDs.removeAll { $0 == windowID }
@@ -1095,13 +1125,14 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         if let record = launchRecords[pid], record.launchToken == launchToken {
             return record.instance
         }
-        removeCachedState(for: identities.remove(processIdentifier: pid))
+        let closed = identities.remove(processIdentifier: pid)
         nextLaunchGeneration &+= 1
         let instance = ApplicationLaunchInstance(
             processIdentifier: pid,
             generation: nextLaunchGeneration
         )
         launchRecords[pid] = LaunchRecord(launchToken: launchToken, instance: instance)
+        removeCachedState(for: closed, notifyClosure: true)
         return instance
     }
 
@@ -1119,15 +1150,25 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         return instance
     }
 
-    private func removeCachedState(for windowIDs: Set<WindowID>) {
-        guard !windowIDs.isEmpty else { return }
-        for windowID in windowIDs {
-            elements.removeValue(forKey: windowID)
-            minimumSizeLearner.remove(windowID)
-            minimizedWindowIDs.remove(windowID)
+    private func removeCachedState(for records: [WindowIdentityRecord], notifyClosure: Bool = false) {
+        guard !records.isEmpty else { return }
+        if notifyClosure {
+            for record in records.sorted(by: { $0.windowID < $1.windowID }) {
+                receiveWindowEvent(WindowSystemEvent(
+                    kind: .destroyed, windowID: record.windowID,
+                    processIdentifier: record.application.processIdentifier
+                ))
+            }
+        } else {
+            let windowIDs = Set(records.map(\.windowID))
+            for windowID in windowIDs {
+                elements.removeValue(forKey: windowID)
+                minimumSizeLearner.remove(windowID)
+                minimizedWindowIDs.remove(windowID)
+            }
+            recentWindowIDs.removeAll { windowIDs.contains($0) }
+            snapshotCache.invalidate()
         }
-        recentWindowIDs.removeAll { windowIDs.contains($0) }
-        snapshotCache.invalidate()
     }
 
     private func windowServerIndex() -> WindowServerIndex? {
@@ -1145,7 +1186,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
     private func targetedWindowServerRecords(ids: Set<CGWindowID>) -> [WindowServerRecord]? {
         guard !ids.isEmpty,
               let info = CGWindowListCreateDescriptionFromArray(
-                  ids.sorted().map { NSNumber(value: $0) } as CFArray
+                  makeWindowServerIDArray(ids)
               ) as? [[CFString: Any]]
         else { return nil }
         return windowServerRecords(from: info, defaultOnscreen: false)
@@ -1236,17 +1277,23 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
     }
 }
 
+/// The window system retains this context while native callbacks are installed.
+/// Queued delivery keeps a weak reference, never an unowned raw address.
+@MainActor
+private final class AccessibilityCallbackContext {
+    weak var system: AccessibilityWindowSystem?
+    init(system: AccessibilityWindowSystem) { self.system = system }
+}
+
 private func betterTileDisplayReconfigurationCallback(
     display: CGDirectDisplayID,
     flags: CGDisplayChangeSummaryFlags,
     userInfo: UnsafeMutableRawPointer?
 ) {
     guard let userInfo else { return }
-    let address = UInt(bitPattern: userInfo)
-    Task { @MainActor in
-        guard let pointer = UnsafeMutableRawPointer(bitPattern: address) else { return }
-        let system = Unmanaged<AccessibilityWindowSystem>.fromOpaque(pointer).takeUnretainedValue()
-        system.displayConfigurationChanged()
+    let context = Unmanaged<AccessibilityCallbackContext>.fromOpaque(userInfo).takeUnretainedValue()
+    Task { @MainActor [weak context] in
+        context?.system?.displayConfigurationChanged()
     }
 }
 
@@ -1272,11 +1319,9 @@ private func betterTileAXObserverCallback(
     default: return
     }
     let accessibilityHash = CFHash(element)
-    let address = UInt(bitPattern: refcon)
-    Task { @MainActor in
-        guard let pointer = UnsafeMutableRawPointer(bitPattern: address) else { return }
-        let system = Unmanaged<AccessibilityWindowSystem>.fromOpaque(pointer).takeUnretainedValue()
-        system.receiveAXEvent(
+    let context = Unmanaged<AccessibilityCallbackContext>.fromOpaque(refcon).takeUnretainedValue()
+    Task { @MainActor [weak context] in
+        context?.system?.receiveAXEvent(
             kind: kind,
             processIdentifier: pid,
             accessibilityHash: accessibilityHash

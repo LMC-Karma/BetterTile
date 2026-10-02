@@ -298,13 +298,20 @@ public struct BentoLayoutFitter: Sendable {
             }
 
             let coordinate: Double?
-            if !changedCandidates.isEmpty {
+            if let furthest = changedCandidates.max(by: {
+                abs($0 - expectedCoordinate) < abs($1 - expectedCoordinate)
+            }) {
                 // A corner resize can contribute two close candidates. If they
                 // disagree, the edge that moved furthest from the old split is
                 // the user-controlled edge.
-                coordinate = changedCandidates.max(by: {
-                    abs($0 - expectedCoordinate) < abs($1 - expectedCoordinate)
-                })
+                // Equally strong edges on opposite sides give no evidence for
+                // either direction. Leave this boundary alone instead of letting
+                // Set iteration order decide which windows move.
+                let contradicts = changedCandidates.contains {
+                    abs(abs($0 - expectedCoordinate) - abs(furthest - expectedCoordinate)) <= 0.5
+                        && ($0 - expectedCoordinate) * (furthest - expectedCoordinate) < 0
+                }
+                coordinate = contradicts ? nil : furthest
             } else {
                 coordinate = stableSharedCoordinate(for: geometry, frames: currentFrames, gap: state.metrics.paneGap, reserve: reserve)
             }

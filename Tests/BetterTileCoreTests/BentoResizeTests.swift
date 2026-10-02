@@ -442,3 +442,34 @@ func newLearnedMinimumEvidenceClearsSmallerSizeCandidates(increased: Bool) {
     #expect(!restarted)
     #expect(learner.learnedSizes[id] == minimum)
 }
+
+@Test(arguments: [SplitAxis.vertical, .horizontal], [1.0, 50.0])
+func equallyContradictoryNativeEdgesDoNotChooseAnArbitraryDivider(axis: SplitAxis, displacement: Double) {
+    let a = WindowID(rawValue: "a"), b = WindowID(rawValue: "b")
+    let square = BTRect(x: 0, y: 0, width: 1200, height: 1200)
+    let state = BentoLayoutState(root: .partition(BentoPartition(axis: axis, first: .leaf(a), second: .leaf(b))))
+    let frames: [WindowID: BTRect] = axis == .vertical ? [
+        a: BTRect(x: 0, y: 0, width: 600 + displacement, height: 1200),
+        b: BTRect(x: 600 - displacement, y: 0, width: 600 + displacement, height: 1200),
+    ] : [
+        a: BTRect(x: 0, y: 0, width: 1200, height: 600 + displacement),
+        b: BTRect(x: 0, y: 600 - displacement, width: 1200, height: 600 + displacement),
+    ]
+    #expect(BentoLayoutFitter().fit(state: state, currentFrames: frames,
+        changedWindowIDs: [a, b], in: square) == nil)
+}
+
+@Test(arguments: [650.0, 550.0])
+func agreeingOrUnequalNativeEdgesKeepTheStrongestDividerEvidence(otherEdge: Double) throws {
+    let a = WindowID(rawValue: "a"), b = WindowID(rawValue: "b")
+    let branch = UUID()
+    let state = BentoLayoutState(root: .partition(BentoPartition(id: branch,
+        axis: .vertical, first: .leaf(a), second: .leaf(b))))
+    let controlledEdge = otherEdge == 650 ? 650.0 : 700.0
+    let frames = [a: BTRect(x: 0, y: 0, width: controlledEdge, height: 800),
+                  b: BTRect(x: otherEdge, y: 0, width: 1200 - otherEdge, height: 800)]
+    let fitted = try #require(BentoLayoutFitter().fit(state: state, currentFrames: frames,
+        changedWindowIDs: [a, b], in: resizeBounds))
+    #expect(fitted.appliedCoordinates[branch] == controlledEdge)
+    #expect(fitted.placements.count == 2)
+}

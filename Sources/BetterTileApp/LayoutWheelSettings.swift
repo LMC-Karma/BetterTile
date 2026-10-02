@@ -132,6 +132,7 @@ struct LayoutWheelSettings: View {
     private var editor: some View {
         LayoutWheelView(
             configuration: wheel,
+            overlayAppearance: model.configuration.overlayAppearance,
             selection: editing,
             onSelect: { editing = $0 }
         )
