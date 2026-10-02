@@ -2,6 +2,16 @@ import Foundation
 import Testing
 @testable import BetterTileCore
 
+@Test func glassTransparencyPreservesSavedFrostingDirection() throws {
+    var appearance = try JSONDecoder().decode(OverlayAppearance.self, from: Data(#"{"useLiquidGlass":true,"strength":0.8}"#.utf8))
+    #expect(abs(appearance.transparency - 0.2) < 0.0001)
+    appearance.transparency = 1
+    #expect(appearance.strength == 0)
+    appearance.transparency = 0
+    #expect(appearance.strength == 1)
+    #expect(try JSONDecoder().decode(OverlayAppearance.self, from: JSONEncoder().encode(appearance)) == appearance)
+}
+
 @Test func legacyConfigurationEnablesSharedLiquidGlass() throws {
     let config = try ConfigurationStore.decode(Data(#"{"schemaVersion":12}"#.utf8))
     let json = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(config)) as? [String: Any])

@@ -2989,11 +2989,16 @@ extension BetterTileModel {
         guard presentsTabbedChrome, session.mode == .tabbed, let state = session.tabbedState, !isStabilizingSpace,
               !nativeFullscreenDisplayIDs.contains(display.id) else { return }
         let overlay = tabbedOverlays[display.id] ?? TabbedOverlayController()
+        overlay.acceptsTabDrags = tabbedTasks[display.id] == nil
         overlay.overlayAppearance = configuration.overlayAppearance
         let sessionID = session.id
-        overlay.onIntent = { [weak self] intent in
-            guard let self, self.sessionStore.session(for: display.id)?.id == sessionID else { return }
+        overlay.onIntent = { [weak self, weak overlay] intent in
+            guard let self, self.sessionStore.session(for: display.id)?.id == sessionID else {
+                overlay?.completeDrop()
+                return
+            }
             self.handleTabbed(intent, on: display.id)
+            if self.tabbedTasks[display.id] == nil { self.tabbedOverlays[display.id]?.completeDrop() }
         }
         let focused = try? system.focusedWindow()
         let obscuring = focused.flatMap { window in
@@ -3079,8 +3084,15 @@ extension BetterTileModel {
             let reason = error.localizedDescription
             guard let rollbackFrames else { statusMessage = reason; return }
             tabbedTaskIDs[display.id] = taskID
+            tabbedOverlays[display.id]?.acceptsTabDrags = false
             tabbedTasks[display.id] = Task { @MainActor [weak self] in
                 guard let self else { return }
+                defer {
+                    if self.tabbedTasks[display.id] == nil, self.tabbedQueuedIntents[display.id] == nil {
+                        self.tabbedOverlays[display.id]?.completeDrop()
+                        self.tabbedOverlays[display.id]?.acceptsTabDrags = true
+                    }
+                }
                 let restored = await self.coordinator.restoreTabbedFrames(rollbackFrames,
                     required: Set(previous?.selectedWindowIDs ?? []), on: display.id, isCurrent: isCurrent)
                 guard self.tabbedTaskIDs[display.id] == taskID else { return }
@@ -3104,8 +3116,15 @@ extension BetterTileModel {
             return
         }
         tabbedTaskIDs[display.id] = taskID
+        tabbedOverlays[display.id]?.acceptsTabDrags = false
         tabbedTasks[display.id] = Task { @MainActor [weak self] in
             guard let self else { return }
+            defer {
+                if self.tabbedTasks[display.id] == nil, self.tabbedQueuedIntents[display.id] == nil {
+                    self.tabbedOverlays[display.id]?.completeDrop()
+                    self.tabbedOverlays[display.id]?.acceptsTabDrags = true
+                }
+            }
             var proposal = initial
             var windows = windows
             // With a readable window order, the focus refresh after a

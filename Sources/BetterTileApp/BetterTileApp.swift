@@ -961,8 +961,6 @@ struct MenuPanelContent<Actions: View, Notice: View>: View {
     var quit: (() -> Void)?
     @ViewBuilder let actions: () -> Actions
     @ViewBuilder let notice: () -> Notice
-    @Environment(\.colorScheme) private var colorScheme
-    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @State private var chromeHeight: CGFloat = 286
 
     private var actionHeight: CGFloat {
@@ -1054,9 +1052,9 @@ struct MenuPanelContent<Actions: View, Notice: View>: View {
         .frame(width: MenuPanelMetrics.width)
         .fixedSize(horizontal: false, vertical: true)
         .background {
-            Rectangle()
-                .fill(reduceTransparency ? AnyShapeStyle(Color.clear) : AnyShapeStyle(.regularMaterial))
-                .overlay(PanelSurface.base(for: colorScheme, reduceTransparency: reduceTransparency))
+            // NSPopover supplies the native glass. Another material here
+            // would hide its optics and make the transparency control ineffective.
+            GlassBacking(model.configuration.overlayAppearance)
         }
         .onGeometryChange(for: CGFloat.self) { [actionHeight] proxy in
             proxy.size.height - actionHeight

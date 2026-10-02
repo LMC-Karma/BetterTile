@@ -1336,6 +1336,7 @@ final class DividerHandleView: NSView {
 
     private func updateAppearance() {
         for surface in surfaces {
+            surface.isLight = true
             surface.highlightsTop = true
             surface.overlayAppearance = overlayAppearance
             surface.tint = gripColor

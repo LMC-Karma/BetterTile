@@ -3,6 +3,108 @@ import BetterTileCore
 import Testing
 @testable import BetterTileMacOS
 
+@Test @MainActor func curtainExcludesOnlyOccupiedStripsAndUpdatesDuringResize() throws {
+    _ = NSApplication.shared
+    let id = WindowID(rawValue: "cutout-window")
+    var state = TabbedLayoutState(preset: .columns)
+    state.reconcile(windowIDs: [id], removed: [], focused: id)
+    let bounds = BTRect(x: 12000, y: 100, width: 1000, height: 800)
+    var curtain: TabbedCurtainView?
+    let overlay = TabbedOverlayController(orderPanel: { panel, mode, _ in
+        if mode == .below { curtain = panel.contentView as? TabbedCurtainView }
+    })
+    defer { overlay.hide() }
+    overlay.refresh(state: state, bounds: bounds, windows: [], selectedWindowNumbers: [id: 7], curtainAnchorWindowNumber: 7)
+    let view = try #require(curtain)
+    #expect(view.excludedStrips.count == 1)
+    let before = try #require(view.excludedStrips.first)
+    #expect(before.minY == 0 && before.height == TabbedLayoutState.headerHeight)
+    let divider = try #require(state.dividers(in: bounds).first?.branchID)
+    let adjusted = state.adjustDivider(divider, by: 0.1, in: bounds)
+    #expect(adjusted)
+    overlay.refreshResize(state: state, bounds: bounds)
+    #expect(view.excludedStrips.first?.width != before.width)
+    let mask = try #require(view.layer?.sublayers?.first?.mask as? CAShapeLayer)
+    let path = try #require(mask.path)
+    let strip = try #require(view.excludedStrips.first)
+    #expect(!path.contains(CGPoint(x: strip.midX, y: 17), using: .evenOdd))
+    #expect(path.contains(CGPoint(x: strip.midX, y: 100), using: .evenOdd))
+    #expect(path.contains(CGPoint(x: 900, y: 17), using: .evenOdd)) // Empty pane remains covered.
+    #expect(view.hitTest(NSPoint(x: strip.midX, y: 17)) === view)
+}
+
+@Test(arguments: [false, true], ["release", "failure", "escape", "hide", "remove", "placement"])
+@MainActor func tabReorderingMovesBeforeReleaseAndRestoresOnInterruption(reduceMotion: Bool, ending: String) throws {
+    _ = NSApplication.shared
+    let ids = (0..<3).map { WindowID(rawValue: "reactive-\($0)") }
+    var state = TabbedLayoutState()
+    state.reconcile(windowIDs: ids, removed: [], focused: ids[0])
+    let bounds = BTRect(x: 12000, y: 0, width: 800, height: 600)
+    let overlay = TabbedOverlayController()
+    defer { overlay.hide() }
+    overlay.refresh(state: state, bounds: bounds, windows: [])
+    let view = try #require(NSApp.windows.compactMap(\.contentView).compactMap { $0 as? TabbedPaneView }.first { $0.pane.id == state.panes[0].id })
+    view.layoutSubtreeIfNeeded()
+    view.content.reduceMotion = { reduceMotion }
+    let panel = try #require(view.window)
+    func event(_ type: NSEvent.EventType, x: Double) throws -> NSEvent {
+        try #require(NSEvent.mouseEvent(with: type, location: NSPoint(x: x, y: 17), modifierFlags: [], timestamp: 0,
+                                        windowNumber: panel.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1))
+    }
+    var moves: [Int?] = []
+    overlay.onIntent = { if case let .move(_, _, index) = $0 { moves.append(index) } }
+    overlay.acceptsTabDrags = false
+    view.mouseDown(with: try event(.leftMouseDown, x: 80))
+    view.mouseDragged(with: try event(.leftMouseDragged, x: 650))
+    #expect(!overlay.isInteracting)
+    #expect(view.content.previewOrder == nil)
+    view.mouseUp(with: try event(.leftMouseUp, x: 650))
+    overlay.acceptsTabDrags = true
+    view.mouseDown(with: try event(.leftMouseDown, x: 80))
+    view.mouseDragged(with: try event(.leftMouseDragged, x: 650))
+    #expect(view.content.previewOrder == [ids[1], ids[2], ids[0]])
+    #expect(view.pane.tabs == ids)
+    #expect(moves.isEmpty)
+    let layers = view.content.subviews.flatMap(\.subviews).compactMap(\.layer)
+    #expect(layers.contains { $0.animation(forKey: "tabPosition") != nil } == !reduceMotion)
+    overlay.refresh(state: state, bounds: bounds, windows: [])
+    #expect(layers.contains { $0.animation(forKey: "tabPosition") != nil } == !reduceMotion)
+    // Returning across the same boundaries must restore the original order.
+    view.mouseDragged(with: try event(.leftMouseDragged, x: 80))
+    #expect(view.content.previewOrder == ids)
+    view.mouseDragged(with: try event(.leftMouseDragged, x: 650))
+    switch ending {
+    case "escape": overlay.cancelInteraction()
+    case "hide": overlay.hide()
+    case "placement": overlay.acceptsTabDrags = false
+    case "remove":
+        state.reconcile(windowIDs: Array(ids.dropFirst()), removed: [ids[0]], focused: ids[1])
+        overlay.refresh(state: state, bounds: bounds, windows: [])
+    default: break
+    }
+    view.mouseUp(with: try event(.leftMouseUp, x: 650))
+    #expect(moves == (["release", "failure"].contains(ending) ? [2] : []))
+    if ending == "failure" {
+        #expect(overlay.isDropPending)
+        overlay.completeDrop()
+        #expect(view.pane.tabs == ids)
+    }
+    if ending == "release" {
+        #expect(view.content.previewOrder == [ids[1], ids[2], ids[0]])
+        #expect(overlay.isDropPending)
+        overlay.refresh(state: state, bounds: bounds, windows: [])
+        #expect(view.content.previewOrder == [ids[1], ids[2], ids[0]])
+        // A successful commit arrives later, without displaying the old order.
+        state.move(ids[0], to: state.panes[0].id, at: 2)
+        overlay.refresh(state: state, bounds: bounds, windows: [])
+        #expect(view.pane.tabs == [ids[1], ids[2], ids[0]])
+        overlay.completeDrop()
+    }
+    #expect(view.content.previewOrder == nil)
+    #expect(!overlay.isInteracting)
+    #expect(view.content.subviews.flatMap(\.subviews).allSatisfy { $0.layer?.animation(forKey: "tabPosition") == nil })
+}
+
 @Test @MainActor func tabbedCurtainCoversContentBelowItsSelectedWindow() throws {
     _ = NSApplication.shared
     let id = WindowID(rawValue: "curtain-selected")
@@ -140,12 +242,10 @@ func tabbedCurtainUsesSolidAccessibilityFallback(options: (Bool, Bool)) {
     let view = TabbedCurtainView(frame: NSRect(x: 0, y: 0, width: 400, height: 300))
     view.displayOptions = { (options.0, options.1) }
     view.refreshAppearance()
-    #expect(view.showsGlass == !(options.0 || options.1))
     #expect(!view.isAccessibilityElement())
-    let plate = view.subviews.last?.layer?.backgroundColor
-    #expect(plate?.alpha == CGFloat(view.plateOpacity))
-    #expect(view.plateOpacity >= 0.96)
-    if options.0 || options.1 { #expect(view.plateOpacity == 1) }
+    let colors = (view.layer?.sublayers?.first as? CAGradientLayer)?.colors as? [CGColor]
+    #expect(colors?.allSatisfy { $0.alpha == 1 } == true)
+    if options.0 || options.1 { #expect(colors?.first == colors?.last) }
 }
 
 @Test @MainActor func tabbedCurtainFrostFollowsLightAndDarkAppearance() throws {
@@ -156,7 +256,7 @@ func tabbedCurtainUsesSolidAccessibilityFallback(options: (Bool, Bool)) {
     for (name, appearanceName) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
         view.appearance = NSAppearance(named: appearanceName)
         view.refreshAppearance()
-        let color = try #require(view.subviews.last?.layer?.backgroundColor)
+        let color = try #require(((view.layer?.sublayers?.first as? CAGradientLayer)?.colors as? [CGColor])?.first)
         brightness.append(try #require(NSColor(cgColor: color)?.usingColorSpace(.sRGB)).redComponent)
         if let directory = ProcessInfo.processInfo.environment["BETTERTILE_TAB_PREVIEW_DIR"] {
             // Render only our own surface; no foreign-window content.
@@ -167,7 +267,7 @@ func tabbedCurtainUsesSolidAccessibilityFallback(options: (Bool, Bool)) {
         }
     }
     #expect(brightness[0] > 0.5)
-    #expect(brightness[1] < 0.5)
+    #expect(brightness[1] > 0.35 && brightness[1] < brightness[0])
 }
 
 @Test @MainActor func selectingVisibleTabKeepsCrowdedStripPositions() throws {
@@ -215,10 +315,35 @@ func tabbedDragUsesReleaseDestination(cancel: Bool) throws {
     view.mouseDragged(with: try event(.leftMouseDragged, point: BTPoint(x: 12250, y: 400)))
     #expect(NSApp.windows.filter(\.isVisible).compactMap(\.contentView).flatMap(\.subviews)
         .compactMap { $0 as? NSTextField }.contains { $0.stringValue == "Move to Pane 1" })
+    view.mouseDragged(with: try event(.leftMouseDragged, point: BTPoint(x: 12750, y: 17)))
+    // A refresh while the empty pane holds a provisional tab must remain safe.
+    overlay.refresh(state: state, bounds: bounds, windows: [])
+    let destinationView = try #require(NSApp.windows.compactMap(\.contentView).compactMap { $0 as? TabbedPaneView }
+        .first { $0.pane.id == state.panes[1].id })
+    #expect(destinationView.content.previewOrder == [id])
+    destinationView.updateAccessibility()
+    destinationView.updateToolTips()
     if cancel { overlay.cancelInteraction() }
     view.mouseUp(with: try event(.leftMouseUp, point: BTPoint(x: 12750, y: 400)))
     #expect(destination == (cancel ? nil : state.panes[1].id))
     #expect(!overlay.isInteracting)
+}
+
+@Test @MainActor func draggingCanScrollPastTheSelectedTabAndCancelBackToIt() {
+    let view = TabbedPaneContentView(frame: NSRect(x: 0, y: 0, width: 330, height: 34))
+    let ids = (0..<9).map { WindowID(rawValue: "scroll-\($0)") }
+    var pane = TabbedPane()
+    pane.tabs = ids
+    pane.selected = ids[0]
+    view.pane = pane
+    view.previewDrag(order: ids, lifted: ids[0])
+    for _ in 0..<12 { _ = view.scrollDrag(at: 285, lifted: ids[0]) }
+    #expect(view.strip.visibleRange.contains(8))
+    #expect(!view.strip.visibleRange.contains(0))
+    for _ in 0..<12 { _ = view.scrollDrag(at: 35, lifted: ids[0]) }
+    #expect(view.strip.visibleRange.contains(0))
+    view.endDragPreview()
+    #expect(view.strip.visibleRange == 0..<2)
 }
 
 @Test(arguments: [120.0, 240, 330, 1024], [0, 1, 9])

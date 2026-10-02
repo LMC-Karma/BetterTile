@@ -36,7 +36,7 @@ private enum SettingsDestination: String, CaseIterable, Identifiable {
                 + "keyboard shortcuts master toggle macos tiling move resize edge "
                 + "advanced enhanced user interface chromium electron voiceover"
         case .windowLayout:
-            "mode manual native bento tabbed tabs pane preset resize linked divider liquid glass strength clear frosted shortcut keyboard hotkey halves thirds quarters sixths move display restore new window side automatic left right top bottom"
+            "mode manual native bento tabbed tabs pane preset resize linked divider appearance liquid glass transparency clear frosted shortcut keyboard hotkey halves thirds quarters sixths move display restore new window side automatic left right top bottom"
         case .snapZones:
             "drag snap edge corner title bar double click maximize"
         case .menuBar:
@@ -513,6 +513,27 @@ struct WindowLayoutSettings: View {
                 }
             }
 
+            Section("Appearance") {
+                Toggle("Use Liquid Glass", isOn: configurationBinding(\.overlayAppearance.useLiquidGlass))
+                LabeledContent("Glass transparency") {
+                    HStack(spacing: 8) {
+                        Text("Frosted").foregroundStyle(.secondary)
+                        Slider(value: configurationBinding(\.overlayAppearance.transparency), in: 0...1)
+                            .accessibilityLabel("Glass transparency")
+                            .accessibilityValue("\(Int((model.configuration.overlayAppearance.transparency * 100).rounded())) percent")
+                        Text("Clear").foregroundStyle(.secondary)
+                        Text("\(Int((model.configuration.overlayAppearance.transparency * 100).rounded()))%")
+                            .monospacedDigit()
+                            .frame(width: 42)
+                    }
+                    .frame(maxWidth: 380)
+                }
+                .disabled(!model.configuration.overlayAppearance.useLiquidGlass)
+                Text("Applies to tab bars, dividers, the Layout Wheel, and the menu bar panel. Clear keeps the native glass effect. The Tabbed curtain always conceals inactive windows. Accessibility display settings take priority.")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+            }
+
             Section("Resize Interaction") {
                 Toggle(
                     "Resize adjacent windows together",
@@ -545,19 +566,6 @@ struct WindowLayoutSettings: View {
                         .monospacedDigit()
                         .frame(width: 42)
                 }
-                Toggle("Use Liquid Glass", isOn: configurationBinding(\.overlayAppearance.useLiquidGlass))
-                HStack {
-                    Text("Glass strength")
-                    Text("Clear").foregroundStyle(.secondary)
-                    Slider(value: configurationBinding(\.overlayAppearance.strength), in: 0...1)
-                        .accessibilityLabel("Glass strength")
-                        .accessibilityValue("\(Int((model.configuration.overlayAppearance.strength * 100).rounded())) percent")
-                    Text("Frosted").foregroundStyle(.secondary)
-                }
-                .disabled(!model.configuration.overlayAppearance.useLiquidGlass)
-                Text("Applies to BetterTile overlays. The Tabbed curtain stays frosted to cover inactive tabs. Accessibility display settings take priority.")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
                 Text("A handle appears when the pointer approaches a valid shared edge. Glass handles keep a minimum visible width of 6 points.")
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)

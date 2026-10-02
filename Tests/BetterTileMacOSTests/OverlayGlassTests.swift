@@ -1,7 +1,87 @@
 import AppKit
 import BetterTileCore
+import SwiftUI
 import Testing
 @testable import BetterTileMacOS
+
+/// Opt in to WindowServer captures of this test's own opaque synthetic window.
+/// Off-screen bitmap caching cannot verify the native glass compositor.
+@Test(.enabled(if: ProcessInfo.processInfo.environment["BETTERTILE_NATIVE_GLASS_PREVIEW_DIR"] != nil,
+               "Requires an explicit native glass preview output directory."))
+@MainActor func nativeGlassCompositorPreviews() async throws {
+    _ = NSApplication.shared
+    let directory = try #require(ProcessInfo.processInfo.environment["BETTERTILE_NATIVE_GLASS_PREVIEW_DIR"])
+    let panel = NSPanel(contentRect: NSRect(x: 80, y: 100, width: 960, height: 620),
+                        styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+    panel.isReleasedWhenClosed = false
+    panel.level = .floating
+    panel.isOpaque = true
+    defer { panel.close() }
+    for (name, appearanceName) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
+        for strength in [0.0, 1.0] {
+            let appearance = OverlayAppearance(strength: strength)
+            panel.appearance = NSAppearance(named: appearanceName)
+            let root = NSView(frame: NSRect(x: 0, y: 0, width: 960, height: 620))
+            root.wantsLayer = true
+            let backdrop = CAGradientLayer()
+            backdrop.frame = root.bounds
+            backdrop.colors = [NSColor.systemBlue.cgColor, NSColor.systemPurple.cgColor, NSColor.systemOrange.cgColor]
+            backdrop.startPoint = .zero
+            backdrop.endPoint = CGPoint(x: 1, y: 1)
+            root.layer?.addSublayer(backdrop)
+            panel.contentView = root
+            for y in stride(from: 30, to: 580, by: 50) {
+                let label = NSTextField(labelWithString: "SYNTHETIC WINDOW CONTENT     0123456789     SYNTHETIC WINDOW CONTENT")
+                label.font = .monospacedSystemFont(ofSize: 20, weight: .bold)
+                label.textColor = .white
+                label.frame = NSRect(x: 24, y: y, width: 900, height: 30)
+                root.addSubview(label)
+            }
+            let curtain = TabbedCurtainView(frame: NSRect(x: 20, y: 40, width: 920, height: 360))
+            curtain.excludedStrips = [NSRect(x: 0, y: 0, width: 920, height: 34)]
+            root.addSubview(curtain)
+            let strip = TabbedPaneView(frame: NSRect(x: 20, y: 366, width: 920, height: 34))
+            var pane = TabbedPane()
+            pane.tabs = (0..<3).map { WindowID(rawValue: "preview-\($0)") }
+            pane.selected = pane.tabs[0]
+            strip.pane = pane
+            strip.titles = ["Notes", "Browser", "Editor"]
+            strip.icons = ["note.text", "globe", "chevron.left.forwardslash.chevron.right"].map { NSImage(systemSymbolName: $0, accessibilityDescription: nil) }
+            strip.active = true
+            strip.overlayAppearance = appearance
+            root.addSubview(strip)
+            let grip = DividerHandleView(frame: NSRect(x: 35, y: 430, width: 160, height: 150),
+                                         mode: .junction(center: CGPoint(x: 80, y: 75),
+                                                         resting: [.left: 36, .right: 36, .up: 36, .down: 36],
+                                                         active: [.left: 55, .right: 55, .up: 55, .down: 55]), thickness: 10)
+            grip.overlayAppearance = appearance
+            root.addSubview(grip)
+            let wheel = NSHostingView(rootView: LayoutWheelView(configuration: .init(), overlayAppearance: appearance))
+            wheel.frame = NSRect(x: 630, y: 400, width: 260, height: 210)
+            root.addSubview(wheel)
+            root.layoutSubtreeIfNeeded()
+            panel.orderFrontRegardless()
+            try await Task.sleep(for: .milliseconds(250))
+            let capture = Process()
+            capture.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
+            capture.arguments = ["-x", "-o", "-l", String(panel.windowNumber),
+                                 "\(directory)/native-\(name)-\(Int(strength)).png"]
+            try capture.run()
+            capture.waitUntilExit()
+            #expect(capture.terminationStatus == 0)
+        }
+    }
+}
+
+@Test @MainActor func sharedGlassKeepsNativeMaterialVisibleAcrossTheSlider() {
+    let view = OverlayGlassView()
+    view.displayOptions = { (false, false) }
+    for strength in [0.0, 0.34, 0.35, 0.5, 1.0] {
+        view.overlayAppearance.strength = strength
+        #expect(view.glass.style == .regular)
+        #expect(view.plateOpacity <= 0.22)
+    }
+}
 
 @Test(arguments: [false, true], [(false, false), (true, false), (false, true)]) @MainActor
 func sharedGlassHonorsToggleAndAccessibility(enabled: Bool, options: (Bool, Bool)) {
@@ -13,25 +93,19 @@ func sharedGlassHonorsToggleAndAccessibility(enabled: Bool, options: (Bool, Bool
     #expect(view.hitTest(NSPoint(x: 10, y: 10)) == nil)
 }
 
-@Test @MainActor func glassStrengthKeepsEmptyPanesLightAndCurtainsFrosted() {
+@Test @MainActor func glassStrengthKeepsEmptyPanesLight() {
     let ordinary = OverlayGlassView()
     let empty = OverlayGlassView()
     empty.isLight = true
-    let curtain = TabbedCurtainView()
-    for view in [ordinary, empty, curtain] { view.displayOptions = { (false, false) } }
+    for view in [ordinary, empty] { view.displayOptions = { (false, false) } }
     var previous = -1.0
     for strength in [0.0, 0.5, 1.0] {
-        for view in [ordinary, empty, curtain] { view.overlayAppearance.strength = strength }
+        for view in [ordinary, empty] { view.overlayAppearance.strength = strength }
         #expect(ordinary.plateOpacity > previous)
-        #expect(empty.plateOpacity < ordinary.plateOpacity)
+        #expect(empty.plateOpacity <= ordinary.plateOpacity)
         #expect(empty.glass.style == .clear)
-        #expect(curtain.plateOpacity >= 0.96)
-        #expect(curtain.showsGlass)
         previous = ordinary.plateOpacity
     }
-    curtain.overlayAppearance.useLiquidGlass = false
-    #expect(!curtain.showsGlass)
-    #expect(curtain.plateOpacity == 1)
 }
 
 @Test @MainActor func glassDividerKeepsHitOwnershipAndMinimumWidth() throws {

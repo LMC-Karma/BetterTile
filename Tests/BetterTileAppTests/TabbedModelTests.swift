@@ -6,10 +6,10 @@ import Testing
 
 /// Two columns: `focused` selected over hidden `tab-1` on the left, `tab-3`
 /// selected over hidden `tab-2` on the right.
-@MainActor private func makeTwoTabbedColumns(_ system: FakeAppWindowSystem) async throws -> BetterTileModel {
+@MainActor private func makeTwoTabbedColumns(_ system: FakeAppWindowSystem, model suppliedModel: BetterTileModel? = nil) async throws -> BetterTileModel {
     _ = NSApplication.shared
     addTabbedWindows(3, to: system)
-    let model = makeModel(system: system)
+    let model = suppliedModel ?? makeModel(system: system)
     model.configuration.defaultTabbedPreset = .columns
     model.setActiveMode(.tabbed)
     try #require(await waitFor { model.activeTabbedState?.windowIDs.count == 4 })
@@ -1455,6 +1455,46 @@ func ignoredTabbedDividerWritesRestoreWithoutLearningOrRepeating(feedback: Resiz
     try #require(await waitFor { system.windows.map(\.frame) == baseline && model.statusMessage != nil })
     #expect(model.activeTabbedState == before)
     #expect(model.statusMessage?.contains("could not fully restore") == false)
+}
+
+@Test(arguments: [false, true]) @MainActor
+func delayedNativeTabbedCheckpointRestoreLocksTabDragsUntilCompletion(cancelRestore: Bool) async throws {
+    _ = NSApplication.shared
+    let system = FakeAppWindowSystem()
+    // Keep the test's own panels off-screen; all window writes use the fake.
+    system.availableDisplays[0].frame.origin.x = 12000
+    system.availableDisplays[0].visibleFrame.origin.x = 12000
+    for index in system.windows.indices { system.windows[index].frame.origin.x += 12000 }
+    let store = ConfigurationStore(fileURL: URL(filePath: "/private/tmp/BetterTileAppTests-\(UUID().uuidString)/configuration.json"))
+    let model = BetterTileModel(store: store, system: system, startRuntime: false, presentsTabbedChrome: true)
+    model.primaryButtonIsPressed = { false }
+    defer { model.shutdown() }
+    _ = try await makeTwoTabbedColumns(system, model: model)
+    let before = try #require(model.activeTabbedState)
+    let pane = try #require(NSApp.windows.compactMap(\.contentView).compactMap { $0 as? TabbedPaneView }
+        .first { $0.pane.id == before.panes[0].id })
+    let overlay = try #require(pane.owner)
+    try #require(await waitFor { overlay.acceptsTabDrags })
+    let baseline = system.windows.map(\.frame)
+    let selected = try #require(before.panes[0].selected)
+    let right = try #require(before.panes[1].selected)
+    let index = try #require(system.windows.firstIndex { $0.id == right })
+    system.windows[index].constraints.minimumSize.width = 950
+    system.frameApplicationDelays[selected] = .milliseconds(100)
+    let writes = system.frameWriteCounts[selected, default: 0]
+    var wider = try #require(frame(selected, in: system))
+    wider.size.width += 150
+    try sendResize(selected, to: wider, in: system)
+    try #require(await waitFor { system.frameWriteCounts[selected, default: 0] > writes })
+    #expect(!overlay.acceptsTabDrags)
+    if cancelRestore {
+        model.shutdown()
+    } else {
+        try #require(await waitFor { system.windows.map(\.frame) == baseline && model.statusMessage != nil })
+        #expect(model.activeTabbedState == before)
+    }
+    try #require(await waitFor { overlay.acceptsTabDrags })
+    #expect(!overlay.isDropPending)
 }
 
 @Test @MainActor func shutdownCancelsDelayedNativeCheckpointVerification() async throws {

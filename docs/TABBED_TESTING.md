@@ -37,19 +37,22 @@ runtime tab groups. Click an empty pane to send newly opened windows there.
 
 ## Overlay appearance
 
-Settings → Window Layout → Resize Interaction has **Use Liquid Glass** and
-**Glass strength**. Glass defaults on. The strength runs from Clear to Frosted
-and applies to tab strips, dividers in every mode, empty panes, curtains, drop
-and resize previews, the Layout Wheel, and result feedback. Empty panes stay
-lighter; the curtain retains enough frost to obscure inactive windows.
+Settings → Window Layout → Appearance has **Use Liquid Glass** and
+**Glass transparency**. Glass defaults on. The slider runs from Frosted to
+Clear. It updates tab strips, dividers, empty panes, Tabbed drop targets, resize
+ghosts, the Layout Wheel, the menu bar popover, and result feedback. Clear
+removes added frosting while keeping the native material. The curtain remains
+opaque with a brighter neutral frost and excludes occupied tab strips. Its
+appearance is independent of the slider. Snap and Bento swap/placement
+previews use light outlines and tint.
 
 Turning glass off uses solid surfaces. Reduce Transparency and Increase
 Contrast also select solid surfaces, including when changed while overlays
-are visible. The strength slider is disabled when glass is off. Changes do not
+are visible. The transparency slider is disabled when glass is off. Changes do not
 move windows or cancel a drag. Glass dividers keep a six-point minimum visual
 width, while their existing hit areas remain unchanged.
 
-Check light and dark appearances at both strength endpoints, with glass off,
+Check light and dark appearances at both transparency endpoints, with glass off,
 and with each accessibility display option. Confirm labels stay readable,
 minimum-size orange feedback remains visible, and tab clicks and divider drags
 still reach the intended control. Check the curtain over oversized inactive
@@ -210,3 +213,31 @@ accessibility actions without
 capturing foreign windows. Real-app stacking, Mission Control/App Exposé, live
 performance, and display/Space transition behavior require the manual checks
 above. This test build is not evidence that those platform checks have passed.
+
+## Glass and tab-drag regression checks
+
+- Drag a tab in both directions. Neighboring tabs move before release. Return
+  to the original slot, then move to another pane's strip, including an empty
+  pane. Check the gap, pointer alignment, and settling motion.
+- Hold a dragged tab at either end of a crowded strip. Hidden tabs scroll into
+  view. Escape restores the starting strip. Hiding the overlay or closing the
+  dragged window also cancels the interaction.
+- Change transparency while a tab is held. The appearance updates without
+  committing the drag. Check Reduce Motion without changing drag destinations.
+- Check curtain cutouts while resizing rows and columns. Inactive windows stay
+  concealed outside the strips. Click strip corners and divider gaps to ensure
+  inactive windows never receive those clicks.
+- Open the menu bar panel and change transparency. Clear removes the extra
+  backing; macOS still supplies the native popover material. Check glass off,
+  Reduce Transparency, Increase Contrast, and keyboard navigation.
+
+Optional compositor previews capture only synthetic test windows by their
+WindowServer numbers. These exercise native materials; off-screen bitmap
+caching does not reproduce all native glass effects.
+
+```sh
+mkdir -p /tmp/bettertile-glass-previews
+BETTERTILE_NATIVE_GLASS_PREVIEW_DIR=/tmp/bettertile-glass-previews \
+  swift test --scratch-path /tmp/bettertile-build \
+  --filter 'nativeGlassCompositorPreviews|menuGlassPopoverPreviews'
+```

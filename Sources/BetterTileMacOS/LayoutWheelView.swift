@@ -362,8 +362,8 @@ public struct LayoutWheelView: View {
         if reduceTransparency || isHighContrast || !overlayAppearance.useLiquidGlass {
             Circle().fill(Color(nsColor: .windowBackgroundColor))
         } else {
-            Circle().fill(.clear).glassEffect(overlayAppearance.strength < 0.35 ? .clear : .regular, in: .circle)
-                    .overlay(Circle().fill(Color(nsColor: .windowBackgroundColor).opacity(0.08 + overlayAppearance.strength * 0.44)))
+            Circle().fill(.clear).glassEffect(.regular, in: .circle)
+                    .overlay(GlassBacking(overlayAppearance).clipShape(Circle()))
         }
     }
 
@@ -529,8 +529,7 @@ public struct LayoutWheelView: View {
             if reduceTransparency || isHighContrast || !overlayAppearance.useLiquidGlass {
                 Circle().fill(Color(nsColor: .controlBackgroundColor))
             } else {
-                Circle().fill(.clear).glassEffect(overlayAppearance.strength < 0.35 ? .clear : .regular, in: .circle)
-                    .overlay(Circle().fill(Color(nsColor: .windowBackgroundColor).opacity(0.08 + overlayAppearance.strength * 0.44)))
+                Circle().fill(.primary.opacity(selection == nil ? 0.08 : 0.04))
             }
             Circle().stroke(
                 selection == nil ? Color.accentColor : .primary.opacity(0.2),

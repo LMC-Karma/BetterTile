@@ -748,7 +748,6 @@ final class LayoutWheelPanelPresenter: LayoutWheelPresenting {
     }
 
     func open(_ presentation: LayoutWheelPresentation) {
-        placementPreviews.overlayAppearance = presentation.overlayAppearance
         let view: NSHostingView<LayoutWheelView>
         if let hosting {
             view = hosting
@@ -763,7 +762,6 @@ final class LayoutWheelPanelPresenter: LayoutWheelPresenting {
     }
 
     func update(_ presentation: LayoutWheelPresentation) {
-        placementPreviews.overlayAppearance = presentation.overlayAppearance
         guard let hosting else { return }
         hosting.rootView = LayoutWheelView(presentation)
         position(view: hosting, at: presentation.placement)
