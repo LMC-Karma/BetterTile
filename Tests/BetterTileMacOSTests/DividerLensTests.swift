@@ -298,7 +298,9 @@ import Testing
     view.viewDidChangeBackingProperties()
     view.layoutSubtreeIfNeeded()
     let root = try #require(view.layer)
-    let initial = lensLayerTree(root)
+    // AppKit controls the hosting layer's scale from the real display,
+    // independently of the panel's injected scale. Check our layers only.
+    let initial = (root.sublayers ?? []).flatMap(lensLayerTree)
     let decoration = lensLayerTree(view.lensLayers.decorationLayer)
     #expect(initial.count > 10)
     #expect(initial.allSatisfy { $0.contentsScale == 2 })
@@ -307,7 +309,7 @@ import Testing
     view.setLimit(DragLimit(width: true, blockedTowardPositive: true))
     view.overlayAppearance.strength = 1
     view.layoutSubtreeIfNeeded()
-    let updated = lensLayerTree(root)
+    let updated = (root.sublayers ?? []).flatMap(lensLayerTree)
     #expect(updated.map(ObjectIdentifier.init) == initial.map(ObjectIdentifier.init))
     #expect(updated.allSatisfy { $0.contentsScale == 2 })
     #expect(updated.allSatisfy { ($0.animationKeys() ?? []).isEmpty })
