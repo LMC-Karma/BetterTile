@@ -77,7 +77,7 @@ final class BetterTileModel {
     /// An apply arrived while another was running; re-apply the committed state after it.
     private var tabbedNeedsReapply: Set<DisplayID> = []
     private let presentsTabbedChrome: Bool
-    private var tabbedFocusTask: Task<Void, Never>?
+    private(set) var tabbedFocusTask: Task<Void, Never>?
     private(set) var tabbedNeedsFocusRefresh = false
     private var tabbedFocusSuppressedUntil = Date.distantPast
     /// Tabbed reads a window-edge resize only after the user lets go, so it

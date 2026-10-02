@@ -185,6 +185,7 @@ func tabbedCurtainsResolveOnlySelectedWindowsAfterPlacementAndFocus(failSelectio
     for index in system.windows.indices { system.windows[index].frame.origin.x += 12000 }
     let store = ConfigurationStore(fileURL: URL(filePath: "/private/tmp/BetterTileAppTests-\(UUID().uuidString)/configuration.json"))
     let model = BetterTileModel(store: store, system: system, startRuntime: false, presentsTabbedChrome: true)
+    model.primaryButtonIsPressed = { false }
     defer { model.shutdown() }
     model.setActiveMode(.tabbed)
     try #require(await waitFor { model.activeTabbedState?.windowIDs.count == 2 })
@@ -201,7 +202,9 @@ func tabbedCurtainsResolveOnlySelectedWindowsAfterPlacementAndFocus(failSelectio
     let requests = system.windowNumberRequests.count
     let status = model.statusMessage
     model.handleApplicationActivation()
-    #expect(await waitFor(timeout: .seconds(1)) { system.windowNumberRequests.count > requests })
+    let focusRefresh = try #require(model.tabbedFocusTask)
+    await focusRefresh.value
+    #expect(system.windowNumberRequests.count > requests)
     #expect(system.windowNumberRequests.last == [shown])
     #expect(model.statusMessage == status) // Missing IDs add no error.
 }
