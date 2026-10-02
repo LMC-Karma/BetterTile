@@ -123,6 +123,7 @@ public struct BentoConstraintSolver: Sendable {
 /// moves or expansions as application constraints.
 public struct WindowMinimumSizeLearner: Sendable {
     public private(set) var learnedSizes: [WindowID: BTSize]
+    private var smallerSizeCandidates: [WindowID: BTSize] = [:]
 
     public init(learnedSizes: [WindowID: BTSize] = [:]) {
         self.learnedSizes = learnedSizes
@@ -140,31 +141,45 @@ public struct WindowMinimumSizeLearner: Sendable {
         guard !actual.approximatelyEquals(baseline, tolerance: tolerance) else { return false }
         var learned = learnedSizes[windowID] ?? .zero
         let previous = learned
+        var observedMinimum = false
         if requested.size.width + tolerance < baseline.size.width,
            actual.size.width > requested.size.width + tolerance,
            actual.size.width < baseline.size.width - tolerance {
             learned.width = max(learned.width, actual.size.width)
+            observedMinimum = true
         }
         if requested.size.height + tolerance < baseline.size.height,
            actual.size.height > requested.size.height + tolerance,
            actual.size.height < baseline.size.height - tolerance {
             learned.height = max(learned.height, actual.size.height)
+            observedMinimum = true
         }
+        if observedMinimum { smallerSizeCandidates.removeValue(forKey: windowID) }
         guard learned != previous else { return false }
         learnedSizes[windowID] = learned
         return true
     }
 
-    /// An observed smaller size disproves an old learned bound. Reported
-    /// application minimums are still merged independently by the caller.
+    /// Two consecutive stable smaller sizes disprove an old learned bound.
+    /// Reported application minimums are still merged by the caller.
     @discardableResult
     public mutating func observeAcceptedSize(windowID: WindowID, size: BTSize) -> Bool {
         guard size.width.isFinite, size.height.isFinite,
               size.width > 0, size.height > 0,
-              let previous = learnedSizes[windowID] else { return false }
-        let next = BTSize(width: min(previous.width, size.width), height: min(previous.height, size.height))
-        guard next != previous else { return false }
-        learnedSizes[windowID] = next
+              let previous = learnedSizes[windowID],
+              size.width < previous.width || size.height < previous.height else {
+            smallerSizeCandidates.removeValue(forKey: windowID)
+            return false
+        }
+        let candidate = smallerSizeCandidates.updateValue(size, forKey: windowID)
+        guard let candidate,
+              abs(candidate.width - size.width) <= 1,
+              abs(candidate.height - size.height) <= 1 else { return false }
+        learnedSizes[windowID] = BTSize(
+            width: min(previous.width, max(candidate.width, size.width)),
+            height: min(previous.height, max(candidate.height, size.height))
+        )
+        smallerSizeCandidates.removeValue(forKey: windowID)
         return true
     }
 
@@ -178,6 +193,7 @@ public struct WindowMinimumSizeLearner: Sendable {
 
     public mutating func remove(_ windowID: WindowID) {
         learnedSizes.removeValue(forKey: windowID)
+        smallerSizeCandidates.removeValue(forKey: windowID)
     }
 
     /// Clears refusal evidence when the caller can safely revalidate it.
@@ -185,6 +201,7 @@ public struct WindowMinimumSizeLearner: Sendable {
     /// a bound when a smaller actual window size is observed.
     public mutating func removeAll() {
         learnedSizes.removeAll()
+        smallerSizeCandidates.removeAll()
     }
 }
 
