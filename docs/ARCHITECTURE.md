@@ -56,8 +56,12 @@ BetterTile operates on eligible on-screen windows exposed by its macOS integrati
 ## Event ordering
 
 Window identities survive off-screen and incomplete Accessibility sweeps.
-Cleanup requires closure evidence from the full public WindowServer list;
-without an exact identity, destruction or application termination owns cleanup.
+After a successful application Accessibility inventory omits a window, cleanup
+requires either its exact identity to be absent from the full public WindowServer
+list or its cached Accessibility element to report `invalidUIElement`. The latter
+confirms closure without an exact WindowServer identity. Other Accessibility read
+failures do not confirm closure. Destruction events and application termination
+also remove window identities.
 Native membership includes retained, nonhidden, nonminimized window identities.
 It keeps a temporarily missing pane in its desktop's tree. Confirmed destruction
 and minimization still remove the pane, and a window observed on another display

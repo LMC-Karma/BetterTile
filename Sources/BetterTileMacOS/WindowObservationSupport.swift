@@ -107,11 +107,9 @@ struct WindowIdentityRegistry {
         return record
     }
 
-    mutating func remove(processIdentifier: pid_t) -> Set<WindowID> {
-        let removed = Set(records.values.compactMap {
-            $0.application.processIdentifier == processIdentifier ? $0.windowID : nil
-        })
-        for windowID in removed { remove(windowID) }
+    mutating func remove(processIdentifier: pid_t) -> [WindowIdentityRecord] {
+        let removed = records.values.filter { $0.application.processIdentifier == processIdentifier }
+        for record in removed { remove(record.windowID) }
         return removed
     }
 
@@ -122,24 +120,24 @@ struct WindowIdentityRegistry {
     }
 
     /// Accessibility can omit another Space's windows even on a successful
-    /// read. Require WindowServer closure evidence as well. Without exact
-    /// identity, destruction and application termination own cleanup.
-    mutating func pruneAfterSweep(
-        retaining retainedIDs: Set<WindowID>,
+    /// read. Require either WindowServer absence or an invalid cached AX element
+    /// to confirm closure. An AX read failure alone does not prove destruction.
+    mutating func removeClosedWindowsAfterSweep(
         observedApplications: [ApplicationLaunchInstance: Set<CFHashCode>],
-        windowServer: WindowServerIndex?
-    ) -> Set<WindowID> {
-        let removed = Set(records.values.compactMap { record -> WindowID? in
-            guard !retainedIDs.contains(record.windowID),
-                  let hashes = observedApplications[record.application],
-                  record.accessibilityHashes.isDisjoint(with: hashes),
-                  let exactID = record.exactWindowID,
-                  let windowServer,
-                  !windowServer.containsIdentity(exactID, processIdentifier: record.application.processIdentifier)
-            else { return nil }
-            return record.windowID
-        })
-        for windowID in removed { remove(windowID) }
+        windowServer: WindowServerIndex?,
+        accessibilityStatus: (WindowID) -> AXError? = { _ in nil }
+    ) -> [WindowIdentityRecord] {
+        let removed = records.values.filter { record in
+            guard let hashes = observedApplications[record.application],
+                  record.accessibilityHashes.isDisjoint(with: hashes)
+            else { return false }
+            if let exactID = record.exactWindowID, let windowServer,
+               !windowServer.containsIdentity(exactID, processIdentifier: record.application.processIdentifier) {
+                return true
+            }
+            return accessibilityStatus(record.windowID) == .invalidUIElement
+        }
+        for record in removed { remove(record.windowID) }
         return removed
     }
 
@@ -210,6 +208,15 @@ final class ExactWindowIDResolver {
             return nil
         }
         return windowID
+    }
+}
+
+func makeWindowServerIDArray(_ ids: Set<CGWindowID>) -> CFArray {
+    // Core Graphics expects raw CGWindowID entries, not CFNumber objects.
+    // Nil callbacks keep Core Foundation from retaining those numeric values.
+    var values = ids.sorted().map { UnsafeRawPointer(bitPattern: UInt($0)) }
+    return values.withUnsafeMutableBufferPointer {
+        CFArrayCreate(kCFAllocatorDefault, $0.baseAddress, $0.count, nil)
     }
 }
 

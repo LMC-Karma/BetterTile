@@ -316,14 +316,15 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         let retainedIDs = managedWindowIDs.union(recentWindowIDs).union(minimizedWindowIDs)
         elements = elements.filter { retainedIDs.contains($0.key) }
         elements.merge(refreshedElements) { _, latest in latest }
-        let observedIDs = Set(snapshots.map(\.id))
-        for staleID in identities.pruneAfterSweep(
-            retaining: retainedIDs.union(observedIDs),
+        removeCachedState(for: identities.removeClosedWindowsAfterSweep(
             observedApplications: observedApplications,
-            windowServer: windowServer
-        ) {
-            minimumSizeLearner.remove(staleID)
-        }
+            windowServer: windowServer,
+            accessibilityStatus: { windowID in
+                guard let element = elements[windowID] else { return nil }
+                var role: CFTypeRef?
+                return AXUIElementCopyAttributeValue(element, kAXRoleAttribute as CFString, &role)
+            }
+        ), notifyClosure: true)
         let sorted = snapshots.sorted { $0.id < $1.id }
         snapshotCache.recordFullSweep(sorted)
         snapshotGeneration &+= 1
@@ -705,7 +706,16 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
     private func synchronizeObservers() {
         let interval = Self.signposter.beginInterval("synchronizeObservers")
         defer { Self.signposter.endInterval("synchronizeObservers", interval) }
-        let applications = NSWorkspace.shared.runningApplications.filter {
+        let runningApplications = NSWorkspace.shared.runningApplications
+        let runningPIDs = Set(runningApplications.map(\.processIdentifier))
+        // A failed observer installation must not prevent termination cleanup.
+        // Hidden or policy-filtered running applications are not terminated.
+        let knownPIDs = Set(launchRecords.keys).union(identities.records.values.map { $0.application.processIdentifier })
+        for pid in knownPIDs.subtracting(runningPIDs) {
+            removeCachedState(for: identities.remove(processIdentifier: pid), notifyClosure: true)
+            launchRecords.removeValue(forKey: pid)
+        }
+        let applications = runningApplications.filter {
             Self.shouldManageApplication(
                 processIdentifier: $0.processIdentifier,
                 ownProcessIdentifier: getpid(),
@@ -816,6 +826,9 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
             retainRecent(windowID)
         }
         if event.kind == .destroyed, let windowID = event.windowID {
+            if let element = elements[windowID] {
+                unregisterWindowNotifications(element, windowID: windowID)
+            }
             elements.removeValue(forKey: windowID)
             identities.remove(windowID)
             recentWindowIDs.removeAll { $0 == windowID }
@@ -1112,13 +1125,14 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         if let record = launchRecords[pid], record.launchToken == launchToken {
             return record.instance
         }
-        removeCachedState(for: identities.remove(processIdentifier: pid))
+        let closed = identities.remove(processIdentifier: pid)
         nextLaunchGeneration &+= 1
         let instance = ApplicationLaunchInstance(
             processIdentifier: pid,
             generation: nextLaunchGeneration
         )
         launchRecords[pid] = LaunchRecord(launchToken: launchToken, instance: instance)
+        removeCachedState(for: closed, notifyClosure: true)
         return instance
     }
 
@@ -1136,15 +1150,25 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         return instance
     }
 
-    private func removeCachedState(for windowIDs: Set<WindowID>) {
-        guard !windowIDs.isEmpty else { return }
-        for windowID in windowIDs {
-            elements.removeValue(forKey: windowID)
-            minimumSizeLearner.remove(windowID)
-            minimizedWindowIDs.remove(windowID)
+    private func removeCachedState(for records: [WindowIdentityRecord], notifyClosure: Bool = false) {
+        guard !records.isEmpty else { return }
+        if notifyClosure {
+            for record in records.sorted(by: { $0.windowID < $1.windowID }) {
+                receiveWindowEvent(WindowSystemEvent(
+                    kind: .destroyed, windowID: record.windowID,
+                    processIdentifier: record.application.processIdentifier
+                ))
+            }
+        } else {
+            let windowIDs = Set(records.map(\.windowID))
+            for windowID in windowIDs {
+                elements.removeValue(forKey: windowID)
+                minimumSizeLearner.remove(windowID)
+                minimizedWindowIDs.remove(windowID)
+            }
+            recentWindowIDs.removeAll { windowIDs.contains($0) }
+            snapshotCache.invalidate()
         }
-        recentWindowIDs.removeAll { windowIDs.contains($0) }
-        snapshotCache.invalidate()
     }
 
     private func windowServerIndex() -> WindowServerIndex? {
@@ -1162,7 +1186,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
     private func targetedWindowServerRecords(ids: Set<CGWindowID>) -> [WindowServerRecord]? {
         guard !ids.isEmpty,
               let info = CGWindowListCreateDescriptionFromArray(
-                  ids.sorted().map { NSNumber(value: $0) } as CFArray
+                  makeWindowServerIDArray(ids)
               ) as? [[CFString: Any]]
         else { return nil }
         return windowServerRecords(from: info, defaultOnscreen: false)
