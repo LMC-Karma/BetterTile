@@ -27,6 +27,10 @@ public enum DividerHandleGeometry {
     public static let activeJunctionArmLength = 36.0
     public static let junctionAcquisitionSize = 32.0
 
+    static func renderedThickness(_ thickness: Double, useLiquidGlass: Bool) -> Double {
+        useLiquidGlass ? max(6, thickness) : thickness
+    }
+
     public static func straightLength(span: ClosedRange<Double>, active: Bool) -> Double {
         let usable = max(8, span.upperBound - span.lowerBound)
         let resting = min(restingStraightLength, usable)
@@ -264,7 +268,16 @@ public final class DividerOverlayController {
         didSet {
             handlePanel?.overlayAppearance = configuration.overlayAppearance
             ghosts.overlayAppearance = configuration.overlayAppearance
-            updateHover(at: NSEvent.mouseLocation)
+            let previousWidth = DividerHandleGeometry.renderedThickness(
+                oldValue.dividerThickness, useLiquidGlass: oldValue.overlayAppearance.useLiquidGlass
+            )
+            if isDragging, previousWidth != renderedDividerThickness,
+               let interaction = activeInteraction,
+               let point = latestDragPoint.map({ topLeftPoint($0) }) ?? startPoint {
+                presentHandle(for: interaction, near: point, active: true)
+            } else {
+                updateHover(at: NSEvent.mouseLocation)
+            }
         }
     }
     public var layoutChangedHandler: ((DisplayID, [WindowID: BTRect]) -> Void)?
@@ -283,6 +296,12 @@ public final class DividerOverlayController {
     public private(set) var isDragging = false
     var dragLimit: DragLimit { handlePanel?.limit ?? DragLimit() }
     var limitedGhostWindowIDs: Set<WindowID> { ghosts.limitedWindowIDs }
+    var visibleHandleView: DividerHandleView? { handlePanel?.contentView as? DividerHandleView }
+    private var renderedDividerThickness: Double {
+        DividerHandleGeometry.renderedThickness(
+            configuration.dividerThickness, useLiquidGlass: configuration.overlayAppearance.useLiquidGlass
+        )
+    }
 
     private let coordinator: WindowCoordinator
     private let displayTicks: ResizeDisplayLink
@@ -867,7 +886,7 @@ public final class DividerOverlayController {
         localKeyMonitor = nil
     }
 
-    private func handleFrame(
+    func handleFrame(
         for interaction: DividerInteraction,
         near point: BTPoint,
         active: Bool
@@ -878,12 +897,12 @@ public final class DividerOverlayController {
                 center: center,
                 boundaries: interaction.boundaries,
                 active: active,
-                thickness: configuration.dividerThickness
+                thickness: renderedDividerThickness
             )
             return DividerHandleGeometry.junctionFrame(
                 center: center,
                 armLengths: arms,
-                thickness: configuration.dividerThickness
+                thickness: renderedDividerThickness
             )
         }
         guard let boundary = interaction.boundaries.first else { return .init(x: point.x, y: point.y, width: 1, height: 1) }
@@ -901,7 +920,7 @@ public final class DividerOverlayController {
         return BTRect(x: center - length / 2, y: boundary.coordinate - hitWidth / 2, width: length, height: hitWidth)
     }
 
-    private func handleMode(
+    func handleMode(
         for interaction: DividerInteraction,
         topLeftFrame: BTRect,
         mainScreenFrame: CGRect
@@ -942,13 +961,13 @@ public final class DividerOverlayController {
                     center: center,
                     boundaries: interaction.boundaries,
                     active: false,
-                    thickness: configuration.dividerThickness
+                    thickness: renderedDividerThickness
                 ),
                 active: DividerHandleGeometry.junctionArmLengths(
                     center: center,
                     boundaries: interaction.boundaries,
                     active: true,
-                    thickness: configuration.dividerThickness
+                    thickness: renderedDividerThickness
                 )
             )
         }
@@ -1108,12 +1127,15 @@ final class DividerHandleView: NSView {
         didSet { updateAppearance(); needsLayout = true }
     }
     var showsGlass: Bool { surfaces[0].showsGlass }
-    var renderedThickness: CGFloat { overlayAppearance.useLiquidGlass ? max(6, thickness) : thickness }
+    var renderedThickness: CGFloat {
+        CGFloat(DividerHandleGeometry.renderedThickness(Double(thickness), useLiquidGlass: overlayAppearance.useLiquidGlass))
+    }
     private var active = false
     /// A neighbor is at its minimum size: the handle turns orange and the
     /// cursor shows only the direction the divider can still move.
     private(set) var limit = DragLimit()
     private(set) var stretchProgress = 0.0
+    var reduceMotion: () -> Bool = { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
     private var animationTask: Task<Void, Never>?
     private var tracking: NSTrackingArea?
 
@@ -1250,7 +1272,7 @@ final class DividerHandleView: NSView {
         animationTask?.cancel()
         self.active = active
         let target = active ? 1.0 : 0.0
-        guard animated, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion, stretchProgress != target else {
+        guard animated, !reduceMotion(), stretchProgress != target else {
             stretchProgress = target
             needsDisplay = true
             needsLayout = true
