@@ -1016,3 +1016,28 @@ func gestureOnAnotherDisplayPreservesAnInactiveTabbedMinimum(nativeVisit: Bool) 
     try #require(await waitFor { model.activeTabbedState?.activeWindowID == hidden.id })
     #expect(model.statusMessage == nil)
 }
+
+@Test(arguments: [false, true]) @MainActor
+func shutdownPreventsQueuedTabbedExitFromMutatingWindows(pendingPlacement: Bool) async throws {
+    _ = NSApplication.shared
+    let system = FakeAppWindowSystem()
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    model.setActiveMode(.tabbed)
+    try #require(await waitFor { model.activeTabbedState?.windowIDs == [system.windows[0].id] })
+    try await Task.sleep(for: .milliseconds(350))
+    if pendingPlacement {
+        model.performTabbed(.preset(.columns))
+    }
+    model.setActiveMode(.manual)
+    // The exit task has been queued but has not resumed on the main actor.
+    model.shutdown()
+    let writes = system.frameWriteCounts
+    let sweeps = system.completeSweepCount
+    let frames = system.windows.map(\.frame)
+    try await Task.sleep(for: .milliseconds(500))
+    #expect(system.frameWriteCounts == writes)
+    #expect(system.completeSweepCount == sweeps)
+    #expect(system.windows.map(\.frame) == frames)
+}
+

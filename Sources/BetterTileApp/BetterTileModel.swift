@@ -3422,7 +3422,8 @@ extension BetterTileModel {
         pending?.cancel()
         Task { @MainActor [weak self] in
             await pending?.value
-            guard let self, var session = self.sessionStore.session(for: displayID),
+            guard let self, !self.isShutDown,
+                  var session = self.sessionStore.session(for: displayID),
                   session.mode == .tabbed, !self.isStabilizingSpace,
                   let display = self.system.displays().first(where: { $0.id == displayID }),
                   let windows = try? self.system.visibleWindows() else { return }
