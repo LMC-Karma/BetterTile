@@ -66,7 +66,7 @@ func offscreenWindowKeepsItsIdentityAcrossSweeps(exactIdentityAvailable: Bool) {
     // The app still lists the window, but WindowServer filters it from the
     // active Space. It is no longer in the active managed/recent window sets.
     for _ in 0..<4 {
-        _ = registry.pruneAfterSweep(retaining: [], observedApplications: [application: [100]], windowServer: nil)
+        _ = registry.removeClosedWindowsAfterSweep(observedApplications: [application: [100]], windowServer: nil)
     }
     let returning = registry.resolve(application: application, accessibilityHash: 100, exactWindowID: exactID)
     #expect(returning == original)
@@ -74,14 +74,14 @@ func offscreenWindowKeepsItsIdentityAcrossSweeps(exactIdentityAvailable: Bool) {
 
     // A failed AX enumeration or a skipped hidden app supplies no evidence
     // that its windows closed. A successful empty list does.
-    #expect(registry.pruneAfterSweep(retaining: [], observedApplications: [:], windowServer: nil).isEmpty)
-    #expect(registry.pruneAfterSweep(retaining: [], observedApplications: [application: []], windowServer: nil).isEmpty)
-    let pruned = registry.pruneAfterSweep(
-        retaining: [], observedApplications: [application: []],
+    #expect(registry.removeClosedWindowsAfterSweep(observedApplications: [:], windowServer: nil).isEmpty)
+    #expect(registry.removeClosedWindowsAfterSweep(observedApplications: [application: []], windowServer: nil).isEmpty)
+    let pruned = registry.removeClosedWindowsAfterSweep(
+        observedApplications: [application: []],
         windowServer: WindowServerIndex(records: [])
     )
     if exactIdentityAvailable {
-        #expect(pruned == [original])
+        #expect(pruned.map(\.windowID) == [original])
     } else {
         #expect(pruned.isEmpty)
         // The public identity fallback waits for destruction/termination.
@@ -118,8 +118,7 @@ func returningWindowIdentitiesPreserveBentoOrientationAndDragging(omittedByAcces
             WindowServerRecord(windowID: UInt32(id), processIdentifier: 42, layer: 0,
                                frame: frame, isOnscreen: false)
         })
-        _ = registry.pruneAfterSweep(
-            retaining: [],
+        _ = registry.removeClosedWindowsAfterSweep(
             observedApplications: [application: omittedByAccessibility ? [] : [100, 200]],
             windowServer: windowServer
         )
@@ -264,4 +263,42 @@ func returningWindowIdentitiesPreserveBentoOrientationAndDragging(omittedByAcces
     var malformed = values
     malformed[2] = "not a size"
     #expect(AccessibilityWindowSystem.parsedBatchedSnapshotAttributes(malformed) == nil)
+}
+
+@Test(arguments: ["closed", "ax-present", "ws-present", "ax-read-failed", "ws-read-failed", "no-exact"])
+func retainedWindowClosureRequiresBothSuccessfulNativeSources(evidence: String) {
+    var registry = WindowIdentityRegistry()
+    let application = ApplicationLaunchInstance(processIdentifier: 42, generation: 1)
+    let id = registry.resolve(application: application, accessibilityHash: 100,
+                              exactWindowID: evidence == "no-exact" ? nil : 700)
+    let observations: [ApplicationLaunchInstance: Set<CFHashCode>] = evidence == "ax-read-failed"
+        ? [:] : [application: evidence == "ax-present" ? [100] : []]
+    let index: WindowServerIndex? = evidence == "ws-read-failed" ? nil : WindowServerIndex(records: evidence == "ws-present" ? [
+        WindowServerRecord(windowID: 700, processIdentifier: 42, layer: 0,
+                           frame: BTRect(x: 0, y: 0, width: 500, height: 400), isOnscreen: false),
+    ] : [])
+    let closed = registry.removeClosedWindowsAfterSweep(observedApplications: observations, windowServer: index)
+    #expect(closed.map(\.windowID).contains(id) == (evidence == "closed"))
+    #expect((registry.records[id] == nil) == (evidence == "closed"))
+    #expect(registry.removeClosedWindowsAfterSweep(observedApplications: observations, windowServer: index).isEmpty)
+}
+
+@Test func terminatedLaunchReturnsEveryIdentityOnceAndKeepsOtherApplications() {
+    var registry = WindowIdentityRegistry()
+    let terminated = ApplicationLaunchInstance(processIdentifier: 42, generation: 1)
+    let other = ApplicationLaunchInstance(processIdentifier: 43, generation: 2)
+    let first = registry.resolve(application: terminated, accessibilityHash: 100, exactWindowID: 700)
+    let second = registry.resolve(application: terminated, accessibilityHash: 101, exactWindowID: nil)
+    let survivor = registry.resolve(application: other, accessibilityHash: 100, exactWindowID: 701)
+    let closed = registry.remove(processIdentifier: terminated.processIdentifier)
+    #expect(Set(closed.map(\.windowID)) == [first, second])
+    #expect(closed.allSatisfy { $0.application == terminated })
+    #expect(registry.remove(processIdentifier: terminated.processIdentifier).isEmpty)
+    #expect(Set(registry.records.keys) == [survivor])
+    #expect(registry.windowID(application: terminated, accessibilityHash: 100) == nil)
+    #expect(registry.windowID(forExactWindowID: 700) == nil)
+    let relaunched = ApplicationLaunchInstance(processIdentifier: 42, generation: 3)
+    let replacement = registry.resolve(application: relaunched, accessibilityHash: 100, exactWindowID: 700)
+    #expect(replacement != first && replacement != second)
+    #expect(registry.windowID(application: other, accessibilityHash: 100) == survivor)
 }
