@@ -551,7 +551,7 @@ struct WindowLayoutSettings: View {
                     Text("Clear").foregroundStyle(.secondary)
                     Slider(value: configurationBinding(\.overlayAppearance.strength), in: 0...1)
                         .accessibilityLabel("Glass strength")
-                        .accessibilityValue("\(Int(model.configuration.overlayAppearance.strength * 100)) percent")
+                        .accessibilityValue("\(Int((model.configuration.overlayAppearance.strength * 100).rounded())) percent")
                     Text("Frosted").foregroundStyle(.secondary)
                 }
                 .disabled(!model.configuration.overlayAppearance.useLiquidGlass)
