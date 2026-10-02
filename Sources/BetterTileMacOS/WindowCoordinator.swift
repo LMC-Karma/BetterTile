@@ -868,7 +868,7 @@ extension WindowCoordinator {
                         guard let placement = changedBestEffort.first(where: { $0.windowID == window.id }),
                               let before = bestEffortBaseline[window.id],
                               !window.frame.approximatelyEquals(placement.frame, tolerance: 2) else { continue }
-                        if previousHiddenFrames[window.id]?.approximatelyEquals(window.frame, tolerance: 1) == true {
+                        if attempt >= 3, previousHiddenFrames[window.id]?.approximatelyEquals(window.frame, tolerance: 1) == true {
                             onSizeMismatch?(window.id, placement.frame, before, window.frame)
                         } else {
                             unsettledHidden = true
