@@ -1167,7 +1167,6 @@ final class DividerHandlePanel: NSPanel {
     func configure(mode: DividerHandleMode, thickness: Double, trackRoom: [DividerHandleArm: Double] = [:]) {
         decorationMargins = mode.decorationMargins
         handleView.configure(mode: mode, thickness: thickness, trackRoom: trackRoom)
-        decorationWindow.setFrame(frame.insetBy(dx: -decorationMargins.x, dy: -decorationMargins.y), display: true)
     }
 
     override func setFrame(_ frameRect: NSRect, display flag: Bool) {

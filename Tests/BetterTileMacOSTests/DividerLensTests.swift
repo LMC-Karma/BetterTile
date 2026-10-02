@@ -278,6 +278,31 @@ import Testing
     #expect(!DividerOverlayController.ownWindowCoversHandle(frame, windows: [panel.decorationWindow], excluding: []))
 }
 
+@Test @MainActor func changingDividerModeMovesDecorationOnlyWithTheFinalFrame() throws {
+    _ = NSApplication.shared
+    let panel = DividerHandlePanel(frame: CGRect(x: 100, y: 100, width: 30, height: 56),
+                                   mode: .vertical(restingLength: 56, activeLength: 168), thickness: 10)
+    defer { panel.close() }
+    let arms: [DividerHandleArm: Double] = [.left: 12, .right: 12, .up: 12, .down: 12]
+    let transitions: [(DividerHandleMode, CGRect, CGFloat, CGFloat)] = [
+        (.junction(center: CGPoint(x: 22, y: 22), resting: arms, active: arms),
+         CGRect(x: 200, y: 200, width: 44, height: 44), 84, 84),
+        (.horizontal(restingLength: 56, activeLength: 168),
+         CGRect(x: 300, y: 300, width: 56, height: 30), 84, 24),
+        (.vertical(restingLength: 56, activeLength: 168),
+         CGRect(x: 400, y: 400, width: 30, height: 56), 24, 84),
+    ]
+    for (mode, frame, marginX, marginY) in transitions {
+        let previousDecorationFrame = panel.decorationWindow.frame
+        panel.configure(mode: mode, thickness: 10)
+        #expect(panel.decorationWindow.frame == previousDecorationFrame)
+        panel.setFrame(frame, display: true)
+        #expect(panel.decorationWindow.frame == frame.insetBy(dx: -marginX, dy: -marginY))
+        let view = try #require(panel.contentView as? DividerHandleView)
+        #expect(view.knobRects.allSatisfy { view.bounds.contains($0) })
+    }
+}
+
 @MainActor private func lensLayerTree(_ root: CALayer) -> [CALayer] {
     [root] + (root.sublayers ?? []).flatMap(lensLayerTree) + (root.mask.map(lensLayerTree) ?? [])
 }
