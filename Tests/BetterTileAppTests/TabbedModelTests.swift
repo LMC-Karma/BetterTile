@@ -509,6 +509,146 @@ func tabbedLearnedWidthFailureDoesNotCommitOrRetryDegradedRestoration(failRestor
     #expect(model.activeTabbedState?.windowIDs.count == 2)
 }
 
+@Test(arguments: ["unchanged", "larger-minimum", "learned-minimum", "oversized-minimum", "oversized-baseline", "no-entry-baseline", "no-entry-larger-minimum"]) @MainActor
+func floatingATabRestoresAReachableFrameRespectingCurrentMinimums(scenario: String) async throws {
+    let system = FakeAppWindowSystem()
+    if scenario == "oversized-baseline" {
+        system.windows[0].frame = BTRect(x: -50, y: 200, width: 1100, height: 400)
+    }
+    let entryWindow = system.windows[0]
+    if scenario.hasPrefix("no-entry") { system.windows = [] }
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    model.configuration.singleWindowPlacement = nil
+    model.configuration.defaultTabbedPreset = .single
+    model.setActiveMode(.tabbed)
+    try #require(await waitFor { model.activeTabbedState != nil })
+    if scenario.hasPrefix("no-entry") {
+        system.windows = [entryWindow]
+        system.eventHandler?(WindowSystemEvent(kind: .created, windowID: entryWindow.id,
+                                              processIdentifier: entryWindow.processIdentifier))
+    }
+    try #require(await waitFor { model.activeTabbedState?.windowIDs == [entryWindow.id] })
+    let expected: BTRect
+    switch scenario {
+    case "larger-minimum":
+        system.windows[0].constraints.minimumSize = BTSize(width: 640, height: 480)
+        expected = BTRect(x: 200, y: 200, width: 640, height: 480)
+    case "learned-minimum":
+        try #require(system.observeApplicationEnforcedMinimum(
+            windowID: entryWindow.id,
+            requested: BTRect(x: 200, y: 200, width: 400, height: 300),
+            baseline: BTRect(x: 200, y: 200, width: 800, height: 600),
+            actual: BTRect(x: 200, y: 200, width: 640, height: 480)
+        ))
+        expected = BTRect(x: 200, y: 200, width: 640, height: 480)
+    case "oversized-minimum":
+        system.windows[0].constraints.minimumSize = BTSize(width: 1200, height: 400)
+        expected = BTRect(x: 0, y: 200, width: 1200, height: 400)
+    case "no-entry-baseline":
+        expected = BTRect(x: 0, y: 34, width: 1000, height: 766)
+    case "no-entry-larger-minimum":
+        system.windows[0].constraints.minimumSize = BTSize(width: 1200, height: 900)
+        expected = BTRect(x: 0, y: 0, width: 1200, height: 900)
+    default: expected = entryWindow.frame
+    }
+    model.statusMessage = nil
+    model.performTabbed(.float(entryWindow.id))
+    try #require(await waitFor { model.activeTabbedState?.floatingWindowIDs.contains(entryWindow.id) == true })
+    #expect(model.activeTabbedState?.windowIDs.contains(entryWindow.id) == false)
+    #expect(model.activeLayoutMode == .tabbed)
+    #expect(system.windows[0].frame == expected)
+    #expect(model.statusMessage == nil)
+}
+
+@Test(arguments: [false, true]) @MainActor
+func rejectedFloatingRestorationRetainsTabbedMembershipAndFrames(ignored: Bool) async throws {
+    let system = FakeAppWindowSystem()
+    let id = system.windows[0].id
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    model.configuration.singleWindowPlacement = nil
+    model.configuration.defaultTabbedPreset = .single
+    model.setActiveMode(.tabbed)
+    try #require(await waitFor { model.activeTabbedState?.windowIDs == [id] })
+    let state = try #require(model.activeTabbedState)
+    let frame = system.windows[0].frame
+    let writes = system.frameWriteCounts[id, default: 0]
+    if ignored { system.ignoredFrameWriteWindowIDs.insert(id) }
+    else { system.failedFrameWriteNumbers[id] = [writes + 1] }
+    model.statusMessage = nil
+    model.performTabbed(.float(id))
+    try #require(await waitFor { model.statusMessage != nil || model.activeTabbedState?.floatingWindowIDs.contains(id) == true })
+    #expect(model.statusMessage != nil)
+    #expect(model.activeTabbedState == state)
+    #expect(system.windows[0].frame == frame)
+    #expect(system.frameWriteCounts[id] == writes + 2)
+}
+
+@Test @MainActor func failedFloatingBatchRollsBackAndDoesNotAddUndo() async throws {
+    let system = FakeAppWindowSystem()
+    addTabbedWindows(1, to: system)
+    let first = system.windows[0].id, second = system.windows[1].id
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    model.configuration.singleWindowPlacement = nil
+    model.configuration.defaultTabbedPreset = .single
+    model.setActiveMode(.tabbed)
+    try #require(await waitFor { model.activeTabbedState?.windowIDs.count == 2 })
+    let initial = try #require(model.activeTabbedState)
+    model.performTabbed(.preset(.columns))
+    try #require(await waitFor { model.activeTabbedState?.panes.count == 2 })
+    let right = try #require(model.activeTabbedState?.panes[1].id)
+    model.performTabbed(.move(second, pane: right, index: nil))
+    try #require(await waitFor { model.activeTabbedState?.panes[1].selected == second })
+    let state = try #require(model.activeTabbedState)
+    // The second required participant must be rewritten after the first tab's
+    // native frame has already been restored, then reject that batch write.
+    system.windows[1].frame = system.windows[1].frame.offsetBy(dx: 10, dy: 10)
+    let frames = system.windows.map(\.frame)
+    let writes = system.frameWriteCounts
+    system.failedFrameWriteNumbers[second] = [writes[second, default: 0] + 1]
+    model.statusMessage = nil
+    model.performTabbed(.float(first))
+    try #require(await waitFor { model.statusMessage != nil || model.activeTabbedState?.floatingWindowIDs.contains(first) == true })
+    #expect(model.statusMessage != nil)
+    #expect(model.activeTabbedState == state)
+    #expect(system.windows.map(\.frame) == frames)
+    #expect(system.frameWriteCounts[first, default: 0] >= writes[first, default: 0] + 2)
+    system.failedFrameWriteNumbers = [:]
+    model.performTabbed(.undo)
+    try #require(await waitFor { model.activeTabbedState != state })
+    // The failed float added nothing: Undo removes the successful move, then
+    // the successful preset, returning to the original single pane.
+    #expect(model.activeTabbedState?.floatingWindowIDs.isEmpty == true)
+    #expect(model.activeTabbedState?.panes[1].tabs.isEmpty == true)
+    model.performTabbed(.undo)
+    try #require(await waitFor { model.activeTabbedState?.panes.count == 1 })
+    #expect(model.activeTabbedState == initial)
+}
+
+@Test @MainActor func floatingRestorationLearnsAnUnreportedMinimumAndRetriesOnce() async throws {
+    let system = FakeAppWindowSystem()
+    let id = system.windows[0].id
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    model.configuration.singleWindowPlacement = nil
+    model.configuration.defaultTabbedPreset = .single
+    model.setActiveMode(.tabbed)
+    try #require(await waitFor { model.activeTabbedState?.windowIDs == [id] })
+    let writes = system.frameWriteCounts[id, default: 0]
+    system.enforcedMinimumWidths[id] = 640
+    system.enforcedMinimumHeights[id] = 480
+    model.statusMessage = nil
+    model.performTabbed(.float(id))
+    try #require(await waitFor { model.activeTabbedState?.floatingWindowIDs.contains(id) == true || model.statusMessage != nil })
+    #expect(model.activeTabbedState?.floatingWindowIDs.contains(id) == true)
+    #expect(system.windows[0].frame == BTRect(x: 200, y: 200, width: 640, height: 480))
+    #expect(system.windows[0].constraints.minimumSize == BTSize(width: 640, height: 480))
+    #expect(system.frameWriteCounts[id] == writes + 3)
+    #expect(model.statusMessage == nil)
+}
+
 @Test @MainActor func destroyedFloatingTabbedWindowIsRemovedFromStateAndUndo() async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()

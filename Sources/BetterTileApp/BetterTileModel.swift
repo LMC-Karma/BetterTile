@@ -1400,7 +1400,7 @@ final class BetterTileModel {
             if let display = system.displays().first(where: { $0.id == displayID }),
                let windows = try? system.visibleWindows() {
                 _ = coordinator.applyPlacements(
-                    tabbedRestorationPlacements(for: session, on: display, windows: windows),
+                    tabbedRestorationPlacements(baselineFrames: session.tabbedBaselineFrames, on: display, windows: windows),
                     recordHistory: false
                 )
             }
@@ -3015,6 +3015,7 @@ extension BetterTileModel {
             return
         }
         let previous = sessionStore.session(for: display.id)?.tabbedState
+        let detached = (previous?.windowIDs ?? []).subtracting(state.windowIDs).intersection(state.floatingWindowIDs)
         var selectionOnly = selectionOnly
         func prepare(_ windows: [WindowSnapshot]) throws -> (state: TabbedLayoutState, placements: [Placement]) {
             if selectionOnly {
@@ -3033,12 +3034,13 @@ extension BetterTileModel {
             }
             let fitted = try state.fittingMinimumWidths(in: display.visibleFrame, windows: windows)
             var proposed = try fitted.placements(in: display.visibleFrame, windows: windows)
-            let detached = (previous?.windowIDs ?? []).subtracting(state.windowIDs).intersection(state.floatingWindowIDs)
-            for window in windows where detached.contains(window.id) {
-                let frame = original.tabbedBaselineFrames[window.id]
-                    ?? window.frame.offsetBy(dx: 35, dy: 35)
-                proposed.append(Placement(windowID: window.id, frame: frame.clamped(to: display.visibleFrame)))
-            }
+            let baselineFrames = Dictionary(uniqueKeysWithValues: windows.filter { detached.contains($0.id) }.map {
+                ($0.id, original.tabbedBaselineFrames[$0.id]
+                    ?? $0.frame.offsetBy(dx: 35, dy: 35).clamped(to: display.visibleFrame))
+            })
+            proposed.append(contentsOf: self.tabbedRestorationPlacements(
+                baselineFrames: baselineFrames, on: display, windows: windows
+            ))
             return (fitted, proposed)
         }
         let initial: (state: TabbedLayoutState, placements: [Placement])
@@ -3080,14 +3082,14 @@ extension BetterTileModel {
                 var learnedSize = false
                 outcome = await self.coordinator.applyTabbed(
                     placements: proposal.placements,
-                    // Hidden tabs stack behind their pane at best effort; only
-                    // what the user sees must fit.
-                    required: selectionOnly ? nil : Set(proposal.state.selectedWindowIDs),
+                    // Selected tabs and newly floating windows must settle;
+                    // hidden tabs stack behind their pane at best effort.
+                    required: selectionOnly ? nil : Set(proposal.state.selectedWindowIDs).union(detached),
                     selected: selected,
                     previousSelected: previous?.selectedWindowIDs.filter(eligibleIDs.contains) ?? [],
                     focus: focus.flatMap { eligibleIDs.contains($0) ? $0 : nil },
                     onSizeMismatch: { id, requested, baseline, actual in
-                        guard proposal.state.windowIDs.contains(id) else { return }
+                        guard proposal.state.windowIDs.contains(id) || detached.contains(id) else { return }
                         learnedSize = self.system.observeApplicationEnforcedMinimum(
                             windowID: id, requested: requested, baseline: baseline, actual: actual
                         ) || learnedSize
@@ -3391,14 +3393,14 @@ extension BetterTileModel {
     }
 
     private func tabbedRestorationPlacements(
-        for session: LayoutSession,
+        baselineFrames: [WindowID: BTRect],
         on display: DisplaySnapshot,
         windows: [WindowSnapshot]
     ) -> [Placement] {
         let visible = Dictionary(uniqueKeysWithValues: windows.filter {
             $0.displayID == display.id && $0.isEligible
         }.map { ($0.id, $0) })
-        return session.tabbedBaselineFrames.compactMap { id, frame -> Placement? in
+        return baselineFrames.compactMap { id, frame -> Placement? in
             guard let window = visible[id] else { return nil }
             var restored = frame
             restored.size.width = max(frame.size.width, window.constraints.minimumSize.width)
@@ -3426,7 +3428,7 @@ extension BetterTileModel {
                   let display = self.system.displays().first(where: { $0.id == displayID }),
                   let windows = try? self.system.visibleWindows() else { return }
             if destination == .manual {
-                let placements = self.tabbedRestorationPlacements(for: session, on: display, windows: windows)
+                let placements = self.tabbedRestorationPlacements(baselineFrames: session.tabbedBaselineFrames, on: display, windows: windows)
                 let outcome: WindowMutationOutcome = placements.isEmpty ? .applied : self.coordinator.applyPlacements(placements, recordHistory: false)
                 if !outcome.isApplied { self.statusMessage = outcome.failureReason; return }
             }
