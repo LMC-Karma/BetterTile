@@ -364,3 +364,26 @@ private func window(_ id: WindowID, x: Double, y: Double, width: Double, height:
         actual: BTRect(x: 0, y: 34, width: 600, height: 500))
     #expect(!learned)
 }
+
+@Test func smallerAcceptedSizeCapsOnlyTheDisprovedLearnedMinimum() {
+    let id = WindowID(rawValue: "content-changed")
+    var learner = WindowMinimumSizeLearner(learnedSizes: [id: BTSize(width: 600, height: 450)])
+    let capped = learner.observeAcceptedSize(windowID: id, size: BTSize(width: 400, height: 500))
+    #expect(capped)
+    #expect(learner.learnedSizes[id] == BTSize(width: 400, height: 450))
+    let reported = WindowConstraints(minimumSize: BTSize(width: 480, height: 300))
+    #expect(learner.merging(reported, for: id).minimumSize == BTSize(width: 480, height: 450))
+    let grew = learner.observeAcceptedSize(windowID: id, size: BTSize(width: 800, height: 600))
+    #expect(!grew)
+    #expect(learner.learnedSizes[id] == BTSize(width: 400, height: 450))
+}
+
+@Test(arguments: [BTSize(width: .nan, height: 300), BTSize(width: 300, height: .infinity),
+                  BTSize(width: 0, height: 300), BTSize(width: 300, height: -1)])
+func invalidAcceptedSizesCannotChangeLearnedMinimums(size: BTSize) {
+    let id = WindowID(rawValue: "invalid-size")
+    var learner = WindowMinimumSizeLearner(learnedSizes: [id: BTSize(width: 600, height: 450)])
+    let changed = learner.observeAcceptedSize(windowID: id, size: size)
+    #expect(!changed)
+    #expect(learner.learnedSizes[id] == BTSize(width: 600, height: 450))
+}

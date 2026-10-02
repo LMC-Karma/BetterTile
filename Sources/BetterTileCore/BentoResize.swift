@@ -155,6 +155,19 @@ public struct WindowMinimumSizeLearner: Sendable {
         return true
     }
 
+    /// An observed smaller size disproves an old learned bound. Reported
+    /// application minimums are still merged independently by the caller.
+    @discardableResult
+    public mutating func observeAcceptedSize(windowID: WindowID, size: BTSize) -> Bool {
+        guard size.width.isFinite, size.height.isFinite,
+              size.width > 0, size.height > 0,
+              let previous = learnedSizes[windowID] else { return false }
+        let next = BTSize(width: min(previous.width, size.width), height: min(previous.height, size.height))
+        guard next != previous else { return false }
+        learnedSizes[windowID] = next
+        return true
+    }
+
     public func merging(_ constraints: WindowConstraints, for windowID: WindowID) -> WindowConstraints {
         guard let learned = learnedSizes[windowID] else { return constraints }
         var result = constraints
