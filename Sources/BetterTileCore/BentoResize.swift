@@ -243,6 +243,8 @@ public struct BentoLayoutFitter: Sendable {
             else { continue }
             let expectedCoordinate = geometry.resolvedCoordinate
             let halfGap = state.metrics.paneGap / 2
+            // A lower window starts below its pane's content reserve.
+            let reserve = state.metrics.contentTopInset
             var changedCandidates: [Double] = []
 
             for id in changedWindowIDs {
@@ -259,8 +261,8 @@ public struct BentoLayoutFitter: Sendable {
                     if geometry.before.windowIDs.contains(id), abs(expected.maxY + halfGap - expectedCoordinate) <= tolerance {
                         changedCandidates.append(actual.maxY + halfGap)
                     }
-                    if geometry.after.windowIDs.contains(id), abs(expected.minY - halfGap - expectedCoordinate) <= tolerance {
-                        changedCandidates.append(actual.minY - halfGap)
+                    if geometry.after.windowIDs.contains(id), abs(expected.minY - reserve - halfGap - expectedCoordinate) <= tolerance {
+                        changedCandidates.append(actual.minY - reserve - halfGap)
                     }
                 }
             }
@@ -274,7 +276,7 @@ public struct BentoLayoutFitter: Sendable {
                     abs($0 - expectedCoordinate) < abs($1 - expectedCoordinate)
                 })
             } else {
-                coordinate = stableSharedCoordinate(for: geometry, frames: currentFrames, gap: state.metrics.paneGap)
+                coordinate = stableSharedCoordinate(for: geometry, frames: currentFrames, gap: state.metrics.paneGap, reserve: reserve)
             }
 
             guard let coordinate, abs(coordinate - expectedCoordinate) > 0.5,
@@ -300,7 +302,8 @@ public struct BentoLayoutFitter: Sendable {
     private func stableSharedCoordinate(
         for boundary: BentoTreeGeometry.BoundaryGeometry,
         frames: [WindowID: BTRect],
-        gap: Double
+        gap: Double,
+        reserve: Double
     ) -> Double? {
         let first = boundary.before.windowIDs.compactMap { frames[$0] }
         let second = boundary.after.windowIDs.compactMap { frames[$0] }
@@ -313,7 +316,7 @@ public struct BentoLayoutFitter: Sendable {
             secondEdge = second.map(\.minX).min()!
         case .horizontal:
             firstEdge = first.map(\.maxY).max()!
-            secondEdge = second.map(\.minY).min()!
+            secondEdge = second.map(\.minY).min()! - reserve
         }
         guard abs(secondEdge - firstEdge - gap) <= tolerance else { return nil }
         return (firstEdge + secondEdge) / 2

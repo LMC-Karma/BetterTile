@@ -32,8 +32,9 @@ empty. Click an empty pane to send newly opened windows there.
   position determines the destination, including after a fast drag.
   At the 12-pane limit, edge drops are unavailable; center moves still work.
 - Drop on **Float window** to detach. Escape or an invalid drop cancels.
-- Drag a divider to resize. All stacked members follow the pane so inactive
-  windows do not retain a larger frame behind it. Side-by-side splits adjust
+- Drag a divider to resize. Tab strips follow the divider during the drag.
+  At release, all stacked members follow the pane so inactive windows do not
+  retain a larger frame behind it. Side-by-side splits adjust
   to the greatest minimum width of each pane's tabs. A requested 50/50 split
   can become 40/60 when the right pane needs more width. Row ratios remain
   unchanged; minimum heights must fit below the tab strip. Impossible layouts
@@ -48,6 +49,11 @@ empty. Click an empty pane to send newly opened windows there.
   Changing Spaces during an active divider drag cancels its stored geometry.
   Frames are restored when returning to that Space, without restoration writes
   on departure. The cancelled drag does not add an Undo entry.
+- Resize a selected window by its edge. BetterTile waits until you release the
+  mouse button. An edge shared with another pane moves that pane divider and
+  stops at each pane's minimum size. Any other change snaps back, including
+  every resize in One Pane. Hidden tabs and strips then follow, and Undo
+  restores the previous divider.
 - Use the pane's **…** menu for Change Layout, Undo, Repair Tabbed, and empty-pane
   removal. Right-click a tab for close, move, split, and float commands.
 - Use **Add Floating Window Here** in a pane menu to reattach a detached window.
@@ -86,6 +92,10 @@ system; the checks below validate real application and macOS behavior.
   their modes and assignments remain independent.
 - Resize toward each app's minimum size. Look for exposed inactive windows,
   flicker, delayed frame changes, or a divider continuing to move after release.
+- Resize a selected window by each edge in One Pane and Two Columns, including
+  into a neighbor at its minimum width. Confirm nothing moves before release,
+  then the window snaps back or the divider moves and stops at the minimum,
+  with hidden tabs and strips aligned and no Repair needed.
 - Sustain a fast divider drag for at least five seconds on both a 60 Hz and a
   high-refresh display when available. Confirm pointer input remains responsive,
   windows do not fall progressively behind, and release lands at the pointer's

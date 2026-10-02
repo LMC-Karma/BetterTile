@@ -1,6 +1,6 @@
 # Tabbed testing findings
 
-Last updated: 2026-09-28.
+Last updated: 2026-10-01.
 
 This is the status record for the experimental Tabbed implementation. Update
 the relevant row after each test or fix. An attempted action is not a passed
@@ -83,6 +83,8 @@ real applications on a real desktop.
 | T-25 | Row divider overshoot froze the layout instead of clamping | Fixed | Pending |
 | T-26 | Narrow tabs showed only an ellipsis; divider states were hard to distinguish | Revised; light and dark renders checked | Pending |
 | T-27 | Settings did not show preset geometry or explain how defaults apply | Revised; light and dark renders checked | Pending |
+| T-28 | A window-edge resize was ignored: hidden tabs showed and strips misaligned until Repair | Fixed | Pending |
+| T-29 | Tab strips followed a divider only at release | Fixed | Pending |
 
 The polish pass also fixes Bento clamping beside locked boundaries, divider
 Escape handling with either app focused, ignored linked-resize neighbors,
@@ -115,6 +117,18 @@ shows "Window refused this size", "Use Repair Tabbed", "Desktop changed", or
 If reading the focused window failed or returned no window, the pending focus
 refresh stayed set, and every later Tabbed placement read focus again. The
 flag now clears unless placement or a resize is still in progress.
+
+### T-28: Window-edge resizes were ignored
+
+BetterTile adopted a user's window-edge resize only in Bento. In Tabbed, a
+smaller selected window exposed the hidden tabs behind it, and a window
+dragged into a neighbor overlapped it without any minimum-size check. The tab
+strips stayed on the old pane geometry until Repair. Tabbed now waits for the
+mouse button to be released, then follows Bento: a shared pane edge moves that
+divider and stops at each pane's minimum; any other change snaps back. Bento's
+edge reader also ignored the tab strip above a lower pane's window, so stacked
+panes always snapped back; it now subtracts the content reserve. Core,
+fake-window, and model regressions reproduce each failure before the fix.
 
 ## Remaining live checks
 
@@ -157,5 +171,7 @@ the selected window; nothing is parked off-screen, minimized, or moved between
 Spaces. Stage Manager must be off.
 
 Pane assignments and the last 20 layout changes are runtime-only. Edge splits
-stop at 12 panes. Cross-display tab dragging is not implemented. Tab strips
-follow a divider at release, not during the drag.
+stop at 12 panes. Cross-display tab dragging is not implemented. Hidden tabs
+follow a divider at release, not during the drag. While a selected window is
+smaller than its pane, during a divider drag or before an edge resize is
+released, the hidden tabs behind it can show.

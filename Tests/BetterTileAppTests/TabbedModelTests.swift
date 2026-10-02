@@ -464,3 +464,102 @@ func tabbedLearnedWidthFailureDoesNotCommitOrRetryDegradedRestoration(failRestor
     #expect(bento.metrics.contentTopInset == 0)
     #expect(bento.metrics.vacantMinimumSize == BTSize(width: 0, height: 0))
 }
+
+@MainActor private func addTabbedWindows(_ count: Int, to system: FakeAppWindowSystem) {
+    for index in 1...count {
+        var window = system.windows[0]
+        window.id = WindowID(rawValue: "tab-\(index)")
+        window.processIdentifier += Int32(index)
+        system.windows.append(window)
+    }
+}
+
+@MainActor private func sendResize(_ id: WindowID, to frame: BTRect, in system: FakeAppWindowSystem) throws {
+    let index = try #require(system.windows.firstIndex { $0.id == id })
+    system.windows[index].frame = frame
+    system.eventHandler?(WindowSystemEvent(kind: .resized, windowID: id, processIdentifier: system.windows[index].processIdentifier))
+}
+
+@MainActor private func frame(_ id: WindowID, in system: FakeAppWindowSystem) -> BTRect? {
+    system.windows.first { $0.id == id }?.frame
+}
+
+@Test(arguments: [false, true]) @MainActor
+func tabbedOnePaneEdgeResizeSnapsBackAfterRelease(holdButton: Bool) async throws {
+    _ = NSApplication.shared
+    let system = FakeAppWindowSystem()
+    addTabbedWindows(1, to: system)
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    var pressed = false
+    model.primaryButtonIsPressed = { pressed }
+    model.setActiveMode(.tabbed)
+    try #require(await waitFor { model.activeTabbedState?.windowIDs.count == 2 })
+    let state = try #require(model.activeTabbedState)
+    let pane = try #require(state.frames(in: system.mainDisplay.visibleFrame)[state.panes[0].id])
+    let content = TabbedLayoutState.contentFrame(pane)
+    try #require(await waitFor { system.windows.allSatisfy { $0.frame == content } })
+    try await Task.sleep(for: .milliseconds(350))
+    let selected = try #require(state.panes[0].selected)
+    let hidden = try #require(state.panes[0].tabs.first { $0 != selected })
+    let shrunk = BTRect(x: content.minX, y: content.minY, width: content.size.width - 300, height: content.size.height)
+
+    pressed = holdButton
+    try sendResize(selected, to: shrunk, in: system)
+    if holdButton {
+        // The edge is still held: BetterTile must not fight the drag.
+        try await Task.sleep(for: .milliseconds(400))
+        #expect(frame(selected, in: system) == shrunk)
+        pressed = false
+    }
+    #expect(await waitFor(timeout: .seconds(2)) { frame(selected, in: system) == content })
+    #expect(frame(hidden, in: system) == content)
+    #expect(model.activeTabbedState?.panes == state.panes)
+    #expect(model.activeTabbedState?.frames(in: system.mainDisplay.visibleFrame) == state.frames(in: system.mainDisplay.visibleFrame))
+}
+
+@Test(arguments: [nil, 450.0] as [Double?]) @MainActor
+func tabbedSharedEdgeResizeMovesThePaneItsHiddenTabsAndItsNeighbor(neighborMinimum: Double?) async throws {
+    _ = NSApplication.shared
+    let system = FakeAppWindowSystem()
+    addTabbedWindows(2, to: system)
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    model.configuration.defaultTabbedPreset = .columns
+    model.setActiveMode(.tabbed)
+    try #require(await waitFor { model.activeTabbedState?.windowIDs.count == 3 })
+    let rightPane = try #require(model.activeTabbedState?.panes[1].id)
+    let neighbor = system.windows[2].id
+    model.performTabbed(.move(neighbor, pane: rightPane, index: nil))
+    try #require(await waitFor { model.activeTabbedState?.panes[1].selected == neighbor })
+    let bounds = system.mainDisplay.visibleFrame
+    let state = try #require(model.activeTabbedState)
+    let leftPane = state.panes[0]
+    let selected = try #require(leftPane.selected)
+    let hidden = try #require(leftPane.tabs.first { $0 != selected })
+    let left = TabbedLayoutState.contentFrame(try #require(state.frames(in: bounds)[leftPane.id]))
+    try #require(await waitFor { frame(selected, in: system) == left && frame(hidden, in: system) == left })
+    try await Task.sleep(for: .milliseconds(350))
+    if let neighborMinimum {
+        let index = try #require(system.windows.firstIndex { $0.id == neighbor })
+        system.windows[index].constraints.minimumSize.width = neighborMinimum
+    }
+
+    // The user drags the shared edge 150 points into the right pane.
+    try sendResize(selected, to: BTRect(x: left.minX, y: left.minY, width: left.size.width + 150, height: left.size.height), in: system)
+    let edge = neighborMinimum.map { bounds.maxX - $0 - TabbedLayoutState.gap } ?? left.maxX + 150
+    #expect(await waitFor(timeout: .seconds(2)) {
+        guard let current = frame(selected, in: system), let behind = frame(hidden, in: system),
+              let next = frame(neighbor, in: system) else { return false }
+        return abs(current.maxX - edge) < 1 && abs(behind.maxX - edge) < 1
+            && abs(next.minX - (edge + TabbedLayoutState.gap)) < 1
+    })
+    let adopted = try #require(model.activeTabbedState)
+    #expect(try abs(#require(adopted.frames(in: bounds)[leftPane.id]).maxX - edge) < 1)
+    #expect(adopted.panes.map(\.tabs) == state.panes.map(\.tabs))
+
+    model.performTabbed(.undo)
+    #expect(await waitFor(timeout: .seconds(2)) {
+        frame(selected, in: system)?.approximatelyEquals(left, tolerance: 1) == true
+    })
+}

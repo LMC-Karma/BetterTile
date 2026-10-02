@@ -211,3 +211,94 @@ private func snapshot(_ name: String, minimum: BTSize = BTSize(width: 120, heigh
     state.split(paneID: state.panes[0].id, moving: extra, edge: .right)
     #expect(state.panes.count == 14)
 }
+
+private let resizeBounds = BTRect(x: 0, y: 0, width: 1000, height: 800)
+
+/// Columns with two tabs on the left (`a` selected, `b` hidden) and `c` on the right.
+private func resizeColumns() -> TabbedLayoutState {
+    var state = TabbedLayoutState(preset: .columns)
+    state.reconcile(windowIDs: [id("a"), id("b")], removed: [], focused: nil)
+    state.activatePane(state.panes[1].id)
+    state.reconcile(windowIDs: [id("a"), id("b"), id("c")], removed: [], focused: nil)
+    state.select(id("a"))
+    return state
+}
+
+private func contentFrames(_ state: TabbedLayoutState) -> [WindowID: BTRect] {
+    Dictionary(uniqueKeysWithValues: state.layout.placements(in: resizeBounds).map { ($0.windowID, $0.frame) })
+}
+
+private func resizing(_ frame: BTRect, minX: Double = 0, minY: Double = 0, maxX: Double = 0, maxY: Double = 0) -> BTRect {
+    BTRect(x: frame.minX + minX, y: frame.minY + minY,
+           width: frame.size.width - minX + maxX, height: frame.size.height - minY + maxY)
+}
+
+@Test func tabbedSharedEdgeResizeMovesTheDividerAndKeepsTabGroups() throws {
+    let state = resizeColumns()
+    #expect(state.panes[0].tabs == [id("a"), id("b")])
+    #expect(state.panes[1].tabs == [id("c")])
+    var frames = contentFrames(state)
+    let left = try #require(frames[id("a")])
+    frames[id("a")] = resizing(left, maxX: 100)
+    let adopted = try #require(state.adoptingResize(
+        of: [id("a")], frames: frames, constraints: [:], in: resizeBounds, tolerance: 6
+    ))
+    let panes = adopted.frames(in: resizeBounds)
+    #expect(try abs(#require(panes[adopted.panes[0].id]).maxX - (left.maxX + 100)) < 0.5)
+    #expect(try abs(#require(panes[adopted.panes[1].id]).minX - (left.maxX + 100 + TabbedLayoutState.gap)) < 0.5)
+    #expect(adopted.panes.map(\.tabs) == state.panes.map(\.tabs))
+    #expect(adopted.panes.map(\.selected) == state.panes.map(\.selected))
+}
+
+@Test func tabbedSharedEdgeResizeStopsAtTheNeighborsMinimum() throws {
+    let state = resizeColumns()
+    var frames = contentFrames(state)
+    let left = try #require(frames[id("a")])
+    // The user drags 300 points into a neighbor that cannot go below 400 wide.
+    frames[id("a")] = resizing(left, maxX: 300)
+    let constraints = [id("c"): WindowConstraints(minimumSize: BTSize(width: 400, height: 80))]
+    let adopted = try #require(state.adoptingResize(
+        of: [id("a")], frames: frames, constraints: constraints, in: resizeBounds, tolerance: 6
+    ))
+    let right = try #require(adopted.frames(in: resizeBounds)[adopted.panes[1].id])
+    #expect(abs(right.size.width - 400) < 0.5)
+    #expect(abs(right.maxX - resizeBounds.maxX) < 0.5)
+}
+
+@Test func tabbedResizesThatAreNotASharedEdgeSnapBack() throws {
+    var single = TabbedLayoutState(preset: .single)
+    single.reconcile(windowIDs: [id("a"), id("b")], removed: [], focused: id("a"))
+    let alone = try #require(contentFrames(single)[id("a")])
+    // One Pane has no shared edge: shrinking from any side snaps back.
+    for shrunk in [resizing(alone, maxX: -200), resizing(alone, minX: 150), resizing(alone, maxY: -100)] {
+        #expect(single.adoptingResize(
+            of: [id("a")], frames: [id("a"): shrunk], constraints: [:], in: resizeBounds, tolerance: 6
+        ) == nil)
+    }
+
+    let columns = resizeColumns()
+    var frames = contentFrames(columns)
+    let left = try #require(frames[id("a")])
+    // An outer edge, a move, and macOS's Fill are not divider drags.
+    for changed in [resizing(left, minX: 120), resizing(left, minX: 80, maxX: 80), resizeBounds] {
+        frames[id("a")] = changed
+        #expect(columns.adoptingResize(
+            of: [id("a")], frames: frames, constraints: [:], in: resizeBounds, tolerance: 6
+        ) == nil)
+    }
+}
+
+@Test func tabbedLowerPaneTopEdgeResizeIsReadBelowTheTabStrip() throws {
+    var state = TabbedLayoutState(preset: .rows)
+    state.reconcile(windowIDs: [id("a")], removed: [], focused: nil)
+    state.activatePane(state.panes[1].id)
+    state.reconcile(windowIDs: [id("a"), id("b")], removed: [], focused: nil)
+    var frames = contentFrames(state)
+    let lower = try #require(frames[id("b")])
+    frames[id("b")] = resizing(lower, minY: 60)
+    let adopted = try #require(state.adoptingResize(
+        of: [id("b")], frames: frames, constraints: [:], in: resizeBounds, tolerance: 6
+    ))
+    let pane = try #require(adopted.frames(in: resizeBounds)[adopted.panes[1].id])
+    #expect(abs(TabbedLayoutState.contentFrame(pane).minY - (lower.minY + 60)) < 0.5)
+}
