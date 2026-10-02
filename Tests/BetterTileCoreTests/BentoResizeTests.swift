@@ -368,6 +368,8 @@ private func window(_ id: WindowID, x: Double, y: Double, width: Double, height:
 @Test func smallerAcceptedSizeCapsOnlyTheDisprovedLearnedMinimum() {
     let id = WindowID(rawValue: "content-changed")
     var learner = WindowMinimumSizeLearner(learnedSizes: [id: BTSize(width: 600, height: 450)])
+    let first = learner.observeAcceptedSize(windowID: id, size: BTSize(width: 400, height: 500))
+    #expect(!first)
     let capped = learner.observeAcceptedSize(windowID: id, size: BTSize(width: 400, height: 500))
     #expect(capped)
     #expect(learner.learnedSizes[id] == BTSize(width: 400, height: 450))
@@ -383,7 +385,60 @@ private func window(_ id: WindowID, x: Double, y: Double, width: Double, height:
 func invalidAcceptedSizesCannotChangeLearnedMinimums(size: BTSize) {
     let id = WindowID(rawValue: "invalid-size")
     var learner = WindowMinimumSizeLearner(learnedSizes: [id: BTSize(width: 600, height: 450)])
+    learner.observeAcceptedSize(windowID: id, size: BTSize(width: 400, height: 300))
     let changed = learner.observeAcceptedSize(windowID: id, size: size)
     #expect(!changed)
     #expect(learner.learnedSizes[id] == BTSize(width: 600, height: 450))
+    let restarted = learner.observeAcceptedSize(windowID: id, size: BTSize(width: 400, height: 300))
+    #expect(!restarted)
+}
+
+@Test func transientSmallerSnapshotDoesNotEraseLearnedMinimum() {
+    let id = WindowID(rawValue: "transient-frame")
+    let minimum = BTSize(width: 600, height: 450)
+    var learner = WindowMinimumSizeLearner(learnedSizes: [id: minimum])
+    let transient = learner.observeAcceptedSize(windowID: id, size: BTSize(width: 400, height: 300))
+    let restored = learner.observeAcceptedSize(windowID: id, size: minimum)
+    #expect(!transient)
+    #expect(!restored)
+    #expect(learner.learnedSizes[id] == minimum)
+}
+
+@Test func smallerAcceptedSizeRequiresStableWholeSize() {
+    let id = WindowID(rawValue: "changing-frame")
+    var learner = WindowMinimumSizeLearner(learnedSizes: [id: BTSize(width: 600, height: 450)])
+    learner.observeAcceptedSize(windowID: id, size: BTSize(width: 400, height: 300))
+    let changing = learner.observeAcceptedSize(windowID: id, size: BTSize(width: 400, height: 350))
+    #expect(!changing)
+    #expect(learner.learnedSizes[id] == BTSize(width: 600, height: 450))
+    let settled = learner.observeAcceptedSize(windowID: id, size: BTSize(width: 400.5, height: 350.5))
+    #expect(settled)
+    #expect(learner.learnedSizes[id] == BTSize(width: 400.5, height: 350.5))
+}
+
+@Test(arguments: [false, true])
+func removingLearnedMinimumsAlsoClearsSmallerSizeCandidates(all: Bool) {
+    let id = WindowID(rawValue: "removed-candidate")
+    var learner = WindowMinimumSizeLearner(learnedSizes: [id: BTSize(width: 600, height: 450)])
+    learner.observeAcceptedSize(windowID: id, size: BTSize(width: 400, height: 300))
+    if all { learner.removeAll() } else { learner.remove(id) }
+    learner.observe(windowID: id, requested: BTRect(x: 0, y: 0, width: 300, height: 250),
+                    baseline: BTRect(x: 0, y: 0, width: 800, height: 600),
+                    actual: BTRect(x: 0, y: 0, width: 600, height: 450))
+    let restarted = learner.observeAcceptedSize(windowID: id, size: BTSize(width: 400, height: 300))
+    #expect(!restarted)
+}
+
+@Test(arguments: [false, true])
+func newLearnedMinimumEvidenceClearsSmallerSizeCandidates(increased: Bool) {
+    let id = WindowID(rawValue: "renewed-candidate")
+    var learner = WindowMinimumSizeLearner(learnedSizes: [id: BTSize(width: 600, height: 450)])
+    learner.observeAcceptedSize(windowID: id, size: BTSize(width: 400, height: 300))
+    let minimum = increased ? BTSize(width: 800, height: 600) : BTSize(width: 600, height: 450)
+    learner.observe(windowID: id, requested: BTRect(x: 0, y: 0, width: 300, height: 250),
+                    baseline: BTRect(x: 0, y: 0, width: 1000, height: 800),
+                    actual: BTRect(origin: BTPoint(x: 0, y: 0), size: minimum))
+    let restarted = learner.observeAcceptedSize(windowID: id, size: BTSize(width: 400, height: 300))
+    #expect(!restarted)
+    #expect(learner.learnedSizes[id] == minimum)
 }
