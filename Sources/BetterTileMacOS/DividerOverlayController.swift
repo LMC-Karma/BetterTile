@@ -264,6 +264,8 @@ public final class DividerOverlayController {
         didSet { updateHover(at: NSEvent.mouseLocation) }
     }
     public var layoutChangedHandler: ((DisplayID, [WindowID: BTRect]) -> Void)?
+    /// Tabbed panels are layout chrome, not floating windows that hide a grip.
+    public var nonOccludingWindowNumbersProvider: (() -> Set<Int>)?
     public var bentoStateProvider: ((DisplayID) -> BentoLayoutState?)?
     public var bentoStateChangedHandler: ((DisplayID, BentoLayoutState, [WindowID: BTRect], [WindowID: BTRect]) -> Void)?
     /// Runs with the tree of each accepted Bento drag sample, and with the
@@ -980,11 +982,19 @@ public final class DividerOverlayController {
             return true
         }
         guard NSApp.isActive else { return false }
-        return NSApp.windows.contains { window in
-            if let handlePanel, window === handlePanel { return false }
-            return window.isVisible
-                && !window.ignoresMouseEvents
-                && window.frame.intersects(appKitFrame)
+        return Self.ownWindowCoversHandle(
+            appKitFrame, windows: NSApp.windows,
+            excluding: (nonOccludingWindowNumbersProvider?() ?? [])
+                .union(handlePanel.map { [$0.windowNumber] } ?? [])
+        )
+    }
+
+    static func ownWindowCoversHandle(
+        _ handleFrame: CGRect, windows: [NSWindow], excluding windowNumbers: Set<Int>
+    ) -> Bool {
+        windows.contains { window in
+            !windowNumbers.contains(window.windowNumber)
+                && window.isVisible && !window.ignoresMouseEvents && window.frame.intersects(handleFrame)
         }
     }
 }

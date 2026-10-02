@@ -818,8 +818,9 @@ enum DividerLimitCase: CaseIterable { case straight, junction, linked }
     #expect(cursor([.up, .left]) == .frameResize(position: .bottomRight, directions: .all))
 }
 
-@Test(arguments: [ResizeFeedbackMode.ghost, .live], [false, true]) @MainActor
-func bentoDividerReportsLiveTreesAndRestoresTheStartWithoutACommit(feedback: ResizeFeedbackMode, commit: Bool) throws {
+@Test(arguments: [ResizeFeedbackMode.ghost, .live], [(false, false), (false, true), (true, false), (true, true)]) @MainActor
+func bentoDividerReportsLiveTreesAndRestoresTheStartWithoutACommit(feedback: ResizeFeedbackMode, scenario: (commit: Bool, displaced: Bool)) throws {
+    let (commit, displaced) = scenario
     _ = NSApplication.shared
     let system = FakeWindowSystem()
     let bounds = BTRect(x: -10_000, y: -10_000, width: 800, height: 600)
@@ -832,6 +833,11 @@ func bentoDividerReportsLiveTreesAndRestoresTheStartWithoutACommit(feedback: Res
     )))
     system.windows = state.placements(in: bounds).map {
         WindowSnapshot(id: $0.windowID, processIdentifier: 1, frame: $0.frame, displayID: display)
+    }
+    if displaced {
+        // A native edge resize can leave the selected tab away from its pane
+        // edge. Pane-derived handles must still acquire a Bento transaction.
+        system.windows[0].frame.size.width -= 80
     }
     var configuration = BetterTileConfiguration()
     configuration.resizeFeedbackMode = feedback
@@ -874,4 +880,24 @@ func bentoDividerReportsLiveTreesAndRestoresTheStartWithoutACommit(feedback: Res
         #expect(committed == nil)
         #expect(reported.last?.tree == state)
     }
+}
+
+@MainActor
+@Test func tabbedChromeDoesNotOccludeDividerButSettingsDoes() {
+    let frame = CGRect(x: 490, y: 300, width: 20, height: 56)
+    let chrome = VisibleDividerTestWindow(contentRect: frame, styleMask: .borderless, backing: .buffered, defer: true)
+    let settings = VisibleDividerTestWindow(contentRect: frame, styleMask: .borderless, backing: .buffered, defer: true)
+    chrome.testNumber = 101
+    settings.testNumber = 102
+    #expect(!DividerOverlayController.ownWindowCoversHandle(frame, windows: [chrome], excluding: [chrome.windowNumber]))
+    #expect(DividerOverlayController.ownWindowCoversHandle(frame, windows: [chrome, settings], excluding: [chrome.windowNumber]))
+    settings.ignoresMouseEvents = true
+    #expect(!DividerOverlayController.ownWindowCoversHandle(frame, windows: [chrome, settings], excluding: [chrome.windowNumber]))
+}
+
+@MainActor
+private final class VisibleDividerTestWindow: NSWindow {
+    var testNumber = 0
+    override var windowNumber: Int { testNumber }
+    override var isVisible: Bool { true }
 }
