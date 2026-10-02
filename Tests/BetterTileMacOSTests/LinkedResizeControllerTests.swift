@@ -1,3 +1,4 @@
+import AppKit
 import Testing
 @testable import BetterTileCore
 @testable import BetterTileMacOS
@@ -456,4 +457,90 @@ import Testing
     controller.handleSharedGestureEvent(event(.leftMouseUp))
     #expect(forgets == 1)
     #expect(system.windows[1].frame.minX == 600)
+}
+
+@Test(arguments: ["stop", "restart", "configuration", "handoff"]) @MainActor
+func queuedLinkedResizePressCannotStartAfterMonitorRetirement(retirement: String) async throws {
+    let system = FakeWindowSystem()
+    var configuration = BetterTileConfiguration()
+    configuration.linkedResizeEnabled = true
+    let ticks = ResizeDisplayLink(automatic: false)
+    let controller = LinkedResizeController(coordinator: WindowCoordinator(system: system), configuration: configuration, displayTicks: ticks)
+    controller.isEnabledForDisplay = { _ in true }
+    var callback: ((NSEvent) -> Void)?
+    var gestureMonitors = 0
+    controller.addGlobalMonitor = { mask, handler in
+        if mask.contains(.leftMouseDown) { callback = handler }
+        else { gestureMonitors += 1 }
+        return NSObject()
+    }
+    controller.removeEventMonitor = { _ in }
+    controller.start()
+    defer { controller.stop() }
+    let event = try #require(NSEvent.mouseEvent(with: .leftMouseDown, location: .zero, modifierFlags: [], timestamp: 1,
+                                               windowNumber: 0, context: nil, eventNumber: 1, clickCount: 1, pressure: 1))
+    #expect(callback != nil)
+    callback?(event)
+    switch retirement {
+    case "configuration":
+        controller.configuration.linkedResizeEnabled = false
+        controller.configuration.linkedResizeEnabled = true
+    case "handoff":
+        controller.setUsesSharedGestureEvents(true)
+        controller.setUsesSharedGestureEvents(false)
+    default:
+        controller.stop()
+        if retirement == "restart" { controller.start() }
+    }
+    for _ in 0..<20 { await Task.yield() }
+    #expect(gestureMonitors == 0)
+    #expect(system.frameWriteCounts.isEmpty)
+    if retirement != "stop" {
+        #expect(callback != nil)
+        callback?(event)
+        for _ in 0..<20 { await Task.yield() }
+        #expect(gestureMonitors == 2)
+    }
+}
+
+@Test(arguments: [false, true]) @MainActor
+func degradedLinkedResizeRestoresPeersOrReportsTerminalFailure(recoveryFails: Bool) {
+    let system = FakeWindowSystem()
+    system.addSecondWindow()
+    system.windows[0].frame = BTRect(x: 0, y: 0, width: 500, height: 800)
+    system.windows[1].frame = BTRect(x: 500, y: 0, width: 500, height: 800)
+    let peer = system.windows[1]
+    let ticks = ResizeDisplayLink(automatic: false)
+    var configuration = BetterTileConfiguration()
+    configuration.linkedResizeEnabled = true
+    let controller = LinkedResizeController(coordinator: WindowCoordinator(system: system), configuration: configuration, displayTicks: ticks)
+    controller.addGlobalMonitor = { _, _ in NSObject() }
+    controller.removeEventMonitor = { _ in }
+    controller.isEnabledForDisplay = { _ in true }
+    controller.setUsesSharedGestureEvents(true)
+    var failures: [DisplayID] = []
+    controller.rollbackFailureHandler = { id, reason in
+        failures.append(id)
+        #expect(reason?.isEmpty == false)
+    }
+    func event(_ kind: GlobalGestureEventKind) -> GlobalGestureEvent {
+        GlobalGestureEvent(kind: kind, position: BTPoint(x: 500, y: 400), button: 0, modifiers: [], timestamp: 1)
+    }
+    controller.handleSharedGestureEvent(event(.leftMouseDown))
+    controller.handleSharedGestureEvent(event(.leftMouseDragged))
+    system.partiallyFailedFrameWriteNumbers[peer.id] = [1]
+    system.failedFrameWriteNumbers[peer.id] = recoveryFails ? [2, 3, 4] : [2]
+    system.windows[0].frame.size.width = 600
+    controller.handleSharedGestureEvent(event(.leftMouseDragged))
+    ticks.fire()
+    #expect(system.frameWriteCounts[peer.id] == (recoveryFails ? 4 : 3))
+    #expect((system.windows[1].frame == peer.frame) == !recoveryFails)
+    #expect(failures == (recoveryFails ? [peer.displayID] : []))
+    let writes = system.frameWriteCounts
+    system.windows[0].frame.size.width = 650
+    controller.handleSharedGestureEvent(event(.leftMouseDragged))
+    ticks.fire()
+    controller.handleSharedGestureEvent(event(.leftMouseUp))
+    #expect(system.frameWriteCounts == writes)
+    controller.stop()
 }

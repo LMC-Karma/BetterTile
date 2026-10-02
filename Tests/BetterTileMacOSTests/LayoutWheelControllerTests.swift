@@ -714,3 +714,41 @@ private struct Harness {
     #expect(updated.placement == placement)
     #expect(harness.box.endedCount == 0)
 }
+
+@Test(arguments: ["stop", "restart", "configuration", "suspension"]) @MainActor
+func queuedWheelModifiersCannotStartAfterMonitorRetirement(retirement: String) async throws {
+    var flags: ((NSEvent) -> Void)?
+    let controller = LayoutWheelController(
+        configuration: BetterTileConfiguration(), presenter: FakePresenter(), pointerProvider: { anchor },
+        addGlobalMonitor: { mask, handler in
+            if mask.contains(.flagsChanged) { flags = handler }
+            return NSObject()
+        }, addLocalMonitor: { _, _ in NSObject() }, removeMonitor: { _ in }
+    )
+    controller.start()
+    defer { controller.stop() }
+    let event = try #require(NSEvent.keyEvent(with: .flagsChanged, location: .zero, modifierFlags: [.control, .option, .shift], timestamp: 1,
+                                             windowNumber: 0, context: nil, characters: "", charactersIgnoringModifiers: "", isARepeat: false, keyCode: 0))
+    #expect(flags != nil)
+    flags?(event)
+    switch retirement {
+    case "configuration":
+        controller.configuration.layoutWheel.keyboardTriggerEnabled = false
+        controller.configuration.layoutWheel.keyboardTriggerEnabled = true
+    case "suspension":
+        controller.suspend()
+        controller.resume()
+    default:
+        controller.stop()
+        if retirement == "restart" { controller.start() }
+    }
+    for _ in 0..<20 { await Task.yield() }
+    #expect(!controller.isPendingActivation)
+    #expect(!controller.isOpen)
+    if retirement != "stop" {
+        #expect(flags != nil)
+        flags?(event)
+        for _ in 0..<20 { await Task.yield() }
+        #expect(controller.isPendingActivation)
+    }
+}

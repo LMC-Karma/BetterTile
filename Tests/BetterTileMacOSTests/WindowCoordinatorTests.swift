@@ -1074,3 +1074,89 @@ func multiWindowFrameWritesShareOneBatchIncludingRollback(fail: Bool) {
     #expect(system.intermediateFrameWriteCounts[id] == 1)
     #expect(system.frameWriteCounts[id] == 2)
 }
+
+@Test(arguments: [false, true]) @MainActor
+func restorePreviewPreservesHistoryUntilSuccessfulExecution(rollbackFails: Bool) throws {
+    let system = FakeWindowSystem()
+    let original = system.windows[0].frame
+    let id = system.windows[0].id
+    let coordinator = WindowCoordinator(system: system)
+    #expect(coordinator.performAction(.leftHalf))
+    let first = try #require(coordinator.planExact(.restore, for: id).readyPlan)
+    let repeated = try #require(coordinator.planExact(.restore, for: id).readyPlan)
+    #expect(first.targetFrame == original)
+    #expect(repeated.targetFrame == original)
+    if rollbackFails {
+        system.partiallyFailedFrameWriteNumbers[id] = [2]
+        system.failedFrameWriteNumbers[id] = [3]
+    } else {
+        system.failingWindowID = id
+    }
+    let failed = coordinator.perform(repeated)
+    #expect(!failed.isApplied)
+    if rollbackFails {
+        guard case .degraded = failed else { Issue.record("Expected failed restore rollback"); return }
+    }
+    system.failingWindowID = nil
+    system.failedFrameWriteNumbers.removeAll()
+    let retry = try #require(coordinator.planExact(.restore, for: id).readyPlan)
+    #expect(coordinator.perform(retry).isApplied)
+    #expect(system.windows[0].frame == original)
+    #expect(coordinator.planExact(.restore, for: id).readyPlan == nil)
+}
+
+@Test(arguments: [false, true], [false, true]) @MainActor
+func singleWindowPartialFailureRestoresBaselineAndPreservesHistory(actionPlan: Bool, rollbackFails: Bool) throws {
+    let system = FakeWindowSystem()
+    let original = system.windows[0].frame
+    let id = system.windows[0].id
+    let coordinator = WindowCoordinator(system: system)
+    let plan = try #require(coordinator.planExact(.leftHalf, for: id).readyPlan)
+    system.partiallyFailedFrameWriteNumbers[id] = [1]
+    if rollbackFails { system.failedFrameWriteNumbers[id] = [2] }
+    let result = actionPlan ? coordinator.perform(plan) : coordinator.perform(WindowPlacementPlan(plan))
+    if rollbackFails {
+        guard case .degraded = result else { Issue.record("Failed rollback must report degraded"); return }
+        #expect(system.windows[0].frame != original)
+    } else {
+        guard case .failed = result else { Issue.record("Restored partial failure must report failed"); return }
+        #expect(system.windows[0].frame == original)
+    }
+    #expect(coordinator.planExact(.restore, for: id).readyPlan == nil)
+}
+
+@Test @MainActor func degradedIntermediateRetryResendsEveryParticipantBeforeClearingFailure() throws {
+    let system = FakeWindowSystem()
+    system.addSecondWindow()
+    let coordinator = WindowCoordinator(system: system)
+    let ids = system.windows.map(\.id)
+    let baseline = system.windows.map { Placement(windowID: $0.id, frame: $0.frame) }
+    var transaction = try #require(coordinator.beginTransaction(windowIDs: Set(ids)).startedTransaction)
+    let target = baseline.map { Placement(windowID: $0.windowID, frame: $0.frame.offsetBy(dx: -20, dy: 0)) }
+    system.failingWindowID = ids[1]
+    system.failedFrameWriteNumbers[ids[0]] = [2]
+    guard case .degraded = coordinator.applyLive(transaction: &transaction, placements: target, validateParticipants: false) else {
+        Issue.record("Expected degraded first apply"); return
+    }
+    system.failingWindowID = nil
+    system.failedFrameWriteNumbers.removeAll()
+    #expect(coordinator.applyLive(transaction: &transaction, placements: baseline, validateParticipants: false).isApplied)
+    #expect(system.windows.map(\.frame) == baseline.map(\.frame))
+    #expect(!transaction.hasDegradedApply)
+}
+
+@Test @MainActor func staleRestorePlanCannotConsumeNewerHistory() throws {
+    let system = FakeWindowSystem()
+    let coordinator = WindowCoordinator(system: system)
+    let id = system.windows[0].id
+    #expect(coordinator.performAction(.leftHalf))
+    let stale = try #require(coordinator.planExact(.restore, for: id).readyPlan)
+    let beforeSecondAction = system.windows[0].frame
+    #expect(coordinator.performAction(.rightHalf))
+    let writes = system.frameWriteCounts
+    #expect(!coordinator.perform(stale).isApplied)
+    #expect(system.frameWriteCounts == writes)
+    let current = try #require(coordinator.planExact(.restore, for: id).readyPlan)
+    #expect(current.targetFrame == beforeSecondAction)
+    #expect(coordinator.perform(current).isApplied)
+}

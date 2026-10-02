@@ -28,6 +28,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
     private var nextLaunchGeneration: UInt64 = 0
     private var loggedBatchFallback = false
     private var observers: [pid_t: AXObserver] = [:]
+    private var observationCallbackContext: AccessibilityCallbackContext?
     private struct Registration: Hashable {
         var windowID: WindowID?
         var accessibilityHash: CFHashCode?
@@ -44,6 +45,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
     private var activationObserver: NSObjectProtocol?
     private var displayReconfigurationHandler: (@MainActor () -> Void)?
     private var isMonitoringDisplayReconfiguration = false
+    private var displayCallbackContext: AccessibilityCallbackContext?
 
     /// The process-wide default, set once on the system-wide element. Reads are
     /// the bulk of the traffic and a stalled application should be skipped
@@ -91,6 +93,13 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         }
     }
 
+    isolated deinit {
+        stopWindowObservation()
+        stopDisplayReconfigurationMonitoring()
+        dockFootprintMonitor.stop()
+        if let activationObserver { NSWorkspace.shared.notificationCenter.removeObserver(activationObserver) }
+    }
+
     public func startDockFootprintMonitoring(onChange: @escaping () -> Void) {
         dockFootprintMonitor.start(onChange: onChange)
     }
@@ -108,26 +117,30 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
     ) {
         displayReconfigurationHandler = onChange
         guard !isMonitoringDisplayReconfiguration else { return }
+        let context = AccessibilityCallbackContext(system: self)
         let result = CGDisplayRegisterReconfigurationCallback(
             betterTileDisplayReconfigurationCallback,
-            Unmanaged.passUnretained(self).toOpaque()
+            Unmanaged.passUnretained(context).toOpaque()
         )
         guard result == .success else {
             Self.log.notice("display callback unavailable; retaining AppKit screen notifications")
             return
         }
+        displayCallbackContext = context
         isMonitoringDisplayReconfiguration = true
     }
 
     public func stopDisplayReconfigurationMonitoring() {
-        guard isMonitoringDisplayReconfiguration else {
+        guard isMonitoringDisplayReconfiguration, let context = displayCallbackContext else {
             displayReconfigurationHandler = nil
             return
         }
         CGDisplayRemoveReconfigurationCallback(
             betterTileDisplayReconfigurationCallback,
-            Unmanaged.passUnretained(self).toOpaque()
+            Unmanaged.passUnretained(context).toOpaque()
         )
+        context.system = nil
+        displayCallbackContext = nil
         isMonitoringDisplayReconfiguration = false
         displayReconfigurationHandler = nil
     }
@@ -151,11 +164,13 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
     }
 
     public func stopWindowObservation() {
+        observationCallbackContext?.system = nil
         for observer in observers.values {
             CFRunLoopRemoveSource(CFRunLoopGetMain(), AXObserverGetRunLoopSource(observer), .commonModes)
         }
         observers.removeAll()
         registrations.removeAll()
+        observationCallbackContext = nil
     }
 
     public func requestAccessibilityPermission(prompt: Bool) -> Bool {
@@ -783,7 +798,9 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
             notification: notification
         )
         guard registrations[pid, default: []].insert(registration).inserted else { return }
-        let pointer = Unmanaged.passUnretained(self).toOpaque()
+        let context = observationCallbackContext ?? AccessibilityCallbackContext(system: self)
+        observationCallbackContext = context
+        let pointer = Unmanaged.passUnretained(context).toOpaque()
         let result = AXObserverAddNotification(observer, element, notification as CFString, pointer)
         if result != .success, result != .notificationAlreadyRegistered {
             registrations[pid]?.remove(registration)
@@ -1236,17 +1253,23 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
     }
 }
 
+/// The window system retains this context while native callbacks are installed.
+/// Queued delivery keeps a weak reference, never an unowned raw address.
+@MainActor
+private final class AccessibilityCallbackContext {
+    weak var system: AccessibilityWindowSystem?
+    init(system: AccessibilityWindowSystem) { self.system = system }
+}
+
 private func betterTileDisplayReconfigurationCallback(
     display: CGDirectDisplayID,
     flags: CGDisplayChangeSummaryFlags,
     userInfo: UnsafeMutableRawPointer?
 ) {
     guard let userInfo else { return }
-    let address = UInt(bitPattern: userInfo)
-    Task { @MainActor in
-        guard let pointer = UnsafeMutableRawPointer(bitPattern: address) else { return }
-        let system = Unmanaged<AccessibilityWindowSystem>.fromOpaque(pointer).takeUnretainedValue()
-        system.displayConfigurationChanged()
+    let context = Unmanaged<AccessibilityCallbackContext>.fromOpaque(userInfo).takeUnretainedValue()
+    Task { @MainActor [weak context] in
+        context?.system?.displayConfigurationChanged()
     }
 }
 
@@ -1272,11 +1295,9 @@ private func betterTileAXObserverCallback(
     default: return
     }
     let accessibilityHash = CFHash(element)
-    let address = UInt(bitPattern: refcon)
-    Task { @MainActor in
-        guard let pointer = UnsafeMutableRawPointer(bitPattern: address) else { return }
-        let system = Unmanaged<AccessibilityWindowSystem>.fromOpaque(pointer).takeUnretainedValue()
-        system.receiveAXEvent(
+    let context = Unmanaged<AccessibilityCallbackContext>.fromOpaque(refcon).takeUnretainedValue()
+    Task { @MainActor [weak context] in
+        context?.system?.receiveAXEvent(
             kind: kind,
             processIdentifier: pid,
             accessibilityHash: accessibilityHash

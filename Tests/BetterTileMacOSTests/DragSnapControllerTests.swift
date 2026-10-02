@@ -1,3 +1,4 @@
+import AppKit
 import Testing
 @testable import BetterTileCore
 @testable import BetterTileMacOS
@@ -494,4 +495,75 @@ import Testing
     #expect(!controller.hasPendingDragSample)
     controller.cancel()
     #expect(controller.pacingDisplayID == nil)
+}
+
+@Test(arguments: ["restart", "configuration", "replacement"]) @MainActor
+func queuedDragEscapeCannotCancelAReplacementGesture(retirement: String) async throws {
+    let system = FakeWindowSystem()
+    let controller = DragSnapController(coordinator: WindowCoordinator(system: system),
+                                        configuration: BetterTileConfiguration(), displayTicks: ResizeDisplayLink(automatic: false))
+    var escape: ((NSEvent) -> Void)?
+    controller.addGlobalMonitor = { mask, handler in
+        if mask.contains(.keyDown) { escape = handler }
+        return NSObject()
+    }
+    controller.removeEventMonitor = { _ in }
+    controller.setUsesSharedGestureEvents(true)
+    controller.start()
+    defer { controller.stop() }
+    let down = GlobalGestureEvent(kind: .leftMouseDown, position: BTPoint(x: 300, y: 220), button: 0, modifiers: [], timestamp: 1)
+    controller.handleSharedGestureEvent(down)
+    #expect(controller.isGestureActive)
+    let event = try #require(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 1,
+                                             windowNumber: 0, context: nil, characters: "", charactersIgnoringModifiers: "", isARepeat: false, keyCode: 53))
+    #expect(escape != nil)
+    escape?(event)
+    switch retirement {
+    case "configuration":
+        controller.configuration.snappingEnabled = false
+        controller.configuration.snappingEnabled = true
+    case "replacement": controller.cancel()
+    default:
+        controller.stop()
+        controller.start()
+    }
+    controller.handleSharedGestureEvent(down)
+    for _ in 0..<20 { await Task.yield() }
+    #expect(controller.isGestureActive)
+    #expect(escape != nil)
+    escape?(event)
+    for _ in 0..<20 { await Task.yield() }
+    #expect(!controller.isGestureActive)
+}
+
+@Test @MainActor func retiredFallbackReleaseCannotEndANewDragAfterEventTapHandoff() async throws {
+    let system = FakeWindowSystem()
+    let controller = DragSnapController(coordinator: WindowCoordinator(system: system),
+                                        configuration: BetterTileConfiguration(), displayTicks: ResizeDisplayLink(automatic: false))
+    var release: ((NSEvent) -> Void)?
+    controller.addGlobalMonitor = { mask, handler in
+        if mask.contains(.leftMouseUp) { release = handler }
+        return NSObject()
+    }
+    controller.removeEventMonitor = { _ in }
+    controller.start()
+    defer { controller.stop() }
+    let down = GlobalGestureEvent(kind: .leftMouseDown, position: BTPoint(x: 300, y: 220), button: 0, modifiers: [], timestamp: 1)
+    controller.setUsesSharedGestureEvents(true)
+    controller.handleSharedGestureEvent(down)
+    controller.setUsesSharedGestureEvents(false)
+    #expect(controller.isGestureActive)
+    let event = try #require(NSEvent.mouseEvent(with: .leftMouseUp, location: .zero, modifierFlags: [], timestamp: 2,
+                                               windowNumber: 0, context: nil, eventNumber: 2, clickCount: 1, pressure: 0))
+    #expect(release != nil)
+    release?(event)
+    controller.cancel()
+    controller.setUsesSharedGestureEvents(true)
+    controller.handleSharedGestureEvent(down)
+    controller.setUsesSharedGestureEvents(false)
+    for _ in 0..<20 { await Task.yield() }
+    #expect(controller.isGestureActive)
+    release?(event)
+    for _ in 0..<20 { await Task.yield() }
+    #expect(!controller.isGestureActive)
 }
