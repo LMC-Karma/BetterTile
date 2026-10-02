@@ -131,7 +131,8 @@ if [[ "$dry_run" == false ]]; then
         exit 1
     }
     git fetch origin main --tags
-    [[ "$(git rev-parse HEAD)" == "$(git rev-parse origin/main)" ]] || {
+    release_commit="$(git rev-parse HEAD)"
+    [[ "$release_commit" == "$(git rev-parse origin/main)" ]] || {
         echo "Local main must exactly match origin/main." >&2
         exit 1
     }
@@ -320,7 +321,7 @@ if [[ "$dry_run" == true ]]; then
 fi
 
 gh release create "$tag" "$work_dir/$dmg_name" "$work_dir/$checksum_name" "$appcast_path" \
-    --repo "$repo" --target main --latest \
+    --repo "$repo" --target "$release_commit" --latest \
     --title "BetterTile $version Beta" --notes-file "$notes_path"
 
 asset_url="$release_url_prefix$dmg_name"
