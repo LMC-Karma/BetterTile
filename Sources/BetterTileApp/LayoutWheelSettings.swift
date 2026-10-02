@@ -107,8 +107,8 @@ struct LayoutWheelSettings: View {
 
                 Toggle("Middle click", isOn: middleClickBinding)
                 Label(
-                    "When enabled, BetterTile reserves middle-click system-wide. Other apps "
-                        + "will not receive middle-click until you turn this off.",
+                    "When enabled, BetterTile reserves unmodified middle-click system-wide. Other apps "
+                        + "still receive modified middle-clicks. Turn this off to restore unmodified middle-click.",
                     systemImage: "exclamationmark.triangle.fill"
                 )
                 .font(.system(size: 12))
