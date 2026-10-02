@@ -964,7 +964,10 @@ func observedSmallerInactiveTabNoLongerForcesItsPreviousMinimum() async throws {
     try #require(await waitFor { system.windows[1].constraints.minimumSize.width >= 600 })
     let previous = try #require(model.activeTabbedState).frames(in: system.mainDisplay.visibleFrame)
     system.enforcedMinimumWidths[hidden.id] = 400
-    system.windows[1].frame.size.width = 400 // The app has actually accepted a smaller size.
+    system.windows[1].frame.size.width = 400
+    // Two matching observations confirm the app's smaller settled size.
+    _ = try system.visibleWindows()
+    _ = try system.visibleWindows()
     model.performTabbed(.select(hidden.id))
     try #require(await waitFor { model.activeTabbedState?.activeWindowID == hidden.id })
     #expect(model.activeTabbedState?.frames(in: system.mainDisplay.visibleFrame) == previous)
