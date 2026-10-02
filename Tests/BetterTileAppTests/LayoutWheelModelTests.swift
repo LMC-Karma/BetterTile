@@ -185,7 +185,10 @@ func makeModel(system: FakeAppWindowSystem) -> BetterTileModel {
     let store = ConfigurationStore(
         fileURL: URL(filePath: "/private/tmp/BetterTileAppTests-\(UUID().uuidString)/configuration.json")
     )
-    return BetterTileModel(store: store, system: system, startRuntime: false)
+    let model = BetterTileModel(store: store, system: system, startRuntime: false)
+    // Fake-window tests own button state; physical input must not defer work.
+    model.primaryButtonIsPressed = { false }
+    return model
 }
 
 @Test(arguments: [0, 4]) @MainActor
