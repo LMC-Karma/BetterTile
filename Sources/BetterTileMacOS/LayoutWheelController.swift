@@ -604,7 +604,7 @@ public final class LayoutWheelController {
             session.unavailableReasons[command] = reason
             phase = .open(session)
             presenter.hidePlacements()
-            Self.log.debug("layout wheel command unavailable: \(reason, privacy: .public)")
+            Self.log.debug("layout wheel command unavailable")
         case nil:
             presenter.hidePlacements()
         }
