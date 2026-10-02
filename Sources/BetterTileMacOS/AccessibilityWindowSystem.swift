@@ -1295,6 +1295,18 @@ public enum OnscreenWindowMatcher {
 }
 
 extension AccessibilityWindowSystem: TabbedWindowSystem {
+    public func windowNumbers(for windows: [WindowSnapshot]) -> [WindowID: Int] {
+        let exactIDs = Dictionary(uniqueKeysWithValues: windows.compactMap { window in
+            identities.exactWindowID(for: window.id).map { (window.id, $0) }
+        })
+        guard let index = targetedWindowServerIndex(ids: Set(exactIDs.values)) else { return [:] }
+        return windows.reduce(into: [:]) { result, window in
+            guard window.isEligible, let number = exactIDs[window.id], number != 0,
+                  index.contains(window, exactWindowID: number) else { return }
+            result[window.id] = Int(number)
+        }
+    }
+
     public func raiseWindow(_ id: WindowID, activate: Bool) throws {
         try ensurePermission()
         guard let element = elements[id] ?? refreshElement(for: id) else { throw WindowSystemError.windowNotFound(id) }

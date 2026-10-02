@@ -79,6 +79,7 @@ final class BetterTileModel {
     private let presentsTabbedChrome: Bool
     private var tabbedFocusTask: Task<Void, Never>?
     private(set) var tabbedNeedsFocusRefresh = false
+    private var tabbedNeedsApplicationOrderRefresh = false
     private var tabbedFocusSuppressedUntil = Date.distantPast
     /// Tabbed reads a window-edge resize only after the user lets go, so it
     /// never fights the drag. Tests replace this.
@@ -120,10 +121,11 @@ final class BetterTileModel {
     init(
         store: ConfigurationStore = .defaultStore(),
         system suppliedSystem: (any BetterTileWindowSystem)? = nil,
-        startRuntime: Bool = true
+        startRuntime: Bool = true,
+        presentsTabbedChrome: Bool? = nil
     ) {
         self.store = store
-        presentsTabbedChrome = startRuntime
+        self.presentsTabbedChrome = presentsTabbedChrome ?? startRuntime
         let loaded = (try? store.load()) ?? BetterTileConfiguration()
         let windowSystem: any BetterTileWindowSystem = suppliedSystem ?? AccessibilityWindowSystem()
         configuration = loaded
@@ -1605,8 +1607,7 @@ final class BetterTileModel {
         ) { [weak self] _ in
             Task { @MainActor in
                 guard let self, !self.isShutDown else { return }
-                self.layoutWheel.handleApplicationDeactivated()
-                self.refreshFocusedDisplayWithoutLayout()
+                self.handleApplicationActivation()
             }
         })
         let timer = Timer(timeInterval: 10, repeats: true) { [weak self] _ in
@@ -1715,6 +1716,12 @@ final class BetterTileModel {
         nativeFullscreenDisplayIDs = Set(observation.currentSpaceByDisplay.compactMap {
             observation.fullscreenSpaceIDs.contains($0.value) ? $0.key : nil
         })
+    }
+
+    func handleApplicationActivation() {
+        layoutWheel.handleApplicationDeactivated()
+        refreshFocusedDisplayWithoutLayout()
+        handleTabbedFocus(repairApplicationOrdering: true)
     }
 
     private func refreshFocusedDisplayWithoutLayout() {
@@ -2949,7 +2956,10 @@ extension BetterTileModel {
                         focused: wasUninitialized ? focused : nil)
         session.tabbedState = state
         session.windowIDs = state.windowIDs
-        let changed = wasUninitialized || before != state || !removed.isEmpty || session.lastWorkArea != display.visibleFrame
+        // Removals include windows on other displays. Reconciliation above
+        // already records actual membership changes; unrelated IDs must not
+        // trigger placement and a queued sweep on each display forever.
+        let changed = wasUninitialized || before != state || session.lastWorkArea != display.visibleFrame
         if (changed || force), !session.automaticWritesSuspended {
             applyTabbedState(state, session: session, display: display, windows: windows,
                              focus: wasUninitialized || before.activeWindowID != state.activeWindowID ? state.activeWindowID : nil)
@@ -2972,16 +2982,21 @@ extension BetterTileModel {
         let obscuring = focused.flatMap { window in
             window.displayID == display.id && !state.windowIDs.contains(window.id) ? window.frame : nil
         }
+        let selected = Set(state.selectedWindowIDs)
+        let windowNumbers = (system as? any TabbedWindowSystem)?.windowNumbers(
+            for: windows.filter { selected.contains($0.id) }
+        ) ?? [:]
         overlay.refresh(state: state, bounds: display.visibleFrame, windows: windows,
                         obscuringFrames: obscuring.map { [$0] } ?? [],
-                        canUndo: !(tabbedUndo[session.id]?.isEmpty ?? true))
+                        canUndo: !(tabbedUndo[session.id]?.isEmpty ?? true),
+                        curtainWindowNumbers: windowNumbers)
         tabbedOverlays[display.id] = overlay
     }
 
     private func applyTabbedState(
         _ state: TabbedLayoutState, session original: LayoutSession, display: DisplaySnapshot,
         windows: [WindowSnapshot], focus: WindowID?, rememberUndo: Bool = false, consumeUndo: Bool = false,
-        selectionOnly: Bool = false
+        selectionOnly: Bool = false, orderingProcessIdentifier: Int32? = nil
     ) {
         guard tabbedTasks[display.id] == nil else {
             tabbedNeedsReapply.insert(display.id)
@@ -2990,6 +3005,9 @@ extension BetterTileModel {
         let previous = sessionStore.session(for: display.id)?.tabbedState
         func prepare(_ windows: [WindowSnapshot]) throws -> (state: TabbedLayoutState, placements: [Placement]) {
             if selectionOnly {
+                // Activation can raise hidden tabs on another display. Restore
+                // ordering there without moving a window or taking its focus.
+                if focus == nil, orderingProcessIdentifier != nil { return (state, []) }
                 guard let focus, windows.contains(where: { $0.id == focus && $0.isEligible }),
                       let pane = state.panes.first(where: { $0.tabs.contains(focus) }),
                       let frame = state.frames(in: display.visibleFrame)[pane.id] else {
@@ -3029,7 +3047,7 @@ extension BetterTileModel {
                     ? Set(windows.filter(\.isEligible).map(\.id))
                     : Set(proposal.placements.map(\.windowID))
                 var selected = proposal.state.selectedWindowIDs.filter(eligibleIDs.contains)
-                if selectionOnly, let process = windows.first(where: { $0.id == focus })?.processIdentifier {
+                if selectionOnly, let process = orderingProcessIdentifier ?? windows.first(where: { $0.id == focus })?.processIdentifier {
                     let applicationWindows = Set(windows.filter { $0.processIdentifier == process }.map(\.id))
                     // Activating an app can expose its inactive tabs in other
                     // panes. Restore only those panes' selected windows.
@@ -3132,6 +3150,7 @@ extension BetterTileModel {
         case let .activate(id):
             tabbedFocusTask?.cancel()
             tabbedNeedsFocusRefresh = false
+            tabbedNeedsApplicationOrderRefresh = false
             state.activatePane(id)
             session.tabbedState = state
             _ = sessionStore.commit(session, replacing: session.revision)
@@ -3213,7 +3232,8 @@ extension BetterTileModel {
         refreshTabbedAfterBentoChange(displayID: display.id, undoBaseline: state)
     }
 
-    /// Tab strips follow a divider during its drag. Windows follow at release.
+    /// Tab strips and curtains follow a divider during its drag. Hidden tabs
+    /// follow at release, behind the curtain.
     private func followTabbedDividerDrag(displayID: DisplayID, layout: BentoLayoutState, bounds: BTRect) {
         guard var session = sessionStore.session(for: displayID), session.mode == .tabbed,
               let overlay = tabbedOverlays[displayID] else { return }
@@ -3267,9 +3287,10 @@ extension BetterTileModel {
         sessionStore.sessions.values.contains { $0.mode == .tabbed && $0.tabbedState?.windowIDs.contains(id) == true }
     }
 
-    private func handleTabbedFocus() {
+    private func handleTabbedFocus(repairApplicationOrdering: Bool = false) {
         guard !isStabilizingSpace, sessionStore.sessions.values.contains(where: { $0.mode == .tabbed }) else { return }
         tabbedNeedsFocusRefresh = true
+        tabbedNeedsApplicationOrderRefresh = tabbedNeedsApplicationOrderRefresh || repairApplicationOrdering
         tabbedFocusTask?.cancel()
         let delay = max(0.08, tabbedFocusSuppressedUntil.timeIntervalSinceNow)
         tabbedFocusTask = Task { @MainActor [weak self] in
@@ -3279,19 +3300,43 @@ extension BetterTileModel {
             // placement, so only busy displays keep the refresh pending.
             guard let focused = (try? self.system.focusedWindow()) ?? nil else {
                 self.tabbedNeedsFocusRefresh = false
+                self.tabbedNeedsApplicationOrderRefresh = false
                 return
             }
             guard self.tabbedTasks[focused.displayID] == nil else { return }
             self.tabbedNeedsFocusRefresh = false
+            let repairApplicationOrdering = self.tabbedNeedsApplicationOrderRefresh
+            self.tabbedNeedsApplicationOrderRefresh = false
+            if repairApplicationOrdering { self.restoreTabbedApplicationOrdering(onOtherDisplaysThan: focused) }
             guard let session = self.sessionStore.session(for: focused.displayID), session.mode == .tabbed,
                   !session.automaticWritesSuspended,
                   let state = session.tabbedState else { return }
-            if state.windowIDs.contains(focused.id), state.activeWindowID != focused.id {
+            if state.windowIDs.contains(focused.id), state.activeWindowID != focused.id || repairApplicationOrdering {
                 self.handleTabbed(.select(focused.id), on: focused.displayID)
             } else if let display = self.system.displays().first(where: { $0.id == focused.displayID }),
                       let windows = try? self.system.visibleWindows() {
                 self.showTabbed(session: session, display: display, windows: windows)
             }
+        }
+    }
+
+    private func restoreTabbedApplicationOrdering(onOtherDisplaysThan focused: WindowSnapshot) {
+        guard let allWindows = try? system.visibleWindows() else { return }
+        let displays = system.displays()
+        for session in sessionStore.sessions.values where session.mode == .tabbed && session.displayID != focused.displayID {
+            guard !session.automaticWritesSuspended, !nativeFullscreenDisplayIDs.contains(session.displayID),
+                  let state = session.tabbedState,
+                  let display = displays.first(where: { $0.id == session.displayID }) else { continue }
+            let windows = bentoEligible(allWindows.filter { $0.displayID == display.id && $0.isEligible && !$0.isFloating })
+            let applicationIDs = Set(windows.filter { $0.processIdentifier == focused.processIdentifier }.map(\.id))
+            guard !state.windowIDs.isDisjoint(with: applicationIDs) else { continue }
+            guard tabbedTasks[display.id] == nil else {
+                tabbedNeedsApplicationOrderRefresh = true
+                tabbedNeedsFocusRefresh = true
+                continue
+            }
+            applyTabbedState(state, session: session, display: display, windows: windows, focus: nil,
+                             selectionOnly: true, orderingProcessIdentifier: focused.processIdentifier)
         }
     }
 

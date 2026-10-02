@@ -10,9 +10,9 @@ public enum TabbedUIIntent {
     case adjustDivider(UUID, by: Double)
 }
 
-/// AppKit chrome only: tab strips and empty-pane targets. It knows pane values
-/// and emits intents; it never writes Accessibility attributes or owns layout
-/// sessions. Pane dividers belong to Bento's divider overlay.
+/// AppKit chrome only: tab strips, empty-pane targets, and pane curtains.
+/// It knows pane values and emits intents; it never writes Accessibility
+/// attributes or owns layout sessions. Pane dividers belong to Bento's overlay.
 @MainActor
 public final class TabbedOverlayController {
     public var onIntent: ((TabbedUIIntent) -> Void)?
@@ -23,6 +23,7 @@ public final class TabbedOverlayController {
     /// Includes failed lookups as nil so they are not repeated on refresh.
     private var applicationIcons: [String: NSImage?] = [:]
     private var panes: [UUID: NSPanel] = [:]
+    private var curtains: [UUID: NSPanel] = [:]
     /// Accessibility-only divider controls. Pointer resizing uses Bento's
     /// divider overlay, so these panels ignore the mouse.
     private var dividerControls: [UUID: NSPanel] = [:]
@@ -33,6 +34,7 @@ public final class TabbedOverlayController {
     private let addGlobalKeyMonitor: (@escaping @MainActor (UInt16) -> Void) -> Any?
     private let addLocalKeyMonitor: (@escaping @MainActor (UInt16) -> Bool) -> Any?
     private let removeMonitor: (Any) -> Void
+    private let orderCurtain: (NSPanel, Int) -> Void
     private var draggedWindow: WindowID?
     private var dropIntent: TabbedUIIntent?
     private var cancelled = false
@@ -61,14 +63,16 @@ public final class TabbedOverlayController {
                 return consumed ? nil : event
             }
         },
-        removeMonitor: @escaping (Any) -> Void = { NSEvent.removeMonitor($0) }
+        removeMonitor: @escaping (Any) -> Void = { NSEvent.removeMonitor($0) },
+        orderCurtain: @escaping (NSPanel, Int) -> Void = { $0.order(.below, relativeTo: $1) }
     ) {
         self.addGlobalKeyMonitor = addGlobalKeyMonitor
         self.addLocalKeyMonitor = addLocalKeyMonitor
         self.removeMonitor = removeMonitor
+        self.orderCurtain = orderCurtain
     }
 
-    public func refresh(state: TabbedLayoutState, bounds: BTRect, windows: [WindowSnapshot], obscuringFrames: [BTRect] = [], canUndo: Bool = false) {
+    public func refresh(state: TabbedLayoutState, bounds: BTRect, windows: [WindowSnapshot], obscuringFrames: [BTRect] = [], canUndo: Bool = false, curtainWindowNumbers: [WindowID: Int] = [:]) {
         self.state = state
         self.bounds = bounds
         self.canUndo = canUndo
@@ -108,12 +112,39 @@ public final class TabbedOverlayController {
             else { panel.orderFrontRegardless() }
             panes[pane.id] = panel
         }
+        refreshCurtains(windowNumbers: curtainWindowNumbers)
         refreshDividerControls()
     }
 
     public func hide() {
         cancelInteraction()
-        for panel in Array(panes.values) + Array(dividerControls.values) { panel.orderOut(nil) }
+        for panel in Array(panes.values) + Array(dividerControls.values) + Array(curtains.values) { panel.orderOut(nil) }
+        curtains.removeAll()
+    }
+
+    private func refreshCurtains(windowNumbers: [WindowID: Int]) {
+        let frames = state.frames(in: bounds)
+        var covered: Set<UUID> = []
+        for pane in state.panes {
+            guard let selected = pane.selected, let number = windowNumbers[selected], number > 0,
+                  let frame = frames[pane.id] else { continue }
+            covered.insert(pane.id)
+            let panel = curtains[pane.id] ?? makePanel()
+            panel.level = .normal
+            panel.ignoresMouseEvents = true
+            panel.isExcludedFromWindowsMenu = true
+            panel.setAccessibilityElement(false)
+            panel.animationBehavior = .none
+            let view = panel.contentView as? TabbedCurtainView ?? TabbedCurtainView()
+            view.refreshAppearance()
+            panel.contentView = view
+            panel.setFrame(appKit(TabbedLayoutState.contentFrame(frame)), display: false)
+            // Never order a curtain to the front. A missing exact identity
+            // leaves ordinary stacking in place for the Debug experiment.
+            orderCurtain(panel, number)
+            curtains[pane.id] = panel
+        }
+        for id in curtains.keys.filter({ !covered.contains($0) }) { curtains.removeValue(forKey: id)?.orderOut(nil) }
     }
 
     private func refreshDividerControls() {
@@ -157,6 +188,9 @@ public final class TabbedOverlayController {
             view.updateAccessibility()
             view.updateToolTips()
             view.needsDisplay = true
+            if let curtain = curtains[pane.id] {
+                curtain.setFrame(appKit(TabbedLayoutState.contentFrame(frame)), display: false)
+            }
         }
         refreshDividerControls()
     }
@@ -376,6 +410,52 @@ public final class TabbedOverlayController {
             guard keyCode == 53 else { return false }
             self?.cancelInteraction()
             return true
+        }
+    }
+}
+
+/// A frosted plate covers the glass so a hidden tab cannot read clearly
+/// through it. The curtain has no input or accessibility controls.
+@MainActor final class TabbedCurtainView: NSView {
+    private let glass = NSGlassEffectView()
+    private let frost = NSView()
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        glass.style = .regular
+        glass.cornerRadius = 0
+        frost.wantsLayer = true
+        for view in [glass, frost] as [NSView] {
+            view.frame = bounds
+            view.autoresizingMask = [.width, .height]
+            view.setAccessibilityElement(false)
+            addSubview(view)
+        }
+        setAccessibilityElement(false)
+        refreshAppearance()
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self, selector: #selector(refreshAppearance),
+            name: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification, object: nil
+        )
+    }
+
+    required init?(coder: NSCoder) { nil }
+
+    override func viewDidChangeEffectiveAppearance() { refreshAppearance() }
+
+    var displayOptions: () -> (reduceTransparency: Bool, increaseContrast: Bool) = {
+        let workspace = NSWorkspace.shared
+        return (workspace.accessibilityDisplayShouldReduceTransparency,
+                workspace.accessibilityDisplayShouldIncreaseContrast)
+    }
+    var showsGlass: Bool { !glass.isHidden }
+
+    @objc func refreshAppearance() {
+        let options = displayOptions()
+        let solid = options.reduceTransparency || options.increaseContrast
+        glass.isHidden = solid
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            frost.layer?.backgroundColor = NSColor.windowBackgroundColor.withAlphaComponent(solid ? 1 : 0.96).cgColor
         }
     }
 }

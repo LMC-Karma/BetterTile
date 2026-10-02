@@ -5,6 +5,105 @@ import Testing
 @testable import BetterTileApp
 
 @Test(arguments: [false, true]) @MainActor
+func activatingAppRestoresHiddenTabsOnOtherTabbedDisplays(focusedDisplayTabbed: Bool) async throws {
+    _ = NSApplication.shared
+    let system = FakeAppWindowSystem()
+    addTabbedWindows(2, to: system)
+    let other = DisplayID(rawValue: "other")
+    system.availableDisplays.append(DisplaySnapshot(id: other,
+        frame: BTRect(x: 1000, y: 0, width: 1000, height: 800),
+        visibleFrame: BTRect(x: 1000, y: 0, width: 1000, height: 800)))
+    for index in 1...2 { system.windows[index].displayID = other }
+    system.windows[1].processIdentifier = system.windows[0].processIdentifier
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    if focusedDisplayTabbed {
+        model.setActiveMode(.tabbed)
+        try #require(await waitFor { model.activeTabbedState?.windowIDs == [system.windows[0].id] })
+    }
+    system.focusedID = system.windows[2].id
+    model.setActiveMode(.tabbed)
+    try #require(await waitFor { model.activeTabbedState?.windowIDs.count == 2 })
+    try #require(model.activeTabbedState?.activeWindowID == system.windows[2].id)
+    try await Task.sleep(for: .milliseconds(350)) // Let both entry placements settle.
+    let frames = system.windows.map(\.frame)
+    let writes = system.frameWriteCounts
+    let raises = system.raiseRequests.count
+
+    try await Task.sleep(for: .milliseconds(100))
+    #expect(system.raiseRequests.count == raises) // An unchanged desktop settles once.
+
+    system.focusedID = system.windows[0].id
+    model.handleApplicationActivation()
+    #expect(await waitFor(timeout: .seconds(1)) {
+        system.raiseRequests.dropFirst(raises).contains { $0.0 == system.windows[2].id && !$0.1 }
+    })
+    #expect(system.focusedID == system.windows[0].id)
+    #expect(system.windows.map(\.frame) == frames)
+    #expect(system.frameWriteCounts == writes)
+}
+
+@Test @MainActor func tabbedCurtainsResolveOnlySelectedWindowsAfterPlacementAndFocus() async throws {
+    _ = NSApplication.shared
+    let system = FakeAppWindowSystem()
+    addTabbedWindows(1, to: system)
+    // Keep the test panels off-screen; no desktop capture or live AX.
+    system.availableDisplays[0].frame.origin.x = 12000
+    system.availableDisplays[0].visibleFrame.origin.x = 12000
+    for index in system.windows.indices { system.windows[index].frame.origin.x += 12000 }
+    let store = ConfigurationStore(fileURL: URL(filePath: "/private/tmp/BetterTileAppTests-\(UUID().uuidString)/configuration.json"))
+    let model = BetterTileModel(store: store, system: system, startRuntime: false, presentsTabbedChrome: true)
+    defer { model.shutdown() }
+    model.setActiveMode(.tabbed)
+    try #require(await waitFor { model.activeTabbedState?.windowIDs.count == 2 })
+    #expect(system.windowNumberRequests.last == [system.windows[0].id])
+    let hidden = system.windows[1].id
+    model.performTabbed(.select(hidden))
+    try #require(await waitFor { model.activeTabbedState?.activeWindowID == hidden })
+    #expect(system.windowNumberRequests.last == [hidden])
+    let requests = system.windowNumberRequests.count
+    model.handleApplicationActivation()
+    #expect(await waitFor(timeout: .seconds(1)) { system.windowNumberRequests.count > requests })
+    #expect(system.windowNumberRequests.last == [hidden])
+    #expect(model.statusMessage == nil) // Missing IDs do not reject the layout.
+}
+
+@Test @MainActor func activatingSelectedTabbedAppRestoresOtherPanesWithoutMovingWindows() async throws {
+    _ = NSApplication.shared
+    let system = FakeAppWindowSystem()
+    addTabbedWindows(3, to: system)
+    system.windows[2].processIdentifier = system.windows[0].processIdentifier
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    model.configuration.defaultTabbedPreset = .columns
+    model.setActiveMode(.tabbed)
+    try #require(await waitFor { model.activeTabbedState?.windowIDs.count == 4 })
+    let right = try #require(model.activeTabbedState?.panes[1].id)
+    for id in [system.windows[2].id, system.windows[3].id] {
+        model.performTabbed(.move(id, pane: right, index: nil))
+        try #require(await waitFor { model.activeTabbedState?.panes[1].selected == id })
+    }
+    let selected = system.windows[0].id
+    model.performTabbed(.select(selected))
+    try #require(await waitFor { model.activeTabbedState?.activeWindowID == selected })
+    let frames = system.windows.map(\.frame)
+    let writes = system.frameWriteCounts
+    let raises = system.raiseRequests.count
+
+    model.handleApplicationActivation()
+    // An AX focus event following activation must not discard the pending
+    // order repair just because the selected tab did not change.
+    system.eventHandler?(WindowSystemEvent(kind: .focused, windowID: selected,
+                                          processIdentifier: system.windows[0].processIdentifier))
+    #expect(await waitFor(timeout: .seconds(1)) {
+        system.raiseRequests.dropFirst(raises).contains { $0.0 == system.windows[3].id }
+    })
+    #expect(system.windows.map(\.frame) == frames)
+    #expect(system.frameWriteCounts == writes)
+    #expect(model.activeTabbedState?.activeWindowID == selected)
+}
+
+@Test(arguments: [false, true]) @MainActor
 func tabSelectionDoesNotRearrangeOrRefitOtherWindows(sharedApplication: Bool) async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()

@@ -111,7 +111,9 @@ each of its windows. No suspension is held across an event-loop turn.
 Tabbed selection preserves pane geometry and other windows' frames. It swaps
 which window the pane's Bento leaf holds and fits only that window; it does not
 rerun the minimum-size solver. Activation restores ordering in other panes only
-when they contain a window from the activated application.
+when they contain a window from the activated application, including on other
+Tabbed displays and when its selected tab did not change. This changes ordering
+only; other displays keep their frames and keyboard focus.
 
 ## Bento
 
@@ -147,11 +149,24 @@ change a Bento operation made to the tree; writing it also writes the tree.
   (`WindowCoordinator.applyTabbed(required:)`): a hidden tab that refuses the
   size never fails the layout. Only hidden tabs whose frame changes are
   written, in the same frame-write batch, and they return if the layout fails.
+- In the Debug experiment, each non-empty pane has a pane curtain covering its
+  content frame. `TabbedOverlayController` orders this normal-level,
+  nonactivating panel directly below the selected window with public
+  `NSWindow.order(_:relativeTo:)`. `AccessibilityWindowSystem.windowNumbers`
+  reuses the approved exact identity and validates its PID, normal level, and
+  on-screen record. A missing or invalid identity hides that pane's curtain;
+  it never guesses from a frame or parks a window. A frosted plate over Liquid
+  Glass hides underlying detail, with a solid surface for Reduce Transparency
+  or Increase Contrast. Curtains ignore input and accessibility navigation.
+  They reorder after placement and focus or application activation. They hide
+  with the overlay on mode exit, Space changes, fullscreen, display removal,
+  and shutdown. Cross-application ordering still needs live validation.
 - Bento owns every layout interaction in Tabbed: divider drags (including the
   minimum-size state), window drags, and minimum-size solving. After a Bento
   commit, Tabbed re-applies its state so hidden tabs follow their pane and the
-  strips move. During a divider drag, the strips follow each accepted sample;
-  hidden tabs follow at release. A window drag first tears the tab out of its
+  strips move. During a divider drag, the strips and curtains follow each
+  accepted sample without repeating tab ordering; hidden tabs follow at
+  release. A window drag first tears the tab out of its
   group when the group has other tabs; a center drop adds the window to that
   pane as a tab, and a torn tab dropped nowhere returns to its group.
 - A user's edge resize of a selected window follows Bento's rule
