@@ -199,7 +199,9 @@ change a Bento operation made to the tree; writing it also writes the tree.
   macOS destination, puts the windows back. Hidden tabs and strips then follow.
 - Tabbed's pointer dividers use pane boundaries even when an application has
   displaced its selected window. Inactive tabs and BetterTile panels do not
-  suppress the handle; overlapping floating windows can. Bento's divider
+  suppress the handle. Verified window order determines which floating
+  windows are in front and can suppress it; without that order, the
+  frontmost application's floating windows provide the fallback. Bento's divider
   handle appears only on hover, so the Tabbed overlay adds a
   VoiceOver slider over each divider. The slider ignores the mouse; increment
   and decrement move the Bento divider by five percent of the area it splits.

@@ -275,7 +275,7 @@ public final class DividerOverlayController {
     public var rollbackFailureHandler: ((DisplayID, String?) -> Void)?
     public var gestureEndedHandler: (() -> Void)?
     /// Runs before the gesture reads its windows, so it sees fresh minimums.
-    public var gestureWillBeginHandler: (() -> Void)?
+    public var gestureWillBeginHandler: ((DisplayID) -> Void)?
     public private(set) var isDragging = false
     var dragLimit: DragLimit { handlePanel?.limit ?? DragLimit() }
     var limitedGhostWindowIDs: Set<WindowID> { ghosts.limitedWindowIDs }
@@ -458,7 +458,7 @@ public final class DividerOverlayController {
     }
 
     func beginGesture(interaction: DividerInteraction, at point: BTPoint) {
-        gestureWillBeginHandler?()
+        gestureWillBeginHandler?(interaction.displayID)
         guard let mainFrame = NSScreen.screens.first?.frame,
               let display = coordinator.system.displays().first(where: { $0.id == interaction.displayID }),
               let windows = try? coordinator.system.visibleWindows()
