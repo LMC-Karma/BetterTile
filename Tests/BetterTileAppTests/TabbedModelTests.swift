@@ -1041,3 +1041,61 @@ func shutdownPreventsQueuedTabbedExitFromMutatingWindows(pendingPlacement: Bool)
     #expect(system.windows.map(\.frame) == frames)
 }
 
+@Test(arguments: ["unchanged", "larger-minimum", "oversized-minimum", "oversized-baseline"]) @MainActor
+func leavingTabbedRestoresBaselineWithinCurrentMinimums(scenario: String) async throws {
+    _ = NSApplication.shared
+    let system = FakeAppWindowSystem()
+    if scenario == "oversized-baseline" {
+        system.windows[0].frame = BTRect(x: -50, y: 200, width: 1100, height: 400)
+    }
+    let baseline = system.windows[0].frame
+    let id = system.windows[0].id
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    model.configuration.singleWindowPlacement = nil
+    model.configuration.defaultTabbedPreset = .single
+    model.setActiveMode(.tabbed)
+    try #require(await waitFor { model.activeTabbedState?.windowIDs == [id] })
+    let expected: BTRect
+    switch scenario {
+    case "larger-minimum":
+        system.windows[0].constraints.minimumSize = BTSize(width: 640, height: 480)
+        expected = BTRect(x: 200, y: 200, width: 640, height: 480)
+    case "oversized-minimum":
+        system.windows[0].constraints.minimumSize = BTSize(width: 1200, height: 400)
+        expected = BTRect(x: 0, y: 200, width: 1200, height: 400)
+    default: expected = baseline
+    }
+    model.statusMessage = nil
+    model.setActiveMode(.manual)
+    try #require(await waitFor { model.activeMode(for: system.mainDisplay.id) == .manual || model.statusMessage != nil })
+    #expect(model.activeMode(for: system.mainDisplay.id) == .manual)
+    #expect(system.windows[0].frame == expected)
+    #expect(model.statusMessage == nil)
+}
+
+@Test @MainActor func failedNativeExitRestorationRollsBackAndKeepsTabbed() async throws {
+    _ = NSApplication.shared
+    let system = FakeAppWindowSystem()
+    addTabbedWindows(1, to: system)
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    model.configuration.singleWindowPlacement = nil
+    model.configuration.defaultTabbedPreset = .single
+    model.setActiveMode(.tabbed)
+    try #require(await waitFor { model.activeTabbedState?.windowIDs.count == 2 })
+    let state = try #require(model.activeTabbedState)
+    let frames = system.windows.map(\.frame)
+    let first = system.windows[0].id, second = system.windows[1].id
+    let writes = system.frameWriteCounts
+    system.windows[0].constraints.minimumSize.width = 640
+    system.failedFrameWriteNumbers[second] = [writes[second, default: 0] + 1]
+    model.statusMessage = nil
+    model.setActiveMode(.manual)
+    try #require(await waitFor { model.statusMessage != nil })
+    #expect(model.activeMode(for: system.mainDisplay.id) == .tabbed)
+    #expect(model.activeTabbedState == state)
+    #expect(system.windows.map(\.frame) == frames)
+    #expect(system.frameWriteCounts[first] == writes[first, default: 0] + 2)
+    #expect(system.frameWriteCounts[second] == writes[second, default: 0] + 1)
+}

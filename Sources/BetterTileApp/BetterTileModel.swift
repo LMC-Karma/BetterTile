@@ -3428,9 +3428,22 @@ extension BetterTileModel {
                   let display = self.system.displays().first(where: { $0.id == displayID }),
                   let windows = try? self.system.visibleWindows() else { return }
             if destination == .manual {
-                let visible = Set(windows.filter { $0.displayID == displayID && $0.isEligible }.map(\.id))
-                let placements = session.tabbedBaselineFrames.compactMap { id, frame in
-                    visible.contains(id) ? Placement(windowID: id, frame: frame.clamped(to: display.visibleFrame)) : nil
+                let visible = Dictionary(uniqueKeysWithValues: windows.filter {
+                    $0.displayID == displayID && $0.isEligible
+                }.map { ($0.id, $0) })
+                let placements = session.tabbedBaselineFrames.compactMap { id, frame -> Placement? in
+                    guard let window = visible[id] else { return nil }
+                    var restored = frame
+                    restored.size.width = max(frame.size.width, window.constraints.minimumSize.width)
+                    restored.size.height = max(frame.size.height, window.constraints.minimumSize.height)
+                    if restored != frame || !PlacementBounds.isReachable(frame, in: display.visibleFrame) {
+                        // Native windows may exceed the work area. Keep their minimum size
+                        // and move the origin into reach instead of shrinking the frame.
+                        let bounds = display.visibleFrame
+                        restored.origin.x = min(max(restored.minX, bounds.minX), max(bounds.minX, bounds.maxX - restored.size.width))
+                        restored.origin.y = min(max(restored.minY, bounds.minY), max(bounds.minY, bounds.maxY - restored.size.height))
+                    }
+                    return Placement(windowID: id, frame: restored)
                 }
                 let outcome: WindowMutationOutcome = placements.isEmpty ? .applied : self.coordinator.applyPlacements(placements, recordHistory: false)
                 if !outcome.isApplied { self.statusMessage = outcome.failureReason; return }
