@@ -87,7 +87,7 @@ real applications on a real desktop.
 | T-28 | A window-edge resize was ignored: hidden tabs showed and strips misaligned until Repair | Fixed | Pending |
 | T-29 | Tab strips followed a divider only at release | Fixed | Pending |
 | T-30 | Inactive tabs showed while a selected window was smaller than its pane | Curtain experiment; geometry, ordering requests, fallback, and cleanup covered | Pending |
-| T-31 | Activating an already selected app could expose its inactive tabs in another pane | Fixed; fake-window regression | Pending |
+| T-31 | App activation could expose inactive tabs in another pane, including with floating focus | Fixed; fake-window regressions on one and two displays | Pending |
 | T-32 | Tabbed on two displays repeated placement for unrelated removal IDs | Fixed; unchanged displays settle once in model regression | Pending |
 
 The polish pass also fixes Bento clamping beside locked boundaries, divider

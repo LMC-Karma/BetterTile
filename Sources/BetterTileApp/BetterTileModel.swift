@@ -3005,8 +3005,8 @@ extension BetterTileModel {
         let previous = sessionStore.session(for: display.id)?.tabbedState
         func prepare(_ windows: [WindowSnapshot]) throws -> (state: TabbedLayoutState, placements: [Placement]) {
             if selectionOnly {
-                // Activation can raise hidden tabs on another display. Restore
-                // ordering there without moving a window or taking its focus.
+                // Floating focus and other displays need ordering restored
+                // without refitting a window or taking its keyboard focus.
                 if focus == nil, orderingProcessIdentifier != nil { return (state, []) }
                 guard let focus, windows.contains(where: { $0.id == focus && $0.isEligible }),
                       let pane = state.panes.first(where: { $0.tabs.contains(focus) }),
@@ -3053,6 +3053,14 @@ extension BetterTileModel {
                     // panes. Restore only those panes' selected windows.
                     selected = proposal.state.panes.filter { $0.tabs.contains(where: applicationWindows.contains) }
                         .compactMap(\.selected).filter(eligibleIDs.contains)
+                }
+                if orderingProcessIdentifier != nil,
+                   let front = try? self.system.focusedWindow(), front.displayID == display.id {
+                    // A floating window caused this activation. Repair the
+                    // tabs below it, then keep that window in front without
+                    // activating an app or changing keyboard focus.
+                    selected.removeAll { $0 == front.id }
+                    selected.append(front.id)
                 }
                 var learnedWidth = false
                 outcome = await self.coordinator.applyTabbed(
@@ -3307,7 +3315,7 @@ extension BetterTileModel {
             self.tabbedNeedsFocusRefresh = false
             let repairApplicationOrdering = self.tabbedNeedsApplicationOrderRefresh
             self.tabbedNeedsApplicationOrderRefresh = false
-            if repairApplicationOrdering { self.restoreTabbedApplicationOrdering(onOtherDisplaysThan: focused) }
+            if repairApplicationOrdering { self.restoreTabbedApplicationOrdering(for: focused) }
             guard let session = self.sessionStore.session(for: focused.displayID), session.mode == .tabbed,
                   !session.automaticWritesSuspended,
                   let state = session.tabbedState else { return }
@@ -3320,13 +3328,16 @@ extension BetterTileModel {
         }
     }
 
-    private func restoreTabbedApplicationOrdering(onOtherDisplaysThan focused: WindowSnapshot) {
+    private func restoreTabbedApplicationOrdering(for focused: WindowSnapshot) {
         guard let allWindows = try? system.visibleWindows() else { return }
         let displays = system.displays()
-        for session in sessionStore.sessions.values where session.mode == .tabbed && session.displayID != focused.displayID {
+        for session in sessionStore.sessions.values where session.mode == .tabbed {
             guard !session.automaticWritesSuspended, !nativeFullscreenDisplayIDs.contains(session.displayID),
                   let state = session.tabbedState,
                   let display = displays.first(where: { $0.id == session.displayID }) else { continue }
+            // A focused tab uses the ordinary selection path below. Floating
+            // focus and other displays need an ordering-only transaction.
+            if display.id == focused.displayID, state.windowIDs.contains(focused.id) { continue }
             let windows = bentoEligible(allWindows.filter { $0.displayID == display.id && $0.isEligible && !$0.isFloating })
             let applicationIDs = Set(windows.filter { $0.processIdentifier == focused.processIdentifier }.map(\.id))
             guard !state.windowIDs.isDisjoint(with: applicationIDs) else { continue }

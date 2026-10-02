@@ -4,6 +4,36 @@ import BetterTileMacOS
 import Testing
 @testable import BetterTileApp
 
+@Test @MainActor func activatingFloatingTabbedAppKeepsItInFrontOfRepairedPanes() async throws {
+    _ = NSApplication.shared
+    let system = FakeAppWindowSystem()
+    addTabbedWindows(2, to: system)
+    system.windows[2].processIdentifier = system.windows[0].processIdentifier
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    model.setActiveMode(.tabbed)
+    try #require(await waitFor { model.activeTabbedState?.windowIDs.count == 3 })
+    let floating = system.windows[2].id, selected = system.windows[1].id
+    model.performTabbed(.float(floating))
+    try #require(await waitFor { model.activeTabbedState?.floatingWindowIDs.contains(floating) == true })
+    model.performTabbed(.select(selected))
+    try #require(await waitFor { model.activeTabbedState?.activeWindowID == selected })
+    let frames = system.windows.map(\.frame)
+    let writes = system.frameWriteCounts
+    let raises = system.raiseRequests.count
+
+    system.focusedID = floating
+    model.handleApplicationActivation()
+    #expect(await waitFor(timeout: .seconds(1)) {
+        system.raiseRequests.dropFirst(raises).contains { $0.0 == selected && !$0.1 }
+    })
+    #expect(system.raiseRequests.last?.0 == floating)
+    #expect(!system.raiseRequests.dropFirst(raises).contains { $0.1 })
+    #expect(system.focusedID == floating)
+    #expect(system.windows.map(\.frame) == frames)
+    #expect(system.frameWriteCounts == writes)
+}
+
 @Test(arguments: [false, true]) @MainActor
 func activatingAppRestoresHiddenTabsOnOtherTabbedDisplays(focusedDisplayTabbed: Bool) async throws {
     _ = NSApplication.shared

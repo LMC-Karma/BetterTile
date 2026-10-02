@@ -112,8 +112,9 @@ Tabbed selection preserves pane geometry and other windows' frames. It swaps
 which window the pane's Bento leaf holds and fits only that window; it does not
 rerun the minimum-size solver. Activation restores ordering in other panes only
 when they contain a window from the activated application, including on other
-Tabbed displays and when its selected tab did not change. This changes ordering
-only; other displays keep their frames and keyboard focus.
+Tabbed displays and when its selected tab did not change. A focused floating
+window stays in front of the repaired panes. This changes ordering only; other
+displays keep their frames and keyboard focus.
 
 ## Bento
 
