@@ -110,11 +110,21 @@ each of its windows. No suspension is held across an event-loop turn.
 
 Tabbed selection preserves pane geometry and other windows' frames. It swaps
 which window the pane's Bento leaf holds and fits only that window; it does not
-rerun the minimum-size solver. Activation restores ordering in other panes only
-when they contain a window from the activated application, including on other
-Tabbed displays and when its selected tab did not change. A focused floating
-window stays in front of the repaired panes. This changes ordering only; other
-displays keep their frames and keyboard focus.
+rerun the minimum-size solver. A focus change selects a tab only when that
+window's application is frontmost. While BetterTile or an application it cannot
+read is in front, `focusedWindow()` reports the last managed application's
+window, and selecting it would take focus away.
+
+After a focus change, application activation, or tab selection,
+`TabbedLayoutState.stackingRepair` compares the WindowServer front-to-back
+order with the panes on every Tabbed display. It raises a selected tab only
+when one of its pane's hidden tabs is in front of it. A window that was in
+front of a raised window and overlaps it, such as a floating or ignored
+window, is raised again afterwards, so it stays in front. If such a window
+cannot be addressed, nothing is raised. The repair never activates an
+application, changes keyboard focus or selection, or moves a window. Without
+exact identities, selection still raises the selected tabs of panes that
+share the selected window's application, and activation changes nothing.
 
 ## Bento
 
@@ -158,10 +168,20 @@ change a Bento operation made to the tree; writing it also writes the tree.
   on-screen record. A missing or invalid identity hides that pane's curtain;
   it never guesses from a frame or parks a window. A frosted plate over Liquid
   Glass hides underlying detail, with a solid surface for Reduce Transparency
-  or Increase Contrast. Curtains ignore input and accessibility navigation.
-  They reorder after placement and focus or application activation. They hide
-  with the overlay on mode exit, Space changes, fullscreen, display removal,
-  and shutdown. Cross-application ordering still needs live validation.
+  or Increase Contrast. A click on a curtain selects its pane's selected
+  window and does not reach a hidden tab; curtains have no accessibility
+  navigation. They reorder after placement and focus or application
+  activation. They hide with the overlay on mode exit, Space changes,
+  fullscreen, display removal, and shutdown.
+- With the same identity, tab strips and empty panes are normal-level panels
+  ordered directly above the selected window, or above the active pane's
+  selected window for an empty pane. Any window in front of the selected tab,
+  including BetterTile's floating Settings window, therefore covers them.
+  Without the identity, they float above normal windows and hide only under
+  the focused window, as before. `AccessibilityWindowSystem.stackingOrder`
+  reads on-screen normal-level windows with `CGWindowListCopyWindowInfo` and
+  skips BetterTile's Tabbed panels. Cross-application ordering still needs
+  live validation.
 - Bento owns every layout interaction in Tabbed: divider drags (including the
   minimum-size state), window drags, and minimum-size solving. After a Bento
   commit, Tabbed re-applies its state so hidden tabs follow their pane and the

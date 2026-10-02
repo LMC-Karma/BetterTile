@@ -55,12 +55,17 @@ only to correlate observer callbacks. Logs contain capability availability and
 one-time fallback reasons, never titles, AX identifiers, raw desktop topology,
 or Stage Manager contents.
 
-Debug Tabbed pane curtains reuse the approved exact window identity to order
-BetterTile's own panels below selected windows with public AppKit. The adapter
-checks the owning PID, layer zero, and on-screen record before returning a
-window number. If the identity is unavailable or invalid, the pane has no
-curtain and keeps ordinary window stacking. This adds no private symbols,
-permissions, screen capture, or stored window identifiers.
+Debug Tabbed reuses the approved exact window identity, with public APIs
+only. AppKit orders BetterTile's own pane curtains, tab strips, and empty
+panes relative to selected windows. `CGWindowListCopyWindowInfo` supplies the
+front-to-back order of on-screen normal-level windows, with their numbers,
+owning PIDs, and bounds; BetterTile reads no window titles from it. When a
+hidden tab is in front of its pane's selected tab, the Accessibility raise
+action restores the order without activating an application. The adapter
+checks the owning PID, layer zero, and on-screen record before using a window
+number. If the identity is unavailable or invalid, the pane has no curtain,
+its chrome floats as before, and no order repair runs. This adds no private
+symbols, permissions, screen capture, or stored window identifiers.
 
 The `defaults` commands below use the public app's domain. For BetterTile Debug,
 replace `com.lmckarma.BetterTile` with

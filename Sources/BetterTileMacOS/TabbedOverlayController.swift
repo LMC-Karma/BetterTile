@@ -34,7 +34,7 @@ public final class TabbedOverlayController {
     private let addGlobalKeyMonitor: (@escaping @MainActor (UInt16) -> Void) -> Any?
     private let addLocalKeyMonitor: (@escaping @MainActor (UInt16) -> Bool) -> Any?
     private let removeMonitor: (Any) -> Void
-    private let orderCurtain: (NSPanel, Int) -> Void
+    private let orderPanel: (NSPanel, NSWindow.OrderingMode, Int) -> Void
     private var draggedWindow: WindowID?
     private var dropIntent: TabbedUIIntent?
     private var cancelled = false
@@ -64,20 +64,30 @@ public final class TabbedOverlayController {
             }
         },
         removeMonitor: @escaping (Any) -> Void = { NSEvent.removeMonitor($0) },
-        orderCurtain: @escaping (NSPanel, Int) -> Void = { $0.order(.below, relativeTo: $1) }
+        orderPanel: @escaping (NSPanel, NSWindow.OrderingMode, Int) -> Void = { $0.order($1, relativeTo: $2) }
     ) {
         self.addGlobalKeyMonitor = addGlobalKeyMonitor
         self.addLocalKeyMonitor = addLocalKeyMonitor
         self.removeMonitor = removeMonitor
-        self.orderCurtain = orderCurtain
+        self.orderPanel = orderPanel
     }
 
-    public func refresh(state: TabbedLayoutState, bounds: BTRect, windows: [WindowSnapshot], obscuringFrames: [BTRect] = [], canUndo: Bool = false, curtainWindowNumbers: [WindowID: Int] = [:]) {
+    /// `selectedWindowNumbers` holds validated WindowServer numbers of the
+    /// panes' selected windows. With a number, a pane's chrome joins the
+    /// normal window stack beside that window, so a window in front of the
+    /// selected tab also covers its strip. Without one, chrome floats and
+    /// hides only under `obscuringFrames`.
+    public func refresh(state: TabbedLayoutState, bounds: BTRect, windows: [WindowSnapshot], obscuringFrames: [BTRect] = [], canUndo: Bool = false, selectedWindowNumbers: [WindowID: Int] = [:]) {
         self.state = state
         self.bounds = bounds
         self.canUndo = canUndo
         self.windows = Dictionary(uniqueKeysWithValues: windows.map { ($0.id, $0) })
         let frames = state.frames(in: bounds)
+        let numbers = selectedWindowNumbers.filter { $0.value > 0 }
+        // An empty pane has no window of its own. It sits above the active
+        // pane's selected tab, which is normally the front of the layout.
+        let emptyPaneAnchor = ([state.activeWindowID].compactMap { $0 } + state.selectedWindowIDs)
+            .lazy.compactMap { numbers[$0] }.first
         for id in panes.keys.filter({ frames[$0] == nil }) { panes.removeValue(forKey: id)?.orderOut(nil) }
         for (index, pane) in state.panes.enumerated() {
             guard let frame = frames[pane.id] else { continue }
@@ -108,12 +118,25 @@ public final class TabbedOverlayController {
             view.updateAccessibility()
             view.updateToolTips()
             view.setAccessibilityLabel("Pane \(index + 1)\(pane.tabs.isEmpty ? ", empty" : "")")
-            if obscuringFrames.contains(where: { $0.intersection(chrome) != nil }) { panel.orderOut(nil) }
-            else { panel.orderFrontRegardless() }
+            if let anchor = pane.selected.flatMap({ numbers[$0] }) ?? (pane.tabs.isEmpty ? emptyPaneAnchor : nil) {
+                panel.level = .normal
+                orderPanel(panel, .above, anchor)
+            } else {
+                panel.level = .floating
+                if obscuringFrames.contains(where: { $0.intersection(chrome) != nil }) { panel.orderOut(nil) }
+                else { panel.orderFrontRegardless() }
+            }
             panes[pane.id] = panel
         }
-        refreshCurtains(windowNumbers: curtainWindowNumbers)
+        refreshCurtains(windowNumbers: numbers)
         refreshDividerControls()
+    }
+
+    /// WindowServer numbers of this overlay's panels, which Tabbed's stacking
+    /// repair must not treat as application windows.
+    public var windowNumbers: Set<Int> {
+        let panels = Array(panes.values) + Array(curtains.values) + Array(dividerControls.values) + [preview, floatTarget].compactMap { $0 }
+        return Set(panels.map(\.windowNumber).filter { $0 > 0 })
     }
 
     public func hide() {
@@ -131,17 +154,22 @@ public final class TabbedOverlayController {
             covered.insert(pane.id)
             let panel = curtains[pane.id] ?? makePanel()
             panel.level = .normal
-            panel.ignoresMouseEvents = true
             panel.isExcludedFromWindowsMenu = true
             panel.setAccessibilityElement(false)
             panel.animationBehavior = .none
             let view = panel.contentView as? TabbedCurtainView ?? TabbedCurtainView()
             view.refreshAppearance()
+            // A click on the curtain must not reach the hidden tab behind it.
+            let paneID = pane.id
+            view.onClick = { [weak self] in
+                guard let self, let selected = self.state.panes.first(where: { $0.id == paneID })?.selected else { return }
+                self.send(.select(selected))
+            }
             panel.contentView = view
             panel.setFrame(appKit(TabbedLayoutState.contentFrame(frame)), display: false)
             // Never order a curtain to the front. A missing exact identity
             // leaves ordinary stacking in place for the Debug experiment.
-            orderCurtain(panel, number)
+            orderPanel(panel, .below, number)
             curtains[pane.id] = panel
         }
         for id in curtains.keys.filter({ !covered.contains($0) }) { curtains.removeValue(forKey: id)?.orderOut(nil) }
@@ -415,10 +443,12 @@ public final class TabbedOverlayController {
 }
 
 /// A frosted plate covers the glass so a hidden tab cannot read clearly
-/// through it. The curtain has no input or accessibility controls.
+/// through it. A click brings the pane's selected window forward; the curtain
+/// has no accessibility controls.
 @MainActor final class TabbedCurtainView: NSView {
     private let glass = NSGlassEffectView()
     private let frost = NSView()
+    var onClick: (() -> Void)?
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -442,6 +472,14 @@ public final class TabbedOverlayController {
     required init?(coder: NSCoder) { nil }
 
     override func viewDidChangeEffectiveAppearance() { refreshAppearance() }
+    override func hitTest(_ point: NSPoint) -> NSView? { super.hitTest(point) == nil ? nil : self }
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    override func mouseDown(with event: NSEvent) {
+        // Stay behind the selected window; the click only brings it forward.
+        NSApp.preventWindowOrdering()
+        onClick?()
+    }
 
     var displayOptions: () -> (reduceTransparency: Bool, increaseContrast: Bool) = {
         let workspace = NSWorkspace.shared
