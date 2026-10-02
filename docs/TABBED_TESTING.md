@@ -41,7 +41,8 @@ Settings → Window Layout → Appearance has **Use Liquid Glass** and
 **Glass transparency**. Glass defaults on. The slider runs from Frosted to
 Clear. It updates tab strips, dividers, empty panes, Tabbed drop targets, resize
 ghosts, the Layout Wheel, the menu bar popover, and result feedback. Clear
-removes added frosting while keeping the native material. The curtain remains
+removes added frosting from native glass surfaces and reduces the divider
+lens body's frosting. The curtain remains
 opaque with a brighter neutral frost and excludes occupied tab strips. Its
 appearance is independent of the slider. Snap and Bento swap/placement
 previews use light outlines and tint.
@@ -49,8 +50,8 @@ previews use light outlines and tint.
 Turning glass off uses solid surfaces. Reduce Transparency and Increase
 Contrast also select solid surfaces, including when changed while overlays
 are visible. The transparency slider is disabled when glass is off. Changes do not
-move windows or cancel a drag. Glass dividers keep a six-point minimum visual
-width, while their existing hit areas remain unchanged.
+move windows or cancel a drag. The divider lens widens when grabbed. Straight
+divider hit areas stay the same; junction hit frames contain the wider lens.
 
 Check light and dark appearances at both transparency endpoints, with glass off,
 and with each accessibility display option. Confirm labels stay readable,
@@ -216,6 +217,28 @@ above. This test build is not evidence that those platform checks have passed.
 
 ## Glass and tab-drag regression checks
 
+- Hover a straight divider in Bento and Tabbed. Confirm the accent track is
+  visible through a clear lens with a bright rim and a narrow gloss streak.
+  Grab it, drag in both directions, and release. The lens widens and stretches,
+  then retracts. Check both horizontal and vertical dividers.
+- Resize toward an application's minimum size. The track, lens edges, core,
+  and border turn orange together. The cursor shows the available direction.
+  Moving away from the limit restores the accent color.
+- Drag three-way and four-way junctions. Their arms form one outline with
+  rounded inner corners. Check short divider spans: the fading track must end
+  inside the span. Resize ghosts must stay below the track and shadow.
+- Click outside the handle's hit frame, including on its track and shadow.
+  The window below receives the click. Hide the handle and check that its
+  track and shadow also disappear.
+- Repeat the lens checks in light and dark mode. Move **Glass transparency**
+  from Frosted to Clear while the handle is visible. Its body frost changes
+  without interrupting the drag. Check the divider preview in Settings too.
+- Toggle Reduce Transparency and Increase Contrast while the handle is
+  visible, then turn Liquid Glass off. Each uses a solid capsule without a
+  track or shadow. Restore each option and confirm the lens returns. Reduce
+  Motion makes grab and release transitions immediate.
+- Sustain a divider drag and look for stutter, clipped shadows, or blurred
+  edges. Repeat after moving between displays with different scale factors.
 - Drag a tab in both directions. Neighboring tabs move before release. Return
   to the original slot, then move to another pane's strip, including an empty
   pane. Check the gap, pointer alignment, and settling motion.
@@ -239,5 +262,5 @@ caching does not reproduce all native glass effects.
 mkdir -p /tmp/bettertile-glass-previews
 BETTERTILE_NATIVE_GLASS_PREVIEW_DIR=/tmp/bettertile-glass-previews \
   swift test --scratch-path /tmp/bettertile-build \
-  --filter 'nativeGlassCompositorPreviews|menuGlassPopoverPreviews'
+  --filter 'nativeGlassCompositorPreviews|nativeDividerLensPreviews|menuGlassPopoverPreviews'
 ```

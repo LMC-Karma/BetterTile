@@ -96,7 +96,12 @@ jobs:
       - name: Swift version
         run: swift --version
       - name: Test
-        run: swift test --parallel
+        shell: bash
+        run: |
+          # Separate processes keep AppKit rendering tests from delaying app-model tasks.
+          for target in BetterTileCoreTests BetterTileMacOSTests BetterTileAppTests; do
+            swift test --parallel --filter "$target"
+          done
       # Guards the `rm -rf` in the release tool's exit trap.
       - name: Test release workspace cleanup
         run: Tools/tests/release-workspace-test.sh

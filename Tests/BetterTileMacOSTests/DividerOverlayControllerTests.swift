@@ -197,13 +197,10 @@ func junctionGripKeepsACompactTargetAndCapsEachExistingArm(thickness: Double) {
 
 @Test @MainActor func ghostPanelsRemainBelowTheActiveHandle() throws {
     _ = NSApplication.shared
-    let handle = NSPanel(
-        contentRect: CGRect(x: 100, y: 100, width: 20, height: 60),
-        styleMask: [.borderless, .nonactivatingPanel],
-        backing: .buffered,
-        defer: false
+    let handle = DividerHandlePanel(
+        frame: CGRect(x: 100, y: 100, width: 30, height: 168),
+        mode: .vertical(restingLength: 56, activeLength: 168), thickness: 10
     )
-    handle.level = .floating
     handle.orderFrontRegardless()
     defer { handle.orderOut(nil) }
 
@@ -216,12 +213,12 @@ func junctionGripKeepsACompactTargetAndCapsEachExistingArm(thickness: Double) {
     ghosts.show(
         placements: [Placement(windowID: snapshot.id, frame: snapshot.frame)],
         windows: [snapshot],
-        below: handle
+        below: handle.decorationWindow
     )
     defer { ghosts.hide() }
 
     #expect(!ghosts.windowNumbers.isEmpty)
-    #expect(ghosts.relativeOrderTargets[snapshot.id] == handle.windowNumber)
+    #expect(ghosts.relativeOrderTargets[snapshot.id] == handle.decorationWindow.windowNumber)
 }
 
 @Test(arguments: [0.0, 1.0, 6.0, 12.0], [false, true])
@@ -320,27 +317,27 @@ func junctionPanelContainsRenderedCapsules(thickness: Double, glass: Bool) throw
                 let mode = controller.handleMode(for: interaction, topLeftFrame: frame, mainScreenFrame: mainFrame)
                 let view = DividerHandleView(frame: CGRect(origin: .zero, size: appKitFrame.size),
                                              mode: mode, thickness: thickness)
+                view.displayOptions = { (false, false) }
                 view.overlayAppearance = configuration.overlayAppearance
                 view.setActive(active, animated: false)
                 view.layoutSubtreeIfNeeded()
-                let container = try #require(view.subviews.first as? NSGlassEffectContainerView)
-                let surfaces = try #require(container.contentView).subviews.filter { !$0.isHidden }
-                #expect(surfaces.count == 2)
-                #expect(surfaces.allSatisfy { view.bounds.contains($0.frame) })
+                #expect(view.knobRects.count == 2)
+                #expect(view.knobRects.allSatisfy { view.bounds.contains($0) })
                 if case let .junction(localCenter, _, _) = mode {
                     #expect(localCenter.x + appKitFrame.minX == CGFloat(center.x))
                     #expect(localCenter.y + appKitFrame.minY == mainFrame.maxY - CGFloat(center.y))
                 } else { Issue.record("Expected a junction handle.") }
                 if active && span == 200 {
-                    let width = glass ? max(6, thickness) : thickness
+                    let restingWidth = min(16, max(12, thickness + 4))
+                    let width = glass ? min(restingWidth + 6, max(18, 3 * thickness) - 2) : thickness
                     #expect(frame.size.width == (fourWay ? 72 + width : 52 + width / 2))
                 }
                 if span == 24 {
-                    #expect(surfaces.allSatisfy {
-                        $0.frame.minX + appKitFrame.minX >= center.x - span
-                            && $0.frame.maxX + appKitFrame.minX <= center.x + span
-                            && $0.frame.minY + appKitFrame.minY >= mainFrame.maxY - center.y - span
-                            && $0.frame.maxY + appKitFrame.minY <= mainFrame.maxY - center.y + span
+                    #expect(view.knobRects.allSatisfy {
+                        $0.minX + appKitFrame.minX >= center.x - span
+                            && $0.maxX + appKitFrame.minX <= center.x + span
+                            && $0.minY + appKitFrame.minY >= mainFrame.maxY - center.y - span
+                            && $0.maxY + appKitFrame.minY <= mainFrame.maxY - center.y + span
                     })
                 }
             }
@@ -388,13 +385,11 @@ func junctionPanelContainsRenderedCapsules(thickness: Double, glass: Bool) throw
         #expect(controller.isDragging)
         #expect(system.windows.map(\.frame) == frames)
         #expect(system.frameWriteCounts == writes)
-        #expect(panel.frame.size.height == (glass ? 78 : 74))
+        #expect(panel.frame.size.height == (glass ? 88 : 74))
         #expect(panel.frame.midY == originalFrame.midY)
         view.setActive(true, animated: false)
         view.layoutSubtreeIfNeeded()
-        let container = try #require(view.subviews.first as? NSGlassEffectContainerView)
-        #expect(try #require(container.contentView).subviews.filter { !$0.isHidden }
-            .allSatisfy { view.bounds.contains($0.frame) })
+        #expect(view.knobRects.allSatisfy { view.bounds.contains($0) })
     }
 }
 
