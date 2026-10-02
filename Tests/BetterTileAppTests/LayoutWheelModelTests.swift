@@ -339,8 +339,17 @@ func settledWorkAreaChangeDoesNotReapplyOnLaterSweeps(learnMinimum: Bool, delaye
     ))
     let model = makeModel(system: system)
     defer { model.shutdown() }
+    @MainActor func finishSettlement() async throws {
+        // Sampling can replace itself with one authoritative verification task.
+        for _ in 0..<2 {
+            guard let task = model.settlementTasks[system.mainDisplay.id] else { break }
+            await task.value
+        }
+        try #require(model.settlementTasks[system.mainDisplay.id] == nil)
+    }
     model.tileCurrentDisplay()
-    try #require(await waitFor { system.cachedRefreshCount >= 2 })
+    try await finishSettlement()
+    try #require(system.cachedRefreshCount >= 2)
 
     // A topology event drives the same ambient reconciliation used for a Dock
     // or display change, without installing live workspace observers.
@@ -351,14 +360,12 @@ func settledWorkAreaChangeDoesNotReapplyOnLaterSweeps(learnMinimum: Bool, delaye
     if delayed { system.frameApplicationDelays[peerID] = .milliseconds(200) }
     let samples = system.cachedRefreshCount
     system.eventHandler?(refresh)
-    try #require(await waitFor(timeout: .seconds(2)) {
-        system.cachedRefreshCount >= samples + 2
-            && system.windows.allSatisfy { PlacementBounds.isContained($0.frame, in: system.availableDisplays[0].visibleFrame) }
-            && system.windows[0].frame.intersection(system.windows[1].frame) == nil
-    })
-    // Allow the two 40ms stable samples and, for a learned minimum, the
-    // authoritative verifier's 100ms read after the corrected frames arrive.
-    try await Task.sleep(for: .milliseconds(200))
+    let reflow = try #require(model.windowEventTask)
+    await reflow.value
+    try await finishSettlement()
+    #expect(system.cachedRefreshCount >= samples + 2)
+    #expect(system.windows[0].frame.intersection(system.windows[1].frame) == nil)
+    #expect(system.windows[1].constraints.minimumSize.width == (learnMinimum ? 450 : 120))
     let settledFrames = system.windows.map(\.frame)
     #expect(settledFrames.allSatisfy {
         PlacementBounds.isContained($0, in: system.availableDisplays[0].visibleFrame)
@@ -369,10 +376,12 @@ func settledWorkAreaChangeDoesNotReapplyOnLaterSweeps(learnMinimum: Bool, delaye
     for _ in 0..<3 {
         let sweeps = system.completeSweepCount
         system.eventHandler?(refresh)
-        try #require(await waitFor { system.completeSweepCount > sweeps })
+        let sweep = try #require(model.windowEventTask)
+        await sweep.value
+        try await finishSettlement()
+        #expect(system.completeSweepCount > sweeps)
         #expect(system.frameWriteCounts == writes, "A settled work-area change must not apply the layout again.")
     }
-    try await Task.sleep(for: .milliseconds(150))
     #expect(system.cachedRefreshCount == settledSamples, "Later sweeps must not restart settlement.")
     #expect(system.windows.map(\.frame) == settledFrames)
 }
