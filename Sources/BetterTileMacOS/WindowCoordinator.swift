@@ -847,6 +847,7 @@ extension WindowCoordinator {
             }
             if let focus { try tabSystem.raiseWindow(focus, activate: false) }
             var previousFrames: [WindowID: BTRect] = [:]
+            var previousHiddenFrames: [WindowID: BTRect] = [:]
             // Frames settle within four samples. Activation can take longer,
             // so accepted frames keep waiting for focus instead of rolling back.
             for attempt in 0..<12 {
@@ -857,15 +858,26 @@ extension WindowCoordinator {
                 let framesMatch = placements.allSatisfy { actual[$0.windowID]?.approximatelyEquals($0.frame, tolerance: 2) == true }
                 let focusMatches = try focus == nil || system.focusedWindow()?.id == focus
                 if framesMatch && focusMatches {
-                    // A hidden tab may already be clamped at its minimum by
-                    // the time it is selected. Preserve accepted size-change
-                    // evidence from this best-effort placement.
-                    let hiddenFrames = (try? snapshots(ids: Set(changedBestEffort.map(\.windowID)))) ?? []
+                    // Hidden writes are best effort, but a transient partial
+                    // resize is not evidence of a minimum. Only mismatches
+                    // need another sample; ordinary accepted frames return now.
+                    let hiddenFrames = onSizeMismatch == nil ? []
+                        : ((try? snapshots(ids: Set(changedBestEffort.map(\.windowID)))) ?? [])
+                    var unsettledHidden = false
                     for window in hiddenFrames {
-                        if let placement = changedBestEffort.first(where: { $0.windowID == window.id }),
-                           let before = bestEffortBaseline[window.id] {
+                        guard let placement = changedBestEffort.first(where: { $0.windowID == window.id }),
+                              let before = bestEffortBaseline[window.id],
+                              !window.frame.approximatelyEquals(placement.frame, tolerance: 2) else { continue }
+                        if previousHiddenFrames[window.id]?.approximatelyEquals(window.frame, tolerance: 1) == true {
                             onSizeMismatch?(window.id, placement.frame, before, window.frame)
+                        } else {
+                            unsettledHidden = true
                         }
+                    }
+                    previousHiddenFrames = Dictionary(uniqueKeysWithValues: hiddenFrames.map { ($0.id, $0.frame) })
+                    if unsettledHidden, attempt < 3 {
+                        try await Task.sleep(for: .milliseconds(50))
+                        continue
                     }
                     return .applied
                 }

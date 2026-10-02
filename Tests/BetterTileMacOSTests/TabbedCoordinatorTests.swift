@@ -128,3 +128,28 @@ import Testing
     #expect(!result.isApplied)
     #expect(system.windows[1].frame == hiddenBefore)
 }
+
+@Test @MainActor func hiddenTabbedPartialResizeIsNotLearnedBeforeItSettles() async throws {
+    let system = FakeWindowSystem()
+    system.addSecondWindow()
+    let shown = system.windows[0].id, hidden = system.windows[1].id
+    let target = BTRect(x: 0, y: 34, width: 400, height: 300)
+    system.windows[0].frame = target
+    system.windows[1].frame = BTRect(x: 200, y: 200, width: 600, height: 400)
+    system.enforcedMinimumWidths[hidden] = 500
+    var learner = WindowMinimumSizeLearner()
+    var hiddenReads = 0
+    system.targetedSnapshotHandler = { ids in
+        guard ids.contains(hidden), system.frameWriteCounts[hidden, default: 0] > 0 else { return }
+        hiddenReads += 1
+        if hiddenReads == 2 { system.windows[1].frame = target }
+    }
+    let result = await WindowCoordinator(system: system).applyTabbed(
+        placements: [Placement(windowID: shown, frame: target), Placement(windowID: hidden, frame: target)],
+        required: [shown], selected: [shown], previousSelected: [], focus: nil,
+        onSizeMismatch: { id, requested, baseline, actual in
+            learner.observe(windowID: id, requested: requested, baseline: baseline, actual: actual)
+        }, isCurrent: { true })
+    #expect(result.isApplied)
+    #expect(learner.learnedSizes.isEmpty)
+}

@@ -60,6 +60,7 @@ final class FakeWindowSystem: WindowSystem, TargetedWindowSystem, WindowEventSou
     var eventHandler: (@MainActor (WindowSystemEvent) -> Void)?
     var targetedSnapshotRequests = 0
     var targetedSnapshotsFail = false
+    var targetedSnapshotHandler: ((Set<WindowID>) -> Void)?
     /// Every `knownCurrentFrame` hint the coordinator supplied, per window, in
     /// call order. `nil` means the coordinator had no fresh reading.
     var recordedKnownCurrentFrames: [WindowID: [BTRect?]] = [:]
@@ -109,6 +110,7 @@ final class FakeWindowSystem: WindowSystem, TargetedWindowSystem, WindowEventSou
     }
     func windowSnapshots(ids: Set<WindowID>) throws -> [WindowSnapshot] {
         targetedSnapshotRequests += 1
+        targetedSnapshotHandler?(ids)
         if targetedSnapshotsFail { throw WindowSystemError.operationFailed("Simulated snapshot failure") }
         settlePendingFrames()
         return windows.filter { ids.contains($0.id) }
