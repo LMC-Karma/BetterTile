@@ -1041,8 +1041,8 @@ func shutdownPreventsQueuedTabbedExitFromMutatingWindows(pendingPlacement: Bool)
     #expect(system.windows.map(\.frame) == frames)
 }
 
-@Test(arguments: ["unchanged", "larger-minimum", "oversized-minimum", "oversized-baseline"]) @MainActor
-func leavingTabbedRestoresBaselineWithinCurrentMinimums(scenario: String) async throws {
+@Test(arguments: ["unchanged", "larger-minimum", "oversized-minimum", "oversized-baseline"], [false, true]) @MainActor
+func restoringTabbedBaselineRespectsCurrentMinimums(scenario: String, shuttingDown: Bool) async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
     if scenario == "oversized-baseline" {
@@ -1067,9 +1067,13 @@ func leavingTabbedRestoresBaselineWithinCurrentMinimums(scenario: String) async 
     default: expected = baseline
     }
     model.statusMessage = nil
-    model.setActiveMode(.manual)
-    try #require(await waitFor { model.activeMode(for: system.mainDisplay.id) == .manual || model.statusMessage != nil })
-    #expect(model.activeMode(for: system.mainDisplay.id) == .manual)
+    if shuttingDown {
+        model.shutdown()
+    } else {
+        model.setActiveMode(.manual)
+        try #require(await waitFor { model.activeMode(for: system.mainDisplay.id) == .manual || model.statusMessage != nil })
+        #expect(model.activeMode(for: system.mainDisplay.id) == .manual)
+    }
     #expect(system.windows[0].frame == expected)
     #expect(model.statusMessage == nil)
 }
