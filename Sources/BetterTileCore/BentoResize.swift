@@ -180,9 +180,9 @@ public struct WindowMinimumSizeLearner: Sendable {
         learnedSizes.removeValue(forKey: windowID)
     }
 
-    /// A learned minimum only explains one refused write. Applications change
-    /// their minimum with their content, so a new user gesture starts again
-    /// from the reported minimum instead of an old refusal.
+    /// Clears refusal evidence when the caller can safely revalidate it.
+    /// Tabbed retains evidence for already-clamped inactive tabs and lowers
+    /// a bound when a smaller actual window size is observed.
     public mutating func removeAll() {
         learnedSizes.removeAll()
     }

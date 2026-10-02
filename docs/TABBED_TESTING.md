@@ -57,8 +57,8 @@ empty. Click an empty pane to send newly opened windows there.
   position, then checks the frames accepted by each app. A rejected final frame
   restores the windows and the Tabbed state. A stable refusal in either
   dimension can cause one retry after complete
-  rollback. Ignored size writes do not become minimum sizes. Tabbed gestures
-  retain observed limits for inactive tabs. A later accepted smaller size
+  rollback. Ignored size writes do not become minimum sizes. Gestures on any
+  display retain observed limits while Tabbed groups remain stored. A later accepted smaller size
   lowers that learned limit.
   Grabbing either side of a divider preserves the pointer's offset. A stationary
   grab does not move the divider. If cancellation cannot restore the previous

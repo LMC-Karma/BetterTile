@@ -940,7 +940,7 @@ func tabbedGesturesRetainEvidenceForAnAlreadyClampedInactiveTab(height: Bool) as
         height ? system.windows[1].constraints.minimumSize.height >= 450
                : system.windows[1].constraints.minimumSize.width >= 600
     })
-    model.prepareWindowGesture(on: system.mainDisplay.id)
+    model.prepareWindowGesture()
     #expect(system.forgetLearnedMinimumsCount == 0)
     model.performTabbed(.select(hidden.id))
     try #require(await waitFor { model.activeTabbedState?.activeWindowID == hidden.id })
@@ -968,5 +968,48 @@ func observedSmallerInactiveTabNoLongerForcesItsPreviousMinimum() async throws {
     model.performTabbed(.select(hidden.id))
     try #require(await waitFor { model.activeTabbedState?.activeWindowID == hidden.id })
     #expect(model.activeTabbedState?.frames(in: system.mainDisplay.visibleFrame) == previous)
+    #expect(model.statusMessage == nil)
+}
+
+@Test(arguments: [false, true]) @MainActor
+func gestureOnAnotherDisplayPreservesAnInactiveTabbedMinimum(nativeVisit: Bool) async throws {
+    _ = NSApplication.shared
+    let system = FakeAppWindowSystem()
+    let first = system.windows[0].id
+    let otherDisplay = DisplayID(rawValue: "tabbed-other-display")
+    system.availableDisplays.append(DisplaySnapshot(id: otherDisplay,
+        frame: BTRect(x: 1000, y: 0, width: 1000, height: 800),
+        visibleFrame: BTRect(x: 1000, y: 0, width: 1000, height: 800)))
+    var selected = system.windows[0]
+    selected.id = WindowID(rawValue: "other-selected")
+    selected.displayID = otherDisplay
+    selected.frame.origin.x += 1000
+    var hidden = selected
+    hidden.id = WindowID(rawValue: "other-inactive-minimum")
+    hidden.frame.size.width = 800
+    system.windows += [selected, hidden]
+    system.enforcedMinimumWidths[hidden.id] = 600
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    model.setActiveMode(.bento)
+    system.focusedID = selected.id
+    model.configuration.defaultTabbedPreset = .columns
+    model.setActiveMode(.tabbed)
+    try #require(await waitFor { system.windows[2].constraints.minimumSize.width >= 600 })
+    if nativeVisit {
+        model.setActiveMode(.manual)
+        try #require(await waitFor { model.activeMode(for: otherDisplay) == .manual })
+    }
+    system.focusedID = first // A Bento gesture starts on the first display.
+    let resets = system.forgetLearnedMinimumsCount
+    model.prepareWindowGesture()
+    #expect(system.forgetLearnedMinimumsCount == resets)
+    system.focusedID = selected.id
+    if nativeVisit {
+        model.setActiveMode(.tabbed)
+        try #require(await waitFor { model.activeTabbedState != nil })
+    }
+    model.performTabbed(.select(hidden.id))
+    try #require(await waitFor { model.activeTabbedState?.activeWindowID == hidden.id })
     #expect(model.statusMessage == nil)
 }

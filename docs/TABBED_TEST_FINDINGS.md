@@ -50,8 +50,9 @@ repeating.
 - A stable refusal in width or height can cause one retry after complete
   rollback. A position-only move or unchanged size is not evidence of a
   minimum. Stale sessions, cancellation, and degraded restoration do not retry.
-- Tabbed gestures retain learned limits for inactive tabs already clamped at
-  those limits. An observed smaller window size lowers the learned bound.
+- Gesture starts preserve learned limits while any display or stored desktop
+  retains Tabbed groups, including during a Native visit. A gesture on another
+  display must not erase an inactive tab's limits. An observed smaller window size lowers the learned bound.
   A content change alone does not prove that a smaller size will be accepted.
 - Repair rereads window constraints and fits the current pane groups.
 
