@@ -45,7 +45,7 @@ import Testing
 }
 
 @Test(arguments: [false, true], [(false, false), (true, false), (false, true)])
-@MainActor func lensSolidFallbackHidesAllDecoration(glass: Bool, options: (Bool, Bool)) throws {
+@MainActor func lensFallbacksHideAllDecoration(glass: Bool, options: (Bool, Bool)) throws {
     _ = NSApplication.shared
     let panel = DividerHandlePanel(frame: CGRect(x: -10_000, y: -10_000, width: 30, height: 168),
                                    mode: .vertical(restingLength: 56, activeLength: 168), thickness: 10)
@@ -59,10 +59,68 @@ import Testing
         view.setActive(active, animated: false)
         view.layoutSubtreeIfNeeded()
         #expect(view.showsGlass == lens)
-        #expect(view.showsSolid == !lens)
+        #expect(view.showsFrost == (!glass && !options.0 && !options.1))
+        #expect(view.showsSolid == (options.0 || options.1))
         #expect(decoration.showsContent == lens)
         #expect(view.knobRects.first?.width == (glass ? 14 : 10))
     }
+}
+
+/// Glass off used to fill the handle with the label color at full opacity,
+/// which is solid white in dark mode.
+@Test(arguments: [NSAppearance.Name.aqua, .darkAqua])
+@MainActor func glassOffHandleIsTranslucentFrost(appearance: NSAppearance.Name) throws {
+    _ = NSApplication.shared
+    let panel = DividerHandlePanel(frame: CGRect(x: -10_000, y: -10_000, width: 30, height: 168),
+                                   mode: .vertical(restingLength: 56, activeLength: 168), thickness: 8)
+    defer { panel.close() }
+    let view = try #require(panel.contentView as? DividerHandleView)
+    view.appearance = NSAppearance(named: appearance)
+    view.displayOptions = { (false, false) }
+    view.overlayAppearance.useLiquidGlass = false
+    view.layoutSubtreeIfNeeded()
+    #expect(view.showsFrost && !view.showsSolid && !view.showsGlass)
+    #expect(view.frostBlendingMode == .behindWindow)
+    var grey: NSColor!
+    var accent: NSColor!
+    var orange: NSColor!
+    view.effectiveAppearance.performAsCurrentDrawingAppearance {
+        grey = NSColor.secondaryLabelColor.usingColorSpace(.deviceRGB)
+        accent = NSColor.controlAccentColor.withAlphaComponent(0.88).usingColorSpace(.deviceRGB)
+        orange = NSColor.systemOrange.usingColorSpace(.deviceRGB)
+    }
+    func close(_ color: NSColor?, _ expected: NSColor) -> Bool {
+        guard let color = color?.usingColorSpace(.deviceRGB) else { return false }
+        return [color.redComponent - expected.redComponent, color.greenComponent - expected.greenComponent,
+                color.blueComponent - expected.blueComponent, color.alphaComponent - expected.alphaComponent]
+            .allSatisfy { abs($0) < 0.02 }
+    }
+    #expect(close(view.frostColor, grey))
+    #expect(grey.alphaComponent < 0.9)
+    view.setActive(true, animated: false)
+    #expect(close(view.frostColor, accent))
+    view.setLimit(DragLimit(width: true, blockedTowardPositive: true))
+    #expect(close(view.frostColor, orange))
+    view.displayOptions = { (true, false) }
+    #expect(view.showsSolid && !view.showsFrost)
+    view.displayOptions = { (false, false) }
+    #expect(view.showsFrost && !view.showsSolid)
+    #expect(view.knobRects.first?.width == 8)
+}
+
+@Test @MainActor func settingsPreviewFrostBlursItsOwnWindow() throws {
+    _ = NSApplication.shared
+    let window = NSWindow(contentRect: CGRect(x: -10_000, y: -10_000, width: 180, height: 180),
+                          styleMask: [.titled], backing: .buffered, defer: false)
+    window.isReleasedWhenClosed = false
+    defer { window.close() }
+    let preview = DividerLensPreviewView(frame: CGRect(x: 0, y: 0, width: 180, height: 180),
+                                         mode: .vertical(restingLength: 56, activeLength: 168), thickness: 8)
+    preview.handleView.displayOptions = { (false, false) }
+    preview.handleView.overlayAppearance.useLiquidGlass = false
+    window.contentView?.addSubview(preview)
+    #expect(preview.handleView.showsFrost)
+    #expect(preview.handleView.frostBlendingMode == .withinWindow)
 }
 
 @Test @MainActor func accessibilityChangesRefreshAVisibleLens() async throws {
@@ -509,7 +567,7 @@ import Testing
 }
 
 @Test(arguments: ["CIGlassLozenge", "CIGaussianBlur", "all"])
-@MainActor func missingLensFilterUsesSolidHandle(missing: String) throws {
+@MainActor func missingLensFilterUsesFrostedHandle(missing: String) throws {
     let layers = DividerLensLayers { name in
         missing == "all" || name == missing ? nil : CIFilter(name: name)
     }
@@ -522,8 +580,8 @@ import Testing
         view.overlayAppearance.strength = strength
         for active in [false, true] {
             view.setActive(active, animated: false)
-            #expect(view.showsSolid)
-            #expect(!view.showsGlass)
+            #expect(view.showsFrost)
+            #expect(!view.showsSolid && !view.showsGlass)
             #expect(layers.decorationLayer.isHidden)
             let knob = try #require(view.knobRects.first)
             #expect(knob.width == 14)

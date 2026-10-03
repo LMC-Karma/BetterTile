@@ -301,9 +301,11 @@ explicit paths and the lens uses no masks. Geometry is cached per capsule set,
 unchanged appearance updates return immediately, and pointer samples update
 named filter parameters instead of replacing filters. Settings changes update
 visible or grabbed handles without window placement. Glass off uses the
-configured width; Reduce Transparency and Increase Contrast retain the glass
-width with a solid fill. Unavailable Core Image filters also use that solid
-fallback. Hit testing and window resizing keep their existing
+configured width and a frosted grey surface: a HUD material clipped to the
+handle outline, under a translucent grip tint and a light rim. It turns blue
+when grabbed and orange at a resize limit. Unavailable Core Image filters also
+use the frosted surface. Reduce Transparency and Increase Contrast use a solid
+fill. Hit testing and window resizing keep their existing
 behavior; junction input frames keep their earlier width, which contains the
 narrower lens.
 At rest and during Live Resize, a separate click-through panel below the handle

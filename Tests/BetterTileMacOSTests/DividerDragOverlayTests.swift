@@ -173,11 +173,11 @@ private func ghostOverlayCleansUpEveryGestureExit(ending: GhostEnd) throws {
         #expect(fixture.system.frameWriteCounts == counts)
     }
     handle.displayOptions = { (true, false) }
-    #expect(overlay.drawing?.solid == true && overlay.lensLayers.decorationLayer.isHidden)
+    #expect(overlay.drawing?.surface == .opaque && overlay.lensLayers.decorationLayer.isHidden)
     handle.displayOptions = { (false, true) }
     #expect(overlay.drawing?.increaseContrast == true)
     handle.displayOptions = { (false, false) }
-    #expect(overlay.drawing?.solid == false)
+    #expect(overlay.drawing?.surface == .glass)
 }
 
 @Test @MainActor func ghostOverlayReceivesStretchWithoutMovingAnyWindow() async throws {
@@ -232,7 +232,7 @@ private func ghostOverlayCleansUpEveryGestureExit(ending: GhostEnd) throws {
     #expect(overlay.drawing?.frame == handle.drawingFrame)
 }
 
-@Test @MainActor func ghostOverlayUsesSolidFallbackWhenItsOwnFilterIsUnavailable() throws {
+@Test @MainActor func ghostOverlayUsesFrostWhenItsOwnFilterIsUnavailable() throws {
     let fixture = try GhostGestureFixture()
     defer { fixture.controller.hideAndCancel() }
     let handle = try #require(fixture.controller.visibleHandleView)
@@ -241,9 +241,9 @@ private func ghostOverlayCleansUpEveryGestureExit(ending: GhostEnd) throws {
     overlay.begin(displayFrame: fixture.bounds, below: try #require(handle.window),
                   appearance: OverlayAppearance(), windows: fixture.system.windows)
     overlay.update(knob: try #require(handle.drawingState))
-    #expect(overlay.drawing?.solid == true)
+    #expect(overlay.drawing?.surface == .frost && overlay.showsFrost)
     #expect(overlay.lensLayers.handleLayer.isHidden && overlay.lensLayers.decorationLayer.isHidden)
-    #expect(overlay.knobRects[0].width == 14)
+    #expect(overlay.knobRects[0].width == 12)
 }
 
 /// Uses the production overlay with an opaque, synthetic canvas behind its
@@ -286,4 +286,23 @@ private func ghostOverlayCleansUpEveryGestureExit(ending: GhostEnd) throws {
             }
         }
     }
+}
+
+@Test @MainActor func ghostOverlayDrawsAFrostedKnobWhenGlassIsOff() throws {
+    let fixture = try GhostGestureFixture()
+    defer { fixture.controller.hideAndCancel() }
+    let handle = try #require(fixture.controller.visibleHandleView)
+    handle.overlayAppearance.useLiquidGlass = false
+    fixture.tick(dx: 20)
+    let overlay = fixture.controller.dragOverlay
+    #expect(overlay.showsFrost)
+    #expect(overlay.drawing?.surface == .frost)
+    #expect(overlay.lensLayers.handleLayer.isHidden && overlay.lensLayers.decorationLayer.isHidden)
+    handle.displayOptions = { (true, false) }
+    fixture.tick(dx: 30)
+    #expect(!overlay.showsFrost && overlay.drawing?.surface == .opaque)
+    handle.displayOptions = { (false, false) }
+    fixture.tick(dx: 40)
+    #expect(overlay.showsFrost && overlay.drawing?.surface == .frost)
+    #expect(handle.drawingSink != nil && !handle.showsFrost)
 }

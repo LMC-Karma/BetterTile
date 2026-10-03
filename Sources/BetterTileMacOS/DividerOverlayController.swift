@@ -1429,6 +1429,7 @@ final class DividerHandleView: NSView {
     private var thickness: CGFloat
     let lensLayers: DividerLensLayers
     private let solidLayer = CAShapeLayer()
+    private let frostView = DividerFrostView()
     weak var decorationView: DividerLensDecorationView?
     private(set) var trackRoom: [DividerHandleArm: Double] = [:]
     private(set) var knobRects: [CGRect] = []
@@ -1447,12 +1448,16 @@ final class DividerHandleView: NSView {
                 CATransaction.setDisableActions(true)
                 lensLayers.handleLayer.isHidden = true
                 lensLayers.decorationLayer.isHidden = true
+                frostView.isHidden = true
                 solidLayer.isHidden = true
                 CATransaction.commit()
             }
         }
     }
     var showsSolid: Bool { !solidLayer.isHidden }
+    var showsFrost: Bool { !frostView.isHidden }
+    var frostBlendingMode: NSVisualEffectView.BlendingMode { frostView.blendingMode }
+    var frostColor: NSColor? { frostView.fillColor }
     var overlayAppearance = OverlayAppearance() {
         didSet { if oldValue != overlayAppearance { updateAppearance() } }
     }
@@ -1483,7 +1488,7 @@ final class DividerHandleView: NSView {
         var trackRoom: [DividerHandleArm: Double]
         var appearance: OverlayAppearance
         var dark: Bool
-        var solid: Bool
+        var surface: DividerHandleSurface
         var contrast: Bool
         var limit: DragLimit
         var tint: NSColor
@@ -1500,6 +1505,10 @@ final class DividerHandleView: NSView {
         wantsLayer = true
         layer?.addSublayer(lensLayers.handleLayer)
         layer?.addSublayer(solidLayer)
+        frostView.isHidden = true
+        frostView.frame = bounds
+        frostView.autoresizingMask = [.width, .height]
+        addSubview(frostView)
         updateAppearance()
         NSWorkspace.shared.notificationCenter.addObserver(
             self, selector: #selector(updateAppearance),
@@ -1638,26 +1647,27 @@ final class DividerHandleView: NSView {
         let drawingBounds = CGRect(origin: .zero, size: drawingFrame?.size ?? bounds.size)
         guard drawingBounds.width > 0, drawingBounds.height > 0 else { return }
         let options = displayOptions()
-        let solid = !overlayAppearance.useLiquidGlass || options.reduceTransparency || options.increaseContrast
-            || !lensLayers.isAvailable
+        let surface = DividerHandleSurface(liquidGlass: overlayAppearance.useLiquidGlass && lensLayers.isAvailable,
+                                           reduceTransparency: options.reduceTransparency,
+                                           increaseContrast: options.increaseContrast)
         var tint = NSColor.controlAccentColor
         effectiveAppearance.performAsCurrentDrawingAppearance {
             tint = (limit.isLimited ? NSColor.systemOrange : NSColor.controlAccentColor).usingColorSpace(.deviceRGB)
                 ?? (limit.isLimited ? .systemOrange : .controlAccentColor)
         }
         let dark = effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-        var solidColor = NSColor.secondaryLabelColor
+        var resolvedGrip = NSColor.secondaryLabelColor
         effectiveAppearance.performAsCurrentDrawingAppearance {
-            solidColor = gripColor.usingColorSpace(.deviceRGB) ?? gripColor
+            resolvedGrip = gripColor.usingColorSpace(.deviceRGB) ?? gripColor
         }
         drawingState = DividerHandleDrawing(frame: drawingFrame ?? window?.frame ?? frame, mode: mode,
                                             thickness: thickness, progress: stretchProgress, trackRoom: trackRoom,
                                             limit: limit, tint: tint, dark: dark, frost: overlayAppearance.strength,
-                                            solid: solid, solidColor: solidColor, increaseContrast: options.increaseContrast,
+                                            surface: surface, gripColor: resolvedGrip, increaseContrast: options.increaseContrast,
                                             scale: window?.backingScaleFactor ?? 1, useLiquidGlass: overlayAppearance.useLiquidGlass)
         defer { if let drawingState { drawingSink?(drawingState) } }
         let state = AppearanceState(size: drawingBounds.size, mode: mode, thickness: thickness, progress: stretchProgress,
-                                    trackRoom: trackRoom, appearance: overlayAppearance, dark: dark, solid: solid,
+                                    trackRoom: trackRoom, appearance: overlayAppearance, dark: dark, surface: surface,
                                     contrast: options.increaseContrast, limit: limit, tint: tint,
                                     scale: window?.backingScaleFactor ?? 1)
         guard state != lastAppearance else { return }
@@ -1684,20 +1694,25 @@ final class DividerHandleView: NSView {
         guard drawsLens else { return }
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        lensLayers.handleLayer.isHidden = solid
-        lensLayers.decorationLayer.isHidden = solid
-        solidLayer.isHidden = !solid
+        lensLayers.handleLayer.isHidden = surface != .glass
+        lensLayers.decorationLayer.isHidden = surface != .glass
+        frostView.isHidden = surface != .frost
+        solidLayer.isHidden = surface != .opaque
         effectiveAppearance.performAsCurrentDrawingAppearance {
-            if solid {
+            switch surface {
+            case .glass:
+                lensLayers.apply(geometry: nextGeometry, margins: mode.decorationMargins, tint: lensTint, dark: dark,
+                                 strength: overlayAppearance.strength, limited: limit.isLimited, p: stretchProgress)
+            case .frost:
+                frostView.update(outline: nextGeometry.outline, color: resolvedGrip, progress: stretchProgress,
+                                 scale: window?.backingScaleFactor ?? 1)
+            case .opaque:
                 let path = CGMutablePath()
                 for rect in nextGeometry.capsules { path.addPath(capsulePath(rect)) }
                 solidLayer.path = path
                 solidLayer.fillColor = gripColor.withAlphaComponent(1).cgColor
                 solidLayer.strokeColor = lensTint.withAlphaComponent(options.increaseContrast ? 1 : 0.45).cgColor
                 solidLayer.lineWidth = options.increaseContrast ? 1.5 : 0.7
-            } else {
-                lensLayers.apply(geometry: nextGeometry, margins: mode.decorationMargins, tint: lensTint, dark: dark,
-                                 strength: overlayAppearance.strength, limited: limit.isLimited, p: stretchProgress)
             }
         }
         updateContentsScale()

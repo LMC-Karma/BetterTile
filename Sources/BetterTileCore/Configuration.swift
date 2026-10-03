@@ -154,7 +154,7 @@ public struct BetterTileConfiguration: Codable, Hashable, Sendable {
         singleWindowPlacement: WindowAction? = .maximize,
         resizeFeedbackMode: ResizeFeedbackMode = .ghost,
         dividerVisibility: DividerVisibility = .hoverAndDrag,
-        dividerThickness: Double = 10,
+        dividerThickness: Double = 8,
         overlayAppearance: OverlayAppearance = .init(),
         bentoInnerGap: Double = 1,
         bentoSwapHoverDelay: Double = 0.12,

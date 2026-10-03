@@ -12,8 +12,8 @@ struct DividerHandleDrawing: Equatable {
     var tint: NSColor
     var dark: Bool
     var frost: Double
-    var solid: Bool
-    var solidColor: NSColor
+    var surface: DividerHandleSurface
+    var gripColor: NSColor
     var increaseContrast: Bool
     var scale: CGFloat
     var useLiquidGlass: Bool
@@ -35,6 +35,7 @@ final class DividerDragOverlay {
     private var geometry: DividerLensGeometry?
     var lensLayers: DividerLensLayers { content.lensLayers }
     var isVisible: Bool { panel?.isVisible == true }
+    var showsFrost: Bool { !content.frost.isHidden }
     var knobRects: [CGRect] {
         (geometry?.capsules ?? []).map { $0.offsetBy(dx: content.knob.frame.minX, dy: content.knob.frame.minY) }
     }
@@ -104,7 +105,7 @@ final class DividerDragOverlay {
     func update(knob drawing: DividerHandleDrawing) {
         guard let panel else { return }
         var drawing = drawing
-        drawing.solid = drawing.solid || !lensLayers.isAvailable
+        if drawing.surface == .glass, !lensLayers.isAvailable { drawing.surface = .frost }
         var previous = self.drawing
         previous?.frame = drawing.frame
         previous?.trackRoom = drawing.trackRoom
@@ -121,19 +122,25 @@ final class DividerDragOverlay {
             && self.geometry?.trackRects == geometry.trackRects
         self.geometry = geometry
         guard !unchanged else { return }
-        lensLayers.handleLayer.isHidden = drawing.solid
-        lensLayers.decorationLayer.isHidden = drawing.solid
-        content.solid.isHidden = !drawing.solid
-        if drawing.solid {
+        lensLayers.handleLayer.isHidden = drawing.surface != .glass
+        lensLayers.decorationLayer.isHidden = drawing.surface != .glass
+        content.frost.isHidden = drawing.surface != .frost
+        content.solid.isHidden = drawing.surface != .opaque
+        switch drawing.surface {
+        case .glass:
+            lensLayers.apply(geometry: geometry, margins: margins, tint: drawing.tint, dark: drawing.dark,
+                             strength: drawing.frost, limited: drawing.limit.isLimited, p: drawing.progress)
+        case .frost:
+            if content.frost.frame != content.knob.bounds { content.frost.frame = content.knob.bounds }
+            content.frost.update(outline: geometry.outline, color: drawing.gripColor,
+                                 progress: drawing.progress, scale: drawing.scale)
+        case .opaque:
             let path = CGMutablePath()
             for rect in geometry.capsules { path.addPath(capsulePath(rect)) }
             content.solid.path = path
-            content.solid.fillColor = drawing.solidColor.withAlphaComponent(1).cgColor
+            content.solid.fillColor = drawing.gripColor.withAlphaComponent(1).cgColor
             content.solid.strokeColor = drawing.tint.withAlphaComponent(drawing.increaseContrast ? 1 : 0.45).cgColor
             content.solid.lineWidth = drawing.increaseContrast ? 1.5 : 0.7
-        } else {
-            lensLayers.apply(geometry: geometry, margins: margins, tint: drawing.tint, dark: drawing.dark,
-                             strength: drawing.frost, limited: drawing.limit.isLimited, p: drawing.progress)
         }
     }
 
@@ -153,6 +160,7 @@ private final class DividerDragOverlayView: NSView {
     let lensLayers: DividerLensLayers
     let decoration: DividerLensDecorationView
     let knob = NSView()
+    let frost = DividerFrostView()
     let solid = CAShapeLayer()
 
     init(lensLayers: DividerLensLayers) {
@@ -165,6 +173,9 @@ private final class DividerDragOverlayView: NSView {
         knob.wantsLayer = true
         knob.layer?.addSublayer(lensLayers.handleLayer)
         knob.layer?.addSublayer(solid)
+        frost.isHidden = true
+        frost.autoresizingMask = [.width, .height]
+        knob.addSubview(frost)
         for view in [previews, decoration, knob] {
             view.setAccessibilityElement(false)
             addSubview(view)
