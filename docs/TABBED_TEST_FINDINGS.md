@@ -322,7 +322,7 @@ covered by automated tests.
 
 ## Current implementation limits
 
-Tabbed is available only in Debug builds. Inactive tabs stay on-screen behind
+Tabbed is available in public builds starting with 0.5.0. Inactive tabs stay on-screen behind
 the selected window; nothing is parked off-screen, minimized, or moved between
 Spaces. Stage Manager must be off.
 

@@ -59,6 +59,15 @@ moves and resizes the least. Panes carry weights and locks, and you can swap,
 retarget, or float any window out of the layout. Resize a Bento pane natively
 and the tree adopts the change rather than fighting it.
 
+### Tabbed panes
+
+Choose **Tabbed** to group windows into resizable panes. Select a tab to bring
+its window forward, drag tabs between panes, or float a window out. Keyboard
+and Layout Wheel partition snaps move the whole pane with its tabs.
+
+Turn off Stage Manager for Tabbed. Pane assignments last for the current app
+session, and cross-display tab dragging is unavailable.
+
 ### Layout Wheel for quick placement
 
 Hold the configured modifiers over a focused window to open the Layout Wheel,
