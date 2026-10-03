@@ -29,6 +29,8 @@ import Testing
     #expect(after.logicalFrames(in: bounds)[destination] == WindowAction.leftHalf.partition?.frame(in: bounds))
     #expect(after.panes.count == 2 && after.activeWindowID == window)
     #expect(model.statusMessage == nil)
+    model.performTabbed(.undo)
+    #expect(await waitFor { model.activeTabbedState == before })
 }
 
 @Test(arguments: ["wheel", "drag"]) @MainActor
