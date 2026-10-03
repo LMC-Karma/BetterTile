@@ -66,7 +66,7 @@ import Testing
         controller.visibleHandleView?.setActive(true, animated: false)
     }
     func frame() throws -> BTRect {
-        let frame = try #require(controller.visibleHandleView?.window?.frame)
+        let frame = try #require(controller.visibleHandleView?.drawingState?.frame)
         return CoordinateConverter.toTopLeft(frame, mainScreenFrame: mainFrame)
     }
     var visible: Bool { controller.visibleHandleView?.window?.isVisible == true }
@@ -165,12 +165,14 @@ func exposedSeamHoverDoesNotOrderHandleOverCover(axis: SplitAxis) throws {
     let reads = fixture.system.onScreenStackReads
     try fixture.begin(500, 290)
     #expect(fixture.system.onScreenStackReads == reads + 1)
+    let inputFrame = try #require(fixture.controller.visibleHandleView?.window?.frame)
     for x in stride(from: 501.0, through: 650, by: 3) {
         fixture.time += 1
         fixture.controller.drag(to: fixture.appKit(fixture.point(x, 290)))
         fixture.ticks.fire()
         #expect(fixture.visible)
         #expect(fixture.controller.isDragging)
+        #expect(fixture.controller.visibleHandleView?.window?.frame == inputFrame)
         let frame = try fixture.frame()
         #expect((frame.intersection(cover)?.area ?? 0) == 0)
         if frame.maxX > cover.minX {
@@ -220,4 +222,3 @@ func exposedSeamHoverDoesNotOrderHandleOverCover(axis: SplitAxis) throws {
     #expect(fixture.controller.visibleHandleView?.trackRoom[.down] == 20)
     #expect(fixture.controller.visibleHandleView?.trackRoom[.right] == 20)
 }
-
