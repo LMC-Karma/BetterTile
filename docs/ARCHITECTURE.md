@@ -199,6 +199,24 @@ change a Bento operation made to the tree; writing it also writes the tree.
   release. A window drag first tears the tab out of its
   group when the group has other tabs; a center drop adds the window to that
   pane as a tab, and a torn tab dropped nowhere returns to its group.
+- Fixed partition snaps use `TabbedSnapPlanner` through one model route for
+  keyboard/menu actions, captured Layout Wheel commands, and native snap zones.
+  Only the source window moves between groups. An exact logical destination
+  pane receives it; otherwise a new pane reserves the requested region and
+  every retained pane is assigned to a deterministic subdivision of the
+  remainder. Assignment memoizes pane subsets, bounded by the 12-pane cap.
+  A conservative subdivision may refuse an otherwise possible packing.
+  Pane matching and the fixed-target invariant use gapless logical geometry;
+  normal gaps and the tab-strip reserve apply once to window placements.
+- Snap membership remains provisional until all selected frames settle.
+  Learned-minimum retries replan from the original state and must preserve
+  the exact requested region. Hidden tabs remain best effort on success;
+  rollback verifies the prior selections too. Native snaps keep the original
+  group state and verified frame checkpoint, including the mouse-down frame
+  of a user-floated source. Undo records one successful change and retains
+  that float frame without changing the Native-exit baseline. Queued snaps
+  keep the captured window/action and replan against the current session.
+  Work-area, Space, session, mode, and rule checks protect asynchronous work.
 - A user's edge resize of a selected window follows Bento's rule
   (`TabbedLayoutState.adoptingResize`), read only after the mouse button is
   released. A shared pane edge moves that divider, stopping at each pane's

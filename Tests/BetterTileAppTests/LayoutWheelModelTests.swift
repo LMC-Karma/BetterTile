@@ -22,6 +22,8 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, TabbedWindowSystem {
     var frameWriteCounts: [WindowID: Int] = [:]
     var failedFrameWriteNumbers: [WindowID: Set<Int>] = [:]
     var completeSweepCount = 0
+    var failedVisibleWindowSweeps: Set<Int> = []
+    var onVisibleWindowSweep: ((Int) -> Void)?
     var cachedRefreshCount = 0
     var cachedSnapshotsAvailable = true
     var emitsFrameEvents = false
@@ -83,6 +85,10 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, TabbedWindowSystem {
     }
     func visibleWindows() throws -> [WindowSnapshot] {
         completeSweepCount += 1
+        onVisibleWindowSweep?(completeSweepCount)
+        if failedVisibleWindowSweeps.contains(completeSweepCount) {
+            throw WindowSystemError.operationFailed("Injected visible-window observation failure.")
+        }
         refreshLearnedConstraints()
         return windows
     }

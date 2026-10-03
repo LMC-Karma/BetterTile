@@ -226,6 +226,15 @@ public final class WindowCoordinator {
         }
     }
 
+    /// Resolves the ordinary shortcut cycle for one already captured window.
+    public func plan(_ requestedAction: WindowAction, for windowID: WindowID) -> WindowPlanOutcome {
+        do {
+            guard let window = try snapshots(ids: [windowID]).first, window.isEligible else { return .unavailable }
+            return plan(requestedAction: requestedAction,
+                resolvedAction: cycledAction(for: requestedAction, windowID: windowID), window: window)
+        } catch { return .failed(reason: error.localizedDescription) }
+    }
+
     /// Plans one exact action for a captured window without advancing shortcut
     /// cycles or recording history.
     public func planExact(
@@ -844,6 +853,8 @@ extension WindowCoordinator {
 
     /// A bounded frame/order transaction. Windows remain on-screen and are
     /// never minimized. Session validity is checked again after each await.
+    /// - Parameter rollbackRequired: Previous selections that become hidden in
+    ///   this proposal but must be verified again if the old layout is restored.
     /// - Parameter required: Windows whose frames must fit and settle. Other
     ///   placements (hidden tabs stacked behind their pane's selected tab) are
     ///   best effort: a refusal never fails the layout. Nil requires all.
@@ -851,6 +862,7 @@ extension WindowCoordinator {
         placements allPlacements: [Placement],
         rollbackFrames: [WindowID: BTRect]? = nil,
         rollbackDisplayID: DisplayID? = nil,
+        rollbackRequired: Set<WindowID>? = nil,
         required: Set<WindowID>? = nil,
         selected: [WindowID],
         previousSelected: [WindowID],
@@ -889,7 +901,7 @@ extension WindowCoordinator {
             baseline = currentFrames.merging(rollbackFrames?.filter { ids.contains($0.key) } ?? [:]) { _, checkpoint in checkpoint }
         } catch {
             if let rollbackFrames, let rollbackDisplayID {
-                let restored = await restoreTabbedFrames(rollbackFrames, required: ids, on: rollbackDisplayID, isCurrent: isCurrent)
+                let restored = await restoreTabbedFrames(rollbackFrames, required: ids.union(rollbackRequired ?? []), on: rollbackDisplayID, isCurrent: isCurrent)
                 if case .degraded = restored { return restored }
             }
             return .failed(reason: error.localizedDescription)
@@ -987,7 +999,7 @@ extension WindowCoordinator {
             guard isCurrent() else { return .degraded(reason: "The desktop changed before Tabbed could restore its windows.") }
             guard let participantDisplayID else { return .failed(reason: error.localizedDescription) }
             let restoration = await restoreTabbedFrames(
-                baseline.merging(bestEffortBaseline) { before, _ in before }, required: ids,
+                baseline.merging(bestEffortBaseline) { before, _ in before }, required: ids.union(rollbackRequired ?? []),
                 on: participantDisplayID, isCurrent: isCurrent)
             guard isCurrent(), !Task.isCancelled else {
                 return .degraded(reason: "The desktop changed before Tabbed could restore its windows.")

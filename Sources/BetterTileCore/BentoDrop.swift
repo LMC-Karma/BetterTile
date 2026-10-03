@@ -266,11 +266,12 @@ public struct BentoDropPlanner: Sendable {
               contains(targetFrame, in: bounds), !targetFrame.isEmpty
         else { return nil }
 
-        var residual = residualRegions(around: targetFrame, in: bounds)
+        let geometry = BentoDropGeometry(tolerance: tolerance)
+        var residual = geometry.residualRegions(around: targetFrame, in: bounds)
         while residual.count < otherIDs.count {
             guard let index = residual.indices.max(by: { residual[$0].area < residual[$1].area }) else { return nil }
             let region = residual.remove(at: index)
-            residual.append(contentsOf: split(region))
+            residual.append(contentsOf: geometry.split(region))
         }
         residual.sort { ($0.area, -$0.minY, -$0.minX) > ($1.area, -$1.minY, -$1.minX) }
 
@@ -282,7 +283,7 @@ public struct BentoDropPlanner: Sendable {
             bounds: bounds
         ) else { return nil }
         let items = [RegionNode(frame: targetFrame, node: .leaf(sourceWindowID))] + allocation
-        guard let root = buildTree(items: items, bounds: bounds) else { return nil }
+        guard let root = geometry.buildTree(items: items, bounds: bounds) else { return nil }
         var next = BentoLayoutState(
             root: root,
             floatingWindowIDs: state.floatingWindowIDs,
@@ -323,82 +324,6 @@ public struct BentoDropPlanner: Sendable {
             minimizedWindowIDs: others,
             excludedWindowIDs: others
         )
-    }
-
-    private func residualRegions(around target: BTRect, in bounds: BTRect) -> [BTRect] {
-        var regions: [BTRect] = []
-        if target.minX > bounds.minX + tolerance {
-            regions.append(BTRect(x: bounds.minX, y: bounds.minY, width: target.minX - bounds.minX, height: bounds.size.height))
-        }
-        if target.maxX < bounds.maxX - tolerance {
-            regions.append(BTRect(x: target.maxX, y: bounds.minY, width: bounds.maxX - target.maxX, height: bounds.size.height))
-        }
-        if target.minY > bounds.minY + tolerance {
-            regions.append(BTRect(x: target.minX, y: bounds.minY, width: target.size.width, height: target.minY - bounds.minY))
-        }
-        if target.maxY < bounds.maxY - tolerance {
-            regions.append(BTRect(x: target.minX, y: target.maxY, width: target.size.width, height: bounds.maxY - target.maxY))
-        }
-        return regions
-    }
-
-    private func split(_ frame: BTRect) -> [BTRect] {
-        if frame.size.width >= frame.size.height {
-            let width = frame.size.width / 2
-            return [
-                BTRect(x: frame.minX, y: frame.minY, width: width, height: frame.size.height),
-                BTRect(x: frame.minX + width, y: frame.minY, width: frame.size.width - width, height: frame.size.height),
-            ]
-        }
-        let height = frame.size.height / 2
-        return [
-            BTRect(x: frame.minX, y: frame.minY, width: frame.size.width, height: height),
-            BTRect(x: frame.minX, y: frame.minY + height, width: frame.size.width, height: frame.size.height - height),
-        ]
-    }
-
-    private func buildTree(items: [RegionNode], bounds: BTRect) -> BentoNode? {
-        guard !items.isEmpty else { return nil }
-        if items.count == 1 {
-            return items[0].frame.approximatelyEquals(bounds, tolerance: tolerance) ? items[0].node : nil
-        }
-        let verticalCuts = Set(items.flatMap { [$0.frame.minX, $0.frame.maxX] })
-            .filter { $0 > bounds.minX + tolerance && $0 < bounds.maxX - tolerance }.sorted()
-        for cut in verticalCuts {
-            let first = items.filter { $0.frame.maxX <= cut + tolerance }
-            let second = items.filter { $0.frame.minX >= cut - tolerance }
-            guard !first.isEmpty, !second.isEmpty, first.count + second.count == items.count else { continue }
-            let firstBounds = BTRect(x: bounds.minX, y: bounds.minY, width: cut - bounds.minX, height: bounds.size.height)
-            let secondBounds = BTRect(x: cut, y: bounds.minY, width: bounds.maxX - cut, height: bounds.size.height)
-            if let firstNode = buildTree(items: first, bounds: firstBounds),
-               let secondNode = buildTree(items: second, bounds: secondBounds) {
-                return .partition(BentoPartition(
-                    axis: .vertical,
-                    weight: firstBounds.size.width / bounds.size.width,
-                    first: firstNode,
-                    second: secondNode
-                ))
-            }
-        }
-        let horizontalCuts = Set(items.flatMap { [$0.frame.minY, $0.frame.maxY] })
-            .filter { $0 > bounds.minY + tolerance && $0 < bounds.maxY - tolerance }.sorted()
-        for cut in horizontalCuts {
-            let first = items.filter { $0.frame.maxY <= cut + tolerance }
-            let second = items.filter { $0.frame.minY >= cut - tolerance }
-            guard !first.isEmpty, !second.isEmpty, first.count + second.count == items.count else { continue }
-            let firstBounds = BTRect(x: bounds.minX, y: bounds.minY, width: bounds.size.width, height: cut - bounds.minY)
-            let secondBounds = BTRect(x: bounds.minX, y: cut, width: bounds.size.width, height: bounds.maxY - cut)
-            if let firstNode = buildTree(items: first, bounds: firstBounds),
-               let secondNode = buildTree(items: second, bounds: secondBounds) {
-                return .partition(BentoPartition(
-                    axis: .horizontal,
-                    weight: firstBounds.size.height / bounds.size.height,
-                    first: firstNode,
-                    second: secondNode
-                ))
-            }
-        }
-        return nil
     }
 
     private func placementScore(windowID: WindowID, region: BTRect, frames: [WindowID: BTRect], bounds: BTRect) -> Double {
@@ -466,7 +391,90 @@ public struct BentoDropPlanner: Sendable {
     }
 }
 
-private struct RegionNode {
+struct RegionNode {
     var frame: BTRect
     var node: BentoNode
+}
+
+/// Rectangle subtraction and tree assembly shared by fixed-region drops.
+struct BentoDropGeometry {
+    var tolerance: Double
+    // Bento retains its historical binary-weight clamp. Tabbed needs exact
+    // ratios for the narrower slots allowed by its twelve-pane limit.
+    var clampSplitWeights = true
+
+    func residualRegions(around target: BTRect, in bounds: BTRect) -> [BTRect] {
+        var regions: [BTRect] = []
+        if target.minX > bounds.minX + tolerance {
+            regions.append(BTRect(x: bounds.minX, y: bounds.minY, width: target.minX - bounds.minX, height: bounds.size.height))
+        }
+        if target.maxX < bounds.maxX - tolerance {
+            regions.append(BTRect(x: target.maxX, y: bounds.minY, width: bounds.maxX - target.maxX, height: bounds.size.height))
+        }
+        if target.minY > bounds.minY + tolerance {
+            regions.append(BTRect(x: target.minX, y: bounds.minY, width: target.size.width, height: target.minY - bounds.minY))
+        }
+        if target.maxY < bounds.maxY - tolerance {
+            regions.append(BTRect(x: target.minX, y: target.maxY, width: target.size.width, height: bounds.maxY - target.maxY))
+        }
+        return regions
+    }
+
+    func split(_ frame: BTRect) -> [BTRect] {
+        if frame.size.width >= frame.size.height {
+            let width = frame.size.width / 2
+            return [
+                BTRect(x: frame.minX, y: frame.minY, width: width, height: frame.size.height),
+                BTRect(x: frame.minX + width, y: frame.minY, width: frame.size.width - width, height: frame.size.height),
+            ]
+        }
+        let height = frame.size.height / 2
+        return [
+            BTRect(x: frame.minX, y: frame.minY, width: frame.size.width, height: height),
+            BTRect(x: frame.minX, y: frame.minY + height, width: frame.size.width, height: frame.size.height - height),
+        ]
+    }
+
+    func buildTree(items: [RegionNode], bounds: BTRect) -> BentoNode? {
+        guard !items.isEmpty else { return nil }
+        if items.count == 1 {
+            return items[0].frame.approximatelyEquals(bounds, tolerance: tolerance) ? items[0].node : nil
+        }
+        let verticalCuts = Set(items.flatMap { [$0.frame.minX, $0.frame.maxX] })
+            .filter { $0 > bounds.minX + tolerance && $0 < bounds.maxX - tolerance }.sorted()
+        for cut in verticalCuts {
+            let first = items.filter { $0.frame.maxX <= cut + tolerance }
+            let second = items.filter { $0.frame.minX >= cut - tolerance }
+            guard !first.isEmpty, !second.isEmpty, first.count + second.count == items.count else { continue }
+            let firstBounds = BTRect(x: bounds.minX, y: bounds.minY, width: cut - bounds.minX, height: bounds.size.height)
+            let secondBounds = BTRect(x: cut, y: bounds.minY, width: bounds.maxX - cut, height: bounds.size.height)
+            if let firstNode = buildTree(items: first, bounds: firstBounds),
+               let secondNode = buildTree(items: second, bounds: secondBounds) {
+                return partition(axis: .vertical, first: firstNode, second: secondNode,
+                                 weight: firstBounds.size.width / bounds.size.width)
+            }
+        }
+        let horizontalCuts = Set(items.flatMap { [$0.frame.minY, $0.frame.maxY] })
+            .filter { $0 > bounds.minY + tolerance && $0 < bounds.maxY - tolerance }.sorted()
+        for cut in horizontalCuts {
+            let first = items.filter { $0.frame.maxY <= cut + tolerance }
+            let second = items.filter { $0.frame.minY >= cut - tolerance }
+            guard !first.isEmpty, !second.isEmpty, first.count + second.count == items.count else { continue }
+            let firstBounds = BTRect(x: bounds.minX, y: bounds.minY, width: bounds.size.width, height: cut - bounds.minY)
+            let secondBounds = BTRect(x: bounds.minX, y: cut, width: bounds.size.width, height: bounds.maxY - cut)
+            if let firstNode = buildTree(items: first, bounds: firstBounds),
+               let secondNode = buildTree(items: second, bounds: secondBounds) {
+                return partition(axis: .horizontal, first: firstNode, second: secondNode,
+                                 weight: firstBounds.size.height / bounds.size.height)
+            }
+        }
+        return nil
+    }
+
+    private func partition(axis: SplitAxis, first: BentoNode, second: BentoNode, weight: Double) -> BentoNode {
+        .partition(clampSplitWeights
+            ? BentoPartition(axis: axis, weight: weight, first: first, second: second)
+            : BentoPartition(axis: axis, children: [first, second], ratios: [weight, 1 - weight]))
+    }
+
 }
