@@ -350,7 +350,12 @@ final class BetterTileModel {
     }
 
     func perform(_ action: WindowAction) {
-        guard !isShutDown, !isStabilizingSpace else { return }
+        guard !isShutDown else { return }
+        guard !isStabilizingSpace else {
+            statusMessage = "Desktop changed. Try again when the Space switch finishes."
+            presentActionResult(succeeded: false, error: statusMessage, displayID: activeDisplayID)
+            return
+        }
         let originalDisplayID = (try? system.focusedWindow())?.displayID ?? activeDisplayID
         guard hasAccessibilityPermission || refreshPermission() else {
             statusMessage = "Accessibility permission is required. Open the Setup Assistant to grant access."
@@ -1766,7 +1771,7 @@ final class BetterTileModel {
         refreshActiveWindows(force: true)
     }
 
-    private func beginActiveSpaceStabilization() {
+    func beginActiveSpaceStabilization() {
         tabbedFocusTask?.cancel()
         tabbedResizeReleaseTask?.cancel()
         tabbedResizeReleaseTask = nil
