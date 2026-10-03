@@ -264,3 +264,38 @@ BETTERTILE_NATIVE_GLASS_PREVIEW_DIR=/tmp/bettertile-glass-previews \
   swift test --scratch-path /tmp/bettertile-build \
   --filter 'nativeGlassCompositorPreviews|nativeDividerLensPreviews|menuGlassPopoverPreviews'
 ```
+
+## Optional interaction benchmark
+
+Run this check locally with no simultaneous builds or compositor captures.
+It is disabled by default and in CI. Set `BETTERTILE_PERF_BENCH=tab-drag` to
+measure completed drag frames, or `all` to include refresh and divider paths.
+The output goes to stdout. `BETTERTILE_PERF_OUT` optionally appends the same
+report to a chosen file.
+
+```sh
+BETTERTILE_PERF_BENCH=tab-drag \
+  swift test --scratch-path /tmp/bettertile-benchmark-build \
+  --filter interactionBenchmark
+```
+
+The tab scenario has four panes and 16 tabs. Each of 400 samples sends one
+mouse event and fires the production display-tick callback, including edge
+scrolling. The report excludes 20 warm-up samples. Checks after each sample
+verify the lifted tab's position and the source strip's provisional order.
+This prevents measuring only the cost of queuing a mouse event.
+
+The phases report controller work, Core Animation commits, and pending AppKit
+drawing. They do not measure final WindowServer compositing, physical pointer
+latency, or real applications accepting Accessibility writes. Compare the
+median mean and median p95 of three serial runs on the same Mac. The drag-frame
+targets are a mean at or below 1 ms and p95 at or below 3 ms.
+
+Run `nativeTabDragPreviews` separately with
+`BETTERTILE_NATIVE_GLASS_PREVIEW_DIR` set to an output directory. It places the
+actual production views over one synthetic backdrop after a completed tick,
+then captures that test window in light and dark appearance. This shows
+reordering, a provisional tab in an empty strip, and a split target. It does not establish
+real-application stacking or the feel of physical input. For that check, drag
+quickly with at least 16 tabs, hold both strip edges to scroll, cancel with
+Escape, and release over a different destination before the next display tick.
