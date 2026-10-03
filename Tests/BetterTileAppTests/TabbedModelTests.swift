@@ -1048,6 +1048,8 @@ func tabbedDividerPresentationSurvivesDisplacedWindowsAndExcludesInactiveTabs() 
     let presentation = model.dividerPresentation(windows: system.windows)
     #expect(presentation.boundaries == expected)
     #expect(presentation.obscuringFrames == [floating.frame])
+    #expect(presentation.managedWindowIDs == [system.mainDisplay.id: state.windowIDs])
+    #expect(presentation.managedWindowIDs[system.mainDisplay.id]?.contains(hidden) == true)
 }
 
 @Test(arguments: [false, true]) @MainActor
@@ -1518,4 +1520,27 @@ func delayedNativeTabbedCheckpointRestoreLocksTabDragsUntilCompletion(cancelRest
     try await Task.sleep(for: .milliseconds(200))
     #expect(model.statusMessage == "shutdown-checkpoint")
     #expect(system.frameWriteCounts == shutdownWrites)
+}
+
+@Test @MainActor func dividerManagedMembersStayOnTheirDisplayIncludingInactiveTabs() async throws {
+    let system = FakeAppWindowSystem()
+    let model = try await makeTwoTabbedColumns(system)
+    defer { model.shutdown() }
+    let firstState = try #require(model.activeTabbedState)
+    let otherDisplay = DisplayID(rawValue: "seam-other-display")
+    system.availableDisplays.append(DisplaySnapshot(
+        id: otherDisplay, frame: BTRect(x: 1000, y: 0, width: 1000, height: 800),
+        visibleFrame: BTRect(x: 1000, y: 0, width: 1000, height: 800)
+    ))
+    let otherWindows = (0..<3).map { index in
+        WindowSnapshot(id: WindowID(rawValue: "other-\(index)"), processIdentifier: 77,
+                       frame: BTRect(x: 1100, y: 100, width: 500, height: 500), displayID: otherDisplay)
+    }
+    system.windows += otherWindows
+    system.focusedID = otherWindows[0].id
+    model.setActiveMode(.tabbed)
+    try #require(await waitFor { model.activeTabbedState?.windowIDs.count == 3 })
+    let presentation = model.dividerPresentation(windows: system.windows)
+    #expect(presentation.managedWindowIDs[system.mainDisplay.id] == firstState.windowIDs)
+    #expect(presentation.managedWindowIDs[otherDisplay] == Set(otherWindows.map(\.id)))
 }

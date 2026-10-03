@@ -134,6 +134,18 @@ window first to use those actions.
 Use disposable windows for the first pass. Automated tests use a fake window
 system; the checks below validate real application and macOS behavior.
 
+- In Bento and Tabbed, float an excluded application's window over the middle
+  of a divider. Hover over the cover, then above and below it. The handle must
+  hide over the cover and stay within the exposed segment beside it. Grab
+  the handle and drag; its knob and track must stop at the cover's edge.
+  Repeat with a normal window, Picture in Picture, and the Dock near an end.
+  Check straight dividers and junctions in light and dark appearance.
+- Cmd-Tab to a window over a visible divider handle. Confirm the handle trims
+  or hides without further pointer movement. Move the cover behind the layout;
+  a window visible only through the gap must not suppress the handle.
+- Drag a seam into a gap shorter than 24 points, or under a cover with no
+  exposed segment. The input handle stays visible until release so the drag
+  can finish. Its minimum knob can extend beyond that short segment.
 - Put two windows from the same app in different panes, with another app selected
   in one pane. Select tabs repeatedly and confirm the other pane stays correct.
 - Test curtains with Safari, Finder, Terminal, and VS Code. Shrink a selected

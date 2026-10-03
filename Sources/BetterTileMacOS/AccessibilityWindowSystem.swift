@@ -1405,3 +1405,11 @@ extension AccessibilityWindowSystem: TabbedWindowSystem {
         }
     }
 }
+
+extension AccessibilityWindowSystem: WindowStackReading {
+    public func onScreenStack(labeling ids: Set<WindowID>) -> [SeamStackEntry]? {
+        guard let records = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
+            as? [[CFString: Any]] else { return nil }
+        return SeamStackRecord.parseStack(records, identities: identities, labeling: ids)
+    }
+}
