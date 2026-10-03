@@ -15,7 +15,8 @@ private let seamParticipants = [
     seamEntry(seamRight, frame: BTRect(x: 501, y: 0, width: 499, height: 800)),
 ]
 private func seamCandidates(_ stack: [SeamStackEntry]) -> [BTRect] {
-    DividerSeamCoverage.frontCandidates(stack: stack, ownProcess: 99, managed: seamMembers, seamParticipants: [seamLeft, seamRight])
+    DividerSeamCoverage.frontCandidates(stack: stack, ownProcess: 99, managed: seamMembers,
+                                        seamParticipants: [seamLeft, seamRight], handleLayer: 3)
 }
 private func seamSegments(_ stack: [SeamStackEntry]) -> [ClosedRange<Double>] {
     DividerSeamCoverage.exposedSegments(span: seamSpan, axis: .vertical, band: seamBand, candidates: seamCandidates(stack))
@@ -54,9 +55,14 @@ private func seamSegments(_ stack: [SeamStackEntry]) -> [ClosedRange<Double>] {
     #expect(seamCandidates(ignored + seamParticipants).isEmpty)
 }
 
-@Test func seamDockTrimsTheEnd() {
-    let dock = seamEntry(layer: 20, frame: BTRect(x: 300, y: 740, width: 400, height: 60))
-    #expect(seamSegments([dock] + seamParticipants) == [8...740])
+@Test func seamIgnoresWindowsAboveTheHandleLevel() {
+    // macOS 26 reports the Dock as one display-sized window at layer 20.
+    let dock = seamEntry(layer: 20, frame: BTRect(x: 0, y: 0, width: 1000, height: 800))
+    let panel = seamEntry(layer: 8, frame: BTRect(x: 300, y: 740, width: 400, height: 60))
+    #expect(seamCandidates([dock, panel] + seamParticipants).isEmpty)
+    #expect(seamSegments([dock, panel] + seamParticipants) == [seamSpan])
+    let floating = seamEntry(layer: 3, frame: BTRect(x: 300, y: 740, width: 400, height: 60))
+    #expect(seamSegments([dock, floating] + seamParticipants) == [8...740])
 }
 
 @Test func seamShortExposedGapHasNoHoverHandle() {

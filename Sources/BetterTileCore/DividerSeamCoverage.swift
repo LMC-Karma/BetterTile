@@ -23,14 +23,17 @@ public struct SeamArmRoom: Equatable, Sendable {
 }
 
 public enum DividerSeamCoverage {
+    /// Only windows at or below `handleLayer` can be drawn over by the handle.
+    /// Higher layers, such as the Dock's display-sized window, already draw
+    /// above it, so they never hide or trim it.
     public static func frontCandidates(
         stack: [SeamStackEntry], ownProcess: Int32,
-        managed: Set<WindowID>, seamParticipants: Set<WindowID>
+        managed: Set<WindowID>, seamParticipants: Set<WindowID>, handleLayer: Int
     ) -> [BTRect] {
         let back = stack.lastIndex { $0.windowID.map(seamParticipants.contains) == true } ?? stack.count
         return stack.prefix(back).compactMap { entry in
             guard entry.processIdentifier != ownProcess, entry.alpha > 0.01,
-                  (0..<24).contains(entry.layer), entry.windowID.map(managed.contains) != true
+                  (0...handleLayer).contains(entry.layer), entry.windowID.map(managed.contains) != true
             else { return nil }
             return entry.frame
         }

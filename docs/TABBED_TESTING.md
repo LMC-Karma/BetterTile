@@ -156,7 +156,8 @@ system; the checks below validate real application and macOS behavior.
   of a divider. Hover over the cover, then above and below it. The handle must
   hide over the cover and stay within the exposed segment beside it. Grab
   the handle and drag; its knob and track must stop at the cover's edge.
-  Repeat with a normal window, Picture in Picture, and the Dock near an end.
+  Repeat with a normal window and Picture in Picture. With the Dock shown and
+  auto-hidden, the handle must still appear on hover; the Dock draws above it.
   Check straight dividers and junctions in light and dark appearance.
 - Cmd-Tab to a window over a visible divider handle. Confirm the handle trims
   or hides without further pointer movement. Move the cover behind the layout;

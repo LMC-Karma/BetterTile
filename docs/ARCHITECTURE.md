@@ -235,8 +235,10 @@ change a Bento operation made to the tree; writing it also writes the tree.
 - Tabbed's pointer dividers use pane boundaries even when an application has
   displaced its selected window. Inactive tabs and BetterTile panels do not
   suppress the handle. The on-screen window stack determines which foreign
-  windows are in front of the seam's participants. The handle and its track
-  stop at the edges of exposed seam segments. Hover caches the stack for
+  windows are in front of the seam's participants. Only windows at or below
+  the handle's floating level count. Higher levels, such as the Dock's
+  display-sized window on macOS 26, already draw above the handle. The handle
+  and its track stop at the edges of exposed seam segments. Hover caches the stack for
   150 ms and invalidates it on boundary refresh or application activation.
   A gesture reads the stack once at its start and recomputes coverage from
   those frames as the seam moves. Missing stack data or an unresolved exact
@@ -247,8 +249,8 @@ change a Bento operation made to the tree; writing it also writes the tree.
   cover. A captured junction also retains its central target if a cover
   reaches it. The junction's rectangular input frame is bounded against
   diagonal covers as well as covers over its arms.
-  Third-party transparent overlays at levels 0–23 still cover the seam
-  when their window alpha is above 0.01. Bento's divider
+  Third-party transparent overlays at or below the floating level still cover
+  the seam when their window alpha is above 0.01. Bento's divider
   handle appears only on hover, so the Tabbed overlay adds a
   VoiceOver slider over each divider. The slider ignores the mouse; increment
   and decrement move the Bento divider by five percent of the area it splits.
