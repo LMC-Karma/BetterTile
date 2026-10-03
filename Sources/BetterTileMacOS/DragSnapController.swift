@@ -106,6 +106,7 @@ public final class DragSnapController {
     }
     public var bentoDragBeganHandler: ((DisplayID, WindowID, BTRect) -> Bool)?
     public var bentoPreviewHandler: ((DisplayID, WindowID, BentoDragOutcome) -> [Placement]?)?
+    public var isTabbedMember: ((WindowID) -> Bool)?
     public var bentoDragEndedHandler: ((DisplayID, WindowID, BentoDragOutcome) -> Void)?
     public var activeModeProvider: ((DisplayID) -> LayoutMode?)?
     public var bentoStateProvider: ((DisplayID) -> BentoLayoutState?)?
@@ -458,6 +459,10 @@ public final class DragSnapController {
             draggedWindowID = windowID
             snapSourceWindow = snapshot
         }
+        if bentoDragDisplayID == nil, let draggedWindowID, isTabbedMember?(draggedWindowID) == true {
+            clearTargets()
+            return
+        }
         let displays = coordinator.system.displays()
         guard let display = displays.first(where: { $0.frame.contains(point) }) else { clearTargets(); return }
         if let bentoDragDisplayID, display.id != bentoDragDisplayID {
@@ -502,22 +507,28 @@ public final class DragSnapController {
                 at: now
             )
             let hoverDelay = position == .center ? configuration.bentoSwapHoverDelay : 0
+            let waitingSnapTarget = bentoHover.armedCandidate(at: now, delay: hoverDelay) == nil && hoverDelay > 0
+                ? snapTarget : nil
+            let retainsSnapWireframes = waitingSnapTarget != nil && activeModeProvider?(display.id) == .tabbed
             if changed {
                 bentoHoverPreviewTask?.cancel()
                 bentoHoverPreviewTask = nil
                 presentedBentoCandidate = nil
                 preview?.hide()
                 target = nil
-                activeBentoPreview.showCue(
-                    targetFrame: placement.frame,
-                    position: position,
-                    phase: .tracking,
-                    seam: nil,
-                    mainScreenFrame: mainFrame
-                )
+                if !retainsSnapWireframes {
+                    activeBentoPreview.showCue(
+                        targetFrame: placement.frame,
+                        position: position,
+                        phase: .tracking,
+                        seam: nil,
+                        mainScreenFrame: mainFrame
+                    )
+                }
                 bentoHoverPreviewTask = Task { @MainActor [weak self] in
+                    let cueDelay = retainsSnapWireframes ? max(Self.bentoCueArmDelay, hoverDelay) : Self.bentoCueArmDelay
                     try? await Task.sleep(
-                        for: .milliseconds(Int(Self.bentoCueArmDelay * 1_000))
+                        for: .milliseconds(Int(cueDelay * 1_000))
                     )
                     guard let self, !Task.isCancelled,
                           self.bentoHover.candidate == candidate
@@ -532,7 +543,7 @@ public final class DragSnapController {
                     guard let placements else { return }
                     try? await Task.sleep(
                         for: .milliseconds(Int(
-                            (Self.bentoReflowPreviewDelay - Self.bentoCueArmDelay) * 1_000
+                            max(0, Self.bentoReflowPreviewDelay - cueDelay) * 1_000
                         ))
                     )
                     guard !Task.isCancelled,
@@ -545,7 +556,7 @@ public final class DragSnapController {
                         baselineFrames: baselineFrames
                     )
                 }
-            } else if presentedBentoCandidate != candidate {
+            } else if presentedBentoCandidate != candidate, !retainsSnapWireframes {
                 activeBentoPreview.showCue(
                     targetFrame: placement.frame,
                     position: position,
@@ -554,11 +565,7 @@ public final class DragSnapController {
                     mainScreenFrame: mainFrame
                 )
             }
-            if bentoHover.armedCandidate(
-                at: now,
-                delay: hoverDelay
-            ) == nil, hoverDelay > 0, let snapTarget {
-                bentoPreview?.hide()
+            if let snapTarget = waitingSnapTarget {
                 target = snapTarget
                 showSnapPreview(snapTarget, displayID: display.id, mainScreenFrame: mainFrame)
             } else {
@@ -571,7 +578,6 @@ public final class DragSnapController {
         bentoHoverPreviewTask = nil
         presentedBentoCandidate = nil
         bentoHover.clear()
-        bentoPreview?.hide()
         target = snapTarget ?? SnapZoneDetector().target(
                 at: point,
                 display: display,
@@ -582,11 +588,13 @@ public final class DragSnapController {
             showSnapPreview(target, displayID: display.id, mainScreenFrame: mainFrame)
         } else {
             preview?.hide()
+            bentoPreview?.hide()
         }
     }
 
     private func showSnapPreview(_ target: SnapTarget, displayID: DisplayID, mainScreenFrame: CGRect) {
         guard bentoDragDisplayID != nil, activeModeProvider?(displayID) == .tabbed else {
+            bentoPreview?.hide()
             showPreview(frame: target.frame, mainScreenFrame: mainScreenFrame)
             return
         }
@@ -601,7 +609,7 @@ public final class DragSnapController {
         let baseline = Dictionary(uniqueKeysWithValues:
             (bentoStateProvider?(displayID)?.placements(in: coordinator.system.displays()
                 .first(where: { $0.id == displayID })?.visibleFrame ?? target.frame) ?? []).map { ($0.windowID, $0.frame) })
-        activeBentoPreview.showWireframes(placements: BentoDragPreview.changedPlacements(
+        activeBentoPreview.showSnapWireframes(placements: BentoDragPreview.changedPlacements(
             placements, baselineFrames: baseline, excluding: source), baselineFrames: baseline)
     }
 
@@ -612,6 +620,10 @@ public final class DragSnapController {
         sourceOriginalFrame: BTRect?,
         mainScreenFrame: CGRect
     ) -> [Placement]? {
+        if bentoPreview?.showsSnapWireframes == true {
+            preview?.hide()
+            target = nil
+        }
         let outcome: BentoDragOutcome = candidate.position == .center
             ? .swap(targetWindowID: candidate.targetWindowID)
             : .insert(targetWindowID: candidate.targetWindowID, edge: candidate.position)
@@ -680,7 +692,9 @@ public final class DragSnapController {
             finishActiveBentoDrag(outcome: outcome)
             return
         }
-        guard let target, let windowID = draggedWindowID else { return }
+        guard let windowID = draggedWindowID else { return }
+        guard isTabbedMember?(windowID) != true else { return }
+        guard let target else { return }
         let displayID = targetDisplayID
         let outcome = coordinator.applyPlacements([Placement(windowID: windowID, frame: target.frame)])
         if let displayID {
@@ -895,6 +909,7 @@ private final class BentoDropPreviewController {
     private let placementPreviews = PlacementWireframeController()
     private var landingPanel: NSPanel?
     private var swapOriginPanel: NSPanel?
+    private(set) var showsSnapWireframes = false
 
     init() {
         cuePanel = Self.makePanel()
@@ -911,7 +926,7 @@ private final class BentoDropPreviewController {
     ) {
         let interval = Self.signposter.beginInterval("showBentoCue")
         defer { Self.signposter.endInterval("showBentoCue", interval) }
-        if phase != .armed { hideMotionPreviews() }
+        if phase != .armed || showsSnapWireframes { hideMotionPreviews() }
         cueView.update(position: position, phase: phase, targetFrame: targetFrame, sourceFrame: seam)
         cuePanel.setFrame(
             CoordinateConverter.toAppKit(targetFrame, mainScreenFrame: mainScreenFrame).insetBy(
@@ -942,7 +957,15 @@ private final class BentoDropPreviewController {
     ) {
         let interval = Self.signposter.beginInterval("showBentoWireframes")
         defer { Self.signposter.endInterval("showBentoWireframes", interval) }
+        showsSnapWireframes = false
         placementPreviews.show(placements, baselineFrames: baselineFrames)
+    }
+
+    func showSnapWireframes(placements: [Placement], baselineFrames: [WindowID: BTRect]) {
+        if cuePanel.isVisible { cuePanel.orderOut(nil) }
+        hideLandingPreviews()
+        showWireframes(placements: placements, baselineFrames: baselineFrames)
+        showsSnapWireframes = true
     }
 
     func hide() {
@@ -953,13 +976,18 @@ private final class BentoDropPreviewController {
     }
 
     private func hideMotionPreviews() {
+        showsSnapWireframes = false
+        hideLandingPreviews()
+        placementPreviews.hide()
+    }
+
+    private func hideLandingPreviews() {
         (landingPanel?.contentView as? BentoLandingView)?.stopPulsing()
         landingPanel?.orderOut(nil)
         landingPanel = nil
         (swapOriginPanel?.contentView as? BentoLandingView)?.stopPulsing()
         swapOriginPanel?.orderOut(nil)
         swapOriginPanel = nil
-        placementPreviews.hide()
     }
 
     private func showLanding(
@@ -1320,15 +1348,31 @@ private final class BentoLandingView: NSView {
 /// visual language for "this window is going here".
 final class PlacementWireframeController {
     private var panels: [WindowID: NSPanel] = [:]
+    private var destinations: [WindowID: CGRect] = [:]
+    private let panelFactory: () -> NSPanel
+    private let reduceMotion: () -> Bool
+    private var wasReducingMotion = false
+
+    init(reduceMotion: @escaping () -> Bool = { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion },
+         panelFactory: @escaping () -> NSPanel = {
+             NSPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: true)
+         }) {
+        self.reduceMotion = reduceMotion
+        self.panelFactory = panelFactory
+    }
 
     func show(
         _ placements: [Placement],
         baselineFrames: [WindowID: BTRect] = [:]
     ) {
         guard let mainFrame = NSScreen.screens.first?.frame else { return }
+        let reduceMotion = reduceMotion()
+        let finishAnimations = reduceMotion && !wasReducingMotion
+        wasReducingMotion = reduceMotion
         let ids = Set(placements.map(\.windowID))
         for id in panels.keys where !ids.contains(id) {
             panels.removeValue(forKey: id)?.orderOut(nil)
+            destinations.removeValue(forKey: id)
         }
         for placement in placements {
             let panel = panels[placement.windowID] ?? makePanel(for: placement.windowID)
@@ -1339,13 +1383,20 @@ final class PlacementWireframeController {
                 dx: BentoPreviewMetrics.motionPanelInset,
                 dy: BentoPreviewMetrics.motionPanelInset
             )
+            if panel.isVisible, destinations[placement.windowID] == destination {
+                if finishAnimations {
+                    panel.alphaValue = 1
+                    panel.setFrame(destination, display: true)
+                }
+                continue
+            }
+            destinations[placement.windowID] = destination
             let origin = baselineFrames[placement.windowID].map {
                 CoordinateConverter.toAppKit($0, mainScreenFrame: mainFrame).insetBy(
                     dx: BentoPreviewMetrics.motionPanelInset,
                     dy: BentoPreviewMetrics.motionPanelInset
                 )
             } ?? destination
-            let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
             panel.alphaValue = reduceMotion ? 1 : 0.58
             panel.setFrame(origin, display: true)
             panel.orderFrontRegardless()
@@ -1366,15 +1417,12 @@ final class PlacementWireframeController {
     func hide() {
         for panel in panels.values { panel.orderOut(nil) }
         panels.removeAll()
+        destinations.removeAll()
+        wasReducingMotion = false
     }
 
     private func makePanel(for id: WindowID) -> NSPanel {
-        let panel = NSPanel(
-            contentRect: .zero,
-            styleMask: [.borderless, .nonactivatingPanel],
-            backing: .buffered,
-            defer: true
-        )
+        let panel = panelFactory()
         panel.level = .floating
         panel.isOpaque = false
         panel.backgroundColor = .clear
