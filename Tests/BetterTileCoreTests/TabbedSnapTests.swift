@@ -16,7 +16,7 @@ private func snapWindow(_ name: String, minimum: BTSize = BTSize(width: 120, hei
     let left = state.panes[0].id, right = state.panes[1].id
     state.activatePane(right)
     state.reconcile(windowIDs: [source, hidden, destination], removed: [], focused: destination)
-    let plan = try #require(TabbedSnapPlanner.plan(sourceWindowID: source, action: .rightHalf, state: state,
+    let plan = try #require(TabbedSnapPlanner.plan(sourceWindowID: source, action: .rightHalf, scope: .window, state: state,
                                                   windows: [snapWindow("source"), snapWindow("hidden"), snapWindow("destination")],
                                                   in: snapBounds))
     #expect(plan.state.panes.map(\.id) == state.panes.map(\.id))
@@ -34,7 +34,7 @@ private func snapWindow(_ name: String, minimum: BTSize = BTSize(width: 120, hei
     var state = TabbedLayoutState()
     state.reconcile(windowIDs: [source], removed: [], focused: source)
     let oldPane = state.panes[0].id
-    let plan = try #require(TabbedSnapPlanner.plan(sourceWindowID: source, action: .rightHalf, state: state,
+    let plan = try #require(TabbedSnapPlanner.plan(sourceWindowID: source, action: .rightHalf, scope: .window, state: state,
                                                   windows: [snapWindow("source")], in: snapBounds))
     #expect(plan.state.panes.count == 2)
     #expect(plan.state.panes.first { $0.id == oldPane }?.tabs.isEmpty == true)
@@ -88,7 +88,7 @@ private func tabbedSnapAllRegionsPreserveGroupsAndCoverWorkArea(example: SnapCas
     let (state, windows) = snapGrid(gap: gap)
     let source = windows[0].id
     let original = state
-    let plan = try #require(TabbedSnapPlanner.plan(sourceWindowID: source, action: example.action, state: state,
+    let plan = try #require(TabbedSnapPlanner.plan(sourceWindowID: source, action: example.action, scope: .window, state: state,
                                                   windows: windows, in: snapBounds))
     #expect(state == original)
     #expect(plan.targetFrame == example.target)
@@ -122,7 +122,7 @@ private func tabbedSnapAllRegionsPreserveGroupsAndCoverWorkArea(example: SnapCas
         #expect(placement.frame.minY == frame.minY + 34)
         #expect(placement.frame.size.height == frame.size.height - 34)
     }
-    let again = try #require(TabbedSnapPlanner.plan(sourceWindowID: source, action: example.action, state: state,
+    let again = try #require(TabbedSnapPlanner.plan(sourceWindowID: source, action: example.action, scope: .window, state: state,
                                                    windows: windows.reversed(), in: snapBounds))
     #expect(again.placements == plan.placements)
     for old in state.panes { #expect(again.state.logicalFrames(in: snapBounds)[old.id] == logical[old.id]) }
@@ -150,7 +150,7 @@ private func tabbedSnapExactJoinPreservesTabOrderAndFloats(sourceKind: SnapSourc
     if occupied { state.activatePane(right); state.reconcile(windowIDs: [d], removed: [], focused: d) }
     let beforeLeft = try #require(state.panes.first { $0.id == left })
     let windows = ["a", "b", "c", "d", "z"].map { snapWindow($0) }
-    let plan = try #require(TabbedSnapPlanner.plan(sourceWindowID: source, action: .rightHalf, state: state,
+    let plan = try #require(TabbedSnapPlanner.plan(sourceWindowID: source, action: .rightHalf, scope: .window, state: state,
                                                   windows: windows, in: snapBounds))
     let remaining = try #require(plan.state.panes.first { $0.id == left })
     #expect(remaining.tabs == beforeLeft.tabs.filter { $0 != source })
@@ -171,12 +171,12 @@ private func tabbedSnapExactJoinPreservesTabOrderAndFloats(sourceKind: SnapSourc
     var state = TabbedLayoutState(preset: .columns)
     state.reconcile(windowIDs: [a, b], removed: [], focused: a)
     let windows = [snapWindow("a"), snapWindow("b")]
-    let plan = try #require(TabbedSnapPlanner.plan(sourceWindowID: b, action: .leftHalf, state: state,
+    let plan = try #require(TabbedSnapPlanner.plan(sourceWindowID: b, action: .leftHalf, scope: .window, state: state,
                                                   windows: windows, in: snapBounds))
     #expect(plan.state.panes[0].tabs == [a, b] && plan.state.panes[0].selected == b)
     #expect(plan.state.panes.map(\.id) == state.panes.map(\.id))
     #expect(plan.state.logicalFrames(in: snapBounds) == state.logicalFrames(in: snapBounds))
-    let repeated = try #require(TabbedSnapPlanner.plan(sourceWindowID: b, action: .leftHalf, state: plan.state,
+    let repeated = try #require(TabbedSnapPlanner.plan(sourceWindowID: b, action: .leftHalf, scope: .window, state: plan.state,
                                                       windows: windows, in: snapBounds))
     #expect(repeated.state == plan.state)
     #expect(!plan.preservesTarget(in: state, within: snapBounds))
@@ -188,12 +188,12 @@ private func tabbedSnapExactJoinPreservesTabOrderAndFloats(sourceKind: SnapSourc
     var state = TabbedLayoutState(preset: .columns)
     state.reconcile(windowIDs: [a, b, c], removed: [], focused: a)
     let windows = [snapWindow("a"), snapWindow("b"), snapWindow("c", minimum: BTSize(width: 10000, height: 10000))]
-    let plan = try #require(TabbedSnapPlanner.plan(sourceWindowID: a, action: .rightHalf, state: state,
+    let plan = try #require(TabbedSnapPlanner.plan(sourceWindowID: a, action: .rightHalf, scope: .window, state: state,
                                                   windows: windows, in: snapBounds))
     #expect(plan.state.panes[0].selected == b)
     #expect(!plan.placements.contains { $0.windowID == c })
     state.select(b)
-    #expect(TabbedSnapPlanner.plan(sourceWindowID: b, action: .rightHalf, state: state,
+    #expect(TabbedSnapPlanner.plan(sourceWindowID: b, action: .rightHalf, scope: .window, state: state,
                                    windows: windows, in: snapBounds) == nil)
 }
 
@@ -202,7 +202,7 @@ func tabbedSnapRejectsMinimaThatChangeTheRequestedRegion(minimum: BTSize) {
     let source = snapID("source")
     var state = TabbedLayoutState(preset: .grid)
     state.reconcile(windowIDs: [source], removed: [], focused: source)
-    #expect(TabbedSnapPlanner.plan(sourceWindowID: source, action: .bottomRightQuarter, state: state,
+    #expect(TabbedSnapPlanner.plan(sourceWindowID: source, action: .bottomRightQuarter, scope: .window, state: state,
                                    windows: [snapWindow("source", minimum: minimum)], in: snapBounds) == nil)
 }
 
@@ -214,7 +214,7 @@ func tabbedSnapRejectsMinimaThatChangeTheRequestedRegion(minimum: BTSize) {
     state.reconcile(windowIDs: [snapID("source")], removed: [], focused: nil)
     let windows = [snapWindow("source"), snapWindow("a", minimum: BTSize(width: 120, height: 500)),
                    snapWindow("b"), snapWindow("c")]
-    let plan = try #require(TabbedSnapPlanner.plan(sourceWindowID: snapID("source"), action: .rightHalf, state: state,
+    let plan = try #require(TabbedSnapPlanner.plan(sourceWindowID: snapID("source"), action: .rightHalf, scope: .window, state: state,
                                                   windows: windows, in: snapBounds))
     #expect(plan.placements.first { $0.windowID == a }?.frame.size.height == 500)
     #expect(plan.preservesTarget(in: plan.state, within: snapBounds))
@@ -229,14 +229,14 @@ func tabbedSnapRejectsMinimaThatChangeTheRequestedRegion(minimum: BTSize) {
     let source = snapID("source")
     state.reconcile(windowIDs: [source], removed: [], focused: source)
     let original = state.panes[0].id
-    let plan = try #require(TabbedSnapPlanner.plan(sourceWindowID: source, action: .topCenterSixth, state: state,
+    let plan = try #require(TabbedSnapPlanner.plan(sourceWindowID: source, action: .topCenterSixth, scope: .window, state: state,
                                                   windows: [snapWindow("source")], in: snapBounds))
     #expect(plan.state.panes.count == 4)
     #expect(plan.state.panes.filter { $0.tabs.isEmpty }.count == 3)
     #expect(plan.state.panes.contains { $0.id == original && $0.tabs.isEmpty })
     #expect(plan.placements.count == 1)
     let tooSmall = BTRect(x: 0, y: 0, width: 210, height: 900)
-    #expect(TabbedSnapPlanner.plan(sourceWindowID: source, action: .rightHalf, state: state,
+    #expect(TabbedSnapPlanner.plan(sourceWindowID: source, action: .rightHalf, scope: .window, state: state,
                                    windows: [snapWindow("source", minimum: BTSize(width: 1, height: 1))], in: tooSmall) == nil)
 }
 
@@ -255,12 +255,12 @@ func tabbedSnapJoinsAtOrAbovePaneCapButCannotCreate(paneCount: Int) throws {
     let (state, windows) = try snapManyPanes(paneCount, exactHalf: true)
     let bounds = BTRect(x: 0, y: 0, width: 6000, height: 6000)
     let source = windows[1].id
-    let plan = try #require(TabbedSnapPlanner.plan(sourceWindowID: source, action: .leftHalf, state: state,
+    let plan = try #require(TabbedSnapPlanner.plan(sourceWindowID: source, action: .leftHalf, scope: .window, state: state,
                                                   windows: windows, in: bounds))
     #expect(plan.state.panes.count == paneCount)
     #expect(plan.state.panes[0].tabs == [windows[0].id, source])
     #expect(plan.state.panes[1].tabs.isEmpty)
-    #expect(TabbedSnapPlanner.plan(sourceWindowID: source, action: .centerThird, state: state,
+    #expect(TabbedSnapPlanner.plan(sourceWindowID: source, action: .centerThird, scope: .window, state: state,
                                    windows: windows, in: bounds) == nil)
 }
 
@@ -269,20 +269,20 @@ func tabbedSnapJoinsAtOrAbovePaneCapButCannotCreate(paneCount: Int) throws {
     let bounds = BTRect(x: -300, y: -100, width: 4400, height: 2400)
     let source = windows[0].id
     for index in 1...5 { windows[index].constraints.minimumSize.width = 1000 }
-    let plan = try #require(TabbedSnapPlanner.plan(sourceWindowID: source, action: .leftHalf, state: state,
+    let plan = try #require(TabbedSnapPlanner.plan(sourceWindowID: source, action: .leftHalf, scope: .window, state: state,
                                                   windows: windows, in: bounds))
     #expect(plan.state.panes.count == 12 && plan.state.windowIDs == state.windowIDs)
     for window in windows.dropFirst().prefix(5) {
         #expect(plan.placements.first { $0.windowID == window.id }!.frame.size.width >= 1000)
     }
     windows[6].constraints.minimumSize.width = 1000
-    #expect(TabbedSnapPlanner.plan(sourceWindowID: source, action: .leftHalf, state: state,
+    #expect(TabbedSnapPlanner.plan(sourceWindowID: source, action: .leftHalf, scope: .window, state: state,
                                    windows: windows, in: bounds) == nil)
     // An unrelated explicit float does not consume a pane or enter allocation.
     state.reconcile(windowIDs: [snapID("float")], removed: [], focused: nil)
     state.float(snapID("float"))
     windows[6].constraints.minimumSize.width = 120
-    let floated = try #require(TabbedSnapPlanner.plan(sourceWindowID: source, action: .leftHalf, state: state,
+    let floated = try #require(TabbedSnapPlanner.plan(sourceWindowID: source, action: .leftHalf, scope: .window, state: state,
                                                      windows: windows + [snapWindow("float")], in: bounds))
     #expect(floated.state.floatingWindowIDs == [snapID("float")])
 }
@@ -292,15 +292,15 @@ func tabbedSnapRejectsFixedSizeParticipantsEvenWhenCurrentSizeFits(sourceFixed: 
     var state = TabbedLayoutState(preset: .columns)
     state.reconcile(windowIDs: [snapID("source"), snapID("successor")], removed: [], focused: snapID("source"))
     var windows = [snapWindow("source"), snapWindow("successor")]
-    let possible = try #require(TabbedSnapPlanner.plan(sourceWindowID: snapID("source"), action: .rightHalf, state: state,
+    let possible = try #require(TabbedSnapPlanner.plan(sourceWindowID: snapID("source"), action: .rightHalf, scope: .window, state: state,
                                                       windows: windows, in: snapBounds))
     let index = sourceFixed ? 0 : 1
     windows[index].frame = try #require(possible.placements.first { $0.windowID == windows[index].id }?.frame)
     windows[index].constraints.isResizable = false
-    #expect(TabbedSnapPlanner.plan(sourceWindowID: snapID("source"), action: .rightHalf, state: state,
+    #expect(TabbedSnapPlanner.plan(sourceWindowID: snapID("source"), action: .rightHalf, scope: .window, state: state,
                                    windows: windows, in: snapBounds) == nil)
     windows[index].frame.size.width -= 10
-    #expect(TabbedSnapPlanner.plan(sourceWindowID: snapID("source"), action: .rightHalf, state: state,
+    #expect(TabbedSnapPlanner.plan(sourceWindowID: snapID("source"), action: .rightHalf, scope: .window, state: state,
                                    windows: windows, in: snapBounds) == nil)
 }
 
@@ -320,7 +320,7 @@ func tabbedSnapRejectsFixedSizeParticipantsEvenWhenCurrentSizeFits(sourceFixed: 
 func tabbedSnapRejectsUnsupportedActions(action: WindowAction) {
     var state = TabbedLayoutState()
     state.reconcile(windowIDs: [snapID("source")], removed: [], focused: nil)
-    #expect(TabbedSnapPlanner.plan(sourceWindowID: snapID("source"), action: action, state: state,
+    #expect(TabbedSnapPlanner.plan(sourceWindowID: snapID("source"), action: action, scope: .window, state: state,
                                    windows: [snapWindow("source")], in: snapBounds) == nil)
 }
 
@@ -333,13 +333,13 @@ func tabbedSnapRejectsUnsupportedActions(action: WindowAction) {
         for index in 0...1 {
             var windows = normal
             windows[index].constraints.minimumSize = minimum
-            #expect(TabbedSnapPlanner.plan(sourceWindowID: snapID("source"), action: .rightHalf, state: state,
+            #expect(TabbedSnapPlanner.plan(sourceWindowID: snapID("source"), action: .rightHalf, scope: .window, state: state,
                                            windows: windows, in: snapBounds) == nil)
         }
     }
     for bounds in [BTRect(x: .nan, y: 0, width: 1200, height: 900), BTRect(x: 0, y: 0, width: .infinity, height: 900),
                    BTRect(x: 0, y: 0, width: 0, height: 900), BTRect(x: 0, y: 0, width: 1200, height: -1)] {
-        #expect(TabbedSnapPlanner.plan(sourceWindowID: snapID("source"), action: .rightHalf, state: state,
+        #expect(TabbedSnapPlanner.plan(sourceWindowID: snapID("source"), action: .rightHalf, scope: .window, state: state,
                                        windows: normal, in: bounds) == nil)
     }
     for change: (inout WindowSnapshot) -> Void in [
@@ -348,12 +348,12 @@ func tabbedSnapRejectsUnsupportedActions(action: WindowAction) {
     ] {
         var windows = normal
         change(&windows[0])
-        #expect(TabbedSnapPlanner.plan(sourceWindowID: snapID("source"), action: .rightHalf, state: state,
+        #expect(TabbedSnapPlanner.plan(sourceWindowID: snapID("source"), action: .rightHalf, scope: .window, state: state,
                                        windows: windows, in: snapBounds) == nil)
     }
-    #expect(TabbedSnapPlanner.plan(sourceWindowID: snapID("missing"), action: .rightHalf, state: state,
+    #expect(TabbedSnapPlanner.plan(sourceWindowID: snapID("missing"), action: .rightHalf, scope: .window, state: state,
                                    windows: normal, in: snapBounds) == nil)
-    #expect(TabbedSnapPlanner.plan(sourceWindowID: snapID("source"), action: .rightHalf, state: state,
+    #expect(TabbedSnapPlanner.plan(sourceWindowID: snapID("source"), action: .rightHalf, scope: .window, state: state,
                                    windows: [normal[0]], in: snapBounds) == nil)
 }
 
@@ -369,7 +369,7 @@ func tabbedSnapRejectsUnsupportedActions(action: WindowAction) {
     state.reconcile(windowIDs: [snapID("float")], removed: [], focused: nil)
     state.float(snapID("float"))
     windows += [snapWindow("sibling-1"), snapWindow("sibling-2"), snapWindow("hidden"), snapWindow("float")]
-    let plan = try #require(TabbedSnapPlanner.plan(sourceWindowID: source, action: .rightHalf, state: state,
+    let plan = try #require(TabbedSnapPlanner.plan(sourceWindowID: source, action: .rightHalf, scope: .window, state: state,
                                                   windows: windows, in: snapBounds))
     #expect(plan.state.panes.count == 5)
     #expect(plan.state.pane(containing: source)?.tabs == [source])
@@ -389,10 +389,132 @@ func tabbedSnapRejectsUnsupportedActions(action: WindowAction) {
     state.float(source)
     state.float(floating)
     let oldPane = state.panes[0]
-    let plan = try #require(TabbedSnapPlanner.plan(sourceWindowID: source, action: .rightHalf, state: state,
+    let plan = try #require(TabbedSnapPlanner.plan(sourceWindowID: source, action: .rightHalf, scope: .window, state: state,
         windows: [snapWindow("source"), snapWindow("kept"), snapWindow("floating")], in: snapBounds))
     #expect(plan.state.panes[0] == oldPane)
     #expect(plan.state.panes.count == 2 && plan.state.activeWindowID == source)
     #expect(plan.state.floatingWindowIDs == [floating])
     #expect(Set(plan.placements.map(\.windowID)) == [source, kept])
+}
+
+@Test func tabbedPaneSnapMovesEveryTabAndSwapsWithTheExactOccupant() throws {
+    let a = snapID("a"), b = snapID("b"), c = snapID("c"), floating = snapID("z")
+    var state = TabbedLayoutState(preset: .columns)
+    state.reconcile(windowIDs: [a, b], removed: [], focused: a)
+    let left = state.panes[0].id, right = state.panes[1].id
+    state.activatePane(right)
+    state.reconcile(windowIDs: [c], removed: [], focused: c)
+    state.reconcile(windowIDs: [floating], removed: [], focused: nil)
+    state.float(floating)
+    let windows = ["a", "b", "c", "z"].map { snapWindow($0) }
+    let plan = try #require(TabbedSnapPlanner.plan(sourceWindowID: a, action: .rightHalf, scope: .pane, state: state,
+                                                  windows: windows, in: snapBounds))
+    let logical = plan.state.logicalFrames(in: snapBounds)
+    #expect(logical[left] == BTRect(x: 400, y: 100, width: 600, height: 900))
+    #expect(logical[right] == BTRect(x: -200, y: 100, width: 600, height: 900))
+    #expect(plan.state.panes.first { $0.id == left }?.tabs == [a, b])
+    #expect(plan.state.panes.first { $0.id == right }?.tabs == [c])
+    #expect(plan.destinationPaneID == left && plan.state.activeWindowID == a)
+    #expect(plan.state.panes.count == 2 && plan.state.floatingWindowIDs == [floating])
+    #expect(Set(plan.placements.map(\.windowID)) == [a, c])
+    #expect(plan.preservesTarget(in: plan.state, within: snapBounds))
+}
+
+@Test func tabbedPaneSnapIntoItsOwnRegionOnlySelectsTheSource() throws {
+    let a = snapID("a"), b = snapID("b")
+    var state = TabbedLayoutState(preset: .columns)
+    state.reconcile(windowIDs: [a, b], removed: [], focused: a)
+    let plan = try #require(TabbedSnapPlanner.plan(sourceWindowID: b, action: .leftHalf, scope: .pane, state: state,
+                                                  windows: [snapWindow("a"), snapWindow("b")], in: snapBounds))
+    #expect(plan.state.logicalFrames(in: snapBounds) == state.logicalFrames(in: snapBounds))
+    #expect(plan.state.panes[0].tabs == [a, b] && plan.state.panes[0].selected == b)
+}
+
+/// Every other pane is occupied, so each target leaves enough room without a
+/// new empty pane.
+@Test(arguments: snapCases, [0.0, 6.0])
+private func tabbedPaneSnapReflowsOtherPanesWithoutAddingEmptyPanes(example: SnapCase, gap: Double) throws {
+    var (state, windows) = snapGrid(gap: gap)
+    let source = windows[0].id
+    state.activatePane(state.panes[0].id)
+    state.reconcile(windowIDs: [snapID("sibling")], removed: [], focused: source)
+    state.select(source)
+    windows.append(snapWindow("sibling"))
+    let sourcePane = try #require(state.pane(containing: source))
+    let plan = try #require(TabbedSnapPlanner.plan(sourceWindowID: source, action: example.action, scope: .pane,
+                                                  state: state, windows: windows, in: snapBounds))
+    #expect(plan.destinationPaneID == sourcePane.id)
+    #expect(plan.targetFrame == example.target)
+    #expect(plan.preservesTarget(in: plan.state, within: snapBounds))
+    #expect(plan.state.panes.count == 4 && !plan.state.panes.contains { $0.tabs.isEmpty })
+    for old in state.panes { #expect(plan.state.panes.first { $0.id == old.id }?.tabs == old.tabs) }
+    let logical = Array(plan.state.logicalFrames(in: snapBounds).values)
+    #expect(abs(logical.reduce(0) { $0 + $1.area } - snapBounds.area) < 0.001)
+    for i in logical.indices {
+        for j in logical.indices where j > i {
+            let width = min(logical[i].maxX, logical[j].maxX) - max(logical[i].minX, logical[j].minX)
+            let height = min(logical[i].maxY, logical[j].maxY) - max(logical[i].minY, logical[j].minY)
+            #expect(width < 0.001 || height < 0.001)
+        }
+    }
+}
+
+@Test func tabbedPaneSnapAddsAnEmptyPaneOnlyWhenTheRemainderNeedsOne() throws {
+    let a = snapID("a"), b = snapID("b"), c = snapID("c")
+    var single = TabbedLayoutState()
+    single.reconcile(windowIDs: [a, b], removed: [], focused: a)
+    let only = single.panes[0].id
+    let moved = try #require(TabbedSnapPlanner.plan(sourceWindowID: a, action: .rightHalf, scope: .pane, state: single,
+                                                   windows: [snapWindow("a"), snapWindow("b")], in: snapBounds))
+    #expect(moved.state.panes.count == 2)
+    #expect(moved.state.panes.first { $0.id == only }?.tabs == [a, b])
+    #expect(moved.state.panes.filter { $0.tabs.isEmpty }.count == 1)
+
+    var columns = TabbedLayoutState(preset: .columns)
+    columns.reconcile(windowIDs: [a], removed: [], focused: a)
+    columns.activatePane(columns.panes[1].id)
+    columns.reconcile(windowIDs: [c], removed: [], focused: c)
+    let quarter = try #require(TabbedSnapPlanner.plan(sourceWindowID: a, action: .topLeftQuarter, scope: .pane,
+                                                     state: columns, windows: [snapWindow("a"), snapWindow("c")],
+                                                     in: snapBounds))
+    // A quarter leaves two regions and only one other pane.
+    #expect(quarter.state.panes.count == 3)
+    #expect(quarter.state.panes.filter { $0.tabs.isEmpty }.count == 1)
+    #expect(Set(columns.panes.map(\.id)).isSubset(of: Set(quarter.state.panes.map(\.id))))
+}
+
+@Test func tabbedPaneSnapRefusesWhenAnotherPaneCannotFit() {
+    let a = snapID("a"), c = snapID("c")
+    var state = TabbedLayoutState(preset: .columns)
+    state.reconcile(windowIDs: [a], removed: [], focused: a)
+    state.activatePane(state.panes[1].id)
+    state.reconcile(windowIDs: [c], removed: [], focused: c)
+    #expect(TabbedSnapPlanner.plan(sourceWindowID: a, action: .topLeftQuarter, scope: .pane, state: state,
+                                   windows: [snapWindow("a"), snapWindow("c", minimum: BTSize(width: 1000, height: 80))],
+                                   in: snapBounds) == nil)
+}
+
+@Test func tabbedPaneSnapKeepsThePaneCountAtTheCap() throws {
+    let (state, windows) = try snapManyPanes(12, exactHalf: true)
+    let bounds = BTRect(x: 0, y: 0, width: 6000, height: 6000)
+    let source = windows[1].id
+    #expect(TabbedSnapPlanner.plan(sourceWindowID: source, action: .centerThird, scope: .window, state: state,
+                                   windows: windows, in: bounds) == nil)
+    let plan = try #require(TabbedSnapPlanner.plan(sourceWindowID: source, action: .centerThird, scope: .pane,
+                                                  state: state, windows: windows, in: bounds))
+    #expect(plan.state.panes.count == 12 && !plan.state.panes.contains { $0.tabs.isEmpty })
+}
+
+@Test func tabbedPaneSnapAttachesAFloatingSourceAsAWindow() throws {
+    let source = snapID("source"), kept = snapID("kept")
+    var state = TabbedLayoutState()
+    state.reconcile(windowIDs: [source, kept], removed: [], focused: kept)
+    state.float(source)
+    let windows = [snapWindow("source"), snapWindow("kept")]
+    let pane = try #require(TabbedSnapPlanner.plan(sourceWindowID: source, action: .rightHalf, scope: .pane,
+                                                  state: state, windows: windows, in: snapBounds))
+    let window = try #require(TabbedSnapPlanner.plan(sourceWindowID: source, action: .rightHalf, scope: .window,
+                                                    state: state, windows: windows, in: snapBounds))
+    #expect(pane.state.panes.map(\.tabs) == window.state.panes.map(\.tabs))
+    #expect(pane.placements == window.placements)
 }

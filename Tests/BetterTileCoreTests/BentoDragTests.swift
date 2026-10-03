@@ -308,7 +308,7 @@ func bentoDragSessionAcceptsAFloatedSourceBesideOnlyVacantPanes(useLayoutFrames:
     #expect(session.sourceReservedFrame == originalFrame)
     #expect(session.restorePlacement == Placement(windowID: source, frame: originalFrame))
     #expect(session.originalState == tabbed.layout)
-    let plan = try #require(TabbedSnapPlanner.plan(sourceWindowID: source, action: .rightHalf,
+    let plan = try #require(TabbedSnapPlanner.plan(sourceWindowID: source, action: .rightHalf, scope: .window,
         state: tabbed, windows: [window], in: session.workArea))
     #expect(plan.destinationPaneID == tabbed.panes[1].id && plan.state.panes[0].tabs.isEmpty)
     #expect(plan.state.floatingWindowIDs.isEmpty)
