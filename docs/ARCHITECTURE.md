@@ -166,7 +166,7 @@ change a Bento operation made to the tree; writing it also writes the tree.
   (`WindowCoordinator.applyTabbed(required:)`): a hidden tab that refuses the
   size never fails the layout. Only hidden tabs whose frame changes are
   written, in the same frame-write batch, and they return if the layout fails.
-- In the Debug experiment, one Tabbed curtain covers the display's work area.
+- One Tabbed curtain covers the display's work area.
   It sits below every selected tab and above inactive tabs, including portions
   that extend outside their panes. `TabbedOverlayController` orders this
   normal-level, nonactivating panel below the backmost selected window with

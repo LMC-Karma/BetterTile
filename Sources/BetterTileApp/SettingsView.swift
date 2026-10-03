@@ -1873,7 +1873,7 @@ private extension LayoutMode {
         case .manual: "Use macOS windows with BetterTile snapping."
         case .linked: "Adjacent snapped windows share resize boundaries."
         case .bento: "Windows join a stable adaptive split layout."
-        case .tabbed: "Group windows in resizable panes with tabs. Experimental; turn off Stage Manager."
+        case .tabbed: "Group windows in resizable panes with tabs. Turn off Stage Manager."
         }
     }
 }

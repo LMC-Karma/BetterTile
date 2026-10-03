@@ -1,16 +1,16 @@
-# Tabbed test build
+# Tabbed testing
 
-Tabbed is an experimental mode available in Debug builds. It uses normal
+Tabbed is available in public and Debug builds. It uses normal
 on-screen window stacking. Inactive tabs remain open behind their pane's selected
 window. Nothing is parked off-screen, minimized, or moved between native Spaces.
 Turn off Stage Manager before testing this mode.
 
-This build tests one Tabbed curtain across each display's work area, behind
+Tabbed uses one Tabbed curtain across each display's work area, behind
 all selected tabs. Its frosted surface covers inactive tabs across pane
 boundaries and gaps. A click selects that pane's selected window or activates
 an empty pane. The curtain needs validated exact identities for every tab
 and a verified safe window order. Missing identities or unsafe ordering
-hide it. This experiment still needs live checks with real applications.
+hide it. Real-application ordering still needs live checks.
 
 Tab strips sit directly above their selected windows. Settings and floating
 windows in front retain their order. After an app switch, BetterTile repairs
@@ -27,7 +27,7 @@ Record results and unresolved observations in
    app must not manage windows at the same time; the normal sibling-app prompt
    handles that transition.
 3. In Settings, choose the default Tabbed layout under Window Mode.
-4. On the desktop you want to test, choose **Tabbed (Test)** in the mode picker.
+4. On the desktop you want to test, choose **Tabbed** in the mode picker.
 
 On a desktop entering Tabbed from Native for the first time, existing eligible
 windows become tabs in the first pane of the chosen default layout. Other panes
@@ -126,7 +126,7 @@ performance require an on-screen check.
 
 Pane assignments and Undo history are runtime-only. Relaunch starts from the
 chosen default. The history holds the last 20 layout changes. Edge splits are
-limited to 12 panes in this test build. Dragging a managed window by its native
+limited to 12 panes. Dragging a managed window by its native
 title bar uses Bento drops: a center drop adds it to a pane's tabs, and an edge
 drop splits the pane. This tracks the window's native drag; dragging a tab strip
 starts BetterTile's separate tab drag. Cross-display tab dragging is not

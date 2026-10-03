@@ -51,9 +51,8 @@ session for the group or synchronize the other members.
 
 ## Tabbed
 
-An experimental per-desktop layout mode, available only in Debug builds. It
-divides the work area into panes and shows each pane's windows as tabs. It is
-not native macOS window tabbing: BetterTile draws the tab strip and brings the
+A per-desktop layout mode that divides the work area into panes and shows each
+pane's windows as tabs. It is not native macOS window tabbing: BetterTile draws the tab strip and brings the
 selected window forward.
 
 _Avoid_: Tabs mode, stacking mode

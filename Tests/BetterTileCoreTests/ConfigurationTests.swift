@@ -476,6 +476,20 @@ func invalidGlassStrengthIsRejected(strength: Double) {
     #expect(roundTrip.linkedResizeEnabled)
 }
 
+@Test func tabbedModeRemainsAvailableAfterConfigurationRoundTrip() throws {
+    let data = try JSONSerialization.data(withJSONObject: [
+        "schemaVersion": BetterTileConfiguration.currentSchemaVersion,
+        "defaultLayoutMode": "tabbed-v1",
+    ])
+    let configuration = try ConfigurationStore.decode(data)
+    #expect(LayoutMode.availableModes.contains(.tabbed))
+    #expect(LayoutMode.tabbed.title == "Tabbed")
+    #expect(configuration.defaultLayoutMode == .tabbed)
+
+    let roundTrip = try ConfigurationStore.decode(JSONEncoder().encode(configuration))
+    #expect(roundTrip.defaultLayoutMode == .tabbed)
+}
+
 @Test func freshInstallUsesRecommendedResizeDefaults() {
     let configuration = BetterTileConfiguration()
     #expect(configuration.linkedResizeEnabled)
