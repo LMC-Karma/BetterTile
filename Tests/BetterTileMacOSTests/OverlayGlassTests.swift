@@ -108,11 +108,11 @@ func sharedGlassHonorsToggleAndAccessibility(enabled: Bool, options: (Bool, Bool
     }
 }
 
-@Test @MainActor func glassDividerKeepsHitOwnershipAndMinimumWidth() throws {
+@Test @MainActor func glassDividerKeepsHitOwnershipAndAddsFourPoints() throws {
     let view = DividerHandleView(frame: NSRect(x: 0, y: 0, width: 40, height: 100),
                                  mode: .vertical(restingLength: 50, activeLength: 80), thickness: 2)
     view.displayOptions = { (false, false) }
-    #expect(view.renderedThickness == 16)
+    #expect(view.renderedThickness == 6)
     #expect(view.hitTest(NSPoint(x: 20, y: 50)) === view)
     view.overlayAppearance.useLiquidGlass = false
     #expect(!view.showsGlass)
@@ -125,25 +125,25 @@ func sharedGlassHonorsToggleAndAccessibility(enabled: Bool, options: (Bool, Bool
 func glassDividerLaysOutStraightAndJunctionCapsules(active: Bool) throws {
     let cases: [(DividerHandleMode, [NSRect])] = [
         (.vertical(restingLength: 60, activeLength: 100),
-         [active ? NSRect(x: 32, y: 11, width: 16, height: 98)
-                 : NSRect(x: 34, y: 31, width: 12, height: 58)]),
+         [active ? NSRect(x: 37, y: 11, width: 6, height: 98)
+                 : NSRect(x: 37, y: 31, width: 6, height: 58)]),
         (.horizontal(restingLength: 40, activeLength: 60),
-         [active ? NSRect(x: 11, y: 52, width: 58, height: 16)
-                 : NSRect(x: 21, y: 54, width: 38, height: 12)]),
+         [active ? NSRect(x: 11, y: 57, width: 58, height: 6)
+                 : NSRect(x: 21, y: 57, width: 38, height: 6)]),
         (.junction(center: CGPoint(x: 40, y: 60),
                    resting: [.left: 20, .right: 20, .up: 30],
                    active: [.left: 30, .right: 30, .up: 50]),
-         active ? [NSRect(x: 2, y: 52, width: 76, height: 16),
-                   NSRect(x: 32, y: 52, width: 16, height: 66)]
-                : [NSRect(x: 14, y: 54, width: 52, height: 12),
-                   NSRect(x: 34, y: 54, width: 12, height: 42)]),
+         active ? [NSRect(x: 7, y: 57, width: 66, height: 6),
+                   NSRect(x: 37, y: 57, width: 6, height: 56)]
+                : [NSRect(x: 17, y: 57, width: 46, height: 6),
+                   NSRect(x: 37, y: 57, width: 6, height: 36)]),
         (.junction(center: CGPoint(x: 40, y: 60),
                    resting: [.left: 20, .right: 20, .up: 30, .down: 30],
                    active: [.left: 30, .right: 30, .up: 50, .down: 50]),
-         active ? [NSRect(x: 2, y: 52, width: 76, height: 16),
-                   NSRect(x: 32, y: 2, width: 16, height: 116)]
-                : [NSRect(x: 14, y: 54, width: 52, height: 12),
-                   NSRect(x: 34, y: 24, width: 12, height: 72)]),
+         active ? [NSRect(x: 7, y: 57, width: 66, height: 6),
+                   NSRect(x: 37, y: 7, width: 6, height: 106)]
+                : [NSRect(x: 17, y: 57, width: 46, height: 6),
+                   NSRect(x: 37, y: 27, width: 6, height: 66)]),
     ]
     for (mode, expected) in cases {
         let view = DividerHandleView(frame: NSRect(x: 0, y: 0, width: 80, height: 120),
@@ -159,7 +159,7 @@ func glassDividerLaysOutStraightAndJunctionCapsules(active: Bool) throws {
     thick.displayOptions = { (false, false) }
     thick.setActive(active, animated: false)
     thick.layoutSubtreeIfNeeded()
-    #expect(thick.knobRects == [active ? NSRect(x: 11, y: 49, width: 58, height: 22)
+    #expect(thick.knobRects == [active ? NSRect(x: 11, y: 52, width: 58, height: 16)
                                     : NSRect(x: 21, y: 52, width: 38, height: 16)])
     #expect(thick.knobRects.allSatisfy { thick.bounds.contains($0) })
 }

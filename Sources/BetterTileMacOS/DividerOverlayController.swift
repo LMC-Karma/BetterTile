@@ -28,7 +28,7 @@ public enum DividerHandleGeometry {
     public static let junctionAcquisitionSize = 32.0
 
     static func renderedThickness(_ thickness: Double, useLiquidGlass: Bool) -> Double {
-        useLiquidGlass ? min(min(16, max(12, thickness + 4)) + 6, max(18, 3 * thickness) - 2) : thickness
+        useLiquidGlass ? thickness + 4 : thickness
     }
 
     public static func straightLength(span: ClosedRange<Double>, active: Bool) -> Double {
@@ -459,14 +459,18 @@ public final class DividerOverlayController {
         if let existing = handlePanel {
             panel = existing
             panel.configure(mode: mode, thickness: configuration.dividerThickness, trackRoom: trackRoom)
-            panel.overlayAppearance = configuration.overlayAppearance
+            if panel.overlayAppearance != configuration.overlayAppearance {
+                panel.overlayAppearance = configuration.overlayAppearance
+            }
             // The accepted divider coordinate moves immediately. Only the
             // decoration inside this frame animates its length.
-            panel.setFrame(appKitFrame, display: true)
+            panel.setFrame(appKitFrame, display: false)
         } else {
             panel = DividerHandlePanel(frame: appKitFrame, mode: mode, thickness: configuration.dividerThickness)
             panel.configure(mode: mode, thickness: configuration.dividerThickness, trackRoom: trackRoom)
-            panel.overlayAppearance = configuration.overlayAppearance
+            if panel.overlayAppearance != configuration.overlayAppearance {
+                panel.overlayAppearance = configuration.overlayAppearance
+            }
             panel.onBegin = { [weak self] in self?.beginHoveredGesture() }
             panel.onDrag = { [weak self] point in self?.drag(to: point) }
             panel.onEnd = { [weak self] in self?.end(at: NSEvent.mouseLocation) }
@@ -1131,7 +1135,9 @@ final class DividerHandlePanel: NSPanel {
     var onDrag: ((CGPoint) -> Void)? { didSet { handleView.onDrag = onDrag } }
     var onEnd: (() -> Void)? { didSet { handleView.onEnd = onEnd } }
     var onExit: (() -> Void)? { didSet { handleView.onExit = onExit } }
-    var overlayAppearance = OverlayAppearance() { didSet { handleView.overlayAppearance = overlayAppearance } }
+    var overlayAppearance = OverlayAppearance() {
+        didSet { if oldValue != overlayAppearance { handleView.overlayAppearance = overlayAppearance } }
+    }
     private let handleView: DividerHandleView
     let decorationWindow: NSPanel
     private var decorationMargins: CGPoint
@@ -1165,14 +1171,15 @@ final class DividerHandlePanel: NSPanel {
     }
 
     func configure(mode: DividerHandleMode, thickness: Double, trackRoom: [DividerHandleArm: Double] = [:]) {
+        guard !handleView.matches(mode: mode, thickness: thickness, trackRoom: trackRoom) else { return }
         decorationMargins = mode.decorationMargins
         handleView.configure(mode: mode, thickness: thickness, trackRoom: trackRoom)
     }
 
     override func setFrame(_ frameRect: NSRect, display flag: Bool) {
-        super.setFrame(frameRect, display: flag)
-        decorationWindow.setFrame(frameRect.insetBy(dx: -decorationMargins.x, dy: -decorationMargins.y), display: flag)
-        handleView.needsLayout = true
+        if frame != frameRect { super.setFrame(frameRect, display: false) }
+        let decorationFrame = frameRect.insetBy(dx: -decorationMargins.x, dy: -decorationMargins.y)
+        if decorationWindow.frame != decorationFrame { decorationWindow.setFrame(decorationFrame, display: false) }
         handleView.layoutSubtreeIfNeeded()
     }
 
@@ -1210,7 +1217,7 @@ final class DividerHandleView: NSView {
     private var thickness: CGFloat
     let lensLayers = DividerLensLayers()
     private let solidLayer = CAShapeLayer()
-    weak var decorationView: DividerLensDecorationView? { didSet { updateAppearance() } }
+    weak var decorationView: DividerLensDecorationView?
     private(set) var trackRoom: [DividerHandleArm: Double] = [:]
     private(set) var knobRects: [CGRect] = []
     private(set) var knobOutline: CGPath?
@@ -1218,7 +1225,7 @@ final class DividerHandleView: NSView {
     private(set) var lensTint = NSColor.controlAccentColor
     var showsSolid: Bool { !solidLayer.isHidden }
     var overlayAppearance = OverlayAppearance() {
-        didSet { updateAppearance(); needsLayout = true }
+        didSet { if oldValue != overlayAppearance { updateAppearance() } }
     }
     var displayOptions: () -> (reduceTransparency: Bool, increaseContrast: Bool) = {
         (NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency,
@@ -1236,6 +1243,24 @@ final class DividerHandleView: NSView {
     var reduceMotion: () -> Bool = { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
     private var animationTask: Task<Void, Never>?
     private var tracking: NSTrackingArea?
+    private var geometry: DividerLensGeometry?
+    private(set) var outlineBuildCount = 0
+    private(set) var appearanceUpdateCount = 0
+    private struct AppearanceState: Equatable {
+        var size: CGSize
+        var mode: DividerHandleMode
+        var thickness: CGFloat
+        var progress: Double
+        var trackRoom: [DividerHandleArm: Double]
+        var appearance: OverlayAppearance
+        var dark: Bool
+        var solid: Bool
+        var contrast: Bool
+        var limit: DragLimit
+        var tint: NSColor
+        var scale: CGFloat
+    }
+    private var lastAppearance: AppearanceState?
 
     init(frame: CGRect, mode: DividerHandleMode, thickness: Double) {
         self.mode = mode
@@ -1256,12 +1281,16 @@ final class DividerHandleView: NSView {
 
     required init?(coder: NSCoder) { nil }
 
+    func matches(mode: DividerHandleMode, thickness: Double, trackRoom: [DividerHandleArm: Double]) -> Bool {
+        self.mode == mode && self.thickness == thickness && self.trackRoom == trackRoom
+    }
+
     func configure(mode: DividerHandleMode, thickness: Double, trackRoom: [DividerHandleArm: Double] = [:]) {
+        guard !matches(mode: mode, thickness: thickness, trackRoom: trackRoom) else { return }
         self.mode = mode
         self.thickness = CGFloat(thickness)
         self.trackRoom = trackRoom
         needsLayout = true
-        needsDisplay = true
         window?.invalidateCursorRects(for: self)
     }
 
@@ -1378,37 +1407,53 @@ final class DividerHandleView: NSView {
         guard bounds.width > 0, bounds.height > 0 else { return }
         let options = displayOptions()
         let solid = !overlayAppearance.useLiquidGlass || options.reduceTransparency || options.increaseContrast
-        let geometry = DividerLensGeometry(
+        var tint = NSColor.controlAccentColor
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            tint = (limit.isLimited ? NSColor.systemOrange : NSColor.controlAccentColor).usingColorSpace(.deviceRGB)
+                ?? (limit.isLimited ? .systemOrange : .controlAccentColor)
+        }
+        let dark = effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        let state = AppearanceState(size: bounds.size, mode: mode, thickness: thickness, progress: stretchProgress,
+                                    trackRoom: trackRoom, appearance: overlayAppearance, dark: dark, solid: solid,
+                                    contrast: options.increaseContrast, limit: limit, tint: tint,
+                                    scale: window?.backingScaleFactor ?? 1)
+        guard state != lastAppearance else { return }
+        let nextGeometry = DividerLensGeometry(
             bounds: bounds, mode: mode, thickness: thickness, progress: stretchProgress,
-            trackRoom: trackRoom, useLiquidGlass: overlayAppearance.useLiquidGlass
+            trackRoom: trackRoom, useLiquidGlass: overlayAppearance.useLiquidGlass, cached: geometry
         )
-        knobRects = geometry.capsules
-        knobOutline = geometry.outline
-        trackRects = geometry.trackRects
+        // Available room changes as the seam moves, but often neither end of
+        // the fading track reaches that boundary. Keep the existing layers in
+        // that case as well as for a repeated input sample.
+        var previous = lastAppearance
+        previous?.trackRoom = state.trackRoom
+        let unchanged = previous == state && geometry?.capsules == nextGeometry.capsules
+            && geometry?.trackRects == nextGeometry.trackRects
+        lastAppearance = state
+        guard !unchanged else { return }
+        appearanceUpdateCount += 1
+        if geometry?.capsules != nextGeometry.capsules { outlineBuildCount += 1 }
+        geometry = nextGeometry
+        knobRects = nextGeometry.capsules
+        knobOutline = nextGeometry.outline
+        trackRects = nextGeometry.trackRects
+        lensTint = tint
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         lensLayers.handleLayer.isHidden = solid
         lensLayers.decorationLayer.isHidden = solid
         solidLayer.isHidden = !solid
         effectiveAppearance.performAsCurrentDrawingAppearance {
-            lensTint = (limit.isLimited ? NSColor.systemOrange : NSColor.controlAccentColor).usingColorSpace(.deviceRGB)
-                ?? (limit.isLimited ? .systemOrange : .controlAccentColor)
-            let dark = effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
             if solid {
                 let path = CGMutablePath()
-                for rect in geometry.capsules { path.addPath(capsulePath(rect)) }
+                for rect in nextGeometry.capsules { path.addPath(capsulePath(rect)) }
                 solidLayer.path = path
                 solidLayer.fillColor = gripColor.withAlphaComponent(1).cgColor
                 solidLayer.strokeColor = lensTint.withAlphaComponent(options.increaseContrast ? 1 : 0.45).cgColor
                 solidLayer.lineWidth = options.increaseContrast ? 1.5 : 0.7
             } else {
-                lensLayers.apply(geometry: geometry, tint: lensTint, dark: dark,
-                                 frost: 0.5 + overlayAppearance.strength, limited: limit.isLimited, p: stretchProgress)
-                let decorationGeometry = DividerLensGeometry(
-                    bounds: bounds, mode: mode, thickness: thickness, progress: stretchProgress,
-                    trackRoom: trackRoom, originOffset: mode.decorationMargins
-                )
-                lensLayers.applyDecoration(geometry: decorationGeometry, tint: lensTint, dark: dark, p: stretchProgress)
+                lensLayers.apply(geometry: nextGeometry, margins: mode.decorationMargins, tint: lensTint, dark: dark,
+                                 strength: overlayAppearance.strength, limited: limit.isLimited, p: stretchProgress)
             }
         }
         updateContentsScale()
