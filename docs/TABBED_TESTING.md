@@ -39,13 +39,14 @@ runtime tab groups. Click an empty pane to send newly opened windows there.
 
 Settings → Window Layout → Appearance has **Use Liquid Glass** and
 **Glass transparency**. Glass defaults on. The slider runs from Frosted to
-Clear. It updates tab strips, dividers, empty panes, Tabbed drop targets, resize
-ghosts, the Layout Wheel, the menu bar popover, and result feedback. Clear
-removes added frosting from native glass surfaces and reduces the divider
-lens body's frosting. The curtain remains
-opaque with a brighter neutral frost and excludes occupied tab strips. Its
-appearance is independent of the slider. Snap and Bento swap/placement
-previews use light outlines and tint.
+Clear. It updates tab strips, dividers, empty panes, the Tabbed curtain and drop
+targets, resize ghosts, the Layout Wheel, the menu bar popover, and result
+feedback. Clear removes added frosting from ordinary native glass surfaces
+and reduces the divider lens body's frosting. The curtain uses regular native
+glass and retains a frost floor at Clear to obscure inactive window detail.
+Its backing follows the slider from 36 percent to 14 percent. Rounded cutouts
+exclude occupied tab strips. Snap and Bento swap/placement previews use light
+outlines and tint.
 
 Turning glass off uses solid surfaces. Reduce Transparency and Increase
 Contrast also select solid surfaces, including when changed while overlays
@@ -137,6 +138,18 @@ window first to use those actions.
 Use disposable windows for the first pass. Automated tests use a fake window
 system; the checks below validate real application and macOS behavior.
 
+- In Bento and Tabbed, float an excluded application's window over the middle
+  of a divider. Hover over the cover, then above and below it. The handle must
+  hide over the cover and stay within the exposed segment beside it. Grab
+  the handle and drag; its knob and track must stop at the cover's edge.
+  Repeat with a normal window, Picture in Picture, and the Dock near an end.
+  Check straight dividers and junctions in light and dark appearance.
+- Cmd-Tab to a window over a visible divider handle. Confirm the handle trims
+  or hides without further pointer movement. Move the cover behind the layout;
+  a window visible only through the gap must not suppress the handle.
+- Drag a seam into a gap shorter than 24 points, or under a cover with no
+  exposed segment. The input handle stays visible until release so the drag
+  can finish. Its minimum knob can extend beyond that short segment.
 - Put two windows from the same app in different panes, with another app selected
   in one pane. Select tabs repeatedly and confirm the other pane stays correct.
 - Test curtains with Safari, Finder, Terminal, and VS Code. Shrink a selected
@@ -251,7 +264,9 @@ above. This test build is not evidence that those platform checks have passed.
   dragged window also cancels the interaction.
 - Change transparency while a tab is held. The appearance updates without
   committing the drag. Check Reduce Motion without changing drag destinations.
-- Check curtain cutouts while resizing rows and columns. Inactive windows stay
+- Move Glass transparency while the curtain is visible. Confirm the frost
+  changes without changing window order. Check curtain cutouts while resizing
+  rows and columns. Inactive windows stay
   concealed outside the strips. Click strip corners and divider gaps to ensure
   inactive windows never receive those clicks.
 - Open the menu bar panel and change transparency. Clear removes the extra
@@ -268,3 +283,38 @@ BETTERTILE_NATIVE_GLASS_PREVIEW_DIR=/tmp/bettertile-glass-previews \
   swift test --scratch-path /tmp/bettertile-build \
   --filter 'nativeGlassCompositorPreviews|nativeDividerLensPreviews|menuGlassPopoverPreviews'
 ```
+
+## Optional interaction benchmark
+
+Run this check locally with no simultaneous builds or compositor captures.
+It is disabled by default and in CI. Set `BETTERTILE_PERF_BENCH=tab-drag` to
+measure completed drag frames, or `all` to include refresh and divider paths.
+The output goes to stdout. `BETTERTILE_PERF_OUT` optionally appends the same
+report to a chosen file.
+
+```sh
+BETTERTILE_PERF_BENCH=tab-drag \
+  swift test --scratch-path /tmp/bettertile-benchmark-build \
+  --filter interactionBenchmark
+```
+
+The tab scenario has four panes and 16 tabs. Each of 400 samples sends one
+mouse event and fires the production display-tick callback, including edge
+scrolling. The report excludes 20 warm-up samples. Checks after each sample
+verify the lifted tab's position and the source strip's provisional order.
+This prevents measuring only the cost of queuing a mouse event.
+
+The phases report controller work, Core Animation commits, and pending AppKit
+drawing. They do not measure final WindowServer compositing, physical pointer
+latency, or real applications accepting Accessibility writes. Compare the
+median mean and median p95 of three serial runs on the same Mac. The drag-frame
+targets are a mean at or below 1 ms and p95 at or below 3 ms.
+
+Run `nativeTabDragPreviews` separately with
+`BETTERTILE_NATIVE_GLASS_PREVIEW_DIR` set to an output directory. It places the
+actual production views over one synthetic backdrop after a completed tick,
+then captures that test window in light and dark appearance. This shows
+reordering, a provisional tab in an empty strip, and a split target. It does not establish
+real-application stacking or the feel of physical input. For that check, drag
+quickly with at least 16 tabs, hold both strip edges to scroll, cancel with
+Escape, and release over a different destination before the next display tick.

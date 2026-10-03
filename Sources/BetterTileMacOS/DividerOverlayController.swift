@@ -50,12 +50,13 @@ public enum DividerHandleGeometry {
         center: BTPoint,
         boundaries: [BoundaryDescriptor],
         active: Bool,
-        thickness: Double
+        thickness: Double,
+        armRoom: [DividerHandleArm: Double] = [:]
     ) -> [DividerHandleArm: Double] {
         let requested = active ? activeJunctionArmLength : restingJunctionArmLength
         let half = max(1, thickness / 2)
         return junctionTrackRoom(center: center, boundaries: boundaries).reduce(into: [:]) { result, entry in
-            result[entry.key] = min(requested, max(0, entry.value - half))
+            result[entry.key] = min(requested, max(0, min(entry.value, armRoom[entry.key] ?? .infinity) - half))
         }
     }
 
@@ -286,6 +287,10 @@ public final class DividerOverlayController {
             }
         }
     }
+    public var stackProvider: ((Set<WindowID>) -> [SeamStackEntry]?)?
+    public var ownProcess: Int32 = getpid()
+    var coverageTime: () -> Double = { CACurrentMediaTime() }
+    var mouseLocation: () -> CGPoint = { NSEvent.mouseLocation }
     public var layoutChangedHandler: ((DisplayID, [WindowID: BTRect]) -> Void)?
     /// Tabbed panels are layout chrome, not floating windows that hide a grip.
     public var nonOccludingWindowNumbersProvider: (() -> Set<Int>)?
@@ -313,6 +318,13 @@ public final class DividerOverlayController {
     private let displayTicks: ResizeDisplayLink
     private var boundaries: [BoundaryDescriptor] = []
     private var obscuringFrames: [BTRect] = []
+    private var managedWindowIDs: [DisplayID: Set<WindowID>] = [:]
+    private var coverCache: (interaction: DividerInteraction, candidates: [BTRect]?, time: Double)?
+    private var gestureCandidates: [BTRect]?
+    private struct HandleCoverage {
+        var exposedSpan: ClosedRange<Double>?
+        var armRoom: [DividerHandleArm: Double] = [:]
+    }
     private var hoveredInteraction: DividerInteraction?
     private var activeInteraction: DividerInteraction?
     private var baselineInteraction: DividerInteraction?
@@ -327,6 +339,7 @@ public final class DividerOverlayController {
     private let addLocalKeyMonitor: (@escaping @MainActor (UInt16) -> Bool) -> Any?
     private let removeKeyMonitor: (Any) -> Void
     private var ownWindowObservationTask: Task<Void, Never>?
+    private var activationObservationTask: Task<Void, Never>?
 
     private var transaction: WindowFrameTransaction?
     private var baselineWindows: [WindowSnapshot] = []
@@ -372,6 +385,22 @@ public final class DividerOverlayController {
         self.addLocalKeyMonitor = addLocalKeyMonitor
         self.removeKeyMonitor = removeKeyMonitor
         observeOwnWindows()
+        activationObservationTask = Task { @MainActor [weak self] in
+            for await _ in NSWorkspace.shared.notificationCenter.notifications(
+                named: NSWorkspace.didActivateApplicationNotification
+            ) {
+                guard let self, !Task.isCancelled else { return }
+                self.coverCache = nil
+                if self.handlePanel?.isVisible == true, !self.isDragging {
+                    self.updateHover(at: self.mouseLocation())
+                }
+            }
+        }
+    }
+
+    deinit {
+        ownWindowObservationTask?.cancel()
+        activationObservationTask?.cancel()
     }
 
     private func observeOwnWindows() {
@@ -389,11 +418,16 @@ public final class DividerOverlayController {
         }
     }
 
-    public func refresh(boundaries: [BoundaryDescriptor], obscuringFrames: [BTRect] = []) {
+    public func refresh(
+        boundaries: [BoundaryDescriptor], obscuringFrames: [BTRect] = [],
+        managedWindowIDs: [DisplayID: Set<WindowID>] = [:]
+    ) {
         // Commit callbacks can refresh while the final gesture is still active.
         // Retain those edges for hover after shrink, without moving the grip.
         self.boundaries = boundaries.filter { !$0.isLocked && $0.spanEnd - $0.spanStart >= 24 }
         self.obscuringFrames = obscuringFrames
+        self.managedWindowIDs = managedWindowIDs
+        coverCache = nil
         if isDragging {
             // A participant can close while the pointer is still, so a
             // window-list refresh must end the gesture without another sample.
@@ -410,12 +444,14 @@ public final class DividerOverlayController {
         handlePanel?.setActive(false, animated: false)
         boundaries = []
         obscuringFrames = []
+        managedWindowIDs = [:]
+        coverCache = nil
         syncHoverMonitoring()
         hoveredInteraction = nil
         handlePanel?.orderOut(nil)
     }
 
-    private func updateHover(at appKitPoint: CGPoint) {
+    func updateHover(at appKitPoint: CGPoint) {
         guard !isDragging, !isRetracting else { return }
         guard !boundaries.isEmpty else {
             hoveredInteraction = nil
@@ -440,11 +476,81 @@ public final class DividerOverlayController {
         presentHandle(for: interaction, near: point, active: false)
     }
 
+    private func candidates(for interaction: DividerInteraction, forceRead: Bool = false) -> [BTRect]? {
+        let now = coverageTime()
+        if !forceRead, let coverCache, coverCache.interaction == interaction, now - coverCache.time < 0.15 {
+            return coverCache.candidates
+        }
+        let managed = managedWindowIDs[interaction.displayID] ?? interaction.affectedWindowIDs
+        let candidates = stackProvider?(managed).map {
+            DividerSeamCoverage.frontCandidates(
+                stack: $0, ownProcess: ownProcess, managed: managed,
+                seamParticipants: interaction.affectedWindowIDs
+            )
+        }
+        coverCache = (interaction, candidates, now)
+        return candidates
+    }
+
+    private func coverage(
+        for interaction: DividerInteraction, near point: BTPoint, active: Bool, candidates: [BTRect]?
+    ) -> HandleCoverage? {
+        guard let candidates else { return HandleCoverage() }
+        let hitWidth = max(18, configuration.dividerThickness * 3)
+        if let center = junctionCenter(for: interaction) {
+            guard let room = DividerSeamCoverage.armRoom(
+                center: center, acquisition: DividerHandleGeometry.junctionAcquisitionFrame(center: center),
+                hitWidth: hitWidth, candidates: candidates
+            ) else {
+                // Keep the input window through mouse-up even if a cover reaches the centre.
+                return active ? HandleCoverage(armRoom: [.up: 0, .down: 0, .left: 0, .right: 0]) : nil
+            }
+            var available: [DividerHandleArm: Double] = [.up: room.up, .down: room.down, .left: room.left, .right: room.right]
+            // Junction input occupies the complete rectangular panel. A cover
+            // beside both arms can still reach its corner, so bound that frame
+            // before deriving either the resting or stretched shape.
+            let frame = handleFrame(for: interaction, near: point, active: true, armRoom: available)
+            for cover in candidates where (cover.intersection(frame)?.area ?? 0) > 0 {
+                if cover.maxY <= center.y { available[.up] = min(available[.up]!, center.y - cover.maxY) }
+                if cover.minY >= center.y { available[.down] = min(available[.down]!, cover.minY - center.y) }
+                if cover.maxX <= center.x { available[.left] = min(available[.left]!, center.x - cover.maxX) }
+                if cover.minX >= center.x { available[.right] = min(available[.right]!, cover.minX - center.x) }
+            }
+            return HandleCoverage(armRoom: available)
+        }
+        guard let boundary = interaction.boundaries.first else { return nil }
+        let span = (boundary.spanStart + 8)...(boundary.spanEnd - 8)
+        let band = DividerSeamCoverage.band(axis: boundary.axis, coordinate: boundary.coordinate, span: span, hitWidth: hitWidth)
+        let segments = DividerSeamCoverage.exposedSegments(span: span, axis: boundary.axis, band: band, candidates: candidates)
+        let position = boundary.axis == .vertical ? point.y : point.x
+        if let segment = DividerSeamCoverage.segment(containing: position, in: segments) {
+            return HandleCoverage(exposedSpan: segment)
+        }
+        guard active else { return nil }
+        // A drag retains its input target. Use the nearest remaining segment;
+        // if none remains, retain a 24-point knob at the clamped pointer.
+        let nearest = segments.min { lhs, rhs in
+            abs(position - min(max(position, lhs.lowerBound), lhs.upperBound))
+                < abs(position - min(max(position, rhs.lowerBound), rhs.upperBound))
+        }
+        let clamped = min(max(position, span.lowerBound), span.upperBound)
+        return HandleCoverage(exposedSpan: nearest ?? clamped...clamped)
+    }
+
     private func presentHandle(for interaction: DividerInteraction, near point: BTPoint, active: Bool) {
         guard let mainFrame = NSScreen.screens.first?.frame else { return }
-        let topLeftFrame = handleFrame(for: interaction, near: point, active: active)
+        let candidates = active ? gestureCandidates : candidates(for: interaction)
+        guard let coverage = coverage(for: interaction, near: point, active: active, candidates: candidates) else {
+            hoveredInteraction = nil
+            handlePanel?.orderOut(nil)
+            return
+        }
+        let topLeftFrame = handleFrame(
+            for: interaction, near: point, active: active,
+            exposedSpan: coverage.exposedSpan, armRoom: coverage.armRoom
+        )
         let appKitFrame = CoordinateConverter.toAppKit(topLeftFrame, mainScreenFrame: mainFrame)
-        guard active || !isCovered(topLeftFrame: topLeftFrame, appKitFrame: appKitFrame) else {
+        guard active || !isCovered(topLeftFrame: topLeftFrame, appKitFrame: appKitFrame, useFallback: candidates == nil) else {
             hoveredInteraction = nil
             handlePanel?.orderOut(nil)
             return
@@ -453,9 +559,12 @@ public final class DividerOverlayController {
         let mode = handleMode(
             for: interaction,
             topLeftFrame: topLeftFrame,
-            mainScreenFrame: mainFrame
+            mainScreenFrame: mainFrame, exposedSpan: coverage.exposedSpan, armRoom: coverage.armRoom
         )
-        let trackRoom = handleTrackRoom(for: interaction, topLeftFrame: topLeftFrame)
+        let trackRoom = handleTrackRoom(
+            for: interaction, topLeftFrame: topLeftFrame,
+            exposedSpan: coverage.exposedSpan, armRoom: coverage.armRoom
+        )
         if let existing = handlePanel {
             panel = existing
             panel.configure(mode: mode, thickness: configuration.dividerThickness, trackRoom: trackRoom)
@@ -503,9 +612,19 @@ public final class DividerOverlayController {
             handlePanel?.setActive(false, animated: false)
             return
         }
-        let topLeftFrame = handleFrame(for: interaction, near: point, active: false)
+        let candidates = candidates(for: interaction, forceRead: true)
+        guard let coverage = coverage(for: interaction, near: point, active: false, candidates: candidates) else {
+            hoveredInteraction = nil
+            handlePanel?.setActive(false, animated: false)
+            handlePanel?.orderOut(nil)
+            return
+        }
+        let topLeftFrame = handleFrame(
+            for: interaction, near: point, active: false,
+            exposedSpan: coverage.exposedSpan, armRoom: coverage.armRoom
+        )
         let appKitFrame = CoordinateConverter.toAppKit(topLeftFrame, mainScreenFrame: mainFrame)
-        guard !isCovered(topLeftFrame: topLeftFrame, appKitFrame: appKitFrame) else {
+        guard !isCovered(topLeftFrame: topLeftFrame, appKitFrame: appKitFrame, useFallback: candidates == nil) else {
             hoveredInteraction = nil
             handlePanel?.setActive(false, animated: false)
             handlePanel?.orderOut(nil)
@@ -534,6 +653,7 @@ public final class DividerOverlayController {
             return
         }
 
+        gestureCandidates = candidates
         activeInteraction = interaction
         baselineInteraction = interaction
         isDragging = true
@@ -855,6 +975,8 @@ public final class DividerOverlayController {
         reportedLiveBentoState = false
         ghosts.hide()
         activeInteraction = nil
+        gestureCandidates = nil
+        coverCache = nil
         baselineInteraction = nil
         isDragging = false
         transaction = nil
@@ -930,7 +1052,9 @@ public final class DividerOverlayController {
     func handleFrame(
         for interaction: DividerInteraction,
         near point: BTPoint,
-        active: Bool
+        active: Bool,
+        exposedSpan: ClosedRange<Double>? = nil,
+        armRoom: [DividerHandleArm: Double] = [:]
     ) -> BTRect {
         let hitWidth = max(18, configuration.dividerThickness * 3)
         if let center = junctionCenter(for: interaction) {
@@ -938,7 +1062,7 @@ public final class DividerOverlayController {
                 center: center,
                 boundaries: interaction.boundaries,
                 active: active,
-                thickness: renderedDividerThickness
+                thickness: renderedDividerThickness, armRoom: armRoom
             )
             return DividerHandleGeometry.junctionFrame(
                 center: center,
@@ -947,12 +1071,17 @@ public final class DividerOverlayController {
             )
         }
         guard let boundary = interaction.boundaries.first else { return .init(x: point.x, y: point.y, width: 1, height: 1) }
-        let usableStart = boundary.spanStart + 8
-        let usableEnd = boundary.spanEnd - 8
-        let length = DividerHandleGeometry.straightLength(
-            span: usableStart...usableEnd,
-            active: active
-        )
+        let usableStart = exposedSpan?.lowerBound ?? boundary.spanStart + 8
+        let usableEnd = exposedSpan?.upperBound ?? boundary.spanEnd - 8
+        let length = max(exposedSpan != nil && active ? 24 : 0, DividerHandleGeometry.straightLength(
+            span: usableStart...usableEnd, active: active
+        ))
+        if usableEnd - usableStart < length {
+            let center = min(max(boundary.axis == .vertical ? point.y : point.x, usableStart), usableEnd)
+            return boundary.axis == .vertical
+                ? BTRect(x: boundary.coordinate - hitWidth / 2, y: center - length / 2, width: hitWidth, height: length)
+                : BTRect(x: center - length / 2, y: boundary.coordinate - hitWidth / 2, width: length, height: hitWidth)
+        }
         if boundary.axis == .vertical {
             let center = min(max(point.y, usableStart + length / 2), usableEnd - length / 2)
             return BTRect(x: boundary.coordinate - hitWidth / 2, y: center - length / 2, width: hitWidth, height: length)
@@ -962,40 +1091,42 @@ public final class DividerOverlayController {
     }
 
     func handleTrackRoom(
-        for interaction: DividerInteraction, topLeftFrame: BTRect
+        for interaction: DividerInteraction, topLeftFrame: BTRect,
+        exposedSpan: ClosedRange<Double>? = nil, armRoom: [DividerHandleArm: Double] = [:]
     ) -> [DividerHandleArm: Double] {
         if let center = junctionCenter(for: interaction) {
             let room = DividerHandleGeometry.junctionTrackRoom(center: center, boundaries: interaction.boundaries)
-            return Dictionary(uniqueKeysWithValues: DividerHandleArm.allCases.map { ($0, room[$0] ?? 0) })
+            return Dictionary(uniqueKeysWithValues: DividerHandleArm.allCases.map { ($0, min(room[$0] ?? 0, armRoom[$0] ?? .infinity)) })
         }
         guard let boundary = interaction.boundaries.first else { return [:] }
         if boundary.axis == .vertical {
-            return [.up: topLeftFrame.midY - (boundary.spanStart + 8),
-                    .down: boundary.spanEnd - 8 - topLeftFrame.midY]
+            return [.up: max(0, topLeftFrame.midY - (exposedSpan?.lowerBound ?? boundary.spanStart + 8)),
+                    .down: max(0, (exposedSpan?.upperBound ?? boundary.spanEnd - 8) - topLeftFrame.midY)]
         }
-        return [.left: topLeftFrame.midX - (boundary.spanStart + 8),
-                .right: boundary.spanEnd - 8 - topLeftFrame.midX]
+        return [.left: max(0, topLeftFrame.midX - (exposedSpan?.lowerBound ?? boundary.spanStart + 8)),
+                .right: max(0, (exposedSpan?.upperBound ?? boundary.spanEnd - 8) - topLeftFrame.midX)]
     }
 
     func handleMode(
         for interaction: DividerInteraction,
         topLeftFrame: BTRect,
-        mainScreenFrame: CGRect
+        mainScreenFrame: CGRect,
+        exposedSpan: ClosedRange<Double>? = nil, armRoom: [DividerHandleArm: Double] = [:]
     ) -> DividerHandleMode {
         switch interaction.kind {
         case .vertical:
             let boundary = interaction.boundaries[0]
-            let span = (boundary.spanStart + 8) ... (boundary.spanEnd - 8)
+            let span = exposedSpan ?? (boundary.spanStart + 8) ... (boundary.spanEnd - 8)
             return .vertical(
                 restingLength: DividerHandleGeometry.straightLength(span: span, active: false),
-                activeLength: DividerHandleGeometry.straightLength(span: span, active: true)
+                activeLength: max(exposedSpan != nil ? 24 : 0, DividerHandleGeometry.straightLength(span: span, active: true))
             )
         case .horizontal:
             let boundary = interaction.boundaries[0]
-            let span = (boundary.spanStart + 8) ... (boundary.spanEnd - 8)
+            let span = exposedSpan ?? (boundary.spanStart + 8) ... (boundary.spanEnd - 8)
             return .horizontal(
                 restingLength: DividerHandleGeometry.straightLength(span: span, active: false),
-                activeLength: DividerHandleGeometry.straightLength(span: span, active: true)
+                activeLength: max(exposedSpan != nil ? 24 : 0, DividerHandleGeometry.straightLength(span: span, active: true))
             )
         case .junction:
             guard let center = junctionCenter(for: interaction) else {
@@ -1018,13 +1149,13 @@ public final class DividerOverlayController {
                     center: center,
                     boundaries: interaction.boundaries,
                     active: false,
-                    thickness: renderedDividerThickness
+                    thickness: renderedDividerThickness, armRoom: armRoom
                 ),
                 active: DividerHandleGeometry.junctionArmLengths(
                     center: center,
                     boundaries: interaction.boundaries,
                     active: true,
-                    thickness: renderedDividerThickness
+                    thickness: renderedDividerThickness, armRoom: armRoom
                 )
             )
         }
@@ -1061,8 +1192,8 @@ public final class DividerOverlayController {
         return CoordinateConverter.pointToTopLeft(point, mainScreenFrame: mainFrame)
     }
 
-    private func isCovered(topLeftFrame: BTRect, appKitFrame: CGRect) -> Bool {
-        if DividerHandleOcclusion.isCovered(topLeftFrame, by: obscuringFrames) {
+    private func isCovered(topLeftFrame: BTRect, appKitFrame: CGRect, useFallback: Bool) -> Bool {
+        if useFallback && DividerHandleOcclusion.isCovered(topLeftFrame, by: obscuringFrames) {
             return true
         }
         guard NSApp.isActive else { return false }
