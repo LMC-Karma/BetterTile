@@ -225,3 +225,19 @@ func tabbedCheckpointVerificationStopsWhenItsDesktopOrTaskChanges(cancelled: Boo
     #expect(system.frameWriteCounts.isEmpty)
     #expect(system.raisedWindows.isEmpty)
 }
+
+@Test @MainActor func tabbedSnapRollbackVerifiesTheFormerDestinationSelection() async {
+    let system = FakeWindowSystem()
+    system.addSecondWindow()
+    let oldSelection = system.windows[0].id, source = system.windows[1].id
+    let baseline = system.windows
+    system.failedFrameWriteNumbers[oldSelection] = [2] // It accepted the hidden write, then refused restoration.
+    system.failingRaiseWindowID = source
+    let outcome = await WindowCoordinator(system: system).applyTabbed(
+        placements: system.windows.map { Placement(windowID: $0.id, frame: BTRect(x: 0, y: 34, width: 700, height: 700)) },
+        rollbackRequired: [oldSelection], required: [source], selected: [source],
+        previousSelected: [oldSelection], focus: source, isCurrent: { true })
+    guard case .degraded = outcome else { Issue.record("The restored old selection must be verified"); return }
+    #expect(system.windows[0].frame != baseline[0].frame)
+    #expect(system.windows[1].frame == baseline[1].frame)
+}

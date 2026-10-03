@@ -126,8 +126,22 @@ title bar uses Bento drops: a center drop adds it to a pane's tabs, and an edge
 drop splits the pane. This tracks the window's native drag; dragging a tab strip
 starts BetterTile's separate tab drag. Cross-display tab dragging is not
 implemented. Keep these checks on one display.
-Ordinary BetterTile snap actions are disabled for Tabbed members. Float the
-window first to use those actions.
+Fixed half, third, two-thirds, quarter, and sixth snaps move only the focused
+window. Keyboard, menu, Settings, Layout Wheel, and native snap zones use the
+same policy. An exact destination pane keeps its tabs and selects the incoming
+window. Otherwise BetterTile creates the requested pane and reflows all prior
+panes into the remaining space. Existing pane identities and other tab groups
+survive, including an emptied source pane. A new arrangement must fit selected
+window minimums and the 12-pane limit. Hidden tabs do not constrain the layout.
+An unavailable snap leaves the previous arrangement in place. Tabbed Undo
+restores one complete pre-snap arrangement.
+
+Maximize is unavailable for pane members; use Change Layout → One Pane.
+Restore is unavailable for members; use Tabbed Undo. Center, Almost Maximize,
+free movement/resizing, and display transfer also remain unavailable for
+members. Float a window to use those free-window actions. A fixed partition
+snap explicitly attaches a user-floated window again. System floating windows
+and apps excluded from Bento stay outside Tabbed.
 
 ## Manual checks to record
 
@@ -264,3 +278,19 @@ BETTERTILE_NATIVE_GLASS_PREVIEW_DIR=/tmp/bettertile-glass-previews \
   swift test --scratch-path /tmp/bettertile-build \
   --filter 'nativeGlassCompositorPreviews|nativeDividerLensPreviews|menuGlassPopoverPreviews'
 ```
+
+## Fixed snap checks
+
+- Move one tab to an occupied exact pane and to an empty exact pane. Other tabs
+  stay in their groups, and the destination selects the moved window.
+- From Four Panes, snap one window to Right Half. The four previous panes stay
+  separate in the left remainder. Undo restores their previous arrangement.
+- Compare keyboard/menu, Layout Wheel, and native title-bar snap-zone results.
+  The wheel keeps its captured window after focus changes.
+- Try a selected window whose minimum cannot fit the exact snap. Verify that
+  neither its group nor the fixed target silently changes. A rejected native
+  drag returns to its pre-drag frame and group.
+- Move a user-floated window, snap it into a pane, then Undo. Its current
+  pre-snap floating frame returns; unrelated floats stay put.
+- Switch Space or mode while a placement is pending. No restoration should
+  move windows on the departed desktop.

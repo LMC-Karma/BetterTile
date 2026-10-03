@@ -101,7 +101,7 @@ import Testing
     controller.activeModeProvider = { _ in .bento }
     controller.bentoStateProvider = { _ in BentoLayoutState() }
     var bentoStartAttempts = 0
-    controller.bentoDragBeganHandler = { _, _ in
+    controller.bentoDragBeganHandler = { _, _, _ in
         bentoStartAttempts += 1
         // A new one-window desktop has no Bento tree to freeze.
         return false
@@ -566,4 +566,55 @@ func queuedDragEscapeCannotCancelAReplacementGesture(retirement: String) async t
     release?(event)
     for _ in 0..<20 { await Task.yield() }
     #expect(!controller.isGestureActive)
+}
+
+@Test(arguments: [false, true]) @MainActor
+func tabbedSnapGestureUsesMouseDownFrameAndPlansItsFixedZonePreview(available: Bool) async throws {
+    let system = FakeWindowSystem()
+    system.addSecondWindow()
+    let source = system.windows[0].id
+    let initialFrame = system.windows[0].frame
+    let controller = DragSnapController(coordinator: WindowCoordinator(system: system), configuration: BetterTileConfiguration())
+    controller.activeModeProvider = { _ in .tabbed }
+    let layout = BentoLayoutState(root: .partition(BentoPartition(axis: .vertical,
+        children: [.leaf(source), .leaf(system.windows[1].id)])))
+    controller.bentoStateProvider = { _ in layout }
+    let previewFrame = BTRect(x: available ? 12000 : 14000, y: 34, width: 497, height: 766)
+    let previousPanels = Set(NSApplication.shared.windows.map(\.windowNumber))
+    var capturedFrame: BTRect?
+    var previews: [BentoDragOutcome] = []
+    var dropped: BentoDragOutcome?
+    controller.bentoDragBeganHandler = { _, id, frame in
+        #expect(id == source)
+        capturedFrame = frame
+        return true
+    }
+    controller.bentoPreviewHandler = { _, id, outcome in
+        previews.append(outcome)
+        return available ? [Placement(windowID: id, frame: previewFrame)] : nil
+    }
+    controller.bentoDragEndedHandler = { _, _, outcome in dropped = outcome }
+    controller.setUsesSharedGestureEvents(true)
+    controller.handleSharedGestureEvent(GlobalGestureEvent(kind: .leftMouseDown,
+        position: BTPoint(x: initialFrame.minX + 100, y: initialFrame.minY + 20), button: 0, modifiers: [], timestamp: 1))
+    system.windows[0].frame.origin.x += 30
+    controller.handleSharedGestureEvent(GlobalGestureEvent(kind: .leftMouseDragged,
+        position: BTPoint(x: 1, y: 400), button: 0, modifiers: [], timestamp: 2))
+    let deadline = ContinuousClock.now.advanced(by: .seconds(1))
+    while previews.isEmpty, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(10)) }
+    let mainFrame = try #require(NSScreen.screens.first?.frame)
+    let expected = CoordinateConverter.toAppKit(previewFrame, mainScreenFrame: mainFrame)
+        .insetBy(dx: BentoPreviewMetrics.motionPanelInset, dy: BentoPreviewMetrics.motionPanelInset)
+    // Inspect only this test application's newly created preview panels.
+    // The synthetic preview is off-screen; no foreign window/AX is involved.
+    let shown = NSApplication.shared.windows.contains {
+        !previousPanels.contains($0.windowNumber) && $0.isVisible
+            && $0.contentView is PlacementWireframeView && $0.frame.equalTo(expected)
+    }
+    #expect(shown == available)
+    controller.handleSharedGestureEvent(GlobalGestureEvent(kind: .leftMouseUp,
+        position: BTPoint(x: 1, y: 400), button: 0, modifiers: [], timestamp: 3))
+    #expect(capturedFrame == initialFrame)
+    #expect(previews.contains { if case .snap(action: .leftHalf, frame: _) = $0 { true } else { false } })
+    guard case .snap(action: .leftHalf, frame: _) = dropped else { Issue.record("Expected the same fixed-zone command on release"); return }
 }
