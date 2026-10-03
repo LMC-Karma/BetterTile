@@ -508,6 +508,31 @@ import Testing
     }
 }
 
+@Test(arguments: ["CIGlassLozenge", "CIGaussianBlur", "all"])
+@MainActor func missingLensFilterUsesSolidHandle(missing: String) throws {
+    let layers = DividerLensLayers { name in
+        missing == "all" || name == missing ? nil : CIFilter(name: name)
+    }
+    let view = DividerHandleView(frame: CGRect(x: 0, y: 0, width: 30, height: 168),
+                                 mode: .vertical(restingLength: 56, activeLength: 168),
+                                 thickness: 10, lensLayers: layers)
+    view.displayOptions = { (false, false) }
+    #expect(!layers.isAvailable)
+    for strength in [0.0, 1.0] {
+        view.overlayAppearance.strength = strength
+        for active in [false, true] {
+            view.setActive(active, animated: false)
+            #expect(view.showsSolid)
+            #expect(!view.showsGlass)
+            #expect(layers.decorationLayer.isHidden)
+            let knob = try #require(view.knobRects.first)
+            #expect(knob.width == 14)
+            #expect(knob.height == (active ? 166 : 54))
+            #expect(view.hitTest(CGPoint(x: 15, y: 84)) === view)
+        }
+    }
+}
+
 @Test(arguments: [false, true])
 @MainActor func lensFiltersFollowEndCapsAndRetainInstances(junction: Bool) throws {
     let mode: DividerHandleMode = junction

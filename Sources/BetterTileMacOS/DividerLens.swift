@@ -82,8 +82,9 @@ final class DividerLensLayers {
     let body = CAShapeLayer()
     let trackHosts = (0..<2).map { _ in CALayer() }
     private let tracks = (0..<2).map { _ in CAGradientLayer() }
-    private let lenses = (0..<2).map { _ in CIFilter(name: "CIGlassLozenge")! }
-    private let blurs = (0..<2).map { _ in CIFilter(name: "CIGaussianBlur")! }
+    private let lenses: [CIFilter?]
+    private let blurs: [CIFilter?]
+    var isAvailable: Bool { lenses.allSatisfy { $0 != nil } && blurs.allSatisfy { $0 != nil } }
     private var blurred = false
     private(set) var filterChainUpdateCount = 0
     private let rings = (0..<3).map { _ in CAShapeLayer() }
@@ -92,14 +93,16 @@ final class DividerLensLayers {
     private let shadow = CALayer()
     private var capsules: [CGRect] = []
 
-    init() {
+    init(makeFilter: (String) -> CIFilter? = { CIFilter(name: $0) }) {
+        lenses = (0..<2).map { _ in makeFilter("CIGlassLozenge") }
+        blurs = (0..<2).map { _ in makeFilter("CIGaussianBlur") }
         decorationLayer.addSublayer(shadow)
         for index in tracks.indices {
             let host = trackHosts[index]
-            lenses[index].name = "lens"
-            lenses[index].setValue(1.2, forKey: "inputRefraction")
-            blurs[index].name = "frost"
-            host.filters = [lenses[index]]
+            lenses[index]?.name = "lens"
+            lenses[index]?.setValue(1.2, forKey: "inputRefraction")
+            blurs[index]?.name = "frost"
+            host.filters = [lenses[index]].compactMap { $0 }
             host.addSublayer(tracks[index])
             decorationLayer.addSublayer(host)
             tracks[index].locations = [0, 0.3, 0.7, 1]
@@ -125,6 +128,7 @@ final class DividerLensLayers {
 
     func apply(geometry g: DividerLensGeometry, margins: CGPoint, tint: NSColor,
                dark: Bool, strength: Double, limited: Bool, p: Double) {
+        guard isAvailable else { return }
         handleLayer.frame = g.bounds
         decorationLayer.frame = g.bounds.insetBy(dx: -margins.x, dy: -margins.y)
         // The decoration view already supplies the outside margin.
@@ -154,7 +158,8 @@ final class DividerLensLayers {
             }
         }
         body.fillColor = NSColor.white.withAlphaComponent((dark ? 0.02 : 0.12) + (dark ? 0.12 : 0.40) * strength).cgColor
-        for (index, alpha) in (dark ? [0.34, 0.12, 0.05] : [0.70, 0.30, 0.12]).enumerated() {
+        let ringAlphas: [CGFloat] = dark ? [0.34, 0.12, 0.05] : [0.70, 0.30, 0.12]
+        for (index, alpha) in ringAlphas.enumerated() {
             rings[index].strokeColor = NSColor.white.withAlphaComponent(alpha).cgColor
         }
         hairline.strokeColor = (limited ? tint.withAlphaComponent(0.85)
@@ -170,7 +175,9 @@ final class DividerLensLayers {
             let host = trackHosts[index]
             // Change the chain only when crossing the frost threshold. Pointer
             // samples update the named filters, never replace their arrays.
-            if blurred != needsBlur { host.filters = needsBlur ? [lenses[index], blurs[index]] : [lenses[index]] }
+            if blurred != needsBlur {
+                host.filters = (needsBlur ? [lenses[index], blurs[index]] : [lenses[index]]).compactMap { $0 }
+            }
             host.isHidden = index >= g.capsules.count || p == 0
             guard index < g.capsules.count else { continue }
             let capsule = g.capsules[index]
