@@ -142,7 +142,7 @@ func invalidGlassStrengthIsRejected(strength: Double) {
         ([.bentoGeometry], { $0.singleWindowPlacement = .almostMaximize }),
         ([.divider], { $0.resizeFeedbackMode = .live }),
         ([.divider], { $0.dividerVisibility = .dragOnly }),
-        ([.divider], { $0.dividerThickness = 8 }),
+        ([.divider], { $0.dividerThickness = 10 }),
         ([.overlayAppearance], { $0.overlayAppearance.useLiquidGlass = false }),
         ([.overlayAppearance], { $0.overlayAppearance.strength = 0.8 }),
         ([.bentoGeometry], { $0.bentoInnerGap = 4 }),
@@ -480,7 +480,7 @@ func invalidGlassStrengthIsRejected(strength: Double) {
     let configuration = BetterTileConfiguration()
     #expect(configuration.linkedResizeEnabled)
     #expect(configuration.resizeFeedbackMode == .ghost)
-    #expect(configuration.dividerThickness == 10)
+    #expect(configuration.dividerThickness == 8)
     #expect(configuration.bentoInnerGap == 1)
     #expect(configuration.bentoSwapHoverDelay == 0.12)
 }
