@@ -291,3 +291,33 @@ private func dragWindows(for state: BentoLayoutState) -> [WindowSnapshot] {
         )
     }
 }
+
+@Test(arguments: [false, true])
+func bentoDragSessionAcceptsAFloatedSourceBesideOnlyVacantPanes(useLayoutFrames: Bool) throws {
+    let source = WindowID(rawValue: "last-floated-tab")
+    var tabbed = TabbedLayoutState(preset: .columns)
+    tabbed.reconcile(windowIDs: [source], removed: [], focused: source)
+    tabbed.float(source)
+    let originalFrame = BTRect(x: 240, y: 170, width: 500, height: 300)
+    let window = WindowSnapshot(id: source, processIdentifier: 1, frame: originalFrame, displayID: dragDisplayID)
+    #expect(tabbed.selectedWindowIDs.isEmpty && tabbed.panes.count == 2)
+    let session = try #require(BentoDragSession(displayID: dragDisplayID, sourceWindowID: source,
+        state: tabbed.layout, windows: [window], workArea: dragBounds, useLayoutFrames: useLayoutFrames))
+    #expect(session.managedWindowIDs == [source])
+    #expect(session.baselineFrames == [source: originalFrame])
+    #expect(session.sourceReservedFrame == originalFrame)
+    #expect(session.restorePlacement == Placement(windowID: source, frame: originalFrame))
+    #expect(session.originalState == tabbed.layout)
+    let plan = try #require(TabbedSnapPlanner.plan(sourceWindowID: source, action: .rightHalf,
+        state: tabbed, windows: [window], in: session.workArea))
+    #expect(plan.destinationPaneID == tabbed.panes[1].id && plan.state.panes[0].tabs.isEmpty)
+    #expect(plan.state.floatingWindowIDs.isEmpty)
+    #expect(BentoDragSession(displayID: dragDisplayID, sourceWindowID: source,
+        state: BentoLayoutState(), windows: [window], workArea: dragBounds) == nil)
+    #expect(BentoDragSession(displayID: dragDisplayID, sourceWindowID: source,
+        state: tabbed.layout, windows: [], workArea: dragBounds) == nil)
+    var unavailable = window
+    unavailable.isMinimized = true
+    #expect(BentoDragSession(displayID: dragDisplayID, sourceWindowID: source,
+        state: tabbed.layout, windows: [unavailable], workArea: dragBounds) == nil)
+}

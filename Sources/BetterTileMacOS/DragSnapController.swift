@@ -104,7 +104,7 @@ public final class DragSnapController {
             syncMonitoring()
         }
     }
-    public var bentoDragBeganHandler: ((DisplayID, WindowID) -> Bool)?
+    public var bentoDragBeganHandler: ((DisplayID, WindowID, BTRect) -> Bool)?
     public var bentoPreviewHandler: ((DisplayID, WindowID, BentoDragOutcome) -> [Placement]?)?
     public var bentoDragEndedHandler: ((DisplayID, WindowID, BentoDragOutcome) -> Void)?
     public var activeModeProvider: ((DisplayID) -> LayoutMode?)?
@@ -440,7 +440,7 @@ public final class DragSnapController {
             }
             if usesBentoDrops(window.displayID),
                allowsBentoDrag(for: window) {
-                guard bentoDragBeganHandler?(window.displayID, window.id) == true else {
+                guard bentoDragBeganHandler?(window.displayID, window.id, dragGate.candidateWindow?.frame ?? window.frame) == true else {
                     clear()
                     return
                 }
@@ -560,7 +560,7 @@ public final class DragSnapController {
             ) == nil, hoverDelay > 0, let snapTarget {
                 bentoPreview?.hide()
                 target = snapTarget
-                showPreview(frame: snapTarget.frame, mainScreenFrame: mainFrame)
+                showSnapPreview(snapTarget, displayID: display.id, mainScreenFrame: mainFrame)
             } else {
                 preview?.hide()
                 target = nil
@@ -579,10 +579,30 @@ public final class DragSnapController {
                 window: snapSourceWindow
         )
         if let target {
-            showPreview(frame: target.frame, mainScreenFrame: mainFrame)
+            showSnapPreview(target, displayID: display.id, mainScreenFrame: mainFrame)
         } else {
             preview?.hide()
         }
+    }
+
+    private func showSnapPreview(_ target: SnapTarget, displayID: DisplayID, mainScreenFrame: CGRect) {
+        guard bentoDragDisplayID != nil, activeModeProvider?(displayID) == .tabbed else {
+            showPreview(frame: target.frame, mainScreenFrame: mainScreenFrame)
+            return
+        }
+        guard let source = draggedWindowID, let action = target.action,
+              let placements = bentoPreviewHandler?(displayID, source, .snap(action: action, frame: target.frame)),
+              let sourceFrame = placements.first(where: { $0.windowID == source })?.frame else {
+            preview?.hide()
+            bentoPreview?.hide()
+            return
+        }
+        showPreview(frame: sourceFrame, mainScreenFrame: mainScreenFrame)
+        let baseline = Dictionary(uniqueKeysWithValues:
+            (bentoStateProvider?(displayID)?.placements(in: coordinator.system.displays()
+                .first(where: { $0.id == displayID })?.visibleFrame ?? target.frame) ?? []).map { ($0.windowID, $0.frame) })
+        activeBentoPreview.showWireframes(placements: BentoDragPreview.changedPlacements(
+            placements, baselineFrames: baseline, excluding: source), baselineFrames: baseline)
     }
 
     private func armBentoCue(
@@ -756,7 +776,7 @@ public final class DragSnapController {
         let point = CoordinateConverter.pointToTopLeft(NSEvent.mouseLocation, mainScreenFrame: mainFrame)
         guard BentoSwapDragRegion.isTitleBarStart(point, in: window.frame),
               allowsBentoDrag(for: window),
-              bentoDragBeganHandler?(window.displayID, window.id) == true
+              bentoDragBeganHandler?(window.displayID, window.id, window.frame) == true
         else { return false }
         bentoDragDisplayID = window.displayID
         beginExposedWindowDrag(with: window)
@@ -797,7 +817,7 @@ public final class DragSnapController {
 
         if usesBentoDrops(window.displayID),
            allowsBentoDrag(for: window) {
-            guard bentoDragBeganHandler?(window.displayID, window.id) == true else { return false }
+            guard bentoDragBeganHandler?(window.displayID, window.id, window.frame) == true else { return false }
             bentoDragDisplayID = window.displayID
         }
         beginExposedWindowDrag(with: window)

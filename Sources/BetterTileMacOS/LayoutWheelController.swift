@@ -13,11 +13,18 @@ public struct LayoutWheelTarget: Equatable, Sendable {
     public var windowID: WindowID
     public var displayID: DisplayID
     public var visibleFrame: BTRect
+    public var layoutMode: LayoutMode?
+    public var desktopSessionID: DesktopSessionID?
+    public var nativeSpaceID: NativeSpaceID?
 
-    public init(windowID: WindowID, displayID: DisplayID, visibleFrame: BTRect) {
+    public init(windowID: WindowID, displayID: DisplayID, visibleFrame: BTRect,
+                desktopSessionID: DesktopSessionID? = nil, nativeSpaceID: NativeSpaceID? = nil, layoutMode: LayoutMode? = nil) {
         self.windowID = windowID
         self.displayID = displayID
         self.visibleFrame = visibleFrame
+        self.layoutMode = layoutMode
+        self.desktopSessionID = desktopSessionID
+        self.nativeSpaceID = nativeSpaceID
     }
 }
 

@@ -173,7 +173,8 @@ public struct BentoDragSession: Sendable {
     ) {
         let treeWindowIDs = Set(state.root?.windowIDs ?? [])
         let managedWindowIDs = treeWindowIDs.union([sourceWindowID])
-        guard !treeWindowIDs.isEmpty else { return nil }
+        // A vacant tree still supplies destinations for a floated window.
+        guard state.root != nil else { return nil }
 
         let indexed = Dictionary(uniqueKeysWithValues: windows.map { ($0.id, $0) })
         guard managedWindowIDs.allSatisfy({ indexed[$0]?.isEligible == true }) else { return nil }
