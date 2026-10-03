@@ -41,6 +41,9 @@ class OverlayGlassView: NSView {
     var tint: NSColor? { didSet { refreshAppearance() } }
     var solidColor: NSColor? { didSet { refreshAppearance() } }
     var isLight = false { didSet { refreshAppearance() } }
+    /// The shared Tabbed backdrop keeps a frost floor even at Clear, without
+    /// adding an outline around its work-area-sized surface.
+    var isCurtain = false { didSet { refreshAppearance() } }
     var displayOptions: () -> (reduceTransparency: Bool, increaseContrast: Bool) = {
         (NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency,
          NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast)
@@ -100,12 +103,13 @@ class OverlayGlassView: NSView {
         let options = displayOptions()
         let solid = !overlayAppearance.useLiquidGlass || options.reduceTransparency || options.increaseContrast
         glass.isHidden = solid
-        glass.style = isLight ? .clear : .regular
+        glass.style = isLight && !isCurtain ? .clear : .regular
         glass.tintColor = tint?.withAlphaComponent(0.06)
-        plateOpacity = solid ? 1 : overlayAppearance.glassBackingOpacity * (isLight ? 0.5 : 1)
+        plateOpacity = solid ? 1 : (isCurtain ? 0.14 + overlayAppearance.glassBackingOpacity
+            : overlayAppearance.glassBackingOpacity * (isLight ? 0.5 : 1))
         effectiveAppearance.performAsCurrentDrawingAppearance {
             plate.layer?.backgroundColor = (solid ? (solidColor ?? .windowBackgroundColor) : .windowBackgroundColor).withAlphaComponent(plateOpacity).cgColor
-            plate.layer?.borderWidth = options.increaseContrast ? 1.5 : 0.7
+            plate.layer?.borderWidth = isCurtain ? 0 : (options.increaseContrast ? 1.5 : 0.7)
             plate.layer?.borderColor = (tint ?? .separatorColor).withAlphaComponent(options.increaseContrast ? 1 : 0.45).cgColor
             highlight.isHidden = !highlightsTop || solid
             highlight.colors = [NSColor.white.withAlphaComponent(0.28).cgColor, NSColor.white.withAlphaComponent(0.02).cgColor]

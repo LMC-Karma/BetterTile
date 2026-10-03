@@ -175,6 +175,10 @@ final class BetterTileModel {
         dragSnap.actionResultHandler = { [weak self] displayID, succeeded, error in
             self?.presentActionResult(succeeded: succeeded, error: error, displayID: displayID)
         }
+        dividerResize.stackProvider = { [weak self] ids in
+            (self?.system as? any WindowStackReading)?.onScreenStack(labeling: ids)
+        }
+        dividerResize.ownProcess = getpid()
         dividerResize.nonOccludingWindowNumbersProvider = { [weak self] in
             self?.tabbedOverlays.values.reduce(into: Set<Int>()) { $0.formUnion($1.windowNumbers) } ?? []
         }
@@ -2947,13 +2951,16 @@ final class BetterTileModel {
 
     private func refreshDividerBoundaries(windows suppliedWindows: [WindowSnapshot]? = nil) {
         let presentation = dividerPresentation(windows: suppliedWindows ?? ((try? system.visibleWindows()) ?? []))
-        dividerResize.refresh(boundaries: presentation.boundaries, obscuringFrames: presentation.obscuringFrames)
+        dividerResize.refresh(
+            boundaries: presentation.boundaries, obscuringFrames: presentation.obscuringFrames,
+            managedWindowIDs: presentation.managedWindowIDs
+        )
     }
 
-    func dividerPresentation(windows: [WindowSnapshot]) -> (boundaries: [BoundaryDescriptor], obscuringFrames: [BTRect]) {
+    func dividerPresentation(windows: [WindowSnapshot]) -> (boundaries: [BoundaryDescriptor], obscuringFrames: [BTRect], managedWindowIDs: [DisplayID: Set<WindowID>]) {
         let displays = Dictionary(uniqueKeysWithValues: system.displays().map { ($0.id, $0) })
         var boundaries: [BoundaryDescriptor] = []
-        var managedWindowIDs: Set<WindowID> = []
+        var managedWindowIDs: [DisplayID: Set<WindowID>] = [:]
         var tabbedObscuringFrames: [BTRect] = []
         let chrome = tabbedOverlays.values.reduce(into: Set<Int>()) { $0.formUnion($1.windowNumbers) }
         let order = sessionStore.sessions.values.contains(where: { $0.mode == .tabbed })
@@ -2969,14 +2976,14 @@ final class BetterTileModel {
                     tolerance: configuration.adjacencyTolerance
                 ).boundaries(in: contextWindows, displayID: displayID)
                 for boundary in linkedBoundaries {
-                    managedWindowIDs.formUnion(boundary.beforeWindowIDs)
-                    managedWindowIDs.formUnion(boundary.afterWindowIDs)
+                    managedWindowIDs[displayID, default: []].formUnion(boundary.beforeWindowIDs)
+                    managedWindowIDs[displayID, default: []].formUnion(boundary.afterWindowIDs)
                 }
                 boundaries += linkedBoundaries
             case .tabbed:
                 // Pane boundaries stay usable when an app clamps or displaces
                 // its selected window. Inactive tabs are layout members too.
-                managedWindowIDs.formUnion(session.tabbedState?.windowIDs ?? [])
+                managedWindowIDs[displayID, default: []].formUnion(session.tabbedState?.windowIDs ?? [])
                 boundaries += session.bentoState.boundaries(in: display.visibleFrame, displayID: displayID)
                 if let state = session.tabbedState, let order {
                     let selected = Set(state.selectedWindowIDs)
@@ -2989,7 +2996,7 @@ final class BetterTileModel {
                     }
                 }
             case .bento:
-                managedWindowIDs.formUnion(session.bentoState.root?.windowIDs ?? [])
+                managedWindowIDs[displayID, default: []].formUnion(session.bentoState.root?.windowIDs ?? [])
                 boundaries += BentoBoundaryResolver(tolerance: configuration.adjacencyTolerance).boundaries(
                     state: session.bentoState,
                     windows: contextWindows,
@@ -3006,8 +3013,8 @@ final class BetterTileModel {
             in: windows.filter {
                 $0.processIdentifier == frontmostPID && !displaysWithVerifiedOrder.contains($0.displayID)
             },
-            excluding: managedWindowIDs
-        ))
+            excluding: managedWindowIDs.values.reduce(into: Set<WindowID>()) { $0.formUnion($1) }
+        ), managedWindowIDs)
     }
 
     private func windowSignature(_ windows: [WindowSnapshot]) -> String {

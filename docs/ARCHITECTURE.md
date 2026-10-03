@@ -173,11 +173,11 @@ change a Bento operation made to the tree; writing it also writes the tree.
   public `NSWindow.order(_:relativeTo:)`. The model verifies the WindowServer
   order and every tab identity before supplying that anchor. Missing
   identities or unsafe ordering hide the curtain. It never guesses from a
-  frame or parks a window. An opaque, bright neutral gradient conceals inactive
-  windows. Rounded cutouts exclude occupied tab strips, including during
+  frame or parks a window. Native frosted glass conceals inactive window
+  detail. Rounded cutouts exclude occupied tab strips, including during
   resizing. The curtain keeps its rectangular input surface; the strips above
-  it own tab interaction. Reduce Transparency and Increase Contrast use a
-  uniform opaque surface.
+  it own tab interaction. Disabling glass, Reduce Transparency, and Increase
+  Contrast use an opaque surface.
   A click selects the selected tab in that pane, or activates an empty pane;
   it does not reach an inactive tab. Curtains have no accessibility navigation.
   They hide with the overlay on mode exit, Space changes, fullscreen, display
@@ -234,9 +234,21 @@ change a Bento operation made to the tree; writing it also writes the tree.
   settle before classifying an incomplete restore as degraded.
 - Tabbed's pointer dividers use pane boundaries even when an application has
   displaced its selected window. Inactive tabs and BetterTile panels do not
-  suppress the handle. Verified window order determines which floating
-  windows are in front and can suppress it; without that order, the
-  frontmost application's floating windows provide the fallback. Bento's divider
+  suppress the handle. The on-screen window stack determines which foreign
+  windows are in front of the seam's participants. The handle and its track
+  stop at the edges of exposed seam segments. Hover caches the stack for
+  150 ms and invalidates it on boundary refresh or application activation.
+  A gesture reads the stack once at its start and recomputes coverage from
+  those frames as the seam moves. Missing stack data or an unresolved exact
+  identity for any managed member retains the previous floating-window
+  fallback, including when private APIs are disabled. Known inactive tabs
+  absent from the on-screen stack do not disable coverage. A captured drag
+  keeps its input window until release; when less than 24 points remain, its minimum knob can overlap a
+  cover. A captured junction also retains its central target if a cover
+  reaches it. The junction's rectangular input frame is bounded against
+  diagonal covers as well as covers over its arms.
+  Third-party transparent overlays at levels 0–23 still cover the seam
+  when their window alpha is above 0.01. Bento's divider
   handle appears only on hover, so the Tabbed overlay adds a
   VoiceOver slider over each divider. The slider ignores the mouse; increment
   and decrement move the Bento divider by five percent of the area it splits.
@@ -260,8 +272,10 @@ Text-bearing surfaces retain regular glass. Empty panes use clear glass with
 half that added frosting. Disabling glass, Reduce
 Transparency, or Increase Contrast selects an opaque surface. Display-option
 changes apply while views are visible. Decorative glass never owns pointer
-events. The Tabbed curtain conceals inactive windows independently of this
-preference.
+events. The Tabbed curtain follows the same preference, with regular glass
+and an additional 14-percent frost floor even at Clear. Its plate ranges from
+14 to 36 percent, without an outline around the work area. It uses the same
+opaque fallback when glass is disabled or either display option is enabled.
 
 The menu bar popover uses the system's native glass. `GlassBacking` adds only
 the shared frosting or accessibility fallback over it; Clear removes this
@@ -284,13 +298,17 @@ the Layout Wheel, the menu bar popover, and result feedback. Snap and Bento
 placement/swap previews retain their light outlines, tint, and pulse.
 
 Tab dragging changes a provisional display order, without mutating the layout.
-The lifted tab follows the pointer and native layer springs move its neighbors.
-Insertion uses stable target geometry, not animated positions. Held edge
-positions scroll crowded strips. Mouse-up recomputes the destination and emits
-one intent. The released tab stays at its destination until that placement
+The lifted tab follows the latest pointer sample on each display tick, and
+native layer springs move its neighbors. Insertion uses stable target geometry,
+not animated positions. The same tick scrolls crowded strips at held edge
+positions. Unchanged destinations retain their preview frame and window order.
+Tooltips and accessibility children refresh when the drag presentation ends,
+instead of on each provisional move. Mouse-up bypasses coalescing, recomputes
+the exact release destination, and emits one intent. The released tab stays at its destination until that placement
 completes; failure restores the committed order. New tab drags wait for any
 pending placement to finish. Escape, hiding, or a layout change clears the
-provisional order, springs, and scrolling. Reduce Motion disables the springs.
+provisional order, queued samples, springs, and scrolling. Reduce Motion
+disables the springs.
 
 ## Linked resizing
 
