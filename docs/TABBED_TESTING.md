@@ -287,6 +287,12 @@ BETTERTILE_NATIVE_GLASS_PREVIEW_DIR=/tmp/bettertile-glass-previews \
   separate in the left remainder. Undo restores their previous arrangement.
 - Compare keyboard/menu, Layout Wheel, and native title-bar snap-zone results.
   The wheel keeps its captured window after focus changes.
+- Keep a native drag within one fixed snap zone. Unchanged preview outlines
+  continue their animation without restarting. Leaving the zone removes them;
+  a competing pane-center drop takes over only after its hover delay.
+- Exclude an app while its window still belongs to a pane. Keyboard, wheel,
+  and native snaps must not move it as a free window. A user-floated window
+  keeps ordinary snapping after exclusion.
 - Try a selected window whose minimum cannot fit the exact snap. Verify that
   neither its group nor the fixed target silently changes. A rejected native
   drag returns to its pre-drag frame and group.

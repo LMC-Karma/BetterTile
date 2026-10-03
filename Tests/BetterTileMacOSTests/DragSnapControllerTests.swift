@@ -618,3 +618,171 @@ func tabbedSnapGestureUsesMouseDownFrameAndPlansItsFixedZonePreview(available: B
     #expect(previews.contains { if case .snap(action: .leftHalf, frame: _) = $0 { true } else { false } })
     guard case .snap(action: .leftHalf, frame: _) = dropped else { Issue.record("Expected the same fixed-zone command on release"); return }
 }
+
+@Test @MainActor func tabbedSnapRepeatedTicksRetainPreviewPanelsAndClearTransitions() async throws {
+    for (competingCenter, acceptsCenter) in [(false, false), (true, false), (true, true)] {
+        try await checkSnapPreviewRetention(competingCenter: competingCenter, acceptsCenter: acceptsCenter)
+    }
+}
+
+@MainActor private func checkSnapPreviewRetention(competingCenter: Bool, acceptsCenter: Bool) async throws {
+    let system = FakeWindowSystem()
+    system.availableDisplays[0].frame.origin.x = 12000
+    system.availableDisplays[0].visibleFrame.origin.x = 12000
+    system.windows[0].frame.origin.x += 12000
+    for name in ["corner", "right"] {
+        var window = system.windows[0]
+        window.id = WindowID(rawValue: name)
+        system.windows.append(window)
+    }
+    let source = system.windows[0].id, corner = system.windows[1].id, right = system.windows[2].id
+    let layout = BentoLayoutState(root: .partition(BentoPartition(axis: .vertical, children: [
+        .partition(BentoPartition(axis: .horizontal, children: [.leaf(corner), .leaf(source)], ratios: [0.1, 0.9])),
+        .leaf(right)
+    ], ratios: [0.1, 0.9])), metrics: BentoLayoutMetrics(paneGap: 0))
+    var configuration = BetterTileConfiguration()
+    configuration.bentoSwapHoverDelay = 1
+    configuration.snapAreaBindings = [SnapAreaBinding(area: .left, action: .rightHalf),
+        SnapAreaBinding(area: .topLeft, action: .rightHalf), SnapAreaBinding(area: .right, action: .leftHalf)]
+    let ticks = ResizeDisplayLink(automatic: false)
+    let controller = DragSnapController(coordinator: WindowCoordinator(system: system),
+        configuration: configuration, displayTicks: ticks)
+    defer { controller.cancel() }
+    controller.activeModeProvider = { _ in .tabbed }
+    controller.bentoStateProvider = { _ in layout }
+    controller.bentoDragBeganHandler = { _, _, _ in true }
+    var available = true
+    var calls = 0
+    var centerCalls = 0
+    var centerEnteredAt: TimeInterval?
+    controller.bentoPreviewHandler = { _, _, outcome in
+        if case .swap = outcome {
+            centerCalls += 1
+            if let centerEnteredAt {
+                #expect(ProcessInfo.processInfo.systemUptime - centerEnteredAt >= configuration.bentoSwapHoverDelay - 0.01)
+            }
+            return acceptsCenter ? [Placement(windowID: source, frame: BTRect(x: 12000, y: 0, width: 100, height: 80))] : nil
+        }
+        guard available, case let .snap(action, _) = outcome else { return nil }
+        calls += 1
+        let x = action == .rightHalf ? 12500.0 : 12000.0
+        return [Placement(windowID: source, frame: BTRect(x: x, y: 34, width: 500, height: 766)),
+                Placement(windowID: corner, frame: BTRect(x: 12300, y: 34, width: 200, height: 300)),
+                Placement(windowID: right, frame: BTRect(x: 12300, y: 400, width: 200, height: 300))]
+    }
+    controller.setUsesSharedGestureEvents(true)
+    let owner = NSUserInterfaceItemIdentifier(UUID().uuidString)
+    func panels() -> [NSWindow] {
+        NSApplication.shared.windows.filter {
+            $0.identifier == owner && $0.isVisible && $0.contentView is PlacementWireframeView
+        }
+    }
+    func send(_ kind: GlobalGestureEventKind, _ point: BTPoint) {
+        let previous = Set(NSApplication.shared.windows.map(ObjectIdentifier.init))
+        controller.handleSharedGestureEvent(GlobalGestureEvent(kind: kind, position: point,
+            button: 0, modifiers: [], timestamp: 1))
+        ticks.fire()
+        for panel in NSApplication.shared.windows where !previous.contains(ObjectIdentifier(panel))
+                && panel.contentView is PlacementWireframeView { panel.identifier = owner }
+    }
+    send(.leftMouseDown, BTPoint(x: 12300, y: 220))
+    system.windows[0].frame.origin.x += 30
+    let point = competingCenter ? BTPoint(x: 12050, y: 40) : BTPoint(x: 12001, y: 400)
+    if competingCenter {
+        let cornerFrame = try #require(layout.placements(in: system.availableDisplays[0].visibleFrame).first { $0.windowID == corner }?.frame)
+        #expect(cornerFrame.contains(point))
+        #expect(BentoPaneDropPosition.resolve(point, in: cornerFrame) == .center)
+    }
+    send(.leftMouseDragged, point)
+    let first = panels()
+    #expect(first.count == 3)
+    let identities = Set(first.map(ObjectIdentifier.init))
+    for _ in 0..<5 { send(.leftMouseDragged, point) }
+    #expect(calls == 6)
+    #expect(Set(panels().map(ObjectIdentifier.init)) == identities)
+    // Changed target keeps the owned panels; invalid/exit/cancel must hide them.
+    configuration.snapAreaBindings = [SnapAreaBinding(area: .left, action: .leftHalf),
+        SnapAreaBinding(area: .topLeft, action: .leftHalf)]
+    controller.configuration = configuration
+    send(.leftMouseDragged, point)
+    #expect(Set(panels().map(ObjectIdentifier.init)) == identities)
+    available = false
+    send(.leftMouseDragged, point)
+    #expect(panels().isEmpty)
+    available = true
+    send(.leftMouseDragged, point)
+    #expect(panels().count == 3)
+    send(.leftMouseDragged, BTPoint(x: 13001, y: 400))
+    #expect(panels().isEmpty)
+    centerEnteredAt = ProcessInfo.processInfo.systemUptime
+    send(.leftMouseDragged, point)
+    #expect(panels().count == 3)
+    if competingCenter {
+        let waitingPanels = Set(panels().map(ObjectIdentifier.init))
+        // Pass the cue-arm delay while the configured center-hover delay is
+        // still pending. The fixed-zone preview must retain ownership.
+        try await Task.sleep(for: .milliseconds(180))
+        send(.leftMouseDragged, point)
+        if ProcessInfo.processInfo.systemUptime - (centerEnteredAt ?? 0) < configuration.bentoSwapHoverDelay {
+            #expect(centerCalls == 0)
+            #expect(Set(panels().map(ObjectIdentifier.init)) == waitingPanels)
+        } else {
+            // A busy main actor can resume this task after the full hover
+            // delay. The callback above still verifies it never arms early.
+            #expect(panels().isEmpty)
+        }
+        let deadline = ContinuousClock.now.advanced(by: .seconds(2))
+        while centerCalls == 0, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(10)) }
+        #expect(centerCalls == 1)
+        #expect(panels().isEmpty)
+        var dropped: BentoDragOutcome?
+        controller.bentoDragEndedHandler = { _, _, outcome in dropped = outcome }
+        send(.leftMouseUp, point)
+        guard case .swap(targetWindowID: corner) = dropped else { Issue.record("Center hover must win after its delay"); return }
+    }
+    controller.cancel()
+    #expect(panels().isEmpty)
+    #expect(system.frameWriteCounts.isEmpty)
+}
+
+@Test(arguments: ["member", "member-no-zone", "becomes-member", "float"]) @MainActor
+func excludedTabbedMembersNeverUseRawNativeSnapping(membership: String) {
+    let system = FakeWindowSystem()
+    var configuration = BetterTileConfiguration()
+    configuration.applicationRules.set(.excludeFromBento, for: "com.example.Test")
+    let controller = DragSnapController(coordinator: WindowCoordinator(system: system), configuration: configuration,
+                                        displayTicks: ResizeDisplayLink(automatic: false))
+    defer { controller.cancel() }
+    var isMember = membership.hasPrefix("member")
+    controller.isTabbedMember = { _ in isMember }
+    controller.activeModeProvider = { _ in .tabbed }
+    controller.bentoStateProvider = { _ in BentoLayoutState(root: .leaf(system.windows[0].id)) }
+    controller.setUsesSharedGestureEvents(true)
+    var resultCount = 0
+    controller.actionResultHandler = { _, _, _ in resultCount += 1 }
+    let existing = Set(NSApplication.shared.windows.map(ObjectIdentifier.init))
+    func send(_ kind: GlobalGestureEventKind, _ point: BTPoint) {
+        controller.handleSharedGestureEvent(GlobalGestureEvent(kind: kind, position: point,
+            button: 0, modifiers: [], timestamp: 1))
+        controller.displayTick()
+    }
+    send(.leftMouseDown, BTPoint(x: 300, y: 220))
+    system.windows[0].frame.origin.x += 3
+    let draggedFrame = system.windows[0].frame
+    let point = BTPoint(x: membership == "member-no-zone" ? 500 : 1, y: 400)
+    send(.leftMouseDragged, point)
+    if isMember {
+        #expect(!NSApplication.shared.windows.contains {
+            !existing.contains(ObjectIdentifier($0)) && $0.isVisible && $0.contentView is PlacementWireframeView
+        })
+    }
+    if membership == "becomes-member" { isMember = true }
+    send(.leftMouseUp, point)
+    if membership == "float" {
+        #expect(system.windows[0].frame == BTRect(x: 0, y: 0, width: 500, height: 800))
+    } else {
+        #expect(system.windows[0].frame == draggedFrame)
+        #expect(system.frameWriteCounts.isEmpty)
+        #expect(resultCount == 0)
+    }
+}

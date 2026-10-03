@@ -154,6 +154,7 @@ final class BetterTileModel {
             self?.perform(action)
         }
         titleBarDoubleClick.isTabbedMember = { [weak self] id in self?.isTabbedMember(id) == true }
+        dragSnap.isTabbedMember = { [weak self] id in self?.isTabbedMember(id) == true }
         dragSnap.activeModeProvider = { [weak self] displayID in self?.activeMode(for: displayID) }
         dragSnap.bentoStateProvider = { [weak self] displayID in self?.sessionStore.session(for: displayID)?.bentoState }
         dragSnap.bentoDragBeganHandler = { [weak self] displayID, sourceID, sourceFrame in
@@ -371,6 +372,10 @@ final class BetterTileModel {
             presentActionResult(succeeded: false, error: statusMessage, displayID: originalDisplayID)
             return
         }
+        if let focused, isTabbedMember(focused.id), !usesTabbedSnap(window: focused) {
+            presentLayoutWheelUnavailable(Self.tabbedParticipationChanged, displayID: focused.displayID)
+            return
+        }
         let actionPlan: WindowActionPlan
         switch focused.map({ coordinator.plan(action, for: $0.id) }) ?? .unavailable {
         case let .ready(plan):
@@ -554,8 +559,10 @@ final class BetterTileModel {
                 guard BentoDropPlanner.partitionActions.contains(action) else {
                     return .unavailable(reason: tabbedSnapUnavailableReason(action), displayID: window.displayID)
                 }
-                guard usesTabbedSnap(window: window),
-                      let context = tabbedSnapContext(windowID: target.windowID, displayID: target.displayID),
+                guard usesTabbedSnap(window: window) else {
+                    return .unavailable(reason: Self.tabbedParticipationChanged, displayID: target.displayID)
+                }
+                guard let context = tabbedSnapContext(windowID: target.windowID, displayID: target.displayID),
                       let plan = TabbedSnapPlanner.plan(sourceWindowID: target.windowID, action: action,
                           state: context.state, windows: context.windows, in: context.display.visibleFrame)
                 else { return .unavailable(reason: Self.tabbedSnapFailure, displayID: target.displayID) }
@@ -3152,6 +3159,7 @@ extension BetterTileModel {
     }
 
     private static let tabbedSnapFailure = "That snap cannot fit every pane within its minimum size and the 12-pane limit."
+    private static let tabbedParticipationChanged = "This window no longer participates in Tabbed. Float the window to use this action."
 
     private func tabbedSnapUnavailableReason(_ action: WindowAction) -> String {
         switch action {

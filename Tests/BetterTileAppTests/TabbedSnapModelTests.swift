@@ -457,6 +457,37 @@ private func snapFixture(preset: TabbedPreset = .columns) async throws -> (FakeA
     #expect(model.activeTabbedState?.panes.count == 2) // A stale queued Left Third was discarded.
 }
 
+@Test(arguments: [false, true]) @MainActor
+func tabbedSnapExcludingAMemberCannotFallThroughToRawPlacement(floated: Bool) async throws {
+    let (system, model) = try await snapFixture()
+    defer { model.shutdown() }
+    let id = system.windows[0].id, bundle = try #require(system.windows[0].bundleIdentifier)
+    if floated {
+        model.performTabbed(.float(id))
+        try #require(await waitFor { model.activeTabbedState?.floatingWindowIDs.contains(id) == true })
+    }
+    let before = try #require(model.activeTabbedState)
+    let target = try #require(model.captureLayoutWheelTarget())
+    model.setRule(.excludeFromBento, for: bundle)
+    #expect(model.activeTabbedState?.windowIDs.contains(id) == !floated)
+    let frames = system.windows.map(\.frame), writes = system.frameWriteCounts
+    model.perform(.rightHalf)
+    if floated {
+        #expect(system.windows[0].frame == WindowAction.rightHalf.partition!.frame(in: system.mainDisplay.visibleFrame))
+        #expect(model.activeTabbedState?.floatingWindowIDs.contains(id) == true)
+        return
+    }
+    #expect(model.activeTabbedState == before)
+    #expect(system.windows.map(\.frame) == frames)
+    #expect(system.frameWriteCounts == writes)
+    #expect(model.lastActionFeedback?.kind == .failure)
+    #expect(model.lastActionFeedback?.message == "Float this window first")
+    #expect(model.statusMessage?.contains("no longer participates") == true)
+    model.performLayoutWheel(.windowAction(.rightHalf), for: target)
+    #expect(system.frameWriteCounts == writes)
+    #expect(model.lastActionFeedback?.message == "Float this window first")
+}
+
 @Test @MainActor func tabbedSnapWaitsForThePreviousNativeDropsTabPlacement() async throws {
     let (system, model) = try await snapFixture()
     defer { model.shutdown() }
