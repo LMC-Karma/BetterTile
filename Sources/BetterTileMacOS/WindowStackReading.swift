@@ -8,6 +8,22 @@ public protocol WindowStackReading {
 
 /// Reads only the five public fields needed for seam coverage.
 enum SeamStackRecord {
+    static func parseStack(
+        _ records: [[CFString: Any]], identities: WindowIdentityRegistry, labeling ids: Set<WindowID>
+    ) -> [SeamStackEntry]? {
+        // Without the exact join, a layout member looks like a foreign cover.
+        guard ids.allSatisfy({ identities.exactWindowID(for: $0) != nil }) else { return nil }
+        let entries = records.compactMap { record in
+            parse(value: { record[$0] }, identities: identities, labeling: ids)
+        }
+        // Known inactive tabs may be off-screen. Validate only records that
+        // are present, without letting a wrong owner or malformed frame pass.
+        let numbers = Set(records.compactMap { ($0[kCGWindowNumber] as? NSNumber)?.uint32Value })
+        let present = ids.filter { identities.exactWindowID(for: $0).map(numbers.contains) == true }
+        guard Set(entries.compactMap(\.windowID)).isSuperset(of: present) else { return nil }
+        return entries
+    }
+
     static func parse(
         value: (CFString) -> Any?, identities: WindowIdentityRegistry, labeling ids: Set<WindowID>
     ) -> SeamStackEntry? {

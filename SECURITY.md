@@ -75,8 +75,11 @@ which foreign windows cover a layout seam, including floating panels and the
 Dock. It never reads window titles or captures pixels. Exact identities are
 labelled only when the known owner PID matches. Coverage is transient, adds
 no permission, and falls back to the existing obscuring frames if the read
-fails. Hover caches the result for at most 150 ms; an active drag retains its
-starting coverage until release.
+fails or any requested layout member lacks a validated exact identity. This
+also keeps dividers usable when private APIs are disabled. It does not guess
+an identity from PID and frame. Known exact identities that are absent from
+the on-screen list do not force this fallback. Hover caches the result for at
+most 150 ms; an active drag retains its starting coverage until release.
 
 The `defaults` commands below use the public app's domain. For BetterTile Debug,
 replace `com.lmckarma.BetterTile` with
