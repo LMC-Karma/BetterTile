@@ -278,7 +278,9 @@ func tabSelectionDoesNotRearrangeOrRefitOtherWindows(sharedApplication: Bool) as
     system.focusedWindowReadFails = true
     system.eventHandler?(WindowSystemEvent(kind: .focused, windowID: system.windows[0].id, processIdentifier: system.windows[0].processIdentifier))
     #expect(model.tabbedNeedsFocusRefresh)
-    #expect(await waitFor(timeout: .seconds(1)) { !model.tabbedNeedsFocusRefresh })
+    let refresh = try #require(model.tabbedFocusTask)
+    await refresh.value
+    #expect(!model.tabbedNeedsFocusRefresh)
 }
 
 @Test @MainActor func repairCurrentLayoutRestoresTabbedFramesAndPreservesGroups() async throws {
