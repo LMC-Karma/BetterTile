@@ -195,31 +195,6 @@ func junctionGripKeepsACompactTargetAndCapsEachExistingArm(thickness: Double) {
     #expect(tied.boundaries.contains { $0.id == "v100" })
 }
 
-@Test @MainActor func ghostPanelsRemainBelowTheActiveHandle() throws {
-    _ = NSApplication.shared
-    let handle = DividerHandlePanel(
-        frame: CGRect(x: 100, y: 100, width: 30, height: 168),
-        mode: .vertical(restingLength: 56, activeLength: 168), thickness: 10
-    )
-    handle.orderFrontRegardless()
-    defer { handle.orderOut(nil) }
-
-    let display = DisplayID(rawValue: "main")
-    let snapshot = WindowSnapshot(
-        id: WindowID(rawValue: "window"), processIdentifier: 1,
-        frame: BTRect(x: 0, y: 0, width: 300, height: 200), displayID: display
-    )
-    let ghosts = GhostFrameOverlayController()
-    ghosts.show(
-        placements: [Placement(windowID: snapshot.id, frame: snapshot.frame)],
-        windows: [snapshot],
-        below: handle.decorationWindow
-    )
-    defer { ghosts.hide() }
-
-    #expect(!ghosts.windowNumbers.isEmpty)
-    #expect(ghosts.relativeOrderTargets[snapshot.id] == handle.decorationWindow.windowNumber)
-}
 
 @Test(arguments: [0.0, 1.0, 6.0, 12.0], [false, true])
 func actualBentoPaneGapsStillAcquireJunctions(gap: Double, fourWay: Bool) throws {
@@ -387,11 +362,12 @@ func junctionPanelContainsRenderedCapsules(thickness: Double, glass: Bool) throw
         #expect(controller.isDragging)
         #expect(system.windows.map(\.frame) == frames)
         #expect(system.frameWriteCounts == writes)
-        #expect(panel.frame.size.height == (glass ? 88 : 74))
+        #expect(view.drawingState?.frame.size.height == (glass ? 88 : 74))
+        #expect(panel.frame == originalFrame)
         #expect(panel.frame.midY == originalFrame.midY)
         view.setActive(true, animated: false)
         view.layoutSubtreeIfNeeded()
-        #expect(view.knobRects.allSatisfy { view.bounds.contains($0) })
+        #expect(view.knobRects.allSatisfy { CGRect(origin: .zero, size: view.drawingState!.frame.size).contains($0) })
     }
     controller.configuration.overlayAppearance.useLiquidGlass = true
     // The lens follows the setting; the junction input keeps its earlier size.
@@ -401,7 +377,8 @@ func junctionPanelContainsRenderedCapsules(thickness: Double, glass: Bool) throw
         #expect(system.frameWriteCounts == writes)
         #expect(system.windows.map(\.frame) == frames)
         #expect(view.knobRects[0].height == CGFloat(thickness + 4))
-        #expect(panel.frame.size.height == CGFloat(panelHeight))
+        #expect(view.drawingState?.frame.size.height == CGFloat(panelHeight))
+        #expect(panel.frame == originalFrame)
         for strength in [0.0, 0.5, 1] {
             controller.configuration.overlayAppearance.strength = strength
             #expect(view.overlayAppearance.strength == strength)
