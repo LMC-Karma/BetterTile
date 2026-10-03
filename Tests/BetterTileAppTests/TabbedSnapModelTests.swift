@@ -513,8 +513,8 @@ func tabbedSnapExcludedNonmembersRetainOrdinaryActions(action: WindowAction, flo
     }
 }
 
-@Test(arguments: [LayoutMode.manual, .bento, .tabbed]) @MainActor
-func windowActionsExplainSpaceStabilizationAndResumeAfterward(mode: LayoutMode) async throws {
+@Test(arguments: [LayoutMode.manual, .bento, .tabbed], [false, true]) @MainActor
+func spaceStabilizationDelaysOnlyTabbedWindowActions(mode: LayoutMode, wheel: Bool) async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
     let model = makeModel(system: system)
@@ -525,31 +525,45 @@ func windowActionsExplainSpaceStabilizationAndResumeAfterward(mode: LayoutMode) 
     if mode == .tabbed {
         try #require(await waitFor { model.activeTabbedState?.windowIDs == [system.windows[0].id] })
     }
-    model.beginActiveSpaceStabilization()
-    let frames = system.windows.map(\.frame), writes = system.frameWriteCounts
-    model.perform(.rightHalf)
-    #expect(system.windows.map(\.frame) == frames)
-    #expect(system.frameWriteCounts == writes)
-    #expect(model.lastActionFeedback?.kind == .failure)
-    #expect(model.lastActionFeedback?.message == "Desktop changed")
-    #expect(model.statusMessage?.contains("Space switch") == true)
-
-    try #require(await waitFor { model.captureLayoutWheelTarget() != nil })
-    let resumedWrites = system.frameWriteCounts
-    model.perform(.rightHalf)
+    let captured = try #require(model.captureLayoutWheelTarget())
+    func act(_ action: WindowAction) {
+        if wheel { model.performLayoutWheel(.windowAction(action), for: captured) }
+        else { model.perform(action) }
+    }
     let target = WindowAction.rightHalf.partition!.frame(in: system.mainDisplay.visibleFrame)
+    model.beginActiveSpaceStabilization()
+    try #require(model.isStabilizingSpace)
+    let frames = system.windows.map(\.frame), writes = system.frameWriteCounts
+    act(.rightHalf)
+
     if mode == .tabbed {
+        #expect(system.windows.map(\.frame) == frames)
+        #expect(system.frameWriteCounts == writes)
+        #expect(model.lastActionFeedback?.kind == .failure)
+        #expect(model.lastActionFeedback?.message == "Desktop changed")
+        #expect(model.statusMessage?.contains("Space switch") == true)
+        #expect(model.captureLayoutWheelTarget() == nil)
+
+        try #require(await waitFor { !model.isStabilizingSpace })
+        #expect(model.captureLayoutWheelTarget() != nil)
+        let resumedWrites = system.frameWriteCounts
+        act(.rightHalf)
         #expect(await waitFor {
             guard let state = model.activeTabbedState,
                   let pane = state.paneID(containing: system.windows[0].id) else { return false }
             return state.logicalFrames(in: system.mainDisplay.visibleFrame)[pane] == target
                 && state.groups.contentFrames(in: system.mainDisplay.visibleFrame)?[pane] == system.windows[0].frame
         })
+        #expect(system.frameWriteCounts != resumedWrites)
     } else {
+        // Other modes keep acting on the focused window during a Space switch.
         #expect(system.windows[0].frame == target)
+        #expect(system.frameWriteCounts != writes)
         #expect(model.lastActionFeedback?.kind == .success)
+        #expect(model.captureLayoutWheelTarget() != nil)
+        try #require(await waitFor { !model.isStabilizingSpace })
+        #expect(system.windows[0].frame == target)
     }
-    #expect(system.frameWriteCounts != resumedWrites)
     #expect(model.statusMessage == nil)
 
     model.shutdown()

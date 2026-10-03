@@ -109,7 +109,7 @@ final class BetterTileModel {
     private var spaceStabilizationTask: Task<Void, Never>?
     private let displayRefreshDebouncer = DisplayRefreshDebouncer()
     private var spaceStabilizationGeneration = 0
-    private var isStabilizingSpace = false
+    private(set) var isStabilizingSpace = false
     private var nativeFullscreenDisplayIDs: Set<DisplayID> = []
     private var suppressSpaceFrameEventsUntil = Date.distantPast
     private var activeBentoDrag: ActiveBentoDrag?
@@ -355,11 +355,6 @@ final class BetterTileModel {
 
     func perform(_ action: WindowAction) {
         guard !isShutDown else { return }
-        guard !isStabilizingSpace else {
-            statusMessage = "Desktop changed. Try again when the Space switch finishes."
-            presentActionResult(succeeded: false, error: statusMessage, displayID: activeDisplayID)
-            return
-        }
         let originalDisplayID = (try? system.focusedWindow())?.displayID ?? activeDisplayID
         guard hasAccessibilityPermission || refreshPermission() else {
             statusMessage = "Accessibility permission is required. Open the Setup Assistant to grant access."
@@ -375,6 +370,11 @@ final class BetterTileModel {
         if !focusedRule.allowsDirectPlacement {
             statusMessage = "BetterTile is set to ignore this app."
             presentActionResult(succeeded: false, error: statusMessage, displayID: originalDisplayID)
+            return
+        }
+        if let focused, waitsForSpaceStabilization(focused) {
+            statusMessage = Self.tabbedSpaceSwitchPending
+            presentActionResult(succeeded: false, error: statusMessage, displayID: focused.displayID)
             return
         }
         if let focused, isTabbedMember(focused.id), !usesTabbedSnap(window: focused) {
@@ -492,10 +492,11 @@ final class BetterTileModel {
     /// succeeds. Returns nil when there is nothing the wheel may act on, which
     /// leaves the wheel closed rather than opening over an ineligible window.
     func captureLayoutWheelTarget() -> LayoutWheelTarget? {
-        guard !isShutDown, !isStabilizingSpace, hasAccessibilityPermission else { return nil }
+        guard !isShutDown, hasAccessibilityPermission else { return nil }
         do {
             guard let window = try system.focusedWindow(),
                   window.isEligible, !tabbedExiting.contains(window.displayID),
+                  !waitsForSpaceStabilization(window),
                   rule(for: window).allowsDirectPlacement,
                   let display = system.displays().first(where: { $0.id == window.displayID })
             else { return nil }
@@ -517,7 +518,7 @@ final class BetterTileModel {
         _ command: LayoutWheelCommand,
         for target: LayoutWheelTarget
     ) -> LayoutWheelPlanOutcome {
-        guard !isShutDown, !isStabilizingSpace, !tabbedExiting.contains(target.displayID) else {
+        guard !isShutDown, !tabbedExiting.contains(target.displayID) else {
             return .unavailable(reason: "The captured desktop is no longer available.", displayID: target.displayID)
         }
         guard hasAccessibilityPermission || refreshPermission(recoverWindows: false) else {
@@ -541,6 +542,9 @@ final class BetterTileModel {
             window = captured
         } catch {
             return .unavailable(reason: error.localizedDescription, displayID: target.displayID)
+        }
+        guard !waitsForSpaceStabilization(window) else {
+            return .unavailable(reason: Self.tabbedSpaceSwitchPending, displayID: target.displayID)
         }
 
         guard system.displays().contains(where: { $0.id == target.displayID && $0.visibleFrame == target.visibleFrame }),
@@ -3172,6 +3176,14 @@ extension BetterTileModel {
 
     private static let tabbedSnapFailure = "That snap cannot fit every pane within its minimum size and the 12-pane limit."
     private static let tabbedParticipationChanged = "This window no longer participates in Tabbed. Float the window to use this action."
+    private static let tabbedSpaceSwitchPending = "Desktop changed. Try again when the Space switch finishes."
+
+    /// A Space switch can replace the session that owns a Tabbed window, so
+    /// Tabbed actions wait for it to settle. Other modes act immediately.
+    private func waitsForSpaceStabilization(_ window: WindowSnapshot) -> Bool {
+        isStabilizingSpace
+            && (sessionStore.session(for: window.displayID)?.mode == .tabbed || isTabbedMember(window.id))
+    }
 
     private func tabbedSnapUnavailableReason(_ action: WindowAction) -> String {
         switch action {
