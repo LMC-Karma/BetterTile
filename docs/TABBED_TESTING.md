@@ -257,6 +257,13 @@ above. This test build is not evidence that those platform checks have passed.
 - Drag three-way and four-way junctions. Their arms form one outline with
   rounded inner corners. Check short divider spans: the fading track must end
   inside the span. Resize ghosts must stay below the track and shadow.
+- In Ghost Preview, drag straight dividers and junctions rapidly. The preview
+  outlines and knob must move together; outlines may pass under the knob.
+  Release, press Escape, hide the handle, and switch Spaces. Confirm the preview
+  disappears and the normal handle returns. Repeat a gesture to check reuse.
+  Record a 60 fps real-application drag when checking frame synchronization.
+  Tabbed strips remain separate windows; record any visible lag without treating
+  it as evidence that the preview outlines lag.
 - Click outside the handle's hit frame, including on its track and shadow.
   The window below receives the click. Hide the handle and check that its
   track and shadow also disappear.

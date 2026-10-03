@@ -279,17 +279,10 @@ final class ResizeDisplayLink: NSObject {
 public final class DividerOverlayController {
     public var configuration: BetterTileConfiguration {
         didSet {
-            handlePanel?.overlayAppearance = configuration.overlayAppearance
-            ghosts.overlayAppearance = configuration.overlayAppearance
-            let previousWidth = DividerHandleGeometry.renderedThickness(
-                oldValue.dividerThickness, useLiquidGlass: oldValue.overlayAppearance.useLiquidGlass
-            )
-            if isDragging, previousWidth != renderedDividerThickness,
-               let interaction = activeInteraction,
-               let point = latestDragPoint.map({ topLeftPoint($0) }) ?? startPoint {
-                presentHandle(for: interaction, near: point, active: true)
+            if dragOverlay.isVisible {
+                updateGhostPresentation { refreshConfiguration(from: oldValue) }
             } else {
-                updateHover(at: NSEvent.mouseLocation)
+                refreshConfiguration(from: oldValue)
             }
         }
     }
@@ -297,6 +290,22 @@ public final class DividerOverlayController {
     public var ownProcess: Int32 = getpid()
     var coverageTime: () -> Double = { CACurrentMediaTime() }
     var mouseLocation: () -> CGPoint = { NSEvent.mouseLocation }
+
+    private func refreshConfiguration(from oldValue: BetterTileConfiguration) {
+        handlePanel?.overlayAppearance = configuration.overlayAppearance
+        dragOverlay.overlayAppearance = configuration.overlayAppearance
+        let previousWidth = DividerHandleGeometry.renderedThickness(
+            oldValue.dividerThickness, useLiquidGlass: oldValue.overlayAppearance.useLiquidGlass
+        )
+        if isDragging, previousWidth != renderedDividerThickness,
+           let interaction = activeInteraction,
+           let point = latestDragPoint.map({ topLeftPoint($0) }) ?? startPoint {
+            presentHandle(for: interaction, near: point, active: true)
+        } else {
+            updateHover(at: NSEvent.mouseLocation)
+        }
+    }
+
     public var layoutChangedHandler: ((DisplayID, [WindowID: BTRect]) -> Void)?
     /// Tabbed panels are layout chrome, not floating windows that hide a grip.
     public var nonOccludingWindowNumbersProvider: (() -> Set<Int>)?
@@ -312,7 +321,7 @@ public final class DividerOverlayController {
     public var gestureWillBeginHandler: (() -> Void)?
     public private(set) var isDragging = false
     var dragLimit: DragLimit { handlePanel?.limit ?? DragLimit() }
-    var limitedGhostWindowIDs: Set<WindowID> { ghosts.limitedWindowIDs }
+    var limitedGhostWindowIDs: Set<WindowID> { dragOverlay.limitedWindowIDs }
     var visibleHandleView: DividerHandleView? { handlePanel?.contentView as? DividerHandleView }
     private var renderedDividerThickness: Double {
         DividerHandleGeometry.renderedThickness(
@@ -336,7 +345,9 @@ public final class DividerOverlayController {
     private var baselineInteraction: DividerInteraction?
     private var isRetracting = false
     private var handlePanel: DividerHandlePanel?
-    private let ghosts = GhostFrameOverlayController()
+    let dragOverlay = DividerDragOverlay()
+    private var isUpdatingGhostPresentation = false
+    private(set) var ghostPresentationCount = 0
     private var globalMouseMonitor: Any?
     private var localMouseMonitor: Any?
     private var globalKeyMonitor: Any?
@@ -579,7 +590,11 @@ public final class DividerOverlayController {
             }
             // The accepted divider coordinate moves immediately. Only the
             // decoration inside this frame animates its length.
-            panel.setFrame(appKitFrame, display: false)
+            if dragOverlay.isVisible {
+                panel.setDrawingFrame(appKitFrame)
+            } else {
+                panel.setFrame(appKitFrame, display: false)
+            }
         } else {
             panel = DividerHandlePanel(frame: appKitFrame, mode: mode, thickness: configuration.dividerThickness)
             panel.configure(mode: mode, thickness: configuration.dividerThickness, trackRoom: trackRoom)
@@ -685,17 +700,47 @@ public final class DividerOverlayController {
         ) { [weak self] in
             self?.displayTick()
         }
-        ghosts.overlayAppearance = configuration.overlayAppearance
         switch configuration.resizeFeedbackMode {
         case .ghost:
-            ghosts.show(
-                placements: latestPlacements,
-                windows: windows,
-                below: handlePanel?.decorationWindow ?? handlePanel
-            )
+            beginGhostPresentation()
+            updateGhostPresentation { dragOverlay.update(previews: latestPlacements) }
         case .live:
-            ghosts.hide()
+            endGhostPresentation()
         }
+    }
+
+    private func beginGhostPresentation() {
+        guard !dragOverlay.isVisible, let handlePanel, let displayBounds, let view = visibleHandleView else { return }
+        dragOverlay.begin(displayFrame: displayBounds, below: handlePanel,
+                          appearance: configuration.overlayAppearance, windows: baselineWindows)
+        handlePanel.setDrawingFrame(handlePanel.frame)
+        handlePanel.setLensHidden(true)
+        view.drawingSink = { [weak self] _ in
+            guard let self, !self.isUpdatingGhostPresentation else { return }
+            self.updateGhostPresentation {}
+        }
+    }
+
+    /// A pointer tick, stretch step, or settings update publishes one complete
+    /// drawing sample. Sinks during the batch wait for its final limit and frame.
+    private func updateGhostPresentation(_ updates: () -> Void) {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        isUpdatingGhostPresentation = true
+        updates()
+        if let drawing = visibleHandleView?.drawingState { dragOverlay.update(knob: drawing) }
+        isUpdatingGhostPresentation = false
+        ghostPresentationCount += 1
+        CATransaction.commit()
+    }
+
+    private func endGhostPresentation() {
+        guard dragOverlay.isVisible else { return }
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        handlePanel?.restoreDrawingFrame()
+        dragOverlay.end()
+        CATransaction.commit()
     }
 
     func drag(to appKitPoint: CGPoint) {
@@ -787,18 +832,19 @@ public final class DividerOverlayController {
             self.transaction = transaction
             activeInteraction = proposedInteraction
             reportLiveBentoState(interaction)
-            ghosts.show(
-                placements: placements,
-                windows: baselineWindows,
-                below: handlePanel?.decorationWindow ?? handlePanel,
-                limitedWindowIDs: ResizeLimits.windowsAtMinimum(
-                    placements, windows: baselineWindows, widthLimited: limit.width, heightLimited: limit.height
+            beginGhostPresentation()
+            updateGhostPresentation {
+                presentHandle(for: proposedInteraction, near: point, active: true)
+                handlePanel?.setLimit(limit)
+                dragOverlay.update(
+                    previews: placements,
+                    limitedWindowIDs: ResizeLimits.windowsAtMinimum(
+                        placements, windows: baselineWindows, widthLimited: limit.width, heightLimited: limit.height
+                    )
                 )
-            )
-            presentHandle(for: proposedInteraction, near: point, active: true)
-            handlePanel?.setLimit(limit)
+            }
         case .live:
-            ghosts.hide()
+            endGhostPresentation()
             switch coordinator.applyLive(
                 transaction: &transaction,
                 placements: placements,
@@ -979,7 +1025,7 @@ public final class DividerOverlayController {
             bentoStateLiveHandler?(displayID, baselineBentoState, displayBounds)
         }
         reportedLiveBentoState = false
-        ghosts.hide()
+        endGhostPresentation()
         activeInteraction = nil
         gestureCandidates = nil
         coverCache = nil
@@ -1282,6 +1328,8 @@ final class DividerHandlePanel: NSPanel {
     let decorationWindow: NSPanel
     private var decorationMargins: CGPoint
     private(set) var isActive = false
+    private(set) var frameSetCallCount = 0
+    private(set) var orderCallCount = 0
 
     init(frame: CGRect, mode: DividerHandleMode, thickness: Double) {
         handleView = DividerHandleView(frame: CGRect(origin: .zero, size: frame.size), mode: mode, thickness: thickness)
@@ -1317,6 +1365,7 @@ final class DividerHandlePanel: NSPanel {
     }
 
     override func setFrame(_ frameRect: NSRect, display flag: Bool) {
+        frameSetCallCount += 1
         if frame != frameRect { super.setFrame(frameRect, display: false) }
         let decorationFrame = frameRect.insetBy(dx: -decorationMargins.x, dy: -decorationMargins.y)
         if decorationWindow.frame != decorationFrame { decorationWindow.setFrame(decorationFrame, display: false) }
@@ -1329,8 +1378,28 @@ final class DividerHandlePanel: NSPanel {
     }
 
     override func orderFrontRegardless() {
+        orderCallCount += 1
         super.orderFrontRegardless()
-        decorationWindow.order(.below, relativeTo: windowNumber)
+        if handleView.drawsLens { decorationWindow.order(.below, relativeTo: windowNumber) }
+    }
+
+    func setDrawingFrame(_ frame: CGRect) {
+        handleView.drawingFrame = frame
+        handleView.layoutSubtreeIfNeeded()
+    }
+
+    func setLensHidden(_ hidden: Bool) {
+        handleView.drawsLens = !hidden
+        if hidden { decorationWindow.orderOut(nil) }
+        else if isVisible { decorationWindow.order(.below, relativeTo: windowNumber) }
+    }
+
+    func restoreDrawingFrame() {
+        let finalFrame = handleView.drawingFrame
+        handleView.drawingSink = nil
+        handleView.drawingFrame = nil
+        if let finalFrame { setFrame(finalFrame, display: false) }
+        setLensHidden(false)
     }
 
     func setLimit(_ limit: DragLimit) { handleView.setLimit(limit) }
@@ -1363,6 +1432,23 @@ final class DividerHandleView: NSView {
     private(set) var knobOutline: CGPath?
     private(set) var trackRects: [CGRect] = []
     private(set) var lensTint = NSColor.controlAccentColor
+    var drawingFrame: CGRect? { didSet { updateAppearance() } }
+    private(set) var drawingState: DividerHandleDrawing?
+    var drawingSink: ((DividerHandleDrawing) -> Void)?
+    var drawsLens = true {
+        didSet {
+            guard oldValue != drawsLens else { return }
+            if drawsLens { lastAppearance = nil; updateAppearance() }
+            else {
+                CATransaction.begin()
+                CATransaction.setDisableActions(true)
+                lensLayers.handleLayer.isHidden = true
+                lensLayers.decorationLayer.isHidden = true
+                solidLayer.isHidden = true
+                CATransaction.commit()
+            }
+        }
+    }
     var showsSolid: Bool { !solidLayer.isHidden }
     var overlayAppearance = OverlayAppearance() {
         didSet { if oldValue != overlayAppearance { updateAppearance() } }
@@ -1546,7 +1632,8 @@ final class DividerHandleView: NSView {
     }
 
     @objc private func updateAppearance() {
-        guard bounds.width > 0, bounds.height > 0 else { return }
+        let drawingBounds = CGRect(origin: .zero, size: drawingFrame?.size ?? bounds.size)
+        guard drawingBounds.width > 0, drawingBounds.height > 0 else { return }
         let options = displayOptions()
         let solid = !overlayAppearance.useLiquidGlass || options.reduceTransparency || options.increaseContrast
             || !lensLayers.isAvailable
@@ -1556,13 +1643,23 @@ final class DividerHandleView: NSView {
                 ?? (limit.isLimited ? .systemOrange : .controlAccentColor)
         }
         let dark = effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-        let state = AppearanceState(size: bounds.size, mode: mode, thickness: thickness, progress: stretchProgress,
+        var solidColor = NSColor.secondaryLabelColor
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            solidColor = gripColor.usingColorSpace(.deviceRGB) ?? gripColor
+        }
+        drawingState = DividerHandleDrawing(frame: drawingFrame ?? window?.frame ?? frame, mode: mode,
+                                            thickness: thickness, progress: stretchProgress, trackRoom: trackRoom,
+                                            limit: limit, tint: tint, dark: dark, frost: overlayAppearance.strength,
+                                            solid: solid, solidColor: solidColor, increaseContrast: options.increaseContrast,
+                                            scale: window?.backingScaleFactor ?? 1, useLiquidGlass: overlayAppearance.useLiquidGlass)
+        defer { if let drawingState { drawingSink?(drawingState) } }
+        let state = AppearanceState(size: drawingBounds.size, mode: mode, thickness: thickness, progress: stretchProgress,
                                     trackRoom: trackRoom, appearance: overlayAppearance, dark: dark, solid: solid,
                                     contrast: options.increaseContrast, limit: limit, tint: tint,
                                     scale: window?.backingScaleFactor ?? 1)
         guard state != lastAppearance else { return }
         let nextGeometry = DividerLensGeometry(
-            bounds: bounds, mode: mode, thickness: thickness, progress: stretchProgress,
+            bounds: drawingBounds, mode: mode, thickness: thickness, progress: stretchProgress,
             trackRoom: trackRoom, useLiquidGlass: overlayAppearance.useLiquidGlass, cached: geometry
         )
         // Available room changes as the seam moves, but often neither end of
@@ -1581,6 +1678,7 @@ final class DividerHandleView: NSView {
         knobOutline = nextGeometry.outline
         trackRects = nextGeometry.trackRects
         lensTint = tint
+        guard drawsLens else { return }
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         lensLayers.handleLayer.isHidden = solid
@@ -1634,78 +1732,7 @@ final class DividerHandleView: NSView {
 }
 
 @MainActor
-final class GhostFrameOverlayController {
-    var overlayAppearance = OverlayAppearance() {
-        didSet { for panel in panels.values { (panel.contentView as? GhostPreviewView)?.overlayAppearance = overlayAppearance } }
-    }
-    private var panels: [WindowID: NSPanel] = [:]
-    var windowNumbers: Set<Int> { Set(panels.values.map(\.windowNumber)) }
-    private(set) var relativeOrderTargets: [WindowID: Int] = [:]
-    private(set) var limitedWindowIDs: Set<WindowID> = []
-
-    func show(
-        placements: [Placement],
-        windows: [WindowSnapshot],
-        below handle: NSWindow?,
-        limitedWindowIDs: Set<WindowID> = []
-    ) {
-        guard let mainFrame = NSScreen.screens.first?.frame else { return }
-        let snapshots = Dictionary(uniqueKeysWithValues: windows.map { ($0.id, $0) })
-        self.limitedWindowIDs = limitedWindowIDs
-        let ids = Set(placements.map(\.windowID))
-        let staleIDs = panels.keys.filter { !ids.contains($0) }
-        for id in staleIDs {
-            panels.removeValue(forKey: id)?.orderOut(nil)
-        }
-        for placement in placements {
-            let frame = CoordinateConverter.toAppKit(placement.frame, mainScreenFrame: mainFrame).insetBy(dx: 3, dy: 3)
-            let panel: NSPanel
-            if let existing = panels[placement.windowID] {
-                panel = existing
-                panel.setFrame(frame, display: true)
-            } else {
-                panel = makePanel(frame: frame, snapshot: snapshots[placement.windowID])
-                panels[placement.windowID] = panel
-            }
-            (panel.contentView as? GhostPreviewView)?.update(
-                snapshot: snapshots[placement.windowID],
-                size: placement.frame.size,
-                limited: limitedWindowIDs.contains(placement.windowID)
-            )
-            if let handle, handle.windowNumber > 0 {
-                panel.order(.below, relativeTo: handle.windowNumber)
-                relativeOrderTargets[placement.windowID] = handle.windowNumber
-            } else {
-                panel.orderFrontRegardless()
-                relativeOrderTargets[placement.windowID] = nil
-            }
-        }
-    }
-
-    func hide() {
-        limitedWindowIDs = []
-        for panel in panels.values { panel.orderOut(nil) }
-        panels.removeAll()
-        relativeOrderTargets.removeAll()
-    }
-
-    private func makePanel(frame: CGRect, snapshot: WindowSnapshot?) -> NSPanel {
-        let panel = NSPanel(contentRect: frame, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
-        panel.level = .floating
-        panel.ignoresMouseEvents = true
-        panel.isOpaque = false
-        panel.hasShadow = false
-        panel.backgroundColor = .clear
-        panel.collectionBehavior = [.moveToActiveSpace, .transient, .ignoresCycle]
-        let view = GhostPreviewView(frame: CGRect(origin: .zero, size: frame.size), snapshot: snapshot)
-        view.overlayAppearance = overlayAppearance
-        panel.contentView = view
-        return panel
-    }
-}
-
-@MainActor
-private final class GhostPreviewView: OverlayGlassView {
+final class GhostPreviewView: OverlayGlassView {
     private let iconView = NSImageView()
     private let titleLabel = NSTextField(labelWithString: "")
     private let sizeLabel = NSTextField(labelWithString: "")
