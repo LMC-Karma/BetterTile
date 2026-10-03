@@ -301,4 +301,8 @@ private func ghostOverlayCleansUpEveryGestureExit(ending: GhostEnd) throws {
     handle.displayOptions = { (true, false) }
     fixture.tick(dx: 30)
     #expect(!overlay.showsFrost && overlay.drawing?.surface == .opaque)
+    handle.displayOptions = { (false, false) }
+    fixture.tick(dx: 40)
+    #expect(overlay.showsFrost && overlay.drawing?.surface == .frost)
+    #expect(handle.drawingSink != nil && !handle.showsFrost)
 }

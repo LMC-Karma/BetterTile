@@ -101,6 +101,10 @@ import Testing
     #expect(close(view.frostColor, accent))
     view.setLimit(DragLimit(width: true, blockedTowardPositive: true))
     #expect(close(view.frostColor, orange))
+    view.displayOptions = { (true, false) }
+    #expect(view.showsSolid && !view.showsFrost)
+    view.displayOptions = { (false, false) }
+    #expect(view.showsFrost && !view.showsSolid)
     #expect(view.knobRects.first?.width == 8)
 }
 

@@ -48,14 +48,15 @@ Its backing follows the slider from 36 percent to 14 percent. Rounded cutouts
 exclude occupied tab strips. Snap and Bento swap/placement previews use light
 outlines and tint.
 
-Turning glass off uses solid surfaces. Reduce Transparency and Increase
-Contrast also select solid surfaces, including when changed while overlays
-are visible. The transparency slider is disabled when glass is off. Changes do not
-move windows or cancel a drag. The divider lens stretches only in length when
-grabbed. Glass handles stay
-4 points wider than the Divider width setting. With glass off, handles use that
-setting and a frosted grey surface instead of a solid fill. Changing either width or transparency updates visible and
-grabbed handles immediately, including the Settings preview.
+Turning glass off uses solid surfaces, except divider handles, which use a
+frosted grey surface. Reduce Transparency and Increase Contrast select solid
+surfaces everywhere, including divider handles and when changed while overlays
+are visible. The transparency slider is disabled when glass is off. Changes do
+not move windows or cancel a drag. The divider lens stretches only in length
+when grabbed. Glass handles stay 4 points wider than the Divider width setting;
+with glass off, handles use that setting. Changing either width or transparency
+updates visible and grabbed handles immediately, including the Settings
+preview.
 
 Check light and dark appearances at both transparency endpoints, with glass off,
 and with each accessibility display option. Confirm labels stay readable,
