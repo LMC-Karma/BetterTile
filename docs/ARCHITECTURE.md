@@ -173,11 +173,11 @@ change a Bento operation made to the tree; writing it also writes the tree.
   public `NSWindow.order(_:relativeTo:)`. The model verifies the WindowServer
   order and every tab identity before supplying that anchor. Missing
   identities or unsafe ordering hide the curtain. It never guesses from a
-  frame or parks a window. An opaque, bright neutral gradient conceals inactive
-  windows. Rounded cutouts exclude occupied tab strips, including during
+  frame or parks a window. Native frosted glass conceals inactive window
+  detail. Rounded cutouts exclude occupied tab strips, including during
   resizing. The curtain keeps its rectangular input surface; the strips above
-  it own tab interaction. Reduce Transparency and Increase Contrast use a
-  uniform opaque surface.
+  it own tab interaction. Disabling glass, Reduce Transparency, and Increase
+  Contrast use an opaque surface.
   A click selects the selected tab in that pane, or activates an empty pane;
   it does not reach an inactive tab. Curtains have no accessibility navigation.
   They hide with the overlay on mode exit, Space changes, fullscreen, display
@@ -252,8 +252,10 @@ Text-bearing surfaces retain regular glass. Empty panes use clear glass with
 half that added frosting. Disabling glass, Reduce
 Transparency, or Increase Contrast selects an opaque surface. Display-option
 changes apply while views are visible. Decorative glass never owns pointer
-events. The Tabbed curtain conceals inactive windows independently of this
-preference.
+events. The Tabbed curtain follows the same preference, with regular glass
+and an additional 14-percent frost floor even at Clear. Its plate ranges from
+14 to 36 percent, without an outline around the work area. It uses the same
+opaque fallback when glass is disabled or either display option is enabled.
 
 The menu bar popover uses the system's native glass. `GlassBacking` adds only
 the shared frosting or accessibility fallback over it; Clear removes this

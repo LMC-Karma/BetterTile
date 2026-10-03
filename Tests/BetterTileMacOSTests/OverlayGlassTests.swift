@@ -38,6 +38,7 @@ import Testing
                 root.addSubview(label)
             }
             let curtain = TabbedCurtainView(frame: NSRect(x: 20, y: 40, width: 920, height: 360))
+            curtain.overlayAppearance = appearance
             curtain.excludedStrips = [NSRect(x: 0, y: 0, width: 920, height: 34)]
             root.addSubview(curtain)
             let strip = TabbedPaneView(frame: NSRect(x: 20, y: 366, width: 920, height: 34))
@@ -105,6 +106,23 @@ func sharedGlassHonorsToggleAndAccessibility(enabled: Bool, options: (Bool, Bool
         #expect(empty.plateOpacity <= ordinary.plateOpacity)
         #expect(empty.glass.style == .clear)
         previous = ordinary.plateOpacity
+    }
+}
+
+@Test(arguments: [false, true]) @MainActor
+func curtainGlassHasHigherFrostFloorAndNoWorkAreaOutline(light: Bool) throws {
+    let ordinary = OverlayGlassView()
+    let curtain = OverlayGlassView()
+    curtain.isCurtain = true
+    curtain.isLight = light
+    for view in [ordinary, curtain] { view.displayOptions = { (false, false) } }
+    for strength in [0.0, 0.5, 1.0] {
+        for view in [ordinary, curtain] { view.overlayAppearance.strength = strength }
+        #expect(curtain.plateOpacity > ordinary.plateOpacity)
+        #expect(curtain.plateOpacity == 0.14 + ordinary.overlayAppearance.glassBackingOpacity)
+        #expect(curtain.glass.style == .regular)
+        let plate = try #require(curtain.subviews.last)
+        #expect(plate.layer?.borderWidth == 0)
     }
 }
 

@@ -18,6 +18,7 @@ public final class TabbedOverlayController {
     public var onIntent: ((TabbedUIIntent) -> Void)?
     public var overlayAppearance = OverlayAppearance() {
         didSet {
+            (curtain?.contentView as? TabbedCurtainView)?.overlayAppearance = overlayAppearance
             for panel in panes.values { (panel.contentView as? TabbedPaneView)?.overlayAppearance = overlayAppearance }
             for panel in [preview, floatTarget, draggedTabPanel].compactMap({ $0 }) {
                 (panel.contentView as? OverlayGlassView)?.overlayAppearance = overlayAppearance
@@ -179,6 +180,7 @@ public final class TabbedOverlayController {
         panel.setAccessibilityElement(false)
         panel.animationBehavior = .none
         let view = panel.contentView as? TabbedCurtainView ?? TabbedCurtainView()
+        view.overlayAppearance = overlayAppearance
         view.onClick = { [weak self, weak panel] point in
             guard let self, let panel else { return }
             let screen = panel.convertPoint(toScreen: point)
@@ -578,61 +580,52 @@ public final class TabbedOverlayController {
     }
 }
 
-/// An opaque frost conceals inactive windows. Only the decorative layer has
-/// strip cutouts; the view still intercepts clicks outside the strip panels.
+/// One native frosted backdrop obscures inactive windows, including overflow
+/// between panes. Strip cutouts affect decoration only; the full input surface
+/// prevents clicks from reaching inactive tabs.
 @MainActor final class TabbedCurtainView: NSView {
     var onClick: ((NSPoint) -> Void)?
     var excludedStrips: [NSRect] = [] { didSet { updateMask() } }
-    private let frost = CAGradientLayer()
+    let surface = OverlayGlassView()
     private let cutouts = CAShapeLayer()
-    var displayOptions: () -> (reduceTransparency: Bool, increaseContrast: Bool) = {
-        (NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency,
-         NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast)
+    var overlayAppearance: OverlayAppearance {
+        get { surface.overlayAppearance }
+        set { surface.overlayAppearance = newValue }
+    }
+    var displayOptions: () -> (reduceTransparency: Bool, increaseContrast: Bool) {
+        get { surface.displayOptions }
+        set { surface.displayOptions = newValue }
     }
     override var isFlipped: Bool { true }
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         wantsLayer = true
-        frost.startPoint = CGPoint(x: 0, y: 0)
-        frost.endPoint = CGPoint(x: 1, y: 1)
+        surface.cornerRadius = 0
+        surface.isCurtain = true
+        surface.frame = bounds
+        surface.autoresizingMask = [.width, .height]
+        addSubview(surface)
         cutouts.fillRule = .evenOdd
-        frost.mask = cutouts
-        layer?.addSublayer(frost)
+        layer?.mask = cutouts
         setAccessibilityElement(false)
-        refreshAppearance()
-        NSWorkspace.shared.notificationCenter.addObserver(
-            self, selector: #selector(refreshAppearance),
-            name: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification, object: nil
-        )
+        updateMask()
     }
 
     required init?(coder: NSCoder) { nil }
     override func layout() { super.layout(); updateMask() }
-    override func viewDidChangeEffectiveAppearance() { refreshAppearance() }
 
-    @objc func refreshAppearance() {
-        let options = displayOptions()
-        effectiveAppearance.performAsCurrentDrawingAppearance {
-            let dark = effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-            let base = NSColor.windowBackgroundColor.blended(withFraction: dark ? 0.32 : 0.55, of: .white)!
-            let end = options.reduceTransparency || options.increaseContrast
-                ? base : base.blended(withFraction: dark ? 0.08 : 0.04, of: .black)!
-            CATransaction.begin()
-            CATransaction.setDisableActions(true)
-            frost.colors = [base.cgColor, end.cgColor]
-            CATransaction.commit()
-        }
-        updateMask()
-    }
+    func refreshAppearance() { surface.refreshAppearance() }
 
     private func updateMask() {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        frost.frame = bounds
+        surface.frame = bounds
         cutouts.frame = bounds
         let path = CGMutablePath()
         path.addRect(bounds)
+        // Match the actual strip glass. Its rounded corners stay covered so
+        // inactive windows cannot show through the space outside the strip.
         for rect in excludedStrips { path.addRoundedRect(in: rect, cornerWidth: 7, cornerHeight: 7) }
         cutouts.path = path
         CATransaction.commit()
