@@ -189,8 +189,10 @@ private func ghostOverlayCleansUpEveryGestureExit(ending: GhostEnd) throws {
     handle.reduceMotion = { false }
     handle.setActive(false, animated: false)
     handle.setActive(true, animated: true)
-    let deadline = ContinuousClock.now + .seconds(2)
-    while overlay.drawing?.progress != 1 && ContinuousClock.now < deadline {
+    // Other main-actor tests can delay both this task and the animation.
+    // Bound polling opportunities, not time spent waiting for the actor.
+    for _ in 0..<200 {
+        if overlay.drawing?.progress == 1 { break }
         try await Task.sleep(for: .milliseconds(10))
         #expect(overlay.drawing?.progress == handle.stretchProgress)
         #expect(handle.window?.frame == initialFrame)
