@@ -44,6 +44,7 @@ private struct GhostGestureFixture {
         ))
         controller.beginGesture(interaction: interaction, at: start)
         let handle = try #require(controller.visibleHandleView)
+        handle.displayOptions = { (false, false) }
         handle.setActive(false, animated: false)
         handle.setActive(true, animated: false)
     }
@@ -130,7 +131,10 @@ private func ghostOverlayCleansUpEveryGestureExit(ending: GhostEnd) throws {
     #expect(controller.dragOverlay.previewViews.isEmpty && controller.limitedGhostWindowIDs.isEmpty)
     #expect(handle.drawsLens && handle.drawingSink == nil && handle.drawingFrame == nil)
     #expect(input.frame == finalFrame)
-    if ending != .hide { #expect(input.decorationWindow.isVisible) }
+    // Reduced Motion can finish retraction and hide both windows immediately
+    // when the pointer is away. Drawing ownership must still be restored.
+    #expect(input.decorationWindow.isVisible == input.isVisible)
+    #expect(handle.showsGlass)
     controller.hideAndCancel()
 }
 
