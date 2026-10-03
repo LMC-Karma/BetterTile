@@ -278,13 +278,17 @@ the Layout Wheel, the menu bar popover, and result feedback. Snap and Bento
 placement/swap previews retain their light outlines, tint, and pulse.
 
 Tab dragging changes a provisional display order, without mutating the layout.
-The lifted tab follows the pointer and native layer springs move its neighbors.
-Insertion uses stable target geometry, not animated positions. Held edge
-positions scroll crowded strips. Mouse-up recomputes the destination and emits
-one intent. The released tab stays at its destination until that placement
+The lifted tab follows the latest pointer sample on each display tick, and
+native layer springs move its neighbors. Insertion uses stable target geometry,
+not animated positions. The same tick scrolls crowded strips at held edge
+positions. Unchanged destinations retain their preview frame and window order.
+Tooltips and accessibility children refresh when the drag presentation ends,
+instead of on each provisional move. Mouse-up bypasses coalescing, recomputes
+the exact release destination, and emits one intent. The released tab stays at its destination until that placement
 completes; failure restores the committed order. New tab drags wait for any
 pending placement to finish. Escape, hiding, or a layout change clears the
-provisional order, springs, and scrolling. Reduce Motion disables the springs.
+provisional order, queued samples, springs, and scrolling. Reduce Motion
+disables the springs.
 
 ## Linked resizing
 
