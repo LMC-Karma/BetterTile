@@ -32,6 +32,12 @@ public struct ResultPillFeedback: Equatable, Sendable {
             message = "Can’t fit this layout"
         } else if value.contains("tabbed size") {
             message = "Window refused this size"
+        } else if value.contains("change layout → one pane") {
+            message = "Choose One Pane"
+        } else if value.contains("use tabbed undo") {
+            message = "Use Tabbed Undo"
+        } else if value.contains("float the window to use this action") {
+            message = "Float this window first"
         } else if value.contains("repair tabbed") || (value.contains("tabbed") && value.contains("restore")) {
             message = "Use Repair Tabbed"
         } else if value.contains("desktop changed") {
