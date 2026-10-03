@@ -277,7 +277,8 @@ unchanged appearance updates return immediately, and pointer samples update
 named filter parameters instead of replacing filters. Settings changes update
 visible or grabbed handles without window placement. Glass off uses the
 configured width; Reduce Transparency and Increase Contrast retain the glass
-width with a solid fill. Hit testing and window resizing keep their existing
+width with a solid fill. Unavailable Core Image filters also use that solid
+fallback. Hit testing and window resizing keep their existing
 behavior. A separate click-through panel below the handle supplies the track
 and shadow; resize ghosts remain below both. Settings uses the same views.
 The preference also covers tab strips, Tabbed drop targets, resize ghosts,

@@ -1346,7 +1346,7 @@ final class DividerHandleView: NSView {
 
     private var mode: DividerHandleMode
     private var thickness: CGFloat
-    let lensLayers = DividerLensLayers()
+    let lensLayers: DividerLensLayers
     private let solidLayer = CAShapeLayer()
     weak var decorationView: DividerLensDecorationView?
     private(set) var trackRoom: [DividerHandleArm: Double] = [:]
@@ -1393,9 +1393,11 @@ final class DividerHandleView: NSView {
     }
     private var lastAppearance: AppearanceState?
 
-    init(frame: CGRect, mode: DividerHandleMode, thickness: Double) {
+    init(frame: CGRect, mode: DividerHandleMode, thickness: Double,
+         lensLayers: DividerLensLayers = DividerLensLayers()) {
         self.mode = mode
         self.thickness = CGFloat(thickness)
+        self.lensLayers = lensLayers
         super.init(frame: frame)
         wantsLayer = true
         layer?.addSublayer(lensLayers.handleLayer)
@@ -1538,6 +1540,7 @@ final class DividerHandleView: NSView {
         guard bounds.width > 0, bounds.height > 0 else { return }
         let options = displayOptions()
         let solid = !overlayAppearance.useLiquidGlass || options.reduceTransparency || options.increaseContrast
+            || !lensLayers.isAvailable
         var tint = NSColor.controlAccentColor
         effectiveAppearance.performAsCurrentDrawingAppearance {
             tint = (limit.isLimited ? NSColor.systemOrange : NSColor.controlAccentColor).usingColorSpace(.deviceRGB)
