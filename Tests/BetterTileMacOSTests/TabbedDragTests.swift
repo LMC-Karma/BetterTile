@@ -200,6 +200,7 @@ func tabDragDefersAccessibilityUntilDropCompletes(success: Bool) throws {
 @MainActor func nativeTabDragPreviews() async throws {
     _ = NSApplication.shared
     let directory = try #require(ProcessInfo.processInfo.environment["BETTERTILE_NATIVE_GLASS_PREVIEW_DIR"])
+    try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
     let screen = try #require(NSScreen.screens.first)
     let frame = NSRect(x: 80, y: 100, width: 1120, height: 720)
     let bounds = CoordinateConverter.toTopLeft(frame, mainScreenFrame: screen.frame)
@@ -254,13 +255,19 @@ func tabDragDefersAccessibilityUntilDropCompletes(success: Bool) throws {
             defer { views.forEach { $0.removeFromSuperview() } }
             root.layoutSubtreeIfNeeded()
             try await Task.sleep(for: .milliseconds(250))
+            let output = URL(fileURLWithPath: directory).appendingPathComponent("tab-drag-\(mode)-\(name).png")
+            if FileManager.default.fileExists(atPath: output.path) {
+                try FileManager.default.removeItem(at: output)
+            }
             let capture = Process()
             capture.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
             capture.arguments = ["-x", "-o", "-l", String(backdrop.windowNumber),
-                                 "\(directory)/tab-drag-\(mode)-\(name).png"]
+                                 output.path]
             try capture.run()
             capture.waitUntilExit()
             #expect(capture.terminationStatus == 0)
+            let captured = try Data(contentsOf: output)
+            #expect(NSBitmapImageRep(data: captured) != nil)
         }
     }
 }
