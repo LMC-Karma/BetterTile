@@ -23,10 +23,11 @@ BetterTile contains portions adapted from Vorssaint's SwiftUI settings and
 menu-panel presentation code. Vorssaint's demand-based service ownership and
 teardown patterns also informed BetterTile's runtime lifecycle.
 
-The divider's colored track beneath a glass knob, tinted rim, and glow build
-on `LiquidGlassMixerSlider` in `UI/MenuPanel/MixerSection.swift` at commit
+The divider's colored track beneath a glass knob builds on
+`LiquidGlassMixerSlider` in `UI/MenuPanel/MixerSection.swift` at commit
 `2641eb1c01cc92c0a671717ad2b39415e7082a69`. BetterTile draws its own lens optics
-and divider geometry with public Core Animation layers. The shared glass preference
+and divider geometry with public Core Animation layers and the Core Image
+`CIGlassLozenge` filter. The shared glass preference
 and accessibility fallback follow the `HUDBackdrop` pattern in
 `UI/SharedUI.swift` at that revision. Other glass surfaces use native AppKit glass.
 

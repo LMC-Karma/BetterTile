@@ -566,7 +566,7 @@ struct WindowLayoutSettings: View {
                         .monospacedDigit()
                         .frame(width: 42)
                 }
-                Text("A handle appears when the pointer approaches a valid shared edge. Glass handles keep a minimum visible width of 6 points.")
+                Text("A handle appears when the pointer approaches a valid shared edge. Glass handles are 4 points wider than this setting.")
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
                 DividerResizePreview(

@@ -1,29 +1,24 @@
 import AppKit
 import BetterTileCore
+import CoreImage
 import Testing
 @testable import BetterTileMacOS
 
-@Test(arguments: [(2.0, 12.0, 16.0), (4, 12, 16), (6, 12, 16),
-                  (8, 12, 18), (10, 14, 20), (12, 16, 22)])
-@MainActor func lensKnobMatchesSizeTable(size: (thickness: Double, resting: Double, active: Double)) throws {
-    let hitWidth = max(18, 3 * size.thickness)
-    let view = DividerHandleView(
-        frame: CGRect(x: 0, y: 0, width: hitWidth, height: 168),
-        mode: .vertical(restingLength: 56, activeLength: 168), thickness: size.thickness
-    )
-    view.displayOptions = { (false, false) }
-    for active in [false, true] {
-        view.setActive(active, animated: false)
-        view.layoutSubtreeIfNeeded()
-        let knob = try #require(view.knobRects.first)
-        #expect(knob.width == CGFloat(active ? size.active : size.resting))
-        #expect(knob.height == (active ? 166 : 54))
-        #expect(knob.minX >= 1)
-        #expect(knob.maxX <= hitWidth - 1)
-        #expect(view.hitTest(CGPoint(x: 0.5, y: 20)) === view)
+@Test(arguments: Array(2...12))
+@MainActor func lensKnobMatchesEveryWidthSetting(thickness: Int) throws {
+    let t = Double(thickness)
+    for progress in [0.0, 0.5, 1] {
+        for glass in [false, true] {
+            let geometry = DividerLensGeometry(bounds: CGRect(x: 0, y: 0, width: max(18, 3 * t), height: 168),
+                                               mode: .vertical(restingLength: 56, activeLength: 168),
+                                               thickness: t, progress: progress, useLiquidGlass: glass)
+            let knob = try #require(geometry.capsules.first)
+            #expect(knob.width == CGFloat(glass ? t + 4 : t))
+            #expect(knob.height == CGFloat(56 + 112 * progress - (glass ? 2 : 0)))
+            #expect(geometry.bounds.contains(knob))
+            #expect(DividerHandleGeometry.renderedThickness(t, useLiquidGlass: glass) == Double(knob.width))
+        }
     }
-    #expect(DividerHandleGeometry.renderedThickness(size.thickness, useLiquidGlass: true) == size.active)
-    #expect(DividerHandleGeometry.renderedThickness(size.thickness, useLiquidGlass: false) == size.thickness)
 }
 
 @Test(arguments: [false, true], [NSAppearance.Name.aqua, .darkAqua,
@@ -66,7 +61,7 @@ import Testing
         #expect(view.showsGlass == lens)
         #expect(view.showsSolid == !lens)
         #expect(decoration.showsContent == lens)
-        #expect(view.knobRects.first?.width == (glass ? (active ? 20 : 14) : 10))
+        #expect(view.knobRects.first?.width == (glass ? 14 : 10))
     }
 }
 
@@ -100,12 +95,12 @@ import Testing
     view.setActive(true, animated: false)
     view.layoutSubtreeIfNeeded()
     let shape = try #require(view.knobOutline)
-    // T = 20, r = 9. The raw union leaves this upper-right corner empty.
-    let inward = 0.3 * 9 / sqrt(2.0)
-    let point = CGPoint(x: 56 + inward, y: 56 + inward)
+    // T = 14, r = 6.3. The raw union leaves this upper-right corner empty.
+    let inward = 0.3 * 6.3 / sqrt(2.0)
+    let point = CGPoint(x: 53 + inward, y: 53 + inward)
     #expect(view.knobRects.allSatisfy { !capsulePath($0).contains(point) })
     #expect(shape.contains(point))
-    #expect(!shape.contains(CGPoint(x: 56 + 9, y: 56 + 9)))
+    #expect(!shape.contains(CGPoint(x: 53 + 6.3, y: 53 + 6.3)))
     #expect(shape.contains(CGPoint(x: 46, y: 46)))
 }
 
@@ -124,7 +119,7 @@ import Testing
         // and spanEnd - 8, so neither end can extend into a neighboring pane.
         #expect(axis == .vertical ? track.minY == 73 : track.minX == 73)
         #expect(axis == .vertical ? track.maxY == 135 : track.maxX == 135)
-        #expect(axis == .vertical ? track.width == 3 : track.height == 3)
+        #expect(axis == .vertical ? track.width == 2.94 : track.height == 2.94)
     }
 }
 
@@ -136,8 +131,8 @@ import Testing
                         active: [.left: 36, .right: 36, .up: 36, .down: 36]),
         thickness: 10, progress: 1, trackRoom: [.left: 20, .right: 65, .up: 35, .down: 75]
     )
-    #expect(geometry.trackRects == [CGRect(x: 80, y: 98.5, width: 85, height: 3),
-                                  CGRect(x: 98.5, y: 25, width: 3, height: 110)])
+    #expect(geometry.trackRects == [CGRect(x: 80, y: 98.53, width: 85, height: 2.94),
+                                  CGRect(x: 98.53, y: 25, width: 2.94, height: 110)])
 }
 
 @Test(arguments: [SplitAxis.vertical, .horizontal], [0.0, 1.0])
@@ -153,8 +148,8 @@ import Testing
         trackRoom: vertical ? [.up: 4, .down: 4] : [.left: 4, .right: 4]
     )
     let track = try #require(geometry.trackRects.first)
-    #expect(track == (vertical ? CGRect(x: 13.5, y: 0, width: 3, height: 8)
-        : CGRect(x: 0, y: 13.5, width: 8, height: 3)))
+    #expect(track == (vertical ? CGRect(x: 13.53, y: 0, width: 2.94, height: 8)
+        : CGRect(x: 0, y: 13.53, width: 8, height: 2.94)))
 }
 
 @Test @MainActor func junctionWithoutHorizontalRoomDoesNotDuplicateItsVerticalTrack() {
@@ -165,21 +160,15 @@ import Testing
         thickness: 10, progress: 1, trackRoom: [.left: 0, .right: 0, .up: 46, .down: 46]
     )
     #expect(geometry.trackRects[0].width == 0)
-    #expect(geometry.trackRects[1] == CGRect(x: 8.5, y: 0, width: 3, height: 92))
+    #expect(geometry.trackRects[1] == CGRect(x: 8.53, y: 0, width: 2.94, height: 92))
 }
 
-@Test @MainActor func squareHorizontalLensKeepsItsTrackAndCoreDirection() throws {
-    let geometry = DividerLensGeometry(
-        bounds: CGRect(x: 0, y: 0, width: 16, height: 30),
-        mode: .horizontal(restingLength: 16, activeLength: 16), thickness: 10,
-        progress: 0, trackRoom: [.left: 8, .right: 8]
-    )
-    #expect(geometry.trackRects == [CGRect(x: 0, y: 13.5, width: 16, height: 3)])
-    var firstPoint: CGPoint?
-    geometry.corePaths[0].applyWithBlock { element in
-        if firstPoint == nil { firstPoint = element.pointee.points[0] }
-    }
-    #expect(firstPoint == CGPoint(x: 1, y: 13.5))
+@Test @MainActor func squareHorizontalLensKeepsItsTrackDirection() {
+    let geometry = DividerLensGeometry(bounds: CGRect(x: 0, y: 0, width: 16, height: 30),
+                                       mode: .horizontal(restingLength: 16, activeLength: 16), thickness: 10,
+                                       progress: 0, trackRoom: [.left: 8, .right: 8])
+    #expect(geometry.capsuleAxes == [.horizontal])
+    #expect(geometry.trackRects == [CGRect(x: 0, y: 13.53, width: 16, height: 2.94)])
 }
 
 @Test(arguments: [DividerPreviewShape.up, .down, .left, .right])
@@ -215,17 +204,26 @@ import Testing
                                        mode: .vertical(restingLength: 56, activeLength: 168),
                                        thickness: 10, progress: progress)
     let knob = try #require(geometry.capsules.first)
-    #expect(knob.width == CGFloat(14 + 6 * progress))
+    #expect(knob.width == CGFloat(14))
     #expect(knob.height == CGFloat(54 + 112 * progress))
     #expect(knob.midX == 15)
     #expect(knob.midY == 84)
     let track = try #require(geometry.trackRects.first)
     #expect(track.height == knob.height + CGFloat(2 * (16 + 54 * progress)))
-    // The core is 3 pt at each tip and magnified through the body.
-    let core = try #require(geometry.corePaths.first)
-    #expect(abs(core.boundingBoxOfPath.width - min(0.36 * knob.width, 3 * (1.5 + 0.3 * progress))) < 0.0001)
-    #expect(core.contains(CGPoint(x: 15, y: 84)))
-    #expect(!core.contains(CGPoint(x: 15 + 1.6, y: knob.minY + 0.01)))
+    let layers = DividerLensLayers()
+    layers.apply(geometry: geometry, margins: .zero, tint: .controlAccentColor, dark: true,
+                 strength: 0.5, limited: false, p: progress)
+    let host = layers.trackHosts[0]
+    let start = try #require(host.value(forKeyPath: "filters.lens.inputPoint0") as? CIVector)
+    let end = try #require(host.value(forKeyPath: "filters.lens.inputPoint1") as? CIVector)
+    #expect(start.y == knob.minY + 7)
+    #expect(end.y == knob.maxY - 7)
+    #expect(host.isHidden == (progress == 0))
+    let gradient = try #require(host.sublayers?.first as? CAGradientLayer)
+    let colors = try #require(gradient.colors as? [CGColor])
+    #expect(colors.map(\.alpha) == [0, CGFloat(progress), CGFloat(progress), 0])
+
+
 }
 
 @Test(arguments: [SplitAxis.vertical, .horizontal])
@@ -311,7 +309,7 @@ import Testing
     override var backingScaleFactor: CGFloat { 2 }
 }
 
-@Test @MainActor func lensLayersAndMasksUseRetinaScaleAndRemainReusable() throws {
+@Test @MainActor func lensLayersUseRetinaScaleAndRemainReusable() throws {
     _ = NSApplication.shared
     let panel = RetinaLensTestPanel(contentRect: CGRect(x: -10_000, y: -10_000, width: 30, height: 168),
                                     styleMask: .borderless, backing: .buffered, defer: false)
@@ -327,7 +325,7 @@ import Testing
     // independently of the panel's injected scale. Check our layers only.
     let initial = (root.sublayers ?? []).flatMap(lensLayerTree)
     let decoration = lensLayerTree(view.lensLayers.decorationLayer)
-    #expect(initial.count > 10)
+    #expect(initial.count > 8)
     #expect(initial.allSatisfy { $0.contentsScale == 2 })
     #expect(decoration.allSatisfy { $0.contentsScale == 2 })
     view.setActive(true, animated: false)
@@ -392,6 +390,7 @@ import Testing
         panel.orderFrontRegardless()
         try await Task.sleep(for: .milliseconds(300))
         let output = URL(fileURLWithPath: directory).appendingPathComponent("divider-lens-\(name)-2x.png")
+        if FileManager.default.fileExists(atPath: output.path) { try FileManager.default.removeItem(at: output) }
         let capture = Process()
         capture.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
         capture.arguments = ["-x", "-o", "-l", String(panel.windowNumber), output.path]
@@ -404,11 +403,11 @@ import Testing
     }
 }
 
-@MainActor private func addNativeLens(to cell: NSView, state: Int, scale: CGFloat) {
+@MainActor private func addNativeLens(to cell: NSView, state: Int, scale: CGFloat, thickness: Double = 10, strength: Double = 0.5) {
     let junction = state == 3
-    let handleSize = junction ? CGSize(width: 92, height: 92) : CGSize(width: 30, height: 168)
+    let handleSize = junction ? CGSize(width: 86, height: 86) : CGSize(width: 30, height: 168)
     let mode: DividerHandleMode = junction
-        ? .junction(center: CGPoint(x: 46, y: 46),
+        ? .junction(center: CGPoint(x: 43, y: 43),
                     resting: [.left: 12, .right: 12, .up: 12, .down: 12],
                     active: [.left: 36, .right: 36, .up: 36, .down: 36])
         : .vertical(restingLength: 56, activeLength: 168)
@@ -418,14 +417,14 @@ import Testing
     let frame = CGRect(x: wrapper.bounds.midX - handleSize.width / 2,
                        y: wrapper.bounds.midY - handleSize.height / 2,
                        width: handleSize.width, height: handleSize.height)
-    let preview = DividerLensPreviewView(frame: frame, mode: mode, thickness: 10)
+    let preview = DividerLensPreviewView(frame: frame, mode: mode, thickness: thickness)
     wrapper.addSubview(preview)
     let handle = preview.handleView
     handle.displayOptions = { (false, false) }
-    handle.overlayAppearance = OverlayAppearance(strength: 0.5)
-    let verticalRoom = max(0, wrapper.bounds.height / 2 - 8 / scale)
-    let horizontalRoom = max(0, wrapper.bounds.width / 2 - 8 / scale)
-    handle.configure(mode: mode, thickness: 10,
+    handle.overlayAppearance = OverlayAppearance(strength: strength)
+    let verticalRoom = max(142, wrapper.bounds.height / 2 - 8 / scale)
+    let horizontalRoom = max(92, wrapper.bounds.width / 2 - 8 / scale)
+    handle.configure(mode: mode, thickness: thickness,
                      trackRoom: [.up: verticalRoom, .down: verticalRoom, .left: horizontalRoom, .right: horizontalRoom])
     handle.setActive(state > 0, animated: false)
     if state == 2 { handle.setLimit(DragLimit(width: true, blockedTowardPositive: true)) }
@@ -488,4 +487,185 @@ import Testing
             }
         }
     }
+}
+
+@Test(arguments: [0.0, 0.5, 0.75, 1.0], [false, true])
+@MainActor func lensFrostControlsOnlyBodyAndOptionalBlur(strength: Double, dark: Bool) throws {
+    let view = DividerHandleView(frame: CGRect(x: 0, y: 0, width: 30, height: 168),
+                                 mode: .vertical(restingLength: 56, activeLength: 168), thickness: 10)
+    view.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+    view.displayOptions = { (false, false) }
+    view.overlayAppearance.strength = strength
+    view.setActive(true, animated: false)
+    let alpha = try #require(view.lensLayers.body.fillColor?.alpha)
+    #expect(abs(alpha - ((dark ? 0.02 : 0.12) + (dark ? 0.12 : 0.40) * strength)) < 0.000001)
+    let host = view.lensLayers.trackHosts[0]
+    let filters = try #require(host.filters as? [CIFilter])
+    #expect(filters.map(\.name) == (strength > 0.5 ? ["lens", "frost"] : ["lens"]))
+    #expect(host.value(forKeyPath: "filters.lens.inputRefraction") as? Double == 1.2)
+    if strength > 0.5 {
+        #expect(host.value(forKeyPath: "filters.frost.inputRadius") as? Double == (strength - 0.5) * 5)
+    }
+}
+
+@Test(arguments: ["CIGlassLozenge", "CIGaussianBlur", "all"])
+@MainActor func missingLensFilterUsesSolidHandle(missing: String) throws {
+    let layers = DividerLensLayers { name in
+        missing == "all" || name == missing ? nil : CIFilter(name: name)
+    }
+    let view = DividerHandleView(frame: CGRect(x: 0, y: 0, width: 30, height: 168),
+                                 mode: .vertical(restingLength: 56, activeLength: 168),
+                                 thickness: 10, lensLayers: layers)
+    view.displayOptions = { (false, false) }
+    #expect(!layers.isAvailable)
+    for strength in [0.0, 1.0] {
+        view.overlayAppearance.strength = strength
+        for active in [false, true] {
+            view.setActive(active, animated: false)
+            #expect(view.showsSolid)
+            #expect(!view.showsGlass)
+            #expect(layers.decorationLayer.isHidden)
+            let knob = try #require(view.knobRects.first)
+            #expect(knob.width == 14)
+            #expect(knob.height == (active ? 166 : 54))
+            #expect(view.hitTest(CGPoint(x: 15, y: 84)) === view)
+        }
+    }
+}
+
+@Test(arguments: [false, true])
+@MainActor func lensFiltersFollowEndCapsAndRetainInstances(junction: Bool) throws {
+    let mode: DividerHandleMode = junction
+        ? .junction(center: CGPoint(x: 43, y: 43), resting: [.left: 12, .right: 12, .up: 12, .down: 12],
+                    active: [.left: 36, .right: 36, .up: 36, .down: 36])
+        : .vertical(restingLength: 56, activeLength: 168)
+    let view = DividerHandleView(frame: CGRect(x: 0, y: 0, width: junction ? 86 : 30, height: junction ? 86 : 168),
+                                 mode: mode, thickness: 10)
+    view.displayOptions = { (false, false) }
+    let chains = view.lensLayers.filterChainUpdateCount
+    #expect(view.lensLayers.trackHosts.allSatisfy { $0.isHidden })
+    for active in [true, false, true] {
+        view.setActive(active, animated: false)
+        for (index, rect) in view.knobRects.enumerated() {
+            let host = view.lensLayers.trackHosts[index]
+            let vertical = !junction || index == 1
+            let p0 = try #require(host.value(forKeyPath: "filters.lens.inputPoint0") as? CIVector)
+            let p1 = try #require(host.value(forKeyPath: "filters.lens.inputPoint1") as? CIVector)
+            #expect(p0.x == (vertical ? rect.midX : rect.minX + 7))
+            #expect(p0.y == (vertical ? rect.minY + 7 : rect.midY))
+            #expect(p1.x == (vertical ? rect.midX : rect.maxX - 7))
+            #expect(p1.y == (vertical ? rect.maxY - 7 : rect.midY))
+            #expect(host.value(forKeyPath: "filters.lens.inputRadius") as? Double == 7)
+            #expect(host.isHidden == !active)
+            #expect(view.lensLayers.filterChainUpdateCount == chains)
+        }
+        let layers = lensLayerTree(view.lensLayers.handleLayer) + lensLayerTree(view.lensLayers.decorationLayer)
+        #expect(layers.allSatisfy { $0.mask == nil && !$0.masksToBounds })
+        #expect(layers.filter { $0.shadowOpacity > 0 && !$0.isHidden }.allSatisfy { $0.shadowPath != nil })
+    }
+}
+
+@Test @MainActor func repeatedLensUpdatesReuseGeometryAndSkipLayerChanges() {
+    let mode = DividerHandleMode.vertical(restingLength: 56, activeLength: 168)
+    let view = DividerHandleView(frame: CGRect(x: 0, y: 0, width: 30, height: 168), mode: mode, thickness: 10)
+    view.displayOptions = { (false, false) }
+    view.layoutSubtreeIfNeeded()
+    let builds = view.outlineBuildCount
+    let updates = view.appearanceUpdateCount
+    let outline = view.knobOutline
+    for _ in 0..<5 {
+        view.configure(mode: mode, thickness: 10)
+        view.overlayAppearance = OverlayAppearance()
+        view.layout()
+    }
+    #expect(view.outlineBuildCount == builds)
+    #expect(view.appearanceUpdateCount == updates)
+    view.configure(mode: mode, thickness: 10, trackRoom: [.up: 100, .down: 110])
+    view.layoutSubtreeIfNeeded()
+    #expect(view.outlineBuildCount == builds)
+    #expect(view.knobOutline === outline)
+    view.overlayAppearance.strength = 1
+    #expect(view.outlineBuildCount == builds)
+}
+
+/// Width and frost sweeps use the production views on a synthetic backdrop.
+@Test(.enabled(if: ProcessInfo.processInfo.environment["BETTERTILE_NATIVE_GLASS_PREVIEW_DIR"] != nil,
+               "Requires an explicit native glass preview output directory."))
+@MainActor func nativeDividerLensSettingsPreviews() async throws {
+    _ = NSApplication.shared
+    let directory = try #require(ProcessInfo.processInfo.environment["BETTERTILE_NATIVE_GLASS_PREVIEW_DIR"])
+    try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
+    let size = CGSize(width: 980, height: 1060)
+    let panel = NSPanel(contentRect: CGRect(origin: CGPoint(x: 40, y: 40), size: size),
+                        styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+    panel.isReleasedWhenClosed = false
+    panel.level = .floating
+    panel.isOpaque = true
+    defer { panel.close() }
+    for (name, appearanceName) in [("dark", NSAppearance.Name.darkAqua), ("light", .aqua)] {
+        let dark = name == "dark"
+        panel.appearance = NSAppearance(named: appearanceName)
+        let root = NSView(frame: CGRect(origin: .zero, size: size))
+        root.wantsLayer = true
+        root.layer?.backgroundColor = NSColor(white: dark ? 0.08 : 0.93, alpha: 1).cgColor
+        panel.contentView = root
+        for row in 0..<4 {
+            let widths = row < 2 ? [2.0, 4, 6, 8, 10, 12] : [10.0, 10, 10, 10, 10]
+            for (column, width) in widths.enumerated() {
+                let strength = row < 2 ? 0.5 : Double(column) / 4
+                let active = row % 2 == 1
+                let x = 145 + CGFloat(column) * 136
+                let y = 790 - CGFloat(row) * 260
+                let label = NSTextField(labelWithString: row < 2 ? "\(Int(width)) pt" : "\(Int((1 - strength) * 100))% clear")
+                label.frame = CGRect(x: x, y: y + 234, width: 130, height: 20)
+                root.addSubview(label)
+                let cell = DividerLensSceneView(frame: CGRect(x: x, y: y, width: 130, height: 230),
+                                                dark: dark, junction: false, active: active)
+                root.addSubview(cell)
+                addNativeLens(to: cell, state: active ? 1 : 0, scale: 1, thickness: width, strength: strength)
+            }
+            let label = NSTextField(labelWithString: "\(row < 2 ? "Width" : "Transparency")\n\(row % 2 == 1 ? "Grabbed" : "Resting")")
+            label.font = .systemFont(ofSize: 15, weight: .semibold)
+            label.frame = CGRect(x: 12, y: 880 - CGFloat(row) * 260, width: 130, height: 45)
+            root.addSubview(label)
+        }
+        root.layoutSubtreeIfNeeded()
+        panel.orderFrontRegardless()
+        try await Task.sleep(for: .milliseconds(300))
+        let output = URL(fileURLWithPath: directory).appendingPathComponent("divider-lens-settings-\(name)-2x.png")
+        if FileManager.default.fileExists(atPath: output.path) { try FileManager.default.removeItem(at: output) }
+        let capture = Process()
+        capture.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
+        capture.arguments = ["-x", "-o", "-l", String(panel.windowNumber), output.path]
+        try capture.run()
+        capture.waitUntilExit()
+        #expect(capture.terminationStatus == 0)
+        let bitmap = try #require(NSBitmapImageRep(data: Data(contentsOf: output)))
+        #expect(bitmap.pixelsWide == Int(size.width * panel.backingScaleFactor))
+        #expect(bitmap.pixelsHigh == Int(size.height * panel.backingScaleFactor))
+    }
+}
+
+@Test @MainActor func movingAlongAnAmpleSeamDoesNotUpdateLensLayers() {
+    let mode = DividerHandleMode.junction(center: CGPoint(x: 43, y: 43),
+                                          resting: [.left: 12, .right: 12, .up: 12, .down: 12],
+                                          active: [.left: 36, .right: 36, .up: 36, .down: 36])
+    let view = DividerHandleView(frame: CGRect(x: 0, y: 0, width: 86, height: 86), mode: mode, thickness: 10)
+    view.displayOptions = { (false, false) }
+    view.setActive(true, animated: false)
+    view.configure(mode: mode, thickness: 10, trackRoom: [.left: 200, .right: 200, .up: 200, .down: 200])
+    view.layoutSubtreeIfNeeded()
+    let updates = view.appearanceUpdateCount
+    let builds = view.outlineBuildCount
+    for distance in 0..<100 {
+        view.configure(mode: mode, thickness: 10,
+                       trackRoom: [.left: 200 + Double(distance), .right: 400 - Double(distance), .up: 200, .down: 200])
+        view.layoutSubtreeIfNeeded()
+    }
+    #expect(view.appearanceUpdateCount == updates)
+    #expect(view.outlineBuildCount == builds)
+    view.configure(mode: mode, thickness: 10, trackRoom: [.left: 50, .right: 50, .up: 50, .down: 50])
+    view.layoutSubtreeIfNeeded()
+    #expect(view.appearanceUpdateCount == updates + 1)
+    #expect(view.trackRects[0].width == 100)
 }
