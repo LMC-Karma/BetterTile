@@ -223,3 +223,17 @@ func exposedSeamHoverDoesNotOrderHandleOverCover(axis: SplitAxis) throws {
     #expect(fixture.controller.visibleHandleView?.trackRoom[.right] == 20)
 }
 
+
+/// Captured from a live desktop: the Dock keeps a display-sized window at
+/// layer 20, above the handle's floating level, in front of every app window.
+@Test @MainActor func displaySizedDockWindowDoesNotHideHandles() throws {
+    let fixture = try SeamFixture()
+    defer { fixture.controller.hideAndCancel() }
+    fixture.system.onScreenStackEntries = [
+        SeamStackEntry(windowID: nil, processIdentifier: 1486, layer: 20, alpha: 1, frame: fixture.bounds),
+    ] + fixture.system.windows.map {
+        SeamStackEntry(windowID: $0.id, processIdentifier: $0.processIdentifier, layer: 0, alpha: 1, frame: $0.frame)
+    }
+    fixture.hover(500, 400)
+    #expect(fixture.visible)
+}

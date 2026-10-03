@@ -502,7 +502,8 @@ public final class DividerOverlayController {
         let candidates = stackProvider?(managed).map {
             DividerSeamCoverage.frontCandidates(
                 stack: $0, ownProcess: ownProcess, managed: managed,
-                seamParticipants: interaction.affectedWindowIDs
+                seamParticipants: interaction.affectedWindowIDs,
+                handleLayer: DividerHandlePanel.windowLevel.rawValue
             )
         }
         coverCache = (interaction, candidates, now)
@@ -1317,6 +1318,8 @@ enum DividerHandleMode: Equatable {
 
 @MainActor
 final class DividerHandlePanel: NSPanel {
+    /// Seam coverage ignores windows above this level; they draw over the handle.
+    static let windowLevel = NSWindow.Level.floating
     var onBegin: (() -> Void)? { didSet { handleView.onBegin = onBegin } }
     var onDrag: ((CGPoint) -> Void)? { didSet { handleView.onDrag = onDrag } }
     var onEnd: (() -> Void)? { didSet { handleView.onEnd = onEnd } }
@@ -1337,7 +1340,7 @@ final class DividerHandlePanel: NSPanel {
         decorationWindow = NSPanel(contentRect: frame.insetBy(dx: -decorationMargins.x, dy: -decorationMargins.y),
                                    styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         super.init(contentRect: frame, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
-        level = .floating
+        level = Self.windowLevel
         isOpaque = false
         backgroundColor = .clear
         hasShadow = false
