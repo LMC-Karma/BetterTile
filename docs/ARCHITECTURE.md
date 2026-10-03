@@ -201,10 +201,15 @@ change a Bento operation made to the tree; writing it also writes the tree.
   pane as a tab, and a torn tab dropped nowhere returns to its group.
 - Fixed partition snaps use `TabbedSnapPlanner` through one model route for
   keyboard/menu actions, captured Layout Wheel commands, and native snap zones.
-  Only the source window moves between groups. An exact logical destination
-  pane receives it; otherwise a new pane reserves the requested region and
-  every retained pane is assigned to a deterministic subdivision of the
-  remainder. Assignment memoizes pane subsets, bounded by the 12-pane cap.
+  Commands use the pane scope: the source's pane moves with all its tabs,
+  swapping with a pane already at the exact logical region. Otherwise it
+  reserves the requested region and the other panes are assigned to a
+  deterministic subdivision of the remainder; extra regions become empty
+  panes. Native snap zones use the window scope: only the source window moves
+  between groups. An exact logical destination pane receives it; otherwise a
+  new pane reserves the requested region and every retained pane is assigned
+  to the remainder. A floating source always uses the window scope.
+  Assignment memoizes pane subsets, bounded by the 12-pane cap.
   A conservative subdivision may refuse an otherwise possible packing.
   Pane matching and the fixed-target invariant use gapless logical geometry;
   normal gaps and the tab-strip reserve apply once to window placements.

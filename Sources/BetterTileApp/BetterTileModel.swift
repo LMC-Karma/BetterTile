@@ -576,7 +576,7 @@ final class BetterTileModel {
                     return .unavailable(reason: tabbedSnapUnavailableReason(action), displayID: window.displayID)
                 }
                 guard let context = tabbedSnapContext(windowID: target.windowID, displayID: target.displayID),
-                      let plan = TabbedSnapPlanner.plan(sourceWindowID: target.windowID, action: action,
+                      let plan = TabbedSnapPlanner.plan(sourceWindowID: target.windowID, action: action, scope: .pane,
                           state: context.state, windows: context.windows, in: context.display.visibleFrame)
                 else { return .unavailable(reason: Self.tabbedSnapFailure, displayID: target.displayID) }
                 return .ready(.tabbed(plan, action, target.displayID))
@@ -1140,7 +1140,7 @@ final class BetterTileModel {
                let frame = StandardActionEngine().targetFrame(for: action, window: window, display: display) {
                 return [Placement(windowID: sourceID, frame: frame)]
             }
-            return TabbedSnapPlanner.plan(sourceWindowID: sourceID, action: action, state: baseline,
+            return TabbedSnapPlanner.plan(sourceWindowID: sourceID, action: action, scope: .window, state: baseline,
                 windows: active.tabbedWindows, in: active.session.workArea)?.placements
         }
         let intent: BentoDropIntent? = switch outcome {
@@ -1201,7 +1201,8 @@ final class BetterTileModel {
                 } else {
                     applyTabbedState(baseline, session: context.session, display: context.display,
                         windows: context.windows, focus: sourceID, rememberUndo: true,
-                        rollbackFrames: active.tabbedRollbackFrames, snapAction: action, gestureBaseline: baseline, gestureSourceID: sourceID, expectedSpaceID: active.tabbedSpaceID)
+                        rollbackFrames: active.tabbedRollbackFrames, snapAction: action, snapScope: .window,
+                        gestureBaseline: baseline, gestureSourceID: sourceID, expectedSpaceID: active.tabbedSpaceID)
                 }
             } else if let baseline = active.tabbedUndoBaseline,
                       let session = sessionStore.session(for: displayID),
@@ -1212,7 +1213,8 @@ final class BetterTileModel {
                 // verifies current participants before restoring any frame.
                 applyTabbedState(baseline, session: session, display: display, windows: active.tabbedWindows,
                     focus: nil, rollbackFrames: active.tabbedRollbackFrames,
-                    snapAction: action, gestureBaseline: baseline, gestureSourceID: sourceID, expectedSpaceID: active.tabbedSpaceID)
+                    snapAction: action, snapScope: .window, gestureBaseline: baseline, gestureSourceID: sourceID,
+                    expectedSpaceID: active.tabbedSpaceID)
             }
             replayBufferedBentoDragEvents()
             refreshDividerBoundaries()
@@ -3240,7 +3242,7 @@ extension BetterTileModel {
         _ state: TabbedLayoutState, session original: LayoutSession, display: DisplaySnapshot,
         windows: [WindowSnapshot], focus: WindowID?, rememberUndo: Bool = false, consumeUndo: Bool = false,
         selectionOnly: Bool = false, rollbackFrames: [WindowID: BTRect]? = nil,
-        snapAction: WindowAction? = nil, gestureBaseline: TabbedLayoutState? = nil,
+        snapAction: WindowAction? = nil, snapScope: TabbedSnapScope = .pane, gestureBaseline: TabbedLayoutState? = nil,
         gestureSourceID: WindowID? = nil, expectedSpaceID: NativeSpaceID? = nil, restorationFrames: [WindowID: BTRect] = [:]
     ) {
         guard tabbedTasks[display.id] == nil else {
@@ -3300,7 +3302,7 @@ extension BetterTileModel {
             if let snapAction {
                 guard let focus, let source = windows.first(where: { $0.id == focus }),
                       self.usesTabbedSnap(window: source),
-                      let plan = TabbedSnapPlanner.plan(sourceWindowID: focus, action: snapAction,
+                      let plan = TabbedSnapPlanner.plan(sourceWindowID: focus, action: snapAction, scope: snapScope,
                           state: state, windows: windows, in: display.visibleFrame),
                       plan.preservesTarget(in: plan.state, within: display.visibleFrame) else {
                     throw WindowSystemError.operationFailed(BentoDropPlanner.partitionActions.contains(snapAction)
@@ -3473,7 +3475,8 @@ extension BetterTileModel {
                 if let committed = self.sessionStore.commit(proposed, replacing: original.revision) {
                     self.statusMessage = nil
                     if consumeUndo { self.tabbedUndo[original.id]?.removeLast() }
-                    let movedPane = snapAction == nil || focus.map { previous?.paneID(containing: $0) != state.paneID(containing: $0) } == true
+                    let movedPane = snapAction == nil || previous?.layout != state.layout
+                        || focus.map { previous?.paneID(containing: $0) != state.paneID(containing: $0) } == true
                     if rememberUndo, movedPane, let previous, previous != state {
                         var floatingFrames: [WindowID: BTRect] = [:]
                         if snapAction != nil, let focus, previous.floatingWindowIDs.contains(focus),

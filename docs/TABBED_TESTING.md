@@ -130,15 +130,24 @@ title bar uses Bento drops: a center drop adds it to a pane's tabs, and an edge
 drop splits the pane. This tracks the window's native drag; dragging a tab strip
 starts BetterTile's separate tab drag. Cross-display tab dragging is not
 implemented. Keep these checks on one display.
-Fixed half, third, two-thirds, quarter, and sixth snaps move only the focused
-window. Keyboard, menu, Settings, Layout Wheel, and native snap zones use the
-same policy. An exact destination pane keeps its tabs and selects the incoming
-window. Otherwise BetterTile creates the requested pane and reflows all prior
-panes into the remaining space. Existing pane identities and other tab groups
-survive, including an emptied source pane. A new arrangement must fit selected
-window minimums and the 12-pane limit. Hidden tabs do not constrain the layout.
-An unavailable snap leaves the previous arrangement in place. Tabbed Undo
-restores one complete pre-snap arrangement.
+Fixed half, third, two-thirds, quarter, and sixth snaps from the keyboard,
+menu, Settings, and Layout Wheel move the focused window's whole pane with all
+of its tabs. A pane already in the requested region swaps places with it. The
+other panes keep their tabs and fill the remaining space, each as close to its
+previous region as the subdivision allows. A new empty pane appears only when
+the remainder needs more regions than there are other panes, such as moving
+the only pane to a half.
+
+A native title-bar drag into a snap zone moves only the dragged window. An
+exact destination pane keeps its tabs and selects the incoming window.
+Otherwise BetterTile creates the requested pane and reflows all prior panes
+into the remaining space. Existing pane identities and other tab groups
+survive, including an emptied source pane.
+
+A new arrangement must fit selected window minimums and the 12-pane limit.
+Hidden tabs do not constrain the layout. An unavailable snap leaves the
+previous arrangement in place. Tabbed Undo restores one complete pre-snap
+arrangement.
 
 Maximize is unavailable for pane members; use Change Layout → One Pane.
 Restore is unavailable for members; use Tabbed Undo. Center, Almost Maximize,
@@ -343,12 +352,18 @@ Escape, and release over a different destination before the next display tick.
 
 ## Fixed snap checks
 
-- Move one tab to an occupied exact pane and to an empty exact pane. Other tabs
-  stay in their groups, and the destination selects the moved window.
-- From Four Panes, snap one window to Right Half. The four previous panes stay
-  separate in the left remainder. Undo restores their previous arrangement.
-- Compare keyboard/menu, Layout Wheel, and native title-bar snap-zone results.
-  The wheel keeps its captured window after focus changes.
+- With the Layout Wheel and the keyboard, snap a pane with several tabs to an
+  occupied exact region and to an empty exact region. The two panes swap, and
+  every pane keeps its tabs.
+- From Four Panes, snap one pane to Right Half. The other three panes keep
+  their tabs in the left remainder, and no empty pane appears. Undo restores
+  the previous arrangement.
+- From One Pane, snap to Left Half. The pane keeps all its tabs, and the right
+  half becomes one empty pane.
+- Drag one tab's window by its title bar to an occupied exact snap zone and to
+  an empty one. Other tabs stay in their groups, and the destination selects
+  the moved window.
+- The wheel keeps its captured window after focus changes.
 - Keep a native drag within one fixed snap zone. Unchanged preview outlines
   continue their animation without restarting. Leaving the zone removes them;
   a competing pane-center drop takes over only after its hover delay.

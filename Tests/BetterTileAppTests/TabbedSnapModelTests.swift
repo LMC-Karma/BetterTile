@@ -4,7 +4,7 @@ import BetterTileMacOS
 import Testing
 @testable import BetterTileApp
 
-@Test @MainActor func requestedTabbedSnapJoinsExistingRightPane() async throws {
+@Test @MainActor func requestedTabbedSnapSwapsThePaneWithTheExactOccupant() async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
     let model = makeModel(system: system)
@@ -17,12 +17,20 @@ import Testing
     let destination = before.panes[1].id
     try #require(before.panes[0].tabs == [window])
     try #require(before.panes[1].tabs.isEmpty)
+    let bounds = system.mainDisplay.visibleFrame
+    let right = WindowAction.rightHalf.partition?.frame(in: bounds)
     model.perform(.rightHalf)
     #expect(await waitFor(timeout: .seconds(1)) {
-        model.activeTabbedState?.panes.first { $0.id == destination }?.tabs == [window]
+        model.activeTabbedState?.logicalFrames(in: bounds)[before.panes[0].id] == right
     })
-    #expect(model.activeTabbedState?.panes.first { $0.id == destination }?.selected == window)
+    let after = try #require(model.activeTabbedState)
+    #expect(after.panes.first { $0.id == before.panes[0].id }?.tabs == [window])
+    #expect(after.panes.first { $0.id == destination }?.tabs.isEmpty == true)
+    #expect(after.logicalFrames(in: bounds)[destination] == WindowAction.leftHalf.partition?.frame(in: bounds))
+    #expect(after.panes.count == 2 && after.activeWindowID == window)
     #expect(model.statusMessage == nil)
+    model.performTabbed(.undo)
+    #expect(await waitFor { model.activeTabbedState == before })
 }
 
 @Test(arguments: ["wheel", "drag"]) @MainActor
@@ -57,6 +65,20 @@ func requestedTabbedSnapPreservesExistingOccupiedPane(entry: String) async throw
         try #require(model.completeBentoDrag(displayID: system.mainDisplay.id, sourceID: source,
                                             outcome: .snap(action: .rightHalf, frame: frame)))
     }
+    let bounds = system.mainDisplay.visibleFrame
+    if entry == "wheel" {
+        // A command moves the source's whole pane; the occupant swaps places.
+        #expect(await waitFor(timeout: .seconds(1)) {
+            model.activeTabbedState?.logicalFrames(in: bounds)[before.panes[0].id]
+                == WindowAction.rightHalf.partition?.frame(in: bounds)
+        })
+        let after = try #require(model.activeTabbedState)
+        #expect(after.panes.first { $0.id == before.panes[0].id }?.tabs == [source, hidden])
+        #expect(after.panes.first { $0.id == destination }?.tabs == [right])
+        #expect(after.activeWindowID == source && after.panes.count == 2)
+        return
+    }
+    // A native drag moves only the dragged window into the exact pane.
     #expect(await waitFor(timeout: .seconds(1)) {
         model.activeTabbedState?.panes.first { $0.id == destination }?.selected == source
     })
@@ -106,11 +128,18 @@ private func snapFixture(preset: TabbedPreset = .columns) async throws -> (FakeA
     #expect(system.frameWriteCounts == writes)
     #expect(model.activeTabbedState == before)
     model.performLayoutWheel(.windowAction(.rightHalf), for: target)
-    try #require(await waitFor { model.activeTabbedState?.panes[1].selected == target.windowID })
+    let bounds = system.mainDisplay.visibleFrame
+    try #require(await waitFor {
+        model.activeTabbedState?.logicalFrames(in: bounds)[before.panes[0].id]
+            == WindowAction.rightHalf.partition?.frame(in: bounds)
+    })
     for placement in placements {
         #expect(system.windows.first { $0.id == placement.windowID }?.frame == placement.frame)
     }
-    #expect(model.activeTabbedState?.panes[1].tabs == [system.windows[2].id, target.windowID])
+    let after = try #require(model.activeTabbedState)
+    #expect(after.panes.first { $0.id == before.panes[0].id }?.tabs == [target.windowID, system.windows[1].id])
+    #expect(after.panes.first { $0.id == before.panes[1].id }?.tabs == [system.windows[2].id])
+    #expect(after.activeWindowID == target.windowID)
 }
 
 @Test(arguments: [WindowAction.maximize, .restore, .center, .centerResize, .almostMaximize,
@@ -209,16 +238,23 @@ private func snapFixture(preset: TabbedPreset = .columns) async throws -> (FakeA
     #expect(model.activeTabbedState?.panes.map(\.id) == before.panes.map(\.id))
 }
 
+/// One Pane needs an empty pane for the remainder. Four Panes reflows its
+/// other panes into the remainder without adding one.
 @Test(arguments: [TabbedPreset.single, .grid])
-@MainActor func tabbedSnapCreatesExactPanePreservesOldPanesAndUndoesOnce(preset: TabbedPreset) async throws {
+@MainActor func tabbedSnapMovesThePaneAndUndoesOnce(preset: TabbedPreset) async throws {
     let (system, model) = try await snapFixture(preset: preset)
     defer { model.shutdown() }
     let before = try #require(model.activeTabbedState), id = system.windows[0].id
+    let source = try #require(before.pane(containing: id))
+    let bounds = system.mainDisplay.visibleFrame
     model.perform(.rightHalf)
-    try #require(await waitFor { model.activeTabbedState?.panes.count == before.panes.count + 1 })
-    let after = try #require(model.activeTabbedState), destination = try #require(after.paneID(containing: id))
+    try #require(await waitFor {
+        model.activeTabbedState?.logicalFrames(in: bounds)[source.id] == WindowAction.rightHalf.partition?.frame(in: bounds)
+    })
+    let after = try #require(model.activeTabbedState)
+    #expect(after.panes.count == before.panes.count + (preset == .single ? 1 : 0))
     #expect(Set(before.panes.map(\.id)).isSubset(of: Set(after.panes.map(\.id))))
-    #expect(after.logicalFrames(in: system.mainDisplay.visibleFrame)[destination] == WindowAction.rightHalf.partition?.frame(in: system.mainDisplay.visibleFrame))
+    #expect(after.panes.first { $0.id == source.id }?.tabs == source.tabs)
     model.performTabbed(.undo)
     #expect(await waitFor { model.activeTabbedState == before })
 }
