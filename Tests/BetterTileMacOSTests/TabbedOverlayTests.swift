@@ -24,10 +24,11 @@ import Testing
     #expect(adjusted)
     overlay.refreshResize(state: state, bounds: bounds)
     #expect(view.excludedStrips.first?.width != before.width)
-    let mask = try #require(view.layer?.sublayers?.first?.mask as? CAShapeLayer)
+    let mask = try #require(view.layer?.mask as? CAShapeLayer)
     let path = try #require(mask.path)
     let strip = try #require(view.excludedStrips.first)
     #expect(!path.contains(CGPoint(x: strip.midX, y: 17), using: .evenOdd))
+    #expect(path.contains(CGPoint(x: strip.minX + 1, y: strip.minY + 1), using: .evenOdd)) // Rounded corners stay covered.
     #expect(path.contains(CGPoint(x: strip.midX, y: 100), using: .evenOdd))
     #expect(path.contains(CGPoint(x: 900, y: 17), using: .evenOdd)) // Empty pane remains covered.
     #expect(view.hitTest(NSPoint(x: strip.midX, y: 17)) === view)
@@ -236,38 +237,78 @@ import Testing
     #expect(!final.isVisible)
 }
 
-@Test(arguments: [(false, false), (true, false), (false, true)]) @MainActor
-func tabbedCurtainUsesSolidAccessibilityFallback(options: (Bool, Bool)) {
+@Test(arguments: [false, true], [(false, false), (true, false), (false, true)]) @MainActor
+func tabbedCurtainUsesNativeGlassAndSolidAccessibilityFallback(enabled: Bool, options: (Bool, Bool)) {
     _ = NSApplication.shared
     let view = TabbedCurtainView(frame: NSRect(x: 0, y: 0, width: 400, height: 300))
     view.displayOptions = { (options.0, options.1) }
-    view.refreshAppearance()
+    view.overlayAppearance = .init(useLiquidGlass: enabled)
     #expect(!view.isAccessibilityElement())
-    let colors = (view.layer?.sublayers?.first as? CAGradientLayer)?.colors as? [CGColor]
-    #expect(colors?.allSatisfy { $0.alpha == 1 } == true)
-    if options.0 || options.1 { #expect(colors?.first == colors?.last) }
+    let showsGlass = enabled && !options.0 && !options.1
+    #expect(view.surface.showsGlass == showsGlass)
+    #expect(view.surface.glass.style == .regular)
+    #expect(view.surface.plateOpacity == (showsGlass ? 0.25 : 1))
+    #expect(view.hitTest(NSPoint(x: 200, y: 100)) === view)
+    #expect(view.surface.hitTest(NSPoint(x: 200, y: 100)) == nil)
+}
+
+@Test @MainActor func visibleTabbedCurtainFollowsTheSharedGlassSliderWithoutReordering() throws {
+    _ = NSApplication.shared
+    let id = WindowID(rawValue: "curtain-slider-window")
+    var state = TabbedLayoutState(preset: .columns)
+    state.reconcile(windowIDs: [id], removed: [], focused: id)
+    var curtain: TabbedCurtainView?
+    var orderingCount = 0
+    let overlay = TabbedOverlayController(orderPanel: { panel, mode, _ in
+        orderingCount += 1
+        if mode == .below { curtain = panel.contentView as? TabbedCurtainView }
+    })
+    defer { overlay.hide() }
+    overlay.overlayAppearance = .init(strength: 0)
+    overlay.refresh(state: state, bounds: BTRect(x: 12000, y: 100, width: 1000, height: 800),
+                    windows: [], selectedWindowNumbers: [id: 7], curtainAnchorWindowNumber: 7)
+    let view = try #require(curtain)
+    view.displayOptions = { (false, false) }
+    view.refreshAppearance()
+    #expect(view.surface.plateOpacity == 0.14) // The first presentation uses the saved preference.
+    let count = orderingCount
+    var previous = 0.0
+    for strength in [0.0, 0.5, 1.0] {
+        overlay.overlayAppearance.strength = strength
+        #expect(view.surface.showsGlass)
+        #expect(view.surface.plateOpacity > previous)
+        #expect(view.surface.plateOpacity > overlay.overlayAppearance.glassBackingOpacity)
+        #expect(view.surface.plateOpacity <= 0.36)
+        previous = view.surface.plateOpacity
+    }
+    #expect(orderingCount == count)
+    overlay.overlayAppearance.useLiquidGlass = false
+    #expect(!view.surface.showsGlass)
+    #expect(view.surface.plateOpacity == 1)
+    overlay.overlayAppearance.useLiquidGlass = true
+    #expect(view.surface.showsGlass)
 }
 
 @Test @MainActor func tabbedCurtainFrostFollowsLightAndDarkAppearance() throws {
     _ = NSApplication.shared
     let view = TabbedCurtainView(frame: NSRect(x: 0, y: 0, width: 400, height: 300))
     view.displayOptions = { (false, false) }
-    var brightness: [CGFloat] = []
+    var colors: [CGColor] = []
     for (name, appearanceName) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
         view.appearance = NSAppearance(named: appearanceName)
         view.refreshAppearance()
-        let color = try #require(((view.layer?.sublayers?.first as? CAGradientLayer)?.colors as? [CGColor])?.first)
-        brightness.append(try #require(NSColor(cgColor: color)?.usingColorSpace(.sRGB)).redComponent)
+        let plate = try #require(view.surface.subviews.last)
+        colors.append(try #require(plate.layer?.backgroundColor))
+        #expect(view.surface.plateOpacity < 1)
         if let directory = ProcessInfo.processInfo.environment["BETTERTILE_TAB_PREVIEW_DIR"] {
-            // Render only our own surface; no foreign-window content.
+            // This bitmap checks the semantic plate only, not native optics.
             let bitmap = try #require(view.bitmapImageRepForCachingDisplay(in: view.bounds))
             view.cacheDisplay(in: view.bounds, to: bitmap)
             let png = try #require(bitmap.representation(using: .png, properties: [:]))
             try png.write(to: URL(fileURLWithPath: directory).appendingPathComponent("curtain-\(name).png"))
         }
     }
-    #expect(brightness[0] > 0.5)
-    #expect(brightness[1] > 0.35 && brightness[1] < brightness[0])
+    #expect(colors[0] != colors[1])
 }
 
 @Test @MainActor func selectingVisibleTabKeepsCrowdedStripPositions() throws {

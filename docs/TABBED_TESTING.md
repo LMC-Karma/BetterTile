@@ -39,13 +39,14 @@ runtime tab groups. Click an empty pane to send newly opened windows there.
 
 Settings → Window Layout → Appearance has **Use Liquid Glass** and
 **Glass transparency**. Glass defaults on. The slider runs from Frosted to
-Clear. It updates tab strips, dividers, empty panes, Tabbed drop targets, resize
-ghosts, the Layout Wheel, the menu bar popover, and result feedback. Clear
-removes added frosting from native glass surfaces and reduces the divider
-lens body's frosting. The curtain remains
-opaque with a brighter neutral frost and excludes occupied tab strips. Its
-appearance is independent of the slider. Snap and Bento swap/placement
-previews use light outlines and tint.
+Clear. It updates tab strips, dividers, empty panes, the Tabbed curtain and drop
+targets, resize ghosts, the Layout Wheel, the menu bar popover, and result
+feedback. Clear removes added frosting from ordinary native glass surfaces
+and reduces the divider lens body's frosting. The curtain uses regular native
+glass and retains a frost floor at Clear to obscure inactive window detail.
+Its backing follows the slider from 36 percent to 14 percent. Rounded cutouts
+exclude occupied tab strips. Snap and Bento swap/placement previews use light
+outlines and tint.
 
 Turning glass off uses solid surfaces. Reduce Transparency and Increase
 Contrast also select solid surfaces, including when changed while overlays
@@ -247,7 +248,9 @@ above. This test build is not evidence that those platform checks have passed.
   dragged window also cancels the interaction.
 - Change transparency while a tab is held. The appearance updates without
   committing the drag. Check Reduce Motion without changing drag destinations.
-- Check curtain cutouts while resizing rows and columns. Inactive windows stay
+- Move Glass transparency while the curtain is visible. Confirm the frost
+  changes without changing window order. Check curtain cutouts while resizing
+  rows and columns. Inactive windows stay
   concealed outside the strips. Click strip corners and divider gaps to ensure
   inactive windows never receive those clicks.
 - Open the menu bar panel and change transparency. Clear removes the extra
