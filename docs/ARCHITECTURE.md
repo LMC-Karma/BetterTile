@@ -264,9 +264,16 @@ named filter parameters instead of replacing filters. Settings changes update
 visible or grabbed handles without window placement. Glass off uses the
 configured width; Reduce Transparency and Increase Contrast retain the glass
 width with a solid fill. Unavailable Core Image filters also use that solid
-fallback. Hit testing and window resizing keep their existing
-behavior. A separate click-through panel below the handle supplies the track
-and shadow; resize ghosts remain below both. Settings uses the same views.
+fallback. Hit testing and window resizing keep their existing behavior.
+At rest and during Live Resize, a separate click-through panel below the handle
+supplies the track and shadow. During Ghost Preview, one reusable click-through
+panel contains the preview views, track, shadow, and knob. Its frame stays at the
+display's visible bounds and it is ordered below the input handle once. Each
+display tick updates all drawing in one transaction with layer actions disabled.
+The input handle stays visible and stationary, with its drawing hidden. A drawing
+sample forwards geometry, limit, stretch, and appearance changes to the overlay.
+Ending the gesture restores the handle frame and drawing before hiding the
+overlay and retracting. Settings uses the same lens views.
 The preference also covers tab strips, Tabbed drop targets, resize ghosts,
 the Layout Wheel, the menu bar popover, and result feedback. Snap and Bento
 placement/swap previews retain their light outlines, tint, and pulse.
