@@ -45,7 +45,8 @@ public final class TabbedOverlayController {
     private var draggedTabPanel: NSPanel?
     private var dragOffset = NSPoint.zero
     private var lastDragPoint: BTPoint?
-    private let dragTicks = ResizeDisplayLink()
+    private var pendingDragPoint: BTPoint?
+    private let dragTicks: ResizeDisplayLink
     private var nextScrollTime: TimeInterval = 0
     private var globalKeyMonitor: Any?
     private var localKeyMonitor: Any?
@@ -53,6 +54,7 @@ public final class TabbedOverlayController {
     private let addLocalKeyMonitor: (@escaping @MainActor (UInt16) -> Bool) -> Any?
     private let removeMonitor: (Any) -> Void
     private let orderPanel: (NSPanel, NSWindow.OrderingMode, Int) -> Void
+    private let panelFactory: () -> NSPanel
     private var draggedWindow: WindowID?
     private var dropIntent: TabbedUIIntent?
     private var cancelled = false
@@ -68,6 +70,10 @@ public final class TabbedOverlayController {
     }
 
     init(
+        dragTicks: ResizeDisplayLink = ResizeDisplayLink(),
+        panelFactory: @escaping () -> NSPanel = {
+            NSPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        },
         addGlobalKeyMonitor: @escaping (@escaping @MainActor (UInt16) -> Void) -> Any? = { handler in
             NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { event in
                 let keyCode = event.keyCode
@@ -84,6 +90,8 @@ public final class TabbedOverlayController {
         removeMonitor: @escaping (Any) -> Void = { NSEvent.removeMonitor($0) },
         orderPanel: @escaping (NSPanel, NSWindow.OrderingMode, Int) -> Void = { $0.order($1, relativeTo: $2) }
     ) {
+        self.panelFactory = panelFactory
+        self.dragTicks = dragTicks
         self.addGlobalKeyMonitor = addGlobalKeyMonitor
         self.addLocalKeyMonitor = addLocalKeyMonitor
         self.removeMonitor = removeMonitor
@@ -257,7 +265,7 @@ public final class TabbedOverlayController {
     }
 
     private func makePanel() -> NSPanel {
-        let panel = NSPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        let panel = panelFactory()
         panel.isReleasedWhenClosed = false
         panel.isOpaque = false
         panel.backgroundColor = .clear
@@ -376,7 +384,7 @@ public final class TabbedOverlayController {
             proxy.contentView = surface
             proxy.setContentSize(NSSize(width: source.strip.tabWidth, height: TabbedLayoutState.headerHeight))
             draggedTabPanel = proxy
-            dragTicks.start(on: source) { [weak self] in self?.scrollDraggedStrip() }
+            dragTicks.start(on: source) { [weak self] in self?.processDragTick() }
         }
         let panel = makePanel()
         let view = tabbedGlassSurface(cornerRadius: 10, tint: .controlAccentColor, appearance: overlayAppearance)
@@ -403,6 +411,20 @@ public final class TabbedOverlayController {
     }
 
     private var floatFrame: BTRect { BTRect(x: bounds.midX - 95, y: bounds.maxY - 70, width: 190, height: 48) }
+
+    fileprivate func queueDrag(to point: BTPoint) {
+        guard isInteracting, !cancelled else { return }
+        pendingDragPoint = point
+    }
+
+    private func processDragTick() {
+        guard let point = pendingDragPoint ?? lastDragPoint else { return }
+        let hasSample = pendingDragPoint != nil
+        pendingDragPoint = nil
+        // The first frame establishes provisional strips before they scroll.
+        let scrolled = scrollDraggedStrip(at: point)
+        if hasSample || scrolled { drag(to: point) }
+    }
 
     fileprivate func drag(to point: BTPoint) {
         guard let id = draggedWindow, !cancelled else { return }
@@ -463,9 +485,9 @@ public final class TabbedOverlayController {
             view.previewDrag(order: order, lifted: id)
         }
         if let proxy = draggedTabPanel {
-            proxy.setFrame(appKit(BTRect(x: point.x - dragOffset.x, y: proxyY,
-                                        width: proxy.frame.width, height: proxy.frame.height)), display: false)
-            proxy.orderFrontRegardless()
+            proxy.setFrameOrigin(appKit(BTRect(x: point.x - dragOffset.x, y: proxyY,
+                                              width: proxy.frame.width, height: proxy.frame.height)).origin)
+            if !proxy.isVisible { proxy.orderFrontRegardless() }
         }
         if let highlight {
             let panel = preview ?? makePanel()
@@ -479,31 +501,36 @@ public final class TabbedOverlayController {
                 surface.addSubview(label)
                 panel.contentView = surface
             }
-            panel.setFrame(appKit(highlight), display: true)
-            if let label = panel.contentView?.subviews.compactMap({ $0 as? NSTextField }).first {
+            let target = appKit(highlight)
+            let changed = panel.frame != target
+            if changed { panel.setFrame(target, display: false) }
+            if let label = panel.contentView?.subviews.compactMap({ $0 as? NSTextField }).first,
+               changed || label.stringValue != destinationLabel {
                 label.stringValue = destinationLabel
                 label.isHidden = destinationLabel.isEmpty || highlight.size.width < 170 || highlight.size.height < 48
                 label.frame = NSRect(x: 8, y: max(0, (highlight.size.height - 22) / 2), width: max(0, highlight.size.width - 16), height: 22)
             }
-            panel.orderFrontRegardless()
+            let appeared = !panel.isVisible
+            if appeared { panel.orderFrontRegardless() }
             preview = panel
-        } else { preview?.orderOut(nil) }
-        draggedTabPanel?.orderFrontRegardless()
+            if appeared { draggedTabPanel?.orderFrontRegardless() }
+        } else if preview?.isVisible == true { preview?.orderOut(nil) }
     }
 
-    private func scrollDraggedStrip() {
-        guard let point = lastDragPoint, let id = draggedWindow,
-              CACurrentMediaTime() >= nextScrollTime else { return }
+    private func scrollDraggedStrip(at point: BTPoint) -> Bool {
+        guard let id = draggedWindow, CACurrentMediaTime() >= nextScrollTime else { return false }
         let frames = state.frames(in: bounds)
         for (paneID, panel) in panes {
             guard let frame = frames[paneID], frame.contains(point),
                   point.y < frame.minY + TabbedLayoutState.headerHeight,
-                  let view = panel.contentView as? TabbedPaneView else { continue }
+                  let view = panel.contentView as? TabbedPaneView,
+                  view.content.previewOrder != nil else { continue }
             if view.scrollDrag(at: point.x - frame.minX, lifted: id) {
                 nextScrollTime = CACurrentMediaTime() + 0.18
-                drag(to: point)
+                return true
             }
         }
+        return false
     }
 
     fileprivate func endDrag() {
@@ -553,6 +580,7 @@ public final class TabbedOverlayController {
     private func finishInteraction(preservingDrop: Bool = false) {
         dragTicks.stop()
         lastDragPoint = nil
+        pendingDragPoint = nil
         nextScrollTime = 0
         if preservingDrop { isDropPending = true }
         else { clearDragPresentation() }
@@ -911,8 +939,6 @@ struct TabbedStripLayout {
         previewOrder = order
         liftedTab = lifted
         layoutTabs(animated: true)
-        updateToolTips()
-        (superview as? TabbedPaneView)?.updateAccessibility()
         needsDisplay = true
     }
 
@@ -937,8 +963,6 @@ struct TabbedStripLayout {
         guard next != layout.visibleRange.lowerBound else { return false }
         firstVisibleIndex = next
         layoutTabs(animated: false)
-        updateToolTips()
-        (superview as? TabbedPaneView)?.updateAccessibility()
         return true
     }
 
@@ -1067,15 +1091,14 @@ struct TabbedStripLayout {
     }
     override func mouseDragged(with event: NSEvent) {
         hoverPoint = convert(event.locationInWindow, from: nil)
-        needsDisplay = true
-        redrawTabs()
+        if !dragging { needsDisplay = true }
         guard let id = downTab, let downPoint, let owner else { return }
         let point = convert(event.locationInWindow, from: nil)
         if !dragging && hypot(point.x - downPoint.x, point.y - downPoint.y) >= 5 {
             let tab = strip.tabFrame(pane.tabs.firstIndex(of: id) ?? 0)
             dragging = owner.beginDrag(id, offset: NSPoint(x: downPoint.x - tab.minX, y: downPoint.y))
         }
-        if dragging { owner.drag(to: owner.screenPoint(event)) }
+        if dragging { owner.queueDrag(to: owner.screenPoint(event)) }
     }
     override func mouseUp(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
