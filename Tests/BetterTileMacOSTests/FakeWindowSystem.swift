@@ -6,13 +6,21 @@ import Testing
 /// BetterTileMacOS test suite. Failure knobs simulate rejected, ignored,
 /// numbered-failing, clamped, and late-settling Accessibility writes.
 @MainActor
-final class FakeWindowSystem: WindowSystem, TargetedWindowSystem, WindowEventSource, TabbedWindowSystem {
+final class FakeWindowSystem: WindowSystem, TargetedWindowSystem, WindowEventSource, TabbedWindowSystem, WindowStackReading {
     var availableDisplays = [DisplaySnapshot(
         id: DisplayID(rawValue: "main"),
         frame: BTRect(x: 0, y: 0, width: 1000, height: 800),
         visibleFrame: BTRect(x: 0, y: 0, width: 1000, height: 800),
         isMain: true
     )]
+    var onScreenStackEntries: [SeamStackEntry]?
+    var onScreenStackReads = 0
+    var onScreenStackLabels: Set<WindowID> = []
+    func onScreenStack(labeling ids: Set<WindowID>) -> [SeamStackEntry]? {
+        onScreenStackReads += 1
+        onScreenStackLabels = ids
+        return onScreenStackEntries
+    }
     var windows: [WindowSnapshot]
     var raisedWindows: [(WindowID, Bool)] = []
     var failingRaiseWindowID: WindowID?
