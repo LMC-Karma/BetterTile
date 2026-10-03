@@ -125,10 +125,17 @@ private func snapFixture(preset: TabbedPreset = .columns) async throws -> (FakeA
     #expect(model.statusMessage != nil)
     if action == .maximize { #expect(model.statusMessage?.contains("One Pane") == true) }
     if action == .restore { #expect(model.statusMessage?.contains("Tabbed Undo") == true) }
+    let feedbackMessage = switch action {
+    case .maximize: "Choose One Pane"
+    case .restore: "Use Tabbed Undo"
+    default: "Float this window first"
+    }
+    #expect(model.lastActionFeedback?.message == feedbackMessage)
     guard case .unavailable = model.previewLayoutWheel(.windowAction(action), for: target) else {
         Issue.record("An unsupported member action was previewed"); return
     }
     model.performLayoutWheel(.windowAction(action), for: target)
+    #expect(model.lastActionFeedback?.message == feedbackMessage)
     #expect(model.activeTabbedState == before)
     #expect(system.windows.map(\.frame) == frames)
     #expect(system.frameWriteCounts == writes)

@@ -3164,7 +3164,7 @@ extension BetterTileModel {
         switch action {
         case .maximize: "Use Change Layout → One Pane to maximize the Tabbed layout."
         case .restore: "Use Tabbed Undo to restore the previous pane arrangement."
-        default: "Tabbed supports fixed half, third, quarter, and sixth snaps. Float the window to use this action."
+        default: "Tabbed supports fixed half, third, two-thirds, quarter, and sixth snaps. Float the window to use this action."
         }
     }
 

@@ -56,6 +56,13 @@ import Testing
     #expect(ResultPillFeedback.failure("That window is no longer available.").message == "Window changed")
 }
 
+@Test func resultPillPreservesTabbedActionGuidance() {
+    #expect(ResultPillFeedback.failure("Use Change Layout → One Pane to maximize the Tabbed layout.").message == "Choose One Pane")
+    #expect(ResultPillFeedback.failure("Use Tabbed Undo to restore the previous pane arrangement.").message == "Use Tabbed Undo")
+    #expect(ResultPillFeedback.failure("Tabbed supports fixed half, third, two-thirds, quarter, and sixth snaps. Float the window to use this action.").message == "Float this window first")
+    #expect(ResultPillFeedback.failure("Unexpected AX error in a Tabbed window.").message == "Couldn’t apply layout")
+}
+
 @Test func resultPillIsCenteredBelowTheDisplayWorkAreaTop() {
     let display = DisplaySnapshot(
         id: DisplayID(rawValue: "secondary"),
