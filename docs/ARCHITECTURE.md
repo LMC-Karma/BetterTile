@@ -279,7 +279,8 @@ visible or grabbed handles without window placement. Glass off uses the
 configured width; Reduce Transparency and Increase Contrast retain the glass
 width with a solid fill. Unavailable Core Image filters also use that solid
 fallback. Hit testing and window resizing keep their existing
-behavior. A separate click-through panel below the handle supplies the track
+behavior; junction input frames keep their earlier width, which contains the
+narrower lens. A separate click-through panel below the handle supplies the track
 and shadow; resize ghosts remain below both. Settings uses the same views.
 The preference also covers tab strips, Tabbed drop targets, resize ghosts,
 the Layout Wheel, the menu bar popover, and result feedback. Snap and Bento

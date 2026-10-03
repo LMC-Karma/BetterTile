@@ -31,6 +31,12 @@ public enum DividerHandleGeometry {
         useLiquidGlass ? thickness + 4 : thickness
     }
 
+    /// Junction input keeps its earlier grab area. Across the configurable
+    /// 2–12 point widths it is never narrower than the drawn lens.
+    static func junctionHitThickness(_ thickness: Double, useLiquidGlass: Bool) -> Double {
+        useLiquidGlass ? min(min(16, max(12, thickness + 4)) + 6, max(18, 3 * thickness) - 2) : thickness
+    }
+
     public static func straightLength(span: ClosedRange<Double>, active: Bool) -> Double {
         let usable = max(8, span.upperBound - span.lowerBound)
         let resting = min(restingStraightLength, usable)
@@ -1058,16 +1064,19 @@ public final class DividerOverlayController {
     ) -> BTRect {
         let hitWidth = max(18, configuration.dividerThickness * 3)
         if let center = junctionCenter(for: interaction) {
+            let hitThickness = DividerHandleGeometry.junctionHitThickness(
+                configuration.dividerThickness, useLiquidGlass: configuration.overlayAppearance.useLiquidGlass
+            )
             let arms = DividerHandleGeometry.junctionArmLengths(
                 center: center,
                 boundaries: interaction.boundaries,
                 active: active,
-                thickness: renderedDividerThickness, armRoom: armRoom
+                thickness: hitThickness, armRoom: armRoom
             )
             return DividerHandleGeometry.junctionFrame(
                 center: center,
                 armLengths: arms,
-                thickness: renderedDividerThickness
+                thickness: hitThickness
             )
         }
         guard let boundary = interaction.boundaries.first else { return .init(x: point.x, y: point.y, width: 1, height: 1) }

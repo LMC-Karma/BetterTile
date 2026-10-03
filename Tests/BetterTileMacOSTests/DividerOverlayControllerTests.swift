@@ -327,9 +327,12 @@ func junctionPanelContainsRenderedCapsules(thickness: Double, glass: Bool) throw
                     #expect(localCenter.x + appKitFrame.minX == CGFloat(center.x))
                     #expect(localCenter.y + appKitFrame.minY == mainFrame.maxY - CGFloat(center.y))
                 } else { Issue.record("Expected a junction handle.") }
-                if active && span == 200 {
-                    let width = glass ? thickness + 4 : thickness
-                    #expect(frame.size.width == (fourWay ? 72 + width : 52 + width / 2))
+                if span == 200 {
+                    // The input frame keeps its earlier width; the lens inside it is thinner.
+                    let restingWidth = min(16, max(12, thickness + 4))
+                    let width = glass ? min(restingWidth + 6, max(18, 3 * thickness) - 2) : thickness
+                    if active { #expect(frame.size.width == (fourWay ? 72 + width : 52 + width / 2)) }
+                    else if fourWay { #expect(frame.size.width == max(32, 24 + width)) }
                 }
                 if span == 24 {
                     #expect(view.knobRects.allSatisfy {
@@ -384,20 +387,21 @@ func junctionPanelContainsRenderedCapsules(thickness: Double, glass: Bool) throw
         #expect(controller.isDragging)
         #expect(system.windows.map(\.frame) == frames)
         #expect(system.frameWriteCounts == writes)
-        #expect(panel.frame.size.height == (glass ? 78 : 74))
+        #expect(panel.frame.size.height == (glass ? 88 : 74))
         #expect(panel.frame.midY == originalFrame.midY)
         view.setActive(true, animated: false)
         view.layoutSubtreeIfNeeded()
         #expect(view.knobRects.allSatisfy { view.bounds.contains($0) })
     }
     controller.configuration.overlayAppearance.useLiquidGlass = true
-    for thickness in [2.0, 6, 10, 12] {
+    // The lens follows the setting; the junction input keeps its earlier size.
+    for (thickness, panelHeight) in [(2.0, 88.0), (6, 88), (10, 92), (12, 94)] {
         controller.configuration.dividerThickness = thickness
         #expect(controller.isDragging)
         #expect(system.frameWriteCounts == writes)
         #expect(system.windows.map(\.frame) == frames)
         #expect(view.knobRects[0].height == CGFloat(thickness + 4))
-        #expect(panel.frame.size.height == CGFloat(72 + thickness + 4))
+        #expect(panel.frame.size.height == CGFloat(panelHeight))
         for strength in [0.0, 0.5, 1] {
             controller.configuration.overlayAppearance.strength = strength
             #expect(view.overlayAppearance.strength == strength)
