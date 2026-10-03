@@ -488,6 +488,54 @@ func tabbedSnapExcludingAMemberCannotFallThroughToRawPlacement(floated: Bool) as
     #expect(model.lastActionFeedback?.message == "Float this window first")
 }
 
+@Test(arguments: [LayoutMode.manual, .bento, .tabbed]) @MainActor
+func windowActionsExplainSpaceStabilizationAndResumeAfterward(mode: LayoutMode) async throws {
+    _ = NSApplication.shared
+    let system = FakeAppWindowSystem()
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    model.configuration.bentoInnerGap = 0
+    model.configuration.defaultTabbedPreset = .columns
+    model.setActiveMode(mode)
+    if mode == .tabbed {
+        try #require(await waitFor { model.activeTabbedState?.windowIDs == [system.windows[0].id] })
+    }
+    model.beginActiveSpaceStabilization()
+    let frames = system.windows.map(\.frame), writes = system.frameWriteCounts
+    model.perform(.rightHalf)
+    #expect(system.windows.map(\.frame) == frames)
+    #expect(system.frameWriteCounts == writes)
+    #expect(model.lastActionFeedback?.kind == .failure)
+    #expect(model.lastActionFeedback?.message == "Desktop changed")
+    #expect(model.statusMessage?.contains("Space switch") == true)
+
+    try #require(await waitFor { model.captureLayoutWheelTarget() != nil })
+    let resumedWrites = system.frameWriteCounts
+    model.perform(.rightHalf)
+    let target = WindowAction.rightHalf.partition!.frame(in: system.mainDisplay.visibleFrame)
+    if mode == .tabbed {
+        #expect(await waitFor {
+            guard let state = model.activeTabbedState,
+                  let pane = state.paneID(containing: system.windows[0].id) else { return false }
+            return state.logicalFrames(in: system.mainDisplay.visibleFrame)[pane] == target
+                && state.groups.contentFrames(in: system.mainDisplay.visibleFrame)?[pane] == system.windows[0].frame
+        })
+    } else {
+        #expect(system.windows[0].frame == target)
+        #expect(model.lastActionFeedback?.kind == .success)
+    }
+    #expect(system.frameWriteCounts != resumedWrites)
+    #expect(model.statusMessage == nil)
+
+    model.shutdown()
+    model.statusMessage = "shutdown checkpoint"
+    let shutdownFeedback = model.lastActionFeedback, shutdownWrites = system.frameWriteCounts
+    model.perform(.leftHalf)
+    #expect(model.statusMessage == "shutdown checkpoint")
+    #expect(model.lastActionFeedback == shutdownFeedback)
+    #expect(system.frameWriteCounts == shutdownWrites)
+}
+
 @Test @MainActor func tabbedSnapWaitsForThePreviousNativeDropsTabPlacement() async throws {
     let (system, model) = try await snapFixture()
     defer { model.shutdown() }
