@@ -221,9 +221,11 @@ change a Bento operation made to the tree; writing it also writes the tree.
   stop at the edges of exposed seam segments. Hover caches the stack for
   150 ms and invalidates it on boundary refresh or application activation.
   A gesture reads the stack once at its start and recomputes coverage from
-  those frames as the seam moves. Missing stack data retains the previous
-  floating-window fallback. A captured drag keeps its input window until
-  release; when less than 24 points remain, its minimum knob can overlap a
+  those frames as the seam moves. Missing stack data or an unresolved exact
+  identity for any managed member retains the previous floating-window
+  fallback, including when private APIs are disabled. Known inactive tabs
+  absent from the on-screen stack do not disable coverage. A captured drag
+  keeps its input window until release; when less than 24 points remain, its minimum knob can overlap a
   cover. A captured junction also retains its central target if a cover
   reaches it. The junction's rectangular input frame is bounded against
   diagonal covers as well as covers over its arms.

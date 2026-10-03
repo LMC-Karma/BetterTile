@@ -1410,8 +1410,6 @@ extension AccessibilityWindowSystem: WindowStackReading {
     public func onScreenStack(labeling ids: Set<WindowID>) -> [SeamStackEntry]? {
         guard let records = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
             as? [[CFString: Any]] else { return nil }
-        return records.compactMap { record in
-            SeamStackRecord.parse(value: { record[$0] }, identities: identities, labeling: ids)
-        }
+        return SeamStackRecord.parseStack(records, identities: identities, labeling: ids)
     }
 }
