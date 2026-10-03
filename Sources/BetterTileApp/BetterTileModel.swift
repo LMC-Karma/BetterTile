@@ -371,10 +371,6 @@ final class BetterTileModel {
             return
         }
         let focused = try? system.focusedWindow()
-        if let focused, isTabbedMember(focused.id), !BentoDropPlanner.partitionActions.contains(action) {
-            presentLayoutWheelUnavailable(tabbedSnapUnavailableReason(action), displayID: focused.displayID)
-            return
-        }
         let focusedRule = focused.map(rule(for:)) ?? .manageNormally
         if !focusedRule.allowsDirectPlacement {
             statusMessage = "BetterTile is set to ignore this app."
@@ -383,6 +379,10 @@ final class BetterTileModel {
         }
         if let focused, isTabbedMember(focused.id), !usesTabbedSnap(window: focused) {
             presentLayoutWheelUnavailable(Self.tabbedParticipationChanged, displayID: focused.displayID)
+            return
+        }
+        if let focused, isTabbedMember(focused.id), !BentoDropPlanner.partitionActions.contains(action) {
+            presentLayoutWheelUnavailable(tabbedSnapUnavailableReason(action), displayID: focused.displayID)
             return
         }
         let actionPlan: WindowActionPlan
@@ -565,11 +565,11 @@ final class BetterTileModel {
         switch command {
         case let .windowAction(action):
             if isTabbedMember(window.id) || (usesTabbedSnap(window: window) && BentoDropPlanner.partitionActions.contains(action)) {
-                guard BentoDropPlanner.partitionActions.contains(action) else {
-                    return .unavailable(reason: tabbedSnapUnavailableReason(action), displayID: window.displayID)
-                }
                 guard usesTabbedSnap(window: window) else {
                     return .unavailable(reason: Self.tabbedParticipationChanged, displayID: target.displayID)
+                }
+                guard BentoDropPlanner.partitionActions.contains(action) else {
+                    return .unavailable(reason: tabbedSnapUnavailableReason(action), displayID: window.displayID)
                 }
                 guard let context = tabbedSnapContext(windowID: target.windowID, displayID: target.displayID),
                       let plan = TabbedSnapPlanner.plan(sourceWindowID: target.windowID, action: action,
