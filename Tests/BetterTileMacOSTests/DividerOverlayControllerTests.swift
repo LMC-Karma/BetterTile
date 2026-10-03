@@ -328,8 +328,7 @@ func junctionPanelContainsRenderedCapsules(thickness: Double, glass: Bool) throw
                     #expect(localCenter.y + appKitFrame.minY == mainFrame.maxY - CGFloat(center.y))
                 } else { Issue.record("Expected a junction handle.") }
                 if active && span == 200 {
-                    let restingWidth = min(16, max(12, thickness + 4))
-                    let width = glass ? min(restingWidth + 6, max(18, 3 * thickness) - 2) : thickness
+                    let width = glass ? thickness + 4 : thickness
                     #expect(frame.size.width == (fourWay ? 72 + width : 52 + width / 2))
                 }
                 if span == 24 {
@@ -385,12 +384,28 @@ func junctionPanelContainsRenderedCapsules(thickness: Double, glass: Bool) throw
         #expect(controller.isDragging)
         #expect(system.windows.map(\.frame) == frames)
         #expect(system.frameWriteCounts == writes)
-        #expect(panel.frame.size.height == (glass ? 88 : 74))
+        #expect(panel.frame.size.height == (glass ? 78 : 74))
         #expect(panel.frame.midY == originalFrame.midY)
         view.setActive(true, animated: false)
         view.layoutSubtreeIfNeeded()
         #expect(view.knobRects.allSatisfy { view.bounds.contains($0) })
     }
+    controller.configuration.overlayAppearance.useLiquidGlass = true
+    for thickness in [2.0, 6, 10, 12] {
+        controller.configuration.dividerThickness = thickness
+        #expect(controller.isDragging)
+        #expect(system.frameWriteCounts == writes)
+        #expect(system.windows.map(\.frame) == frames)
+        #expect(view.knobRects[0].height == CGFloat(thickness + 4))
+        #expect(panel.frame.size.height == CGFloat(72 + thickness + 4))
+        for strength in [0.0, 0.5, 1] {
+            controller.configuration.overlayAppearance.strength = strength
+            #expect(view.overlayAppearance.strength == strength)
+            #expect(view.knobRects[0].height == CGFloat(thickness + 4))
+            #expect(system.frameWriteCounts == writes)
+        }
+    }
+
 }
 
 @Test func junctionGrabOffsetIsPreservedAndEachBranchMovesOnce() {

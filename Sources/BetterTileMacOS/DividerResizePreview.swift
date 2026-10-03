@@ -56,7 +56,8 @@ public struct DividerResizePreview: View {
                         }
                     }
                     PreviewGrip(
-                        mode: sample.mode(thickness: thickness), thickness: thickness, trackRoom: sample.trackRoom,
+                        mode: sample.mode(thickness: DividerHandleGeometry.renderedThickness(
+                            thickness, useLiquidGlass: overlayAppearance.useLiquidGlass)), thickness: thickness, trackRoom: sample.trackRoom,
                         active: dragStart != nil, reduceMotion: reduceMotion, overlayAppearance: overlayAppearance
                     )
                     .frame(width: 180, height: 180)

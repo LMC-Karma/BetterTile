@@ -51,8 +51,11 @@ outlines and tint.
 Turning glass off uses solid surfaces. Reduce Transparency and Increase
 Contrast also select solid surfaces, including when changed while overlays
 are visible. The transparency slider is disabled when glass is off. Changes do not
-move windows or cancel a drag. The divider lens widens when grabbed. Straight
-divider hit areas stay the same; junction hit frames contain the wider lens.
+move windows or cancel a drag. The divider lens stretches only in length when
+grabbed. Glass handles stay
+4 points wider than the Divider width setting; solid handles use that setting
+when glass is off. Changing either width or transparency updates visible and
+grabbed handles immediately, including the Settings preview.
 
 Check light and dark appearances at both transparency endpoints, with glass off,
 and with each accessibility display option. Confirm labels stay readable,
@@ -231,11 +234,11 @@ above. This test build is not evidence that those platform checks have passed.
 ## Glass and tab-drag regression checks
 
 - Hover a straight divider in Bento and Tabbed. Confirm the accent track is
-  visible through a clear lens with a bright rim and a narrow gloss streak.
-  Grab it, drag in both directions, and release. The lens widens and stretches,
-  then retracts. Check both horizontal and vertical dividers.
-- Resize toward an application's minimum size. The track, lens edges, core,
-  and border turn orange together. The cursor shows the available direction.
+  invisible at rest. Grab it, drag in both directions, and release. The track
+  fades in through a clear lens with soft cap glints as the lens stretches,
+  then retracts. Its width and shadow stay constant. Check both axes.
+- Resize toward an application's minimum size. The track and thin
+  border turn orange together. The cursor shows the available direction.
   Moving away from the limit restores the accent color.
 - Drag three-way and four-way junctions. Their arms form one outline with
   rounded inner corners. Check short divider spans: the fading track must end
@@ -245,7 +248,8 @@ above. This test build is not evidence that those platform checks have passed.
   track and shadow also disappear.
 - Repeat the lens checks in light and dark mode. Move **Glass transparency**
   from Frosted to Clear while the handle is visible. Its body frost changes
-  without interrupting the drag. Check the divider preview in Settings too.
+  without interrupting the drag. Above the default frost level, the track
+  also softens. Check widths from 2 to 12 points and the Settings preview too.
 - Toggle Reduce Transparency and Increase Contrast while the handle is
   visible, then turn Liquid Glass off. Each uses a solid capsule without a
   track or shadow. Restore each option and confirm the lens returns. Reduce

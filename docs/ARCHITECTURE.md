@@ -264,17 +264,22 @@ the shared frosting or accessibility fallback over it; Clear removes this
 additional layer. The Layout Wheel uses the same backing over one native glass
 surface. Its hub does not add a second glass material.
 
-Divider handles draw their lens with public Core Animation layers. Native
-glass blurs at this size without providing the required lens optics. The lens
-draws a magnified accent track, reflections, and one rounded junction outline.
-A separate click-through panel below the handle supplies the fading track and
-outer shadow. Resize ghosts sit below both panels. The track stops within the
-usable divider span. Glass transparency controls the lens body's frosting.
-Straight hit areas, cursors, and minimum-size feedback keep their existing
-behavior. Junction hit frames grow to contain the wider lens: at the default
-thickness, the resting four-way frame is 44 points square instead of 34.
-Glass off, Reduce Transparency, and Increase Contrast select the solid capsule.
-The settings preview uses the same handle and decoration views.
+Divider handles use public Core Animation layers and a retained Core Image
+`CIGlassLozenge` filter on each colored track. The handle is clear at rest.
+Grabbing fades in the track and stretches only the length over 0.18 seconds;
+the glass width stays at the Divider width setting plus 4 points. The shadow
+stays constant. Tracks stop at the supplied room on each arm. Glass transparency
+controls the white body's opacity and adds up to 2.5 points of Gaussian blur
+above the default frost level. Thin white edge rings and cap glints define the
+lens; an orange track and hairline indicate a resize limit. All shadows have
+explicit paths and the lens uses no masks. Geometry is cached per capsule set,
+unchanged appearance updates return immediately, and pointer samples update
+named filter parameters instead of replacing filters. Settings changes update
+visible or grabbed handles without window placement. Glass off uses the
+configured width; Reduce Transparency and Increase Contrast retain the glass
+width with a solid fill. Hit testing and window resizing keep their existing
+behavior. A separate click-through panel below the handle supplies the track
+and shadow; resize ghosts remain below both. Settings uses the same views.
 The preference also covers tab strips, Tabbed drop targets, resize ghosts,
 the Layout Wheel, the menu bar popover, and result feedback. Snap and Bento
 placement/swap previews retain their light outlines, tint, and pulse.
