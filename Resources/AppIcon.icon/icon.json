@@ -7,11 +7,25 @@
       "layers" : [
         {
           "image-name" : "02-RightPane.svg",
-          "name" : "Emerald Pane"
+          "name" : "Emerald Pane",
+          "position" : {
+            "scale" : 1.15,
+            "translation-in-points" : [
+              7,
+              38
+            ]
+          }
         },
         {
           "image-name" : "01-LeftPanes.svg",
-          "name" : "Frosted Panes"
+          "name" : "Frosted Panes",
+          "position" : {
+            "scale" : 1.15,
+            "translation-in-points" : [
+              -8,
+              38
+            ]
+          }
         }
       ],
       "name" : "Glass Panes",
@@ -28,10 +42,25 @@
       "layers" : [
         {
           "image-name" : "00-TrafficLights.svg",
-          "name" : "Traffic Lights"
+          "name" : "Traffic Lights",
+          "position" : {
+            "scale" : 1,
+            "translation-in-points" : [
+              43.200000000000045,
+              10
+            ]
+          }
         }
       ],
-      "name" : "Traffic Lights"
+      "name" : "Traffic Lights",
+      "shadow" : {
+        "kind" : "neutral",
+        "opacity" : 0.5
+      },
+      "translucency" : {
+        "enabled" : true,
+        "value" : 0.3
+      }
     }
   ],
   "supported-platforms" : {

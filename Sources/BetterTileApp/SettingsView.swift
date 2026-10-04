@@ -32,7 +32,7 @@ private enum SettingsDestination: String, CaseIterable, Identifiable {
     var keywords: String {
         switch self {
         case .general:
-            "permission accessibility dock appearance light dark system drag snapping application update automatic check "
+            "permission accessibility dock icon classic ice blue appearance light dark system drag snapping application update automatic check "
                 + "keyboard shortcuts master toggle macos tiling move resize edge "
                 + "advanced enhanced user interface chromium electron voiceover"
         case .windowLayout:
@@ -387,6 +387,7 @@ private struct GeneralSettings: View {
                 Text("System follows the current macOS appearance.")
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
+                AppIconPicker()
             }
 
             Section("Advanced") {
@@ -438,6 +439,41 @@ private struct GeneralSettings: View {
         let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String
         guard let build, !build.isEmpty, build != version else { return version }
         return "\(version) (\(build))"
+    }
+}
+
+struct AppIconPicker: View {
+    @AppStorage(AppIconStyle.defaultsKey) private var selectedRawValue = AppIconStyle.classic.rawValue
+
+    var body: some View {
+        Picker("App icon", selection: Binding(
+            get: { AppIconStyle(rawValue: selectedRawValue) ?? .classic },
+            set: { style in
+                selectedRawValue = style.rawValue
+                AppIconStyle.apply(style)
+            }
+        )) {
+            ForEach(AppIconStyle.allCases) { style in
+                VStack(spacing: 6) {
+                    if let image = style.image {
+                        Image(nsImage: image)
+                            .resizable()
+                            .interpolation(.high)
+                            .scaledToFit()
+                            .frame(width: 64, height: 64)
+                            .accessibilityHidden(true)
+                    }
+                    Text(style.title)
+                }
+                .tag(style)
+                .accessibilityLabel(style.title)
+            }
+        }
+        .pickerStyle(.radioGroup)
+        .horizontalRadioGroupLayout()
+        Text("Changes the Dock icon while BetterTile is running. Your choice is saved; Finder uses Classic.")
+            .font(.system(size: 12))
+            .foregroundStyle(.secondary)
     }
 }
 

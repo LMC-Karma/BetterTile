@@ -1,6 +1,19 @@
 {
   "fill": {
-    "automatic-gradient": "srgb:0.00000,0.26308,1.00000,1.00000"
+    "linear-gradient": [
+      "srgb:0.94118,0.97255,1.00000,1.00000",
+      "srgb:0.71373,0.82353,0.98431,1.00000"
+    ],
+    "orientation": {
+      "start": {
+        "x": 0,
+        "y": 0
+      },
+      "stop": {
+        "x": 1,
+        "y": 1
+      }
+    }
   },
   "groups": [
     {
@@ -31,11 +44,11 @@
       "name": "Glass Panes",
       "shadow": {
         "kind": "neutral",
-        "opacity": 0.5
+        "opacity": 0.38
       },
       "translucency": {
         "enabled": true,
-        "value": 0.5
+        "value": 0
       }
     },
     {
@@ -61,15 +74,6 @@
         "enabled": true,
         "value": 0.3
       }
-    },
-    {
-      "name": "Debug",
-      "layers": [
-        {
-          "image-name": "03-DebugBadge.svg",
-          "name": "Debug Badge"
-        }
-      ]
     }
   ],
   "supported-platforms": {
