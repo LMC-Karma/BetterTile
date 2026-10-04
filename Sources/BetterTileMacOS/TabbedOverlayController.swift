@@ -138,10 +138,11 @@ public final class TabbedOverlayController {
                 applicationIcons[bundleID] = .some(icon)
                 return icon
             }
-            panel.contentView = view
+            if panel.contentView !== view { panel.contentView = view }
             let chrome = BTRect(x: frame.minX, y: frame.minY, width: frame.size.width,
                                 height: pane.tabs.isEmpty ? frame.size.height : TabbedLayoutState.headerHeight)
-            panel.setFrame(appKit(chrome), display: true)
+            let chromeFrame = appKit(chrome)
+            if panel.frame != chromeFrame { panel.setFrame(chromeFrame, display: true) }
             view.needsDisplay = true
             view.updateAccessibility()
             view.updateToolTips()
@@ -198,8 +199,9 @@ public final class TabbedOverlayController {
             if let selected = pane.selected { self.send(.select(selected)) }
             else { self.send(.activate(pane.id)) }
         }
-        panel.contentView = view
-        panel.setFrame(appKit(bounds), display: false)
+        if panel.contentView !== view { panel.contentView = view }
+        let frame = appKit(bounds)
+        if panel.frame != frame { panel.setFrame(frame, display: false) }
         updateCurtainExclusions(view)
         orderPanel(panel, .below, anchor)
         curtain = panel
@@ -227,12 +229,13 @@ public final class TabbedOverlayController {
             let extent = divider.axis == .vertical ? parent.size.width : parent.size.height
             let start = divider.axis == .vertical ? parent.minX : parent.minY
             view.setAccessibilityValue(((divider.coordinate - start) / max(1, extent) * 100).rounded())
-            panel.contentView = view
+            if panel.contentView !== view { panel.contentView = view }
             let gap = TabbedLayoutState.gap
             let frame = divider.axis == .vertical
                 ? BTRect(x: divider.coordinate - gap / 2, y: divider.spanStart, width: gap, height: divider.spanEnd - divider.spanStart)
                 : BTRect(x: divider.spanStart, y: divider.coordinate - gap / 2, width: divider.spanEnd - divider.spanStart, height: gap)
-            panel.setFrame(appKit(frame), display: false)
+            let controlFrame = appKit(frame)
+            if panel.frame != controlFrame { panel.setFrame(controlFrame, display: false) }
             // A divider drag refreshes on every display tick. These panels
             // draw nothing, so ordering them once is enough.
             if !panel.isVisible { panel.orderFrontRegardless() }
@@ -253,13 +256,17 @@ public final class TabbedOverlayController {
                   let view = panel.contentView as? TabbedPaneView else { continue }
             let chrome = BTRect(x: frame.minX, y: frame.minY, width: frame.size.width,
                                height: pane.tabs.isEmpty ? frame.size.height : TabbedLayoutState.headerHeight)
-            panel.setFrame(appKit(chrome), display: false)
+            let chromeFrame = appKit(chrome)
+            if panel.frame != chromeFrame { panel.setFrame(chromeFrame, display: false) }
             view.updateAccessibility()
             view.updateToolTips()
             view.needsDisplay = true
 
         }
-        curtain?.setFrame(appKit(bounds), display: false)
+        if let curtain {
+            let frame = appKit(bounds)
+            if curtain.frame != frame { curtain.setFrame(frame, display: false) }
+        }
         if let view = curtain?.contentView as? TabbedCurtainView { updateCurtainExclusions(view) }
         refreshDividerControls()
     }
@@ -826,6 +833,7 @@ struct TabbedStripLayout {
     private var downTab: WindowID?
     private var downClose: WindowID?
     private var dragging = false
+    private var attemptedDrag = false
     private var hoverPoint: NSPoint?
     private var firstVisibleIndex = 0
     override var isFlipped: Bool { true }
@@ -850,8 +858,7 @@ struct TabbedStripLayout {
                           startIndex: firstVisibleIndex)
     }
     private func tabIndex(at point: NSPoint) -> Int? {
-        guard let index = strip.tabIndex(at: point) else { return nil }
-        return pane.tabs.firstIndex(of: renderedOrder[index])
+        strip.tabIndex(at: point)
     }
 
     override func updateTrackingAreas() {
@@ -1078,13 +1085,18 @@ struct TabbedStripLayout {
     }
 
     override func mouseDown(with event: NSEvent) {
-        guard owner?.isDropPending != true else { return }
         let point = convert(event.locationInWindow, from: nil)
-        downTab = nil; downClose = nil; downPoint = nil; dragging = false
+        downTab = nil; downClose = nil; downPoint = nil; dragging = false; attemptedDrag = false
         if strip.menuFrame.contains(point) || event.modifierFlags.contains(.control) { showMenu(event); return }
         if let index = tabIndex(at: point) {
-            let id = pane.tabs[index]
-            if strip.closeFrame(index).contains(point) { downClose = id; hoverPoint = point; needsDisplay = true; return }
+            // A released strip shows provisional membership until placement
+            // settles. Capture the displayed window identity; the model queues
+            // its selection behind the move.
+            let id = renderedOrder[index]
+            if strip.closeFrame(index).contains(point) {
+                guard owner?.isDropPending != true else { return }
+                downClose = id; hoverPoint = point; needsDisplay = true; return
+            }
             downTab = id; downPoint = point; dragging = false
             hoverPoint = point; needsDisplay = true
         } else { owner?.send(.activate(pane.id)) }
@@ -1095,7 +1107,8 @@ struct TabbedStripLayout {
         guard let id = downTab, let downPoint, let owner else { return }
         let point = convert(event.locationInWindow, from: nil)
         if !dragging && hypot(point.x - downPoint.x, point.y - downPoint.y) >= 5 {
-            let tab = strip.tabFrame(pane.tabs.firstIndex(of: id) ?? 0)
+            attemptedDrag = true
+            let tab = strip.tabFrame(renderedOrder.firstIndex(of: id) ?? 0)
             dragging = owner.beginDrag(id, offset: NSPoint(x: downPoint.x - tab.minX, y: downPoint.y))
         }
         if dragging { owner.queueDrag(to: owner.screenPoint(event)) }
@@ -1106,22 +1119,22 @@ struct TabbedStripLayout {
             owner.drag(to: owner.screenPoint(event))
             owner.endDrag()
         }
-        else if let downClose,
+        else if !attemptedDrag, let downClose,
                 let index = tabIndex(at: point),
-                pane.tabs[index] == downClose,
+                renderedOrder[index] == downClose,
                 strip.closeFrame(index).contains(point) { owner?.send(.close(downClose)) }
-        else if let downTab,
+        else if !attemptedDrag, let downTab,
                 let index = tabIndex(at: point),
-                pane.tabs[index] == downTab,
+                renderedOrder[index] == downTab,
                 !strip.closeFrame(index).contains(point) { owner?.send(.select(downTab)) }
-        downTab = nil; downClose = nil; downPoint = nil; dragging = false
+        downTab = nil; downClose = nil; downPoint = nil; dragging = false; attemptedDrag = false
         needsDisplay = true
     }
     override func rightMouseDown(with event: NSEvent) { showMenu(event) }
     private func showMenu(_ event: NSEvent) {
-        guard let owner else { return }
+        guard let owner, !owner.isDropPending else { return }
         let index = tabIndex(at: convert(event.locationInWindow, from: nil))
-        let menu = owner.menu(pane: pane, windowID: index.map { pane.tabs[$0] })
+        let menu = owner.menu(pane: pane, windowID: index.map { renderedOrder[$0] })
         NSMenu.popUpContextMenu(menu, with: event, for: self)
     }
     override func keyDown(with event: NSEvent) {

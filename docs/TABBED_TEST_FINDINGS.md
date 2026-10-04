@@ -1,6 +1,6 @@
 # Tabbed testing findings
 
-Last updated: 2026-10-02.
+Last updated: 2026-10-04.
 
 This is the status record for the experimental Tabbed implementation. Update
 the relevant row after each test or fix. An attempted action is not a passed
@@ -116,6 +116,12 @@ matrix below.
 | T-45 | Increased minimums prevented Native exit | Fixed; Native exit and shutdown regressions cover grown minimums and exact reachable baselines; failed Native exit rolls back | Passed with fixtures: Native exit and idle shutdown restore frames with grown width and height minimums; unchanged baseline restored exactly |
 | T-46 | Shutdown cancelled an active divider after restoration and overwrote restored frames | Fixed; fake-window regression reproduced the overwrite; divider cancellation now precedes final restoration | Pending for a held native gesture |
 | T-47 | Floating a tab restored undersized frames or committed after a failed write | Fixed; current and learned minimums, exact reachable baselines, new-window fallback, rollback, Undo, and bounded retry covered | Passed with a fixture: grown width and height minimums restore a floating frame; failure paths checked with fake windows |
+| T-48 | A later click replaced a queued move; retaining all clicks caused a slow-focus backlog | Fixed; structural commands retain order, consecutive selections keep each pane's latest choice after membership settles | Pending |
+| T-49 | A rejected native center drop retained destination membership and an Undo entry | Fixed; selected/inactive source regressions restore original membership and frames; cancellation restores tab order and selection | Pending |
+| T-50 | Pending strip drops discarded clicks, including clicks on a provisionally transferred tab | Fixed; AppKit pointer tests use displayed identity and recheck it after completion or rollback; blocked drags do not become clicks | Pending |
+| T-51 | A queued synchronous pane activation discarded a deferred window refresh | Fixed; fake-window sequence checks new-window membership after queued activation | Pending |
+| T-52 | Refreshes repeated unchanged panel frame/content assignments; simple selection repeated its focus raise | Fixed; counters require no unchanged panel writes and one focus raise when no other pane needs ordering; stacking repairs remain active | Synthetic previews checked; real-app flicker pending |
+| T-53 | A cancelled strip placement discarded a click accepted after native drag capture | Fixed; in-flight placement, immediate native release, queued selection, and Undo regressions pass; lone-tab cancellation drains UI and captured snap commands | Pending |
 
 The polish pass also fixes Bento clamping beside locked boundaries, divider
 Escape handling with either app focused, ignored linked-resize neighbors,
@@ -232,6 +238,45 @@ Fixture checks reached that endpoint and returned to 50 percent. Light/dark
 Settings divider samples rendered normally; strength endpoints and Glass
 on/off preserved fixture window dimensions. Cross-process blur and curtain
 coverage remain pending.
+
+## Repeated interaction regression pass (2026-10-04)
+
+The regression pass reproduced T-48 through T-53 before their fixes. Core tests
+repeat move-and-return sequences 1,800 times across all six three-tab orders and
+three starting selections. App-model tests repeat 100 mixed strip-command and
+native-drop cycles across same-app and mixed-app fixtures. A 42-click burst
+against a fake app that does not accept focus requests produces only three
+focus requests: the active request and each pane's final choice. Structural
+commands remain barriers between selection runs.
+
+AppKit tests cover clicks during pending same-pane reorder and cross-pane
+transfer, release outside the pressed tab, blocked repeat drags, and completion
+or rollback between press and release. Synthetic native previews cover reorder,
+empty-pane insertion, and splitting in light and dark appearance. They use owned
+fixture windows, not foreign application content.
+
+These checks do not establish that cross-process flicker is gone. The real-app
+matrix, physical input timing, and display/Space interruption checks remain open.
+The integrated pass completed 914 tests across Core, macOS, and App targets,
+`swift build`, and the Debug Xcode build with signing disabled. Astra reviewed
+the final changes before commit. No real managed applications were used in
+these automated checks.
+
+The existing interaction benchmark compared the original and revised overlay
+on the same Mac. Each version ran three times serially, without concurrent
+builds or captures. The table reports the median of each run's metric.
+
+| Synthetic scenario | Before mean / p95 | After mean / p95 |
+| --- | --- | --- |
+| Completed tab-drag frame, four panes / 16 tabs | 0.583 / 2.024 ms | 0.586 / 2.106 ms |
+| Move/selection refresh, four panes / 16 tabs | 11.919 / 23.848 ms | 11.390 / 22.258 ms |
+
+The refresh controller's call phase decreased from 1.905 to 1.426 ms mean.
+Completed drag-frame timing was similar and remained within the existing
+1 ms mean / 3 ms p95 targets. The benchmark includes Core Animation commits
+and pending AppKit drawing, but excludes real Accessibility writes and final
+WindowServer composition. These results do not prove a reduction in visible
+cross-application flicker.
 
 ## Current live checks
 

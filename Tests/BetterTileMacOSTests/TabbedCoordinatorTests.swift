@@ -18,6 +18,23 @@ import Testing
     #expect(system.minimizeWriteCounts.isEmpty)
 }
 
+@Test(arguments: [false, true]) @MainActor
+func tabbedSelectionRaisesOnceUnlessOtherSelectionsNeedOrdering(orderOtherPane: Bool) async {
+    let system = FakeWindowSystem()
+    system.addSecondWindow()
+    let first = system.windows[0].id, second = system.windows[1].id
+    let result = await WindowCoordinator(system: system).applyTabbed(
+        placements: system.windows.map { Placement(windowID: $0.id, frame: $0.frame) },
+        selected: orderOtherPane ? [first, second] : [first],
+        previousSelected: [first, second], focus: first, isCurrent: { true })
+
+    #expect(result.isApplied)
+    #expect(system.frameWriteCounts.isEmpty)
+    #expect(system.raisedWindows.map(\.0) == (orderOtherPane ? [first, second, first] : [first]))
+    #expect(system.raisedWindows.filter(\.1).map(\.0) == [first])
+    #expect(system.focusedWindowID == first)
+}
+
 @Test @MainActor func tabbedCoordinatorWaitsForSlowFocusWithoutRollingBack() async {
     let system = FakeWindowSystem()
     system.addSecondWindow()

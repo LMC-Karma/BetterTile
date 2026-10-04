@@ -935,7 +935,11 @@ extension WindowCoordinator {
                 touched = true
                 try tabSystem.raiseWindow(id, activate: false)
             }
-            if let focus { try tabSystem.raiseWindow(focus, activate: false) }
+            // Activation already raised the focused tab. Raise it again only
+            // when ordering another pane put a window in front of it.
+            if let focus, selected.contains(where: { $0 != focus }) {
+                try tabSystem.raiseWindow(focus, activate: false)
+            }
             var previousFrames: [WindowID: BTRect] = [:]
             var previousHiddenFrames: [WindowID: BTRect] = [:]
             // Frames settle within four samples. Activation can take longer,

@@ -48,6 +48,7 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, TabbedWindowSystem {
     func requestAccessibilityPermission(prompt: Bool) -> Bool { permission }
     var focusedID: WindowID?
     var focusRequests: [WindowID] = []
+    var acceptsFocusRequests = true
     var raiseRequests: [(WindowID, Bool)] = []
     var failingNextRaiseWindowID: WindowID?
     var windowNumberRequests: [Set<WindowID>] = []
@@ -72,7 +73,10 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, TabbedWindowSystem {
             throw WindowSystemError.operationFailed("Injected window ordering failure.")
         }
         raiseRequests.append((id, activate))
-        if activate { focusedID = id; focusRequests.append(id) }
+        if activate {
+            if acceptsFocusRequests { focusedID = id }
+            focusRequests.append(id)
+        }
         if updatesStackOnRaise, let index = stack?.firstIndex(where: { $0.windowID == id }), let entry = stack?.remove(at: index) {
             stack?.insert(entry, at: 0)
         }
