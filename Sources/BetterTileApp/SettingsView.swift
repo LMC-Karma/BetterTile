@@ -328,10 +328,6 @@ private struct GeneralSettings: View {
                     .foregroundStyle(.secondary)
             }
 
-            Section("Application") {
-                Toggle("Show Dock icon", isOn: configurationBinding(\.showDockIcon))
-            }
-
             Section("Updates") {
                 HStack {
                     Text("Version")
@@ -387,7 +383,7 @@ private struct GeneralSettings: View {
                 Text("System follows the current macOS appearance.")
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
-                AppIconPicker()
+                AppIconPicker(showDockIcon: configurationBinding(\.showDockIcon))
             }
 
             Section("Advanced") {
@@ -443,37 +439,80 @@ private struct GeneralSettings: View {
 }
 
 struct AppIconPicker: View {
+    @Binding var showDockIcon: Bool
     @AppStorage(AppIconStyle.defaultsKey) private var selectedRawValue = AppIconStyle.classic.rawValue
 
     var body: some View {
-        Picker("App icon", selection: Binding(
-            get: { AppIconStyle(rawValue: selectedRawValue) ?? .classic },
-            set: { style in
-                selectedRawValue = style.rawValue
-                AppIconStyle.apply(style)
+        Toggle("Show Dock icon", isOn: $showDockIcon)
+        VStack(alignment: .leading, spacing: 12) {
+            Text("App icon")
+            HStack(spacing: 12) {
+                ForEach(AppIconStyle.allCases) { style in
+                    iconChoice(style)
+                }
             }
-        )) {
-            ForEach(AppIconStyle.allCases) { style in
-                VStack(spacing: 6) {
+            Text(showDockIcon
+                 ? "Changes the Dock icon while BetterTile is running. Finder uses Classic."
+                 : "Your choice is saved. Turn on Show Dock icon above to display it in the Dock.")
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+        }
+        .padding(.vertical, 4)
+    }
+
+    private func iconChoice(_ style: AppIconStyle) -> some View {
+        let selected = (AppIconStyle(rawValue: selectedRawValue) ?? .classic) == style
+        return Button {
+            select(style)
+        } label: {
+            VStack(spacing: 8) {
+                Group {
                     if let image = style.image {
                         Image(nsImage: image)
                             .resizable()
                             .interpolation(.high)
                             .scaledToFit()
-                            .frame(width: 64, height: 64)
-                            .accessibilityHidden(true)
+                    } else {
+                        Image(systemName: "app")
+                            .font(.largeTitle)
                     }
-                    Text(style.title)
                 }
-                .tag(style)
-                .accessibilityLabel(style.title)
+                .frame(width: 64, height: 64)
+                Text(style.title)
+                    .multilineTextAlignment(.center)
             }
+            .frame(width: 112)
+            .padding(.vertical, 12)
+            .background(
+                selected ? Color.accentColor.opacity(0.12) : Color.secondary.opacity(0.06),
+                in: RoundedRectangle(cornerRadius: 12)
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(selected ? Color.accentColor : Color.secondary.opacity(0.18))
+            }
+            .overlay(alignment: .topTrailing) {
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundStyle(Color.accentColor)
+                    .padding(6)
+                    .opacity(selected ? 1 : 0)
+            }
+            .contentShape(RoundedRectangle(cornerRadius: 12))
         }
-        .pickerStyle(.radioGroup)
-        .horizontalRadioGroupLayout()
-        Text("Changes the Dock icon while BetterTile is running. Your choice is saved; Finder uses Classic.")
-            .font(.system(size: 12))
-            .foregroundStyle(.secondary)
+        .buttonStyle(.plain)
+        .focusable()
+        .onKeyPress(keys: [.space, .return]) { _ in
+            select(style)
+            return .handled
+        }
+        .accessibilityLabel(style.title)
+        .accessibilityAddTraits(selected ? .isSelected : [])
+        .help("Use the \(style.title) icon in the Dock")
+    }
+
+    private func select(_ style: AppIconStyle) {
+        selectedRawValue = style.rawValue
+        AppIconStyle.apply(style)
     }
 }
 
