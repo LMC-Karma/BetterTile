@@ -328,11 +328,25 @@ not animated positions. The same tick scrolls crowded strips at held edge
 positions. Unchanged destinations retain their preview frame and window order.
 Tooltips and accessibility children refresh when the drag presentation ends,
 instead of on each provisional move. Mouse-up bypasses coalescing, recomputes
-the exact release destination, and emits one intent. The released tab stays at its destination until that placement
-completes; failure restores the committed order. New tab drags wait for any
-pending placement to finish. Escape, hiding, or a layout change clears the
-provisional order, queued samples, springs, and scrolling. Reduce Motion
-disables the springs.
+the exact release destination, and emits one intent. The released tab stays at
+its destination until that placement completes; failure restores the committed
+order. Clicks during a pending drop capture the displayed window identity and
+queue selection behind placement. New tab drags wait for any pending placement
+to finish. A blocked drag does not become a click on release. Escape, hiding,
+or a layout change clears the provisional order, queued samples, springs, and
+scrolling. Reduce Motion disables the springs.
+
+Tabbed retains accepted commands in order while a placement is pending. On
+completion, a consecutive run of selections keeps the last choice in each
+pane, using the now-committed membership. Moves and other commands separate
+these runs. Synchronous commands do not discard deferred reconciliation.
+Native center drops use the original group and frame checkpoint for rollback;
+membership and Undo commit only after placement succeeds. Returning a torn tab
+to its origin restores its original order and selection without adding Undo.
+A native drag supersedes the prior unfinished placement and commands queued
+before capture. Commands accepted after capture wait for release; the cancelled
+placement cannot discard them or unlock tab dragging during the native gesture.
+Release drains those commands even when no new placement is needed.
 
 ## Linked resizing
 

@@ -318,6 +318,35 @@ BETTERTILE_NATIVE_GLASS_PREVIEW_DIR=/tmp/bettertile-glass-previews \
   --filter 'nativeGlassCompositorPreviews|nativeDividerLensPreviews|menuGlassPopoverPreviews'
 ```
 
+## Repeated transfer and selection checks
+
+Start with A/B in one pane and C/D in another. Select A, move A to the second
+pane, select C, select A, move A back, then select B and A. Repeat with different
+starting tab orders, same-app windows, and mixed apps. Alternate tab-strip and
+title-bar drags. Run settled steps first, then issue clicks before each preceding
+move settles.
+
+- A valid move must not disappear when a later tab is clicked. The final
+  selection in each pane must match the last requested selection there.
+- During a pending strip drop, click both an existing destination tab and the
+  incoming tab. The click must address the displayed tab. A second drag waits
+  for settlement and must not become an accidental selection on release.
+- Move the last tab out of a pane and back. The empty pane remains a destination.
+- Cancel a native title-bar drag. The tab returns to its original order and
+  selection without adding an Undo step. Undo after a rejected drop must undo
+  the preceding successful change.
+- Start a native drag while a selection or move settles, finish it immediately,
+  and select another tab. The next interaction must work without Repair.
+- Open or close a window during placement, then activate another pane. The
+  deferred window inventory must still reconcile.
+- Click rapidly between tabs of a slow-to-focus application. Older selections
+  in the same pane must not create a long replay after the final click. Type
+  after settlement to check real focus, separately from selected-tab styling.
+
+The automated sequence tests use fake windows and AppKit pointer events. Record
+real-app focus, stacking, and flicker results separately in
+[TABBED_TEST_FINDINGS.md](TABBED_TEST_FINDINGS.md).
+
 ## Optional interaction benchmark
 
 Run this check locally with no simultaneous builds or compositor captures.

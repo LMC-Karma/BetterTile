@@ -73,7 +73,7 @@ final class BetterTileModel {
     private var tabbedTasks: [DisplayID: Task<Void, Never>] = [:]
     private var tabbedTaskIDs: [DisplayID: UUID] = [:]
     private var tabbedExiting: Set<DisplayID> = []
-    private var tabbedQueuedIntents: [DisplayID: PendingTabbedIntent] = [:]
+    private var tabbedQueuedIntents: [DisplayID: [PendingTabbedIntent]] = [:]
     private var tabbedUndo: [DesktopSessionID: [TabbedUndoStep]] = [:]
     private var tabbedNeedsRefresh: Set<DisplayID> = []
     /// An apply arrived while another was running; re-apply the committed state after it.
@@ -1093,6 +1093,9 @@ final class BetterTileModel {
         // The gesture now owns this desktop revision. An older placement
         // must not drain queued work into the provisional tear-off state.
         tabbedTasks[displayID]?.cancel()
+        tabbedQueuedIntents.removeValue(forKey: displayID)
+        tabbedNeedsReapply.remove(displayID)
+        tabbedNeedsRefresh.remove(displayID)
         windowEventTask?.cancel()
         windowEventTask = nil
         // These callbacks may already belong to the move that triggered the
@@ -1113,6 +1116,7 @@ final class BetterTileModel {
             tabbedRollbackFrames: tabbedRollbackFrames,
             tabbedWindows: bentoEligible(windows.filter { $0.displayID == displayID && $0.isEligible && !$0.isFloating })
         )
+        tabbedOverlays[displayID]?.acceptsTabDrags = false
         dividerResize.refresh(boundaries: [])
         return true
     }
@@ -1166,6 +1170,15 @@ final class BetterTileModel {
               active.session.displayID == displayID,
               active.session.sourceWindowID == sourceID
         else { return }
+        defer {
+            if activeBentoDrag == nil, !isTabbedBusy(on: displayID) {
+                drainTabbedQueuedIntent(on: displayID, sessionID: active.layoutSession.id)
+                if !isTabbedBusy(on: displayID), tabbedQueuedIntents[displayID] == nil {
+                    tabbedOverlays[displayID]?.completeDrop()
+                    tabbedOverlays[displayID]?.acceptsTabDrags = true
+                }
+            }
+        }
 
         if active.layoutSession.mode == .tabbed, let pending = tabbedTasks[displayID] {
             // Beginning this gesture superseded the older placement revision.
@@ -1376,24 +1389,28 @@ final class BetterTileModel {
         }
         guard let destination else { return false }
         _ = coordinator.cancel(transaction: active.transaction)
-        // A concurrent update can replace the session between reading and
-        // committing. Retry once against the current session so the dragged
-        // tab is never left floating.
-        for _ in 0..<2 {
-            guard var session = sessionStore.session(for: active.session.displayID),
-                  var state = session.tabbedState else { break }
-            state.move(sourceID, to: destination)
-            session.tabbedState = state
-            guard let committed = sessionStore.commit(session, replacing: session.revision) else { continue }
-            if let baseline = active.tabbedUndoBaseline, baseline != state {
-                rememberTabbedUndo(baseline, sessionID: committed.id)
+        if let session = sessionStore.session(for: active.session.displayID),
+           session.id == active.layoutSession.id, session.revision == active.layoutSession.revision,
+           display.visibleFrame == active.session.workArea,
+           let baseline = active.tabbedUndoBaseline, var state = session.tabbedState {
+            let restoring: Bool
+            if case .restore = outcome {
+                state = baseline
+                restoring = true
+            } else {
+                state.move(sourceID, to: destination)
+                restoring = false
             }
-            if let windows = try? system.visibleWindows() {
-                let displayWindows = bentoEligible(windows.filter {
-                    $0.displayID == display.id && $0.isEligible && !$0.isFloating
-                })
-                applyTabbedState(state, session: committed, display: display, windows: displayWindows, focus: sourceID)
-            }
+            let windows = (try? system.visibleWindows()) ?? active.tabbedWindows
+            let displayWindows = bentoEligible(windows.filter {
+                $0.displayID == display.id && $0.isEligible && !$0.isFloating
+            })
+            // The tear-off is provisional. Publish membership and Undo only
+            // after placement succeeds, restoring the original group on failure.
+            applyTabbedState(state, session: session, display: display, windows: displayWindows,
+                focus: restoring ? baseline.activeWindowID : sourceID, rememberUndo: !restoring,
+                rollbackFrames: active.tabbedRollbackFrames, gestureBaseline: baseline,
+                gestureSourceID: sourceID, expectedSpaceID: active.tabbedSpaceID)
             return true
         }
         statusMessage = "The desktop changed during the drop. Use Repair Tabbed to return the window to a pane."
@@ -3142,7 +3159,7 @@ extension BetterTileModel {
         guard presentsTabbedChrome, session.mode == .tabbed, let state = session.tabbedState, !isStabilizingSpace,
               !nativeFullscreenDisplayIDs.contains(display.id) else { return }
         let overlay = tabbedOverlays[display.id] ?? TabbedOverlayController()
-        overlay.acceptsTabDrags = tabbedTasks[display.id] == nil
+        overlay.acceptsTabDrags = !isTabbedBusy(on: display.id)
         overlay.overlayAppearance = configuration.overlayAppearance
         let sessionID = session.id
         overlay.onIntent = { [weak self, weak overlay] intent in
@@ -3151,7 +3168,9 @@ extension BetterTileModel {
                 return
             }
             self.handleTabbed(intent, on: display.id)
-            if self.tabbedTasks[display.id] == nil { self.tabbedOverlays[display.id]?.completeDrop() }
+            if !self.isTabbedBusy(on: display.id), self.tabbedQueuedIntents[display.id] == nil {
+                self.tabbedOverlays[display.id]?.completeDrop()
+            }
         }
         let focused = try? system.focusedWindow()
         let obscuring = focused.flatMap { window in
@@ -3226,8 +3245,8 @@ extension BetterTileModel {
             presentLayoutWheelUnavailable(tabbedSnapUnavailableReason(action), displayID: displayID)
             return
         }
-        if tabbedTasks[displayID] != nil {
-            tabbedQueuedIntents[displayID] = .snap(windowID, action, expectedSpaceID)
+        if isTabbedBusy(on: displayID) {
+            tabbedQueuedIntents[displayID, default: []].append(.snap(windowID, action, expectedSpaceID))
             return
         }
         applyTabbedState(context.state, session: context.session, display: context.display,
@@ -3333,7 +3352,7 @@ extension BetterTileModel {
             tabbedTasks[display.id] = Task { @MainActor [weak self] in
                 guard let self else { return }
                 defer {
-                    if self.tabbedTasks[display.id] == nil, self.tabbedQueuedIntents[display.id] == nil {
+                    if !self.isTabbedBusy(on: display.id), self.tabbedQueuedIntents[display.id] == nil {
                         self.tabbedOverlays[display.id]?.completeDrop()
                         self.tabbedOverlays[display.id]?.acceptsTabDrags = true
                     }
@@ -3345,9 +3364,11 @@ extension BetterTileModel {
                 self.tabbedTaskIDs.removeValue(forKey: display.id)
                 self.tabbedTasks[display.id] = nil
                 guard isSameDesktop(), !Task.isCancelled else {
-                    self.tabbedQueuedIntents.removeValue(forKey: display.id)
-                    self.tabbedNeedsReapply.remove(display.id)
-                    self.tabbedNeedsRefresh.remove(display.id)
+                    if !isSameDesktop() || self.activeBentoDrag?.layoutSession.id != original.id {
+                        self.tabbedQueuedIntents.removeValue(forKey: display.id)
+                        self.tabbedNeedsReapply.remove(display.id)
+                        self.tabbedNeedsRefresh.remove(display.id)
+                    }
                     return
                 }
                 guard isCurrent() else {
@@ -3377,7 +3398,7 @@ extension BetterTileModel {
         tabbedTasks[display.id] = Task { @MainActor [weak self] in
             guard let self else { return }
             defer {
-                if self.tabbedTasks[display.id] == nil, self.tabbedQueuedIntents[display.id] == nil {
+                if !self.isTabbedBusy(on: display.id), self.tabbedQueuedIntents[display.id] == nil {
                     self.tabbedOverlays[display.id]?.completeDrop()
                     self.tabbedOverlays[display.id]?.acceptsTabDrags = true
                 }
@@ -3410,7 +3431,7 @@ extension BetterTileModel {
                     placements: proposal.placements,
                     rollbackFrames: rollbackFrames,
                     rollbackDisplayID: rollbackFrames == nil ? nil : display.id,
-                    rollbackRequired: snapAction == nil ? nil : Set(previous?.selectedWindowIDs ?? []),
+                    rollbackRequired: rollbackFrames == nil ? nil : Set(previous?.selectedWindowIDs ?? []),
                     // Selected tabs and newly floating windows must settle;
                     // hidden tabs stack behind their pane at best effort.
                     required: selectionOnly ? nil : Set(proposal.state.selectedWindowIDs).union(detached),
@@ -3448,9 +3469,11 @@ extension BetterTileModel {
             self.tabbedTaskIDs.removeValue(forKey: display.id)
             self.tabbedTasks[display.id] = nil
             guard !Task.isCancelled, isSameDesktop() else {
-                self.tabbedQueuedIntents.removeValue(forKey: display.id)
-                self.tabbedNeedsReapply.remove(display.id)
-                self.tabbedNeedsRefresh.remove(display.id)
+                if !isSameDesktop() || self.activeBentoDrag?.layoutSession.id != original.id {
+                    self.tabbedQueuedIntents.removeValue(forKey: display.id)
+                    self.tabbedNeedsReapply.remove(display.id)
+                    self.tabbedNeedsRefresh.remove(display.id)
+                }
                 return
             }
             guard isCurrent() else {
@@ -3508,13 +3531,18 @@ extension BetterTileModel {
         if tabbedUndo[sessionID, default: []].count > 20 { tabbedUndo[sessionID]?.removeFirst() }
     }
 
+    private func isTabbedBusy(on displayID: DisplayID) -> Bool {
+        tabbedTasks[displayID] != nil || (activeBentoDrag?.session.displayID == displayID
+            && activeBentoDrag?.layoutSession.mode == .tabbed)
+    }
+
     private func handleTabbed(_ intent: TabbedUIIntent, on displayID: DisplayID) {
         guard !isStabilizingSpace, !isShutDown,
               var session = sessionStore.session(for: displayID), session.mode == .tabbed,
               let display = system.displays().first(where: { $0.id == displayID }),
               var state = session.tabbedState else { return }
-        if tabbedTasks[displayID] != nil {
-            tabbedQueuedIntents[displayID] = .ui(intent)
+        if isTabbedBusy(on: displayID) {
+            tabbedQueuedIntents[displayID, default: []].append(.ui(intent))
             return
         }
         guard let allWindows = try? system.visibleWindows() else { return }
@@ -3528,8 +3556,11 @@ extension BetterTileModel {
         var selectionOnly = false
         var restorationFrames: [WindowID: BTRect] = [:]
         switch intent {
-        case let .select(id): state.select(id); focus = id; undo = false; selectionOnly = true
+        case let .select(id):
+            guard state.paneID(containing: id) != nil else { return }
+            state.select(id); focus = id; undo = false; selectionOnly = true
         case let .activate(id):
+            guard state.panes.contains(where: { $0.id == id }) else { return }
             tabbedFocusTask?.cancel()
             tabbedNeedsFocusRefresh = false
             state.activatePane(id)
@@ -3542,8 +3573,14 @@ extension BetterTileModel {
             if !outcome.isApplied { statusMessage = outcome.failureReason }
             return
         case let .float(id): state.float(id); focus = id
-        case let .move(id, pane, index): state.move(id, to: pane, at: index); focus = id
-        case let .split(id, pane, edge): state.split(paneID: pane, moving: id, edge: edge); focus = id
+        case let .move(id, pane, index):
+            guard state.panes.contains(where: { $0.id == pane }),
+                  windows.contains(where: { $0.id == id }) else { return }
+            state.move(id, to: pane, at: index); focus = id
+        case let .split(id, pane, edge):
+            guard state.panes.contains(where: { $0.id == pane }),
+                  windows.contains(where: { $0.id == id }) else { return }
+            state.split(paneID: pane, moving: id, edge: edge); focus = id
         case let .preset(preset): state.applyPreset(preset); focus = state.activeWindowID
         case .undo:
             guard let step = tabbedUndo[session.id]?.last else { return }
@@ -3645,20 +3682,46 @@ extension BetterTileModel {
     }
 
     private func drainTabbedQueuedIntent(on displayID: DisplayID, sessionID: DesktopSessionID) {
-        let queuedIntent = tabbedQueuedIntents.removeValue(forKey: displayID)
-        let needsRefresh = tabbedNeedsRefresh.remove(displayID) != nil
-        let needsReapply = tabbedNeedsReapply.remove(displayID) != nil
         guard !Task.isCancelled, !isStabilizingSpace, !isShutDown,
               sessionStore.session(for: displayID)?.id == sessionID,
-              activeMode(for: displayID) == .tabbed else { return }
-        if let queuedIntent {
-            switch queuedIntent {
+              activeMode(for: displayID) == .tabbed else {
+            tabbedQueuedIntents.removeValue(forKey: displayID)
+            tabbedNeedsRefresh.remove(displayID)
+            tabbedNeedsReapply.remove(displayID)
+            return
+        }
+        // Synchronous actions (empty-pane activation, close, unavailable
+        // targets) do not start a task. Continue until a placement owns the
+        // slot, keeping background work pending behind accepted user actions.
+        while !isTabbedBusy(on: displayID),
+              var queued = tabbedQueuedIntents[displayID], !queued.isEmpty {
+            let intent = queued.removeFirst()
+            tabbedQueuedIntents[displayID] = queued.isEmpty ? nil : queued
+            if case let .ui(.select(id)) = intent,
+               let state = sessionStore.session(for: displayID)?.tabbedState,
+               let pane = state.paneID(containing: id) {
+                // Resolve membership after the preceding placement settles.
+                // Within this selection run, only each pane's latest click
+                // matters. A structural action ends the run.
+                let laterSelections = queued.prefix {
+                    if case .ui(.select) = $0 { return true }
+                    return false
+                }
+                if laterSelections.contains(where: {
+                    if case let .ui(.select(other)) = $0 { return state.paneID(containing: other) == pane }
+                    return false
+                }) { continue }
+            }
+            switch intent {
             case let .ui(intent): handleTabbed(intent, on: displayID)
             case let .snap(id, action, space): performTabbedSnap(action, windowID: id, displayID: displayID, expectedSpaceID: space)
             }
-        } else if needsReapply {
+        }
+        guard !isTabbedBusy(on: displayID) else { return }
+        if tabbedNeedsReapply.remove(displayID) != nil {
             refreshTabbedAfterBentoChange(displayID: displayID)
-        } else if needsRefresh {
+        }
+        if tabbedTasks[displayID] == nil, tabbedNeedsRefresh.remove(displayID) != nil {
             refreshActiveWindows(force: false)
         }
     }
@@ -3690,7 +3753,7 @@ extension BetterTileModel {
             // An unreadable focus cannot become readable by retrying after each
             // placement, so only busy displays keep the refresh pending.
             let focused = (try? self.system.focusedWindow()) ?? nil
-            if let focused, self.tabbedTasks[focused.displayID] != nil { return }
+            if let focused, self.isTabbedBusy(on: focused.displayID) { return }
             self.tabbedNeedsFocusRefresh = false
             if let focused, self.isFrontmost(focused),
                let session = self.sessionStore.session(for: focused.displayID), session.mode == .tabbed,

@@ -62,6 +62,48 @@ private func snapshot(_ name: String, minimum: BTSize = BTSize(width: 120, heigh
     #expect(state.panes.flatMap(\.tabs).count == state.windowIDs.count)
 }
 
+@Test(arguments: [["a", "b", "c"], ["a", "c", "b"], ["b", "a", "c"],
+                  ["b", "c", "a"], ["c", "a", "b"], ["c", "b", "a"]], 0..<3)
+func tabbedRepeatedTransfersDoNotDependOnTabOrder(order: [String], selectedIndex: Int) throws {
+    var state = TabbedLayoutState(preset: .columns)
+    let tabs = order.map(id)
+    let peer = id("peer")
+    let left = state.panes[0].id, right = state.panes[1].id
+    state.reconcile(windowIDs: tabs + [peer], removed: [], focused: nil)
+    state.move(peer, to: right)
+    for (index, tab) in tabs.enumerated() { state.move(tab, to: left, at: index) }
+    state.select(tabs[selectedIndex])
+    let bounds = BTRect(x: 0, y: 0, width: 1400, height: 900)
+    let originalFrames = state.frames(in: bounds)
+    let members = Set(tabs + [peer])
+
+    for cycle in 0..<100 {
+        let moving = tabs[cycle % tabs.count]
+        let insertion = cycle % 2
+        state.move(moving, to: right, at: insertion)
+        #expect(state.panes[1].tabs[insertion] == moving)
+        for tab in [peer, moving, peer, moving] {
+            state.select(tab)
+            #expect(state.activeWindowID == tab)
+            #expect(state.panes[1].selected == tab)
+        }
+        state.move(moving, to: left, at: try #require(tabs.firstIndex(of: moving)))
+        for tab in tabs {
+            state.select(tab)
+            #expect(state.activeWindowID == tab)
+        }
+        #expect(state.panes.map(\.id) == [left, right])
+        #expect(state.panes[0].tabs == tabs)
+        #expect(state.panes[1].tabs == [peer])
+        #expect(state.panes[1].selected == peer)
+        #expect(state.windowIDs == members)
+        #expect(state.panes.flatMap(\.tabs).count == members.count)
+        #expect(Set(state.layout.root?.windowIDs ?? []) == Set(state.selectedWindowIDs))
+        #expect(state.floatingWindowIDs.isEmpty)
+        #expect(state.frames(in: bounds) == originalFrames)
+    }
+}
+
 @Test func tabbedReconcileKeepsFloatingMembershipUntilClosed() {
     let a = id("a"), b = id("b")
     var state = TabbedLayoutState()

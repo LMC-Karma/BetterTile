@@ -5,10 +5,32 @@ import Testing
 
 @MainActor private final class DragTestPanel: NSPanel {
     var frameWrites = 0
+    var contentWrites = 0
+    override var contentView: NSView? {
+        didSet { contentWrites += 1 }
+    }
     override func setFrame(_ frameRect: NSRect, display flag: Bool) {
         frameWrites += 1
         super.setFrame(frameRect, display: flag)
     }
+}
+
+@Test @MainActor func unchangedTabbedRefreshRetainsPanelFramesAndContentViews() throws {
+    var orders = 0
+    let f = try TabDragFixture(orderPanel: { _, _, _ in orders += 1 })
+    defer { f.overlay.hide() }
+    let numbers = [f.ids[0]: 777]
+    f.overlay.refresh(state: f.state, bounds: f.bounds, windows: [],
+                      selectedWindowNumbers: numbers, curtainAnchorWindowNumber: 777)
+    f.createdPanels().forEach { $0.frameWrites = 0; $0.contentWrites = 0 }
+    orders = 0
+    f.overlay.refresh(state: f.state, bounds: f.bounds, windows: [],
+                      selectedWindowNumbers: numbers, curtainAnchorWindowNumber: 777)
+    #expect(f.createdPanels().allSatisfy { $0.frameWrites == 0 })
+    #expect(f.createdPanels().allSatisfy { $0.contentWrites == 0 })
+    #expect(orders == 3) // Both strips and the validated curtain still rejoin the window stack.
+    f.overlay.refreshResize(state: f.state, bounds: f.bounds)
+    #expect(f.createdPanels().allSatisfy { $0.frameWrites == 0 })
 }
 
 @MainActor private final class TabDragFixture {
@@ -21,7 +43,8 @@ import Testing
 
     init(count: Int = 3,
          bounds: BTRect = BTRect(x: 12000, y: 0, width: 1600, height: 800),
-         appearance: NSAppearance? = nil) throws {
+         appearance: NSAppearance? = nil,
+         orderPanel: @escaping (NSPanel, NSWindow.OrderingMode, Int) -> Void = { $0.order($1, relativeTo: $2) }) throws {
         _ = NSApplication.shared
         self.bounds = bounds
         ids = (0..<count).map { WindowID(rawValue: "drag-check-\($0)") }
@@ -33,7 +56,7 @@ import Testing
             panel.appearance = appearance
             made.append(panel)
             return panel
-        })
+        }, orderPanel: orderPanel)
         let windows = ids.enumerated().map { index, id in
             WindowSnapshot(id: id, processIdentifier: 1, title: "Document \(index + 1)", frame: bounds,
                            displayID: DisplayID(rawValue: "drag-check"))
@@ -57,8 +80,9 @@ import Testing
         }
     }
 
-    func event(_ type: NSEvent.EventType, x: Double, y: Double = 17) throws -> NSEvent {
-        let panel = try #require(view.window)
+    func event(_ type: NSEvent.EventType, x: Double, y: Double = 17,
+               in target: TabbedPaneView? = nil) throws -> NSEvent {
+        let panel = try #require((target ?? view).window)
         let screen = NSPoint(x: x, y: NSScreen.screens.first!.frame.maxY - y)
         return try #require(NSEvent.mouseEvent(with: type, location: panel.convertPoint(fromScreen: screen),
                                               modifierFlags: [], timestamp: 0, windowNumber: panel.windowNumber,
@@ -74,6 +98,131 @@ import Testing
     func release(x: Double, y: Double = 17) throws {
         view.mouseUp(with: try event(.leftMouseUp, x: x, y: y))
     }
+}
+
+@Test(arguments: [false, true]) @MainActor
+func pendingTabDropAcceptsClicksByTheDisplayedWindowIdentity(crossPane: Bool) throws {
+    let f = try TabDragFixture()
+    defer { f.overlay.hide() }
+    var selections: [WindowID] = []
+    f.overlay.onIntent = { if case let .select(id) = $0 { selections.append(id) } }
+    try f.start()
+    let releaseX = crossPane ? f.bounds.minX + 900 : f.bounds.minX + 650
+    try f.drag(x: releaseX)
+    f.ticks.fire()
+    try f.release(x: releaseX)
+    try #require(f.overlay.isDropPending)
+    let target = crossPane
+        ? try #require(f.createdPanels().compactMap(\.contentView).compactMap { $0 as? TabbedPaneView }
+            .first { $0.pane.id == f.state.panes[1].id })
+        : f.view
+    let order = try #require(target.content.previewOrder)
+    for (slot, id) in order.enumerated() {
+        let rect = target.strip.tabFrame(slot)
+        let paneFrame = try #require(f.state.frames(in: f.bounds)[target.pane.id])
+        let x = paneFrame.minX + rect.minX + 12
+        target.mouseDown(with: try f.event(.leftMouseDown, x: x, in: target))
+        target.mouseUp(with: try f.event(.leftMouseUp, x: x, in: target))
+        #expect(selections.last == id)
+    }
+    #expect(selections == order)
+    #expect(f.overlay.isDropPending)
+    #expect(!f.overlay.isInteracting)
+}
+
+@Test(arguments: [false, true], [false, true]) @MainActor
+func pendingTabClickValidatesItsIdentityAgainAfterPlacementFinishes(crossPane: Bool, success: Bool) throws {
+    let f = try TabDragFixture()
+    defer { f.overlay.hide() }
+    var selections: [WindowID] = []
+    f.overlay.onIntent = { if case let .select(id) = $0 { selections.append(id) } }
+    try f.start()
+    let releaseX = crossPane ? f.bounds.minX + 900 : f.bounds.minX + 650
+    try f.drag(x: releaseX)
+    f.ticks.fire()
+    try f.release(x: releaseX)
+    try #require(f.overlay.isDropPending)
+    let target = crossPane
+        ? try #require(f.createdPanels().compactMap(\.contentView).compactMap { $0 as? TabbedPaneView }
+            .first { $0.pane.id == f.state.panes[1].id })
+        : f.view
+    let pressedID = try #require(target.content.previewOrder?.first)
+    let paneFrame = try #require(f.state.frames(in: f.bounds)[target.pane.id])
+    let x = paneFrame.minX + target.strip.tabFrame(0).minX + 12
+    target.mouseDown(with: try f.event(.leftMouseDown, x: x, in: target))
+    if success {
+        f.state.move(f.ids[0], to: target.pane.id, at: crossPane ? 0 : 2)
+        f.overlay.refresh(state: f.state, bounds: f.bounds, windows: [])
+    }
+    f.overlay.completeDrop()
+    target.mouseUp(with: try f.event(.leftMouseUp, x: x, in: target))
+    // Success retains the displayed identity; rollback puts a different tab,
+    // or no tab, under the same pointer and must not select it.
+    #expect(selections == (success ? [pressedID] : []))
+}
+
+@Test(arguments: [false, true], [false, true]) @MainActor
+func pendingTabDropPreservesExactClickReleaseAndBlocksAnotherDrag(crossPane: Bool, success: Bool) throws {
+    let f = try TabDragFixture()
+    defer { f.overlay.hide() }
+    var selections: [WindowID] = []
+    var closes: [WindowID] = []
+    var moves = 0
+    f.overlay.onIntent = {
+        switch $0 {
+        case let .select(id): selections.append(id)
+        case let .close(id): closes.append(id)
+        case .move: moves += 1
+        default: break
+        }
+    }
+    try f.start()
+    let releaseX = crossPane ? f.bounds.minX + 900 : f.bounds.minX + 650
+    try f.drag(x: releaseX)
+    f.ticks.fire()
+    try f.release(x: releaseX)
+    try #require(f.overlay.isDropPending)
+    let target = crossPane
+        ? try #require(f.createdPanels().compactMap(\.contentView).compactMap { $0 as? TabbedPaneView }
+            .first { $0.pane.id == f.state.panes[1].id })
+        : f.view
+    let paneFrame = try #require(f.state.frames(in: f.bounds)[target.pane.id])
+    let tab = target.strip.tabFrame(0)
+    let close = target.strip.closeFrame(0)
+    let pressX = paneFrame.minX + tab.minX + 12
+    let closeX = paneFrame.minX + close.midX
+    // Selection still requires the same displayed tab and a non-close release.
+    for (releaseX, releaseY) in [(closeX, 17.0), (paneFrame.minX + 5, 17.0), (pressX, -1.0)] {
+        target.mouseDown(with: try f.event(.leftMouseDown, x: pressX, in: target))
+        target.mouseUp(with: try f.event(.leftMouseUp, x: releaseX, y: releaseY, in: target))
+    }
+    target.mouseDown(with: try f.event(.leftMouseDown, x: closeX, in: target))
+    target.mouseUp(with: try f.event(.leftMouseUp, x: closeX, in: target))
+    // A blocked drag can return to the original tab. It must not become a click.
+    target.mouseDown(with: try f.event(.leftMouseDown, x: pressX, in: target))
+    target.mouseDragged(with: try f.event(.leftMouseDragged, x: pressX + 10, in: target))
+    f.ticks.fire()
+    target.mouseUp(with: try f.event(.leftMouseUp, x: pressX, in: target))
+    #expect(selections.isEmpty)
+    #expect(closes.isEmpty)
+    #expect(moves == 1)
+    #expect(f.overlay.isDropPending)
+
+    if success {
+        f.state.move(f.ids[0], to: target.pane.id, at: crossPane ? 0 : 2)
+        f.overlay.refresh(state: f.state, bounds: f.bounds, windows: [])
+    }
+    f.overlay.completeDrop()
+    #expect(!f.overlay.isDropPending)
+    #expect(target.content.previewOrder == nil)
+    // Both success and failure restore a strip that accepts the next selection.
+    let expected = try #require(target.pane.tabs.first ?? f.view.pane.tabs.first)
+    let clickable = target.pane.tabs.isEmpty ? f.view : target
+    let clickableFrame = try #require(f.state.frames(in: f.bounds)[clickable.pane.id])
+    let x = clickableFrame.minX + clickable.strip.tabFrame(0).minX + 12
+    clickable.mouseDown(with: try f.event(.leftMouseDown, x: x, in: clickable))
+    clickable.mouseUp(with: try f.event(.leftMouseUp, x: x, in: clickable))
+    #expect(selections == [expected])
 }
 
 @Test @MainActor func tabDragConsumesOnlyTheLatestPointPerTickAndReleasesExactly() throws {
