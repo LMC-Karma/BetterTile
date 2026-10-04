@@ -95,12 +95,23 @@ enum AppIconStyle: String, CaseIterable, Identifiable {
 
     case classic
     case ice
+    case dark
 
     var id: Self { self }
-    var title: String { self == .classic ? "Classic" : "Ice Blue" }
+    var title: String {
+        switch self {
+        case .classic: "Classic"
+        case .ice: "Ice Blue"
+        case .dark: "Dark"
+        }
+    }
 
     var resourceName: String {
-        let name = self == .classic ? "AppIcon" : "AppIconIce"
+        let name = switch self {
+        case .classic: "AppIcon"
+        case .ice: "AppIconIce"
+        case .dark: "AppIconDark"
+        }
 #if DEBUG
         return name + "Debug"
 #else

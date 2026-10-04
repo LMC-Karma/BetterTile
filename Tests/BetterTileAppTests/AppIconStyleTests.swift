@@ -11,6 +11,8 @@ import Testing
     defaults.set("ice", forKey: AppIconStyle.defaultsKey)
     let restoredDefaults = try #require(UserDefaults(suiteName: suite))
     #expect(AppIconStyle.selected(in: restoredDefaults) == .ice)
+    defaults.set("dark", forKey: AppIconStyle.defaultsKey)
+    #expect(AppIconStyle.selected(in: restoredDefaults) == .dark)
     defaults.set("unknown-future-icon", forKey: AppIconStyle.defaultsKey)
     #expect(AppIconStyle.selected(in: defaults) == .classic)
     defaults.set("classic", forKey: AppIconStyle.defaultsKey)
@@ -48,14 +50,14 @@ import Testing
         }
     }
     let expected = try geometry(document(source))
-    for name in ["AppIconIce", "AppIconDebug", "AppIconIceDebug"] {
+    for name in ["AppIconIce", "AppIconDark", "AppIconDebug", "AppIconIceDebug", "AppIconDarkDebug"] {
         let bundle = resources.appendingPathComponent("\(name).icon")
         var actual = try document(bundle)
         if name.hasSuffix("Debug") {
             var groups = try #require(actual["groups"] as? [[String: Any]])
             let badgeIndex = try #require(groups.firstIndex { $0["name"] as? String == "Debug" })
-            if name == "AppIconIceDebug" {
-                #expect(badgeIndex == 0, "The Debug badge must be above the opaque Ice panes")
+            if name != "AppIconDebug" {
+                #expect(badgeIndex == 0, "The Debug badge must be above the opaque panes")
             }
             groups.remove(at: badgeIndex)
             actual["groups"] = groups
@@ -64,7 +66,7 @@ import Testing
         for file in ["00-TrafficLights.svg", "01-LeftPanes.svg", "02-RightPane.svg"] {
             let originalURL = source.appendingPathComponent("Assets/\(file)")
             let copyURL = bundle.appendingPathComponent("Assets/\(file)")
-            if name.contains("Ice") && file != "00-TrafficLights.svg" {
+            if (name.contains("Ice") || name.contains("Dark")) && file != "00-TrafficLights.svg" {
                 #expect(try outlines(copyURL) == outlines(originalURL), "\(name)/\(file) must preserve each pane outline")
                 let originalRoot = try #require(XMLDocument(contentsOf: originalURL).rootElement())
                 let copyRoot = try #require(XMLDocument(contentsOf: copyURL).rootElement())
