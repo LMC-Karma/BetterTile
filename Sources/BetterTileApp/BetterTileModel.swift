@@ -1666,11 +1666,7 @@ final class BetterTileModel {
     private func applyDockPolicy() {
         guard !isShutDown else { return }
         NSApp.setActivationPolicy(configuration.showDockIcon ? .regular : .accessory)
-        guard configuration.showDockIcon,
-              let icon = NSImage(named: NSImage.applicationIconName)
-        else { return }
-        NSApp.applicationIconImage = icon
-        NSApp.dockTile.display()
+        if configuration.showDockIcon { AppIconStyle.apply() }
     }
 
     func installWorkspaceTriggers() {

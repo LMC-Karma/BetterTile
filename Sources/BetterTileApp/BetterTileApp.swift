@@ -90,6 +90,40 @@ enum AppAppearance: String, CaseIterable, Identifiable {
     }
 }
 
+enum AppIconStyle: String, CaseIterable, Identifiable {
+    static let defaultsKey = "BetterTileAppIcon"
+
+    case classic
+    case ice
+
+    var id: Self { self }
+    var title: String { self == .classic ? "Classic" : "Ice Blue" }
+
+    var resourceName: String {
+        let name = self == .classic ? "AppIcon" : "AppIconIce"
+#if DEBUG
+        return name + "Debug"
+#else
+        return name
+#endif
+    }
+
+    static func selected(in defaults: UserDefaults = .standard) -> Self {
+        defaults.string(forKey: defaultsKey).flatMap(Self.init(rawValue:)) ?? .classic
+    }
+
+    @MainActor
+    var image: NSImage? { Bundle.main.image(forResource: resourceName) }
+
+    @MainActor
+    static func apply(_ style: Self? = nil) {
+        let selected = style ?? selected()
+        // nil restores the system-rendered primary Icon Composer icon.
+        NSApp.applicationIconImage = selected == .classic ? nil : selected.image
+        NSApp.dockTile.display()
+    }
+}
+
 enum WindowActionGroup: String, CaseIterable, Identifiable {
     case halves
     case thirds
@@ -228,6 +262,7 @@ private final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSPo
         _ = model
         WindowActionGroup.assertComplete()
         AppAppearance.apply()
+        AppIconStyle.apply()
         installMainMenu()
         installStatusItem()
 #if !DEBUG
