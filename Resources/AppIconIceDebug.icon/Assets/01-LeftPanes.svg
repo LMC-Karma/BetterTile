@@ -1,4 +1,68 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
-  <rect x="190" y="240" width="380" height="230" rx="70" fill="#FFFFFF"/>
-  <rect x="190" y="554" width="380" height="230" rx="70" fill="#FFFFFF"/>
+  <defs>
+    <linearGradient id="rim-0" x1="0" y1="0" x2="0.65" y2="1"><stop stop-color="#0861FF"/><stop offset="1" stop-color="#0020B6"/></linearGradient>
+    <linearGradient id="rim-1" x1="0" y1="0" x2="0.65" y2="1"><stop stop-color="#389EFF"/><stop offset="1" stop-color="#0030D1"/></linearGradient>
+    <linearGradient id="rim-2" x1="0" y1="0" x2="0.65" y2="1"><stop stop-color="#92CEFF"/><stop offset="1" stop-color="#0140EC"/></linearGradient>
+    <linearGradient id="rim-3" x1="0" y1="0" x2="0.65" y2="1"><stop stop-color="#EDFFFF"/><stop offset="1" stop-color="#0D5AF2"/></linearGradient>
+    <linearGradient id="rim-4" x1="0" y1="0" x2="0.65" y2="1"><stop stop-color="#EBFFFF"/><stop offset="1" stop-color="#1874F9"/></linearGradient>
+    <linearGradient id="rim-5" x1="0" y1="0" x2="0.65" y2="1"><stop stop-color="#E9FFFF"/><stop offset="1" stop-color="#248EFF"/></linearGradient>
+    <linearGradient id="rim-6" x1="0" y1="0" x2="0.65" y2="1"><stop stop-color="#D8FAFF"/><stop offset="1" stop-color="#3297FF"/></linearGradient>
+    <linearGradient id="rim-7" x1="0" y1="0" x2="0.65" y2="1"><stop stop-color="#C6F4FF"/><stop offset="1" stop-color="#3FA0FF"/></linearGradient>
+    <linearGradient id="rim-8" x1="0" y1="0" x2="0.65" y2="1"><stop stop-color="#B5EEFF"/><stop offset="1" stop-color="#4DA9FF"/></linearGradient>
+    <linearGradient id="rim-9" x1="0" y1="0" x2="0.65" y2="1"><stop stop-color="#A4E9FF"/><stop offset="1" stop-color="#48A1FF"/></linearGradient>
+    <linearGradient id="rim-10" x1="0" y1="0" x2="0.65" y2="1"><stop stop-color="#9BE3FF"/><stop offset="1" stop-color="#429AFF"/></linearGradient>
+    <linearGradient id="rim-11" x1="0" y1="0" x2="0.65" y2="1"><stop stop-color="#91DDFF"/><stop offset="1" stop-color="#3D92FF"/></linearGradient>
+    <linearGradient id="rim-12" x1="0" y1="0" x2="0.65" y2="1"><stop stop-color="#88D7FF"/><stop offset="1" stop-color="#388AFF"/></linearGradient>
+    <linearGradient id="rim-13" x1="0" y1="0" x2="0.65" y2="1"><stop stop-color="#7ED1FF"/><stop offset="1" stop-color="#3080FD"/></linearGradient>
+    <linearGradient id="rim-14" x1="0" y1="0" x2="0.65" y2="1"><stop stop-color="#75CBFF"/><stop offset="1" stop-color="#2877FC"/></linearGradient>
+    <linearGradient id="rim-15" x1="0" y1="0" x2="0.65" y2="1"><stop stop-color="#71C8FF"/><stop offset="1" stop-color="#206EFA"/></linearGradient>
+    <linearGradient id="rim-16" x1="0" y1="0" x2="0.65" y2="1"><stop stop-color="#6EC4FF"/><stop offset="1" stop-color="#1764F8"/></linearGradient>
+    <linearGradient id="rim-17" x1="0" y1="0" x2="0.65" y2="1"><stop stop-color="#6AC0FF"/><stop offset="1" stop-color="#0F5AF7"/></linearGradient>
+    <linearGradient id="rim-18" x1="0" y1="0" x2="0.65" y2="1"><stop stop-color="#66BDFF"/><stop offset="1" stop-color="#0751F5"/></linearGradient>
+    <linearGradient id="face" x1="0" y1="0" x2="0.3" y2="1"><stop offset="0" stop-color="#66BDFF"/><stop offset=".38" stop-color="#2583FF"/><stop offset="1" stop-color="#0751F5"/></linearGradient>
+  </defs>
+  <g id="upper-pane">
+    <rect id="upper-pane-outline" x="190" y="240" width="380" height="230" rx="70" fill="url(#rim-0)"/>
+    <rect x="191" y="241" width="378" height="228" rx="69" fill="url(#rim-1)"/>
+    <rect x="192" y="242" width="376" height="226" rx="68" fill="url(#rim-2)"/>
+    <rect x="193" y="243" width="374" height="224" rx="67" fill="url(#rim-3)"/>
+    <rect x="194" y="244" width="372" height="222" rx="66" fill="url(#rim-4)"/>
+    <rect x="195" y="245" width="370" height="220" rx="65" fill="url(#rim-5)"/>
+    <rect x="196" y="246" width="368" height="218" rx="64" fill="url(#rim-6)"/>
+    <rect x="197" y="247" width="366" height="216" rx="63" fill="url(#rim-7)"/>
+    <rect x="198" y="248" width="364" height="214" rx="62" fill="url(#rim-8)"/>
+    <rect x="199" y="249" width="362" height="212" rx="61" fill="url(#rim-9)"/>
+    <rect x="200" y="250" width="360" height="210" rx="60" fill="url(#rim-10)"/>
+    <rect x="201" y="251" width="358" height="208" rx="59" fill="url(#rim-11)"/>
+    <rect x="202" y="252" width="356" height="206" rx="58" fill="url(#rim-12)"/>
+    <rect x="203" y="253" width="354" height="204" rx="57" fill="url(#rim-13)"/>
+    <rect x="204" y="254" width="352" height="202" rx="56" fill="url(#rim-14)"/>
+    <rect x="205" y="255" width="350" height="200" rx="55" fill="url(#rim-15)"/>
+    <rect x="206" y="256" width="348" height="198" rx="54" fill="url(#rim-16)"/>
+    <rect x="207" y="257" width="346" height="196" rx="53" fill="url(#rim-17)"/>
+    <rect x="208" y="258" width="344" height="194" rx="52" fill="url(#rim-18)"/>
+    <rect x="209" y="259" width="342" height="192" rx="51" fill="url(#face)"/>
+  </g>
+  <g id="lower-pane">
+    <rect id="lower-pane-outline" x="190" y="554" width="380" height="230" rx="70" fill="url(#rim-0)"/>
+    <rect x="191" y="555" width="378" height="228" rx="69" fill="url(#rim-1)"/>
+    <rect x="192" y="556" width="376" height="226" rx="68" fill="url(#rim-2)"/>
+    <rect x="193" y="557" width="374" height="224" rx="67" fill="url(#rim-3)"/>
+    <rect x="194" y="558" width="372" height="222" rx="66" fill="url(#rim-4)"/>
+    <rect x="195" y="559" width="370" height="220" rx="65" fill="url(#rim-5)"/>
+    <rect x="196" y="560" width="368" height="218" rx="64" fill="url(#rim-6)"/>
+    <rect x="197" y="561" width="366" height="216" rx="63" fill="url(#rim-7)"/>
+    <rect x="198" y="562" width="364" height="214" rx="62" fill="url(#rim-8)"/>
+    <rect x="199" y="563" width="362" height="212" rx="61" fill="url(#rim-9)"/>
+    <rect x="200" y="564" width="360" height="210" rx="60" fill="url(#rim-10)"/>
+    <rect x="201" y="565" width="358" height="208" rx="59" fill="url(#rim-11)"/>
+    <rect x="202" y="566" width="356" height="206" rx="58" fill="url(#rim-12)"/>
+    <rect x="203" y="567" width="354" height="204" rx="57" fill="url(#rim-13)"/>
+    <rect x="204" y="568" width="352" height="202" rx="56" fill="url(#rim-14)"/>
+    <rect x="205" y="569" width="350" height="200" rx="55" fill="url(#rim-15)"/>
+    <rect x="206" y="570" width="348" height="198" rx="54" fill="url(#rim-16)"/>
+    <rect x="207" y="571" width="346" height="196" rx="53" fill="url(#rim-17)"/>
+    <rect x="208" y="572" width="344" height="194" rx="52" fill="url(#rim-18)"/>
+    <rect x="209" y="573" width="342" height="192" rx="51" fill="url(#face)"/>
+  </g>
 </svg>

@@ -1,3 +1,46 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
-  <rect x="620" y="240" width="214" height="544" rx="70" fill="#059669"/>
+  <defs>
+    <linearGradient id="rim-0" x1="0" y1="0" x2="0.65" y2="1"><stop stop-color="#08B98B"/><stop offset="1" stop-color="#037598"/></linearGradient>
+    <linearGradient id="rim-1" x1="0" y1="0" x2="0.65" y2="1"><stop stop-color="#28CC9C"/><stop offset="1" stop-color="#0482A6"/></linearGradient>
+    <linearGradient id="rim-2" x1="0" y1="0" x2="0.65" y2="1"><stop stop-color="#47DEAC"/><stop offset="1" stop-color="#068EB4"/></linearGradient>
+    <linearGradient id="rim-3" x1="0" y1="0" x2="0.65" y2="1"><stop stop-color="#96EECE"/><stop offset="1" stop-color="#179FC0"/></linearGradient>
+    <linearGradient id="rim-4" x1="0" y1="0" x2="0.65" y2="1"><stop stop-color="#E6FFF0"/><stop offset="1" stop-color="#27B0CB"/></linearGradient>
+    <linearGradient id="rim-5" x1="0" y1="0" x2="0.65" y2="1"><stop stop-color="#DFFFEC"/><stop offset="1" stop-color="#38C1D7"/></linearGradient>
+    <linearGradient id="rim-6" x1="0" y1="0" x2="0.65" y2="1"><stop stop-color="#D8FFE8"/><stop offset="1" stop-color="#3DC4D8"/></linearGradient>
+    <linearGradient id="rim-7" x1="0" y1="0" x2="0.65" y2="1"><stop stop-color="#CAFEE3"/><stop offset="1" stop-color="#42C7DA"/></linearGradient>
+    <linearGradient id="rim-8" x1="0" y1="0" x2="0.65" y2="1"><stop stop-color="#BCFDDE"/><stop offset="1" stop-color="#48CADB"/></linearGradient>
+    <linearGradient id="rim-9" x1="0" y1="0" x2="0.65" y2="1"><stop stop-color="#AEFCD9"/><stop offset="1" stop-color="#4DCDDC"/></linearGradient>
+    <linearGradient id="rim-10" x1="0" y1="0" x2="0.65" y2="1"><stop stop-color="#A0FBD4"/><stop offset="1" stop-color="#46C5D7"/></linearGradient>
+    <linearGradient id="rim-11" x1="0" y1="0" x2="0.65" y2="1"><stop stop-color="#98F9D1"/><stop offset="1" stop-color="#3FBED2"/></linearGradient>
+    <linearGradient id="rim-12" x1="0" y1="0" x2="0.65" y2="1"><stop stop-color="#8FF8CD"/><stop offset="1" stop-color="#38B6CD"/></linearGradient>
+    <linearGradient id="rim-13" x1="0" y1="0" x2="0.65" y2="1"><stop stop-color="#87F6CA"/><stop offset="1" stop-color="#31AFC8"/></linearGradient>
+    <linearGradient id="rim-14" x1="0" y1="0" x2="0.65" y2="1"><stop stop-color="#7EF5C6"/><stop offset="1" stop-color="#2AA7C3"/></linearGradient>
+    <linearGradient id="rim-15" x1="0" y1="0" x2="0.65" y2="1"><stop stop-color="#76F3C3"/><stop offset="1" stop-color="#209FC1"/></linearGradient>
+    <linearGradient id="rim-16" x1="0" y1="0" x2="0.65" y2="1"><stop stop-color="#6BF7BE"/><stop offset="1" stop-color="#1596BE"/></linearGradient>
+    <linearGradient id="rim-17" x1="0" y1="0" x2="0.65" y2="1"><stop stop-color="#5FFBB9"/><stop offset="1" stop-color="#0A8EBC"/></linearGradient>
+    <linearGradient id="rim-18" x1="0" y1="0" x2="0.65" y2="1"><stop stop-color="#54FFB4"/><stop offset="1" stop-color="#0086BA"/></linearGradient>
+    <linearGradient id="face" x1="0" y1="0" x2="0.3" y2="1"><stop offset="0" stop-color="#54FFB4"/><stop offset=".42" stop-color="#13DFB8"/><stop offset="1" stop-color="#0086BA"/></linearGradient>
+  </defs>
+  <g id="right-pane">
+    <rect id="right-pane-outline" x="620" y="240" width="214" height="544" rx="70" fill="url(#rim-0)"/>
+    <rect x="621" y="241" width="212" height="542" rx="69" fill="url(#rim-1)"/>
+    <rect x="622" y="242" width="210" height="540" rx="68" fill="url(#rim-2)"/>
+    <rect x="623" y="243" width="208" height="538" rx="67" fill="url(#rim-3)"/>
+    <rect x="624" y="244" width="206" height="536" rx="66" fill="url(#rim-4)"/>
+    <rect x="625" y="245" width="204" height="534" rx="65" fill="url(#rim-5)"/>
+    <rect x="626" y="246" width="202" height="532" rx="64" fill="url(#rim-6)"/>
+    <rect x="627" y="247" width="200" height="530" rx="63" fill="url(#rim-7)"/>
+    <rect x="628" y="248" width="198" height="528" rx="62" fill="url(#rim-8)"/>
+    <rect x="629" y="249" width="196" height="526" rx="61" fill="url(#rim-9)"/>
+    <rect x="630" y="250" width="194" height="524" rx="60" fill="url(#rim-10)"/>
+    <rect x="631" y="251" width="192" height="522" rx="59" fill="url(#rim-11)"/>
+    <rect x="632" y="252" width="190" height="520" rx="58" fill="url(#rim-12)"/>
+    <rect x="633" y="253" width="188" height="518" rx="57" fill="url(#rim-13)"/>
+    <rect x="634" y="254" width="186" height="516" rx="56" fill="url(#rim-14)"/>
+    <rect x="635" y="255" width="184" height="514" rx="55" fill="url(#rim-15)"/>
+    <rect x="636" y="256" width="182" height="512" rx="54" fill="url(#rim-16)"/>
+    <rect x="637" y="257" width="180" height="510" rx="53" fill="url(#rim-17)"/>
+    <rect x="638" y="258" width="178" height="508" rx="52" fill="url(#rim-18)"/>
+    <rect x="639" y="259" width="176" height="506" rx="51" fill="url(#face)"/>
+  </g>
 </svg>

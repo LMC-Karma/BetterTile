@@ -1,13 +1,20 @@
 # App icon variants
 
 Classic uses the existing [AppIcon.icon](../../Resources/AppIcon.icon) document.
-[Ice Blue](../../Resources/AppIconIce.icon) is a copy of that document. It changes
-only the background color to ice blue. Every foreground SVG is an exact copy. The SVG geometry, layer positions, scale, groups, and Liquid Glass
-settings match the source. The Debug copies add the existing D badge.
+[Ice Blue](../../Resources/AppIconIce.icon) derives from that document. It keeps
+the pane outlines, corner radii, canvas, layer order, positions, and scale.
+It uses a pale ice background, blue left panes, and a mint-to-teal right pane.
+Inset SVG gradient contours create the thicker glossy rims inside the original
+outlines. Pane translucency and shadow strength are adjusted for these colors.
+The traffic-light SVG remains an exact copy. Each Debug copy adds the existing D
+badge. Ice Blue places that badge above its opaque panes so it stays visible.
 
 Open either `.icon` document in Apple's Icon Composer. When changing source
-geometry or effects, copy those changes into the other three documents.
-`appIconVariantsPreserveSourceGeometryAndEffects` checks that they stay aligned.
+geometry, copy those changes into the other three documents. Keep appearance
+changes aligned within each base/Debug pair. Edit the pane SVG gradients to
+adjust the Ice rim colors; Icon Composer retains the native glass and shadow
+effects. `appIconVariantsPreserveSourceGeometry` checks the outlines, canvas,
+composition, and matching Debug copies.
 
 Settings → General → Appearance has a native radio picker with both icon
 previews. Classic is the default. The local `BetterTileAppIcon` preference saves
@@ -31,7 +38,9 @@ introduced. The only new stored value is the local icon preference.
 - Native picker interaction in an isolated app using the actual picker source
   and compiled icon catalog; the running window manager was left in place.
 - Light and dark picker captures and Apple-rendered icon previews are in
-  [previews](previews). Icon exports use Icon Composer's `ictool`, macOS,
-  design generation 26. They are review images, not runtime PNG resources.
+  [previews](previews). Icon exports use Icon Composer's `ictool` for macOS.
+  Unsuffixed icon exports use design generation 26; `*-27.png` exports use
+  generation 27. The final Ice source was also opened and checked in Icon
+  Composer. These are review images, not runtime PNG resources.
 - Full-app relaunch, live Dock appearance changes, and VoiceOver traversal
   remain manual checks. These builds are unsigned and are not distributed.
