@@ -1,10 +1,10 @@
 {
-  "name": "bettertile-website",
-  "version": "1.0.0",
+  "name": "bettertile-brand-website",
   "private": true,
+  "type": "module",
   "scripts": {
-    "build": "node --check main.js && node check.cjs && node build.mjs",
-    "test": "node check.cjs",
-    "dev": "python3 -u -m http.server 4175 --bind 127.0.0.1"
-  }
+    "dev": "python3 -u -m http.server 4188 --bind 127.0.0.1",
+    "build": "node --check redesign.js && node --check export-assets.js && node build.mjs && node check.mjs"
+  },
+  "engines": { "node": ">=22" }
 }

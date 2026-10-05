@@ -1,0 +1,171 @@
+{
+  "snap": {
+    "source": "bettertile-videos/out/loops/bettertile-snap.mp4",
+    "website": "assets/media/snap.mp4",
+    "trimEnd": null,
+    "audio": "removed; video stream only",
+    "origin": "User-created Remotion rendered demonstration, not a live app capture",
+    "probe": {
+      "programs": [],
+      "stream_groups": [],
+      "streams": [
+        {
+          "codec_name": "h264",
+          "codec_type": "video",
+          "width": 1920,
+          "height": 1080,
+          "r_frame_rate": "60/1"
+        }
+      ],
+      "format": {
+        "duration": "8.400000",
+        "size": "2816976"
+      }
+    }
+  },
+  "resize": {
+    "source": "bettertile-videos/out/loops/bettertile-resize.mp4",
+    "website": "assets/media/resize.mp4",
+    "trimEnd": null,
+    "audio": "removed; video stream only",
+    "origin": "User-created Remotion rendered demonstration, not a live app capture",
+    "probe": {
+      "programs": [],
+      "stream_groups": [],
+      "streams": [
+        {
+          "codec_name": "h264",
+          "codec_type": "video",
+          "width": 1920,
+          "height": 1080,
+          "r_frame_rate": "60/1"
+        }
+      ],
+      "format": {
+        "duration": "8.000000",
+        "size": "1316507"
+      }
+    }
+  },
+  "bento": {
+    "source": "bettertile-videos/out/loops/bettertile-bento.mp4",
+    "website": "assets/media/bento.mp4",
+    "trimEnd": null,
+    "audio": "removed; video stream only",
+    "origin": "User-created Remotion rendered demonstration, not a live app capture",
+    "probe": {
+      "programs": [],
+      "stream_groups": [],
+      "streams": [
+        {
+          "codec_name": "h264",
+          "codec_type": "video",
+          "width": 1920,
+          "height": 1080,
+          "r_frame_rate": "60/1"
+        }
+      ],
+      "format": {
+        "duration": "7.600000",
+        "size": "2696579"
+      }
+    }
+  },
+  "tabbed": {
+    "source": "bettertile-videos/out/loops/bettertile-tabbed.mp4",
+    "website": "assets/media/tabbed.mp4",
+    "trimEnd": null,
+    "audio": "removed; video stream only",
+    "origin": "User-created Remotion rendered demonstration, not a live app capture",
+    "probe": {
+      "programs": [],
+      "stream_groups": [],
+      "streams": [
+        {
+          "codec_name": "h264",
+          "codec_type": "video",
+          "width": 1920,
+          "height": 1080,
+          "r_frame_rate": "60/1"
+        }
+      ],
+      "format": {
+        "duration": "7.800000",
+        "size": "1284055"
+      }
+    }
+  },
+  "wheel": {
+    "source": "bettertile-videos/out/loops/bettertile-wheel.mp4",
+    "website": "assets/media/wheel.mp4",
+    "trimEnd": null,
+    "audio": "removed; video stream only",
+    "origin": "User-created Remotion rendered demonstration, not a live app capture",
+    "probe": {
+      "programs": [],
+      "stream_groups": [],
+      "streams": [
+        {
+          "codec_name": "h264",
+          "codec_type": "video",
+          "width": 1920,
+          "height": 1080,
+          "r_frame_rate": "60/1"
+        }
+      ],
+      "format": {
+        "duration": "6.600000",
+        "size": "887659"
+      }
+    }
+  },
+  "keyboard": {
+    "source": "bettertile-videos/out/loops/bettertile-keyboard.mp4",
+    "website": "assets/media/keyboard.mp4",
+    "trimEnd": null,
+    "audio": "removed; video stream only",
+    "origin": "User-created Remotion rendered demonstration, not a live app capture",
+    "probe": {
+      "programs": [],
+      "stream_groups": [],
+      "streams": [
+        {
+          "codec_name": "h264",
+          "codec_type": "video",
+          "width": 1920,
+          "height": 1080,
+          "r_frame_rate": "60/1"
+        }
+      ],
+      "format": {
+        "duration": "5.600000",
+        "size": "1028858"
+      }
+    }
+  },
+  "overview": {
+    "source": "bettertile-videos/out/bettertile-overview.mp4",
+    "website": "assets/media/overview.mp4",
+    "trimEnd": null,
+    "audio": "removed; video stream only",
+    "origin": "User-created Remotion rendered demonstration, not a live app capture",
+    "probe": {
+      "programs": [],
+      "stream_groups": [],
+      "streams": [
+        {
+          "codec_name": "h264",
+          "codec_type": "video",
+          "width": 1920,
+          "height": 1080,
+          "r_frame_rate": "60/1"
+        }
+      ],
+      "format": {
+        "duration": "25.000000",
+        "size": "9499501"
+      }
+    },
+    "note": "Complete overview including BetterTile logo/name closing card, as requested. Original video stream preserved; audio removed."
+  }
+}
