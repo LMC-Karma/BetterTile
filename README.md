@@ -205,8 +205,9 @@ private observations, fallback behavior, and vulnerability reporting.
   windows in that Stage group.
 - **Tabbed needs Stage Manager off.** Pane assignments and placement undo history
   last for the current app session. Cross-display tab dragging is unavailable.
-- **Some apps restrict window sizes.** Broader multi-display and fullscreen
-  behavior remains under validation. Read the [beta notes](docs/releases/0.5.0-beta.md).
+- **Some apps restrict window sizes.** Broader real-app stacking,
+  multi-display, and Space-switch behavior remains under validation. Read the
+  [beta notes](docs/releases/0.5.1-beta.md).
 
 <h2 align="center" id="bettertile-is-free">BetterTile is free</h2>
 
