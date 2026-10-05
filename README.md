@@ -1,253 +1,245 @@
 <p align="center">
-  <img src="docs/assets/app-icon.png" alt="BetterTile app icon" width="180">
+  <a href="https://lmc-karma.github.io/BetterTile/">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="https://lmc-karma.github.io/BetterTile/assets/identity/app-icon-native-dark-256.png">
+      <img src="https://lmc-karma.github.io/BetterTile/assets/identity/app-icon-native-light-256.png" alt="BetterTile app icon" width="160" height="160">
+    </picture>
+  </a>
 </p>
 
-<h1 align="center">BetterTile</h1>
+<h1 align="center" id="bettertile">BetterTile</h1>
 
-**A native macOS window manager that resizes neighbours together, not just one window at a time.**
+<p align="center"><strong>Your windows. Working together.</strong></p>
 
-[![CI](https://github.com/LMC-Karma/BetterTile/actions/workflows/ci.yml/badge.svg)](https://github.com/LMC-Karma/BetterTile/actions/workflows/ci.yml)
-[![License: GPL v3 or later](https://img.shields.io/badge/License-GPL--3.0--or--later-blue.svg)](LICENSE)
-[![Platform](https://img.shields.io/badge/platform-macOS%2026%2B-lightgrey.svg)](#what-you-need)
-[![Swift](https://img.shields.io/badge/Swift-6.3-orange.svg)](https://swift.org)
-[![Free forever](https://img.shields.io/badge/price-free%20forever-brightgreen.svg)](#bettertile-is-free)
+<p align="center">
+  A free, native macOS window manager.<br>
+  Snap windows into place, resize neighbours together, and let Bento adapt as your work grows.
+</p>
 
-[**Download the latest beta**](https://github.com/LMC-Karma/BetterTile/releases/latest)
-· [Website](https://lmc-karma.github.io/BetterTile/)
-· [Build from source](#install)
+<p align="center">
+  <a href="https://github.com/LMC-Karma/BetterTile/releases/latest"><strong>Download the latest beta</strong></a>
+  · <a href="https://lmc-karma.github.io/BetterTile/">Website</a>
+  · <a href="#everything-it-does">Features</a>
+  · <a href="#install">Install</a>
+  · <a href="#private-by-default">Privacy</a>
+  · <a href="#documentation">Documentation</a>
+</p>
 
-Requires macOS 26 or later and Accessibility permission. The public beta is self-signed and not notarized; see
-[Install](#install) before opening it for the first time.
+<p align="center">
+  <a href="https://github.com/LMC-Karma/BetterTile/actions/workflows/ci.yml"><img src="https://github.com/LMC-Karma/BetterTile/actions/workflows/ci.yml/badge.svg" alt="CI status"></a>
+  <a href="#what-you-need"><img src="https://img.shields.io/badge/platform-macOS%2026%2B-lightgrey.svg" alt="macOS 26 or later"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-GPL--3.0--or--later-blue.svg" alt="License: GPL v3 or later"></a>
+  <a href="#bettertile-is-free"><img src="https://img.shields.io/badge/price-free%20forever-brightgreen.svg" alt="Free forever"></a>
+</p>
 
-BetterTile is built with Swift, SwiftUI, AppKit, and the macOS Accessibility
-API. Public Apple APIs control windows. A small, documented set of reviewed,
-read-only private observations improves exact window identity, minimum-size
-handling, Spaces, and Stage Manager behavior; each is validated and has a
-public fallback. BetterTile uses no code injection or SIP workaround and does
-no behavioral tracking. Sparkle is the only runtime dependency and provides
-secure update checks. BetterTile asks for one permission and explains why
-before it does. See [Security and privacy](SECURITY.md) for the full design and
-fallback details.
+<p align="center">
+  Requires macOS 26 or later and Accessibility permission.<br>
+  The public beta is self-signed and not notarized. Read the <a href="#install">installation steps</a> before first launch.
+</p>
 
----
+<p align="center">
+  <a href="https://lmc-karma.github.io/BetterTile/#overview">
+    <img src="https://lmc-karma.github.io/BetterTile/assets/media/overview.jpg" alt="Watch the full BetterTile tour: snapping, linked resizing, Bento, Tabbed, and the Layout Wheel" width="800" height="450">
+  </a>
+  <br>
+  <a href="https://lmc-karma.github.io/BetterTile/#overview"><strong>Watch the full tour · 25 seconds</strong></a>
+</p>
 
-https://github.com/user-attachments/assets/8f8eda65-384f-4e5a-8548-9a9208da6c30
+<h2 align="center" id="everything-it-does">Everything it does</h2>
 
----
+<p align="center">
+  Feature demonstrations. For videos with playback controls, <a href="https://lmc-karma.github.io/BetterTile/#features">visit the website</a>.
+</p>
 
-## Everything it does
+<!-- Rendered product demonstrations, exported at 800 × 450 and 20 fps. GitHub attachments keep the GIFs out of Git history. -->
 
-### Drag windows where they belong
+<h3 align="center" id="resize-neighbours-together">Resize neighbours together</h3>
 
-Drag a window toward an edge or corner and BetterTile previews the zone before
-you let go. Snapping only engages on a real title-bar drag, so it never fights
-you while you are working inside a window.
+<p align="center">
+  Drag the shared boundary between adjacent windows. Both windows resize together.<br>
+  Choose a <strong>live</strong> resize or a <strong>ghost</strong> preview that applies when you release.
+</p>
 
-### Resize neighbours together
+<p align="center">
+  <a href="https://lmc-karma.github.io/BetterTile/#linked">
+    <img src="https://github.com/user-attachments/assets/9352bbca-5a8a-49e1-8193-b9abe254a527" alt="Linked resizing demonstration: moving a shared boundary resizes neighbouring windows together" width="800" height="450">
+  </a>
+</p>
 
-Hover the seam between two adjacent windows and drag it. Both windows resize
-against the shared boundary at once. Choose a **ghost** preview that commits on
-release, or **live** resizing that updates as you move. Boundaries are derived
-from actual window frames within a tolerance you control, so a seam is only
-offered when it genuinely exists.
+<h3 align="center" id="bento-tiling-that-adapts">Bento tiling that adapts</h3>
 
-### Bento tiling that adapts
+<p align="center">
+  Open a window. Bento makes room in the layout while keeping movement and resizing to a minimum.<br>
+  Swap windows, adjust the layout, or float a window out when it needs its own space.
+</p>
 
-Bento arranges the visible windows on each display into a split tree. New
-windows are placed by scoring every candidate split and picking the one that
-moves and resizes the least. Panes carry weights and locks, and you can swap,
-retarget, or float any window out of the layout. Resize a Bento pane natively
-and the tree adopts the change rather than fighting it.
+<p align="center">
+  <a href="https://lmc-karma.github.io/BetterTile/#bento">
+    <img src="https://github.com/user-attachments/assets/3fe57264-071c-4e88-af05-c57aa665a299" alt="Bento demonstration: the layout adjusts as new windows open" width="800" height="450">
+  </a>
+</p>
 
-### Tabbed panes
+<h3 align="center" id="tabbed-panes">Tabbed panes</h3>
 
-Choose **Tabbed** to group windows into resizable panes. Select a tab to bring
-its window forward, drag tabs between panes, or float a window out. Keyboard
-and Layout Wheel partition snaps move the whole pane with its tabs.
+<p align="center">
+  Group windows into resizable panes. Select a tab to bring its window forward.<br>
+  Drag tabs between panes or float a window out. The other windows stay open behind it.
+</p>
 
-Turn off Stage Manager for Tabbed. Pane assignments last for the current app
-session, and cross-display tab dragging is unavailable.
+<p align="center">
+  <a href="https://lmc-karma.github.io/BetterTile/#tabbed">
+    <img src="https://github.com/user-attachments/assets/8be13f8a-705e-4d1f-8d72-f625acd41308" alt="Tabbed demonstration: selecting tabs changes the visible window, and tabs move between panes" width="800" height="450">
+  </a>
+</p>
 
-### Layout Wheel for quick placement
+<p align="center">
+  Turn off Stage Manager for Tabbed. Pane assignments last for the current app session.<br>
+  Cross-display tab dragging is unavailable.
+</p>
 
-Hold the configured modifiers over a focused window to open the Layout Wheel,
-move to a sector, and release to apply its exact action. The default trigger is
-Control + Option + Shift. The center, an Empty sector, Escape, or releasing in
-the gap between two rings cancels without changing the window. One Level keeps
-the wheel compact; Two Levels adds a second ring for utility actions. Every
-sector can be assigned in Settings, including Repair Bento when the display is
-using Bento mode.
+<h3 align="center" id="more-ways-to-arrange-your-windows">More ways to arrange your windows</h3>
 
-An optional Middle Click trigger is available for one-handed use. When enabled,
-BetterTile reserves unmodified middle-click system-wide, so other apps do not
-receive it until the option is turned off.
+<p align="center">
+  <strong>Drag snapping</strong><br>
+  Drag a title bar toward an edge or corner. Preview the placement before you release.
+</p>
 
-### Keyboard shortcuts with duplicate checks
+<p align="center">
+  <strong>Layout Wheel</strong><br>
+  Hold Control + Option + Shift, choose a sector, and release.<br>
+  Configure the trigger, actions, and one or two levels in Settings. The center or Escape cancels.
+</p>
 
-Global shortcuts are available for every standard action. BetterTile prevents
-the same shortcut from being assigned to more than one of its actions.
+<p align="center">
+  <strong>Keyboard shortcuts and undo</strong><br>
+  Place windows with global shortcuts, with duplicate checks for BetterTile actions.<br>
+  Undo a placement to restore an earlier window frame.
+</p>
 
-### Undo the placement, not just the window
+<p align="center">
+  The optional Middle Click trigger reserves unmodified middle-click system-wide while enabled.<br>
+  Other apps receive that button again when you turn the option off.
+</p>
 
-BetterTile keeps a bounded frame history per window, so a misplaced action is
-one step back rather than a manual reconstruction.
+<p align="center">
+  <a href="https://lmc-karma.github.io/BetterTile/#snapping">Watch drag snapping</a>
+  · <a href="https://lmc-karma.github.io/BetterTile/#wheel">Watch the Layout Wheel</a>
+  · <a href="https://lmc-karma.github.io/BetterTile/#keyboard">Watch shortcuts and undo</a>
+</p>
 
 ---
 
 ## What you need
 
-- macOS 26 or later
-- Accessibility permission (the only permission BetterTile requests)
-
-To build it yourself, also Xcode 26 / Swift 6.3 or later.
-
----
+- macOS 26 or later.
+- Accessibility permission. This is the only macOS permission BetterTile requests.
+- To build from source: Xcode 26 / Swift 6.3 or later. See [Development setup](docs/DEVELOPMENT.md).
 
 ## Install
 
-Public beta builds are distributed as disk images from
-[GitHub Releases](https://github.com/LMC-Karma/BetterTile/releases). Download
-the latest `BetterTile-*-beta.dmg`, open it, and drag BetterTile into the
-Applications shortcut before launching it.
+1. [Download the latest beta](https://github.com/LMC-Karma/BetterTile/releases/latest).
+   Open the `BetterTile-*-beta.dmg` and drag BetterTile into **Applications**.
+2. Launch BetterTile. The beta is signed with the stable, self-signed
+   **BetterTile Beta** certificate. It is **not signed with an Apple Developer ID
+   and is not notarized**. After the first launch attempt, open **System Settings →
+   Privacy & Security** and choose **Open Anyway** after confirming the download
+   came from this repository. You can check it against the `.sha256` file beside
+   the release download.
+3. Follow BetterTile's explanation to grant **Accessibility** permission.
+   BetterTile runs in the menu bar. Its Dock icon is optional and off by default.
 
-The beta application is signed with the stable, self-signed **BetterTile Beta**
-certificate. It is **not signed with an Apple Developer ID and is not
-notarized**, so macOS cannot identify the developer and will refuse the first
-launch. Open **System Settings → Privacy & Security**, find the message about
-BetterTile, and choose **Open Anyway**, after confirming that the download came
-from this repository. You can also check the download against the `.sha256`
-file published beside it.
+### Updates
 
-Updates are authenticated separately: Sparkle verifies each DMG's EdDSA
-signature against a public key built into the app, independently of the macOS
-code signature.
+BetterTile checks its GitHub-hosted update feed every four hours by default.
+It shows release notes and asks before downloading or installing. Turn automatic
+checks off in General Settings, or use **Check for Updates…** at any time.
 
-BetterTile checks the repository's GitHub-hosted update feed every four hours by
-default. It shows release notes and asks before downloading or installing. You
-can turn automatic checks off in General Settings or use **Check for Updates…**
-at any time.
+Sparkle verifies each update's EdDSA signature against a public key built into
+the app. This is separate from the beta's macOS code signature. Public betas
+since 0.4.1 use the same self-signed certificate to preserve Accessibility
+permission across normal updates. If that identity changes, the release notes
+will explain the one-time permission steps.
 
-Public betas since 0.4.1 use the same self-signed certificate so normal updates
-keep a stable code-signing identity and do not require you to grant
-Accessibility again. If a future release must change that identity, its release
-notes will include the one-time permission steps.
+### Build from source
 
-To build it from source instead:
-
-```sh
-git clone https://github.com/LMC-Karma/BetterTile.git
-cd BetterTile
-cp Config/LocalSigning.xcconfig.example Config/LocalSigning.xcconfig
-```
-
-Add your Apple ID in **Xcode → Settings → Accounts**, then replace
-`YOUR_TEAM_ID` in `Config/LocalSigning.xcconfig` with your Personal Team ID.
-The local file is gitignored, so signing never changes the shared Xcode project.
-Then run `open BetterTile.xcodeproj`, select the shared **BetterTile** scheme,
-and run. BetterTile launches into the menu bar; the Dock icon is optional and
-off by default. On first launch it explains how to grant Accessibility
-permission. See [Development setup](docs/DEVELOPMENT.md) for Team ID discovery
-and agent setup.
-
-For command-line validation:
-
-```sh
-swift test
-swift build
-```
-
-`Package.swift` intentionally exposes only the supporting libraries, so Xcode
-cannot offer a bundle-less duplicate BetterTile executable.
+Follow [Development setup](docs/DEVELOPMENT.md) to configure your free Personal
+Team, open `BetterTile.xcodeproj`, and run the shared **BetterTile** scheme.
+The Debug app has its own configuration and Accessibility grant, separate from
+the public beta. `Package.swift` exposes supporting libraries only; the runnable
+app comes from the Xcode project.
 
 ### Keeping Accessibility permission across rebuilds
 
-macOS ties privacy grants to an app's code-signing designated requirement.
-Xcode's **Sign to Run Locally** ad-hoc identity changes on every rebuild, so
-macOS cannot carry the Accessibility grant forward and you end up re-granting it
-constantly.
-
-Fix it once: add an Apple ID under **Xcode › Settings › Accounts**, then put
-that account's Personal Team ID in the gitignored
-`Config/LocalSigning.xcconfig`. Keep the bundle identifier unchanged and always
-launch the Xcode app target rather than the Swift package executable. After
-switching from ad-hoc to Apple Development signing, remove the stale BetterTile
-entry from Accessibility once and grant the newly signed build access. Later
-rebuilds signed by the same team keep the grant.
-
----
+Use your Personal Team in the gitignored `Config/LocalSigning.xcconfig` and keep
+the bundle identifier unchanged. Ad-hoc signing changes the app's identity on
+each rebuild. See [the signing guide](docs/DEVELOPMENT.md#2-sign-the-app-with-your-own-free-personal-team)
+for setup and the one-time permission reset.
 
 ## Private by default
 
-BetterTile uses the Accessibility API to identify eligible windows and read,
-move, and resize them. It observes limited pointer input for drag snapping,
-divider and linked resizing, and the Layout Wheel. It observes limited keyboard
-input: Escape during drag snapping and divider resizing, and the Layout Wheel's
-trigger and navigation keys. It can also use the documented read-only private
-observations described above. It does not send
-window data, configuration, analytics, telemetry, or crash reports anywhere.
-Your configuration is a plain JSON file on your own disk.
+Window geometry and configuration stay on your Mac. BetterTile has no
+advertising, behavioral tracking, or sale of user data. It explains
+Accessibility permission before requesting it.
 
-Update checks contact GitHub to fetch the public Sparkle appcast and release
-archive. They do not include BetterTile window data, configuration, diagnostics,
-analytics, telemetry, crash reports, or a Sparkle system profile. See the
-[security and privacy policy](SECURITY.md) for the review requirements that
-apply to current behavior and any future network, data, dependency, or
-permission change.
+Public Apple APIs move and resize windows. A small, documented set of reviewed,
+read-only private observations improves window identity, minimum-size handling,
+Spaces, and Stage Manager behavior. Each observation is validated and has a
+public fallback. BetterTile uses no code injection or SIP workaround.
 
-Accessibility is currently the sole mandatory permission, and BetterTile
-explains what it is for in-product before requesting it.
+BetterTile observes limited pointer and keyboard input for snapping, resizing,
+and the Layout Wheel. **Update checks and downloads contact GitHub**, which
+receives ordinary connection metadata. These requests send no window data,
+configuration, analytics, telemetry, crash reports, or system profile.
+**Send Feedback** opens a GitHub form with the app version and build in its
+suggested title; it submits no issue automatically.
 
----
+Read [Security and privacy](SECURITY.md) for the input scope, network disclosure,
+private observations, fallback behavior, and vulnerability reporting.
 
 ## Known limits
 
-- **No cross-Space window movement.** macOS exposes no public API that can do
-  this safely, and BetterTile will not use a private one to fake it.
+- **No cross-Space window movement.** BetterTile does not move windows between
+  macOS desktops.
 - **Stage Manager groups stay single-window.** A thumbnail drag selects one
-  validated frontmost real member. BetterTile does not move or synchronize the
-  other windows in that Stage group.
+  validated frontmost member. BetterTile does not move or synchronize the other
+  windows in that Stage group.
+- **Tabbed needs Stage Manager off.** Pane assignments and placement undo history
+  last for the current app session. Cross-display tab dragging is unavailable.
+- **Some apps restrict window sizes.** Broader real-app stacking,
+  multi-display, and Space-switch behavior remains under validation. Read the
+  [beta notes](docs/releases/0.5.1-beta.md).
 
----
+<h2 align="center" id="bettertile-is-free">BetterTile is free</h2>
 
-## BetterTile is free
+<p align="center">
+  Free forever. No paid tier, subscription, trial, or features held behind a purchase.<br>
+  Open source under the <a href="LICENSE">GNU GPL v3 or later</a>.<br>
+  Use it, read it, fork it, and share modified versions under the same license.
+</p>
 
-BetterTile is free, and it will always be free. There is no paid tier, no
-subscription, no trial, and no feature held back behind a purchase. It is
-released under the [GNU GPL v3 or later](LICENSE) — use it, read it, fork it,
-and share modified versions under the same license.
-
----
+<p align="center">
+  <a href="https://github.com/LMC-Karma/BetterTile/releases/latest"><strong>Download BetterTile</strong></a>
+  · <a href="https://lmc-karma.github.io/BetterTile/">Explore the website</a>
+</p>
 
 ## Documentation
 
-- [Architecture](docs/ARCHITECTURE.md) — layer boundaries, coordinate model,
-  event ordering, Layout Wheel integration, and the Bento split tree
-- [Development setup](docs/DEVELOPMENT.md) — build, sign, run, and test on your
-  own Mac
-- [Beta releases](docs/RELEASING.md) — version, validate, sign, and publish an
-  update
-- [Contributing](CONTRIBUTING.md) — branch, test, and pull-request workflow
-- [Security](SECURITY.md) — reporting policy and permission rules
-- [Third-party notices](THIRD_PARTY_NOTICES.md) — upstream code and attribution
-- [AGENTS.md](AGENTS.md) — build, test, and convention rules for AI coding
-  agents
-
----
+- [Development setup](docs/DEVELOPMENT.md) — build, sign, run, and test on your Mac.
+- [Contributing](CONTRIBUTING.md) — branch, test, and pull-request workflow.
+- [Architecture](docs/ARCHITECTURE.md) — layers, coordinates, window mutations, and Bento.
+- [Domain glossary](CONTEXT.md) — shared BetterTile terms.
+- [Beta releases](docs/RELEASING.md) — version, validate, sign, and publish an update.
+- [Security and privacy](SECURITY.md) — permissions, networking, and reporting policy.
+- [Third-party notices](THIRD_PARTY_NOTICES.md) — upstream code, attribution, and terms.
+- [Agent instructions](AGENTS.md) — build, test, and convention rules for coding agents.
 
 ## Acknowledgements
 
-BetterTile exists because other people published their work openly.
-
-- **[Vorssaint](https://github.com/vorssaint/vorssaint-utils)** — BetterTile
-  includes adapted settings and menu-panel presentation code from Vorssaint,
-  and its demand-based service ownership shaped BetterTile's runtime lifecycle.
+- **[Vorssaint](https://github.com/vorssaint/vorssaint-utils)** — BetterTile includes
+  adapted settings and menu-panel presentation code from Vorssaint. Its
+  demand-based service ownership shaped BetterTile's runtime lifecycle.
   See [Third-party notices](THIRD_PARTY_NOTICES.md) for attribution and terms.
-- **[Rectangle](https://github.com/rxhanson/Rectangle)** — the reference for
-  event-driven window management on macOS, and a reminder that the best window
-  manager is the one doing nothing until you ask.
+- **[Rectangle](https://github.com/rxhanson/Rectangle)** — a reference for
+  event-driven window management on macOS.
 
-Thank you to both. Open source made this better.
-
----
-
-Made by [@LMC-Karma](https://github.com/LMC-Karma)
+<p align="center">Made by <a href="https://github.com/LMC-Karma">@LMC-Karma</a></p>
