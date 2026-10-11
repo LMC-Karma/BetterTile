@@ -165,6 +165,24 @@ final class FakeWindowSystem: WindowSystem, TargetedWindowSystem, WindowEventSou
         try setFrame(frame, knownCurrentFrame: knownCurrentFrame, for: windowID)
     }
 
+    /// Like the Accessibility adapter, attempts every write of a batch and
+    /// reports the first failure, instead of stopping at it.
+    var attemptsWholeBatch = false
+    func setFrames(_ writes: [Placement], knownCurrentFrames: [WindowID: BTRect]) -> FrameBatchResult {
+        var attempted: [WindowID] = []
+        var failure: (windowID: WindowID, error: Error)?
+        for write in writes {
+            attempted.append(write.windowID)
+            do {
+                try setFrame(write.frame, knownCurrentFrame: knownCurrentFrames[write.windowID], for: write.windowID)
+            } catch {
+                if failure == nil { failure = (write.windowID, error) }
+                if !attemptsWholeBatch { break }
+            }
+        }
+        return FrameBatchResult(attempted: attempted, failure: failure)
+    }
+
     func setFrame(_ frame: BTRect, knownCurrentFrame: BTRect?, for windowID: WindowID) throws {
         currentFrameWriteBatch?.append(windowID)
         recordedKnownCurrentFrames[windowID, default: []].append(knownCurrentFrame)

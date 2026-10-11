@@ -866,19 +866,21 @@ public final class WindowCoordinator {
                     throw failure.error
                 }
             } catch {
-                // A size write can succeed before a position write fails. Read
-                // the failing window before deciding whether it needs rollback.
+                // A size write can succeed before a position write fails, and
+                // a concurrent batch can fail in several applications. Read
+                // every attempted window; an unread one gets the full
+                // restoring write sequence.
                 let failedID = attempted.last
-                let failedFrame = failedID.flatMap { (try? snapshots(ids: [$0]))?.first?.frame }
+                let actualFrames = Dictionary(
+                    ((try? snapshots(ids: Set(attempted))) ?? []).map { ($0.id, $0.frame) },
+                    uniquingKeysWith: { first, _ in first }
+                )
                 var rollbackFailures: [WindowID] = []
                 for id in attempted.reversed() {
                     guard let frame = rollbackFrames[id] else { continue }
-                    if id == failedID, failedFrame?.approximatelyEquals(frame, tolerance: 0.01) == true { continue }
-                    let appliedFrame = id == failedID
-                        ? failedFrame
-                        : placements.first(where: { $0.windowID == id })?.frame
+                    if id == failedID, actualFrames[id]?.approximatelyEquals(frame, tolerance: 0.01) == true { continue }
                     do {
-                        try apply(frame, to: id, knownCurrentFrame: appliedFrame)
+                        try apply(frame, to: id, knownCurrentFrame: actualFrames[id])
                     } catch {
                         rollbackFailures.append(id)
                     }

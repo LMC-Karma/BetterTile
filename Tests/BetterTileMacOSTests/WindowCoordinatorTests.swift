@@ -1322,3 +1322,31 @@ func singleWindowPartialFailureRestoresBaselineAndPreservesHistory(actionPlan: B
     #expect(coordinator.applyLive(transaction: &transaction, placements: tick, validateParticipants: false).isApplied)
     #expect(system.windows[0].frame == BTRect(x: 0, y: 0, width: 450, height: 450))
 }
+
+/// A concurrent batch can fail in more than one application. Rollback reads
+/// every attempted window, so each restoring write starts from that
+/// window's real frame, not from the frame it was asked to take.
+@Test @MainActor func batchRollbackStartsFromEveryWindowsRealFrame() throws {
+    let system = FakeWindowSystem()
+    system.windows[0].frame = BTRect(x: 0, y: 0, width: 500, height: 800)
+    system.addSecondWindow()
+    system.windows[1].frame = BTRect(x: 500, y: 0, width: 500, height: 800)
+    system.attemptsWholeBatch = true
+    let first = system.windows[0], second = system.windows[1]
+    // Both applications take the new size and refuse the new position.
+    for id in [first.id, second.id] {
+        system.partiallyFailedFrameWriteNumbers[id] = [system.frameWriteCounts[id, default: 0] + 1]
+    }
+    let coordinator = WindowCoordinator(system: system)
+    let outcome = coordinator.applyPlacements([
+        Placement(windowID: first.id, frame: BTRect(x: 100, y: 0, width: 400, height: 800)),
+        Placement(windowID: second.id, frame: BTRect(x: 600, y: 0, width: 400, height: 800)),
+    ])
+    #expect(!outcome.isApplied)
+    #expect(system.windows.first { $0.id == first.id }?.frame == first.frame)
+    #expect(system.windows.first { $0.id == second.id }?.frame == second.frame)
+    for window in [first, second] {
+        let hint = system.recordedKnownCurrentFrames[window.id]?.last ?? nil
+        #expect(hint == BTRect(x: window.frame.minX, y: 0, width: 400, height: 800), "\(window.id): \(String(describing: hint))")
+    }
+}
