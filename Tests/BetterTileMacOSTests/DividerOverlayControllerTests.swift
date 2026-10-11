@@ -878,11 +878,16 @@ enum DividerLimitCase: CaseIterable { case straight, junction, linked }
         WindowSnapshot(id: left, processIdentifier: 1, frame: BTRect(x: bounds.minX, y: bounds.minY, width: 400, height: 600), displayID: display),
         WindowSnapshot(id: right, processIdentifier: 2, frame: BTRect(x: bounds.minX + 400, y: bounds.minY, width: 400, height: 600), displayID: display),
     ]
+    let earlier = BTRect(x: bounds.minX, y: bounds.minY, width: 300, height: 600)
     let baseline = system.windows.map(\.frame)
     system.enforcedMinimumWidths[right] = 340
     var config = BetterTileConfiguration()
     config.resizeFeedbackMode = .ghost
-    let controller = DividerOverlayController(coordinator: WindowCoordinator(system: system), configuration: config)
+    let coordinator = WindowCoordinator(system: system)
+    // An earlier snap gives the left window one Restore step.
+    system.windows[0].frame = earlier
+    #expect(coordinator.applyPlacements([Placement(windowID: left, frame: baseline[0])]).isApplied)
+    let controller = DividerOverlayController(coordinator: coordinator, configuration: config)
     let boundary = BoundaryDescriptor(
         id: "native", displayID: display, axis: .vertical, coordinate: bounds.minX + 400,
         spanStart: bounds.minY, spanEnd: bounds.maxY, beforeWindowIDs: [left], afterWindowIDs: [right]
@@ -907,6 +912,15 @@ enum DividerLimitCase: CaseIterable { case straight, junction, linked }
     system.targetedSnapshotsFail = false
     #expect(system.windows.map(\.frame) == baseline)
     #expect(!changed)
+    // The failed release left no Restore step behind: Restore returns the
+    // window to the earlier frame.
+    system.focusedWindowID = left
+    guard case let .ready(plan) = coordinator.plan(.restore) else {
+        Issue.record("Restore should be available")
+        return
+    }
+    #expect(coordinator.perform(plan).isApplied)
+    #expect(system.windows.first { $0.id == left }?.frame == earlier)
 }
 
 @Test @MainActor func ghostReleaseDoesNotLearnAMinimumFromAnUnchangedWindow() throws {

@@ -485,6 +485,12 @@ public final class WindowCoordinator {
         }
     }
 
+    /// Records a committed transaction's changed frames for Restore, for a
+    /// caller that committed with `recordHistory: false`.
+    public func recordHistory(of transaction: WindowFrameTransaction) {
+        recordChangedHistoryFrames(transaction.baselineFrames, proposedPlacements: transaction.proposedPlacements)
+    }
+
     public func applyLive(
         transaction: inout WindowFrameTransaction,
         placements: [Placement],

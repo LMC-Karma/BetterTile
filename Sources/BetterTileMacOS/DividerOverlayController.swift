@@ -941,7 +941,9 @@ public final class DividerOverlayController {
         let succeeded: Bool
         switch configuration.resizeFeedbackMode {
         case .ghost:
-            var outcome = coordinator.commit(transaction: &transaction, placements: latestPlacements)
+            // History records the release once, after any correction, so a
+            // failed release leaves Restore unchanged.
+            var outcome = coordinator.commit(transaction: &transaction, placements: latestPlacements, recordHistory: false)
             // The preview cannot show a minimum an application never
             // reported. The commit reads each window back, so a refused size
             // is measured at once; the layout is solved again with it.
@@ -958,9 +960,10 @@ public final class DividerOverlayController {
                     break
                 }
                 transaction = corrected
-                outcome = coordinator.commit(transaction: &transaction, placements: latestPlacements)
+                outcome = coordinator.commit(transaction: &transaction, placements: latestPlacements, recordHistory: false)
             }
             succeeded = outcome.isApplied
+            if succeeded { coordinator.recordHistory(of: transaction) }
             // A failed correction can follow a commit that already moved the
             // windows; return them all to the baseline.
             if case .degraded = outcome {
