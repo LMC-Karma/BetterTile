@@ -1546,3 +1546,51 @@ func delayedNativeTabbedCheckpointRestoreLocksTabDragsUntilCompletion(cancelRest
     #expect(presentation.managedWindowIDs[system.mainDisplay.id] == firstState.windowIDs)
     #expect(presentation.managedWindowIDs[otherDisplay] == Set(otherWindows.map(\.id)))
 }
+
+/// The same application owns the selected tabs of both panes. Selecting a
+/// tab activates the application, which exposes the other pane's hidden tab.
+/// The stacking repair raises the other pane's selected window; keyboard
+/// focus must still end on the clicked tab.
+@Test(arguments: [false, true]) @MainActor
+func selectingASameApplicationTabKeepsFocusOnTheClickedTab(activationRestoresOldMain: Bool) async throws {
+    let system = FakeAppWindowSystem()
+    let model = try await makeTwoTabbedColumns(system)
+    defer { model.shutdown() }
+    for index in system.windows.indices { system.windows[index].processIdentifier = 7 }
+    system.raiseFocusesFrontmostApplicationWindow = true
+    let hiddenLeft = system.windows[1].id
+    let rightSelected = system.windows[3].id
+    // Right pane's hidden tab is in front of its selected tab after activation.
+    system.stack = [0, 2, 3, 1].map { stackEntry(system.windows[$0]) }
+    system.focusedID = system.windows[0].id
+    if activationRestoresOldMain { system.activationFocusesInstead = rightSelected }
+
+    model.performTabbed(.select(hiddenLeft))
+    try #require(await waitFor { model.activeTabbedState?.panes[0].selected == hiddenLeft })
+    try await Task.sleep(for: .milliseconds(900)) // Let focus refreshes run.
+    #expect(system.focusedID == hiddenLeft)
+    #expect(model.activeTabbedState?.panes[0].selected == hiddenLeft)
+    #expect(model.activeTabbedState?.panes[1].selected == rightSelected)
+    #expect(model.activeTabbedState?.activeWindowID == hiddenLeft)
+}
+
+@Test @MainActor
+func stackingRepairOfTheKeyApplicationRaisesTheKeyWindowLast() async throws {
+    let system = FakeAppWindowSystem()
+    let model = try await makeTwoTabbedColumns(system)
+    defer { model.shutdown() }
+    for index in system.windows.indices { system.windows[index].processIdentifier = 7 }
+    system.raiseFocusesFrontmostApplicationWindow = true
+    // The key window is in front; only the right pane needs a raise.
+    system.stack = [0, 2, 3, 1].map { stackEntry(system.windows[$0]) }
+    system.focusedID = system.windows[0].id
+    let state = try #require(model.activeTabbedState)
+    let raises = system.raiseRequests.count
+
+    model.handleApplicationActivation()
+    #expect(await waitFor(timeout: .seconds(1)) { system.raiseRequests.count > raises })
+    try await Task.sleep(for: .milliseconds(500))
+    #expect(system.raiseRequests.dropFirst(raises).map(\.0) == [system.windows[3].id, system.windows[0].id])
+    #expect(system.focusedID == system.windows[0].id)
+    #expect(model.activeTabbedState == state)
+}

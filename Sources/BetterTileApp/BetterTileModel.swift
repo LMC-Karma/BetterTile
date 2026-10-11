@@ -82,6 +82,11 @@ final class BetterTileModel {
     private(set) var tabbedFocusTask: Task<Void, Never>?
     private(set) var tabbedNeedsFocusRefresh = false
     private var tabbedFocusSuppressedUntil = Date.distantPast
+    /// The tab the user last selected. Activating its application can make
+    /// that application's previous main window key instead; for a short
+    /// time such a focus change is corrected rather than treated as a
+    /// selection.
+    private var tabbedIntendedFocus: (windowID: WindowID, until: Date)?
     /// Tabbed reads a window-edge resize only after the user lets go, so it
     /// never fights the drag. Tests replace this.
     var primaryButtonIsPressed: () -> Bool = { NSEvent.pressedMouseButtons & 1 == 1 }
@@ -3482,6 +3487,9 @@ extension BetterTileModel {
                 return
             }
             if outcome.isApplied {
+                if selectionOnly, let focus {
+                    self.tabbedIntendedFocus = (focus, Date().addingTimeInterval(1))
+                }
                 var proposed = original
                 proposed.tabbedState = state
                 proposed.windowIDs = state.windowIDs
@@ -3755,6 +3763,7 @@ extension BetterTileModel {
             let focused = (try? self.system.focusedWindow()) ?? nil
             if let focused, self.isTabbedBusy(on: focused.displayID) { return }
             self.tabbedNeedsFocusRefresh = false
+            if let focused, self.correctStolenTabbedFocus(focused) { return }
             if let focused, self.isFrontmost(focused),
                let session = self.sessionStore.session(for: focused.displayID), session.mode == .tabbed,
                !session.automaticWritesSuspended, let state = session.tabbedState,
@@ -3764,6 +3773,26 @@ extension BetterTileModel {
             }
             self.repairTabbedStacking()
         }
+    }
+
+    /// Activating an application makes its main window key. When that is
+    /// another tab of the application the user just selected, focus returns
+    /// to the selected tab once instead of changing the selection.
+    private func correctStolenTabbedFocus(_ focused: WindowSnapshot) -> Bool {
+        guard let intended = tabbedIntendedFocus else { return false }
+        guard intended.until > Date() else { tabbedIntendedFocus = nil; return false }
+        guard focused.id != intended.windowID, isFrontmost(focused),
+              let session = sessionStore.session(for: focused.displayID), session.mode == .tabbed,
+              let state = session.tabbedState, state.selectedWindowIDs.contains(intended.windowID),
+              state.windowIDs.contains(focused.id),
+              let target = ((try? system.visibleWindows()) ?? []).first(where: { $0.id == intended.windowID }),
+              target.processIdentifier == focused.processIdentifier,
+              let tabSystem = system as? any TabbedWindowSystem else { return false }
+        tabbedIntendedFocus = nil
+        tabbedFocusSuppressedUntil = Date().addingTimeInterval(0.3)
+        try? tabSystem.raiseWindow(intended.windowID, activate: true)
+        repairTabbedStacking()
+        return true
     }
 
     /// `focusedWindow()` skips BetterTile and applications it cannot read,
@@ -3802,10 +3831,20 @@ extension BetterTileModel {
         guard let system = system as? any TabbedWindowSystem else { return nil }
         let chrome = tabbedOverlays.values.reduce(into: Set<Int>()) { $0.formUnion($1.windowNumbers) }
         guard var order = system.stackingOrder(for: windows, excluding: chrome),
-              let plan = state.sharedCurtainStackingRepair(order: order, curtainBounds: bounds) else { return nil }
-        if !plan.isEmpty {
+              let repair = state.sharedCurtainStackingRepair(order: order, curtainBounds: bounds) else { return nil }
+        if !repair.isEmpty {
             // Never reorder foreign windows during a held resize.
             guard !dividerResize.isDragging, tabbedResizeReleaseTask == nil else { return nil }
+            // A raise of another window of the key window's application moves
+            // keyboard focus to it; the key window is raised again last.
+            let key = ((try? self.system.focusedWindow()) ?? nil).flatMap { isFrontmost($0) ? $0.id : nil }
+            let plan = state.keyPreservingRaisePlan(
+                repair,
+                keyWindowID: key,
+                processIdentifiers: Dictionary(windows.map { ($0.id, $0.processIdentifier) }) { first, _ in first }
+            )
+            // Focus changes caused by these raises are not user selections.
+            tabbedFocusSuppressedUntil = max(tabbedFocusSuppressedUntil, Date().addingTimeInterval(0.3))
             let outcome = coordinator.raiseTabbedWindows(plan)
             guard outcome.isApplied else { statusMessage = outcome.failureReason; return nil }
             guard let readback = system.stackingOrder(for: windows, excluding: chrome) else { return nil }

@@ -85,3 +85,24 @@ private func entry(_ name: String?, _ frame: BTRect) -> TabbedStackEntry {
     let unknownHidden = [entry(nil, oversized), entry("a", left), entry("c", right), entry("d", right)]
     #expect(state.sharedCurtainStackingRepair(order: unknownHidden, curtainBounds: bounds) == nil)
 }
+
+@Test func keyPreservingPlanRaisesTheKeyWindowLastWhenItsAppIsRaised() {
+    let state = twoPanes()
+    let pids: [WindowID: Int32] = [id("a"): 1, id("b"): 1, id("c"): 1, id("d"): 2]
+    // Raising `c` makes it the app's main window; `a` must be raised again.
+    #expect(state.keyPreservingRaisePlan([id("c")], keyWindowID: id("a"), processIdentifiers: pids)
+        == [id("c"), id("a")])
+    // An already-last key window is left in place.
+    #expect(state.keyPreservingRaisePlan([id("a"), id("c")], keyWindowID: id("a"), processIdentifiers: pids)
+        == [id("c"), id("a")])
+}
+
+@Test func keyPreservingPlanLeavesOtherAppsAndHiddenTabsAlone() {
+    let state = twoPanes()
+    let pids: [WindowID: Int32] = [id("a"): 1, id("b"): 1, id("c"): 2, id("d"): 2]
+    // Another application's raise cannot steal this app's focus.
+    #expect(state.keyPreservingRaisePlan([id("c")], keyWindowID: id("a"), processIdentifiers: pids) == [id("c")])
+    // A hidden tab would cover its pane's selected tab.
+    #expect(state.keyPreservingRaisePlan([id("a")], keyWindowID: id("b"), processIdentifiers: pids) == [id("a")])
+    #expect(state.keyPreservingRaisePlan([id("c")], keyWindowID: nil, processIdentifiers: pids) == [id("c")])
+}

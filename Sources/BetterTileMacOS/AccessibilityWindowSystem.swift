@@ -1379,14 +1379,20 @@ extension AccessibilityWindowSystem: TabbedWindowSystem {
         if activate {
             var pid: pid_t = 0
             guard AXUIElementGetPid(element, &pid) == .success,
-                  let app = NSRunningApplication(processIdentifier: pid),
-                  app.activate(options: []) else {
+                  let app = NSRunningApplication(processIdentifier: pid) else {
                 throw WindowSystemError.operationFailed("The application could not be activated.")
             }
+            // Activation makes the application's main window key. Make the
+            // target main first; otherwise the app's previous main window,
+            // which can be a selected tab in another pane, takes focus.
+            _ = AXUIElementSetAttributeValue(element, kAXMainAttribute as CFString, kCFBooleanTrue)
             let application = makeApplicationElement(pid: pid)
             let focusResult = AXUIElementSetAttributeValue(application, kAXFocusedWindowAttribute as CFString, element)
             if focusResult != .success && focusResult != .attributeUnsupported {
                 throw WindowSystemError.operationFailed("The application rejected window focus.")
+            }
+            guard app.activate(options: []) else {
+                throw WindowSystemError.operationFailed("The application could not be activated.")
             }
         }
         guard AXUIElementPerformAction(element, kAXRaiseAction as CFString) == .success else {
