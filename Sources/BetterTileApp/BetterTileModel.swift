@@ -1407,7 +1407,16 @@ final class BetterTileModel {
                 var placements = plan.placements
                 if !plan.isFocusDrop, proposed.mode == .bento,
                    let display = system.displays().first(where: { $0.id == displayID }) {
-                    placements = resolvedAfterMeasuredClamps(placements, session: &proposed, display: display)
+                    let correction = resolvedAfterMeasuredClamps(placements, session: &proposed, display: display)
+                    placements = correction.placements
+                    if let reason = correction.degradedReason {
+                        recoveryFailurePresented = true
+                        suspendAutomaticBentoWrites(
+                            displayID: displayID,
+                            windows: (try? system.visibleWindows()) ?? [],
+                            error: reason
+                        )
+                    }
                 }
                 let requestedFrames = Dictionary(uniqueKeysWithValues: placements.map { ($0.windowID, $0.frame) })
                 proposed.recordProposedFrames(requestedFrames)
