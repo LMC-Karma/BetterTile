@@ -698,6 +698,25 @@ func waitFor(
 }
 
 
+/// A Layout Wheel half during focus mode brings the covered windows back,
+/// like the keyboard shortcut, instead of leaving them minimized.
+@Test @MainActor func aLayoutWheelHalfEndsFocusModeAndReturnsThePeers() async throws {
+    _ = NSApplication.shared
+    let system = FakeAppWindowSystem()
+    let peer = WindowID(rawValue: "peer")
+    system.windows.append(WindowSnapshot(id: peer, processIdentifier: 43, bundleIdentifier: "com.example.Peer",
+        frame: BTRect(x: 0, y: 0, width: 200, height: 300), displayID: system.mainDisplay.id))
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    model.setActiveMode(.bento)
+    try #require(await waitFor { system.windows.allSatisfy { $0.frame.size.height == 800 } })
+    system.focusedID = system.windows[0].id
+    model.perform(.maximize)
+    try #require(system.windows[1].isMinimized)
+    model.performLayoutWheel(.windowAction(.leftHalf), for: target(for: system))
+    #expect(!system.windows[1].isMinimized)
+}
+
 /// Restore waits for the peers to come back before it lays the desktop out.
 /// A newer action during that wait wins: Maximize again stays maximized.
 @Test @MainActor func aNewerActionCancelsAPendingFocusModeRestore() async throws {

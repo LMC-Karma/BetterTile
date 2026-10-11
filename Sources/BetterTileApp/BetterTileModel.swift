@@ -508,6 +508,12 @@ final class BetterTileModel {
                 verifyPlacementLanded(WindowPlacementPlan(plan), displayID: displayID)
             }
         case let .ready(.bento(proposal)):
+            // As from the keyboard, a partition action during focus mode
+            // first brings the covered windows back.
+            if case let .windowAction(action) = command, BentoDropPlanner.partitionActions.contains(action),
+               let window = (try? system.windowSnapshots(ids: [target.windowID]))?.first {
+                _ = performBentoFocusMode(action, window: window)
+            }
             let succeeded = commitLayoutWheelBento(proposal)
             statusMessage = succeeded
                 ? nil
