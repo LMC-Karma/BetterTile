@@ -3299,8 +3299,12 @@ extension BetterTileModel {
             session.tabbedBaselineFrames = Dictionary(uniqueKeysWithValues: windows.map { ($0.id, $0.frame) })
         }
         let before = state
-        state.reconcile(windowIDs: windows.map(\.id), removed: removed,
-                        focused: wasUninitialized ? focused : nil)
+        if wasUninitialized {
+            state.reconcile(windowIDs: windows.map(\.id), removed: removed, focused: focused)
+        } else {
+            state.reconcile(windowIDs: windows.map(\.id), removed: removed,
+                            fittingIn: display.visibleFrame, windows: windows)
+        }
         session.tabbedState = state
         session.windowIDs = state.windowIDs
         // Removals include windows on other displays. Reconciliation above
@@ -3769,7 +3773,10 @@ extension BetterTileModel {
             focus = state.activeWindowID; undo = false
         case .repair:
             session.resumeAutomaticWrites()
-            state.reconcile(windowIDs: windows.map(\.id), removed: state.windowIDs.subtracting(windows.map(\.id)), focused: nil)
+            // Repair adopts every window outside the panes the same way a
+            // late arrival joins, so none is left out of the layout.
+            state.reconcile(windowIDs: windows.map(\.id), removed: state.windowIDs.subtracting(windows.map(\.id)),
+                            fittingIn: display.visibleFrame, windows: windows)
             focus = state.activeWindowID; undo = false
         case let .removePane(id): state.removeEmptyPane(id)
         case let .adjustDivider(id, delta):
@@ -4002,8 +4009,14 @@ extension BetterTileModel {
     func repairTabbedOrder(state: TabbedLayoutState, windows: [WindowSnapshot], bounds: BTRect) -> [TabbedStackEntry]? {
         guard let system = system as? any TabbedWindowSystem else { return nil }
         let chrome = tabbedOverlays.values.reduce(into: Set<Int>()) { $0.formUnion($1.windowNumbers) }
+        // Floating windows and other windows outside the panes must stay
+        // visible above the curtain.
+        let aboveCurtain = Set(windows.filter { window in
+            window.isEligible && !state.windowIDs.contains(window.id) && window.frame.intersection(bounds) != nil
+        }.map(\.id)).union(state.floatingWindowIDs)
         guard var order = system.stackingOrder(for: windows, excluding: chrome),
-              let repair = state.sharedCurtainStackingRepair(order: order, curtainBounds: bounds) else { return nil }
+              let repair = state.sharedCurtainStackingRepair(order: order, curtainBounds: bounds,
+                                                             aboveCurtain: aboveCurtain) else { return nil }
         if !repair.isEmpty {
             // Never reorder foreign windows during a held resize.
             guard !dividerResize.isDragging, tabbedResizeReleaseTask == nil else { return nil }
@@ -4022,7 +4035,8 @@ extension BetterTileModel {
             guard let readback = system.stackingOrder(for: windows, excluding: chrome) else { return nil }
             order = readback
         }
-        guard state.sharedCurtainStackingRepair(order: order, curtainBounds: bounds)?.isEmpty == true else { return nil }
+        guard state.sharedCurtainStackingRepair(order: order, curtainBounds: bounds,
+                                                aboveCurtain: aboveCurtain)?.isEmpty == true else { return nil }
         return order
     }
 
