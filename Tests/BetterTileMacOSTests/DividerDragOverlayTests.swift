@@ -310,3 +310,25 @@ private func ghostOverlayCleansUpEveryGestureExit(ending: GhostEnd) throws {
     #expect(overlay.showsFrost && overlay.drawing?.surface == .frost)
     #expect(handle.drawingSink != nil && !handle.showsFrost)
 }
+
+/// An application that applies a committed frame late keeps the Ghost
+/// previews over its window until it lands, so the old frame never shows
+/// after the preview is gone. The handle takes its knob back at once.
+@Test @MainActor func ghostPreviewsStayUntilASlowWindowLands() async throws {
+    let fixture = try GhostGestureFixture()
+    let controller = fixture.controller
+    let handle = try #require(controller.visibleHandleView)
+    fixture.tick(dx: 50)
+    // The new frames become visible only after a few reads.
+    fixture.system.readsBeforeSettling = 4
+    controller.end(at: fixture.point(dx: 50))
+    #expect(!controller.isDragging)
+    #expect(controller.dragOverlay.isVisible)
+    #expect(handle.drawsLens && handle.drawingSink == nil)
+    // Once the window reports its frame, the previews fade away. The hold
+    // itself ends within 250 ms; the margin covers a loaded test machine.
+    let deadline = Date().addingTimeInterval(5)
+    while controller.dragOverlay.isVisible, Date() < deadline { try await Task.sleep(for: .milliseconds(20)) }
+    #expect(!controller.dragOverlay.isVisible)
+    #expect(controller.dragOverlay.previewViews.isEmpty)
+}

@@ -1235,3 +1235,19 @@ func liveDividerReleaseRecomputesANewlyLearnedMinimum(height: Bool) throws {
     #expect(height ? rightFrame.size.height == 240 : rightFrame.size.width == 340)
     #expect(height ? abs(leftFrame.maxY - rightFrame.minY) < 0.5 : abs(leftFrame.maxX - rightFrame.minX) < 0.5)
 }
+
+/// A divider commit keeps a fixed-size window at its size, centred in its
+/// new pane; resizable windows still fill theirs.
+@Test @MainActor func dividerPlacementsKeepFixedSizeWindowsCentred() {
+    let display = DisplayID(rawValue: "main")
+    let fixed = WindowSnapshot(id: WindowID(rawValue: "calculator"), processIdentifier: 1,
+                               frame: BTRect(x: 0, y: 0, width: 230, height: 408), displayID: display,
+                               constraints: WindowConstraints(isResizable: false))
+    let other = WindowSnapshot(id: WindowID(rawValue: "other"), processIdentifier: 2,
+                               frame: BTRect(x: 0, y: 0, width: 400, height: 400), displayID: display)
+    let placements = [Placement(windowID: fixed.id, frame: BTRect(x: 0, y: 64, width: 900, height: 900)),
+                      Placement(windowID: other.id, frame: BTRect(x: 906, y: 64, width: 900, height: 900))]
+    let kept = DividerOverlayController.keepingFixedSizes(placements, windows: [fixed, other])
+    #expect(kept[0].frame == BTRect(x: 335, y: 310, width: 230, height: 408))
+    #expect(kept[1] == placements[1])
+}

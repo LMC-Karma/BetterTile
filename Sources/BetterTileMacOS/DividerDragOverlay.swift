@@ -50,8 +50,15 @@ final class DividerDragOverlay {
         content = DividerDragOverlayView(lensLayers: lensLayers)
     }
 
+    /// A fade that finishes after a new gesture began must not hide it.
+    private var presentationGeneration = 0
+
     func begin(displayFrame: BTRect, below handle: NSWindow, appearance: OverlayAppearance, windows: [WindowSnapshot]) {
         guard let mainFrame = NSScreen.screens.first?.frame else { return }
+        presentationGeneration &+= 1
+        panel?.alphaValue = 1
+        content.knob.isHidden = false
+        content.decoration.isHidden = false
         let frame = CoordinateConverter.toAppKit(displayFrame, mainScreenFrame: mainFrame)
         let panel: NSPanel
         if let existing = self.panel {
@@ -144,7 +151,34 @@ final class DividerDragOverlay {
         }
     }
 
+    /// After a committed release the handle draws its own knob again; the
+    /// previews stay until the windows reach them.
+    func releaseKnob() {
+        content.knob.isHidden = true
+        content.decoration.isHidden = true
+    }
+
+    /// Fades the previews out once the windows have landed.
+    func fadeOut(duration: TimeInterval = 0.12) {
+        guard let panel, panel.isVisible else { end(); return }
+        let generation = presentationGeneration
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = duration
+            panel.animator().alphaValue = 0
+        }
+        // End after the fade on the main actor; animation completion
+        // handlers are not guaranteed to run promptly.
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(duration))
+            guard let self, self.presentationGeneration == generation else { return }
+            self.end()
+        }
+    }
+
     func end() {
+        panel?.alphaValue = 1
+        content.knob.isHidden = false
+        content.decoration.isHidden = false
         if panel?.isVisible == true { panel?.orderOut(nil) }
         for view in previewViews.values { view.removeFromSuperview() }
         previewViews = [:]
