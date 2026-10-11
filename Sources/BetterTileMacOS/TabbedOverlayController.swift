@@ -64,6 +64,8 @@ public final class TabbedOverlayController {
     /// Reads the real primary button. A tab drag whose mouse-up never
     /// arrives finishes on the next display tick instead of staying armed.
     private let primaryButtonIsPressed: () -> Bool
+    /// Where the pointer is now; the release point when a mouse-up was lost.
+    private let pointerLocation: () -> BTPoint?
     private var dropIntent: TabbedUIIntent?
     private var cancelled = false
     private var canUndo = false
@@ -74,7 +76,10 @@ public final class TabbedOverlayController {
                 let keyCode = event.keyCode
                 MainActor.assumeIsolated { handler(keyCode) }
             }
-        }, primaryButtonIsPressed: { NSEvent.pressedMouseButtons & 1 != 0 })
+        }, primaryButtonIsPressed: { NSEvent.pressedMouseButtons & 1 != 0 },
+        pointerLocation: {
+            CoordinateConverter.pointToTopLeft(NSEvent.mouseLocation, mainScreenFrame: NSScreen.screens.first?.frame ?? .zero)
+        })
     }
 
     init(
@@ -97,10 +102,12 @@ public final class TabbedOverlayController {
         },
         removeMonitor: @escaping (Any) -> Void = { NSEvent.removeMonitor($0) },
         orderPanel: @escaping (NSPanel, NSWindow.OrderingMode, Int) -> Void = { $0.order($1, relativeTo: $2) },
-        primaryButtonIsPressed: @escaping () -> Bool = { true }
+        primaryButtonIsPressed: @escaping () -> Bool = { true },
+        pointerLocation: @escaping () -> BTPoint? = { nil }
     ) {
         self.panelFactory = panelFactory
         self.primaryButtonIsPressed = primaryButtonIsPressed
+        self.pointerLocation = pointerLocation
         self.dragTicks = dragTicks
         self.addGlobalKeyMonitor = addGlobalKeyMonitor
         self.addLocalKeyMonitor = addLocalKeyMonitor
@@ -459,7 +466,7 @@ public final class TabbedOverlayController {
         // strip panel during a fast drag. Finish where the preview last
         // showed the destination; never let the next drag complete this one.
         if draggedWindow != nil, !primaryButtonIsPressed() {
-            if let point = pendingDragPoint ?? lastDragPoint { drag(to: point) }
+            if let point = pointerLocation() ?? pendingDragPoint ?? lastDragPoint { drag(to: point) }
             endDrag()
             return
         }
