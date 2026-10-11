@@ -18,6 +18,8 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
     private var continuousWriteDepth = 0
     private var continuousSettable: [WindowID: Bool] = [:]
     private var lastWriteReadback: [WindowID: BTRect] = [:]
+    /// Decided popup classifications, kept for each window's lifetime.
+    private var popupVerdicts: [WindowID: PopupWindowClassifier.Verdict] = [:]
     private var identities = WindowIdentityRegistry()
     private let privateAPIsDisabled: Bool
     private let exactWindowIDResolver: ExactWindowIDResolver
@@ -1216,6 +1218,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
                 )
             }
             minimumSizeLearner.remove(windowID)
+            popupVerdicts.removeValue(forKey: windowID)
             applicationKeys.removeValue(forKey: windowID)
             lastWriteReadback.removeValue(forKey: windowID)
             continuousSettable.removeValue(forKey: windowID)
@@ -1328,7 +1331,39 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
             isFullScreen: attributes.fullScreen,
             isHidden: false,
             isFloating: WindowFloatingClassifier.isFloating(subrole: attributes.subrole)
+                || popupVerdict(for: id, element: element, attributes: attributes, bundleIdentifier: bundleIdentifier) == .popup
         )
+    }
+
+    /// Classifies a window once, when it is first decidable: popups such as
+    /// file pickers and settings dialogs float instead of joining a layout.
+    /// A window's buttons change while a sheet is attached, so a decided
+    /// verdict is kept for the window's lifetime.
+    private func popupVerdict(
+        for id: WindowID, element: AXUIElement, attributes: SnapshotAttributes, bundleIdentifier: String?
+    ) -> PopupWindowClassifier.Verdict {
+        if let cached = popupVerdicts[id] { return cached }
+        let verdict = PopupWindowClassifier.classify(PopupWindowClassifier.Attributes(
+            subrole: attributes.subrole,
+            fullScreenButton: buttonState(kAXFullScreenButtonAttribute, of: element),
+            closeButton: buttonState(kAXCloseButtonAttribute, of: element),
+            minimizeButton: buttonState(kAXMinimizeButtonAttribute, of: element),
+            isModal: value("AXModal", from: element) ?? false,
+            isMinimized: attributes.minimized || attributes.fullScreen,
+            bundleIdentifier: bundleIdentifier
+        ))
+        if verdict != .undetermined { popupVerdicts[id] = verdict }
+        return verdict
+    }
+
+    private func buttonState(_ attribute: String, of element: AXUIElement) -> PopupWindowClassifier.ButtonState {
+        var raw: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, attribute as CFString, &raw) == .success,
+              let raw, CFGetTypeID(raw) == AXUIElementGetTypeID() else { return .missing }
+        var enabled: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(unsafeDowncast(raw, to: AXUIElement.self), kAXEnabledAttribute as CFString, &enabled) == .success
+        else { return .enabled }
+        return (enabled as? Bool) == false ? .disabled : .enabled
     }
 
     private func snapshotAttributes(_ element: AXUIElement) -> SnapshotAttributes? {
@@ -1546,6 +1581,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
             for windowID in windowIDs {
                 elements.removeValue(forKey: windowID)
                 minimumSizeLearner.remove(windowID)
+                popupVerdicts.removeValue(forKey: windowID)
                 minimizedWindowIDs.remove(windowID)
             }
             recentWindowIDs.removeAll { windowIDs.contains($0) }
