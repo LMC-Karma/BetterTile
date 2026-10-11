@@ -946,7 +946,8 @@ public final class DividerOverlayController {
             // reported. The commit reads each window back, so a refused size
             // is measured at once; the layout is solved again with it.
             var corrections = 0
-            while outcome.isApplied, corrections < 2, learnCommittedMinimums(), let point = latestDragPoint {
+            while outcome.isApplied, corrections < 2, learnCommittedMinimums(baseline: transaction.baselineFrames),
+                  let point = latestDragPoint {
                 corrections += 1
                 self.transaction = transaction
                 applyDrag(to: point, validateParticipants: true)
@@ -955,8 +956,12 @@ public final class DividerOverlayController {
                 outcome = coordinator.commit(transaction: &transaction, placements: latestPlacements)
             }
             succeeded = outcome.isApplied
+            // A failed correction can follow a commit that already moved the
+            // windows; return them all to the baseline.
             if case .degraded = outcome {
                 reportRollbackFailure(displayID: interaction.displayID, outcome: coordinator.cancel(transaction: transaction))
+            } else if !succeeded, corrections > 0 {
+                reportRollbackFailure(displayID: interaction.displayID, outcome: coordinator.restoreBaseline(of: transaction))
             }
         case .live:
             var appliedFinalPlacement = true
@@ -1053,18 +1058,22 @@ public final class DividerOverlayController {
     }
 
     /// Records each size a committed window refused as its minimum for this
-    /// gesture. Returns true when a minimum changed.
-    private func learnCommittedMinimums() -> Bool {
+    /// gesture. Returns true when a minimum changed. A window still at its
+    /// baseline size gives no evidence: it may apply the write later.
+    private func learnCommittedMinimums(baseline: [WindowID: BTRect]) -> Bool {
         var learned = false
         for placement in latestPlacements {
             guard let actual = coordinator.system.measuredFrameAfterWrite(for: placement.windowID)?.size,
                   let index = baselineWindows.firstIndex(where: { $0.id == placement.windowID }) else { continue }
+            let before = baseline[placement.windowID]?.size
             var minimum = baselineWindows[index].constraints.minimumSize
-            if actual.width > placement.frame.size.width + 2, actual.width > minimum.width + 0.5 {
+            if actual.width > placement.frame.size.width + 2, actual.width > minimum.width + 0.5,
+               before.map({ abs($0.width - actual.width) > 0.5 }) ?? true {
                 minimum.width = actual.width
                 learned = true
             }
-            if actual.height > placement.frame.size.height + 2, actual.height > minimum.height + 0.5 {
+            if actual.height > placement.frame.size.height + 2, actual.height > minimum.height + 0.5,
+               before.map({ abs($0.height - actual.height) > 0.5 }) ?? true {
                 minimum.height = actual.height
                 learned = true
             }

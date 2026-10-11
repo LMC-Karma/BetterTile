@@ -526,7 +526,16 @@ public final class WindowCoordinator {
                         transaction: transaction, excluding: Set(growing.map(\.windowID))
                     )
                     writes = changed.compactMap { placement in
-                        if shrinkingIDs.contains(placement.windowID) { return placement }
+                        if shrinkingIDs.contains(placement.windowID) {
+                            // A window can shrink on one axis and grow on the
+                            // other at a junction. Its growing axis trails
+                            // like any growing window.
+                            guard let old = previous[placement.windowID] else { return placement }
+                            let held = neighbourHoldsSpace ? old : (previousProposal[placement.windowID] ?? old)
+                            let frame = Self.trailingGrowth(placement.frame, from: old, held: held)
+                            if !frame.approximatelyEquals(placement.frame, tolerance: 0.01) { trailing = true }
+                            return Placement(windowID: placement.windowID, frame: frame)
+                        }
                         if neighbourHoldsSpace { trailing = true; return nil }
                         guard let earlier = previousProposal[placement.windowID] ?? previous[placement.windowID],
                               earlier.size.width <= placement.frame.size.width + 0.5,
@@ -576,6 +585,20 @@ public final class WindowCoordinator {
     /// True when a window other than `excluding` has not given up the space a
     /// neighbour would grow into: it read back larger than the size it was
     /// sent.
+    /// Takes each shrinking axis of `frame` now and keeps each growing axis
+    /// at `held`, so the window never grows into space a neighbour has not
+    /// yet given up.
+    static func trailingGrowth(_ frame: BTRect, from old: BTRect, held: BTRect) -> BTRect {
+        func axis(_ new: (origin: Double, size: Double), _ old: Double, _ held: (origin: Double, size: Double))
+            -> (origin: Double, size: Double) {
+            guard new.size > old + 0.5, held.size <= new.size + 0.5 else { return new }
+            return held
+        }
+        let x = axis((frame.minX, frame.size.width), old.size.width, (held.minX, held.size.width))
+        let y = axis((frame.minY, frame.size.height), old.size.height, (held.minY, held.size.height))
+        return BTRect(x: x.origin, y: y.origin, width: x.size, height: y.size)
+    }
+
     private func neighbourHoldsItsSpace(transaction: WindowFrameTransaction, excluding: Set<WindowID>) -> Bool {
         let candidates = transaction.lastAppliedFrames.filter { !excluding.contains($0.key) && transaction.baselineFrames[$0.key] != $0.value }
         guard !candidates.isEmpty else { return false }
@@ -605,6 +628,12 @@ public final class WindowCoordinator {
 
     public func cancel(transaction: WindowFrameTransaction) -> WindowMutationOutcome {
         guard transaction.hasLiveChanges || transaction.hasDegradedApply else { return .applied }
+        return restoreBaseline(of: transaction)
+    }
+
+    /// Returns every participant to its baseline frame, also after a
+    /// committed apply.
+    public func restoreBaseline(of transaction: WindowFrameTransaction) -> WindowMutationOutcome {
         do {
             try applyAtomically(
                 transaction.baselineFrames.map { Placement(windowID: $0.key, frame: $0.value) },

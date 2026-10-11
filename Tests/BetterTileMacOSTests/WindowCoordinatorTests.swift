@@ -1272,3 +1272,26 @@ func singleWindowPartialFailureRestoresBaselineAndPreservesHistory(actionPlan: B
     #expect(system.windows[0].frame.maxX == 550)
     #expect(!transaction.hasTrailingWrites)
 }
+
+/// At a junction a window can shrink in width and grow in height in one
+/// tick. Its height trails one tick, like any growing window, so it never
+/// grows into the window below before that window has moved.
+@Test @MainActor func liveJunctionTickTrailsTheGrowingAxisOfAMixedWindow() throws {
+    let system = FakeWindowSystem()
+    system.windows[0].frame = BTRect(x: 0, y: 0, width: 500, height: 400)
+    system.addSecondWindow()
+    system.windows[1].frame = BTRect(x: 0, y: 400, width: 500, height: 400)
+    let coordinator = WindowCoordinator(system: system)
+    let top = system.windows[0].id, bottom = system.windows[1].id
+    var transaction = try #require(coordinator.beginTransaction(windowIDs: [top, bottom]).startedTransaction)
+    let tick = [
+        Placement(windowID: top, frame: BTRect(x: 0, y: 0, width: 450, height: 450)),
+        Placement(windowID: bottom, frame: BTRect(x: 0, y: 450, width: 500, height: 350)),
+    ]
+    #expect(coordinator.applyLive(transaction: &transaction, placements: tick, validateParticipants: false).isApplied)
+    #expect(system.windows[0].frame == BTRect(x: 0, y: 0, width: 450, height: 400))
+    #expect(system.windows[1].frame == BTRect(x: 0, y: 450, width: 500, height: 350))
+    // The next tick sends the rest of the change.
+    #expect(coordinator.applyLive(transaction: &transaction, placements: tick, validateParticipants: false).isApplied)
+    #expect(system.windows[0].frame == BTRect(x: 0, y: 0, width: 450, height: 450))
+}
