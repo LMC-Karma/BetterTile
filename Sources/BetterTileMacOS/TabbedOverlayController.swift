@@ -1195,7 +1195,10 @@ struct TabbedStripLayout {
             titleFrame.size.width -= 21
         }
         if !compact {
-            drawText(titles.indices.contains(index) ? titles[index] : "Window", in: titleFrame, color: .labelColor, bold: selected, trailing: 18)
+            // The close button shows on the selected or hovered tab; other
+            // tabs give its space to the title.
+            drawText(titles.indices.contains(index) ? titles[index] : "Window", in: titleFrame, color: .labelColor,
+                     bold: selected, trailing: selected || hovered ? 18 : 0)
         }
         // The close button keeps its slot, so widths never change on hover.
         let close = NSRect(x: tab.maxX - 24, y: 0, width: 24, height: tab.height)
