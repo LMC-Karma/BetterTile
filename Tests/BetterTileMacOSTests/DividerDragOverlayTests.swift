@@ -331,9 +331,10 @@ private func ghostOverlayCleansUpEveryGestureExit(ending: GhostEnd) throws {
     #expect(controller.dragOverlay.isVisible)
     #expect(handle.drawsLens && handle.drawingSink == nil)
     // Once the window reports its frame, the previews fade away. The hold
-    // itself ends within 250 ms; the margin covers a loaded test machine.
-    let deadline = Date().addingTimeInterval(5)
-    while controller.dragOverlay.isVisible, Date() < deadline { try await Task.sleep(for: .milliseconds(20)) }
+    // itself ends within 250 ms. The margin counts 20 ms steps, not
+    // wall-clock time: a loaded test machine can block the main actor for
+    // seconds, and the hold needs its turn after such a block.
+    for _ in 0..<250 where controller.dragOverlay.isVisible { try await Task.sleep(for: .milliseconds(20)) }
     #expect(!controller.dragOverlay.isVisible)
     #expect(controller.dragOverlay.previewViews.isEmpty)
 }
@@ -354,8 +355,7 @@ private func ghostOverlayCleansUpEveryGestureExit(ending: GhostEnd) throws {
     #expect(!controller.dragOverlay.isFading)
     // Once WindowServer shows the new frame, the previews fade away.
     fixture.system.drawnFrameOverrides = [:]
-    let deadline = Date().addingTimeInterval(5)
-    while controller.dragOverlay.isVisible, Date() < deadline { try await Task.sleep(for: .milliseconds(20)) }
+    for _ in 0..<250 where controller.dragOverlay.isVisible { try await Task.sleep(for: .milliseconds(20)) }
     #expect(!controller.dragOverlay.isVisible)
 }
 
@@ -368,8 +368,7 @@ private func ghostOverlayCleansUpEveryGestureExit(ending: GhostEnd) throws {
     // The window never draws its new frame, so the hold ends at its deadline.
     fixture.system.readsBeforeSettling = 1000
     controller.end(at: fixture.point(dx: 50))
-    let deadline = Date().addingTimeInterval(5)
-    while !controller.dragOverlay.isFading, Date() < deadline { try await Task.sleep(for: .milliseconds(5)) }
+    for _ in 0..<1000 where !controller.dragOverlay.isFading { try await Task.sleep(for: .milliseconds(5)) }
     try #require(controller.dragOverlay.isFading)
     try fixture.begin()
     fixture.tick(dx: 30)
