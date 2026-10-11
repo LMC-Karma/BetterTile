@@ -939,7 +939,19 @@ public final class DividerOverlayController {
         let succeeded: Bool
         switch configuration.resizeFeedbackMode {
         case .ghost:
-            let outcome = coordinator.commit(transaction: &transaction, placements: latestPlacements)
+            var outcome = coordinator.commit(transaction: &transaction, placements: latestPlacements)
+            // The preview cannot show a minimum an application never
+            // reported. The commit reads each window back, so a refused size
+            // is measured at once; the layout is solved again with it.
+            var corrections = 0
+            while outcome.isApplied, corrections < 2, learnCommittedMinimums(), let point = latestDragPoint {
+                corrections += 1
+                self.transaction = transaction
+                applyDrag(to: point, validateParticipants: true)
+                guard let corrected = self.transaction else { break }
+                transaction = corrected
+                outcome = coordinator.commit(transaction: &transaction, placements: latestPlacements)
+            }
             succeeded = outcome.isApplied
             if case .degraded = outcome {
                 reportRollbackFailure(displayID: interaction.displayID, outcome: coordinator.cancel(transaction: transaction))
@@ -1036,6 +1048,27 @@ public final class DividerOverlayController {
             refused.height = refused.height || learnedHeight
         }
         return refused
+    }
+
+    /// Records each size a committed window refused as its minimum for this
+    /// gesture. Returns true when a minimum changed.
+    private func learnCommittedMinimums() -> Bool {
+        var learned = false
+        for placement in latestPlacements {
+            guard let actual = coordinator.system.measuredFrameAfterWrite(for: placement.windowID)?.size,
+                  let index = baselineWindows.firstIndex(where: { $0.id == placement.windowID }) else { continue }
+            var minimum = baselineWindows[index].constraints.minimumSize
+            if actual.width > placement.frame.size.width + 2, actual.width > minimum.width + 0.5 {
+                minimum.width = actual.width
+                learned = true
+            }
+            if actual.height > placement.frame.size.height + 2, actual.height > minimum.height + 0.5 {
+                minimum.height = actual.height
+                learned = true
+            }
+            baselineWindows[index].constraints.minimumSize = minimum
+        }
+        return learned
     }
 
     func cancelActiveGesture() {
