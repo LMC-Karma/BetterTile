@@ -388,3 +388,17 @@ private func resizing(_ frame: BTRect, minX: Double = 0, minY: Double = 0, maxX:
     #expect(rightFrame.midX > bounds.midX)
     #expect(leftFrame.midY < bounds.midY && rightFrame.midY < bounds.midY)
 }
+
+/// A fixed-size window exactly as tall as its pane's window area fits:
+/// the tab strip is reserved once, not twice.
+@Test func aFixedSizeWindowAsTallAsTheWindowAreaFits() throws {
+    let bounds = BTRect(x: 0, y: 0, width: 1000, height: 800)
+    let id = WindowID(rawValue: "fixed")
+    var state = TabbedLayoutState(preset: .single)
+    state.reconcile(windowIDs: [id], removed: [], focused: id)
+    let window = WindowSnapshot(id: id, processIdentifier: 1,
+        frame: BTRect(x: 0, y: 0, width: 400, height: 800 - TabbedLayoutState.headerHeight),
+        displayID: DisplayID(rawValue: "main"), constraints: WindowConstraints(isResizable: false))
+    let fitted = try state.fittingMinimumWidths(in: bounds, windows: [window])
+    #expect(try fitted.placements(in: bounds, windows: [window]).first?.frame.size == window.frame.size)
+}
