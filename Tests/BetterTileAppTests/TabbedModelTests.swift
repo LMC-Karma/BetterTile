@@ -1625,6 +1625,26 @@ func aSameApplicationFocusChangeAfterTheSelectionIsKept() async throws {
     #expect(system.raiseRequests.last?.0 == previousFocus)
 }
 
+/// The placement's own checks can also reject a selection before any
+/// write, here because the tab cannot be read. The early raise is undone.
+@Test @MainActor func aSelectionRejectedByThePlacementPutsBackTheEarlyRaise() async throws {
+    let system = FakeAppWindowSystem()
+    let model = try await makeTwoTabbedColumns(system)
+    defer { model.shutdown() }
+    let state = try #require(model.activeTabbedState)
+    let previous = try #require(state.panes[0].selected)
+    let previousFocus = try #require(state.activeWindowID)
+    let hidden = try #require(state.panes[0].tabs.first { $0 != previous })
+    system.unreadableAfterWrites[hidden] = 0
+    system.focusedID = previousFocus
+    let raises = system.raiseRequests.count
+    model.performTabbed(.select(hidden))
+    try await Task.sleep(for: .milliseconds(400))
+    #expect(system.raiseRequests.dropFirst(raises).first?.0 == hidden)
+    #expect(model.activeTabbedState?.panes[0].selected == previous)
+    #expect(system.focusedID == previousFocus)
+}
+
 @Test @MainActor
 func stackingRepairOfTheKeyApplicationRaisesTheKeyWindowLast() async throws {
     let system = FakeAppWindowSystem()

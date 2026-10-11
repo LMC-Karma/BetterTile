@@ -467,3 +467,24 @@ func tabDragDefersAccessibilityUntilDropCompletes(success: Bool) throws {
     #expect(!f.overlay.hasActiveTabDrag)
     #expect(!intents.contains { if case .move = $0 { true } else { false } })
 }
+
+/// A drag that crossed the threshold while a selection blocked tab drags
+/// starts at release once drags are allowed again, even without further
+/// pointer movement, and drops the tab where the pointer is.
+@Test @MainActor func aBlockedTabDragStillDropsAtRelease() throws {
+    let f = try TabDragFixture()
+    defer { f.overlay.hide() }
+    var intents: [TabbedUIIntent] = []
+    f.overlay.onIntent = { intents.append($0) }
+    f.overlay.acceptsTabDrags = false
+    try f.start()
+    try f.drag(x: f.bounds.minX + 1200, y: f.bounds.minY + 400)
+    #expect(!f.overlay.isInteracting)
+    f.overlay.acceptsTabDrags = true
+    try f.release(x: f.bounds.minX + 1200, y: f.bounds.minY + 400)
+    #expect(!f.overlay.isInteracting)
+    let moves = intents.compactMap { intent -> WindowID? in
+        if case let .move(id, _, _) = intent { return id } else { return nil }
+    }
+    #expect(moves == [f.ids[0]])
+}

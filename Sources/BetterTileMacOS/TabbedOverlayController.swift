@@ -1306,6 +1306,12 @@ struct TabbedStripLayout {
     }
     override func mouseUp(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
+        // A drag blocked while a selection settled starts now, so a release
+        // without further movement still drops the tab.
+        if !dragging, attemptedDrag, let id = downTab, let downPoint, let owner {
+            let tab = strip.tabFrame(renderedOrder.firstIndex(of: id) ?? 0)
+            dragging = owner.beginDrag(id, offset: NSPoint(x: downPoint.x - tab.minX, y: downPoint.y))
+        }
         if dragging, let owner {
             owner.drag(to: owner.screenPoint(event))
             owner.endDrag()

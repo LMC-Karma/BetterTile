@@ -3881,6 +3881,10 @@ extension BetterTileModel {
                 if case .degraded = outcome {
                     self.sessionStore.update(display.id) { $0.suspendAutomaticWrites(observing: windows) }
                 } else if let restored = self.sessionStore.session(for: display.id) {
+                    // A rejection before any write has nothing to roll back;
+                    // the early raise is undone here. After a rollback this
+                    // repeats the same raises.
+                    if let earlyRaise { self.undoEarlyTabRaise(earlyRaise) }
                     // A complete rollback raised the previous selections.
                     // Put their curtains below them again as well.
                     self.showTabbed(session: restored, display: display, windows: windows)
