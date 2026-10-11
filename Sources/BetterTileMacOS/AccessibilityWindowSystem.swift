@@ -829,6 +829,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         let accepted: [AXError] = [.success, .attributeUnsupported]
         var failure: (windowID: WindowID, error: Error)?
         for write in writes {
+            lastWriteReadback.removeValue(forKey: write.windowID)
             guard let result = results[write.windowID] else { continue }
             guard result.errors.allSatisfy({ accepted.contains($0) }) else {
                 elements.removeValue(forKey: write.windowID)

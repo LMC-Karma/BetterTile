@@ -1405,11 +1405,13 @@ final class BetterTileModel {
                 // write; solve again now, so the correction lands with the
                 // drop instead of half a second later from settlement.
                 var placements = plan.placements
+                var correctionDegraded = false
                 if !plan.isFocusDrop, proposed.mode == .bento,
                    let display = system.displays().first(where: { $0.id == displayID }) {
                     let correction = resolvedAfterMeasuredClamps(placements, session: &proposed, display: display)
                     placements = correction.placements
                     if let reason = correction.degradedReason {
+                        correctionDegraded = true
                         recoveryFailurePresented = true
                         suspendAutomaticBentoWrites(
                             displayID: displayID,
@@ -1427,7 +1429,11 @@ final class BetterTileModel {
                 proposed.excludedFocusWindowIDs.formUnion(plan.excludedWindowIDs)
                 proposed.excludedFocusWindowIDs.remove(sourceID)
                 proposed.automaticallyFloatingWindowIDs.remove(sourceID)
-                if sessionStore.commit(
+                if correctionDegraded {
+                    // Automatic writes are suspended and the message names
+                    // Repair; the drop's session is not committed.
+                    committed = false
+                } else if sessionStore.commit(
                     proposed,
                     replacing: active.layoutSession.revision
                 ) != nil {
