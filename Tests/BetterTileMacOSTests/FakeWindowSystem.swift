@@ -176,13 +176,18 @@ final class FakeWindowSystem: WindowSystem, TargetedWindowSystem, WindowEventSou
         }
         var attempted: [WindowID] = []
         var failure: (windowID: WindowID, error: Error)?
-        for write in writes {
-            attempted.append(write.windowID)
-            do {
-                try setFrame(write.frame, knownCurrentFrame: knownCurrentFrames[write.windowID], for: write.windowID)
-            } catch {
-                if failure == nil { failure = (write.windowID, error) }
-                if !attemptsWholeBatch { break }
+        // Like the adapter: shrinking windows, then growing windows, and no
+        // further pass after a failed one.
+        for pass in AccessibilityWindowSystem.shrinkingFirstPasses(writes, knownCurrentFrames: knownCurrentFrames) {
+            guard failure == nil else { break }
+            for write in pass {
+                attempted.append(write.windowID)
+                do {
+                    try setFrame(write.frame, knownCurrentFrame: knownCurrentFrames[write.windowID], for: write.windowID)
+                } catch {
+                    if failure == nil { failure = (write.windowID, error) }
+                    if !attemptsWholeBatch { return FrameBatchResult(attempted: attempted, failure: failure) }
+                }
             }
         }
         return FrameBatchResult(attempted: attempted, failure: failure)
