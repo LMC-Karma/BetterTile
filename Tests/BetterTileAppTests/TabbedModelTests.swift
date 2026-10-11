@@ -192,7 +192,8 @@ func tabbedCurtainsResolveOnlySelectedWindowsAfterPlacementAndFocus(failSelectio
     #expect(system.windowNumberRequests.last == [system.windows[0].id])
     let hidden = system.windows[1].id
     let initialRequests = system.windowNumberRequests.count
-    if failSelection { system.failingNextRaiseWindowID = hidden }
+    // The early raise and the verified placement both fail to order it.
+    if failSelection { system.failingRaiseWindowIDs = [hidden] }
     model.performTabbed(.select(hidden))
     let shown = failSelection ? system.windows[0].id : hidden
     if failSelection { try #require(await waitFor { model.statusMessage != nil }) }

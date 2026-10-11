@@ -59,6 +59,8 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, TabbedWindowSystem, Min
     var acceptsFocusRequests = true
     var raiseRequests: [(WindowID, Bool)] = []
     var failingNextRaiseWindowID: WindowID?
+    /// Raises of these windows always fail.
+    var failingRaiseWindowIDs: Set<WindowID> = []
     /// Like macOS, AXRaise on a window of the frontmost application makes it
     /// that application's key window.
     var raiseFocusesFrontmostApplicationWindow = false
@@ -82,8 +84,8 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, TabbedWindowSystem, Min
         frontmostOverride ?? (windows.first { $0.id == focusedID } ?? windows.first)?.processIdentifier
     }
     func raiseWindow(_ id: WindowID, activate: Bool) throws {
-        if failingNextRaiseWindowID == id {
-            failingNextRaiseWindowID = nil
+        if failingNextRaiseWindowID == id || failingRaiseWindowIDs.contains(id) {
+            if failingNextRaiseWindowID == id { failingNextRaiseWindowID = nil }
             throw WindowSystemError.operationFailed("Injected window ordering failure.")
         }
         raiseRequests.append((id, activate))

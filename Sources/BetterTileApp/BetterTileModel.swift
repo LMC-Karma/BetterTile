@@ -3607,7 +3607,7 @@ extension BetterTileModel {
     private func applyTabbedState(
         _ state: TabbedLayoutState, session original: LayoutSession, display: DisplaySnapshot,
         windows: [WindowSnapshot], focus: WindowID?, rememberUndo: Bool = false, consumeUndo: Bool = false,
-        selectionOnly: Bool = false, rollbackFrames: [WindowID: BTRect]? = nil,
+        selectionOnly: Bool = false, focusAlreadyRequested: Bool = false, rollbackFrames: [WindowID: BTRect]? = nil,
         snapAction: WindowAction? = nil, snapScope: TabbedSnapScope = .pane, gestureBaseline: TabbedLayoutState? = nil,
         gestureSourceID: WindowID? = nil, expectedSpaceID: NativeSpaceID? = nil, restorationFrames: [WindowID: BTRect] = [:]
     ) {
@@ -3789,6 +3789,7 @@ extension BetterTileModel {
                     selected: selected,
                     previousSelected: previous?.selectedWindowIDs.filter(eligibleIDs.contains) ?? [],
                     focus: focus.flatMap { eligibleIDs.contains($0) ? $0 : nil },
+                    focusAlreadyRequested: focusAlreadyRequested && attempt == 0,
                     onSizeMismatch: { id, requested, baseline, actual in
                         guard proposal.state.windowIDs.contains(id) || detached.contains(id) else { return }
                         learnedSize = self.system.observeApplicationEnforcedMinimum(
@@ -3911,7 +3912,18 @@ extension BetterTileModel {
             tabbedQueuedIntents[displayID, default: []].append(.ui(intent))
             return
         }
-        guard let allWindows = try? system.visibleWindows() else { return }
+        // A selected tab's frame is already in its pane, so it comes to the
+        // front before anything is read. The placement below verifies it.
+        var focusAlreadyRequested = false
+        if case let .select(id) = intent, state.panes.contains(where: { $0.tabs.contains(id) && $0.selected != id }) {
+            tabbedFocusSuppressedUntil = Date().addingTimeInterval(0.3)
+            tabbedIntendedFocus = (id, Date().addingTimeInterval(1))
+            focusAlreadyRequested = coordinator.raiseSelectedTab(id).isApplied
+        }
+        // Refresh only this layout's windows when the snapshot cache is valid;
+        // a full scan of every application costs 10-40 ms per action.
+        guard let allWindows = (try? system.cachedVisibleWindows(refreshing: Set(state.windowIDs)))
+                ?? (try? system.visibleWindows()) else { return }
         let observation = system.nativeDesktopObservation()
         guard observation?.allowsAutomaticLayout(on: displayID) != false else { return }
         let windows = bentoEligible((observation?.windowsOnCurrentSpaces(allWindows) ?? allWindows)
@@ -3970,6 +3982,7 @@ extension BetterTileModel {
         }
         applyTabbedState(state, session: session, display: display, windows: windows, focus: focus,
                          rememberUndo: undo, consumeUndo: consumeUndo, selectionOnly: selectionOnly,
+                         focusAlreadyRequested: focusAlreadyRequested,
                          restorationFrames: restorationFrames)
     }
 
