@@ -1358,16 +1358,30 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
 
     private func buttonState(_ attribute: String, of element: AXUIElement) -> PopupWindowClassifier.ButtonState {
         var raw: CFTypeRef?
-        switch AXUIElementCopyAttributeValue(element, attribute as CFString, &raw) {
+        let reference = AXUIElementCopyAttributeValue(element, attribute as CFString, &raw)
+        guard reference == .success else { return Self.buttonState(reference: reference, enabled: nil) }
+        guard let raw, CFGetTypeID(raw) == AXUIElementGetTypeID() else { return .missing }
+        var enabled: CFTypeRef?
+        let error = AXUIElementCopyAttributeValue(unsafeDowncast(raw, to: AXUIElement.self), kAXEnabledAttribute as CFString, &enabled)
+        return Self.buttonState(reference: reference, enabled: (error, enabled as? Bool))
+    }
+
+    /// Maps the reads of a title-bar button to its state. Only an absent
+    /// attribute means absent; any other failed read is unreadable, so the
+    /// window is judged again later.
+    nonisolated static func buttonState(reference: AXError, enabled: (error: AXError, value: Bool?)?) -> PopupWindowClassifier.ButtonState {
+        switch reference {
         case .success: break
         case .attributeUnsupported, .noValue: return .missing
         default: return .unreadable
         }
-        guard let raw, CFGetTypeID(raw) == AXUIElementGetTypeID() else { return .missing }
-        var enabled: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(unsafeDowncast(raw, to: AXUIElement.self), kAXEnabledAttribute as CFString, &enabled) == .success
-        else { return .enabled }
-        return (enabled as? Bool) == false ? .disabled : .enabled
+        guard let enabled else { return .missing }
+        switch enabled.error {
+        case .success: return enabled.value == false ? .disabled : .enabled
+        // A button without an enabled state can be pressed.
+        case .attributeUnsupported, .noValue: return .enabled
+        default: return .unreadable
+        }
     }
 
     private func snapshotAttributes(_ element: AXUIElement) -> SnapshotAttributes? {
