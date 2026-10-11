@@ -1350,3 +1350,26 @@ func singleWindowPartialFailureRestoresBaselineAndPreservesHistory(actionPlan: B
         #expect(hint == BTRect(x: window.frame.minX, y: 0, width: 400, height: 800), "\(window.id): \(String(describing: hint))")
     }
 }
+
+/// A batch that fails while it is prepared writes nothing. Its rollback must
+/// not return a window from the live drag to the frame from before the drag.
+@Test @MainActor func batchThatFailsBeforeWritingMovesNoWindow() throws {
+    let system = FakeWindowSystem()
+    system.windows[0].frame = BTRect(x: 0, y: 0, width: 500, height: 800)
+    system.addSecondWindow()
+    system.windows[1].frame = BTRect(x: 500, y: 0, width: 500, height: 800)
+    let first = system.windows[0].id, second = system.windows[1].id
+    let coordinator = WindowCoordinator(system: system)
+    var transaction = try #require(coordinator.beginTransaction(windowIDs: [first, second]).startedTransaction)
+    let placements = [
+        Placement(windowID: first, frame: BTRect(x: 0, y: 0, width: 400, height: 800)),
+        Placement(windowID: second, frame: BTRect(x: 400, y: 0, width: 600, height: 800)),
+    ]
+    for _ in 1...2 { _ = coordinator.applyLive(transaction: &transaction, placements: placements, validateParticipants: false) }
+    let dragged = system.windows.map(\.frame)
+    let writes = system.frameWriteCounts
+    system.unpreparedBatchWindowID = second
+    #expect(!coordinator.commit(transaction: &transaction, placements: placements).isApplied)
+    #expect(system.frameWriteCounts == writes)
+    #expect(system.windows.map(\.frame) == dragged)
+}

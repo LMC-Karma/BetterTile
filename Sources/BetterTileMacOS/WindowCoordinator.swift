@@ -860,9 +860,12 @@ public final class WindowCoordinator {
                     for id in Set(ordered.map(\.windowID)).subtracting(attempted).union([failure.windowID]) {
                         if let generation = generationsWritten[id] { cancelExpectedMutation(for: id, generation: generation) }
                     }
-                    // The failing window is read before rollback below.
-                    attempted.removeAll { $0 == failure.windowID }
-                    attempted.append(failure.windowID)
+                    // The failing window is read before rollback below. A
+                    // batch that failed before writing has nothing to undo.
+                    if attempted.contains(failure.windowID) {
+                        attempted.removeAll { $0 == failure.windowID }
+                        attempted.append(failure.windowID)
+                    }
                     throw failure.error
                 }
             } catch {

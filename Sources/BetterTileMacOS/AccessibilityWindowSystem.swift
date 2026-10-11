@@ -795,9 +795,11 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         }
         var groups: [pid_t: [CommittedJob]] = [:]
         var pidOrder: [pid_t] = []
+        var preparing = writes[0].windowID
         do {
             try ensurePermission()
             for write in writes {
+                preparing = write.windowID
                 guard let element = elements[write.windowID] ?? refreshElement(for: write.windowID) else {
                     throw WindowSystemError.windowNotFound(write.windowID)
                 }
@@ -815,7 +817,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
             }
         } catch {
             // Nothing was written yet.
-            return FrameBatchResult(attempted: [], failure: (writes.first?.windowID ?? WindowID(rawValue: ""), error))
+            return FrameBatchResult(attempted: [], failure: (preparing, error))
         }
         let jobs = pidOrder.compactMap { groups[$0] }
         let lock = NSLock()

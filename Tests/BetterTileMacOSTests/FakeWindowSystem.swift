@@ -168,7 +168,12 @@ final class FakeWindowSystem: WindowSystem, TargetedWindowSystem, WindowEventSou
     /// Like the Accessibility adapter, attempts every write of a batch and
     /// reports the first failure, instead of stopping at it.
     var attemptsWholeBatch = false
+    /// Fails the batch while preparing this window, before any write.
+    var unpreparedBatchWindowID: WindowID?
     func setFrames(_ writes: [Placement], knownCurrentFrames: [WindowID: BTRect]) -> FrameBatchResult {
+        if let unpreparedBatchWindowID, writes.contains(where: { $0.windowID == unpreparedBatchWindowID }) {
+            return FrameBatchResult(attempted: [], failure: (unpreparedBatchWindowID, WindowSystemError.windowNotFound(unpreparedBatchWindowID)))
+        }
         var attempted: [WindowID] = []
         var failure: (windowID: WindowID, error: Error)?
         for write in writes {
