@@ -17,6 +17,8 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
     /// Open while a continuous gesture writes on every display tick.
     private var continuousWriteDepth = 0
     private var continuousSettable: [WindowID: Bool] = [:]
+    /// Size settability, checked once per continuous gesture like moving.
+    private var continuousSizeSettable: [WindowID: Bool] = [:]
     private var lastWriteReadback: [WindowID: BTRect] = [:]
     /// Decided popup classifications, kept for each window's lifetime.
     private var popupVerdicts: [WindowID: PopupWindowClassifier.Verdict] = [:]
@@ -614,7 +616,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         // A measurement belongs to one write; an older one is not evidence.
         lastWriteReadback.removeValue(forKey: windowID)
         // A fixed-size window, such as Calculator, rejects any size write.
-        if !isSettable(kAXSizeAttribute, on: element) { plan.writesInitialSize = false; plan.writesFinalSize = false }
+        if !sizeIsSettable(windowID, on: element) { plan.writesInitialSize = false; plan.writesFinalSize = false }
         var errors: [AXError] = []
         if plan.writesInitialSize {
             errors.append(AXUIElementSetAttributeValue(element, kAXSizeAttribute as CFString, sizeValue))
@@ -682,11 +684,21 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         continuousWriteDepth += 1
     }
 
+    /// Whether a window's size can be written. A continuous gesture asks the
+    /// application once, not on every tick.
+    private func sizeIsSettable(_ windowID: WindowID, on element: AXUIElement) -> Bool {
+        if continuousWriteDepth > 0, let cached = continuousSizeSettable[windowID] { return cached }
+        let settable = isSettable(kAXSizeAttribute, on: element)
+        if continuousWriteDepth > 0 { continuousSizeSettable[windowID] = settable }
+        return settable
+    }
+
     public func endContinuousWrites() {
         guard continuousWriteDepth > 0 else { return }
         continuousWriteDepth -= 1
         guard continuousWriteDepth == 0 else { return }
         continuousSettable.removeAll()
+        continuousSizeSettable.removeAll()
         let suspensions = frameWriteSuspensions ?? [:]
         frameWriteSuspensions = nil
         for suspension in suspensions.values { suspension.restore() }
@@ -732,7 +744,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
             AXUIElementGetPid(element, &pid)
             let previous = knownCurrentFrames[write.windowID]
             var plan = FrameWritePlanner.plan(target: write.frame, knownCurrentFrame: previous, correctsClamping: false)
-            if !isSettable(kAXSizeAttribute, on: element) { plan.writesInitialSize = false }
+            if !sizeIsSettable(write.windowID, on: element) { plan.writesInitialSize = false }
             groups[pid, default: []].append(IntermediateJob(windowID: write.windowID, element: element,
                                                             frame: write.frame, previous: previous, plan: plan))
         }
@@ -1248,6 +1260,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
             applicationKeys.removeValue(forKey: windowID)
             lastWriteReadback.removeValue(forKey: windowID)
             continuousSettable.removeValue(forKey: windowID)
+            continuousSizeSettable.removeValue(forKey: windowID)
         }
         if event.kind != .moved, event.kind != .resized, event.kind != .focused {
             snapshotCache.invalidate()
