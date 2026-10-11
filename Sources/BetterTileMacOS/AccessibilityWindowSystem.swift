@@ -235,17 +235,23 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
             var restore = original
             guard let tinyValue = AXValueCreate(.cgSize, &tiny),
                   let restoreValue = AXValueCreate(.cgSize, &restore) else { continue }
+            // As for a frame write: with enhanced accessibility on, an
+            // application can reinterpret the size writes.
+            let enhancedUserInterface = suspendEnhancedUserInterfaceIfNeeded(for: element)
+            defer { if frameWriteSuspensions == nil { enhancedUserInterface.restore() } }
             AXUIElementSetMessagingTimeout(element, Self.frameWriteMessagingTimeout)
             defer { AXUIElementSetMessagingTimeout(element, 0) }
             guard AXUIElementSetAttributeValue(element, kAXSizeAttribute as CFString, tinyValue) == .success else { continue }
             let clamped: CGSize? = axValue(kAXSizeAttribute, from: element, type: .cgSize)
             // Confirm the original size; try once more before reporting it.
-            let restored = (0..<2).contains { _ in
+            let sizeRestored = (0..<2).contains { _ in
                 _ = AXUIElementSetAttributeValue(element, kAXSizeAttribute as CFString, restoreValue)
                 guard let size: CGSize = axValue(kAXSizeAttribute, from: element, type: .cgSize) else { return false }
                 return abs(size.width - original.width) <= 1 && abs(size.height - original.height) <= 1
             }
-            if !restored { unrestored.insert(id) }
+            // Some applications move a window to keep it on screen when it
+            // shrinks; put its position back too.
+            if !sizeRestored || !restorePosition(element, to: position) { unrestored.insert(id) }
             guard let clamped else { continue }
             let before = BTRect(x: position.x, y: position.y, width: original.width, height: original.height)
             measured = minimumSizeLearner.observeWriteReadback(
@@ -639,18 +645,32 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
     }
 
     /// Moves the window 1 pt and back. True when the application followed the
-    /// move synchronously. The nudge is not visible.
+    /// move synchronously and returned. The nudge is not visible.
     private func confirmsSynchronousWrites(_ element: AXUIElement, at position: CGPoint) -> Bool {
         var nudged = CGPoint(x: position.x + 1, y: position.y)
-        var original = position
         guard let nudgedValue = AXValueCreate(.cgPoint, &nudged),
-              let originalValue = AXValueCreate(.cgPoint, &original),
               AXUIElementSetAttributeValue(element, kAXPositionAttribute as CFString, nudgedValue) == .success
         else { return false }
         let observed: CGPoint? = axValue(kAXPositionAttribute, from: element, type: .cgPoint)
-        _ = AXUIElementSetAttributeValue(element, kAXPositionAttribute as CFString, originalValue)
+        let returned = restorePosition(element, to: position)
         guard let observed else { return false }
-        return abs(observed.x - nudged.x) <= 0.5
+        return returned && abs(observed.x - nudged.x) <= 0.5
+    }
+
+    /// Writes a window's position back and reads it, trying once more. True
+    /// when the window is at `position`, already or after the write.
+    private func restorePosition(_ element: AXUIElement, to position: CGPoint) -> Bool {
+        func isBack() -> Bool {
+            guard let now: CGPoint = axValue(kAXPositionAttribute, from: element, type: .cgPoint) else { return false }
+            return abs(now.x - position.x) <= 0.5 && abs(now.y - position.y) <= 0.5
+        }
+        if isBack() { return true }
+        var target = position
+        guard let value = AXValueCreate(.cgPoint, &target) else { return false }
+        return (0..<2).contains { _ in
+            _ = AXUIElementSetAttributeValue(element, kAXPositionAttribute as CFString, value)
+            return isBack()
+        }
     }
 
     public func withFrameWriteBatch(_ updates: () throws -> Void) rethrows {

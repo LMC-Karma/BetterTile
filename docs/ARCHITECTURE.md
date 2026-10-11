@@ -147,6 +147,15 @@ insertion policy. Minimized windows retain their reinsertion anchors, and
 Space transitions retain their stored layouts. Changing the preference does
 not rearrange existing windows.
 
+Maximize enters Focus mode on a tiled Bento window and retains the previous
+tree for that desktop session. Restore, Maximize again, and a peer restored
+from the Dock share one bounded wait for the covered peers to return before
+restoring that tree. A failed peer restore still returns the available windows
+to the previous layout after the wait. A rejected layout restore suspends
+automatic placement until Repair. Background sweeps retain membership without
+moving windows while the wait owns that session. A newer layout action cancels
+the wait.
+
 ### Tabbed on Bento
 
 Tabbed is Bento with tab groups. A Tabbed desktop's `bentoState` is its layout;
@@ -265,11 +274,13 @@ change a Bento operation made to the tree; writing it also writes the tree.
   handle appears only on hover, so the Tabbed overlay adds a
   VoiceOver slider over each divider. The slider ignores the mouse; increment
   and decrement move the Bento divider by five percent of the area it splits.
-- New windows join the active pane as its selected tab. Entering Tabbed from
-  Bento adopts the tree, so every pane stays where it was. Leaving for Bento
-  gives every hidden tab its own pane (`unstacked(in:)`) and removes the
-  reserve. Leaving for Native restores the pre-Tabbed frames and keeps the tab
-  groups for the next Tabbed visit.
+- New windows join the active pane as its selected tab. An arrival that cannot
+  fit there joins the first other pane it fits without replacing its selected
+  tab or moving boundaries. If no pane fits, it stays hidden in the active pane.
+  Entering Tabbed from Bento adopts the tree, so every pane stays where it was.
+  Leaving for Bento gives every hidden tab its own pane (`unstacked(in:)`) and
+  removes the reserve. Leaving for Native restores the pre-Tabbed frames and
+  keeps the tab groups for the next Tabbed visit.
 
 ## Overlay appearance
 

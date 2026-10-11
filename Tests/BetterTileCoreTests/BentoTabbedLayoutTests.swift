@@ -405,3 +405,29 @@ private func adoptionWindow(_ name: String, minimumWidth: Double = 120) -> Windo
     state.reconcile(windowIDs: [a.id, arrival.id], removed: [], fittingIn: bounds, windows: [a, arrival])
     #expect(state.panes[1].selected == arrival.id)
 }
+
+@Test func arrivingWindowThatFitsAnotherPanePreservesItsSelectedTab() throws {
+    let bounds = BTRect(x: 0, y: 0, width: 1000, height: 800)
+    let active = adoptionWindow("active")
+    let visible = adoptionWindow("visible", minimumWidth: 750)
+    let arrival = adoptionWindow("arrival", minimumWidth: 600)
+    let layout = BentoLayoutState(root: .partition(BentoPartition(
+        axis: .vertical, weight: 0.2, first: .leaf(active.id), second: .leaf(visible.id)
+    )))
+    var state = try #require(TabbedLayoutState(adopting: layout))
+    let activePaneID = state.activePaneID
+    let otherPaneID = try #require(state.pane(containing: visible.id)?.id)
+    let framesBefore = state.frames(in: bounds)
+    let windows = [active, visible, arrival]
+    _ = try state.placements(in: bounds, windows: windows)
+
+    state.reconcile(windowIDs: windows.map(\.id), removed: [], fittingIn: bounds, windows: windows)
+
+    #expect(state.pane(containing: arrival.id)?.id == otherPaneID)
+    #expect(state.pane(containing: visible.id)?.selected == visible.id)
+    #expect(state.hiddenWindowIDs.contains(arrival.id))
+    #expect(state.activePaneID == activePaneID)
+    #expect(state.activeWindowID == active.id)
+    #expect(state.frames(in: bounds) == framesBefore)
+    _ = try state.placements(in: bounds, windows: windows)
+}
