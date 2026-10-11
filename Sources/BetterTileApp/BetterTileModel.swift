@@ -1399,9 +1399,17 @@ final class BetterTileModel {
                 )
             }
             if committed {
-                let requestedFrames = Dictionary(uniqueKeysWithValues: plan.placements.map { ($0.windowID, $0.frame) })
                 var proposed = active.layoutSession
                 proposed.bentoState = plan.state
+                // A window that refused its new pane is measured by this
+                // write; solve again now, so the correction lands with the
+                // drop instead of half a second later from settlement.
+                var placements = plan.placements
+                if !plan.isFocusDrop, proposed.mode == .bento,
+                   let display = system.displays().first(where: { $0.id == displayID }) {
+                    placements = resolvedAfterMeasuredClamps(placements, session: &proposed, display: display)
+                }
+                let requestedFrames = Dictionary(uniqueKeysWithValues: placements.map { ($0.windowID, $0.frame) })
                 proposed.recordProposedFrames(requestedFrames)
                 proposed.windowIDs.insert(sourceID)
                 if !proposed.bentoInsertionOrder.contains(sourceID) {
@@ -1414,7 +1422,7 @@ final class BetterTileModel {
                     proposed,
                     replacing: active.layoutSession.revision
                 ) != nil {
-                    let changedWindowIDs: Set<WindowID> = Set(plan.placements.compactMap { placement -> WindowID? in
+                    let changedWindowIDs: Set<WindowID> = Set(placements.compactMap { placement -> WindowID? in
                         guard let baseline = active.transaction.baselineFrames[placement.windowID],
                               !baseline.approximatelyEquals(placement.frame, tolerance: 0.01)
                         else { return nil }

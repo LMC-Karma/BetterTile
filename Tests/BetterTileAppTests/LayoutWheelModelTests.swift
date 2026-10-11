@@ -1654,3 +1654,38 @@ func minimizedRightHalfReturnsToItsOriginalSide(nativeMembership: Bool, staleMin
     let learned = system.windows.first { $0.id == arrival }?.constraints.minimumSize.width ?? 0
     #expect(learned < 590, "arrival learned a minimum width of \(learned): \(system.windows.map(\.frame))")
 }
+
+/// A swap can put a window into a pane smaller than a minimum it never
+/// reported. The drop's own write measures the refusal, and the layout is
+/// solved again before the drop returns, so no overlap waits for settlement.
+@Test @MainActor func dragSwapSolvesAgainWhenTheMovedWindowRefusesItsPane() async throws {
+    _ = NSApplication.shared
+    let system = FakeAppWindowSystem()
+    system.measuresOnWrite = true
+    for (index, name) in ["swap-b", "swap-c"].enumerated() {
+        system.windows.append(WindowSnapshot(id: WindowID(rawValue: name), processIdentifier: Int32(43 + index),
+            bundleIdentifier: "com.example.\(name)", frame: BTRect(x: 300 + Double(index) * 40, y: 300, width: 500, height: 400),
+            displayID: system.mainDisplay.id))
+    }
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    model.setActiveMode(.bento)
+    let visible = system.mainDisplay.visibleFrame
+    // Bento tiles the three windows: one full-height pane and two half-height ones.
+    try #require(await waitFor {
+        system.windows.contains { $0.frame.size.height > visible.size.height * 0.75 }
+            && system.windows.filter { $0.frame.size.height < visible.size.height * 0.6 }.count == 2
+    })
+    let tall = try #require(system.windows.first { $0.frame.size.height > visible.size.height * 0.75 })
+    let short = try #require(system.windows.first { $0.frame.size.height < visible.size.height * 0.6 })
+    system.enforcedMinimumHeights[tall.id] = visible.size.height * 0.7
+    try #require(model.beginBentoDrag(displayID: system.mainDisplay.id, sourceID: tall.id))
+    model.finishBentoDrag(displayID: system.mainDisplay.id, sourceID: tall.id, outcome: .swap(targetWindowID: short.id))
+    let frames = system.windows.map(\.frame)
+    for (i, a) in frames.enumerated() {
+        for b in frames.dropFirst(i + 1) {
+            #expect((a.intersection(b)?.area ?? 0) < 1, "\(frames)")
+        }
+    }
+    #expect(try #require(system.windows.first { $0.id == tall.id }).frame.size.height >= visible.size.height * 0.7)
+}
