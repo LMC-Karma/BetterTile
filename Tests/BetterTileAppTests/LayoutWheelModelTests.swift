@@ -1373,3 +1373,27 @@ func minimizedRightHalfReturnsToItsOriginalSide(nativeMembership: Bool, staleMin
     #expect(system.probeRequests.contains { $0.contains(arrival) })
     #expect((system.requestedFrames[arrival] ?? []).allSatisfy { $0.size.height >= 600 })
 }
+
+/// Repair learns a minimum from its own write and must not report success
+/// while that window overlaps a neighbour: it plans again with the measured
+/// minimum, and only then reports.
+@Test @MainActor func repairVerifiesItsLayoutAndReplansAroundMeasuredMinimums() async throws {
+    _ = NSApplication.shared
+    let system = FakeAppWindowSystem()
+    system.measuresOnWrite = true
+    let brave = WindowID(rawValue: "brave"), other = WindowID(rawValue: "other")
+    system.windows.append(WindowSnapshot(id: brave, processIdentifier: 50, bundleIdentifier: "com.brave.Browser",
+        frame: BTRect(x: 100, y: 100, width: 700, height: 600), displayID: system.mainDisplay.id))
+    system.windows.append(WindowSnapshot(id: other, processIdentifier: 51, bundleIdentifier: "com.example.Other",
+        frame: BTRect(x: 150, y: 150, width: 600, height: 500), displayID: system.mainDisplay.id))
+    system.enforcedMinimumWidths[brave] = 520
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    system.focusedID = system.windows[0].id
+
+    model.tileCurrentDisplay()
+    let frames = Dictionary(uniqueKeysWithValues: system.windows.map { ($0.id, $0.frame) })
+    #expect(BentoLayoutVerifier.overlappingWindowIDs(frames).isEmpty, "\(frames)")
+    #expect(model.lastActionFeedback?.kind == .success, "\(String(describing: model.statusMessage))")
+    #expect((frames[brave]?.size.width ?? 0) >= 520)
+}

@@ -971,7 +971,7 @@ final class BetterTileModel {
             session.mode = .bento
             session.prepareForRepair()
             session.bentoState.metrics = BentoLayoutMetrics(paneGap: configuration.bentoInnerGap)
-            let placements: [Placement]
+            var placements: [Placement]
             if displayWindows.count <= 6 {
                 let result = BentoPlanner().plan(
                     state: BentoRuntimeState(
@@ -1014,7 +1014,34 @@ final class BetterTileModel {
                 recordHistory: true,
                 surfaceFailure: false
             )
-            let applied = commitResult.result == .committed
+            var applied = commitResult.result == .committed
+            var overlapping: Set<WindowID> = []
+            if applied {
+                // Each write reads the real size back, so a refused size is
+                // measured now. Verify the frames the windows took; if any
+                // overlap, plan once more with the measured minimums.
+                for pass in 0..<2 {
+                    let ids = Set(placements.map(\.windowID))
+                    guard let actual = try? system.windowSnapshots(ids: ids) else { break }
+                    overlapping = BentoLayoutVerifier.overlappingWindowIDs(
+                        Dictionary(uniqueKeysWithValues: actual.map { ($0.id, $0.frame) }))
+                    guard !overlapping.isEmpty, pass == 0, displayWindows.count <= 6 else { break }
+                    let replanned = BentoPlanner().plan(
+                        state: BentoRuntimeState(layout: session.bentoState,
+                                                 reinsertionAnchors: session.bentoReinsertionAnchors),
+                        observation: BentoObservation(bounds: display.visibleFrame, windows: actual,
+                                                      focusedWindowID: focused.id),
+                        intent: .retile
+                    )
+                    guard replanned.writesFrames, !replanned.placements.isEmpty else { break }
+                    session.bentoState = replanned.state.layout
+                    session.lastObservedFrames = Dictionary(uniqueKeysWithValues: replanned.placements.map { ($0.windowID, $0.frame) })
+                    placements = replanned.placements
+                    applied = commitBentoProposal(placements, session: &session, display: display,
+                                                  recordHistory: false, surfaceFailure: false).result == .committed
+                    if !applied { break }
+                }
+            }
             if applied {
                 scheduleBentoSettlement(
                     displayID: display.id,
@@ -1024,8 +1051,14 @@ final class BetterTileModel {
                     isAuthoritative: true
                 )
             }
+            let overlapNames = displayWindows.filter { overlapping.contains($0.id) }
+                .map { $0.title.isEmpty ? ($0.bundleIdentifier ?? "A window") : $0.title }.sorted()
             statusMessage = if !applied {
                 commitResult.failureReason ?? "The Bento layout could not be repaired."
+            } else if displayWindows.count > 6 {
+                "Bento manages up to six windows. The others stay floating."
+            } else if !overlapNames.isEmpty {
+                "\(overlapNames.prefix(2).joined(separator: " and ")) cannot fit beside each other at their minimum sizes."
             } else if !session.automaticallyFloatingWindowIDs.isEmpty {
                 "Some windows are floating because their minimum sizes do not fit this display."
             } else {
