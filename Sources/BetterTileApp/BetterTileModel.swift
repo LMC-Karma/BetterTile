@@ -3931,6 +3931,9 @@ extension BetterTileModel {
                     self.showTabbed(session: restored, display: display, windows: windows)
                 }
                 self.presentActionResult(succeeded: false, error: outcome.failureReason, displayID: display.id)
+                // An earlier step of this gesture may have pointed the
+                // divider at a selection the rollback just reverted.
+                self.refreshDividerBoundaries()
             }
             self.drainTabbedQueuedIntent(on: display.id, sessionID: original.id)
             if self.tabbedNeedsFocusRefresh || repairsStackingAfterSelection { self.handleTabbedFocus() }
