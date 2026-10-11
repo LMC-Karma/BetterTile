@@ -2521,6 +2521,7 @@ final class BetterTileModel {
             }
             return (.rejected, statusMessage)
         }
+        let placements = resolvedAfterMeasuredClamps(placements, session: &session, display: display)
         session.recordProposedFrames(
             Dictionary(uniqueKeysWithValues: placements.map { ($0.windowID, $0.frame) })
         )
@@ -2539,6 +2540,39 @@ final class BetterTileModel {
         }
         session = committed
         return (.committed, nil)
+    }
+
+    /// A write reads each size back. When an application clamped a window
+    /// larger than its pane, that minimum is now known: solve the same tree
+    /// again and write once more in the same pass, so the correction lands
+    /// with the placement instead of as a separate, later jump.
+    private func resolvedAfterMeasuredClamps(
+        _ placements: [Placement],
+        session: inout LayoutSession,
+        display: DisplaySnapshot
+    ) -> [Placement] {
+        let ids = Set(placements.map(\.windowID))
+        guard session.mode == .bento, placements.count > 1,
+              Set(session.bentoState.root?.windowIDs ?? []) == ids,
+              let measured = try? system.windowSnapshots(ids: ids), measured.count == ids.count
+        else { return placements }
+        let requested = Dictionary(uniqueKeysWithValues: placements.map { ($0.windowID, $0.frame) })
+        let clamped = measured.contains { window in
+            guard let frame = requested[window.id] else { return false }
+            return window.frame.size.width > frame.size.width + 2 || window.frame.size.height > frame.size.height + 2
+        }
+        guard clamped,
+              let solved = BentoConstraintSolver().solve(
+                  state: session.bentoState, in: display.visibleFrame,
+                  constraints: Dictionary(uniqueKeysWithValues: measured.map { ($0.id, $0.constraints) }))
+        else { return placements }
+        let next = solved.placements(in: display.visibleFrame)
+        let nextFrames = Dictionary(uniqueKeysWithValues: next.map { ($0.windowID, $0.frame) })
+        guard nextFrames != requested, bentoProposalIsContained(next, in: display),
+              coordinator.applyPlacements(next, recordHistory: false).isApplied
+        else { return placements }
+        session.bentoState = solved
+        return next
     }
 
     // MARK: - Application rules

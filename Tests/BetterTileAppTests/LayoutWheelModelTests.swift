@@ -1554,3 +1554,36 @@ func minimizedRightHalfReturnsToItsOriginalSide(nativeMembership: Bool, staleMin
     }
     #expect(reflowed, "\(system.windows.map(\.frame)) after closing \(closed.id), sweeps \(system.completeSweepCount)")
 }
+
+/// A neighbour whose minimum is not yet measured clamps during a new
+/// window's placement. The correction lands in the same pass, so the first
+/// observable layout already has no overlap; it is not a later second jump.
+@Test @MainActor func measuredClampIsCorrectedInTheSamePlacement() async throws {
+    _ = NSApplication.shared
+    let system = FakeAppWindowSystem()
+    system.measuresOnWrite = true
+    system.emitsFrameEvents = true
+    let wide = WindowID(rawValue: "wide")
+    system.windows.append(WindowSnapshot(id: wide, processIdentifier: 80, bundleIdentifier: "com.example.Wide",
+        frame: BTRect(x: 0, y: 0, width: 800, height: 800), displayID: system.mainDisplay.id))
+    system.enforcedMinimumHeights[system.windows[0].id] = 560
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    model.setActiveMode(.bento)
+    try #require(await waitFor { system.windows.allSatisfy { $0.frame.size.height == 800 } })
+    try await Task.sleep(for: .milliseconds(400))
+    let writes = system.frameWriteCounts.values.reduce(0, +)
+    let arrival = WindowID(rawValue: "arrival")
+    system.windows.append(WindowSnapshot(id: arrival, processIdentifier: 81, bundleIdentifier: "com.example.Arrival",
+        frame: BTRect(x: 100, y: 100, width: 400, height: 300), displayID: system.mainDisplay.id))
+    // The probe finds nothing for the arrival; the neighbour's height limit is unknown.
+    system.focusedID = wide
+    system.eventHandler?(WindowSystemEvent(kind: .created, windowID: arrival, processIdentifier: 81))
+    var firstObservation: [WindowID: BTRect] = [:]
+    _ = await waitFor(timeout: .seconds(3)) {
+        guard system.frameWriteCounts.values.reduce(0, +) > writes else { return false }
+        firstObservation = Dictionary(uniqueKeysWithValues: system.windows.map { ($0.id, $0.frame) })
+        return true
+    }
+    #expect(BentoLayoutVerifier.overlappingWindowIDs(firstObservation).isEmpty, "\(firstObservation)")
+}
