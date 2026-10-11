@@ -1594,3 +1594,26 @@ func stackingRepairOfTheKeyApplicationRaisesTheKeyWindowLast() async throws {
     #expect(system.focusedID == system.windows[0].id)
     #expect(model.activeTabbedState == state)
 }
+
+/// Terminal settles on whole character cells, just short of its pane. The
+/// tab is selected, and its real frame is not read as a user resize.
+@Test(arguments: [false, true]) @MainActor
+func steppedApplicationTabIsSelectedWithoutResizeLoops(emitsEvents: Bool) async throws {
+    let system = FakeAppWindowSystem()
+    let model = try await makeTwoTabbedColumns(system)
+    defer { model.shutdown() }
+    let terminal = system.windows[1].id
+    system.widthSteps[terminal] = 10
+    // The hidden tab drifted, so selecting it must write its pane frame.
+    system.windows[1].frame.size.width = 300
+    system.emitsFrameEvents = emitsEvents
+
+    model.performTabbed(.select(terminal))
+    #expect(await waitFor(timeout: .seconds(2)) { model.activeTabbedState?.panes[0].selected == terminal })
+    try await Task.sleep(for: .milliseconds(600))
+    let writes = system.frameWriteCounts
+    try await Task.sleep(for: .milliseconds(600))
+    #expect(model.activeTabbedState?.panes[0].selected == terminal)
+    #expect(system.frameWriteCounts == writes) // No adopt-and-refit loop.
+    #expect(model.statusMessage == nil)
+}

@@ -144,7 +144,7 @@ public final class WindowCoordinator {
     /// generations after its successful terminal snapshot.
     public func matchesExpectedMutation(windowID: WindowID, actualFrame: BTRect, tolerance: Double = 2) -> Bool {
         expectedMutations[windowID]?.contains {
-            actualFrame.approximatelyEquals($0.frame, tolerance: tolerance)
+            SteppedSizeAcceptance.evaluate(requested: $0.frame, actual: actualFrame, tolerance: tolerance) != .rejected
         } == true
     }
 
@@ -941,6 +941,7 @@ extension WindowCoordinator {
                 try tabSystem.raiseWindow(focus, activate: false)
             }
             var previousFrames: [WindowID: BTRect] = [:]
+            var previousSamples: [WindowID: BTRect] = [:]
             var previousHiddenFrames: [WindowID: BTRect] = [:]
             // Frames settle within four samples. Activation can take longer,
             // so accepted frames keep waiting for focus instead of rolling back.
@@ -949,7 +950,18 @@ extension WindowCoordinator {
                     return touched ? .degraded(reason: "The desktop changed during Tabbed placement. Return to that desktop and use Repair Tabbed.") : .failed(reason: "The desktop changed.")
                 }
                 let actual = Dictionary(uniqueKeysWithValues: try snapshots(ids: ids).map { ($0.id, $0.frame) })
-                let framesMatch = placements.allSatisfy { actual[$0.windowID]?.approximatelyEquals($0.frame, tolerance: 2) == true }
+                // An application that resizes in steps settles just short of
+                // the request. Once that frame is stable it is accepted; the
+                // curtain covers the remainder of the pane.
+                let framesMatch = placements.allSatisfy { placement in
+                    guard let frame = actual[placement.windowID] else { return false }
+                    switch SteppedSizeAcceptance.evaluate(requested: placement.frame, actual: frame) {
+                    case .exact: return true
+                    case .stepped: return previousSamples[placement.windowID]?.approximatelyEquals(frame, tolerance: 0.5) == true
+                    case .rejected: return false
+                    }
+                }
+                previousSamples = actual
                 let focusMatches = try focus == nil || system.focusedWindow()?.id == focus
                 if framesMatch && focusMatches {
                     // Hidden writes are best effort, but a transient partial

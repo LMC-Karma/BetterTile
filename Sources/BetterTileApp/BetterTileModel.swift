@@ -3494,7 +3494,16 @@ extension BetterTileModel {
                 proposed.tabbedState = state
                 proposed.windowIDs = state.windowIDs
                 proposed.lastWorkArea = display.visibleFrame
-                let placedFrames = Dictionary(uniqueKeysWithValues: placements.map { ($0.windowID, $0.frame) })
+                var placedFrames = Dictionary(uniqueKeysWithValues: placements.map { ($0.windowID, $0.frame) })
+                // An application that resizes in steps settled just short of
+                // its pane. Its real frame is the verified one; comparing later
+                // events with the request would read it as a user resize.
+                for window in (try? self.system.windowSnapshots(ids: Set(placedFrames.keys))) ?? [] {
+                    if let requested = placedFrames[window.id],
+                       SteppedSizeAcceptance.evaluate(requested: requested, actual: window.frame) == .stepped {
+                        placedFrames[window.id] = window.frame
+                    }
+                }
                 proposed.lastObservedFrames = selectionOnly
                     ? original.lastObservedFrames.merging(placedFrames) { _, new in new }
                     : placedFrames
