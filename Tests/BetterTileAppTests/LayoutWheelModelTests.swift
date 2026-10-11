@@ -1397,3 +1397,29 @@ func minimizedRightHalfReturnsToItsOriginalSide(nativeMembership: Bool, staleMin
     #expect(model.lastActionFeedback?.kind == .success, "\(String(describing: model.statusMessage))")
     #expect((frames[brave]?.size.width ?? 0) >= 520)
 }
+
+/// The seventh window on a Bento desktop floats where it opened. BetterTile
+/// says so at once and names the window, instead of leaving it over the
+/// tiles without a word.
+@Test @MainActor func seventhBentoWindowIsAnnouncedWhenItFloats() async throws {
+    _ = NSApplication.shared
+    let system = FakeAppWindowSystem()
+    system.availableDisplays = [DisplaySnapshot(id: system.mainDisplay.id,
+        frame: BTRect(x: 0, y: 0, width: 1800, height: 1000), visibleFrame: BTRect(x: 0, y: 0, width: 1800, height: 1000),
+        isMain: true)]
+    for index in 1...5 {
+        system.windows.append(WindowSnapshot(id: WindowID(rawValue: "w\(index)"), processIdentifier: Int32(60 + index),
+            title: "Window \(index)", frame: BTRect(x: 0, y: 0, width: 400, height: 300), displayID: system.mainDisplay.id))
+    }
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    model.setActiveMode(.bento)
+    try #require(await waitFor { Set(system.windows.map(\.frame)).count == 6 })
+    try await Task.sleep(for: .milliseconds(300))
+    let seventh = WindowID(rawValue: "seventh")
+    system.windows.append(WindowSnapshot(id: seventh, processIdentifier: 90, title: "Report",
+        frame: BTRect(x: 100, y: 100, width: 400, height: 300), displayID: system.mainDisplay.id))
+    system.eventHandler?(WindowSystemEvent(kind: .created, windowID: seventh, processIdentifier: 90))
+    #expect(await waitFor { model.lastActionFeedback?.message == "Bento is full" })
+    #expect(model.lastActionFeedback?.detail?.contains("Report") == true)
+}

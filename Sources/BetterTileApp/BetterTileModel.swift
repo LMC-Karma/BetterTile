@@ -2292,6 +2292,19 @@ final class BetterTileModel {
         refreshDividerBoundaries()
     }
 
+    /// A window beyond Bento's six panes floats where it opened. Say so at
+    /// once, with what the user can do, instead of leaving it over the tiles
+    /// silently.
+    private func announceBentoOverflow(before: LayoutSession, on display: DisplaySnapshot, windows: [WindowSnapshot]) {
+        guard let after = sessionStore.session(for: display.id), after.mode == .bento,
+              (after.bentoState.root?.windowIDs.count ?? 0) >= 6 else { return }
+        let newlyFloating = after.automaticallyFloatingWindowIDs.subtracting(before.automaticallyFloatingWindowIDs)
+        guard let window = windows.first(where: { newlyFloating.contains($0.id) }) else { return }
+        let name = window.title.isEmpty ? "This window" : "“\(window.title)”"
+        statusMessage = "Bento manages up to six windows. \(name) stays floating: drop it on a pane to swap, or switch this desktop to Tabbed."
+        presentActionResult(succeeded: false, error: statusMessage, displayID: display.id)
+    }
+
     /// Maximize on a tiled Bento window enters focus mode at once: the window
     /// covers the display and its peers are minimized in one transaction.
     /// Restore, Maximize again, or restoring any peer from the Dock ends it
@@ -3001,6 +3014,7 @@ final class BetterTileModel {
                 let committed = sessionStore.commit(session, replacing: session.revision) != nil
                 sweepCommitted = sweepCommitted && committed
             }
+            announceBentoOverflow(before: activation.session, on: display, windows: displayWindows)
         }
         if sweepCommitted {
             confirmedGoneWindowIDs.subtract(consumedDestroyedWindowIDs)

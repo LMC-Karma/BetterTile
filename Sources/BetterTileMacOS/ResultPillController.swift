@@ -39,6 +39,8 @@ public struct ResultPillFeedback: Equatable, Sendable {
             message = "Bento not active"
         } else if value.contains("eligible") || value.contains("focused window") {
             message = "No eligible window"
+        } else if value.contains("up to six") {
+            message = "Bento is full"
         } else if value.contains("cannot fit") || value.contains("can't fit") || value.contains("minimum size") {
             message = "Can’t fit this layout"
         } else if value.contains("tabbed size") {
@@ -63,7 +65,7 @@ public struct ResultPillFeedback: Equatable, Sendable {
         }
         // Titles that do not say why carry the reason as a second line.
         let reason = error?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let explains = ["Couldn’t apply layout", "Can’t fit this layout", "Window refused this size"].contains(message)
+        let explains = ["Couldn’t apply layout", "Can’t fit this layout", "Window refused this size", "Bento is full"].contains(message)
         let detail = explains && !reason.isEmpty ? reason : nil
         return Self(kind: .failure, message: message, detail: detail, symbolName: "xmark",
                     dismissDelay: detail == nil ? 1.6 : 3)
