@@ -687,7 +687,16 @@ public struct TabbedLayoutState: Hashable, Sendable {
 
     /// Solves the selected tabs' minimum sizes with Bento's solver.
     public func fittingMinimumWidths(in bounds: BTRect, windows: [WindowSnapshot]) throws -> Self {
-        let constraints = Dictionary(windows.map { ($0.id, $0.constraints) }, uniquingKeysWith: { first, _ in first })
+        let constraints = Dictionary(windows.map { window -> (WindowID, WindowConstraints) in
+            var value = window.constraints
+            // A fixed-size window needs a pane whose window area holds it.
+            if !value.isResizable {
+                value.minimumSize = BTSize(
+                    width: max(value.minimumSize.width, window.frame.size.width),
+                    height: max(value.minimumSize.height, window.frame.size.height + Self.headerHeight))
+            }
+            return (window.id, value)
+        }, uniquingKeysWith: { first, _ in first })
         guard let fitted = groups.fitted(in: bounds, constraints: constraints) else { throw TabbedLayoutError.panesTooSmall }
         var result = self
         result.groups = fitted

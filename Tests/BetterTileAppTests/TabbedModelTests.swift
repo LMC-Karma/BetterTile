@@ -1748,6 +1748,37 @@ func steppedApplicationTabIsSelectedWithoutResizeLoops(emitsEvents: Bool) async 
     held = false
 }
 
+/// A fixed-size tab wider than its pane widens the pane when it is
+/// selected, like a resizable tab with a large minimum, instead of failing.
+@Test @MainActor func fixedSizeTabWiderThanItsPaneWidensThePane() async throws {
+    _ = NSApplication.shared
+    let system = FakeAppWindowSystem()
+    addTabbedWindows(2, to: system)
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    model.configuration.defaultTabbedPreset = .columns
+    model.setActiveMode(.tabbed)
+    try #require(await waitFor { model.activeTabbedState?.windowIDs.count == 3 })
+    let fixed = system.windows[2].id
+    let pane = try #require(model.activeTabbedState?.panes.first { $0.tabs.contains(fixed) })
+    let bounds = system.mainDisplay.visibleFrame
+    let width = try #require(model.activeTabbedState?.frames(in: bounds)[pane.id]).size.width + 80
+    if pane.selected == fixed {
+        let other = try #require(pane.tabs.first { $0 != fixed })
+        model.performTabbed(.select(other))
+        try #require(await waitFor { model.activeTabbedState?.panes.first { $0.id == pane.id }?.selected == other })
+    }
+    let index = try #require(system.windows.firstIndex { $0.id == fixed })
+    system.windows[index].constraints.isResizable = false
+    system.windows[index].frame.size = BTSize(width: width, height: 300)
+    model.performTabbed(.select(fixed))
+    #expect(await waitFor { model.activeTabbedState?.activeWindowID == fixed })
+    #expect(system.windows[index].frame.size == BTSize(width: width, height: 300))
+    let paneFrame = try #require(model.activeTabbedState?.frames(in: bounds)[pane.id])
+    #expect(paneFrame.size.width + 0.5 >= width, "pane \(paneFrame) window \(width)")
+    #expect(model.statusMessage == nil, "\(model.statusMessage ?? "")")
+}
+
 /// A fixed-size tab can be selected at its own size. Before, any layout in
 /// which it was the selected tab failed and rolled back.
 @Test @MainActor func fixedSizeTabCanBeSelectedAtItsOwnSize() async throws {
