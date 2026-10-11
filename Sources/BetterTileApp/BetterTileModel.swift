@@ -3598,6 +3598,7 @@ extension BetterTileModel {
         }
         if isTabbedBusy(on: displayID) {
             tabbedQueuedIntents[displayID, default: []].append(.snap(windowID, action, expectedSpaceID))
+            tabbedOverlays[displayID]?.yieldPressSelection()
             return
         }
         applyTabbedState(context.state, session: context.session, display: context.display,
@@ -3916,6 +3917,7 @@ extension BetterTileModel {
               var state = session.tabbedState else { return }
         if isTabbedBusy(on: displayID) {
             tabbedQueuedIntents[displayID, default: []].append(.ui(intent))
+            tabbedOverlays[displayID]?.yieldPressSelection()
             return
         }
         // A selected tab's frame is already in its pane, so it comes to the

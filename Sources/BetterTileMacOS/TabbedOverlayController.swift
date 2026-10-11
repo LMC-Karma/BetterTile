@@ -28,8 +28,14 @@ public final class TabbedOverlayController {
     public private(set) var isInteracting = false
     public private(set) var isDropPending = false
     public var acceptsTabDrags = true {
-        didSet { if !acceptsTabDrags, isInteracting { cancelInteraction() } }
+        didSet {
+            if acceptsTabDrags { pressSelection = nil }
+            if !acceptsTabDrags, isInteracting { cancelInteraction() }
+        }
     }
+    /// The tab whose press started the placement that now blocks tab drags.
+    /// Only that placement lets a blocked drag start at release.
+    private var pressSelection: WindowID?
     public private(set) var state = TabbedLayoutState()
     private var bounds = BTRect(x: 0, y: 0, width: 1, height: 1)
     private var windows: [WindowID: WindowSnapshot] = [:]
@@ -342,6 +348,17 @@ public final class TabbedOverlayController {
 
     fileprivate func send(_ intent: TabbedUIIntent) { onIntent?(intent) }
 
+    /// Sends a press's selection. It owns the drag block only when no other
+    /// placement already held it.
+    fileprivate func selectOnPress(_ id: WindowID) {
+        pressSelection = acceptsTabDrags ? id : nil
+        send(.select(id))
+    }
+
+    /// Another action is queued behind the current placement, so a drag
+    /// blocked now no longer waits only for a press's own selection.
+    public func yieldPressSelection() { pressSelection = nil }
+
     func menu(pane: TabbedPane, windowID: WindowID?) -> NSMenu {
         let menu = NSMenu()
         menu.autoenablesItems = false
@@ -417,10 +434,11 @@ public final class TabbedOverlayController {
         return window.title.isEmpty ? (window.bundleIdentifier ?? "Window") : window.title
     }
 
-    /// `atRelease` starts a drag blocked while a selection settled, at the
-    /// mouse-up itself; its drop is queued behind that selection.
+    /// `atRelease` starts a drag blocked while its press's own selection
+    /// settled, at the mouse-up itself; its drop is queued behind that
+    /// selection.
     fileprivate func beginDrag(_ id: WindowID, offset: NSPoint, atRelease: Bool = false) -> Bool {
-        guard acceptsTabDrags || atRelease, !isInteracting, !isDropPending else { return false }
+        guard acceptsTabDrags || (atRelease && pressSelection == id), !isInteracting, !isDropPending else { return false }
         isInteracting = true
         cancelled = false
         draggedWindow = id
@@ -1293,7 +1311,7 @@ struct TabbedStripLayout {
             if owner?.isDropPending != true, previewOrder == nil, pane.selected != id {
                 selectedOnPress = id
                 pressedSelection = id
-                owner?.send(.select(id))
+                owner?.selectOnPress(id)
             }
         } else { owner?.send(.activate(pane.id)) }
     }
