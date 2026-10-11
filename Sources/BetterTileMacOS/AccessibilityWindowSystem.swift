@@ -910,10 +910,10 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
             var p: CFTypeRef?, s: CFTypeRef?
             guard AXUIElementCopyAttributeValue(job.element, kAXPositionAttribute as CFString, &p) == .success,
                   AXUIElementCopyAttributeValue(job.element, kAXSizeAttribute as CFString, &s) == .success,
-                  let p, let s, CFGetTypeID(p) == AXValueGetTypeID(), CFGetTypeID(s) == AXValueGetTypeID() else { return nil }
-            var point = CGPoint.zero, extent = CGSize.zero
-            AXValueGetValue(p as! AXValue, .cgPoint, &point)
-            AXValueGetValue(s as! AXValue, .cgSize, &extent)
+                  let p, let s,
+                  // A value of another type is no measurement, not a zero frame.
+                  let point: CGPoint = decodedAXValue(p, type: .cgPoint),
+                  let extent: CGSize = decodedAXValue(s, type: .cgSize) else { return nil }
             return BTRect(x: point.x, y: point.y, width: extent.width, height: extent.height)
         }
         guard let actual = read() else {
