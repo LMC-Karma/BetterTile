@@ -1251,3 +1251,39 @@ func liveDividerReleaseRecomputesANewlyLearnedMinimum(height: Bool) throws {
     #expect(kept[0].frame == BTRect(x: 335, y: 310, width: 230, height: 408))
     #expect(kept[1] == placements[1])
 }
+
+/// A divider cannot shrink a pane below the fixed-size window in it, so the
+/// window never covers the neighbour that grew.
+@Test @MainActor func dividerStopsAtAFixedSizeWindow() throws {
+    _ = NSApplication.shared
+    let system = FakeWindowSystem()
+    let bounds = BTRect(x: -10_000, y: -10_000, width: 800, height: 600)
+    let display = DisplayID(rawValue: "main")
+    system.availableDisplays = [DisplaySnapshot(id: display, frame: bounds, visibleFrame: bounds, isMain: true)]
+    let left = WindowID(rawValue: "left"), right = WindowID(rawValue: "right")
+    system.windows = [
+        WindowSnapshot(id: left, processIdentifier: 1, frame: BTRect(x: bounds.minX, y: bounds.minY, width: 400, height: 600),
+                       displayID: display, constraints: WindowConstraints(isResizable: false)),
+        WindowSnapshot(id: right, processIdentifier: 2, frame: BTRect(x: bounds.minX + 400, y: bounds.minY, width: 400, height: 600), displayID: display),
+    ]
+    var config = BetterTileConfiguration()
+    config.resizeFeedbackMode = .ghost
+    let controller = DividerOverlayController(coordinator: WindowCoordinator(system: system), configuration: config)
+    let boundary = BoundaryDescriptor(
+        id: "native", displayID: display, axis: .vertical, coordinate: bounds.minX + 400,
+        spanStart: bounds.minY, spanEnd: bounds.maxY, beforeWindowIDs: [left], afterWindowIDs: [right]
+    )
+    let start = BTPoint(x: bounds.minX + 400, y: bounds.minY + 80)
+    let interaction = try #require(DividerInteractionResolver.resolve(at: start, in: [boundary], hitWidth: 18, adjacencyTolerance: 6, paneGap: 0))
+    let screen = try #require(NSScreen.screens.first)
+
+    controller.beginGesture(interaction: interaction, at: start)
+    defer { controller.hideAndCancel() }
+    controller.drag(to: CGPoint(x: start.x - 150, y: screen.frame.maxY - start.y))
+    controller.displayTick()
+    controller.end()
+    let leftFrame = try #require(system.windows.first { $0.id == left }?.frame)
+    let rightFrame = try #require(system.windows.first { $0.id == right }?.frame)
+    #expect(leftFrame.size.width == 400, "left \(leftFrame)")
+    #expect(rightFrame.minX >= leftFrame.maxX - 0.5, "left \(leftFrame) right \(rightFrame)")
+}

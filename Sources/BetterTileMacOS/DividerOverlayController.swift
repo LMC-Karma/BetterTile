@@ -694,7 +694,7 @@ public final class DividerOverlayController {
         baselineInteraction = interaction
         isDragging = true
         installEscapeMonitor()
-        baselineWindows = windows
+        baselineWindows = Self.holdingFixedSizes(windows)
         displayBounds = display.visibleFrame
         startPoint = point
         baselineBentoState = state
@@ -758,6 +758,19 @@ public final class DividerOverlayController {
         isUpdatingOverlayPresentation = false
         overlayPresentationCount += 1
         CATransaction.commit()
+    }
+
+    /// A fixed-size window's pane cannot become smaller than the window, so
+    /// the divider stops before the window would cover its neighbour.
+    static func holdingFixedSizes(_ windows: [WindowSnapshot]) -> [WindowSnapshot] {
+        windows.map { window in
+            guard !window.constraints.isResizable else { return window }
+            var held = window
+            held.constraints.minimumSize = BTSize(
+                width: max(window.constraints.minimumSize.width, window.frame.size.width),
+                height: max(window.constraints.minimumSize.height, window.frame.size.height))
+            return held
+        }
     }
 
     /// A fixed-size window, such as a Calculator tab, keeps its size,
