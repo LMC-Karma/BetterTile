@@ -835,7 +835,8 @@ func aFocusModeRestoreReturnsAvailablePeersAfterARestoreFailure(fromDock: Bool) 
 
 /// A Layout Wheel half during Focus mode brings the covered windows back,
 /// like the keyboard shortcut, instead of leaving them minimized.
-@Test @MainActor func aLayoutWheelHalfEndsFocusModeAndReturnsThePeers() async throws {
+@Test(arguments: [false, true]) @MainActor
+func aLayoutWheelHalfEndsFocusModeAndReturnsThePeers(focusChangesAfterCapture: Bool) async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
     let peer = WindowID(rawValue: "peer")
@@ -843,13 +844,20 @@ func aFocusModeRestoreReturnsAvailablePeersAfterARestoreFailure(fromDock: Bool) 
         frame: BTRect(x: 0, y: 0, width: 200, height: 300), displayID: system.mainDisplay.id))
     let model = makeModel(system: system)
     defer { model.shutdown() }
+    model.configuration.bentoInnerGap = 0
     model.setActiveMode(.bento)
     try #require(await waitFor { system.windows.allSatisfy { $0.frame.size.height == 800 } })
     system.focusedID = system.windows[0].id
     model.perform(.maximize)
     try #require(system.windows[1].isMinimized)
-    model.performLayoutWheel(.windowAction(.leftHalf), for: target(for: system))
+    let captured = try #require(model.captureLayoutWheelTarget())
+    if focusChangesAfterCapture { system.focusedID = peer }
+    model.performLayoutWheel(.windowAction(.leftHalf), for: captured)
     #expect(!system.windows[1].isMinimized)
+    #expect(system.windows[0].frame == BTRect(x: 0, y: 0, width: 500, height: 800))
+    #expect(system.windows[1].frame == BTRect(x: 500, y: 0, width: 500, height: 800))
+    #expect(model.statusMessage == nil)
+    #expect(model.lastActionFeedback?.kind == .success)
 }
 
 /// Restore waits for the peers to come back before it lays the desktop out.

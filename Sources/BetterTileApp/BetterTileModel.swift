@@ -502,7 +502,16 @@ final class BetterTileModel {
         if command == .repairBento,
            repairsAfterFocusRestore({ [weak self] in self?.performLayoutWheel(command, for: target) }) { return }
         cancelPendingFocusRestore()
-        switch planLayoutWheel(command, for: target) {
+        var outcome = planLayoutWheel(command, for: target)
+        if case .ready(.bento(_)) = outcome,
+           case let .windowAction(action) = command,
+           BentoDropPlanner.partitionActions.contains(action),
+           sessionStore.session(for: target.displayID)?.excludedFocusWindowIDs.isEmpty == false,
+           let window = (try? system.windowSnapshots(ids: [target.windowID]))?.first {
+            _ = performBentoFocusMode(action, window: window)
+            outcome = planLayoutWheel(command, for: target)
+        }
+        switch outcome {
         case let .unavailable(reason, displayID):
             statusMessage = reason
             presentActionResult(succeeded: false, error: reason, displayID: displayID)
@@ -524,12 +533,6 @@ final class BetterTileModel {
                 verifyPlacementLanded(WindowPlacementPlan(plan), displayID: displayID)
             }
         case let .ready(.bento(proposal)):
-            // As from the keyboard, a partition action during Focus mode
-            // first brings the covered windows back.
-            if case let .windowAction(action) = command, BentoDropPlanner.partitionActions.contains(action),
-               let window = (try? system.windowSnapshots(ids: [target.windowID]))?.first {
-                _ = performBentoFocusMode(action, window: window)
-            }
             let succeeded = commitLayoutWheelBento(proposal)
             statusMessage = succeeded
                 ? nil
