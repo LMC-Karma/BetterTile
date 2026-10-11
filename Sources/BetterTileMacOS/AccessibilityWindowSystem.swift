@@ -230,7 +230,11 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         guard AXIsProcessTrusted() else { return [] }
         var measured = false
         var unrestored: Set<WindowID> = []
-        for id in ids.sorted() where !minimumSizeLearner.hasMeasurement(for: id) {
+        // A window of an application measured before starts from that
+        // application's seed; probing it again only flashes the window. A
+        // larger minimum is still measured by its first write.
+        for id in ids.sorted() where !minimumSizeLearner.hasMeasurement(for: id)
+            && applicationKeys[id].flatMap({ minimumSizeLearner.applicationSizes[$0] }) == nil {
             guard let element = elements[id] ?? refreshElement(for: id),
                   isSettable(kAXSizeAttribute, on: element),
                   let position: CGPoint = axValue(kAXPositionAttribute, from: element, type: .cgPoint),
