@@ -22,9 +22,6 @@ protocol BetterTileWindowSystem: TargetedWindowSystem, WindowEventSource {
     /// Clears minimums learned from refused writes. Called when the user
     /// starts a new resize or drag, so an old refusal never becomes a floor.
     func forgetLearnedMinimums()
-    /// Measures the minimum sizes of newly appeared windows before their
-    /// first placement.
-    func probeMinimumSizes(for ids: Set<WindowID>)
     func refreshApplicationObservers()
     func resetCachedWindows()
     func startDockFootprintMonitoring(onChange: @escaping () -> Void)
@@ -89,6 +86,8 @@ final class BetterTileModel {
     /// The Bento tree from before focus mode, per desktop session, so ending
     /// focus mode returns exactly the previous layout.
     private var bentoStateBeforeFocus: [DesktopSessionID: BentoLayoutState] = [:]
+    /// Restores the layout once focus-mode peers return from the Dock.
+    private var focusRestoreTask: Task<Void, Never>?
     /// The tab the user last selected. Activating its application can make
     /// that application's previous main window key instead; for a short
     /// time such a focus change is corrected rather than treated as a
@@ -1016,13 +1015,18 @@ final class BetterTileModel {
             )
             var applied = commitResult.result == .committed
             var overlapping: Set<WindowID> = []
+            var verified = true
             if applied {
                 // Each write reads the real size back, so a refused size is
                 // measured now. Verify the frames the windows took; if any
                 // overlap, plan once more with the measured minimums.
                 for pass in 0..<2 {
                     let ids = Set(placements.map(\.windowID))
-                    guard let actual = try? system.windowSnapshots(ids: ids) else { break }
+                    // Success needs every placed window read back.
+                    guard let actual = try? system.windowSnapshots(ids: ids), Set(actual.map(\.id)) == ids else {
+                        verified = false
+                        break
+                    }
                     overlapping = BentoLayoutVerifier.overlappingWindowIDs(
                         Dictionary(uniqueKeysWithValues: actual.map { ($0.id, $0.frame) }))
                     guard !overlapping.isEmpty, pass == 0, displayWindows.count <= 6 else { break }
@@ -1055,6 +1059,8 @@ final class BetterTileModel {
                 .map { $0.title.isEmpty ? ($0.bundleIdentifier ?? "A window") : $0.title }.sorted()
             statusMessage = if !applied {
                 commitResult.failureReason ?? "The Bento layout could not be repaired."
+            } else if !verified {
+                "BetterTile could not read the repaired windows back to confirm the layout."
             } else if displayWindows.count > 6 {
                 "Bento manages up to six windows. The others stay floating."
             } else if !overlapNames.isEmpty {
@@ -2335,13 +2341,19 @@ final class BetterTileModel {
             // Applications restore minimized windows asynchronously. Lay the
             // display out only once every peer is back, or the focused window
             // keeps a frame that overlaps the returning peers.
-            Task { @MainActor [weak self] in
+            // Only this desktop's layout may be restored; after a Space
+            // switch the display shows another session. The returning peers
+            // change the revision, so it cannot guard this wait.
+            let sessionID = session.id
+            focusRestoreTask?.cancel()
+            focusRestoreTask = Task { @MainActor [weak self] in
                 let deadline = Date().addingTimeInterval(1.5)
-                while let self, !self.isShutDown {
+                while let self, !self.isShutDown, !Task.isCancelled {
                     let windows = (try? self.system.visibleWindows()) ?? []
                     let back = peers.allSatisfy { id in windows.contains { $0.id == id && $0.isEligible } }
                     if back || Date() >= deadline {
-                        guard var restored = self.sessionStore.session(for: display.id), restored.mode == .bento else { return }
+                        guard var restored = self.sessionStore.session(for: display.id), restored.mode == .bento,
+                              restored.id == sessionID else { return }
                         if let previous = self.bentoStateBeforeFocus.removeValue(forKey: restored.id) {
                             restored.bentoState = previous
                         }
@@ -2918,7 +2930,11 @@ final class BetterTileModel {
                 let known = activation.previousWindowIDs
                 let arrivals = Set(displayWindows.map(\.id)).subtracting(known)
                 if !arrivals.isEmpty {
-                    system.probeMinimumSizes(for: arrivals)
+                    // A window left at a probe size is placed next, which
+                    // writes its size again.
+                    if case let .degraded(reason) = coordinator.probeMinimumSizes(for: arrivals) {
+                        Self.bentoLog.error("\(reason, privacy: .public)")
+                    }
                     if let measured = try? system.windowSnapshots(ids: arrivals) {
                         let byID = Dictionary(measured.map { ($0.id, $0) }) { first, _ in first }
                         displayWindows = displayWindows.map { byID[$0.id] ?? $0 }

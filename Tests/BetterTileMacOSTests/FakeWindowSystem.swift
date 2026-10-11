@@ -6,7 +6,7 @@ import Testing
 /// BetterTileMacOS test suite. Failure knobs simulate rejected, ignored,
 /// numbered-failing, clamped, and late-settling Accessibility writes.
 @MainActor
-final class FakeWindowSystem: WindowSystem, TargetedWindowSystem, WindowEventSource, TabbedWindowSystem, WindowStackReading {
+final class FakeWindowSystem: WindowSystem, TargetedWindowSystem, WindowEventSource, TabbedWindowSystem, WindowStackReading, MinimumSizeProbing {
     var availableDisplays = [DisplaySnapshot(
         id: DisplayID(rawValue: "main"),
         frame: BTRect(x: 0, y: 0, width: 1000, height: 800),
@@ -81,6 +81,13 @@ final class FakeWindowSystem: WindowSystem, TargetedWindowSystem, WindowEventSou
     /// loop: the write is accepted, but the new frame is only observable after
     /// this many reads.
     var readsBeforeSettling = 0
+    /// Windows that a minimum-size probe leaves at the wrong size.
+    var unrestoredProbeWindowIDs: Set<WindowID> = []
+    private(set) var probedWindowIDs: [Set<WindowID>] = []
+    func probeMinimumSizes(for ids: Set<WindowID>) -> Set<WindowID> {
+        probedWindowIDs.append(ids)
+        return unrestoredProbeWindowIDs.intersection(ids)
+    }
     private var pendingFrames: [WindowID: (frame: BTRect, readsRemaining: Int)] = [:]
 
     private func settlePendingFrames() {

@@ -7,7 +7,7 @@ import Testing
 @testable import BetterTileApp
 
 @MainActor
-final class FakeAppWindowSystem: BetterTileWindowSystem, TabbedWindowSystem {
+final class FakeAppWindowSystem: BetterTileWindowSystem, TabbedWindowSystem, MinimumSizeProbing {
     let mainDisplay = DisplaySnapshot(
         id: DisplayID(rawValue: "main"),
         frame: BTRect(x: 0, y: 0, width: 1000, height: 800),
@@ -118,9 +118,15 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, TabbedWindowSystem {
         return windows
     }
     func displays() -> [DisplaySnapshot] { availableDisplays }
+    /// Windows that targeted reads leave out once they took this many frame
+    /// writes, as for an application that stops answering after a write.
+    var unreadableAfterWrites: [WindowID: Int] = [:]
     func windowSnapshots(ids: Set<WindowID>) throws -> [WindowSnapshot] {
         refreshLearnedConstraints()
-        return windows.filter { ids.contains($0.id) }
+        return windows.filter { window in
+            ids.contains(window.id)
+                && unreadableAfterWrites[window.id].map { frameWriteCounts[window.id, default: 0] < $0 } ?? true
+        }
     }
     private func refreshLearnedConstraints() {
         for index in windows.indices {
@@ -217,9 +223,9 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, TabbedWindowSystem {
     }
     var reportedConstraints: [WindowID: WindowConstraints] = [:]
     var probeRequests: [Set<WindowID>] = []
-    func probeMinimumSizes(for ids: Set<WindowID>) {
+    func probeMinimumSizes(for ids: Set<WindowID>) -> Set<WindowID> {
         probeRequests.append(ids)
-        guard measuresOnWrite else { return }
+        guard measuresOnWrite else { return [] }
         for id in ids {
             guard let index = windows.firstIndex(where: { $0.id == id }) else { continue }
             let frame = windows[index].frame
@@ -234,6 +240,7 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, TabbedWindowSystem {
             )
         }
         refreshLearnedConstraints()
+        return []
     }
     var forgetLearnedMinimumsCount = 0
     func forgetLearnedMinimums() {
@@ -1396,6 +1403,23 @@ func minimizedRightHalfReturnsToItsOriginalSide(nativeMembership: Bool, staleMin
     #expect(BentoLayoutVerifier.overlappingWindowIDs(frames).isEmpty, "\(frames)")
     #expect(model.lastActionFeedback?.kind == .success, "\(String(describing: model.statusMessage))")
     #expect((frames[brave]?.size.width ?? 0) >= 520)
+}
+
+/// Repair reports success only after it read every placed window back.
+@Test @MainActor func repairDoesNotReportSuccessWithoutReadingEveryWindowBack() {
+    let system = FakeAppWindowSystem()
+    system.windows.append(WindowSnapshot(id: WindowID(rawValue: "second"), processIdentifier: 43,
+        frame: BTRect(x: 800, y: 200, width: 400, height: 400), displayID: system.mainDisplay.id))
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    let captured = target(for: system)
+    model.setActiveMode(.bento)
+    let second = system.windows[1].id
+    system.unreadableAfterWrites[second] = system.frameWriteCounts[second, default: 0] + 1
+    model.performLayoutWheel(.repairBento, for: captured)
+    #expect(model.lastActionFeedback?.kind != .success)
+    #expect(model.statusMessage == "BetterTile could not read the repaired windows back to confirm the layout.",
+            "\(String(describing: model.statusMessage))")
 }
 
 /// The seventh window on a Bento desktop floats where it opened. BetterTile

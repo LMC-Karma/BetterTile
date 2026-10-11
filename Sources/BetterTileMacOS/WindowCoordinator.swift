@@ -588,6 +588,16 @@ public final class WindowCoordinator {
         }
     }
 
+    /// Measures the minimum sizes of new windows before their first
+    /// placement. The probe changes each window's size and restores it, so
+    /// it is a window mutation like any other.
+    public func probeMinimumSizes(for windowIDs: Set<WindowID>) -> WindowMutationOutcome {
+        guard !windowIDs.isEmpty, let probing = system as? any MinimumSizeProbing else { return .applied }
+        let unrestored = probing.probeMinimumSizes(for: windowIDs)
+        return unrestored.isEmpty ? .applied
+            : .degraded(reason: "A new window did not return to its size after BetterTile measured it.")
+    }
+
     /// Restores every focus-drop peer in deterministic order, best-effort: a
     /// failing peer does not stop the sweep, and successfully restored windows
     /// are deliberately never re-minimized. This is asymmetric with

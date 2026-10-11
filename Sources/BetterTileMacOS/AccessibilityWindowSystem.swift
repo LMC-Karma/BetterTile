@@ -222,9 +222,10 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
     /// size back gives the exact minimum in about 10 ms. The original size is
     /// restored at once. Only for new windows, which are animating in and
     /// about to move; never for settled, visible windows.
-    public func probeMinimumSizes(for ids: Set<WindowID>) {
-        guard AXIsProcessTrusted() else { return }
+    public func probeMinimumSizes(for ids: Set<WindowID>) -> Set<WindowID> {
+        guard AXIsProcessTrusted() else { return [] }
         var measured = false
+        var unrestored: Set<WindowID> = []
         for id in ids.sorted() where !minimumSizeLearner.hasMeasurement(for: id) {
             guard let element = elements[id] ?? refreshElement(for: id),
                   isSettable(kAXSizeAttribute, on: element),
@@ -238,7 +239,13 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
             defer { AXUIElementSetMessagingTimeout(element, 0) }
             guard AXUIElementSetAttributeValue(element, kAXSizeAttribute as CFString, tinyValue) == .success else { continue }
             let clamped: CGSize? = axValue(kAXSizeAttribute, from: element, type: .cgSize)
-            _ = AXUIElementSetAttributeValue(element, kAXSizeAttribute as CFString, restoreValue)
+            // Confirm the original size; try once more before reporting it.
+            let restored = (0..<2).contains { _ in
+                _ = AXUIElementSetAttributeValue(element, kAXSizeAttribute as CFString, restoreValue)
+                guard let size: CGSize = axValue(kAXSizeAttribute, from: element, type: .cgSize) else { return false }
+                return abs(size.width - original.width) <= 1 && abs(size.height - original.height) <= 1
+            }
+            if !restored { unrestored.insert(id) }
             guard let clamped else { continue }
             let before = BTRect(x: position.x, y: position.y, width: original.width, height: original.height)
             measured = minimumSizeLearner.observeWriteReadback(
@@ -249,6 +256,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
             ) || measured
         }
         if measured { snapshotGeneration &+= 1 }
+        return unrestored
     }
 
     public func focusedWindow() throws -> WindowSnapshot? {
@@ -1500,3 +1508,5 @@ extension AccessibilityWindowSystem: WindowStackReading {
         return SeamStackRecord.parseStack(records, identities: identities, labeling: ids)
     }
 }
+
+extension AccessibilityWindowSystem: MinimumSizeProbing {}

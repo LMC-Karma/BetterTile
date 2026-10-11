@@ -1165,3 +1165,20 @@ func singleWindowPartialFailureRestoresBaselineAndPreservesHistory(actionPlan: B
     #expect(current.targetFrame == beforeSecondAction)
     #expect(coordinator.perform(current).isApplied)
 }
+
+/// The minimum-size probe changes a window's size, so it runs through the
+/// coordinator and reports a window it could not return to its size.
+@Test @MainActor func minimumSizeProbeReportsAWindowLeftAtTheWrongSize() {
+    let system = FakeWindowSystem()
+    let coordinator = WindowCoordinator(system: system)
+    let id = system.windows[0].id
+    #expect(coordinator.probeMinimumSizes(for: []) == .applied)
+    #expect(system.probedWindowIDs.isEmpty)
+    #expect(coordinator.probeMinimumSizes(for: [id]) == .applied)
+    system.unrestoredProbeWindowIDs = [id]
+    guard case .degraded = coordinator.probeMinimumSizes(for: [id]) else {
+        Issue.record("A window left at the probe size must degrade the outcome")
+        return
+    }
+    #expect(system.probedWindowIDs == [[id], [id]])
+}
