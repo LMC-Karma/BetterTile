@@ -1625,6 +1625,28 @@ func aSameApplicationFocusChangeAfterTheSelectionIsKept() async throws {
     #expect(system.raiseRequests.last?.0 == previousFocus)
 }
 
+/// A focus change the user made selects its tab without an early raise.
+/// When that selection is rejected, the window they chose stays in front.
+@Test @MainActor func aRejectedFocusSelectionKeepsTheChosenWindowInFront() async throws {
+    let system = FakeAppWindowSystem()
+    let model = try await makeTwoTabbedColumns(system)
+    defer { model.shutdown() }
+    let state = try #require(model.activeTabbedState)
+    let previous = try #require(state.panes[0].selected)
+    let previousFocus = try #require(state.activeWindowID)
+    let hidden = try #require(state.panes[0].tabs.first { $0 != previous })
+    let index = try #require(system.windows.firstIndex { $0.id == hidden })
+    system.windows[index].constraints.minimumSize = BTSize(width: 5000, height: 5000)
+    let raises = system.raiseRequests.count
+    system.focusedID = hidden
+    system.eventHandler?(WindowSystemEvent(kind: .focused, windowID: hidden,
+                                           processIdentifier: system.windows[index].processIdentifier))
+    try await Task.sleep(for: .milliseconds(500))
+    #expect(model.activeTabbedState?.panes[0].selected == previous)
+    #expect(system.focusedID == hidden)
+    #expect(!system.raiseRequests.dropFirst(raises).contains { $0.0 == previousFocus && $0.1 })
+}
+
 /// The placement's own checks can also reject a selection before any
 /// write, here because the tab cannot be read. The early raise is undone.
 @Test @MainActor func aSelectionRejectedByThePlacementPutsBackTheEarlyRaise() async throws {

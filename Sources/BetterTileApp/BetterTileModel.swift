@@ -3910,7 +3910,10 @@ extension BetterTileModel {
             && activeBentoDrag?.layoutSession.mode == .tabbed)
     }
 
-    private func handleTabbed(_ intent: TabbedUIIntent, on displayID: DisplayID) {
+    /// - Parameter raisesEarly: A press or command raises a selected tab
+    ///   before the placement. A selection that follows a focus change the
+    ///   user made does not: that window is already in front.
+    private func handleTabbed(_ intent: TabbedUIIntent, on displayID: DisplayID, raisesEarly: Bool = true) {
         guard !isStabilizingSpace, !isShutDown,
               var session = sessionStore.session(for: displayID), session.mode == .tabbed,
               let display = system.displays().first(where: { $0.id == displayID }),
@@ -3924,7 +3927,8 @@ extension BetterTileModel {
         // front before anything is read. The placement below verifies it; a
         // selection rejected before that placement undoes the raise.
         var earlyRaise: TabbedEarlyRaise?
-        if case let .select(id) = intent, let pane = state.panes.first(where: { $0.tabs.contains(id) && $0.selected != id }) {
+        if raisesEarly, case let .select(id) = intent,
+           let pane = state.panes.first(where: { $0.tabs.contains(id) && $0.selected != id }) {
             tabbedFocusSuppressedUntil = Date().addingTimeInterval(0.3)
             tabbedIntendedFocus = (id, Date().addingTimeInterval(1))
             if coordinator.focusTabbedWindow(id).isApplied {
@@ -4193,7 +4197,7 @@ extension BetterTileModel {
                let session = self.sessionStore.session(for: focused.displayID), session.mode == .tabbed,
                !session.automaticWritesSuspended, let state = session.tabbedState,
                state.windowIDs.contains(focused.id), state.activeWindowID != focused.id {
-                self.handleTabbed(.select(focused.id), on: focused.displayID)
+                self.handleTabbed(.select(focused.id), on: focused.displayID, raisesEarly: false)
                 return
             }
             self.repairTabbedStacking()
