@@ -111,6 +111,13 @@ public struct BentoDropHoverState: Sendable {
         delay: TimeInterval,
         snapTarget: SnapTarget?
     ) -> BentoDragOutcome {
+        // At a screen edge the pointer is also on the outer edge of the
+        // nearest pane. The edge's snap area is the user's evident intent;
+        // inserting beside that pane gave a column at its minimum width.
+        if let snapTarget, let action = snapTarget.action,
+           let candidate, candidate.position != .center {
+            return .snap(action: action, frame: snapTarget.frame)
+        }
         if let candidate = armedCandidate(at: time, delay: delay) {
             return candidate.position == .center
                 ? .swap(targetWindowID: candidate.targetWindowID)

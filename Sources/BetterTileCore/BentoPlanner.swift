@@ -3,10 +3,15 @@ import Foundation
 public struct BentoReinsertionAnchor: Hashable, Sendable {
     public var neighborWindowID: WindowID
     public var edge: BentoPaneDropPosition
+    /// The tree just before the window was minimized. Restoring several
+    /// windows rebuilds from it, because the neighbour of a later-minimized
+    /// window may itself be gone.
+    public var layoutBefore: BentoLayoutState?
 
-    public init(neighborWindowID: WindowID, edge: BentoPaneDropPosition) {
+    public init(neighborWindowID: WindowID, edge: BentoPaneDropPosition, layoutBefore: BentoLayoutState? = nil) {
         self.neighborWindowID = neighborWindowID
         self.edge = edge
+        self.layoutBefore = layoutBefore
     }
 }
 
@@ -461,8 +466,59 @@ public struct BentoPlanner: Sendable {
             } else {
                 next.layout.insert(windowID, in: observation.bounds, currentFrames: observation.frames)
             }
+            // A new window opens beside the focused one unless that leaves a
+            // pane too small to use, such as a sliver next to a window at its
+            // minimum. Then the best split anywhere in the layout is used.
+            let besideFocus = solved(next, observation: observation, pill: .success("Pane added"))
+            if besideFocus.writesFrames, paneQuality(besideFocus.placements, in: observation.bounds) >= 1 {
+                return besideFocus
+            }
+            return scoredInsertion(windowID, state: state, observation: observation) ?? besideFocus
         }
         return solved(next, observation: observation, pill: .success("Pane added"))
+    }
+
+    /// The narrowest side of any pane against a usable size: 240 pt, or a
+    /// fifth of the display's shorter side on small displays. 1 or more is
+    /// usable; a 140 pt sliver beside a window at its minimum is not.
+    private func paneQuality(_ placements: [Placement], in bounds: BTRect) -> Double {
+        let usable = min(240, min(bounds.size.width, bounds.size.height) / 5)
+        return placements.map { placement in
+            min(placement.frame.size.width, placement.frame.size.height) / usable
+        }.min() ?? 0
+    }
+
+    /// Tries a split beside every pane on every edge and keeps the layout in
+    /// which the smallest pane is largest, then the one that moves existing
+    /// windows least. Minimum sizes come from the solver, so no candidate
+    /// leaves a pane narrower than its window allows. The focused pane only
+    /// breaks ties.
+    private func scoredInsertion(
+        _ windowID: WindowID,
+        state: BentoRuntimeState,
+        observation: BentoObservation
+    ) -> BentoPlannerResult? {
+        let bounds = observation.bounds
+        var best: (score: Double, result: BentoPlannerResult)?
+        for targetID in (state.layout.root?.windowIDs ?? []).sorted() {
+            for edge in [BentoPaneDropPosition.right, .bottom, .left, .top] {
+                var next = state
+                next.layout.setFloating(false, windowID: windowID)
+                guard next.layout.reinsert(windowID, beside: targetID, edge: edge) else { continue }
+                let result = solved(next, observation: observation, pill: .success("Pane added"))
+                guard result.writesFrames else { continue }
+                // A 140 pt sliver scores far below a half column.
+                let smallest = paneQuality(result.placements, in: bounds)
+                let moved = frameDistance(
+                    result.placements.filter { $0.windowID != windowID },
+                    from: observation.frames, in: bounds
+                )
+                let focusBonus = targetID == observation.focusedWindowID ? 0.001 : 0
+                let score = min(smallest, 2) * 4 - moved + focusBonus
+                if best == nil || score > best!.score { best = (score, result) }
+            }
+        }
+        return best?.result
     }
 
     /// Split a pane toward the preferred edge without rebuilding existing
@@ -514,11 +570,12 @@ public struct BentoPlanner: Sendable {
         observation: BentoObservation
     ) -> BentoPlannerResult {
         var next = state
-        if minimized, let anchor = reinsertionAnchor(
+        if minimized, var anchor = reinsertionAnchor(
             for: windowID,
             state: state.layout,
             bounds: observation.bounds
         ) {
+            anchor.layoutBefore = state.layout
             next.reinsertionAnchors[windowID] = anchor
         }
         next.layout.remove(windowID)
@@ -541,6 +598,21 @@ public struct BentoPlanner: Sendable {
                 writesFrames: false
             )
         }
+        if let (remembered, snapshot) = rememberedLayout(restoring: windowID, state: next, observation: observation) {
+            var result = remembered
+            result.state.reinsertionAnchors.removeValue(forKey: windowID)
+            // Windows still minimized from the same arrangement keep the
+            // largest snapshot, so restoring them later completes it.
+            let snapshotIDs = Set(snapshot.root?.windowIDs ?? [])
+            for (id, var anchor) in result.state.reinsertionAnchors where snapshotIDs.contains(id) {
+                if (anchor.layoutBefore?.root?.windowIDs.count ?? 0) < snapshotIDs.count {
+                    anchor.layoutBefore = snapshot
+                    result.state.reinsertionAnchors[id] = anchor
+                }
+            }
+            result.restoreWindowIDs.insert(windowID)
+            return result
+        }
         if let anchor = next.reinsertionAnchors.removeValue(forKey: windowID),
            next.layout.root?.windowIDs.contains(anchor.neighborWindowID) == true {
             _ = next.layout.reinsert(windowID, beside: anchor.neighborWindowID, edge: anchor.edge)
@@ -556,6 +628,33 @@ public struct BentoPlanner: Sendable {
         var result = solved(next, observation: observation, pill: .success("Pane restored"))
         result.restoreWindowIDs.insert(windowID)
         return result
+    }
+
+    /// The largest tree remembered at a minimize that contains the restored
+    /// window and every pane on screen. Windows that are still minimized or
+    /// gone are pruned from it, so the remaining panes keep their places.
+    private func rememberedLayout(
+        restoring windowID: WindowID,
+        state: BentoRuntimeState,
+        observation: BentoObservation
+    ) -> (BentoPlannerResult, BentoLayoutState)? {
+        let current = Set(state.layout.root?.windowIDs ?? [])
+        let keep = current.union([windowID])
+        let candidates = state.reinsertionAnchors.values.compactMap(\.layoutBefore).filter { layout in
+            let ids = Set(layout.root?.windowIDs ?? [])
+            return keep.isSubset(of: ids)
+        }
+        guard let remembered = candidates.max(by: {
+            ($0.root?.windowIDs.count ?? 0) < ($1.root?.windowIDs.count ?? 0)
+        }) else { return nil }
+        var next = state
+        var layout = remembered
+        for id in Set(layout.root?.windowIDs ?? []).subtracting(keep) { layout.remove(id) }
+        layout.metrics = state.layout.metrics
+        layout.floatingWindowIDs = state.layout.floatingWindowIDs.subtracting(keep)
+        next.layout = layout
+        let result = solved(next, observation: observation, pill: .success("Pane restored"))
+        return result.writesFrames ? (result, remembered) : nil
     }
 
     private func solved(

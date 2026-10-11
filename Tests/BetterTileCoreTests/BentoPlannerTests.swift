@@ -747,3 +747,34 @@ func adoptingSixExistingPanesStillRegistersOverflow(paneGap: Double) {
     #expect(result.writesFrames == (paneGap > 0))
     #expect(!result.placements.contains { $0.windowID == extra.id })
 }
+
+/// The audit's sliver: three columns, with Brave (500 pt minimum) focused in
+/// the right column. Splitting Brave's cell left the new window 138 pt wide
+/// while two 640 pt columns could each take half their height.
+@Test func insertNeverSqueezesANewWindowBesideAMinimumWhenRoomExists() throws {
+    let bounds = BTRect(x: 0, y: 0, width: 1920, height: 968)
+    var brave = plannerWindow("brave", frame: BTRect(x: 1280, y: 0, width: 640, height: 484))
+    brave.constraints.minimumSize = BTSize(width: 500, height: 375)
+    let existing = [
+        plannerWindow("textedit", frame: BTRect(x: 0, y: 0, width: 640, height: 968)),
+        plannerWindow("finder", frame: BTRect(x: 640, y: 0, width: 640, height: 968)),
+        brave,
+        plannerWindow("safari", frame: BTRect(x: 1280, y: 484, width: 640, height: 484)),
+    ]
+    let adopted = BentoPlanner().plan(
+        state: BentoRuntimeState(),
+        observation: BentoObservation(bounds: bounds, windows: existing, focusedWindowID: brave.id),
+        intent: .activate
+    )
+    let arrival = plannerWindow("new", frame: BTRect(x: 300, y: 200, width: 600, height: 500))
+    let result = BentoPlanner().plan(
+        state: adopted.state,
+        observation: BentoObservation(bounds: bounds, windows: existing + [arrival], focusedWindowID: brave.id),
+        intent: .insert(arrival.id)
+    )
+    let frames = Dictionary(uniqueKeysWithValues: result.placements.map { ($0.windowID, $0.frame) })
+    let placed = try #require(frames[arrival.id])
+    #expect(placed.size.width >= 300, "new window got \(placed)")
+    #expect(placed.size.height >= 300, "new window got \(placed)")
+    #expect((frames[brave.id]?.size.width ?? 0) >= 500)
+}
