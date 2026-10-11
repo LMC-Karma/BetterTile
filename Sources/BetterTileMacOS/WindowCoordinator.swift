@@ -744,6 +744,17 @@ public final class WindowCoordinator {
         expectedMutations[windowID, default: []].append(ExpectedMutation(frame: frame, generation: generation))
     }
 
+    /// A stepped frame accepted for a Tabbed placement is this placement's
+    /// result too. Its events are expected; other near frames are not.
+    private func expectSteppedFrames(_ placements: [Placement], actual: [WindowID: BTRect]) {
+        for placement in placements {
+            guard let frame = actual[placement.windowID],
+                  SteppedSizeAcceptance.evaluate(requested: placement.frame, actual: frame) == .stepped,
+                  let generation = generations[placement.windowID] else { continue }
+            expect(frame, for: placement.windowID, generation: generation)
+        }
+    }
+
     private func cancelExpectedMutation(for windowID: WindowID, generation: UInt64) {
         expectedMutations[windowID]?.removeAll { $0.generation == generation }
         if expectedMutations[windowID]?.isEmpty == true {
@@ -941,6 +952,7 @@ extension WindowCoordinator {
                 try tabSystem.raiseWindow(focus, activate: false)
             }
             var previousFrames: [WindowID: BTRect] = [:]
+            var previousSamples: [WindowID: BTRect] = [:]
             var previousHiddenFrames: [WindowID: BTRect] = [:]
             // Frames settle within four samples. Activation can take longer,
             // so accepted frames keep waiting for focus instead of rolling back.
@@ -949,7 +961,18 @@ extension WindowCoordinator {
                     return touched ? .degraded(reason: "The desktop changed during Tabbed placement. Return to that desktop and use Repair Tabbed.") : .failed(reason: "The desktop changed.")
                 }
                 let actual = Dictionary(uniqueKeysWithValues: try snapshots(ids: ids).map { ($0.id, $0.frame) })
-                let framesMatch = placements.allSatisfy { actual[$0.windowID]?.approximatelyEquals($0.frame, tolerance: 2) == true }
+                // An application that resizes in steps settles just short of
+                // the request. Once that frame is stable it is accepted; the
+                // curtain covers the remainder of the pane.
+                let framesMatch = placements.allSatisfy { placement in
+                    guard let frame = actual[placement.windowID] else { return false }
+                    switch SteppedSizeAcceptance.evaluate(requested: placement.frame, actual: frame) {
+                    case .exact: return true
+                    case .stepped: return previousSamples[placement.windowID]?.approximatelyEquals(frame, tolerance: 0.5) == true
+                    case .rejected: return false
+                    }
+                }
+                previousSamples = actual
                 let focusMatches = try focus == nil || system.focusedWindow()?.id == focus
                 if framesMatch && focusMatches {
                     // Hidden writes are best effort, but a transient partial
@@ -973,12 +996,16 @@ extension WindowCoordinator {
                         try await Task.sleep(for: .milliseconds(50))
                         continue
                     }
+                    expectSteppedFrames(placements, actual: actual)
                     return .applied
                 }
                 if framesMatch {
                     // The window was raised and its frame accepted. A focus
                     // that never arrives is left to the focus observer.
-                    if attempt == 11 { return .applied }
+                    if attempt == 11 {
+                        expectSteppedFrames(placements, actual: actual)
+                        return .applied
+                    }
                     try await Task.sleep(for: .milliseconds(50))
                     continue
                 }
@@ -1035,6 +1062,19 @@ extension WindowCoordinator {
             do { try tabSystem.raiseWindow(id, activate: false) } catch { failed = true }
         }
         return failed ? .failed(reason: "Tabbed could not restore window order. Select the tab again or use Repair Tabbed.") : .applied
+    }
+
+    /// Raises a selected tab and gives it keyboard focus.
+    public func focusTabbedWindow(_ id: WindowID) -> WindowMutationOutcome {
+        guard let tabSystem = system as? any TabbedWindowSystem else {
+            return .failed(reason: "This window system does not support Tabbed actions.")
+        }
+        do {
+            try tabSystem.raiseWindow(id, activate: true)
+            return .applied
+        } catch {
+            return .failed(reason: error.localizedDescription)
+        }
     }
 
     public func closeTabbedWindow(_ id: WindowID) -> WindowMutationOutcome {

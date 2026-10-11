@@ -19,6 +19,9 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, TabbedWindowSystem {
     var ignoredFrameWriteWindowIDs: Set<WindowID> = []
     var enforcedMinimumWidths: [WindowID: Double] = [:]
     var enforcedMinimumHeights: [WindowID: Double] = [:]
+    /// Simulates an application that resizes in steps, such as Terminal's
+    /// character cells: widths round down to a multiple of the step.
+    var widthSteps: [WindowID: Double] = [:]
     var frameWriteCounts: [WindowID: Int] = [:]
     var failedFrameWriteNumbers: [WindowID: Set<Int>] = [:]
     var completeSweepCount = 0
@@ -51,6 +54,12 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, TabbedWindowSystem {
     var acceptsFocusRequests = true
     var raiseRequests: [(WindowID, Bool)] = []
     var failingNextRaiseWindowID: WindowID?
+    /// Like macOS, AXRaise on a window of the frontmost application makes it
+    /// that application's key window.
+    var raiseFocusesFrontmostApplicationWindow = false
+    /// Simulates activation that makes the application's previous main
+    /// window key instead of the requested one.
+    var activationFocusesInstead: WindowID?
     var windowNumberRequests: [Set<WindowID>] = []
     func windowNumbers(for windows: [WindowSnapshot]) -> [WindowID: Int] {
         windowNumberRequests.append(Set(windows.map(\.id)))
@@ -74,8 +83,15 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, TabbedWindowSystem {
         }
         raiseRequests.append((id, activate))
         if activate {
-            if acceptsFocusRequests { focusedID = id }
+            if let other = activationFocusesInstead {
+                activationFocusesInstead = nil
+                focusedID = other
+            } else if acceptsFocusRequests { focusedID = id }
             focusRequests.append(id)
+        } else if raiseFocusesFrontmostApplicationWindow,
+                  let process = windows.first(where: { $0.id == id })?.processIdentifier,
+                  process == frontmostProcessIdentifier {
+            focusedID = id
         }
         if updatesStackOnRaise, let index = stack?.firstIndex(where: { $0.windowID == id }), let entry = stack?.remove(at: index) {
             stack?.insert(entry, at: 0)
@@ -138,6 +154,9 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, TabbedWindowSystem {
         windows[index].frame = frame
         windows[index].frame.size.width = max(frame.size.width, enforcedMinimumWidths[windowID] ?? 0)
         windows[index].frame.size.height = max(frame.size.height, enforcedMinimumHeights[windowID] ?? 0)
+        if let step = widthSteps[windowID] {
+            windows[index].frame.size.width = (windows[index].frame.size.width / step).rounded(.down) * step
+        }
         if emitsFrameEvents {
             eventHandler?(WindowSystemEvent(kind: .resized, windowID: windowID, processIdentifier: windows[index].processIdentifier))
         }

@@ -61,3 +61,23 @@ public extension TabbedLayoutState {
         return plan.compactMap { $0 }
     }
 }
+
+public extension TabbedLayoutState {
+    /// AXRaise makes a window its application's main window. When a repair
+    /// raises another window of the key window's application, that
+    /// application would move keyboard focus to the raised window. Raising
+    /// the key window last keeps focus where the user put it. A hidden tab is
+    /// never raised: it must stay behind the curtain.
+    func keyPreservingRaisePlan(
+        _ plan: [WindowID],
+        keyWindowID: WindowID?,
+        processIdentifiers: [WindowID: Int32]
+    ) -> [WindowID] {
+        guard let keyWindowID, let keyProcess = processIdentifiers[keyWindowID] else { return plan }
+        let hidden = Set(panes.flatMap(\.tabs)).subtracting(selectedWindowIDs)
+        guard !hidden.contains(keyWindowID),
+              plan.contains(where: { $0 != keyWindowID && processIdentifiers[$0] == keyProcess })
+        else { return plan }
+        return plan.filter { $0 != keyWindowID } + [keyWindowID]
+    }
+}
