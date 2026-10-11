@@ -841,17 +841,29 @@ public final class WindowCoordinator {
                     return placement.frame.size.width < old.size.width - 0.5
                         || placement.frame.size.height < old.size.height - 0.5
                 }
-                for placement in placements.sorted(by: { lhs, rhs in
+                let ordered = placements.sorted(by: { lhs, rhs in
                     let left = shrinks(lhs), right = shrinks(rhs)
                     return left != right ? left : lhs.windowID < rhs.windowID
-                }) {
-                    attempted.append(placement.windowID)
-                    try apply(
-                        placement.frame,
-                        to: placement.windowID,
-                        knownCurrentFrame: known[placement.windowID],
-                        intermediate: intermediate
-                    )
+                })
+                // Different applications are written at once, so the layout
+                // lands together; one application's windows keep this order.
+                var generationsWritten: [WindowID: UInt64] = [:]
+                for placement in ordered {
+                    let generation = (generations[placement.windowID] ?? 0) &+ 1
+                    generations[placement.windowID] = generation
+                    generationsWritten[placement.windowID] = generation
+                    expect(placement.frame, for: placement.windowID, generation: generation)
+                }
+                let result = system.setFrames(ordered, knownCurrentFrames: known)
+                attempted = result.attempted
+                if let failure = result.failure {
+                    for id in Set(ordered.map(\.windowID)).subtracting(attempted).union([failure.windowID]) {
+                        if let generation = generationsWritten[id] { cancelExpectedMutation(for: id, generation: generation) }
+                    }
+                    // The failing window is read before rollback below.
+                    attempted.removeAll { $0 == failure.windowID }
+                    attempted.append(failure.windowID)
+                    throw failure.error
                 }
             } catch {
                 // A size write can succeed before a position write fails. Read

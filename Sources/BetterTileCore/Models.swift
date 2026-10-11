@@ -141,6 +141,19 @@ public enum LayoutMode: String, Codable, CaseIterable, Sendable {
     }
 }
 
+/// The outcome of a multi-window frame write.
+public struct FrameBatchResult {
+    /// Windows written or attempted, in write order.
+    public var attempted: [WindowID]
+    /// The first window that failed, if any.
+    public var failure: (windowID: WindowID, error: Error)?
+
+    public init(attempted: [WindowID], failure: (windowID: WindowID, error: Error)?) {
+        self.attempted = attempted
+        self.failure = failure
+    }
+}
+
 @MainActor
 public protocol WindowSystem: AnyObject {
     func requestAccessibilityPermission(prompt: Bool) -> Bool
@@ -170,6 +183,12 @@ public protocol WindowSystem: AnyObject {
     /// different applications concurrently, so one slow application does not
     /// delay the others within a display frame.
     func setIntermediateFrames(_ writes: [Placement], knownCurrentFrames: [WindowID: BTRect]) throws
+    /// Writes final frames for several windows. Implementations may write
+    /// different applications concurrently, so a layout lands at once
+    /// instead of one application after another. Returns the windows that
+    /// were written or attempted, and the first failure. The default writes
+    /// in order and stops at the first failure.
+    func setFrames(_ writes: [Placement], knownCurrentFrames: [WindowID: BTRect]) -> FrameBatchResult
 }
 
 public extension WindowSystem {
@@ -181,6 +200,18 @@ public extension WindowSystem {
         for write in writes {
             try setIntermediateFrame(write.frame, knownCurrentFrame: knownCurrentFrames[write.windowID], for: write.windowID)
         }
+    }
+    func setFrames(_ writes: [Placement], knownCurrentFrames: [WindowID: BTRect]) -> FrameBatchResult {
+        var attempted: [WindowID] = []
+        for write in writes {
+            attempted.append(write.windowID)
+            do {
+                try setFrame(write.frame, knownCurrentFrame: knownCurrentFrames[write.windowID], for: write.windowID)
+            } catch {
+                return FrameBatchResult(attempted: attempted, failure: (write.windowID, error))
+            }
+        }
+        return FrameBatchResult(attempted: attempted, failure: nil)
     }
 
     func setIntermediateFrame(_ frame: BTRect, knownCurrentFrame: BTRect?, for windowID: WindowID) throws {
