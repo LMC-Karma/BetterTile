@@ -3683,6 +3683,10 @@ extension BetterTileModel {
                       let frame = state.frames(in: display.visibleFrame)[pane.id] else {
                     throw WindowSystemError.operationFailed("That window is no longer available.")
                 }
+                // A fixed-size window keeps its size, centred by the planner.
+                if !window.constraints.isResizable {
+                    return (state, try state.placements(in: display.visibleFrame, windows: windows).filter { $0.windowID == focus })
+                }
                 let content = TabbedLayoutState.contentFrame(frame)
                 let minimum = window.constraints.minimumSize
                 if content.size.width + 0.001 >= minimum.width,

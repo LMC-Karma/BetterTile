@@ -604,13 +604,15 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         // sequence is size, position, size. When the size is not changing the
         // leading write asks for the value the window already has, so it is
         // skipped; the trailing write still corrects any clamping.
-        let plan = FrameWritePlanner.plan(
+        var plan = FrameWritePlanner.plan(
             target: frame,
             knownCurrentFrame: knownCurrentFrame,
             correctsClamping: correctsClamping
         )
         // A measurement belongs to one write; an older one is not evidence.
         lastWriteReadback.removeValue(forKey: windowID)
+        // A fixed-size window, such as Calculator, rejects any size write.
+        if !isSettable(kAXSizeAttribute, on: element) { plan.writesInitialSize = false; plan.writesFinalSize = false }
         var errors: [AXError] = []
         if plan.writesInitialSize {
             errors.append(AXUIElementSetAttributeValue(element, kAXSizeAttribute as CFString, sizeValue))
@@ -727,7 +729,8 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
             var pid: pid_t = 0
             AXUIElementGetPid(element, &pid)
             let previous = knownCurrentFrames[write.windowID]
-            let plan = FrameWritePlanner.plan(target: write.frame, knownCurrentFrame: previous, correctsClamping: false)
+            var plan = FrameWritePlanner.plan(target: write.frame, knownCurrentFrame: previous, correctsClamping: false)
+            if !isSettable(kAXSizeAttribute, on: element) { plan.writesInitialSize = false }
             groups[pid, default: []].append(IntermediateJob(windowID: write.windowID, element: element,
                                                             frame: write.frame, previous: previous, plan: plan))
         }
@@ -810,7 +813,8 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
                 var pid: pid_t = 0
                 AXUIElementGetPid(element, &pid)
                 let previous = knownCurrentFrames[write.windowID]
-                let plan = FrameWritePlanner.plan(target: write.frame, knownCurrentFrame: previous, correctsClamping: true)
+                var plan = FrameWritePlanner.plan(target: write.frame, knownCurrentFrame: previous, correctsClamping: true)
+                if !isSettable(kAXSizeAttribute, on: element) { plan.writesInitialSize = false; plan.writesFinalSize = false }
                 if groups[pid] == nil { pidOrder.append(pid) }
                 groups[pid, default: []].append(CommittedJob(windowID: write.windowID, element: element,
                                                              frame: write.frame, previous: previous, plan: plan))

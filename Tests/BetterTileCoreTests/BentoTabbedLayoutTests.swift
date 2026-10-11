@@ -405,3 +405,28 @@ private func adoptionWindow(_ name: String, minimumWidth: Double = 120) -> Windo
     state.reconcile(windowIDs: [a.id, arrival.id], removed: [], fittingIn: bounds, windows: [a, arrival])
     #expect(state.panes[1].selected == arrival.id)
 }
+
+/// A fixed-size window, such as Calculator, keeps its size as a tab. When
+/// selected it is centred in its pane, and the layout still applies; only a
+/// window larger than its pane makes the layout too small.
+@Test func fixedSizeTabIsCentredAtItsOwnSize() throws {
+    let bounds = BTRect(x: 0, y: 0, width: 1000, height: 800)
+    var state = TabbedLayoutState(preset: .columns)
+    let fixed = WindowSnapshot(id: window("calculator"), processIdentifier: 7, frame: BTRect(x: 0, y: 0, width: 230, height: 408),
+                               displayID: DisplayID(rawValue: "main"), constraints: WindowConstraints(isResizable: false))
+    let other = WindowSnapshot(id: window("other"), processIdentifier: 8, frame: BTRect(x: 0, y: 0, width: 400, height: 400),
+                               displayID: DisplayID(rawValue: "main"))
+    state.reconcile(windowIDs: [fixed.id, other.id], removed: [], focused: fixed.id)
+    state.select(fixed.id)
+    let placements = try state.placements(in: bounds, windows: [fixed, other])
+    let paneID = try #require(state.paneID(containing: fixed.id))
+    let pane = try #require(state.frames(in: bounds)[paneID])
+    let content = TabbedLayoutState.contentFrame(pane)
+    let placed = try #require(placements.first { $0.windowID == fixed.id }?.frame)
+    #expect(placed.size == fixed.frame.size)
+    #expect(abs(placed.midX - content.midX) <= 1 && abs(placed.midY - content.midY) <= 1)
+    // Larger than its pane: the layout cannot show it.
+    var huge = fixed
+    huge.frame.size = BTSize(width: 2000, height: 408)
+    #expect(throws: TabbedLayoutError.self) { try state.placements(in: bounds, windows: [huge, other]) }
+}

@@ -767,7 +767,11 @@ public final class WindowCoordinator {
         let displays = Dictionary(uniqueKeysWithValues: system.displays().map { ($0.id, $0) })
         for placement in placements {
             guard let snapshot = snapshots[placement.windowID] else { throw WindowSystemError.windowNotFound(placement.windowID) }
-            guard snapshot.isEligible, snapshot.constraints.isMovable, snapshot.constraints.isResizable else {
+            // A fixed-size window can still be moved at its own size.
+            let keepsSize = abs(placement.frame.size.width - snapshot.frame.size.width) <= 1
+                && abs(placement.frame.size.height - snapshot.frame.size.height) <= 1
+            guard snapshot.isEligible, snapshot.constraints.isMovable,
+                  snapshot.constraints.isResizable || keepsSize else {
                 throw WindowSystemError.unsupportedWindow(placement.windowID)
             }
             guard placement.frame.size.width + sizeTolerance >= snapshot.constraints.minimumSize.width,
@@ -1096,10 +1100,16 @@ extension WindowCoordinator {
             }
             try validate(placements, sizeTolerance: 0.001)
             let participants = try snapshots(ids: ids)
+            let requestedSizes = Dictionary(uniqueKeysWithValues: placements.map { ($0.windowID, $0.frame.size) })
             guard isCurrent(), !Task.isCancelled,
                   participants.count == ids.count,
-                  participants.allSatisfy({ $0.isEligible && $0.constraints.isResizable
-                      && (rollbackDisplayID == nil || $0.displayID == rollbackDisplayID) }) else {
+                  participants.allSatisfy({ participant in
+                      let keepsSize = requestedSizes[participant.id].map {
+                          abs($0.width - participant.frame.size.width) <= 1 && abs($0.height - participant.frame.size.height) <= 1
+                      } ?? false
+                      return participant.isEligible && (participant.constraints.isResizable || keepsSize)
+                          && (rollbackDisplayID == nil || participant.displayID == rollbackDisplayID)
+                  }) else {
                 throw WindowSystemError.operationFailed("The Tabbed participants changed.")
             }
             participantDisplayID = rollbackDisplayID ?? participants.first?.displayID

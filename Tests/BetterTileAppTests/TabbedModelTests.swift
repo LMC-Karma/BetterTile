@@ -1747,3 +1747,24 @@ func steppedApplicationTabIsSelectedWithoutResizeLoops(emitsEvents: Bool) async 
     #expect((during[leftPane]?.maxX ?? 0) > (before[leftPane]?.maxX ?? 0) + 100)
     held = false
 }
+
+/// A fixed-size tab can be selected at its own size. Before, any layout in
+/// which it was the selected tab failed and rolled back.
+@Test @MainActor func fixedSizeTabCanBeSelectedAtItsOwnSize() async throws {
+    _ = NSApplication.shared
+    let system = FakeAppWindowSystem()
+    addTabbedWindows(2, to: system)
+    system.windows[2].constraints.isResizable = false
+    system.windows[2].frame.size = BTSize(width: 230, height: 408)
+    let store = ConfigurationStore(fileURL: URL(filePath: "/private/tmp/BetterTileAppTests-\(UUID().uuidString)/configuration.json"))
+    let model = BetterTileModel(store: store, system: system, startRuntime: false)
+    model.primaryButtonIsPressed = { false }
+    defer { model.shutdown() }
+    model.setActiveMode(.tabbed)
+    try #require(await waitFor { model.activeTabbedState?.windowIDs.count == 3 })
+    let fixed = system.windows[2].id
+    model.performTabbed(.select(fixed))
+    #expect(await waitFor { model.activeTabbedState?.activeWindowID == fixed })
+    #expect(system.windows[2].frame.size == BTSize(width: 230, height: 408))
+    #expect(model.statusMessage == nil, "\(model.statusMessage ?? "")")
+}

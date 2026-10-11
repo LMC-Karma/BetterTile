@@ -660,10 +660,23 @@ public struct TabbedLayoutState: Hashable, Sendable {
             let frame = Self.contentFrame(paneFrame)
             for id in pane.tabs {
                 guard let window = snapshots[id], window.isEligible else { continue }
+                guard window.constraints.isResizable else {
+                    // A fixed-size window, such as Calculator, keeps its size,
+                    // centred in its pane; the backdrop covers the rest.
+                    let size = window.frame.size
+                    if id == pane.selected,
+                       size.width > frame.size.width + 0.001 || size.height > frame.size.height + 0.001 {
+                        throw TabbedLayoutError.panesTooSmall
+                    }
+                    result.append(Placement(windowID: id, frame: BTRect(
+                        x: frame.minX + max(0, ((frame.size.width - size.width) / 2).rounded(.down)),
+                        y: frame.minY + max(0, ((frame.size.height - size.height) / 2).rounded(.down)),
+                        width: size.width, height: size.height)))
+                    continue
+                }
                 if id == pane.selected {
                     guard frame.size.width + 0.001 >= window.constraints.minimumSize.width,
-                          frame.size.height + 0.001 >= window.constraints.minimumSize.height,
-                          window.constraints.isResizable || frame.size == window.frame.size
+                          frame.size.height + 0.001 >= window.constraints.minimumSize.height
                     else { throw TabbedLayoutError.panesTooSmall }
                 }
                 result.append(Placement(windowID: id, frame: frame))
