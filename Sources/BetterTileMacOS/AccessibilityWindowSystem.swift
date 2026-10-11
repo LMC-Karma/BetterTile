@@ -779,10 +779,26 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         let confirmedClamp: Bool
     }
 
+    /// Splits a batch into a shrinking pass and a growing pass, each in the
+    /// batch's order. A window with an unknown frame grows, as in
+    /// `WindowCoordinator`'s order.
+    nonisolated static func shrinkingFirstPasses(
+        _ writes: [Placement], knownCurrentFrames: [WindowID: BTRect]
+    ) -> [[Placement]] {
+        func shrinks(_ write: Placement) -> Bool {
+            guard let old = knownCurrentFrames[write.windowID] else { return false }
+            return write.frame.size.width < old.size.width - 0.5 || write.frame.size.height < old.size.height - 0.5
+        }
+        return [writes.filter(shrinks), writes.filter { !shrinks($0) }].filter { !$0.isEmpty }
+    }
+
     /// Writes final frames for each application on its own thread, so a
     /// layout lands at once instead of one application after another. Every
-    /// window is checked before any write; within one application the
-    /// writes keep their order.
+    /// window is checked before any write. Shrinking windows are written
+    /// first, in every application at once, then growing windows, so a
+    /// growing window never covers a neighbour from another application that
+    /// has not yet made room. Within one application the writes keep their
+    /// order.
     public func setFrames(_ writes: [Placement], knownCurrentFrames: [WindowID: BTRect]) -> FrameBatchResult {
         guard writes.count > 1 else {
             var attempted: [WindowID] = []
@@ -793,8 +809,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
             }
             return FrameBatchResult(attempted: attempted, failure: nil)
         }
-        var groups: [pid_t: [CommittedJob]] = [:]
-        var pidOrder: [pid_t] = []
+        var prepared: [WindowID: (pid: pid_t, job: CommittedJob)] = [:]
         var preparing = writes[0].windowID
         do {
             try ensurePermission()
@@ -811,21 +826,29 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
                 AXUIElementGetPid(element, &pid)
                 let previous = knownCurrentFrames[write.windowID]
                 let plan = FrameWritePlanner.plan(target: write.frame, knownCurrentFrame: previous, correctsClamping: true)
-                if groups[pid] == nil { pidOrder.append(pid) }
-                groups[pid, default: []].append(CommittedJob(windowID: write.windowID, element: element,
-                                                             frame: write.frame, previous: previous, plan: plan))
+                prepared[write.windowID] = (pid, CommittedJob(windowID: write.windowID, element: element,
+                                                              frame: write.frame, previous: previous, plan: plan))
             }
         } catch {
             // Nothing was written yet.
             return FrameBatchResult(attempted: [], failure: (preparing, error))
         }
-        let jobs = pidOrder.compactMap { groups[$0] }
         let lock = NSLock()
         nonisolated(unsafe) var results: [WindowID: CommittedResult] = [:]
-        DispatchQueue.concurrentPerform(iterations: jobs.count) { index in
-            for job in jobs[index] {
-                let result = Self.performCommittedWrite(job)
-                lock.lock(); results[job.windowID] = result; lock.unlock()
+        for pass in Self.shrinkingFirstPasses(writes, knownCurrentFrames: knownCurrentFrames) {
+            var groups: [pid_t: [CommittedJob]] = [:]
+            var pidOrder: [pid_t] = []
+            for write in pass {
+                guard let entry = prepared[write.windowID] else { continue }
+                if groups[entry.pid] == nil { pidOrder.append(entry.pid) }
+                groups[entry.pid, default: []].append(entry.job)
+            }
+            let jobs = pidOrder.compactMap { groups[$0] }
+            DispatchQueue.concurrentPerform(iterations: jobs.count) { index in
+                for job in jobs[index] {
+                    let result = Self.performCommittedWrite(job)
+                    lock.lock(); results[job.windowID] = result; lock.unlock()
+                }
             }
         }
         let accepted: [AXError] = [.success, .attributeUnsupported]

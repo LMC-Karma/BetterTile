@@ -1373,3 +1373,23 @@ func singleWindowPartialFailureRestoresBaselineAndPreservesHistory(actionPlan: B
     #expect(system.frameWriteCounts == writes)
     #expect(system.windows.map(\.frame) == dragged)
 }
+
+/// A committed layout writes every application at once, but in two passes:
+/// windows that shrink, then windows that grow. A growing window never
+/// covers a neighbour from another application that has not made room.
+@Test func committedBatchesShrinkInOnePassBeforeTheyGrow() {
+    let a = WindowID(rawValue: "a"), b = WindowID(rawValue: "b"), c = WindowID(rawValue: "c")
+    let known = [
+        a: BTRect(x: 0, y: 0, width: 500, height: 800),
+        b: BTRect(x: 500, y: 0, width: 500, height: 800),
+    ]
+    let writes = [
+        Placement(windowID: a, frame: BTRect(x: 0, y: 0, width: 600, height: 800)),
+        Placement(windowID: b, frame: BTRect(x: 600, y: 0, width: 400, height: 800)),
+        Placement(windowID: c, frame: BTRect(x: 0, y: 0, width: 100, height: 100)),
+    ]
+    let passes = AccessibilityWindowSystem.shrinkingFirstPasses(writes, knownCurrentFrames: known)
+    #expect(passes.map { $0.map(\.windowID) } == [[b], [a, c]])
+    #expect(AccessibilityWindowSystem.shrinkingFirstPasses(Array(writes.prefix(1)), knownCurrentFrames: known)
+        .map { $0.map(\.windowID) } == [[a]])
+}

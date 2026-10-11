@@ -846,7 +846,9 @@ public final class WindowCoordinator {
                     return left != right ? left : lhs.windowID < rhs.windowID
                 })
                 // Different applications are written at once, so the layout
-                // lands together; one application's windows keep this order.
+                // lands together: the adapter writes every application's
+                // shrinking windows, then the growing ones. One application's
+                // windows keep this order.
                 var generationsWritten: [WindowID: UInt64] = [:]
                 for placement in ordered {
                     let generation = (generations[placement.windowID] ?? 0) &+ 1
