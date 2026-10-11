@@ -30,7 +30,7 @@ public final class TabbedOverlayController {
     public var acceptsTabDrags = true {
         didSet { if !acceptsTabDrags, isInteracting { cancelInteraction() } }
     }
-    private var state = TabbedLayoutState()
+    public private(set) var state = TabbedLayoutState()
     private var bounds = BTRect(x: 0, y: 0, width: 1, height: 1)
     private var windows: [WindowID: WindowSnapshot] = [:]
     /// Includes failed lookups as nil so they are not repeated on refresh.

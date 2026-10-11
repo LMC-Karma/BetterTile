@@ -85,6 +85,7 @@ final class BetterTileModel {
     private var lastBentoFocusMessage: String?
     private var tabbedCurtainRecheckTask: Task<Void, Never>?
     private var absenceConfirmationTask: Task<Void, Never>?
+    private var lastTabbedNativeResizePreview = Date.distantPast
     /// The Bento tree from before focus mode, per desktop session, so ending
     /// focus mode returns exactly the previous layout.
     private var bentoStateBeforeFocus: [DesktopSessionID: BentoLayoutState] = [:]
@@ -2045,6 +2046,7 @@ final class BetterTileModel {
         case .moved, .resized:
             guard Date() >= suppressSpaceFrameEventsUntil else { return }
             pendingWindowEvents.record(event)
+            if let windowID = event.windowID { previewTabbedNativeResize(windowID) }
             // Do not leave a handle at a coordinate macOS has invalidated.
             if !dividerResize.isDragging { dividerResize.refresh(boundaries: []) }
         case .restored:
@@ -3971,6 +3973,35 @@ extension BetterTileModel {
         // layout rather than that externally changed frame on failure.
         applyTabbedState(adopted, session: session, display: display, windows: windows,
                          focus: nil, rememberUndo: true, rollbackFrames: session.lastObservedFrames)
+    }
+
+    /// The layout the tab strips currently show, for tests.
+    func presentedTabbedState(on displayID: DisplayID) -> TabbedLayoutState? { tabbedOverlays[displayID]?.state }
+
+    /// While the user drags a selected tab's own edge, the tab strips follow
+    /// the shared boundary live, as they do for a divider drag. Hidden tabs
+    /// and the committed layout still follow only at release.
+    private func previewTabbedNativeResize(_ windowID: WindowID) {
+        guard primaryButtonIsPressed(), !dividerResize.isDragging,
+              Date().timeIntervalSince(lastTabbedNativeResizePreview) >= 1.0 / 30 else { return }
+        guard let session = sessionStore.sessions.values.first(where: {
+                  $0.mode == .tabbed && $0.tabbedState?.selectedWindowIDs.contains(windowID) == true
+              }),
+              tabbedTasks[session.displayID] == nil,
+              let state = session.tabbedState,
+              let overlay = tabbedOverlays[session.displayID],
+              let display = system.displays().first(where: { $0.id == session.displayID }),
+              let windows = try? system.windowSnapshots(ids: Set(state.selectedWindowIDs))
+        else { return }
+        lastTabbedNativeResizePreview = Date()
+        var frames = session.lastObservedFrames.filter { state.selectedWindowIDs.contains($0.key) }
+        for window in windows where window.id == windowID { frames[window.id] = window.frame }
+        guard let adopted = state.adoptingResize(
+            of: [windowID], frames: frames,
+            constraints: Dictionary(uniqueKeysWithValues: windows.map { ($0.id, $0.constraints) }),
+            in: display.visibleFrame, tolerance: configuration.adjacencyTolerance
+        ) else { return }
+        overlay.refreshResize(state: adopted, bounds: display.visibleFrame)
     }
 
     /// Tab strips and curtains follow a divider during its drag. Hidden tabs
