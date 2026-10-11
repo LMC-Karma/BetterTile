@@ -1667,6 +1667,33 @@ func aSameApplicationFocusChangeAfterTheSelectionIsKept() async throws {
     #expect(system.focusedID == previousFocus)
 }
 
+/// A selection whose write fails is rolled back, and the rollback already
+/// returns focus to the previous tab. The early raise's undo does not
+/// activate it a second time.
+@Test @MainActor func aRolledBackSelectionReturnsFocusOnce() async throws {
+    let system = FakeAppWindowSystem()
+    let model = try await makeTwoTabbedColumns(system)
+    defer { model.shutdown() }
+    let state = try #require(model.activeTabbedState)
+    let previous = try #require(state.panes[0].selected)
+    let previousFocus = try #require(state.activeWindowID)
+    let hidden = try #require(state.panes[0].tabs.first { $0 != previous })
+    let index = try #require(system.windows.firstIndex { $0.id == hidden })
+    // The tab sits off its pane, so selecting it writes its frame; that
+    // write fails.
+    system.windows[index].frame.origin.x += 7
+    let next = system.frameWriteCounts[hidden, default: 0] + 1
+    system.failedFrameWriteNumbers[hidden] = Set(next...(next + 50))
+    system.focusedID = previousFocus
+    let raises = system.raiseRequests.count
+    model.performTabbed(.select(hidden))
+    try await Task.sleep(for: .milliseconds(500))
+    #expect(model.activeTabbedState?.panes[0].selected == previous)
+    #expect(system.focusedID == previousFocus)
+    let activations = system.raiseRequests.dropFirst(raises).filter { $0.0 == previousFocus && $0.1 }
+    #expect(activations.count == 1, "\(system.raiseRequests.dropFirst(raises).map { "\($0.0.rawValue):\($0.1)" })")
+}
+
 @Test @MainActor
 func stackingRepairOfTheKeyApplicationRaisesTheKeyWindowLast() async throws {
     let system = FakeAppWindowSystem()

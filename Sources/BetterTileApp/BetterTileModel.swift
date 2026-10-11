@@ -3883,9 +3883,9 @@ extension BetterTileModel {
                     self.sessionStore.update(display.id) { $0.suspendAutomaticWrites(observing: windows) }
                 } else if let restored = self.sessionStore.session(for: display.id) {
                     // A rejection before any write has nothing to roll back;
-                    // the early raise is undone here. After a rollback this
-                    // repeats the same raises.
-                    if let earlyRaise { self.undoEarlyTabRaise(earlyRaise) }
+                    // the early raise is undone here. After a rollback focus
+                    // is already back and is not activated again.
+                    if let earlyRaise { self.undoEarlyTabRaise(earlyRaise, afterPlacement: true) }
                     // A complete rollback raised the previous selections.
                     // Put their curtains below them again as well.
                     self.showTabbed(session: restored, display: display, windows: windows)
@@ -3932,7 +3932,7 @@ extension BetterTileModel {
             tabbedFocusSuppressedUntil = Date().addingTimeInterval(0.3)
             tabbedIntendedFocus = (id, Date().addingTimeInterval(1))
             if coordinator.focusTabbedWindow(id).isApplied {
-                earlyRaise = TabbedEarlyRaise(previousSelected: pane.selected, previousFocus: state.activeWindowID)
+                earlyRaise = TabbedEarlyRaise(raised: id, previousSelected: pane.selected, previousFocus: state.activeWindowID)
             }
         }
         var handedOff = false
@@ -4006,10 +4006,16 @@ extension BetterTileModel {
 
     /// Puts back the tab order and focus from before a selection raised its
     /// tab early, when that selection is rejected before its placement.
-    private func undoEarlyTabRaise(_ raise: TabbedEarlyRaise) {
+    /// - Parameter afterPlacement: A failed placement's rollback may already
+    ///   have restored focus, or the user moved it. Focus then returns only
+    ///   from the early-raised tab itself.
+    private func undoEarlyTabRaise(_ raise: TabbedEarlyRaise, afterPlacement: Bool = false) {
         tabbedIntendedFocus = nil
         if let previous = raise.previousSelected { _ = coordinator.raiseTabbedWindows([previous]) }
-        if let focus = raise.previousFocus { _ = coordinator.focusTabbedWindow(focus) }
+        guard let focus = raise.previousFocus else { return }
+        if !afterPlacement || (try? system.focusedWindow())?.id == raise.raised {
+            _ = coordinator.focusTabbedWindow(focus)
+        }
     }
 
     /// The user resized a selected window by its edge. As in Bento, a shared
@@ -4372,6 +4378,7 @@ extension BetterTileModel {
 
 /// The tab order and focus before a selection raised its tab early.
 struct TabbedEarlyRaise {
+    let raised: WindowID
     let previousSelected: WindowID?
     let previousFocus: WindowID?
 }
