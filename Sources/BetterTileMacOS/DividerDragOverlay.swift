@@ -53,9 +53,14 @@ final class DividerDragOverlay {
     /// A fade that finishes after a new gesture began must not hide it.
     private var presentationGeneration = 0
 
+    /// True from a fade's start until the overlay ends. The panel is still
+    /// visible meanwhile, but a new gesture must start a fresh presentation.
+    private(set) var isFading = false
+
     func begin(displayFrame: BTRect, below handle: NSWindow, appearance: OverlayAppearance, windows: [WindowSnapshot]) {
         guard let mainFrame = NSScreen.screens.first?.frame else { return }
         presentationGeneration &+= 1
+        isFading = false
         panel?.alphaValue = 1
         content.knob.isHidden = false
         content.decoration.isHidden = false
@@ -161,6 +166,7 @@ final class DividerDragOverlay {
     /// Fades the previews out once the windows have landed.
     func fadeOut(duration: TimeInterval = 0.12) {
         guard let panel, panel.isVisible else { end(); return }
+        isFading = true
         let generation = presentationGeneration
         NSAnimationContext.runAnimationGroup { context in
             context.duration = duration
@@ -176,6 +182,7 @@ final class DividerDragOverlay {
     }
 
     func end() {
+        isFading = false
         panel?.alphaValue = 1
         content.knob.isHidden = false
         content.decoration.isHidden = false

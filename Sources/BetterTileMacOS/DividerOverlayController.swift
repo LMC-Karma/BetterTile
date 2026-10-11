@@ -733,6 +733,9 @@ public final class DividerOverlayController {
 
     private func beginOverlayPresentation() {
         finishLanding(fade: false)
+        // The previous release may still be fading; its end must not hide
+        // this gesture.
+        if dragOverlay.isFading { dragOverlay.end() }
         guard !dragOverlay.isVisible, let handlePanel, let displayBounds, let view = visibleHandleView else { return }
         dragOverlay.begin(displayFrame: displayBounds, below: handlePanel,
                           appearance: configuration.overlayAppearance, windows: baselineWindows)
@@ -777,8 +780,9 @@ public final class DividerOverlayController {
 
     private func holdPreviewsUntilWindowsLand(_ placements: [Placement]) {
         let targets = Dictionary(placements.map { ($0.windowID, $0.frame) }, uniquingKeysWith: { _, last in last })
+        let baseline = Dictionary(baselineWindows.map { ($0.id, $0.frame) }, uniquingKeysWith: { first, _ in first })
         // Most applications apply the commit before it returns.
-        guard !windowsHaveLanded(targets) else {
+        guard !windowsHaveLanded(targets, baseline: baseline) else {
             endOverlayPresentation()
             return
         }
@@ -793,7 +797,7 @@ public final class DividerOverlayController {
             while !Task.isCancelled {
                 try? await Task.sleep(for: .milliseconds(33))
                 guard let self, !Task.isCancelled else { return }
-                if self.windowsHaveLanded(targets) || CACurrentMediaTime() >= deadline {
+                if self.windowsHaveLanded(targets, baseline: baseline) || CACurrentMediaTime() >= deadline {
                     self.finishLanding(fade: true)
                     return
                 }
@@ -803,7 +807,10 @@ public final class DividerOverlayController {
 
     /// Prefers WindowServer frames: an application such as a Chromium
     /// browser reports its new Accessibility frame before it draws there.
-    private func windowsHaveLanded(_ targets: [WindowID: BTRect]) -> Bool {
+    /// An application that resizes in steps lands near its target. A frame
+    /// still at the window's baseline has not landed, even when it is that
+    /// near: the window has not drawn the commit yet.
+    private func windowsHaveLanded(_ targets: [WindowID: BTRect], baseline: [WindowID: BTRect]) -> Bool {
         let ids = Set(targets.keys)
         let frames: [WindowID: BTRect]
         if let shown = (coordinator.system as? any WindowStackReading)?.windowServerFrames(for: ids) {
@@ -815,8 +822,9 @@ public final class DividerOverlayController {
         }
         return targets.allSatisfy { id, target in
             guard let frame = frames[id] else { return true }
-            return frame.approximatelyEquals(target, tolerance: 2)
-                || SteppedSizeAcceptance.evaluate(requested: target, actual: frame) != .rejected
+            if frame.approximatelyEquals(target, tolerance: 2) { return true }
+            if let old = baseline[id], frame.approximatelyEquals(old, tolerance: 2) { return false }
+            return SteppedSizeAcceptance.evaluate(requested: target, actual: frame) != .rejected
         }
     }
 

@@ -14,6 +14,7 @@ private struct GhostGestureFixture {
     let display = DisplayID(rawValue: "ghost-overlay")
     let mainFrame: CGRect
     let start: BTPoint
+    let interaction: DividerInteraction
 
     init(junction: Bool = false, live: Bool = false, onScreen: Bool = false) throws {
         _ = NSApplication.shared
@@ -39,9 +40,13 @@ private struct GhostGestureFixture {
         controller = DividerOverlayController(coordinator: WindowCoordinator(system: system), configuration: configuration, displayTicks: ticks)
         let state = state
         controller.bentoStateProvider = { _ in state }
-        let interaction = try #require(DividerInteractionResolver.resolve(
+        interaction = try #require(DividerInteractionResolver.resolve(
             at: start, in: state.boundaries(in: bounds, displayID: display), hitWidth: 30, adjacencyTolerance: 6
         ))
+        try begin()
+    }
+
+    func begin() throws {
         controller.beginGesture(interaction: interaction, at: start)
         let handle = try #require(controller.visibleHandleView)
         handle.displayOptions = { (false, false) }
@@ -331,4 +336,46 @@ private func ghostOverlayCleansUpEveryGestureExit(ending: GhostEnd) throws {
     while controller.dragOverlay.isVisible, Date() < deadline { try await Task.sleep(for: .milliseconds(20)) }
     #expect(!controller.dragOverlay.isVisible)
     #expect(controller.dragOverlay.previewViews.isEmpty)
+}
+
+/// A window that grows a little still shows its old frame until it draws.
+/// That old frame is near the target, but it is not a landing.
+@Test @MainActor func ghostPreviewsWaitForAWindowStillDrawingItsOldFrame() async throws {
+    let fixture = try GhostGestureFixture()
+    let controller = fixture.controller
+    let left = fixture.system.windows[0]
+    fixture.tick(dx: 12)
+    fixture.system.drawnFrameOverrides = [left.id: left.frame]
+    controller.end(at: fixture.point(dx: 12))
+    let target = try #require(fixture.system.windows.first { $0.id == left.id }?.frame)
+    #expect(target.size.width > left.frame.size.width && target.size.width - left.frame.size.width <= 24)
+    try await Task.sleep(for: .milliseconds(120))
+    #expect(controller.dragOverlay.isVisible)
+    #expect(!controller.dragOverlay.isFading)
+    // Once WindowServer shows the new frame, the previews fade away.
+    fixture.system.drawnFrameOverrides = [:]
+    let deadline = Date().addingTimeInterval(5)
+    while controller.dragOverlay.isVisible, Date() < deadline { try await Task.sleep(for: .milliseconds(20)) }
+    #expect(!controller.dragOverlay.isVisible)
+}
+
+/// A drag that starts while the previous release still fades gets its own
+/// presentation; the old fade does not hide the new previews.
+@Test @MainActor func aDragDuringTheLandingFadeKeepsItsPreviews() async throws {
+    let fixture = try GhostGestureFixture()
+    let controller = fixture.controller
+    fixture.tick(dx: 50)
+    // The window never draws its new frame, so the hold ends at its deadline.
+    fixture.system.readsBeforeSettling = 1000
+    controller.end(at: fixture.point(dx: 50))
+    let deadline = Date().addingTimeInterval(5)
+    while !controller.dragOverlay.isFading, Date() < deadline { try await Task.sleep(for: .milliseconds(5)) }
+    try #require(controller.dragOverlay.isFading)
+    try fixture.begin()
+    fixture.tick(dx: 30)
+    #expect(controller.dragOverlay.isVisible && !controller.dragOverlay.isFading)
+    try await Task.sleep(for: .milliseconds(300))
+    #expect(controller.isDragging)
+    #expect(controller.dragOverlay.isVisible)
+    #expect(!controller.dragOverlay.previewViews.isEmpty)
 }
