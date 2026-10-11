@@ -1799,3 +1799,53 @@ func steppedApplicationTabIsSelectedWithoutResizeLoops(emitsEvents: Bool) async 
     #expect(system.windows[2].frame.size == BTSize(width: 230, height: 408))
     #expect(model.statusMessage == nil, "\(model.statusMessage ?? "")")
 }
+
+/// After a Tabbed divider drag the handle must follow the new pane edge.
+/// Window events from BetterTile's own writes are suppressed, so the
+/// finished placement refreshes the boundaries itself; otherwise the next
+/// drag at the new edge found nothing to grab.
+@Test @MainActor func tabbedDividerHandleFollowsTheEdgeAfterADrag() async throws {
+    let system = FakeAppWindowSystem()
+    let model = try await makeTwoTabbedColumns(system)
+    defer { model.shutdown() }
+    model.configuration.resizeFeedbackMode = .ghost
+    model.dividerResize.configuration = model.configuration
+    let bounds = system.mainDisplay.visibleFrame
+    let start = BTPoint(x: bounds.midX, y: bounds.midY)
+    let presentation = model.dividerPresentation(windows: system.windows)
+    model.dividerResize.refresh(boundaries: presentation.boundaries, obscuringFrames: presentation.obscuringFrames)
+    let interaction = try #require(DividerInteractionResolver.resolve(
+        at: start, in: presentation.boundaries, hitWidth: 18, adjacencyTolerance: 6, paneGap: model.configuration.bentoInnerGap))
+    let screen = try #require(NSScreen.screens.first)
+    model.dividerResize.beginGesture(interaction: interaction, at: start)
+    model.dividerResize.drag(to: CGPoint(x: start.x - 100, y: screen.frame.maxY - start.y))
+    model.dividerResize.displayTick()
+    model.dividerResize.end(at: CGPoint(x: start.x - 100, y: screen.frame.maxY - start.y))
+    let moved = await waitFor {
+        model.dividerResize.currentBoundaries.contains { abs($0.coordinate - (start.x - 100)) < 8 }
+    }
+    #expect(moved, "\(model.dividerResize.currentBoundaries.map(\.coordinate))")
+}
+
+/// Selecting a tab changes which window a divider drag resizes, so the
+/// boundaries must name the newly selected tab; a stale boundary resized a
+/// hidden tab and left the visible one for a later pass.
+@Test @MainActor func tabbedDividerBoundariesNameTheSelectedTab() async throws {
+    let system = FakeAppWindowSystem()
+    let model = try await makeTwoTabbedColumns(system)
+    defer { model.shutdown() }
+    let left = try #require(model.activeTabbedState?.panes[0])
+    let hidden = try #require(system.windows.first { $0.id != left.selected && left.tabs.contains($0.id) }?.id
+        ?? system.windows.first { !left.tabs.contains($0.id) }?.id)
+    if !left.tabs.contains(hidden) {
+        model.performTabbed(.move(hidden, pane: left.id, index: nil))
+        try #require(await waitFor { model.activeTabbedState?.panes[0].selected == hidden })
+    } else {
+        model.performTabbed(.select(hidden))
+        try #require(await waitFor { model.activeTabbedState?.panes[0].selected == hidden })
+    }
+    let named = await waitFor {
+        model.dividerResize.currentBoundaries.contains { $0.beforeWindowIDs.contains(hidden) || $0.afterWindowIDs.contains(hidden) }
+    }
+    #expect(named, "\(model.dividerResize.currentBoundaries.map { ($0.beforeWindowIDs, $0.afterWindowIDs) })")
+}

@@ -3910,6 +3910,11 @@ extension BetterTileModel {
                         self.rememberTabbedUndo(previous, sessionID: original.id, floatingFrames: floatingFrames)
                     }
                     self.showTabbed(session: committed, display: display, windows: windows)
+                    // Pane edges or the windows that show them changed. The
+                    // divider must follow both: a selection changes which
+                    // window a divider drag resizes. Window events from our
+                    // own writes are suppressed and do not refresh it.
+                    self.refreshDividerBoundaries()
                 }
             } else {
                 _ = restoreGestureMembership()
