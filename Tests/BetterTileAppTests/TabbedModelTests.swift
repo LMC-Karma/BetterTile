@@ -1588,10 +1588,8 @@ func aSameApplicationFocusChangeAfterTheSelectionIsKept() async throws {
     system.focusedID = system.windows[0].id
     model.performTabbed(.select(hiddenLeft))
     try #require(await waitFor { model.activeTabbedState?.panes[0].selected == hiddenLeft && system.focusedID == hiddenLeft })
-    // The focus refresh for the selection sees the clicked tab focused.
-    system.eventHandler?(WindowSystemEvent(kind: .focused, windowID: hiddenLeft, processIdentifier: 7))
-    try await Task.sleep(for: .milliseconds(450))
-    // The user clicks the right pane's window within the correction time.
+    // The user clicks the right pane's window at once, before any focus
+    // refresh ran; the placement already saw the clicked tab focused.
     let raises = system.raiseRequests.count
     system.focusedID = rightSelected
     system.eventHandler?(WindowSystemEvent(kind: .focused, windowID: rightSelected, processIdentifier: 7))

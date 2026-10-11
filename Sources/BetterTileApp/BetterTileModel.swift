@@ -3487,8 +3487,11 @@ extension BetterTileModel {
                 return
             }
             if outcome.isApplied {
+                // Correct a later focus change only when the placement never
+                // saw the selected tab focused; after that, it is the user's.
                 if selectionOnly, let focus {
-                    self.tabbedIntendedFocus = (focus, Date().addingTimeInterval(1))
+                    let confirmed = ((try? self.system.focusedWindow()) ?? nil)?.id == focus
+                    self.tabbedIntendedFocus = confirmed ? nil : (focus, Date().addingTimeInterval(1))
                 }
                 var proposed = original
                 proposed.tabbedState = state
