@@ -417,8 +417,10 @@ public final class TabbedOverlayController {
         return window.title.isEmpty ? (window.bundleIdentifier ?? "Window") : window.title
     }
 
-    fileprivate func beginDrag(_ id: WindowID, offset: NSPoint) -> Bool {
-        guard acceptsTabDrags, !isInteracting, !isDropPending else { return false }
+    /// `atRelease` starts a drag blocked while a selection settled, at the
+    /// mouse-up itself; its drop is queued behind that selection.
+    fileprivate func beginDrag(_ id: WindowID, offset: NSPoint, atRelease: Bool = false) -> Bool {
+        guard acceptsTabDrags || atRelease, !isInteracting, !isDropPending else { return false }
         isInteracting = true
         cancelled = false
         draggedWindow = id
@@ -963,6 +965,9 @@ struct TabbedStripLayout {
     private var downClose: WindowID?
     /// The tab a press already selected, so its release does not select again.
     private var selectedOnPress: WindowID?
+    /// True while a drag past the threshold waits for the selection its press
+    /// started. A drag that started and was cancelled is not resumed.
+    private var blockedDrag = false
     private var dragging = false
     private var attemptedDrag = false
     private var hoverPoint: NSPoint?
@@ -1269,7 +1274,7 @@ struct TabbedStripLayout {
         // A new press proves the previous drag ended. Cancel a drag whose
         // mouse-up was lost rather than completing it with this gesture.
         if owner?.hasActiveTabDrag == true { owner?.cancelInteraction() }
-        downTab = nil; downClose = nil; downPoint = nil; dragging = false; attemptedDrag = false; selectedOnPress = nil
+        downTab = nil; downClose = nil; downPoint = nil; dragging = false; attemptedDrag = false; blockedDrag = false; selectedOnPress = nil
         if strip.menuFrame.contains(point) || event.modifierFlags.contains(.control) { showMenu(event); return }
         if let index = tabIndex(at: point) {
             // A released strip shows provisional membership until placement
@@ -1301,16 +1306,19 @@ struct TabbedStripLayout {
             attemptedDrag = true
             let tab = strip.tabFrame(renderedOrder.firstIndex(of: id) ?? 0)
             dragging = owner.beginDrag(id, offset: NSPoint(x: downPoint.x - tab.minX, y: downPoint.y))
+            // Only this press's own selection blocks the drag; any other
+            // placement keeps rejecting it.
+            blockedDrag = !dragging && selectedOnPress == id
         }
         if dragging { owner.queueDrag(to: owner.screenPoint(event)) }
     }
     override func mouseUp(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
-        // A drag blocked while a selection settled starts now, so a release
-        // without further movement still drops the tab.
-        if !dragging, attemptedDrag, let id = downTab, let downPoint, let owner {
+        // A drag blocked while a selection settled starts now, so its drop
+        // is not lost; the model queues it behind the selection.
+        if !dragging, blockedDrag, let id = downTab, let downPoint, let owner {
             let tab = strip.tabFrame(renderedOrder.firstIndex(of: id) ?? 0)
-            dragging = owner.beginDrag(id, offset: NSPoint(x: downPoint.x - tab.minX, y: downPoint.y))
+            dragging = owner.beginDrag(id, offset: NSPoint(x: downPoint.x - tab.minX, y: downPoint.y), atRelease: true)
         }
         if dragging, let owner {
             owner.drag(to: owner.screenPoint(event))
@@ -1324,7 +1332,7 @@ struct TabbedStripLayout {
                 let index = tabIndex(at: point),
                 renderedOrder[index] == downTab,
                 !strip.closeFrame(index).contains(point) { owner?.send(.select(downTab)) }
-        downTab = nil; downClose = nil; downPoint = nil; dragging = false; attemptedDrag = false; selectedOnPress = nil
+        downTab = nil; downClose = nil; downPoint = nil; dragging = false; attemptedDrag = false; blockedDrag = false; selectedOnPress = nil
         needsDisplay = true
     }
     override func rightMouseDown(with event: NSEvent) { showMenu(event) }
