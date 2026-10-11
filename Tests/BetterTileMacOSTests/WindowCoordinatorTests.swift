@@ -1182,3 +1182,45 @@ func singleWindowPartialFailureRestoresBaselineAndPreservesHistory(actionPlan: B
     }
     #expect(system.probedWindowIDs == [[id], [id]])
 }
+
+/// Two side-by-side windows whose shared edge moves right: "focused" grows,
+/// "second" shrinks. IDs sort the growing window first, as in many layouts.
+@MainActor private func sharedEdgeFixture() -> (FakeWindowSystem, WindowCoordinator) {
+    let system = FakeWindowSystem()
+    system.windows[0].frame = BTRect(x: 0, y: 0, width: 500, height: 800)
+    system.addSecondWindow()
+    system.windows[1].frame = BTRect(x: 500, y: 0, width: 500, height: 800)
+    return (system, WindowCoordinator(system: system))
+}
+
+@Test @MainActor func multiWindowWritesShrinkBeforeTheyGrow() throws {
+    let (system, coordinator) = sharedEdgeFixture()
+    var transaction = try #require(coordinator.beginTransaction(windowIDs: Set(system.windows.map(\.id))).startedTransaction)
+    _ = coordinator.applyLive(transaction: &transaction, placements: [
+        Placement(windowID: system.windows[0].id, frame: BTRect(x: 0, y: 0, width: 600, height: 800)),
+        Placement(windowID: system.windows[1].id, frame: BTRect(x: 600, y: 0, width: 400, height: 800)),
+    ])
+    #expect(system.frameWriteBatches.last == [system.windows[1].id, system.windows[0].id])
+}
+
+/// A live divider tick asks a window to shrink below a minimum it never
+/// reported. The window that would grow into it waits for that tick, so the
+/// two never overlap while the divider learns the minimum.
+@Test @MainActor func liveTickHoldsTheGrowingWindowWhenItsNeighbourRefuses() throws {
+    let (system, coordinator) = sharedEdgeFixture()
+    system.enforcedMinimumWidths[system.windows[1].id] = 450
+    var transaction = try #require(coordinator.beginTransaction(windowIDs: Set(system.windows.map(\.id))).startedTransaction)
+    let outcome = coordinator.applyLive(transaction: &transaction, placements: [
+        Placement(windowID: system.windows[0].id, frame: BTRect(x: 0, y: 0, width: 600, height: 800)),
+        Placement(windowID: system.windows[1].id, frame: BTRect(x: 600, y: 0, width: 400, height: 800)),
+    ], validateParticipants: false)
+    #expect(outcome.isApplied)
+    let grown = system.windows[0].frame, refused = system.windows[1].frame
+    #expect(grown.maxX <= refused.minX + 0.5, "grew to \(grown) over \(refused)")
+    // A later tick within the minimum still applies normally.
+    _ = coordinator.applyLive(transaction: &transaction, placements: [
+        Placement(windowID: system.windows[0].id, frame: BTRect(x: 0, y: 0, width: 540, height: 800)),
+        Placement(windowID: system.windows[1].id, frame: BTRect(x: 540, y: 0, width: 460, height: 800)),
+    ], validateParticipants: false)
+    #expect(system.windows[0].frame.size.width == 540)
+}

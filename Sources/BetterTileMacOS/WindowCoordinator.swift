@@ -494,12 +494,49 @@ public final class WindowCoordinator {
                 : transaction.proposedPlacements.filter {
                     transaction.lastAppliedFrames[$0.windowID]?.approximatelyEquals($0.frame, tolerance: 0.01) != true
                 }
-            try applyAtomically(
-                changed,
-                rollbackFrames: transaction.lastAppliedFrames,
-                intermediate: !validateParticipants
-            )
-            transaction.lastAppliedFrames = Dictionary(uniqueKeysWithValues: placements.map { ($0.windowID, $0.frame) })
+            var written = changed
+            if !validateParticipants {
+                // Within a drag tick, write the shrinking windows first and
+                // read them back. A neighbour that refused leaves no room, so
+                // the windows that would grow into it wait for a later tick
+                // instead of overlapping it.
+                let previous = transaction.lastAppliedFrames
+                let shrinking = changed.filter { placement in
+                    guard let old = previous[placement.windowID] else { return false }
+                    return placement.frame.size.width < old.size.width - 0.5
+                        || placement.frame.size.height < old.size.height - 0.5
+                }
+                if !shrinking.isEmpty, shrinking.count < changed.count {
+                    try applyAtomically(shrinking, rollbackFrames: previous, intermediate: true)
+                    let actual = Dictionary(
+                        ((try? snapshots(ids: Set(shrinking.map(\.windowID)))) ?? []).map { ($0.id, $0.frame.size) }
+                    ) { first, _ in first }
+                    let refused = shrinking.contains { placement in
+                        guard let size = actual[placement.windowID] else { return false }
+                        return size.width > placement.frame.size.width + 2 || size.height > placement.frame.size.height + 2
+                    }
+                    let growing = changed.filter { placement in !shrinking.contains { $0.windowID == placement.windowID } }
+                    if !refused {
+                        try applyAtomically(growing, rollbackFrames: previous, intermediate: true)
+                    }
+                    written = refused ? shrinking : changed
+                } else {
+                    try applyAtomically(changed, rollbackFrames: previous, intermediate: true)
+                }
+            } else {
+                try applyAtomically(
+                    changed,
+                    rollbackFrames: transaction.lastAppliedFrames,
+                    intermediate: false
+                )
+            }
+            // Frames that waited this tick keep their last request, so the
+            // next tick sends them again.
+            if written.count == changed.count {
+                transaction.lastAppliedFrames = Dictionary(uniqueKeysWithValues: placements.map { ($0.windowID, $0.frame) })
+            } else {
+                for placement in written { transaction.lastAppliedFrames[placement.windowID] = placement.frame }
+            }
             transaction.hasLiveChanges = true
             transaction.hasDegradedApply = false
             return .applied
@@ -676,7 +713,18 @@ public final class WindowCoordinator {
         try system.withFrameWriteBatch {
             var attempted: [WindowID] = []
             do {
-                for placement in placements.sorted(by: { $0.windowID < $1.windowID }) {
+                // Shrink before growing, so a growing window never covers a
+                // neighbour that has not yet made room.
+                let before = currentFrames ?? rollbackFrames
+                func shrinks(_ placement: Placement) -> Bool {
+                    guard let old = before[placement.windowID] else { return false }
+                    return placement.frame.size.width < old.size.width - 0.5
+                        || placement.frame.size.height < old.size.height - 0.5
+                }
+                for placement in placements.sorted(by: { lhs, rhs in
+                    let left = shrinks(lhs), right = shrinks(rhs)
+                    return left != right ? left : lhs.windowID < rhs.windowID
+                }) {
                     attempted.append(placement.windowID)
                     try apply(
                         placement.frame,
