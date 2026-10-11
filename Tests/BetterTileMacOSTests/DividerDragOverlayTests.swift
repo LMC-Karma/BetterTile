@@ -83,9 +83,9 @@ func ghostOverlayKeepsOneWindowAndStationaryInputForEveryTick(junction: Bool) th
     var accepted: BentoLayoutState?
     controller.bentoStateLiveHandler = { _, state, _ in accepted = state }
     for sample in 1...50 {
-        let before = controller.ghostPresentationCount
+        let before = controller.overlayPresentationCount
         fixture.tick(dx: Double(sample), dy: junction ? Double(sample) / 2 : 0)
-        #expect(controller.ghostPresentationCount == before + 1)
+        #expect(controller.overlayPresentationCount == before + 1)
         #expect(panel.frame == initialOverlayFrame)
         #expect(input.frame == initialInputFrame)
         let state = try #require(accepted)
@@ -138,15 +138,19 @@ private func ghostOverlayCleansUpEveryGestureExit(ending: GhostEnd) throws {
     controller.hideAndCancel()
 }
 
-@Test @MainActor func liveDividerKeepsItsOwnDrawingAndCreatesNoDragOverlay() throws {
+/// Live Resize draws the moving knob in the overlay, without previews, and
+/// keeps the input window still. Moving the window that owns the drag made
+/// active Chromium browsers stall their own resizes.
+@Test @MainActor func liveDividerDrawsInTheOverlayAndKeepsItsInputWindowStill() throws {
     let fixture = try GhostGestureFixture(live: true)
     defer { fixture.controller.hideAndCancel() }
     let handle = try #require(fixture.controller.visibleHandleView)
     let before = handle.window?.frame
     fixture.tick(dx: 50)
-    #expect(handle.drawsLens && handle.drawingSink == nil && handle.showsGlass)
-    #expect(handle.window?.frame != before)
-    #expect(fixture.controller.dragOverlay.panel == nil)
+    #expect(handle.window?.frame == before)
+    #expect(!handle.drawsLens && handle.drawingSink != nil)
+    #expect(fixture.controller.dragOverlay.isVisible)
+    #expect(fixture.controller.dragOverlay.previewViews.isEmpty)
     #expect(!fixture.system.frameWriteCounts.isEmpty)
 }
 

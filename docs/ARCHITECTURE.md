@@ -308,12 +308,15 @@ use the frosted surface. Reduce Transparency and Increase Contrast use a solid
 fill. Hit testing and window resizing keep their existing
 behavior; junction input frames keep their earlier width, which contains the
 narrower lens.
-At rest and during Live Resize, a separate click-through panel below the handle
-supplies the track and shadow. During Ghost Preview, one reusable click-through
-panel contains the preview views, track, shadow, and knob. Its frame stays at the
-display's visible bounds and it is ordered below the input handle once. Each
-display tick updates all drawing in one transaction with layer actions disabled.
-The input handle stays visible and stationary, with its drawing hidden. A drawing
+At rest, a separate click-through panel below the handle supplies the track and
+shadow. During a divider drag, one reusable click-through panel contains the
+track, shadow, and knob, plus the preview views in Ghost Preview. Its frame stays
+at the display's visible bounds and it is ordered below the input handle once.
+Each display tick updates all drawing in one transaction with layer actions
+disabled. The input handle stays visible and stationary, with its drawing hidden.
+Live Resize needs this too: moving the panel that owns the drag on every tick
+made Chromium browsers block their own window writes for 80–150 ms while they
+were the active application. A drawing
 sample forwards geometry, limit, stretch, and appearance changes to the overlay.
 Ending the gesture restores the handle frame and drawing before hiding the
 overlay and retracting. Settings uses the same lens views.

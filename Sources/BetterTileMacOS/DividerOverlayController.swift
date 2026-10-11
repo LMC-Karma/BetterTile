@@ -280,7 +280,7 @@ public final class DividerOverlayController {
     public var configuration: BetterTileConfiguration {
         didSet {
             if dragOverlay.isVisible {
-                updateGhostPresentation { refreshConfiguration(from: oldValue) }
+                updateOverlayPresentation { refreshConfiguration(from: oldValue) }
             } else {
                 refreshConfiguration(from: oldValue)
             }
@@ -346,8 +346,8 @@ public final class DividerOverlayController {
     private var isRetracting = false
     private var handlePanel: DividerHandlePanel?
     let dragOverlay = DividerDragOverlay()
-    private var isUpdatingGhostPresentation = false
-    private(set) var ghostPresentationCount = 0
+    private var isUpdatingOverlayPresentation = false
+    private(set) var overlayPresentationCount = 0
     private var globalMouseMonitor: Any?
     private var localMouseMonitor: Any?
     private var globalKeyMonitor: Any?
@@ -719,41 +719,42 @@ public final class DividerOverlayController {
         ) { [weak self] in
             self?.displayTick()
         }
-        switch configuration.resizeFeedbackMode {
-        case .ghost:
-            beginGhostPresentation()
-            updateGhostPresentation { dragOverlay.update(previews: latestPlacements) }
-        case .live:
-            endGhostPresentation()
+        // Both modes draw the active handle in the click-through overlay and
+        // keep the input panel still. Moving the panel that owns the drag on
+        // every tick made Chromium browsers block their own window writes for
+        // 80-150 ms while they were the active application.
+        beginOverlayPresentation()
+        updateOverlayPresentation {
+            dragOverlay.update(previews: configuration.resizeFeedbackMode == .ghost ? latestPlacements : [])
         }
     }
 
-    private func beginGhostPresentation() {
+    private func beginOverlayPresentation() {
         guard !dragOverlay.isVisible, let handlePanel, let displayBounds, let view = visibleHandleView else { return }
         dragOverlay.begin(displayFrame: displayBounds, below: handlePanel,
                           appearance: configuration.overlayAppearance, windows: baselineWindows)
         handlePanel.setDrawingFrame(handlePanel.frame)
         handlePanel.setLensHidden(true)
         view.drawingSink = { [weak self] _ in
-            guard let self, !self.isUpdatingGhostPresentation else { return }
-            self.updateGhostPresentation {}
+            guard let self, !self.isUpdatingOverlayPresentation else { return }
+            self.updateOverlayPresentation {}
         }
     }
 
     /// A pointer tick, stretch step, or settings update publishes one complete
-    /// drawing sample. Sinks during the batch wait for its final limit and frame.
-    private func updateGhostPresentation(_ updates: () -> Void) {
+    /// drawing sample to the overlay. Sinks during the batch wait for its final limit and frame.
+    private func updateOverlayPresentation(_ updates: () -> Void) {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        isUpdatingGhostPresentation = true
+        isUpdatingOverlayPresentation = true
         updates()
         if let drawing = visibleHandleView?.drawingState { dragOverlay.update(knob: drawing) }
-        isUpdatingGhostPresentation = false
-        ghostPresentationCount += 1
+        isUpdatingOverlayPresentation = false
+        overlayPresentationCount += 1
         CATransaction.commit()
     }
 
-    private func endGhostPresentation() {
+    private func endOverlayPresentation() {
         guard dragOverlay.isVisible else { return }
         CATransaction.begin()
         CATransaction.setDisableActions(true)
@@ -853,8 +854,8 @@ public final class DividerOverlayController {
             self.transaction = transaction
             activeInteraction = proposedInteraction
             reportLiveBentoState(interaction)
-            beginGhostPresentation()
-            updateGhostPresentation {
+            beginOverlayPresentation()
+            updateOverlayPresentation {
                 presentHandle(for: proposedInteraction, near: point, active: true)
                 handlePanel?.setLimit(limit)
                 dragOverlay.update(
@@ -865,7 +866,6 @@ public final class DividerOverlayController {
                 )
             }
         case .live:
-            endGhostPresentation()
             switch coordinator.applyLive(
                 transaction: &transaction,
                 placements: placements,
@@ -908,8 +908,10 @@ public final class DividerOverlayController {
                         return
                     }
                 }
-                presentHandle(for: proposedInteraction, near: point, active: true)
-                handlePanel?.setLimit(limit)
+                updateOverlayPresentation {
+                    presentHandle(for: proposedInteraction, near: point, active: true)
+                    handlePanel?.setLimit(limit)
+                }
             case .failed:
                 if minimumCorrections > 0 {
                     cancelActiveGesture()
@@ -1093,7 +1095,7 @@ public final class DividerOverlayController {
             bentoStateLiveHandler?(displayID, baselineBentoState, displayBounds)
         }
         reportedLiveBentoState = false
-        endGhostPresentation()
+        endOverlayPresentation()
         activeInteraction = nil
         gestureCandidates = nil
         coverCache = nil
