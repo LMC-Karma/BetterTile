@@ -85,6 +85,7 @@ final class BetterTileModel {
     private var lastBentoFocusMessage: String?
     private var tabbedCurtainRecheckTask: Task<Void, Never>?
     private var absenceConfirmationTask: Task<Void, Never>?
+    private var arrivalSweepTask: Task<Void, Never>?
     private var lastTabbedNativeResizePreview = Date.distantPast
     /// The Bento tree from before focus mode, per desktop session, so ending
     /// focus mode returns exactly the previous layout.
@@ -1653,6 +1654,7 @@ final class BetterTileModel {
     func shutdown() {
         guard !isShutDown else { return }
         absenceConfirmationTask?.cancel()
+        arrivalSweepTask?.cancel()
         tabbedCurtainRecheckTask?.cancel()
         // A held divider can roll back to pane frames. Finish that rollback
         // before restoring the windows' Native entry frames.
@@ -3060,6 +3062,16 @@ final class BetterTileModel {
             if shouldLogHeldAbsences {
                 logHeldAbsences(in: transition.session)
             }
+            // A desktop-switch sweep keeps the stored tree. A window that
+            // arrived with the switch, for example dragged here in Mission
+            // Control, joins in a normal sweep once the switch settles.
+            if desktopTransition, activation.session.mode == .bento, activation.session.isBentoInitialized {
+                let layout = transition.session.bentoState
+                let known = Set(layout.root?.windowIDs ?? []).union(layout.floatingWindowIDs)
+                if !Set(displayWindows.map(\.id)).subtracting(known).isEmpty {
+                    scheduleArrivalSweep()
+                }
+            }
 
             switch transition {
             case let .placeSingleWindow(proposed, placement):
@@ -3226,6 +3238,17 @@ final class BetterTileModel {
         if !session.presence.pending.isEmpty {
             Self.bentoLog.debug("holding absent panes until closure is confirmed")
             scheduleAbsenceConfirmation()
+        }
+    }
+
+    private func scheduleArrivalSweep() {
+        guard arrivalSweepTask == nil, !isShutDown else { return }
+        arrivalSweepTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(400))
+            guard let self, !Task.isCancelled else { return }
+            self.arrivalSweepTask = nil
+            self.pendingWindowEvents.recordTopologyChange()
+            self.schedulePendingWindowEvents()
         }
     }
 
