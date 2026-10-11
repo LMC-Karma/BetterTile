@@ -613,8 +613,36 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
             if minimumSizeLearner.observeWriteReadback(
                 windowID: windowID, application: applicationKeys[windowID],
                 requested: frame, previous: knownCurrentFrame, actual: actual
-            ) { snapshotGeneration &+= 1 }
+            ) {
+                snapshotGeneration &+= 1
+            } else if (actual.size.width > frame.size.width + 2 || actual.size.height > frame.size.height + 2),
+                      abs(actual.minX - frame.minX) <= 2, abs(actual.minY - frame.minY) <= 2,
+                      confirmsSynchronousWrites(element, at: actualPosition) {
+                // The window kept its size at the same origin, which an
+                // ignored write would also do. A 1 pt position nudge that the
+                // application follows proves it processes writes at once, so
+                // the kept size is its minimum.
+                if minimumSizeLearner.observeConfirmedClamp(
+                    windowID: windowID, application: applicationKeys[windowID],
+                    requested: frame.size, actual: actual.size
+                ) { snapshotGeneration &+= 1 }
+            }
         }
+    }
+
+    /// Moves the window 1 pt and back. True when the application followed the
+    /// move synchronously. The nudge is not visible.
+    private func confirmsSynchronousWrites(_ element: AXUIElement, at position: CGPoint) -> Bool {
+        var nudged = CGPoint(x: position.x + 1, y: position.y)
+        var original = position
+        guard let nudgedValue = AXValueCreate(.cgPoint, &nudged),
+              let originalValue = AXValueCreate(.cgPoint, &original),
+              AXUIElementSetAttributeValue(element, kAXPositionAttribute as CFString, nudgedValue) == .success
+        else { return false }
+        let observed: CGPoint? = axValue(kAXPositionAttribute, from: element, type: .cgPoint)
+        _ = AXUIElementSetAttributeValue(element, kAXPositionAttribute as CFString, originalValue)
+        guard let observed else { return false }
+        return abs(observed.x - nudged.x) <= 0.5
     }
 
     public func withFrameWriteBatch(_ updates: () throws -> Void) rethrows {

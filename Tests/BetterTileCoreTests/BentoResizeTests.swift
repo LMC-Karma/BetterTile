@@ -536,3 +536,13 @@ private let readbackID = WindowID(rawValue: "readback")
     #expect(learner.merging(WindowConstraints(), for: second, application: "com.brave.Browser").minimumSize
         == BTSize(width: 500, height: 375))
 }
+
+@Test func confirmedClampRecordsOnlyTheAxesThatStayedLarger() {
+    var learner = WindowMinimumSizeLearner()
+    let recorded = learner.observeConfirmedClamp(windowID: readbackID, application: "com.apple.Preview",
+        requested: BTSize(width: 458, height: 484), actual: BTSize(width: 708, height: 484))
+    #expect(recorded)
+    #expect(learner.learnedSizes[readbackID] == BTSize(width: 708, height: 0))
+    #expect(learner.merging(WindowConstraints(), for: WindowID(rawValue: "other"), application: "com.apple.Preview")
+        .minimumSize.width == 708)
+}

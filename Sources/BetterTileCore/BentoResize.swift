@@ -279,6 +279,28 @@ public struct WindowMinimumSizeLearner: Sendable {
 
     public func hasMeasurement(for windowID: WindowID) -> Bool { learnedSizes[windowID] != nil }
 
+    /// Records a clamp that the caller proved synchronous by other means, for
+    /// a write that left the window where it was: each axis that stayed
+    /// larger than requested is the minimum.
+    @discardableResult
+    public mutating func observeConfirmedClamp(
+        windowID: WindowID,
+        application: String? = nil,
+        requested: BTSize,
+        actual: BTSize,
+        tolerance: Double = 2
+    ) -> Bool {
+        defer { rememberApplication(application, from: windowID) }
+        let before = learnedSizes[windowID] ?? .zero
+        var learned = before
+        if actual.width > requested.width + tolerance { learned.width = actual.width }
+        if actual.height > requested.height + tolerance { learned.height = actual.height }
+        guard learned != before else { return false }
+        learnedSizes[windowID] = learned
+        smallerSizeCandidates.removeValue(forKey: windowID)
+        return true
+    }
+
     /// Records the window's current measurement as its application's seed.
     public mutating func rememberApplication(_ application: String?, for windowID: WindowID) {
         rememberApplication(application, from: windowID)
