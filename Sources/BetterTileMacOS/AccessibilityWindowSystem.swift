@@ -235,6 +235,10 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
             var restore = original
             guard let tinyValue = AXValueCreate(.cgSize, &tiny),
                   let restoreValue = AXValueCreate(.cgSize, &restore) else { continue }
+            // As for a frame write: with enhanced accessibility on, an
+            // application can reinterpret the size writes.
+            let enhancedUserInterface = suspendEnhancedUserInterfaceIfNeeded(for: element)
+            defer { if frameWriteSuspensions == nil { enhancedUserInterface.restore() } }
             AXUIElementSetMessagingTimeout(element, Self.frameWriteMessagingTimeout)
             defer { AXUIElementSetMessagingTimeout(element, 0) }
             guard AXUIElementSetAttributeValue(element, kAXSizeAttribute as CFString, tinyValue) == .success else { continue }
