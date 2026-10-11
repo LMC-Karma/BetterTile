@@ -1587,3 +1587,37 @@ func minimizedRightHalfReturnsToItsOriginalSide(nativeMembership: Bool, staleMin
     }
     #expect(BentoLayoutVerifier.overlappingWindowIDs(firstObservation).isEmpty, "\(firstObservation)")
 }
+
+/// A clamp correction that fails, and whose rollback fails too, leaves the
+/// windows in a mixed state. The placement reports that instead of success,
+/// so automatic writes stop until the user repairs the layout.
+@Test @MainActor func failedClampCorrectionWithAFailedRollbackIsNotASuccess() async throws {
+    _ = NSApplication.shared
+    let system = FakeAppWindowSystem()
+    system.measuresOnWrite = true
+    let wide = WindowID(rawValue: "wide")
+    system.windows.append(WindowSnapshot(id: wide, processIdentifier: 80, bundleIdentifier: "com.example.Wide",
+        frame: BTRect(x: 0, y: 0, width: 800, height: 800), displayID: system.mainDisplay.id))
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    model.setActiveMode(.bento)
+    try #require(await waitFor { system.windows.allSatisfy { $0.frame.size.height == 800 } })
+    try await Task.sleep(for: .milliseconds(400))
+    let arrival = WindowID(rawValue: "arrival")
+    system.windows.append(WindowSnapshot(id: arrival, processIdentifier: 81, bundleIdentifier: "com.example.Arrival",
+        frame: BTRect(x: 100, y: 100, width: 400, height: 300), displayID: system.mainDisplay.id))
+    // The wide window refuses its new pane width, so the correction moves
+    // both right-hand windows. The arrival moves first; the other window's
+    // write fails, and so does the rollback of the arrival.
+    system.enforcedMinimumWidths[wide] = 600
+    for window in system.windows {
+        let next = system.frameWriteCounts[window.id, default: 0] + (window.id == arrival ? 3 : 2)
+        system.failedFrameWriteNumbers[window.id] = Set(next...(next + 20))
+    }
+    system.focusedID = wide
+    system.eventHandler?(WindowSystemEvent(kind: .created, windowID: arrival, processIdentifier: 81))
+    let suspended = await waitFor(timeout: .seconds(3)) {
+        model.statusMessage?.hasSuffix("Use Repair to rebuild Bento.") == true
+    }
+    #expect(suspended, "\(String(describing: model.statusMessage)) \(system.requestedFrames.mapValues { $0.map { "\($0.minX),\($0.minY) \($0.size.width)x\($0.size.height)" } })")
+}

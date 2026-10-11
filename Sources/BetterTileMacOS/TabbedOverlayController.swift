@@ -60,6 +60,11 @@ public final class TabbedOverlayController {
     /// True while a curtain is kept over an order that could not be read
     /// back. The caller should verify the order again soon.
     public private(set) var needsCurtainVerification = false
+    /// Unreadable refreshes in a row that kept the curtain. An order that
+    /// stays unreadable can also mean a floating window failed to rise, so
+    /// the curtain gives way after a few.
+    private var curtainHolds = 0
+    static let maximumCurtainHolds = 4
     /// Reads the real primary button. A tab drag whose mouse-up never
     /// arrives finishes on the next display tick instead of staying armed.
     private let primaryButtonIsPressed: () -> Bool
@@ -191,6 +196,7 @@ public final class TabbedOverlayController {
 
     public func hide() {
         needsCurtainVerification = false
+        curtainHolds = 0
         curtainBounds = nil
         cancelInteraction()
         for panel in Array(panes.values) + Array(dividerControls.values) + [curtain].compactMap({ $0 }) { panel.orderOut(nil) }
@@ -206,14 +212,19 @@ public final class TabbedOverlayController {
             // Removing the curtain then exposes every hidden tab at once;
             // keeping it is never worse, and the caller verifies the order
             // again shortly.
-            if identitiesValid, curtain?.isVisible == true, curtainBounds == bounds {
+            if identitiesValid, curtain?.isVisible == true, curtainBounds == bounds,
+               curtainHolds < Self.maximumCurtainHolds {
+                curtainHolds += 1
                 needsCurtainVerification = true
                 return
             }
+            needsCurtainVerification = false
+            curtainHolds = 0
             curtain?.orderOut(nil)
             return
         }
         needsCurtainVerification = false
+        curtainHolds = 0
         curtainBounds = bounds
         let panel = curtain ?? makePanel()
         panel.level = .normal

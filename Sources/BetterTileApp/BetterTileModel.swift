@@ -2525,7 +2525,18 @@ final class BetterTileModel {
             }
             return (.rejected, statusMessage)
         }
-        let placements = resolvedAfterMeasuredClamps(placements, session: &session, display: display)
+        let correction = resolvedAfterMeasuredClamps(placements, session: &session, display: display)
+        if let reason = correction.degradedReason {
+            // The correction failed and its rollback did too: the windows are
+            // neither at the first placement nor at the correction.
+            statusMessage = reason
+            Self.bentoLog.error("measured-clamp correction left a mixed layout")
+            if surfaceFailure {
+                presentActionResult(succeeded: false, error: statusMessage, displayID: display.id)
+            }
+            return (.degraded, statusMessage)
+        }
+        let placements = correction.placements
         session.recordProposedFrames(
             Dictionary(uniqueKeysWithValues: placements.map { ($0.windowID, $0.frame) })
         )
@@ -2554,12 +2565,12 @@ final class BetterTileModel {
         _ placements: [Placement],
         session: inout LayoutSession,
         display: DisplaySnapshot
-    ) -> [Placement] {
+    ) -> (placements: [Placement], degradedReason: String?) {
         let ids = Set(placements.map(\.windowID))
         guard session.mode == .bento, placements.count > 1,
               Set(session.bentoState.root?.windowIDs ?? []) == ids,
               let measured = try? system.windowSnapshots(ids: ids), measured.count == ids.count
-        else { return placements }
+        else { return (placements, nil) }
         let requested = Dictionary(uniqueKeysWithValues: placements.map { ($0.windowID, $0.frame) })
         let clamped = measured.contains { window in
             guard let frame = requested[window.id] else { return false }
@@ -2569,14 +2580,20 @@ final class BetterTileModel {
               let solved = BentoConstraintSolver().solve(
                   state: session.bentoState, in: display.visibleFrame,
                   constraints: Dictionary(uniqueKeysWithValues: measured.map { ($0.id, $0.constraints) }))
-        else { return placements }
+        else { return (placements, nil) }
         let next = solved.placements(in: display.visibleFrame)
         let nextFrames = Dictionary(uniqueKeysWithValues: next.map { ($0.windowID, $0.frame) })
-        guard nextFrames != requested, bentoProposalIsContained(next, in: display),
-              coordinator.applyPlacements(next, recordHistory: false).isApplied
-        else { return placements }
-        session.bentoState = solved
-        return next
+        guard nextFrames != requested, bentoProposalIsContained(next, in: display) else { return (placements, nil) }
+        // A cleanly rolled-back correction keeps the first placement.
+        switch coordinator.applyPlacements(next, recordHistory: false) {
+        case .applied:
+            session.bentoState = solved
+            return (next, nil)
+        case let .degraded(reason):
+            return (placements, reason)
+        case .failed:
+            return (placements, nil)
+        }
     }
 
     // MARK: - Application rules
