@@ -1593,7 +1593,9 @@ func aSameApplicationFocusChangeAfterTheSelectionIsKept() async throws {
     let raises = system.raiseRequests.count
     system.focusedID = rightSelected
     system.eventHandler?(WindowSystemEvent(kind: .focused, windowID: rightSelected, processIdentifier: 7))
-    try await Task.sleep(for: .milliseconds(400))
+    // The focus refresh runs once the selection's suppression ends.
+    #expect(await waitFor(timeout: .seconds(3)) { model.activeTabbedState?.activeWindowID == rightSelected })
+    try await Task.sleep(for: .milliseconds(200))
     #expect(system.focusedID == rightSelected)
     #expect(!system.raiseRequests.dropFirst(raises).contains { $0.0 == hiddenLeft && $0.1 })
     #expect(model.activeTabbedState?.activeWindowID == rightSelected)
