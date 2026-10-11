@@ -139,6 +139,16 @@ share the selected window's application, and activation changes nothing.
 
 Bento uses a binary split tree held by each display's runtime `LayoutSession`. Leaves reference currently visible windows and branches carry an axis, normalized weight, and lock state. New windows are inserted by evaluating every unlocked leaf and choosing the split with the lowest movement/area-change score; closed or hidden windows are removed from the current tree. `BentoResizeEngine` changes branch weights and recursively derives all affected frames, `BentoLayoutFitter` adopts native edge changes, and `BentoBoundaryResolver` exposes only shared segments verified against current window frames.
 
+After a placement writes the full Bento tree with multiple windows,
+`commitBentoProposal` reads their measured sizes. If an application clamps a
+window larger than requested, BetterTile solves the same tree with the learned
+minimum sizes. A changed, valid solution gets at most one correction write
+through `WindowCoordinator` within that commit, avoiding a later placement
+jump. Settlement compares against the corrected frames. A failed correction
+with a successful rollback keeps the first placement. If the correction and
+its rollback both fail, the outcome is degraded and automatic writes stop
+until a new transaction or Repair.
+
 The **New window side** preference applies only to new Bento insertions.
 Automatic retains the existing insertion policy. An explicit side favors a
 constraint-valid insertion toward that edge within the existing partition tree.
