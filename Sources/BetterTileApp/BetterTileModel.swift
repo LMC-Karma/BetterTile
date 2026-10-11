@@ -4378,7 +4378,13 @@ extension BetterTileModel {
             // Bento takes over the tree: every hidden tab gets a pane. Native
             // leaves the tree alone, so the tab groups return with Tabbed.
             if destination == .bento, let state = session.tabbedState {
-                session.bentoState = state.unstacked(in: display.visibleFrame)
+                var bento = state.unstacked(in: display.visibleFrame)
+                // A fixed-size window takes no Bento pane; it floats, as when
+                // it arrives on a Bento desktop.
+                for window in windows where !(window.constraints.isResizable && window.constraints.isMovable) {
+                    bento.remove(window.id)
+                }
+                session.bentoState = bento
                 session.isBentoInitialized = session.bentoState.root != nil
                 session.tabbedState = nil
             }

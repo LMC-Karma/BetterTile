@@ -1779,6 +1779,28 @@ func steppedApplicationTabIsSelectedWithoutResizeLoops(emitsEvents: Bool) async 
     #expect(model.statusMessage == nil, "\(model.statusMessage ?? "")")
 }
 
+/// Leaving Tabbed for Bento gives every tab a pane except a fixed-size one,
+/// which floats. Its pane is not left empty.
+@Test @MainActor func leavingTabbedForBentoLeavesNoPaneForAFixedSizeTab() async throws {
+    _ = NSApplication.shared
+    let system = FakeAppWindowSystem()
+    addTabbedWindows(2, to: system)
+    system.windows[2].constraints.isResizable = false
+    system.windows[2].frame.size = BTSize(width: 230, height: 408)
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    model.configuration.defaultTabbedPreset = .columns
+    model.setActiveMode(.tabbed)
+    try #require(await waitFor { model.activeTabbedState?.windowIDs.count == 3 })
+    model.setActiveMode(.bento)
+    let visible = system.mainDisplay.visibleFrame
+    let filled = await waitFor {
+        system.windows.prefix(2).reduce(0) { $0 + $1.frame.area } > visible.area * 0.95
+    }
+    #expect(filled, "\(system.windows.map(\.frame))")
+    #expect(system.windows[2].frame.size == BTSize(width: 230, height: 408))
+}
+
 /// A fixed-size tab can be selected at its own size. Before, any layout in
 /// which it was the selected tab failed and rolled back.
 @Test @MainActor func fixedSizeTabCanBeSelectedAtItsOwnSize() async throws {

@@ -45,3 +45,19 @@ group/list/button Accessibility hierarchy used to find `AXWindowIDs`. BetterTile
 adapts that hierarchy pattern, then applies its own strict WindowServer
 validation and single-window drag policy. Rectangle's complete license text is
 available in its [upstream repository](https://github.com/rxhanson/Rectangle/blob/main/LICENSE).
+
+## AeroSpace
+
+- Source: <https://github.com/nikitabobko/AeroSpace>
+- Copyright: Copyright (c) 2023 Nikita Bobko
+- License: MIT License
+
+AeroSpace's `isDialogHeuristic` in
+`Sources/AppBundle/model/AxUiElementWindowType.swift` decides whether a window
+is a dialog from its subrole, modal state, and full-screen button.
+`PopupWindowClassifier` adapts those rules and their application-specific
+cases: terminals, editors, and Chromium browsers that lack an enabled
+full-screen button; Firefox windows without an enabled minimize button; and
+Ghostty. BetterTile adds its own handling for
+attached sheets and failed Accessibility reads. AeroSpace's complete license
+text is available in its [upstream repository](https://github.com/nikitabobko/AeroSpace/blob/main/LICENSE).
