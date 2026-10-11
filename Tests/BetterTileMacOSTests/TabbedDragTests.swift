@@ -33,7 +33,12 @@ import Testing
     #expect(f.createdPanels().allSatisfy { $0.frameWrites == 0 })
 }
 
+@MainActor private final class ButtonState {
+    var held = true
+}
+
 @MainActor private final class TabDragFixture {
+    let button = ButtonState()
     let bounds: BTRect
     let ticks = ResizeDisplayLink(automatic: false)
     let ids: [WindowID]
@@ -50,13 +55,14 @@ import Testing
         ids = (0..<count).map { WindowID(rawValue: "drag-check-\($0)") }
         state.reconcile(windowIDs: ids, removed: [], focused: ids[0])
         var made: [DragTestPanel] = []
+        let button = self.button
         overlay = TabbedOverlayController(dragTicks: ticks, panelFactory: {
             let panel = DragTestPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel],
                                       backing: .buffered, defer: false)
             panel.appearance = appearance
             made.append(panel)
             return panel
-        }, orderPanel: orderPanel)
+        }, orderPanel: orderPanel, primaryButtonIsPressed: { button.held })
         let windows = ids.enumerated().map { index, id in
             WindowSnapshot(id: id, processIdentifier: 1, title: "Document \(index + 1)", frame: bounds,
                            displayID: DisplayID(rawValue: "drag-check"))
@@ -419,4 +425,45 @@ func tabDragDefersAccessibilityUntilDropCompletes(success: Bool) throws {
             #expect(NSBitmapImageRep(data: captured) != nil)
         }
     }
+}
+
+/// AppKit lost the mouse-up of a fast drag. The next display tick sees the
+/// released button and drops the tab where its preview showed it, once.
+@Test @MainActor func tabDragFinishesOnceWhenItsMouseUpIsLost() throws {
+    let f = try TabDragFixture()
+    defer { f.overlay.hide() }
+    var intents: [TabbedUIIntent] = []
+    f.overlay.onIntent = { intents.append($0) }
+    try f.start()
+    try f.drag(x: f.bounds.minX + 1200, y: f.bounds.minY + 400)
+    f.ticks.fire()
+    #expect(f.overlay.isInteracting)
+    f.button.held = false
+    f.ticks.fire()
+    #expect(!f.overlay.isInteracting)
+    let moves = intents.compactMap { intent -> (WindowID, UUID)? in
+        if case let .move(id, pane, _) = intent { return (id, pane) } else { return nil }
+    }
+    #expect(moves.count == 1)
+    #expect(moves.first?.0 == f.ids[0])
+    #expect(moves.first?.1 == f.state.panes[1].id)
+    // A late mouse-up from the same gesture must not drop it again.
+    let sent = intents.count
+    try f.release(x: f.bounds.minX + 300, y: f.bounds.minY + 400)
+    #expect(intents.count == sent)
+}
+
+/// A new press arrives before any tick noticed the lost mouse-up. The old
+/// drag is cancelled; it never completes into the new gesture's target.
+@Test @MainActor func newPressCancelsATabDragWhoseMouseUpWasLost() throws {
+    let f = try TabDragFixture()
+    defer { f.overlay.hide() }
+    var intents: [TabbedUIIntent] = []
+    f.overlay.onIntent = { intents.append($0) }
+    try f.start()
+    try f.drag(x: f.bounds.minX + 1200, y: f.bounds.minY + 400)
+    f.ticks.fire()
+    try f.start()
+    #expect(!f.overlay.hasActiveTabDrag)
+    #expect(!intents.contains { if case .move = $0 { true } else { false } })
 }

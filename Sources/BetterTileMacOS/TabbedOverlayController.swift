@@ -56,6 +56,9 @@ public final class TabbedOverlayController {
     private let orderPanel: (NSPanel, NSWindow.OrderingMode, Int) -> Void
     private let panelFactory: () -> NSPanel
     private var draggedWindow: WindowID?
+    /// Reads the real primary button. A tab drag whose mouse-up never
+    /// arrives finishes on the next display tick instead of staying armed.
+    private let primaryButtonIsPressed: () -> Bool
     private var dropIntent: TabbedUIIntent?
     private var cancelled = false
     private var canUndo = false
@@ -66,7 +69,7 @@ public final class TabbedOverlayController {
                 let keyCode = event.keyCode
                 MainActor.assumeIsolated { handler(keyCode) }
             }
-        })
+        }, primaryButtonIsPressed: { NSEvent.pressedMouseButtons & 1 != 0 })
     }
 
     init(
@@ -88,9 +91,11 @@ public final class TabbedOverlayController {
             }
         },
         removeMonitor: @escaping (Any) -> Void = { NSEvent.removeMonitor($0) },
-        orderPanel: @escaping (NSPanel, NSWindow.OrderingMode, Int) -> Void = { $0.order($1, relativeTo: $2) }
+        orderPanel: @escaping (NSPanel, NSWindow.OrderingMode, Int) -> Void = { $0.order($1, relativeTo: $2) },
+        primaryButtonIsPressed: @escaping () -> Bool = { true }
     ) {
         self.panelFactory = panelFactory
+        self.primaryButtonIsPressed = primaryButtonIsPressed
         self.dragTicks = dragTicks
         self.addGlobalKeyMonitor = addGlobalKeyMonitor
         self.addLocalKeyMonitor = addLocalKeyMonitor
@@ -362,6 +367,8 @@ public final class TabbedOverlayController {
         return menu
     }
 
+    var hasActiveTabDrag: Bool { isInteracting && draggedWindow != nil }
+
     fileprivate func beginDrag(_ id: WindowID, offset: NSPoint) -> Bool {
         guard acceptsTabDrags, !isInteracting, !isDropPending else { return false }
         isInteracting = true
@@ -425,6 +432,14 @@ public final class TabbedOverlayController {
     }
 
     private func processDragTick() {
+        // AppKit can lose a mouse-up, for example when the pointer leaves the
+        // strip panel during a fast drag. Finish where the preview last
+        // showed the destination; never let the next drag complete this one.
+        if draggedWindow != nil, !primaryButtonIsPressed() {
+            if let point = pendingDragPoint ?? lastDragPoint { drag(to: point) }
+            endDrag()
+            return
+        }
         guard let point = pendingDragPoint ?? lastDragPoint else { return }
         let hasSample = pendingDragPoint != nil
         pendingDragPoint = nil
@@ -541,6 +556,7 @@ public final class TabbedOverlayController {
     }
 
     fileprivate func endDrag() {
+        guard isInteracting else { return }
         let intent = cancelled ? nil : dropIntent
         let keepsOrder: Bool
         if case let .move(_, paneID, index?) = intent,
@@ -1086,6 +1102,9 @@ struct TabbedStripLayout {
 
     override func mouseDown(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
+        // A new press proves the previous drag ended. Cancel a drag whose
+        // mouse-up was lost rather than completing it with this gesture.
+        if owner?.hasActiveTabDrag == true { owner?.cancelInteraction() }
         downTab = nil; downClose = nil; downPoint = nil; dragging = false; attemptedDrag = false
         if strip.menuFrame.contains(point) || event.modifierFlags.contains(.control) { showMenu(event); return }
         if let index = tabIndex(at: point) {
