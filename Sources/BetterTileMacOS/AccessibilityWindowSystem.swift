@@ -1358,8 +1358,12 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
 
     private func buttonState(_ attribute: String, of element: AXUIElement) -> PopupWindowClassifier.ButtonState {
         var raw: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(element, attribute as CFString, &raw) == .success,
-              let raw, CFGetTypeID(raw) == AXUIElementGetTypeID() else { return .missing }
+        switch AXUIElementCopyAttributeValue(element, attribute as CFString, &raw) {
+        case .success: break
+        case .attributeUnsupported, .noValue: return .missing
+        default: return .unreadable
+        }
+        guard let raw, CFGetTypeID(raw) == AXUIElementGetTypeID() else { return .missing }
         var enabled: CFTypeRef?
         guard AXUIElementCopyAttributeValue(unsafeDowncast(raw, to: AXUIElement.self), kAXEnabledAttribute as CFString, &enabled) == .success
         else { return .enabled }

@@ -24,7 +24,6 @@ private func attributes(
 @Test func dialogSubrolesAndModalWindowsFloat() {
     #expect(PopupWindowClassifier.classify(attributes(subrole: "AXDialog")) == .popup)
     #expect(PopupWindowClassifier.classify(attributes(subrole: "AXUnknown")) == .popup)
-    #expect(PopupWindowClassifier.classify(attributes(subrole: nil)) == .popup)
     #expect(PopupWindowClassifier.classify(attributes(modal: true)) == .popup)
 }
 
@@ -61,4 +60,17 @@ private func attributes(
 
 @Test func minimizedWindowsAreJudgedLater() {
     #expect(PopupWindowClassifier.classify(attributes(subrole: "AXDialog", minimized: true)) == .undetermined)
+}
+
+/// A read that failed, for example while the application is busy, is not
+/// evidence. The window is judged again later instead of floating for good.
+@Test func failedReadsAreJudgedLater() {
+    #expect(PopupWindowClassifier.classify(attributes(subrole: nil)) == .undetermined)
+    #expect(PopupWindowClassifier.classify(attributes(fullScreen: .unreadable)) == .undetermined)
+    #expect(PopupWindowClassifier.classify(attributes(close: .unreadable)) == .undetermined)
+    #expect(PopupWindowClassifier.classify(attributes(minimize: .unreadable, bundle: "org.mozilla.firefox")) == .undetermined)
+    // The next complete read decides.
+    #expect(PopupWindowClassifier.classify(attributes()) == .window)
+    // A dialog subrole is evidence on its own.
+    #expect(PopupWindowClassifier.classify(attributes(subrole: "AXDialog", fullScreen: .unreadable)) == .popup)
 }

@@ -10,6 +10,8 @@ public enum PopupWindowClassifier {
         case missing
         case disabled
         case enabled
+        /// The read failed, for example because the application was busy.
+        case unreadable
     }
 
     public enum Verdict: Equatable, Sendable {
@@ -79,7 +81,12 @@ public enum PopupWindowClassifier {
         if attributes.isMinimized { return .undetermined }
         let id = attributes.bundleIdentifier ?? ""
         if attributes.isModal { return .popup }
-        if attributes.subrole != standardWindowSubrole, !subroleExceptions.contains(id) { return .popup }
+        // A failed read is not evidence. Judge the window again later.
+        guard let subrole = attributes.subrole else { return .undetermined }
+        if subrole != standardWindowSubrole, !subroleExceptions.contains(id) { return .popup }
+        if [attributes.fullScreenButton, attributes.closeButton, attributes.minimizeButton].contains(.unreadable) {
+            return .undetermined
+        }
         // An attached sheet removes the full-screen button and disables the
         // close button of its window. That window is not a popup.
         if attributes.closeButton == .disabled { return .undetermined }
