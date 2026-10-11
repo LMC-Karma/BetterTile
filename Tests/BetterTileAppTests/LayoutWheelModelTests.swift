@@ -278,6 +278,50 @@ func makeModel(system: FakeAppWindowSystem) -> BetterTileModel {
     return model
 }
 
+/// A window can arrive with a Space switch, for example dragged there in
+/// Mission Control. The switch sweep keeps the stored layout; a follow-up
+/// sweep tiles the new window once the switch settles.
+@Test @MainActor func aWindowThatArrivesWithASpaceSwitchIsTiled() async throws {
+    _ = NSApplication.shared
+    let system = FakeAppWindowSystem()
+    let firstSpace = NativeSpaceID(rawValue: 1)
+    let secondSpace = NativeSpaceID(rawValue: 2)
+    let displayID = system.mainDisplay.id
+    system.windows.append(WindowSnapshot(
+        id: WindowID(rawValue: "peer"), processIdentifier: 43,
+        frame: BTRect(x: 200, y: 0, width: 400, height: 300), displayID: displayID
+    ))
+    system.desktopObservation = NativeDesktopObservation(
+        currentSpaceByDisplay: [displayID: firstSpace],
+        knownSpacesByDisplay: [displayID: [firstSpace, secondSpace]],
+        windowMembership: Dictionary(uniqueKeysWithValues: system.windows.map { ($0.id, [firstSpace]) })
+    )
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    model.setActiveMode(.bento)
+    try #require(await waitFor { system.windows.allSatisfy { $0.frame.size.height == 800 } })
+    try await Task.sleep(for: .milliseconds(300))
+    let tiled = system.windows
+    model.installWorkspaceTriggers()
+
+    system.desktopObservation?.currentSpaceByDisplay[displayID] = secondSpace
+    system.windows = []
+    NSWorkspace.shared.notificationCenter.post(name: NSWorkspace.activeSpaceDidChangeNotification, object: nil)
+    try await Task.sleep(for: .milliseconds(200))
+
+    // The user comes back with a window dragged onto this Space.
+    let arrival = WindowSnapshot(id: WindowID(rawValue: "arrival"), processIdentifier: 44,
+        frame: BTRect(x: 300, y: 200, width: 300, height: 200), displayID: displayID)
+    system.desktopObservation?.windowMembership[arrival.id] = [firstSpace]
+    system.desktopObservation?.currentSpaceByDisplay[displayID] = firstSpace
+    system.windows = tiled + [arrival]
+    NSWorkspace.shared.notificationCenter.post(name: NSWorkspace.activeSpaceDidChangeNotification, object: nil)
+    #expect(await waitFor(timeout: .seconds(2)) {
+        system.windows.first { $0.id == arrival.id }?.frame != arrival.frame
+            && Set(system.windows.map(\.frame)).count == 3
+    })
+}
+
 @Test(arguments: [0, 4]) @MainActor
 func returningToBentoSpaceWithPartialVisibilityDoesNotMoveItsWindows(extraIncompleteSweeps: Int) async throws {
     _ = NSApplication.shared

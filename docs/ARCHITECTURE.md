@@ -223,10 +223,12 @@ change a Bento operation made to the tree; writing it also writes the tree.
   keep the captured window/action and replan against the current session.
   Work-area, Space, session, mode, and rule checks protect asynchronous work.
 - A user's edge resize of a selected window follows Bento's rule
-  (`TabbedLayoutState.adoptingResize`), read only after the mouse button is
-  released. A shared pane edge moves that divider, stopping at each pane's
-  minimum. Any other change, including One Pane, an outer edge, a move, or a
-  macOS destination, puts the windows back. Hidden tabs and strips then follow.
+  (`TabbedLayoutState.adoptingResize`), committed only after the mouse button
+  is released. While the button is held, the same rule drives a preview of the
+  tab strips and curtain; it moves no window. A shared pane edge moves that
+  divider, stopping at each pane's minimum. Any other change, including One
+  Pane, an outer edge, a move, or a macOS destination, puts the windows back.
+  Hidden tabs and strips then follow.
 - Divider and native-edge resize proposals remain provisional until every
   selected window accepts its frame. Recovery uses the session's last verified
   frames, even when a divider gesture begins with a displaced window. Current

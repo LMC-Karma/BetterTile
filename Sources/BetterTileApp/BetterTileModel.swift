@@ -2078,8 +2078,11 @@ final class BetterTileModel {
             layoutWheel.handleFocusedWindowChanged()
             // Closing a document window often only moves focus: some
             // applications keep the window alive off screen and send no
-            // destroyed event. A sweep then notices the missing pane.
-            if sessionStore.sessions.values.contains(where: { $0.mode == .bento }) {
+            // destroyed event. A sweep then notices the missing pane. Focus
+            // that lands outside every Bento layout needs no sweep.
+            if let id = event.windowID, sessionStore.sessions.values.contains(where: {
+                $0.mode == .bento && $0.windowIDs.contains(id)
+            }) {
                 pendingWindowEvents.recordTopologyChange()
             }
         }
@@ -4036,6 +4039,9 @@ extension BetterTileModel {
         guard let session = sessionStore.sessions.values.first(where: {
                   $0.mode == .tabbed && $0.tabbedState?.selectedWindowIDs.contains(windowID) == true
               }),
+              // A suspended layout does not adopt the resize at release, so
+              // the strips must not preview it either.
+              !session.automaticWritesSuspended,
               tabbedTasks[session.displayID] == nil,
               let state = session.tabbedState,
               let overlay = tabbedOverlays[session.displayID],
