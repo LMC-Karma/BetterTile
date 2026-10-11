@@ -605,7 +605,10 @@ public final class DividerOverlayController {
             }
             // The accepted divider coordinate moves immediately. Only the
             // decoration inside this frame animates its length.
-            if dragOverlay.isVisible {
+            // During a gesture only the drawing moves; after release, even
+            // while previews wait for the windows to land, the real handle
+            // follows the hover so a click lands on it.
+            if isDragging, dragOverlay.isVisible {
                 panel.setDrawingFrame(appKitFrame)
             } else {
                 panel.setFrame(appKitFrame, display: false)
@@ -823,7 +826,9 @@ public final class DividerOverlayController {
     /// An application that resizes in steps lands near its target. A frame
     /// still at the window's baseline has not landed, even when it is that
     /// near: the window has not drawn the commit yet.
-    private func windowsHaveLanded(_ targets: [WindowID: BTRect], baseline: [WindowID: BTRect]) -> Bool {
+    /// A window that cannot be read has not landed; the hold's deadline
+    /// still ends the wait.
+    func windowsHaveLanded(_ targets: [WindowID: BTRect], baseline: [WindowID: BTRect]) -> Bool {
         let ids = Set(targets.keys)
         let frames: [WindowID: BTRect]
         if let shown = (coordinator.system as? any WindowStackReading)?.windowServerFrames(for: ids) {
@@ -834,7 +839,7 @@ public final class DividerOverlayController {
             return true
         }
         return targets.allSatisfy { id, target in
-            guard let frame = frames[id] else { return true }
+            guard let frame = frames[id] else { return false }
             if frame.approximatelyEquals(target, tolerance: 2) { return true }
             if let old = baseline[id], frame.approximatelyEquals(old, tolerance: 2) { return false }
             return SteppedSizeAcceptance.evaluate(requested: target, actual: frame) != .rejected

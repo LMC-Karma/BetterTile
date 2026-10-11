@@ -378,3 +378,32 @@ private func ghostOverlayCleansUpEveryGestureExit(ending: GhostEnd) throws {
     #expect(controller.dragOverlay.isVisible)
     #expect(!controller.dragOverlay.previewViews.isEmpty)
 }
+
+/// A window that cannot be read during the hold has not landed, so its
+/// preview is not removed before the window draws.
+@Test @MainActor func anUnreadableWindowHasNotLanded() throws {
+    let fixture = try GhostGestureFixture()
+    defer { fixture.controller.hideAndCancel() }
+    let targets = Dictionary(uniqueKeysWithValues: fixture.system.windows.map { ($0.id, $0.frame) })
+    let baseline = targets.mapValues { $0.offsetBy(dx: -40, dy: 0) }
+    #expect(fixture.controller.windowsHaveLanded(targets, baseline: baseline))
+    fixture.system.unreadableWindowIDs = [fixture.system.windows[0].id]
+    #expect(!fixture.controller.windowsHaveLanded(targets, baseline: baseline))
+}
+
+/// While previews wait for the windows to land, hovering a divider moves the
+/// real handle, not only its drawing, so a click lands on the handle.
+@Test @MainActor func hoverDuringTheLandingHoldMovesTheRealHandle() throws {
+    let fixture = try GhostGestureFixture()
+    let controller = fixture.controller
+    defer { controller.hideAndCancel() }
+    let input = try #require(controller.visibleHandleView?.window as? DividerHandlePanel)
+    controller.refresh(boundaries: fixture.state.boundaries(in: fixture.bounds, displayID: fixture.display))
+    fixture.tick(dx: 30)
+    fixture.system.readsBeforeSettling = 1000
+    controller.end(at: fixture.point(dx: 30))
+    try #require(controller.dragOverlay.isVisible)
+    let before = input.frame
+    controller.updateHover(at: fixture.point(dx: 0, dy: 150))
+    #expect(input.frame != before)
+}

@@ -139,12 +139,15 @@ final class FakeWindowSystem: WindowSystem, TargetedWindowSystem, WindowEventSou
         settlePendingFrames()
         return windows
     }
+    /// Windows a targeted read leaves out, as Accessibility does for an
+    /// element it cannot read at the moment.
+    var unreadableWindowIDs: Set<WindowID> = []
     func windowSnapshots(ids: Set<WindowID>) throws -> [WindowSnapshot] {
         targetedSnapshotRequests += 1
         targetedSnapshotHandler?(ids)
         if targetedSnapshotsFail { throw WindowSystemError.operationFailed("Simulated snapshot failure") }
         settlePendingFrames()
-        return windows.filter { ids.contains($0.id) }
+        return windows.filter { ids.contains($0.id) && !unreadableWindowIDs.contains($0.id) }
     }
     func displays() -> [DisplaySnapshot] { availableDisplays }
     func setWindowEventHandler(_ handler: (@MainActor (WindowSystemEvent) -> Void)?) { eventHandler = handler }
