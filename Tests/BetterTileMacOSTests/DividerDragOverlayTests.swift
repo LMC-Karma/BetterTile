@@ -318,8 +318,9 @@ private func ghostOverlayCleansUpEveryGestureExit(ending: GhostEnd) throws {
     controller.refresh(boundaries: fixture.state.boundaries(in: fixture.bounds, displayID: fixture.display))
     fixture.tick(dx: 30)
     controller.end(at: fixture.point(dx: 30))
-    let retracting = !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-    #expect(input.ignoresMouseEvents == retracting)
+    // A release always stops the handle taking clicks; it retracts unless
+    // Reduce Motion is on.
+    #expect(input.ignoresMouseEvents)
     controller.updateHover(at: fixture.point(dx: 0))
     #expect(!input.ignoresMouseEvents)
 }
