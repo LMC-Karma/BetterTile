@@ -985,9 +985,13 @@ func tabStripInsertionPointsMatchRenderedTabEdges(width: Double) {
                     curtainAnchorWindowNumber: nil)
     #expect(shown.isVisible)
     #expect(overlay.needsCurtainVerification)
-    // A different selection with an unreadable order still hides it.
+    // A selection change with a briefly unreadable order keeps it too.
     state.select(second)
     overlay.refresh(state: state, bounds: bounds, windows: [], selectedWindowNumbers: numbers,
+                    curtainAnchorWindowNumber: nil)
+    #expect(shown.isVisible)
+    // A missing exact identity still hides it.
+    overlay.refresh(state: state, bounds: bounds, windows: [], selectedWindowNumbers: [second: 0],
                     curtainAnchorWindowNumber: nil)
     #expect(!shown.isVisible)
 }

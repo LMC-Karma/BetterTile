@@ -56,7 +56,6 @@ public final class TabbedOverlayController {
     private let orderPanel: (NSPanel, NSWindow.OrderingMode, Int) -> Void
     private let panelFactory: () -> NSPanel
     private var draggedWindow: WindowID?
-    private var curtainSelection: [WindowID] = []
     private var curtainBounds: BTRect?
     /// True while a curtain is kept over an order that could not be read
     /// back. The caller should verify the order again soon.
@@ -192,7 +191,6 @@ public final class TabbedOverlayController {
 
     public func hide() {
         needsCurtainVerification = false
-        curtainSelection = []
         curtainBounds = nil
         cancelInteraction()
         for panel in Array(panes.values) + Array(dividerControls.values) + [curtain].compactMap({ $0 }) { panel.orderOut(nil) }
@@ -203,12 +201,12 @@ public final class TabbedOverlayController {
     /// supplies the exact number of the backmost selected window.
     private func refreshCurtain(anchor: Int?, identitiesValid: Bool) {
         guard let anchor, anchor > 0 else {
-            // Right after an application activates, the window order often
-            // reads back stale for a moment. Removing the curtain then
-            // exposes every hidden tab; with the same selection it stays
-            // where it is, and the caller verifies the order again shortly.
-            if identitiesValid, curtain?.isVisible == true,
-               curtainSelection == state.selectedWindowIDs, curtainBounds == bounds {
+            // Right after an application activates, or while a selection
+            // changes, the window order often reads back stale for a moment.
+            // Removing the curtain then exposes every hidden tab at once;
+            // keeping it is never worse, and the caller verifies the order
+            // again shortly.
+            if identitiesValid, curtain?.isVisible == true, curtainBounds == bounds {
                 needsCurtainVerification = true
                 return
             }
@@ -216,7 +214,6 @@ public final class TabbedOverlayController {
             return
         }
         needsCurtainVerification = false
-        curtainSelection = state.selectedWindowIDs
         curtainBounds = bounds
         let panel = curtain ?? makePanel()
         panel.level = .normal
