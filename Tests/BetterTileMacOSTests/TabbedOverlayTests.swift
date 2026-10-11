@@ -1030,4 +1030,12 @@ func tabStripInsertionPointsMatchRenderedTabEdges(width: Double) {
                     curtainAnchorWindowNumber: nil)
     #expect(!shown.isVisible)
     #expect(!overlay.needsCurtainVerification)
+    // Without a window inventory the caller releases a held curtain at once.
+    overlay.refresh(state: state, bounds: bounds, windows: [], selectedWindowNumbers: numbers,
+                    curtainAnchorWindowNumber: numbers[first])
+    overlay.refresh(state: state, bounds: bounds, windows: [], selectedWindowNumbers: numbers,
+                    curtainAnchorWindowNumber: nil)
+    #expect(shown.isVisible && overlay.needsCurtainVerification)
+    overlay.releaseUnverifiedCurtain()
+    #expect(!shown.isVisible && !overlay.needsCurtainVerification)
 }

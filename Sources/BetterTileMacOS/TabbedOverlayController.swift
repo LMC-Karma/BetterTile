@@ -194,6 +194,14 @@ public final class TabbedOverlayController {
         return Set(panels.map(\.windowNumber).filter { $0 > 0 })
     }
 
+    /// Hides a curtain kept over an order that could not be verified.
+    public func releaseUnverifiedCurtain() {
+        guard needsCurtainVerification else { return }
+        needsCurtainVerification = false
+        curtainHolds = 0
+        curtain?.orderOut(nil)
+    }
+
     public func hide() {
         needsCurtainVerification = false
         curtainHolds = 0

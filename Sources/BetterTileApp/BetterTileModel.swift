@@ -2735,6 +2735,11 @@ final class BetterTileModel {
         workArea: BTRect? = nil
     ) {
         guard let scheduledSession = sessionStore.session(for: displayID) else { return }
+        // A clamp correction can change frames after the caller planned
+        // them; the session records the frames finally written.
+        let requestedFrames = requestedFrames.map { requested in
+            requested.merging(scheduledSession.lastObservedFrames.filter { requested[$0.key] != nil }) { _, written in written }
+        }
         let sessionID = scheduledSession.id
         let revision = scheduledSession.revision
         let mutationGenerations = Dictionary(uniqueKeysWithValues: changedWindowIDs.map {
@@ -3528,7 +3533,11 @@ extension BetterTileModel {
                 try? await Task.sleep(for: .milliseconds(80))
                 guard let self, !Task.isCancelled else { return }
                 self.tabbedCurtainRecheckTask = nil
-                self.repairTabbedStacking()
+                // Without a window inventory the order cannot be verified;
+                // the curtain gives way instead of waiting for one.
+                if !self.repairTabbedStacking() {
+                    self.tabbedOverlays.values.forEach { $0.releaseUnverifiedCurtain() }
+                }
             }
         }
     }
@@ -4194,8 +4203,10 @@ extension BetterTileModel {
     /// what must move. It never activates an application, changes a
     /// selection, or moves a window. Chrome then reorders around the
     /// selected tabs.
-    private func repairTabbedStacking() {
-        guard let windows = try? system.visibleWindows() else { return }
+    /// Returns false when the window inventory could not be read.
+    @discardableResult
+    private func repairTabbedStacking() -> Bool {
+        guard let windows = try? system.visibleWindows() else { return false }
         let displays = system.displays()
         for session in sessionStore.sessions.values where session.mode == .tabbed {
             guard !session.automaticWritesSuspended, tabbedTasks[session.displayID] == nil,
@@ -4208,6 +4219,7 @@ extension BetterTileModel {
                 _ = repairTabbedOrder(state: state, windows: windows, bounds: display.visibleFrame)
             }
         }
+        return true
     }
 
     /// A shared curtain needs every selected tab above every inactive tab.

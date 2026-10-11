@@ -1621,3 +1621,31 @@ func minimizedRightHalfReturnsToItsOriginalSide(nativeMembership: Bool, staleMin
     }
     #expect(suspended, "\(String(describing: model.statusMessage)) \(system.requestedFrames.mapValues { $0.map { "\($0.minX),\($0.minY) \($0.size.width)x\($0.size.height)" } })")
 }
+
+/// A clamp correction widens a neighbour beyond the frame first planned for
+/// it. Settlement compares that neighbour with the frame finally written, so
+/// its accepted width is not learned as a minimum.
+@Test @MainActor func settlementAfterAClampCorrectionLearnsNoFalseMinimum() async throws {
+    _ = NSApplication.shared
+    let system = FakeAppWindowSystem()
+    system.measuresOnWrite = true
+    let wide = WindowID(rawValue: "wide")
+    system.windows.append(WindowSnapshot(id: wide, processIdentifier: 80, bundleIdentifier: "com.example.Wide",
+        frame: BTRect(x: 0, y: 0, width: 800, height: 800), displayID: system.mainDisplay.id))
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    model.setActiveMode(.bento)
+    try #require(await waitFor { system.windows.allSatisfy { $0.frame.size.height == 800 } })
+    try await Task.sleep(for: .milliseconds(400))
+    let focused = system.windows[0].id
+    system.enforcedMinimumWidths[focused] = 600
+    let arrival = WindowID(rawValue: "arrival")
+    system.windows.append(WindowSnapshot(id: arrival, processIdentifier: 81, bundleIdentifier: "com.example.Arrival",
+        frame: BTRect(x: 100, y: 100, width: 800, height: 300), displayID: system.mainDisplay.id))
+    system.focusedID = focused
+    system.eventHandler?(WindowSystemEvent(kind: .created, windowID: arrival, processIdentifier: 81))
+    try #require(await waitFor { (system.windows.first { $0.id == focused }?.frame.size.width ?? 0) >= 599 })
+    try await Task.sleep(for: .milliseconds(1000))
+    let learned = system.windows.first { $0.id == arrival }?.constraints.minimumSize.width ?? 0
+    #expect(learned < 590, "arrival learned a minimum width of \(learned): \(system.windows.map(\.frame))")
+}
