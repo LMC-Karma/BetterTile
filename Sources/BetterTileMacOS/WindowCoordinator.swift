@@ -1032,9 +1032,13 @@ extension WindowCoordinator {
               let snapshots = try? snapshots(ids: Set(frames.keys)) else { return degraded }
         // Size hints can change after a resize. Bypass only those hints;
         // never write an unreadable, ineligible, or relocated participant.
-        let current = Dictionary(snapshots.filter {
-            $0.isEligible && $0.constraints.isResizable && $0.displayID == displayID
-                && frames[$0.id].map { PlacementBounds.isReachable($0, in: display.visibleFrame) } == true
+        // A fixed-size window can be restored when its saved frame keeps its size.
+        let current = Dictionary(snapshots.filter { snapshot in
+            snapshot.isEligible && snapshot.displayID == displayID
+                && (snapshot.constraints.isResizable || frames[snapshot.id].map {
+                    abs($0.size.width - snapshot.frame.size.width) <= 1 && abs($0.size.height - snapshot.frame.size.height) <= 1
+                } == true)
+                && frames[snapshot.id].map { PlacementBounds.isReachable($0, in: display.visibleFrame) } == true
         }.map { ($0.id, $0.frame) }, uniquingKeysWith: { first, _ in first })
         guard isCurrent(), !Task.isCancelled, !required.isEmpty,
               required.isSubset(of: Set(current.keys)) else { return degraded }

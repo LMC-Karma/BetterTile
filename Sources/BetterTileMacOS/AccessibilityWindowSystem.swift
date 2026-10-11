@@ -1773,7 +1773,11 @@ extension AccessibilityWindowSystem: TabbedWindowSystem {
             if focusResult != .success && focusResult != .attributeUnsupported {
                 throw WindowSystemError.operationFailed("The application rejected window focus.")
             }
-            guard AXUIElementPerformAction(element, kAXRaiseAction as CFString) == .success else {
+            // Some windows, such as Calculator's, do not offer the raise
+            // action (reported as an unsupported action or attribute);
+            // activation still brings them forward.
+            let raised = AXUIElementPerformAction(element, kAXRaiseAction as CFString)
+            guard [.success, .actionUnsupported, .attributeUnsupported].contains(raised) else {
                 throw WindowSystemError.operationFailed("The application rejected window ordering.")
             }
             // Activating through Accessibility returns in about 8 ms and shows
@@ -1786,7 +1790,8 @@ extension AccessibilityWindowSystem: TabbedWindowSystem {
             }
             return
         }
-        guard AXUIElementPerformAction(element, kAXRaiseAction as CFString) == .success else {
+        let raised = AXUIElementPerformAction(element, kAXRaiseAction as CFString)
+        guard [.success, .actionUnsupported, .attributeUnsupported].contains(raised) else {
             throw WindowSystemError.operationFailed("The application rejected window ordering.")
         }
     }
