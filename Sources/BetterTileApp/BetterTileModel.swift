@@ -90,6 +90,7 @@ final class BetterTileModel {
     /// newer layout action cancels it.
     private var focusRestoreTask: Task<Void, Never>?
 
+    private var focusRestoreGeneration = 0
     private func cancelPendingFocusRestore() {
         focusRestoreTask?.cancel()
         focusRestoreTask = nil
@@ -912,6 +913,17 @@ final class BetterTileModel {
     }
 
     func tileCurrentDisplay() {
+        // Ending focus mode is still bringing the covered windows back.
+        // Repair after that restore, so it never lays the desktop out without
+        // them. A newer action that cancels the restore also wins over this.
+        if let pending = focusRestoreTask {
+            Task { @MainActor [weak self] in
+                await pending.value
+                guard let self, !self.isShutDown, !pending.isCancelled else { return }
+                self.tileCurrentDisplay()
+            }
+            return
+        }
         cancelPendingFocusRestore()
         do {
             guard let focused = try system.focusedWindow() else {
@@ -1024,6 +1036,7 @@ final class BetterTileModel {
                 surfaceFailure: false
             )
             var applied = commitResult.result == .committed
+            var failureReason = commitResult.failureReason
             var overlapping: Set<WindowID> = []
             var verified = true
             if applied {
@@ -1051,9 +1064,10 @@ final class BetterTileModel {
                     session.bentoState = replanned.state.layout
                     session.lastObservedFrames = Dictionary(uniqueKeysWithValues: replanned.placements.map { ($0.windowID, $0.frame) })
                     placements = replanned.placements
-                    applied = commitBentoProposal(placements, session: &session, display: display,
-                                                  recordHistory: false, surfaceFailure: false).result == .committed
-                    if !applied { break }
+                    let replan = commitBentoProposal(placements, session: &session, display: display,
+                                                     recordHistory: false, surfaceFailure: false)
+                    applied = replan.result == .committed
+                    if !applied { failureReason = replan.failureReason; break }
                 }
             }
             if applied {
@@ -1068,7 +1082,7 @@ final class BetterTileModel {
             let overlapNames = displayWindows.filter { overlapping.contains($0.id) }
                 .map { $0.title.isEmpty ? ($0.bundleIdentifier ?? "A window") : $0.title }.sorted()
             statusMessage = if !applied {
-                commitResult.failureReason ?? "The Bento layout could not be repaired."
+                failureReason ?? "The Bento layout could not be repaired."
             } else if !verified {
                 "BetterTile could not read the repaired windows back to confirm the layout."
             } else if displayWindows.count > 6 {
@@ -2357,7 +2371,12 @@ final class BetterTileModel {
             // change the revision, so it cannot guard this wait.
             let sessionID = session.id
             focusRestoreTask?.cancel()
+            focusRestoreGeneration &+= 1
+            let generation = focusRestoreGeneration
             focusRestoreTask = Task { @MainActor [weak self] in
+                defer {
+                    if let self, self.focusRestoreGeneration == generation { self.focusRestoreTask = nil }
+                }
                 let deadline = Date().addingTimeInterval(1.5)
                 while let self, !self.isShutDown, !Task.isCancelled {
                     let windows = (try? self.system.visibleWindows()) ?? []

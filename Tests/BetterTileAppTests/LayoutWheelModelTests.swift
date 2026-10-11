@@ -190,10 +190,13 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, TabbedWindowSystem, Min
             eventHandler?(WindowSystemEvent(kind: .resized, windowID: windowID, processIdentifier: windows[index].processIdentifier))
         }
     }
+    /// Windows whose application restores them later than the request.
+    var slowRestoreIDs: Set<WindowID> = []
     func setMinimized(_ minimized: Bool, for windowID: WindowID) throws {
         guard let index = windows.firstIndex(where: { $0.id == windowID }) else {
             throw WindowSystemError.windowNotFound(windowID)
         }
+        if !minimized, slowRestoreIDs.contains(windowID) { return }
         windows[index].isMinimized = minimized
     }
 
@@ -715,6 +718,35 @@ func waitFor(
     try await Task.sleep(for: .milliseconds(1800))
     #expect(system.windows[1].isMinimized)
     #expect(system.windows[0].frame == system.mainDisplay.visibleFrame)
+}
+
+/// Repair while focus mode is ending waits for the covered windows to come
+/// back, so it never lays the desktop out without them.
+@Test @MainActor func repairWhileFocusModeEndsWaitsForTheReturningPeers() async throws {
+    _ = NSApplication.shared
+    let system = FakeAppWindowSystem()
+    let peer = WindowID(rawValue: "peer")
+    system.windows.append(WindowSnapshot(id: peer, processIdentifier: 43, bundleIdentifier: "com.example.Peer",
+        frame: BTRect(x: 0, y: 0, width: 200, height: 300), displayID: system.mainDisplay.id))
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    model.setActiveMode(.bento)
+    try #require(await waitFor { system.windows.allSatisfy { $0.frame.size.height == 800 } })
+    let tiled = system.windows.map(\.frame)
+    system.focusedID = system.windows[0].id
+    model.perform(.maximize)
+    try #require(system.windows[1].isMinimized)
+    system.slowRestoreIDs = [peer]
+    model.perform(.restore)
+    let restoring = model.lastActionFeedback
+    model.tileCurrentDisplay()
+    try await Task.sleep(for: .milliseconds(300))
+    // Repair has not reported a layout while the peer is still minimized.
+    #expect(model.lastActionFeedback == restoring)
+    system.slowRestoreIDs = []
+    system.windows[1].isMinimized = false
+    #expect(await waitFor { system.windows.map(\.frame) == tiled })
+    #expect(await waitFor { model.lastActionFeedback != restoring })
 }
 
 /// A probe that cannot restore a new window's size puts the window back at
