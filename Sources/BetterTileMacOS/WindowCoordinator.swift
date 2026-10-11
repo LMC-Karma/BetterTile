@@ -832,6 +832,7 @@ public final class WindowCoordinator {
         }
         try system.withFrameWriteBatch {
             var attempted: [WindowID] = []
+            var generationsWritten: [WindowID: UInt64] = [:]
             do {
                 // Shrink before growing, so a growing window never covers a
                 // neighbour that has not yet made room.
@@ -849,7 +850,6 @@ public final class WindowCoordinator {
                 // lands together: the adapter writes every application's
                 // shrinking windows, then the growing ones. One application's
                 // windows keep this order.
-                var generationsWritten: [WindowID: UInt64] = [:]
                 for placement in ordered {
                     let generation = (generations[placement.windowID] ?? 0) &+ 1
                     generations[placement.windowID] = generation
@@ -880,6 +880,14 @@ public final class WindowCoordinator {
                     ((try? snapshots(ids: Set(attempted))) ?? []).map { ($0.id, $0.frame) },
                     uniquingKeysWith: { first, _ in first }
                 )
+                // Several applications can fail in one batch. A window that
+                // did not reach its frame expects no event for it.
+                let requested = Dictionary(placements.map { ($0.windowID, $0.frame) }, uniquingKeysWith: { _, last in last })
+                for id in attempted where actualFrames[id].map({ frame in
+                    requested[id].map { !frame.approximatelyEquals($0, tolerance: 2) } ?? false
+                }) == true {
+                    if let generation = generationsWritten[id] { cancelExpectedMutation(for: id, generation: generation) }
+                }
                 var rollbackFailures: [WindowID] = []
                 for id in attempted.reversed() {
                     guard let frame = rollbackFrames[id] else { continue }

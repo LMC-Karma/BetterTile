@@ -835,7 +835,11 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         }
         let lock = NSLock()
         nonisolated(unsafe) var results: [WindowID: CommittedResult] = [:]
+        let accepted: [AXError] = [.success, .attributeUnsupported]
         for pass in Self.shrinkingFirstPasses(writes, knownCurrentFrames: knownCurrentFrames) {
+            // A failed shrink leaves no room for the growing windows; stop
+            // before the next pass, and the caller rolls back.
+            guard results.values.allSatisfy({ $0.errors.allSatisfy { accepted.contains($0) } }) else { break }
             var groups: [pid_t: [CommittedJob]] = [:]
             var pidOrder: [pid_t] = []
             for write in pass {
@@ -851,7 +855,6 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
                 }
             }
         }
-        let accepted: [AXError] = [.success, .attributeUnsupported]
         var failure: (windowID: WindowID, error: Error)?
         for write in writes {
             lastWriteReadback.removeValue(forKey: write.windowID)
@@ -879,7 +882,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
                 snapshotGeneration &+= 1
             }
         }
-        return FrameBatchResult(attempted: writes.map(\.windowID), failure: failure)
+        return FrameBatchResult(attempted: writes.map(\.windowID).filter { results[$0] != nil }, failure: failure)
     }
 
     /// Size, position, size, then a readback; the same sequence as
