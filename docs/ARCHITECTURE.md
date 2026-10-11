@@ -127,7 +127,10 @@ front-to-back order with every tab on the display. It puts all selected tabs
 above all inactive tabs. Windows already in front, including floating windows
 in pane gaps, are raised again when needed to keep them above the shared
 curtain. If a tab's identity is missing or a protected window cannot be raised,
-no repair runs and the curtain hides. The repair never activates an
+no repair runs. A missing identity hides the curtain. An order that cannot be
+verified keeps a curtain already shown, at the same bounds, for up to four
+refreshes while the model checks again 80 ms later; then the curtain hides. A
+window list that cannot be read hides it at once. The repair never activates an
 application, changes keyboard focus or selection, or moves a window. Without
 a readable order, selection still raises the selected tabs of panes that
 share the selected window's application, and activation changes nothing.
@@ -172,7 +175,8 @@ change a Bento operation made to the tree; writing it also writes the tree.
   normal-level, nonactivating panel below the backmost selected window with
   public `NSWindow.order(_:relativeTo:)`. The model verifies the WindowServer
   order and every tab identity before supplying that anchor. Missing
-  identities or unsafe ordering hide the curtain. It never guesses from a
+  identities hide the curtain. Unverified ordering keeps a curtain already
+  shown for up to four refreshes, then hides it. It never guesses from a
   frame or parks a window. Native frosted glass conceals inactive window
   detail. Rounded cutouts exclude occupied tab strips, including during
   resizing. The curtain keeps its rectangular input surface; the strips above
