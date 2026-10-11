@@ -11,6 +11,9 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
     )
 
     private var elements: [WindowID: AXUIElement] = [:]
+    /// Bundle identifiers of observed windows, for per-application minimum
+    /// size seeds.
+    private var applicationKeys: [WindowID: String] = [:]
     private var identities = WindowIdentityRegistry()
     private let privateAPIsDisabled: Bool
     private let exactWindowIDResolver: ExactWindowIDResolver
@@ -211,6 +214,41 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
     public func forgetLearnedMinimums() {
         minimumSizeLearner.removeAll()
         snapshotGeneration &+= 1
+    }
+
+    /// Measures the minimum size of windows that just appeared, before their
+    /// first placement. No application reports its minimum, but each clamps
+    /// a size write synchronously: asking for a tiny size and reading the
+    /// size back gives the exact minimum in about 10 ms. The original size is
+    /// restored at once. Only for new windows, which are animating in and
+    /// about to move; never for settled, visible windows.
+    public func probeMinimumSizes(for ids: Set<WindowID>) {
+        guard AXIsProcessTrusted() else { return }
+        var measured = false
+        for id in ids.sorted() where !minimumSizeLearner.hasMeasurement(for: id) {
+            guard let element = elements[id] ?? refreshElement(for: id),
+                  isSettable(kAXSizeAttribute, on: element),
+                  let position: CGPoint = axValue(kAXPositionAttribute, from: element, type: .cgPoint),
+                  let original: CGSize = axValue(kAXSizeAttribute, from: element, type: .cgSize) else { continue }
+            var tiny = CGSize(width: 1, height: 1)
+            var restore = original
+            guard let tinyValue = AXValueCreate(.cgSize, &tiny),
+                  let restoreValue = AXValueCreate(.cgSize, &restore) else { continue }
+            AXUIElementSetMessagingTimeout(element, Self.frameWriteMessagingTimeout)
+            defer { AXUIElementSetMessagingTimeout(element, 0) }
+            guard AXUIElementSetAttributeValue(element, kAXSizeAttribute as CFString, tinyValue) == .success else { continue }
+            let clamped: CGSize? = axValue(kAXSizeAttribute, from: element, type: .cgSize)
+            _ = AXUIElementSetAttributeValue(element, kAXSizeAttribute as CFString, restoreValue)
+            guard let clamped else { continue }
+            let before = BTRect(x: position.x, y: position.y, width: original.width, height: original.height)
+            measured = minimumSizeLearner.observeWriteReadback(
+                windowID: id, application: applicationKeys[id],
+                requested: BTRect(x: position.x, y: position.y, width: 1, height: 1),
+                previous: before,
+                actual: BTRect(x: position.x, y: position.y, width: clamped.width, height: clamped.height)
+            ) || measured
+        }
+        if measured { snapshotGeneration &+= 1 }
     }
 
     public func focusedWindow() throws -> WindowSnapshot? {
@@ -565,6 +603,18 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
                 "macOS rejected the window frame update (\(errors.map { String($0.rawValue) }.joined(separator: ", ")))."
             )
         }
+        // Applications clamp a size synchronously. Reading it straight back
+        // measures the minimum exactly, before anything is shown as settled.
+        if plan.writesInitialSize || plan.writesFinalSize,
+           let actualPosition: CGPoint = axValue(kAXPositionAttribute, from: element, type: .cgPoint),
+           let actualSize: CGSize = axValue(kAXSizeAttribute, from: element, type: .cgSize) {
+            let actual = BTRect(x: actualPosition.x, y: actualPosition.y,
+                                width: actualSize.width, height: actualSize.height)
+            if minimumSizeLearner.observeWriteReadback(
+                windowID: windowID, application: applicationKeys[windowID],
+                requested: frame, previous: knownCurrentFrame, actual: actual
+            ) { snapshotGeneration &+= 1 }
+        }
     }
 
     public func withFrameWriteBatch(_ updates: () throws -> Void) rethrows {
@@ -839,6 +889,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
                 )
             }
             minimumSizeLearner.remove(windowID)
+            applicationKeys.removeValue(forKey: windowID)
         }
         if event.kind != .moved, event.kind != .resized, event.kind != .focused {
             snapshotCache.invalidate()
@@ -925,14 +976,16 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
             hints: attributes.minimumSizes,
             displaySize: display.frame.size
         )
-        minimumSizeLearner.observeAcceptedSize(windowID: id, size: frame.size)
+        if let bundleIdentifier { applicationKeys[id] = bundleIdentifier }
+        minimumSizeLearner.observeAcceptedSize(windowID: id, application: bundleIdentifier, size: frame.size)
         let constraints = minimumSizeLearner.merging(
             WindowConstraints(
                 minimumSize: minimumSize,
                 isMovable: movable,
                 isResizable: resizable
             ),
-            for: id
+            for: id,
+            application: bundleIdentifier
         )
         return WindowSnapshot(
             id: id,

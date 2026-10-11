@@ -22,6 +22,9 @@ protocol BetterTileWindowSystem: TargetedWindowSystem, WindowEventSource {
     /// Clears minimums learned from refused writes. Called when the user
     /// starts a new resize or drag, so an old refusal never becomes a floor.
     func forgetLearnedMinimums()
+    /// Measures the minimum sizes of newly appeared windows before their
+    /// first placement.
+    func probeMinimumSizes(for ids: Set<WindowID>)
     func refreshApplicationObservers()
     func resetCachedWindows()
     func startDockFootprintMonitoring(onChange: @escaping () -> Void)
@@ -2581,6 +2584,17 @@ final class BetterTileModel {
                 settledWindows = refreshed
             }
         }
+        // The write's readback may already have measured the minimum that
+        // made a window settle larger than requested. That is the same
+        // evidence; the layout must still be solved around it.
+        if !learnedMinimum, let requestedFrames {
+            learnedMinimum = windows.contains { window in
+                guard changedWindowIDs.contains(window.id), let requested = requestedFrames[window.id] else { return false }
+                let minimum = window.constraints.minimumSize
+                return (window.frame.size.width > requested.size.width + 2 && minimum.width >= window.frame.size.width - 2)
+                    || (window.frame.size.height > requested.size.height + 2 && minimum.height >= window.frame.size.height - 2)
+            }
+        }
 
         let displayWindows = settledWindows.filter { session.windowIDs.contains($0.id) && $0.displayID == displayID }
         // A lone window owns its own frame. Correcting it back towards a layout
@@ -2733,7 +2747,7 @@ final class BetterTileModel {
         )
 
         for display in displays {
-            let displayWindows = bentoEligible(eligible.filter { $0.displayID == display.id })
+            var displayWindows = bentoEligible(eligible.filter { $0.displayID == display.id })
             let activation = sessionStore.activate(
                 displayID: display.id,
                 windowIDs: Set(displayWindows.map(\.id)),
@@ -2752,6 +2766,22 @@ final class BetterTileModel {
                 ) != nil
                 sweepCommitted = sweepCommitted && committed
                 continue
+            }
+            // A window that just appeared on a managed desktop is measured
+            // before it is placed, so its first placement and every later
+            // preview use its real minimum. Entering a mode or returning to a
+            // desktop measures nothing: those windows are already visible.
+            if activation.session.mode != .manual, !activation.wasCreated, !desktopTransition,
+               !activation.session.automaticWritesSuspended {
+                let known = activation.previousWindowIDs
+                let arrivals = Set(displayWindows.map(\.id)).subtracting(known)
+                if !arrivals.isEmpty {
+                    system.probeMinimumSizes(for: arrivals)
+                    if let measured = try? system.windowSnapshots(ids: arrivals) {
+                        let byID = Dictionary(measured.map { ($0.id, $0) }) { first, _ in first }
+                        displayWindows = displayWindows.map { byID[$0.id] ?? $0 }
+                    }
+                }
             }
             if activation.session.mode == .tabbed {
                 refreshTabbedSession(
@@ -2964,14 +2994,11 @@ final class BetterTileModel {
         }.joined(separator: "|")
     }
 
-    func prepareWindowGesture() {
-        // The learner resets globally. Preserve evidence for retained Tabbed
-        // groups on every display and Space, including after a Native visit.
-        let retainsTabs = system.displays().contains { display in
-            sessionStore.allSessions(for: display.id).contains { $0.tabbedState != nil }
-        }
-        if !retainsTabs { system.forgetLearnedMinimums() }
-    }
+    /// Gestures keep measured minimums, so a drag preview stops where
+    /// release stops. A minimum is not a permanent floor: every write reads
+    /// the real size back, and any accepted smaller size, including the
+    /// user's own edge resize, lowers it at once.
+    func prepareWindowGesture() {}
 
     private func refreshDividerBoundaries(windows suppliedWindows: [WindowSnapshot]? = nil) {
         let presentation = dividerPresentation(windows: suppliedWindows ?? ((try? system.visibleWindows()) ?? []))

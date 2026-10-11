@@ -124,6 +124,12 @@ public struct BentoConstraintSolver: Sendable {
 public struct WindowMinimumSizeLearner: Sendable {
     public private(set) var learnedSizes: [WindowID: BTSize]
     private var smallerSizeCandidates: [WindowID: BTSize] = [:]
+    /// The latest measurement for each application, by bundle identifier.
+    /// Applications rarely report a minimum, so a new window starts from its
+    /// application's measured size instead of the default floor. Its own
+    /// measurement replaces the seed as soon as one exists. Process memory
+    /// only; nothing is saved.
+    public private(set) var applicationSizes: [String: BTSize] = [:]
 
     public init(learnedSizes: [WindowID: BTSize] = [:]) {
         self.learnedSizes = learnedSizes
@@ -163,6 +169,13 @@ public struct WindowMinimumSizeLearner: Sendable {
     /// Two consecutive stable smaller sizes disprove an old learned bound.
     /// Reported application minimums are still merged by the caller.
     @discardableResult
+    public mutating func observeAcceptedSize(windowID: WindowID, application: String?, size: BTSize) -> Bool {
+        let lowered = observeAcceptedSize(windowID: windowID, size: size)
+        if lowered { rememberApplication(application, from: windowID) }
+        return lowered
+    }
+
+    @discardableResult
     public mutating func observeAcceptedSize(windowID: WindowID, size: BTSize) -> Bool {
         guard size.width.isFinite, size.height.isFinite,
               size.width > 0, size.height > 0,
@@ -181,6 +194,65 @@ public struct WindowMinimumSizeLearner: Sendable {
         )
         smallerSizeCandidates.removeValue(forKey: windowID)
         return true
+    }
+
+    /// Reads a frame straight after a write. Applications clamp a size
+    /// synchronously, so a size larger than the request is the minimum in
+    /// that axis, measured now. The request must have been processed: either
+    /// the window moved to the requested origin, or its size changed. A frame
+    /// that ignored the write entirely proves nothing and is never learned.
+    /// A requested size that was accepted lowers an older, larger bound.
+    @discardableResult
+    public mutating func observeWriteReadback(
+        windowID: WindowID,
+        application: String? = nil,
+        requested: BTRect,
+        previous: BTRect?,
+        actual: BTRect,
+        tolerance: Double = 2
+    ) -> Bool {
+        defer { rememberApplication(application, from: windowID) }
+        let movedToRequest = previous.map {
+            abs($0.minX - requested.minX) > tolerance || abs($0.minY - requested.minY) > tolerance
+        } ?? false
+        let atRequestedOrigin = abs(actual.minX - requested.minX) <= tolerance
+            && abs(actual.minY - requested.minY) <= tolerance
+        let sizeChanged = previous.map {
+            abs($0.size.width - actual.size.width) > tolerance || abs($0.size.height - actual.size.height) > tolerance
+        } ?? false
+        guard (movedToRequest && atRequestedOrigin) || sizeChanged else { return false }
+        let before = learnedSizes[windowID]
+        var learned = before ?? .zero
+        func measure(_ requestedLength: Double, _ actualLength: Double, _ bound: inout Double) {
+            if actualLength > requestedLength + tolerance {
+                bound = actualLength
+            } else if abs(actualLength - requestedLength) <= tolerance, bound > actualLength {
+                bound = actualLength
+            }
+        }
+        measure(requested.size.width, actual.size.width, &learned.width)
+        measure(requested.size.height, actual.size.height, &learned.height)
+        guard learned != (before ?? .zero) else { return false }
+        if learned == .zero { learnedSizes.removeValue(forKey: windowID) } else { learnedSizes[windowID] = learned }
+        smallerSizeCandidates.removeValue(forKey: windowID)
+        return true
+    }
+
+    private mutating func rememberApplication(_ application: String?, from windowID: WindowID) {
+        guard let application, !application.isEmpty else { return }
+        if let learned = learnedSizes[windowID] { applicationSizes[application] = learned }
+    }
+
+    /// The window's own measurement, or its application's seed when the
+    /// window has none yet.
+    public func merging(_ constraints: WindowConstraints, for windowID: WindowID, application: String?) -> WindowConstraints {
+        guard learnedSizes[windowID] == nil, let application, let seed = applicationSizes[application] else {
+            return merging(constraints, for: windowID)
+        }
+        var result = constraints
+        result.minimumSize.width = max(result.minimumSize.width, seed.width)
+        result.minimumSize.height = max(result.minimumSize.height, seed.height)
+        return result
     }
 
     public func merging(_ constraints: WindowConstraints, for windowID: WindowID) -> WindowConstraints {
@@ -202,6 +274,14 @@ public struct WindowMinimumSizeLearner: Sendable {
     public mutating func removeAll() {
         learnedSizes.removeAll()
         smallerSizeCandidates.removeAll()
+        applicationSizes.removeAll()
+    }
+
+    public func hasMeasurement(for windowID: WindowID) -> Bool { learnedSizes[windowID] != nil }
+
+    /// Records the window's current measurement as its application's seed.
+    public mutating func rememberApplication(_ application: String?, for windowID: WindowID) {
+        rememberApplication(application, from: windowID)
     }
 }
 

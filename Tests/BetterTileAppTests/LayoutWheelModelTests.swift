@@ -19,6 +19,11 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, TabbedWindowSystem {
     var ignoredFrameWriteWindowIDs: Set<WindowID> = []
     var enforcedMinimumWidths: [WindowID: Double] = [:]
     var enforcedMinimumHeights: [WindowID: Double] = [:]
+    /// Measures minimums straight after each write and seeds new windows
+    /// from their application, as the Accessibility adapter does.
+    var measuresOnWrite = false
+    /// Every frame BetterTile asked for, per window, in order.
+    var requestedFrames: [WindowID: [BTRect]] = [:]
     /// Simulates an application that resizes in steps, such as Terminal's
     /// character cells: widths round down to a multiple of the step.
     var widthSteps: [WindowID: Double] = [:]
@@ -121,7 +126,12 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, TabbedWindowSystem {
         for index in windows.indices {
             let id = windows[index].id
             minimumSizeLearner.observeAcceptedSize(windowID: id, size: windows[index].frame.size)
-            if let reported = reportedConstraints[id] {
+            if measuresOnWrite {
+                if reportedConstraints[id] == nil { reportedConstraints[id] = windows[index].constraints }
+                windows[index].constraints = minimumSizeLearner.merging(
+                    reportedConstraints[id]!, for: id, application: windows[index].bundleIdentifier
+                )
+            } else if let reported = reportedConstraints[id] {
                 windows[index].constraints = minimumSizeLearner.merging(reported, for: id)
             }
         }
@@ -136,6 +146,7 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, TabbedWindowSystem {
             throw WindowSystemError.windowNotFound(windowID)
         }
         frameWriteCounts[windowID, default: 0] += 1
+        requestedFrames[windowID, default: []].append(frame)
         if failedFrameWriteNumbers[windowID]?.contains(frameWriteCounts[windowID, default: 0]) == true {
             throw WindowSystemError.operationFailed("Injected frame write failure.")
         }
@@ -151,6 +162,18 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, TabbedWindowSystem {
     }
     private func applyFrame(_ frame: BTRect, at index: Int) {
         let windowID = windows[index].id
+        let before = windows[index].frame
+        defer {
+            // Like the Accessibility adapter, read the size straight back.
+            if measuresOnWrite {
+                if reportedConstraints[windowID] == nil { reportedConstraints[windowID] = windows[index].constraints }
+                minimumSizeLearner.observeWriteReadback(
+                    windowID: windowID, application: windows[index].bundleIdentifier,
+                    requested: frame, previous: before, actual: windows[index].frame
+                )
+                refreshLearnedConstraints()
+            }
+        }
         windows[index].frame = frame
         windows[index].frame.size.width = max(frame.size.width, enforcedMinimumWidths[windowID] ?? 0)
         windows[index].frame.size.height = max(frame.size.height, enforcedMinimumHeights[windowID] ?? 0)
@@ -193,6 +216,25 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, TabbedWindowSystem {
         return learned
     }
     var reportedConstraints: [WindowID: WindowConstraints] = [:]
+    var probeRequests: [Set<WindowID>] = []
+    func probeMinimumSizes(for ids: Set<WindowID>) {
+        probeRequests.append(ids)
+        guard measuresOnWrite else { return }
+        for id in ids {
+            guard let index = windows.firstIndex(where: { $0.id == id }) else { continue }
+            let frame = windows[index].frame
+            let tiny = BTRect(x: frame.minX, y: frame.minY, width: 1, height: 1)
+            let clamped = BTRect(x: frame.minX, y: frame.minY,
+                                 width: max(1, enforcedMinimumWidths[id] ?? 1),
+                                 height: max(1, enforcedMinimumHeights[id] ?? 1))
+            if reportedConstraints[id] == nil { reportedConstraints[id] = windows[index].constraints }
+            minimumSizeLearner.observeWriteReadback(
+                windowID: id, application: windows[index].bundleIdentifier,
+                requested: tiny, previous: frame, actual: clamped
+            )
+        }
+        refreshLearnedConstraints()
+    }
     var forgetLearnedMinimumsCount = 0
     func forgetLearnedMinimums() {
         forgetLearnedMinimumsCount += 1
@@ -1239,4 +1281,60 @@ func minimizedRightHalfReturnsToItsOriginalSide(nativeMembership: Bool, staleMin
     system.eventHandler?(WindowSystemEvent(kind: .restored, windowID: restoredID, processIdentifier: 42))
     try await Task.sleep(for: .milliseconds(700))
     #expect(system.windows.map(\.frame) == originalFrames)
+}
+
+
+/// A new window of an application with a measured minimum starts from that
+/// measurement: its first snapshot is seeded, and BetterTile never asks it
+/// for a size the application already refused once.
+@Test @MainActor func newWindowOfAMeasuredApplicationStartsFromItsMeasurement() async throws {
+    _ = NSApplication.shared
+    let system = FakeAppWindowSystem()
+    system.measuresOnWrite = true
+    system.emitsFrameEvents = true
+    let first = WindowID(rawValue: "brave-a"), second = WindowID(rawValue: "brave-b")
+    system.windows.append(WindowSnapshot(id: first, processIdentifier: 50, bundleIdentifier: "com.brave.Browser",
+        frame: BTRect(x: 100, y: 100, width: 700, height: 600), displayID: system.mainDisplay.id))
+    system.enforcedMinimumWidths[first] = 520
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    model.setActiveMode(.bento)
+    // The first write measures 520 and the layout is solved around it.
+    let entered = await waitFor {
+        system.windows[1].frame.size.width >= 520 && system.windows[0].frame.intersection(system.windows[1].frame) == nil
+    }
+    #expect(entered, "\(system.windows.map(\.frame))")
+
+    system.windows.append(WindowSnapshot(id: second, processIdentifier: 50, bundleIdentifier: "com.brave.Browser",
+        frame: BTRect(x: 150, y: 150, width: 700, height: 600), displayID: system.mainDisplay.id))
+    system.enforcedMinimumWidths[second] = 520
+    #expect(try system.windowSnapshots(ids: [second]).first?.constraints.minimumSize.width == 520)
+    system.eventHandler?(WindowSystemEvent(kind: .created, windowID: second, processIdentifier: 50))
+    try await Task.sleep(for: .milliseconds(900))
+    #expect((system.requestedFrames[second] ?? []).allSatisfy { $0.size.width >= 520 })
+}
+
+
+/// A window that appears on a Bento desktop is measured before its first
+/// placement, so even the first window of an application never receives a
+/// size it refuses. Entering Bento measures nothing.
+@Test @MainActor func arrivingWindowIsMeasuredBeforeItsFirstPlacement() async throws {
+    _ = NSApplication.shared
+    let system = FakeAppWindowSystem()
+    system.measuresOnWrite = true
+    system.emitsFrameEvents = true
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    model.setActiveMode(.bento)
+    try await Task.sleep(for: .milliseconds(300))
+    #expect(system.probeRequests.isEmpty)
+    let arrival = WindowID(rawValue: "preview-a")
+    system.windows.append(WindowSnapshot(id: arrival, processIdentifier: 60, bundleIdentifier: "com.apple.Preview",
+        frame: BTRect(x: 100, y: 100, width: 700, height: 700), displayID: system.mainDisplay.id))
+    system.enforcedMinimumHeights[arrival] = 600
+    system.eventHandler?(WindowSystemEvent(kind: .created, windowID: arrival, processIdentifier: 60))
+    #expect(await waitFor { system.frameWriteCounts[arrival, default: 0] > 0 })
+    try await Task.sleep(for: .milliseconds(600))
+    #expect(system.probeRequests.contains { $0.contains(arrival) })
+    #expect((system.requestedFrames[arrival] ?? []).allSatisfy { $0.size.height >= 600 })
 }
