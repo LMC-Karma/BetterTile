@@ -833,9 +833,11 @@ public final class DividerOverlayController {
         let frames: [WindowID: BTRect]
         if let shown = (coordinator.system as? any WindowStackReading)?.windowServerFrames(for: ids) {
             frames = shown
-        } else if let snapshots = try? (coordinator.system as? any TargetedWindowSystem)?.windowSnapshots(ids: ids) {
+        } else if let targeted = coordinator.system as? any TargetedWindowSystem {
+            guard let snapshots = try? targeted.windowSnapshots(ids: ids) else { return false }
             frames = Dictionary(snapshots.map { ($0.id, $0.frame) }, uniquingKeysWith: { first, _ in first })
         } else {
+            // Without a way to read frames there is nothing to wait for.
             return true
         }
         return targets.allSatisfy { id, target in

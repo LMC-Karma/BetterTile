@@ -389,6 +389,10 @@ private func ghostOverlayCleansUpEveryGestureExit(ending: GhostEnd) throws {
     #expect(fixture.controller.windowsHaveLanded(targets, baseline: baseline))
     fixture.system.unreadableWindowIDs = [fixture.system.windows[0].id]
     #expect(!fixture.controller.windowsHaveLanded(targets, baseline: baseline))
+    // A read that fails outright has not shown the windows landed either.
+    fixture.system.unreadableWindowIDs = []
+    fixture.system.targetedSnapshotsFail = true
+    #expect(!fixture.controller.windowsHaveLanded(targets, baseline: baseline))
 }
 
 /// While previews wait for the windows to land, hovering a divider moves the
