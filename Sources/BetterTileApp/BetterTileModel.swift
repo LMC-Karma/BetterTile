@@ -3789,17 +3789,21 @@ extension BetterTileModel {
     /// to the selected tab once instead of changing the selection.
     private func correctStolenTabbedFocus(_ focused: WindowSnapshot) -> Bool {
         guard let intended = tabbedIntendedFocus else { return false }
-        guard intended.until > Date() else { tabbedIntendedFocus = nil; return false }
-        guard focused.id != intended.windowID, isFrontmost(focused),
+        // Once the selected tab has had focus, a later focus change is the
+        // user's own choice. Expiry ends the correction too.
+        guard intended.until > Date(), focused.id != intended.windowID else { tabbedIntendedFocus = nil; return false }
+        guard isFrontmost(focused),
               let session = sessionStore.session(for: focused.displayID), session.mode == .tabbed,
               let state = session.tabbedState, state.selectedWindowIDs.contains(intended.windowID),
               state.windowIDs.contains(focused.id),
               let target = ((try? system.visibleWindows()) ?? []).first(where: { $0.id == intended.windowID }),
-              target.processIdentifier == focused.processIdentifier,
-              let tabSystem = system as? any TabbedWindowSystem else { return false }
+              target.processIdentifier == focused.processIdentifier else { return false }
         tabbedIntendedFocus = nil
         tabbedFocusSuppressedUntil = Date().addingTimeInterval(0.3)
-        try? tabSystem.raiseWindow(intended.windowID, activate: true)
+        guard coordinator.focusTabbedWindow(intended.windowID).isApplied else {
+            tabbedFocusSuppressedUntil = .distantPast
+            return false
+        }
         repairTabbedStacking()
         return true
     }

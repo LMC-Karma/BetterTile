@@ -144,7 +144,7 @@ public final class WindowCoordinator {
     /// generations after its successful terminal snapshot.
     public func matchesExpectedMutation(windowID: WindowID, actualFrame: BTRect, tolerance: Double = 2) -> Bool {
         expectedMutations[windowID]?.contains {
-            SteppedSizeAcceptance.evaluate(requested: $0.frame, actual: actualFrame, tolerance: tolerance) != .rejected
+            actualFrame.approximatelyEquals($0.frame, tolerance: tolerance)
         } == true
     }
 
@@ -744,6 +744,17 @@ public final class WindowCoordinator {
         expectedMutations[windowID, default: []].append(ExpectedMutation(frame: frame, generation: generation))
     }
 
+    /// A stepped frame accepted for a Tabbed placement is this placement's
+    /// result too. Its events are expected; other near frames are not.
+    private func expectSteppedFrames(_ placements: [Placement], actual: [WindowID: BTRect]) {
+        for placement in placements {
+            guard let frame = actual[placement.windowID],
+                  SteppedSizeAcceptance.evaluate(requested: placement.frame, actual: frame) == .stepped,
+                  let generation = generations[placement.windowID] else { continue }
+            expect(frame, for: placement.windowID, generation: generation)
+        }
+    }
+
     private func cancelExpectedMutation(for windowID: WindowID, generation: UInt64) {
         expectedMutations[windowID]?.removeAll { $0.generation == generation }
         if expectedMutations[windowID]?.isEmpty == true {
@@ -985,12 +996,16 @@ extension WindowCoordinator {
                         try await Task.sleep(for: .milliseconds(50))
                         continue
                     }
+                    expectSteppedFrames(placements, actual: actual)
                     return .applied
                 }
                 if framesMatch {
                     // The window was raised and its frame accepted. A focus
                     // that never arrives is left to the focus observer.
-                    if attempt == 11 { return .applied }
+                    if attempt == 11 {
+                        expectSteppedFrames(placements, actual: actual)
+                        return .applied
+                    }
                     try await Task.sleep(for: .milliseconds(50))
                     continue
                 }
@@ -1047,6 +1062,19 @@ extension WindowCoordinator {
             do { try tabSystem.raiseWindow(id, activate: false) } catch { failed = true }
         }
         return failed ? .failed(reason: "Tabbed could not restore window order. Select the tab again or use Repair Tabbed.") : .applied
+    }
+
+    /// Raises a selected tab and gives it keyboard focus.
+    public func focusTabbedWindow(_ id: WindowID) -> WindowMutationOutcome {
+        guard let tabSystem = system as? any TabbedWindowSystem else {
+            return .failed(reason: "This window system does not support Tabbed actions.")
+        }
+        do {
+            try tabSystem.raiseWindow(id, activate: true)
+            return .applied
+        } catch {
+            return .failed(reason: error.localizedDescription)
+        }
     }
 
     public func closeTabbedWindow(_ id: WindowID) -> WindowMutationOutcome {

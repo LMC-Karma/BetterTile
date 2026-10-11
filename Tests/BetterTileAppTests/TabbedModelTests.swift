@@ -1574,6 +1574,33 @@ func selectingASameApplicationTabKeepsFocusOnTheClickedTab(activationRestoresOld
     #expect(model.activeTabbedState?.activeWindowID == hiddenLeft)
 }
 
+/// After the selected tab had focus, the user moves focus to the other
+/// pane's window of the same application. That is a choice, not a focus
+/// change to correct.
+@Test @MainActor
+func aSameApplicationFocusChangeAfterTheSelectionIsKept() async throws {
+    let system = FakeAppWindowSystem()
+    let model = try await makeTwoTabbedColumns(system)
+    defer { model.shutdown() }
+    for index in system.windows.indices { system.windows[index].processIdentifier = 7 }
+    let hiddenLeft = system.windows[1].id
+    let rightSelected = system.windows[3].id
+    system.focusedID = system.windows[0].id
+    model.performTabbed(.select(hiddenLeft))
+    try #require(await waitFor { model.activeTabbedState?.panes[0].selected == hiddenLeft && system.focusedID == hiddenLeft })
+    // The focus refresh for the selection sees the clicked tab focused.
+    system.eventHandler?(WindowSystemEvent(kind: .focused, windowID: hiddenLeft, processIdentifier: 7))
+    try await Task.sleep(for: .milliseconds(450))
+    // The user clicks the right pane's window within the correction time.
+    let raises = system.raiseRequests.count
+    system.focusedID = rightSelected
+    system.eventHandler?(WindowSystemEvent(kind: .focused, windowID: rightSelected, processIdentifier: 7))
+    try await Task.sleep(for: .milliseconds(400))
+    #expect(system.focusedID == rightSelected)
+    #expect(!system.raiseRequests.dropFirst(raises).contains { $0.0 == hiddenLeft && $0.1 })
+    #expect(model.activeTabbedState?.activeWindowID == rightSelected)
+}
+
 @Test @MainActor
 func stackingRepairOfTheKeyApplicationRaisesTheKeyWindowLast() async throws {
     let system = FakeAppWindowSystem()

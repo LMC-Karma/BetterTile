@@ -457,6 +457,11 @@ func partiallyFailedFrameWriteRestoresTheFailingWindow(rollbackFails: Bool) thro
         windowID: id,
         actualFrame: BTRect(x: 0, y: 0, width: 650, height: 800)
     ))
+    // A user resize a few points smaller is not this placement's event.
+    #expect(!coordinator.matchesExpectedMutation(
+        windowID: id,
+        actualFrame: BTRect(x: 0, y: 0, width: 490, height: 800)
+    ))
 }
 
 @Test @MainActor func coordinatorOwnsDelayedEventsFromOverlappingGenerations() throws {
