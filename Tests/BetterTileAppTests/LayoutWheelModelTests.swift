@@ -240,8 +240,14 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, TabbedWindowSystem, Min
             )
         }
         refreshLearnedConstraints()
-        return []
+        // A window left at its probe size.
+        let unrestored = unrestoredProbeWindowIDs.intersection(ids)
+        for index in windows.indices where unrestored.contains(windows[index].id) {
+            windows[index].frame.size = BTSize(width: 1, height: 1)
+        }
+        return unrestored
     }
+    var unrestoredProbeWindowIDs: Set<WindowID> = []
     var forgetLearnedMinimumsCount = 0
     func forgetLearnedMinimums() {
         forgetLearnedMinimumsCount += 1
@@ -688,6 +694,49 @@ func waitFor(
     #expect(await waitFor { system.windows.map(\.frame) == tiled })
 }
 
+
+/// Restore waits for the peers to come back before it lays the desktop out.
+/// A newer action during that wait wins: Maximize again stays maximized.
+@Test @MainActor func aNewerActionCancelsAPendingFocusModeRestore() async throws {
+    _ = NSApplication.shared
+    let system = FakeAppWindowSystem()
+    let peer = WindowID(rawValue: "peer")
+    system.windows.append(WindowSnapshot(id: peer, processIdentifier: 43, bundleIdentifier: "com.example.Peer",
+        frame: BTRect(x: 0, y: 0, width: 200, height: 300), displayID: system.mainDisplay.id))
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    model.setActiveMode(.bento)
+    try #require(await waitFor { system.windows.allSatisfy { $0.frame.size.height == 800 } })
+    system.focusedID = system.windows[0].id
+    model.perform(.maximize)
+    try #require(system.windows[1].isMinimized)
+    model.perform(.restore)
+    model.perform(.maximize)
+    try await Task.sleep(for: .milliseconds(1800))
+    #expect(system.windows[1].isMinimized)
+    #expect(system.windows[0].frame == system.mainDisplay.visibleFrame)
+}
+
+/// A probe that cannot restore a new window's size puts the window back at
+/// its own frame at once; a window that floats gets no other write.
+@Test @MainActor func aFailedProbeRestorePutsTheArrivalBack() async throws {
+    _ = NSApplication.shared
+    let system = FakeAppWindowSystem()
+    system.measuresOnWrite = true
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    model.setActiveMode(.bento)
+    try #require(await waitFor { system.windows.allSatisfy { $0.frame.size.height == 800 } })
+    try await Task.sleep(for: .milliseconds(300))
+    let arrival = WindowID(rawValue: "arrival")
+    let original = BTRect(x: 100, y: 100, width: 400, height: 300)
+    system.windows.append(WindowSnapshot(id: arrival, processIdentifier: 81, bundleIdentifier: "com.example.Arrival",
+        frame: original, displayID: system.mainDisplay.id))
+    system.unrestoredProbeWindowIDs = [arrival]
+    system.eventHandler?(WindowSystemEvent(kind: .created, windowID: arrival, processIdentifier: 81))
+    #expect(await waitFor { system.probeRequests.contains { $0.contains(arrival) } })
+    #expect(system.requestedFrames[arrival]?.first == original)
+}
 
 @Test @MainActor func repairBentoRequiresBentoAndRunsWhenAvailable() {
     let system = FakeAppWindowSystem()

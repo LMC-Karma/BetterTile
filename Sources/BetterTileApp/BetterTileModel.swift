@@ -86,8 +86,14 @@ final class BetterTileModel {
     /// The Bento tree from before focus mode, per desktop session, so ending
     /// focus mode returns exactly the previous layout.
     private var bentoStateBeforeFocus: [DesktopSessionID: BentoLayoutState] = [:]
-    /// Restores the layout once focus-mode peers return from the Dock.
+    /// Restores the layout once focus-mode peers return from the Dock. Any
+    /// newer layout action cancels it.
     private var focusRestoreTask: Task<Void, Never>?
+
+    private func cancelPendingFocusRestore() {
+        focusRestoreTask?.cancel()
+        focusRestoreTask = nil
+    }
     /// The tab the user last selected. Activating its application can make
     /// that application's previous main window key instead; for a short
     /// time such a focus change is corrected rather than treated as a
@@ -331,6 +337,7 @@ final class BetterTileModel {
     }
 
     func setActiveMode(_ mode: LayoutMode) {
+        cancelPendingFocusRestore()
         let mode = mode.availableMode
         refreshActiveWindows(force: false)
         guard let displayID = activeDisplayID else {
@@ -365,6 +372,7 @@ final class BetterTileModel {
     }
 
     func perform(_ action: WindowAction) {
+        cancelPendingFocusRestore()
         guard !isShutDown else { return }
         let originalDisplayID = (try? system.focusedWindow())?.displayID ?? activeDisplayID
         guard hasAccessibilityPermission || refreshPermission() else {
@@ -476,6 +484,7 @@ final class BetterTileModel {
         _ command: LayoutWheelCommand,
         for target: LayoutWheelTarget
     ) {
+        cancelPendingFocusRestore()
         switch planLayoutWheel(command, for: target) {
         case let .unavailable(reason, displayID):
             statusMessage = reason
@@ -903,6 +912,7 @@ final class BetterTileModel {
     }
 
     func tileCurrentDisplay() {
+        cancelPendingFocusRestore()
         do {
             guard let focused = try system.focusedWindow() else {
                 statusMessage = "No eligible window or display."
@@ -1125,6 +1135,7 @@ final class BetterTileModel {
     }
 
     func beginBentoDrag(displayID: DisplayID, sourceID: WindowID, sourceFrame: BTRect? = nil) -> Bool {
+        cancelPendingFocusRestore()
         guard activeBentoDrag == nil, !tabbedExiting.contains(displayID),
               var layoutSession = sessionStore.session(for: displayID),
               layoutSession.mode == .bento || layoutSession.mode == .tabbed,
@@ -2930,10 +2941,16 @@ final class BetterTileModel {
                 let known = activation.previousWindowIDs
                 let arrivals = Set(displayWindows.map(\.id)).subtracting(known)
                 if !arrivals.isEmpty {
-                    // A window left at a probe size is placed next, which
-                    // writes its size again.
+                    let originalFrames = displayWindows.filter { arrivals.contains($0.id) }
+                        .map { Placement(windowID: $0.id, frame: $0.frame) }
                     if case let .degraded(reason) = coordinator.probeMinimumSizes(for: arrivals) {
+                        // A window can float without another write, so put
+                        // it back now instead of relying on its placement.
                         Self.bentoLog.error("\(reason, privacy: .public)")
+                        if !coordinator.applyPlacements(originalFrames, recordHistory: false).isApplied {
+                            statusMessage = reason
+                            presentActionResult(succeeded: false, error: reason, displayID: display.id)
+                        }
                     }
                     if let measured = try? system.windowSnapshots(ids: arrivals) {
                         let byID = Dictionary(measured.map { ($0.id, $0) }) { first, _ in first }
@@ -3157,7 +3174,7 @@ final class BetterTileModel {
     /// release stops. A minimum is not a permanent floor: every write reads
     /// the real size back, and any accepted smaller size, including the
     /// user's own edge resize, lowers it at once.
-    func prepareWindowGesture() {}
+    func prepareWindowGesture() { cancelPendingFocusRestore() }
 
     private func refreshDividerBoundaries(windows suppliedWindows: [WindowSnapshot]? = nil) {
         let presentation = dividerPresentation(windows: suppliedWindows ?? ((try? system.visibleWindows()) ?? []))
