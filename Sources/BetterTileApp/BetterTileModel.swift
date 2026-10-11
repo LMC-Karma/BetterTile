@@ -2734,7 +2734,7 @@ final class BetterTileModel {
         }
         let frames = Dictionary(uniqueKeysWithValues: displayWindows.map { ($0.id, $0.frame) })
         let constraints = Dictionary(uniqueKeysWithValues: displayWindows.map { ($0.id, $0.constraints) })
-        Self.bentoLog.debug("settlement branch: \(learnedMinimum ? "learned-minimum resolve" : "divider fit", privacy: .public)")
+        Self.bentoLog.debug("settlement branch: \(learnedMinimum ? "minimum-size resolve" : "layout fit", privacy: .public)")
         if learnedMinimum {
             if let solved = BentoConstraintSolver().solve(
                 state: session.bentoState,

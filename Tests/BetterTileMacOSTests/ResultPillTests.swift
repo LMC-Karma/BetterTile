@@ -12,7 +12,9 @@ import Testing
     #expect(success.dismissDelay == 0.9)
     #expect(failure.message == "Can’t fit this layout")
     #expect(failure.symbolName == "xmark")
-    #expect(failure.dismissDelay == 1.6)
+    // The title does not say why, so the reason stays readable longer.
+    #expect(failure.detail == "That Bento drop cannot satisfy the windows’ minimum sizes.")
+    #expect(failure.dismissDelay == 3)
 }
 
 /// Repairing a desktop whose single window is set to be left unchanged succeeds
@@ -128,4 +130,17 @@ private final class ResultPillTestPanel: NSPanel {
 
     override func orderFrontRegardless() { isPresented = true }
     override func orderOut(_ sender: Any?) { isPresented = false }
+}
+
+@Test func genericFailureTitlesCarryTheReasonAsDetail() {
+    let reason = "Brave and Preview cannot fit beside each other at their minimum sizes."
+    let feedback = ResultPillFeedback.failure(reason)
+    #expect(feedback.message == "Can’t fit this layout")
+    #expect(feedback.detail == reason)
+    #expect(feedback.dismissDelay >= 3)
+    // A title that already says what to do needs no detail.
+    #expect(ResultPillFeedback.failure("No eligible focused window.").detail == nil)
+    let display = DisplaySnapshot(id: DisplayID(rawValue: "pill"), frame: BTRect(x: 0, y: 0, width: 1920, height: 1080),
+                                  visibleFrame: BTRect(x: 0, y: 0, width: 1920, height: 1050))
+    #expect(ResultPillLayout.frame(for: feedback, on: display).size.height > 40)
 }
