@@ -99,6 +99,15 @@ public struct WindowFrameTransaction: Sendable {
     /// ever succeeded. A later fully successful apply clears it — every
     /// participant was just written, so no window remains in unknown state.
     public fileprivate(set) var hasDegradedApply: Bool
+    /// True when a live tick left a growing window one sample behind. The next
+    /// tick completes it, even without a new sample.
+    public fileprivate(set) var hasTrailingWrites = false
+    /// The proposal of the previous live tick, which growing windows trail.
+    fileprivate var previousLiveProposal: [WindowID: BTRect] = [:]
+    /// Frames read back after this transaction's live writes. A drag can move
+    /// less than the write tolerance per tick, so the next write compares
+    /// with what the window reported, not with the last request.
+    fileprivate var measuredLiveFrames: [WindowID: BTRect] = [:]
 
     fileprivate init(baselineFrames: [WindowID: BTRect]) {
         id = UUID()
@@ -481,6 +490,7 @@ public final class WindowCoordinator {
         placements: [Placement],
         validateParticipants: Bool = true
     ) -> WindowMutationOutcome {
+        let previousProposal = transaction.previousLiveProposal
         if case let .failed(reason) = preview(transaction: &transaction, placements: placements) {
             return .failed(reason: reason)
         }
@@ -494,34 +504,48 @@ public final class WindowCoordinator {
                 : transaction.proposedPlacements.filter {
                     transaction.lastAppliedFrames[$0.windowID]?.approximatelyEquals($0.frame, tolerance: 0.01) != true
                 }
-            var written = changed
+            var writes = changed
+            var trailing = false
             if !validateParticipants {
-                // Within a drag tick, write the shrinking windows first and
-                // read them back. A neighbour that refused leaves no room, so
-                // the windows that would grow into it wait for a later tick
-                // instead of overlapping it.
+                // Within a drag tick, shrinking windows take the new sample
+                // and growing windows take the previous one. All applications
+                // are still written in one concurrent pass, but a growing
+                // window only enters space its neighbour gave up a tick
+                // earlier, so the two do not overlap while that neighbour
+                // commits. A neighbour that refused its last size holds the
+                // growing windows.
                 let previous = transaction.lastAppliedFrames
-                let shrinking = changed.filter { placement in
+                let shrinkingIDs = Set(changed.filter { placement in
                     guard let old = previous[placement.windowID] else { return false }
                     return placement.frame.size.width < old.size.width - 0.5
                         || placement.frame.size.height < old.size.height - 0.5
+                }.map(\.windowID))
+                let growing = changed.filter { !shrinkingIDs.contains($0.windowID) }
+                if !changed.isEmpty {
+                    let neighbourHoldsSpace = neighbourHoldsItsSpace(
+                        transaction: transaction, excluding: Set(growing.map(\.windowID))
+                    )
+                    writes = changed.compactMap { placement in
+                        if shrinkingIDs.contains(placement.windowID) { return placement }
+                        if neighbourHoldsSpace { trailing = true; return nil }
+                        guard let earlier = previousProposal[placement.windowID] ?? previous[placement.windowID],
+                              earlier.size.width <= placement.frame.size.width + 0.5,
+                              earlier.size.height <= placement.frame.size.height + 0.5,
+                              !shrinkingIDs.isEmpty
+                        else { return placement }
+                        if !earlier.approximatelyEquals(placement.frame, tolerance: 0.01) { trailing = true }
+                        guard previous[placement.windowID]?.approximatelyEquals(earlier, tolerance: 0.01) != true else { return nil }
+                        return Placement(windowID: placement.windowID, frame: earlier)
+                    }
                 }
-                if !shrinking.isEmpty, shrinking.count < changed.count {
-                    try applyAtomically(shrinking, rollbackFrames: previous, intermediate: true)
-                    let actual = Dictionary(
-                        ((try? snapshots(ids: Set(shrinking.map(\.windowID)))) ?? []).map { ($0.id, $0.frame.size) }
-                    ) { first, _ in first }
-                    let refused = shrinking.contains { placement in
-                        guard let size = actual[placement.windowID] else { return false }
-                        return size.width > placement.frame.size.width + 2 || size.height > placement.frame.size.height + 2
-                    }
-                    let growing = changed.filter { placement in !shrinking.contains { $0.windowID == placement.windowID } }
-                    if !refused {
-                        try applyAtomically(growing, rollbackFrames: previous, intermediate: true)
-                    }
-                    written = refused ? shrinking : changed
-                } else {
-                    try applyAtomically(changed, rollbackFrames: previous, intermediate: true)
+                try applyAtomically(
+                    writes,
+                    rollbackFrames: previous,
+                    currentFrames: previous.merging(transaction.measuredLiveFrames) { _, measured in measured },
+                    intermediate: true
+                )
+                for placement in writes {
+                    transaction.measuredLiveFrames[placement.windowID] = system.measuredFrameAfterWrite(for: placement.windowID)
                 }
             } else {
                 try applyAtomically(
@@ -530,18 +554,43 @@ public final class WindowCoordinator {
                     intermediate: false
                 )
             }
-            // Frames that waited this tick keep their last request, so the
-            // next tick sends them again.
-            if written.count == changed.count {
+            // A window that trailed keeps the frame it was sent, so the next
+            // tick sends the rest of its change.
+            if validateParticipants {
                 transaction.lastAppliedFrames = Dictionary(uniqueKeysWithValues: placements.map { ($0.windowID, $0.frame) })
             } else {
-                for placement in written { transaction.lastAppliedFrames[placement.windowID] = placement.frame }
+                for placement in writes { transaction.lastAppliedFrames[placement.windowID] = placement.frame }
             }
+            transaction.previousLiveProposal = Dictionary(
+                uniqueKeysWithValues: transaction.proposedPlacements.map { ($0.windowID, $0.frame) }
+            )
+            transaction.hasTrailingWrites = trailing
             transaction.hasLiveChanges = true
             transaction.hasDegradedApply = false
             return .applied
         } catch {
             return applyFailureOutcome(for: error, transaction: &transaction)
+        }
+    }
+
+    /// True when a window other than `excluding` has not given up the space a
+    /// neighbour would grow into: it read back larger than the size it was
+    /// sent.
+    private func neighbourHoldsItsSpace(transaction: WindowFrameTransaction, excluding: Set<WindowID>) -> Bool {
+        let candidates = transaction.lastAppliedFrames.filter { !excluding.contains($0.key) && transaction.baselineFrames[$0.key] != $0.value }
+        guard !candidates.isEmpty else { return false }
+        var unread = Set<WindowID>()
+        for (id, sent) in candidates {
+            if let actual = system.measuredFrameAfterWrite(for: id) {
+                if actual.size.width > sent.size.width + 2 || actual.size.height > sent.size.height + 2 { return true }
+            } else {
+                unread.insert(id)
+            }
+        }
+        guard !unread.isEmpty, let read = try? snapshots(ids: unread) else { return false }
+        return read.contains { snapshot in
+            guard let sent = candidates[snapshot.id] else { return false }
+            return snapshot.frame.size.width > sent.size.width + 2 || snapshot.frame.size.height > sent.size.height + 2
         }
     }
 
@@ -710,6 +759,35 @@ public final class WindowCoordinator {
         intermediate: Bool = false
     ) throws {
         guard !placements.isEmpty else { return }
+        let known = currentFrames ?? rollbackFrames
+        if intermediate {
+            // Gesture samples go to every application at once; a rejected
+            // sample restores the previous sample's frames.
+            try system.withFrameWriteBatch {
+                var generationsWritten: [WindowID: UInt64] = [:]
+                for placement in placements {
+                    let generation = (generations[placement.windowID] ?? 0) &+ 1
+                    generations[placement.windowID] = generation
+                    generationsWritten[placement.windowID] = generation
+                    expect(placement.frame, for: placement.windowID, generation: generation)
+                }
+                do {
+                    try system.setIntermediateFrames(placements, knownCurrentFrames: known)
+                } catch {
+                    for (id, generation) in generationsWritten { cancelExpectedMutation(for: id, generation: generation) }
+                    var rollbackFailed = false
+                    for placement in placements {
+                        guard let frame = rollbackFrames[placement.windowID] else { continue }
+                        do { try apply(frame, to: placement.windowID, knownCurrentFrame: placement.frame) } catch { rollbackFailed = true }
+                    }
+                    if rollbackFailed {
+                        throw DegradedApplyError(message: "A window update failed and the previous layout could not be fully restored.")
+                    }
+                    throw error
+                }
+            }
+            return
+        }
         try system.withFrameWriteBatch {
             var attempted: [WindowID] = []
             do {
@@ -729,7 +807,7 @@ public final class WindowCoordinator {
                     try apply(
                         placement.frame,
                         to: placement.windowID,
-                        knownCurrentFrame: (currentFrames ?? rollbackFrames)[placement.windowID],
+                        knownCurrentFrame: known[placement.windowID],
                         intermediate: intermediate
                     )
                 }

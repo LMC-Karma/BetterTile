@@ -573,9 +573,14 @@ enum DividerTestEnding: CaseIterable {
 
     #expect(system.frameWriteCounts.isEmpty)
     displayTicks.fire()
+    // The shrinking window takes the sample first. The growing window
+    // trails by one tick, so it never covers its neighbour.
+    #expect(system.frameWriteCounts == [right: 1])
+    #expect(system.windows.first(where: { $0.id == right })?.frame.minX == bounds.midX + 60)
+    #expect((system.windows.first(where: { $0.id == left })?.frame.maxX ?? .infinity) <= bounds.midX + 60)
+    displayTicks.fire()
     #expect(system.frameWriteCounts == [left: 1, right: 1])
     #expect(system.windows.first(where: { $0.id == left })?.frame.maxX == bounds.midX + 60)
-    #expect(system.windows.first(where: { $0.id == right })?.frame.minX == bounds.midX + 60)
 
     for delta in 121...240 {
         controller.drag(to: appKitPoint(delta: Double(delta) / 2))

@@ -1224,3 +1224,51 @@ func singleWindowPartialFailureRestoresBaselineAndPreservesHistory(actionPlan: B
     ], validateParticipants: false)
     #expect(system.windows[0].frame.size.width == 540)
 }
+
+/// A slow drag moves less than the write tolerance per tick. Each tick must
+/// compare with the frame the window reported, not with the last request,
+/// or the adapter would skip every size write and only move the window.
+@Test @MainActor func slowLiveTicksCompareWithTheMeasuredFrame() throws {
+    let (system, coordinator) = sharedEdgeFixture()
+    system.roundsSizesAndReportsReadback = true
+    let shrinking = system.windows[1].id
+    var transaction = try #require(coordinator.beginTransaction(windowIDs: Set(system.windows.map(\.id))).startedTransaction)
+    for step in 1...4 {
+        let edge = 500 + 0.3 * Double(step)
+        _ = coordinator.applyLive(transaction: &transaction, placements: [
+            Placement(windowID: system.windows[0].id, frame: BTRect(x: 0, y: 0, width: edge, height: 800)),
+            Placement(windowID: shrinking, frame: BTRect(x: edge, y: 0, width: 1000 - edge, height: 800)),
+        ], validateParticipants: false)
+    }
+    let hints = try #require(system.recordedKnownCurrentFrames[shrinking])
+    // After the first write, every hint is a size the window reported.
+    #expect(hints.dropFirst().allSatisfy { hint in
+        guard let hint else { return false }
+        return hint.size.width == hint.size.width.rounded()
+    })
+}
+
+/// Over a steady drag, the growing window takes each sample one tick after
+/// its shrinking neighbour, so the two never overlap.
+@Test @MainActor func liveTicksLetTheGrowingWindowTrailByOneSample() throws {
+    let (system, coordinator) = sharedEdgeFixture()
+    var transaction = try #require(coordinator.beginTransaction(windowIDs: Set(system.windows.map(\.id))).startedTransaction)
+    var edges: [Double] = []
+    for step in 1...5 {
+        let edge = 500 + 10 * Double(step)
+        edges.append(edge)
+        _ = coordinator.applyLive(transaction: &transaction, placements: [
+            Placement(windowID: system.windows[0].id, frame: BTRect(x: 0, y: 0, width: edge, height: 800)),
+            Placement(windowID: system.windows[1].id, frame: BTRect(x: edge, y: 0, width: 1000 - edge, height: 800)),
+        ], validateParticipants: false)
+        let grown = system.windows[0].frame, shrunk = system.windows[1].frame
+        #expect(shrunk.minX == edge)
+        #expect(grown.maxX <= shrunk.minX)
+        #expect(grown.maxX == (step == 1 ? 500 : edges[step - 2]))
+    }
+    #expect(transaction.hasTrailingWrites)
+    // A tick without a new sample completes the growing window.
+    _ = coordinator.applyLive(transaction: &transaction, placements: transaction.proposedPlacements, validateParticipants: false)
+    #expect(system.windows[0].frame.maxX == 550)
+    #expect(!transaction.hasTrailingWrites)
+}

@@ -368,6 +368,7 @@ public final class DividerOverlayController {
     private var reportedLiveBentoState = false
     private var latestDragPoint: CGPoint?
     private var hasPendingDisplayUpdate = false
+    private var holdsContinuousWrites = false
     /// Consecutive live ticks on which a window held its size while asked to
     /// shrink. One tick is not proof: an application can apply a write late.
     private var heldSizeTicks: [WindowID: (size: BTSize, widthCount: Int, heightCount: Int)] = [:]
@@ -705,6 +706,12 @@ public final class DividerOverlayController {
             return
         }
         transaction = newTransaction
+        if configuration.resizeFeedbackMode == .live, !holdsContinuousWrites {
+            // Live ticks share one write session: per-application setup runs
+            // once per gesture instead of once per display frame.
+            coordinator.system.beginContinuousWrites()
+            holdsContinuousWrites = true
+        }
         if let startPoint { presentHandle(for: interaction, near: startPoint, active: true) }
         displayTicks.start(
             on: handlePanel?.contentView,
@@ -761,7 +768,9 @@ public final class DividerOverlayController {
     }
 
     func displayTick() {
-        guard hasPendingDisplayUpdate, let latestDragPoint else { return }
+        // A tick also completes a growing window that trailed the last sample.
+        guard hasPendingDisplayUpdate || (configuration.resizeFeedbackMode == .live && transaction?.hasTrailingWrites == true),
+              let latestDragPoint else { return }
         hasPendingDisplayUpdate = false
         applyDrag(to: latestDragPoint, validateParticipants: false)
     }
@@ -975,14 +984,28 @@ public final class DividerOverlayController {
         }
         let shrinkingIDs = Set(shrinking.map(\.windowID))
         heldSizeTicks = heldSizeTicks.filter { shrinkingIDs.contains($0.key) }
-        guard !shrinking.isEmpty,
-              let targeted = coordinator.system as? any TargetedWindowSystem,
-              let actual = try? targeted.windowSnapshots(ids: shrinkingIDs)
-        else {
+        guard !shrinking.isEmpty else {
             heldSizeTicks = [:]
             return (false, false)
         }
-        let actualSizes = Dictionary(actual.map { ($0.id, $0.frame.size) }, uniquingKeysWith: { first, _ in first })
+        // An application clamps a size while it handles the write, so the
+        // frame read back right after the write is the refusal evidence. A
+        // later read can still show a frame the application has not finished
+        // moving, which a slow drag would mistake for a held minimum.
+        var actualSizes: [WindowID: BTSize] = [:]
+        for id in shrinkingIDs {
+            if let size = coordinator.system.measuredFrameAfterWrite(for: id)?.size { actualSizes[id] = size }
+        }
+        let unread = shrinkingIDs.subtracting(actualSizes.keys)
+        if !unread.isEmpty {
+            guard let targeted = coordinator.system as? any TargetedWindowSystem,
+                  let actual = try? targeted.windowSnapshots(ids: unread)
+            else {
+                heldSizeTicks = [:]
+                return (false, false)
+            }
+            for snapshot in actual where actualSizes[snapshot.id] == nil { actualSizes[snapshot.id] = snapshot.frame.size }
+        }
         var refused = (width: false, height: false)
         for placement in shrinking {
             guard let size = actualSizes[placement.windowID] else {
@@ -1044,6 +1067,10 @@ public final class DividerOverlayController {
         baselineInteraction = nil
         isDragging = false
         transaction = nil
+        if holdsContinuousWrites {
+            holdsContinuousWrites = false
+            coordinator.system.endContinuousWrites()
+        }
         baselineWindows = []
         displayBounds = nil
         startPoint = nil

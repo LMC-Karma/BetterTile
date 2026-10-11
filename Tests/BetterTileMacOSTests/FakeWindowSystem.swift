@@ -77,6 +77,12 @@ final class FakeWindowSystem: WindowSystem, TargetedWindowSystem, WindowEventSou
     /// Simulates applications whose real minimum sizes are not reported.
     var enforcedMinimumWidths: [WindowID: Double] = [:]
     var enforcedMinimumHeights: [WindowID: Double] = [:]
+    /// Simulates applications that round sizes to whole points and an
+    /// adapter that reads the frame back after each write.
+    var roundsSizesAndReportsReadback = false
+    func measuredFrameAfterWrite(for windowID: WindowID) -> BTRect? {
+        roundsSizesAndReportsReadback ? windows.first(where: { $0.id == windowID })?.frame : nil
+    }
     /// Simulates an application that applies a geometry change on its own run
     /// loop: the write is accepted, but the new frame is only observable after
     /// this many reads.
@@ -161,6 +167,10 @@ final class FakeWindowSystem: WindowSystem, TargetedWindowSystem, WindowEventSou
             return
         }
         var applied = frame
+        if roundsSizesAndReportsReadback {
+            applied.size.width = applied.size.width.rounded()
+            applied.size.height = applied.size.height.rounded()
+        }
         if let clampWidth { applied.size.width = min(applied.size.width, clampWidth) }
         if let minimum = enforcedMinimumWidths[windowID], applied.size.width < minimum {
             // A refused shrink keeps the window's edge nearest its old frame.
