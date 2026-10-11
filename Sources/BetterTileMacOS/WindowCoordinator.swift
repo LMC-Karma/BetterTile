@@ -470,7 +470,10 @@ public final class WindowCoordinator {
         }
         do {
             try validate(transaction.proposedPlacements)
-            try applyAtomically(transaction.proposedPlacements, rollbackFrames: transaction.baselineFrames)
+            // A corrective commit starts from the frames an earlier commit
+            // wrote, so shrink-before-grow compares against those.
+            try applyAtomically(transaction.proposedPlacements, rollbackFrames: transaction.baselineFrames,
+                                currentFrames: transaction.lastAppliedFrames)
             if recordHistory {
                 recordChangedHistoryFrames(
                     transaction.baselineFrames,

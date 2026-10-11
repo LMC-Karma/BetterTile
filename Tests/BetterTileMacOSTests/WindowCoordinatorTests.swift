@@ -1251,6 +1251,25 @@ func singleWindowPartialFailureRestoresBaselineAndPreservesHistory(actionPlan: B
     #expect(system.windows[1].frame == BTRect(x: 500, y: 0, width: 500, height: 800))
 }
 
+/// A corrective commit after a first commit compares each window with the
+/// frame it was given, not the frame from before the gesture. The window
+/// that must shrink back is written before its neighbour grows.
+@Test @MainActor func aCorrectiveCommitShrinksFromTheCommittedFrames() throws {
+    let (system, coordinator) = sharedEdgeFixture()
+    let left = system.windows[0].id, right = system.windows[1].id
+    var transaction = try #require(coordinator.beginTransaction(windowIDs: [left, right]).startedTransaction)
+    #expect(coordinator.commit(transaction: &transaction, placements: [
+        Placement(windowID: left, frame: BTRect(x: 0, y: 0, width: 700, height: 800)),
+        Placement(windowID: right, frame: BTRect(x: 700, y: 0, width: 300, height: 800)),
+    ], recordHistory: false).isApplied)
+    // Still wider than before the gesture, but narrower than committed.
+    #expect(coordinator.commit(transaction: &transaction, placements: [
+        Placement(windowID: left, frame: BTRect(x: 0, y: 0, width: 600, height: 800)),
+        Placement(windowID: right, frame: BTRect(x: 600, y: 0, width: 400, height: 800)),
+    ], recordHistory: false).isApplied)
+    #expect(system.frameWriteBatches.last == [left, right])
+}
+
 /// A slow drag moves less than the write tolerance per tick. Each tick must
 /// compare with the frame the window reported, not with the last request,
 /// or the adapter would skip every size write and only move the window.
