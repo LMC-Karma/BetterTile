@@ -192,12 +192,29 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, TabbedWindowSystem, Min
     }
     /// Windows whose application restores them later than the request.
     var slowRestoreIDs: Set<WindowID> = []
+    var failedRestoreWindowIDs: Set<WindowID> = []
+    var restoreRequests: [WindowID] = []
+    var emitsMinimizationEvents = false
     func setMinimized(_ minimized: Bool, for windowID: WindowID) throws {
         guard let index = windows.firstIndex(where: { $0.id == windowID }) else {
             throw WindowSystemError.windowNotFound(windowID)
         }
-        if !minimized, slowRestoreIDs.contains(windowID) { return }
+        if !minimized {
+            restoreRequests.append(windowID)
+            if failedRestoreWindowIDs.contains(windowID) {
+                throw WindowSystemError.operationFailed("Injected restore failure.")
+            }
+            if slowRestoreIDs.contains(windowID) { return }
+        }
         windows[index].isMinimized = minimized
+        if emitsMinimizationEvents {
+            let event = WindowSystemEvent(kind: minimized ? .minimized : .restored,
+                                          windowID: windowID, processIdentifier: windows[index].processIdentifier)
+            Task { @MainActor [weak self] in
+                await Task.yield()
+                self?.eventHandler?(event)
+            }
+        }
     }
 
     func setWindowEventHandler(_ handler: (@MainActor (WindowSystemEvent) -> Void)?) {
@@ -662,7 +679,7 @@ func waitFor(
     #expect(!peerBaseline.isMinimized)
 }
 
-/// Keyboard Maximize on a Bento desktop enters focus mode at once, and a
+/// Keyboard Maximize on a Bento desktop enters Focus mode at once, and a
 /// later sweep does not repeat it. Restore ends it and returns the layout.
 @Test @MainActor func bentoMaximizeEntersFocusModeAndRestoreReturnsTheLayout() async throws {
     _ = NSApplication.shared
@@ -680,8 +697,8 @@ func waitFor(
     model.perform(.maximize)
     #expect(system.windows[0].frame == system.mainDisplay.visibleFrame)
     #expect(system.windows[1].isMinimized)
-    #expect(model.lastActionFeedback?.message.hasPrefix("Focus") == true)
-    try await Task.sleep(for: .milliseconds(400)) // Later sweeps leave focus mode alone.
+    #expect(model.lastActionFeedback?.message.hasPrefix("Focus mode · ") == true)
+    try await Task.sleep(for: .milliseconds(400)) // Later sweeps leave Focus mode alone.
     #expect(system.windows[1].isMinimized)
     #expect(system.windows[0].frame == system.mainDisplay.visibleFrame)
 
@@ -689,7 +706,7 @@ func waitFor(
     #expect(!system.windows[1].isMinimized)
     #expect(await waitFor { system.windows.map(\.frame) == tiled })
 
-    // Repair during focus mode also brings the peers back.
+    // Repair during Focus mode also brings the peers back.
     model.perform(.maximize)
     try #require(system.windows[1].isMinimized)
     model.tileCurrentDisplay()
@@ -697,8 +714,102 @@ func waitFor(
     #expect(await waitFor { system.windows.map(\.frame) == tiled })
 }
 
+@Test(arguments: [false, true]) @MainActor
+func restoringAFocusModePeerFromTheDockWaitsForTheOtherPeers(rejectLayout: Bool) async throws {
+    _ = NSApplication.shared
+    let system = FakeAppWindowSystem()
+    for name in ["dock-peer", "slow-peer"] {
+        system.windows.append(WindowSnapshot(id: WindowID(rawValue: name), processIdentifier: 43,
+            bundleIdentifier: "com.example.Peer", frame: BTRect(x: 0, y: 0, width: 200, height: 300),
+            displayID: system.mainDisplay.id))
+    }
+    system.emitsMinimizationEvents = true
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    model.setActiveMode(.bento)
+    try #require(await waitFor { system.frameWriteCounts.count == system.windows.count })
+    try await Task.sleep(for: .milliseconds(350))
+    system.focusedID = system.windows[0].id
+    model.perform(.leftTwoThirds)
+    try await Task.sleep(for: .milliseconds(350))
+    try #require(system.windows[0].frame.size.width > 600)
+    let tiled = system.windows.map(\.frame)
+    let focusedID = system.windows[0].id
+    let dockPeer = system.windows[1].id
+    let slowPeer = system.windows[2].id
+    system.focusedID = focusedID
+    model.perform(.maximize)
+    try #require(system.windows.dropFirst().allSatisfy { $0.isMinimized })
+    try await Task.sleep(for: .milliseconds(350))
+    system.slowRestoreIDs = [slowPeer]
+    system.focusedID = dockPeer
+    try system.setMinimized(false, for: dockPeer)
+    try #require(await waitFor { system.restoreRequests.contains(slowPeer) })
+    try await Task.sleep(for: .milliseconds(200))
+    #expect(system.windows[2].isMinimized)
+    #expect(system.windows[0].frame == system.mainDisplay.visibleFrame)
+    if rejectLayout {
+        system.failedFrameWriteNumbers[focusedID] = [system.frameWriteCounts[focusedID, default: 0] + 1]
+    }
+    system.slowRestoreIDs = []
+    try system.setMinimized(false, for: slowPeer)
 
-/// A Layout Wheel half during focus mode brings the covered windows back,
+    if rejectLayout {
+        try #require(await waitFor { model.statusMessage?.contains("Use Repair") == true })
+        #expect(system.windows[0].frame == system.mainDisplay.visibleFrame)
+        let writes = system.frameWriteCounts
+        try await Task.sleep(for: .milliseconds(350))
+        #expect(system.frameWriteCounts == writes)
+    } else {
+        #expect(await waitFor { system.windows.map(\.frame) == tiled })
+        #expect(system.windows.allSatisfy { !$0.isMinimized })
+        system.focusedID = focusedID
+        model.perform(.maximize)
+        model.perform(.restore)
+        #expect(await waitFor { system.windows.map(\.frame) == tiled })
+    }
+}
+
+@Test(arguments: [false, true]) @MainActor
+func aFocusModeRestoreReturnsAvailablePeersAfterARestoreFailure(fromDock: Bool) async throws {
+    _ = NSApplication.shared
+    let system = FakeAppWindowSystem()
+    for name in ["dock-peer", "failed-peer"] {
+        system.windows.append(WindowSnapshot(id: WindowID(rawValue: name), processIdentifier: 43,
+            bundleIdentifier: "com.example.Peer", frame: BTRect(x: 0, y: 0, width: 200, height: 300),
+            displayID: system.mainDisplay.id))
+    }
+    system.emitsMinimizationEvents = true
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    model.setActiveMode(.bento)
+    try #require(await waitFor { system.frameWriteCounts.count == system.windows.count })
+    try await Task.sleep(for: .milliseconds(350))
+    let tiled = system.windows.map(\.frame)
+    system.focusedID = system.windows[0].id
+    model.perform(.maximize)
+    try #require(system.windows.dropFirst().allSatisfy { $0.isMinimized })
+    try await Task.sleep(for: .milliseconds(350))
+    let dockPeer = system.windows[1].id
+    let failedPeer = system.windows[2].id
+    system.failedRestoreWindowIDs = [failedPeer]
+    if fromDock {
+        system.focusedID = dockPeer
+        try system.setMinimized(false, for: dockPeer)
+    } else {
+        model.perform(.restore)
+    }
+
+    #expect(await waitFor { Array(system.windows.prefix(2).map(\.frame)) == Array(tiled.prefix(2)) })
+    #expect(!system.windows[1].isMinimized)
+    #expect(system.windows[2].isMinimized)
+    #expect(system.restoreRequests.filter { $0 == failedPeer }.count == 1)
+    let writes = system.frameWriteCounts
+    try await Task.sleep(for: .milliseconds(350))
+    #expect(system.frameWriteCounts == writes)
+}
+
+/// A Layout Wheel half during Focus mode brings the covered windows back,
 /// like the keyboard shortcut, instead of leaving them minimized.
 @Test @MainActor func aLayoutWheelHalfEndsFocusModeAndReturnsThePeers() async throws {
     _ = NSApplication.shared
@@ -739,7 +850,7 @@ func waitFor(
     #expect(system.windows[0].frame == system.mainDisplay.visibleFrame)
 }
 
-/// Repair while focus mode is ending waits for the covered windows to come
+/// Repair while Focus mode is ending waits for the covered windows to come
 /// back, so it never lays the desktop out without them.
 @Test @MainActor func repairWhileFocusModeEndsWaitsForTheReturningPeers() async throws {
     _ = NSApplication.shared
@@ -768,7 +879,7 @@ func waitFor(
     #expect(await waitFor { model.lastActionFeedback != restoring })
 }
 
-/// Repair Bento from the Layout Wheel waits for a focus-mode restore the
+/// Repair Bento from the Layout Wheel waits for a Focus mode restore the
 /// same way, instead of cancelling it.
 @Test @MainActor func layoutWheelRepairWaitsForAFocusModeRestore() async throws {
     _ = NSApplication.shared
