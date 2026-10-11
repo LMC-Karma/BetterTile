@@ -774,9 +774,11 @@ public final class WindowCoordinator {
                   snapshot.constraints.isResizable || keepsSize else {
                 throw WindowSystemError.unsupportedWindow(placement.windowID)
             }
-            guard placement.frame.size.width + sizeTolerance >= snapshot.constraints.minimumSize.width,
-                  placement.frame.size.height + sizeTolerance >= snapshot.constraints.minimumSize.height
-            else { throw WindowSystemError.operationFailed("A window reached its minimum size.") }
+            if snapshot.constraints.isResizable {
+                guard placement.frame.size.width + sizeTolerance >= snapshot.constraints.minimumSize.width,
+                      placement.frame.size.height + sizeTolerance >= snapshot.constraints.minimumSize.height
+                else { throw WindowSystemError.operationFailed("A window reached its minimum size.") }
+            }
             // A legal size is not enough: a stale display frame or a split
             // driven to an edge can produce a placement that leaves nothing on
             // screen to grab.
