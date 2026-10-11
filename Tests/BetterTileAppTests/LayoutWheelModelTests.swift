@@ -639,13 +639,48 @@ func waitFor(
     }
 
     #expect(placements.map(\.windowID) == [captured.windowID])
+    // Focus mode: the window covers the display and its peer is minimized
+    // in the same action, exactly as the keyboard shortcut does.
     model.performLayoutWheel(.windowAction(.maximize), for: captured)
-    #expect(system.windows.first(where: { $0.id == peer.id })?.frame == peerBaseline.frame)
-    #expect(
-        system.windows.first(where: { $0.id == peer.id })?.isMinimized
-            == peerBaseline.isMinimized
-    )
+    #expect(system.windows.first(where: { $0.id == peer.id })?.isMinimized == true)
+    #expect(!peerBaseline.isMinimized)
 }
+
+/// Keyboard Maximize on a Bento desktop enters focus mode at once, and a
+/// later sweep does not repeat it. Restore ends it and returns the layout.
+@Test @MainActor func bentoMaximizeEntersFocusModeAndRestoreReturnsTheLayout() async throws {
+    _ = NSApplication.shared
+    let system = FakeAppWindowSystem()
+    let peer = WindowID(rawValue: "peer")
+    system.windows.append(WindowSnapshot(id: peer, processIdentifier: 43, bundleIdentifier: "com.example.Peer",
+        frame: BTRect(x: 0, y: 0, width: 200, height: 300), displayID: system.mainDisplay.id))
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    model.setActiveMode(.bento)
+    try #require(await waitFor { system.windows.allSatisfy { $0.frame.size.height == 800 } })
+    let tiled = system.windows.map(\.frame)
+    system.focusedID = system.windows[0].id
+
+    model.perform(.maximize)
+    #expect(system.windows[0].frame == system.mainDisplay.visibleFrame)
+    #expect(system.windows[1].isMinimized)
+    #expect(model.lastActionFeedback?.message.hasPrefix("Focus") == true)
+    try await Task.sleep(for: .milliseconds(400)) // Later sweeps leave focus mode alone.
+    #expect(system.windows[1].isMinimized)
+    #expect(system.windows[0].frame == system.mainDisplay.visibleFrame)
+
+    model.perform(.restore)
+    #expect(!system.windows[1].isMinimized)
+    #expect(await waitFor { system.windows.map(\.frame) == tiled })
+
+    // Repair during focus mode also brings the peers back.
+    model.perform(.maximize)
+    try #require(system.windows[1].isMinimized)
+    model.tileCurrentDisplay()
+    #expect(!system.windows[1].isMinimized)
+    #expect(await waitFor { system.windows.map(\.frame) == tiled })
+}
+
 
 @Test @MainActor func repairBentoRequiresBentoAndRunsWhenAvailable() {
     let system = FakeAppWindowSystem()
