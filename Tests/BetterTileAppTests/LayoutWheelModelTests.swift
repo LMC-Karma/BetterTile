@@ -768,6 +768,31 @@ func waitFor(
     #expect(await waitFor { model.lastActionFeedback != restoring })
 }
 
+/// Repair Bento from the Layout Wheel waits for a focus-mode restore the
+/// same way, instead of cancelling it.
+@Test @MainActor func layoutWheelRepairWaitsForAFocusModeRestore() async throws {
+    _ = NSApplication.shared
+    let system = FakeAppWindowSystem()
+    let peer = WindowID(rawValue: "peer")
+    system.windows.append(WindowSnapshot(id: peer, processIdentifier: 43, bundleIdentifier: "com.example.Peer",
+        frame: BTRect(x: 0, y: 0, width: 200, height: 300), displayID: system.mainDisplay.id))
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    model.setActiveMode(.bento)
+    try #require(await waitFor { system.windows.allSatisfy { $0.frame.size.height == 800 } })
+    let tiled = system.windows.map(\.frame)
+    system.focusedID = system.windows[0].id
+    model.perform(.maximize)
+    try #require(system.windows[1].isMinimized)
+    system.slowRestoreIDs = [peer]
+    model.perform(.restore)
+    model.performLayoutWheel(.repairBento, for: target(for: system))
+    try await Task.sleep(for: .milliseconds(300))
+    system.slowRestoreIDs = []
+    system.windows[1].isMinimized = false
+    #expect(await waitFor { system.windows.map(\.frame) == tiled })
+}
+
 /// A probe that cannot restore a new window's size puts the window back at
 /// its own frame at once; a window that floats gets no other write.
 @Test @MainActor func aFailedProbeRestorePutsTheArrivalBack() async throws {

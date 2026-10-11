@@ -95,6 +95,18 @@ final class BetterTileModel {
         focusRestoreTask?.cancel()
         focusRestoreTask = nil
     }
+    /// Ending focus mode is still bringing the covered windows back. Repair
+    /// runs after that restore, so it never lays the desktop out without
+    /// them. A newer action that cancels the restore also wins over Repair.
+    private func repairsAfterFocusRestore(_ repair: @escaping @MainActor () -> Void) -> Bool {
+        guard let pending = focusRestoreTask else { return false }
+        Task { @MainActor [weak self] in
+            await pending.value
+            guard let self, !self.isShutDown, !pending.isCancelled else { return }
+            repair()
+        }
+        return true
+    }
     /// The tab the user last selected. Activating its application can make
     /// that application's previous main window key instead; for a short
     /// time such a focus change is corrected rather than treated as a
@@ -485,6 +497,8 @@ final class BetterTileModel {
         _ command: LayoutWheelCommand,
         for target: LayoutWheelTarget
     ) {
+        if command == .repairBento,
+           repairsAfterFocusRestore({ [weak self] in self?.performLayoutWheel(command, for: target) }) { return }
         cancelPendingFocusRestore()
         switch planLayoutWheel(command, for: target) {
         case let .unavailable(reason, displayID):
@@ -919,17 +933,7 @@ final class BetterTileModel {
     }
 
     func tileCurrentDisplay() {
-        // Ending focus mode is still bringing the covered windows back.
-        // Repair after that restore, so it never lays the desktop out without
-        // them. A newer action that cancels the restore also wins over this.
-        if let pending = focusRestoreTask {
-            Task { @MainActor [weak self] in
-                await pending.value
-                guard let self, !self.isShutDown, !pending.isCancelled else { return }
-                self.tileCurrentDisplay()
-            }
-            return
-        }
+        if repairsAfterFocusRestore({ [weak self] in self?.tileCurrentDisplay() }) { return }
         cancelPendingFocusRestore()
         do {
             guard let focused = try system.focusedWindow() else {
