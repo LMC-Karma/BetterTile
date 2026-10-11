@@ -143,6 +143,22 @@ final class FakeWindowSystem: WindowSystem, TargetedWindowSystem, WindowEventSou
     func emit(_ event: WindowSystemEvent) { eventHandler?(event) }
 
     var intermediateFrameWriteCounts: [WindowID: Int] = [:]
+    /// Like the Accessibility adapter, writes every window of a live tick
+    /// before it reports the first failure.
+    var attemptsWholeIntermediateBatch = false
+
+    func setIntermediateFrames(_ writes: [Placement], knownCurrentFrames: [WindowID: BTRect]) throws {
+        var failure: Error?
+        for write in writes {
+            do {
+                try setIntermediateFrame(write.frame, knownCurrentFrame: knownCurrentFrames[write.windowID], for: write.windowID)
+            } catch {
+                failure = failure ?? error
+                if !attemptsWholeIntermediateBatch { throw error }
+            }
+        }
+        if let failure { throw failure }
+    }
 
     func setIntermediateFrame(_ frame: BTRect, knownCurrentFrame: BTRect?, for windowID: WindowID) throws {
         intermediateFrameWriteCounts[windowID, default: 0] += 1

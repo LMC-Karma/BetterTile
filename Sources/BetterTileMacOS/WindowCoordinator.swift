@@ -811,7 +811,14 @@ public final class WindowCoordinator {
                 } catch {
                     for (id, generation) in generationsWritten { cancelExpectedMutation(for: id, generation: generation) }
                     var rollbackFailed = false
-                    for placement in placements {
+                    // Other applications may already hold this sample. Shrink
+                    // windows back before regrowing their neighbours.
+                    func shrinksBack(_ placement: Placement) -> Bool {
+                        guard let frame = rollbackFrames[placement.windowID] else { return false }
+                        return frame.size.width < placement.frame.size.width - 0.5
+                            || frame.size.height < placement.frame.size.height - 0.5
+                    }
+                    for placement in placements.sorted(by: { shrinksBack($0) && !shrinksBack($1) }) {
                         guard let frame = rollbackFrames[placement.windowID] else { continue }
                         do { try apply(frame, to: placement.windowID, knownCurrentFrame: placement.frame) } catch { rollbackFailed = true }
                     }

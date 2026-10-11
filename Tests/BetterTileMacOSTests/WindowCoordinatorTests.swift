@@ -1225,6 +1225,33 @@ func singleWindowPartialFailureRestoresBaselineAndPreservesHistory(actionPlan: B
     #expect(system.windows[0].frame.size.width == 540)
 }
 
+/// A live tick writes every application before it reports a failure, so
+/// a rejected tick can leave other windows at the new sample. Rollback
+/// shrinks those windows back before it regrows their neighbours.
+@Test @MainActor func rejectedLiveTickShrinksBackBeforeItRegrows() throws {
+    let (system, coordinator) = sharedEdgeFixture()
+    system.attemptsWholeIntermediateBatch = true
+    let left = system.windows[0].id, right = system.windows[1].id
+    var transaction = try #require(coordinator.beginTransaction(windowIDs: [left, right]).startedTransaction)
+    func tick(_ edge: Double) -> WindowMutationOutcome {
+        coordinator.applyLive(transaction: &transaction, placements: [
+            Placement(windowID: left, frame: BTRect(x: 0, y: 0, width: edge, height: 800)),
+            Placement(windowID: right, frame: BTRect(x: edge, y: 0, width: 1000 - edge, height: 800)),
+        ], validateParticipants: false)
+    }
+    #expect(tick(480).isApplied)
+    // The shrinking left window's write fails after its size lands; the
+    // growing right window has already taken the previous sample.
+    system.partiallyFailedFrameWriteNumbers[left] = [2]
+    #expect(!tick(460).isApplied)
+    let batch = try #require(system.frameWriteBatches.last)
+    // Writes go in window order; the rollback starts with the right window,
+    // which shrinks back, before the left window regrows.
+    #expect(batch == [left, right, right, left])
+    #expect(system.windows[0].frame == BTRect(x: 0, y: 0, width: 480, height: 800))
+    #expect(system.windows[1].frame == BTRect(x: 500, y: 0, width: 500, height: 800))
+}
+
 /// A slow drag moves less than the write tolerance per tick. Each tick must
 /// compare with the frame the window reported, not with the last request,
 /// or the adapter would skip every size write and only move the window.
