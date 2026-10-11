@@ -1528,3 +1528,29 @@ func minimizedRightHalfReturnsToItsOriginalSide(nativeMembership: Bool, staleMin
     #expect(await waitFor { model.lastActionFeedback?.message == "Bento is full" })
     #expect(model.lastActionFeedback?.detail?.contains("Report") == true)
 }
+
+/// A closed document window that its application keeps alive off screen
+/// sends no destroyed event. Its pane must still close within a second,
+/// not wait for the watchdog's sweeps.
+@Test @MainActor func silentlyClosedWindowLeavesItsPaneWithinASecond() async throws {
+    _ = NSApplication.shared
+    let system = FakeAppWindowSystem()
+    for index in 1...2 {
+        system.windows.append(WindowSnapshot(id: WindowID(rawValue: "doc\(index)"), processIdentifier: 70,
+            frame: BTRect(x: 0, y: 0, width: 400, height: 300), displayID: system.mainDisplay.id))
+    }
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    model.setActiveMode(.bento)
+    try #require(await waitFor { Set(system.windows.map(\.frame)).count == 3 })
+    try await Task.sleep(for: .milliseconds(300))
+    let closed = system.windows.removeLast()
+    // The application only moves focus to its other window.
+    system.focusedID = system.windows[0].id
+    system.eventHandler?(WindowSystemEvent(kind: .focused, windowID: system.windows[0].id,
+                                          processIdentifier: system.windows[0].processIdentifier))
+    let reflowed = await waitFor(timeout: .seconds(3)) {
+        system.windows.allSatisfy { $0.frame.size.height == 800 } && Set(system.windows.map(\.frame)).count == 2
+    }
+    #expect(reflowed, "\(system.windows.map(\.frame)) after closing \(closed.id), sweeps \(system.completeSweepCount)")
+}

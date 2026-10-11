@@ -83,6 +83,8 @@ final class BetterTileModel {
     private(set) var tabbedNeedsFocusRefresh = false
     private var tabbedFocusSuppressedUntil = Date.distantPast
     private var lastBentoFocusMessage: String?
+    private var tabbedCurtainRecheckTask: Task<Void, Never>?
+    private var absenceConfirmationTask: Task<Void, Never>?
     /// The Bento tree from before focus mode, per desktop session, so ending
     /// focus mode returns exactly the previous layout.
     private var bentoStateBeforeFocus: [DesktopSessionID: BentoLayoutState] = [:]
@@ -1649,6 +1651,8 @@ final class BetterTileModel {
 
     func shutdown() {
         guard !isShutDown else { return }
+        absenceConfirmationTask?.cancel()
+        tabbedCurtainRecheckTask?.cancel()
         // A held divider can roll back to pane frames. Finish that rollback
         // before restoring the windows' Native entry frames.
         dividerResize.hideAndCancel()
@@ -2068,6 +2072,12 @@ final class BetterTileModel {
         case .focused:
             handleTabbedFocus()
             layoutWheel.handleFocusedWindowChanged()
+            // Closing a document window often only moves focus: some
+            // applications keep the window alive off screen and send no
+            // destroyed event. A sweep then notices the missing pane.
+            if sessionStore.sessions.values.contains(where: { $0.mode == .bento }) {
+                pendingWindowEvents.recordTopologyChange()
+            }
         }
         schedulePendingWindowEvents()
     }
@@ -3179,6 +3189,22 @@ final class BetterTileModel {
     private func logHeldAbsences(in session: LayoutSession) {
         if !session.presence.pending.isEmpty {
             Self.bentoLog.debug("holding absent panes until closure is confirmed")
+            scheduleAbsenceConfirmation()
+        }
+    }
+
+    /// Some applications keep a closed document window alive off screen, so
+    /// no destroyed event arrives and closure waited for the watchdog's
+    /// sweeps. While a pane is missing, sweep again shortly so the required
+    /// consecutive misses accumulate in under a second.
+    private func scheduleAbsenceConfirmation() {
+        guard absenceConfirmationTask == nil, !isShutDown else { return }
+        absenceConfirmationTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(250))
+            guard let self, !Task.isCancelled else { return }
+            self.absenceConfirmationTask = nil
+            self.pendingWindowEvents.recordTopologyChange()
+            self.schedulePendingWindowEvents()
         }
     }
 
@@ -3420,6 +3446,15 @@ extension BetterTileModel {
                                 order.last(where: { $0.windowID.map(selected.contains) == true })?.windowID
                             }.flatMap { windowNumbers[$0] })
         tabbedOverlays[display.id] = overlay
+        // A kept curtain over an unverified order is checked again shortly.
+        if overlay.needsCurtainVerification, tabbedCurtainRecheckTask == nil {
+            tabbedCurtainRecheckTask = Task { @MainActor [weak self] in
+                try? await Task.sleep(for: .milliseconds(80))
+                guard let self, !Task.isCancelled else { return }
+                self.tabbedCurtainRecheckTask = nil
+                self.repairTabbedStacking()
+            }
+        }
     }
 
     private static let tabbedSnapFailure = "That snap cannot fit every pane within its minimum size and the 12-pane limit."

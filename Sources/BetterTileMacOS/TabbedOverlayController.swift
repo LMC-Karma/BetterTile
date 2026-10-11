@@ -56,6 +56,11 @@ public final class TabbedOverlayController {
     private let orderPanel: (NSPanel, NSWindow.OrderingMode, Int) -> Void
     private let panelFactory: () -> NSPanel
     private var draggedWindow: WindowID?
+    private var curtainSelection: [WindowID] = []
+    private var curtainBounds: BTRect?
+    /// True while a curtain is kept over an order that could not be read
+    /// back. The caller should verify the order again soon.
+    public private(set) var needsCurtainVerification = false
     /// Reads the real primary button. A tab drag whose mouse-up never
     /// arrives finishes on the next display tick instead of staying armed.
     private let primaryButtonIsPressed: () -> Bool
@@ -167,7 +172,7 @@ public final class TabbedOverlayController {
         let anchor = curtainAnchorWindowNumber.flatMap { number in
             hasSelectedIdentities && state.selectedWindowIDs.contains(where: { numbers[$0] == number }) ? number : nil
         }
-        refreshCurtain(anchor: anchor)
+        refreshCurtain(anchor: anchor, identitiesValid: hasSelectedIdentities)
         refreshDividerControls()
     }
 
@@ -179,6 +184,9 @@ public final class TabbedOverlayController {
     }
 
     public func hide() {
+        needsCurtainVerification = false
+        curtainSelection = []
+        curtainBounds = nil
         cancelInteraction()
         for panel in Array(panes.values) + Array(dividerControls.values) + [curtain].compactMap({ $0 }) { panel.orderOut(nil) }
         curtain = nil
@@ -186,8 +194,23 @@ public final class TabbedOverlayController {
 
     /// The caller verifies all selected windows are above inactive tabs, then
     /// supplies the exact number of the backmost selected window.
-    private func refreshCurtain(anchor: Int?) {
-        guard let anchor, anchor > 0 else { curtain?.orderOut(nil); return }
+    private func refreshCurtain(anchor: Int?, identitiesValid: Bool) {
+        guard let anchor, anchor > 0 else {
+            // Right after an application activates, the window order often
+            // reads back stale for a moment. Removing the curtain then
+            // exposes every hidden tab; with the same selection it stays
+            // where it is, and the caller verifies the order again shortly.
+            if identitiesValid, curtain?.isVisible == true,
+               curtainSelection == state.selectedWindowIDs, curtainBounds == bounds {
+                needsCurtainVerification = true
+                return
+            }
+            curtain?.orderOut(nil)
+            return
+        }
+        needsCurtainVerification = false
+        curtainSelection = state.selectedWindowIDs
+        curtainBounds = bounds
         let panel = curtain ?? makePanel()
         panel.level = .normal
         panel.isExcludedFromWindowsMenu = true
