@@ -2689,9 +2689,15 @@ final class BetterTileModel {
 
     /// Windows Bento may lay out. Excluded applications keep their own size and
     /// position instead of becoming panes.
+    /// In Bento, a window that cannot be resized or moved, such as
+    /// Calculator, floats: a pane would ask it for a frame it refuses, and
+    /// every placement would be rejected. Tabbed keeps such a window as a
+    /// tab; its backdrop covers the rest of the pane.
     private func bentoEligible(_ windows: [WindowSnapshot]) -> [WindowSnapshot] {
         windows.filter {
-            !confirmedMinimizedWindowIDs.contains($0.id) && rule(for: $0).allowsBentoParticipation
+            guard !confirmedMinimizedWindowIDs.contains($0.id), rule(for: $0).allowsBentoParticipation else { return false }
+            if sessionStore.session(for: $0.displayID)?.mode == .tabbed { return true }
+            return $0.constraints.isResizable && $0.constraints.isMovable
         }
     }
 
