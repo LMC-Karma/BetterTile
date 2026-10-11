@@ -2342,7 +2342,7 @@ final class BetterTileModel {
         let newlyFloating = after.automaticallyFloatingWindowIDs.subtracting(before.automaticallyFloatingWindowIDs)
         guard let window = windows.first(where: { newlyFloating.contains($0.id) }) else { return }
         let name = window.title.isEmpty ? "This window" : "“\(window.title)”"
-        statusMessage = "Bento manages up to six windows. \(name) stays floating: drop it on a pane to swap, or switch this desktop to Tabbed."
+        statusMessage = "Bento manages up to six windows. \(name) floats: drop it on a pane to swap, or use Tabbed."
         presentActionResult(succeeded: false, error: statusMessage, displayID: display.id)
     }
 
