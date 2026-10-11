@@ -3607,7 +3607,7 @@ extension BetterTileModel {
     private func applyTabbedState(
         _ state: TabbedLayoutState, session original: LayoutSession, display: DisplaySnapshot,
         windows: [WindowSnapshot], focus: WindowID?, rememberUndo: Bool = false, consumeUndo: Bool = false,
-        selectionOnly: Bool = false, focusAlreadyRequested: Bool = false, rollbackFrames: [WindowID: BTRect]? = nil,
+        selectionOnly: Bool = false, earlyRaise: TabbedEarlyRaise? = nil, rollbackFrames: [WindowID: BTRect]? = nil,
         snapAction: WindowAction? = nil, snapScope: TabbedSnapScope = .pane, gestureBaseline: TabbedLayoutState? = nil,
         gestureSourceID: WindowID? = nil, expectedSpaceID: NativeSpaceID? = nil, restorationFrames: [WindowID: BTRect] = [:]
     ) {
@@ -3694,6 +3694,7 @@ extension BetterTileModel {
         catch {
             let reason = error.localizedDescription
             guard let rollbackFrames else {
+                if let earlyRaise { undoEarlyTabRaise(earlyRaise) }
                 statusMessage = reason
                 presentActionResult(succeeded: false, error: reason, displayID: display.id)
                 return
@@ -3789,7 +3790,8 @@ extension BetterTileModel {
                     selected: selected,
                     previousSelected: previous?.selectedWindowIDs.filter(eligibleIDs.contains) ?? [],
                     focus: focus.flatMap { eligibleIDs.contains($0) ? $0 : nil },
-                    focusAlreadyRequested: focusAlreadyRequested && attempt == 0,
+                    focusAlreadyRequested: earlyRaise != nil && attempt == 0,
+                    focusCheckpoint: earlyRaise?.previousFocus,
                     onSizeMismatch: { id, requested, baseline, actual in
                         guard proposal.state.windowIDs.contains(id) || detached.contains(id) else { return }
                         learnedSize = self.system.observeApplicationEnforcedMinimum(
@@ -3913,13 +3915,18 @@ extension BetterTileModel {
             return
         }
         // A selected tab's frame is already in its pane, so it comes to the
-        // front before anything is read. The placement below verifies it.
-        var focusAlreadyRequested = false
-        if case let .select(id) = intent, state.panes.contains(where: { $0.tabs.contains(id) && $0.selected != id }) {
+        // front before anything is read. The placement below verifies it; a
+        // selection rejected before that placement undoes the raise.
+        var earlyRaise: TabbedEarlyRaise?
+        if case let .select(id) = intent, let pane = state.panes.first(where: { $0.tabs.contains(id) && $0.selected != id }) {
             tabbedFocusSuppressedUntil = Date().addingTimeInterval(0.3)
             tabbedIntendedFocus = (id, Date().addingTimeInterval(1))
-            focusAlreadyRequested = coordinator.raiseSelectedTab(id).isApplied
+            if coordinator.focusTabbedWindow(id).isApplied {
+                earlyRaise = TabbedEarlyRaise(previousSelected: pane.selected, previousFocus: state.activeWindowID)
+            }
         }
+        var handedOff = false
+        defer { if !handedOff, let earlyRaise { undoEarlyTabRaise(earlyRaise) } }
         // Refresh only this layout's windows when the snapshot cache is valid;
         // a full scan of every application costs 10-40 ms per action.
         guard let allWindows = (try? system.cachedVisibleWindows(refreshing: Set(state.windowIDs)))
@@ -3980,10 +3987,19 @@ extension BetterTileModel {
         case let .adjustDivider(id, delta):
             guard state.adjustDivider(id, by: delta, in: display.visibleFrame) else { return }
         }
+        handedOff = true
         applyTabbedState(state, session: session, display: display, windows: windows, focus: focus,
                          rememberUndo: undo, consumeUndo: consumeUndo, selectionOnly: selectionOnly,
-                         focusAlreadyRequested: focusAlreadyRequested,
+                         earlyRaise: earlyRaise,
                          restorationFrames: restorationFrames)
+    }
+
+    /// Puts back the tab order and focus from before a selection raised its
+    /// tab early, when that selection is rejected before its placement.
+    private func undoEarlyTabRaise(_ raise: TabbedEarlyRaise) {
+        tabbedIntendedFocus = nil
+        if let previous = raise.previousSelected { _ = coordinator.raiseTabbedWindows([previous]) }
+        if let focus = raise.previousFocus { _ = coordinator.focusTabbedWindow(focus) }
     }
 
     /// The user resized a selected window by its edge. As in Bento, a shared
@@ -4342,4 +4358,10 @@ extension BetterTileModel {
             }
         }
     }
+}
+
+/// The tab order and focus before a selection raised its tab early.
+struct TabbedEarlyRaise {
+    let previousSelected: WindowID?
+    let previousFocus: WindowID?
 }

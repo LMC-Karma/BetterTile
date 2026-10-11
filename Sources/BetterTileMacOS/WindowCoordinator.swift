@@ -1057,6 +1057,7 @@ extension WindowCoordinator {
         previousSelected: [WindowID],
         focus: WindowID?,
         focusAlreadyRequested: Bool = false,
+        focusCheckpoint: WindowID? = nil,
         onSizeMismatch: (@MainActor (WindowID, BTRect, BTRect, BTRect) -> Void)? = nil,
         isCurrent: @MainActor () -> Bool
     ) async -> WindowMutationOutcome {
@@ -1070,7 +1071,8 @@ extension WindowCoordinator {
         let baseline: [WindowID: BTRect]
         let currentFrames: [WindowID: BTRect]
         let participantDisplayID: DisplayID?
-        let oldFocus = try? system.focusedWindow()?.id
+        // A selection that raised its tab early knows the focus before it.
+        let oldFocus = focusCheckpoint ?? (try? system.focusedWindow()?.id)
         do {
             guard ids == Set(placements.map(\.windowID)) else {
                 throw WindowSystemError.operationFailed("One or more selected tabs are no longer available.")
@@ -1235,21 +1237,6 @@ extension WindowCoordinator {
 
     /// Restores Tabbed stacking without moving a window, activating an app,
     /// or changing keyboard focus. Raises in the given order, back to front.
-    /// Brings a newly selected tab to the front and focuses it before its
-    /// placement is verified, so the selection shows at once. The placement
-    /// that follows still checks the frames and the window order.
-    public func raiseSelectedTab(_ id: WindowID) -> WindowMutationOutcome {
-        guard let tabSystem = system as? any TabbedWindowSystem else {
-            return .failed(reason: "This window system does not support Tabbed actions.")
-        }
-        do {
-            try tabSystem.raiseWindow(id, activate: true)
-            return .applied
-        } catch {
-            return .failed(reason: error.localizedDescription)
-        }
-    }
-
     public func raiseTabbedWindows(_ ids: [WindowID]) -> WindowMutationOutcome {
         guard let tabSystem = system as? any TabbedWindowSystem else {
             return .failed(reason: "This window system does not support Tabbed actions.")

@@ -1602,6 +1602,29 @@ func aSameApplicationFocusChangeAfterTheSelectionIsKept() async throws {
     #expect(model.activeTabbedState?.activeWindowID == rightSelected)
 }
 
+/// A selection raises its tab before the placement is prepared. When the
+/// placement is rejected, the old tab and the old focus come back.
+@Test @MainActor func aRejectedSelectionPutsBackTheEarlyRaise() async throws {
+    let system = FakeAppWindowSystem()
+    let model = try await makeTwoTabbedColumns(system)
+    defer { model.shutdown() }
+    let state = try #require(model.activeTabbedState)
+    let previous = try #require(state.panes[0].selected)
+    let previousFocus = try #require(state.activeWindowID)
+    let hidden = try #require(state.panes[0].tabs.first { $0 != previous })
+    let index = try #require(system.windows.firstIndex { $0.id == hidden })
+    // The tab cannot fit its pane, so the selection is rejected.
+    system.windows[index].constraints.minimumSize = BTSize(width: 5000, height: 5000)
+    system.focusedID = previousFocus
+    let raises = system.raiseRequests.count
+    model.performTabbed(.select(hidden))
+    try await Task.sleep(for: .milliseconds(300))
+    #expect(system.raiseRequests.dropFirst(raises).first?.0 == hidden)
+    #expect(model.activeTabbedState?.panes[0].selected == previous)
+    #expect(system.focusedID == previousFocus)
+    #expect(system.raiseRequests.last?.0 == previousFocus)
+}
+
 @Test @MainActor
 func stackingRepairOfTheKeyApplicationRaisesTheKeyWindowLast() async throws {
     let system = FakeAppWindowSystem()
