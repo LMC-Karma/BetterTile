@@ -551,3 +551,22 @@ func tabDragDefersAccessibilityUntilDropCompletes(success: Bool) throws {
     #expect(!f.overlay.isInteracting)
     #expect(!intents.contains { if case .move = $0 { true } else { false } })
 }
+
+/// A pressed tab draws as selected at once. When its selection is rejected
+/// and the placement ends, the strip shows the tab that stayed selected.
+@Test @MainActor func aRejectedPressDropsItsHighlightWhenThePlacementEnds() throws {
+    let f = try TabDragFixture()
+    defer { f.overlay.hide() }
+    f.overlay.onIntent = { [weak overlay = f.overlay] intent in
+        if case .select = intent { overlay?.acceptsTabDrags = false }
+    }
+    let selected = f.view.pane.selected
+    let tab = f.view.strip.tabFrame(1)
+    let pressed = f.view.pane.tabs[1]
+    try #require(pressed != selected)
+    f.view.mouseDown(with: try f.event(.leftMouseDown, x: f.bounds.minX + tab.midX, y: f.bounds.minY + 17))
+    #expect(f.view.displayedSelection == pressed)
+    // The model rejects the selection and keeps the previous tab.
+    f.overlay.acceptsTabDrags = true
+    #expect(f.view.displayedSelection == selected)
+}
