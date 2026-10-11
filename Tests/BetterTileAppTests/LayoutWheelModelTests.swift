@@ -544,16 +544,40 @@ private func target(for system: FakeAppWindowSystem) -> LayoutWheelTarget {
 /// finishes as soon as the state arrives and only spends the timeout when the
 /// state never arrives at all.
 @MainActor
+/// Polls in 20 ms steps. The budget counts steps, not wall-clock time: a
+/// loaded test machine can block the main actor for seconds, and the work
+/// being waited for needs its turn after such a block too.
 func waitFor(
     timeout: Duration = .seconds(10),
     _ condition: () -> Bool
 ) async -> Bool {
-    let deadline = ContinuousClock.now.advanced(by: timeout)
-    while ContinuousClock.now < deadline {
+    let step = Duration.milliseconds(20)
+    for _ in 0..<Int((timeout / step).rounded(.up)) {
         if condition() { return true }
-        try? await Task.sleep(for: .milliseconds(20))
+        try? await Task.sleep(for: step)
     }
     return condition()
+}
+
+@Test @MainActor func waitForRetainsPollingStepsWhenMainActorIsBlocked() async {
+    var polls = 0
+    let reached = await waitFor(timeout: .milliseconds(40)) {
+        polls += 1
+        if polls == 1 { Thread.sleep(forTimeInterval: 0.1) }
+        return polls == 3
+    }
+    #expect(reached)
+    #expect(polls == 3)
+}
+
+@Test @MainActor func waitForStopsAfterItsPollingBudgetWhenStateNeverArrives() async {
+    var polls = 0
+    let reached = await waitFor(timeout: .milliseconds(40)) {
+        polls += 1
+        return false
+    }
+    #expect(!reached)
+    #expect(polls == 3)
 }
 
 @Test @MainActor func manualLayoutWheelPreviewIsPureAndMatchesCommit() {
