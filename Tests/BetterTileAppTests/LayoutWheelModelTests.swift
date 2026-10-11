@@ -1407,8 +1407,8 @@ func minimizedRightHalfReturnsToItsOriginalSide(nativeMembership: Bool, staleMin
     system.windows[0].isMinimized = false
     if nativeMembership { system.desktopObservation?.windowMembership[restoredID] = [NativeSpaceID(rawValue: 1)] }
     system.eventHandler?(WindowSystemEvent(kind: .restored, windowID: restoredID, processIdentifier: 42))
-    try await Task.sleep(for: .milliseconds(700))
-    #expect(system.windows.map(\.frame) == originalFrames)
+    #expect(await waitFor(timeout: .seconds(3)) { system.windows.map(\.frame) == originalFrames },
+            "\(system.windows.map(\.frame))")
 }
 
 
