@@ -110,7 +110,11 @@ Frame batches share enhanced-accessibility setup per application. The
 coordinator keeps placement and rollback in one synchronous batch. The macOS
 adapter restores each application's original setting before the batch returns,
 including error exits. This avoids toggling the same application's setting for
-each of its windows. No suspension is held across an event-loop turn.
+each of its windows. Outside a live divider drag, no suspension is held across
+an event-loop turn. A live divider drag holds each application's suspension
+from its first write until the gesture ends, cancels, or the overlay hides, so
+an application such as a Chromium browser does not toggle the setting on every
+tick.
 
 Tabbed selection preserves pane geometry when the selected window fits. It swaps
 which window the pane's Bento leaf holds and checks both minimum dimensions.

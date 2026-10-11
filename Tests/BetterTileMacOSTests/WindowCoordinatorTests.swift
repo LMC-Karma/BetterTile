@@ -1230,7 +1230,6 @@ func singleWindowPartialFailureRestoresBaselineAndPreservesHistory(actionPlan: B
 /// shrinks those windows back before it regrows their neighbours.
 @Test @MainActor func rejectedLiveTickShrinksBackBeforeItRegrows() throws {
     let (system, coordinator) = sharedEdgeFixture()
-    system.attemptsWholeIntermediateBatch = true
     let left = system.windows[0].id, right = system.windows[1].id
     var transaction = try #require(coordinator.beginTransaction(windowIDs: [left, right]).startedTransaction)
     func tick(_ edge: Double) -> WindowMutationOutcome {
