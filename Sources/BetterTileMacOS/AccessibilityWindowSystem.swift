@@ -605,6 +605,8 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
             knownCurrentFrame: knownCurrentFrame,
             correctsClamping: correctsClamping
         )
+        // A measurement belongs to one write; an older one is not evidence.
+        lastWriteReadback.removeValue(forKey: windowID)
         var errors: [AXError] = []
         if plan.writesInitialSize {
             errors.append(AXUIElementSetAttributeValue(element, kAXSizeAttribute as CFString, sizeValue))
@@ -737,6 +739,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         let accepted: [AXError] = [.success, .attributeUnsupported]
         var failure: WindowID?
         for (job, result) in results {
+            lastWriteReadback.removeValue(forKey: result.windowID)
             if !result.errors.allSatisfy({ accepted.contains($0) }) {
                 elements.removeValue(forKey: result.windowID)
                 failure = failure ?? result.windowID

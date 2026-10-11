@@ -951,7 +951,12 @@ public final class DividerOverlayController {
                 corrections += 1
                 self.transaction = transaction
                 applyDrag(to: point, validateParticipants: true)
-                guard let corrected = self.transaction else { break }
+                // The correction was cancelled, for example because a window
+                // could not be read. The first commit is undone below.
+                guard let corrected = self.transaction else {
+                    outcome = .failed(reason: "The layout changed while the release was corrected.")
+                    break
+                }
                 transaction = corrected
                 outcome = coordinator.commit(transaction: &transaction, placements: latestPlacements)
             }

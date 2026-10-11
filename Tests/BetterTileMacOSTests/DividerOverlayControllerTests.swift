@@ -863,6 +863,52 @@ enum DividerLimitCase: CaseIterable { case straight, junction, linked }
 /// A window that has not applied the release write yet still reads back
 /// at its baseline size. That is not a refusal: the release is not solved
 /// again around the old size.
+/// The release commit measures a refusal, but the corrective solve cannot
+/// read the windows. The release fails as a whole: every window returns to
+/// its baseline instead of keeping the uncorrected first commit.
+@Test @MainActor func ghostReleaseUndoesTheCommitWhenItsCorrectionIsCancelled() throws {
+    _ = NSApplication.shared
+    let system = FakeWindowSystem()
+    system.roundsSizesAndReportsReadback = true
+    let bounds = BTRect(x: -10_000, y: -10_000, width: 800, height: 600)
+    let display = DisplayID(rawValue: "main")
+    system.availableDisplays = [DisplaySnapshot(id: display, frame: bounds, visibleFrame: bounds, isMain: true)]
+    let left = WindowID(rawValue: "left"), right = WindowID(rawValue: "right")
+    system.windows = [
+        WindowSnapshot(id: left, processIdentifier: 1, frame: BTRect(x: bounds.minX, y: bounds.minY, width: 400, height: 600), displayID: display),
+        WindowSnapshot(id: right, processIdentifier: 2, frame: BTRect(x: bounds.minX + 400, y: bounds.minY, width: 400, height: 600), displayID: display),
+    ]
+    let baseline = system.windows.map(\.frame)
+    system.enforcedMinimumWidths[right] = 340
+    var config = BetterTileConfiguration()
+    config.resizeFeedbackMode = .ghost
+    let controller = DividerOverlayController(coordinator: WindowCoordinator(system: system), configuration: config)
+    let boundary = BoundaryDescriptor(
+        id: "native", displayID: display, axis: .vertical, coordinate: bounds.minX + 400,
+        spanStart: bounds.minY, spanEnd: bounds.maxY, beforeWindowIDs: [left], afterWindowIDs: [right]
+    )
+    let start = BTPoint(x: bounds.minX + 400, y: bounds.minY + 80)
+    let interaction = try #require(DividerInteractionResolver.resolve(at: start, in: [boundary], hitWidth: 18, adjacencyTolerance: 6, paneGap: 0))
+    let screen = try #require(NSScreen.screens.first)
+    var changed = false
+    controller.layoutChangedHandler = { _, _ in changed = true }
+
+    controller.beginGesture(interaction: interaction, at: start)
+    defer { controller.hideAndCancel() }
+    controller.drag(to: CGPoint(x: start.x + 120, y: screen.frame.maxY - start.y))
+    controller.displayTick()
+    // Reads fail once the first commit has written the refusing window.
+    system.targetedSnapshotHandler = { _ in
+        if system.frameWriteCounts[right, default: 0] >= 1, system.frameWriteCounts[left, default: 0] >= 1 {
+            system.targetedSnapshotsFail = true
+        }
+    }
+    controller.end()
+    system.targetedSnapshotsFail = false
+    #expect(system.windows.map(\.frame) == baseline)
+    #expect(!changed)
+}
+
 @Test @MainActor func ghostReleaseDoesNotLearnAMinimumFromAnUnchangedWindow() throws {
     _ = NSApplication.shared
     let system = FakeWindowSystem()
