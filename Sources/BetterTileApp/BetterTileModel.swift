@@ -3786,10 +3786,24 @@ extension BetterTileModel {
                   !PlacementBounds.isContained(window.frame, in: bounds) else { continue }
             restorationFrames[window.id] = window.frame.clamped(to: bounds)
         }
-        if let window = windows.first(where: { floated.contains($0.id) }) {
+        let floatedNames = windows.filter { floated.contains($0.id) }.map(Self.displayName(of:))
+        if floatedNames.count == 1 {
             presentActionResult(succeeded: false, feedback: .failure(
-                title: "\(Self.displayName(of: window)) is floating",
+                title: "\(floatedNames[0]) is floating",
                 detail: "It doesn’t fit in any pane."
+            ), displayID: display.id)
+        } else if floatedNames.count > 1 {
+            // One pill names them all; long names shorten, not the sentence.
+            let named = floatedNames.count > 3 ? Array(floatedNames.prefix(2)) : floatedNames
+            presentActionResult(succeeded: false, feedback: .failure(
+                title: "\(floatedNames.count) windows are floating",
+                detail: ResultPillLayout.detail(naming: named) { titles in
+                    switch (titles.count, floatedNames.count) {
+                    case (2, 2): "\(titles[0]) and \(titles[1]) don’t fit in any pane."
+                    case (2, _): "\(titles[0]), \(titles[1]), and \(floatedNames.count - 2) more don’t fit in any pane."
+                    default: "\(titles[0]), \(titles[1]), and \(titles[2]) don’t fit in any pane."
+                    }
+                }
             ), displayID: display.id)
         }
         // Removals include windows on other displays. Reconciliation above

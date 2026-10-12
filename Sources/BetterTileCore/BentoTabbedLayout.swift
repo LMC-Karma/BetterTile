@@ -422,9 +422,9 @@ public struct TabbedLayoutState: Hashable, Sendable {
     /// Reconciles a running layout. A window that arrives later, for example
     /// from another Space, joins as the selected tab of the active pane when
     /// it fits there, moving boundaries only as far as it needs. Otherwise it
-    /// joins the first pane it fits without replacing an existing selected
-    /// tab or moving any boundary, else as a hidden tab of the active pane.
-    /// The window is never left out.
+    /// joins, as a hidden tab, the other pane that can show it with the least
+    /// change to the panes, as is or after boundaries adapt. A window that no
+    /// pane can show floats instead.
     public mutating func reconcile(
         windowIDs observed: [WindowID],
         removed: Set<WindowID>,

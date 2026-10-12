@@ -92,3 +92,42 @@ import Testing
         system.windows.first { $0.id == big }.map { PlacementBounds.isContained($0.frame, in: system.mainDisplay.visibleFrame) } == true
     })
 }
+
+/// Two windows that float in the same sweep are both named in one pill.
+@Test @MainActor func windowsThatFloatTogetherAreAllNamed() async throws {
+    _ = NSApplication.shared
+    let system = FakeAppWindowSystem()
+    let peer = WindowID(rawValue: "peer")
+    system.windows.append(WindowSnapshot(
+        id: peer, processIdentifier: 900_031, title: "Peer",
+        frame: BTRect(x: 500, y: 0, width: 500, height: 800), displayID: system.mainDisplay.id
+    ))
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    model.configuration.defaultTabbedPreset = .columns
+    model.setActiveMode(.tabbed)
+    try #require(await waitFor { model.activeTabbedState?.windowIDs.count == 2 })
+    let right = try #require(model.activeTabbedState?.panes[1].id)
+    model.performTabbed(.move(peer, pane: right, index: nil))
+    try #require(await waitFor { model.activeTabbedState?.panes[1].selected == peer })
+    try await Task.sleep(for: .milliseconds(300))
+
+    var arrivals: [WindowID] = []
+    for (index, name) in ["Wide", "Wider"].enumerated() {
+        let id = WindowID(rawValue: name)
+        var window = WindowSnapshot(
+            id: id, processIdentifier: 900_032 + Int32(index), title: name,
+            frame: BTRect(x: 20, y: 100, width: 950, height: 500), displayID: system.mainDisplay.id
+        )
+        window.constraints.minimumSize = BTSize(width: 950, height: 400)
+        system.windows.append(window)
+        arrivals.append(id)
+    }
+    for (index, id) in arrivals.enumerated() {
+        system.eventHandler?(WindowSystemEvent(kind: .created, windowID: id, processIdentifier: 900_032 + Int32(index)))
+    }
+
+    #expect(await waitFor { arrivals.allSatisfy { model.activeTabbedState?.floatingWindowIDs.contains($0) == true } })
+    #expect(model.lastActionFeedback?.message == "2 windows are floating")
+    #expect(model.lastActionFeedback?.detail == "Wide and Wider don’t fit in any pane.")
+}
