@@ -82,6 +82,14 @@ can float a window out of Bento or out of a Tabbed pane, and BetterTile floats
 windows that appear on several Spaces. A floating window keeps its own frame
 until the user returns it to the layout.
 
+## Focus mode
+
+A temporary Bento arrangement that expands one tiled window to the work area
+and minimizes its covered peers. Maximize enters Focus mode. Restore, Maximize
+again, or restoring a peer from the Dock ends it and returns the previous Bento
+layout after the peers return. Repair Bento also brings the peers back. A
+partition shortcut ends Focus mode before applying the requested partition.
+
 ## Tabbed preset
 
 A starting pane arrangement for Tabbed: One Pane, Two Columns, Two Rows,

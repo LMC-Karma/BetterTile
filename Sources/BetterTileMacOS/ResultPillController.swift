@@ -10,8 +10,19 @@ public struct ResultPillFeedback: Equatable, Sendable {
 
     public let kind: Kind
     public let message: String
+    /// The specific reason under a short failure title, so a generic title
+    /// such as "Couldn't apply layout" always says why.
+    public let detail: String?
     public let symbolName: String
     public let dismissDelay: TimeInterval
+
+    init(kind: Kind, message: String, detail: String? = nil, symbolName: String, dismissDelay: TimeInterval) {
+        self.kind = kind
+        self.message = message
+        self.detail = detail
+        self.symbolName = symbolName
+        self.dismissDelay = dismissDelay
+    }
 
     public static func success(_ message: String = "Layout applied") -> Self {
         Self(kind: .success, message: message, symbolName: "checkmark", dismissDelay: 0.9)
@@ -28,6 +39,8 @@ public struct ResultPillFeedback: Equatable, Sendable {
             message = "Bento not active"
         } else if value.contains("eligible") || value.contains("focused window") {
             message = "No eligible window"
+        } else if value.contains("up to six") {
+            message = "Bento is full"
         } else if value.contains("cannot fit") || value.contains("can't fit") || value.contains("minimum size") {
             message = "Can’t fit this layout"
         } else if value.contains("tabbed size") {
@@ -50,19 +63,35 @@ public struct ResultPillFeedback: Equatable, Sendable {
         } else {
             message = "Couldn’t apply layout"
         }
-        return Self(kind: .failure, message: message, symbolName: "xmark", dismissDelay: 1.6)
+        // Titles that do not say why carry the reason as a second line.
+        let reason = error?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let explains = ["Couldn’t apply layout", "Can’t fit this layout", "Window refused this size", "Bento is full"].contains(message)
+        let detail = explains && !reason.isEmpty ? reason : nil
+        return Self(kind: .failure, message: message, detail: detail, symbolName: "xmark",
+                    dismissDelay: detail == nil ? 1.6 : 3)
     }
 }
 
 public enum ResultPillLayout {
+    static let maximumDetailWidth: Double = 520
+    /// Horizontal space beside the detail text: insets, icon, and spacing.
+    static let detailChrome: Double = 55
+    /// Detail characters that fit on the two lines a wide pill shows.
+    public static let detailCharacterCapacity = Int((maximumDetailWidth - 60) / 6) * 2
+
     public static func frame(for feedback: ResultPillFeedback, on display: DisplaySnapshot) -> BTRect {
         let estimatedWidth = 72 + Double(feedback.message.count) * 7
-        let width = min(240, max(172, estimatedWidth))
+        let detailWidth = feedback.detail.map { 60 + Double($0.count) * 6 } ?? 0
+        let width = feedback.detail == nil
+            ? min(240, max(172, estimatedWidth))
+            : min(maximumDetailWidth, max(240, detailWidth))
+        // A detail longer than the widest pill wraps to a second line.
+        let height: Double = feedback.detail == nil ? 40 : detailWidth > maximumDetailWidth ? 72 : 58
         return BTRect(
             x: display.visibleFrame.midX - width / 2,
             y: display.visibleFrame.minY + 24,
             width: width,
-            height: 40
+            height: height
         ).clamped(to: display.visibleFrame)
     }
 }
@@ -81,6 +110,7 @@ public final class ResultPillController {
     private let stack = NSStackView()
     private let icon = NSImageView()
     private let label = NSTextField(labelWithString: "")
+    private let detailLabel = NSTextField(labelWithString: "")
     private var dismissalTask: Task<Void, Never>?
     private var presentationID = UUID()
 
@@ -112,16 +142,17 @@ public final class ResultPillController {
         presentationID = UUID()
 
         label.stringValue = feedback.message
+        detailLabel.stringValue = feedback.detail ?? ""
+        detailLabel.isHidden = feedback.detail == nil
         icon.image = NSImage(
             systemSymbolName: "\(feedback.symbolName).circle.fill",
             accessibilityDescription: feedback.message
         )
         icon.contentTintColor = feedback.kind == .success ? .systemGreen : .systemRed
 
-        let target = CoordinateConverter.toAppKit(
-            ResultPillLayout.frame(for: feedback, on: display),
-            mainScreenFrame: mainFrame
-        )
+        let frame = ResultPillLayout.frame(for: feedback, on: display)
+        detailLabel.preferredMaxLayoutWidth = max(0, frame.size.width - ResultPillLayout.detailChrome)
+        let target = CoordinateConverter.toAppKit(frame, mainScreenFrame: mainFrame)
         let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         panel.alphaValue = reduceMotion ? 1 : 0
         panel.setFrame(reduceMotion ? target : target.offsetBy(dx: 0, dy: 10), display: true)
@@ -186,8 +217,20 @@ public final class ResultPillController {
         stack.alignment = .centerY
         stack.spacing = 8
         stack.edgeInsets = NSEdgeInsets(top: 8, left: 13, bottom: 8, right: 15)
+        detailLabel.font = .systemFont(ofSize: 11)
+        detailLabel.textColor = .secondaryLabelColor
+        detailLabel.lineBreakMode = .byWordWrapping
+        detailLabel.usesSingleLineMode = false
+        detailLabel.cell?.wraps = true
+        detailLabel.cell?.truncatesLastVisibleLine = true
+        detailLabel.maximumNumberOfLines = 2
+        detailLabel.isHidden = true
+        let text = NSStackView(views: [label, detailLabel])
+        text.orientation = .vertical
+        text.alignment = .leading
+        text.spacing = 1
         stack.addArrangedSubview(icon)
-        stack.addArrangedSubview(label)
+        stack.addArrangedSubview(text)
         stack.translatesAutoresizingMaskIntoConstraints = false
         effect.addSubview(stack)
         NSLayoutConstraint.activate([

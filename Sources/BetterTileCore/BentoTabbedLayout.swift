@@ -382,6 +382,48 @@ public struct TabbedLayoutState: Hashable, Sendable {
         if let focused, windowIDs.contains(focused), added.isEmpty || added.contains(focused) { select(focused) }
     }
 
+    /// Reconciles a running layout. A window that arrives later, for example
+    /// from another Space, joins as the selected tab of the active pane when
+    /// it fits there, moving boundaries only as far as it needs. Otherwise it
+    /// joins the first pane it fits without replacing an existing selected
+    /// tab or moving any boundary, else as a hidden tab of the active pane.
+    /// The window is never left out.
+    public mutating func reconcile(
+        windowIDs observed: [WindowID],
+        removed: Set<WindowID>,
+        fittingIn bounds: BTRect,
+        windows: [WindowSnapshot]
+    ) {
+        for id in removed { removeClosedWindow(id) }
+        let known = windowIDs.union(floatingWindowIDs)
+        for id in Array(Set(observed).subtracting(known)).sorted() {
+            adopt(id, fittingIn: bounds, windows: windows)
+        }
+    }
+
+    private mutating func adopt(_ id: WindowID, fittingIn bounds: BTRect, windows: [WindowSnapshot]) {
+        // The active pane is the user's choice for new windows: keep it when
+        // the window fits there as is, or after boundaries adapt.
+        var active = self
+        if active.groups.add(id, to: activePaneID) {
+            if (try? active.placements(in: bounds, windows: windows)) != nil { self = active; return }
+            if let fitted = try? active.fittingMinimumWidths(in: bounds, windows: windows),
+               (try? fitted.placements(in: bounds, windows: windows)) != nil {
+                self = fitted
+                return
+            }
+        }
+        for paneID in groups.panes.map(\.id) where paneID != activePaneID {
+            var trial = self
+            guard trial.groups.add(id, to: paneID) else { continue }
+            if (try? trial.placements(in: bounds, windows: windows)) != nil {
+                groups.add(id, to: paneID, select: false)
+                return
+            }
+        }
+        groups.add(id, to: activePaneID, select: false)
+    }
+
     /// The last tab of a pane leaves the pane empty, ready for another tab.
     public mutating func removeClosedWindow(_ id: WindowID) {
         groups.remove(id)
@@ -493,8 +535,32 @@ public struct TabbedLayoutState: Hashable, Sendable {
         let oldGroups = groups.panes
         let oldFrames = groups.paneFrames(in: unit) ?? [:]
         let kept = Array(oldGroups.prefix(preset.paneCount))
-        var paneIDs = kept.map(\.id)
-        while paneIDs.count < preset.paneCount { paneIDs.append(UUID()) }
+        // Each kept group takes the new pane nearest its old position, so
+        // Two Columns to Four Panes keeps left on the left and right on the
+        // right instead of filling the first column.
+        var paneIDs = (0..<preset.paneCount).map { _ in UUID() }
+        var probe = layout
+        probe.root = Self.tree(preset, leaves: paneIDs.map { BentoNode.vacant($0) })
+        if let probeState = BentoTabbedLayoutState(adopting: probe, contentTopInset: Self.headerHeight),
+           let probeFrames = probeState.paneFrames(in: unit) {
+            var free = Set(paneIDs.indices)
+            var assigned: [Int: UUID] = [:]
+            for group in kept {
+                let center = oldFrames[group.id]?.center ?? BTPoint(x: 0, y: 0)
+                guard let slot = free.min(by: { a, b in
+                    func distance(_ index: Int) -> Double {
+                        guard let point = probeFrames[paneIDs[index]]?.center else { return .infinity }
+                        return pow(point.x - center.x, 2) + pow(point.y - center.y, 2)
+                    }
+                    return distance(a) == distance(b) ? a < b : distance(a) < distance(b)
+                }) else { break }
+                free.remove(slot)
+                assigned[slot] = group.id
+            }
+            for (slot, id) in assigned { paneIDs[slot] = id }
+        } else {
+            for (index, group) in kept.enumerated() { paneIDs[index] = group.id }
+        }
         var empty = layout
         empty.root = Self.tree(preset, leaves: paneIDs.map { BentoNode.vacant($0) })
         guard var next = BentoTabbedLayoutState(adopting: empty, contentTopInset: Self.headerHeight) else { return }
@@ -502,7 +568,7 @@ public struct TabbedLayoutState: Hashable, Sendable {
         func place(_ group: BentoTabbedPane, into paneID: UUID) {
             for id in group.tabs { next.add(id, to: paneID, select: id == group.selected) }
         }
-        for (group, paneID) in zip(kept, paneIDs) { place(group, into: paneID) }
+        for group in kept where paneIDs.contains(group.id) { place(group, into: group.id) }
         // Merged groups join as hidden tabs; each pane keeps what it shows.
         func merge(_ group: BentoTabbedPane, into paneID: UUID) {
             for id in group.tabs { next.add(id, to: paneID, select: false) }

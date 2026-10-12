@@ -17,7 +17,14 @@ public extension TabbedLayoutState {
     /// A back-to-front raise plan that puts all selected tabs above all
     /// inactive tabs on this display. Nil means the order cannot be repaired
     /// safely; an empty plan means a shared curtain can already be inserted.
-    func sharedCurtainStackingRepair(order: [TabbedStackEntry], curtainBounds: BTRect) -> [WindowID]? {
+    /// `aboveCurtain` names windows outside the panes, such as floating
+    /// windows, that must never end up behind the curtain where they would
+    /// be invisible.
+    func sharedCurtainStackingRepair(
+        order: [TabbedStackEntry],
+        curtainBounds: BTRect,
+        aboveCurtain: Set<WindowID> = []
+    ) -> [WindowID]? {
         var position: [WindowID: Int] = [:]
         for (index, entry) in order.enumerated() {
             if let id = entry.windowID, position[id] == nil { position[id] = index }
@@ -32,7 +39,16 @@ public extension TabbedLayoutState {
         let exposed = Set(order.indices.filter { index in
             index < backmost && order[index].windowID.map { hidden.contains($0) } == true
         })
-        guard !exposed.isEmpty else { return [] }
+        // Floating windows behind the backmost selected tab would be covered
+        // by the curtain. Raise them, back to front, above every pane.
+        let buried = order.indices.filter { index in
+            index > backmost && order[index].windowID.map { aboveCurtain.contains($0) } == true
+                && order[index].frame.intersection(curtainBounds) != nil
+        }
+        guard !exposed.isEmpty || !buried.isEmpty else { return [] }
+        guard !exposed.isEmpty else {
+            return buried.sorted(by: >).compactMap { order[$0].windowID }
+        }
         // Move the exposed inactive tabs behind the backmost selected tab.
         // All other windows retain their relative order.
         let target = order.indices.filter { !exposed.contains($0) }
@@ -58,7 +74,7 @@ public extension TabbedLayoutState {
         }
         let plan = raised.sorted { rank[$0, default: 0] > rank[$1, default: 0] }.map { order[$0].windowID }
         guard plan.allSatisfy({ $0 != nil }) else { return nil }
-        return plan.compactMap { $0 }
+        return plan.compactMap { $0 } + buried.sorted(by: >).compactMap { order[$0].windowID }
     }
 }
 

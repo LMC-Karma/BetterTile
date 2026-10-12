@@ -370,3 +370,21 @@ private func resizing(_ frame: BTRect, minX: Double = 0, minY: Double = 0, maxX:
     #expect(state.panes[0].selected == hidden)
     #expect(state.layout.root?.windowIDs == [hidden])
 }
+
+/// Two Columns to Four Panes keeps each group on its side: left top-left,
+/// right top-right. It used to put both groups in the left column.
+@Test func fourPanesKeepsEachColumnsGroupOnItsSide() throws {
+    var state = TabbedLayoutState(preset: .columns)
+    let left = WindowID(rawValue: "left"), right = WindowID(rawValue: "right")
+    state.reconcile(windowIDs: [left], removed: [], focused: left)
+    state.activatePane(state.panes[1].id)
+    state.reconcile(windowIDs: [left, right], removed: [], focused: right)
+    state.applyPreset(.grid)
+    let bounds = BTRect(x: 0, y: 0, width: 1000, height: 800)
+    let frames = state.frames(in: bounds)
+    let leftPane = try #require(state.paneID(containing: left)), rightPane = try #require(state.paneID(containing: right))
+    let leftFrame = try #require(frames[leftPane]), rightFrame = try #require(frames[rightPane])
+    #expect(leftFrame.midX < bounds.midX)
+    #expect(rightFrame.midX > bounds.midX)
+    #expect(leftFrame.midY < bounds.midY && rightFrame.midY < bounds.midY)
+}

@@ -321,3 +321,21 @@ func bentoDragSessionAcceptsAFloatedSourceBesideOnlyVacantPanes(useLayoutFrames:
     #expect(BentoDragSession(displayID: dragDisplayID, sourceWindowID: source,
         state: tabbed.layout, windows: [unavailable], workArea: dragBounds) == nil)
 }
+
+/// The audit's 120 pt column: dropping at the left screen edge armed an
+/// insert beside the leftmost pane instead of the edge's Left Half snap.
+@Test func screenEdgeSnapWinsOverAnArmedPaneEdgeInsert() {
+    var hover = BentoDropHoverState()
+    let candidate = BentoHoverCandidate(displayID: DisplayID(rawValue: "d"),
+                                        targetWindowID: WindowID(rawValue: "leftmost"), position: .left)
+    let snap = SnapTarget(action: .leftHalf, frame: BTRect(x: 0, y: 0, width: 960, height: 968))
+    hover.observe(candidate, competingSnapTarget: snap, at: 0)
+    #expect(hover.outcome(at: 1, delay: 0, snapTarget: snap) == .snap(action: .leftHalf, frame: snap.frame))
+    // Away from the screen edge the pane edge still inserts.
+    #expect(hover.outcome(at: 1, delay: 0, snapTarget: nil)
+        == .insert(targetWindowID: candidate.targetWindowID, edge: .left))
+    // A centre hover still swaps.
+    hover.observe(BentoHoverCandidate(displayID: candidate.displayID, targetWindowID: candidate.targetWindowID,
+                                      position: .center), competingSnapTarget: snap, at: 2)
+    #expect(hover.outcome(at: 3, delay: 0, snapTarget: snap) == .swap(targetWindowID: candidate.targetWindowID))
+}

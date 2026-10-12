@@ -366,3 +366,68 @@ func fitterReadsALowerPaneEdgeBelowItsContentReserve(reserve: Double) throws {
     #expect(state.synchronize(with: changed).isEmpty)
     #expect(state.panes.count == 2)
 }
+
+private func adoptionWindow(_ name: String, minimumWidth: Double = 120) -> WindowSnapshot {
+    var window = WindowSnapshot(id: WindowID(rawValue: name), processIdentifier: 1,
+                                frame: BTRect(x: 0, y: 0, width: 400, height: 400), displayID: DisplayID(rawValue: "t"))
+    window.constraints.minimumSize = BTSize(width: minimumWidth, height: 80)
+    return window
+}
+
+/// A window that arrives later (from another Space) and fits nowhere with
+/// the current panes still becomes a tab: hidden in the active pane. It is
+/// never left outside the layout, and other panes keep their sizes.
+@Test func arrivingWindowThatCannotFitJoinsAsAHiddenTab() throws {
+    let bounds = BTRect(x: 0, y: 0, width: 1000, height: 800)
+    var state = TabbedLayoutState(preset: .columns)
+    let a = adoptionWindow("a", minimumWidth: 480), b = adoptionWindow("b", minimumWidth: 480)
+    state.reconcile(windowIDs: [a.id], removed: [], focused: a.id)
+    state.activatePane(state.panes[1].id)
+    state.reconcile(windowIDs: [a.id, b.id], removed: [], focused: b.id)
+    state.activatePane(state.panes[0].id)
+    let framesBefore = state.frames(in: bounds)
+    let wide = adoptionWindow("wide", minimumWidth: 708)
+    state.reconcile(windowIDs: [a.id, b.id, wide.id], removed: [], fittingIn: bounds, windows: [a, b, wide])
+    #expect(state.windowIDs.contains(wide.id))
+    #expect(state.panes[0].tabs.contains(wide.id))
+    #expect(state.panes[0].selected == a.id)
+    #expect(state.frames(in: bounds) == framesBefore)
+    #expect((try? state.placements(in: bounds, windows: [a, b, wide])) != nil)
+}
+
+@Test func arrivingWindowJoinsTheActivePaneWhenItFits() {
+    let bounds = BTRect(x: 0, y: 0, width: 1000, height: 800)
+    var state = TabbedLayoutState(preset: .columns)
+    let a = adoptionWindow("a")
+    state.reconcile(windowIDs: [a.id], removed: [], focused: a.id)
+    state.activatePane(state.panes[1].id)
+    let arrival = adoptionWindow("new")
+    state.reconcile(windowIDs: [a.id, arrival.id], removed: [], fittingIn: bounds, windows: [a, arrival])
+    #expect(state.panes[1].selected == arrival.id)
+}
+
+@Test func arrivingWindowThatFitsAnotherPanePreservesItsSelectedTab() throws {
+    let bounds = BTRect(x: 0, y: 0, width: 1000, height: 800)
+    let active = adoptionWindow("active")
+    let visible = adoptionWindow("visible", minimumWidth: 750)
+    let arrival = adoptionWindow("arrival", minimumWidth: 600)
+    let layout = BentoLayoutState(root: .partition(BentoPartition(
+        axis: .vertical, weight: 0.2, first: .leaf(active.id), second: .leaf(visible.id)
+    )))
+    var state = try #require(TabbedLayoutState(adopting: layout))
+    let activePaneID = state.activePaneID
+    let otherPaneID = try #require(state.pane(containing: visible.id)?.id)
+    let framesBefore = state.frames(in: bounds)
+    let windows = [active, visible, arrival]
+    _ = try state.placements(in: bounds, windows: windows)
+
+    state.reconcile(windowIDs: windows.map(\.id), removed: [], fittingIn: bounds, windows: windows)
+
+    #expect(state.pane(containing: arrival.id)?.id == otherPaneID)
+    #expect(state.pane(containing: visible.id)?.selected == visible.id)
+    #expect(state.hiddenWindowIDs.contains(arrival.id))
+    #expect(state.activePaneID == activePaneID)
+    #expect(state.activeWindowID == active.id)
+    #expect(state.frames(in: bounds) == framesBefore)
+    _ = try state.placements(in: bounds, windows: windows)
+}

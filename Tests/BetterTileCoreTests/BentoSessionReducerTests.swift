@@ -415,3 +415,47 @@ private extension BentoSessionTransition {
         return
     }
 }
+
+/// The audit's minimize/restore case: three windows of a 2x2 grid are
+/// minimized one after another and restored in a different order. The grid
+/// must come back; anchors to windows that were themselves minimized used to
+/// stack the restored windows into rows.
+@Test(arguments: [[1, 2, 3], [3, 1, 2], [2, 3, 1]])
+func restoringSeveralMinimizedWindowsRebuildsTheirGrid(restoreOrder: [Int]) throws {
+    let ids = ["a", "b", "c", "d"]
+    let quarter = [BTRect(x: 0, y: 0, width: 600, height: 400), BTRect(x: 600, y: 0, width: 600, height: 400),
+                   BTRect(x: 0, y: 400, width: 600, height: 400), BTRect(x: 600, y: 400, width: 600, height: 400)]
+    var windows = zip(ids, quarter).map { name, frame -> WindowSnapshot in
+        var window = reducerWindow(name); window.frame = frame; return window
+    }
+    var session = LayoutSession(displayID: reducerDisplay, mode: .bento, windowIDs: Set(windows.map(\.id)))
+    func reconcile(minimized: Set<WindowID> = []) throws {
+        let visible = windows.map { window -> WindowSnapshot in
+            var copy = window; copy.isMinimized = minimized.contains(window.id); return copy
+        }
+        let transition = BentoSessionReducer().reconcile(
+            session: session, observation: BentoObservation(bounds: reducerBounds, windows: visible),
+            paneGap: 0, minimized: minimized)
+        if let update = transition.update {
+            session = update.session
+            for placement in update.placements {
+                if let index = windows.firstIndex(where: { $0.id == placement.windowID }) {
+                    windows[index].frame = placement.frame
+                }
+            }
+        }
+    }
+    try reconcile()
+    let grid = Dictionary(uniqueKeysWithValues: windows.map { ($0.id, $0.frame) })
+    var minimized: Set<WindowID> = []
+    for index in [1, 2, 3] {
+        minimized.insert(windows[index].id)
+        try reconcile(minimized: minimized)
+    }
+    for index in restoreOrder {
+        minimized.remove(windows[index].id)
+        try reconcile(minimized: minimized)
+    }
+    let restored = Dictionary(uniqueKeysWithValues: windows.map { ($0.id, $0.frame) })
+    #expect(restored == grid, "\(restored)")
+}

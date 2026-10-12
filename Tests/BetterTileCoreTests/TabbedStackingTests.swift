@@ -106,3 +106,14 @@ private func entry(_ name: String?, _ frame: BTRect) -> TabbedStackEntry {
     #expect(state.keyPreservingRaisePlan([id("a")], keyWindowID: id("b"), processIdentifiers: pids) == [id("a")])
     #expect(state.keyPreservingRaisePlan([id("c")], keyWindowID: nil, processIdentifiers: pids) == [id("c")])
 }
+
+/// A floating window that ended behind the backmost selected tab would sit
+/// under the curtain, invisible. The repair raises it above the panes.
+@Test func sharedCurtainRaisesABuriedFloatingWindow() {
+    let state = twoPanes()
+    let floating = BTRect(x: 300, y: 200, width: 400, height: 300)
+    let order = [entry("a", left), entry("c", right), entry("b", left), entry("floating", floating), entry("d", right)]
+    #expect(state.sharedCurtainStackingRepair(order: order, curtainBounds: bounds) == [])
+    #expect(state.sharedCurtainStackingRepair(order: order, curtainBounds: bounds,
+                                              aboveCurtain: [id("floating")]) == [id("floating")])
+}

@@ -1165,3 +1165,35 @@ func singleWindowPartialFailureRestoresBaselineAndPreservesHistory(actionPlan: B
     #expect(current.targetFrame == beforeSecondAction)
     #expect(coordinator.perform(current).isApplied)
 }
+
+/// The probe is BetterTile's own write. A window that stays where it was,
+/// for example one that floats, must not read as moved by someone else.
+@Test @MainActor func minimumSizeProbeOwnsTheEventsItCauses() {
+    let system = FakeWindowSystem()
+    system.addSecondWindow()
+    let coordinator = WindowCoordinator(system: system)
+    let restored = system.windows[0], unrestored = system.windows[1]
+    #expect(!coordinator.matchesExpectedMutation(windowID: restored.id, actualFrame: restored.frame))
+    system.unrestoredProbeWindowIDs = [unrestored.id]
+    _ = coordinator.probeMinimumSizes(for: [restored.id, unrestored.id])
+    #expect(coordinator.matchesExpectedMutation(windowID: restored.id, actualFrame: restored.frame))
+    // A window left at another size did not return to that frame.
+    #expect(!coordinator.matchesExpectedMutation(windowID: unrestored.id, actualFrame: unrestored.frame))
+}
+
+/// The minimum-size probe changes a window's size, so it runs through the
+/// coordinator and reports a window it could not return to its size.
+@Test @MainActor func minimumSizeProbeReportsAWindowLeftAtTheWrongSize() {
+    let system = FakeWindowSystem()
+    let coordinator = WindowCoordinator(system: system)
+    let id = system.windows[0].id
+    #expect(coordinator.probeMinimumSizes(for: []) == .applied)
+    #expect(system.probedWindowIDs.isEmpty)
+    #expect(coordinator.probeMinimumSizes(for: [id]) == .applied)
+    system.unrestoredProbeWindowIDs = [id]
+    guard case .degraded = coordinator.probeMinimumSizes(for: [id]) else {
+        Issue.record("A window left at the probe size must degrade the outcome")
+        return
+    }
+    #expect(system.probedWindowIDs == [[id], [id]])
+}

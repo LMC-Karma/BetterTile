@@ -101,7 +101,9 @@ sample and consume it on an AppKit display-link tick. Live Accessibility batches
 run at no more than 60 Hz; ghost-only feedback may follow the display's native
 rate. Intermediate ticks reuse one frame transaction, skip unchanged targets,
 and avoid repeated participant sweeps. They also skip the trailing
-clamp-correcting size write; the next tick or the release corrects a clamp. Mouse-up bypasses coalescing, validates
+clamp-correcting size write; the next tick or the release corrects a clamp.
+Once a window's minimum is measured, intermediate ticks also skip the size
+readback, and only a final write can confirm a new clamp with a position nudge. Mouse-up bypasses coalescing, validates
 the participants, and applies the exact final geometry. Linked resizing writes
 only the neighboring windows; the application keeps control of the window the
 user is resizing.
@@ -143,6 +145,27 @@ Vacancies take priority, and an unavailable preferred split uses the normal
 insertion policy. Minimized windows retain their reinsertion anchors, and
 Space transitions retain their stored layouts. Changing the preference does
 not rearrange existing windows.
+
+Maximize enters Focus mode on a tiled Bento window and retains the previous
+tree for that desktop session. Restore, Maximize again, and a peer restored
+from the Dock share one bounded wait for the covered peers to return before
+restoring that tree. A failed peer restore still returns the available windows
+to the previous layout after the wait. A rejected layout restore suspends
+automatic placement until Repair. Background sweeps retain membership without
+moving windows while the wait owns that session. A newer layout action cancels
+the wait.
+
+Keyboard and captured Layout Wheel partitions use the same peer-return wait.
+When all peers are visible, the partition runs synchronously. Otherwise it
+keeps the original target and replans after the peers return or the 1.5-second
+deadline expires. It does not restore the previous tree before partitioning.
+The resumed command validates the captured window, display, Space, session,
+mode, and application rule again. Shortcut cycling still applies to keyboard
+commands. A newer partition replaces the pending command and retains its
+returning peers. Repair waits behind the command. Mode changes, a different
+session, a newer gesture, and shutdown cancel the wait. Failed restore requests
+and peer-return timeouts are logged. At the deadline, available peers join the
+requested partition without waiting indefinitely for missing peers.
 
 ### Tabbed on Bento
 
@@ -259,11 +282,13 @@ change a Bento operation made to the tree; writing it also writes the tree.
   handle appears only on hover, so the Tabbed overlay adds a
   VoiceOver slider over each divider. The slider ignores the mouse; increment
   and decrement move the Bento divider by five percent of the area it splits.
-- New windows join the active pane as its selected tab. Entering Tabbed from
-  Bento adopts the tree, so every pane stays where it was. Leaving for Bento
-  gives every hidden tab its own pane (`unstacked(in:)`) and removes the
-  reserve. Leaving for Native restores the pre-Tabbed frames and keeps the tab
-  groups for the next Tabbed visit.
+- New windows join the active pane as its selected tab. An arrival that cannot
+  fit there joins the first other pane it fits without replacing its selected
+  tab or moving boundaries. If no pane fits, it stays hidden in the active pane.
+  Entering Tabbed from Bento adopts the tree, so every pane stays where it was.
+  Leaving for Bento gives every hidden tab its own pane (`unstacked(in:)`) and
+  removes the reserve. Leaving for Native restores the pre-Tabbed frames and
+  keeps the tab groups for the next Tabbed visit.
 
 ## Overlay appearance
 
