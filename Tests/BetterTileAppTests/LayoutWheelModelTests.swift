@@ -2065,6 +2065,41 @@ func silentlyClosedWindowLeavesItsPaneWithinASecond(nilFocusID: Bool) async thro
     #expect(reflowed, "\(system.windows.map(\.frame)) after closing \(closed.id), sweeps \(system.completeSweepCount)")
 }
 
+/// Closing a document on one display can move focus to the same
+/// application's window on another display. The focus check covers every
+/// Bento layout, so the closed pane still leaves.
+@Test @MainActor func silentlyClosedWindowOnAnotherDisplayLeavesItsPane() async throws {
+    _ = NSApplication.shared
+    let system = FakeAppWindowSystem()
+    let second = DisplaySnapshot(id: DisplayID(rawValue: "second"),
+        frame: BTRect(x: 1000, y: 0, width: 1000, height: 800), visibleFrame: BTRect(x: 1000, y: 0, width: 1000, height: 800))
+    system.availableDisplays.append(second)
+    let sibling = WindowID(rawValue: "sibling")
+    system.windows.append(WindowSnapshot(id: sibling, processIdentifier: 70,
+        frame: BTRect(x: 0, y: 0, width: 400, height: 300), displayID: system.mainDisplay.id))
+    for index in 1...2 {
+        system.windows.append(WindowSnapshot(id: WindowID(rawValue: "doc\(index)"), processIdentifier: 70,
+            frame: BTRect(x: 1000, y: 0, width: 400, height: 300), displayID: second.id))
+    }
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    model.updateConfiguration { $0.defaultLayoutMode = .bento }
+    model.setActiveMode(.bento)
+    let onSecond = { system.windows.filter { $0.displayID == second.id } }
+    try #require(await waitFor(timeout: .seconds(2)) {
+        model.activeMode(for: second.id) == .bento && Set(onSecond().map(\.frame)).count == 2
+            && onSecond().allSatisfy { $0.frame.size.width < 1000 }
+    }, "\(system.windows.map(\.frame))")
+    try await Task.sleep(for: .milliseconds(300))
+    system.windows.removeAll { $0.id == WindowID(rawValue: "doc2") }
+    system.focusedID = sibling
+    system.eventHandler?(WindowSystemEvent(kind: .focused, windowID: nil, processIdentifier: 70))
+    let reflowed = await waitFor(timeout: .seconds(3)) {
+        onSecond().first?.frame == second.visibleFrame
+    }
+    #expect(reflowed, "\(system.windows.map(\.frame)), sweeps \(system.completeSweepCount)")
+}
+
 @Test(arguments: [false, true]) @MainActor
 func repeatedBentoFocusChecksPeersWithoutSweepingOrWriting(nilFocusID: Bool) async throws {
     _ = NSApplication.shared
