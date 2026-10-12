@@ -101,6 +101,10 @@ func stackingRepairKeepsAWindowInFrontOrLeavesAnUnreadableOneAlone(readable: Boo
     let raises = system.raiseRequests.count
 
     model.handleApplicationActivation()
+    if readable {
+        // The stacking check is asynchronous; wait for it on a loaded runner.
+        try #require(await waitFor(timeout: .seconds(3)) { system.raiseRequests.count >= raises + 3 })
+    }
     try await Task.sleep(for: .milliseconds(500))
     let raised = system.raiseRequests.dropFirst(raises)
     #expect(raised.map(\.0) == (readable ? [system.windows[0].id, system.windows[3].id, floating] : []))
@@ -165,13 +169,16 @@ func tabSelectionPreservesFloatingOrderWhenRepairingTheSharedCurtain(readableOrd
 
     let target = system.windows[1].id
     model.performTabbed(.select(target))
-    #expect(await waitFor(timeout: .seconds(1)) { model.activeTabbedState?.activeWindowID == target })
-    try await Task.sleep(for: .milliseconds(600)) // The stacking check follows the selection.
-    let raised = Set(system.raiseRequests.dropFirst(raises).map(\.0))
+    #expect(await waitFor(timeout: .seconds(3)) { model.activeTabbedState?.activeWindowID == target })
     // The formerly selected left tab is now inactive above the right
     // selection. Repair puts both selected tabs above it, preserving floating.
-    #expect(raised == (readableOrder ? [target, system.windows[3].id, floating.windowID!]
-                                    : [target, system.windows[3].id]))
+    let expected: Set<WindowID> = readableOrder ? [target, system.windows[3].id, floating.windowID!]
+                                                : [target, system.windows[3].id]
+    // The stacking check follows the selection asynchronously.
+    _ = await waitFor(timeout: .seconds(3)) { Set(system.raiseRequests.dropFirst(raises).map(\.0)) == expected }
+    try await Task.sleep(for: .milliseconds(200))
+    let raised = Set(system.raiseRequests.dropFirst(raises).map(\.0))
+    #expect(raised == expected)
 }
 
 @Test(arguments: [false, true]) @MainActor
