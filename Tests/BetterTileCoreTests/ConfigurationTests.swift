@@ -570,3 +570,15 @@ func invalidGlassStrengthIsRejected(strength: Double) {
         #expect(ConfigurationChangeSet.between(legacy, changed).isEmpty)
     }
 }
+
+@Test func balanceOnNewWindowDefaultsOffAndRoundTripsWithoutReconfiguringCurrentWindows() throws {
+    let legacy = try ConfigurationStore.decode(JSONSerialization.data(withJSONObject: [
+        "schemaVersion": BetterTileConfiguration.currentSchemaVersion,
+    ]))
+    #expect(!legacy.bentoBalancesNewWindows)
+    var changed = legacy
+    changed.bentoBalancesNewWindows = true
+    #expect(try ConfigurationStore.decode(JSONEncoder().encode(changed)).bentoBalancesNewWindows)
+    // Read at insertion time; changing it must not restart gestures or reflow.
+    #expect(ConfigurationChangeSet.between(legacy, changed).isEmpty)
+}

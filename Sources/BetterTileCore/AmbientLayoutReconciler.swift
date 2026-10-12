@@ -65,17 +65,20 @@ public struct AmbientLayoutReconciler: Sendable {
     public var adjacencyTolerance: Double
     public var singleWindowPlacement: WindowAction?
     public var newWindowSide: BentoNewWindowSide
+    public var balancesNewWindows: Bool
 
     public init(
         paneGap: Double,
         adjacencyTolerance: Double,
         singleWindowPlacement: WindowAction?,
-        newWindowSide: BentoNewWindowSide = .automatic
+        newWindowSide: BentoNewWindowSide = .automatic,
+        balancesNewWindows: Bool = false
     ) {
         self.paneGap = paneGap
         self.adjacencyTolerance = adjacencyTolerance
         self.singleWindowPlacement = singleWindowPlacement
         self.newWindowSide = newWindowSide
+        self.balancesNewWindows = balancesNewWindows
     }
 
     public func transition(
@@ -113,7 +116,8 @@ public struct AmbientLayoutReconciler: Sendable {
                     confirmedGone: observation.confirmedGone,
                     minimized: observation.confirmedMinimized,
                     knownSpaceWindowIDs: observation.knownSpaceWindowIDs,
-                    newWindowSide: newWindowSide
+                    newWindowSide: newWindowSide,
+                    balancesNewWindows: balancesNewWindows
                 )
                 if case let .update(updated, _, _) = transition {
                     session = updated
@@ -214,7 +218,8 @@ public struct AmbientLayoutReconciler: Sendable {
                 session: session,
                 observation: BentoObservation(bounds: display.visibleFrame, windows: windows),
                 paneGap: paneGap,
-                newWindowSide: newWindowSide
+                newWindowSide: newWindowSide,
+                balancesNewWindows: balancesNewWindows
             )
             if case let .update(updated, _, _) = transition { session = updated }
             return true
