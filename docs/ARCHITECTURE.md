@@ -67,6 +67,14 @@ It keeps a temporarily missing pane in its desktop's tree. Confirmed destruction
 and minimization still remove the pane, and a window observed on another display
 is no longer protected on the old display.
 
+Some applications close a document window without a destruction event; focus
+only moves to another window. When focus lands in a Bento layout, the model
+coalesces one check per event pass. The check reads the expected tiled panes
+through the targeted cached refresh. If every pane is still visible and eligible,
+no complete sweep runs. A missing, ineligible, or unreadable pane, or an
+unavailable cache, requests the complete sweep above. The check only requests a
+sweep; it never confirms closure by itself.
+
 One listen-only session event tap forwards ordered scalar left-button values
 from a dedicated run loop to the main actor. Drag snapping and linked resizing
 share that stream. If tap creation or recovery fails, both consumers switch to

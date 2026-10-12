@@ -33,7 +33,11 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, TabbedWindowSystem, Min
     var failedVisibleWindowSweeps: Set<Int> = []
     var onVisibleWindowSweep: ((Int) -> Void)?
     var cachedRefreshCount = 0
+    var cachedRefreshRequests: [Set<WindowID>] = []
     var cachedSnapshotsAvailable = true
+    var cachedRefreshFails = false
+    var cachedVisibilityOmittedIDs: Set<WindowID> = []
+    var offscreenWindowIDs: Set<WindowID> = []
     var emitsFrameEvents = false
     var desktopObservation: NativeDesktopObservation?
     var frameApplicationDelays: [WindowID: Duration] = [:]
@@ -115,7 +119,7 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, TabbedWindowSystem, Min
             throw WindowSystemError.operationFailed("Injected visible-window observation failure.")
         }
         refreshLearnedConstraints()
-        return windows
+        return windows.filter { !offscreenWindowIDs.contains($0.id) }
     }
     func displays() -> [DisplaySnapshot] { availableDisplays }
     /// Windows that targeted reads leave out once they took this many frame
@@ -144,8 +148,14 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, TabbedWindowSystem, Min
     }
     func cachedVisibleWindows(refreshing ids: Set<WindowID>) throws -> [WindowSnapshot]? {
         cachedRefreshCount += 1
-        refreshLearnedConstraints()
-        return cachedSnapshotsAvailable ? windows : nil
+        cachedRefreshRequests.append(ids)
+        if cachedRefreshFails {
+            throw WindowSystemError.operationFailed("Injected cached visibility failure.")
+        }
+        guard cachedSnapshotsAvailable else { return nil }
+        let refreshed = try windowSnapshots(ids: ids)
+        guard Set(refreshed.map(\.id)) == ids, ids.isDisjoint(with: offscreenWindowIDs) else { return nil }
+        return windows.filter { !offscreenWindowIDs.contains($0.id) && !cachedVisibilityOmittedIDs.contains($0.id) }
     }
     func setFrame(_ frame: BTRect, knownCurrentFrame: BTRect?, for windowID: WindowID) throws {
         guard let index = windows.firstIndex(where: { $0.id == windowID }) else {
@@ -1734,7 +1744,8 @@ func minimizedRightHalfReturnsToItsOriginalSide(nativeMembership: Bool, staleMin
 /// A closed document window that its application keeps alive off screen
 /// sends no destroyed event. Its pane must still close within a second,
 /// not wait for the watchdog's sweeps.
-@Test @MainActor func silentlyClosedWindowLeavesItsPaneWithinASecond() async throws {
+@Test(arguments: [false, true]) @MainActor
+func silentlyClosedWindowLeavesItsPaneWithinASecond(nilFocusID: Bool) async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
     for index in 1...2 {
@@ -1747,14 +1758,190 @@ func minimizedRightHalfReturnsToItsOriginalSide(nativeMembership: Bool, staleMin
     try #require(await waitFor { Set(system.windows.map(\.frame)).count == 3 })
     try await Task.sleep(for: .milliseconds(300))
     let closed = system.windows.removeLast()
-    // The application only moves focus to its other window.
     system.focusedID = system.windows[0].id
-    system.eventHandler?(WindowSystemEvent(kind: .focused, windowID: system.windows[0].id,
+    system.eventHandler?(WindowSystemEvent(kind: .focused, windowID: nilFocusID ? nil : system.windows[0].id,
                                           processIdentifier: system.windows[0].processIdentifier))
     let reflowed = await waitFor(timeout: .seconds(3)) {
         system.windows.allSatisfy { $0.frame.size.height == 800 } && Set(system.windows.map(\.frame)).count == 2
     }
     #expect(reflowed, "\(system.windows.map(\.frame)) after closing \(closed.id), sweeps \(system.completeSweepCount)")
+}
+
+@Test(arguments: [false, true]) @MainActor
+func repeatedBentoFocusChecksPeersWithoutSweepingOrWriting(nilFocusID: Bool) async throws {
+    _ = NSApplication.shared
+    let system = FakeAppWindowSystem()
+    system.windows.append(WindowSnapshot(id: WindowID(rawValue: "peer"), processIdentifier: 70,
+        frame: BTRect(x: 0, y: 0, width: 400, height: 300), displayID: system.mainDisplay.id))
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    model.setActiveMode(.bento)
+    try #require(await waitFor { system.windows.allSatisfy { $0.frame.size.height == 800 } && model.settlementTasks.isEmpty })
+    try await Task.sleep(for: .milliseconds(300))
+    let sweeps = system.completeSweepCount
+    let writes = system.frameWriteCounts
+    let checks = system.cachedRefreshRequests.count
+    let expected = Set(system.windows.map(\.id))
+    for round in 1...3 {
+        for _ in 0..<5 {
+            system.eventHandler?(WindowSystemEvent(kind: .focused, windowID: nilFocusID ? nil : system.windows[0].id,
+                                                  processIdentifier: 42))
+        }
+        // Each burst coalesces into one check; wait for it under a loaded runner.
+        try #require(await waitFor(timeout: .seconds(2)) { system.cachedRefreshRequests.count >= checks + round })
+    }
+    try await Task.sleep(for: .milliseconds(300))
+    #expect(Array(system.cachedRefreshRequests.dropFirst(checks)) == Array(repeating: expected, count: 3))
+    #expect(system.completeSweepCount == sweeps)
+    #expect(system.frameWriteCounts == writes)
+}
+
+@Test(arguments: [false, true]) @MainActor
+func offscreenReadableBentoPeerFallsBackWithoutPrematureRemoval(nativeMembership: Bool) async throws {
+    _ = NSApplication.shared
+    let system = FakeAppWindowSystem()
+    let peer = WindowID(rawValue: "peer")
+    system.windows.append(WindowSnapshot(id: peer, processIdentifier: 70,
+        frame: BTRect(x: 0, y: 0, width: 400, height: 300), displayID: system.mainDisplay.id))
+    if nativeMembership {
+        let space = NativeSpaceID(rawValue: 1)
+        system.desktopObservation = NativeDesktopObservation(
+            currentSpaceByDisplay: [system.mainDisplay.id: space],
+            knownSpacesByDisplay: [system.mainDisplay.id: [space]],
+            windowMembership: Dictionary(uniqueKeysWithValues: system.windows.map { ($0.id, [space]) })
+        )
+    }
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    model.setActiveMode(.bento)
+    try #require(await waitFor { system.windows.allSatisfy { $0.frame.size.height == 800 } && model.settlementTasks.isEmpty })
+    try await Task.sleep(for: .milliseconds(300))
+    let sweeps = system.completeSweepCount
+    let writes = system.frameWriteCounts
+    system.offscreenWindowIDs.insert(peer)
+    #expect(try system.windowSnapshots(ids: [peer]).count == 1)
+    system.eventHandler?(WindowSystemEvent(kind: .focused, windowID: nil, processIdentifier: 42))
+    try #require(await waitFor(timeout: .seconds(2)) { system.completeSweepCount > sweeps })
+    #expect(system.frameWriteCounts == writes)
+    if nativeMembership {
+        try await Task.sleep(for: .milliseconds(1100))
+        #expect(system.frameWriteCounts == writes)
+    }
+    system.offscreenWindowIDs.remove(peer)
+    try await Task.sleep(for: .milliseconds(600))
+    #expect(system.frameWriteCounts == writes)
+}
+
+@Test(arguments: ["missingCache", "readFailure", "incomplete", "ineligible"]) @MainActor
+func uncertainBentoFocusVisibilityPreservesFullSweepRetry(failure: String) async throws {
+    _ = NSApplication.shared
+    let system = FakeAppWindowSystem()
+    let peer = WindowID(rawValue: "peer")
+    system.windows.append(WindowSnapshot(id: peer, processIdentifier: 70,
+        frame: BTRect(x: 0, y: 0, width: 400, height: 300), displayID: system.mainDisplay.id))
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    model.setActiveMode(.bento)
+    try #require(await waitFor { system.windows.allSatisfy { $0.frame.size.height == 800 } && model.settlementTasks.isEmpty })
+    try await Task.sleep(for: .milliseconds(300))
+    let sweeps = system.completeSweepCount
+    let writes = system.frameWriteCounts
+    switch failure {
+    case "missingCache": system.cachedSnapshotsAvailable = false
+    case "readFailure": system.cachedRefreshFails = true
+    case "incomplete": system.cachedVisibilityOmittedIDs = [peer]
+    default: system.windows[1].isHidden = true
+    }
+    system.failedVisibleWindowSweeps = [sweeps + 1]
+    system.eventHandler?(WindowSystemEvent(kind: .focused, windowID: nil, processIdentifier: 42))
+    try #require(await waitFor(timeout: .seconds(2)) { system.completeSweepCount >= sweeps + 1 })
+    #expect(system.frameWriteCounts == writes)
+    system.cachedSnapshotsAvailable = true
+    system.cachedRefreshFails = false
+    system.cachedVisibilityOmittedIDs.removeAll()
+    system.windows[1].isHidden = false
+    try #require(await waitFor(timeout: .seconds(2)) { system.completeSweepCount >= sweeps + 2 })
+    try await Task.sleep(for: .milliseconds(300))
+    #expect(system.completeSweepCount == sweeps + 2)
+    #expect(system.frameWriteCounts == writes)
+}
+
+@Test(arguments: ["wrongPID", "unmanaged", "manual", "unreadable"]) @MainActor
+func unrelatedBentoFocusDoesNotReadPeers(focus: String) async throws {
+    _ = NSApplication.shared
+    let system = FakeAppWindowSystem()
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    if focus != "manual" { model.setActiveMode(.bento) }
+    try #require(await waitFor { model.settlementTasks.isEmpty })
+    try await Task.sleep(for: .milliseconds(300))
+    let sweeps = system.completeSweepCount
+    let checks = system.cachedRefreshRequests.count
+    let writes = system.frameWriteCounts
+    system.focusedWindowReadFails = focus == "unreadable"
+    system.eventHandler?(WindowSystemEvent(kind: .focused,
+        windowID: focus == "unmanaged" ? WindowID(rawValue: "unmanaged") : nil,
+        processIdentifier: focus == "wrongPID" ? 70 : 42))
+    try await Task.sleep(for: .milliseconds(300))
+    #expect(system.cachedRefreshRequests.count == checks)
+    #expect(system.completeSweepCount == sweeps)
+    #expect(system.frameWriteCounts == writes)
+}
+
+@Test @MainActor func bentoFocusCheckExcludesFocusCoveredPeers() async throws {
+    _ = NSApplication.shared
+    let system = FakeAppWindowSystem()
+    let peer = WindowID(rawValue: "peer")
+    system.windows.append(WindowSnapshot(id: peer, processIdentifier: 70,
+        frame: BTRect(x: 0, y: 0, width: 400, height: 300), displayID: system.mainDisplay.id))
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    model.setActiveMode(.bento)
+    try #require(await waitFor { system.windows.allSatisfy { $0.frame.size.height == 800 } && model.settlementTasks.isEmpty })
+    system.focusedID = system.windows[0].id
+    model.perform(.maximize)
+    try #require(system.windows[1].isMinimized)
+    try await Task.sleep(for: .milliseconds(400))
+    let sweeps = system.completeSweepCount
+    let writes = system.frameWriteCounts
+    let checks = system.cachedRefreshRequests.count
+    system.eventHandler?(WindowSystemEvent(kind: .focused, windowID: nil, processIdentifier: 42))
+    try #require(await waitFor(timeout: .seconds(2)) { system.cachedRefreshRequests.count > checks })
+    try await Task.sleep(for: .milliseconds(300))
+    #expect(Array(system.cachedRefreshRequests.dropFirst(checks)) == [Set([system.windows[0].id])])
+    #expect(system.completeSweepCount == sweeps)
+    #expect(system.frameWriteCounts == writes)
+    #expect(system.windows[1].isMinimized)
+}
+
+@Test(arguments: ["gesture", "space"]) @MainActor
+func bentoFocusCheckWaitsForDesktopInteraction(interaction: String) async throws {
+    _ = NSApplication.shared
+    let system = FakeAppWindowSystem()
+    system.windows.append(WindowSnapshot(id: WindowID(rawValue: "peer"), processIdentifier: 70,
+        frame: BTRect(x: 0, y: 0, width: 400, height: 300), displayID: system.mainDisplay.id))
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    model.setActiveMode(.bento)
+    try #require(await waitFor { system.windows.allSatisfy { $0.frame.size.height == 800 } && model.settlementTasks.isEmpty })
+    try await Task.sleep(for: .milliseconds(300))
+    let checks = system.cachedRefreshRequests.count
+    if interaction == "gesture" {
+        try #require(model.beginBentoDrag(displayID: system.mainDisplay.id, sourceID: system.windows[0].id))
+    } else {
+        model.beginActiveSpaceStabilization()
+        try #require(model.isStabilizingSpace)
+    }
+    system.eventHandler?(WindowSystemEvent(kind: .focused, windowID: nil, processIdentifier: 42))
+    try await Task.sleep(for: .milliseconds(40))
+    #expect(system.cachedRefreshRequests.count == checks)
+    if interaction == "gesture" {
+        try await Task.sleep(for: .milliseconds(200))
+        #expect(system.cachedRefreshRequests.count == checks)
+        model.finishBentoDrag(displayID: system.mainDisplay.id, sourceID: system.windows[0].id, outcome: .restore)
+    }
+    #expect(await waitFor(timeout: .seconds(2)) { system.cachedRefreshRequests.count > checks })
+    #expect(system.cachedRefreshRequests.last == Set(system.windows.map(\.id)))
 }
 
 /// A neighbour whose minimum is not yet measured clamps during a new

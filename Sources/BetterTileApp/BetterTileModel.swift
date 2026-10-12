@@ -130,6 +130,7 @@ final class BetterTileModel {
     private var lastVisibleSignature = ""
     private var lastDisplayWorkAreaSignature = ""
     private var pendingWindowEvents = WindowEventBuffer()
+    private var pendingBentoFocusEvent: WindowSystemEvent?
     /// Windows a destroyed event has accounted for. Direct evidence, so their
     /// panes are released without waiting for absence to be corroborated.
     private var confirmedGoneWindowIDs: Set<WindowID> = []
@@ -1696,6 +1697,7 @@ final class BetterTileModel {
         watchdogTimer = nil
         permissionPollTask?.cancel()
         windowEventTask?.cancel()
+        pendingBentoFocusEvent = nil
         spaceStabilizationTask?.cancel()
         displayRefreshDebouncer.cancel()
         settlementTasks.values.forEach { $0.cancel() }
@@ -2021,6 +2023,9 @@ final class BetterTileModel {
 
     private func receiveWindowSystemEvent(_ event: WindowSystemEvent) {
         guard !isShutDown else { return }
+        if event.kind == .focused, sessionStore.sessions.values.contains(where: { $0.mode == .bento }) {
+            pendingBentoFocusEvent = event
+        }
         // Lifecycle evidence survives gesture buffering and Space stabilization.
         // A stale scan must not restore a pane before minimization is observed.
         if let windowID = event.windowID {
@@ -2092,26 +2097,44 @@ final class BetterTileModel {
         case .focused:
             handleTabbedFocus()
             layoutWheel.handleFocusedWindowChanged()
-            // Closing a document window often only moves focus: some
-            // applications keep the window alive off screen and send no
-            // destroyed event. A sweep then notices the missing pane. Focus
-            // that lands outside every Bento layout needs no sweep.
-            if let id = event.windowID, sessionStore.sessions.values.contains(where: {
-                $0.mode == .bento && $0.windowIDs.contains(id)
-            }) {
-                pendingWindowEvents.recordTopologyChange()
-            }
         }
         schedulePendingWindowEvents()
+    }
+
+    private func bentoFocusNeedsTopologyRefresh(_ event: WindowSystemEvent) -> Bool {
+        let focusedID: WindowID
+        if let windowID = event.windowID {
+            focusedID = windowID
+        } else {
+            guard let focused = try? system.focusedWindow(),
+                  focused.processIdentifier == event.processIdentifier else { return false }
+            focusedID = focused.id
+        }
+        let sessions = sessionStore.sessions.values.filter { $0.mode == .bento }
+        guard sessions.contains(where: { $0.windowIDs.contains(focusedID) }) else { return false }
+        let expectedPeers = sessions.flatMap { session in
+            Set(session.bentoState.root?.windowIDs ?? [])
+                .subtracting(session.excludedFocusWindowIDs)
+                .subtracting(confirmedGoneWindowIDs)
+                .subtracting(confirmedMinimizedWindowIDs)
+                .map { (windowID: $0, displayID: session.displayID) }
+        }
+        let expectedIDs = Set(expectedPeers.map(\.windowID))
+        guard !expectedIDs.isEmpty else { return false }
+        guard let refreshed = try? system.cachedVisibleWindows(refreshing: expectedIDs) else { return true }
+        let snapshots = Dictionary(uniqueKeysWithValues: refreshed.map { ($0.id, $0) })
+        return expectedPeers.contains { peer in
+            guard let snapshot = snapshots[peer.windowID] else { return true }
+            return !snapshot.isEligible || snapshot.isFloating
+                || !rule(for: snapshot).allowsBentoParticipation || snapshot.displayID != peer.displayID
+        }
     }
 
     private func schedulePendingWindowEvents(after delay: Duration = WindowEventRetryBackoff.initialDelay) {
         guard !isShutDown else { return }
         let isGestureActive = activeBentoDrag != nil || dragSnap.isGestureActive || dividerResize.isDragging
-        guard pendingWindowEvents.isReadyForProcessing(
-            isGestureActive: isGestureActive,
-            isStabilizingSpace: isStabilizingSpace
-        ) else { return }
+        guard !isGestureActive, !isStabilizingSpace,
+              !pendingWindowEvents.isEmpty || pendingBentoFocusEvent != nil else { return }
         windowEventTask?.cancel()
         windowEventTask = Task { @MainActor [weak self] in
             try? await Task.sleep(for: delay)
@@ -2122,13 +2145,17 @@ final class BetterTileModel {
 
     private func processPendingWindowEvents() {
         let isGestureActive = activeBentoDrag != nil || dragSnap.isGestureActive || dividerResize.isDragging
-        guard pendingWindowEvents.isReadyForProcessing(
-            isGestureActive: isGestureActive,
-            isStabilizingSpace: isStabilizingSpace
-        ) else { return }
+        guard !isGestureActive, !isStabilizingSpace,
+              !pendingWindowEvents.isEmpty || pendingBentoFocusEvent != nil else { return }
         let pendingEvents = pendingWindowEvents
         let changedIDs = pendingEvents.frameEventWindowIDs
         let refreshTopology = pendingEvents.topologyChanged
+            || pendingBentoFocusEvent.map(bentoFocusNeedsTopologyRefresh) == true
+        if !refreshTopology, changedIDs.isEmpty {
+            pendingBentoFocusEvent = nil
+            windowEventRetryBackoff.reset()
+            return
+        }
         let windows: [WindowSnapshot]
         if !refreshTopology,
            !changedIDs.isEmpty,
@@ -2136,12 +2163,14 @@ final class BetterTileModel {
             windows = targeted
         } else {
             guard let completeSweep = try? system.visibleWindows() else {
+                if refreshTopology { pendingWindowEvents.recordTopologyChange() }
                 schedulePendingWindowEvents(after: windowEventRetryBackoff.nextDelayAfterFailure())
                 return
             }
             windows = completeSweep
         }
         pendingWindowEvents.acknowledge(pendingEvents)
+        pendingBentoFocusEvent = nil
         windowEventRetryBackoff.reset()
         let visibleIDs = Set(windows.map(\.id))
         let now = Date()
