@@ -117,3 +117,28 @@ public enum FrameWritePlanner {
         )
     }
 }
+
+/// Decides whether a final size write that kept a larger size is worth a
+/// clamp confirmation. The confirmation adds a position nudge and its restore,
+/// so it runs only for a clamp the learned minimum does not already explain.
+/// Live gesture ticks never confirm; they write through
+/// `setIntermediateFrames`.
+public enum WriteReadbackPolicy {
+    /// True when the window stayed at the requested origin, larger than
+    /// requested on an axis the learned minimum does not already explain.
+    public static func confirmsClamp(
+        requested: BTRect,
+        actual: BTRect,
+        learnedMinimum: BTSize?,
+        tolerance: Double = 2
+    ) -> Bool {
+        guard abs(actual.minX - requested.minX) <= tolerance,
+              abs(actual.minY - requested.minY) <= tolerance else { return false }
+        let known = learnedMinimum ?? .zero
+        let widthIsNew = actual.size.width > requested.size.width + tolerance
+            && actual.size.width > known.width + tolerance
+        let heightIsNew = actual.size.height > requested.size.height + tolerance
+            && actual.size.height > known.height + tolerance
+        return widthIsNew || heightIsNew
+    }
+}

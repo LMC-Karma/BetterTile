@@ -970,6 +970,7 @@ public final class DividerOverlayController {
                 )
             }
         case .live:
+            let sentBefore = transaction.lastAppliedFrames
             switch coordinator.applyLive(
                 transaction: &transaction,
                 placements: placements,
@@ -981,7 +982,11 @@ public final class DividerOverlayController {
                 activeInteraction = proposedInteraction
                 self.transaction = transaction
                 reportLiveBentoState(interaction)
-                let refused = recordRefusedMinimums(placements)
+                // Only a window written on this tick gives new refusal
+                // evidence; a release writes every window.
+                let written = validateParticipants ? Set(placements.map(\.windowID))
+                    : Set(transaction.lastAppliedFrames.filter { sentBefore[$0.key] != $0.value }.keys)
+                let refused = recordRefusedMinimums(placements, written: written)
                 if refused.width || refused.height {
                     if validateParticipants {
                         // Correcting one axis can establish the other axis's
@@ -1095,7 +1100,10 @@ public final class DividerOverlayController {
             }
             layoutChangedHandler?(interaction.displayID, frames)
         }
-        clearGesture(committed: succeeded)
+        // A correction cancelled inside applyDrag already cleared the gesture
+        // and started the handle's retraction; a second clear would end the
+        // quick re-grab window early.
+        if activeInteraction != nil { clearGesture(committed: succeeded) }
     }
 
     private func reportLiveBentoState(_ interaction: DividerInteraction) {
@@ -1107,7 +1115,7 @@ public final class DividerOverlayController {
     /// Learns a held size only after that axis actually shrank from its
     /// gesture baseline. An unchanged window can mean ignored AX writes.
     /// Two held ticks establish a minimum for this gesture only.
-    private func recordRefusedMinimums(_ placements: [Placement]) -> (width: Bool, height: Bool) {
+    private func recordRefusedMinimums(_ placements: [Placement], written: Set<WindowID>) -> (width: Bool, height: Bool) {
         let baseline = Dictionary(baselineWindows.map { ($0.id, $0.frame.size) }, uniquingKeysWith: { first, _ in first })
         let shrinking = placements.filter { placement in
             guard let start = baseline[placement.windowID] else { return false }
@@ -1138,7 +1146,9 @@ public final class DividerOverlayController {
             for snapshot in actual where actualSizes[snapshot.id] == nil { actualSizes[snapshot.id] = snapshot.frame.size }
         }
         var refused = (width: false, height: false)
-        for placement in shrinking {
+        // A window not written on this tick keeps its count: its readback is
+        // the evidence already counted.
+        for placement in shrinking where written.contains(placement.windowID) {
             guard let size = actualSizes[placement.windowID] else {
                 heldSizeTicks[placement.windowID] = nil
                 continue

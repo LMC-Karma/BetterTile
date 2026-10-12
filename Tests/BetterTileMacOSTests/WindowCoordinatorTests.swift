@@ -24,6 +24,70 @@ import Testing
     #expect(system.targetedSnapshotRequests >= 2)
 }
 
+@Test @MainActor func tinyFixedSizeWindowMovesInAMultiWindowCommit() {
+    let system = FakeWindowSystem()
+    system.addSecondWindow()
+    system.windows[1].frame = BTRect(x: 800, y: 600, width: 90, height: 70)
+    system.windows[1].constraints.isResizable = false
+    let coordinator = WindowCoordinator(system: system)
+    let placements = [
+        Placement(windowID: system.windows[0].id, frame: BTRect(x: 0, y: 0, width: 500, height: 800)),
+        Placement(windowID: system.windows[1].id, frame: BTRect(x: 600, y: 300, width: 90, height: 70)),
+    ]
+
+    #expect(coordinator.applyPlacements(placements).isApplied)
+    #expect(system.windows.map(\.frame) == placements.map(\.frame))
+    #expect(Set(system.frameWriteCounts.keys) == Set(placements.map(\.windowID)))
+}
+
+@Test(arguments: [
+    BTSize(width: 150, height: 70),
+    BTSize(width: 90, height: 100),
+    BTSize(width: 80, height: 70),
+    BTSize(width: 90, height: 60),
+]) @MainActor func tinyFixedSizeWindowResizeRejectsTheWholeCommit(targetSize: BTSize) {
+    let system = FakeWindowSystem()
+    system.addSecondWindow()
+    system.windows[1].frame = BTRect(x: 800, y: 600, width: 90, height: 70)
+    system.windows[1].constraints.isResizable = false
+    let original = system.windows.map(\.frame)
+    let fixedWindowID = system.windows[1].id
+    let coordinator = WindowCoordinator(system: system)
+    let placements = [
+        Placement(windowID: system.windows[0].id, frame: BTRect(x: 0, y: 0, width: 500, height: 800)),
+        Placement(windowID: fixedWindowID, frame: BTRect(origin: BTPoint(x: 600, y: 300), size: targetSize)),
+    ]
+
+    #expect(coordinator.applyPlacements(placements) == .failed(
+        reason: WindowSystemError.unsupportedWindow(fixedWindowID).localizedDescription
+    ))
+    #expect(system.windows.map(\.frame) == original)
+    #expect(system.frameWriteCounts.isEmpty)
+    #expect(system.frameWriteBatches.isEmpty)
+}
+
+@Test(arguments: [BTSize(width: 90, height: 400), BTSize(width: 600, height: 70)], [false, true])
+@MainActor func tinyResizableWindowMinimumRejectsTheWholeCommit(targetSize: BTSize, keepsSize: Bool) {
+    let system = FakeWindowSystem()
+    system.addSecondWindow()
+    if keepsSize {
+        system.windows[1].frame = BTRect(origin: system.windows[1].frame.origin, size: targetSize)
+    }
+    let original = system.windows.map(\.frame)
+    let coordinator = WindowCoordinator(system: system)
+    let placements = [
+        Placement(windowID: system.windows[0].id, frame: BTRect(x: 0, y: 0, width: 500, height: 800)),
+        Placement(windowID: system.windows[1].id, frame: BTRect(origin: BTPoint(x: 400, y: 200), size: targetSize)),
+    ]
+
+    #expect(coordinator.applyPlacements(placements) == .failed(
+        reason: WindowSystemError.operationFailed("A window reached its minimum size.").localizedDescription
+    ))
+    #expect(system.windows.map(\.frame) == original)
+    #expect(system.frameWriteCounts.isEmpty)
+    #expect(system.frameWriteBatches.isEmpty)
+}
+
 @Test @MainActor func coordinatorCanPlanAnActionWithoutMovingTheWindow() throws {
     let system = FakeWindowSystem()
     let original = system.windows[0].frame
@@ -1166,6 +1230,21 @@ func singleWindowPartialFailureRestoresBaselineAndPreservesHistory(actionPlan: B
     #expect(coordinator.perform(current).isApplied)
 }
 
+/// The probe is BetterTile's own write. A window that stays where it was,
+/// for example one that floats, must not read as moved by someone else.
+@Test @MainActor func minimumSizeProbeOwnsTheEventsItCauses() {
+    let system = FakeWindowSystem()
+    system.addSecondWindow()
+    let coordinator = WindowCoordinator(system: system)
+    let restored = system.windows[0], unrestored = system.windows[1]
+    #expect(!coordinator.matchesExpectedMutation(windowID: restored.id, actualFrame: restored.frame))
+    system.unrestoredProbeWindowIDs = [unrestored.id]
+    _ = coordinator.probeMinimumSizes(for: [restored.id, unrestored.id])
+    #expect(coordinator.matchesExpectedMutation(windowID: restored.id, actualFrame: restored.frame))
+    // A window left at another size did not return to that frame.
+    #expect(!coordinator.matchesExpectedMutation(windowID: unrestored.id, actualFrame: unrestored.frame))
+}
+
 /// The minimum-size probe changes a window's size, so it runs through the
 /// coordinator and reports a window it could not return to its size.
 @Test @MainActor func minimumSizeProbeReportsAWindowLeftAtTheWrongSize() {
@@ -1203,6 +1282,36 @@ func singleWindowPartialFailureRestoresBaselineAndPreservesHistory(actionPlan: B
     #expect(system.frameWriteBatches.last == [system.windows[1].id, system.windows[0].id])
 }
 
+/// At a 2x2 junction only the window that would grow into a refusing
+/// neighbour waits. The other growing window keeps following the divider.
+@Test @MainActor func aRefusingWindowHoldsOnlyTheWindowThatWouldOverlapIt() throws {
+    let system = FakeWindowSystem()
+    system.windows[0].frame = BTRect(x: 0, y: 0, width: 500, height: 400)
+    for (name, frame) in [("topRight", BTRect(x: 500, y: 0, width: 500, height: 400)),
+                          ("bottomLeft", BTRect(x: 0, y: 400, width: 500, height: 400)),
+                          ("bottomRight", BTRect(x: 500, y: 400, width: 500, height: 400))] {
+        system.windows.append(WindowSnapshot(id: WindowID(rawValue: name), processIdentifier: Int32(50 + system.windows.count),
+            bundleIdentifier: "com.example.\(name)", frame: frame, displayID: DisplayID(rawValue: "main")))
+    }
+    let topLeft = system.windows[0].id, bottomLeft = WindowID(rawValue: "bottomLeft"), bottomRight = WindowID(rawValue: "bottomRight")
+    system.enforcedMinimumWidths[bottomRight] = 450
+    let coordinator = WindowCoordinator(system: system)
+    var transaction = try #require(coordinator.beginTransaction(windowIDs: Set(system.windows.map(\.id))).startedTransaction)
+    let sample = [
+        Placement(windowID: topLeft, frame: BTRect(x: 0, y: 0, width: 600, height: 400)),
+        Placement(windowID: WindowID(rawValue: "topRight"), frame: BTRect(x: 600, y: 0, width: 400, height: 400)),
+        Placement(windowID: bottomLeft, frame: BTRect(x: 0, y: 400, width: 600, height: 400)),
+        Placement(windowID: bottomRight, frame: BTRect(x: 600, y: 400, width: 400, height: 400)),
+    ]
+    // The first tick shrinks the right column; the second completes growth.
+    for _ in 0..<2 {
+        #expect(coordinator.applyLive(transaction: &transaction, placements: sample, validateParticipants: false).isApplied)
+    }
+    let frame = { (id: WindowID) in system.windows.first { $0.id == id }!.frame }
+    #expect(frame(topLeft).size.width == 600, "\(system.windows.map(\.frame))")
+    #expect(frame(bottomLeft).maxX <= frame(bottomRight).minX + 0.5, "\(system.windows.map(\.frame))")
+}
+
 /// A live divider tick asks a window to shrink below a minimum it never
 /// reported. The window that would grow into it waits for that tick, so the
 /// two never overlap while the divider learns the minimum.
@@ -1230,7 +1339,6 @@ func singleWindowPartialFailureRestoresBaselineAndPreservesHistory(actionPlan: B
 /// shrinks those windows back before it regrows their neighbours.
 @Test @MainActor func rejectedLiveTickShrinksBackBeforeItRegrows() throws {
     let (system, coordinator) = sharedEdgeFixture()
-    system.attemptsWholeIntermediateBatch = true
     let left = system.windows[0].id, right = system.windows[1].id
     var transaction = try #require(coordinator.beginTransaction(windowIDs: [left, right]).startedTransaction)
     func tick(_ edge: Double) -> WindowMutationOutcome {
@@ -1250,6 +1358,25 @@ func singleWindowPartialFailureRestoresBaselineAndPreservesHistory(actionPlan: B
     #expect(batch == [left, right, right, left])
     #expect(system.windows[0].frame == BTRect(x: 0, y: 0, width: 480, height: 800))
     #expect(system.windows[1].frame == BTRect(x: 500, y: 0, width: 500, height: 800))
+}
+
+/// A corrective commit after a first commit compares each window with the
+/// frame it was given, not the frame from before the gesture. The window
+/// that must shrink back is written before its neighbour grows.
+@Test @MainActor func aCorrectiveCommitShrinksFromTheCommittedFrames() throws {
+    let (system, coordinator) = sharedEdgeFixture()
+    let left = system.windows[0].id, right = system.windows[1].id
+    var transaction = try #require(coordinator.beginTransaction(windowIDs: [left, right]).startedTransaction)
+    #expect(coordinator.commit(transaction: &transaction, placements: [
+        Placement(windowID: left, frame: BTRect(x: 0, y: 0, width: 700, height: 800)),
+        Placement(windowID: right, frame: BTRect(x: 700, y: 0, width: 300, height: 800)),
+    ], recordHistory: false).isApplied)
+    // Still wider than before the gesture, but narrower than committed.
+    #expect(coordinator.commit(transaction: &transaction, placements: [
+        Placement(windowID: left, frame: BTRect(x: 0, y: 0, width: 600, height: 800)),
+        Placement(windowID: right, frame: BTRect(x: 600, y: 0, width: 400, height: 800)),
+    ], recordHistory: false).isApplied)
+    #expect(system.frameWriteBatches.last == [left, right])
 }
 
 /// A slow drag moves less than the write tolerance per tick. Each tick must
@@ -1297,6 +1424,23 @@ func singleWindowPartialFailureRestoresBaselineAndPreservesHistory(actionPlan: B
     // A tick without a new sample completes the growing window.
     _ = coordinator.applyLive(transaction: &transaction, placements: transaction.proposedPlacements, validateParticipants: false)
     #expect(system.windows[0].frame.maxX == 550)
+    #expect(!transaction.hasTrailingWrites)
+}
+
+/// A rejected tick that only completes a trailing window clears the
+/// trailing mark, so a still pointer does not retry it every display tick.
+@Test @MainActor func aRejectedTrailingTickDoesNotKeepRetrying() throws {
+    let (system, coordinator) = sharedEdgeFixture()
+    var transaction = try #require(coordinator.beginTransaction(windowIDs: Set(system.windows.map(\.id))).startedTransaction)
+    _ = coordinator.applyLive(transaction: &transaction, placements: [
+        Placement(windowID: system.windows[0].id, frame: BTRect(x: 0, y: 0, width: 520, height: 800)),
+        Placement(windowID: system.windows[1].id, frame: BTRect(x: 520, y: 0, width: 480, height: 800)),
+    ], validateParticipants: false)
+    try #require(transaction.hasTrailingWrites)
+    system.failingWindowID = system.windows[0].id
+    let outcome = coordinator.applyLive(transaction: &transaction, placements: transaction.proposedPlacements,
+                                        validateParticipants: false)
+    #expect(!outcome.isApplied)
     #expect(!transaction.hasTrailingWrites)
 }
 
@@ -1372,4 +1516,64 @@ func singleWindowPartialFailureRestoresBaselineAndPreservesHistory(actionPlan: B
     #expect(!coordinator.commit(transaction: &transaction, placements: placements).isApplied)
     #expect(system.frameWriteCounts == writes)
     #expect(system.windows.map(\.frame) == dragged)
+}
+
+/// A committed layout writes every application at once, but in two passes:
+/// windows that shrink, then windows that grow. A growing window never
+/// covers a neighbour from another application that has not made room.
+@Test func committedBatchesShrinkInOnePassBeforeTheyGrow() {
+    let a = WindowID(rawValue: "a"), b = WindowID(rawValue: "b"), c = WindowID(rawValue: "c")
+    let known = [
+        a: BTRect(x: 0, y: 0, width: 500, height: 800),
+        b: BTRect(x: 500, y: 0, width: 500, height: 800),
+    ]
+    let writes = [
+        Placement(windowID: a, frame: BTRect(x: 0, y: 0, width: 600, height: 800)),
+        Placement(windowID: b, frame: BTRect(x: 600, y: 0, width: 400, height: 800)),
+        Placement(windowID: c, frame: BTRect(x: 0, y: 0, width: 100, height: 100)),
+    ]
+    let passes = AccessibilityWindowSystem.shrinkingFirstPasses(writes, knownCurrentFrames: known)
+    #expect(passes.map { $0.map(\.windowID) } == [[b], [a, c]])
+    #expect(AccessibilityWindowSystem.shrinkingFirstPasses(Array(writes.prefix(1)), knownCurrentFrames: known)
+        .map { $0.map(\.windowID) } == [[a]])
+}
+
+/// Several applications can fail in one concurrent batch. No window keeps
+/// an expectation for a frame it never reached, so a later real move to that
+/// frame is not mistaken for BetterTile's own write.
+@Test @MainActor func aFailedBatchExpectsNoFrameAWindowNeverReached() throws {
+    let system = FakeWindowSystem()
+    system.windows[0].frame = BTRect(x: 0, y: 0, width: 500, height: 800)
+    system.addSecondWindow()
+    system.windows[1].frame = BTRect(x: 500, y: 0, width: 500, height: 800)
+    system.attemptsWholeBatch = true
+    let first = system.windows[0].id, second = system.windows[1].id
+    for id in [first, second] {
+        system.partiallyFailedFrameWriteNumbers[id] = [system.frameWriteCounts[id, default: 0] + 1]
+    }
+    let coordinator = WindowCoordinator(system: system)
+    let requested = [
+        Placement(windowID: first, frame: BTRect(x: 100, y: 0, width: 400, height: 800)),
+        Placement(windowID: second, frame: BTRect(x: 600, y: 0, width: 400, height: 800)),
+    ]
+    #expect(!coordinator.applyPlacements(requested).isApplied)
+    for placement in requested {
+        #expect(!coordinator.matchesExpectedMutation(windowID: placement.windowID, actualFrame: placement.frame))
+    }
+}
+
+/// A committed batch writes shrinking windows first. When a shrink fails,
+/// the growing windows are not written over the window that kept its room.
+@Test @MainActor func aFailedShrinkStopsTheGrowingPass() throws {
+    let (system, coordinator) = sharedEdgeFixture()
+    system.attemptsWholeBatch = true
+    let left = system.windows[0].id, right = system.windows[1].id
+    system.failingWindowID = right
+    let leftFrame = system.windows[0].frame
+    #expect(!coordinator.applyPlacements([
+        Placement(windowID: left, frame: BTRect(x: 0, y: 0, width: 600, height: 800)),
+        Placement(windowID: right, frame: BTRect(x: 600, y: 0, width: 400, height: 800)),
+    ]).isApplied)
+    #expect(system.frameWriteCounts[left, default: 0] == 0)
+    #expect(system.windows[0].frame == leftFrame)
 }

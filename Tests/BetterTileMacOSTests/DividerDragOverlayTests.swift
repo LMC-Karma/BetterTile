@@ -411,3 +411,21 @@ private func ghostOverlayCleansUpEveryGestureExit(ending: GhostEnd) throws {
     controller.updateHover(at: fixture.point(dx: 0, dy: 150))
     #expect(input.frame != before)
 }
+
+/// After a release the handle retracts for a moment. A pointer that comes
+/// back to the divider meanwhile takes the handle back at once, so a quick
+/// second drag grabs the divider, not the application's window edge.
+@Test @MainActor func aQuickSecondDragTakesTheRetractingHandleBack() throws {
+    let fixture = try GhostGestureFixture()
+    let controller = fixture.controller
+    defer { controller.hideAndCancel() }
+    let input = try #require(controller.visibleHandleView?.window as? DividerHandlePanel)
+    controller.refresh(boundaries: fixture.state.boundaries(in: fixture.bounds, displayID: fixture.display))
+    fixture.tick(dx: 30)
+    controller.end(at: fixture.point(dx: 30))
+    // A release always stops the handle taking clicks; it retracts unless
+    // Reduce Motion is on.
+    #expect(input.ignoresMouseEvents)
+    controller.updateHover(at: fixture.point(dx: 0))
+    #expect(!input.ignoresMouseEvents)
+}

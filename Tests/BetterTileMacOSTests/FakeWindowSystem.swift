@@ -158,7 +158,7 @@ final class FakeWindowSystem: WindowSystem, TargetedWindowSystem, WindowEventSou
     var intermediateFrameWriteCounts: [WindowID: Int] = [:]
     /// Like the Accessibility adapter, writes every window of a live tick
     /// before it reports the first failure.
-    var attemptsWholeIntermediateBatch = false
+    var attemptsWholeIntermediateBatch = true
 
     func setIntermediateFrames(_ writes: [Placement], knownCurrentFrames: [WindowID: BTRect]) throws {
         var failure: Error?
@@ -189,13 +189,18 @@ final class FakeWindowSystem: WindowSystem, TargetedWindowSystem, WindowEventSou
         }
         var attempted: [WindowID] = []
         var failure: (windowID: WindowID, error: Error)?
-        for write in writes {
-            attempted.append(write.windowID)
-            do {
-                try setFrame(write.frame, knownCurrentFrame: knownCurrentFrames[write.windowID], for: write.windowID)
-            } catch {
-                if failure == nil { failure = (write.windowID, error) }
-                if !attemptsWholeBatch { break }
+        // Like the adapter: shrinking windows, then growing windows, and no
+        // further pass after a failed one.
+        for pass in AccessibilityWindowSystem.shrinkingFirstPasses(writes, knownCurrentFrames: knownCurrentFrames) {
+            guard failure == nil else { break }
+            for write in pass {
+                attempted.append(write.windowID)
+                do {
+                    try setFrame(write.frame, knownCurrentFrame: knownCurrentFrames[write.windowID], for: write.windowID)
+                } catch {
+                    if failure == nil { failure = (write.windowID, error) }
+                    if !attemptsWholeBatch { return FrameBatchResult(attempted: attempted, failure: failure) }
+                }
             }
         }
         return FrameBatchResult(attempted: attempted, failure: failure)

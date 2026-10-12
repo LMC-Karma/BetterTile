@@ -2,6 +2,37 @@ import Testing
 @testable import BetterTileCore
 @testable import BetterTileMacOS
 
+@Test @MainActor func tabbedCoordinatorCommitsTinyFixedSizeSelectionAlongsideResizableWindow() async throws {
+    let system = FakeWindowSystem()
+    system.addSecondWindow()
+    system.windows[1].frame = BTRect(x: 800, y: 600, width: 90, height: 70)
+    system.windows[1].constraints.isResizable = false
+    let resizableWindowID = system.windows[0].id
+    let fixedWindowID = system.windows[1].id
+    let fixedSize = system.windows[1].frame.size
+    var state = TabbedLayoutState(preset: .columns)
+    state.reconcile(windowIDs: [resizableWindowID], removed: [], focused: resizableWindowID)
+    state.activatePane(state.panes[1].id)
+    state.reconcile(windowIDs: [resizableWindowID, fixedWindowID], removed: [], focused: fixedWindowID)
+    let placements = try state.placements(in: system.availableDisplays[0].visibleFrame, windows: system.windows)
+    let fixedPlacement = try #require(placements.first { $0.windowID == fixedWindowID })
+    #expect(fixedPlacement.frame.size == fixedSize)
+
+    let result = await WindowCoordinator(system: system).applyTabbed(
+        placements: placements, required: [resizableWindowID, fixedWindowID],
+        selected: [resizableWindowID, fixedWindowID], previousSelected: [resizableWindowID],
+        focus: fixedWindowID, isCurrent: { true })
+
+    #expect(result.isApplied)
+    for placement in placements {
+        #expect(system.windows.first { $0.id == placement.windowID }?.frame == placement.frame)
+    }
+    #expect(Set(system.frameWriteCounts.keys) == Set(placements.map(\.windowID)))
+    #expect(system.focusedWindowID == fixedWindowID)
+    #expect(system.raisedWindows.last?.0 == fixedWindowID)
+    #expect(system.minimizeWriteCounts.isEmpty)
+}
+
 @Test @MainActor func tabbedCoordinatorOrdersSelectedWindowsAndDoesNotMinimize() async {
     let system = FakeWindowSystem()
     system.addSecondWindow()

@@ -29,7 +29,12 @@ public final class TabbedOverlayController {
     public private(set) var isDropPending = false
     public var acceptsTabDrags = true {
         didSet {
-            if acceptsTabDrags { pressSelection = nil }
+            if acceptsTabDrags {
+                pressSelection = nil
+                // The placement ended, so each strip shows the selection it
+                // confirmed, including a rejected press's previous tab.
+                for panel in panes.values { (panel.contentView as? TabbedPaneView)?.dropPressedSelection() }
+            }
             if !acceptsTabDrags, isInteracting { cancelInteraction() }
         }
     }
@@ -88,7 +93,11 @@ public final class TabbedOverlayController {
             }
         }, primaryButtonIsPressed: { NSEvent.pressedMouseButtons & 1 != 0 },
         pointerLocation: {
-            CoordinateConverter.pointToTopLeft(NSEvent.mouseLocation, mainScreenFrame: NSScreen.screens.first?.frame ?? .zero)
+            // Without a screen there is no pointer position; the drag falls
+            // back to its last sampled point.
+            NSScreen.screens.first.map {
+                CoordinateConverter.pointToTopLeft(NSEvent.mouseLocation, mainScreenFrame: $0.frame)
+            }
         })
     }
 
@@ -930,6 +939,8 @@ struct TabbedStripLayout {
     }
 
     var stripLayout: TabbedStripLayout { content.strip }
+    var displayedSelection: WindowID? { content.displayedSelection }
+    func dropPressedSelection() { content.dropPressedSelection() }
     func updateToolTips() { content.updateToolTips() }
     func updateAccessibility() {
         setAccessibilityElement(true)
@@ -964,7 +975,8 @@ struct TabbedStripLayout {
             }
         }
     }
-    private var displayedSelection: WindowID? { pressedSelection ?? pane.selected }
+    var displayedSelection: WindowID? { pressedSelection ?? pane.selected }
+    func dropPressedSelection() { pressedSelection = nil }
     var number = 1
     var active = false { didSet { needsDisplay = true; redrawTabs() } }
     var titles: [String] = [] { didSet { if titles != oldValue { layoutTabs(animated: false) }; redrawTabs() } }

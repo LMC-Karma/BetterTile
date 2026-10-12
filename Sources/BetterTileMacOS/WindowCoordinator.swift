@@ -141,6 +141,9 @@ public final class WindowCoordinator {
     private var generations: [WindowID: UInt64] = [:]
     private var expectedMutations: [WindowID: [ExpectedMutation]] = [:]
     private var lastCycle: (windowID: WindowID, requestedAction: WindowAction, index: Int, date: Date)?
+    /// Repeating a half shortcut within this many seconds cycles to the next
+    /// size. Tests on a loaded runner lengthen it.
+    public var shortcutCycleInterval: TimeInterval = 2
 
     public init(system: any WindowSystem, historyCapacity: Int = 10, actionEngine: StandardActionEngine = StandardActionEngine()) {
         self.system = system
@@ -376,6 +379,16 @@ public final class WindowCoordinator {
         }
     }
 
+    /// The frames the most recent committed placement started from. A
+    /// follow-up write in the same user action records undo history against
+    /// these, not against the frames the first write left.
+    public private(set) var lastPlacementBaselineFrames: [WindowID: BTRect] = [:]
+
+    /// Records undo frames for windows a follow-up write moved.
+    public func recordHistory(_ frames: [WindowID: BTRect]) {
+        recordHistoryFrames(frames)
+    }
+
     /// Verifies a completed system-driven reflow and retries only windows
     /// whose Accessibility frames did not settle at the requested values.
     public func settleAuthoritativePlacements(
@@ -465,12 +478,16 @@ public final class WindowCoordinator {
         placements: [Placement]? = nil,
         recordHistory: Bool = true
     ) -> WindowMutationOutcome {
+        lastPlacementBaselineFrames = transaction.baselineFrames
         if let placements, case let .failed(reason) = preview(transaction: &transaction, placements: placements) {
             return .failed(reason: reason)
         }
         do {
             try validate(transaction.proposedPlacements)
-            try applyAtomically(transaction.proposedPlacements, rollbackFrames: transaction.baselineFrames)
+            // A corrective commit starts from the frames an earlier commit
+            // wrote, so shrink-before-grow compares against those.
+            try applyAtomically(transaction.proposedPlacements, rollbackFrames: transaction.baselineFrames,
+                                currentFrames: transaction.lastAppliedFrames)
             if recordHistory {
                 recordChangedHistoryFrames(
                     transaction.baselineFrames,
@@ -518,8 +535,8 @@ public final class WindowCoordinator {
                 // are still written in one concurrent pass, but a growing
                 // window only enters space its neighbour gave up a tick
                 // earlier, so the two do not overlap while that neighbour
-                // commits. A neighbour that refused its last size holds the
-                // growing windows.
+                // commits. A neighbour that refused its last size holds only
+                // the growing windows that would overlap it.
                 let previous = transaction.lastAppliedFrames
                 let shrinkingIDs = Set(changed.filter { placement in
                     guard let old = previous[placement.windowID] else { return false }
@@ -528,21 +545,22 @@ public final class WindowCoordinator {
                 }.map(\.windowID))
                 let growing = changed.filter { !shrinkingIDs.contains($0.windowID) }
                 if !changed.isEmpty {
-                    let neighbourHoldsSpace = neighbourHoldsItsSpace(
-                        transaction: transaction, excluding: Set(growing.map(\.windowID))
-                    )
+                    let refused = refusedFrames(transaction: transaction, excluding: Set(growing.map(\.windowID)))
+                    func isHeld(_ frame: BTRect) -> Bool {
+                        refused.contains { Self.overlaps(frame, $0) }
+                    }
                     writes = changed.compactMap { placement in
                         if shrinkingIDs.contains(placement.windowID) {
                             // A window can shrink on one axis and grow on the
                             // other at a junction. Its growing axis trails
                             // like any growing window.
                             guard let old = previous[placement.windowID] else { return placement }
-                            let held = neighbourHoldsSpace ? old : (previousProposal[placement.windowID] ?? old)
+                            let held = isHeld(placement.frame) ? old : (previousProposal[placement.windowID] ?? old)
                             let frame = Self.trailingGrowth(placement.frame, from: old, held: held)
                             if !frame.approximatelyEquals(placement.frame, tolerance: 0.01) { trailing = true }
                             return Placement(windowID: placement.windowID, frame: frame)
                         }
-                        if neighbourHoldsSpace { trailing = true; return nil }
+                        if isHeld(placement.frame) { trailing = true; return nil }
                         guard let earlier = previousProposal[placement.windowID] ?? previous[placement.windowID],
                               earlier.size.width <= placement.frame.size.width + 0.5,
                               earlier.size.height <= placement.frame.size.height + 0.5,
@@ -584,13 +602,13 @@ public final class WindowCoordinator {
             transaction.hasDegradedApply = false
             return .applied
         } catch {
+            // The rejected tick rolled back. The next pointer sample retries
+            // it; a still pointer must not resend it every display tick.
+            transaction.hasTrailingWrites = false
             return applyFailureOutcome(for: error, transaction: &transaction)
         }
     }
 
-    /// True when a window other than `excluding` has not given up the space a
-    /// neighbour would grow into: it read back larger than the size it was
-    /// sent.
     /// Takes each shrinking axis of `frame` now and keeps each growing axis
     /// at `held`, so the window never grows into space a neighbour has not
     /// yet given up.
@@ -605,22 +623,34 @@ public final class WindowCoordinator {
         return BTRect(x: x.origin, y: y.origin, width: x.size, height: y.size)
     }
 
-    private func neighbourHoldsItsSpace(transaction: WindowFrameTransaction, excluding: Set<WindowID>) -> Bool {
+    /// The read-back frames of windows other than `excluding` that have not
+    /// given up their space: each read back larger than the size it was sent.
+    private func refusedFrames(transaction: WindowFrameTransaction, excluding: Set<WindowID>) -> [BTRect] {
         let candidates = transaction.lastAppliedFrames.filter { !excluding.contains($0.key) && transaction.baselineFrames[$0.key] != $0.value }
-        guard !candidates.isEmpty else { return false }
+        guard !candidates.isEmpty else { return [] }
+        func refused(_ actual: BTRect, sent: BTRect) -> Bool {
+            actual.size.width > sent.size.width + 2 || actual.size.height > sent.size.height + 2
+        }
+        var frames: [BTRect] = []
         var unread = Set<WindowID>()
         for (id, sent) in candidates {
             if let actual = system.measuredFrameAfterWrite(for: id) {
-                if actual.size.width > sent.size.width + 2 || actual.size.height > sent.size.height + 2 { return true }
+                if refused(actual, sent: sent) { frames.append(actual) }
             } else {
                 unread.insert(id)
             }
         }
-        guard !unread.isEmpty, let read = try? snapshots(ids: unread) else { return false }
-        return read.contains { snapshot in
-            guard let sent = candidates[snapshot.id] else { return false }
-            return snapshot.frame.size.width > sent.size.width + 2 || snapshot.frame.size.height > sent.size.height + 2
+        if !unread.isEmpty, let read = try? snapshots(ids: unread) {
+            for snapshot in read {
+                if let sent = candidates[snapshot.id], refused(snapshot.frame, sent: sent) { frames.append(snapshot.frame) }
+            }
         }
+        return frames
+    }
+
+    /// True when the two frames share more than a 2 pt sliver on both axes.
+    static func overlaps(_ a: BTRect, _ b: BTRect) -> Bool {
+        min(a.maxX, b.maxX) - max(a.minX, b.minX) > 2 && min(a.maxY, b.maxY) - max(a.minY, b.minY) > 2
     }
 
     public func finishLive(transaction: WindowFrameTransaction, recordHistory: Bool = true) {
@@ -714,7 +744,20 @@ public final class WindowCoordinator {
     /// it is a window mutation like any other.
     public func probeMinimumSizes(for windowIDs: Set<WindowID>) -> WindowMutationOutcome {
         guard !windowIDs.isEmpty, let probing = system as? any MinimumSizeProbing else { return .applied }
+        // The probe is BetterTile's own write. Its frame events end at each
+        // window's current frame and must not read as an external change.
+        var probeGenerations: [WindowID: UInt64] = [:]
+        for snapshot in (try? snapshots(ids: windowIDs)) ?? [] {
+            let generation = (generations[snapshot.id] ?? 0) &+ 1
+            generations[snapshot.id] = generation
+            probeGenerations[snapshot.id] = generation
+            expect(snapshot.frame, for: snapshot.id, generation: generation)
+        }
         let unrestored = probing.probeMinimumSizes(for: windowIDs)
+        // A window left at another size has not returned to that frame.
+        for id in unrestored {
+            if let generation = probeGenerations[id] { cancelExpectedMutation(for: id, generation: generation) }
+        }
         return unrestored.isEmpty ? .applied
             : .degraded(reason: "A new window did not return to its size after BetterTile measured it.")
     }
@@ -742,19 +785,14 @@ public final class WindowCoordinator {
     private func apply(
         _ frame: BTRect,
         to windowID: WindowID,
-        knownCurrentFrame: BTRect? = nil,
-        intermediate: Bool = false
+        knownCurrentFrame: BTRect? = nil
     ) throws {
         let generation = (generations[windowID] ?? 0) &+ 1
         generations[windowID] = generation
         guard generations[windowID] == generation else { return }
         expect(frame, for: windowID, generation: generation)
         do {
-            if intermediate {
-                try system.setIntermediateFrame(frame, knownCurrentFrame: knownCurrentFrame, for: windowID)
-            } else {
-                try system.setFrame(frame, knownCurrentFrame: knownCurrentFrame, for: windowID)
-            }
+            try system.setFrame(frame, knownCurrentFrame: knownCurrentFrame, for: windowID)
         } catch {
             cancelExpectedMutation(for: windowID, generation: generation)
             throw error
@@ -774,9 +812,11 @@ public final class WindowCoordinator {
                   snapshot.constraints.isResizable || keepsSize else {
                 throw WindowSystemError.unsupportedWindow(placement.windowID)
             }
-            guard placement.frame.size.width + sizeTolerance >= snapshot.constraints.minimumSize.width,
-                  placement.frame.size.height + sizeTolerance >= snapshot.constraints.minimumSize.height
-            else { throw WindowSystemError.operationFailed("A window reached its minimum size.") }
+            if snapshot.constraints.isResizable {
+                guard placement.frame.size.width + sizeTolerance >= snapshot.constraints.minimumSize.width,
+                      placement.frame.size.height + sizeTolerance >= snapshot.constraints.minimumSize.height
+                else { throw WindowSystemError.operationFailed("A window reached its minimum size.") }
+            }
             // A legal size is not enough: a stale display frame or a split
             // driven to an edge can produce a placement that leaves nothing on
             // screen to grab.
@@ -836,6 +876,7 @@ public final class WindowCoordinator {
         }
         try system.withFrameWriteBatch {
             var attempted: [WindowID] = []
+            var generationsWritten: [WindowID: UInt64] = [:]
             do {
                 // Shrink before growing, so a growing window never covers a
                 // neighbour that has not yet made room.
@@ -850,8 +891,9 @@ public final class WindowCoordinator {
                     return left != right ? left : lhs.windowID < rhs.windowID
                 })
                 // Different applications are written at once, so the layout
-                // lands together; one application's windows keep this order.
-                var generationsWritten: [WindowID: UInt64] = [:]
+                // lands together: the adapter writes every application's
+                // shrinking windows, then the growing ones. One application's
+                // windows keep this order.
                 for placement in ordered {
                     let generation = (generations[placement.windowID] ?? 0) &+ 1
                     generations[placement.windowID] = generation
@@ -882,6 +924,14 @@ public final class WindowCoordinator {
                     ((try? snapshots(ids: Set(attempted))) ?? []).map { ($0.id, $0.frame) },
                     uniquingKeysWith: { first, _ in first }
                 )
+                // Several applications can fail in one batch. A window that
+                // did not reach its frame expects no event for it.
+                let requested = Dictionary(placements.map { ($0.windowID, $0.frame) }, uniquingKeysWith: { _, last in last })
+                for id in attempted where actualFrames[id].map({ frame in
+                    requested[id].map { !frame.approximatelyEquals($0, tolerance: 2) } ?? false
+                }) == true {
+                    if let generation = generationsWritten[id] { cancelExpectedMutation(for: id, generation: generation) }
+                }
                 var rollbackFailures: [WindowID] = []
                 for id in attempted.reversed() {
                     guard let frame = rollbackFrames[id] else { continue }
@@ -1008,7 +1058,7 @@ public final class WindowCoordinator {
         }
         let now = Date()
         let nextIndex: Int
-        if let lastCycle, lastCycle.windowID == windowID, lastCycle.requestedAction == requested, now.timeIntervalSince(lastCycle.date) < 2 {
+        if let lastCycle, lastCycle.windowID == windowID, lastCycle.requestedAction == requested, now.timeIntervalSince(lastCycle.date) < shortcutCycleInterval {
             nextIndex = (lastCycle.index + 1) % sequence.count
         } else {
             nextIndex = 0
