@@ -330,9 +330,11 @@ public struct BentoLayoutState: Hashable, Sendable {
         return true
     }
 
+    /// Splits a pane along its longer side: a wide pane gets the new pane
+    /// beside it, a tall pane gets it below. A square pane splits side by side.
     public mutating func split(_ targetWindowID: WindowID, inserting windowID: WindowID, in bounds: BTRect) {
-        let depth = depth(of: targetWindowID) ?? 0
-        let axis: SplitAxis = depth.isMultiple(of: 2) ? .vertical : .horizontal
+        let frame = paneFrames(in: bounds)[targetWindowID]
+        let axis: SplitAxis = frame.map { $0.size.width >= $0.size.height ? .vertical : .horizontal } ?? .vertical
         split(targetWindowID, inserting: windowID, axis: axis, in: bounds)
     }
 
@@ -359,21 +361,6 @@ public struct BentoLayoutState: Hashable, Sendable {
             ))
         }, bounds: bounds))
         floatingWindowIDs.remove(windowID)
-    }
-
-    public func depth(of windowID: WindowID) -> Int? {
-        guard let root else { return nil }
-        func find(_ node: BentoNode, depth: Int) -> Int? {
-            switch node {
-            case let .leaf(candidate):
-                return candidate == windowID ? depth : nil
-            case .vacant:
-                return nil
-            case let .partition(partition):
-                return partition.children.lazy.compactMap { find($0, depth: depth + 1) }.first
-            }
-        }
-        return find(root, depth: 0)
     }
 
     public mutating func insertAtRoot(
