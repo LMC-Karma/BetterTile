@@ -4359,9 +4359,11 @@ extension BetterTileModel {
             // The edge came back to where it started. The 30 Hz preview can
             // have skipped that last step, so the strips return to the panes,
             // but only once the button is released: the edge may still move.
-            let paneEvents = externalIDs.intersection(paneWindows.map(\.id))
-            if primaryButtonIsPressed(), !paneEvents.isEmpty {
-                deferTabbedResizeUntilRelease(paneEvents)
+            // A pass can also come from another window's event while the edge
+            // is held; the strips keep the preview until release either way.
+            if primaryButtonIsPressed() {
+                let paneEvents = externalIDs.intersection(paneWindows.map(\.id))
+                if !paneEvents.isEmpty { deferTabbedResizeUntilRelease(paneEvents) }
                 return
             }
             if tabbedTasks[display.id] == nil, let overlay = tabbedOverlays[display.id], overlay.state != state {
