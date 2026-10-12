@@ -1956,6 +1956,20 @@ func minimizedRightHalfReturnsToItsOriginalSide(nativeMembership: Bool, staleMin
     #expect((frames[brave]?.size.width ?? 0) >= 520)
 }
 
+/// Repair names the windows that overlap. Long titles are shortened so the
+/// reason still fits the result pill.
+@Test func repairOverlapMessageFitsTheResultPillWithLongTitles() {
+    let long = [
+        "Quarterly planning notes and follow-up actions for the platform team – Google Docs – Brave",
+        "Untitled spreadsheet with a very long descriptive name for the budget review – Numbers",
+    ]
+    let message = BetterTileModel.overlapMessage(long)
+    #expect(message.hasSuffix("cannot fit beside each other at their minimum sizes."))
+    #expect(message.count <= ResultPillLayout.detailCharacterCapacity, "\(message.count)")
+    #expect(BetterTileModel.overlapMessage(["Brave", "Preview"])
+        == "Brave and Preview cannot fit beside each other at their minimum sizes.")
+}
+
 /// Repair reports success only after it read every placed window back.
 @Test @MainActor func repairDoesNotReportSuccessWithoutReadingEveryWindowBack() {
     let system = FakeAppWindowSystem()

@@ -250,8 +250,9 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
                 return abs(size.width - original.width) <= 1 && abs(size.height - original.height) <= 1
             }
             // Some applications move a window to keep it on screen when it
-            // shrinks; put its position back too.
-            if !sizeRestored || !restorePosition(element, to: position) { unrestored.insert(id) }
+            // shrinks; put its position back too, even when the size stayed off.
+            let positionRestored = restorePosition(element, to: position)
+            if !sizeRestored || !positionRestored { unrestored.insert(id) }
             guard let clamped else { continue }
             let before = BTRect(x: position.x, y: position.y, width: original.width, height: original.height)
             measured = minimumSizeLearner.observeWriteReadback(
