@@ -1000,11 +1000,14 @@ final class BetterTileModel {
     private func repairBento(displayID: DisplayID, focusedWindowID: WindowID) {
         // Repair during Focus mode ends it: the covered peers come back and the
         // previous layout returns, instead of forgetting the minimized peers.
+        // Repair then verifies that layout and reports, so success is never
+        // shown before the windows are read back.
         if sessionStore.session(for: displayID)?.excludedFocusWindowIDs.isEmpty == false,
            let focused = (try? system.windowSnapshots(ids: [focusedWindowID]))?.first,
-           let succeeded = performBentoFocusMode(.restore, window: focused) {
-            presentActionResult(succeeded: succeeded, error: statusMessage,
-                                successMessage: lastBentoFocusMessage, displayID: displayID)
+           let succeeded = performBentoFocusMode(.restore, window: focused, afterRestore: { [weak self] in
+               self?.repairBento(displayID: displayID, focusedWindowID: focusedWindowID)
+           }) {
+            if !succeeded { presentActionResult(succeeded: false, error: statusMessage, displayID: displayID) }
             return
         }
         do {
@@ -2492,9 +2495,9 @@ final class BetterTileModel {
             bentoStateBeforeFocus.removeValue(forKey: session.id)
             return false
         }
-        scheduleBentoFocusRestore(session: session, display: display) { [weak self] in
+        scheduleBentoFocusRestore(session: session, display: display, onPeersReturned: { [weak self] in
             self?.performLayoutWheel(.windowAction(action), for: target, cyclesShortcut: cyclesShortcut)
-        }
+        })
         return true
     }
 
@@ -2503,7 +2506,11 @@ final class BetterTileModel {
     /// Restore, Maximize again, or restoring any peer from the Dock ends it
     /// and returns the previous layout. Nil means the action is not a
     /// Focus mode action for this window.
-    private func performBentoFocusMode(_ action: WindowAction, window: WindowSnapshot) -> Bool? {
+    private func performBentoFocusMode(
+        _ action: WindowAction,
+        window: WindowSnapshot,
+        afterRestore: (@MainActor () -> Void)? = nil
+    ) -> Bool? {
         guard action == .maximize || action == .restore,
               var session = sessionStore.session(for: window.displayID), session.mode == .bento,
               !session.automaticWritesSuspended, session.windowIDs.contains(window.id),
@@ -2514,7 +2521,7 @@ final class BetterTileModel {
             let peers = session.excludedFocusWindowIDs
             let outcome = coordinator.restoreFocusDropPeers(peers)
             sessionStore.update(display.id) { $0.excludedFocusWindowIDs.removeAll() }
-            scheduleBentoFocusRestore(session: session, display: display)
+            scheduleBentoFocusRestore(session: session, display: display, afterRestore: afterRestore)
             if case let .failed(reason) = outcome { statusMessage = reason; return false }
             lastBentoFocusMessage = "Layout restored"
             return true
@@ -2542,6 +2549,7 @@ final class BetterTileModel {
     private func scheduleBentoFocusRestore(
         session: LayoutSession,
         display: DisplaySnapshot,
+        afterRestore: (@MainActor () -> Void)? = nil,
         onPeersReturned: (@MainActor () -> Void)? = nil
     ) {
         // Applications restore minimized windows asynchronously. Lay the
@@ -2602,6 +2610,10 @@ final class BetterTileModel {
                         session: restored, displayWindows: displayWindows, display: display,
                         suspendOnRejection: true
                     )
+                    if let afterRestore {
+                        self.focusRestores.removeValue(forKey: display.id)
+                        afterRestore()
+                    }
                     return
                 }
                 try? await Task.sleep(for: .milliseconds(50))
