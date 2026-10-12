@@ -49,6 +49,7 @@ import Testing
     let view: TabbedPaneView
 
     init(count: Int = 3,
+         titles: [String]? = nil,
          bounds: BTRect = BTRect(x: 12000, y: 0, width: 1600, height: 800),
          appearance: NSAppearance? = nil,
          orderPanel: @escaping (NSPanel, NSWindow.OrderingMode, Int) -> Void = { $0.order($1, relativeTo: $2) }) throws {
@@ -66,7 +67,7 @@ import Testing
             return panel
         }, orderPanel: orderPanel, primaryButtonIsPressed: { button.held }, pointerLocation: { button.pointer })
         let windows = ids.enumerated().map { index, id in
-            WindowSnapshot(id: id, processIdentifier: 1, title: "Document \(index + 1)", frame: bounds,
+            WindowSnapshot(id: id, processIdentifier: 1, title: titles?[index] ?? "Document \(index + 1)", frame: bounds,
                            displayID: DisplayID(rawValue: "drag-check"))
         }
         overlay.refresh(state: state, bounds: bounds, windows: windows)
@@ -106,6 +107,28 @@ import Testing
     func release(x: Double, y: Double = 17) throws {
         view.mouseUp(with: try event(.leftMouseUp, x: x, y: y))
     }
+}
+
+/// Fitted tabs differ in width. Dragging a short tab just past the middle
+/// of a wide neighbour moves it once and keeps that order while the pointer
+/// barely moves. Correcting the preview's drop edge by the committed index
+/// put the tab back on the next sample, so the preview flipped on every move.
+@Test @MainActor func reorderingPastAWideTabKeepsOnePreviewOrder() throws {
+    let f = try TabDragFixture(titles: ["A", "A much longer document title for this tab", "B"])
+    defer { f.overlay.hide() }
+    let committed = f.view.pane.tabs
+    let short = f.view.strip.tabFrame(0), wide = f.view.strip.tabFrame(1)
+    try #require(wide.width > short.width * 2)
+    let x = f.bounds.minX + wide.midX + 10
+    try f.start()
+    var orders: [[WindowID]] = []
+    for offset in [0.0, 1, 0, 1, 0] {
+        try f.drag(x: x + offset)
+        f.ticks.fire()
+        orders.append(try #require(f.view.content.previewOrder))
+    }
+    #expect(orders.allSatisfy { $0 == [committed[1], committed[0], committed[2]] }, "\(orders)")
+    try f.release(x: x)
 }
 
 @Test(arguments: [false, true]) @MainActor
