@@ -2525,6 +2525,47 @@ func bentoFocusCheckWaitsForDesktopInteraction(interaction: String) async throws
     #expect(suspended, "\(String(describing: model.statusMessage)) \(system.requestedFrames.mapValues { $0.map { "\($0.minX),\($0.minY) \($0.size.width)x\($0.size.height)" } })")
 }
 
+/// A clamp correction that fails, but whose rollback succeeds, keeps the
+/// first placement. The placement still counts as committed, so no Repair is
+/// requested and automatic writes continue: settlement corrects the clamp
+/// later.
+@Test @MainActor func failedClampCorrectionWithACleanRollbackKeepsTheFirstPlacement() async throws {
+    _ = NSApplication.shared
+    let system = FakeAppWindowSystem()
+    system.measuresOnWrite = true
+    let wide = WindowID(rawValue: "wide")
+    system.windows.append(WindowSnapshot(id: wide, processIdentifier: 80, bundleIdentifier: "com.example.Wide",
+        frame: BTRect(x: 0, y: 0, width: 800, height: 800), displayID: system.mainDisplay.id))
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    model.setActiveMode(.bento)
+    try #require(await waitFor { system.windows.allSatisfy { $0.frame.size.height == 800 } })
+    try await Task.sleep(for: .milliseconds(400))
+    let arrival = WindowID(rawValue: "arrival")
+    system.windows.append(WindowSnapshot(id: arrival, processIdentifier: 81, bundleIdentifier: "com.example.Arrival",
+        frame: BTRect(x: 100, y: 100, width: 400, height: 300), displayID: system.mainDisplay.id))
+    // The wide window refuses its new pane width, so the correction moves
+    // both right-hand windows. The arrival moves first; only the wide
+    // window's correction write fails, so the arrival rolls back cleanly.
+    system.enforcedMinimumWidths[wide] = 600
+    let correction = system.frameWriteCounts[wide, default: 0] + 2
+    system.failedFrameWriteNumbers[wide] = [correction]
+    let arrivalWrites = system.requestedFrames[arrival]?.count ?? 0
+    system.focusedID = wide
+    system.eventHandler?(WindowSystemEvent(kind: .created, windowID: arrival, processIdentifier: 81))
+    // Placement, correction, then the rollback to the first placement.
+    try #require(await waitFor(timeout: .seconds(3)) {
+        (system.requestedFrames[arrival]?.count ?? 0) >= arrivalWrites + 3
+    }, "\(system.requestedFrames.mapValues { $0.map { "\($0.minX),\($0.minY) \($0.size.width)x\($0.size.height)" } })")
+    let requested = try #require(system.requestedFrames[arrival])
+    let first = requested[arrivalWrites]
+    #expect(requested[arrivalWrites + 1] != first)
+    #expect(requested[arrivalWrites + 2] == first)
+    let corrected = requested[arrivalWrites + 1]
+    #expect(await waitFor(timeout: .seconds(3)) { system.windows.first { $0.id == arrival }?.frame == corrected })
+    #expect(model.statusMessage?.contains("Use Repair") != true, "\(String(describing: model.statusMessage))")
+}
+
 /// A clamp correction widens a neighbour beyond the frame first planned for
 /// it. Settlement compares that neighbour with the frame finally written, so
 /// its accepted width is not learned as a minimum.
