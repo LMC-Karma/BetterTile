@@ -133,6 +133,11 @@ final class BetterTileModel {
     /// Tabbed reads a window-edge resize only after the user lets go, so it
     /// never fights the drag. Tests replace this.
     var primaryButtonIsPressed: () -> Bool = { NSEvent.pressedMouseButtons & 1 == 1 }
+    /// How long a repeated half shortcut keeps cycling sizes. Tests replace this.
+    var shortcutCycleInterval: TimeInterval {
+        get { coordinator.shortcutCycleInterval }
+        set { coordinator.shortcutCycleInterval = newValue }
+    }
     private var tabbedResizeReleaseTask: Task<Void, Never>?
 
     private var watchdogTimer: Timer?
