@@ -897,6 +897,8 @@ enum DividerLimitCase: CaseIterable { case straight, junction, linked }
     let screen = try #require(NSScreen.screens.first)
     var changed = false
     controller.layoutChangedHandler = { _, _ in changed = true }
+    var rollbackReports = 0
+    controller.rollbackFailureHandler = { _, _ in rollbackReports += 1 }
 
     controller.beginGesture(interaction: interaction, at: start)
     defer { controller.hideAndCancel() }
@@ -910,7 +912,10 @@ enum DividerLimitCase: CaseIterable { case straight, junction, linked }
     }
     controller.end()
     system.targetedSnapshotsFail = false
+    // The cancelled correction restores nothing itself: a Ghost transaction
+    // has no live changes. The release restores the baseline exactly once.
     #expect(system.windows.map(\.frame) == baseline)
+    #expect(rollbackReports == 0)
     #expect(!changed)
     // The failed release left no Restore step behind: Restore returns the
     // window to the earlier frame.
