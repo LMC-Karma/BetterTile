@@ -779,6 +779,37 @@ func adoptingSixExistingPanesStillRegistersOverflow(paneGap: Double) {
     #expect((frames[brave.id]?.size.width ?? 0) >= 500)
 }
 
+/// A pane the user already made narrow does not decide where a new window
+/// goes. The split beside the focused window leaves both of its panes
+/// usable, so the new window opens there. Scoring the whole layout used to
+/// see the old 140 pt column and split the 400 pt column instead.
+@Test func insertBesideFocusIgnoresAnUnrelatedNarrowPane() throws {
+    let narrow = plannerWindow("narrow", frame: BTRect(x: 0, y: 0, width: 140, height: 800))
+    let focused = plannerWindow("focused", frame: BTRect(x: 140, y: 0, width: 660, height: 800))
+    let medium = plannerWindow("medium", frame: BTRect(x: 800, y: 0, width: 400, height: 800))
+    let existing = [narrow, focused, medium]
+    let adopted = BentoPlanner().plan(
+        state: BentoRuntimeState(),
+        observation: BentoObservation(bounds: plannerBounds, windows: existing, focusedWindowID: focused.id),
+        intent: .activate
+    )
+    try #require(adopted.state.layout.root?.windowIDs.count == 3)
+    let arrival = plannerWindow("new", frame: BTRect(x: 300, y: 200, width: 600, height: 500))
+    let result = BentoPlanner().plan(
+        state: adopted.state,
+        observation: BentoObservation(bounds: plannerBounds, windows: existing + [arrival], focusedWindowID: focused.id),
+        intent: .insert(arrival.id)
+    )
+    let frames = Dictionary(uniqueKeysWithValues: result.placements.map { ($0.windowID, $0.frame) })
+    let placed = try #require(frames[arrival.id])
+    // The new window shares the focused window's column.
+    #expect(placed.minX == 140 && placed.maxX == 800, "new window got \(placed)")
+    #expect(frames[focused.id]?.minX == 140 && frames[focused.id]?.maxX == 800)
+    // The other columns keep their frames.
+    #expect(frames[narrow.id] == narrow.frame)
+    #expect(frames[medium.id] == medium.frame)
+}
+
 /// Two minimized windows can remember equally large arrangements of a
 /// different shape. The restored grid must not depend on dictionary order:
 /// the anchor with the smaller window ID wins.

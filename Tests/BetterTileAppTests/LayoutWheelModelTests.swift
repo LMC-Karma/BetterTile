@@ -944,6 +944,47 @@ func repairDuringFocusModeReportsOnlyAfterThePeersReturn(restoredEventArrives: B
     }, "\(system.windows.map(\.frame))")
 }
 
+/// A covered peer can close while Focus mode keeps it minimized. Ending
+/// Focus mode then lays out the remaining windows without its pane.
+@Test @MainActor func endingFocusModeAfterAPeerClosedFillsTheDisplay() async throws {
+    _ = NSApplication.shared
+    let system = FakeAppWindowSystem()
+    for name in ["kept-peer", "closed-peer"] {
+        system.windows.append(WindowSnapshot(id: WindowID(rawValue: name), processIdentifier: 43,
+            bundleIdentifier: "com.example.Peer", frame: BTRect(x: 0, y: 0, width: 200, height: 300),
+            displayID: system.mainDisplay.id))
+    }
+    system.emitsMinimizationEvents = true
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    model.setActiveMode(.bento)
+    try #require(await waitFor { system.frameWriteCounts.count == system.windows.count })
+    try await Task.sleep(for: .milliseconds(350))
+    let focused = system.windows[0].id
+    system.focusedID = focused
+    model.perform(.maximize)
+    try #require(system.windows.dropFirst().allSatisfy { $0.isMinimized })
+    try await Task.sleep(for: .milliseconds(350))
+
+    let closed = WindowID(rawValue: "closed-peer")
+    system.windows.removeAll { $0.id == closed }
+    system.eventHandler?(WindowSystemEvent(kind: .destroyed, windowID: closed, processIdentifier: 43))
+    try await Task.sleep(for: .milliseconds(300))
+    let writesBefore = Dictionary(uniqueKeysWithValues: system.windows.map { ($0.id, system.requestedFrames[$0.id]?.count ?? 0) })
+    system.focusedID = focused
+    model.perform(.restore)
+
+    try #require(await waitFor(timeout: .seconds(3)) {
+        system.windows.allSatisfy { !$0.isMinimized }
+            && system.windows.allSatisfy { (system.requestedFrames[$0.id]?.count ?? 0) > writesBefore[$0.id]! }
+    }, "\(system.windows.map(\.frame))")
+    // The first layout after the restore already covers the display.
+    let firstFrames = system.windows.map { system.requestedFrames[$0.id]![writesBefore[$0.id]!] }
+    let covered = firstFrames.map { $0.size.width * $0.size.height }.reduce(0, +)
+    let display = system.mainDisplay.visibleFrame
+    #expect(covered >= display.size.width * display.size.height * 0.98, "\(firstFrames)")
+}
+
 /// Closing the Focus mode window leaves its peers minimized. Restoring one
 /// from the Dock must lay the peers out without the closed window's pane,
 /// not leave its area empty until a later sweep notices the window is gone.
@@ -2122,16 +2163,24 @@ func minimizedRightHalfReturnsToItsOriginalSide(nativeMembership: Bool, staleMin
     #expect((frames[brave]?.size.width ?? 0) >= 520)
 }
 
+/// Long window titles in result-pill details. CJK characters and emoji are
+/// about twice as wide as Latin letters, so a character count cannot tell
+/// whether a detail fits.
+private let longPillTitles = [
+    "Quarterly planning notes and follow-up actions for the platform team – Google Docs – Brave",
+    "四半期計画のメモとプラットフォームチームのフォローアップ項目一覧表と予算レビュー資料",
+    "📊📈📉🗂️📁📂🗃️🗄️📋📌📍📎🖇️📏📐✂️🗒️🗓️📆📅📇🧾📑🔖🏷️💼📒📓📔📕📗📘📙📚",
+    "Budget 2027 予算レビュー 📊 – 프로젝트 계획서 및 후속 조치 항목 – Numbers",
+]
+
 /// Repair names the windows that overlap. Long titles are shortened so the
 /// reason still fits the result pill.
-@Test func repairOverlapMessageFitsTheResultPillWithLongTitles() {
-    let long = [
-        "Quarterly planning notes and follow-up actions for the platform team – Google Docs – Brave",
-        "Untitled spreadsheet with a very long descriptive name for the budget review – Numbers",
-    ]
-    let message = BetterTileModel.overlapMessage(long)
+@Test(arguments: longPillTitles)
+func repairOverlapMessageFitsTheResultPillWithLongTitles(title: String) {
+    let message = BetterTileModel.overlapMessage([title, title])
     #expect(message.hasSuffix("cannot fit beside each other at their minimum sizes."))
-    #expect(message.count <= ResultPillLayout.detailCharacterCapacity, "\(message.count)")
+    #expect(ResultPillLayout.detailFits(message), "\(message)")
+    #expect(message.hasPrefix(String(title.prefix(4))), "\(message)")
     #expect(BetterTileModel.overlapMessage(["Brave", "Preview"])
         == "Brave and Preview cannot fit beside each other at their minimum sizes.")
 }
@@ -2181,7 +2230,8 @@ func minimizedRightHalfReturnsToItsOriginalSide(nativeMembership: Bool, staleMin
 
 /// A long window title is shortened so the overflow instruction still fits
 /// the result pill.
-@Test @MainActor func seventhBentoWindowAnnouncementKeepsItsInstructionWithALongTitle() async throws {
+@Test(arguments: longPillTitles) @MainActor
+func seventhBentoWindowAnnouncementKeepsItsInstructionWithALongTitle(title: String) async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
     system.availableDisplays = [DisplaySnapshot(id: system.mainDisplay.id,
@@ -2197,16 +2247,15 @@ func minimizedRightHalfReturnsToItsOriginalSide(nativeMembership: Bool, staleMin
     try #require(await waitFor { Set(system.windows.map(\.frame)).count == 6 })
     try await Task.sleep(for: .milliseconds(300))
     let seventh = WindowID(rawValue: "seventh")
-    let title = "Quarterly planning notes and follow-up actions for the platform team – Google Docs – Brave"
     system.windows.append(WindowSnapshot(id: seventh, processIdentifier: 90, title: title,
         frame: BTRect(x: 100, y: 100, width: 400, height: 300), displayID: system.mainDisplay.id))
     system.eventHandler?(WindowSystemEvent(kind: .created, windowID: seventh, processIdentifier: 90))
     try #require(await waitFor(timeout: .seconds(2)) { model.lastActionFeedback?.message == "Bento is full" })
     let detail = try #require(model.lastActionFeedback?.detail)
     #expect(detail.hasSuffix("switch this desktop to Tabbed."))
-    #expect(detail.contains("Quarterly planning"))
+    #expect(detail.contains("“\(title.prefix(4))"))
     #expect(!detail.contains(title))
-    #expect(detail.count <= ResultPillLayout.detailCharacterCapacity)
+    #expect(ResultPillLayout.detailFits(detail), "\(detail)")
 }
 
 /// A closed document window that its application keeps alive off screen
