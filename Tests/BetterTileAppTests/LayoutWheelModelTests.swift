@@ -280,14 +280,6 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, TabbedWindowSystem, Min
         return unrestored
     }
     var unrestoredProbeWindowIDs: Set<WindowID> = []
-    var forgetLearnedMinimumsCount = 0
-    func forgetLearnedMinimums() {
-        forgetLearnedMinimumsCount += 1
-        minimumSizeLearner.removeAll()
-        for index in windows.indices {
-            if let reported = reportedConstraints[windows[index].id] { windows[index].constraints = reported }
-        }
-    }
     func startDockFootprintMonitoring(onChange: @escaping () -> Void) {}
     func stopDockFootprintMonitoring() {}
     func triggerDockFootprintCheck() {}

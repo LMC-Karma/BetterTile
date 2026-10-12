@@ -19,9 +19,6 @@ protocol BetterTileWindowSystem: TargetedWindowSystem, WindowEventSource {
         baseline: BTRect,
         actual: BTRect
     ) -> Bool
-    /// Clears minimums learned from refused writes. Called when the user
-    /// starts a new resize or drag, so an old refusal never becomes a floor.
-    func forgetLearnedMinimums()
     func refreshApplicationObservers()
     func resetCachedWindows()
     func startDockFootprintMonitoring(onChange: @escaping () -> Void)

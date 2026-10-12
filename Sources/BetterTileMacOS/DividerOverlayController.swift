@@ -317,7 +317,7 @@ public final class DividerOverlayController {
     public var bentoStateLiveHandler: ((DisplayID, BentoLayoutState, BTRect) -> Void)?
     public var rollbackFailureHandler: ((DisplayID, String?) -> Void)?
     public var gestureEndedHandler: (() -> Void)?
-    /// Runs before the gesture reads its windows, so it sees fresh minimums.
+    /// Runs once when a gesture starts, before it reads its windows.
     public var gestureWillBeginHandler: (() -> Void)?
     public private(set) var isDragging = false
     var dragLimit: DragLimit { handlePanel?.limit ?? DragLimit() }

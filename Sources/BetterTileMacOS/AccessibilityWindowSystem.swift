@@ -34,6 +34,8 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
     private struct LaunchRecord {
         var launchToken: UInt64?
         var instance: ApplicationLaunchInstance
+        /// Kept because a process that quit can no longer report it.
+        var bundleIdentifier: String? = nil
     }
     private var launchRecords: [pid_t: LaunchRecord] = [:]
     private var nextLaunchGeneration: UInt64 = 0
@@ -219,11 +221,6 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         )
     }
 
-    public func forgetLearnedMinimums() {
-        minimumSizeLearner.removeAll()
-        snapshotGeneration &+= 1
-    }
-
     /// Measures the minimum size of windows that just appeared, before their
     /// first placement. No application reports its minimum, but each clamps
     /// a size write synchronously: asking for a tiny size and reading the
@@ -234,11 +231,12 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         guard AXIsProcessTrusted() else { return [] }
         var measured = false
         var unrestored: Set<WindowID> = []
-        // A window of an application measured before starts from that
-        // application's seed; probing it again only flashes the window. A
-        // larger minimum is still measured by its first write.
-        for id in ids.sorted() where !minimumSizeLearner.hasMeasurement(for: id)
-            && applicationKeys[id].flatMap({ minimumSizeLearner.applicationSizes[$0] }) == nil {
+        // A window with its own measurement is not probed again. A window
+        // that has only its application's seed is: the seed came from another
+        // window, which can have a larger minimum. Until the probe measures
+        // the window, it plans with the seed. Its own measurement then
+        // replaces the seed for it and becomes the application's new seed.
+        for id in minimumSizeLearner.windowsNeedingMeasurement(ids) {
             guard let element = elements[id] ?? refreshElement(for: id),
                   isSettable(kAXSizeAttribute, on: element),
                   let position: CGPoint = axValue(kAXPositionAttribute, from: element, type: .cgPoint),
@@ -285,6 +283,16 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
                 // ignored write would also do. The position nudge proves the
                 // application handles writes at once, as for a frame write.
                 measured = true
+            }
+            // The window had no measurement before this probe.
+            let application = applicationKeys[id] ?? "unknown"
+            if let size = minimumSizeLearner.learnedSizes[id] {
+                Self.log.debug("""
+                    probe measured a \(application, privacy: .public) window: \
+                    minimum \(size.width, format: .fixed(precision: 0)) x \(size.height, format: .fixed(precision: 0))
+                    """)
+            } else {
+                Self.log.debug("probe measured nothing for a \(application, privacy: .public) window")
             }
         }
         if measured { snapshotGeneration &+= 1 }
@@ -1169,10 +1177,14 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         // A failed observer installation must not prevent termination cleanup.
         // Hidden or policy-filtered running applications are not terminated.
         let knownPIDs = Set(launchRecords.keys).union(identities.records.values.map { $0.application.processIdentifier })
+        var quitApplications: Set<String> = []
         for pid in knownPIDs.subtracting(runningPIDs) {
-            removeCachedState(for: identities.remove(processIdentifier: pid), notifyClosure: true)
+            let closed = identities.remove(processIdentifier: pid)
+            quitApplications.formUnion(bundleIdentifiers(of: pid, windows: closed))
+            removeCachedState(for: closed, notifyClosure: true)
             launchRecords.removeValue(forKey: pid)
         }
+        forgetMinimumSizeSeeds(of: quitApplications, running: runningApplications)
         let applications = runningApplications.filter {
             Self.shouldManageApplication(
                 processIdentifier: $0.processIdentifier,
@@ -1637,18 +1649,59 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
     ) -> ApplicationLaunchInstance {
         let pid = application.processIdentifier
         let launchToken = application.launchDate?.timeIntervalSinceReferenceDate.bitPattern
-        if let record = launchRecords[pid], record.launchToken == launchToken {
-            return record.instance
+        let previous = launchRecords[pid]
+        if let previous, previous.launchToken == launchToken {
+            return previous.instance
         }
+        // A changed launch at a known process identifier means the previous
+        // process quit, and its windows close with it.
         let closed = identities.remove(processIdentifier: pid)
+        let quitApplications = previous == nil ? [] : bundleIdentifiers(of: pid, windows: closed)
         nextLaunchGeneration &+= 1
         let instance = ApplicationLaunchInstance(
             processIdentifier: pid,
             generation: nextLaunchGeneration
         )
-        launchRecords[pid] = LaunchRecord(launchToken: launchToken, instance: instance)
+        launchRecords[pid] = LaunchRecord(
+            launchToken: launchToken, instance: instance, bundleIdentifier: application.bundleIdentifier
+        )
         removeCachedState(for: closed, notifyClosure: true)
+        if !quitApplications.isEmpty {
+            forgetMinimumSizeSeeds(of: quitApplications, running: NSWorkspace.shared.runningApplications)
+        }
         return instance
+    }
+
+    /// The bundle identifiers a process had, read before its windows are
+    /// removed from the cache.
+    private func bundleIdentifiers(of pid: pid_t, windows: [WindowIdentityRecord]) -> Set<String> {
+        var result = Set(windows.compactMap { applicationKeys[$0.windowID] })
+        if let bundleIdentifier = launchRecords[pid]?.bundleIdentifier { result.insert(bundleIdentifier) }
+        return result
+    }
+
+    /// Drops the minimum-size seeds of applications that quit, so a relaunch,
+    /// perhaps of an updated version, measures its windows again. Only a real
+    /// termination calls this; a hidden application or one that BetterTile no
+    /// longer observes keeps its seed.
+    private func forgetMinimumSizeSeeds(of quitApplications: Set<String>, running: [NSRunningApplication]) {
+        let seeds = Self.minimumSizeSeedsToForget(
+            quitApplications: quitApplications,
+            runningApplications: Set(running.compactMap(\.bundleIdentifier))
+        )
+        for bundleIdentifier in seeds.sorted() where minimumSizeLearner.applicationSizes[bundleIdentifier] != nil {
+            minimumSizeLearner.forgetApplication(bundleIdentifier)
+            Self.log.debug("forgot minimum-size seed of \(bundleIdentifier, privacy: .public) after it quit")
+        }
+    }
+
+    /// A seed stays while another process of the same application runs: its
+    /// windows still use it.
+    nonisolated static func minimumSizeSeedsToForget(
+        quitApplications: Set<String>,
+        runningApplications: Set<String>
+    ) -> Set<String> {
+        quitApplications.subtracting(runningApplications)
     }
 
     private func applicationInstance(forPID pid: pid_t) -> ApplicationLaunchInstance {
