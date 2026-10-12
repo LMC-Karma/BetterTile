@@ -189,3 +189,34 @@ public enum WriteReadbackPolicy {
         return abs(observed.x - nudged.x) <= tolerance
     }
 }
+
+/// Applications whose Accessibility call just waited out its messaging
+/// timeout, which usually means the application is hung. Every call to a hung
+/// application blocks the main thread until its timeout, and one gesture makes
+/// many reads and writes, so a single divider drag froze BetterTile for about
+/// five seconds. Calls to a held application fail at once, as a timed-out call
+/// would, until the hold ends; a call that completes ends it sooner.
+public struct UnresponsiveApplicationGate: Sendable {
+    /// A `cannotComplete` that took this long waited out its timeout. The
+    /// shortest timeout BetterTile sets is 0.35 s.
+    public static let stallSeconds = 0.3
+    public static let holdSeconds = 2.0
+
+    private var holdsUntil: [Int32: Double] = [:]
+
+    public init() {}
+
+    public func isHeld(_ processIdentifier: Int32, now: Double) -> Bool {
+        (holdsUntil[processIdentifier] ?? -.infinity) > now
+    }
+
+    /// Records one call. A quick `cannotComplete` is an answer from a busy
+    /// application, not a hang, so it neither starts nor ends a hold.
+    public mutating func record(_ processIdentifier: Int32, cannotComplete: Bool, elapsed: Double, now: Double) {
+        if !cannotComplete {
+            holdsUntil.removeValue(forKey: processIdentifier)
+        } else if elapsed >= Self.stallSeconds {
+            holdsUntil[processIdentifier] = now + Self.holdSeconds
+        }
+    }
+}

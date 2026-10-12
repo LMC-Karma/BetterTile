@@ -858,6 +858,12 @@ public final class WindowCoordinator {
                 }
                 do {
                     try system.setIntermediateFrames(placements, knownCurrentFrames: known)
+                } catch let notStarted as FrameWritesNotStarted {
+                    // Nothing was written, so there is nothing to roll back.
+                    // A held application must not turn a skipped sample into
+                    // a failed rollback; the next sample tries again.
+                    for (id, generation) in generationsWritten { cancelExpectedMutation(for: id, generation: generation) }
+                    throw notStarted.underlying
                 } catch {
                     for (id, generation) in generationsWritten { cancelExpectedMutation(for: id, generation: generation) }
                     var rollbackFailed = false
@@ -870,7 +876,13 @@ public final class WindowCoordinator {
                     }
                     for placement in placements.sorted(by: { shrinksBack($0) && !shrinksBack($1) }) {
                         guard let frame = rollbackFrames[placement.windowID] else { continue }
-                        do { try apply(frame, to: placement.windowID, knownCurrentFrame: placement.frame) } catch { rollbackFailed = true }
+                        do {
+                            try apply(frame, to: placement.windowID, knownCurrentFrame: placement.frame)
+                        } catch where system.isApplicationUnresponsive(for: placement.windowID) {
+                            // A drag sample is rewritten by the next tick or
+                            // the release once the application answers, so a
+                            // held window is skipped, not a failed rollback.
+                        } catch { rollbackFailed = true }
                     }
                     if rollbackFailed {
                         throw DegradedApplyError(message: "A window update failed and the previous layout could not be fully restored.")
