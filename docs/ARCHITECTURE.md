@@ -123,8 +123,10 @@ Each tick writes every application at once, one thread per application, and
 returns only after every write. A shrinking window takes the new sample at
 once. A growing window, or the growing axis of a window at a junction, takes
 the previous sample, so it only enters space its neighbour gave up a tick
-earlier. A rejected tick shrinks windows back before it regrows their
-neighbours. Mouse-up bypasses coalescing, validates
+earlier. A growing window that would overlap a neighbour that refused its
+size waits for the next sample or the release; a still pointer does not keep
+the display ticks running for it. A rejected tick shrinks windows back before
+it regrows their neighbours. Mouse-up bypasses coalescing, validates
 the participants, and applies the exact final geometry. Linked resizing writes
 only the neighboring windows; the application keeps control of the window the
 user is resizing.

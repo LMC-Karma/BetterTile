@@ -529,6 +529,9 @@ public final class WindowCoordinator {
                 }
             var writes = changed
             var trailing = false
+            // A window held by a refusing neighbour waits for that
+            // neighbour's next readback, which only a write refreshes.
+            var held = false
             if !validateParticipants {
                 // Within a drag tick, shrinking windows take the new sample
                 // and growing windows take the previous one. All applications
@@ -560,7 +563,7 @@ public final class WindowCoordinator {
                             if !frame.approximatelyEquals(placement.frame, tolerance: 0.01) { trailing = true }
                             return Placement(windowID: placement.windowID, frame: frame)
                         }
-                        if isHeld(placement.frame) { trailing = true; return nil }
+                        if isHeld(placement.frame) { held = true; return nil }
                         guard let earlier = previousProposal[placement.windowID] ?? previous[placement.windowID],
                               earlier.size.width <= placement.frame.size.width + 0.5,
                               earlier.size.height <= placement.frame.size.height + 0.5,
@@ -597,7 +600,10 @@ public final class WindowCoordinator {
             transaction.previousLiveProposal = Dictionary(
                 uniqueKeysWithValues: transaction.proposedPlacements.map { ($0.windowID, $0.frame) }
             )
-            transaction.hasTrailingWrites = trailing
+            // A tick that wrote nothing leaves a held window's inputs
+            // unchanged, so another tick without a new sample cannot
+            // release it. It waits for the next sample or the release.
+            transaction.hasTrailingWrites = trailing || (held && !writes.isEmpty)
             transaction.hasLiveChanges = true
             transaction.hasDegradedApply = false
             return .applied
