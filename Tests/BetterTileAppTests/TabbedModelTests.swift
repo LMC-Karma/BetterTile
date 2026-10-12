@@ -101,6 +101,10 @@ func stackingRepairKeepsAWindowInFrontOrLeavesAnUnreadableOneAlone(readable: Boo
     let raises = system.raiseRequests.count
 
     model.handleApplicationActivation()
+    if readable {
+        // The stacking check is asynchronous; wait for it on a loaded runner.
+        try #require(await waitFor(timeout: .seconds(3)) { system.raiseRequests.count >= raises + 3 })
+    }
     try await Task.sleep(for: .milliseconds(500))
     let raised = system.raiseRequests.dropFirst(raises)
     #expect(raised.map(\.0) == (readable ? [system.windows[0].id, system.windows[3].id, floating] : []))
@@ -165,13 +169,16 @@ func tabSelectionPreservesFloatingOrderWhenRepairingTheSharedCurtain(readableOrd
 
     let target = system.windows[1].id
     model.performTabbed(.select(target))
-    #expect(await waitFor(timeout: .seconds(1)) { model.activeTabbedState?.activeWindowID == target })
-    try await Task.sleep(for: .milliseconds(600)) // The stacking check follows the selection.
-    let raised = Set(system.raiseRequests.dropFirst(raises).map(\.0))
+    #expect(await waitFor(timeout: .seconds(3)) { model.activeTabbedState?.activeWindowID == target })
     // The formerly selected left tab is now inactive above the right
     // selection. Repair puts both selected tabs above it, preserving floating.
-    #expect(raised == (readableOrder ? [target, system.windows[3].id, floating.windowID!]
-                                    : [target, system.windows[3].id]))
+    let expected: Set<WindowID> = readableOrder ? [target, system.windows[3].id, floating.windowID!]
+                                                : [target, system.windows[3].id]
+    // The stacking check follows the selection asynchronously.
+    _ = await waitFor(timeout: .seconds(3)) { Set(system.raiseRequests.dropFirst(raises).map(\.0)) == expected }
+    try await Task.sleep(for: .milliseconds(200))
+    let raised = Set(system.raiseRequests.dropFirst(raises).map(\.0))
+    #expect(raised == expected)
 }
 
 @Test(arguments: [false, true]) @MainActor
@@ -1665,6 +1672,33 @@ func aSameApplicationFocusChangeAfterTheSelectionIsKept() async throws {
     #expect(system.raiseRequests.dropFirst(raises).first?.0 == hidden)
     #expect(model.activeTabbedState?.panes[0].selected == previous)
     #expect(system.focusedID == previousFocus)
+}
+
+/// A selection whose write fails is rolled back, and the rollback already
+/// returns focus to the previous tab. The early raise's undo does not
+/// activate it a second time.
+@Test @MainActor func aRolledBackSelectionReturnsFocusOnce() async throws {
+    let system = FakeAppWindowSystem()
+    let model = try await makeTwoTabbedColumns(system)
+    defer { model.shutdown() }
+    let state = try #require(model.activeTabbedState)
+    let previous = try #require(state.panes[0].selected)
+    let previousFocus = try #require(state.activeWindowID)
+    let hidden = try #require(state.panes[0].tabs.first { $0 != previous })
+    let index = try #require(system.windows.firstIndex { $0.id == hidden })
+    // The tab sits off its pane, so selecting it writes its frame; that
+    // write fails.
+    system.windows[index].frame.origin.x += 7
+    let next = system.frameWriteCounts[hidden, default: 0] + 1
+    system.failedFrameWriteNumbers[hidden] = Set(next...(next + 50))
+    system.focusedID = previousFocus
+    let raises = system.raiseRequests.count
+    model.performTabbed(.select(hidden))
+    try await Task.sleep(for: .milliseconds(500))
+    #expect(model.activeTabbedState?.panes[0].selected == previous)
+    #expect(system.focusedID == previousFocus)
+    let activations = system.raiseRequests.dropFirst(raises).filter { $0.0 == previousFocus && $0.1 }
+    #expect(activations.count == 1, "\(system.raiseRequests.dropFirst(raises).map { "\($0.0.rawValue):\($0.1)" })")
 }
 
 @Test @MainActor

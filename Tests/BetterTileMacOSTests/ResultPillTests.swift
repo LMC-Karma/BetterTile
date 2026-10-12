@@ -144,3 +144,17 @@ private final class ResultPillTestPanel: NSPanel {
                                   visibleFrame: BTRect(x: 0, y: 0, width: 1920, height: 1050))
     #expect(ResultPillLayout.frame(for: feedback, on: display).size.height > 40)
 }
+
+/// A detail wider than the widest pill wraps to a second line, so its end
+/// stays visible instead of being cut off.
+@Test func longFailureDetailWrapsToASecondLine() {
+    let display = DisplaySnapshot(id: DisplayID(rawValue: "pill"), frame: BTRect(x: 0, y: 0, width: 1920, height: 1080),
+                                  visibleFrame: BTRect(x: 0, y: 0, width: 1920, height: 1050))
+    let short = ResultPillLayout.frame(for: .failure("That layout cannot fit."), on: display)
+    let long = ResultPillLayout.frame(for: .failure(
+        "Bento manages up to six windows. “Report” stays floating: drop it on a pane to swap, or switch this desktop to Tabbed."
+    ), on: display)
+    #expect(short.size.height == 58)
+    #expect(long.size.width == 520)
+    #expect(long.size.height > short.size.height)
+}
