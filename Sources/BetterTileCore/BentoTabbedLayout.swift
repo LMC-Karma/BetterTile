@@ -76,9 +76,10 @@ public struct BentoTabbedLayoutState: Hashable, Sendable {
     }
 
     /// Takes a tab out of its group and keeps it outside the tree.
+    /// - Parameter reselecting: See `remove(_:reselecting:)`.
     @discardableResult
-    public mutating func float(_ id: WindowID) -> Bool {
-        guard remove(id) else { return false }
+    public mutating func float(_ id: WindowID, reselecting: WindowID? = nil) -> Bool {
+        guard remove(id, reselecting: reselecting) else { return false }
         layout.floatingWindowIDs.insert(id)
         return true
     }
@@ -99,14 +100,23 @@ public struct BentoTabbedLayoutState: Hashable, Sendable {
     }
 
     /// The last tab leaves a vacant leaf, preserving the pane and its boundaries.
+    /// - Parameter reselecting: When the removed tab is selected, this tab
+    ///   takes its place if it is another tab of the same pane. A tab drag
+    ///   uses it to give the pane back the tab it showed before the press
+    ///   that selected the dragged tab.
     @discardableResult
-    public mutating func remove(_ id: WindowID) -> Bool {
+    public mutating func remove(_ id: WindowID, reselecting: WindowID? = nil) -> Bool {
         guard let index = panes.firstIndex(where: { $0.tabs.contains(id) }),
               let tabIndex = panes[index].tabs.firstIndex(of: id) else { return false }
         if panes[index].selected == id {
-            // Like a browser: the tab to the right, else the one to the left.
             let tabs = panes[index].tabs
-            let replacement = tabIndex + 1 < tabs.count ? tabs[tabIndex + 1] : (tabIndex > 0 ? tabs[tabIndex - 1] : nil)
+            let replacement: WindowID?
+            if let reselecting, reselecting != id, tabs.contains(reselecting) {
+                replacement = reselecting
+            } else {
+                // Like a browser: the tab to the right, else the one to the left.
+                replacement = tabIndex + 1 < tabs.count ? tabs[tabIndex + 1] : (tabIndex > 0 ? tabs[tabIndex - 1] : nil)
+            }
             guard replaceRepresentative(id, paneID: panes[index].id, with: replacement) else { return false }
             panes[index].selected = replacement
         }
@@ -430,8 +440,11 @@ public struct TabbedLayoutState: Hashable, Sendable {
         groups.forgetFloating(id)
     }
 
-    public mutating func float(_ id: WindowID) {
-        groups.float(id)
+    /// - Parameter reselecting: The tab the source pane showed before the
+    ///   gesture that selected `id`. The pane selects it again when it is
+    ///   still a member; otherwise the next tab takes the pane as usual.
+    public mutating func float(_ id: WindowID, reselecting: WindowID? = nil) {
+        groups.float(id, reselecting: reselecting)
     }
 
     /// Starts dragging one tab out of a group: the next tab takes the leaf
@@ -452,7 +465,10 @@ public struct TabbedLayoutState: Hashable, Sendable {
 
     /// Moves a tab (or a floating window) into a pane at a position and
     /// selects it. Within one pane this only reorders.
-    public mutating func move(_ id: WindowID, to paneID: UUID, at index: Int? = nil) {
+    /// - Parameter reselecting: The tab the source pane showed before the
+    ///   gesture that selected `id`. It applies only when the tab leaves its
+    ///   pane, and only while it is still a member of that pane.
+    public mutating func move(_ id: WindowID, to paneID: UUID, at index: Int? = nil, reselecting: WindowID? = nil) {
         guard groups.panes.contains(where: { $0.id == paneID }),
               windowIDs.contains(id) || floatingWindowIDs.contains(id) else { return }
         if groups.pane(containing: id)?.id == paneID {
@@ -460,17 +476,18 @@ public struct TabbedLayoutState: Hashable, Sendable {
             select(id)
             return
         }
-        groups.remove(id)
+        groups.remove(id, reselecting: reselecting)
         groups.forgetFloating(id)
         if groups.add(id, to: paneID, at: index) { activePaneID = paneID }
     }
 
     /// Moves a tab into a new pane on one edge of another pane.
-    public mutating func split(paneID: UUID, moving windowID: WindowID, edge: TabbedEdge) {
+    /// - Parameter reselecting: See `move(_:to:at:reselecting:)`.
+    public mutating func split(paneID: UUID, moving windowID: WindowID, edge: TabbedEdge, reselecting: WindowID? = nil) {
         guard groups.panes.count < Self.maximumPaneCount,
               groups.panes.contains(where: { $0.id == paneID }),
               windowIDs.contains(windowID) || floatingWindowIDs.contains(windowID) else { return }
-        groups.remove(windowID)
+        groups.remove(windowID, reselecting: reselecting)
         groups.forgetFloating(windowID)
         guard let target = groups.panes.first(where: { $0.id == paneID }), let root = layout.root else { return }
         let targetNode: BentoNode = target.selected.map(BentoNode.leaf) ?? .vacant(target.id)

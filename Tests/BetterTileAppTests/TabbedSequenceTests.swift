@@ -295,3 +295,82 @@ func mixedNativeAndStripMoveReturnSequencesRemainUsable(nativeFirst: Bool, share
         #expect(system.windows.first { $0.id == moving }?.frame == content)
     }
 }
+
+/// The sequence fixture with a third tab, `sequence-4`, joined to the left
+/// pane: left [a, b, sequence-4] showing `a`, right [c, d].
+@MainActor private func threeTabSequenceFixture() async throws -> (FakeAppWindowSystem, BetterTileModel) {
+    let (system, model) = try await sequenceFixture()
+    var opened = system.windows[0]
+    opened.id = WindowID(rawValue: "sequence-4")
+    opened.processIdentifier += 10
+    system.windows.append(opened)
+    model.setActiveMode(.tabbed) // Refresh the current mode so the window joins.
+    try #require(await waitFor(timeout: .seconds(2)) { model.activeTabbedState?.windowIDs.contains(opened.id) == true })
+    let a = system.windows[0].id
+    model.performTabbed(.select(a))
+    try #require(await waitFor(timeout: .seconds(2)) { model.activeTabbedState?.activeWindowID == a })
+    await model.tabbedFocusTask?.value
+    try #require(model.activeTabbedState?.panes[0].tabs == [a, system.windows[1].id, opened.id])
+    return (system, model)
+}
+
+enum TabStripDrop: CaseIterable, Sendable { case otherPane, split, float }
+
+/// A tab drag's press selected the background tab `b`, and its drop took
+/// `b` out of the pane. The pane shows `a` again, not `sequence-4`, the tab
+/// to the right of `b`. A queued drop waits behind the press's selection.
+@Test(arguments: TabStripDrop.allCases, [false, true]) @MainActor
+func aTabDraggedOutAfterItsPressSelectedItShowsThePreviousTabAgain(drop: TabStripDrop, queued: Bool) async throws {
+    let (system, model) = try await threeTabSequenceFixture()
+    defer { model.shutdown() }
+    let a = system.windows[0].id, b = system.windows[1].id, e = system.windows[4].id
+    let left = try #require(model.activeTabbedState?.panes[0].id)
+    let right = try #require(model.activeTabbedState?.panes[1].id)
+    model.performTabbed(.select(b))
+    if !queued {
+        try #require(await waitFor(timeout: .seconds(2)) { model.activeTabbedState?.activeWindowID == b })
+        await model.tabbedFocusTask?.value
+    }
+    let raises = system.raiseRequests.count
+    switch drop {
+    case .otherPane: model.performTabbed(.move(b, pane: right, index: nil, reselecting: a))
+    case .split: model.performTabbed(.split(b, pane: right, edge: .bottom, reselecting: a))
+    case .float: model.performTabbed(.float(b, reselecting: a))
+    }
+    try #require(await waitFor(timeout: .seconds(2)) {
+        model.activeTabbedState?.paneID(containing: b) != left
+            && model.activeTabbedState?.panes.first { $0.id == left }?.tabs == [a, e]
+    })
+    #expect(model.activeTabbedState?.panes.first { $0.id == left }?.selected == a)
+    if drop == .float {
+        #expect(model.activeTabbedState?.floatingWindowIDs.contains(b) == true)
+    } else {
+        #expect(model.activeTabbedState?.pane(containing: b)?.selected == b)
+    }
+    // The placement brings the selected tab back to the front of its pane.
+    #expect(await waitFor(timeout: .seconds(2)) { system.raiseRequests.dropFirst(raises).contains { $0.0 == a } })
+    let paneFrame = try #require(model.activeTabbedState?.frames(in: system.mainDisplay.visibleFrame)[left])
+    #expect(system.windows.first { $0.id == a }?.frame == TabbedLayoutState.contentFrame(paneFrame))
+}
+
+/// Undo of the drop restores the state from before it, which the press's
+/// selection already changed: `b` is back in the left pane and selected.
+@Test @MainActor func undoingADragOutRestoresThePressSelectedTab() async throws {
+    let (system, model) = try await threeTabSequenceFixture()
+    defer { model.shutdown() }
+    let a = system.windows[0].id, b = system.windows[1].id
+    let right = try #require(model.activeTabbedState?.panes[1].id)
+    model.performTabbed(.select(b))
+    try #require(await waitFor(timeout: .seconds(2)) { model.activeTabbedState?.activeWindowID == b })
+    await model.tabbedFocusTask?.value
+    let afterPress = try #require(model.activeTabbedState)
+    model.performTabbed(.move(b, pane: right, index: nil, reselecting: a))
+    try #require(await waitFor(timeout: .seconds(2)) {
+        model.activeTabbedState?.paneID(containing: b) == right && model.activeTabbedState?.panes[0].selected == a
+    })
+    model.performTabbed(.undo)
+    #expect(await waitFor(timeout: .seconds(2)) {
+        model.activeTabbedState?.panes.map(\.tabs) == afterPress.panes.map(\.tabs)
+            && model.activeTabbedState?.panes[0].selected == b
+    })
+}

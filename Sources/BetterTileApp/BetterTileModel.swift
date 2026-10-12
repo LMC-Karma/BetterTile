@@ -4284,15 +4284,17 @@ extension BetterTileModel {
             let outcome = coordinator.closeTabbedWindow(id)
             if !outcome.isApplied { statusMessage = outcome.failureReason }
             return
-        case let .float(id): state.float(id); focus = id
-        case let .move(id, pane, index):
+        // A tab drag whose press selected the dragged tab gives its source
+        // pane back the tab shown before that press.
+        case let .float(id, reselecting): state.float(id, reselecting: reselecting); focus = id
+        case let .move(id, pane, index, reselecting):
             guard state.panes.contains(where: { $0.id == pane }),
                   windows.contains(where: { $0.id == id }) else { return }
-            state.move(id, to: pane, at: index); focus = id
-        case let .split(id, pane, edge):
+            state.move(id, to: pane, at: index, reselecting: reselecting); focus = id
+        case let .split(id, pane, edge, reselecting):
             guard state.panes.contains(where: { $0.id == pane }),
                   windows.contains(where: { $0.id == id }) else { return }
-            state.split(paneID: pane, moving: id, edge: edge); focus = id
+            state.split(paneID: pane, moving: id, edge: edge, reselecting: reselecting); focus = id
         case let .preset(preset): state.applyPreset(preset); focus = state.activeWindowID
         case .undo:
             guard let step = tabbedUndo[session.id]?.last else { return }

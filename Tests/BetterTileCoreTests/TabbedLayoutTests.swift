@@ -402,3 +402,80 @@ private func resizing(_ frame: BTRect, minX: Double = 0, minY: Double = 0, maxX:
     let fitted = try state.fittingMinimumWidths(in: bounds, windows: [window])
     #expect(try fitted.placements(in: bounds, windows: [window]).first?.frame.size == window.frame.size)
 }
+
+/// Where a tab drag drops the tab it pressed.
+enum TabbedTabDrop: CaseIterable, Sendable { case otherPane, splitOtherPane, splitOwnPane, float }
+
+/// Left pane [a, b, c, d] showing `a`, right pane empty. The press of a tab
+/// drag selected `c`.
+private func pressSelectedBackgroundTab() -> (TabbedLayoutState, left: UUID, right: UUID) {
+    let a = id("a"), b = id("b"), c = id("c"), d = id("d")
+    var state = TabbedLayoutState(preset: .columns)
+    state.reconcile(windowIDs: [a, b, c, d], removed: [], focused: a)
+    state.select(c)
+    return (state, state.panes[0].id, state.panes[1].id)
+}
+
+private func drop(_ tab: WindowID, _ kind: TabbedTabDrop, in state: inout TabbedLayoutState,
+                  left: UUID, right: UUID, reselecting: WindowID?) {
+    switch kind {
+    case .otherPane: state.move(tab, to: right, reselecting: reselecting)
+    case .splitOtherPane: state.split(paneID: right, moving: tab, edge: .bottom, reselecting: reselecting)
+    case .splitOwnPane: state.split(paneID: left, moving: tab, edge: .right, reselecting: reselecting)
+    case .float: state.float(tab, reselecting: reselecting)
+    }
+}
+
+@Test(arguments: TabbedTabDrop.allCases)
+func aTabDraggedOutOfItsPaneGivesThePaneBackItsSelectionFromBeforeThePress(kind: TabbedTabDrop) throws {
+    let a = id("a"), c = id("c")
+    var (state, left, right) = pressSelectedBackgroundTab()
+    try #require(state.pane(containing: c)?.selected == c)
+    drop(c, kind, in: &state, left: left, right: right, reselecting: a)
+    let source = try #require(state.panes.first { $0.id == left })
+    #expect(source.tabs == [a, id("b"), id("d")])
+    #expect(source.selected == a)
+    #expect(state.layout.root?.windowIDs.contains(a) == true)
+    #expect(state.layout.root?.windowIDs.contains(id("d")) == false)
+    if kind == .float {
+        #expect(state.floatingWindowIDs == [c])
+    } else {
+        #expect(state.pane(containing: c)?.selected == c)
+        #expect(state.activeWindowID == c)
+    }
+}
+
+@Test(arguments: TabbedTabDrop.allCases)
+func aTabDraggedOutPromotesTheNextTabWhenThePreviousSelectionLeftThePane(kind: TabbedTabDrop) throws {
+    let a = id("a"), c = id("c"), d = id("d")
+    for removal in ["closed", "moved", "none"] {
+        var (state, left, right) = pressSelectedBackgroundTab()
+        switch removal {
+        case "closed": state.removeClosedWindow(a)
+        case "moved": state.move(a, to: right); state.select(c)
+        default: break
+        }
+        // Without a previous selection, as for a tab that was already selected
+        // before the press, the tab to the right takes the pane.
+        drop(c, kind, in: &state, left: left, right: right, reselecting: removal == "none" ? nil : a)
+        #expect(state.panes.first { $0.id == left }?.selected == d)
+    }
+}
+
+@Test func reorderingAPressSelectedTabKeepsItSelected() {
+    let a = id("a"), c = id("c")
+    var (state, left, _) = pressSelectedBackgroundTab()
+    state.move(c, to: left, at: 0, reselecting: a)
+    #expect(state.panes[0].tabs == [c, a, id("b"), id("d")])
+    #expect(state.panes[0].selected == c)
+}
+
+@Test func aRejectedPressSelectionLeavesTheSelectionWhenTheTabLeaves() {
+    let a = id("a"), b = id("b"), c = id("c"), d = id("d")
+    var state = TabbedLayoutState(preset: .columns)
+    state.reconcile(windowIDs: [a, b, c, d], removed: [], focused: a)
+    // The press did not select `c`, so the pane still shows `a`.
+    state.move(c, to: state.panes[1].id, reselecting: a)
+    #expect(state.panes[0].selected == a)
+    #expect(state.panes[0].tabs == [a, b, d])
+}
