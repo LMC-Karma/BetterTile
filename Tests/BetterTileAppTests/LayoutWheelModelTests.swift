@@ -932,6 +932,8 @@ func repairDuringFocusModeReportsOnlyAfterThePeersReturn(restoredEventArrives: B
     #expect(covered >= display.size.width * display.size.height * 0.98, "\(firstFrames)")
 }
 
+/// A Focus mode peer that fails to restore stays minimized. The others
+/// return and fill the display; it rejoins its place in the grid later.
 @Test(arguments: [false, true]) @MainActor
 func aFocusModeRestoreReturnsAvailablePeersAfterARestoreFailure(fromDock: Bool) async throws {
     _ = NSApplication.shared
@@ -962,13 +964,27 @@ func aFocusModeRestoreReturnsAvailablePeersAfterARestoreFailure(fromDock: Bool) 
         model.perform(.restore)
     }
 
-    #expect(await waitFor { Array(system.windows.prefix(2).map(\.frame)) == Array(tiled.prefix(2)) })
+    // The peer that stayed minimized leaves the layout like any minimized
+    // window, so the returned windows fill the display without a gap.
+    let display = system.mainDisplay.visibleFrame
+    let fills = {
+        let frames = system.windows.prefix(2).map(\.frame)
+        let area = frames.map { $0.size.width * $0.size.height }.reduce(0, +)
+        return area >= display.size.width * display.size.height * 0.98
+            && BentoLayoutVerifier.overlappingWindowIDs(Dictionary(uniqueKeysWithValues: system.windows.prefix(2).map { ($0.id, $0.frame) })).isEmpty
+    }
+    #expect(await waitFor(timeout: .seconds(3)) { fills() }, "\(system.windows.map(\.frame))")
     #expect(!system.windows[1].isMinimized)
     #expect(system.windows[2].isMinimized)
     #expect(system.restoreRequests.filter { $0 == failedPeer }.count == 1)
     let writes = system.frameWriteCounts
     try await Task.sleep(for: .milliseconds(350))
     #expect(system.frameWriteCounts == writes)
+
+    // Restored later, it returns to its place in the original grid.
+    system.failedRestoreWindowIDs = []
+    try system.setMinimized(false, for: failedPeer)
+    #expect(await waitFor(timeout: .seconds(3)) { system.windows.map(\.frame) == tiled }, "\(system.windows.map(\.frame))")
 }
 
 /// A Layout Wheel half during Focus mode brings the covered windows back,
