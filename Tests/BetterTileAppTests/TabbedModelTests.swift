@@ -1386,6 +1386,11 @@ func tabbedDividerRecoversAnUnreportedMinimumAtRelease(feedback: ResizeFeedbackM
     try #require(await waitFor { model.statusMessage != nil })
     #expect(model.activeTabbedState == before)
     #expect(system.windows.map(\.frame) == baseline)
+    // The rollback refreshes the divider: our own restore writes are
+    // suppressed, so nothing else would bring its handles back.
+    #expect(await waitFor(timeout: .seconds(2)) {
+        model.dividerResize.currentBoundaries.contains { $0.beforeWindowIDs.contains(selected) || $0.afterWindowIDs.contains(selected) }
+    }, "\(model.dividerResize.currentBoundaries.map { ($0.beforeWindowIDs, $0.afterWindowIDs) })")
 }
 
 @Test(arguments: [ResizeFeedbackMode.ghost, .live], [false, true]) @MainActor
