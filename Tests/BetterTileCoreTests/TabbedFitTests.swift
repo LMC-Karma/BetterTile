@@ -101,3 +101,21 @@ private func leftWidth(_ state: TabbedLayoutState) -> Double {
     // Read at selection time; changing it must not restart gestures or reflow.
     #expect(ConfigurationChangeSet.between(legacy, changed).isEmpty)
 }
+
+@Test func fitProblemNamesOnlyTheWindowsThatSetAColumnsWidth() throws {
+    // Left: small over hidden large. Right column: wide stacked over narrow.
+    let small = WindowID(rawValue: "small"), large = WindowID(rawValue: "large")
+    let wide = WindowID(rawValue: "wide"), narrow = WindowID(rawValue: "narrow")
+    let tree = BentoLayoutState(root: .partition(BentoPartition(
+        axis: .vertical,
+        children: [.leaf(small), .partition(BentoPartition(axis: .horizontal, children: [.leaf(wide), .leaf(narrow)]))]
+    )))
+    var state = try #require(TabbedLayoutState(adopting: tree))
+    state.reconcile(windowIDs: [small, wide, narrow, large], removed: [], focused: nil)
+    try #require(state.pane(containing: large)?.id == state.pane(containing: small)?.id)
+    state.select(small)
+    let windows = [window("small"), window("large", minimumWidth: 600), window("wide", minimumWidth: 500), window("narrow")]
+    let problem = state.fitProblem(showing: large, in: fitBounds, windows: windows)
+    #expect(problem == .neighbors([wide]))
+}
+
