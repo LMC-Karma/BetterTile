@@ -14,6 +14,7 @@ private struct GhostGestureFixture {
     let display = DisplayID(rawValue: "ghost-overlay")
     let mainFrame: CGRect
     let start: BTPoint
+    let interaction: DividerInteraction
 
     init(junction: Bool = false, live: Bool = false, onScreen: Bool = false) throws {
         _ = NSApplication.shared
@@ -39,9 +40,13 @@ private struct GhostGestureFixture {
         controller = DividerOverlayController(coordinator: WindowCoordinator(system: system), configuration: configuration, displayTicks: ticks)
         let state = state
         controller.bentoStateProvider = { _ in state }
-        let interaction = try #require(DividerInteractionResolver.resolve(
+        interaction = try #require(DividerInteractionResolver.resolve(
             at: start, in: state.boundaries(in: bounds, displayID: display), hitWidth: 30, adjacencyTolerance: 6
         ))
+        try begin()
+    }
+
+    func begin() throws {
         controller.beginGesture(interaction: interaction, at: start)
         let handle = try #require(controller.visibleHandleView)
         handle.displayOptions = { (false, false) }
@@ -309,6 +314,119 @@ private func ghostOverlayCleansUpEveryGestureExit(ending: GhostEnd) throws {
     fixture.tick(dx: 40)
     #expect(overlay.showsFrost && overlay.drawing?.surface == .frost)
     #expect(handle.drawingSink != nil && !handle.showsFrost)
+}
+
+/// An application that applies a committed frame late keeps the Ghost
+/// previews over its window until it lands, so the old frame never shows
+/// after the preview is gone. The handle takes its knob back at once.
+@Test @MainActor func ghostPreviewsStayUntilASlowWindowLands() async throws {
+    let fixture = try GhostGestureFixture()
+    let controller = fixture.controller
+    let handle = try #require(controller.visibleHandleView)
+    fixture.tick(dx: 50)
+    // The new frames become visible only after a few reads.
+    fixture.system.readsBeforeSettling = 4
+    controller.end(at: fixture.point(dx: 50))
+    #expect(!controller.isDragging)
+    #expect(controller.dragOverlay.isVisible)
+    #expect(handle.drawsLens && handle.drawingSink == nil)
+    // Once the window reports its frame, the previews fade away. The hold
+    // itself ends within 250 ms. The margin counts 20 ms steps, not
+    // wall-clock time: a loaded test machine can block the main actor for
+    // seconds, and the hold needs its turn after such a block.
+    for _ in 0..<250 where controller.dragOverlay.isVisible { try await Task.sleep(for: .milliseconds(20)) }
+    #expect(!controller.dragOverlay.isVisible)
+    #expect(controller.dragOverlay.previewViews.isEmpty)
+}
+
+/// Cancelling the divider during a landing hold, for example on a mode
+/// change, ends the hold's poll with the overlay.
+@Test @MainActor func hideAndCancelEndsALandingHold() async throws {
+    let fixture = try GhostGestureFixture()
+    let controller = fixture.controller
+    fixture.tick(dx: 50)
+    fixture.system.readsBeforeSettling = 1000
+    controller.end(at: fixture.point(dx: 50))
+    try #require(controller.dragOverlay.isVisible)
+    controller.hideAndCancel()
+    #expect(!controller.dragOverlay.isVisible)
+    var reads = 0
+    fixture.system.targetedSnapshotHandler = { _ in reads += 1 }
+    try await Task.sleep(for: .milliseconds(200))
+    #expect(reads == 0, "the landing poll kept reading windows")
+}
+
+/// A window that grows a little still shows its old frame until it draws.
+/// That old frame is near the target, but it is not a landing.
+@Test @MainActor func ghostPreviewsWaitForAWindowStillDrawingItsOldFrame() async throws {
+    let fixture = try GhostGestureFixture()
+    let controller = fixture.controller
+    let left = fixture.system.windows[0]
+    fixture.tick(dx: 12)
+    fixture.system.drawnFrameOverrides = [left.id: left.frame]
+    controller.end(at: fixture.point(dx: 12))
+    let target = try #require(fixture.system.windows.first { $0.id == left.id }?.frame)
+    #expect(target.size.width > left.frame.size.width && target.size.width - left.frame.size.width <= 24)
+    try await Task.sleep(for: .milliseconds(120))
+    #expect(controller.dragOverlay.isVisible)
+    #expect(!controller.dragOverlay.isFading)
+    // Once WindowServer shows the new frame, the previews fade away.
+    fixture.system.drawnFrameOverrides = [:]
+    for _ in 0..<250 where controller.dragOverlay.isVisible { try await Task.sleep(for: .milliseconds(20)) }
+    #expect(!controller.dragOverlay.isVisible)
+}
+
+/// A drag that starts while the previous release still fades gets its own
+/// presentation; the old fade does not hide the new previews.
+@Test @MainActor func aDragDuringTheLandingFadeKeepsItsPreviews() async throws {
+    let fixture = try GhostGestureFixture()
+    let controller = fixture.controller
+    fixture.tick(dx: 50)
+    // The window never draws its new frame, so the hold ends at its deadline.
+    fixture.system.readsBeforeSettling = 1000
+    controller.end(at: fixture.point(dx: 50))
+    for _ in 0..<1000 where !controller.dragOverlay.isFading { try await Task.sleep(for: .milliseconds(5)) }
+    try #require(controller.dragOverlay.isFading)
+    try fixture.begin()
+    fixture.tick(dx: 30)
+    #expect(controller.dragOverlay.isVisible && !controller.dragOverlay.isFading)
+    try await Task.sleep(for: .milliseconds(300))
+    #expect(controller.isDragging)
+    #expect(controller.dragOverlay.isVisible)
+    #expect(!controller.dragOverlay.previewViews.isEmpty)
+}
+
+/// A window that cannot be read during the hold has not landed, so its
+/// preview is not removed before the window draws.
+@Test @MainActor func anUnreadableWindowHasNotLanded() throws {
+    let fixture = try GhostGestureFixture()
+    defer { fixture.controller.hideAndCancel() }
+    let targets = Dictionary(uniqueKeysWithValues: fixture.system.windows.map { ($0.id, $0.frame) })
+    let baseline = targets.mapValues { $0.offsetBy(dx: -40, dy: 0) }
+    #expect(fixture.controller.windowsHaveLanded(targets, baseline: baseline))
+    fixture.system.unreadableWindowIDs = [fixture.system.windows[0].id]
+    #expect(!fixture.controller.windowsHaveLanded(targets, baseline: baseline))
+    // A read that fails outright has not shown the windows landed either.
+    fixture.system.unreadableWindowIDs = []
+    fixture.system.targetedSnapshotsFail = true
+    #expect(!fixture.controller.windowsHaveLanded(targets, baseline: baseline))
+}
+
+/// While previews wait for the windows to land, hovering a divider moves the
+/// real handle, not only its drawing, so a click lands on the handle.
+@Test @MainActor func hoverDuringTheLandingHoldMovesTheRealHandle() throws {
+    let fixture = try GhostGestureFixture()
+    let controller = fixture.controller
+    defer { controller.hideAndCancel() }
+    let input = try #require(controller.visibleHandleView?.window as? DividerHandlePanel)
+    controller.refresh(boundaries: fixture.state.boundaries(in: fixture.bounds, displayID: fixture.display))
+    fixture.tick(dx: 30)
+    fixture.system.readsBeforeSettling = 1000
+    controller.end(at: fixture.point(dx: 30))
+    try #require(controller.dragOverlay.isVisible)
+    let before = input.frame
+    controller.updateHover(at: fixture.point(dx: 0, dy: 150))
+    #expect(input.frame != before)
 }
 
 /// After a release the handle retracts for a moment. A pointer that comes

@@ -1936,6 +1936,18 @@ extension AccessibilityWindowSystem: TabbedWindowSystem {
 }
 
 extension AccessibilityWindowSystem: WindowStackReading {
+    public func windowServerFrames(for ids: Set<WindowID>) -> [WindowID: BTRect]? {
+        var exact: [CGWindowID: WindowID] = [:]
+        for id in ids {
+            guard let number = identities.exactWindowID(for: id) else { return nil }
+            exact[number] = id
+        }
+        guard let records = targetedWindowServerRecords(ids: Set(exact.keys)) else { return nil }
+        var frames: [WindowID: BTRect] = [:]
+        for record in records { if let id = exact[record.windowID] { frames[id] = record.frame } }
+        return frames.count == ids.count ? frames : nil
+    }
+
     public func onScreenStack(labeling ids: Set<WindowID>) -> [SeamStackEntry]? {
         guard let records = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
             as? [[CFString: Any]] else { return nil }
