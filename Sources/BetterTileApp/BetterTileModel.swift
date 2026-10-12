@@ -2471,26 +2471,27 @@ final class BetterTileModel {
         refreshDividerBoundaries()
     }
 
+    /// Names the windows that cannot fit beside each other. A long window
+    /// title is shortened by its rendered width, so the rest of the message
+    /// stays within the result pill's two lines.
+    nonisolated static func overlapMessage(_ names: [String]) -> String {
+        ResultPillLayout.detail(naming: Array(names.prefix(2))) { titles in
+            "\(titles.joined(separator: " and ")) cannot fit beside each other at their minimum sizes."
+        }
+    }
+
     /// A window beyond Bento's six panes floats where it opened. Say so at
     /// once, with what the user can do, instead of leaving it over the tiles
     /// silently.
-    /// A long window title must not push the rest of a result-pill
-    /// message out of its two lines.
-    nonisolated static func pillTitle(_ title: String) -> String {
-        title.count > 40 ? "\(title.prefix(39))…" : title
-    }
-
-    nonisolated static func overlapMessage(_ names: [String]) -> String {
-        "\(names.prefix(2).map(pillTitle).joined(separator: " and ")) cannot fit beside each other at their minimum sizes."
-    }
-
     private func announceBentoOverflow(before: LayoutSession, on display: DisplaySnapshot, windows: [WindowSnapshot]) {
         guard let after = sessionStore.session(for: display.id), after.mode == .bento,
               (after.bentoState.root?.windowIDs.count ?? 0) >= 6 else { return }
         let newlyFloating = after.automaticallyFloatingWindowIDs.subtracting(before.automaticallyFloatingWindowIDs)
         guard let window = windows.first(where: { newlyFloating.contains($0.id) }) else { return }
-        let name = window.title.isEmpty ? "This window" : "“\(Self.pillTitle(window.title))”"
-        statusMessage = "Bento manages up to six windows. \(name) stays floating: drop it on a pane to swap, or switch this desktop to Tabbed."
+        statusMessage = ResultPillLayout.detail(naming: window.title.isEmpty ? [] : [window.title]) { titles in
+            let name = titles.first.map { "“\($0)”" } ?? "This window"
+            return "Bento manages up to six windows. \(name) stays floating: drop it on a pane to swap, or switch this desktop to Tabbed."
+        }
         presentActionResult(succeeded: false, error: statusMessage, displayID: display.id)
     }
 
