@@ -87,6 +87,16 @@ final class FakeWindowSystem: WindowSystem, TargetedWindowSystem, WindowEventSou
     /// loop: the write is accepted, but the new frame is only observable after
     /// this many reads.
     var readsBeforeSettling = 0
+    /// When set, WindowServer reports these frames instead of the windows'
+    /// Accessibility frames, as for an application that has not drawn yet.
+    var drawnFrameOverrides: [WindowID: BTRect]?
+    func windowServerFrames(for ids: Set<WindowID>) -> [WindowID: BTRect]? {
+        guard let drawnFrameOverrides else { return nil }
+        var frames = Dictionary(windows.filter { ids.contains($0.id) }.map { ($0.id, $0.frame) },
+                                uniquingKeysWith: { first, _ in first })
+        for (id, frame) in drawnFrameOverrides where ids.contains(id) { frames[id] = frame }
+        return frames
+    }
     /// Windows that a minimum-size probe leaves at the wrong size.
     var unrestoredProbeWindowIDs: Set<WindowID> = []
     private(set) var probedWindowIDs: [Set<WindowID>] = []
@@ -129,12 +139,15 @@ final class FakeWindowSystem: WindowSystem, TargetedWindowSystem, WindowEventSou
         settlePendingFrames()
         return windows
     }
+    /// Windows a targeted read leaves out, as Accessibility does for an
+    /// element it cannot read at the moment.
+    var unreadableWindowIDs: Set<WindowID> = []
     func windowSnapshots(ids: Set<WindowID>) throws -> [WindowSnapshot] {
         targetedSnapshotRequests += 1
         targetedSnapshotHandler?(ids)
         if targetedSnapshotsFail { throw WindowSystemError.operationFailed("Simulated snapshot failure") }
         settlePendingFrames()
-        return windows.filter { ids.contains($0.id) }
+        return windows.filter { ids.contains($0.id) && !unreadableWindowIDs.contains($0.id) }
     }
     func displays() -> [DisplaySnapshot] { availableDisplays }
     func setWindowEventHandler(_ handler: (@MainActor (WindowSystemEvent) -> Void)?) { eventHandler = handler }

@@ -4,6 +4,14 @@ import BetterTileCore
 @MainActor
 public protocol WindowStackReading {
     func onScreenStack(labeling ids: Set<WindowID>) -> [SeamStackEntry]?
+    /// The frames WindowServer shows for these windows. An application can
+    /// report a new Accessibility frame before it draws at that size; these
+    /// frames are what the user sees. Nil when unavailable.
+    func windowServerFrames(for ids: Set<WindowID>) -> [WindowID: BTRect]?
+}
+
+public extension WindowStackReading {
+    func windowServerFrames(for ids: Set<WindowID>) -> [WindowID: BTRect]? { nil }
 }
 
 /// Reads only the five public fields needed for seam coverage.
