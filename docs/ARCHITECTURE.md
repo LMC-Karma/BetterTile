@@ -191,8 +191,10 @@ not rearrange existing windows.
 Maximize enters Focus mode on a tiled Bento window and retains the previous
 tree for that desktop session. Restore, Maximize again, and a peer restored
 from the Dock share one bounded wait for the covered peers to return before
-restoring that tree. A failed peer restore still returns the available windows
-to the previous layout after the wait. A rejected layout restore suspends
+restoring that tree. A peer still minimized when the wait ends, such as one
+whose restore failed, leaves the tree like any minimized window: the available
+windows fill the display, and the peer's reinsertion anchor keeps the previous
+tree for its return. A rejected layout restore suspends
 automatic placement until Repair. Background sweeps retain membership without
 moving windows while the wait owns that session. A newer layout action cancels
 the wait.
