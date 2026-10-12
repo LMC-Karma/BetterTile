@@ -2665,6 +2665,9 @@ final class BetterTileModel {
                     let displayWindows = windows.filter {
                         $0.displayID == display.id && members.contains($0.id) && $0.isEligible
                     }
+                    // Commit the returned peers as members too, so a divider drag
+                    // or Maximize right after the restore includes them.
+                    restored.windowIDs.formUnion(displayWindows.map(\.id))
                     self.restoreBentoLayout(
                         session: restored, displayWindows: displayWindows, display: display,
                         suspendOnRejection: true
