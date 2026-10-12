@@ -257,6 +257,7 @@ final class BetterTileModel {
             }
             session.resumeAutomaticWrites()
             session.bentoState = state
+            session.forgetRememberedBentoLayouts()
             session.recordProposedFrames(frames)
             guard self.sessionStore.commit(session, replacing: session.revision) != nil else {
                 self.pendingWindowEvents.recordFrameChanges(Set(frames.keys))
@@ -792,6 +793,8 @@ final class BetterTileModel {
             uniqueKeysWithValues: proposal.plan.placements.map { ($0.windowID, $0.frame) }
         )
         session.bentoState = proposal.plan.state
+        // Focus mode keeps the previous tree, so its remembered layouts stay.
+        if !proposal.plan.isFocusDrop { session.forgetRememberedBentoLayouts() }
         session.isBentoInitialized = true
         session.windowIDs = Set(proposal.displayWindows.map(\.id))
         session.recordProposedFrames(requestedFrames)
@@ -939,6 +942,7 @@ final class BetterTileModel {
         }
         let requestedFrames = Dictionary(uniqueKeysWithValues: plan.placements.map { ($0.windowID, $0.frame) })
         session.bentoState = plan.state
+        session.forgetRememberedBentoLayouts()
         session.isBentoInitialized = true
         session.windowIDs = Set(displayWindows.map(\.id))
         session.recordProposedFrames(requestedFrames)
@@ -1464,6 +1468,7 @@ final class BetterTileModel {
             if committed {
                 var proposed = active.layoutSession
                 proposed.bentoState = plan.state
+                if !plan.isFocusDrop { proposed.forgetRememberedBentoLayouts() }
                 // A window that refused its new pane is measured by this
                 // write; solve again now, so the correction lands with the
                 // drop instead of half a second later from settlement.
@@ -2432,6 +2437,7 @@ final class BetterTileModel {
         // not realise must not become the session's state, or the layout and
         // the windows disagree from then on.
         session.bentoState = plan.state
+        if !plan.isFocusDrop { session.forgetRememberedBentoLayouts() }
         // macOS's Window > Fill resolves to the same focus plan a BetterTile
         // maximize does, and a focus plan covers its peers instead of tiling
         // beside them. Committing only its placement would leave those peers

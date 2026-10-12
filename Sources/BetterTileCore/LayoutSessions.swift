@@ -128,6 +128,16 @@ public struct LayoutSession: Hashable, Sendable {
         presence = WindowPresenceTracker()
     }
 
+    /// A user change to the Bento tree, such as a drop, a swap, a partition,
+    /// or a divider move, makes every tree remembered at an earlier minimize
+    /// out of date. Restoring from one would undo the change. Each minimized
+    /// window keeps its neighbour and edge, so it still returns beside them.
+    public mutating func forgetRememberedBentoLayouts() {
+        for windowID in bentoReinsertionAnchors.keys {
+            bentoReinsertionAnchors[windowID]?.layoutBefore = nil
+        }
+    }
+
     /// A user-owned transaction clears this display's recovery stop.
     public mutating func resumeAutomaticWrites() {
         automaticWritesSuspended = false
