@@ -259,12 +259,25 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
             if !sizeRestored || !positionRestored { unrestored.insert(id) }
             guard let clamped else { continue }
             let before = BTRect(x: position.x, y: position.y, width: original.width, height: original.height)
-            measured = minimumSizeLearner.observeWriteReadback(
+            if minimumSizeLearner.observeWriteReadback(
                 windowID: id, application: applicationKeys[id],
                 requested: BTRect(x: position.x, y: position.y, width: 1, height: 1),
                 previous: before,
                 actual: BTRect(x: position.x, y: position.y, width: clamped.width, height: clamped.height)
-            ) || measured
+            ) {
+                measured = true
+            } else if abs(clamped.width - original.width) <= 1, abs(clamped.height - original.height) <= 1,
+                      !unrestored.contains(id), confirmsSynchronousWrites(element, at: position),
+                      minimumSizeLearner.observeConfirmedClamp(
+                          windowID: id, application: applicationKeys[id],
+                          requested: BTSize(width: 1, height: 1),
+                          actual: BTSize(width: clamped.width, height: clamped.height)
+                      ) {
+                // A window already at its minimum keeps its size, which an
+                // ignored write would also do. The position nudge proves the
+                // application handles writes at once, as for a frame write.
+                measured = true
+            }
         }
         if measured { snapshotGeneration &+= 1 }
         return unrestored
