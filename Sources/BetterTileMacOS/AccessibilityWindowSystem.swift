@@ -900,10 +900,11 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
                     throw WindowSystemError.windowNotFound(write.windowID)
                 }
                 try requireResponsive(element)
-                guard isSettable(kAXPositionAttribute, on: element) || isSettable(kAXSizeAttribute, on: element) else {
+                // An application that stops answering here is reported as not
+                // responding, not as a window that cannot move.
+                guard try movability(of: element) else {
                     throw WindowSystemError.unsupportedWindow(write.windowID)
                 }
-                try requireResponsive(element)
                 _ = suspendEnhancedUserInterfaceIfNeeded(for: element)
                 var pid: pid_t = 0
                 AXUIElementGetPid(element, &pid)
