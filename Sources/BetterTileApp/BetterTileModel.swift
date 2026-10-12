@@ -2512,7 +2512,13 @@ final class BetterTileModel {
                         onPeersReturned()
                         return
                     }
-                    if let previous = self.bentoStateBeforeFocus.removeValue(forKey: restored.id) {
+                    if var previous = self.bentoStateBeforeFocus.removeValue(forKey: restored.id) {
+                        // A window closed during Focus mode must not keep an
+                        // empty pane. Peers still on their way back keep theirs.
+                        let present = Set(windows.filter { $0.displayID == display.id && $0.isEligible }.map(\.id))
+                        for id in Set(previous.root?.windowIDs ?? []).subtracting(present).subtracting(peers) {
+                            previous.remove(id)
+                        }
                         restored.bentoState = previous
                     }
                     let displayWindows = windows.filter {
