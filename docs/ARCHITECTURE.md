@@ -106,7 +106,7 @@ Escape cancels synchronously on the main actor, including when a managed app
 retains keyboard focus. The global monitor only observes the event; the local
 monitor consumes Escape and passes other keys through.
 
-All window mutations pass through the main-actor coordinator. Multi-window operations preflight every participant, apply in deterministic order, and roll back already-applied frames when a later Accessibility write fails. Ghost resize transactions do not mutate real windows before commit; live transactions can restore their original baseline on cancellation. AX move/resize events are debounced, while events matching a recent coordinator generation and expected frame are suppressed to prevent feedback loops.
+All window mutations pass through the main-actor coordinator. Multi-window operations preflight every participant, apply in deterministic order, and roll back already-applied frames when a later Accessibility write fails. Ghost resize transactions do not mutate real windows before commit; live transactions can restore their original baseline on cancellation. A Ghost release whose post-commit correction fails or is cancelled also restores the baseline. AX move/resize events are debounced, while events matching a recent coordinator generation and expected frame are suppressed to prevent feedback loops.
 
 Continuous resize gestures keep only the newest pointer or observed-window
 sample and consume it on an AppKit display-link tick. Live Accessibility batches
@@ -114,17 +114,34 @@ run at no more than 60 Hz; ghost-only feedback may follow the display's native
 rate. Intermediate ticks reuse one frame transaction, skip unchanged targets,
 and avoid repeated participant sweeps. They also skip the trailing
 clamp-correcting size write; the next tick or the release corrects a clamp.
-Once a window's minimum is measured, intermediate ticks also skip the size
-readback, and only a final write can confirm a new clamp with a position nudge. Mouse-up bypasses coalescing, validates
+Live ticks read each written window back but never confirm a clamp with a
+position nudge; only a final write does, for a clamp the learned minimum does
+not already explain.
+Each tick writes every application at once, one thread per application, and
+returns only after every write. A shrinking window takes the new sample at
+once. A growing window, or the growing axis of a window at a junction, takes
+the previous sample, so it only enters space its neighbour gave up a tick
+earlier. A rejected tick shrinks windows back before it regrows their
+neighbours. Mouse-up bypasses coalescing, validates
 the participants, and applies the exact final geometry. Linked resizing writes
 only the neighboring windows; the application keeps control of the window the
 user is resizing.
+
+A Ghost Preview release commits the previewed layout and reads every window
+back. A window that refused its size gives a measured minimum, and the release
+solves the layout again with it, at most twice. Undo history records the
+release once, after any correction. If a correction fails or is cancelled,
+every window returns to its frame from before the gesture.
 
 Frame batches share enhanced-accessibility setup per application. The
 coordinator keeps placement and rollback in one synchronous batch. The macOS
 adapter restores each application's original setting before the batch returns,
 including error exits. This avoids toggling the same application's setting for
-each of its windows. No suspension is held across an event-loop turn.
+each of its windows. Outside a live divider drag, no suspension is held across
+an event-loop turn. A live divider drag holds each application's suspension
+from its first write until the gesture ends, cancels, or the overlay hides, so
+an application such as a Chromium browser does not toggle the setting on every
+tick.
 
 Tabbed selection preserves pane geometry when the selected window fits. It swaps
 which window the pane's Bento leaf holds and checks both minimum dimensions.
@@ -363,12 +380,15 @@ use the frosted surface. Reduce Transparency and Increase Contrast use a solid
 fill. Hit testing and window resizing keep their existing
 behavior; junction input frames keep their earlier width, which contains the
 narrower lens.
-At rest and during Live Resize, a separate click-through panel below the handle
-supplies the track and shadow. During Ghost Preview, one reusable click-through
-panel contains the preview views, track, shadow, and knob. Its frame stays at the
-display's visible bounds and it is ordered below the input handle once. Each
-display tick updates all drawing in one transaction with layer actions disabled.
-The input handle stays visible and stationary, with its drawing hidden. A drawing
+At rest, a separate click-through panel below the handle supplies the track and
+shadow. During a divider drag, one reusable click-through panel contains the
+track, shadow, and knob, plus the preview views in Ghost Preview. Its frame stays
+at the display's visible bounds and it is ordered below the input handle once.
+Each display tick updates all drawing in one transaction with layer actions
+disabled. The input handle stays visible and stationary, with its drawing hidden.
+Live Resize needs this too: moving the panel that owns the drag on every tick
+made Chromium browsers block their own window writes for 80–150 ms while they
+were the active application. A drawing
 sample forwards geometry, limit, stretch, and appearance changes to the overlay.
 Ending the gesture restores the handle frame and drawing before hiding the
 overlay and retracting. Settings uses the same lens views.

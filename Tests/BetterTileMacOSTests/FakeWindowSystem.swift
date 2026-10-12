@@ -77,6 +77,12 @@ final class FakeWindowSystem: WindowSystem, TargetedWindowSystem, WindowEventSou
     /// Simulates applications whose real minimum sizes are not reported.
     var enforcedMinimumWidths: [WindowID: Double] = [:]
     var enforcedMinimumHeights: [WindowID: Double] = [:]
+    /// Simulates applications that round sizes to whole points and an
+    /// adapter that reads the frame back after each write.
+    var roundsSizesAndReportsReadback = false
+    func measuredFrameAfterWrite(for windowID: WindowID) -> BTRect? {
+        roundsSizesAndReportsReadback ? windows.first(where: { $0.id == windowID })?.frame : nil
+    }
     /// Simulates an application that applies a geometry change on its own run
     /// loop: the write is accepted, but the new frame is only observable after
     /// this many reads.
@@ -137,6 +143,22 @@ final class FakeWindowSystem: WindowSystem, TargetedWindowSystem, WindowEventSou
     func emit(_ event: WindowSystemEvent) { eventHandler?(event) }
 
     var intermediateFrameWriteCounts: [WindowID: Int] = [:]
+    /// Like the Accessibility adapter, writes every window of a live tick
+    /// before it reports the first failure.
+    var attemptsWholeIntermediateBatch = true
+
+    func setIntermediateFrames(_ writes: [Placement], knownCurrentFrames: [WindowID: BTRect]) throws {
+        var failure: Error?
+        for write in writes {
+            do {
+                try setIntermediateFrame(write.frame, knownCurrentFrame: knownCurrentFrames[write.windowID], for: write.windowID)
+            } catch {
+                failure = failure ?? error
+                if !attemptsWholeIntermediateBatch { throw error }
+            }
+        }
+        if let failure { throw failure }
+    }
 
     func setIntermediateFrame(_ frame: BTRect, knownCurrentFrame: BTRect?, for windowID: WindowID) throws {
         intermediateFrameWriteCounts[windowID, default: 0] += 1
@@ -161,6 +183,10 @@ final class FakeWindowSystem: WindowSystem, TargetedWindowSystem, WindowEventSou
             return
         }
         var applied = frame
+        if roundsSizesAndReportsReadback {
+            applied.size.width = applied.size.width.rounded()
+            applied.size.height = applied.size.height.rounded()
+        }
         if let clampWidth { applied.size.width = min(applied.size.width, clampWidth) }
         if let minimum = enforcedMinimumWidths[windowID], applied.size.width < minimum {
             // A refused shrink keeps the window's edge nearest its old frame.

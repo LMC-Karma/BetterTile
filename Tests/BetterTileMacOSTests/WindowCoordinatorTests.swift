@@ -1197,3 +1197,208 @@ func singleWindowPartialFailureRestoresBaselineAndPreservesHistory(actionPlan: B
     }
     #expect(system.probedWindowIDs == [[id], [id]])
 }
+
+/// Two side-by-side windows whose shared edge moves right: "focused" grows,
+/// "second" shrinks. IDs sort the growing window first, as in many layouts.
+@MainActor private func sharedEdgeFixture() -> (FakeWindowSystem, WindowCoordinator) {
+    let system = FakeWindowSystem()
+    system.windows[0].frame = BTRect(x: 0, y: 0, width: 500, height: 800)
+    system.addSecondWindow()
+    system.windows[1].frame = BTRect(x: 500, y: 0, width: 500, height: 800)
+    return (system, WindowCoordinator(system: system))
+}
+
+@Test @MainActor func multiWindowWritesShrinkBeforeTheyGrow() throws {
+    let (system, coordinator) = sharedEdgeFixture()
+    var transaction = try #require(coordinator.beginTransaction(windowIDs: Set(system.windows.map(\.id))).startedTransaction)
+    _ = coordinator.applyLive(transaction: &transaction, placements: [
+        Placement(windowID: system.windows[0].id, frame: BTRect(x: 0, y: 0, width: 600, height: 800)),
+        Placement(windowID: system.windows[1].id, frame: BTRect(x: 600, y: 0, width: 400, height: 800)),
+    ])
+    #expect(system.frameWriteBatches.last == [system.windows[1].id, system.windows[0].id])
+}
+
+/// At a 2x2 junction only the window that would grow into a refusing
+/// neighbour waits. The other growing window keeps following the divider.
+@Test @MainActor func aRefusingWindowHoldsOnlyTheWindowThatWouldOverlapIt() throws {
+    let system = FakeWindowSystem()
+    system.windows[0].frame = BTRect(x: 0, y: 0, width: 500, height: 400)
+    for (name, frame) in [("topRight", BTRect(x: 500, y: 0, width: 500, height: 400)),
+                          ("bottomLeft", BTRect(x: 0, y: 400, width: 500, height: 400)),
+                          ("bottomRight", BTRect(x: 500, y: 400, width: 500, height: 400))] {
+        system.windows.append(WindowSnapshot(id: WindowID(rawValue: name), processIdentifier: Int32(50 + system.windows.count),
+            bundleIdentifier: "com.example.\(name)", frame: frame, displayID: DisplayID(rawValue: "main")))
+    }
+    let topLeft = system.windows[0].id, bottomLeft = WindowID(rawValue: "bottomLeft"), bottomRight = WindowID(rawValue: "bottomRight")
+    system.enforcedMinimumWidths[bottomRight] = 450
+    let coordinator = WindowCoordinator(system: system)
+    var transaction = try #require(coordinator.beginTransaction(windowIDs: Set(system.windows.map(\.id))).startedTransaction)
+    let sample = [
+        Placement(windowID: topLeft, frame: BTRect(x: 0, y: 0, width: 600, height: 400)),
+        Placement(windowID: WindowID(rawValue: "topRight"), frame: BTRect(x: 600, y: 0, width: 400, height: 400)),
+        Placement(windowID: bottomLeft, frame: BTRect(x: 0, y: 400, width: 600, height: 400)),
+        Placement(windowID: bottomRight, frame: BTRect(x: 600, y: 400, width: 400, height: 400)),
+    ]
+    // The first tick shrinks the right column; the second completes growth.
+    for _ in 0..<2 {
+        #expect(coordinator.applyLive(transaction: &transaction, placements: sample, validateParticipants: false).isApplied)
+    }
+    let frame = { (id: WindowID) in system.windows.first { $0.id == id }!.frame }
+    #expect(frame(topLeft).size.width == 600, "\(system.windows.map(\.frame))")
+    #expect(frame(bottomLeft).maxX <= frame(bottomRight).minX + 0.5, "\(system.windows.map(\.frame))")
+}
+
+/// A live divider tick asks a window to shrink below a minimum it never
+/// reported. The window that would grow into it waits for that tick, so the
+/// two never overlap while the divider learns the minimum.
+@Test @MainActor func liveTickHoldsTheGrowingWindowWhenItsNeighbourRefuses() throws {
+    let (system, coordinator) = sharedEdgeFixture()
+    system.enforcedMinimumWidths[system.windows[1].id] = 450
+    var transaction = try #require(coordinator.beginTransaction(windowIDs: Set(system.windows.map(\.id))).startedTransaction)
+    let outcome = coordinator.applyLive(transaction: &transaction, placements: [
+        Placement(windowID: system.windows[0].id, frame: BTRect(x: 0, y: 0, width: 600, height: 800)),
+        Placement(windowID: system.windows[1].id, frame: BTRect(x: 600, y: 0, width: 400, height: 800)),
+    ], validateParticipants: false)
+    #expect(outcome.isApplied)
+    let grown = system.windows[0].frame, refused = system.windows[1].frame
+    #expect(grown.maxX <= refused.minX + 0.5, "grew to \(grown) over \(refused)")
+    // A later tick within the minimum still applies normally.
+    _ = coordinator.applyLive(transaction: &transaction, placements: [
+        Placement(windowID: system.windows[0].id, frame: BTRect(x: 0, y: 0, width: 540, height: 800)),
+        Placement(windowID: system.windows[1].id, frame: BTRect(x: 540, y: 0, width: 460, height: 800)),
+    ], validateParticipants: false)
+    #expect(system.windows[0].frame.size.width == 540)
+}
+
+/// A live tick writes every application before it reports a failure, so
+/// a rejected tick can leave other windows at the new sample. Rollback
+/// shrinks those windows back before it regrows their neighbours.
+@Test @MainActor func rejectedLiveTickShrinksBackBeforeItRegrows() throws {
+    let (system, coordinator) = sharedEdgeFixture()
+    let left = system.windows[0].id, right = system.windows[1].id
+    var transaction = try #require(coordinator.beginTransaction(windowIDs: [left, right]).startedTransaction)
+    func tick(_ edge: Double) -> WindowMutationOutcome {
+        coordinator.applyLive(transaction: &transaction, placements: [
+            Placement(windowID: left, frame: BTRect(x: 0, y: 0, width: edge, height: 800)),
+            Placement(windowID: right, frame: BTRect(x: edge, y: 0, width: 1000 - edge, height: 800)),
+        ], validateParticipants: false)
+    }
+    #expect(tick(480).isApplied)
+    // The shrinking left window's write fails after its size lands; the
+    // growing right window has already taken the previous sample.
+    system.partiallyFailedFrameWriteNumbers[left] = [2]
+    #expect(!tick(460).isApplied)
+    let batch = try #require(system.frameWriteBatches.last)
+    // Writes go in window order; the rollback starts with the right window,
+    // which shrinks back, before the left window regrows.
+    #expect(batch == [left, right, right, left])
+    #expect(system.windows[0].frame == BTRect(x: 0, y: 0, width: 480, height: 800))
+    #expect(system.windows[1].frame == BTRect(x: 500, y: 0, width: 500, height: 800))
+}
+
+/// A corrective commit after a first commit compares each window with the
+/// frame it was given, not the frame from before the gesture. The window
+/// that must shrink back is written before its neighbour grows.
+@Test @MainActor func aCorrectiveCommitShrinksFromTheCommittedFrames() throws {
+    let (system, coordinator) = sharedEdgeFixture()
+    let left = system.windows[0].id, right = system.windows[1].id
+    var transaction = try #require(coordinator.beginTransaction(windowIDs: [left, right]).startedTransaction)
+    #expect(coordinator.commit(transaction: &transaction, placements: [
+        Placement(windowID: left, frame: BTRect(x: 0, y: 0, width: 700, height: 800)),
+        Placement(windowID: right, frame: BTRect(x: 700, y: 0, width: 300, height: 800)),
+    ], recordHistory: false).isApplied)
+    // Still wider than before the gesture, but narrower than committed.
+    #expect(coordinator.commit(transaction: &transaction, placements: [
+        Placement(windowID: left, frame: BTRect(x: 0, y: 0, width: 600, height: 800)),
+        Placement(windowID: right, frame: BTRect(x: 600, y: 0, width: 400, height: 800)),
+    ], recordHistory: false).isApplied)
+    #expect(system.frameWriteBatches.last == [left, right])
+}
+
+/// A slow drag moves less than the write tolerance per tick. Each tick must
+/// compare with the frame the window reported, not with the last request,
+/// or the adapter would skip every size write and only move the window.
+@Test @MainActor func slowLiveTicksCompareWithTheMeasuredFrame() throws {
+    let (system, coordinator) = sharedEdgeFixture()
+    system.roundsSizesAndReportsReadback = true
+    let shrinking = system.windows[1].id
+    var transaction = try #require(coordinator.beginTransaction(windowIDs: Set(system.windows.map(\.id))).startedTransaction)
+    for step in 1...4 {
+        let edge = 500 + 0.3 * Double(step)
+        _ = coordinator.applyLive(transaction: &transaction, placements: [
+            Placement(windowID: system.windows[0].id, frame: BTRect(x: 0, y: 0, width: edge, height: 800)),
+            Placement(windowID: shrinking, frame: BTRect(x: edge, y: 0, width: 1000 - edge, height: 800)),
+        ], validateParticipants: false)
+    }
+    let hints = try #require(system.recordedKnownCurrentFrames[shrinking])
+    // After the first write, every hint is a size the window reported.
+    #expect(hints.dropFirst().allSatisfy { hint in
+        guard let hint else { return false }
+        return hint.size.width == hint.size.width.rounded()
+    })
+}
+
+/// Over a steady drag, the growing window takes each sample one tick after
+/// its shrinking neighbour, so the two never overlap.
+@Test @MainActor func liveTicksLetTheGrowingWindowTrailByOneSample() throws {
+    let (system, coordinator) = sharedEdgeFixture()
+    var transaction = try #require(coordinator.beginTransaction(windowIDs: Set(system.windows.map(\.id))).startedTransaction)
+    var edges: [Double] = []
+    for step in 1...5 {
+        let edge = 500 + 10 * Double(step)
+        edges.append(edge)
+        _ = coordinator.applyLive(transaction: &transaction, placements: [
+            Placement(windowID: system.windows[0].id, frame: BTRect(x: 0, y: 0, width: edge, height: 800)),
+            Placement(windowID: system.windows[1].id, frame: BTRect(x: edge, y: 0, width: 1000 - edge, height: 800)),
+        ], validateParticipants: false)
+        let grown = system.windows[0].frame, shrunk = system.windows[1].frame
+        #expect(shrunk.minX == edge)
+        #expect(grown.maxX <= shrunk.minX)
+        #expect(grown.maxX == (step == 1 ? 500 : edges[step - 2]))
+    }
+    #expect(transaction.hasTrailingWrites)
+    // A tick without a new sample completes the growing window.
+    _ = coordinator.applyLive(transaction: &transaction, placements: transaction.proposedPlacements, validateParticipants: false)
+    #expect(system.windows[0].frame.maxX == 550)
+    #expect(!transaction.hasTrailingWrites)
+}
+
+/// A rejected tick that only completes a trailing window clears the
+/// trailing mark, so a still pointer does not retry it every display tick.
+@Test @MainActor func aRejectedTrailingTickDoesNotKeepRetrying() throws {
+    let (system, coordinator) = sharedEdgeFixture()
+    var transaction = try #require(coordinator.beginTransaction(windowIDs: Set(system.windows.map(\.id))).startedTransaction)
+    _ = coordinator.applyLive(transaction: &transaction, placements: [
+        Placement(windowID: system.windows[0].id, frame: BTRect(x: 0, y: 0, width: 520, height: 800)),
+        Placement(windowID: system.windows[1].id, frame: BTRect(x: 520, y: 0, width: 480, height: 800)),
+    ], validateParticipants: false)
+    try #require(transaction.hasTrailingWrites)
+    system.failingWindowID = system.windows[0].id
+    let outcome = coordinator.applyLive(transaction: &transaction, placements: transaction.proposedPlacements,
+                                        validateParticipants: false)
+    #expect(!outcome.isApplied)
+    #expect(!transaction.hasTrailingWrites)
+}
+
+/// At a junction a window can shrink in width and grow in height in one
+/// tick. Its height trails one tick, like any growing window, so it never
+/// grows into the window below before that window has moved.
+@Test @MainActor func liveJunctionTickTrailsTheGrowingAxisOfAMixedWindow() throws {
+    let system = FakeWindowSystem()
+    system.windows[0].frame = BTRect(x: 0, y: 0, width: 500, height: 400)
+    system.addSecondWindow()
+    system.windows[1].frame = BTRect(x: 0, y: 400, width: 500, height: 400)
+    let coordinator = WindowCoordinator(system: system)
+    let top = system.windows[0].id, bottom = system.windows[1].id
+    var transaction = try #require(coordinator.beginTransaction(windowIDs: [top, bottom]).startedTransaction)
+    let tick = [
+        Placement(windowID: top, frame: BTRect(x: 0, y: 0, width: 450, height: 450)),
+        Placement(windowID: bottom, frame: BTRect(x: 0, y: 450, width: 500, height: 350)),
+    ]
+    #expect(coordinator.applyLive(transaction: &transaction, placements: tick, validateParticipants: false).isApplied)
+    #expect(system.windows[0].frame == BTRect(x: 0, y: 0, width: 450, height: 400))
+    #expect(system.windows[1].frame == BTRect(x: 0, y: 450, width: 500, height: 350))
+    // The next tick sends the rest of the change.
+    #expect(coordinator.applyLive(transaction: &transaction, placements: tick, validateParticipants: false).isApplied)
+    #expect(system.windows[0].frame == BTRect(x: 0, y: 0, width: 450, height: 450))
+}

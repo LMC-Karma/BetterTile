@@ -128,37 +128,25 @@ private let target = BTRect(x: 100, y: 100, width: 600, height: 400)
     #expect(unknown.writeCount == 2)
 }
 
-/// Intermediate gesture writes skip the readback once a minimum is known,
-/// so a resize held at a window's minimum costs no extra Accessibility calls.
-@Test func gestureWritesReadBackOnlyUntilTheMinimumIsMeasured() {
-    #expect(WriteReadbackPolicy.readsBack(correctsClamping: true, learnedMinimum: BTSize(width: 300, height: 200)))
-    #expect(WriteReadbackPolicy.readsBack(correctsClamping: true, learnedMinimum: nil))
-    #expect(WriteReadbackPolicy.readsBack(correctsClamping: false, learnedMinimum: nil))
-    #expect(!WriteReadbackPolicy.readsBack(correctsClamping: false, learnedMinimum: BTSize(width: 300, height: 0)))
-}
-
-@Test func clampConfirmationRunsOnlyForANewFinalClamp() {
+@Test func clampConfirmationRunsOnlyForANewClamp() {
     let requested = BTRect(x: 100, y: 50, width: 200, height: 150)
     let clamped = BTRect(x: 100, y: 50, width: 300, height: 150)
-    // An unexplained clamp on a final write is confirmed.
+    // An unexplained clamp is confirmed.
     #expect(WriteReadbackPolicy.confirmsClamp(requested: requested, actual: clamped,
-                                              learnedMinimum: nil, correctsClamping: true))
+                                              learnedMinimum: nil))
     #expect(WriteReadbackPolicy.confirmsClamp(requested: requested, actual: clamped,
-                                              learnedMinimum: BTSize(width: 250, height: 0), correctsClamping: true))
-    // A gesture tick never nudges, even for an unexplained clamp.
-    #expect(!WriteReadbackPolicy.confirmsClamp(requested: requested, actual: clamped,
-                                               learnedMinimum: nil, correctsClamping: false))
+                                              learnedMinimum: BTSize(width: 250, height: 0)))
     // A clamp the learned minimum already explains needs no nudge.
     #expect(!WriteReadbackPolicy.confirmsClamp(requested: requested, actual: clamped,
-                                               learnedMinimum: BTSize(width: 300, height: 0), correctsClamping: true))
+                                               learnedMinimum: BTSize(width: 300, height: 0)))
     // A new clamp on the other axis is still confirmed.
     let taller = BTRect(x: 100, y: 50, width: 300, height: 240)
     #expect(WriteReadbackPolicy.confirmsClamp(requested: requested, actual: taller,
-                                              learnedMinimum: BTSize(width: 300, height: 0), correctsClamping: true))
+                                              learnedMinimum: BTSize(width: 300, height: 0)))
     // A window that moved away from the requested origin is not a clamp.
     #expect(!WriteReadbackPolicy.confirmsClamp(requested: requested, actual: clamped.offsetBy(dx: 40, dy: 0),
-                                               learnedMinimum: nil, correctsClamping: true))
+                                               learnedMinimum: nil))
     // A window that took the requested size is not a clamp.
     #expect(!WriteReadbackPolicy.confirmsClamp(requested: requested, actual: requested,
-                                               learnedMinimum: nil, correctsClamping: true))
+                                               learnedMinimum: nil))
 }

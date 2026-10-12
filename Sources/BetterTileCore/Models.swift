@@ -159,10 +159,29 @@ public protocol WindowSystem: AnyObject {
     /// restores it before returning, including when a write or rollback fails.
     func withFrameWriteBatch(_ updates: () throws -> Void) rethrows
     func setMinimized(_ minimized: Bool, for windowID: WindowID) throws
+    /// Keeps per-write adapter setup open across the ticks of a continuous
+    /// gesture, such as a live divider drag, until `endContinuousWrites`.
+    func beginContinuousWrites()
+    func endContinuousWrites()
+    /// The frame read back right after the most recent write, when the
+    /// implementation measures one. Nil when unknown.
+    func measuredFrameAfterWrite(for windowID: WindowID) -> BTRect?
+    /// Writes intermediate gesture samples. Implementations may write
+    /// different applications concurrently, so one slow application does not
+    /// delay the others within a display frame.
+    func setIntermediateFrames(_ writes: [Placement], knownCurrentFrames: [WindowID: BTRect]) throws
 }
 
 public extension WindowSystem {
     func withFrameWriteBatch(_ updates: () throws -> Void) rethrows { try updates() }
+    func beginContinuousWrites() {}
+    func endContinuousWrites() {}
+    func measuredFrameAfterWrite(for windowID: WindowID) -> BTRect? { nil }
+    func setIntermediateFrames(_ writes: [Placement], knownCurrentFrames: [WindowID: BTRect]) throws {
+        for write in writes {
+            try setIntermediateFrame(write.frame, knownCurrentFrame: knownCurrentFrames[write.windowID], for: write.windowID)
+        }
+    }
 
     func setIntermediateFrame(_ frame: BTRect, knownCurrentFrame: BTRect?, for windowID: WindowID) throws {
         try setFrame(frame, knownCurrentFrame: knownCurrentFrame, for: windowID)

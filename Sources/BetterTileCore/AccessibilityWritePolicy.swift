@@ -118,29 +118,21 @@ public enum FrameWritePlanner {
     }
 }
 
-/// Decides how much a size write verifies afterwards. A readback costs two
-/// Accessibility reads; a clamp confirmation adds a position nudge and its
-/// restore. Continuous gestures write up to 60 times a second, so they pay
-/// for neither once a window's minimum is known.
+/// Decides whether a final size write that kept a larger size is worth a
+/// clamp confirmation. The confirmation adds a position nudge and its restore,
+/// so it runs only for a clamp the learned minimum does not already explain.
+/// Live gesture ticks never confirm; they write through
+/// `setIntermediateFrames`.
 public enum WriteReadbackPolicy {
-    /// Reads the frame back after a final write, or after an intermediate
-    /// gesture write while the window has no measured minimum yet.
-    public static func readsBack(correctsClamping: Bool, learnedMinimum: BTSize?) -> Bool {
-        correctsClamping || learnedMinimum == nil
-    }
-
-    /// Confirms a kept size with a position nudge only on a final write, and
-    /// only when the window stayed at the requested origin, larger than
+    /// True when the window stayed at the requested origin, larger than
     /// requested on an axis the learned minimum does not already explain.
     public static func confirmsClamp(
         requested: BTRect,
         actual: BTRect,
         learnedMinimum: BTSize?,
-        correctsClamping: Bool,
         tolerance: Double = 2
     ) -> Bool {
-        guard correctsClamping,
-              abs(actual.minX - requested.minX) <= tolerance,
+        guard abs(actual.minX - requested.minX) <= tolerance,
               abs(actual.minY - requested.minY) <= tolerance else { return false }
         let known = learnedMinimum ?? .zero
         let widthIsNew = actual.size.width > requested.size.width + tolerance

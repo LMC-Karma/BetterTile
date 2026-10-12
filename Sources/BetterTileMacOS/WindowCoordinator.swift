@@ -99,6 +99,15 @@ public struct WindowFrameTransaction: Sendable {
     /// ever succeeded. A later fully successful apply clears it — every
     /// participant was just written, so no window remains in unknown state.
     public fileprivate(set) var hasDegradedApply: Bool
+    /// True when a live tick left a growing window one sample behind. The next
+    /// tick completes it, even without a new sample.
+    public fileprivate(set) var hasTrailingWrites = false
+    /// The proposal of the previous live tick, which growing windows trail.
+    fileprivate var previousLiveProposal: [WindowID: BTRect] = [:]
+    /// Frames read back after this transaction's live writes. A drag can move
+    /// less than the write tolerance per tick, so the next write compares
+    /// with what the window reported, not with the last request.
+    fileprivate var measuredLiveFrames: [WindowID: BTRect] = [:]
 
     fileprivate init(baselineFrames: [WindowID: BTRect]) {
         id = UUID()
@@ -475,7 +484,10 @@ public final class WindowCoordinator {
         }
         do {
             try validate(transaction.proposedPlacements)
-            try applyAtomically(transaction.proposedPlacements, rollbackFrames: transaction.baselineFrames)
+            // A corrective commit starts from the frames an earlier commit
+            // wrote, so shrink-before-grow compares against those.
+            try applyAtomically(transaction.proposedPlacements, rollbackFrames: transaction.baselineFrames,
+                                currentFrames: transaction.lastAppliedFrames)
             if recordHistory {
                 recordChangedHistoryFrames(
                     transaction.baselineFrames,
@@ -490,11 +502,18 @@ public final class WindowCoordinator {
         }
     }
 
+    /// Records a committed transaction's changed frames for Restore, for a
+    /// caller that committed with `recordHistory: false`.
+    public func recordHistory(of transaction: WindowFrameTransaction) {
+        recordChangedHistoryFrames(transaction.baselineFrames, proposedPlacements: transaction.proposedPlacements)
+    }
+
     public func applyLive(
         transaction: inout WindowFrameTransaction,
         placements: [Placement],
         validateParticipants: Bool = true
     ) -> WindowMutationOutcome {
+        let previousProposal = transaction.previousLiveProposal
         if case let .failed(reason) = preview(transaction: &transaction, placements: placements) {
             return .failed(reason: reason)
         }
@@ -508,18 +527,130 @@ public final class WindowCoordinator {
                 : transaction.proposedPlacements.filter {
                     transaction.lastAppliedFrames[$0.windowID]?.approximatelyEquals($0.frame, tolerance: 0.01) != true
                 }
-            try applyAtomically(
-                changed,
-                rollbackFrames: transaction.lastAppliedFrames,
-                intermediate: !validateParticipants
+            var writes = changed
+            var trailing = false
+            if !validateParticipants {
+                // Within a drag tick, shrinking windows take the new sample
+                // and growing windows take the previous one. All applications
+                // are still written in one concurrent pass, but a growing
+                // window only enters space its neighbour gave up a tick
+                // earlier, so the two do not overlap while that neighbour
+                // commits. A neighbour that refused its last size holds only
+                // the growing windows that would overlap it.
+                let previous = transaction.lastAppliedFrames
+                let shrinkingIDs = Set(changed.filter { placement in
+                    guard let old = previous[placement.windowID] else { return false }
+                    return placement.frame.size.width < old.size.width - 0.5
+                        || placement.frame.size.height < old.size.height - 0.5
+                }.map(\.windowID))
+                let growing = changed.filter { !shrinkingIDs.contains($0.windowID) }
+                if !changed.isEmpty {
+                    let refused = refusedFrames(transaction: transaction, excluding: Set(growing.map(\.windowID)))
+                    func isHeld(_ frame: BTRect) -> Bool {
+                        refused.contains { Self.overlaps(frame, $0) }
+                    }
+                    writes = changed.compactMap { placement in
+                        if shrinkingIDs.contains(placement.windowID) {
+                            // A window can shrink on one axis and grow on the
+                            // other at a junction. Its growing axis trails
+                            // like any growing window.
+                            guard let old = previous[placement.windowID] else { return placement }
+                            let held = isHeld(placement.frame) ? old : (previousProposal[placement.windowID] ?? old)
+                            let frame = Self.trailingGrowth(placement.frame, from: old, held: held)
+                            if !frame.approximatelyEquals(placement.frame, tolerance: 0.01) { trailing = true }
+                            return Placement(windowID: placement.windowID, frame: frame)
+                        }
+                        if isHeld(placement.frame) { trailing = true; return nil }
+                        guard let earlier = previousProposal[placement.windowID] ?? previous[placement.windowID],
+                              earlier.size.width <= placement.frame.size.width + 0.5,
+                              earlier.size.height <= placement.frame.size.height + 0.5,
+                              !shrinkingIDs.isEmpty
+                        else { return placement }
+                        if !earlier.approximatelyEquals(placement.frame, tolerance: 0.01) { trailing = true }
+                        guard previous[placement.windowID]?.approximatelyEquals(earlier, tolerance: 0.01) != true else { return nil }
+                        return Placement(windowID: placement.windowID, frame: earlier)
+                    }
+                }
+                try applyAtomically(
+                    writes,
+                    rollbackFrames: previous,
+                    currentFrames: previous.merging(transaction.measuredLiveFrames) { _, measured in measured },
+                    intermediate: true
+                )
+                for placement in writes {
+                    transaction.measuredLiveFrames[placement.windowID] = system.measuredFrameAfterWrite(for: placement.windowID)
+                }
+            } else {
+                try applyAtomically(
+                    changed,
+                    rollbackFrames: transaction.lastAppliedFrames,
+                    intermediate: false
+                )
+            }
+            // A window that trailed keeps the frame it was sent, so the next
+            // tick sends the rest of its change.
+            if validateParticipants {
+                transaction.lastAppliedFrames = Dictionary(uniqueKeysWithValues: placements.map { ($0.windowID, $0.frame) })
+            } else {
+                for placement in writes { transaction.lastAppliedFrames[placement.windowID] = placement.frame }
+            }
+            transaction.previousLiveProposal = Dictionary(
+                uniqueKeysWithValues: transaction.proposedPlacements.map { ($0.windowID, $0.frame) }
             )
-            transaction.lastAppliedFrames = Dictionary(uniqueKeysWithValues: placements.map { ($0.windowID, $0.frame) })
+            transaction.hasTrailingWrites = trailing
             transaction.hasLiveChanges = true
             transaction.hasDegradedApply = false
             return .applied
         } catch {
+            // The rejected tick rolled back. The next pointer sample retries
+            // it; a still pointer must not resend it every display tick.
+            transaction.hasTrailingWrites = false
             return applyFailureOutcome(for: error, transaction: &transaction)
         }
+    }
+
+    /// Takes each shrinking axis of `frame` now and keeps each growing axis
+    /// at `held`, so the window never grows into space a neighbour has not
+    /// yet given up.
+    static func trailingGrowth(_ frame: BTRect, from old: BTRect, held: BTRect) -> BTRect {
+        func axis(_ new: (origin: Double, size: Double), _ old: Double, _ held: (origin: Double, size: Double))
+            -> (origin: Double, size: Double) {
+            guard new.size > old + 0.5, held.size <= new.size + 0.5 else { return new }
+            return held
+        }
+        let x = axis((frame.minX, frame.size.width), old.size.width, (held.minX, held.size.width))
+        let y = axis((frame.minY, frame.size.height), old.size.height, (held.minY, held.size.height))
+        return BTRect(x: x.origin, y: y.origin, width: x.size, height: y.size)
+    }
+
+    /// The read-back frames of windows other than `excluding` that have not
+    /// given up their space: each read back larger than the size it was sent.
+    private func refusedFrames(transaction: WindowFrameTransaction, excluding: Set<WindowID>) -> [BTRect] {
+        let candidates = transaction.lastAppliedFrames.filter { !excluding.contains($0.key) && transaction.baselineFrames[$0.key] != $0.value }
+        guard !candidates.isEmpty else { return [] }
+        func refused(_ actual: BTRect, sent: BTRect) -> Bool {
+            actual.size.width > sent.size.width + 2 || actual.size.height > sent.size.height + 2
+        }
+        var frames: [BTRect] = []
+        var unread = Set<WindowID>()
+        for (id, sent) in candidates {
+            if let actual = system.measuredFrameAfterWrite(for: id) {
+                if refused(actual, sent: sent) { frames.append(actual) }
+            } else {
+                unread.insert(id)
+            }
+        }
+        if !unread.isEmpty, let read = try? snapshots(ids: unread) {
+            for snapshot in read {
+                if let sent = candidates[snapshot.id], refused(snapshot.frame, sent: sent) { frames.append(snapshot.frame) }
+            }
+        }
+        return frames
+    }
+
+    /// True when the two frames share more than a 2 pt sliver on both axes.
+    static func overlaps(_ a: BTRect, _ b: BTRect) -> Bool {
+        min(a.maxX, b.maxX) - max(a.minX, b.minX) > 2 && min(a.maxY, b.maxY) - max(a.minY, b.minY) > 2
     }
 
     public func finishLive(transaction: WindowFrameTransaction, recordHistory: Bool = true) {
@@ -533,6 +664,12 @@ public final class WindowCoordinator {
 
     public func cancel(transaction: WindowFrameTransaction) -> WindowMutationOutcome {
         guard transaction.hasLiveChanges || transaction.hasDegradedApply else { return .applied }
+        return restoreBaseline(of: transaction)
+    }
+
+    /// Returns every participant to its baseline frame, also after a
+    /// committed apply.
+    public func restoreBaseline(of transaction: WindowFrameTransaction) -> WindowMutationOutcome {
         do {
             try applyAtomically(
                 transaction.baselineFrames.map { Placement(windowID: $0.key, frame: $0.value) },
@@ -648,19 +785,14 @@ public final class WindowCoordinator {
     private func apply(
         _ frame: BTRect,
         to windowID: WindowID,
-        knownCurrentFrame: BTRect? = nil,
-        intermediate: Bool = false
+        knownCurrentFrame: BTRect? = nil
     ) throws {
         let generation = (generations[windowID] ?? 0) &+ 1
         generations[windowID] = generation
         guard generations[windowID] == generation else { return }
         expect(frame, for: windowID, generation: generation)
         do {
-            if intermediate {
-                try system.setIntermediateFrame(frame, knownCurrentFrame: knownCurrentFrame, for: windowID)
-            } else {
-                try system.setFrame(frame, knownCurrentFrame: knownCurrentFrame, for: windowID)
-            }
+            try system.setFrame(frame, knownCurrentFrame: knownCurrentFrame, for: windowID)
         } catch {
             cancelExpectedMutation(for: windowID, generation: generation)
             throw error
@@ -700,16 +832,62 @@ public final class WindowCoordinator {
         intermediate: Bool = false
     ) throws {
         guard !placements.isEmpty else { return }
+        let known = currentFrames ?? rollbackFrames
+        if intermediate {
+            // Gesture samples go to every application at once; a rejected
+            // sample restores the previous sample's frames.
+            try system.withFrameWriteBatch {
+                var generationsWritten: [WindowID: UInt64] = [:]
+                for placement in placements {
+                    let generation = (generations[placement.windowID] ?? 0) &+ 1
+                    generations[placement.windowID] = generation
+                    generationsWritten[placement.windowID] = generation
+                    expect(placement.frame, for: placement.windowID, generation: generation)
+                }
+                do {
+                    try system.setIntermediateFrames(placements, knownCurrentFrames: known)
+                } catch {
+                    for (id, generation) in generationsWritten { cancelExpectedMutation(for: id, generation: generation) }
+                    var rollbackFailed = false
+                    // Other applications may already hold this sample. Shrink
+                    // windows back before regrowing their neighbours.
+                    func shrinksBack(_ placement: Placement) -> Bool {
+                        guard let frame = rollbackFrames[placement.windowID] else { return false }
+                        return frame.size.width < placement.frame.size.width - 0.5
+                            || frame.size.height < placement.frame.size.height - 0.5
+                    }
+                    for placement in placements.sorted(by: { shrinksBack($0) && !shrinksBack($1) }) {
+                        guard let frame = rollbackFrames[placement.windowID] else { continue }
+                        do { try apply(frame, to: placement.windowID, knownCurrentFrame: placement.frame) } catch { rollbackFailed = true }
+                    }
+                    if rollbackFailed {
+                        throw DegradedApplyError(message: "A window update failed and the previous layout could not be fully restored.")
+                    }
+                    throw error
+                }
+            }
+            return
+        }
         try system.withFrameWriteBatch {
             var attempted: [WindowID] = []
             do {
-                for placement in placements.sorted(by: { $0.windowID < $1.windowID }) {
+                // Shrink before growing, so a growing window never covers a
+                // neighbour that has not yet made room.
+                let before = currentFrames ?? rollbackFrames
+                func shrinks(_ placement: Placement) -> Bool {
+                    guard let old = before[placement.windowID] else { return false }
+                    return placement.frame.size.width < old.size.width - 0.5
+                        || placement.frame.size.height < old.size.height - 0.5
+                }
+                for placement in placements.sorted(by: { lhs, rhs in
+                    let left = shrinks(lhs), right = shrinks(rhs)
+                    return left != right ? left : lhs.windowID < rhs.windowID
+                }) {
                     attempted.append(placement.windowID)
                     try apply(
                         placement.frame,
                         to: placement.windowID,
-                        knownCurrentFrame: (currentFrames ?? rollbackFrames)[placement.windowID],
-                        intermediate: intermediate
+                        knownCurrentFrame: known[placement.windowID]
                     )
                 }
             } catch {

@@ -573,9 +573,14 @@ enum DividerTestEnding: CaseIterable {
 
     #expect(system.frameWriteCounts.isEmpty)
     displayTicks.fire()
+    // The shrinking window takes the sample first. The growing window
+    // trails by one tick, so it never covers its neighbour.
+    #expect(system.frameWriteCounts == [right: 1])
+    #expect(system.windows.first(where: { $0.id == right })?.frame.minX == bounds.midX + 60)
+    #expect((system.windows.first(where: { $0.id == left })?.frame.maxX ?? .infinity) <= bounds.midX + 60)
+    displayTicks.fire()
     #expect(system.frameWriteCounts == [left: 1, right: 1])
     #expect(system.windows.first(where: { $0.id == left })?.frame.maxX == bounds.midX + 60)
-    #expect(system.windows.first(where: { $0.id == right })?.frame.minX == bounds.midX + 60)
 
     for delta in 121...240 {
         controller.drag(to: appKitPoint(delta: Double(delta) / 2))
@@ -817,6 +822,145 @@ enum DividerLimitCase: CaseIterable { case straight, junction, linked }
     controller.cancelActiveGesture()
 }
 
+/// A ghost preview cannot show a minimum the application never reported.
+/// The release commit measures the refusal and solves the layout again, so
+/// the windows do not overlap.
+@Test @MainActor func ghostReleaseSolvesAgainWhenAWindowRefusesItsSize() throws {
+    _ = NSApplication.shared
+    let system = FakeWindowSystem()
+    system.roundsSizesAndReportsReadback = true
+    let bounds = BTRect(x: -10_000, y: -10_000, width: 800, height: 600)
+    let display = DisplayID(rawValue: "main")
+    system.availableDisplays = [DisplaySnapshot(id: display, frame: bounds, visibleFrame: bounds, isMain: true)]
+    let left = WindowID(rawValue: "left"), right = WindowID(rawValue: "right")
+    system.windows = [
+        WindowSnapshot(id: left, processIdentifier: 1, frame: BTRect(x: bounds.minX, y: bounds.minY, width: 400, height: 600), displayID: display),
+        WindowSnapshot(id: right, processIdentifier: 2, frame: BTRect(x: bounds.minX + 400, y: bounds.minY, width: 400, height: 600), displayID: display),
+    ]
+    system.enforcedMinimumWidths[right] = 340
+    var config = BetterTileConfiguration()
+    config.resizeFeedbackMode = .ghost
+    let controller = DividerOverlayController(coordinator: WindowCoordinator(system: system), configuration: config)
+    let boundary = BoundaryDescriptor(
+        id: "native", displayID: display, axis: .vertical, coordinate: bounds.minX + 400,
+        spanStart: bounds.minY, spanEnd: bounds.maxY, beforeWindowIDs: [left], afterWindowIDs: [right]
+    )
+    let start = BTPoint(x: bounds.minX + 400, y: bounds.minY + 80)
+    let interaction = try #require(DividerInteractionResolver.resolve(at: start, in: [boundary], hitWidth: 18, adjacencyTolerance: 6, paneGap: 0))
+    let screen = try #require(NSScreen.screens.first)
+
+    controller.beginGesture(interaction: interaction, at: start)
+    defer { controller.hideAndCancel() }
+    controller.drag(to: CGPoint(x: start.x + 120, y: screen.frame.maxY - start.y))
+    controller.displayTick()
+    controller.end()
+    let leftFrame = try #require(system.windows.first { $0.id == left }?.frame)
+    let rightFrame = try #require(system.windows.first { $0.id == right }?.frame)
+    #expect(rightFrame.size.width == 340)
+    #expect(abs(leftFrame.maxX - rightFrame.minX) < 0.5, "left \(leftFrame) right \(rightFrame)")
+}
+
+/// A window that has not applied the release write yet still reads back
+/// at its baseline size. That is not a refusal: the release is not solved
+/// again around the old size.
+/// The release commit measures a refusal, but the corrective solve cannot
+/// read the windows. The release fails as a whole: every window returns to
+/// its baseline instead of keeping the uncorrected first commit.
+@Test @MainActor func ghostReleaseUndoesTheCommitWhenItsCorrectionIsCancelled() throws {
+    _ = NSApplication.shared
+    let system = FakeWindowSystem()
+    system.roundsSizesAndReportsReadback = true
+    let bounds = BTRect(x: -10_000, y: -10_000, width: 800, height: 600)
+    let display = DisplayID(rawValue: "main")
+    system.availableDisplays = [DisplaySnapshot(id: display, frame: bounds, visibleFrame: bounds, isMain: true)]
+    let left = WindowID(rawValue: "left"), right = WindowID(rawValue: "right")
+    system.windows = [
+        WindowSnapshot(id: left, processIdentifier: 1, frame: BTRect(x: bounds.minX, y: bounds.minY, width: 400, height: 600), displayID: display),
+        WindowSnapshot(id: right, processIdentifier: 2, frame: BTRect(x: bounds.minX + 400, y: bounds.minY, width: 400, height: 600), displayID: display),
+    ]
+    let earlier = BTRect(x: bounds.minX, y: bounds.minY, width: 300, height: 600)
+    let baseline = system.windows.map(\.frame)
+    system.enforcedMinimumWidths[right] = 340
+    var config = BetterTileConfiguration()
+    config.resizeFeedbackMode = .ghost
+    let coordinator = WindowCoordinator(system: system)
+    // An earlier snap gives the left window one Restore step.
+    system.windows[0].frame = earlier
+    #expect(coordinator.applyPlacements([Placement(windowID: left, frame: baseline[0])]).isApplied)
+    let controller = DividerOverlayController(coordinator: coordinator, configuration: config)
+    let boundary = BoundaryDescriptor(
+        id: "native", displayID: display, axis: .vertical, coordinate: bounds.minX + 400,
+        spanStart: bounds.minY, spanEnd: bounds.maxY, beforeWindowIDs: [left], afterWindowIDs: [right]
+    )
+    let start = BTPoint(x: bounds.minX + 400, y: bounds.minY + 80)
+    let interaction = try #require(DividerInteractionResolver.resolve(at: start, in: [boundary], hitWidth: 18, adjacencyTolerance: 6, paneGap: 0))
+    let screen = try #require(NSScreen.screens.first)
+    var changed = false
+    controller.layoutChangedHandler = { _, _ in changed = true }
+    var rollbackReports = 0
+    controller.rollbackFailureHandler = { _, _ in rollbackReports += 1 }
+
+    controller.beginGesture(interaction: interaction, at: start)
+    defer { controller.hideAndCancel() }
+    controller.drag(to: CGPoint(x: start.x + 120, y: screen.frame.maxY - start.y))
+    controller.displayTick()
+    // Reads fail once the first commit has written the refusing window.
+    system.targetedSnapshotHandler = { _ in
+        if system.frameWriteCounts[right, default: 0] >= 1, system.frameWriteCounts[left, default: 0] >= 1 {
+            system.targetedSnapshotsFail = true
+        }
+    }
+    controller.end()
+    system.targetedSnapshotsFail = false
+    // The cancelled correction restores nothing itself: a Ghost transaction
+    // has no live changes. The release restores the baseline exactly once.
+    #expect(system.windows.map(\.frame) == baseline)
+    #expect(rollbackReports == 0)
+    #expect(!changed)
+    // The failed release left no Restore step behind: Restore returns the
+    // window to the earlier frame.
+    system.focusedWindowID = left
+    guard case let .ready(plan) = coordinator.plan(.restore) else {
+        Issue.record("Restore should be available")
+        return
+    }
+    #expect(coordinator.perform(plan).isApplied)
+    #expect(system.windows.first { $0.id == left }?.frame == earlier)
+}
+
+@Test @MainActor func ghostReleaseDoesNotLearnAMinimumFromAnUnchangedWindow() throws {
+    _ = NSApplication.shared
+    let system = FakeWindowSystem()
+    system.roundsSizesAndReportsReadback = true
+    let bounds = BTRect(x: -10_000, y: -10_000, width: 800, height: 600)
+    let display = DisplayID(rawValue: "main")
+    system.availableDisplays = [DisplaySnapshot(id: display, frame: bounds, visibleFrame: bounds, isMain: true)]
+    let left = WindowID(rawValue: "left"), right = WindowID(rawValue: "right")
+    system.windows = [
+        WindowSnapshot(id: left, processIdentifier: 1, frame: BTRect(x: bounds.minX, y: bounds.minY, width: 400, height: 600), displayID: display),
+        WindowSnapshot(id: right, processIdentifier: 2, frame: BTRect(x: bounds.minX + 400, y: bounds.minY, width: 400, height: 600), displayID: display),
+    ]
+    system.ignoredFrameWriteCounts[right] = 100
+    var config = BetterTileConfiguration()
+    config.resizeFeedbackMode = .ghost
+    let controller = DividerOverlayController(coordinator: WindowCoordinator(system: system), configuration: config)
+    let boundary = BoundaryDescriptor(
+        id: "native", displayID: display, axis: .vertical, coordinate: bounds.minX + 400,
+        spanStart: bounds.minY, spanEnd: bounds.maxY, beforeWindowIDs: [left], afterWindowIDs: [right]
+    )
+    let start = BTPoint(x: bounds.minX + 400, y: bounds.minY + 80)
+    let interaction = try #require(DividerInteractionResolver.resolve(at: start, in: [boundary], hitWidth: 18, adjacencyTolerance: 6, paneGap: 0))
+    let screen = try #require(NSScreen.screens.first)
+
+    controller.beginGesture(interaction: interaction, at: start)
+    defer { controller.hideAndCancel() }
+    controller.drag(to: CGPoint(x: start.x + 120, y: screen.frame.maxY - start.y))
+    controller.displayTick()
+    controller.end()
+    let leftFrame = try #require(system.windows.first { $0.id == left }?.frame)
+    #expect(leftFrame.size.width == 520, "left \(leftFrame)")
+}
+
 @Test @MainActor func ignoredLiveResizesDoNotBecomeMinimumSizes() throws {
     _ = NSApplication.shared
     let system = FakeWindowSystem()
@@ -911,6 +1055,45 @@ enum DividerLimitCase: CaseIterable { case straight, junction, linked }
     #expect(controller.dragLimit.width == (axis == .vertical))
     #expect(controller.dragLimit.height == (axis == .horizontal))
     #expect(controller.dragLimit.blockedTowardPositive)
+}
+
+/// A tick that only completes a trailing write does not write the
+/// refusing window again, so its earlier readback is not a second refusal.
+@Test @MainActor func aTrailingTickIsNotASecondRefusal() throws {
+    _ = NSApplication.shared
+    let system = FakeWindowSystem()
+    let bounds = BTRect(x: -10_000, y: -10_000, width: 800, height: 600)
+    let display = DisplayID(rawValue: "main")
+    system.availableDisplays = [DisplaySnapshot(id: display, frame: bounds, visibleFrame: bounds, isMain: true)]
+    let left = WindowID(rawValue: "left"), right = WindowID(rawValue: "right")
+    system.windows = [
+        WindowSnapshot(id: left, processIdentifier: 1, frame: BTRect(x: bounds.minX, y: bounds.minY, width: 400, height: 600), displayID: display),
+        WindowSnapshot(id: right, processIdentifier: 2, frame: BTRect(x: bounds.midX, y: bounds.minY, width: 400, height: 600), displayID: display),
+    ]
+    system.enforcedMinimumWidths[right] = 340
+    var config = BetterTileConfiguration()
+    config.resizeFeedbackMode = .live
+    let controller = DividerOverlayController(coordinator: WindowCoordinator(system: system), configuration: config)
+    let boundary = BoundaryDescriptor(
+        id: "native", displayID: display, axis: .vertical, coordinate: bounds.midX,
+        spanStart: bounds.minY, spanEnd: bounds.maxY, beforeWindowIDs: [left], afterWindowIDs: [right]
+    )
+    let start = BTPoint(x: bounds.midX, y: bounds.minY + 80)
+    let interaction = try #require(DividerInteractionResolver.resolve(
+        at: start, in: [boundary], hitWidth: 18, adjacencyTolerance: 6, paneGap: 0
+    ))
+    let screen = try #require(NSScreen.screens.first)
+    controller.beginGesture(interaction: interaction, at: start)
+    defer { controller.hideAndCancel() }
+    controller.drag(to: CGPoint(x: start.x + 90, y: screen.frame.maxY - start.y))
+    controller.displayTick()
+    #expect(!controller.dragLimit.isLimited)
+    // The pointer stays; this tick only completes the growing window.
+    controller.displayTick()
+    #expect(!controller.dragLimit.isLimited)
+    controller.drag(to: CGPoint(x: start.x + 100, y: screen.frame.maxY - start.y))
+    controller.displayTick()
+    #expect(controller.dragLimit.width)
 }
 
 @Test(arguments: [false, true])

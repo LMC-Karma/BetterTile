@@ -280,7 +280,7 @@ public final class DividerOverlayController {
     public var configuration: BetterTileConfiguration {
         didSet {
             if dragOverlay.isVisible {
-                updateGhostPresentation { refreshConfiguration(from: oldValue) }
+                updateOverlayPresentation { refreshConfiguration(from: oldValue) }
             } else {
                 refreshConfiguration(from: oldValue)
             }
@@ -346,8 +346,8 @@ public final class DividerOverlayController {
     private var isRetracting = false
     private var handlePanel: DividerHandlePanel?
     let dragOverlay = DividerDragOverlay()
-    private var isUpdatingGhostPresentation = false
-    private(set) var ghostPresentationCount = 0
+    private var isUpdatingOverlayPresentation = false
+    private(set) var overlayPresentationCount = 0
     private var globalMouseMonitor: Any?
     private var localMouseMonitor: Any?
     private var globalKeyMonitor: Any?
@@ -368,6 +368,7 @@ public final class DividerOverlayController {
     private var reportedLiveBentoState = false
     private var latestDragPoint: CGPoint?
     private var hasPendingDisplayUpdate = false
+    private var holdsContinuousWrites = false
     /// Consecutive live ticks on which a window held its size while asked to
     /// shrink. One tick is not proof: an application can apply a write late.
     private var heldSizeTicks: [WindowID: (size: BTSize, widthCount: Int, heightCount: Int)] = [:]
@@ -705,6 +706,12 @@ public final class DividerOverlayController {
             return
         }
         transaction = newTransaction
+        if configuration.resizeFeedbackMode == .live, !holdsContinuousWrites {
+            // Live ticks share one write session: per-application setup runs
+            // once per gesture instead of once per display frame.
+            coordinator.system.beginContinuousWrites()
+            holdsContinuousWrites = true
+        }
         if let startPoint { presentHandle(for: interaction, near: startPoint, active: true) }
         displayTicks.start(
             on: handlePanel?.contentView,
@@ -712,41 +719,42 @@ public final class DividerOverlayController {
         ) { [weak self] in
             self?.displayTick()
         }
-        switch configuration.resizeFeedbackMode {
-        case .ghost:
-            beginGhostPresentation()
-            updateGhostPresentation { dragOverlay.update(previews: latestPlacements) }
-        case .live:
-            endGhostPresentation()
+        // Both modes draw the active handle in the click-through overlay and
+        // keep the input panel still. Moving the panel that owns the drag on
+        // every tick made Chromium browsers block their own window writes for
+        // 80-150 ms while they were the active application.
+        beginOverlayPresentation()
+        updateOverlayPresentation {
+            dragOverlay.update(previews: configuration.resizeFeedbackMode == .ghost ? latestPlacements : [])
         }
     }
 
-    private func beginGhostPresentation() {
+    private func beginOverlayPresentation() {
         guard !dragOverlay.isVisible, let handlePanel, let displayBounds, let view = visibleHandleView else { return }
         dragOverlay.begin(displayFrame: displayBounds, below: handlePanel,
                           appearance: configuration.overlayAppearance, windows: baselineWindows)
         handlePanel.setDrawingFrame(handlePanel.frame)
         handlePanel.setLensHidden(true)
         view.drawingSink = { [weak self] _ in
-            guard let self, !self.isUpdatingGhostPresentation else { return }
-            self.updateGhostPresentation {}
+            guard let self, !self.isUpdatingOverlayPresentation else { return }
+            self.updateOverlayPresentation {}
         }
     }
 
     /// A pointer tick, stretch step, or settings update publishes one complete
-    /// drawing sample. Sinks during the batch wait for its final limit and frame.
-    private func updateGhostPresentation(_ updates: () -> Void) {
+    /// drawing sample to the overlay. Sinks during the batch wait for its final limit and frame.
+    private func updateOverlayPresentation(_ updates: () -> Void) {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        isUpdatingGhostPresentation = true
+        isUpdatingOverlayPresentation = true
         updates()
         if let drawing = visibleHandleView?.drawingState { dragOverlay.update(knob: drawing) }
-        isUpdatingGhostPresentation = false
-        ghostPresentationCount += 1
+        isUpdatingOverlayPresentation = false
+        overlayPresentationCount += 1
         CATransaction.commit()
     }
 
-    private func endGhostPresentation() {
+    private func endOverlayPresentation() {
         guard dragOverlay.isVisible else { return }
         CATransaction.begin()
         CATransaction.setDisableActions(true)
@@ -761,7 +769,9 @@ public final class DividerOverlayController {
     }
 
     func displayTick() {
-        guard hasPendingDisplayUpdate, let latestDragPoint else { return }
+        // A tick also completes a growing window that trailed the last sample.
+        guard hasPendingDisplayUpdate || (configuration.resizeFeedbackMode == .live && transaction?.hasTrailingWrites == true),
+              let latestDragPoint else { return }
         hasPendingDisplayUpdate = false
         applyDrag(to: latestDragPoint, validateParticipants: false)
     }
@@ -844,8 +854,8 @@ public final class DividerOverlayController {
             self.transaction = transaction
             activeInteraction = proposedInteraction
             reportLiveBentoState(interaction)
-            beginGhostPresentation()
-            updateGhostPresentation {
+            beginOverlayPresentation()
+            updateOverlayPresentation {
                 presentHandle(for: proposedInteraction, near: point, active: true)
                 handlePanel?.setLimit(limit)
                 dragOverlay.update(
@@ -856,7 +866,7 @@ public final class DividerOverlayController {
                 )
             }
         case .live:
-            endGhostPresentation()
+            let sentBefore = transaction.lastAppliedFrames
             switch coordinator.applyLive(
                 transaction: &transaction,
                 placements: placements,
@@ -868,7 +878,11 @@ public final class DividerOverlayController {
                 activeInteraction = proposedInteraction
                 self.transaction = transaction
                 reportLiveBentoState(interaction)
-                let refused = recordRefusedMinimums(placements)
+                // Only a window written on this tick gives new refusal
+                // evidence; a release writes every window.
+                let written = validateParticipants ? Set(placements.map(\.windowID))
+                    : Set(transaction.lastAppliedFrames.filter { sentBefore[$0.key] != $0.value }.keys)
+                let refused = recordRefusedMinimums(placements, written: written)
                 if refused.width || refused.height {
                     if validateParticipants {
                         // Correcting one axis can establish the other axis's
@@ -899,8 +913,10 @@ public final class DividerOverlayController {
                         return
                     }
                 }
-                presentHandle(for: proposedInteraction, near: point, active: true)
-                handlePanel?.setLimit(limit)
+                updateOverlayPresentation {
+                    presentHandle(for: proposedInteraction, near: point, active: true)
+                    handlePanel?.setLimit(limit)
+                }
             case .failed:
                 if minimumCorrections > 0 {
                     cancelActiveGesture()
@@ -930,10 +946,35 @@ public final class DividerOverlayController {
         let succeeded: Bool
         switch configuration.resizeFeedbackMode {
         case .ghost:
-            let outcome = coordinator.commit(transaction: &transaction, placements: latestPlacements)
+            // History records the release once, after any correction, so a
+            // failed release leaves Restore unchanged.
+            var outcome = coordinator.commit(transaction: &transaction, placements: latestPlacements, recordHistory: false)
+            // The preview cannot show a minimum an application never
+            // reported. The commit reads each window back, so a refused size
+            // is measured at once; the layout is solved again with it.
+            var corrections = 0
+            while outcome.isApplied, corrections < 2, learnCommittedMinimums(baseline: transaction.baselineFrames),
+                  let point = latestDragPoint {
+                corrections += 1
+                self.transaction = transaction
+                applyDrag(to: point, validateParticipants: true)
+                // The correction was cancelled, for example because a window
+                // could not be read. The first commit is undone below.
+                guard let corrected = self.transaction else {
+                    outcome = .failed(reason: "The layout changed while the release was corrected.")
+                    break
+                }
+                transaction = corrected
+                outcome = coordinator.commit(transaction: &transaction, placements: latestPlacements, recordHistory: false)
+            }
             succeeded = outcome.isApplied
+            if succeeded { coordinator.recordHistory(of: transaction) }
+            // A failed correction can follow a commit that already moved the
+            // windows; return them all to the baseline.
             if case .degraded = outcome {
                 reportRollbackFailure(displayID: interaction.displayID, outcome: coordinator.cancel(transaction: transaction))
+            } else if !succeeded, corrections > 0 {
+                reportRollbackFailure(displayID: interaction.displayID, outcome: coordinator.restoreBaseline(of: transaction))
             }
         case .live:
             var appliedFinalPlacement = true
@@ -955,7 +996,10 @@ public final class DividerOverlayController {
             }
             layoutChangedHandler?(interaction.displayID, frames)
         }
-        clearGesture(committed: succeeded)
+        // A correction cancelled inside applyDrag already cleared the gesture
+        // and started the handle's retraction; a second clear would end the
+        // quick re-grab window early.
+        if activeInteraction != nil { clearGesture(committed: succeeded) }
     }
 
     private func reportLiveBentoState(_ interaction: DividerInteraction) {
@@ -967,7 +1011,7 @@ public final class DividerOverlayController {
     /// Learns a held size only after that axis actually shrank from its
     /// gesture baseline. An unchanged window can mean ignored AX writes.
     /// Two held ticks establish a minimum for this gesture only.
-    private func recordRefusedMinimums(_ placements: [Placement]) -> (width: Bool, height: Bool) {
+    private func recordRefusedMinimums(_ placements: [Placement], written: Set<WindowID>) -> (width: Bool, height: Bool) {
         let baseline = Dictionary(baselineWindows.map { ($0.id, $0.frame.size) }, uniquingKeysWith: { first, _ in first })
         let shrinking = placements.filter { placement in
             guard let start = baseline[placement.windowID] else { return false }
@@ -975,16 +1019,32 @@ public final class DividerOverlayController {
         }
         let shrinkingIDs = Set(shrinking.map(\.windowID))
         heldSizeTicks = heldSizeTicks.filter { shrinkingIDs.contains($0.key) }
-        guard !shrinking.isEmpty,
-              let targeted = coordinator.system as? any TargetedWindowSystem,
-              let actual = try? targeted.windowSnapshots(ids: shrinkingIDs)
-        else {
+        guard !shrinking.isEmpty else {
             heldSizeTicks = [:]
             return (false, false)
         }
-        let actualSizes = Dictionary(actual.map { ($0.id, $0.frame.size) }, uniquingKeysWith: { first, _ in first })
+        // An application clamps a size while it handles the write, so the
+        // frame read back right after the write is the refusal evidence. A
+        // later read can still show a frame the application has not finished
+        // moving, which a slow drag would mistake for a held minimum.
+        var actualSizes: [WindowID: BTSize] = [:]
+        for id in shrinkingIDs {
+            if let size = coordinator.system.measuredFrameAfterWrite(for: id)?.size { actualSizes[id] = size }
+        }
+        let unread = shrinkingIDs.subtracting(actualSizes.keys)
+        if !unread.isEmpty {
+            guard let targeted = coordinator.system as? any TargetedWindowSystem,
+                  let actual = try? targeted.windowSnapshots(ids: unread)
+            else {
+                heldSizeTicks = [:]
+                return (false, false)
+            }
+            for snapshot in actual where actualSizes[snapshot.id] == nil { actualSizes[snapshot.id] = snapshot.frame.size }
+        }
         var refused = (width: false, height: false)
-        for placement in shrinking {
+        // A window not written on this tick keeps its count: its readback is
+        // the evidence already counted.
+        for placement in shrinking where written.contains(placement.windowID) {
             guard let size = actualSizes[placement.windowID] else {
                 heldSizeTicks[placement.windowID] = nil
                 continue
@@ -1015,6 +1075,31 @@ public final class DividerOverlayController {
         return refused
     }
 
+    /// Records each size a committed window refused as its minimum for this
+    /// gesture. Returns true when a minimum changed. A window still at its
+    /// baseline size gives no evidence: it may apply the write later.
+    private func learnCommittedMinimums(baseline: [WindowID: BTRect]) -> Bool {
+        var learned = false
+        for placement in latestPlacements {
+            guard let actual = coordinator.system.measuredFrameAfterWrite(for: placement.windowID)?.size,
+                  let index = baselineWindows.firstIndex(where: { $0.id == placement.windowID }) else { continue }
+            let before = baseline[placement.windowID]?.size
+            var minimum = baselineWindows[index].constraints.minimumSize
+            if actual.width > placement.frame.size.width + 2, actual.width > minimum.width + 0.5,
+               before.map({ abs($0.width - actual.width) > 0.5 }) ?? true {
+                minimum.width = actual.width
+                learned = true
+            }
+            if actual.height > placement.frame.size.height + 2, actual.height > minimum.height + 0.5,
+               before.map({ abs($0.height - actual.height) > 0.5 }) ?? true {
+                minimum.height = actual.height
+                learned = true
+            }
+            baselineWindows[index].constraints.minimumSize = minimum
+        }
+        return learned
+    }
+
     func cancelActiveGesture() {
         if let transaction {
             let outcome = coordinator.cancel(transaction: transaction)
@@ -1037,13 +1122,17 @@ public final class DividerOverlayController {
             bentoStateLiveHandler?(displayID, baselineBentoState, displayBounds)
         }
         reportedLiveBentoState = false
-        endGhostPresentation()
+        endOverlayPresentation()
         activeInteraction = nil
         gestureCandidates = nil
         coverCache = nil
         baselineInteraction = nil
         isDragging = false
         transaction = nil
+        if holdsContinuousWrites {
+            holdsContinuousWrites = false
+            coordinator.system.endContinuousWrites()
+        }
         baselineWindows = []
         displayBounds = nil
         startPoint = nil
