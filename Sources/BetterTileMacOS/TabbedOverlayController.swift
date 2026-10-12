@@ -558,7 +558,12 @@ public final class TabbedOverlayController {
                         ?? TabbedStripLayout(width: frame.size.width, count: pane.tabs.count, selectedIndex: nil)
                     let insertion = strip.insertion(at: point.x - frame.minX)
                     var index = insertion.index
-                    if let old = pane.tabs.firstIndex(of: id), old < index { index -= 1 }
+                    // The strip draws the dragged tab where the preview put
+                    // it, so an edge after that slot counts it once. Fitted
+                    // tabs differ in width, so the committed index is not
+                    // that slot, and using it flipped the preview each move.
+                    let order = view?.dropOrder(for: id) ?? (pane.tabs.contains(id) ? pane.tabs : pane.tabs + [id])
+                    if let slot = order.firstIndex(of: id), slot < index { index -= 1 }
                     index = min(pane.tabs.count - (pane.tabs.contains(id) ? 1 : 0), max(0, index))
                     dropIntent = .move(id, pane: pane.id, index: index)
                     stripDestination = (pane.id, index)
@@ -892,6 +897,7 @@ struct TabbedStripLayout {
     var icons: [NSImage?] { get { content.icons } set { content.icons = newValue } }
     var strip: TabbedStripLayout { content.strip }
     func dropStrip(for id: WindowID) -> TabbedStripLayout { content.dropStrip(for: id) }
+    func dropOrder(for id: WindowID) -> [WindowID] { content.dropOrder(for: id) }
     func previewDrag(order: [WindowID], lifted: WindowID) { content.previewDrag(order: order, lifted: lifted) }
     func endDragPreview() { content.endDragPreview() }
     func scrollDrag(at x: Double, lifted: WindowID) -> Bool { content.scrollDrag(at: x, lifted: lifted) }
@@ -1139,8 +1145,14 @@ struct TabbedStripLayout {
 
     private func redrawTabs() { for view in tabViews.values { view.needsDisplay = true } }
 
+    /// The order a drop of `id` is measured in: the preview while it holds
+    /// the dragged tab, otherwise the tabs with `id` at its place or the end.
+    func dropOrder(for id: WindowID) -> [WindowID] {
+        previewOrder.flatMap { $0.contains(id) ? $0 : nil } ?? (pane.tabs.contains(id) ? pane.tabs : pane.tabs + [id])
+    }
+
     func dropStrip(for id: WindowID) -> TabbedStripLayout {
-        let order = previewOrder.flatMap { $0.contains(id) ? $0 : nil } ?? (pane.tabs.contains(id) ? pane.tabs : pane.tabs + [id])
+        let order = dropOrder(for: id)
         return TabbedStripLayout(width: bounds.width, count: order.count,
                                  selectedIndex: nil, startIndex: previewOrder == nil ? strip.visibleRange.lowerBound : firstVisibleIndex,
                                  preferredWidths: order.map(preferredWidth))
