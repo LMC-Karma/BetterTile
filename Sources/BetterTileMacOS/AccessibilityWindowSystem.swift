@@ -1184,7 +1184,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
             removeCachedState(for: closed, notifyClosure: true)
             launchRecords.removeValue(forKey: pid)
         }
-        forgetMinimumSizeSeeds(of: quitApplications, running: runningApplications)
+        forgetMinimumSizeSeeds(of: quitApplications)
         let applications = runningApplications.filter {
             Self.shouldManageApplication(
                 processIdentifier: $0.processIdentifier,
@@ -1667,7 +1667,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         )
         removeCachedState(for: closed, notifyClosure: true)
         if !quitApplications.isEmpty {
-            forgetMinimumSizeSeeds(of: quitApplications, running: NSWorkspace.shared.runningApplications)
+            forgetMinimumSizeSeeds(of: quitApplications)
         }
         return instance
     }
@@ -1681,27 +1681,16 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
     }
 
     /// Drops the minimum-size seeds of applications that quit, so a relaunch,
-    /// perhaps of an updated version, measures its windows again. Only a real
+    /// perhaps of an updated version, starts without an old value. Only a real
     /// termination calls this; a hidden application or one that BetterTile no
-    /// longer observes keeps its seed.
-    private func forgetMinimumSizeSeeds(of quitApplications: Set<String>, running: [NSRunningApplication]) {
-        let seeds = Self.minimumSizeSeedsToForget(
-            quitApplications: quitApplications,
-            runningApplications: Set(running.compactMap(\.bundleIdentifier))
-        )
-        for bundleIdentifier in seeds.sorted() where minimumSizeLearner.applicationSizes[bundleIdentifier] != nil {
+    /// longer observes keeps its seed. Another running process of the same
+    /// application loses the seed too: running processes cannot tell a second
+    /// instance from a relaunch, and each new window is measured anyway.
+    private func forgetMinimumSizeSeeds(of quitApplications: Set<String>) {
+        for bundleIdentifier in quitApplications.sorted() where minimumSizeLearner.applicationSizes[bundleIdentifier] != nil {
             minimumSizeLearner.forgetApplication(bundleIdentifier)
             Self.log.debug("forgot minimum-size seed of \(bundleIdentifier, privacy: .public) after it quit")
         }
-    }
-
-    /// A seed stays while another process of the same application runs: its
-    /// windows still use it.
-    nonisolated static func minimumSizeSeedsToForget(
-        quitApplications: Set<String>,
-        runningApplications: Set<String>
-    ) -> Set<String> {
-        quitApplications.subtracting(runningApplications)
     }
 
     private func applicationInstance(forPID pid: pid_t) -> ApplicationLaunchInstance {

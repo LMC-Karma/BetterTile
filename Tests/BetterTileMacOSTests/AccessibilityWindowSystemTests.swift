@@ -11,18 +11,6 @@ import Testing
     #expect(!OnscreenWindowMatcher.matches(accessibilityFrame: full, windowServerFrame: thumbnail))
 }
 
-/// Another running instance of the application still uses the seed.
-@Test func quitApplicationLosesItsSeedOnlyWhenNoInstanceStillRuns() {
-    let forgotten = AccessibilityWindowSystem.minimumSizeSeedsToForget(
-        quitApplications: ["com.apple.mail", "com.apple.Terminal"],
-        runningApplications: ["com.apple.Terminal", "com.apple.finder"]
-    )
-    #expect(forgotten == ["com.apple.mail"])
-    #expect(AccessibilityWindowSystem.minimumSizeSeedsToForget(
-        quitApplications: [], runningApplications: ["com.apple.finder"]
-    ).isEmpty)
-}
-
 @Test func windowSystemNeverManagesItsOwnApplicationWindows() {
     #expect(!AccessibilityWindowSystem.shouldManageApplication(
         processIdentifier: 42,
