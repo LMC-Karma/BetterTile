@@ -2566,6 +2566,41 @@ func bentoFocusCheckWaitsForDesktopInteraction(interaction: String) async throws
     #expect(model.statusMessage?.contains("Use Repair") != true, "\(String(describing: model.statusMessage))")
 }
 
+/// A clamp correction can move a window that the first write left alone.
+/// Undo must still return that window to its frame from before the action.
+@Test @MainActor func undoRestoresAWindowThatOnlyTheClampCorrectionMoved() async throws {
+    _ = NSApplication.shared
+    let system = FakeAppWindowSystem()
+    system.measuresOnWrite = true
+    for name in ["top", "bottom"] {
+        system.windows.append(WindowSnapshot(id: WindowID(rawValue: name), processIdentifier: name == "top" ? 80 : 81,
+            bundleIdentifier: "com.example.\(name)", frame: BTRect(x: 0, y: 0, width: 400, height: 300),
+            displayID: system.mainDisplay.id))
+    }
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    model.setActiveMode(.bento)
+    try #require(await waitFor { Set(system.windows.map(\.frame)).count == 3 && model.settlementTasks.isEmpty })
+    try await Task.sleep(for: .milliseconds(400))
+    let lead = try #require(system.windows.max { $0.frame.size.height < $1.frame.size.height })
+    let before = lead.frame
+    let narrow = try #require(system.windows.first { $0.id != lead.id })
+    // A right-hand window now refuses its width; Repair rewrites the same
+    // frames, the window clamps, and the correction narrows the lead pane.
+    system.enforcedMinimumWidths[narrow.id] = narrow.frame.size.width + 150
+    system.focusedID = lead.id
+    model.tileCurrentDisplay()
+    try #require(await waitFor(timeout: .seconds(3)) {
+        (system.windows.first { $0.id == lead.id }?.frame.size.width ?? 0) < before.size.width - 100
+    }, "\(system.windows.map(\.frame))")
+    try await Task.sleep(for: .milliseconds(400))
+
+    system.focusedID = lead.id
+    model.perform(.restore)
+    #expect(await waitFor(timeout: .seconds(2)) { system.windows.first { $0.id == lead.id }?.frame == before },
+            "\(system.windows.map(\.frame)) \(String(describing: model.statusMessage))")
+}
+
 /// A clamp correction widens a neighbour beyond the frame first planned for
 /// it. Settlement compares that neighbour with the frame finally written, so
 /// its accepted width is not learned as a minimum.
