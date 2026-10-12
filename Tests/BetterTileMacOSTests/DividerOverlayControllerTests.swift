@@ -1331,3 +1331,58 @@ func liveDividerReleaseRecomputesANewlyLearnedMinimum(height: Bool) throws {
     #expect(leftFrame.size.width == 400, "left \(leftFrame)")
     #expect(rightFrame.minX >= leftFrame.maxX - 0.5, "left \(leftFrame) right \(rightFrame)")
 }
+
+/// A live drag beside an application that stops answering keeps going: the
+/// held application's ticks write nothing and roll nothing back, and once it
+/// answers again the drag moves every window.
+@Test(arguments: [false, true]) @MainActor
+func aLiveDragContinuesAfterAnApplicationStopsAnsweringForAWhile(midWrite: Bool) throws {
+    _ = NSApplication.shared
+    let system = FakeWindowSystem()
+    let bounds = BTRect(x: -10_000, y: -10_000, width: 800, height: 600)
+    let display = DisplayID(rawValue: "main")
+    system.availableDisplays = [DisplaySnapshot(id: display, frame: bounds, visibleFrame: bounds, isMain: true)]
+    let left = WindowID(rawValue: "left"), right = WindowID(rawValue: "right")
+    system.windows = [
+        WindowSnapshot(id: left, processIdentifier: 1, frame: BTRect(x: bounds.minX, y: bounds.minY, width: 400, height: 600), displayID: display),
+        WindowSnapshot(id: right, processIdentifier: 2, frame: BTRect(x: bounds.midX, y: bounds.minY, width: 400, height: 600), displayID: display),
+    ]
+    var config = BetterTileConfiguration()
+    config.resizeFeedbackMode = .live
+    let controller = DividerOverlayController(coordinator: WindowCoordinator(system: system), configuration: config)
+    let boundary = BoundaryDescriptor(
+        id: "native", displayID: display, axis: .vertical, coordinate: bounds.midX,
+        spanStart: bounds.minY, spanEnd: bounds.maxY, beforeWindowIDs: [left], afterWindowIDs: [right]
+    )
+    let start = BTPoint(x: bounds.midX, y: bounds.minY + 80)
+    let interaction = try #require(DividerInteractionResolver.resolve(
+        at: start, in: [boundary], hitWidth: 18, adjacencyTolerance: 6, paneGap: 0
+    ))
+    let screen = try #require(NSScreen.screens.first)
+    func drag(_ dx: Double) {
+        controller.drag(to: CGPoint(x: start.x + dx, y: screen.frame.maxY - start.y))
+        controller.displayTick()
+    }
+    controller.beginGesture(interaction: interaction, at: start)
+    defer { controller.hideAndCancel() }
+
+    // The right application stops answering: its reads fail, and every tick
+    // fails before writing or, when it first stops mid-write, during it.
+    if midWrite { system.failingWindowID = right } else { system.unpreparedIntermediateWindowID = right }
+    system.heldWindowIDs = [right]
+    drag(-40)
+    drag(-60)
+    #expect(controller.isDragging)
+    #expect(system.windows.first { $0.id == right }?.frame.minX == bounds.midX)
+
+    system.unpreparedIntermediateWindowID = nil
+    system.failingWindowID = nil
+    system.heldWindowIDs = []
+    drag(-80)
+    // A growing window follows a tick after its neighbour gives up room.
+    drag(-80)
+    #expect(controller.isDragging)
+    #expect(abs((system.windows.first { $0.id == left }?.frame.size.width ?? 0) - 320) < 1)
+    #expect(abs((system.windows.first { $0.id == right }?.frame.minX ?? 0) - (bounds.midX - 80)) < 1)
+}
+

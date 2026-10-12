@@ -419,7 +419,7 @@ import Testing
     #expect(system.windows[1].frame == BTRect(x: 600, y: 0, width: 400, height: 800))
 }
 
-@Test @MainActor func linkedResizeForgetsLearnedMinimumsOnlyWhenAWindowResizes() {
+@Test @MainActor func linkedResizeReportsGestureStartOnlyWhenAWindowResizes() {
     let system = FakeWindowSystem()
     system.addSecondWindow()
     system.windows[0].frame = BTRect(x: 0, y: 0, width: 500, height: 800)
@@ -432,20 +432,20 @@ import Testing
     )
     controller.isEnabledForDisplay = { _ in true }
     controller.setUsesSharedGestureEvents(true)
-    var forgets = 0
-    controller.gestureWillBeginHandler = { forgets += 1 }
+    var starts = 0
+    controller.gestureWillBeginHandler = { starts += 1 }
     func event(_ kind: GlobalGestureEventKind) -> GlobalGestureEvent {
         GlobalGestureEvent(kind: kind, position: BTPoint(x: 500, y: 400), button: 0, modifiers: [], timestamp: 1)
     }
 
-    // A plain click or a drag that resizes nothing keeps learned minimums.
+    // A plain click or a drag that resizes nothing does not start a gesture.
     controller.handleSharedGestureEvent(event(.leftMouseDown))
     controller.handleSharedGestureEvent(event(.leftMouseDragged))
     ticks.fire()
     controller.handleSharedGestureEvent(event(.leftMouseUp))
-    #expect(forgets == 0)
+    #expect(starts == 0)
 
-    // An edge drag forgets them once, when the window first resizes.
+    // An edge drag starts one gesture, when the window first resizes.
     controller.handleSharedGestureEvent(event(.leftMouseDown))
     controller.handleSharedGestureEvent(event(.leftMouseDragged))
     system.windows[0].frame.size.width = 560
@@ -455,7 +455,7 @@ import Testing
     controller.handleSharedGestureEvent(event(.leftMouseDragged))
     ticks.fire()
     controller.handleSharedGestureEvent(event(.leftMouseUp))
-    #expect(forgets == 1)
+    #expect(starts == 1)
     #expect(system.windows[1].frame.minX == 600)
 }
 

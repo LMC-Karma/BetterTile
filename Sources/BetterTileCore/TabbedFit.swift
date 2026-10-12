@@ -56,7 +56,20 @@ extension TabbedLayoutState {
                     : values.max() ?? 0
             }
         }
-        func selectedWindows(in nodes: [BentoNode]) -> [WindowID] { nodes.flatMap(\.windowIDs) }
+        /// The windows that set a node's minimum extent on an axis. In a
+        /// stack across the axis only the largest minimum counts: a narrower
+        /// window beside it would not need to shrink below its own minimum.
+        func binding(_ node: BentoNode, _ axis: SplitAxis) -> [WindowID] {
+            switch node {
+            case let .leaf(id): return [id]
+            case .vacant: return []
+            case let .partition(partition):
+                if partition.axis == axis { return partition.children.flatMap { binding($0, axis) } }
+                let largest = partition.children.map { minimumExtent($0, axis) }.max() ?? 0
+                return partition.children.filter { minimumExtent($0, axis) >= largest - tolerance }
+                    .flatMap { binding($0, axis) }
+            }
+        }
 
         /// `available` is the most room the node can get on each axis.
         func check(_ node: BentoNode, available: BTSize) -> TabbedFitProblem? {
@@ -69,8 +82,16 @@ extension TabbedLayoutState {
             let needs = children.map { minimumExtent($0, axis) }
             var others = children
             others.remove(at: index)
-            if needs.reduce(0, +) > room + tolerance {
-                return .neighbors(selectedWindows(in: others))
+            // The others must give up `shortfall` below their minimums. A pane
+            // must give some only if the rest together cannot cover it, even
+            // by shrinking to nothing; when any could, all are named.
+            let shortfall = needs.reduce(0, +) - room
+            if shortfall > tolerance {
+                let otherIndices = children.indices.filter { $0 != index }
+                let othersNeed = otherIndices.reduce(0) { $0 + needs[$1] }
+                let forced = otherIndices.filter { othersNeed - needs[$0] < shortfall - tolerance }
+                let named = forced.isEmpty ? otherIndices : forced
+                return .neighbors(named.flatMap { binding(children[$0], axis) })
             }
             // Locked dividers fix the total size of each run between them.
             let locked = partition.boundaryIDs.indices.filter {

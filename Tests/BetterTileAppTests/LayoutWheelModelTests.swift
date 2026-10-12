@@ -283,14 +283,6 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, TabbedWindowSystem, Min
         return unrestored
     }
     var unrestoredProbeWindowIDs: Set<WindowID> = []
-    var forgetLearnedMinimumsCount = 0
-    func forgetLearnedMinimums() {
-        forgetLearnedMinimumsCount += 1
-        minimumSizeLearner.removeAll()
-        for index in windows.indices {
-            if let reported = reportedConstraints[windows[index].id] { windows[index].constraints = reported }
-        }
-    }
     func startDockFootprintMonitoring(onChange: @escaping () -> Void) {}
     func stopDockFootprintMonitoring() {}
     func triggerDockFootprintCheck() {}
@@ -2843,7 +2835,7 @@ func bentoFocusCheckWaitsForDesktopInteraction(interaction: String) async throws
 /// minimize out of date. B leaves a 2x2 grid, the user rearranges the other
 /// three, and C is minimized and restored. C must return to the user's
 /// arrangement, not to the larger grid remembered when B left.
-@Test(arguments: ["swap", "shortcut", "divider"]) @MainActor
+@Test(arguments: ["swap", "shortcut", "divider", "edgeResize"]) @MainActor
 func restoringAWindowKeepsAUserChangeMadeAfterAnEarlierMinimize(change: String) async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
@@ -2886,6 +2878,17 @@ func restoringAWindowKeepsAUserChangeMadeAfterAnEarlierMinimize(change: String) 
     case "shortcut":
         // A already fills the left half, so moving it right changes the layout.
         model.perform(.rightHalf)
+    case "edgeResize":
+        // A native resize of A's right edge, outside BetterTile, moves the
+        // divider beside the C/D column. The first event ends BetterTile's
+        // ownership of the frame it wrote, so the second one is the user's.
+        let index = try #require(system.windows.firstIndex { $0.id == a })
+        let event = WindowSystemEvent(kind: .resized, windowID: a,
+                                      processIdentifier: system.windows[index].processIdentifier)
+        system.eventHandler?(event)
+        try await settle()
+        system.windows[index].frame.size.width += 100
+        system.eventHandler?(event)
     default:
         // Drag the divider between A and the C/D column 100 points right.
         let start = BTPoint(x: 500, y: 200)

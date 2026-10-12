@@ -228,6 +228,31 @@ public struct BentoLayoutState: Hashable, Sendable {
         root = root.flatMap { removing(windowID, from: $0) }
     }
 
+    /// Puts a window into one empty slot. Returns false when the slot does
+    /// not exist or the window is already in the tree.
+    @discardableResult
+    public mutating func fillVacancy(_ vacancyID: UUID, with windowID: WindowID) -> Bool {
+        guard let root, !root.windowIDs.contains(windowID),
+              Self.vacancyIDs(in: root).contains(vacancyID) else { return false }
+        self.root = replacingVacant(vacancyID, in: root, with: .leaf(windowID))
+        floatingWindowIDs.remove(windowID)
+        return true
+    }
+
+    /// Removes every empty slot. The panes beside each slot share its space
+    /// in proportion to their sizes. A tree of only empty slots becomes empty.
+    public mutating func removeVacancies() {
+        root = root.flatMap { pruning($0) { if case .vacant = $0 { true } else { false } } }
+    }
+
+    private static func vacancyIDs(in node: BentoNode) -> [UUID] {
+        switch node {
+        case .leaf: []
+        case let .vacant(id): [id]
+        case let .partition(partition): partition.children.flatMap(vacancyIDs)
+        }
+    }
+
     public mutating func setFloating(_ floating: Bool, windowID: WindowID) {
         if floating {
             floatingWindowIDs.insert(windowID)
@@ -330,9 +355,11 @@ public struct BentoLayoutState: Hashable, Sendable {
         return true
     }
 
+    /// Splits a pane along its longer side: a wide pane gets the new pane
+    /// beside it, a tall pane gets it below. A square pane splits side by side.
     public mutating func split(_ targetWindowID: WindowID, inserting windowID: WindowID, in bounds: BTRect) {
-        let depth = depth(of: targetWindowID) ?? 0
-        let axis: SplitAxis = depth.isMultiple(of: 2) ? .vertical : .horizontal
+        let frame = paneFrames(in: bounds)[targetWindowID]
+        let axis: SplitAxis = frame.map { $0.size.width >= $0.size.height ? .vertical : .horizontal } ?? .vertical
         split(targetWindowID, inserting: windowID, axis: axis, in: bounds)
     }
 
@@ -359,21 +386,6 @@ public struct BentoLayoutState: Hashable, Sendable {
             ))
         }, bounds: bounds))
         floatingWindowIDs.remove(windowID)
-    }
-
-    public func depth(of windowID: WindowID) -> Int? {
-        guard let root else { return nil }
-        func find(_ node: BentoNode, depth: Int) -> Int? {
-            switch node {
-            case let .leaf(candidate):
-                return candidate == windowID ? depth : nil
-            case .vacant:
-                return nil
-            case let .partition(partition):
-                return partition.children.lazy.compactMap { find($0, depth: depth + 1) }.first
-            }
-        }
-        return find(root, depth: 0)
     }
 
     public mutating func insertAtRoot(
@@ -659,34 +671,53 @@ public struct BentoLayoutState: Hashable, Sendable {
     }
 
     private func removing(_ id: WindowID, from node: BentoNode) -> BentoNode? {
+        pruning(node) { $0 == .leaf(id) }
+    }
+
+    /// Drops the leaves `removes` matches. A partition left with one child
+    /// becomes that child. A removed child's share goes to the kept children
+    /// between the same locked dividers, in proportion to their sizes, so a
+    /// locked divider stays where it is and keeps its lock.
+    private func pruning(_ node: BentoNode, removes: (BentoNode) -> Bool) -> BentoNode? {
         switch node {
-        case let .leaf(candidate): return candidate == id ? nil : node
-        case .vacant: return node
-        case var .partition(partition):
-            var retainedChildren: [BentoNode] = []
-            var retainedRatios: [Double] = []
-            var retainedIndices: [Int] = []
+        case .leaf, .vacant: return removes(node) ? nil : node
+        case let .partition(partition):
+            var kept: [(index: Int, child: BentoNode)] = []
             for index in partition.children.indices {
-                guard let child = removing(id, from: partition.children[index]) else { continue }
-                retainedChildren.append(child)
-                retainedRatios.append(partition.ratios[index])
-                retainedIndices.append(index)
+                guard let child = pruning(partition.children[index], removes: removes) else { continue }
+                kept.append((index, child))
             }
-            guard !retainedChildren.isEmpty else { return nil }
-            if retainedChildren.count == 1 { return retainedChildren[0] }
-            partition.children = retainedChildren
-            partition.ratios = retainedRatios
-            partition.boundaryIDs = zip(retainedIndices, retainedIndices.dropFirst()).map { pair in
-                partition.boundaryIDs[min(pair.0, partition.boundaryIDs.count - 1)]
+            guard !kept.isEmpty else { return nil }
+            if kept.count == 1 { return kept[0].child }
+            let keptIndices = Set(kept.map(\.index))
+            let lockedIndices = partition.boundaryIDs.indices.filter {
+                partition.lockedBoundaryIDs.contains(partition.boundaryIDs[$0])
             }
-            partition.lockedBoundaryIDs.formIntersection(partition.boundaryIDs)
+            var ratios = partition.ratios
+            for removed in partition.children.indices where !keptIndices.contains(removed) {
+                let start = lockedIndices.last { $0 < removed }.map { $0 + 1 } ?? 0
+                let end = lockedIndices.first { $0 >= removed }.map { $0 + 1 } ?? partition.children.count
+                let heirs = (start..<end).filter(keptIndices.contains)
+                let total = heirs.reduce(0) { $0 + partition.ratios[$1] }
+                // Without a kept child in its run, the share is spread over
+                // every kept child when the ratios are normalized.
+                guard total > 0 else { continue }
+                for heir in heirs { ratios[heir] += partition.ratios[removed] * partition.ratios[heir] / total }
+            }
+            // Children that become neighbours keep a locked divider between
+            // them if there was one, else the left child's divider.
+            let boundaryIDs = zip(kept, kept.dropFirst()).map { pair in
+                let spanned = partition.boundaryIDs[pair.0.index..<min(pair.1.index, partition.boundaryIDs.count)]
+                return spanned.first { partition.lockedBoundaryIDs.contains($0) }
+                    ?? partition.boundaryIDs[min(pair.0.index, partition.boundaryIDs.count - 1)]
+            }
             return Self.normalized(.partition(BentoPartition(
                 id: partition.id,
                 axis: partition.axis,
-                children: partition.children,
-                ratios: partition.ratios,
-                boundaryIDs: partition.boundaryIDs,
-                lockedBoundaryIDs: partition.lockedBoundaryIDs
+                children: kept.map(\.child),
+                ratios: kept.map { ratios[$0.index] },
+                boundaryIDs: boundaryIDs,
+                lockedBoundaryIDs: partition.lockedBoundaryIDs.intersection(boundaryIDs)
             )))
         }
     }

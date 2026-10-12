@@ -19,9 +19,6 @@ protocol BetterTileWindowSystem: TargetedWindowSystem, WindowEventSource {
         baseline: BTRect,
         actual: BTRect
     ) -> Bool
-    /// Clears minimums learned from refused writes. Called when the user
-    /// starts a new resize or drag, so an old refusal never becomes a floor.
-    func forgetLearnedMinimums()
     func refreshApplicationObservers()
     func resetCachedWindows()
     func startDockFootprintMonitoring(onChange: @escaping () -> Void)
@@ -2384,6 +2381,9 @@ final class BetterTileModel {
                 continue
             }
             session.bentoState = fitted.state
+            // An adopted edge resize is a layout change like a divider drag:
+            // restoring a tree remembered at an earlier minimize would undo it.
+            session.forgetRememberedBentoLayouts()
             let placements = fitted.placements.filter { session.windowIDs.contains($0.windowID) }
             let commitResult = commitBentoProposal(
                 placements,
@@ -3279,7 +3279,8 @@ final class BetterTileModel {
             paneGap: configuration.bentoInnerGap,
             adjacencyTolerance: configuration.adjacencyTolerance,
             singleWindowPlacement: configuration.singleWindowPlacement,
-            newWindowSide: configuration.bentoNewWindowSide
+            newWindowSide: configuration.bentoNewWindowSide,
+            balancesNewWindows: configuration.bentoBalancesNewWindows
         )
 
         for display in displays {
@@ -3539,7 +3540,8 @@ final class BetterTileModel {
             confirmedGone: confirmedGone,
             minimized: minimized.union(confirmedMinimizedWindowIDs),
             knownSpaceWindowIDs: system.nativeDesktopObservation()?.exclusiveWindowIDs(on: display.id) ?? [],
-            newWindowSide: configuration.bentoNewWindowSide
+            newWindowSide: configuration.bentoNewWindowSide,
+            balancesNewWindows: configuration.bentoBalancesNewWindows
         )
         guard case let .update(updated, _, _) = transition else { return }
         session = updated
@@ -4305,11 +4307,20 @@ extension BetterTileModel {
         case let .neighbors(ids):
             var names: [String] = []
             for other in ids where !names.contains(name(other)) { names.append(name(other)) }
-            let detail = switch names.count {
-            case 0: "The empty panes beside it can’t get any smaller."
-            case 1: "It would overlap \(names[0])."
-            case 2: "It would overlap \(names[0]) and \(names[1])."
-            default: "It would overlap \(names.dropLast().joined(separator: ", ")), and \(names[names.count - 1])."
+            guard !names.isEmpty else {
+                return TabbedFitFailure(title: "\(window) doesn’t fit here",
+                                        detail: "The empty panes beside it can’t get any smaller.")
+            }
+            // Shorten long names rather than the sentence, so the pill's two
+            // lines still say what is in the way.
+            let named = names.count > 3 ? Array(names.prefix(2)) : names
+            let detail = ResultPillLayout.detail(naming: named) { titles in
+                switch (titles.count, names.count) {
+                case (1, _): "It would overlap \(titles[0])."
+                case (2, 2): "It would overlap \(titles[0]) and \(titles[1])."
+                case (2, _): "It would overlap \(titles[0]), \(titles[1]), and \(names.count - 2) more."
+                default: "It would overlap \(titles[0]), \(titles[1]), and \(titles[2])."
+                }
             }
             return TabbedFitFailure(title: "\(window) doesn’t fit here", detail: detail)
         }
@@ -4349,10 +4360,17 @@ extension BetterTileModel {
         // A hidden tab that joined when the desktop entered Tabbed was never
         // measured. Measure it now, while it is still behind its pane's
         // selected tab, so its placement can grow the pane at once.
-        if case let .select(id) = intent, state.hiddenWindowIDs.contains(id),
-           case let .degraded(reason) = coordinator.probeMinimumSizes(for: [id]) {
-            // The selection's placement writes this window's frame next.
-            Self.bentoLog.error("\(reason, privacy: .public)")
+        if case let .select(id) = intent, state.hiddenWindowIDs.contains(id) {
+            let original = (try? system.windowSnapshots(ids: [id]))?.first.map { Placement(windowID: id, frame: $0.frame) }
+            if case let .degraded(reason) = coordinator.probeMinimumSizes(for: [id]) {
+                // Put the window back now: a selection that does not fit
+                // writes no frames, so it cannot be left to the placement.
+                Self.bentoLog.error("\(reason, privacy: .public)")
+                if let original, !coordinator.applyPlacements([original], recordHistory: false).isApplied {
+                    statusMessage = reason
+                    presentActionResult(succeeded: false, error: reason, displayID: displayID)
+                }
+            }
         }
         // A selected tab's frame is already in its pane, so it comes to the
         // front before anything is read. The placement below verifies it; a
@@ -4403,15 +4421,17 @@ extension BetterTileModel {
             let outcome = coordinator.closeTabbedWindow(id)
             if !outcome.isApplied { statusMessage = outcome.failureReason }
             return
-        case let .float(id): state.float(id); focus = id
-        case let .move(id, pane, index):
+        // A tab drag whose press selected the dragged tab gives its source
+        // pane back the tab shown before that press.
+        case let .float(id, reselecting): state.float(id, reselecting: reselecting); focus = id
+        case let .move(id, pane, index, reselecting):
             guard state.panes.contains(where: { $0.id == pane }),
                   windows.contains(where: { $0.id == id }) else { return }
-            state.move(id, to: pane, at: index); focus = id
-        case let .split(id, pane, edge):
+            state.move(id, to: pane, at: index, reselecting: reselecting); focus = id
+        case let .split(id, pane, edge, reselecting):
             guard state.panes.contains(where: { $0.id == pane }),
                   windows.contains(where: { $0.id == id }) else { return }
-            state.split(paneID: pane, moving: id, edge: edge); focus = id
+            state.split(paneID: pane, moving: id, edge: edge, reselecting: reselecting); focus = id
         case let .preset(preset): state.applyPreset(preset); focus = state.activeWindowID
         case .undo:
             guard let step = tabbedUndo[session.id]?.last else { return }

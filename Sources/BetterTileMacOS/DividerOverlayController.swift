@@ -317,7 +317,7 @@ public final class DividerOverlayController {
     public var bentoStateLiveHandler: ((DisplayID, BentoLayoutState, BTRect) -> Void)?
     public var rollbackFailureHandler: ((DisplayID, String?) -> Void)?
     public var gestureEndedHandler: (() -> Void)?
-    /// Runs before the gesture reads its windows, so it sees fresh minimums.
+    /// Runs once when a gesture starts, before it reads its windows.
     public var gestureWillBeginHandler: (() -> Void)?
     public private(set) var isDragging = false
     var dragLimit: DragLimit { handlePanel?.limit ?? DragLimit() }
@@ -1449,7 +1449,10 @@ public final class DividerOverlayController {
 
     private func activeParticipantsArePresent() -> Bool {
         guard let transaction else { return false }
-        let expected = Set(transaction.baselineFrames.keys)
+        // A held application cannot be read, but its window has not closed.
+        let held = Set(transaction.baselineFrames.keys.filter { coordinator.system.isApplicationUnresponsive(for: $0) })
+        let expected = Set(transaction.baselineFrames.keys).subtracting(held)
+        guard !expected.isEmpty else { return true }
         do {
             let windows: [WindowSnapshot]
             if let targeted = coordinator.system as? any TargetedWindowSystem {

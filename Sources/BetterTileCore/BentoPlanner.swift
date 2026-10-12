@@ -123,10 +123,18 @@ public struct BentoCrossDisplayResult: Sendable {
 public struct BentoPlanner: Sendable {
     public var maximumManagedWindows: Int
     public var newWindowSide: BentoNewWindowSide
+    /// Gives every partition equal shares after a new window joins, as
+    /// close as minimum sizes allow.
+    public var balancesNewWindows: Bool
 
-    public init(maximumManagedWindows: Int = 6, newWindowSide: BentoNewWindowSide = .automatic) {
+    public init(
+        maximumManagedWindows: Int = 6,
+        newWindowSide: BentoNewWindowSide = .automatic,
+        balancesNewWindows: Bool = false
+    ) {
         self.maximumManagedWindows = max(1, maximumManagedWindows)
         self.newWindowSide = newWindowSide
+        self.balancesNewWindows = balancesNewWindows
     }
 
     public func plan(
@@ -140,7 +148,8 @@ public struct BentoPlanner: Sendable {
         case .retile:
             return retile(state: state, observation: observation)
         case let .insert(windowID):
-            return insert(windowID, state: state, observation: observation)
+            let result = insert(windowID, state: state, observation: observation)
+            return balancesNewWindows ? balanced(result, inserting: windowID, observation: observation) : result
         case let .remove(windowID, minimized):
             return remove(windowID, minimized: minimized, state: state, observation: observation)
         case let .restore(windowID):
@@ -390,6 +399,8 @@ public struct BentoPlanner: Sendable {
 
         var result = layout
         result.root = result.root.map { BentoLayoutState.normalized(reset($0)) }
+        // Repair leaves no blank space: an empty slot's neighbours take it.
+        result.removeVacancies()
         return result
     }
 
@@ -460,7 +471,12 @@ public struct BentoPlanner: Sendable {
             next.layout.floatingWindowIDs = floatingWindowIDs.subtracting(treeIDs.union([windowID]))
         } else {
             next.layout.setFloating(false, windowID: windowID)
-            if let focusedWindowID = observation.focusedWindowID,
+            if !next.layout.vacantFrames(in: observation.bounds).isEmpty {
+                // An empty slot, such as the rest of the screen after a
+                // half-screen snap, takes the new window before any pane
+                // is split. The largest slot is used.
+                next.layout.insert(windowID, in: observation.bounds, currentFrames: observation.frames)
+            } else if let focusedWindowID = observation.focusedWindowID,
                treeIDs.contains(focusedWindowID) {
                 next.layout.split(focusedWindowID, inserting: windowID, in: observation.bounds)
             } else {
@@ -482,6 +498,27 @@ public struct BentoPlanner: Sendable {
             return scoredInsertion(windowID, state: state, observation: observation) ?? besideFocus
         }
         return solved(next, observation: observation, pill: .success("Pane added"))
+    }
+
+    /// Balancing never turns a placement into a failure: when the balanced
+    /// layout cannot meet minimum sizes, the unbalanced placement stands.
+    private func balanced(
+        _ result: BentoPlannerResult,
+        inserting windowID: WindowID,
+        observation: BentoObservation
+    ) -> BentoPlannerResult {
+        guard result.writesFrames,
+              result.state.layout.root?.windowIDs.contains(windowID) == true,
+              let layout = BentoBalancer().balance(
+                  state: result.state.layout,
+                  in: observation.bounds,
+                  constraints: observation.constraints
+              )
+        else { return result }
+        var next = result
+        next.state.layout = layout
+        next.placements = layout.placements(in: observation.bounds)
+        return next
     }
 
     /// The narrowest side of any pane against a usable size: 240 pt, or a

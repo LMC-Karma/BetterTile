@@ -154,3 +154,51 @@ private let bentoBounds = BTRect(x: 0, y: 0, width: 1200, height: 800)
     #expect(abs((movedByID[dragged.id] ?? 0) - target) < 1)
     #expect(abs((movedByID[untouched.id] ?? 0) - untouched.coordinate) < 1)
 }
+
+@Test func splitPlacesTheNewPaneAlongTheLongerSide() throws {
+    let a = WindowID(rawValue: "a")
+    let b = WindowID(rawValue: "b")
+    let c = WindowID(rawValue: "c")
+    // A full-width row splits side by side, not into another short row.
+    var rows = BentoLayoutState(root: .partition(BentoPartition(
+        axis: .horizontal, children: [.leaf(a), .leaf(b)], ratios: [0.6, 0.4]
+    )))
+    rows.split(b, inserting: c, in: bentoBounds)
+    guard case let .partition(rowRoot) = rows.root, case let .partition(bottom) = rowRoot.children.last else {
+        Issue.record("Expected the bottom row to become a partition")
+        return
+    }
+    #expect(rowRoot.axis == .horizontal)
+    #expect(rowRoot.ratios == [0.6, 0.4])
+    #expect(bottom.axis == .vertical)
+    #expect(bottom.children == [.leaf(b), .leaf(c)])
+
+    // A tall, narrow pane splits top and bottom, whatever its depth.
+    let d = WindowID(rawValue: "d")
+    var columns = BentoLayoutState(root: .partition(BentoPartition(
+        axis: .vertical,
+        children: [.leaf(a), .partition(BentoPartition(axis: .horizontal, children: [.leaf(b), .leaf(c)]))],
+        ratios: [0.8, 0.2]
+    )))
+    columns.split(b, inserting: d, in: bentoBounds)
+    let frames = columns.paneFrames(in: bentoBounds)
+    let upper = try #require(frames[b])
+    let lower = try #require(frames[d])
+    #expect(upper.minX == lower.minX)
+    #expect(upper.size.width == lower.size.width)
+    #expect(upper.maxY <= lower.minY)
+}
+
+@Test func splittingASquarePanePlacesTheNewPaneBesideIt() {
+    let a = WindowID(rawValue: "a")
+    let b = WindowID(rawValue: "b")
+    let square = BTRect(x: 0, y: 0, width: 800, height: 800)
+    var state = BentoLayoutState(root: .leaf(a))
+    state.split(a, inserting: b, in: square)
+    guard case let .partition(root) = state.root else {
+        Issue.record("Expected a partition")
+        return
+    }
+    #expect(root.axis == .vertical)
+    #expect(root.children == [.leaf(a), .leaf(b)])
+}

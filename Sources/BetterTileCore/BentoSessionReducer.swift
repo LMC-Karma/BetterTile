@@ -26,7 +26,8 @@ public struct BentoSessionReducer: Sendable {
         confirmedGone: Set<WindowID> = [],
         minimized: Set<WindowID> = [],
         knownSpaceWindowIDs: Set<WindowID> = [],
-        newWindowSide: BentoNewWindowSide = .automatic
+        newWindowSide: BentoNewWindowSide = .automatic,
+        balancesNewWindows: Bool = false
     ) -> BentoSessionTransition {
         var next = session
         var runtime = BentoRuntimeState(
@@ -79,7 +80,11 @@ public struct BentoSessionReducer: Sendable {
             next.automaticallyFloatingWindowIDs.insert(candidate)
         }
 
-        let planner = BentoPlanner(maximumManagedWindows: maximumManagedWindows, newWindowSide: newWindowSide)
+        let planner = BentoPlanner(
+            maximumManagedWindows: maximumManagedWindows,
+            newWindowSide: newWindowSide,
+            balancesNewWindows: balancesNewWindows
+        )
         for windowID in next.bentoInsertionOrder where present.contains(windowID) {
             if next.excludedFocusWindowIDs.contains(windowID) {
                 runtime.layout.setFloating(true, windowID: windowID)

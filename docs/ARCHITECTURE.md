@@ -201,6 +201,15 @@ insertion policy. Minimized windows retain their reinsertion anchors, and
 Space transitions retain their stored layouts. Changing the preference does
 not rearrange existing windows.
 
+The **Balance on new window** preference is off by default and applies only to
+Bento. After a new window is inserted, `BentoBalancer` gives the children of
+each partition equal shares. A child that cannot shrink to its share keeps its
+minimum extent, and its siblings split the rest equally. A locked divider stays
+in place, and each side of it is balanced separately. If the balanced tree
+cannot meet the minimum sizes, the unbalanced insertion stands, so balancing
+never turns a placement into a failure. A size an application refuses on write
+goes through the same learned-minimum correction as any other Bento placement.
+
 Each reinsertion anchor stores a neighbor, an edge, and the tree from just
 before the minimize. Restoring several windows rebuilds the largest stored
 tree. A drop, swap, partition, Layout Wheel command, or divider move clears

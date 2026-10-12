@@ -1096,7 +1096,6 @@ func tabbedGesturesRetainEvidenceForAnAlreadyClampedInactiveTab(height: Bool) as
                : system.windows[1].constraints.minimumSize.width >= 600
     })
     model.prepareWindowGesture()
-    #expect(system.forgetLearnedMinimumsCount == 0)
     model.performTabbed(.select(hidden.id))
     try #require(await waitFor { model.activeTabbedState?.activeWindowID == hidden.id })
     #expect(model.statusMessage == nil)
@@ -1159,9 +1158,7 @@ func gestureOnAnotherDisplayPreservesAnInactiveTabbedMinimum(nativeVisit: Bool) 
         try #require(await waitFor { model.activeMode(for: otherDisplay) == .manual })
     }
     system.focusedID = first // A Bento gesture starts on the first display.
-    let resets = system.forgetLearnedMinimumsCount
     model.prepareWindowGesture()
-    #expect(system.forgetLearnedMinimumsCount == resets)
     system.focusedID = selected.id
     if nativeVisit {
         model.setActiveMode(.tabbed)
@@ -2017,4 +2014,21 @@ func steppedApplicationTabIsSelectedWithoutResizeLoops(emitsEvents: Bool) async 
         model.dividerResize.currentBoundaries.contains { $0.beforeWindowIDs.contains(hidden) || $0.afterWindowIDs.contains(hidden) }
     }
     #expect(named, "\(model.dividerResize.currentBoundaries.map { ($0.beforeWindowIDs, $0.afterWindowIDs) })")
+}
+
+/// An empty Tabbed pane leaves no blank space in Bento: the window beside
+/// it takes the whole work area.
+@Test @MainActor func leavingTabbedForBentoFillsAnEmptyPane() async throws {
+    _ = NSApplication.shared
+    let system = FakeAppWindowSystem()
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    model.configuration.defaultTabbedPreset = .columns
+    model.setActiveMode(.tabbed)
+    try #require(await waitFor { model.activeTabbedState?.windowIDs.count == 1 })
+    try #require(model.activeTabbedState?.panes.contains { $0.tabs.isEmpty } == true)
+    model.setActiveMode(.bento)
+    let visible = system.mainDisplay.visibleFrame
+    let filled = await waitFor { system.windows[0].frame.area > visible.area * 0.95 }
+    #expect(filled, "\(system.windows[0].frame) in \(visible)")
 }

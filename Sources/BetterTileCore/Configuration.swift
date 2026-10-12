@@ -130,6 +130,9 @@ public struct BetterTileConfiguration: Codable, Hashable, Sendable {
     public var bentoInnerGap: Double
     public var bentoSwapHoverDelay: Double
     public var bentoNewWindowSide: BentoNewWindowSide
+    /// Bento only: a new window evens out pane sizes, as close as minimum
+    /// sizes allow.
+    public var bentoBalancesNewWindows: Bool
     public var snapSuppressionModifiers: ShortcutModifiers
     public var adjacencyTolerance: Double
     public var snapAreaBindings: [SnapAreaBinding]
@@ -162,6 +165,7 @@ public struct BetterTileConfiguration: Codable, Hashable, Sendable {
         bentoInnerGap: Double = 1,
         bentoSwapHoverDelay: Double = 0.12,
         bentoNewWindowSide: BentoNewWindowSide = .automatic,
+        bentoBalancesNewWindows: Bool = false,
         snapSuppressionModifiers: ShortcutModifiers = .option,
         adjacencyTolerance: Double = 6,
         snapAreaBindings: [SnapAreaBinding] = BetterTileConfiguration.defaultSnapAreaBindings,
@@ -189,6 +193,7 @@ public struct BetterTileConfiguration: Codable, Hashable, Sendable {
         self.bentoInnerGap = min(12, max(0, bentoInnerGap))
         self.bentoSwapHoverDelay = bentoSwapHoverDelay
         self.bentoNewWindowSide = bentoNewWindowSide
+        self.bentoBalancesNewWindows = bentoBalancesNewWindows
         self.snapSuppressionModifiers = snapSuppressionModifiers
         self.adjacencyTolerance = adjacencyTolerance
         self.snapAreaBindings = snapAreaBindings
@@ -212,7 +217,7 @@ public struct BetterTileConfiguration: Codable, Hashable, Sendable {
         case showDockIcon, snappingEnabled, linkedResizeEnabled
         case defaultTabbedPreset
         case defaultLayoutMode, resizeFeedbackMode, dividerVisibility, dividerThickness, bentoInnerGap, bentoSwapHoverDelay
-        case bentoNewWindowSide
+        case bentoNewWindowSide, bentoBalancesNewWindows
         case overlayAppearance
         case singleWindowPlacement
         case singleWindowInitialPlacement
@@ -297,6 +302,7 @@ public struct BetterTileConfiguration: Codable, Hashable, Sendable {
         }
         _ = try container.decodeIfPresent(String.self, forKey: .dockReservationMode)
         bentoNewWindowSide = try container.decodeIfPresent(BentoNewWindowSide.self, forKey: .bentoNewWindowSide) ?? .automatic
+        bentoBalancesNewWindows = try container.decodeIfPresent(Bool.self, forKey: .bentoBalancesNewWindows) ?? false
         let decodedSwapDelay = try container.decodeIfPresent(Double.self, forKey: .bentoSwapHoverDelay)
         bentoSwapHoverDelay = decodedSwapDelay == 0.25 ? 0.12 : decodedSwapDelay ?? 0.12
         snapSuppressionModifiers = try container.decodeIfPresent(ShortcutModifiers.self, forKey: .snapSuppressionModifiers) ?? .option
@@ -369,6 +375,7 @@ public struct BetterTileConfiguration: Codable, Hashable, Sendable {
         try container.encode(bentoInnerGap, forKey: .bentoInnerGap)
         try container.encode(bentoSwapHoverDelay, forKey: .bentoSwapHoverDelay)
         try container.encode(bentoNewWindowSide, forKey: .bentoNewWindowSide)
+        try container.encode(bentoBalancesNewWindows, forKey: .bentoBalancesNewWindows)
         try container.encode(snapSuppressionModifiers, forKey: .snapSuppressionModifiers)
         try container.encode(adjacencyTolerance, forKey: .adjacencyTolerance)
         try container.encode(snapAreaBindings, forKey: .snapAreaBindings)
@@ -508,7 +515,8 @@ public struct ConfigurationChangeSet: OptionSet, Hashable, Sendable {
             || old.adjacencyTolerance != new.adjacencyTolerance {
             changes.insert(.divider)
         }
-        // New-window side is read when inserting; it must not restart an active gesture.
+        // New-window side and balancing are read when inserting; they must
+        // not restart an active gesture.
         if old.defaultLayoutMode != new.defaultLayoutMode
             || old.singleWindowPlacement != new.singleWindowPlacement
             || old.bentoInnerGap != new.bentoInnerGap
