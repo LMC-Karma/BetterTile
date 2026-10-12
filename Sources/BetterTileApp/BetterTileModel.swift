@@ -83,6 +83,10 @@ final class BetterTileModel {
     private(set) var tabbedNeedsFocusRefresh = false
     private var tabbedFocusSuppressedUntil = Date.distantPast
     private var lastBentoFocusMessage: String?
+    private var tabbedCurtainRecheckTask: Task<Void, Never>?
+    private var absenceConfirmationTask: Task<Void, Never>?
+    private var arrivalSweepTask: Task<Void, Never>?
+    private var lastTabbedNativeResizePreview = Date.distantPast
     /// The Bento tree from before Focus mode, per desktop session, so ending
     /// Focus mode returns exactly the previous layout.
     private var bentoStateBeforeFocus: [DesktopSessionID: BentoLayoutState] = [:]
@@ -138,6 +142,9 @@ final class BetterTileModel {
     private var lastVisibleSignature = ""
     private var lastDisplayWorkAreaSignature = ""
     private var pendingWindowEvents = WindowEventBuffer()
+    /// Set when focus lands in a Bento layout. Later focus elsewhere does not
+    /// clear it; only the event pass that runs the peer check does.
+    private var pendingBentoFocusCheck = false
     /// Windows a destroyed event has accounted for. Direct evidence, so their
     /// panes are released without waiting for absence to be corroborated.
     private var confirmedGoneWindowIDs: Set<WindowID> = []
@@ -1705,6 +1712,9 @@ final class BetterTileModel {
     func shutdown() {
         cancelPendingFocusRestore(on: nil)
         guard !isShutDown else { return }
+        absenceConfirmationTask?.cancel()
+        arrivalSweepTask?.cancel()
+        tabbedCurtainRecheckTask?.cancel()
         // A held divider can roll back to pane frames. Finish that rollback
         // before restoring the windows' Native entry frames.
         dividerResize.hideAndCancel()
@@ -1733,6 +1743,7 @@ final class BetterTileModel {
         watchdogTimer = nil
         permissionPollTask?.cancel()
         windowEventTask?.cancel()
+        pendingBentoFocusCheck = false
         spaceStabilizationTask?.cancel()
         displayRefreshDebouncer.cancel()
         settlementTasks.values.forEach { $0.cancel() }
@@ -2058,6 +2069,11 @@ final class BetterTileModel {
 
     private func receiveWindowSystemEvent(_ event: WindowSystemEvent) {
         guard !isShutDown else { return }
+        // Resolve the focus now, while it is still on that window. A later
+        // focus change elsewhere must not erase a check this one needs.
+        if event.kind == .focused, !pendingBentoFocusCheck, bentoFocusLandsInLayout(event) {
+            pendingBentoFocusCheck = true
+        }
         // Lifecycle evidence survives gesture buffering and Space stabilization.
         // A stale scan must not restore a pane before minimization is observed.
         if let windowID = event.windowID {
@@ -2097,6 +2113,7 @@ final class BetterTileModel {
         case .moved, .resized:
             guard Date() >= suppressSpaceFrameEventsUntil else { return }
             pendingWindowEvents.record(event)
+            if let windowID = event.windowID { previewTabbedNativeResize(windowID) }
             // Do not leave a handle at a coordinate macOS has invalidated.
             if !dividerResize.isDragging { dividerResize.refresh(boundaries: []) }
         case .restored:
@@ -2132,13 +2149,45 @@ final class BetterTileModel {
         schedulePendingWindowEvents()
     }
 
+    private func bentoFocusLandsInLayout(_ event: WindowSystemEvent) -> Bool {
+        let sessions = sessionStore.sessions.values.filter { $0.mode == .bento }
+        guard !sessions.isEmpty else { return false }
+        let focusedID: WindowID
+        if let windowID = event.windowID {
+            focusedID = windowID
+        } else {
+            guard let focused = try? system.focusedWindow(),
+                  focused.processIdentifier == event.processIdentifier else { return false }
+            focusedID = focused.id
+        }
+        return sessions.contains { $0.windowIDs.contains(focusedID) }
+    }
+
+    private func bentoPeersNeedTopologyRefresh() -> Bool {
+        let sessions = sessionStore.sessions.values.filter { $0.mode == .bento }
+        let expectedPeers = sessions.flatMap { session in
+            Set(session.bentoState.root?.windowIDs ?? [])
+                .subtracting(session.excludedFocusWindowIDs)
+                .subtracting(confirmedGoneWindowIDs)
+                .subtracting(confirmedMinimizedWindowIDs)
+                .map { (windowID: $0, displayID: session.displayID) }
+        }
+        let expectedIDs = Set(expectedPeers.map(\.windowID))
+        guard !expectedIDs.isEmpty else { return false }
+        guard let refreshed = try? system.cachedVisibleWindows(refreshing: expectedIDs) else { return true }
+        let snapshots = Dictionary(uniqueKeysWithValues: refreshed.map { ($0.id, $0) })
+        return expectedPeers.contains { peer in
+            guard let snapshot = snapshots[peer.windowID] else { return true }
+            return !snapshot.isEligible || snapshot.isFloating
+                || !rule(for: snapshot).allowsBentoParticipation || snapshot.displayID != peer.displayID
+        }
+    }
+
     private func schedulePendingWindowEvents(after delay: Duration = WindowEventRetryBackoff.initialDelay) {
         guard !isShutDown else { return }
         let isGestureActive = activeBentoDrag != nil || dragSnap.isGestureActive || dividerResize.isDragging
-        guard pendingWindowEvents.isReadyForProcessing(
-            isGestureActive: isGestureActive,
-            isStabilizingSpace: isStabilizingSpace
-        ) else { return }
+        guard !isGestureActive, !isStabilizingSpace,
+              !pendingWindowEvents.isEmpty || pendingBentoFocusCheck else { return }
         windowEventTask?.cancel()
         windowEventTask = Task { @MainActor [weak self] in
             try? await Task.sleep(for: delay)
@@ -2149,13 +2198,17 @@ final class BetterTileModel {
 
     private func processPendingWindowEvents() {
         let isGestureActive = activeBentoDrag != nil || dragSnap.isGestureActive || dividerResize.isDragging
-        guard pendingWindowEvents.isReadyForProcessing(
-            isGestureActive: isGestureActive,
-            isStabilizingSpace: isStabilizingSpace
-        ) else { return }
+        guard !isGestureActive, !isStabilizingSpace,
+              !pendingWindowEvents.isEmpty || pendingBentoFocusCheck else { return }
         let pendingEvents = pendingWindowEvents
         let changedIDs = pendingEvents.frameEventWindowIDs
         let refreshTopology = pendingEvents.topologyChanged
+            || (pendingBentoFocusCheck && bentoPeersNeedTopologyRefresh())
+        if !refreshTopology, changedIDs.isEmpty {
+            pendingBentoFocusCheck = false
+            windowEventRetryBackoff.reset()
+            return
+        }
         let windows: [WindowSnapshot]
         if !refreshTopology,
            !changedIDs.isEmpty,
@@ -2163,12 +2216,14 @@ final class BetterTileModel {
             windows = targeted
         } else {
             guard let completeSweep = try? system.visibleWindows() else {
+                if refreshTopology { pendingWindowEvents.recordTopologyChange() }
                 schedulePendingWindowEvents(after: windowEventRetryBackoff.nextDelayAfterFailure())
                 return
             }
             windows = completeSweep
         }
         pendingWindowEvents.acknowledge(pendingEvents)
+        pendingBentoFocusCheck = false
         windowEventRetryBackoff.reset()
         let visibleIDs = Set(windows.map(\.id))
         let now = Date()
@@ -2665,6 +2720,20 @@ final class BetterTileModel {
             }
             return (.rejected, statusMessage)
         }
+        let correction = resolvedAfterMeasuredClamps(
+            placements, session: &session, display: display, recordHistory: recordHistory
+        )
+        if let reason = correction.degradedReason {
+            // The correction failed and its rollback did too: the windows are
+            // neither at the first placement nor at the correction.
+            statusMessage = reason
+            Self.bentoLog.error("measured-clamp correction left a mixed layout")
+            if surfaceFailure {
+                presentActionResult(succeeded: false, error: statusMessage, displayID: display.id)
+            }
+            return (.degraded, statusMessage)
+        }
+        let placements = correction.placements
         session.recordProposedFrames(
             Dictionary(uniqueKeysWithValues: placements.map { ($0.windowID, $0.frame) })
         )
@@ -2683,6 +2752,57 @@ final class BetterTileModel {
         }
         session = committed
         return (.committed, nil)
+    }
+
+    /// A write reads each size back. When an application clamped a window
+    /// larger than its pane, that minimum is now known: solve the same tree
+    /// again and write once more in the same pass, so the correction lands
+    /// with the placement instead of as a separate, later jump.
+    private func resolvedAfterMeasuredClamps(
+        _ placements: [Placement],
+        session: inout LayoutSession,
+        display: DisplaySnapshot,
+        recordHistory: Bool
+    ) -> (placements: [Placement], degradedReason: String?) {
+        let ids = Set(placements.map(\.windowID))
+        guard session.mode == .bento, placements.count > 1,
+              Set(session.bentoState.root?.windowIDs ?? []) == ids,
+              let measured = try? system.windowSnapshots(ids: ids), measured.count == ids.count
+        else { return (placements, nil) }
+        let requested = Dictionary(uniqueKeysWithValues: placements.map { ($0.windowID, $0.frame) })
+        let clamped = measured.contains { window in
+            guard let frame = requested[window.id] else { return false }
+            return window.frame.size.width > frame.size.width + 2 || window.frame.size.height > frame.size.height + 2
+        }
+        guard clamped,
+              let solved = BentoConstraintSolver().solve(
+                  state: session.bentoState, in: display.visibleFrame,
+                  constraints: Dictionary(uniqueKeysWithValues: measured.map { ($0.id, $0.constraints) }))
+        else { return (placements, nil) }
+        let next = solved.placements(in: display.visibleFrame)
+        let nextFrames = Dictionary(uniqueKeysWithValues: next.map { ($0.windowID, $0.frame) })
+        guard nextFrames != requested, bentoProposalIsContained(next, in: display) else { return (placements, nil) }
+        // The first write already recorded undo frames for the windows it
+        // moved. A window only the correction moves gets its frame from
+        // before the action; the others keep their single entry.
+        let actionBaseline = coordinator.lastPlacementBaselineFrames
+        // A cleanly rolled-back correction keeps the first placement.
+        switch coordinator.applyPlacements(next, recordHistory: false) {
+        case .applied:
+            session.bentoState = solved
+            if recordHistory {
+                coordinator.recordHistory(actionBaseline.filter { id, baseline in
+                    guard let first = requested[id], let corrected = nextFrames[id] else { return false }
+                    return baseline.approximatelyEquals(first, tolerance: 0.01)
+                        && !corrected.approximatelyEquals(first, tolerance: 0.01)
+                })
+            }
+            return (next, nil)
+        case let .degraded(reason):
+            return (placements, reason)
+        case .failed:
+            return (placements, nil)
+        }
     }
 
     // MARK: - Application rules
@@ -2825,6 +2945,11 @@ final class BetterTileModel {
         workArea: BTRect? = nil
     ) {
         guard let scheduledSession = sessionStore.session(for: displayID) else { return }
+        // A clamp correction can change frames after the caller planned
+        // them; the session records the frames finally written.
+        let requestedFrames = requestedFrames.map { requested in
+            requested.merging(scheduledSession.lastObservedFrames.filter { requested[$0.key] != nil }) { _, written in written }
+        }
         let sessionID = scheduledSession.id
         let revision = scheduledSession.revision
         let mutationGenerations = Dictionary(uniqueKeysWithValues: changedWindowIDs.map {
@@ -3177,6 +3302,16 @@ final class BetterTileModel {
             if shouldLogHeldAbsences {
                 logHeldAbsences(in: transition.session)
             }
+            // A desktop-switch sweep keeps the stored tree. A window that
+            // arrived with the switch, for example dragged here in Mission
+            // Control, joins in a normal sweep once the switch settles.
+            if desktopTransition, activation.session.mode == .bento, activation.session.isBentoInitialized {
+                let layout = transition.session.bentoState
+                let known = Set(layout.root?.windowIDs ?? []).union(layout.floatingWindowIDs)
+                if !Set(displayWindows.map(\.id)).subtracting(known).isEmpty {
+                    scheduleArrivalSweep()
+                }
+            }
 
             switch transition {
             case let .placeSingleWindow(proposed, placement):
@@ -3342,6 +3477,33 @@ final class BetterTileModel {
     private func logHeldAbsences(in session: LayoutSession) {
         if !session.presence.pending.isEmpty {
             Self.bentoLog.debug("holding absent panes until closure is confirmed")
+            scheduleAbsenceConfirmation()
+        }
+    }
+
+    private func scheduleArrivalSweep() {
+        guard arrivalSweepTask == nil, !isShutDown else { return }
+        arrivalSweepTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(400))
+            guard let self, !Task.isCancelled else { return }
+            self.arrivalSweepTask = nil
+            self.pendingWindowEvents.recordTopologyChange()
+            self.schedulePendingWindowEvents()
+        }
+    }
+
+    /// Some applications keep a closed document window alive off screen, so
+    /// no destroyed event arrives and closure waited for the watchdog's
+    /// sweeps. While a pane is missing, sweep again shortly so the required
+    /// consecutive misses accumulate in under a second.
+    private func scheduleAbsenceConfirmation() {
+        guard absenceConfirmationTask == nil, !isShutDown else { return }
+        absenceConfirmationTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(250))
+            guard let self, !Task.isCancelled else { return }
+            self.absenceConfirmationTask = nil
+            self.pendingWindowEvents.recordTopologyChange()
+            self.schedulePendingWindowEvents()
         }
     }
 
@@ -3585,6 +3747,19 @@ extension BetterTileModel {
                                 order.last(where: { $0.windowID.map(selected.contains) == true })?.windowID
                             }.flatMap { windowNumbers[$0] })
         tabbedOverlays[display.id] = overlay
+        // A kept curtain over an unverified order is checked again shortly.
+        if overlay.needsCurtainVerification, tabbedCurtainRecheckTask == nil {
+            tabbedCurtainRecheckTask = Task { @MainActor [weak self] in
+                try? await Task.sleep(for: .milliseconds(80))
+                guard let self, !Task.isCancelled else { return }
+                self.tabbedCurtainRecheckTask = nil
+                // Without a window inventory the order cannot be verified;
+                // the curtain gives way instead of waiting for one.
+                if !self.repairTabbedStacking() {
+                    self.tabbedOverlays.values.forEach { $0.releaseUnverifiedCurtain() }
+                }
+            }
+        }
     }
 
     private static let tabbedSnapFailure = "That snap cannot fit every pane within its minimum size and the 12-pane limit."
@@ -4069,6 +4244,38 @@ extension BetterTileModel {
                          focus: nil, rememberUndo: true, rollbackFrames: session.lastObservedFrames)
     }
 
+    /// The layout the tab strips currently show, for tests.
+    func presentedTabbedState(on displayID: DisplayID) -> TabbedLayoutState? { tabbedOverlays[displayID]?.state }
+
+    /// While the user drags a selected tab's own edge, the tab strips follow
+    /// the shared boundary live, as they do for a divider drag. Hidden tabs
+    /// and the committed layout still follow only at release.
+    private func previewTabbedNativeResize(_ windowID: WindowID) {
+        guard primaryButtonIsPressed(), !dividerResize.isDragging,
+              Date().timeIntervalSince(lastTabbedNativeResizePreview) >= 1.0 / 30 else { return }
+        guard let session = sessionStore.sessions.values.first(where: {
+                  $0.mode == .tabbed && $0.tabbedState?.selectedWindowIDs.contains(windowID) == true
+              }),
+              // A suspended layout does not adopt the resize at release, so
+              // the strips must not preview it either.
+              !session.automaticWritesSuspended,
+              tabbedTasks[session.displayID] == nil,
+              let state = session.tabbedState,
+              let overlay = tabbedOverlays[session.displayID],
+              let display = system.displays().first(where: { $0.id == session.displayID }),
+              let windows = try? system.windowSnapshots(ids: Set(state.selectedWindowIDs))
+        else { return }
+        lastTabbedNativeResizePreview = Date()
+        var frames = session.lastObservedFrames.filter { state.selectedWindowIDs.contains($0.key) }
+        for window in windows where window.id == windowID { frames[window.id] = window.frame }
+        guard let adopted = state.adoptingResize(
+            of: [windowID], frames: frames,
+            constraints: Dictionary(uniqueKeysWithValues: windows.map { ($0.id, $0.constraints) }),
+            in: display.visibleFrame, tolerance: configuration.adjacencyTolerance
+        ) else { return }
+        overlay.refreshResize(state: adopted, bounds: display.visibleFrame)
+    }
+
     /// Tab strips and curtains follow a divider during its drag. Hidden tabs
     /// follow at release, behind the curtain.
     private func followTabbedDividerDrag(displayID: DisplayID, layout: BentoLayoutState, bounds: BTRect) {
@@ -4219,8 +4426,10 @@ extension BetterTileModel {
     /// what must move. It never activates an application, changes a
     /// selection, or moves a window. Chrome then reorders around the
     /// selected tabs.
-    private func repairTabbedStacking() {
-        guard let windows = try? system.visibleWindows() else { return }
+    /// Returns false when the window inventory could not be read.
+    @discardableResult
+    private func repairTabbedStacking() -> Bool {
+        guard let windows = try? system.visibleWindows() else { return false }
         let displays = system.displays()
         for session in sessionStore.sessions.values where session.mode == .tabbed {
             guard !session.automaticWritesSuspended, tabbedTasks[session.displayID] == nil,
@@ -4233,6 +4442,7 @@ extension BetterTileModel {
                 _ = repairTabbedOrder(state: state, windows: windows, bounds: display.visibleFrame)
             }
         }
+        return true
     }
 
     /// A shared curtain needs every selected tab above every inactive tab.

@@ -1651,3 +1651,40 @@ func steppedApplicationTabIsSelectedWithoutResizeLoops(emitsEvents: Bool) async 
     #expect(system.frameWriteCounts == writes) // No adopt-and-refit loop.
     #expect(model.statusMessage == nil)
 }
+
+/// While the button is held on a selected tab's shared edge, the strips
+/// follow that edge live; the layout is committed only at release.
+@Test @MainActor func tabStripsFollowANativeEdgeResizeWhileTheButtonIsHeld() async throws {
+    _ = NSApplication.shared
+    let system = FakeAppWindowSystem()
+    system.availableDisplays[0].frame.origin.x = 12000
+    system.availableDisplays[0].visibleFrame.origin.x = 12000
+    for index in system.windows.indices { system.windows[index].frame.origin.x += 12000 }
+    addTabbedWindows(1, to: system)
+    for index in system.windows.indices { system.windows[index].frame.origin.x = 12000 + 100 }
+    let store = ConfigurationStore(fileURL: URL(filePath: "/private/tmp/BetterTileAppTests-\(UUID().uuidString)/configuration.json"))
+    let model = BetterTileModel(store: store, system: system, startRuntime: false, presentsTabbedChrome: true)
+    var held = false
+    model.primaryButtonIsPressed = { held }
+    defer { model.shutdown() }
+    model.configuration.defaultTabbedPreset = .columns
+    model.setActiveMode(.tabbed)
+    try #require(await waitFor { model.activeTabbedState?.windowIDs.count == 2 })
+    let right = try #require(model.activeTabbedState?.panes[1].id)
+    model.performTabbed(.move(system.windows[1].id, pane: right, index: nil))
+    try #require(await waitFor { model.activeTabbedState?.panes[1].selected == system.windows[1].id })
+    try await Task.sleep(for: .milliseconds(400))
+    let display = system.mainDisplay.id
+    let before = try #require(model.presentedTabbedState(on: display)?.frames(in: system.availableDisplays[0].visibleFrame))
+    let leftPane = try #require(model.activeTabbedState?.panes[0].id)
+
+    held = true
+    var left = system.windows[0].frame
+    left.size.width += 120
+    system.windows[0].frame = left
+    system.eventHandler?(WindowSystemEvent(kind: .resized, windowID: system.windows[0].id,
+                                          processIdentifier: system.windows[0].processIdentifier))
+    let during = try #require(model.presentedTabbedState(on: display)?.frames(in: system.availableDisplays[0].visibleFrame))
+    #expect((during[leftPane]?.maxX ?? 0) > (before[leftPane]?.maxX ?? 0) + 100)
+    held = false
+}

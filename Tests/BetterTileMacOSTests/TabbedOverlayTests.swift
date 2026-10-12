@@ -954,3 +954,88 @@ func tabStripInsertionPointsMatchRenderedTabEdges(width: Double) {
     overlay.refresh(state: state, bounds: bounds, windows: [], selectedWindowNumbers: [first: 7, second: 8], curtainAnchorWindowNumber: 8)
     #expect(curtains.count == 1)
 }
+
+/// Right after an application activates, the window order can read back stale
+/// for a moment. With the same selection the curtain stays in place instead
+/// of exposing every hidden tab, and the caller is asked to verify again.
+@Test @MainActor func curtainStaysWhileTheOrderIsBrieflyUnreadable() throws {
+    _ = NSApplication.shared
+    let bounds = BTRect(x: 14000, y: 0, width: 1000, height: 800)
+    let first = WindowID(rawValue: "stay-first"), second = WindowID(rawValue: "stay-second")
+    var state = TabbedLayoutState(preset: .columns)
+    state.reconcile(windowIDs: [first, second], removed: [], focused: first)
+    let targets = (0..<2).map { _ in
+        NSPanel(contentRect: CoordinateConverter.toAppKit(bounds, mainScreenFrame: NSScreen.screens.first!.frame),
+                styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+    }
+    defer { targets.forEach { $0.orderOut(nil) } }
+    targets.forEach { $0.orderFrontRegardless() }
+    let numbers = [first: targets[0].windowNumber, second: targets[1].windowNumber]
+    var curtain: NSPanel?
+    let overlay = TabbedOverlayController(orderPanel: { panel, mode, number in
+        if mode == .below { curtain = panel }
+        panel.order(mode, relativeTo: number)
+    })
+    defer { overlay.hide() }
+    overlay.refresh(state: state, bounds: bounds, windows: [], selectedWindowNumbers: numbers,
+                    curtainAnchorWindowNumber: numbers[first])
+    let shown = try #require(curtain)
+    #expect(shown.isVisible)
+    overlay.refresh(state: state, bounds: bounds, windows: [], selectedWindowNumbers: numbers,
+                    curtainAnchorWindowNumber: nil)
+    #expect(shown.isVisible)
+    #expect(overlay.needsCurtainVerification)
+    // A selection change with a briefly unreadable order keeps it too.
+    state.select(second)
+    overlay.refresh(state: state, bounds: bounds, windows: [], selectedWindowNumbers: numbers,
+                    curtainAnchorWindowNumber: nil)
+    #expect(shown.isVisible)
+    // A missing exact identity still hides it.
+    overlay.refresh(state: state, bounds: bounds, windows: [], selectedWindowNumbers: [second: 0],
+                    curtainAnchorWindowNumber: nil)
+    #expect(!shown.isVisible)
+}
+
+/// An order that stays unreadable can mean a floating window failed to
+/// rise above the selected tabs. The curtain gives way after a few checks
+/// instead of covering that window indefinitely.
+@Test @MainActor func curtainGivesWayWhenTheOrderStaysUnreadable() throws {
+    _ = NSApplication.shared
+    let bounds = BTRect(x: 15000, y: 0, width: 1000, height: 800)
+    let first = WindowID(rawValue: "hold-first"), second = WindowID(rawValue: "hold-second")
+    var state = TabbedLayoutState(preset: .columns)
+    state.reconcile(windowIDs: [first, second], removed: [], focused: first)
+    let targets = (0..<2).map { _ in
+        NSPanel(contentRect: CoordinateConverter.toAppKit(bounds, mainScreenFrame: NSScreen.screens.first!.frame),
+                styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+    }
+    defer { targets.forEach { $0.orderOut(nil) } }
+    targets.forEach { $0.orderFrontRegardless() }
+    let numbers = [first: targets[0].windowNumber, second: targets[1].windowNumber]
+    var curtain: NSPanel?
+    let overlay = TabbedOverlayController(orderPanel: { panel, mode, number in
+        if mode == .below { curtain = panel }
+        panel.order(mode, relativeTo: number)
+    })
+    defer { overlay.hide() }
+    overlay.refresh(state: state, bounds: bounds, windows: [], selectedWindowNumbers: numbers,
+                    curtainAnchorWindowNumber: numbers[first])
+    let shown = try #require(curtain)
+    for _ in 0..<TabbedOverlayController.maximumCurtainHolds {
+        overlay.refresh(state: state, bounds: bounds, windows: [], selectedWindowNumbers: numbers,
+                        curtainAnchorWindowNumber: nil)
+        #expect(shown.isVisible)
+    }
+    overlay.refresh(state: state, bounds: bounds, windows: [], selectedWindowNumbers: numbers,
+                    curtainAnchorWindowNumber: nil)
+    #expect(!shown.isVisible)
+    #expect(!overlay.needsCurtainVerification)
+    // Without a window inventory the caller releases a held curtain at once.
+    overlay.refresh(state: state, bounds: bounds, windows: [], selectedWindowNumbers: numbers,
+                    curtainAnchorWindowNumber: numbers[first])
+    overlay.refresh(state: state, bounds: bounds, windows: [], selectedWindowNumbers: numbers,
+                    curtainAnchorWindowNumber: nil)
+    #expect(shown.isVisible && overlay.needsCurtainVerification)
+    overlay.releaseUnverifiedCurtain()
+    #expect(!shown.isVisible && !overlay.needsCurtainVerification)
+}

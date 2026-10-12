@@ -469,7 +469,18 @@ public final class DividerOverlayController {
     }
 
     func updateHover(at appKitPoint: CGPoint) {
-        guard !isDragging, !isRetracting else { return }
+        guard !isDragging else { return }
+        // The handle retracts for a moment after a release. A pointer that
+        // returns to a divider meanwhile takes it back at once; otherwise a
+        // quick second drag reaches the application's own window edge.
+        if isRetracting {
+            let point = topLeftPoint(appKitPoint)
+            guard DividerInteractionResolver.resolve(
+                at: point, in: boundaries, hitWidth: max(18, configuration.dividerThickness * 3),
+                adjacencyTolerance: configuration.adjacencyTolerance, paneGap: configuration.bentoInnerGap
+            ) != nil else { return }
+            isRetracting = false
+        }
         guard !boundaries.isEmpty else {
             hoveredInteraction = nil
             handlePanel?.orderOut(nil)

@@ -67,6 +67,18 @@ It keeps a temporarily missing pane in its desktop's tree. Confirmed destruction
 and minimization still remove the pane, and a window observed on another display
 is no longer protected on the old display.
 
+Some applications close a document window without a destruction event; focus
+only moves to another window. When focus lands in a Bento layout, the model
+marks a check for the next event pass. It resolves the focused window when the
+event arrives, so a later focus change elsewhere cannot clear the mark. The
+event pass runs one check however many events marked it. The check reads the tiled panes of every
+active Bento layout through the targeted cached refresh. A document closed on one
+display can move focus to its application's window on another display, so the
+check is not limited to the focused layout. If every pane is still visible and eligible,
+no complete sweep runs. A missing, ineligible, or unreadable pane, or an
+unavailable cache, requests the complete sweep above. The check only requests a
+sweep; it never confirms closure by itself.
+
 One listen-only session event tap forwards ordered scalar left-button values
 from a dedicated run loop to the main actor. Drag snapping and linked resizing
 share that stream. If tap creation or recovery fails, both consumers switch to
@@ -129,7 +141,10 @@ front-to-back order with every tab on the display. It puts all selected tabs
 above all inactive tabs. Windows already in front, including floating windows
 in pane gaps, are raised again when needed to keep them above the shared
 curtain. If a tab's identity is missing or a protected window cannot be raised,
-no repair runs and the curtain hides. The repair never activates an
+no repair runs. A missing identity hides the curtain. An order that cannot be
+verified keeps a curtain already shown, at the same bounds, for up to four
+refreshes while the model checks again 80 ms later; then the curtain hides. A
+window list that cannot be read hides it at once. The repair never activates an
 application, changes keyboard focus or selection, or moves a window. Without
 a readable order, selection still raises the selected tabs of panes that
 share the selected window's application, and activation changes nothing.
@@ -137,6 +152,16 @@ share the selected window's application, and activation changes nothing.
 ## Bento
 
 Bento uses a binary split tree held by each display's runtime `LayoutSession`. Leaves reference currently visible windows and branches carry an axis, normalized weight, and lock state. New windows are inserted by evaluating every unlocked leaf and choosing the split with the lowest movement/area-change score; closed or hidden windows are removed from the current tree. `BentoResizeEngine` changes branch weights and recursively derives all affected frames, `BentoLayoutFitter` adopts native edge changes, and `BentoBoundaryResolver` exposes only shared segments verified against current window frames.
+
+After a placement writes the full Bento tree with multiple windows,
+`commitBentoProposal` reads their measured sizes. If an application clamps a
+window larger than requested, BetterTile solves the same tree with the learned
+minimum sizes. A changed, valid solution gets at most one correction write
+through `WindowCoordinator` within that commit, avoiding a later placement
+jump. Settlement compares against the corrected frames. A failed correction
+with a successful rollback keeps the first placement. If the correction and
+its rollback both fail, the outcome is degraded and automatic writes stop
+until a new transaction or Repair.
 
 The **New window side** preference applies only to new Bento insertions.
 Automatic retains the existing insertion policy. An explicit side favors a
@@ -195,7 +220,8 @@ change a Bento operation made to the tree; writing it also writes the tree.
   normal-level, nonactivating panel below the backmost selected window with
   public `NSWindow.order(_:relativeTo:)`. The model verifies the WindowServer
   order and every tab identity before supplying that anchor. Missing
-  identities or unsafe ordering hide the curtain. It never guesses from a
+  identities hide the curtain. Unverified ordering keeps a curtain already
+  shown for up to four refreshes, then hides it. It never guesses from a
   frame or parks a window. Native frosted glass conceals inactive window
   detail. Rounded cutouts exclude occupied tab strips, including during
   resizing. The curtain keeps its rectangular input surface; the strips above
@@ -246,10 +272,12 @@ change a Bento operation made to the tree; writing it also writes the tree.
   keep the captured window/action and replan against the current session.
   Work-area, Space, session, mode, and rule checks protect asynchronous work.
 - A user's edge resize of a selected window follows Bento's rule
-  (`TabbedLayoutState.adoptingResize`), read only after the mouse button is
-  released. A shared pane edge moves that divider, stopping at each pane's
-  minimum. Any other change, including One Pane, an outer edge, a move, or a
-  macOS destination, puts the windows back. Hidden tabs and strips then follow.
+  (`TabbedLayoutState.adoptingResize`), committed only after the mouse button
+  is released. While the button is held, the same rule drives a preview of the
+  tab strips and curtain; it moves no window. A shared pane edge moves that
+  divider, stopping at each pane's minimum. Any other change, including One
+  Pane, an outer edge, a move, or a macOS destination, puts the windows back.
+  Hidden tabs and strips then follow.
 - Divider and native-edge resize proposals remain provisional until every
   selected window accepts its frame. Recovery uses the session's last verified
   frames, even when a divider gesture begins with a displaced window. Current

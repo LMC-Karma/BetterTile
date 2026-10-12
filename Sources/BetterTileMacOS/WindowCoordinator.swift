@@ -363,8 +363,19 @@ public final class WindowCoordinator {
         case let .failed(reason):
             return .failed(reason: reason)
         case var .started(transaction):
+            lastPlacementBaselineFrames = transaction.baselineFrames
             return commit(transaction: &transaction, placements: placements, recordHistory: recordHistory)
         }
+    }
+
+    /// The frames the most recent `applyPlacements` call started from. A
+    /// follow-up write in the same user action records undo history against
+    /// these, not against the frames the first write left.
+    public private(set) var lastPlacementBaselineFrames: [WindowID: BTRect] = [:]
+
+    /// Records undo frames for windows a follow-up write moved.
+    public func recordHistory(_ frames: [WindowID: BTRect]) {
+        recordHistoryFrames(frames)
     }
 
     /// Verifies a completed system-driven reflow and retries only windows
