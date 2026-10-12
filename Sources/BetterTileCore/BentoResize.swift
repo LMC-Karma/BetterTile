@@ -127,8 +127,8 @@ public struct WindowMinimumSizeLearner: Sendable {
     /// The latest measurement for each application, by bundle identifier.
     /// Applications rarely report a minimum, so a new window starts from its
     /// application's measured size instead of the default floor. Its own
-    /// measurement replaces the seed as soon as one exists. Process memory
-    /// only; nothing is saved.
+    /// measurement replaces the seed as soon as one exists. A seed lasts
+    /// until its application quits. Process memory only; nothing is saved.
     public private(set) var applicationSizes: [String: BTSize] = [:]
 
     public init(learnedSizes: [WindowID: BTSize] = [:]) {
@@ -262,16 +262,21 @@ public struct WindowMinimumSizeLearner: Sendable {
         smallerSizeCandidates.removeValue(forKey: windowID)
     }
 
-    /// Clears refusal evidence when the caller can safely revalidate it.
-    /// Tabbed retains evidence for already-clamped inactive tabs and lowers
-    /// a bound when a smaller actual window size is observed.
-    public mutating func removeAll() {
-        learnedSizes.removeAll()
-        smallerSizeCandidates.removeAll()
-        applicationSizes.removeAll()
+    /// Drops one application's seed, for example when it quits. A relaunch,
+    /// perhaps of an updated version, then measures its windows again.
+    /// Measurements of individual windows stay.
+    public mutating func forgetApplication(_ bundleIdentifier: String) {
+        applicationSizes.removeValue(forKey: bundleIdentifier)
     }
 
     public func hasMeasurement(for windowID: WindowID) -> Bool { learnedSizes[windowID] != nil }
+
+    /// The windows that still need their own measurement, in ID order. An
+    /// application seed does not count: it came from another window of the
+    /// same application, which can have a larger minimum.
+    public func windowsNeedingMeasurement(_ windowIDs: Set<WindowID>) -> [WindowID] {
+        windowIDs.sorted().filter { !hasMeasurement(for: $0) }
+    }
 
     /// Records a clamp that the caller proved synchronous by other means, for
     /// a write that left the window where it was: each axis that stayed

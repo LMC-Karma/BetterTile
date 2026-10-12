@@ -341,7 +341,7 @@ private func window(_ id: WindowID, x: Double, y: Double, width: Double, height:
     )
 }
 
-@Test func learnedMinimumsCanBeForgottenForANewGesture() {
+@Test func learnedMinimumIsForgottenWithItsWindow() {
     var learner = WindowMinimumSizeLearner()
     let id = WindowID(rawValue: "w")
     let learned = learner.observe(
@@ -352,7 +352,7 @@ private func window(_ id: WindowID, x: Double, y: Double, width: Double, height:
     )
     #expect(learned)
     #expect(learner.merging(WindowConstraints(), for: id).minimumSize.width == 360)
-    learner.removeAll()
+    learner.remove(id)
     #expect(learner.merging(WindowConstraints(), for: id).minimumSize.width == WindowConstraints().minimumSize.width)
 }
 
@@ -416,12 +416,11 @@ func invalidAcceptedSizesCannotChangeLearnedMinimums(size: BTSize) {
     #expect(learner.learnedSizes[id] == BTSize(width: 400.5, height: 350.5))
 }
 
-@Test(arguments: [false, true])
-func removingLearnedMinimumsAlsoClearsSmallerSizeCandidates(all: Bool) {
+@Test func removingLearnedMinimumsAlsoClearsSmallerSizeCandidates() {
     let id = WindowID(rawValue: "removed-candidate")
     var learner = WindowMinimumSizeLearner(learnedSizes: [id: BTSize(width: 600, height: 450)])
     learner.observeAcceptedSize(windowID: id, size: BTSize(width: 400, height: 300))
-    if all { learner.removeAll() } else { learner.remove(id) }
+    learner.remove(id)
     learner.observe(windowID: id, requested: BTRect(x: 0, y: 0, width: 300, height: 250),
                     baseline: BTRect(x: 0, y: 0, width: 800, height: 600),
                     actual: BTRect(x: 0, y: 0, width: 600, height: 450))
@@ -528,13 +527,58 @@ private let readbackID = WindowID(rawValue: "readback")
     // Another application keeps the default floor.
     #expect(learner.merging(WindowConstraints(), for: second, application: "com.apple.Preview").minimumSize
         == WindowConstraints().minimumSize)
-    // The window's own measurement replaces the seed.
+    // An accepted write measures no minimum, so the seed stays.
     let own = learner.observeWriteReadback(windowID: second, application: "com.brave.Browser",
         requested: BTRect(x: 50, y: 0, width: 600, height: 400), previous: BTRect(x: 0, y: 0, width: 800, height: 600),
         actual: BTRect(x: 50, y: 0, width: 600, height: 400))
     #expect(!own)
     #expect(learner.merging(WindowConstraints(), for: second, application: "com.brave.Browser").minimumSize
         == BTSize(width: 500, height: 375))
+}
+
+/// A seed from a large main window must not stay the floor of a smaller
+/// window of the same application once that window is measured.
+@Test func probeMeasurementReplacesALargerSeedForItsWindow() {
+    var learner = WindowMinimumSizeLearner()
+    let main = WindowID(rawValue: "mail-main"), compose = WindowID(rawValue: "mail-compose")
+    let tiny = BTRect(x: 0, y: 0, width: 1, height: 1)
+    learner.observeWriteReadback(windowID: main, application: "com.apple.mail", requested: tiny,
+        previous: BTRect(x: 0, y: 0, width: 1200, height: 800), actual: BTRect(x: 0, y: 0, width: 900, height: 600))
+    // Before its probe, the new window plans with the seed and still needs one.
+    #expect(learner.merging(WindowConstraints(), for: compose, application: "com.apple.mail").minimumSize
+        == BTSize(width: 900, height: 600))
+    #expect(learner.windowsNeedingMeasurement([main, compose]) == [compose])
+    let probed = learner.observeWriteReadback(windowID: compose, application: "com.apple.mail", requested: tiny,
+        previous: BTRect(x: 0, y: 0, width: 700, height: 500), actual: BTRect(x: 0, y: 0, width: 400, height: 300))
+    #expect(probed)
+    #expect(learner.windowsNeedingMeasurement([main, compose]).isEmpty)
+    #expect(learner.merging(WindowConstraints(), for: compose, application: "com.apple.mail").minimumSize
+        == BTSize(width: 400, height: 300))
+    // The main window keeps its own, and the latest measurement is the seed.
+    #expect(learner.merging(WindowConstraints(), for: main, application: "com.apple.mail").minimumSize
+        == BTSize(width: 900, height: 600))
+    #expect(learner.applicationSizes["com.apple.mail"] == BTSize(width: 400, height: 300))
+}
+
+@Test func forgettingAnApplicationKeepsOtherSeedsAndWindowMeasurements() {
+    var learner = WindowMinimumSizeLearner()
+    let mail = WindowID(rawValue: "mail"), notes = WindowID(rawValue: "notes")
+    let tiny = BTRect(x: 0, y: 0, width: 1, height: 1)
+    let previous = BTRect(x: 0, y: 0, width: 1200, height: 800)
+    learner.observeWriteReadback(windowID: mail, application: "com.apple.mail", requested: tiny,
+        previous: previous, actual: BTRect(x: 0, y: 0, width: 900, height: 600))
+    learner.observeWriteReadback(windowID: notes, application: "com.apple.Notes", requested: tiny,
+        previous: previous, actual: BTRect(x: 0, y: 0, width: 500, height: 400))
+
+    learner.forgetApplication("com.apple.mail")
+    learner.forgetApplication("com.example.never-measured")
+
+    #expect(learner.applicationSizes == ["com.apple.Notes": BTSize(width: 500, height: 400)])
+    #expect(learner.learnedSizes[mail] == BTSize(width: 900, height: 600))
+    #expect(learner.learnedSizes[notes] == BTSize(width: 500, height: 400))
+    let fresh = WindowID(rawValue: "mail-relaunched")
+    #expect(learner.merging(WindowConstraints(), for: fresh, application: "com.apple.mail").minimumSize
+        == WindowConstraints().minimumSize)
 }
 
 @Test func confirmedClampRecordsOnlyTheAxesThatStayedLarger() {

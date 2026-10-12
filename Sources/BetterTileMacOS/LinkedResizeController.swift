@@ -271,8 +271,8 @@ public final class LinkedResizeController {
         else { return false }
 
         if !hasStartedResizing {
-            // The first real edge movement starts a resize. Forget minimums
-            // learned from old refusals, read fresh ones, and solve again.
+            // The first real edge movement starts a resize. Tell the owner
+            // once, then read the windows' current minimums and solve again.
             hasStartedResizing = true
             gestureWillBeginHandler?()
             if let targeted = coordinator.system as? any TargetedWindowSystem,

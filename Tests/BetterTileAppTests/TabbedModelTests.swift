@@ -1096,7 +1096,6 @@ func tabbedGesturesRetainEvidenceForAnAlreadyClampedInactiveTab(height: Bool) as
                : system.windows[1].constraints.minimumSize.width >= 600
     })
     model.prepareWindowGesture()
-    #expect(system.forgetLearnedMinimumsCount == 0)
     model.performTabbed(.select(hidden.id))
     try #require(await waitFor { model.activeTabbedState?.activeWindowID == hidden.id })
     #expect(model.statusMessage == nil)
@@ -1159,9 +1158,7 @@ func gestureOnAnotherDisplayPreservesAnInactiveTabbedMinimum(nativeVisit: Bool) 
         try #require(await waitFor { model.activeMode(for: otherDisplay) == .manual })
     }
     system.focusedID = first // A Bento gesture starts on the first display.
-    let resets = system.forgetLearnedMinimumsCount
     model.prepareWindowGesture()
-    #expect(system.forgetLearnedMinimumsCount == resets)
     system.focusedID = selected.id
     if nativeVisit {
         model.setActiveMode(.tabbed)
