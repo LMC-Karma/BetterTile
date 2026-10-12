@@ -944,8 +944,6 @@ func repairDuringFocusModeReportsOnlyAfterThePeersReturn(restoredEventArrives: B
     }, "\(system.windows.map(\.frame))")
 }
 
-/// Closing the Focus mode window leaves its peers minimized. Restoring one
-/// from the Dock must lay the peers out without the closed window's pane,
 /// A covered peer can close while Focus mode keeps it minimized. Ending
 /// Focus mode then lays out the remaining windows without its pane.
 @Test @MainActor func endingFocusModeAfterAPeerClosedFillsTheDisplay() async throws {
@@ -987,6 +985,8 @@ func repairDuringFocusModeReportsOnlyAfterThePeersReturn(restoredEventArrives: B
     #expect(covered >= display.size.width * display.size.height * 0.98, "\(firstFrames)")
 }
 
+/// Closing the Focus mode window leaves its peers minimized. Restoring one
+/// from the Dock must lay the peers out without the closed window's pane,
 /// not leave its area empty until a later sweep notices the window is gone.
 @Test @MainActor func restoringAPeerAfterClosingTheFocusModeWindowFillsTheDisplay() async throws {
     _ = NSApplication.shared
