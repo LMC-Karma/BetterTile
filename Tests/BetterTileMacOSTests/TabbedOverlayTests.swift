@@ -644,7 +644,7 @@ func tabbedStripFitsNarrowAndCrowdedPanes(width: Double, count: Int) {
     #expect(closed == [id])
 }
 
-@Test @MainActor func tabbedTabSelectionRequiresReleaseInsideOriginalTab() throws {
+@Test @MainActor func tabbedTabSelectsOnPressLikeNativeTabBars() throws {
     _ = NSApplication.shared
     let panel = NSPanel(contentRect: NSRect(x: 12000, y: 0, width: 330, height: 34),
                         styleMask: [.borderless], backing: .buffered, defer: false)
@@ -681,15 +681,20 @@ func tabbedStripFitsNarrowAndCrowdedPanes(width: Double, count: Int) {
         if case let .select(id) = intent { selections.append(id) }
     }
 
+    // Like native tab bars, the press selects; where the release lands does
+    // not cancel or repeat it, and a release on a close button closes nothing.
+    var closes: [WindowID] = []
+    overlay.onIntent = { intent in
+        if case let .select(id) = intent { selections.append(id) }
+        if case let .close(id) = intent { closes.append(id) }
+    }
     for release in releases {
         view.mouseDown(with: try event(.leftMouseDown, at: press))
+        #expect(selections.last == first)
         view.mouseUp(with: try event(.leftMouseUp, at: release))
     }
-    #expect(selections.isEmpty)
-
-    view.mouseDown(with: try event(.leftMouseDown, at: press))
-    view.mouseUp(with: try event(.leftMouseUp, at: press))
-    #expect(selections == [first])
+    #expect(selections == Array(repeating: first, count: releases.count))
+    #expect(closes.isEmpty)
 }
 
 @Test @MainActor func tabbedDragAtPaneLimitDoesNotOfferSplitButKeepsCenterMove() throws {
@@ -1038,4 +1043,42 @@ func tabStripInsertionPointsMatchRenderedTabEdges(width: Double) {
     #expect(shown.isVisible && overlay.needsCurtainVerification)
     overlay.releaseUnverifiedCurtain()
     #expect(!shown.isVisible && !overlay.needsCurtainVerification)
+}
+
+/// Tabs fit their titles and pack from the leading edge, so a short title
+/// does not leave a wide empty tab.
+@Test func contentFittedTabsKeepTheirOwnWidthsWhenTheyFit() {
+    let strip = TabbedStripLayout(width: 1000, count: 3, selectedIndex: 0, preferredWidths: [100, 180, 140])
+    #expect(strip.visibleRange == 0..<3 && strip.hiddenCount == 0)
+    #expect(strip.tabFrame(0).width == 100 && strip.tabFrame(1).width == 180 && strip.tabFrame(2).width == 140)
+    #expect(strip.tabFrame(0).minX == 32 && strip.tabFrame(1).minX == 132 && strip.tabFrame(2).minX == 312)
+    // Very long titles stop at the maximum; very short ones at the minimum.
+    let clamped = TabbedStripLayout(width: 1000, count: 2, selectedIndex: 0, preferredWidths: [10, 900])
+    #expect(clamped.tabFrame(0).width == 88)
+    #expect(clamped.tabFrame(1).width == 200)
+}
+
+/// When tabs do not fit, they compress toward the minimum before any tab is
+/// hidden, and they still fill exactly the available space.
+@Test func contentFittedTabsCompressBeforeHiding() {
+    let width = 500.0
+    let strip = TabbedStripLayout(width: width, count: 4, selectedIndex: 3, preferredWidths: [200, 200, 120, 160])
+    let available = strip.menuFrame.minX - 32
+    #expect(strip.hiddenCount == 0)
+    let widths = strip.visibleRange.map { strip.tabFrame($0).width }
+    #expect(abs(widths.reduce(0, +) - available) < 0.001)
+    #expect(widths.allSatisfy { $0 >= 88 - 0.001 })
+    // A wider title stays wider after compression.
+    #expect(widths[0] > widths[2])
+    // Insertion points sit on the drawn tab edges.
+    for index in strip.visibleRange {
+        let frame = strip.tabFrame(index)
+        #expect(abs(strip.insertion(at: frame.minX + 5).x - frame.minX) < 0.001)
+        #expect(strip.insertion(at: frame.maxX - 5).index == index + 1)
+        #expect(strip.tabIndex(at: NSPoint(x: frame.midX, y: 17)) == index)
+    }
+    // Too many tabs for the minimum width: the extras hide behind the menu.
+    let crowded = TabbedStripLayout(width: width, count: 9, selectedIndex: 8, preferredWidths: Array(repeating: 150, count: 9))
+    #expect(crowded.hiddenCount > 0 && crowded.visibleRange.contains(8))
+    #expect(crowded.tabFrame(crowded.visibleRange.upperBound - 1).maxX <= crowded.menuFrame.minX + 0.001)
 }

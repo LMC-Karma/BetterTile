@@ -1093,6 +1093,8 @@ extension WindowCoordinator {
         selected: [WindowID],
         previousSelected: [WindowID],
         focus: WindowID?,
+        focusAlreadyRequested: Bool = false,
+        focusCheckpoint: WindowID? = nil,
         onSizeMismatch: (@MainActor (WindowID, BTRect, BTRect, BTRect) -> Void)? = nil,
         isCurrent: @MainActor () -> Bool
     ) async -> WindowMutationOutcome {
@@ -1106,7 +1108,8 @@ extension WindowCoordinator {
         let baseline: [WindowID: BTRect]
         let currentFrames: [WindowID: BTRect]
         let participantDisplayID: DisplayID?
-        let oldFocus = try? system.focusedWindow()?.id
+        // A selection that raised its tab early knows the focus before it.
+        let oldFocus = focusCheckpoint ?? (try? system.focusedWindow()?.id)
         do {
             guard ids == Set(placements.map(\.windowID)) else {
                 throw WindowSystemError.operationFailed("One or more selected tabs are no longer available.")
@@ -1155,7 +1158,10 @@ extension WindowCoordinator {
             }
             if let focus {
                 touched = true
-                try tabSystem.raiseWindow(focus, activate: true)
+                // A selection may already have requested focus when it was
+                // pressed. Ask again only for the window order, so a slow
+                // application does not receive a second activation.
+                try tabSystem.raiseWindow(focus, activate: !focusAlreadyRequested)
             }
             for id in selected where id != focus {
                 touched = true

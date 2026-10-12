@@ -493,3 +493,106 @@ func tabDragDefersAccessibilityUntilDropCompletes(success: Bool) throws {
     #expect(!f.overlay.hasActiveTabDrag)
     #expect(!intents.contains { if case .move = $0 { true } else { false } })
 }
+
+/// A drag that crossed the threshold while a selection blocked tab drags
+/// starts at release once drags are allowed again, even without further
+/// pointer movement, and drops the tab where the pointer is.
+@Test @MainActor func aBlockedTabDragStillDropsAtRelease() throws {
+    let f = try TabDragFixture()
+    defer { f.overlay.hide() }
+    var intents: [TabbedUIIntent] = []
+    // The model blocks tab drags while the press's selection places.
+    f.overlay.onIntent = { [weak overlay = f.overlay] intent in
+        intents.append(intent)
+        if case .select = intent { overlay?.acceptsTabDrags = false }
+    }
+    // Press an unselected tab: the press starts its selection.
+    let tab = f.view.strip.tabFrame(1)
+    f.view.mouseDown(with: try f.event(.leftMouseDown, x: f.bounds.minX + tab.midX, y: f.bounds.minY + 17))
+    try f.drag(x: f.bounds.minX + 1200, y: f.bounds.minY + 400)
+    #expect(!f.overlay.isInteracting)
+    f.overlay.acceptsTabDrags = true
+    try f.release(x: f.bounds.minX + 1200, y: f.bounds.minY + 400)
+    #expect(!f.overlay.isInteracting)
+    let moves = intents.compactMap { intent -> WindowID? in
+        if case let .move(id, _, _) = intent { return id } else { return nil }
+    }
+    #expect(moves == [f.ids[1]])
+}
+
+/// The release can also come before the selection settles. The drop is
+/// still sent; the model queues it behind the selection.
+@Test @MainActor func aTabDragReleasedWhileASelectionSettlesStillDrops() throws {
+    let f = try TabDragFixture()
+    defer { f.overlay.hide() }
+    var intents: [TabbedUIIntent] = []
+    // The model blocks tab drags while the press's selection places.
+    f.overlay.onIntent = { [weak overlay = f.overlay] intent in
+        intents.append(intent)
+        if case .select = intent { overlay?.acceptsTabDrags = false }
+    }
+    // Press an unselected tab: the press starts its selection.
+    let tab = f.view.strip.tabFrame(1)
+    f.view.mouseDown(with: try f.event(.leftMouseDown, x: f.bounds.minX + tab.midX, y: f.bounds.minY + 17))
+    try f.drag(x: f.bounds.minX + 1200, y: f.bounds.minY + 400)
+    try f.release(x: f.bounds.minX + 1200, y: f.bounds.minY + 400)
+    #expect(!f.overlay.isInteracting)
+    let moves = intents.compactMap { intent -> WindowID? in
+        if case let .move(id, _, _) = intent { return id } else { return nil }
+    }
+    #expect(moves == [f.ids[1]])
+}
+
+/// A placement that already blocked tab drags before the press is not the
+/// press's own selection, so the release does not drop against its old panes.
+@Test @MainActor func aTabDragBlockedByAnotherPlacementIsNotDroppedAtRelease() throws {
+    let f = try TabDragFixture()
+    defer { f.overlay.hide() }
+    var intents: [TabbedUIIntent] = []
+    f.overlay.onIntent = { intents.append($0) }
+    f.overlay.acceptsTabDrags = false
+    let tab = f.view.strip.tabFrame(1)
+    f.view.mouseDown(with: try f.event(.leftMouseDown, x: f.bounds.minX + tab.midX, y: f.bounds.minY + 17))
+    try f.drag(x: f.bounds.minX + 1200, y: f.bounds.minY + 400)
+    try f.release(x: f.bounds.minX + 1200, y: f.bounds.minY + 400)
+    #expect(!f.overlay.isInteracting)
+    #expect(!intents.contains { if case .move = $0 { true } else { false } })
+}
+
+/// An action queued behind the press's selection may change the panes, so
+/// the release no longer drops the blocked drag.
+@Test @MainActor func aTabDragIsNotDroppedAtReleaseAfterAnotherActionQueues() throws {
+    let f = try TabDragFixture()
+    defer { f.overlay.hide() }
+    var intents: [TabbedUIIntent] = []
+    f.overlay.onIntent = { [weak overlay = f.overlay] intent in
+        intents.append(intent)
+        if case .select = intent { overlay?.acceptsTabDrags = false }
+    }
+    let tab = f.view.strip.tabFrame(1)
+    f.view.mouseDown(with: try f.event(.leftMouseDown, x: f.bounds.minX + tab.midX, y: f.bounds.minY + 17))
+    try f.drag(x: f.bounds.minX + 1200, y: f.bounds.minY + 400)
+    f.overlay.yieldPressSelection()
+    try f.release(x: f.bounds.minX + 1200, y: f.bounds.minY + 400)
+    #expect(!f.overlay.isInteracting)
+    #expect(!intents.contains { if case .move = $0 { true } else { false } })
+}
+
+/// A pressed tab draws as selected at once. When its selection is rejected
+/// and the placement ends, the strip shows the tab that stayed selected.
+@Test @MainActor func aRejectedPressDropsItsHighlightWhenThePlacementEnds() throws {
+    let f = try TabDragFixture()
+    defer { f.overlay.hide() }
+    f.overlay.onIntent = { [weak overlay = f.overlay] intent in
+        if case .select = intent { overlay?.acceptsTabDrags = false }
+    }
+    let selected = f.view.pane.selected
+    let tab = f.view.strip.tabFrame(1)
+    let pressed = f.view.pane.tabs[1]
+    try #require(pressed != selected)
+    f.view.mouseDown(with: try f.event(.leftMouseDown, x: f.bounds.minX + tab.midX, y: f.bounds.minY + 17))
+    #expect(f.view.displayedSelection == pressed)
+    // The model rejects the selection and keeps the previous tab.
+    f.overlay.acceptsTabDrags = true
+    #expect(f.view.displayedSelection == selected)
+}

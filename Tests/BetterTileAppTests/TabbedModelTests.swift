@@ -199,7 +199,8 @@ func tabbedCurtainsResolveOnlySelectedWindowsAfterPlacementAndFocus(failSelectio
     #expect(system.windowNumberRequests.last == [system.windows[0].id])
     let hidden = system.windows[1].id
     let initialRequests = system.windowNumberRequests.count
-    if failSelection { system.failingNextRaiseWindowID = hidden }
+    // The early raise and the verified placement both fail to order it.
+    if failSelection { system.failingRaiseWindowIDs = [hidden] }
     model.performTabbed(.select(hidden))
     let shown = failSelection ? system.windows[0].id : hidden
     if failSelection { try #require(await waitFor { model.statusMessage != nil }) }
@@ -1606,6 +1607,98 @@ func aSameApplicationFocusChangeAfterTheSelectionIsKept() async throws {
     #expect(system.focusedID == rightSelected)
     #expect(!system.raiseRequests.dropFirst(raises).contains { $0.0 == hiddenLeft && $0.1 })
     #expect(model.activeTabbedState?.activeWindowID == rightSelected)
+}
+
+/// A selection raises its tab before the placement is prepared. When the
+/// placement is rejected, the old tab and the old focus come back.
+@Test @MainActor func aRejectedSelectionPutsBackTheEarlyRaise() async throws {
+    let system = FakeAppWindowSystem()
+    let model = try await makeTwoTabbedColumns(system)
+    defer { model.shutdown() }
+    let state = try #require(model.activeTabbedState)
+    let previous = try #require(state.panes[0].selected)
+    let previousFocus = try #require(state.activeWindowID)
+    let hidden = try #require(state.panes[0].tabs.first { $0 != previous })
+    let index = try #require(system.windows.firstIndex { $0.id == hidden })
+    // The tab cannot fit its pane, so the selection is rejected.
+    system.windows[index].constraints.minimumSize = BTSize(width: 5000, height: 5000)
+    system.focusedID = previousFocus
+    let raises = system.raiseRequests.count
+    model.performTabbed(.select(hidden))
+    try await Task.sleep(for: .milliseconds(300))
+    #expect(system.raiseRequests.dropFirst(raises).first?.0 == hidden)
+    #expect(model.activeTabbedState?.panes[0].selected == previous)
+    #expect(system.focusedID == previousFocus)
+    #expect(system.raiseRequests.last?.0 == previousFocus)
+}
+
+/// A focus change the user made selects its tab without an early raise.
+/// When that selection is rejected, the window they chose stays in front.
+@Test @MainActor func aRejectedFocusSelectionKeepsTheChosenWindowInFront() async throws {
+    let system = FakeAppWindowSystem()
+    let model = try await makeTwoTabbedColumns(system)
+    defer { model.shutdown() }
+    let state = try #require(model.activeTabbedState)
+    let previous = try #require(state.panes[0].selected)
+    let previousFocus = try #require(state.activeWindowID)
+    let hidden = try #require(state.panes[0].tabs.first { $0 != previous })
+    let index = try #require(system.windows.firstIndex { $0.id == hidden })
+    system.windows[index].constraints.minimumSize = BTSize(width: 5000, height: 5000)
+    let raises = system.raiseRequests.count
+    system.focusedID = hidden
+    system.eventHandler?(WindowSystemEvent(kind: .focused, windowID: hidden,
+                                           processIdentifier: system.windows[index].processIdentifier))
+    try await Task.sleep(for: .milliseconds(500))
+    #expect(model.activeTabbedState?.panes[0].selected == previous)
+    #expect(system.focusedID == hidden)
+    #expect(!system.raiseRequests.dropFirst(raises).contains { $0.0 == previousFocus && $0.1 })
+}
+
+/// The placement's own checks can also reject a selection before any
+/// write, here because the tab cannot be read. The early raise is undone.
+@Test @MainActor func aSelectionRejectedByThePlacementPutsBackTheEarlyRaise() async throws {
+    let system = FakeAppWindowSystem()
+    let model = try await makeTwoTabbedColumns(system)
+    defer { model.shutdown() }
+    let state = try #require(model.activeTabbedState)
+    let previous = try #require(state.panes[0].selected)
+    let previousFocus = try #require(state.activeWindowID)
+    let hidden = try #require(state.panes[0].tabs.first { $0 != previous })
+    system.unreadableAfterWrites[hidden] = 0
+    system.focusedID = previousFocus
+    let raises = system.raiseRequests.count
+    model.performTabbed(.select(hidden))
+    try await Task.sleep(for: .milliseconds(400))
+    #expect(system.raiseRequests.dropFirst(raises).first?.0 == hidden)
+    #expect(model.activeTabbedState?.panes[0].selected == previous)
+    #expect(system.focusedID == previousFocus)
+}
+
+/// A selection whose write fails is rolled back, and the rollback already
+/// returns focus to the previous tab. The early raise's undo does not
+/// activate it a second time.
+@Test @MainActor func aRolledBackSelectionReturnsFocusOnce() async throws {
+    let system = FakeAppWindowSystem()
+    let model = try await makeTwoTabbedColumns(system)
+    defer { model.shutdown() }
+    let state = try #require(model.activeTabbedState)
+    let previous = try #require(state.panes[0].selected)
+    let previousFocus = try #require(state.activeWindowID)
+    let hidden = try #require(state.panes[0].tabs.first { $0 != previous })
+    let index = try #require(system.windows.firstIndex { $0.id == hidden })
+    // The tab sits off its pane, so selecting it writes its frame; that
+    // write fails.
+    system.windows[index].frame.origin.x += 7
+    let next = system.frameWriteCounts[hidden, default: 0] + 1
+    system.failedFrameWriteNumbers[hidden] = Set(next...(next + 50))
+    system.focusedID = previousFocus
+    let raises = system.raiseRequests.count
+    model.performTabbed(.select(hidden))
+    try await Task.sleep(for: .milliseconds(500))
+    #expect(model.activeTabbedState?.panes[0].selected == previous)
+    #expect(system.focusedID == previousFocus)
+    let activations = system.raiseRequests.dropFirst(raises).filter { $0.0 == previousFocus && $0.1 }
+    #expect(activations.count == 1, "\(system.raiseRequests.dropFirst(raises).map { "\($0.0.rawValue):\($0.1)" })")
 }
 
 @Test @MainActor
