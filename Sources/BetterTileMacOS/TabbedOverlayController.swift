@@ -368,6 +368,17 @@ public final class TabbedOverlayController {
     /// blocked now no longer waits only for a press's own selection.
     public func yieldPressSelection() { pressSelection = nil }
 
+    /// The model rejected the selection of `id` before any placement
+    /// started. The strip that shows `id` as pressed shows its confirmed
+    /// selection again at once. Other strips keep their pressed tabs.
+    public func dropPressedSelection(of id: WindowID) {
+        if pressSelection == id { pressSelection = nil }
+        for panel in panes.values {
+            guard let view = panel.contentView as? TabbedPaneView, view.displayedSelection == id else { continue }
+            view.dropPressedSelection()
+        }
+    }
+
     func menu(pane: TabbedPane, windowID: WindowID?) -> NSMenu {
         let menu = NSMenu()
         menu.autoenablesItems = false

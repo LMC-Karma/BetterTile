@@ -1637,6 +1637,53 @@ func aSameApplicationFocusChangeAfterTheSelectionIsKept() async throws {
     #expect(system.raiseRequests.last?.0 == previousFocus)
 }
 
+/// A pressed tab draws as selected at once. When the model rejects that
+/// selection before any placement starts, the strip shows the previous tab
+/// again at once, not after the highlight's timeout. The placement can
+/// reject the tab, or the model can stop before it because no window list
+/// can be read.
+@Test(arguments: [false, true]) @MainActor
+func aPressRejectedBeforePlacementDropsItsHighlightAtOnce(unreadableWindows: Bool) async throws {
+    _ = NSApplication.shared
+    let system = FakeAppWindowSystem()
+    // Keep the test's own panels off-screen; all window writes use the fake.
+    system.availableDisplays[0].frame.origin.x = 12000
+    system.availableDisplays[0].visibleFrame.origin.x = 12000
+    for index in system.windows.indices { system.windows[index].frame.origin.x += 12000 }
+    let store = ConfigurationStore(fileURL: URL(filePath: "/private/tmp/BetterTileAppTests-\(UUID().uuidString)/configuration.json"))
+    let model = BetterTileModel(store: store, system: system, startRuntime: false, presentsTabbedChrome: true)
+    model.primaryButtonIsPressed = { false }
+    defer { model.shutdown() }
+    _ = try await makeTwoTabbedColumns(system, model: model)
+    let state = try #require(model.activeTabbedState)
+    let previous = try #require(state.panes[0].selected)
+    let hidden = try #require(state.panes[0].tabs.first { $0 != previous })
+    let pane = try #require(NSApp.windows.compactMap(\.contentView).compactMap { $0 as? TabbedPaneView }
+        .first { $0.pane.id == state.panes[0].id })
+    let overlay = try #require(pane.owner)
+    try #require(await waitFor { overlay.acceptsTabDrags })
+    if unreadableWindows {
+        system.cachedRefreshFails = true
+        system.failedVisibleWindowSweeps = [system.completeSweepCount + 1]
+    } else {
+        let index = try #require(system.windows.firstIndex { $0.id == hidden })
+        // The tab cannot fit its pane, so the selection is rejected.
+        system.windows[index].constraints.minimumSize = BTSize(width: 5000, height: 5000)
+    }
+    pane.layoutSubtreeIfNeeded()
+    let tab = pane.strip.tabFrame(try #require(pane.content.renderedIndex(of: hidden)))
+    let window = try #require(pane.window)
+    let location = pane.content.convert(NSPoint(x: tab.midX, y: tab.midY), to: nil)
+    let press = try #require(NSEvent.mouseEvent(
+        with: .leftMouseDown, location: location, modifierFlags: [], timestamp: 0,
+        windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1
+    ))
+    pane.mouseDown(with: press)
+    #expect(model.activeTabbedState?.panes[0].selected == previous)
+    #expect((model.statusMessage != nil) != unreadableWindows)
+    #expect(pane.displayedSelection == previous)
+}
+
 /// A focus change the user made selects its tab without an early raise.
 /// When that selection is rejected, the window they chose stays in front.
 @Test @MainActor func aRejectedFocusSelectionKeepsTheChosenWindowInFront() async throws {
