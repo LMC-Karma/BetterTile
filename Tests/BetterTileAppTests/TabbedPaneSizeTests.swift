@@ -138,3 +138,21 @@ func aLargerHiddenTabGrowsItsPaneAndTheSmallerTabRestoresIt(restores: Bool) asyn
     #expect(await waitFor { model.lastActionFeedback?.kind == .failure })
     #expect(model.lastActionFeedback?.message == "Large is too large for this display")
 }
+
+/// A probe that leaves the hidden tab at its probe size is undone at once,
+/// even when the selection then does not fit and writes no frames.
+@Test @MainActor func aHiddenTabLeftAtItsProbeSizeIsPutBack() async throws {
+    let system = FakeAppWindowSystem()
+    let (model, large, _) = try await narrowLeftPaneWithAHiddenTab(system, restores: true)
+    defer { model.shutdown() }
+    // The app keeps its window at least 1200 wide, behind the narrower pane.
+    system.windows[1].constraints.minimumSize.width = 1200
+    system.windows[1].frame.size.width = 1200
+    let before = system.windows[1].frame
+    system.measuresOnWrite = true
+    system.unrestoredProbeWindowIDs = [large]
+    model.performTabbed(.select(large))
+    #expect(await waitFor { model.lastActionFeedback?.kind == .failure })
+    #expect(system.windows.first { $0.id == large }?.frame == before)
+}
+

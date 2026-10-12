@@ -4296,10 +4296,17 @@ extension BetterTileModel {
         // A hidden tab that joined when the desktop entered Tabbed was never
         // measured. Measure it now, while it is still behind its pane's
         // selected tab, so its placement can grow the pane at once.
-        if case let .select(id) = intent, state.hiddenWindowIDs.contains(id),
-           case let .degraded(reason) = coordinator.probeMinimumSizes(for: [id]) {
-            // The selection's placement writes this window's frame next.
-            Self.bentoLog.error("\(reason, privacy: .public)")
+        if case let .select(id) = intent, state.hiddenWindowIDs.contains(id) {
+            let original = (try? system.windowSnapshots(ids: [id]))?.first.map { Placement(windowID: id, frame: $0.frame) }
+            if case let .degraded(reason) = coordinator.probeMinimumSizes(for: [id]) {
+                // Put the window back now: a selection that does not fit
+                // writes no frames, so it cannot be left to the placement.
+                Self.bentoLog.error("\(reason, privacy: .public)")
+                if let original, !coordinator.applyPlacements([original], recordHistory: false).isApplied {
+                    statusMessage = reason
+                    presentActionResult(succeeded: false, error: reason, displayID: displayID)
+                }
+            }
         }
         // A selected tab's frame is already in its pane, so it comes to the
         // front before anything is read. The placement below verifies it; a
