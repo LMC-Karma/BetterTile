@@ -361,8 +361,10 @@ change a Bento operation made to the tree; writing it also writes the tree.
   VoiceOver slider over each divider. The slider ignores the mouse; increment
   and decrement move the Bento divider by five percent of the area it splits.
 - New windows join the active pane as its selected tab. An arrival that cannot
-  fit there joins the first other pane it fits without replacing its selected
-  tab or moving boundaries. If no pane fits, it stays hidden in the active pane.
+  fit there joins, as a hidden tab, the other pane that can show it with the
+  least change to the panes: as is, or after boundaries adapt. If no pane can
+  show it, it floats at its own size, moved fully onto the work area when it
+  fits there, and the result pill says it does not fit in any pane.
   Entering Tabbed from Bento adopts the tree, so every pane stays where it was.
   Leaving for Bento gives every hidden tab its own pane (`unstacked(in:)`) and
   removes the reserve. Leaving for Native restores the pre-Tabbed frames and

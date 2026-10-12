@@ -454,9 +454,9 @@ public struct TabbedLayoutState: Hashable, Sendable {
     /// Reconciles a running layout. A window that arrives later, for example
     /// from another Space, joins as the selected tab of the active pane when
     /// it fits there, moving boundaries only as far as it needs. Otherwise it
-    /// joins the first pane it fits without replacing an existing selected
-    /// tab or moving any boundary, else as a hidden tab of the active pane.
-    /// The window is never left out.
+    /// joins, as a hidden tab, the other pane that can show it with the least
+    /// change to the panes, as is or after boundaries adapt. A window that no
+    /// pane can show floats instead.
     public mutating func reconcile(
         windowIDs observed: [WindowID],
         removed: Set<WindowID>,
@@ -482,15 +482,35 @@ public struct TabbedLayoutState: Hashable, Sendable {
                 return
             }
         }
+        // Otherwise the pane that can show it with the least change to the
+        // other panes, as is or after boundaries adapt. It joins as a hidden
+        // tab; selecting it fits the panes again.
+        let current = frames(in: bounds)
+        var best: (change: Double, paneID: UUID)?
         for paneID in groups.panes.map(\.id) where paneID != activePaneID {
             var trial = self
             guard trial.groups.add(id, to: paneID) else { continue }
+            let shown: Self
             if (try? trial.placements(in: bounds, windows: windows)) != nil {
-                groups.add(id, to: paneID, select: false)
-                return
+                shown = trial
+            } else if let fitted = try? trial.fittingMinimumWidths(in: bounds, windows: windows),
+                      (try? fitted.placements(in: bounds, windows: windows)) != nil {
+                shown = fitted
+            } else { continue }
+            let change = shown.frames(in: bounds).reduce(0) { total, entry in
+                guard let old = current[entry.key] else { return total }
+                return total + abs(old.minX - entry.value.minX) + abs(old.minY - entry.value.minY)
+                    + abs(old.size.width - entry.value.size.width) + abs(old.size.height - entry.value.size.height)
             }
+            if best.map({ change < $0.change - 0.5 }) ?? true { best = (change, paneID) }
         }
-        groups.add(id, to: activePaneID, select: false)
+        if let best {
+            groups.add(id, to: best.paneID, select: false)
+            return
+        }
+        // No pane can show it. It floats at its own size, as Bento floats a
+        // window it cannot place, instead of hiding behind a pane it overflows.
+        groups.layout.floatingWindowIDs.insert(id)
     }
 
     /// The last tab of a pane leaves the pane empty, ready for another tab.
