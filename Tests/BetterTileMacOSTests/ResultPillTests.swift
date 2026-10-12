@@ -158,3 +158,59 @@ private final class ResultPillTestPanel: NSPanel {
     #expect(long.size.width == 520)
     #expect(long.size.height > short.size.height)
 }
+
+/// CJK characters and emoji are about twice as wide as Latin letters. The
+/// pill measures the rendered detail, so a short CJK detail that is wider
+/// than one line gets the two-line height.
+@Test func resultPillMeasuresWideCharactersForItsSize() {
+    let display = DisplaySnapshot(id: DisplayID(rawValue: "pill"), frame: BTRect(x: 0, y: 0, width: 1920, height: 1080),
+                                  visibleFrame: BTRect(x: 0, y: 0, width: 1920, height: 1050))
+    // 44 characters: a 6 pt-per-character estimate puts this on one line.
+    let wide = String(repeating: "四半期計画のメモと対応", count: 4)
+    #expect(ResultPillLayout.detailLineCount(wide, width: ResultPillLayout.maximumDetailTextWidth) == 2)
+    let frame = ResultPillLayout.frame(for: .failure(wide), on: display)
+    #expect(frame.size.width == 520)
+    #expect(frame.size.height == 72)
+
+    let short = ResultPillLayout.frame(for: .failure("予算 and 計画 cannot fit."), on: display)
+    #expect(short.size.height == 58)
+}
+
+/// Titles absorb the shortening, so the sentence around them always stays
+/// visible within the detail's two lines on the widest pill.
+@MainActor
+@Test(arguments: [
+    "Quarterly planning notes and follow-up actions for the platform team – Google Docs – Brave",
+    "四半期計画のメモとプラットフォームチームのフォローアップ項目一覧表と予算レビュー資料",
+    "📊📈📉🗂️📁📂🗃️🗄️📋📌📍📎🖇️📏📐✂️🗒️🗓️📆📅📇🧾📑🔖🏷️💼📒📓📔📕📗📘📙📚",
+    "Budget 2027 予算レビュー 📊 – 프로젝트 계획서 및 후속 조치 항목 – Numbers",
+])
+func resultPillDetailShortensTitlesToKeepItsSentence(title: String) {
+    let ending = " stays floating: drop it on a pane to swap, or switch this desktop to Tabbed."
+    let detail = ResultPillLayout.detail(naming: [title, title]) { titles in
+        "Bento manages up to six windows. “\(titles.joined(separator: "” and “"))”\(ending)"
+    }
+    #expect(detail.hasSuffix(ending))
+    #expect(detail.contains("“\(title.prefix(3))"), "\(detail)")
+    #expect(detail.contains("…"))
+    #expect(ResultPillLayout.detailFits(detail), "\(detail)")
+
+    // The pill's own label shows the whole detail without truncating it.
+    let label = NSTextField(labelWithString: detail)
+    ResultPillController.configureDetailLabel(label)
+    let bounds = NSRect(x: 0, y: 0, width: ResultPillLayout.maximumDetailWidth - ResultPillLayout.detailChrome,
+                        height: 1000)
+    let shown = label.cell?.cellSize(forBounds: bounds).height ?? 0
+    label.maximumNumberOfLines = 0
+    let needed = label.cell?.cellSize(forBounds: bounds).height ?? 0
+    #expect(needed > 0)
+    #expect(needed <= shown, "\(detail)")
+}
+
+/// A detail that already fits keeps its titles whole.
+@Test func resultPillDetailKeepsShortTitlesWhole() {
+    let detail = ResultPillLayout.detail(naming: ["予算", "📊 Report"]) { titles in
+        "\(titles.joined(separator: " and ")) cannot fit beside each other at their minimum sizes."
+    }
+    #expect(detail == "予算 and 📊 Report cannot fit beside each other at their minimum sizes.")
+}

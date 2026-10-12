@@ -74,19 +74,80 @@ public struct ResultPillFeedback: Equatable, Sendable {
 
 public enum ResultPillLayout {
     static let maximumDetailWidth: Double = 520
-    /// Horizontal space beside the detail text: insets, icon, and spacing.
+    static let minimumDetailWidth: Double = 240
+    /// Horizontal space beside the detail label: insets, icon, and spacing.
     static let detailChrome: Double = 55
-    /// Detail characters that fit on the two lines a wide pill shows.
-    public static let detailCharacterCapacity = Int((maximumDetailWidth - 60) / 6) * 2
+    /// The label draws its text 2 pt inside each side.
+    static let labelTextInset: Double = 4
+    /// Spare width, so a small difference between this measurement and the
+    /// label's own layout cannot push text onto a third line.
+    static let measurementMargin: Double = 6
+    /// The detail label shows at most this many lines.
+    public static let detailLineLimit = 2
+    /// The width the detail text can use on the widest pill.
+    public static let maximumDetailTextWidth = maximumDetailWidth - detailChrome - labelTextInset - measurementMargin
+    static var detailFont: NSFont { .systemFont(ofSize: 11) }
+
+    /// The number of lines `text` takes in the detail font, wrapped by word
+    /// at `width`. It measures rendered glyphs, so wide characters such as
+    /// CJK text and emoji count at their real width.
+    public static func detailLineCount(_ text: String, width: Double) -> Int {
+        let storage = NSTextStorage(string: text, attributes: [.font: detailFont])
+        let layoutManager = NSLayoutManager()
+        storage.addLayoutManager(layoutManager)
+        let container = NSTextContainer(size: NSSize(width: width, height: .greatestFiniteMagnitude))
+        container.lineFragmentPadding = 0
+        layoutManager.addTextContainer(container)
+        layoutManager.ensureLayout(for: container)
+        var lines = 0
+        layoutManager.enumerateLineFragments(forGlyphRange: layoutManager.glyphRange(for: container)) { _, _, _, _, _ in
+            lines += 1
+        }
+        return lines
+    }
+
+    /// True when all of `text` shows within the detail's lines on the widest pill.
+    public static func detailFits(_ text: String) -> Bool {
+        detailLineCount(text, width: maximumDetailTextWidth) <= detailLineLimit
+    }
+
+    /// Builds a detail that names windows. When the full detail does not fit,
+    /// it shortens the titles, not the sentence around them, so the
+    /// instruction always stays visible.
+    public static func detail(naming titles: [String], _ compose: ([String]) -> String) -> String {
+        let full = compose(titles)
+        guard !detailFits(full) else { return full }
+        func shortened(to length: Int) -> String {
+            compose(titles.map { title in
+                guard title.count > length else { return title }
+                return title.prefix(length).trimmingCharacters(in: .whitespaces) + "…"
+            })
+        }
+        // Find the longest title length that fits. `fitting` always fits,
+        // or is the shortest form when even that does not fit.
+        var fitting = 0
+        var tooLong = titles.map(\.count).max() ?? 0
+        while tooLong - fitting > 1 {
+            let middle = (fitting + tooLong) / 2
+            if detailFits(shortened(to: middle)) { fitting = middle } else { tooLong = middle }
+        }
+        return shortened(to: fitting)
+    }
 
     public static func frame(for feedback: ResultPillFeedback, on display: DisplaySnapshot) -> BTRect {
-        let estimatedWidth = 72 + Double(feedback.message.count) * 7
-        let detailWidth = feedback.detail.map { 60 + Double($0.count) * 6 } ?? 0
-        let width = feedback.detail == nil
-            ? min(240, max(172, estimatedWidth))
-            : min(maximumDetailWidth, max(240, detailWidth))
-        // A detail longer than the widest pill wraps to a second line.
-        let height: Double = feedback.detail == nil ? 40 : detailWidth > maximumDetailWidth ? 72 : 58
+        let width: Double
+        let height: Double
+        if let detail = feedback.detail {
+            let spare = detailChrome + labelTextInset + measurementMargin
+            let textWidth = NSAttributedString(string: detail, attributes: [.font: detailFont]).size().width
+            width = min(maximumDetailWidth, max(minimumDetailWidth, (textWidth + spare).rounded(.up)))
+            // A detail wider than the widest pill wraps to a second line.
+            height = detailLineCount(detail, width: width - spare) > 1 ? 72 : 58
+        } else {
+            let estimatedWidth = 72 + Double(feedback.message.count) * 7
+            width = min(240, max(172, estimatedWidth))
+            height = 40
+        }
         return BTRect(
             x: display.visibleFrame.midX - width / 2,
             y: display.visibleFrame.minY + 24,
@@ -202,6 +263,17 @@ public final class ResultPillController {
         panel.orderOut(nil)
     }
 
+    /// The detail's wrapping must match what `ResultPillLayout` measures.
+    static func configureDetailLabel(_ label: NSTextField) {
+        label.font = ResultPillLayout.detailFont
+        label.textColor = .secondaryLabelColor
+        label.lineBreakMode = .byWordWrapping
+        label.usesSingleLineMode = false
+        label.cell?.wraps = true
+        label.cell?.truncatesLastVisibleLine = true
+        label.maximumNumberOfLines = ResultPillLayout.detailLineLimit
+    }
+
     private func makeContentView() -> NSView {
         let effect = OverlayGlassView()
         effect.cornerRadius = 20
@@ -217,13 +289,7 @@ public final class ResultPillController {
         stack.alignment = .centerY
         stack.spacing = 8
         stack.edgeInsets = NSEdgeInsets(top: 8, left: 13, bottom: 8, right: 15)
-        detailLabel.font = .systemFont(ofSize: 11)
-        detailLabel.textColor = .secondaryLabelColor
-        detailLabel.lineBreakMode = .byWordWrapping
-        detailLabel.usesSingleLineMode = false
-        detailLabel.cell?.wraps = true
-        detailLabel.cell?.truncatesLastVisibleLine = true
-        detailLabel.maximumNumberOfLines = 2
+        Self.configureDetailLabel(detailLabel)
         detailLabel.isHidden = true
         let text = NSStackView(views: [label, detailLabel])
         text.orientation = .vertical
