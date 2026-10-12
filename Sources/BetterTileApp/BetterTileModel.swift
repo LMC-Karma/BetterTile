@@ -3789,15 +3789,13 @@ extension BetterTileModel {
             restorationFrames[window.id] = window.frame.clamped(to: bounds)
         }
         let floatedNames = windows.filter { floated.contains($0.id) }.map(Self.displayName(of:))
+        var floatedFeedback: ResultPillFeedback?
         if floatedNames.count == 1 {
-            presentActionResult(succeeded: false, feedback: .failure(
-                title: "\(floatedNames[0]) is floating",
-                detail: "It doesn’t fit in any pane."
-            ), displayID: display.id)
+            floatedFeedback = .failure(title: "\(floatedNames[0]) is floating", detail: "It doesn’t fit in any pane.")
         } else if floatedNames.count > 1 {
             // One pill names them all; long names shorten, not the sentence.
             let named = floatedNames.count > 3 ? Array(floatedNames.prefix(2)) : floatedNames
-            presentActionResult(succeeded: false, feedback: .failure(
+            floatedFeedback = .failure(
                 title: "\(floatedNames.count) windows are floating",
                 detail: ResultPillLayout.detail(naming: named) { titles in
                     switch (titles.count, floatedNames.count) {
@@ -3806,7 +3804,7 @@ extension BetterTileModel {
                     default: "\(titles[0]), \(titles[1]), and \(titles[2]) don’t fit in any pane."
                     }
                 }
-            ), displayID: display.id)
+            )
         }
         // Removals include windows on other displays. Reconciliation above
         // already records actual membership changes; unrelated IDs must not
@@ -3816,7 +3814,8 @@ extension BetterTileModel {
             applyTabbedState(state, session: session, display: display, windows: windows,
                              focus: wasUninitialized || before.activeWindowID != state.activeWindowID ? state.activeWindowID : nil,
                              restorationFrames: restorationFrames,
-                             arrivals: wasUninitialized ? [] : state.windowIDs.subtracting(before.windowIDs))
+                             arrivals: wasUninitialized ? [] : state.windowIDs.subtracting(before.windowIDs),
+                             appliedFeedback: floatedFeedback)
         } else {
             _ = sessionStore.commit(session, replacing: session.revision)
             showTabbed(session: session, display: display, windows: windows)
@@ -3941,7 +3940,7 @@ extension BetterTileModel {
         selectionOnly: Bool = false, earlyRaise: TabbedEarlyRaise? = nil, rollbackFrames: [WindowID: BTRect]? = nil,
         snapAction: WindowAction? = nil, snapScope: TabbedSnapScope = .pane, gestureBaseline: TabbedLayoutState? = nil,
         gestureSourceID: WindowID? = nil, expectedSpaceID: NativeSpaceID? = nil, restorationFrames: [WindowID: BTRect] = [:],
-        arrivals: Set<WindowID> = []
+        arrivals: Set<WindowID> = [], appliedFeedback: ResultPillFeedback? = nil
     ) {
         guard tabbedTasks[display.id] == nil else {
             tabbedNeedsReapply.insert(display.id)
@@ -4243,6 +4242,10 @@ extension BetterTileModel {
                         self.rememberTabbedUndo(previous, sessionID: original.id, floatingFrames: floatingFrames)
                     }
                     self.showTabbed(session: committed, display: display, windows: windows)
+                    // Said only once the placement that makes it true landed.
+                    if let appliedFeedback {
+                        self.presentActionResult(succeeded: false, feedback: appliedFeedback, displayID: display.id)
+                    }
                     // Pane edges or the windows that show them changed. The
                     // divider must follow both: a selection changes which
                     // window a divider drag resizes. Window events from our
