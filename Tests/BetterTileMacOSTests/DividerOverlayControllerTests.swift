@@ -1279,3 +1279,55 @@ func liveDividerReleaseRecomputesANewlyLearnedMinimum(height: Bool) throws {
     #expect(height ? rightFrame.size.height == 240 : rightFrame.size.width == 340)
     #expect(height ? abs(leftFrame.maxY - rightFrame.minY) < 0.5 : abs(leftFrame.maxX - rightFrame.minX) < 0.5)
 }
+
+/// A divider commit keeps a fixed-size window at its size, centred in its
+/// new pane; resizable windows still fill theirs.
+@Test @MainActor func dividerPlacementsKeepFixedSizeWindowsCentred() {
+    let display = DisplayID(rawValue: "main")
+    let fixed = WindowSnapshot(id: WindowID(rawValue: "calculator"), processIdentifier: 1,
+                               frame: BTRect(x: 0, y: 0, width: 230, height: 408), displayID: display,
+                               constraints: WindowConstraints(isResizable: false))
+    let other = WindowSnapshot(id: WindowID(rawValue: "other"), processIdentifier: 2,
+                               frame: BTRect(x: 0, y: 0, width: 400, height: 400), displayID: display)
+    let placements = [Placement(windowID: fixed.id, frame: BTRect(x: 0, y: 64, width: 900, height: 900)),
+                      Placement(windowID: other.id, frame: BTRect(x: 906, y: 64, width: 900, height: 900))]
+    let kept = DividerOverlayController.keepingFixedSizes(placements, windows: [fixed, other])
+    #expect(kept[0].frame == BTRect(x: 335, y: 310, width: 230, height: 408))
+    #expect(kept[1] == placements[1])
+}
+
+/// A divider cannot shrink a pane below the fixed-size window in it, so the
+/// window never covers the neighbour that grew.
+@Test @MainActor func dividerStopsAtAFixedSizeWindow() throws {
+    _ = NSApplication.shared
+    let system = FakeWindowSystem()
+    let bounds = BTRect(x: -10_000, y: -10_000, width: 800, height: 600)
+    let display = DisplayID(rawValue: "main")
+    system.availableDisplays = [DisplaySnapshot(id: display, frame: bounds, visibleFrame: bounds, isMain: true)]
+    let left = WindowID(rawValue: "left"), right = WindowID(rawValue: "right")
+    system.windows = [
+        WindowSnapshot(id: left, processIdentifier: 1, frame: BTRect(x: bounds.minX, y: bounds.minY, width: 400, height: 600),
+                       displayID: display, constraints: WindowConstraints(isResizable: false)),
+        WindowSnapshot(id: right, processIdentifier: 2, frame: BTRect(x: bounds.minX + 400, y: bounds.minY, width: 400, height: 600), displayID: display),
+    ]
+    var config = BetterTileConfiguration()
+    config.resizeFeedbackMode = .ghost
+    let controller = DividerOverlayController(coordinator: WindowCoordinator(system: system), configuration: config)
+    let boundary = BoundaryDescriptor(
+        id: "native", displayID: display, axis: .vertical, coordinate: bounds.minX + 400,
+        spanStart: bounds.minY, spanEnd: bounds.maxY, beforeWindowIDs: [left], afterWindowIDs: [right]
+    )
+    let start = BTPoint(x: bounds.minX + 400, y: bounds.minY + 80)
+    let interaction = try #require(DividerInteractionResolver.resolve(at: start, in: [boundary], hitWidth: 18, adjacencyTolerance: 6, paneGap: 0))
+    let screen = try #require(NSScreen.screens.first)
+
+    controller.beginGesture(interaction: interaction, at: start)
+    defer { controller.hideAndCancel() }
+    controller.drag(to: CGPoint(x: start.x - 150, y: screen.frame.maxY - start.y))
+    controller.displayTick()
+    controller.end()
+    let leftFrame = try #require(system.windows.first { $0.id == left }?.frame)
+    let rightFrame = try #require(system.windows.first { $0.id == right }?.frame)
+    #expect(leftFrame.size.width == 400, "left \(leftFrame)")
+    #expect(rightFrame.minX >= leftFrame.maxX - 0.5, "left \(leftFrame) right \(rightFrame)")
+}

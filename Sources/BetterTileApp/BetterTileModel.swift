@@ -4029,6 +4029,9 @@ extension BetterTileModel {
                     self.showTabbed(session: restoredSession, display: display, windows: windows)
                 }
                 self.presentActionResult(succeeded: false, error: self.statusMessage, displayID: display.id)
+                // The rollback may have reverted a selection the divider
+                // pointed at mid-gesture; our restore writes do not refresh it.
+                self.refreshDividerBoundaries()
                 self.drainTabbedQueuedIntent(on: display.id, sessionID: original.id)
                 self.schedulePendingWindowEvents()
             }
@@ -4163,6 +4166,11 @@ extension BetterTileModel {
                         self.rememberTabbedUndo(previous, sessionID: original.id, floatingFrames: floatingFrames)
                     }
                     self.showTabbed(session: committed, display: display, windows: windows)
+                    // Pane edges or the windows that show them changed. The
+                    // divider must follow both: a selection changes which
+                    // window a divider drag resizes. Window events from our
+                    // own writes are suppressed and do not refresh it.
+                    self.refreshDividerBoundaries()
                 }
             } else {
                 _ = restoreGestureMembership()
@@ -4179,6 +4187,9 @@ extension BetterTileModel {
                     self.showTabbed(session: restored, display: display, windows: windows)
                 }
                 self.presentActionResult(succeeded: false, error: outcome.failureReason, displayID: display.id)
+                // An earlier step of this gesture may have pointed the
+                // divider at a selection the rollback just reverted.
+                self.refreshDividerBoundaries()
             }
             self.drainTabbedQueuedIntent(on: display.id, sessionID: original.id)
             if self.tabbedNeedsFocusRefresh || repairsStackingAfterSelection { self.handleTabbedFocus() }
