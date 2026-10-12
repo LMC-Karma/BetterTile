@@ -12,13 +12,10 @@ private func plannerWindow(_ name: String, frame: BTRect = plannerBounds) -> Win
 
 @Test func removingEmptySlotsKeepsTheOtherPanesRelativeSizes() throws {
     let a = WindowID(rawValue: "a"), b = WindowID(rawValue: "b")
-    let locked = UUID(), free = UUID()
     var state = BentoLayoutState(root: .partition(BentoPartition(
         axis: .vertical,
         children: [.vacant(UUID()), .leaf(a), .leaf(b)],
-        ratios: [0.2, 0.3, 0.5],
-        boundaryIDs: [free, locked],
-        lockedBoundaryIDs: [locked]
+        ratios: [0.2, 0.3, 0.5]
     )))
     state.removeVacancies()
     guard case let .partition(root) = state.root else {
@@ -27,7 +24,6 @@ private func plannerWindow(_ name: String, frame: BTRect = plannerBounds) -> Win
     }
     #expect(root.children == [.leaf(a), .leaf(b)])
     #expect(abs(root.ratios[0] - 0.375) < 0.000_001)
-    #expect(root.lockedBoundaryIDs == [locked])
 
     var onlyEmpty = BentoLayoutState(root: .partition(BentoPartition(
         axis: .horizontal, children: [.vacant(UUID()), .vacant(UUID())]
@@ -86,4 +82,65 @@ private func plannerWindow(_ name: String, frame: BTRect = plannerBounds) -> Win
         return
     }
     #expect(!root.children.contains { if case .vacant = $0 { true } else { false } })
+}
+
+@Test func removingAnEmptySlotBesideALockedDividerKeepsTheLockInPlace() throws {
+    let a = WindowID(rawValue: "a"), b = WindowID(rawValue: "b")
+    let free = UUID(), locked = UUID()
+    var state = BentoLayoutState(root: .partition(BentoPartition(
+        axis: .vertical,
+        children: [.leaf(a), .vacant(UUID()), .leaf(b)],
+        ratios: [0.3, 0.3, 0.4],
+        boundaryIDs: [free, locked],
+        lockedBoundaryIDs: [locked]
+    )))
+    state.removeVacancies()
+    guard case let .partition(root) = state.root else {
+        Issue.record("Expected a partition")
+        return
+    }
+    #expect(root.children == [.leaf(a), .leaf(b)])
+    #expect(root.boundaryIDs == [locked])
+    #expect(root.lockedBoundaryIDs == [locked])
+    // The empty slot's share goes to a, on the free side, so b keeps its edge.
+    #expect(abs(root.ratios[0] - 0.6) < 0.000_001)
+}
+
+@Test func removingTwoEmptySlotsFromOneRowKeepsTheLockedDivider() throws {
+    let a = WindowID(rawValue: "a"), b = WindowID(rawValue: "b")
+    let locked = UUID()
+    var state = BentoLayoutState(root: .partition(BentoPartition(
+        axis: .vertical,
+        children: [.vacant(UUID()), .leaf(a), .vacant(UUID()), .leaf(b)],
+        ratios: [0.1, 0.3, 0.2, 0.4],
+        boundaryIDs: [UUID(), locked, UUID()],
+        lockedBoundaryIDs: [locked]
+    )))
+    state.removeVacancies()
+    guard case let .partition(root) = state.root else {
+        Issue.record("Expected a partition")
+        return
+    }
+    #expect(root.children == [.leaf(a), .leaf(b)])
+    #expect(root.lockedBoundaryIDs == [locked])
+    #expect(abs(root.ratios[0] - 0.4) < 0.000_001)
+}
+
+@Test func closingAWindowBesideALockedDividerKeepsTheLock() throws {
+    let a = WindowID(rawValue: "a"), x = WindowID(rawValue: "x"), b = WindowID(rawValue: "b")
+    let locked = UUID()
+    var state = BentoLayoutState(root: .partition(BentoPartition(
+        axis: .vertical,
+        children: [.leaf(a), .leaf(x), .leaf(b)],
+        ratios: [0.3, 0.3, 0.4],
+        boundaryIDs: [UUID(), locked],
+        lockedBoundaryIDs: [locked]
+    )))
+    state.remove(x)
+    guard case let .partition(root) = state.root else {
+        Issue.record("Expected a partition")
+        return
+    }
+    #expect(root.lockedBoundaryIDs == [locked])
+    #expect(abs(root.ratios[0] - 0.6) < 0.000_001)
 }
