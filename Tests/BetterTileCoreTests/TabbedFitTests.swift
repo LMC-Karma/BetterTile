@@ -119,3 +119,23 @@ private func leftWidth(_ state: TabbedLayoutState) -> Double {
     #expect(problem == .neighbors([wide]))
 }
 
+@Test func fitProblemNamesOnlyThePanesThatMustGiveWay() throws {
+    // Three columns: the target's pane, a 500 wide neighbour, a 120 wide one.
+    let a = WindowID(rawValue: "a"), b = WindowID(rawValue: "b"), c = WindowID(rawValue: "c")
+    let tree = BentoLayoutState(root: .partition(BentoPartition(
+        axis: .vertical, children: [.leaf(a), .leaf(b), .leaf(c)]
+    )))
+    var state = try #require(TabbedLayoutState(adopting: tree))
+    let large = WindowID(rawValue: "large")
+    state.reconcile(windowIDs: [a, b, c, large], removed: [], focused: nil)
+    try #require(state.pane(containing: large)?.id == state.pane(containing: a)?.id)
+    state.select(a)
+    // 1000 - 12 of gaps = 988: large 700 + b 500 + c 120 leaves 332 short,
+    // more than c's 120 could give, so only b must give way.
+    let mostly = [window("a"), window("large", minimumWidth: 700), window("b", minimumWidth: 500), window("c")]
+    #expect(state.fitProblem(showing: large, in: fitBounds, windows: mostly) == .neighbors([b]))
+    // 100 short: either neighbour alone could give it, so both are named.
+    let either = [window("a"), window("large", minimumWidth: 588), window("b", minimumWidth: 200), window("c", minimumWidth: 300)]
+    #expect(state.fitProblem(showing: large, in: fitBounds, windows: either) == .neighbors([b, c]))
+}
+

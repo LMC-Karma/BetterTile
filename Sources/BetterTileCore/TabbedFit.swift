@@ -82,10 +82,16 @@ extension TabbedLayoutState {
             let needs = children.map { minimumExtent($0, axis) }
             var others = children
             others.remove(at: index)
-            // Every other pane is already at its minimum in the best layout,
-            // so each one's binding windows would have to shrink below theirs.
-            if needs.reduce(0, +) > room + tolerance {
-                return .neighbors(others.flatMap { binding($0, axis) })
+            // The others must give up `shortfall` below their minimums. A pane
+            // must give some only if the rest together cannot cover it, even
+            // by shrinking to nothing; when any could, all are named.
+            let shortfall = needs.reduce(0, +) - room
+            if shortfall > tolerance {
+                let otherIndices = children.indices.filter { $0 != index }
+                let othersNeed = otherIndices.reduce(0) { $0 + needs[$1] }
+                let forced = otherIndices.filter { othersNeed - needs[$0] < shortfall - tolerance }
+                let named = forced.isEmpty ? otherIndices : forced
+                return .neighbors(named.flatMap { binding(children[$0], axis) })
             }
             // Locked dividers fix the total size of each run between them.
             let locked = partition.boundaryIDs.indices.filter {
