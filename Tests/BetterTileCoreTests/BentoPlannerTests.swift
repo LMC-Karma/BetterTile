@@ -844,3 +844,39 @@ func adoptingSixExistingPanesStillRegistersOverflow(paneGap: Double) {
     let restoredB = try #require(results[0].first { $0.windowID == b.id })
     #expect(restoredB.frame.minX >= 599, "\(results[0])")
 }
+
+@Test func aNewWindowFillsAnEmptySlotBeforeSplittingTheFocusedPane() throws {
+    let left = plannerWindow("left", frame: BTRect(x: 0, y: 0, width: 600, height: 800))
+    let new = plannerWindow("new")
+    let snapped = BentoPartition(axis: .vertical, children: [.leaf(left.id), .vacant(UUID())])
+    let result = BentoPlanner().plan(
+        state: BentoRuntimeState(layout: BentoLayoutState(root: .partition(snapped))),
+        observation: BentoObservation(bounds: plannerBounds, windows: [left, new], focusedWindowID: left.id),
+        intent: .insert(new.id)
+    )
+
+    #expect(result.writesFrames)
+    let frames = Dictionary(uniqueKeysWithValues: result.placements.map { ($0.windowID, $0.frame) })
+    #expect(frames[left.id] == left.frame)
+    #expect(frames[new.id] == BTRect(x: 600, y: 0, width: 600, height: 800))
+}
+
+@Test func repairRemovesEmptySlots() throws {
+    let a = plannerWindow("a", frame: BTRect(x: 0, y: 0, width: 400, height: 800))
+    let b = plannerWindow("b", frame: BTRect(x: 400, y: 0, width: 400, height: 800))
+    let tree = BentoPartition(axis: .vertical, children: [.leaf(a.id), .leaf(b.id), .vacant(UUID())])
+    let result = BentoPlanner().plan(
+        state: BentoRuntimeState(layout: BentoLayoutState(root: .partition(tree))),
+        observation: BentoObservation(bounds: plannerBounds, windows: [a, b], focusedWindowID: a.id),
+        intent: .retile
+    )
+
+    #expect(result.writesFrames)
+    let area = result.placements.reduce(0) { $0 + $1.frame.area }
+    #expect(abs(area - plannerBounds.area) < 0.01)
+    guard case let .partition(root) = result.state.layout.root else {
+        Issue.record("Expected a partition")
+        return
+    }
+    #expect(!root.children.contains { if case .vacant = $0 { true } else { false } })
+}

@@ -390,6 +390,8 @@ public struct BentoPlanner: Sendable {
 
         var result = layout
         result.root = result.root.map { BentoLayoutState.normalized(reset($0)) }
+        // Repair leaves no blank space: an empty slot's neighbours take it.
+        result.removeVacancies()
         return result
     }
 
@@ -460,7 +462,12 @@ public struct BentoPlanner: Sendable {
             next.layout.floatingWindowIDs = floatingWindowIDs.subtracting(treeIDs.union([windowID]))
         } else {
             next.layout.setFloating(false, windowID: windowID)
-            if let focusedWindowID = observation.focusedWindowID,
+            if !next.layout.vacantFrames(in: observation.bounds).isEmpty {
+                // An empty slot, such as the rest of the screen after a
+                // half-screen snap, takes the new window before any pane
+                // is split. The largest slot is used.
+                next.layout.insert(windowID, in: observation.bounds, currentFrames: observation.frames)
+            } else if let focusedWindowID = observation.focusedWindowID,
                treeIDs.contains(focusedWindowID) {
                 next.layout.split(focusedWindowID, inserting: windowID, in: observation.bounds)
             } else {

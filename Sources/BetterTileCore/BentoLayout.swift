@@ -228,6 +228,31 @@ public struct BentoLayoutState: Hashable, Sendable {
         root = root.flatMap { removing(windowID, from: $0) }
     }
 
+    /// Puts a window into one empty slot. Returns false when the slot does
+    /// not exist or the window is already in the tree.
+    @discardableResult
+    public mutating func fillVacancy(_ vacancyID: UUID, with windowID: WindowID) -> Bool {
+        guard let root, !root.windowIDs.contains(windowID),
+              Self.vacancyIDs(in: root).contains(vacancyID) else { return false }
+        self.root = replacingVacant(vacancyID, in: root, with: .leaf(windowID))
+        floatingWindowIDs.remove(windowID)
+        return true
+    }
+
+    /// Removes every empty slot. The panes beside each slot share its space
+    /// in proportion to their sizes. A tree of only empty slots becomes empty.
+    public mutating func removeVacancies() {
+        root = root.flatMap { pruning($0) { if case .vacant = $0 { true } else { false } } }
+    }
+
+    private static func vacancyIDs(in node: BentoNode) -> [UUID] {
+        switch node {
+        case .leaf: []
+        case let .vacant(id): [id]
+        case let .partition(partition): partition.children.flatMap(vacancyIDs)
+        }
+    }
+
     public mutating func setFloating(_ floating: Bool, windowID: WindowID) {
         if floating {
             floatingWindowIDs.insert(windowID)
@@ -659,15 +684,20 @@ public struct BentoLayoutState: Hashable, Sendable {
     }
 
     private func removing(_ id: WindowID, from node: BentoNode) -> BentoNode? {
+        pruning(node) { $0 == .leaf(id) }
+    }
+
+    /// Drops the leaves `removes` matches. A partition left with one child
+    /// becomes that child; the remaining children keep their relative sizes.
+    private func pruning(_ node: BentoNode, removes: (BentoNode) -> Bool) -> BentoNode? {
         switch node {
-        case let .leaf(candidate): return candidate == id ? nil : node
-        case .vacant: return node
+        case .leaf, .vacant: return removes(node) ? nil : node
         case var .partition(partition):
             var retainedChildren: [BentoNode] = []
             var retainedRatios: [Double] = []
             var retainedIndices: [Int] = []
             for index in partition.children.indices {
-                guard let child = removing(id, from: partition.children[index]) else { continue }
+                guard let child = pruning(partition.children[index], removes: removes) else { continue }
                 retainedChildren.append(child)
                 retainedRatios.append(partition.ratios[index])
                 retainedIndices.append(index)
