@@ -212,15 +212,9 @@ public struct WindowMinimumSizeLearner: Sendable {
         tolerance: Double = 2
     ) -> Bool {
         defer { rememberApplication(application, from: windowID) }
-        let movedToRequest = previous.map {
-            abs($0.minX - requested.minX) > tolerance || abs($0.minY - requested.minY) > tolerance
-        } ?? false
-        let atRequestedOrigin = abs(actual.minX - requested.minX) <= tolerance
-            && abs(actual.minY - requested.minY) <= tolerance
-        let sizeChanged = previous.map {
-            abs($0.size.width - actual.size.width) > tolerance || abs($0.size.height - actual.size.height) > tolerance
-        } ?? false
-        guard (movedToRequest && atRequestedOrigin) || sizeChanged else { return false }
+        guard WriteReadbackPolicy.readbackProvesWrite(
+            requested: requested, previous: previous, actual: actual, tolerance: tolerance
+        ) else { return false }
         let before = learnedSizes[windowID]
         var learned = before ?? .zero
         func measure(_ requestedLength: Double, _ actualLength: Double, _ bound: inout Double) {
