@@ -2610,8 +2610,10 @@ final class BetterTileModel {
                     return
                 }
                 let windows = (try? self.system.visibleWindows()) ?? []
+                // A peer that closed during Focus mode is not coming back.
                 let back = peers.allSatisfy { id in
                     windows.contains { $0.id == id && $0.displayID == display.id && $0.isEligible }
+                        || !windows.contains { $0.id == id }
                 }
                 if back || Date() >= deadline {
                     guard var restored = self.sessionStore.session(for: display.id), restored.mode == .bento,
@@ -2632,11 +2634,16 @@ final class BetterTileModel {
                         onPeersReturned()
                         return
                     }
+                    // A sweep while the peers were minimized can drop them from
+                    // the session's members. They are members again on return.
+                    let members = restored.windowIDs.union(peers)
                     if var previous = self.bentoStateBeforeFocus.removeValue(forKey: restored.id) {
                         // A window closed during Focus mode must not keep an
-                        // empty pane.
+                        // empty pane, whether it was the focused window or a
+                        // covered peer. A peer that still exists is handled below.
                         let present = Set(windows.filter { $0.displayID == display.id && $0.isEligible }.map(\.id))
-                        for id in Set(previous.root?.windowIDs ?? []).subtracting(present).subtracting(peers) {
+                        let existingPeers = peers.filter { id in windows.contains { $0.id == id } }
+                        for id in Set(previous.root?.windowIDs ?? []).subtracting(present).subtracting(existingPeers) {
                             previous.remove(id)
                         }
                         // A peer still minimized when the wait ends leaves the
@@ -2645,7 +2652,7 @@ final class BetterTileModel {
                         let stillMinimized = peers.filter { id in windows.contains { $0.id == id && $0.isMinimized } }
                         var runtime = BentoRuntimeState(layout: previous, reinsertionAnchors: restored.bentoReinsertionAnchors)
                         let observation = BentoObservation(bounds: display.visibleFrame, windows: windows.filter {
-                            $0.displayID == display.id && restored.windowIDs.contains($0.id) && $0.isEligible
+                            $0.displayID == display.id && members.contains($0.id) && $0.isEligible
                         })
                         for id in stillMinimized.sorted() where runtime.layout.root?.windowIDs.contains(id) == true {
                             runtime = BentoPlanner().plan(state: runtime, observation: observation,
@@ -2656,7 +2663,7 @@ final class BetterTileModel {
                         restored.bentoReinsertionAnchors = runtime.reinsertionAnchors
                     }
                     let displayWindows = windows.filter {
-                        $0.displayID == display.id && restored.windowIDs.contains($0.id) && $0.isEligible
+                        $0.displayID == display.id && members.contains($0.id) && $0.isEligible
                     }
                     self.restoreBentoLayout(
                         session: restored, displayWindows: displayWindows, display: display,
