@@ -2381,6 +2381,9 @@ final class BetterTileModel {
                 continue
             }
             session.bentoState = fitted.state
+            // An adopted edge resize is a layout change like a divider drag:
+            // restoring a tree remembered at an earlier minimize would undo it.
+            session.forgetRememberedBentoLayouts()
             let placements = fitted.placements.filter { session.windowIDs.contains($0.windowID) }
             let commitResult = commitBentoProposal(
                 placements,
