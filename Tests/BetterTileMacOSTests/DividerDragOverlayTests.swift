@@ -339,6 +339,23 @@ private func ghostOverlayCleansUpEveryGestureExit(ending: GhostEnd) throws {
     #expect(controller.dragOverlay.previewViews.isEmpty)
 }
 
+/// Cancelling the divider during a landing hold, for example on a mode
+/// change, ends the hold's poll with the overlay.
+@Test @MainActor func hideAndCancelEndsALandingHold() async throws {
+    let fixture = try GhostGestureFixture()
+    let controller = fixture.controller
+    fixture.tick(dx: 50)
+    fixture.system.readsBeforeSettling = 1000
+    controller.end(at: fixture.point(dx: 50))
+    try #require(controller.dragOverlay.isVisible)
+    controller.hideAndCancel()
+    #expect(!controller.dragOverlay.isVisible)
+    var reads = 0
+    fixture.system.targetedSnapshotHandler = { _ in reads += 1 }
+    try await Task.sleep(for: .milliseconds(200))
+    #expect(reads == 0, "the landing poll kept reading windows")
+}
+
 /// A window that grows a little still shows its old frame until it draws.
 /// That old frame is near the target, but it is not a landing.
 @Test @MainActor func ghostPreviewsWaitForAWindowStillDrawingItsOldFrame() async throws {

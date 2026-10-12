@@ -858,6 +858,10 @@ public final class DividerOverlayController {
     }
 
     private func endOverlayPresentation() {
+        // Ending the presentation ends any landing hold, so its poll never
+        // outlives the overlay, for example after hideAndCancel.
+        landingTask?.cancel()
+        landingTask = nil
         guard dragOverlay.isVisible else { return }
         CATransaction.begin()
         CATransaction.setDisableActions(true)
