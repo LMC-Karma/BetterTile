@@ -848,6 +848,50 @@ func restoringAFocusModePeerFromTheDockWaitsForTheOtherPeers(rejectLayout: Bool)
     }
 }
 
+/// Closing the Focus mode window leaves its peers minimized. Restoring one
+/// from the Dock must lay the peers out without the closed window's pane,
+/// not leave its area empty until a later sweep notices the window is gone.
+@Test @MainActor func restoringAPeerAfterClosingTheFocusModeWindowFillsTheDisplay() async throws {
+    _ = NSApplication.shared
+    let system = FakeAppWindowSystem()
+    for name in ["dock-peer", "other-peer"] {
+        system.windows.append(WindowSnapshot(id: WindowID(rawValue: name), processIdentifier: 43,
+            bundleIdentifier: "com.example.Peer", frame: BTRect(x: 0, y: 0, width: 200, height: 300),
+            displayID: system.mainDisplay.id))
+    }
+    system.emitsMinimizationEvents = true
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    model.setActiveMode(.bento)
+    try #require(await waitFor { system.frameWriteCounts.count == system.windows.count })
+    try await Task.sleep(for: .milliseconds(350))
+    let focused = system.windows[0]
+    system.focusedID = focused.id
+    model.perform(.maximize)
+    try #require(system.windows.dropFirst().allSatisfy { $0.isMinimized })
+    try await Task.sleep(for: .milliseconds(350))
+
+    system.windows.removeFirst()
+    system.focusedID = nil
+    system.eventHandler?(WindowSystemEvent(kind: .destroyed, windowID: focused.id,
+                                          processIdentifier: focused.processIdentifier))
+    try await Task.sleep(for: .milliseconds(400))
+    let peers = system.windows.map(\.id)
+    let writesBefore = Dictionary(uniqueKeysWithValues: peers.map { ($0, system.requestedFrames[$0]?.count ?? 0) })
+    system.focusedID = peers[0]
+    try system.setMinimized(false, for: peers[0])
+
+    try #require(await waitFor(timeout: .seconds(3)) {
+        system.windows.allSatisfy { !$0.isMinimized }
+            && peers.allSatisfy { (system.requestedFrames[$0]?.count ?? 0) > writesBefore[$0]! }
+    })
+    // The first layout after the peers return already covers the display.
+    let firstFrames = peers.map { system.requestedFrames[$0]![writesBefore[$0]!] }
+    let covered = firstFrames.map { $0.size.width * $0.size.height }.reduce(0, +)
+    let display = system.mainDisplay.visibleFrame
+    #expect(covered >= display.size.width * display.size.height * 0.98, "\(firstFrames)")
+}
+
 @Test(arguments: [false, true]) @MainActor
 func aFocusModeRestoreReturnsAvailablePeersAfterARestoreFailure(fromDock: Bool) async throws {
     _ = NSApplication.shared
