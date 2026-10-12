@@ -150,3 +150,55 @@ private let target = BTRect(x: 100, y: 100, width: 600, height: 400)
     #expect(!WriteReadbackPolicy.confirmsClamp(requested: requested, actual: requested,
                                                learnedMinimum: nil))
 }
+
+@Test func clampConfirmationSkipsAClampTheReadbackAlreadyProves() {
+    let requested = BTRect(x: 100, y: 50, width: 200, height: 150)
+    let clamped = BTRect(x: 100, y: 50, width: 300, height: 150)
+    // The window stayed where it was and kept its size: only a nudge proves
+    // that the application processed the write.
+    #expect(WriteReadbackPolicy.needsClampConfirmation(
+        requested: requested, previous: clamped, actual: clamped, learnedMinimum: nil))
+    #expect(WriteReadbackPolicy.needsClampConfirmation(
+        requested: requested, previous: nil, actual: clamped, learnedMinimum: nil))
+    // The window moved to the requested origin: the readback proves the write.
+    #expect(!WriteReadbackPolicy.needsClampConfirmation(
+        requested: requested, previous: clamped.offsetBy(dx: 400, dy: 0), actual: clamped, learnedMinimum: nil))
+    // The window changed size: the readback proves the write.
+    #expect(!WriteReadbackPolicy.needsClampConfirmation(
+        requested: requested, previous: BTRect(x: 100, y: 50, width: 500, height: 150),
+        actual: clamped, learnedMinimum: nil))
+    // A clamp the learned minimum already explains needs no nudge.
+    #expect(!WriteReadbackPolicy.needsClampConfirmation(
+        requested: requested, previous: clamped, actual: clamped,
+        learnedMinimum: BTSize(width: 300, height: 0)))
+}
+
+@Test func clampConfirmationAgreesWithTheLearner() {
+    // A nudge runs only when the readback teaches the learner nothing.
+    let requested = BTRect(x: 100, y: 50, width: 200, height: 150)
+    let actual = BTRect(x: 100, y: 50, width: 300, height: 150)
+    for previous in [nil, actual, actual.offsetBy(dx: 400, dy: 0),
+                     BTRect(x: 100, y: 50, width: 500, height: 150)] as [BTRect?] {
+        var learner = WindowMinimumSizeLearner()
+        let learned = learner.observeWriteReadback(
+            windowID: WindowID(rawValue: "w"), requested: requested, previous: previous, actual: actual)
+        #expect(learned == WriteReadbackPolicy.readbackProvesWrite(
+            requested: requested, previous: previous, actual: actual))
+        #expect(learned != WriteReadbackPolicy.needsClampConfirmation(
+            requested: requested, previous: previous, actual: actual, learnedMinimum: nil))
+    }
+}
+
+@Test func aNudgeConfirmsOnlyWhenTheWindowFollowedAndReturned() {
+    let nudged = BTPoint(x: 101, y: 50)
+    #expect(WriteReadbackPolicy.nudgeConfirmsSynchronousWrites(
+        nudged: nudged, observed: BTPoint(x: 101, y: 50), returned: true))
+    // A window that followed the nudge but did not return is no proof.
+    #expect(!WriteReadbackPolicy.nudgeConfirmsSynchronousWrites(
+        nudged: nudged, observed: BTPoint(x: 101, y: 50), returned: false))
+    // A window that ignored the nudge is no proof.
+    #expect(!WriteReadbackPolicy.nudgeConfirmsSynchronousWrites(
+        nudged: nudged, observed: BTPoint(x: 100, y: 50), returned: true))
+    #expect(!WriteReadbackPolicy.nudgeConfirmsSynchronousWrites(
+        nudged: nudged, observed: nil, returned: true))
+}

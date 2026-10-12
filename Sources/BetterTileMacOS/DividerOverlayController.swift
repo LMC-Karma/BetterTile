@@ -332,6 +332,8 @@ public final class DividerOverlayController {
     private let coordinator: WindowCoordinator
     private let displayTicks: ResizeDisplayLink
     private var boundaries: [BoundaryDescriptor] = []
+    /// The boundaries the handle can grab, for hover and tests.
+    public var currentBoundaries: [BoundaryDescriptor] { boundaries }
     private var obscuringFrames: [BTRect] = []
     private var managedWindowIDs: [DisplayID: Set<WindowID>] = [:]
     private var coverCache: (interaction: DividerInteraction, candidates: [BTRect]?, time: Double)?
@@ -603,7 +605,10 @@ public final class DividerOverlayController {
             }
             // The accepted divider coordinate moves immediately. Only the
             // decoration inside this frame animates its length.
-            if dragOverlay.isVisible {
+            // During a gesture only the drawing moves; after release, even
+            // while previews wait for the windows to land, the real handle
+            // follows the hover so a click lands on it.
+            if isDragging, dragOverlay.isVisible {
                 panel.setDrawingFrame(appKitFrame)
             } else {
                 panel.setFrame(appKitFrame, display: false)
@@ -692,7 +697,7 @@ public final class DividerOverlayController {
         baselineInteraction = interaction
         isDragging = true
         installEscapeMonitor()
-        baselineWindows = windows
+        baselineWindows = Self.holdingFixedSizes(windows)
         displayBounds = display.visibleFrame
         startPoint = point
         baselineBentoState = state
@@ -730,6 +735,10 @@ public final class DividerOverlayController {
     }
 
     private func beginOverlayPresentation() {
+        finishLanding(fade: false)
+        // The previous release may still be fading; its end must not hide
+        // this gesture.
+        if dragOverlay.isFading { dragOverlay.end() }
         guard !dragOverlay.isVisible, let handlePanel, let displayBounds, let view = visibleHandleView else { return }
         dragOverlay.begin(displayFrame: displayBounds, below: handlePanel,
                           appearance: configuration.overlayAppearance, windows: baselineWindows)
@@ -754,7 +763,105 @@ public final class DividerOverlayController {
         CATransaction.commit()
     }
 
+    /// A fixed-size window's pane cannot become smaller than the window, so
+    /// the divider stops before the window would cover its neighbour.
+    static func holdingFixedSizes(_ windows: [WindowSnapshot]) -> [WindowSnapshot] {
+        windows.map { window in
+            guard !window.constraints.isResizable else { return window }
+            var held = window
+            held.constraints.minimumSize = BTSize(
+                width: max(window.constraints.minimumSize.width, window.frame.size.width),
+                height: max(window.constraints.minimumSize.height, window.frame.size.height))
+            return held
+        }
+    }
+
+    /// A fixed-size window, such as a Calculator tab, keeps its size,
+    /// centred in its new pane; asking it to fill the pane would fail the
+    /// whole commit.
+    static func keepingFixedSizes(_ placements: [Placement], windows: [WindowSnapshot]) -> [Placement] {
+        let byID = Dictionary(windows.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        return placements.map { placement in
+            guard let window = byID[placement.windowID], !window.constraints.isResizable else { return placement }
+            let size = window.frame.size
+            let pane = placement.frame
+            return Placement(windowID: placement.windowID, frame: BTRect(
+                x: pane.minX + max(0, ((pane.size.width - size.width) / 2).rounded(.down)),
+                y: pane.minY + max(0, ((pane.size.height - size.height) / 2).rounded(.down)),
+                width: size.width, height: size.height))
+        }
+    }
+
+    private var landingTask: Task<Void, Never>?
+
+    private func holdPreviewsUntilWindowsLand(_ placements: [Placement]) {
+        let targets = Dictionary(placements.map { ($0.windowID, $0.frame) }, uniquingKeysWith: { _, last in last })
+        let baseline = Dictionary(baselineWindows.map { ($0.id, $0.frame) }, uniquingKeysWith: { first, _ in first })
+        // Most applications apply the commit before it returns.
+        guard !windowsHaveLanded(targets, baseline: baseline) else {
+            endOverlayPresentation()
+            return
+        }
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        handlePanel?.restoreDrawingFrame()
+        dragOverlay.releaseKnob()
+        CATransaction.commit()
+        let deadline = CACurrentMediaTime() + 0.25
+        landingTask?.cancel()
+        landingTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .milliseconds(33))
+                guard let self, !Task.isCancelled else { return }
+                if self.windowsHaveLanded(targets, baseline: baseline) || CACurrentMediaTime() >= deadline {
+                    self.finishLanding(fade: true)
+                    return
+                }
+            }
+        }
+    }
+
+    /// Prefers WindowServer frames: an application such as a Chromium
+    /// browser reports its new Accessibility frame before it draws there.
+    /// An application that resizes in steps lands near its target. A frame
+    /// still at the window's baseline has not landed, even when it is that
+    /// near: the window has not drawn the commit yet.
+    /// A window that cannot be read has not landed; the hold's deadline
+    /// still ends the wait.
+    func windowsHaveLanded(_ targets: [WindowID: BTRect], baseline: [WindowID: BTRect]) -> Bool {
+        let ids = Set(targets.keys)
+        let frames: [WindowID: BTRect]
+        if let shown = (coordinator.system as? any WindowStackReading)?.windowServerFrames(for: ids) {
+            frames = shown
+        } else if let targeted = coordinator.system as? any TargetedWindowSystem {
+            guard let snapshots = try? targeted.windowSnapshots(ids: ids) else { return false }
+            frames = Dictionary(snapshots.map { ($0.id, $0.frame) }, uniquingKeysWith: { first, _ in first })
+        } else {
+            // Without a way to read frames there is nothing to wait for.
+            return true
+        }
+        return targets.allSatisfy { id, target in
+            guard let frame = frames[id] else { return false }
+            if frame.approximatelyEquals(target, tolerance: 2) { return true }
+            if let old = baseline[id], frame.approximatelyEquals(old, tolerance: 2) { return false }
+            return SteppedSizeAcceptance.evaluate(requested: target, actual: frame) != .rejected
+        }
+    }
+
+    /// Ends a landing hold: fades the previews, or removes them at once when
+    /// a new gesture needs the overlay.
+    private func finishLanding(fade: Bool) {
+        guard let task = landingTask else { return }
+        task.cancel()
+        landingTask = nil
+        if fade { dragOverlay.fadeOut() } else { dragOverlay.end() }
+    }
+
     private func endOverlayPresentation() {
+        // Ending the presentation ends any landing hold, so its poll never
+        // outlives the overlay, for example after hideAndCancel.
+        landingTask?.cancel()
+        landingTask = nil
         guard dragOverlay.isVisible else { return }
         CATransaction.begin()
         CATransaction.setDisableActions(true)
@@ -783,7 +890,7 @@ public final class DividerOverlayController {
             return
         }
         let point = topLeftPoint(appKitPoint)
-        let placements: [Placement]
+        var placements: [Placement]
         let proposedInteraction: DividerInteraction
         var proposedState = proposedBentoState
         var limit = DragLimit()
@@ -839,6 +946,7 @@ public final class DividerOverlayController {
             moved.coordinate += result.appliedDelta
             proposedInteraction = DividerInteraction(boundaries: [moved], kind: interaction.kind)
         }
+        placements = Self.keepingFixedSizes(placements, windows: baselineWindows)
 
         switch configuration.resizeFeedbackMode {
         case .ghost:
@@ -1129,7 +1237,14 @@ public final class DividerOverlayController {
             bentoStateLiveHandler?(displayID, baselineBentoState, displayBounds)
         }
         reportedLiveBentoState = false
-        endOverlayPresentation()
+        // A committed Ghost Preview keeps its previews over the windows until
+        // they land, so a slow application never shows the old frame after
+        // the preview is gone.
+        if committed, configuration.resizeFeedbackMode == .ghost, dragOverlay.isVisible, !latestPlacements.isEmpty {
+            holdPreviewsUntilWindowsLand(latestPlacements)
+        } else {
+            endOverlayPresentation()
+        }
         activeInteraction = nil
         gestureCandidates = nil
         coverCache = nil

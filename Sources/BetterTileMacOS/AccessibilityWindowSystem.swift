@@ -263,7 +263,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
             }
             // Some applications move a window to keep it on screen when it
             // shrinks; put its position back too, even when the size stayed off.
-            let positionRestored = restorePosition(element, to: position)
+            let positionRestored = Self.restorePosition(element, to: position)
             if !sizeRestored || !positionRestored { unrestored.insert(id) }
             guard let clamped else { continue }
             let before = BTRect(x: position.x, y: position.y, width: original.width, height: original.height)
@@ -275,7 +275,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
             ) {
                 measured = true
             } else if abs(clamped.width - original.width) <= 1, abs(clamped.height - original.height) <= 1,
-                      !unrestored.contains(id), confirmsSynchronousWrites(element, at: position),
+                      !unrestored.contains(id), Self.confirmsSynchronousWrites(element, at: position),
                       minimumSizeLearner.observeConfirmedClamp(
                           windowID: id, application: applicationKeys[id],
                           requested: BTSize(width: 1, height: 1),
@@ -669,9 +669,9 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
                 requested: frame, previous: knownCurrentFrame, actual: actual
             ) {
                 snapshotGeneration &+= 1
-            } else if WriteReadbackPolicy.confirmsClamp(
-                requested: frame, actual: actual, learnedMinimum: learnedMinimum
-            ), confirmsSynchronousWrites(element, at: actualPosition) {
+            } else if WriteReadbackPolicy.needsClampConfirmation(
+                requested: frame, previous: knownCurrentFrame, actual: actual, learnedMinimum: learnedMinimum
+            ), Self.confirmsSynchronousWrites(element, at: actualPosition) {
                 // The window kept its size at the same origin, which an
                 // ignored write would also do. A 1 pt position nudge that the
                 // application follows proves it processes writes at once, so
@@ -685,23 +685,34 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
     }
 
     /// Moves the window 1 pt and back. True when the application followed the
-    /// move synchronously and returned. The nudge is not visible.
-    private func confirmsSynchronousWrites(_ element: AXUIElement, at position: CGPoint) -> Bool {
+    /// move synchronously and returned. The nudge is not visible. Nonisolated,
+    /// so a single-window write and a batched committed write share it.
+    private nonisolated static func confirmsSynchronousWrites(_ element: AXUIElement, at position: CGPoint) -> Bool {
         var nudged = CGPoint(x: position.x + 1, y: position.y)
         guard let nudgedValue = AXValueCreate(.cgPoint, &nudged),
               AXUIElementSetAttributeValue(element, kAXPositionAttribute as CFString, nudgedValue) == .success
         else { return false }
-        let observed: CGPoint? = axValue(kAXPositionAttribute, from: element, type: .cgPoint)
+        let observed = readPosition(element)
         let returned = restorePosition(element, to: position)
-        guard let observed else { return false }
-        return returned && abs(observed.x - nudged.x) <= 0.5
+        return WriteReadbackPolicy.nudgeConfirmsSynchronousWrites(
+            nudged: BTPoint(x: nudged.x, y: nudged.y),
+            observed: observed.map { BTPoint(x: $0.x, y: $0.y) },
+            returned: returned
+        )
+    }
+
+    private nonisolated static func readPosition(_ element: AXUIElement) -> CGPoint? {
+        var raw: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, kAXPositionAttribute as CFString, &raw) == .success,
+              let raw else { return nil }
+        return decodedAXValue(raw, type: .cgPoint)
     }
 
     /// Writes a window's position back and reads it, trying once more. True
     /// when the window is at `position`, already or after the write.
-    private func restorePosition(_ element: AXUIElement, to position: CGPoint) -> Bool {
+    private nonisolated static func restorePosition(_ element: AXUIElement, to position: CGPoint) -> Bool {
         func isBack() -> Bool {
-            guard let now: CGPoint = axValue(kAXPositionAttribute, from: element, type: .cgPoint) else { return false }
+            guard let now = readPosition(element) else { return false }
             return abs(now.x - position.x) <= 0.5 && abs(now.y - position.y) <= 0.5
         }
         if isBack() { return true }
@@ -819,14 +830,17 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         let frame: BTRect
         let previous: BTRect?
         let plan: FrameWritePlan
+        /// The minimum learned before this write. A clamp it explains needs
+        /// no position nudge.
+        let learnedMinimum: BTSize?
     }
 
     private struct CommittedResult: @unchecked Sendable {
         let windowID: WindowID
         let errors: [AXError]
         let actual: BTRect?
-        /// The window kept a larger size at the requested origin and
-        /// followed a 1 pt position nudge, so the kept size is its minimum.
+        /// The window kept a larger size at the requested origin, followed a
+        /// 1 pt position nudge, and returned, so the kept size is its minimum.
         let confirmedClamp: Bool
     }
 
@@ -878,8 +892,10 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
                 let previous = knownCurrentFrames[write.windowID]
                 var plan = FrameWritePlanner.plan(target: write.frame, knownCurrentFrame: previous, correctsClamping: true)
                 if !isSettable(kAXSizeAttribute, on: element) { plan.writesInitialSize = false; plan.writesFinalSize = false }
-                prepared[write.windowID] = (pid, CommittedJob(windowID: write.windowID, element: element,
-                                                              frame: write.frame, previous: previous, plan: plan))
+                prepared[write.windowID] = (pid, CommittedJob(
+                    windowID: write.windowID, element: element, frame: write.frame, previous: previous,
+                    plan: plan, learnedMinimum: minimumSizeLearner.learnedSizes[write.windowID]
+                ))
             }
         } catch {
             // Nothing was written yet.
@@ -974,18 +990,9 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         guard let actual = read() else {
             return CommittedResult(windowID: job.windowID, errors: errors, actual: nil, confirmedClamp: false)
         }
-        var confirmed = false
-        if actual.size.width > job.frame.size.width + 2 || actual.size.height > job.frame.size.height + 2,
-           abs(actual.minX - job.frame.minX) <= 2, abs(actual.minY - job.frame.minY) <= 2 {
-            var nudged = CGPoint(x: actual.minX + 1, y: actual.minY)
-            var original = CGPoint(x: actual.minX, y: actual.minY)
-            if let nudgedValue = AXValueCreate(.cgPoint, &nudged), let originalValue = AXValueCreate(.cgPoint, &original),
-               AXUIElementSetAttributeValue(job.element, kAXPositionAttribute as CFString, nudgedValue) == .success {
-                let observed = read()
-                _ = AXUIElementSetAttributeValue(job.element, kAXPositionAttribute as CFString, originalValue)
-                confirmed = observed.map { abs($0.minX - nudged.x) <= 0.5 } ?? false
-            }
-        }
+        let confirmed = WriteReadbackPolicy.needsClampConfirmation(
+            requested: job.frame, previous: job.previous, actual: actual, learnedMinimum: job.learnedMinimum
+        ) && confirmsSynchronousWrites(job.element, at: CGPoint(x: actual.minX, y: actual.minY))
         return CommittedResult(windowID: job.windowID, errors: errors, actual: actual, confirmedClamp: confirmed)
     }
 
@@ -1936,6 +1943,18 @@ extension AccessibilityWindowSystem: TabbedWindowSystem {
 }
 
 extension AccessibilityWindowSystem: WindowStackReading {
+    public func windowServerFrames(for ids: Set<WindowID>) -> [WindowID: BTRect]? {
+        var exact: [CGWindowID: WindowID] = [:]
+        for id in ids {
+            guard let number = identities.exactWindowID(for: id) else { return nil }
+            exact[number] = id
+        }
+        guard let records = targetedWindowServerRecords(ids: Set(exact.keys)) else { return nil }
+        var frames: [WindowID: BTRect] = [:]
+        for record in records { if let id = exact[record.windowID] { frames[id] = record.frame } }
+        return frames.count == ids.count ? frames : nil
+    }
+
     public func onScreenStack(labeling ids: Set<WindowID>) -> [SeamStackEntry]? {
         guard let records = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
             as? [[CFString: Any]] else { return nil }
