@@ -73,15 +73,25 @@ public struct ResultPillFeedback: Equatable, Sendable {
 }
 
 public enum ResultPillLayout {
+    static let maximumDetailWidth: Double = 520
+    /// Horizontal space beside the detail text: insets, icon, and spacing.
+    static let detailChrome: Double = 55
+    /// Detail characters that fit on the two lines a wide pill shows.
+    public static let detailCharacterCapacity = Int((maximumDetailWidth - 60) / 6) * 2
+
     public static func frame(for feedback: ResultPillFeedback, on display: DisplaySnapshot) -> BTRect {
         let estimatedWidth = 72 + Double(feedback.message.count) * 7
         let detailWidth = feedback.detail.map { 60 + Double($0.count) * 6 } ?? 0
-        let width = feedback.detail == nil ? min(240, max(172, estimatedWidth)) : min(520, max(240, detailWidth))
+        let width = feedback.detail == nil
+            ? min(240, max(172, estimatedWidth))
+            : min(maximumDetailWidth, max(240, detailWidth))
+        // A detail longer than the widest pill wraps to a second line.
+        let height: Double = feedback.detail == nil ? 40 : detailWidth > maximumDetailWidth ? 72 : 58
         return BTRect(
             x: display.visibleFrame.midX - width / 2,
             y: display.visibleFrame.minY + 24,
             width: width,
-            height: feedback.detail == nil ? 40 : 58
+            height: height
         ).clamped(to: display.visibleFrame)
     }
 }
@@ -140,10 +150,9 @@ public final class ResultPillController {
         )
         icon.contentTintColor = feedback.kind == .success ? .systemGreen : .systemRed
 
-        let target = CoordinateConverter.toAppKit(
-            ResultPillLayout.frame(for: feedback, on: display),
-            mainScreenFrame: mainFrame
-        )
+        let frame = ResultPillLayout.frame(for: feedback, on: display)
+        detailLabel.preferredMaxLayoutWidth = max(0, frame.size.width - ResultPillLayout.detailChrome)
+        let target = CoordinateConverter.toAppKit(frame, mainScreenFrame: mainFrame)
         let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         panel.alphaValue = reduceMotion ? 1 : 0
         panel.setFrame(reduceMotion ? target : target.offsetBy(dx: 0, dy: 10), display: true)
@@ -210,7 +219,11 @@ public final class ResultPillController {
         stack.edgeInsets = NSEdgeInsets(top: 8, left: 13, bottom: 8, right: 15)
         detailLabel.font = .systemFont(ofSize: 11)
         detailLabel.textColor = .secondaryLabelColor
-        detailLabel.lineBreakMode = .byTruncatingTail
+        detailLabel.lineBreakMode = .byWordWrapping
+        detailLabel.usesSingleLineMode = false
+        detailLabel.cell?.wraps = true
+        detailLabel.cell?.truncatesLastVisibleLine = true
+        detailLabel.maximumNumberOfLines = 2
         detailLabel.isHidden = true
         let text = NSStackView(views: [label, detailLabel])
         text.orientation = .vertical
