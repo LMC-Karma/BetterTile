@@ -850,14 +850,16 @@ func restoringAFocusModePeerFromTheDockWaitsForTheOtherPeers(rejectLayout: Bool)
 
 /// Repair during Focus mode brings the peers back first. It reports only
 /// after the restored layout is verified, never while a peer is still
-/// returning.
-@Test @MainActor func repairDuringFocusModeReportsOnlyAfterThePeersReturn() async throws {
+/// returning. A peer seen back on screen counts even when its restored
+/// notification arrives late.
+@Test(arguments: [true, false]) @MainActor
+func repairDuringFocusModeReportsOnlyAfterThePeersReturn(restoredEventArrives: Bool) async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
     let peer = WindowID(rawValue: "peer")
     system.windows.append(WindowSnapshot(id: peer, processIdentifier: 43, bundleIdentifier: "com.example.Peer",
         frame: BTRect(x: 0, y: 0, width: 200, height: 300), displayID: system.mainDisplay.id))
-    system.emitsMinimizationEvents = true
+    system.emitsMinimizationEvents = restoredEventArrives
     let model = makeModel(system: system)
     defer { model.shutdown() }
     model.setActiveMode(.bento)
@@ -870,17 +872,23 @@ func restoringAFocusModePeerFromTheDockWaitsForTheOtherPeers(rejectLayout: Bool)
     try await Task.sleep(for: .milliseconds(350))
     let focusFeedback = model.lastActionFeedback
 
+    if !restoredEventArrives {
+        // Accessibility notifications lag: the minimize evidence is still
+        // fresh, and the restored notification never arrives in time.
+        system.eventHandler?(WindowSystemEvent(kind: .minimized, windowID: peer, processIdentifier: 43))
+    }
     system.slowRestoreIDs = [peer]
     model.tileCurrentDisplay()
     try #require(system.restoreRequests.contains(peer))
-    try await Task.sleep(for: .milliseconds(200))
+    // Stay well inside the 1.5 s peer wait, even on a loaded runner.
+    try await Task.sleep(for: .milliseconds(100))
     #expect(model.lastActionFeedback == focusFeedback, "\(String(describing: model.lastActionFeedback))")
     system.slowRestoreIDs = []
     try system.setMinimized(false, for: peer)
     #expect(await waitFor(timeout: .seconds(2)) {
         model.lastActionFeedback != focusFeedback && model.lastActionFeedback?.kind == .success
-    }, "\(String(describing: model.lastActionFeedback))")
-    #expect(system.windows.map(\.frame) == tiled)
+            && system.windows.map(\.frame) == tiled
+    }, "\(String(describing: model.lastActionFeedback)) \(system.windows.map(\.frame))")
 }
 
 /// Each display waits for its own Focus mode peers. Entering Focus mode on
