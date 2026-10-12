@@ -93,7 +93,11 @@ public final class TabbedOverlayController {
             }
         }, primaryButtonIsPressed: { NSEvent.pressedMouseButtons & 1 != 0 },
         pointerLocation: {
-            CoordinateConverter.pointToTopLeft(NSEvent.mouseLocation, mainScreenFrame: NSScreen.screens.first?.frame ?? .zero)
+            // Without a screen there is no pointer position; the drag falls
+            // back to its last sampled point.
+            NSScreen.screens.first.map {
+                CoordinateConverter.pointToTopLeft(NSEvent.mouseLocation, mainScreenFrame: $0.frame)
+            }
         })
     }
 

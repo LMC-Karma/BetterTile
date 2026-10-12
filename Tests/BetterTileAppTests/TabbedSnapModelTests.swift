@@ -440,6 +440,8 @@ private func snapFixture(preset: TabbedPreset = .columns) async throws -> (FakeA
 @Test @MainActor func tabbedSnapKeyboardCyclesWhileWheelPreviewsRemainExact() async throws {
     let (system, model) = try await snapFixture()
     defer { model.shutdown() }
+    // A loaded runner can take longer than the 2-second cycle between presses.
+    model.shortcutCycleInterval = 60
     let id = system.windows[0].id
     for action in [WindowAction.leftHalf, .leftThird, .leftTwoThirds] {
         model.perform(.leftHalf)

@@ -778,3 +778,38 @@ func adoptingSixExistingPanesStillRegistersOverflow(paneGap: Double) {
     #expect(placed.size.height >= 300, "new window got \(placed)")
     #expect((frames[brave.id]?.size.width ?? 0) >= 500)
 }
+
+/// Two minimized windows can remember equally large arrangements of a
+/// different shape. The restored grid must not depend on dictionary order:
+/// the anchor with the smaller window ID wins.
+@Test func equallyLargeRememberedLayoutsResolveDeterministically() throws {
+    let a = plannerWindow("a"), b = plannerWindow("b"), c = plannerWindow("c")
+    // b's arrangement: a on the left, b over c on the right.
+    var sideBySide = BentoLayoutState()
+    sideBySide.insert(a.id, in: plannerBounds)
+    sideBySide.split(a.id, inserting: b.id, in: plannerBounds)
+    sideBySide.split(b.id, inserting: c.id, in: plannerBounds)
+    // c's arrangement: a over b on the left, c on the right.
+    var stacked = BentoLayoutState()
+    stacked.insert(a.id, in: plannerBounds)
+    stacked.split(a.id, inserting: c.id, in: plannerBounds)
+    stacked.split(a.id, inserting: b.id, in: plannerBounds)
+    try #require(sideBySide.root != stacked.root)
+    var current = BentoLayoutState()
+    current.insert(a.id, in: plannerBounds)
+    let anchorB = BentoReinsertionAnchor(neighborWindowID: a.id, edge: .right, layoutBefore: sideBySide)
+    let anchorC = BentoReinsertionAnchor(neighborWindowID: a.id, edge: .right, layoutBefore: stacked)
+    let observation = BentoObservation(bounds: plannerBounds, windows: [a, b])
+    var results: [[Placement]] = []
+    for order in [[(b.id, anchorB), (c.id, anchorC)], [(c.id, anchorC), (b.id, anchorB)]] {
+        var anchors: [WindowID: BentoReinsertionAnchor] = [:]
+        for (id, anchor) in order { anchors[id] = anchor }
+        let result = BentoPlanner().plan(state: BentoRuntimeState(layout: current, reinsertionAnchors: anchors),
+                                         observation: observation, intent: .restore(b.id))
+        results.append(result.placements.sorted { $0.windowID < $1.windowID })
+    }
+    #expect(results[0] == results[1])
+    // b's own side-by-side arrangement, with c pruned, puts b on the right.
+    let restoredB = try #require(results[0].first { $0.windowID == b.id })
+    #expect(restoredB.frame.minX >= 599, "\(results[0])")
+}

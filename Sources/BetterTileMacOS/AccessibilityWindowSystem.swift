@@ -239,25 +239,45 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
             var restore = original
             guard let tinyValue = AXValueCreate(.cgSize, &tiny),
                   let restoreValue = AXValueCreate(.cgSize, &restore) else { continue }
+            // As for a frame write: with enhanced accessibility on, an
+            // application can reinterpret the size writes.
+            let enhancedUserInterface = suspendEnhancedUserInterfaceIfNeeded(for: element)
+            defer { if frameWriteSuspensions == nil { enhancedUserInterface.restore() } }
             AXUIElementSetMessagingTimeout(element, Self.frameWriteMessagingTimeout)
             defer { AXUIElementSetMessagingTimeout(element, 0) }
             guard AXUIElementSetAttributeValue(element, kAXSizeAttribute as CFString, tinyValue) == .success else { continue }
             let clamped: CGSize? = axValue(kAXSizeAttribute, from: element, type: .cgSize)
             // Confirm the original size; try once more before reporting it.
-            let restored = (0..<2).contains { _ in
+            let sizeRestored = (0..<2).contains { _ in
                 _ = AXUIElementSetAttributeValue(element, kAXSizeAttribute as CFString, restoreValue)
                 guard let size: CGSize = axValue(kAXSizeAttribute, from: element, type: .cgSize) else { return false }
                 return abs(size.width - original.width) <= 1 && abs(size.height - original.height) <= 1
             }
-            if !restored { unrestored.insert(id) }
+            // Some applications move a window to keep it on screen when it
+            // shrinks; put its position back too, even when the size stayed off.
+            let positionRestored = restorePosition(element, to: position)
+            if !sizeRestored || !positionRestored { unrestored.insert(id) }
             guard let clamped else { continue }
             let before = BTRect(x: position.x, y: position.y, width: original.width, height: original.height)
-            measured = minimumSizeLearner.observeWriteReadback(
+            if minimumSizeLearner.observeWriteReadback(
                 windowID: id, application: applicationKeys[id],
                 requested: BTRect(x: position.x, y: position.y, width: 1, height: 1),
                 previous: before,
                 actual: BTRect(x: position.x, y: position.y, width: clamped.width, height: clamped.height)
-            ) || measured
+            ) {
+                measured = true
+            } else if abs(clamped.width - original.width) <= 1, abs(clamped.height - original.height) <= 1,
+                      !unrestored.contains(id), confirmsSynchronousWrites(element, at: position),
+                      minimumSizeLearner.observeConfirmedClamp(
+                          windowID: id, application: applicationKeys[id],
+                          requested: BTSize(width: 1, height: 1),
+                          actual: BTSize(width: clamped.width, height: clamped.height)
+                      ) {
+                // A window already at its minimum keeps its size, which an
+                // ignored write would also do. The position nudge proves the
+                // application handles writes at once, as for a frame write.
+                measured = true
+            }
         }
         if measured { snapshotGeneration &+= 1 }
         return unrestored
@@ -549,18 +569,22 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
     }
 
     public func setFrame(_ frame: BTRect, knownCurrentFrame: BTRect?, for windowID: WindowID) throws {
-        try writeFrame(frame, knownCurrentFrame: knownCurrentFrame, for: windowID, correctsClamping: true)
+        try writeFrame(frame, knownCurrentFrame: knownCurrentFrame, for: windowID)
     }
 
+    /// One window's intermediate sample takes the same path as a batch, so
+    /// the two cannot diverge.
     public func setIntermediateFrame(_ frame: BTRect, knownCurrentFrame: BTRect?, for windowID: WindowID) throws {
-        try writeFrame(frame, knownCurrentFrame: knownCurrentFrame, for: windowID, correctsClamping: false)
+        try setIntermediateFrames(
+            [Placement(windowID: windowID, frame: frame)],
+            knownCurrentFrames: knownCurrentFrame.map { [windowID: $0] } ?? [:]
+        )
     }
 
     private func writeFrame(
         _ frame: BTRect,
         knownCurrentFrame: BTRect?,
-        for windowID: WindowID,
-        correctsClamping: Bool
+        for windowID: WindowID
     ) throws {
         try ensurePermission()
         guard let element = elements[windowID] ?? refreshElement(for: windowID) else {
@@ -600,11 +624,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         // sequence is size, position, size. When the size is not changing the
         // leading write asks for the value the window already has, so it is
         // skipped; the trailing write still corrects any clamping.
-        let plan = FrameWritePlanner.plan(
-            target: frame,
-            knownCurrentFrame: knownCurrentFrame,
-            correctsClamping: correctsClamping
-        )
+        let plan = FrameWritePlanner.plan(target: frame, knownCurrentFrame: knownCurrentFrame)
         // A measurement belongs to one write; an older one is not evidence.
         lastWriteReadback.removeValue(forKey: windowID)
         var errors: [AXError] = []
@@ -627,6 +647,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         }
         // Applications clamp a size synchronously. Reading it straight back
         // measures the minimum exactly, before anything is shown as settled.
+        let learnedMinimum = minimumSizeLearner.learnedSizes[windowID]
         if plan.writesInitialSize || plan.writesFinalSize,
            let actualPosition: CGPoint = axValue(kAXPositionAttribute, from: element, type: .cgPoint),
            let actualSize: CGSize = axValue(kAXSizeAttribute, from: element, type: .cgSize) {
@@ -638,10 +659,9 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
                 requested: frame, previous: knownCurrentFrame, actual: actual
             ) {
                 snapshotGeneration &+= 1
-            } else if correctsClamping,
-                      (actual.size.width > frame.size.width + 2 || actual.size.height > frame.size.height + 2),
-                      abs(actual.minX - frame.minX) <= 2, abs(actual.minY - frame.minY) <= 2,
-                      confirmsSynchronousWrites(element, at: actualPosition) {
+            } else if WriteReadbackPolicy.confirmsClamp(
+                requested: frame, actual: actual, learnedMinimum: learnedMinimum
+            ), confirmsSynchronousWrites(element, at: actualPosition) {
                 // The window kept its size at the same origin, which an
                 // ignored write would also do. A 1 pt position nudge that the
                 // application follows proves it processes writes at once, so
@@ -655,18 +675,32 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
     }
 
     /// Moves the window 1 pt and back. True when the application followed the
-    /// move synchronously. The nudge is not visible.
+    /// move synchronously and returned. The nudge is not visible.
     private func confirmsSynchronousWrites(_ element: AXUIElement, at position: CGPoint) -> Bool {
         var nudged = CGPoint(x: position.x + 1, y: position.y)
-        var original = position
         guard let nudgedValue = AXValueCreate(.cgPoint, &nudged),
-              let originalValue = AXValueCreate(.cgPoint, &original),
               AXUIElementSetAttributeValue(element, kAXPositionAttribute as CFString, nudgedValue) == .success
         else { return false }
         let observed: CGPoint? = axValue(kAXPositionAttribute, from: element, type: .cgPoint)
-        _ = AXUIElementSetAttributeValue(element, kAXPositionAttribute as CFString, originalValue)
+        let returned = restorePosition(element, to: position)
         guard let observed else { return false }
-        return abs(observed.x - nudged.x) <= 0.5
+        return returned && abs(observed.x - nudged.x) <= 0.5
+    }
+
+    /// Writes a window's position back and reads it, trying once more. True
+    /// when the window is at `position`, already or after the write.
+    private func restorePosition(_ element: AXUIElement, to position: CGPoint) -> Bool {
+        func isBack() -> Bool {
+            guard let now: CGPoint = axValue(kAXPositionAttribute, from: element, type: .cgPoint) else { return false }
+            return abs(now.x - position.x) <= 0.5 && abs(now.y - position.y) <= 0.5
+        }
+        if isBack() { return true }
+        var target = position
+        guard let value = AXValueCreate(.cgPoint, &target) else { return false }
+        return (0..<2).contains { _ in
+            _ = AXUIElementSetAttributeValue(element, kAXPositionAttribute as CFString, value)
+            return isBack()
+        }
     }
 
     public func beginContinuousWrites() {
@@ -777,10 +811,10 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         var p: CFTypeRef?, s: CFTypeRef?
         if AXUIElementCopyAttributeValue(job.element, kAXPositionAttribute as CFString, &p) == .success,
            AXUIElementCopyAttributeValue(job.element, kAXSizeAttribute as CFString, &s) == .success,
-           let p, let s, CFGetTypeID(p) == AXValueGetTypeID(), CFGetTypeID(s) == AXValueGetTypeID() {
-            var point = CGPoint.zero, extent = CGSize.zero
-            AXValueGetValue(p as! AXValue, .cgPoint, &point)
-            AXValueGetValue(s as! AXValue, .cgSize, &extent)
+           let p, let s,
+           // A value of another type is no measurement, not a zero frame.
+           let point: CGPoint = decodedAXValue(p, type: .cgPoint),
+           let extent: CGSize = decodedAXValue(s, type: .cgSize) {
             actual = BTRect(x: point.x, y: point.y, width: extent.width, height: extent.height)
         }
         return IntermediateResult(windowID: job.windowID, errors: errors, actual: actual)
