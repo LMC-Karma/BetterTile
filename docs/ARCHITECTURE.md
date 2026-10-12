@@ -174,6 +174,18 @@ automatic placement until Repair. Background sweeps retain membership without
 moving windows while the wait owns that session. A newer layout action cancels
 the wait.
 
+Keyboard and captured Layout Wheel partitions use the same peer-return wait.
+When all peers are visible, the partition runs synchronously. Otherwise it
+keeps the original target and replans after the peers return or the 1.5-second
+deadline expires. It does not restore the previous tree before partitioning.
+The resumed command validates the captured window, display, Space, session,
+mode, and application rule again. Shortcut cycling still applies to keyboard
+commands. A newer partition replaces the pending command and retains its
+returning peers. Repair waits behind the command. Mode changes, a different
+session, a newer gesture, and shutdown cancel the wait. Failed restore requests
+and peer-return timeouts are logged. At the deadline, available peers join the
+requested partition without waiting indefinitely for missing peers.
+
 ### Tabbed on Bento
 
 Tabbed is Bento with tab groups. A Tabbed desktop's `bentoState` is its layout;
