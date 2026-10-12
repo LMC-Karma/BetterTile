@@ -75,3 +75,17 @@ import Testing
     // Nothing left to drop.
     #expect(AccessibilityWindowSystem.forgetSeeds(of: windowless, in: &learner).isEmpty)
 }
+
+/// A process registered without a name learns it from its own windows, so
+/// its seed can be dropped when it quits; a named or older record does not.
+@Test func aLaunchRecordLearnsItsBundleIdentifierOnlyFromItsOwnLaunch() {
+    let current = ApplicationLaunchInstance(processIdentifier: 42, generation: 2)
+    let earlier = ApplicationLaunchInstance(processIdentifier: 42, generation: 1)
+    #expect(AccessibilityWindowSystem.recordLearnsBundleIdentifier(
+        recordInstance: current, recordBundleIdentifier: nil, windowInstance: current))
+    #expect(!AccessibilityWindowSystem.recordLearnsBundleIdentifier(
+        recordInstance: current, recordBundleIdentifier: "com.apple.mail", windowInstance: current))
+    #expect(!AccessibilityWindowSystem.recordLearnsBundleIdentifier(
+        recordInstance: earlier, recordBundleIdentifier: nil, windowInstance: current))
+}
+

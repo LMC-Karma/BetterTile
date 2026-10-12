@@ -1406,7 +1406,9 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
             // bundle identifier from its windows, so its seed is still
             // dropped when it quits after its last window closed.
             let pid = application.processIdentifier
-            if launchRecords[pid]?.instance == application, launchRecords[pid]?.bundleIdentifier == nil {
+            if let record = launchRecords[pid], Self.recordLearnsBundleIdentifier(
+                recordInstance: record.instance, recordBundleIdentifier: record.bundleIdentifier, windowInstance: application
+            ) {
                 launchRecords[pid]?.bundleIdentifier = bundleIdentifier
             }
         }
@@ -1714,6 +1716,17 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         for bundleIdentifier in Self.forgetSeeds(of: quitApplications, in: &minimumSizeLearner) {
             Self.log.debug("forgot minimum-size seed of \(bundleIdentifier, privacy: .private) after it quit")
         }
+    }
+
+    /// A launch record takes its bundle identifier from a window only when it
+    /// has none and the window belongs to the same launch. A record left from
+    /// an earlier process at a reused identifier is never relabelled.
+    nonisolated static func recordLearnsBundleIdentifier(
+        recordInstance: ApplicationLaunchInstance,
+        recordBundleIdentifier: String?,
+        windowInstance: ApplicationLaunchInstance
+    ) -> Bool {
+        recordBundleIdentifier == nil && recordInstance == windowInstance
     }
 
     /// Drops the seeds of `quitApplications` and returns those it dropped.
