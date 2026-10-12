@@ -2720,7 +2720,9 @@ final class BetterTileModel {
             }
             return (.rejected, statusMessage)
         }
-        let correction = resolvedAfterMeasuredClamps(placements, session: &session, display: display)
+        let correction = resolvedAfterMeasuredClamps(
+            placements, session: &session, display: display, recordHistory: recordHistory
+        )
         if let reason = correction.degradedReason {
             // The correction failed and its rollback did too: the windows are
             // neither at the first placement nor at the correction.
@@ -2759,7 +2761,8 @@ final class BetterTileModel {
     private func resolvedAfterMeasuredClamps(
         _ placements: [Placement],
         session: inout LayoutSession,
-        display: DisplaySnapshot
+        display: DisplaySnapshot,
+        recordHistory: Bool
     ) -> (placements: [Placement], degradedReason: String?) {
         let ids = Set(placements.map(\.windowID))
         guard session.mode == .bento, placements.count > 1,
@@ -2779,10 +2782,21 @@ final class BetterTileModel {
         let next = solved.placements(in: display.visibleFrame)
         let nextFrames = Dictionary(uniqueKeysWithValues: next.map { ($0.windowID, $0.frame) })
         guard nextFrames != requested, bentoProposalIsContained(next, in: display) else { return (placements, nil) }
+        // The first write already recorded undo frames for the windows it
+        // moved. A window only the correction moves gets its frame from
+        // before the action; the others keep their single entry.
+        let actionBaseline = coordinator.lastPlacementBaselineFrames
         // A cleanly rolled-back correction keeps the first placement.
         switch coordinator.applyPlacements(next, recordHistory: false) {
         case .applied:
             session.bentoState = solved
+            if recordHistory {
+                coordinator.recordHistory(actionBaseline.filter { id, baseline in
+                    guard let first = requested[id], let corrected = nextFrames[id] else { return false }
+                    return baseline.approximatelyEquals(first, tolerance: 0.01)
+                        && !corrected.approximatelyEquals(first, tolerance: 0.01)
+                })
+            }
             return (next, nil)
         case let .degraded(reason):
             return (placements, reason)
