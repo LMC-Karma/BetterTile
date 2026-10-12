@@ -1675,8 +1675,23 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
     /// The bundle identifiers a process had, read before its windows are
     /// removed from the cache.
     private func bundleIdentifiers(of pid: pid_t, windows: [WindowIdentityRecord]) -> Set<String> {
-        var result = Set(windows.compactMap { applicationKeys[$0.windowID] })
-        if let bundleIdentifier = launchRecords[pid]?.bundleIdentifier { result.insert(bundleIdentifier) }
+        Self.quitApplicationBundles(
+            closedWindowIDs: windows.map(\.windowID),
+            applicationKeys: applicationKeys,
+            launchBundleIdentifier: launchRecords[pid]?.bundleIdentifier
+        )
+    }
+
+    /// The applications a quit process belonged to, from the windows it had
+    /// and from its launch record. The caller reads both before they leave
+    /// the cache.
+    nonisolated static func quitApplicationBundles(
+        closedWindowIDs: [WindowID],
+        applicationKeys: [WindowID: String],
+        launchBundleIdentifier: String?
+    ) -> Set<String> {
+        var result = Set(closedWindowIDs.compactMap { applicationKeys[$0] })
+        if let launchBundleIdentifier { result.insert(launchBundleIdentifier) }
         return result
     }
 
@@ -1687,10 +1702,20 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
     /// application loses the seed too: running processes cannot tell a second
     /// instance from a relaunch, and each new window is measured anyway.
     private func forgetMinimumSizeSeeds(of quitApplications: Set<String>) {
-        for bundleIdentifier in quitApplications.sorted() where minimumSizeLearner.applicationSizes[bundleIdentifier] != nil {
-            minimumSizeLearner.forgetApplication(bundleIdentifier)
+        for bundleIdentifier in Self.forgetSeeds(of: quitApplications, in: &minimumSizeLearner) {
             Self.log.debug("forgot minimum-size seed of \(bundleIdentifier, privacy: .public) after it quit")
         }
+    }
+
+    /// Drops the seeds of `quitApplications` and returns those it dropped.
+    /// Measurements of individual windows stay.
+    nonisolated static func forgetSeeds(
+        of quitApplications: Set<String>,
+        in learner: inout WindowMinimumSizeLearner
+    ) -> [String] {
+        let dropped = quitApplications.sorted().filter { learner.applicationSizes[$0] != nil }
+        for bundleIdentifier in dropped { learner.forgetApplication(bundleIdentifier) }
+        return dropped
     }
 
     private func applicationInstance(forPID pid: pid_t) -> ApplicationLaunchInstance {

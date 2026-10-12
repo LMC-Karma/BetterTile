@@ -40,3 +40,38 @@ import Testing
     #expect(System.buttonState(reference: .success, enabled: (.attributeUnsupported, nil)) == .enabled)
     #expect(System.buttonState(reference: .success, enabled: (.cannotComplete, nil)) == .unreadable)
 }
+
+/// A process that quits takes its applications' seeds with it: those of the
+/// windows it had and the one its launch record names. Another application's
+/// seed and every window's own measurement stay.
+@Test func aQuitProcessDropsItsApplicationsSeedsOnly() {
+    var learner = WindowMinimumSizeLearner()
+    let mail = WindowID(rawValue: "mail"), notes = WindowID(rawValue: "notes")
+    func measure(_ id: WindowID, _ application: String) {
+        _ = learner.observeWriteReadback(windowID: id, application: application,
+            requested: BTRect(x: 0, y: 0, width: 100, height: 100), previous: BTRect(x: 0, y: 0, width: 800, height: 600),
+            actual: BTRect(x: 0, y: 0, width: 500, height: 375))
+    }
+    measure(mail, "com.apple.mail")
+    measure(notes, "com.apple.Notes")
+    let keys = [mail: "com.apple.mail", notes: "com.apple.Notes"]
+
+    let quit = AccessibilityWindowSystem.quitApplicationBundles(
+        closedWindowIDs: [mail], applicationKeys: keys, launchBundleIdentifier: nil
+    )
+    #expect(quit == ["com.apple.mail"])
+    #expect(AccessibilityWindowSystem.forgetSeeds(of: quit, in: &learner) == ["com.apple.mail"])
+    #expect(learner.applicationSizes["com.apple.mail"] == nil)
+    #expect(learner.applicationSizes["com.apple.Notes"] != nil)
+    #expect(learner.hasMeasurement(for: mail))
+
+    // A process that quit without windows is known by its launch record.
+    let windowless = AccessibilityWindowSystem.quitApplicationBundles(
+        closedWindowIDs: [], applicationKeys: keys, launchBundleIdentifier: "com.apple.Notes"
+    )
+    #expect(windowless == ["com.apple.Notes"])
+    #expect(AccessibilityWindowSystem.forgetSeeds(of: windowless, in: &learner) == ["com.apple.Notes"])
+    #expect(learner.applicationSizes.isEmpty)
+    // Nothing left to drop.
+    #expect(AccessibilityWindowSystem.forgetSeeds(of: windowless, in: &learner).isEmpty)
+}
