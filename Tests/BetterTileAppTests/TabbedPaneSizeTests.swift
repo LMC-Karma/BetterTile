@@ -156,3 +156,20 @@ func aLargerHiddenTabGrowsItsPaneAndTheSmallerTabRestoresIt(restores: Bool) asyn
     #expect(system.windows.first { $0.id == large }?.frame == before)
 }
 
+
+/// A long application name is shortened so the detail stays within the
+/// pill's two lines and still says what is in the way.
+@Test @MainActor func aLongNameInTheWayIsShortenedToFitThePill() async throws {
+    let system = FakeAppWindowSystem()
+    let (model, large, _) = try await narrowLeftPaneWithAHiddenTab(system, restores: true)
+    defer { model.shutdown() }
+    system.windows[1].constraints.minimumSize.width = 600
+    system.windows[2].constraints.minimumSize.width = 500
+    system.windows[2].title = String(repeating: "Very Long Application Name ", count: 12)
+    model.performTabbed(.select(large))
+    #expect(await waitFor { model.lastActionFeedback?.kind == .failure })
+    let detail = try #require(model.lastActionFeedback?.detail)
+    #expect(detail.hasPrefix("It would overlap Very Long"))
+    #expect(detail.hasSuffix("."))
+    #expect(ResultPillLayout.detailFits(detail))
+}

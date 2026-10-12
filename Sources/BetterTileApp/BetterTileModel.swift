@@ -4252,11 +4252,20 @@ extension BetterTileModel {
         case let .neighbors(ids):
             var names: [String] = []
             for other in ids where !names.contains(name(other)) { names.append(name(other)) }
-            let detail = switch names.count {
-            case 0: "The empty panes beside it can’t get any smaller."
-            case 1: "It would overlap \(names[0])."
-            case 2: "It would overlap \(names[0]) and \(names[1])."
-            default: "It would overlap \(names.dropLast().joined(separator: ", ")), and \(names[names.count - 1])."
+            guard !names.isEmpty else {
+                return TabbedFitFailure(title: "\(window) doesn’t fit here",
+                                        detail: "The empty panes beside it can’t get any smaller.")
+            }
+            // Shorten long names rather than the sentence, so the pill's two
+            // lines still say what is in the way.
+            let named = names.count > 3 ? Array(names.prefix(2)) : names
+            let detail = ResultPillLayout.detail(naming: named) { titles in
+                switch (titles.count, names.count) {
+                case (1, _): "It would overlap \(titles[0])."
+                case (2, 2): "It would overlap \(titles[0]) and \(titles[1])."
+                case (2, _): "It would overlap \(titles[0]), \(titles[1]), and \(names.count - 2) more."
+                default: "It would overlap \(titles[0]), \(titles[1]), and \(titles[2])."
+                }
             }
             return TabbedFitFailure(title: "\(window) doesn’t fit here", detail: detail)
         }
