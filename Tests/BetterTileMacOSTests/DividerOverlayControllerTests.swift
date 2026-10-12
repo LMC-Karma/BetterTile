@@ -1335,7 +1335,8 @@ func liveDividerReleaseRecomputesANewlyLearnedMinimum(height: Bool) throws {
 /// A live drag beside an application that stops answering keeps going: the
 /// held application's ticks write nothing and roll nothing back, and once it
 /// answers again the drag moves every window.
-@Test @MainActor func aLiveDragContinuesAfterAnApplicationStopsAnsweringForAWhile() throws {
+@Test(arguments: [false, true]) @MainActor
+func aLiveDragContinuesAfterAnApplicationStopsAnsweringForAWhile(midWrite: Bool) throws {
     _ = NSApplication.shared
     let system = FakeWindowSystem()
     let bounds = BTRect(x: -10_000, y: -10_000, width: 800, height: 600)
@@ -1365,17 +1366,18 @@ func liveDividerReleaseRecomputesANewlyLearnedMinimum(height: Bool) throws {
     controller.beginGesture(interaction: interaction, at: start)
     defer { controller.hideAndCancel() }
 
-    // The right application stops answering: its reads fail and every tick
-    // fails before writing.
-    system.unpreparedIntermediateWindowID = right
-    system.targetedSnapshotsFail = true
+    // The right application stops answering: its reads fail, and every tick
+    // fails before writing or, when it first stops mid-write, during it.
+    if midWrite { system.failingWindowID = right } else { system.unpreparedIntermediateWindowID = right }
+    system.heldWindowIDs = [right]
     drag(-40)
     drag(-60)
     #expect(controller.isDragging)
-    #expect(system.windows.map(\.frame.minX) == [bounds.minX, bounds.midX])
+    #expect(system.windows.first { $0.id == right }?.frame.minX == bounds.midX)
 
     system.unpreparedIntermediateWindowID = nil
-    system.targetedSnapshotsFail = false
+    system.failingWindowID = nil
+    system.heldWindowIDs = []
     drag(-80)
     // A growing window follows a tick after its neighbour gives up room.
     drag(-80)

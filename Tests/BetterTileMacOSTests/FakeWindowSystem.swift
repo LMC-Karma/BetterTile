@@ -146,6 +146,8 @@ final class FakeWindowSystem: WindowSystem, TargetedWindowSystem, WindowEventSou
         targetedSnapshotRequests += 1
         targetedSnapshotHandler?(ids)
         if targetedSnapshotsFail { throw WindowSystemError.operationFailed("Simulated snapshot failure") }
+        // A held application cannot be read.
+        if !ids.isDisjoint(with: heldWindowIDs) { throw WindowSystemError.operationFailed("Simulated unresponsive read") }
         settlePendingFrames()
         return windows.filter { ids.contains($0.id) && !unreadableWindowIDs.contains($0.id) }
     }
@@ -159,6 +161,10 @@ final class FakeWindowSystem: WindowSystem, TargetedWindowSystem, WindowEventSou
     /// Like the Accessibility adapter, writes every window of a live tick
     /// before it reports the first failure.
     var attemptsWholeIntermediateBatch = true
+
+    /// Windows whose application is held as unresponsive.
+    var heldWindowIDs: Set<WindowID> = []
+    func isApplicationUnresponsive(for windowID: WindowID) -> Bool { heldWindowIDs.contains(windowID) }
 
     /// Fails a live tick that includes this window before writing any window,
     /// as the adapter does while an application is held as unresponsive.

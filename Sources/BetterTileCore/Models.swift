@@ -183,6 +183,9 @@ public protocol WindowSystem: AnyObject {
     /// different applications concurrently, so one slow application does not
     /// delay the others within a display frame.
     func setIntermediateFrames(_ writes: [Placement], knownCurrentFrames: [WindowID: BTRect]) throws
+    /// True while the window's application is held as unresponsive: calls
+    /// to it fail at once instead of waiting, and its window has not closed.
+    func isApplicationUnresponsive(for windowID: WindowID) -> Bool
     /// Writes final frames for several windows. Implementations may write
     /// different applications concurrently, so a layout lands at once
     /// instead of one application after another. Returns the windows that
@@ -196,6 +199,7 @@ public extension WindowSystem {
     func beginContinuousWrites() {}
     func endContinuousWrites() {}
     func measuredFrameAfterWrite(for windowID: WindowID) -> BTRect? { nil }
+    func isApplicationUnresponsive(for windowID: WindowID) -> Bool { false }
     func setIntermediateFrames(_ writes: [Placement], knownCurrentFrames: [WindowID: BTRect]) throws {
         for write in writes {
             try setIntermediateFrame(write.frame, knownCurrentFrame: knownCurrentFrames[write.windowID], for: write.windowID)

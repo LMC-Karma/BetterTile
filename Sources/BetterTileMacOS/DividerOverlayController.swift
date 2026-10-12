@@ -1025,17 +1025,15 @@ public final class DividerOverlayController {
                     presentHandle(for: proposedInteraction, near: point, active: true)
                     handlePanel?.setLimit(limit)
                 }
-            case let .failed(reason):
+            case .failed:
                 if minimumCorrections > 0 {
                     cancelActiveGesture()
                     return
                 }
                 // A transient rejection keeps the gesture alive; the next drag
-                // sample proposes fresh placements. An application that is not
-                // responding cannot be read, but its window has not closed.
+                // sample proposes fresh placements.
                 self.transaction = transaction
-                if reason != AccessibilityWindowSystem.unresponsiveApplicationMessage,
-                   !activeParticipantsArePresent() { cancelActiveGesture() }
+                if !activeParticipantsArePresent() { cancelActiveGesture() }
                 return
             case .degraded:
                 reportRollbackFailure(displayID: interaction.displayID, outcome: coordinator.cancel(transaction: transaction))
@@ -1451,7 +1449,10 @@ public final class DividerOverlayController {
 
     private func activeParticipantsArePresent() -> Bool {
         guard let transaction else { return false }
-        let expected = Set(transaction.baselineFrames.keys)
+        // A held application cannot be read, but its window has not closed.
+        let held = Set(transaction.baselineFrames.keys.filter { coordinator.system.isApplicationUnresponsive(for: $0) })
+        let expected = Set(transaction.baselineFrames.keys).subtracting(held)
+        guard !expected.isEmpty else { return true }
         do {
             let windows: [WindowSnapshot]
             if let targeted = coordinator.system as? any TargetedWindowSystem {

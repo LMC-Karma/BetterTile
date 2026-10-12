@@ -1653,3 +1653,31 @@ func singleWindowPartialFailureRestoresBaselineAndPreservesHistory(actionPlan: B
     #expect(system.windows.map(\.frame) == target.map(\.frame))
 }
 
+/// An application that first stops answering during a live tick's write
+/// cannot take its rollback either. The tick fails without counting that
+/// as a failed rollback: the next tick or the release rewrites the window.
+@Test @MainActor func aWindowHeldMidTickIsSkippedByTheRollback() throws {
+    let system = FakeWindowSystem()
+    system.addSecondWindow()
+    let coordinator = WindowCoordinator(system: system)
+    let ids = system.windows.map(\.id)
+    let baseline = system.windows.map { Placement(windowID: $0.id, frame: $0.frame) }
+    var transaction = try #require(coordinator.beginTransaction(windowIDs: Set(ids)).startedTransaction)
+    let target = baseline.map { Placement(windowID: $0.windowID, frame: $0.frame.offsetBy(dx: -20, dy: 0)) }
+    // The second window's write and its rollback both fail, and the
+    // application is held by then.
+    system.failingWindowID = ids[1]
+    system.heldWindowIDs = [ids[1]]
+    guard case .failed = coordinator.applyLive(transaction: &transaction, placements: target, validateParticipants: false) else {
+        Issue.record("Expected a transient failure, not a degraded rollback"); return
+    }
+    #expect(!transaction.hasDegradedApply)
+    // The window that took the sample was put back.
+    #expect(system.windows[0].frame == baseline[0].frame)
+
+    system.failingWindowID = nil
+    system.heldWindowIDs = []
+    #expect(coordinator.applyLive(transaction: &transaction, placements: target, validateParticipants: false).isApplied)
+    #expect(system.windows.map(\.frame) == target.map(\.frame))
+}
+

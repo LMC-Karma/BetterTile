@@ -876,7 +876,13 @@ public final class WindowCoordinator {
                     }
                     for placement in placements.sorted(by: { shrinksBack($0) && !shrinksBack($1) }) {
                         guard let frame = rollbackFrames[placement.windowID] else { continue }
-                        do { try apply(frame, to: placement.windowID, knownCurrentFrame: placement.frame) } catch { rollbackFailed = true }
+                        do {
+                            try apply(frame, to: placement.windowID, knownCurrentFrame: placement.frame)
+                        } catch where system.isApplicationUnresponsive(for: placement.windowID) {
+                            // A drag sample is rewritten by the next tick or
+                            // the release once the application answers, so a
+                            // held window is skipped, not a failed rollback.
+                        } catch { rollbackFailed = true }
                     }
                     if rollbackFailed {
                         throw DegradedApplyError(message: "A window update failed and the previous layout could not be fully restored.")

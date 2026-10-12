@@ -763,6 +763,13 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
 
     public func measuredFrameAfterWrite(for windowID: WindowID) -> BTRect? { lastWriteReadback[windowID] }
 
+    public func isApplicationUnresponsive(for windowID: WindowID) -> Bool {
+        // The identity record outlives the cached element, which a failed
+        // write drops.
+        guard let pid = identities.records[windowID]?.application.processIdentifier else { return false }
+        return Self.isUnresponsive(pid)
+    }
+
 
     /// One application's share of a concurrent intermediate write.
     private struct IntermediateJob: @unchecked Sendable {
