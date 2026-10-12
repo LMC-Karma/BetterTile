@@ -661,10 +661,23 @@ public struct TabbedLayoutState: Hashable, Sendable {
             let frame = Self.contentFrame(paneFrame)
             for id in pane.tabs {
                 guard let window = snapshots[id], window.isEligible else { continue }
+                guard window.constraints.isResizable else {
+                    // A fixed-size window, such as Calculator, keeps its size,
+                    // centred in its pane; the backdrop covers the rest.
+                    let size = window.frame.size
+                    if id == pane.selected,
+                       size.width > frame.size.width + 0.001 || size.height > frame.size.height + 0.001 {
+                        throw TabbedLayoutError.panesTooSmall
+                    }
+                    result.append(Placement(windowID: id, frame: BTRect(
+                        x: frame.minX + max(0, ((frame.size.width - size.width) / 2).rounded(.down)),
+                        y: frame.minY + max(0, ((frame.size.height - size.height) / 2).rounded(.down)),
+                        width: size.width, height: size.height)))
+                    continue
+                }
                 if id == pane.selected {
                     guard frame.size.width + 0.001 >= window.constraints.minimumSize.width,
-                          frame.size.height + 0.001 >= window.constraints.minimumSize.height,
-                          window.constraints.isResizable || frame.size == window.frame.size
+                          frame.size.height + 0.001 >= window.constraints.minimumSize.height
                     else { throw TabbedLayoutError.panesTooSmall }
                 }
                 result.append(Placement(windowID: id, frame: frame))
@@ -675,7 +688,17 @@ public struct TabbedLayoutState: Hashable, Sendable {
 
     /// Solves the selected tabs' minimum sizes with Bento's solver.
     public func fittingMinimumWidths(in bounds: BTRect, windows: [WindowSnapshot]) throws -> Self {
-        let constraints = Dictionary(windows.map { ($0.id, $0.constraints) }, uniquingKeysWith: { first, _ in first })
+        let constraints = Dictionary(windows.map { window -> (WindowID, WindowConstraints) in
+            var value = window.constraints
+            // A fixed-size window needs a pane whose window area holds it.
+            // The solver adds the tab strip, as for any minimum.
+            if !value.isResizable {
+                value.minimumSize = BTSize(
+                    width: max(value.minimumSize.width, window.frame.size.width),
+                    height: max(value.minimumSize.height, window.frame.size.height))
+            }
+            return (window.id, value)
+        }, uniquingKeysWith: { first, _ in first })
         guard let fitted = groups.fitted(in: bounds, constraints: constraints) else { throw TabbedLayoutError.panesTooSmall }
         var result = self
         result.groups = fitted

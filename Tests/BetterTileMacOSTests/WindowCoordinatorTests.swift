@@ -24,6 +24,70 @@ import Testing
     #expect(system.targetedSnapshotRequests >= 2)
 }
 
+@Test @MainActor func tinyFixedSizeWindowMovesInAMultiWindowCommit() {
+    let system = FakeWindowSystem()
+    system.addSecondWindow()
+    system.windows[1].frame = BTRect(x: 800, y: 600, width: 90, height: 70)
+    system.windows[1].constraints.isResizable = false
+    let coordinator = WindowCoordinator(system: system)
+    let placements = [
+        Placement(windowID: system.windows[0].id, frame: BTRect(x: 0, y: 0, width: 500, height: 800)),
+        Placement(windowID: system.windows[1].id, frame: BTRect(x: 600, y: 300, width: 90, height: 70)),
+    ]
+
+    #expect(coordinator.applyPlacements(placements).isApplied)
+    #expect(system.windows.map(\.frame) == placements.map(\.frame))
+    #expect(Set(system.frameWriteCounts.keys) == Set(placements.map(\.windowID)))
+}
+
+@Test(arguments: [
+    BTSize(width: 150, height: 70),
+    BTSize(width: 90, height: 100),
+    BTSize(width: 80, height: 70),
+    BTSize(width: 90, height: 60),
+]) @MainActor func tinyFixedSizeWindowResizeRejectsTheWholeCommit(targetSize: BTSize) {
+    let system = FakeWindowSystem()
+    system.addSecondWindow()
+    system.windows[1].frame = BTRect(x: 800, y: 600, width: 90, height: 70)
+    system.windows[1].constraints.isResizable = false
+    let original = system.windows.map(\.frame)
+    let fixedWindowID = system.windows[1].id
+    let coordinator = WindowCoordinator(system: system)
+    let placements = [
+        Placement(windowID: system.windows[0].id, frame: BTRect(x: 0, y: 0, width: 500, height: 800)),
+        Placement(windowID: fixedWindowID, frame: BTRect(origin: BTPoint(x: 600, y: 300), size: targetSize)),
+    ]
+
+    #expect(coordinator.applyPlacements(placements) == .failed(
+        reason: WindowSystemError.unsupportedWindow(fixedWindowID).localizedDescription
+    ))
+    #expect(system.windows.map(\.frame) == original)
+    #expect(system.frameWriteCounts.isEmpty)
+    #expect(system.frameWriteBatches.isEmpty)
+}
+
+@Test(arguments: [BTSize(width: 90, height: 400), BTSize(width: 600, height: 70)], [false, true])
+@MainActor func tinyResizableWindowMinimumRejectsTheWholeCommit(targetSize: BTSize, keepsSize: Bool) {
+    let system = FakeWindowSystem()
+    system.addSecondWindow()
+    if keepsSize {
+        system.windows[1].frame = BTRect(origin: system.windows[1].frame.origin, size: targetSize)
+    }
+    let original = system.windows.map(\.frame)
+    let coordinator = WindowCoordinator(system: system)
+    let placements = [
+        Placement(windowID: system.windows[0].id, frame: BTRect(x: 0, y: 0, width: 500, height: 800)),
+        Placement(windowID: system.windows[1].id, frame: BTRect(origin: BTPoint(x: 400, y: 200), size: targetSize)),
+    ]
+
+    #expect(coordinator.applyPlacements(placements) == .failed(
+        reason: WindowSystemError.operationFailed("A window reached its minimum size.").localizedDescription
+    ))
+    #expect(system.windows.map(\.frame) == original)
+    #expect(system.frameWriteCounts.isEmpty)
+    #expect(system.frameWriteBatches.isEmpty)
+}
+
 @Test @MainActor func coordinatorCanPlanAnActionWithoutMovingTheWindow() throws {
     let system = FakeWindowSystem()
     let original = system.windows[0].frame

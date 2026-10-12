@@ -2729,6 +2729,28 @@ func bentoFocusCheckWaitsForDesktopInteraction(interaction: String) async throws
     #expect(try #require(system.windows.first { $0.id == tall.id }).frame.size.height >= visible.size.height * 0.7)
 }
 
+/// A fixed-size window, such as Calculator, floats instead of joining Bento.
+/// Otherwise every placement asks it for a frame it refuses, and Bento
+/// retries a rejected layout forever.
+@Test @MainActor func fixedSizeWindowFloatsInsteadOfBlockingBento() async throws {
+    _ = NSApplication.shared
+    let system = FakeAppWindowSystem()
+    let fixed = WindowID(rawValue: "calculator")
+    system.windows.append(WindowSnapshot(id: fixed, processIdentifier: 77, bundleIdentifier: "com.apple.calculator",
+        frame: BTRect(x: 500, y: 500, width: 230, height: 408), displayID: system.mainDisplay.id,
+        constraints: WindowConstraints(isResizable: false)))
+    let other = system.windows[0].id
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    model.setActiveMode(.bento)
+    // The resizable window is placed; the fixed one keeps its frame.
+    #expect(await waitFor { system.frameWriteCounts[other, default: 0] > 0 })
+    try await Task.sleep(for: .milliseconds(300))
+    #expect(system.frameWriteCounts[fixed, default: 0] == 0)
+    #expect(system.windows.first { $0.id == fixed }?.frame == BTRect(x: 500, y: 500, width: 230, height: 408))
+    #expect(model.statusMessage == nil)
+}
+
 /// The drop's correction can move a window the swap left alone. Undo
 /// returns that window to its frame from before the drag.
 @Test @MainActor func undoAfterADropCorrectionRestoresAWindowOnlyTheCorrectionMoved() async throws {

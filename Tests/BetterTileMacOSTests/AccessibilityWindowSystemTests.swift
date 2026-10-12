@@ -27,3 +27,16 @@ import Testing
         includeHidden: false
     ))
 }
+
+/// A failed read of a title-bar button, or of its enabled state, is not
+/// evidence for a popup verdict; only an absent attribute is.
+@Test func popupButtonReadsMapFailuresToUnreadable() {
+    typealias System = AccessibilityWindowSystem
+    #expect(System.buttonState(reference: .attributeUnsupported, enabled: nil) == .missing)
+    #expect(System.buttonState(reference: .noValue, enabled: nil) == .missing)
+    #expect(System.buttonState(reference: .cannotComplete, enabled: nil) == .unreadable)
+    #expect(System.buttonState(reference: .success, enabled: (.success, false)) == .disabled)
+    #expect(System.buttonState(reference: .success, enabled: (.success, true)) == .enabled)
+    #expect(System.buttonState(reference: .success, enabled: (.attributeUnsupported, nil)) == .enabled)
+    #expect(System.buttonState(reference: .success, enabled: (.cannotComplete, nil)) == .unreadable)
+}

@@ -17,7 +17,11 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
     /// Open while a continuous gesture writes on every display tick.
     private var continuousWriteDepth = 0
     private var continuousSettable: [WindowID: Bool] = [:]
+    /// Size settability, checked once per continuous gesture like moving.
+    private var continuousSizeSettable: [WindowID: Bool] = [:]
     private var lastWriteReadback: [WindowID: BTRect] = [:]
+    /// Decided popup classifications, kept for each window's lifetime.
+    private var popupVerdicts: [WindowID: PopupWindowClassifier.Verdict] = [:]
     private var identities = WindowIdentityRegistry()
     private let privateAPIsDisabled: Bool
     private let exactWindowIDResolver: ExactWindowIDResolver
@@ -628,9 +632,11 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         // sequence is size, position, size. When the size is not changing the
         // leading write asks for the value the window already has, so it is
         // skipped; the trailing write still corrects any clamping.
-        let plan = FrameWritePlanner.plan(target: frame, knownCurrentFrame: knownCurrentFrame)
+        var plan = FrameWritePlanner.plan(target: frame, knownCurrentFrame: knownCurrentFrame)
         // A measurement belongs to one write; an older one is not evidence.
         lastWriteReadback.removeValue(forKey: windowID)
+        // A fixed-size window, such as Calculator, rejects any size write.
+        if !sizeIsSettable(windowID, on: element) { plan.writesInitialSize = false; plan.writesFinalSize = false }
         var errors: [AXError] = []
         if plan.writesInitialSize {
             errors.append(AXUIElementSetAttributeValue(element, kAXSizeAttribute as CFString, sizeValue))
@@ -712,11 +718,21 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         continuousWriteDepth += 1
     }
 
+    /// Whether a window's size can be written. A continuous gesture asks the
+    /// application once, not on every tick.
+    private func sizeIsSettable(_ windowID: WindowID, on element: AXUIElement) -> Bool {
+        if continuousWriteDepth > 0, let cached = continuousSizeSettable[windowID] { return cached }
+        let settable = isSettable(kAXSizeAttribute, on: element)
+        if continuousWriteDepth > 0 { continuousSizeSettable[windowID] = settable }
+        return settable
+    }
+
     public func endContinuousWrites() {
         guard continuousWriteDepth > 0 else { return }
         continuousWriteDepth -= 1
         guard continuousWriteDepth == 0 else { return }
         continuousSettable.removeAll()
+        continuousSizeSettable.removeAll()
         let suspensions = frameWriteSuspensions ?? [:]
         frameWriteSuspensions = nil
         for suspension in suspensions.values { suspension.restore() }
@@ -761,7 +777,8 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
             var pid: pid_t = 0
             AXUIElementGetPid(element, &pid)
             let previous = knownCurrentFrames[write.windowID]
-            let plan = FrameWritePlanner.plan(target: write.frame, knownCurrentFrame: previous, correctsClamping: false)
+            var plan = FrameWritePlanner.plan(target: write.frame, knownCurrentFrame: previous, correctsClamping: false)
+            if !sizeIsSettable(write.windowID, on: element) { plan.writesInitialSize = false }
             groups[pid, default: []].append(IntermediateJob(windowID: write.windowID, element: element,
                                                             frame: write.frame, previous: previous, plan: plan))
         }
@@ -859,7 +876,8 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
                 var pid: pid_t = 0
                 AXUIElementGetPid(element, &pid)
                 let previous = knownCurrentFrames[write.windowID]
-                let plan = FrameWritePlanner.plan(target: write.frame, knownCurrentFrame: previous, correctsClamping: true)
+                var plan = FrameWritePlanner.plan(target: write.frame, knownCurrentFrame: previous, correctsClamping: true)
+                if !isSettable(kAXSizeAttribute, on: element) { plan.writesInitialSize = false; plan.writesFinalSize = false }
                 prepared[write.windowID] = (pid, CommittedJob(windowID: write.windowID, element: element,
                                                               frame: write.frame, previous: previous, plan: plan))
             }
@@ -1272,9 +1290,11 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
                 )
             }
             minimumSizeLearner.remove(windowID)
+            popupVerdicts.removeValue(forKey: windowID)
             applicationKeys.removeValue(forKey: windowID)
             lastWriteReadback.removeValue(forKey: windowID)
             continuousSettable.removeValue(forKey: windowID)
+            continuousSizeSettable.removeValue(forKey: windowID)
         }
         if event.kind != .moved, event.kind != .resized, event.kind != .focused {
             snapshotCache.invalidate()
@@ -1384,7 +1404,57 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
             isFullScreen: attributes.fullScreen,
             isHidden: false,
             isFloating: WindowFloatingClassifier.isFloating(subrole: attributes.subrole)
+                || popupVerdict(for: id, element: element, attributes: attributes, bundleIdentifier: bundleIdentifier) == .popup
         )
+    }
+
+    /// Classifies a window once, when it is first decidable: popups such as
+    /// file pickers and settings dialogs float instead of joining a layout.
+    /// A window's buttons change while a sheet is attached, so a decided
+    /// verdict is kept for the window's lifetime.
+    private func popupVerdict(
+        for id: WindowID, element: AXUIElement, attributes: SnapshotAttributes, bundleIdentifier: String?
+    ) -> PopupWindowClassifier.Verdict {
+        if let cached = popupVerdicts[id] { return cached }
+        let verdict = PopupWindowClassifier.classify(PopupWindowClassifier.Attributes(
+            subrole: attributes.subrole,
+            fullScreenButton: buttonState(kAXFullScreenButtonAttribute, of: element),
+            closeButton: buttonState(kAXCloseButtonAttribute, of: element),
+            minimizeButton: buttonState(kAXMinimizeButtonAttribute, of: element),
+            isModal: value("AXModal", from: element) ?? false,
+            isMinimized: attributes.minimized || attributes.fullScreen,
+            bundleIdentifier: bundleIdentifier
+        ))
+        if verdict != .undetermined { popupVerdicts[id] = verdict }
+        return verdict
+    }
+
+    private func buttonState(_ attribute: String, of element: AXUIElement) -> PopupWindowClassifier.ButtonState {
+        var raw: CFTypeRef?
+        let reference = AXUIElementCopyAttributeValue(element, attribute as CFString, &raw)
+        guard reference == .success else { return Self.buttonState(reference: reference, enabled: nil) }
+        guard let raw, CFGetTypeID(raw) == AXUIElementGetTypeID() else { return .missing }
+        var enabled: CFTypeRef?
+        let error = AXUIElementCopyAttributeValue(unsafeDowncast(raw, to: AXUIElement.self), kAXEnabledAttribute as CFString, &enabled)
+        return Self.buttonState(reference: reference, enabled: (error, enabled as? Bool))
+    }
+
+    /// Maps the reads of a title-bar button to its state. Only an absent
+    /// attribute means absent; any other failed read is unreadable, so the
+    /// window is judged again later.
+    nonisolated static func buttonState(reference: AXError, enabled: (error: AXError, value: Bool?)?) -> PopupWindowClassifier.ButtonState {
+        switch reference {
+        case .success: break
+        case .attributeUnsupported, .noValue: return .missing
+        default: return .unreadable
+        }
+        guard let enabled else { return .missing }
+        switch enabled.error {
+        case .success: return enabled.value == false ? .disabled : .enabled
+        // A button without an enabled state can be pressed.
+        case .attributeUnsupported, .noValue: return .enabled
+        default: return .unreadable
+        }
     }
 
     private func snapshotAttributes(_ element: AXUIElement) -> SnapshotAttributes? {
@@ -1602,6 +1672,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
             for windowID in windowIDs {
                 elements.removeValue(forKey: windowID)
                 minimumSizeLearner.remove(windowID)
+                popupVerdicts.removeValue(forKey: windowID)
                 minimizedWindowIDs.remove(windowID)
             }
             recentWindowIDs.removeAll { windowIDs.contains($0) }
@@ -1829,7 +1900,11 @@ extension AccessibilityWindowSystem: TabbedWindowSystem {
             if focusResult != .success && focusResult != .attributeUnsupported {
                 throw WindowSystemError.operationFailed("The application rejected window focus.")
             }
-            guard AXUIElementPerformAction(element, kAXRaiseAction as CFString) == .success else {
+            // Some windows, such as Calculator's, do not offer the raise
+            // action (reported as an unsupported action or attribute);
+            // activation still brings them forward.
+            let raised = AXUIElementPerformAction(element, kAXRaiseAction as CFString)
+            guard [.success, .actionUnsupported, .attributeUnsupported].contains(raised) else {
                 throw WindowSystemError.operationFailed("The application rejected window ordering.")
             }
             // Activating through Accessibility returns in about 8 ms and shows
@@ -1842,7 +1917,8 @@ extension AccessibilityWindowSystem: TabbedWindowSystem {
             }
             return
         }
-        guard AXUIElementPerformAction(element, kAXRaiseAction as CFString) == .success else {
+        let raised = AXUIElementPerformAction(element, kAXRaiseAction as CFString)
+        guard [.success, .actionUnsupported, .attributeUnsupported].contains(raised) else {
             throw WindowSystemError.operationFailed("The application rejected window ordering.")
         }
     }

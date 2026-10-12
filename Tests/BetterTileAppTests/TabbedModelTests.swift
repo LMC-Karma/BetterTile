@@ -1781,3 +1781,77 @@ func steppedApplicationTabIsSelectedWithoutResizeLoops(emitsEvents: Bool) async 
     #expect((during[leftPane]?.maxX ?? 0) > (before[leftPane]?.maxX ?? 0) + 100)
     held = false
 }
+
+/// A fixed-size tab wider than its pane widens the pane when it is
+/// selected, like a resizable tab with a large minimum, instead of failing.
+@Test @MainActor func fixedSizeTabWiderThanItsPaneWidensThePane() async throws {
+    _ = NSApplication.shared
+    let system = FakeAppWindowSystem()
+    addTabbedWindows(2, to: system)
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    model.configuration.defaultTabbedPreset = .columns
+    model.setActiveMode(.tabbed)
+    try #require(await waitFor { model.activeTabbedState?.windowIDs.count == 3 })
+    let fixed = system.windows[2].id
+    let pane = try #require(model.activeTabbedState?.panes.first { $0.tabs.contains(fixed) })
+    let bounds = system.mainDisplay.visibleFrame
+    let width = try #require(model.activeTabbedState?.frames(in: bounds)[pane.id]).size.width + 80
+    if pane.selected == fixed {
+        let other = try #require(pane.tabs.first { $0 != fixed })
+        model.performTabbed(.select(other))
+        try #require(await waitFor { model.activeTabbedState?.panes.first { $0.id == pane.id }?.selected == other })
+    }
+    let index = try #require(system.windows.firstIndex { $0.id == fixed })
+    system.windows[index].constraints.isResizable = false
+    system.windows[index].frame.size = BTSize(width: width, height: 300)
+    model.performTabbed(.select(fixed))
+    #expect(await waitFor { model.activeTabbedState?.activeWindowID == fixed })
+    #expect(system.windows[index].frame.size == BTSize(width: width, height: 300))
+    let paneFrame = try #require(model.activeTabbedState?.frames(in: bounds)[pane.id])
+    #expect(paneFrame.size.width + 0.5 >= width, "pane \(paneFrame) window \(width)")
+    #expect(model.statusMessage == nil, "\(model.statusMessage ?? "")")
+}
+
+/// Leaving Tabbed for Bento gives every tab a pane except a fixed-size one,
+/// which floats. Its pane is not left empty.
+@Test @MainActor func leavingTabbedForBentoLeavesNoPaneForAFixedSizeTab() async throws {
+    _ = NSApplication.shared
+    let system = FakeAppWindowSystem()
+    addTabbedWindows(2, to: system)
+    system.windows[2].constraints.isResizable = false
+    system.windows[2].frame.size = BTSize(width: 230, height: 408)
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    model.configuration.defaultTabbedPreset = .columns
+    model.setActiveMode(.tabbed)
+    try #require(await waitFor { model.activeTabbedState?.windowIDs.count == 3 })
+    model.setActiveMode(.bento)
+    let visible = system.mainDisplay.visibleFrame
+    let filled = await waitFor {
+        system.windows.prefix(2).reduce(0) { $0 + $1.frame.area } > visible.area * 0.95
+    }
+    #expect(filled, "\(system.windows.map(\.frame))")
+    #expect(system.windows[2].frame.size == BTSize(width: 230, height: 408))
+}
+
+/// A fixed-size tab can be selected at its own size. Before, any layout in
+/// which it was the selected tab failed and rolled back.
+@Test @MainActor func fixedSizeTabCanBeSelectedAtItsOwnSize() async throws {
+    _ = NSApplication.shared
+    let system = FakeAppWindowSystem()
+    addTabbedWindows(2, to: system)
+    system.windows[2].constraints.isResizable = false
+    system.windows[2].frame.size = BTSize(width: 230, height: 408)
+    let store = ConfigurationStore(fileURL: URL(filePath: "/private/tmp/BetterTileAppTests-\(UUID().uuidString)/configuration.json"))
+    let model = BetterTileModel(store: store, system: system, startRuntime: false)
+    model.primaryButtonIsPressed = { false }
+    defer { model.shutdown() }
+    model.setActiveMode(.tabbed)
+    try #require(await waitFor { model.activeTabbedState?.windowIDs.count == 3 })
+    let fixed = system.windows[2].id
+    model.performTabbed(.select(fixed))
+    #expect(await waitFor { model.activeTabbedState?.activeWindowID == fixed })
+    #expect(system.windows[2].frame.size == BTSize(width: 230, height: 408))
+    #expect(model.statusMessage == nil, "\(model.statusMessage ?? "")")
+}

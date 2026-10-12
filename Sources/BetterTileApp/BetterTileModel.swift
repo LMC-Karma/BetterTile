@@ -2921,9 +2921,15 @@ final class BetterTileModel {
 
     /// Windows Bento may lay out. Excluded applications keep their own size and
     /// position instead of becoming panes.
+    /// In Bento, a window that cannot be resized or moved, such as
+    /// Calculator, floats: a pane would ask it for a frame it refuses, and
+    /// every placement would be rejected. Tabbed keeps such a window as a
+    /// tab; its backdrop covers the rest of the pane.
     private func bentoEligible(_ windows: [WindowSnapshot]) -> [WindowSnapshot] {
         windows.filter {
-            !confirmedMinimizedWindowIDs.contains($0.id) && rule(for: $0).allowsBentoParticipation
+            guard !confirmedMinimizedWindowIDs.contains($0.id), rule(for: $0).allowsBentoParticipation else { return false }
+            if sessionStore.session(for: $0.displayID)?.mode == .tabbed { return true }
+            return $0.constraints.isResizable && $0.constraints.isMovable
         }
     }
 
@@ -3921,9 +3927,15 @@ extension BetterTileModel {
                     throw WindowSystemError.operationFailed("That window is no longer available.")
                 }
                 let content = TabbedLayoutState.contentFrame(frame)
-                let minimum = window.constraints.minimumSize
+                // A fixed-size window keeps its size, centred by the planner;
+                // its size is the minimum its pane must hold.
+                let fixed = !window.constraints.isResizable
+                let minimum = fixed ? window.frame.size : window.constraints.minimumSize
                 if content.size.width + 0.001 >= minimum.width,
                    content.size.height + 0.001 >= minimum.height {
+                    if fixed {
+                        return (state, try state.placements(in: display.visibleFrame, windows: windows).filter { $0.windowID == focus })
+                    }
                     return (state, [Placement(windowID: focus, frame: content)])
                 }
                 selectionOnly = false
@@ -4618,7 +4630,13 @@ extension BetterTileModel {
             // Bento takes over the tree: every hidden tab gets a pane. Native
             // leaves the tree alone, so the tab groups return with Tabbed.
             if destination == .bento, let state = session.tabbedState {
-                session.bentoState = state.unstacked(in: display.visibleFrame)
+                var bento = state.unstacked(in: display.visibleFrame)
+                // A fixed-size window takes no Bento pane; it floats, as when
+                // it arrives on a Bento desktop.
+                for window in windows where !(window.constraints.isResizable && window.constraints.isMovable) {
+                    bento.remove(window.id)
+                }
+                session.bentoState = bento
                 session.isBentoInitialized = session.bentoState.root != nil
                 session.tabbedState = nil
             }

@@ -805,12 +805,18 @@ public final class WindowCoordinator {
         let displays = Dictionary(uniqueKeysWithValues: system.displays().map { ($0.id, $0) })
         for placement in placements {
             guard let snapshot = snapshots[placement.windowID] else { throw WindowSystemError.windowNotFound(placement.windowID) }
-            guard snapshot.isEligible, snapshot.constraints.isMovable, snapshot.constraints.isResizable else {
+            // A fixed-size window can still be moved at its own size.
+            let keepsSize = abs(placement.frame.size.width - snapshot.frame.size.width) <= 1
+                && abs(placement.frame.size.height - snapshot.frame.size.height) <= 1
+            guard snapshot.isEligible, snapshot.constraints.isMovable,
+                  snapshot.constraints.isResizable || keepsSize else {
                 throw WindowSystemError.unsupportedWindow(placement.windowID)
             }
-            guard placement.frame.size.width + sizeTolerance >= snapshot.constraints.minimumSize.width,
-                  placement.frame.size.height + sizeTolerance >= snapshot.constraints.minimumSize.height
-            else { throw WindowSystemError.operationFailed("A window reached its minimum size.") }
+            if snapshot.constraints.isResizable {
+                guard placement.frame.size.width + sizeTolerance >= snapshot.constraints.minimumSize.width,
+                      placement.frame.size.height + sizeTolerance >= snapshot.constraints.minimumSize.height
+                else { throw WindowSystemError.operationFailed("A window reached its minimum size.") }
+            }
             // A legal size is not enough: a stale display frame or a split
             // driven to an edge can produce a placement that leaves nothing on
             // screen to grab.
@@ -1076,9 +1082,13 @@ extension WindowCoordinator {
               let snapshots = try? snapshots(ids: Set(frames.keys)) else { return degraded }
         // Size hints can change after a resize. Bypass only those hints;
         // never write an unreadable, ineligible, or relocated participant.
-        let current = Dictionary(snapshots.filter {
-            $0.isEligible && $0.constraints.isResizable && $0.displayID == displayID
-                && frames[$0.id].map { PlacementBounds.isReachable($0, in: display.visibleFrame) } == true
+        // A fixed-size window can be restored when its saved frame keeps its size.
+        let current = Dictionary(snapshots.filter { snapshot in
+            snapshot.isEligible && snapshot.displayID == displayID
+                && (snapshot.constraints.isResizable || frames[snapshot.id].map {
+                    abs($0.size.width - snapshot.frame.size.width) <= 1 && abs($0.size.height - snapshot.frame.size.height) <= 1
+                } == true)
+                && frames[snapshot.id].map { PlacementBounds.isReachable($0, in: display.visibleFrame) } == true
         }.map { ($0.id, $0.frame) }, uniquingKeysWith: { first, _ in first })
         guard isCurrent(), !Task.isCancelled, !required.isEmpty,
               required.isSubset(of: Set(current.keys)) else { return degraded }
@@ -1144,10 +1154,16 @@ extension WindowCoordinator {
             }
             try validate(placements, sizeTolerance: 0.001)
             let participants = try snapshots(ids: ids)
+            let requestedSizes = Dictionary(uniqueKeysWithValues: placements.map { ($0.windowID, $0.frame.size) })
             guard isCurrent(), !Task.isCancelled,
                   participants.count == ids.count,
-                  participants.allSatisfy({ $0.isEligible && $0.constraints.isResizable
-                      && (rollbackDisplayID == nil || $0.displayID == rollbackDisplayID) }) else {
+                  participants.allSatisfy({ participant in
+                      let keepsSize = requestedSizes[participant.id].map {
+                          abs($0.width - participant.frame.size.width) <= 1 && abs($0.height - participant.frame.size.height) <= 1
+                      } ?? false
+                      return participant.isEligible && (participant.constraints.isResizable || keepsSize)
+                          && (rollbackDisplayID == nil || participant.displayID == rollbackDisplayID)
+                  }) else {
                 throw WindowSystemError.operationFailed("The Tabbed participants changed.")
             }
             participantDisplayID = rollbackDisplayID ?? participants.first?.displayID
