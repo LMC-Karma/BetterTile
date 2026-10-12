@@ -1218,6 +1218,36 @@ func singleWindowPartialFailureRestoresBaselineAndPreservesHistory(actionPlan: B
     #expect(system.frameWriteBatches.last == [system.windows[1].id, system.windows[0].id])
 }
 
+/// At a 2x2 junction only the window that would grow into a refusing
+/// neighbour waits. The other growing window keeps following the divider.
+@Test @MainActor func aRefusingWindowHoldsOnlyTheWindowThatWouldOverlapIt() throws {
+    let system = FakeWindowSystem()
+    system.windows[0].frame = BTRect(x: 0, y: 0, width: 500, height: 400)
+    for (name, frame) in [("topRight", BTRect(x: 500, y: 0, width: 500, height: 400)),
+                          ("bottomLeft", BTRect(x: 0, y: 400, width: 500, height: 400)),
+                          ("bottomRight", BTRect(x: 500, y: 400, width: 500, height: 400))] {
+        system.windows.append(WindowSnapshot(id: WindowID(rawValue: name), processIdentifier: Int32(50 + system.windows.count),
+            bundleIdentifier: "com.example.\(name)", frame: frame, displayID: DisplayID(rawValue: "main")))
+    }
+    let topLeft = system.windows[0].id, bottomLeft = WindowID(rawValue: "bottomLeft"), bottomRight = WindowID(rawValue: "bottomRight")
+    system.enforcedMinimumWidths[bottomRight] = 450
+    let coordinator = WindowCoordinator(system: system)
+    var transaction = try #require(coordinator.beginTransaction(windowIDs: Set(system.windows.map(\.id))).startedTransaction)
+    let sample = [
+        Placement(windowID: topLeft, frame: BTRect(x: 0, y: 0, width: 600, height: 400)),
+        Placement(windowID: WindowID(rawValue: "topRight"), frame: BTRect(x: 600, y: 0, width: 400, height: 400)),
+        Placement(windowID: bottomLeft, frame: BTRect(x: 0, y: 400, width: 600, height: 400)),
+        Placement(windowID: bottomRight, frame: BTRect(x: 600, y: 400, width: 400, height: 400)),
+    ]
+    // The first tick shrinks the right column; the second completes growth.
+    for _ in 0..<2 {
+        #expect(coordinator.applyLive(transaction: &transaction, placements: sample, validateParticipants: false).isApplied)
+    }
+    let frame = { (id: WindowID) in system.windows.first { $0.id == id }!.frame }
+    #expect(frame(topLeft).size.width == 600, "\(system.windows.map(\.frame))")
+    #expect(frame(bottomLeft).maxX <= frame(bottomRight).minX + 0.5, "\(system.windows.map(\.frame))")
+}
+
 /// A live divider tick asks a window to shrink below a minimum it never
 /// reported. The window that would grow into it waits for that tick, so the
 /// two never overlap while the divider learns the minimum.

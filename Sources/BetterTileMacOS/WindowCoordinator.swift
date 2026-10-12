@@ -532,8 +532,8 @@ public final class WindowCoordinator {
                 // are still written in one concurrent pass, but a growing
                 // window only enters space its neighbour gave up a tick
                 // earlier, so the two do not overlap while that neighbour
-                // commits. A neighbour that refused its last size holds the
-                // growing windows.
+                // commits. A neighbour that refused its last size holds only
+                // the growing windows that would overlap it.
                 let previous = transaction.lastAppliedFrames
                 let shrinkingIDs = Set(changed.filter { placement in
                     guard let old = previous[placement.windowID] else { return false }
@@ -542,21 +542,22 @@ public final class WindowCoordinator {
                 }.map(\.windowID))
                 let growing = changed.filter { !shrinkingIDs.contains($0.windowID) }
                 if !changed.isEmpty {
-                    let neighbourHoldsSpace = neighbourHoldsItsSpace(
-                        transaction: transaction, excluding: Set(growing.map(\.windowID))
-                    )
+                    let refused = refusedFrames(transaction: transaction, excluding: Set(growing.map(\.windowID)))
+                    func isHeld(_ frame: BTRect) -> Bool {
+                        refused.contains { Self.overlaps(frame, $0) }
+                    }
                     writes = changed.compactMap { placement in
                         if shrinkingIDs.contains(placement.windowID) {
                             // A window can shrink on one axis and grow on the
                             // other at a junction. Its growing axis trails
                             // like any growing window.
                             guard let old = previous[placement.windowID] else { return placement }
-                            let held = neighbourHoldsSpace ? old : (previousProposal[placement.windowID] ?? old)
+                            let held = isHeld(placement.frame) ? old : (previousProposal[placement.windowID] ?? old)
                             let frame = Self.trailingGrowth(placement.frame, from: old, held: held)
                             if !frame.approximatelyEquals(placement.frame, tolerance: 0.01) { trailing = true }
                             return Placement(windowID: placement.windowID, frame: frame)
                         }
-                        if neighbourHoldsSpace { trailing = true; return nil }
+                        if isHeld(placement.frame) { trailing = true; return nil }
                         guard let earlier = previousProposal[placement.windowID] ?? previous[placement.windowID],
                               earlier.size.width <= placement.frame.size.width + 0.5,
                               earlier.size.height <= placement.frame.size.height + 0.5,
@@ -605,9 +606,6 @@ public final class WindowCoordinator {
         }
     }
 
-    /// True when a window other than `excluding` has not given up the space a
-    /// neighbour would grow into: it read back larger than the size it was
-    /// sent.
     /// Takes each shrinking axis of `frame` now and keeps each growing axis
     /// at `held`, so the window never grows into space a neighbour has not
     /// yet given up.
@@ -622,22 +620,34 @@ public final class WindowCoordinator {
         return BTRect(x: x.origin, y: y.origin, width: x.size, height: y.size)
     }
 
-    private func neighbourHoldsItsSpace(transaction: WindowFrameTransaction, excluding: Set<WindowID>) -> Bool {
+    /// The read-back frames of windows other than `excluding` that have not
+    /// given up their space: each read back larger than the size it was sent.
+    private func refusedFrames(transaction: WindowFrameTransaction, excluding: Set<WindowID>) -> [BTRect] {
         let candidates = transaction.lastAppliedFrames.filter { !excluding.contains($0.key) && transaction.baselineFrames[$0.key] != $0.value }
-        guard !candidates.isEmpty else { return false }
+        guard !candidates.isEmpty else { return [] }
+        func refused(_ actual: BTRect, sent: BTRect) -> Bool {
+            actual.size.width > sent.size.width + 2 || actual.size.height > sent.size.height + 2
+        }
+        var frames: [BTRect] = []
         var unread = Set<WindowID>()
         for (id, sent) in candidates {
             if let actual = system.measuredFrameAfterWrite(for: id) {
-                if actual.size.width > sent.size.width + 2 || actual.size.height > sent.size.height + 2 { return true }
+                if refused(actual, sent: sent) { frames.append(actual) }
             } else {
                 unread.insert(id)
             }
         }
-        guard !unread.isEmpty, let read = try? snapshots(ids: unread) else { return false }
-        return read.contains { snapshot in
-            guard let sent = candidates[snapshot.id] else { return false }
-            return snapshot.frame.size.width > sent.size.width + 2 || snapshot.frame.size.height > sent.size.height + 2
+        if !unread.isEmpty, let read = try? snapshots(ids: unread) {
+            for snapshot in read {
+                if let sent = candidates[snapshot.id], refused(snapshot.frame, sent: sent) { frames.append(snapshot.frame) }
+            }
         }
+        return frames
+    }
+
+    /// True when the two frames share more than a 2 pt sliver on both axes.
+    static func overlaps(_ a: BTRect, _ b: BTRect) -> Bool {
+        min(a.maxX, b.maxX) - max(a.minX, b.minX) > 2 && min(a.maxY, b.maxY) - max(a.minY, b.minY) > 2
     }
 
     public func finishLive(transaction: WindowFrameTransaction, recordHistory: Bool = true) {
