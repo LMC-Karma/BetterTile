@@ -76,6 +76,9 @@ final class BetterTileModel {
     private var tabbedQueuedIntents: [DisplayID: [PendingTabbedIntent]] = [:]
     private var tabbedUndo: [DesktopSessionID: [TabbedUndoStep]] = [:]
     private var tabbedNeedsRefresh: Set<DisplayID> = []
+    /// New windows already adopted again after refusing their first pane.
+    /// A second refusal is reported instead of adopting them forever.
+    private var tabbedReadoptedArrivals: Set<WindowID> = []
     /// An apply arrived while another was running; re-apply the committed state after it.
     private var tabbedNeedsReapply: Set<DisplayID> = []
     private let presentsTabbedChrome: Bool
@@ -3772,13 +3775,32 @@ extension BetterTileModel {
         }
         session.tabbedState = state
         session.windowIDs = state.windowIDs
+        // A new window that fits no pane floats. Move it fully onto the work
+        // area at its own size when it can be, and say why it is not a tab.
+        let floated = wasUninitialized ? [] : state.floatingWindowIDs
+            .subtracting(before.floatingWindowIDs).subtracting(before.windowIDs)
+        var restorationFrames: [WindowID: BTRect] = [:]
+        for window in windows where floated.contains(window.id) {
+            let bounds = display.visibleFrame
+            guard window.frame.size.width <= bounds.size.width, window.frame.size.height <= bounds.size.height,
+                  !PlacementBounds.isContained(window.frame, in: bounds) else { continue }
+            restorationFrames[window.id] = window.frame.clamped(to: bounds)
+        }
+        if let window = windows.first(where: { floated.contains($0.id) }) {
+            presentActionResult(succeeded: false, feedback: .failure(
+                title: "\(Self.displayName(of: window)) is floating",
+                detail: "It doesn’t fit in any pane."
+            ), displayID: display.id)
+        }
         // Removals include windows on other displays. Reconciliation above
         // already records actual membership changes; unrelated IDs must not
         // trigger placement and a queued sweep on each display forever.
         let changed = wasUninitialized || before != state || session.lastWorkArea != display.visibleFrame
         if (changed || force), !session.automaticWritesSuspended {
             applyTabbedState(state, session: session, display: display, windows: windows,
-                             focus: wasUninitialized || before.activeWindowID != state.activeWindowID ? state.activeWindowID : nil)
+                             focus: wasUninitialized || before.activeWindowID != state.activeWindowID ? state.activeWindowID : nil,
+                             restorationFrames: restorationFrames,
+                             arrivals: wasUninitialized ? [] : state.windowIDs.subtracting(before.windowIDs))
         } else {
             _ = sessionStore.commit(session, replacing: session.revision)
             showTabbed(session: session, display: display, windows: windows)
@@ -3902,7 +3924,8 @@ extension BetterTileModel {
         windows: [WindowSnapshot], focus: WindowID?, rememberUndo: Bool = false, consumeUndo: Bool = false,
         selectionOnly: Bool = false, earlyRaise: TabbedEarlyRaise? = nil, rollbackFrames: [WindowID: BTRect]? = nil,
         snapAction: WindowAction? = nil, snapScope: TabbedSnapScope = .pane, gestureBaseline: TabbedLayoutState? = nil,
-        gestureSourceID: WindowID? = nil, expectedSpaceID: NativeSpaceID? = nil, restorationFrames: [WindowID: BTRect] = [:]
+        gestureSourceID: WindowID? = nil, expectedSpaceID: NativeSpaceID? = nil, restorationFrames: [WindowID: BTRect] = [:],
+        arrivals: Set<WindowID> = []
     ) {
         guard tabbedTasks[display.id] == nil else {
             tabbedNeedsReapply.insert(display.id)
@@ -3937,7 +3960,10 @@ extension BetterTileModel {
             restored.lastObservedFrames = rollbackFrames ?? original.lastObservedFrames
             return sessionStore.commit(restored, replacing: original.revision) ?? original
         }
-        let detached = (previous?.windowIDs ?? []).subtracting(state.windowIDs).intersection(state.floatingWindowIDs)
+        // Windows that left the panes, and any new window the caller floated
+        // with a frame to put it at.
+        let detached = (previous?.windowIDs ?? []).subtracting(state.windowIDs)
+            .union(restorationFrames.keys).intersection(state.floatingWindowIDs)
         var selectionOnly = selectionOnly
         // Set when a selection fits the panes from the sizes the user set.
         var fitsFromPreferredSizes = false
@@ -4209,7 +4235,18 @@ extension BetterTileModel {
                 }
             } else {
                 _ = restoreGestureMembership()
-                self.statusMessage = outcome.failureReason
+                // A new window refused the size its pane offered. Adopt it
+                // again, once, with the minimum the write revealed: it joins
+                // a pane that fits it or floats, and that result explains
+                // itself.
+                var readoptsArrivals = false
+                let fresh = arrivals.subtracting(self.tabbedReadoptedArrivals)
+                if case .failed = outcome, !fresh.isEmpty { readoptsArrivals = true }
+                if readoptsArrivals {
+                    self.tabbedReadoptedArrivals.formUnion(fresh)
+                    self.tabbedNeedsRefresh.insert(display.id)
+                }
+                self.statusMessage = readoptsArrivals ? nil : outcome.failureReason
                 if case .degraded = outcome {
                     self.sessionStore.update(display.id) { $0.suspendAutomaticWrites(observing: windows) }
                 } else if let restored = self.sessionStore.session(for: display.id) {
@@ -4221,8 +4258,10 @@ extension BetterTileModel {
                     // Put their curtains below them again as well.
                     self.showTabbed(session: restored, display: display, windows: windows)
                 }
-                self.presentActionResult(succeeded: false, error: outcome.failureReason,
-                                         feedback: fitFailure?.feedback, displayID: display.id)
+                if !readoptsArrivals {
+                    self.presentActionResult(succeeded: false, error: outcome.failureReason,
+                                             feedback: fitFailure?.feedback, displayID: display.id)
+                }
                 // An earlier step of this gesture may have pointed the
                 // divider at a selection the rollback just reverted.
                 self.refreshDividerBoundaries()

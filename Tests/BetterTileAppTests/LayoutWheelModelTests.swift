@@ -255,10 +255,13 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, TabbedWindowSystem, Min
     }
     var reportedConstraints: [WindowID: WindowConstraints] = [:]
     var probeRequests: [Set<WindowID>] = []
+    /// Windows whose application clamps a size only after a delay, so the
+    /// probe's immediate read-back measures nothing.
+    var unprobeableWindowIDs: Set<WindowID> = []
     func probeMinimumSizes(for ids: Set<WindowID>) -> Set<WindowID> {
         probeRequests.append(ids)
         guard measuresOnWrite else { return [] }
-        for id in ids {
+        for id in ids where !unprobeableWindowIDs.contains(id) {
             guard let index = windows.firstIndex(where: { $0.id == id }) else { continue }
             let frame = windows[index].frame
             let tiny = BTRect(x: frame.minX, y: frame.minY, width: 1, height: 1)
