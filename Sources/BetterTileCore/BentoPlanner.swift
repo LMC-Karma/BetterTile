@@ -640,7 +640,10 @@ public struct BentoPlanner: Sendable {
     ) -> (BentoPlannerResult, BentoLayoutState)? {
         let current = Set(state.layout.root?.windowIDs ?? [])
         let keep = current.union([windowID])
-        let candidates = state.reinsertionAnchors.values.compactMap(\.layoutBefore).filter { layout in
+        // Anchors in window order, so equally large snapshots resolve the
+        // same way on every run: the first maximal one wins.
+        let candidates = state.reinsertionAnchors.sorted { $0.key < $1.key }
+            .compactMap(\.value.layoutBefore).filter { layout in
             let ids = Set(layout.root?.windowIDs ?? [])
             return keep.isSubset(of: ids)
         }

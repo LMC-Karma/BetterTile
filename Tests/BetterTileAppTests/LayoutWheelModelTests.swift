@@ -794,6 +794,41 @@ func restoringAFocusModePeerFromTheDockWaitsForTheOtherPeers(rejectLayout: Bool)
     }
 }
 
+/// Repair during Focus mode brings the peers back first. It reports only
+/// after the restored layout is verified, never while a peer is still
+/// returning.
+@Test @MainActor func repairDuringFocusModeReportsOnlyAfterThePeersReturn() async throws {
+    _ = NSApplication.shared
+    let system = FakeAppWindowSystem()
+    let peer = WindowID(rawValue: "peer")
+    system.windows.append(WindowSnapshot(id: peer, processIdentifier: 43, bundleIdentifier: "com.example.Peer",
+        frame: BTRect(x: 0, y: 0, width: 200, height: 300), displayID: system.mainDisplay.id))
+    system.emitsMinimizationEvents = true
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    model.setActiveMode(.bento)
+    try #require(await waitFor { system.windows.allSatisfy { $0.frame.size.height == 800 } })
+    try await Task.sleep(for: .milliseconds(350))
+    let tiled = system.windows.map(\.frame)
+    system.focusedID = system.windows[0].id
+    model.perform(.maximize)
+    try #require(system.windows[1].isMinimized)
+    try await Task.sleep(for: .milliseconds(350))
+    let focusFeedback = model.lastActionFeedback
+
+    system.slowRestoreIDs = [peer]
+    model.tileCurrentDisplay()
+    try #require(system.restoreRequests.contains(peer))
+    try await Task.sleep(for: .milliseconds(200))
+    #expect(model.lastActionFeedback == focusFeedback, "\(String(describing: model.lastActionFeedback))")
+    system.slowRestoreIDs = []
+    try system.setMinimized(false, for: peer)
+    #expect(await waitFor(timeout: .seconds(2)) {
+        model.lastActionFeedback != focusFeedback && model.lastActionFeedback?.kind == .success
+    }, "\(String(describing: model.lastActionFeedback))")
+    #expect(system.windows.map(\.frame) == tiled)
+}
+
 /// Each display waits for its own Focus mode peers. Entering Focus mode on
 /// another display while the first display's peers are still returning
 /// must not cancel the first display's pending command.
