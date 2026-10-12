@@ -1400,7 +1400,16 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
             hints: attributes.minimumSizes,
             displaySize: display.frame.size
         )
-        if let bundleIdentifier { applicationKeys[id] = bundleIdentifier }
+        if let bundleIdentifier {
+            applicationKeys[id] = bundleIdentifier
+            // A process registered while macOS could not name it learns its
+            // bundle identifier from its windows, so its seed is still
+            // dropped when it quits after its last window closed.
+            let pid = application.processIdentifier
+            if launchRecords[pid]?.instance == application, launchRecords[pid]?.bundleIdentifier == nil {
+                launchRecords[pid]?.bundleIdentifier = bundleIdentifier
+            }
+        }
         minimumSizeLearner.observeAcceptedSize(windowID: id, application: bundleIdentifier, size: frame.size)
         let constraints = minimumSizeLearner.merging(
             WindowConstraints(
