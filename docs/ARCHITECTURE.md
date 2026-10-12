@@ -150,7 +150,16 @@ tick.
 Tabbed selection preserves pane geometry when the selected window fits. It swaps
 which window the pane's Bento leaf holds and checks both minimum dimensions.
 If it needs more space, Bento's constraint solver adjusts the pane boundaries.
-An impossible arrangement retains the previous selection. A focus change
+`TabbedLayoutState.preferredPaneRatios` records the pane sizes from the user's
+own layout edits: divider drags, edge resizes, presets, splits, and pane
+removal. Fitting a selection does not change them. With **Restore pane size
+when switching tabs** on, a selection fits from those sizes, so a pane that grew
+for a larger tab returns to its size when a smaller tab is selected. A hidden
+tab is measured with `probeMinimumSizes` before it is raised, while it is still
+behind its pane's selected tab. An impossible arrangement retains the previous
+selection. `TabbedLayoutState.fitProblem` then names the cause for the result
+pill: a window larger than the display, a locked divider, or the panes that
+would have to shrink below their own minimum sizes. A focus change
 selects a tab only when that
 window's application is frontmost. While BetterTile or an application it cannot
 read is in front, `focusedWindow()` reports the last managed application's

@@ -28,6 +28,13 @@ public struct ResultPillFeedback: Equatable, Sendable {
         Self(kind: .success, message: message, symbolName: "checkmark", dismissDelay: 0.9)
     }
 
+    /// A failure whose title already says what went wrong, such as which
+    /// window does not fit. The detail is the second line.
+    public static func failure(title: String, detail: String?) -> Self {
+        Self(kind: .failure, message: title, detail: detail, symbolName: "xmark",
+             dismissDelay: detail == nil ? 1.6 : 3)
+    }
+
     public static func failure(_ error: String?) -> Self {
         let value = (error ?? "").lowercased()
         let message: String
