@@ -230,7 +230,11 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         guard AXIsProcessTrusted() else { return [] }
         var measured = false
         var unrestored: Set<WindowID> = []
-        for id in ids.sorted() where !minimumSizeLearner.hasMeasurement(for: id) {
+        // A window of an application measured before starts from that
+        // application's seed; probing it again only flashes the window. A
+        // larger minimum is still measured by its first write.
+        for id in ids.sorted() where !minimumSizeLearner.hasMeasurement(for: id)
+            && applicationKeys[id].flatMap({ minimumSizeLearner.applicationSizes[$0] }) == nil {
             guard let element = elements[id] ?? refreshElement(for: id),
                   isSettable(kAXSizeAttribute, on: element),
                   let position: CGPoint = axValue(kAXPositionAttribute, from: element, type: .cgPoint),
@@ -789,6 +793,182 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         if failure != nil {
             throw WindowSystemError.operationFailed("macOS rejected the window frame update.")
         }
+    }
+
+    /// One window's share of a concurrent committed write.
+    private struct CommittedJob: @unchecked Sendable {
+        let windowID: WindowID
+        let element: AXUIElement
+        let frame: BTRect
+        let previous: BTRect?
+        let plan: FrameWritePlan
+    }
+
+    private struct CommittedResult: @unchecked Sendable {
+        let windowID: WindowID
+        let errors: [AXError]
+        let actual: BTRect?
+        /// The window kept a larger size at the requested origin and
+        /// followed a 1 pt position nudge, so the kept size is its minimum.
+        let confirmedClamp: Bool
+    }
+
+    /// Splits a batch into a shrinking pass and a growing pass, each in the
+    /// batch's order. A window with an unknown frame grows, as in
+    /// `WindowCoordinator`'s order.
+    nonisolated static func shrinkingFirstPasses(
+        _ writes: [Placement], knownCurrentFrames: [WindowID: BTRect]
+    ) -> [[Placement]] {
+        func shrinks(_ write: Placement) -> Bool {
+            guard let old = knownCurrentFrames[write.windowID] else { return false }
+            return write.frame.size.width < old.size.width - 0.5 || write.frame.size.height < old.size.height - 0.5
+        }
+        return [writes.filter(shrinks), writes.filter { !shrinks($0) }].filter { !$0.isEmpty }
+    }
+
+    /// Writes final frames for each application on its own thread, so a
+    /// layout lands at once instead of one application after another. Every
+    /// window is checked before any write. Shrinking windows are written
+    /// first, in every application at once, then growing windows, so a
+    /// growing window never covers a neighbour from another application that
+    /// has not yet made room. Within one application the writes keep their
+    /// order.
+    public func setFrames(_ writes: [Placement], knownCurrentFrames: [WindowID: BTRect]) -> FrameBatchResult {
+        guard writes.count > 1 else {
+            var attempted: [WindowID] = []
+            for write in writes {
+                attempted.append(write.windowID)
+                do { try setFrame(write.frame, knownCurrentFrame: knownCurrentFrames[write.windowID], for: write.windowID) }
+                catch { return FrameBatchResult(attempted: attempted, failure: (write.windowID, error)) }
+            }
+            return FrameBatchResult(attempted: attempted, failure: nil)
+        }
+        var prepared: [WindowID: (pid: pid_t, job: CommittedJob)] = [:]
+        var preparing = writes[0].windowID
+        do {
+            try ensurePermission()
+            for write in writes {
+                preparing = write.windowID
+                guard let element = elements[write.windowID] ?? refreshElement(for: write.windowID) else {
+                    throw WindowSystemError.windowNotFound(write.windowID)
+                }
+                guard isSettable(kAXPositionAttribute, on: element) || isSettable(kAXSizeAttribute, on: element) else {
+                    throw WindowSystemError.unsupportedWindow(write.windowID)
+                }
+                _ = suspendEnhancedUserInterfaceIfNeeded(for: element)
+                var pid: pid_t = 0
+                AXUIElementGetPid(element, &pid)
+                let previous = knownCurrentFrames[write.windowID]
+                let plan = FrameWritePlanner.plan(target: write.frame, knownCurrentFrame: previous, correctsClamping: true)
+                prepared[write.windowID] = (pid, CommittedJob(windowID: write.windowID, element: element,
+                                                              frame: write.frame, previous: previous, plan: plan))
+            }
+        } catch {
+            // Nothing was written yet.
+            return FrameBatchResult(attempted: [], failure: (preparing, error))
+        }
+        let lock = NSLock()
+        nonisolated(unsafe) var results: [WindowID: CommittedResult] = [:]
+        let accepted: [AXError] = [.success, .attributeUnsupported]
+        for pass in Self.shrinkingFirstPasses(writes, knownCurrentFrames: knownCurrentFrames) {
+            // A failed shrink leaves no room for the growing windows; stop
+            // before the next pass, and the caller rolls back.
+            guard results.values.allSatisfy({ $0.errors.allSatisfy { accepted.contains($0) } }) else { break }
+            var groups: [pid_t: [CommittedJob]] = [:]
+            var pidOrder: [pid_t] = []
+            for write in pass {
+                guard let entry = prepared[write.windowID] else { continue }
+                if groups[entry.pid] == nil { pidOrder.append(entry.pid) }
+                groups[entry.pid, default: []].append(entry.job)
+            }
+            let jobs = pidOrder.compactMap { groups[$0] }
+            DispatchQueue.concurrentPerform(iterations: jobs.count) { index in
+                for job in jobs[index] {
+                    let result = Self.performCommittedWrite(job)
+                    lock.lock(); results[job.windowID] = result; lock.unlock()
+                }
+            }
+        }
+        var failure: (windowID: WindowID, error: Error)?
+        for write in writes {
+            lastWriteReadback.removeValue(forKey: write.windowID)
+            guard let result = results[write.windowID] else { continue }
+            guard result.errors.allSatisfy({ accepted.contains($0) }) else {
+                elements.removeValue(forKey: write.windowID)
+                if failure == nil {
+                    failure = (write.windowID, WindowSystemError.operationFailed(
+                        "macOS rejected the window frame update (\(result.errors.map { String($0.rawValue) }.joined(separator: ", ")))."
+                    ))
+                }
+                continue
+            }
+            guard let actual = result.actual else { continue }
+            lastWriteReadback[write.windowID] = actual
+            if minimumSizeLearner.observeWriteReadback(
+                windowID: write.windowID, application: applicationKeys[write.windowID],
+                requested: write.frame, previous: knownCurrentFrames[write.windowID], actual: actual
+            ) {
+                snapshotGeneration &+= 1
+            } else if result.confirmedClamp, minimumSizeLearner.observeConfirmedClamp(
+                windowID: write.windowID, application: applicationKeys[write.windowID],
+                requested: write.frame.size, actual: actual.size
+            ) {
+                snapshotGeneration &+= 1
+            }
+        }
+        return FrameBatchResult(attempted: writes.map(\.windowID).filter { results[$0] != nil }, failure: failure)
+    }
+
+    /// Size, position, size, then a readback; the same sequence as
+    /// `writeFrame`, including the nudge that confirms a same-origin clamp.
+    private nonisolated static func performCommittedWrite(_ job: CommittedJob) -> CommittedResult {
+        var position = CGPoint(x: job.frame.minX, y: job.frame.minY)
+        var size = CGSize(width: job.frame.size.width, height: job.frame.size.height)
+        guard let positionValue = AXValueCreate(.cgPoint, &position),
+              let sizeValue = AXValueCreate(.cgSize, &size) else {
+            return CommittedResult(windowID: job.windowID, errors: [.failure], actual: nil, confirmedClamp: false)
+        }
+        AXUIElementSetMessagingTimeout(job.element, frameWriteMessagingTimeout)
+        defer { AXUIElementSetMessagingTimeout(job.element, 0) }
+        var errors: [AXError] = []
+        if job.plan.writesInitialSize {
+            errors.append(AXUIElementSetAttributeValue(job.element, kAXSizeAttribute as CFString, sizeValue))
+        }
+        if job.plan.writesPosition {
+            errors.append(AXUIElementSetAttributeValue(job.element, kAXPositionAttribute as CFString, positionValue))
+        }
+        if job.plan.writesFinalSize {
+            errors.append(AXUIElementSetAttributeValue(job.element, kAXSizeAttribute as CFString, sizeValue))
+        }
+        guard job.plan.writesInitialSize || job.plan.writesFinalSize else {
+            return CommittedResult(windowID: job.windowID, errors: errors, actual: nil, confirmedClamp: false)
+        }
+        func read() -> BTRect? {
+            var p: CFTypeRef?, s: CFTypeRef?
+            guard AXUIElementCopyAttributeValue(job.element, kAXPositionAttribute as CFString, &p) == .success,
+                  AXUIElementCopyAttributeValue(job.element, kAXSizeAttribute as CFString, &s) == .success,
+                  let p, let s,
+                  // A value of another type is no measurement, not a zero frame.
+                  let point: CGPoint = decodedAXValue(p, type: .cgPoint),
+                  let extent: CGSize = decodedAXValue(s, type: .cgSize) else { return nil }
+            return BTRect(x: point.x, y: point.y, width: extent.width, height: extent.height)
+        }
+        guard let actual = read() else {
+            return CommittedResult(windowID: job.windowID, errors: errors, actual: nil, confirmedClamp: false)
+        }
+        var confirmed = false
+        if actual.size.width > job.frame.size.width + 2 || actual.size.height > job.frame.size.height + 2,
+           abs(actual.minX - job.frame.minX) <= 2, abs(actual.minY - job.frame.minY) <= 2 {
+            var nudged = CGPoint(x: actual.minX + 1, y: actual.minY)
+            var original = CGPoint(x: actual.minX, y: actual.minY)
+            if let nudgedValue = AXValueCreate(.cgPoint, &nudged), let originalValue = AXValueCreate(.cgPoint, &original),
+               AXUIElementSetAttributeValue(job.element, kAXPositionAttribute as CFString, nudgedValue) == .success {
+                let observed = read()
+                _ = AXUIElementSetAttributeValue(job.element, kAXPositionAttribute as CFString, originalValue)
+                confirmed = observed.map { abs($0.minX - nudged.x) <= 0.5 } ?? false
+            }
+        }
+        return CommittedResult(windowID: job.windowID, errors: errors, actual: actual, confirmedClamp: confirmed)
     }
 
     private nonisolated static func performIntermediateWrite(_ job: IntermediateJob) -> IntermediateResult {

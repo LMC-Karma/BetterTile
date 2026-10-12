@@ -375,12 +375,11 @@ public final class WindowCoordinator {
         case let .failed(reason):
             return .failed(reason: reason)
         case var .started(transaction):
-            lastPlacementBaselineFrames = transaction.baselineFrames
             return commit(transaction: &transaction, placements: placements, recordHistory: recordHistory)
         }
     }
 
-    /// The frames the most recent `applyPlacements` call started from. A
+    /// The frames the most recent committed placement started from. A
     /// follow-up write in the same user action records undo history against
     /// these, not against the frames the first write left.
     public private(set) var lastPlacementBaselineFrames: [WindowID: BTRect] = [:]
@@ -479,6 +478,7 @@ public final class WindowCoordinator {
         placements: [Placement]? = nil,
         recordHistory: Bool = true
     ) -> WindowMutationOutcome {
+        lastPlacementBaselineFrames = transaction.baselineFrames
         if let placements, case let .failed(reason) = preview(transaction: &transaction, placements: placements) {
             return .failed(reason: reason)
         }
@@ -870,6 +870,7 @@ public final class WindowCoordinator {
         }
         try system.withFrameWriteBatch {
             var attempted: [WindowID] = []
+            var generationsWritten: [WindowID: UInt64] = [:]
             do {
                 // Shrink before growing, so a growing window never covers a
                 // neighbour that has not yet made room.
@@ -879,31 +880,58 @@ public final class WindowCoordinator {
                     return placement.frame.size.width < old.size.width - 0.5
                         || placement.frame.size.height < old.size.height - 0.5
                 }
-                for placement in placements.sorted(by: { lhs, rhs in
+                let ordered = placements.sorted(by: { lhs, rhs in
                     let left = shrinks(lhs), right = shrinks(rhs)
                     return left != right ? left : lhs.windowID < rhs.windowID
-                }) {
-                    attempted.append(placement.windowID)
-                    try apply(
-                        placement.frame,
-                        to: placement.windowID,
-                        knownCurrentFrame: known[placement.windowID]
-                    )
+                })
+                // Different applications are written at once, so the layout
+                // lands together: the adapter writes every application's
+                // shrinking windows, then the growing ones. One application's
+                // windows keep this order.
+                for placement in ordered {
+                    let generation = (generations[placement.windowID] ?? 0) &+ 1
+                    generations[placement.windowID] = generation
+                    generationsWritten[placement.windowID] = generation
+                    expect(placement.frame, for: placement.windowID, generation: generation)
+                }
+                let result = system.setFrames(ordered, knownCurrentFrames: known)
+                attempted = result.attempted
+                if let failure = result.failure {
+                    for id in Set(ordered.map(\.windowID)).subtracting(attempted).union([failure.windowID]) {
+                        if let generation = generationsWritten[id] { cancelExpectedMutation(for: id, generation: generation) }
+                    }
+                    // The failing window is read before rollback below. A
+                    // batch that failed before writing has nothing to undo.
+                    if attempted.contains(failure.windowID) {
+                        attempted.removeAll { $0 == failure.windowID }
+                        attempted.append(failure.windowID)
+                    }
+                    throw failure.error
                 }
             } catch {
-                // A size write can succeed before a position write fails. Read
-                // the failing window before deciding whether it needs rollback.
+                // A size write can succeed before a position write fails, and
+                // a concurrent batch can fail in several applications. Read
+                // every attempted window; an unread one gets the full
+                // restoring write sequence.
                 let failedID = attempted.last
-                let failedFrame = failedID.flatMap { (try? snapshots(ids: [$0]))?.first?.frame }
+                let actualFrames = Dictionary(
+                    ((try? snapshots(ids: Set(attempted))) ?? []).map { ($0.id, $0.frame) },
+                    uniquingKeysWith: { first, _ in first }
+                )
+                // Several applications can fail in one batch. A window that
+                // did not reach its frame expects no event for it.
+                let requested = Dictionary(placements.map { ($0.windowID, $0.frame) }, uniquingKeysWith: { _, last in last })
+                for id in attempted where actualFrames[id].map({ frame in
+                    requested[id].map { !frame.approximatelyEquals($0, tolerance: 2) } ?? false
+                }) == true {
+                    if let generation = generationsWritten[id] { cancelExpectedMutation(for: id, generation: generation) }
+                }
                 var rollbackFailures: [WindowID] = []
                 for id in attempted.reversed() {
                     guard let frame = rollbackFrames[id] else { continue }
-                    if id == failedID, failedFrame?.approximatelyEquals(frame, tolerance: 0.01) == true { continue }
-                    let appliedFrame = id == failedID
-                        ? failedFrame
-                        : placements.first(where: { $0.windowID == id })?.frame
+                    if id == failedID, actualFrames[id]?.approximatelyEquals(frame, tolerance: 0.01) == true { continue }
                     do {
-                        try apply(frame, to: id, knownCurrentFrame: appliedFrame)
+                        try apply(frame, to: id, knownCurrentFrame: actualFrames[id])
                     } catch {
                         rollbackFailures.append(id)
                     }

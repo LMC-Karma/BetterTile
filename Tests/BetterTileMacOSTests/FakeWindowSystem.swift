@@ -165,6 +165,34 @@ final class FakeWindowSystem: WindowSystem, TargetedWindowSystem, WindowEventSou
         try setFrame(frame, knownCurrentFrame: knownCurrentFrame, for: windowID)
     }
 
+    /// Like the Accessibility adapter, attempts every write of a batch and
+    /// reports the first failure, instead of stopping at it.
+    var attemptsWholeBatch = false
+    /// Fails the batch while preparing this window, before any write.
+    var unpreparedBatchWindowID: WindowID?
+    func setFrames(_ writes: [Placement], knownCurrentFrames: [WindowID: BTRect]) -> FrameBatchResult {
+        if let unpreparedBatchWindowID, writes.contains(where: { $0.windowID == unpreparedBatchWindowID }) {
+            return FrameBatchResult(attempted: [], failure: (unpreparedBatchWindowID, WindowSystemError.windowNotFound(unpreparedBatchWindowID)))
+        }
+        var attempted: [WindowID] = []
+        var failure: (windowID: WindowID, error: Error)?
+        // Like the adapter: shrinking windows, then growing windows, and no
+        // further pass after a failed one.
+        for pass in AccessibilityWindowSystem.shrinkingFirstPasses(writes, knownCurrentFrames: knownCurrentFrames) {
+            guard failure == nil else { break }
+            for write in pass {
+                attempted.append(write.windowID)
+                do {
+                    try setFrame(write.frame, knownCurrentFrame: knownCurrentFrames[write.windowID], for: write.windowID)
+                } catch {
+                    if failure == nil { failure = (write.windowID, error) }
+                    if !attemptsWholeBatch { return FrameBatchResult(attempted: attempted, failure: failure) }
+                }
+            }
+        }
+        return FrameBatchResult(attempted: attempted, failure: failure)
+    }
+
     func setFrame(_ frame: BTRect, knownCurrentFrame: BTRect?, for windowID: WindowID) throws {
         currentFrameWriteBatch?.append(windowID)
         recordedKnownCurrentFrames[windowID, default: []].append(knownCurrentFrame)

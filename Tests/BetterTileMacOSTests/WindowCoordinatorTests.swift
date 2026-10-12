@@ -1402,3 +1402,114 @@ func singleWindowPartialFailureRestoresBaselineAndPreservesHistory(actionPlan: B
     #expect(coordinator.applyLive(transaction: &transaction, placements: tick, validateParticipants: false).isApplied)
     #expect(system.windows[0].frame == BTRect(x: 0, y: 0, width: 450, height: 450))
 }
+
+/// A concurrent batch can fail in more than one application. Rollback reads
+/// every attempted window, so each restoring write starts from that
+/// window's real frame, not from the frame it was asked to take.
+@Test @MainActor func batchRollbackStartsFromEveryWindowsRealFrame() throws {
+    let system = FakeWindowSystem()
+    system.windows[0].frame = BTRect(x: 0, y: 0, width: 500, height: 800)
+    system.addSecondWindow()
+    system.windows[1].frame = BTRect(x: 500, y: 0, width: 500, height: 800)
+    system.attemptsWholeBatch = true
+    let first = system.windows[0], second = system.windows[1]
+    // Both applications take the new size and refuse the new position.
+    for id in [first.id, second.id] {
+        system.partiallyFailedFrameWriteNumbers[id] = [system.frameWriteCounts[id, default: 0] + 1]
+    }
+    let coordinator = WindowCoordinator(system: system)
+    let outcome = coordinator.applyPlacements([
+        Placement(windowID: first.id, frame: BTRect(x: 100, y: 0, width: 400, height: 800)),
+        Placement(windowID: second.id, frame: BTRect(x: 600, y: 0, width: 400, height: 800)),
+    ])
+    #expect(!outcome.isApplied)
+    #expect(system.windows.first { $0.id == first.id }?.frame == first.frame)
+    #expect(system.windows.first { $0.id == second.id }?.frame == second.frame)
+    for window in [first, second] {
+        let hint = system.recordedKnownCurrentFrames[window.id]?.last ?? nil
+        #expect(hint == BTRect(x: window.frame.minX, y: 0, width: 400, height: 800), "\(window.id): \(String(describing: hint))")
+    }
+}
+
+/// A batch that fails while it is prepared writes nothing. Its rollback must
+/// not return a window from the live drag to the frame from before the drag.
+@Test @MainActor func batchThatFailsBeforeWritingMovesNoWindow() throws {
+    let system = FakeWindowSystem()
+    system.windows[0].frame = BTRect(x: 0, y: 0, width: 500, height: 800)
+    system.addSecondWindow()
+    system.windows[1].frame = BTRect(x: 500, y: 0, width: 500, height: 800)
+    let first = system.windows[0].id, second = system.windows[1].id
+    let coordinator = WindowCoordinator(system: system)
+    var transaction = try #require(coordinator.beginTransaction(windowIDs: [first, second]).startedTransaction)
+    let placements = [
+        Placement(windowID: first, frame: BTRect(x: 0, y: 0, width: 400, height: 800)),
+        Placement(windowID: second, frame: BTRect(x: 400, y: 0, width: 600, height: 800)),
+    ]
+    for _ in 1...2 { _ = coordinator.applyLive(transaction: &transaction, placements: placements, validateParticipants: false) }
+    let dragged = system.windows.map(\.frame)
+    let writes = system.frameWriteCounts
+    system.unpreparedBatchWindowID = second
+    #expect(!coordinator.commit(transaction: &transaction, placements: placements).isApplied)
+    #expect(system.frameWriteCounts == writes)
+    #expect(system.windows.map(\.frame) == dragged)
+}
+
+/// A committed layout writes every application at once, but in two passes:
+/// windows that shrink, then windows that grow. A growing window never
+/// covers a neighbour from another application that has not made room.
+@Test func committedBatchesShrinkInOnePassBeforeTheyGrow() {
+    let a = WindowID(rawValue: "a"), b = WindowID(rawValue: "b"), c = WindowID(rawValue: "c")
+    let known = [
+        a: BTRect(x: 0, y: 0, width: 500, height: 800),
+        b: BTRect(x: 500, y: 0, width: 500, height: 800),
+    ]
+    let writes = [
+        Placement(windowID: a, frame: BTRect(x: 0, y: 0, width: 600, height: 800)),
+        Placement(windowID: b, frame: BTRect(x: 600, y: 0, width: 400, height: 800)),
+        Placement(windowID: c, frame: BTRect(x: 0, y: 0, width: 100, height: 100)),
+    ]
+    let passes = AccessibilityWindowSystem.shrinkingFirstPasses(writes, knownCurrentFrames: known)
+    #expect(passes.map { $0.map(\.windowID) } == [[b], [a, c]])
+    #expect(AccessibilityWindowSystem.shrinkingFirstPasses(Array(writes.prefix(1)), knownCurrentFrames: known)
+        .map { $0.map(\.windowID) } == [[a]])
+}
+
+/// Several applications can fail in one concurrent batch. No window keeps
+/// an expectation for a frame it never reached, so a later real move to that
+/// frame is not mistaken for BetterTile's own write.
+@Test @MainActor func aFailedBatchExpectsNoFrameAWindowNeverReached() throws {
+    let system = FakeWindowSystem()
+    system.windows[0].frame = BTRect(x: 0, y: 0, width: 500, height: 800)
+    system.addSecondWindow()
+    system.windows[1].frame = BTRect(x: 500, y: 0, width: 500, height: 800)
+    system.attemptsWholeBatch = true
+    let first = system.windows[0].id, second = system.windows[1].id
+    for id in [first, second] {
+        system.partiallyFailedFrameWriteNumbers[id] = [system.frameWriteCounts[id, default: 0] + 1]
+    }
+    let coordinator = WindowCoordinator(system: system)
+    let requested = [
+        Placement(windowID: first, frame: BTRect(x: 100, y: 0, width: 400, height: 800)),
+        Placement(windowID: second, frame: BTRect(x: 600, y: 0, width: 400, height: 800)),
+    ]
+    #expect(!coordinator.applyPlacements(requested).isApplied)
+    for placement in requested {
+        #expect(!coordinator.matchesExpectedMutation(windowID: placement.windowID, actualFrame: placement.frame))
+    }
+}
+
+/// A committed batch writes shrinking windows first. When a shrink fails,
+/// the growing windows are not written over the window that kept its room.
+@Test @MainActor func aFailedShrinkStopsTheGrowingPass() throws {
+    let (system, coordinator) = sharedEdgeFixture()
+    system.attemptsWholeBatch = true
+    let left = system.windows[0].id, right = system.windows[1].id
+    system.failingWindowID = right
+    let leftFrame = system.windows[0].frame
+    #expect(!coordinator.applyPlacements([
+        Placement(windowID: left, frame: BTRect(x: 0, y: 0, width: 600, height: 800)),
+        Placement(windowID: right, frame: BTRect(x: 600, y: 0, width: 400, height: 800)),
+    ]).isApplied)
+    #expect(system.frameWriteCounts[left, default: 0] == 0)
+    #expect(system.windows[0].frame == leftFrame)
+}

@@ -2646,3 +2646,121 @@ func bentoFocusCheckWaitsForDesktopInteraction(interaction: String) async throws
     let learned = system.windows.first { $0.id == arrival }?.constraints.minimumSize.width ?? 0
     #expect(learned < 590, "arrival learned a minimum width of \(learned): \(system.windows.map(\.frame))")
 }
+
+/// The re-solve after a drop can fail with a failed rollback too. The drop
+/// then reports the mixed layout and asks for Repair; it does not restore
+/// the drag over it, and automatic writes stop.
+@Test @MainActor func aDegradedDropCorrectionAsksForRepairAndStopsWrites() async throws {
+    _ = NSApplication.shared
+    let system = FakeAppWindowSystem()
+    system.measuresOnWrite = true
+    for (index, name) in ["swap-b", "swap-c"].enumerated() {
+        system.windows.append(WindowSnapshot(id: WindowID(rawValue: name), processIdentifier: Int32(43 + index),
+            bundleIdentifier: "com.example.\(name)", frame: BTRect(x: 300 + Double(index) * 40, y: 300, width: 500, height: 400),
+            displayID: system.mainDisplay.id))
+    }
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    model.setActiveMode(.bento)
+    let visible = system.mainDisplay.visibleFrame
+    try #require(await waitFor {
+        system.windows.contains { $0.frame.size.height > visible.size.height * 0.75 }
+            && system.windows.filter { $0.frame.size.height < visible.size.height * 0.6 }.count == 2
+    })
+    try await Task.sleep(for: .milliseconds(400))
+    let tall = try #require(system.windows.first { $0.frame.size.height > visible.size.height * 0.75 })
+    let short = try #require(system.windows.first { $0.frame.size.height < visible.size.height * 0.6 })
+    system.enforcedMinimumHeights[tall.id] = visible.size.height * 0.7
+    // The drop's writes succeed. The correction moves "swap-c" first; the
+    // next window's write fails, and so does the rollback of "swap-c".
+    let corrected = WindowID(rawValue: "swap-c")
+    for window in system.windows {
+        let next = system.frameWriteCounts[window.id, default: 0] + (window.id == corrected ? 3 : 2)
+        system.failedFrameWriteNumbers[window.id] = Set(next...(next + 20))
+    }
+    let before = system.frameWriteCounts
+    try #require(model.beginBentoDrag(displayID: system.mainDisplay.id, sourceID: tall.id))
+    model.finishBentoDrag(displayID: system.mainDisplay.id, sourceID: tall.id, outcome: .swap(targetWindowID: short.id))
+    #expect(model.statusMessage?.hasSuffix("Use Repair to rebuild Bento.") == true, "\(model.statusMessage ?? "nil")")
+    // The window the correction never touched got only the drop's write: the
+    // drag was not restored over the mixed layout.
+    let untouched = WindowID(rawValue: "swap-b")
+    #expect(system.frameWriteCounts[untouched] == (before[untouched] ?? 0) + 1)
+    // Automatic writes stay stopped for a later event.
+    system.failedFrameWriteNumbers = [:]
+    let writes = system.frameWriteCounts
+    system.eventHandler?(WindowSystemEvent(kind: .moved, windowID: untouched, processIdentifier: 43))
+    try await Task.sleep(for: .milliseconds(400))
+    #expect(system.frameWriteCounts == writes)
+}
+
+/// A swap can put a window into a pane smaller than a minimum it never
+/// reported. The drop's own write measures the refusal, and the layout is
+/// solved again before the drop returns, so no overlap waits for settlement.
+@Test @MainActor func dragSwapSolvesAgainWhenTheMovedWindowRefusesItsPane() async throws {
+    _ = NSApplication.shared
+    let system = FakeAppWindowSystem()
+    system.measuresOnWrite = true
+    for (index, name) in ["swap-b", "swap-c"].enumerated() {
+        system.windows.append(WindowSnapshot(id: WindowID(rawValue: name), processIdentifier: Int32(43 + index),
+            bundleIdentifier: "com.example.\(name)", frame: BTRect(x: 300 + Double(index) * 40, y: 300, width: 500, height: 400),
+            displayID: system.mainDisplay.id))
+    }
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    model.setActiveMode(.bento)
+    let visible = system.mainDisplay.visibleFrame
+    // Bento tiles the three windows: one full-height pane and two half-height ones.
+    try #require(await waitFor {
+        system.windows.contains { $0.frame.size.height > visible.size.height * 0.75 }
+            && system.windows.filter { $0.frame.size.height < visible.size.height * 0.6 }.count == 2
+    })
+    let tall = try #require(system.windows.first { $0.frame.size.height > visible.size.height * 0.75 })
+    let short = try #require(system.windows.first { $0.frame.size.height < visible.size.height * 0.6 })
+    system.enforcedMinimumHeights[tall.id] = visible.size.height * 0.7
+    try #require(model.beginBentoDrag(displayID: system.mainDisplay.id, sourceID: tall.id))
+    model.finishBentoDrag(displayID: system.mainDisplay.id, sourceID: tall.id, outcome: .swap(targetWindowID: short.id))
+    let frames = system.windows.map(\.frame)
+    for (i, a) in frames.enumerated() {
+        for b in frames.dropFirst(i + 1) {
+            #expect((a.intersection(b)?.area ?? 0) < 1, "\(frames)")
+        }
+    }
+    #expect(try #require(system.windows.first { $0.id == tall.id }).frame.size.height >= visible.size.height * 0.7)
+}
+
+/// The drop's correction can move a window the swap left alone. Undo
+/// returns that window to its frame from before the drag.
+@Test @MainActor func undoAfterADropCorrectionRestoresAWindowOnlyTheCorrectionMoved() async throws {
+    _ = NSApplication.shared
+    let system = FakeAppWindowSystem()
+    system.measuresOnWrite = true
+    for (index, name) in ["swap-b", "swap-c"].enumerated() {
+        system.windows.append(WindowSnapshot(id: WindowID(rawValue: name), processIdentifier: Int32(43 + index),
+            bundleIdentifier: "com.example.\(name)", frame: BTRect(x: 300 + Double(index) * 40, y: 300, width: 500, height: 400),
+            displayID: system.mainDisplay.id))
+    }
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    model.setActiveMode(.bento)
+    let visible = system.mainDisplay.visibleFrame
+    try #require(await waitFor {
+        system.windows.contains { $0.frame.size.height > visible.size.height * 0.75 }
+            && system.windows.filter { $0.frame.size.height < visible.size.height * 0.6 }.count == 2
+    })
+    try await Task.sleep(for: .milliseconds(400))
+    let tall = try #require(system.windows.first { $0.frame.size.height > visible.size.height * 0.75 })
+    let short = try #require(system.windows.first { $0.frame.size.height < visible.size.height * 0.6 })
+    let other = try #require(system.windows.first { $0.id != tall.id && $0.id != short.id })
+    let before = other.frame
+    system.enforcedMinimumHeights[tall.id] = visible.size.height * 0.7
+    try #require(model.beginBentoDrag(displayID: system.mainDisplay.id, sourceID: tall.id))
+    model.finishBentoDrag(displayID: system.mainDisplay.id, sourceID: tall.id, outcome: .swap(targetWindowID: short.id))
+    try #require(system.windows.first { $0.id == other.id }?.frame != before, "the correction moved the third window")
+    try await Task.sleep(for: .milliseconds(400))
+
+    system.focusedID = other.id
+    model.perform(.restore)
+    #expect(await waitFor(timeout: .seconds(2)) { system.windows.first { $0.id == other.id }?.frame == before },
+            "\(system.windows.map(\.frame)) \(String(describing: model.statusMessage))")
+}

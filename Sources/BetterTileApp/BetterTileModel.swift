@@ -1462,9 +1462,32 @@ final class BetterTileModel {
                 )
             }
             if committed {
-                let requestedFrames = Dictionary(uniqueKeysWithValues: plan.placements.map { ($0.windowID, $0.frame) })
                 var proposed = active.layoutSession
                 proposed.bentoState = plan.state
+                // A window that refused its new pane is measured by this
+                // write; solve again now, so the correction lands with the
+                // drop instead of half a second later from settlement.
+                var placements = plan.placements
+                var correctionDegraded = false
+                if !plan.isFocusDrop, proposed.mode == .bento,
+                   let display = system.displays().first(where: { $0.id == displayID }) {
+                    // The drop recorded Undo history; a window only the
+                    // correction moves gets its frame from before the drag.
+                    let correction = resolvedAfterMeasuredClamps(
+                        placements, session: &proposed, display: display, recordHistory: true
+                    )
+                    placements = correction.placements
+                    if let reason = correction.degradedReason {
+                        correctionDegraded = true
+                        recoveryFailurePresented = true
+                        suspendAutomaticBentoWrites(
+                            displayID: displayID,
+                            windows: (try? system.visibleWindows()) ?? [],
+                            error: reason
+                        )
+                    }
+                }
+                let requestedFrames = Dictionary(uniqueKeysWithValues: placements.map { ($0.windowID, $0.frame) })
                 proposed.recordProposedFrames(requestedFrames)
                 proposed.windowIDs.insert(sourceID)
                 if !proposed.bentoInsertionOrder.contains(sourceID) {
@@ -1473,11 +1496,15 @@ final class BetterTileModel {
                 proposed.excludedFocusWindowIDs.formUnion(plan.excludedWindowIDs)
                 proposed.excludedFocusWindowIDs.remove(sourceID)
                 proposed.automaticallyFloatingWindowIDs.remove(sourceID)
-                if sessionStore.commit(
+                if correctionDegraded {
+                    // Automatic writes are suspended and the message names
+                    // Repair; the drop's session is not committed.
+                    committed = false
+                } else if sessionStore.commit(
                     proposed,
                     replacing: active.layoutSession.revision
                 ) != nil {
-                    let changedWindowIDs: Set<WindowID> = Set(plan.placements.compactMap { placement -> WindowID? in
+                    let changedWindowIDs: Set<WindowID> = Set(placements.compactMap { placement -> WindowID? in
                         guard let baseline = active.transaction.baselineFrames[placement.windowID],
                               !baseline.approximatelyEquals(placement.frame, tolerance: 0.01)
                         else { return nil }
