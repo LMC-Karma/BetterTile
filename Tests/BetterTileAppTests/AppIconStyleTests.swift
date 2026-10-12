@@ -5,7 +5,12 @@ import Testing
 @Test func appIconChoiceRestoresAndFallsBackToClassic() throws {
     let suite = "BetterTileIconTests-\(UUID().uuidString)"
     let defaults = try #require(UserDefaults(suiteName: suite))
-    defer { defaults.removePersistentDomain(forName: suite) }
+    defer {
+        defaults.removePersistentDomain(forName: suite)
+        // Removing the domain leaves an empty plist behind, one per run.
+        try? FileManager.default.removeItem(at: FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Preferences/\(suite).plist"))
+    }
 
     #expect(AppIconStyle.selected(in: defaults) == .classic)
     defaults.set("ice", forKey: AppIconStyle.defaultsKey)
