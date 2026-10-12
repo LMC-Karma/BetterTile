@@ -576,7 +576,7 @@ public struct BentoBoundaryResolver: Sendable {
     }
 }
 
-private enum BentoTreeGeometry {
+enum BentoTreeGeometry {
     struct BoundaryGeometry {
         var axis: SplitAxis
         var before: BentoNode

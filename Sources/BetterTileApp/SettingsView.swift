@@ -668,6 +668,15 @@ struct WindowLayoutSettings: View {
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
 
+                Toggle("Balance on new window", isOn: configurationBinding(\.bentoBalancesNewWindows))
+                Text(
+                    "When a window opens, Bento makes panes equal sizes again. "
+                        + "A window that can't shrink that far keeps its smallest size. "
+                        + "This replaces divider positions you set. Tabbed is not affected."
+                )
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+
                 HStack {
                     Text("Pane gap")
                     Slider(value: configurationBinding(\.bentoInnerGap), in: 0...12, step: 1)

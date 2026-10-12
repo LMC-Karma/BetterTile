@@ -3276,7 +3276,8 @@ final class BetterTileModel {
             paneGap: configuration.bentoInnerGap,
             adjacencyTolerance: configuration.adjacencyTolerance,
             singleWindowPlacement: configuration.singleWindowPlacement,
-            newWindowSide: configuration.bentoNewWindowSide
+            newWindowSide: configuration.bentoNewWindowSide,
+            balancesNewWindows: configuration.bentoBalancesNewWindows
         )
 
         for display in displays {
@@ -3536,7 +3537,8 @@ final class BetterTileModel {
             confirmedGone: confirmedGone,
             minimized: minimized.union(confirmedMinimizedWindowIDs),
             knownSpaceWindowIDs: system.nativeDesktopObservation()?.exclusiveWindowIDs(on: display.id) ?? [],
-            newWindowSide: configuration.bentoNewWindowSide
+            newWindowSide: configuration.bentoNewWindowSide,
+            balancesNewWindows: configuration.bentoBalancesNewWindows
         )
         guard case let .update(updated, _, _) = transition else { return }
         session = updated
