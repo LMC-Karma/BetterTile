@@ -1,5 +1,5 @@
 import BetterTileCore
-import BetterTileMacOS
+@testable import BetterTileMacOS
 import Foundation
 import AppKit
 import SwiftUI
@@ -2785,4 +2785,81 @@ func bentoFocusCheckWaitsForDesktopInteraction(interaction: String) async throws
     model.perform(.restore)
     #expect(await waitFor(timeout: .seconds(2)) { system.windows.first { $0.id == other.id }?.frame == before },
             "\(system.windows.map(\.frame)) \(String(describing: model.statusMessage))")
+}
+
+/// A user layout change makes every arrangement remembered at an earlier
+/// minimize out of date. B leaves a 2x2 grid, the user rearranges the other
+/// three, and C is minimized and restored. C must return to the user's
+/// arrangement, not to the larger grid remembered when B left.
+@Test(arguments: ["swap", "shortcut", "divider"]) @MainActor
+func restoringAWindowKeepsAUserChangeMadeAfterAnEarlierMinimize(change: String) async throws {
+    _ = NSApplication.shared
+    let system = FakeAppWindowSystem()
+    system.emitsMinimizationEvents = true
+    let (a, b, c, d) = (WindowID(rawValue: "a"), WindowID(rawValue: "b"), WindowID(rawValue: "c"), WindowID(rawValue: "d"))
+    system.windows = [a, b, c, d].enumerated().map { index, id in
+        WindowSnapshot(id: id, processIdentifier: Int32(60 + index), bundleIdentifier: "com.example.\(id.rawValue)",
+            frame: BTRect(x: 100 + Double(index) * 20, y: 100, width: 400, height: 300),
+            displayID: system.mainDisplay.id)
+    }
+    system.focusedID = a
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    func tiled(_ count: Int) -> Bool {
+        let visible = system.windows.filter { !$0.isMinimized }
+        return visible.count == count && Set(visible.map(\.frame)).count == count
+            && visible.reduce(0) { $0 + $1.frame.area } > system.mainDisplay.visibleFrame.area * 0.99
+    }
+    func frames() -> [WindowID: BTRect] {
+        Dictionary(uniqueKeysWithValues: system.windows.filter { !$0.isMinimized }.map { ($0.id, $0.frame) })
+    }
+    func settle() async throws {
+        await model.windowEventTask?.value
+        try #require(await waitFor { model.settlementTasks.isEmpty })
+        try await Task.sleep(for: .milliseconds(300))
+    }
+    model.setActiveMode(.bento)
+    try #require(await waitFor { tiled(4) }, "\(frames())")
+    try await settle()
+
+    try system.setMinimized(true, for: b)
+    try #require(await waitFor { tiled(3) }, "\(frames())")
+    try await settle()
+    let beforeChange = frames()
+
+    switch change {
+    case "swap":
+        try #require(model.beginBentoDrag(displayID: system.mainDisplay.id, sourceID: a))
+        model.finishBentoDrag(displayID: system.mainDisplay.id, sourceID: a, outcome: .swap(targetWindowID: d))
+    case "shortcut":
+        // A already fills the left half, so moving it right changes the layout.
+        model.perform(.rightHalf)
+    default:
+        // Drag the divider between A and the C/D column 100 points right.
+        let start = BTPoint(x: 500, y: 200)
+        let presentation = model.dividerPresentation(windows: system.windows)
+        model.dividerResize.refresh(boundaries: presentation.boundaries, obscuringFrames: [])
+        let interaction = try #require(DividerInteractionResolver.resolve(
+            at: start, in: presentation.boundaries, hitWidth: 18,
+            adjacencyTolerance: 6, paneGap: model.configuration.bentoInnerGap
+        ))
+        let screen = try #require(NSScreen.screens.first)
+        let release = CGPoint(x: start.x + 100, y: screen.frame.maxY - start.y)
+        model.dividerResize.beginGesture(interaction: interaction, at: start)
+        try #require(model.dividerResize.isDragging)
+        model.dividerResize.drag(to: release)
+        model.dividerResize.displayTick()
+        model.dividerResize.end(at: release)
+    }
+    try #require(await waitFor { tiled(3) && frames() != beforeChange }, "\(frames())")
+    try await settle()
+    let changed = frames()
+
+    try system.setMinimized(true, for: c)
+    try #require(await waitFor { tiled(2) }, "\(frames())")
+    try await settle()
+    try system.setMinimized(false, for: c)
+    try #require(await waitFor { tiled(3) }, "\(frames())")
+    try await settle()
+    #expect(frames() == changed, "before the change: \(beforeChange)")
 }

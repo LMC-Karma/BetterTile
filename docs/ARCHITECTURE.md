@@ -188,6 +188,12 @@ insertion policy. Minimized windows retain their reinsertion anchors, and
 Space transitions retain their stored layouts. Changing the preference does
 not rearrange existing windows.
 
+Each reinsertion anchor stores a neighbor, an edge, and the tree from just
+before the minimize. Restoring several windows rebuilds the largest stored
+tree. A drop, swap, partition, Layout Wheel command, or divider move clears
+the stored trees, because restoring one would undo that change. The anchors
+keep their neighbor and edge.
+
 Maximize enters Focus mode on a tiled Bento window and retains the previous
 tree for that desktop session. Restore, Maximize again, and a peer restored
 from the Dock share one bounded wait for the covered peers to return before

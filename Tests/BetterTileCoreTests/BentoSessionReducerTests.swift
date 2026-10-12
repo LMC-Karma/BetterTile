@@ -459,3 +459,51 @@ func restoringSeveralMinimizedWindowsRebuildsTheirGrid(restoreOrder: [Int]) thro
     let restored = Dictionary(uniqueKeysWithValues: windows.map { ($0.id, $0.frame) })
     #expect(restored == grid, "\(restored)")
 }
+
+/// A user change after a minimize makes the tree remembered at that minimize
+/// out of date. B leaves a 2x2 grid, the user swaps A and D, and C is
+/// minimized and restored: C returns to the swapped layout, not to B's grid.
+@Test func restoringAfterAUserChangeKeepsTheChange() throws {
+    let ids = ["a", "b", "c", "d"]
+    let quarter = [BTRect(x: 0, y: 0, width: 600, height: 400), BTRect(x: 600, y: 0, width: 600, height: 400),
+                   BTRect(x: 0, y: 400, width: 600, height: 400), BTRect(x: 600, y: 400, width: 600, height: 400)]
+    var windows = zip(ids, quarter).map { name, frame -> WindowSnapshot in
+        var window = reducerWindow(name); window.frame = frame; return window
+    }
+    var session = LayoutSession(displayID: reducerDisplay, mode: .bento, windowIDs: Set(windows.map(\.id)))
+    func place(_ placements: [Placement]) {
+        for placement in placements {
+            if let index = windows.firstIndex(where: { $0.id == placement.windowID }) {
+                windows[index].frame = placement.frame
+            }
+        }
+    }
+    func reconcile(minimized: Set<WindowID> = []) {
+        let visible = windows.map { window -> WindowSnapshot in
+            var copy = window; copy.isMinimized = minimized.contains(window.id); return copy
+        }
+        let transition = BentoSessionReducer().reconcile(
+            session: session, observation: BentoObservation(bounds: reducerBounds, windows: visible),
+            paneGap: 0, minimized: minimized)
+        if let update = transition.update {
+            session = update.session
+            place(update.placements)
+        }
+    }
+    func frames(except hidden: Set<WindowID>) -> [WindowID: BTRect] {
+        Dictionary(uniqueKeysWithValues: windows.filter { !hidden.contains($0.id) }.map { ($0.id, $0.frame) })
+    }
+    let (a, b, c, d) = (windows[0].id, windows[1].id, windows[2].id, windows[3].id)
+    reconcile()
+    reconcile(minimized: [b])
+    // The user swaps A and D, as a drag or the Layout Wheel commits it.
+    session.bentoState.swap(a, d)
+    session.forgetRememberedBentoLayouts()
+    place(session.bentoState.placements(in: reducerBounds))
+    let swapped = frames(except: [b])
+    #expect(session.bentoReinsertionAnchors[b]?.layoutBefore == nil)
+    #expect(session.bentoReinsertionAnchors[b]?.neighborWindowID != nil)
+    reconcile(minimized: [b, c])
+    reconcile(minimized: [b])
+    #expect(frames(except: [b]) == swapped, "\(frames(except: [b]))")
+}
