@@ -89,3 +89,14 @@ import Testing
         recordInstance: earlier, recordBundleIdentifier: nil, windowInstance: current))
 }
 
+
+/// Only two real answers make a window unmovable. An application that did
+/// not answer leaves the question open, so a drag asks again on its next
+/// tick instead of keeping the window still for the rest of the drag.
+@Test func movabilityNeedsAnAnswerBeforeAWindowCountsAsUnmovable() {
+    #expect(AccessibilityWindowSystem.movability(position: true, size: nil) == true)
+    #expect(AccessibilityWindowSystem.movability(position: false, size: true) == true)
+    #expect(AccessibilityWindowSystem.movability(position: false, size: false) == false)
+    #expect(AccessibilityWindowSystem.movability(position: nil, size: nil) == nil)
+    #expect(AccessibilityWindowSystem.movability(position: false, size: nil) == nil)
+}

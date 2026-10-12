@@ -1,10 +1,14 @@
 import AppKit
 import BetterTileCore
 
+/// `reselecting` is set only by a tab drag whose press selected the dragged
+/// tab. It names the tab its pane showed before that press. When the drop
+/// takes the dragged tab out of that pane, the pane selects that tab again.
 public enum TabbedUIIntent {
-    case select(WindowID), activate(UUID), close(WindowID), float(WindowID)
-    case move(WindowID, pane: UUID, index: Int?)
-    case split(WindowID, pane: UUID, edge: TabbedEdge)
+    case select(WindowID), activate(UUID), close(WindowID)
+    case float(WindowID, reselecting: WindowID? = nil)
+    case move(WindowID, pane: UUID, index: Int?, reselecting: WindowID? = nil)
+    case split(WindowID, pane: UUID, edge: TabbedEdge, reselecting: WindowID? = nil)
     case preset(TabbedPreset), undo, repair, removePane(UUID)
     /// VoiceOver moves a Bento pane divider by a fraction of its area.
     case adjustDivider(UUID, by: Double)
@@ -67,6 +71,9 @@ public final class TabbedOverlayController {
     private let orderPanel: (NSPanel, NSWindow.OrderingMode, Int) -> Void
     private let panelFactory: () -> NSPanel
     private var draggedWindow: WindowID?
+    /// The tab the source pane showed before the press that selected the
+    /// dragged tab. Nil when the press did not change the selection.
+    private var dragReselecting: WindowID?
     private var curtainBounds: BTRect?
     /// True while a curtain is kept over an order that could not be read
     /// back. The caller should verify the order again soon.
@@ -457,11 +464,15 @@ public final class TabbedOverlayController {
     /// `atRelease` starts a drag blocked while its press's own selection
     /// settled, at the mouse-up itself; its drop is queued behind that
     /// selection.
-    fileprivate func beginDrag(_ id: WindowID, offset: NSPoint, atRelease: Bool = false) -> Bool {
+    /// - Parameter reselecting: The tab the source pane showed before this
+    ///   gesture's press selected `id`. Every drop intent carries it.
+    fileprivate func beginDrag(_ id: WindowID, offset: NSPoint, atRelease: Bool = false,
+                               reselecting: WindowID? = nil) -> Bool {
         guard acceptsTabDrags || (atRelease && pressSelection == id), !isInteracting, !isDropPending else { return false }
         isInteracting = true
         cancelled = false
         draggedWindow = id
+        dragReselecting = reselecting == id ? nil : reselecting
         dragOffset = offset
         installEscape()
         if let source = panes.values.compactMap({ $0.contentView as? TabbedPaneView })
@@ -546,7 +557,7 @@ public final class TabbedOverlayController {
         var highlight: BTRect?
         var destinationLabel = ""
         if floatFrame.contains(point) {
-            dropIntent = .float(id)
+            dropIntent = .float(id, reselecting: dragReselecting)
             highlight = floatFrame
         } else {
             let frames = state.frames(in: bounds)
@@ -558,9 +569,14 @@ public final class TabbedOverlayController {
                         ?? TabbedStripLayout(width: frame.size.width, count: pane.tabs.count, selectedIndex: nil)
                     let insertion = strip.insertion(at: point.x - frame.minX)
                     var index = insertion.index
-                    if let old = pane.tabs.firstIndex(of: id), old < index { index -= 1 }
+                    // The strip draws the dragged tab where the preview put
+                    // it, so an edge after that slot counts it once. Fitted
+                    // tabs differ in width, so the committed index is not
+                    // that slot, and using it flipped the preview each move.
+                    let order = view?.dropOrder(for: id) ?? (pane.tabs.contains(id) ? pane.tabs : pane.tabs + [id])
+                    if let slot = order.firstIndex(of: id), slot < index { index -= 1 }
                     index = min(pane.tabs.count - (pane.tabs.contains(id) ? 1 : 0), max(0, index))
-                    dropIntent = .move(id, pane: pane.id, index: index)
+                    dropIntent = .move(id, pane: pane.id, index: index, reselecting: dragReselecting)
                     stripDestination = (pane.id, index)
                     proxyY = frame.minY
                 } else {
@@ -572,14 +588,14 @@ public final class TabbedOverlayController {
                     else if point.y > content.maxY - 28 { edge = .bottom }
                     else { edge = nil }
                     if let edge, state.panes.count < TabbedLayoutState.maximumPaneCount {
-                        dropIntent = .split(id, pane: pane.id, edge: edge)
+                        dropIntent = .split(id, pane: pane.id, edge: edge, reselecting: dragReselecting)
                         destinationLabel = "Split \(edge.rawValue.capitalized) · Pane \(index + 1)"
                         highlight = BTRect(x: edge == .right ? content.midX : content.minX,
                                            y: edge == .bottom ? content.midY : content.minY,
                                            width: edge == .left || edge == .right ? content.size.width / 2 : content.size.width,
                                            height: edge == .top || edge == .bottom ? content.size.height / 2 : content.size.height)
                     } else if edge == nil {
-                        dropIntent = .move(id, pane: pane.id, index: nil)
+                        dropIntent = .move(id, pane: pane.id, index: nil, reselecting: dragReselecting)
                         destinationLabel = "Move to Pane \(index + 1)"
                         highlight = content
                     }
@@ -648,7 +664,7 @@ public final class TabbedOverlayController {
         guard isInteracting else { return }
         let intent = cancelled ? nil : dropIntent
         let keepsOrder: Bool
-        if case let .move(_, paneID, index?) = intent,
+        if case let .move(_, paneID, index?, _) = intent,
            let view = panes[paneID]?.contentView as? TabbedPaneView,
            let frame = state.frames(in: bounds)[paneID], let proxy = draggedTabPanel {
             let slot = view.strip.tabFrame(index)
@@ -702,7 +718,7 @@ public final class TabbedOverlayController {
         if let localKeyMonitor { removeMonitor(localKeyMonitor) }
         globalKeyMonitor = nil
         localKeyMonitor = nil
-        draggedWindow = nil; dropIntent = nil
+        draggedWindow = nil; dragReselecting = nil; dropIntent = nil
         isInteracting = false
     }
 
@@ -892,6 +908,7 @@ struct TabbedStripLayout {
     var icons: [NSImage?] { get { content.icons } set { content.icons = newValue } }
     var strip: TabbedStripLayout { content.strip }
     func dropStrip(for id: WindowID) -> TabbedStripLayout { content.dropStrip(for: id) }
+    func dropOrder(for id: WindowID) -> [WindowID] { content.dropOrder(for: id) }
     func previewDrag(order: [WindowID], lifted: WindowID) { content.previewDrag(order: order, lifted: lifted) }
     func endDragPreview() { content.endDragPreview() }
     func scrollDrag(at x: Double, lifted: WindowID) -> Bool { content.scrollDrag(at: x, lifted: lifted) }
@@ -1006,6 +1023,9 @@ struct TabbedStripLayout {
     private var downClose: WindowID?
     /// The tab a press already selected, so its release does not select again.
     private var selectedOnPress: WindowID?
+    /// The tab this pane showed when that press selected another tab. A drag
+    /// from the press carries it, so a drop out of the pane can show it again.
+    private var selectionBeforePress: WindowID?
     /// True while a drag past the threshold waits for the selection its press
     /// started. A drag that started and was cancelled is not resumed.
     private var blockedDrag = false
@@ -1139,8 +1159,14 @@ struct TabbedStripLayout {
 
     private func redrawTabs() { for view in tabViews.values { view.needsDisplay = true } }
 
+    /// The order a drop of `id` is measured in: the preview while it holds
+    /// the dragged tab, otherwise the tabs with `id` at its place or the end.
+    func dropOrder(for id: WindowID) -> [WindowID] {
+        previewOrder.flatMap { $0.contains(id) ? $0 : nil } ?? (pane.tabs.contains(id) ? pane.tabs : pane.tabs + [id])
+    }
+
     func dropStrip(for id: WindowID) -> TabbedStripLayout {
-        let order = previewOrder.flatMap { $0.contains(id) ? $0 : nil } ?? (pane.tabs.contains(id) ? pane.tabs : pane.tabs + [id])
+        let order = dropOrder(for: id)
         return TabbedStripLayout(width: bounds.width, count: order.count,
                                  selectedIndex: nil, startIndex: previewOrder == nil ? strip.visibleRange.lowerBound : firstVisibleIndex,
                                  preferredWidths: order.map(preferredWidth))
@@ -1315,7 +1341,8 @@ struct TabbedStripLayout {
         // A new press proves the previous drag ended. Cancel a drag whose
         // mouse-up was lost rather than completing it with this gesture.
         if owner?.hasActiveTabDrag == true { owner?.cancelInteraction() }
-        downTab = nil; downClose = nil; downPoint = nil; dragging = false; attemptedDrag = false; blockedDrag = false; selectedOnPress = nil
+        downTab = nil; downClose = nil; downPoint = nil; dragging = false; attemptedDrag = false; blockedDrag = false
+        selectedOnPress = nil; selectionBeforePress = nil
         if strip.menuFrame.contains(point) || event.modifierFlags.contains(.control) { showMenu(event); return }
         if let index = tabIndex(at: point) {
             // A released strip shows provisional membership until placement
@@ -1332,6 +1359,9 @@ struct TabbedStripLayout {
             // can still start from it. A pending drop keeps release-time
             // selection, which re-checks the displayed tab after placement.
             if owner?.isDropPending != true, previewOrder == nil, pane.selected != id {
+                // The tab drawn as selected, which can be an earlier press
+                // that has not settled yet.
+                selectionBeforePress = displayedSelection
                 selectedOnPress = id
                 pressedSelection = id
                 owner?.selectOnPress(id)
@@ -1346,7 +1376,8 @@ struct TabbedStripLayout {
         if !dragging && hypot(point.x - downPoint.x, point.y - downPoint.y) >= 5 {
             attemptedDrag = true
             let tab = strip.tabFrame(renderedOrder.firstIndex(of: id) ?? 0)
-            dragging = owner.beginDrag(id, offset: NSPoint(x: downPoint.x - tab.minX, y: downPoint.y))
+            dragging = owner.beginDrag(id, offset: NSPoint(x: downPoint.x - tab.minX, y: downPoint.y),
+                                       reselecting: selectionBeforePress)
             // Only this press's own selection blocks the drag; any other
             // placement keeps rejecting it.
             blockedDrag = !dragging && selectedOnPress == id
@@ -1359,7 +1390,8 @@ struct TabbedStripLayout {
         // is not lost; the model queues it behind the selection.
         if !dragging, blockedDrag, let id = downTab, let downPoint, let owner {
             let tab = strip.tabFrame(renderedOrder.firstIndex(of: id) ?? 0)
-            dragging = owner.beginDrag(id, offset: NSPoint(x: downPoint.x - tab.minX, y: downPoint.y), atRelease: true)
+            dragging = owner.beginDrag(id, offset: NSPoint(x: downPoint.x - tab.minX, y: downPoint.y), atRelease: true,
+                                       reselecting: selectionBeforePress)
         }
         if dragging, let owner {
             owner.drag(to: owner.screenPoint(event))
@@ -1373,7 +1405,8 @@ struct TabbedStripLayout {
                 let index = tabIndex(at: point),
                 renderedOrder[index] == downTab,
                 !strip.closeFrame(index).contains(point) { owner?.send(.select(downTab)) }
-        downTab = nil; downClose = nil; downPoint = nil; dragging = false; attemptedDrag = false; blockedDrag = false; selectedOnPress = nil
+        downTab = nil; downClose = nil; downPoint = nil; dragging = false; attemptedDrag = false; blockedDrag = false
+        selectedOnPress = nil; selectionBeforePress = nil
         needsDisplay = true
     }
     override func rightMouseDown(with event: NSEvent) { showMenu(event) }

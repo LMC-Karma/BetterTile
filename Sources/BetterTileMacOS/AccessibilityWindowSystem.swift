@@ -2,6 +2,7 @@ import AppKit
 @preconcurrency import ApplicationServices
 import BetterTileCore
 import os
+import Synchronization
 
 @MainActor
 public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventSource {
@@ -73,6 +74,10 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
     /// released back to the process default. A spuriously timed-out write is
     /// worse than a slow one.
     private nonisolated static let frameWriteMessagingTimeout: Float = 1.5
+    /// Shared by the main actor and the per-application write threads.
+    private nonisolated static let unresponsiveApplications = Mutex(UnresponsiveApplicationGate())
+    private nonisolated static let acceptedWriteErrors: [AXError] = [.success, .attributeUnsupported]
+    static let unresponsiveApplicationMessage = "The application is not responding, so its window cannot move right now."
     private nonisolated static let enhancedUserInterfaceAttribute = "AXEnhancedUserInterface"
     private nonisolated static let log = Logger(
         subsystem: "com.lmckarma.BetterTile",
@@ -174,6 +179,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
     public func refreshApplicationObservers() {
         guard AXIsProcessTrusted() else { return }
         synchronizeObservers()
+        retryPendingEnhancedUserInterfaceRestores()
     }
 
     public func stopWindowObservation() {
@@ -239,6 +245,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         for id in minimumSizeLearner.windowsNeedingMeasurement(ids) {
             guard let element = elements[id] ?? refreshElement(for: id),
                   isSettable(kAXSizeAttribute, on: element),
+                  (try? requireResponsive(element)) != nil,
                   let position: CGPoint = axValue(kAXPositionAttribute, from: element, type: .cgPoint),
                   let original: CGSize = axValue(kAXSizeAttribute, from: element, type: .cgSize) else { continue }
             var tiny = CGSize(width: 1, height: 1)
@@ -248,13 +255,14 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
             // As for a frame write: with enhanced accessibility on, an
             // application can reinterpret the size writes.
             let enhancedUserInterface = suspendEnhancedUserInterfaceIfNeeded(for: element)
-            defer { if frameWriteSuspensions == nil { enhancedUserInterface.restore() } }
+            defer { if frameWriteSuspensions == nil { finish(enhancedUserInterface) } }
             AXUIElementSetMessagingTimeout(element, Self.frameWriteMessagingTimeout)
             defer { AXUIElementSetMessagingTimeout(element, 0) }
-            guard AXUIElementSetAttributeValue(element, kAXSizeAttribute as CFString, tinyValue) == .success else { continue }
+            guard Self.setFrameAttribute(element, kAXSizeAttribute, tinyValue) == .success else { continue }
             let clamped: CGSize? = axValue(kAXSizeAttribute, from: element, type: .cgSize)
             // Confirm the original size; try once more before reporting it.
             let sizeRestored = (0..<2).contains { _ in
+                // Not gated: putting the user's window back outweighs a timeout.
                 _ = AXUIElementSetAttributeValue(element, kAXSizeAttribute as CFString, restoreValue)
                 guard let size: CGSize = axValue(kAXSizeAttribute, from: element, type: .cgSize) else { return false }
                 return abs(size.width - original.width) <= 1 && abs(size.height - original.height) <= 1
@@ -606,12 +614,13 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         guard let element = elements[windowID] ?? refreshElement(for: windowID) else {
             throw WindowSystemError.windowNotFound(windowID)
         }
+        try requireResponsive(element)
         // A continuous gesture checks once whether the window can move.
         let movable: Bool
         if continuousWriteDepth > 0, let cached = continuousSettable[windowID] {
             movable = cached
         } else {
-            movable = isSettable(kAXPositionAttribute, on: element) || isSettable(kAXSizeAttribute, on: element)
+            movable = try movability(of: element)
             if continuousWriteDepth > 0 { continuousSettable[windowID] = movable }
         }
         guard movable else {
@@ -629,7 +638,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         // requested frame. Disable it for the duration of the write. The
         // attribute is only ever touched when the application had it enabled.
         let enhancedUserInterface = suspendEnhancedUserInterfaceIfNeeded(for: element)
-        defer { if frameWriteSuspensions == nil { enhancedUserInterface.restore() } }
+        defer { if frameWriteSuspensions == nil { finish(enhancedUserInterface) } }
 
         // A frame write deserves more patience than a bulk read. Passing 0
         // returns this element to the process-wide default afterwards.
@@ -646,18 +655,20 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         // A fixed-size window, such as Calculator, rejects any size write.
         if !sizeIsSettable(windowID, on: element) { plan.writesInitialSize = false; plan.writesFinalSize = false }
         var errors: [AXError] = []
+        // A refused call fails the write, so the sequence stops there: a hung
+        // application makes every further call wait out its timeout.
+        func proceeds() -> Bool { errors.allSatisfy { Self.acceptedWriteErrors.contains($0) } }
         if plan.writesInitialSize {
-            errors.append(AXUIElementSetAttributeValue(element, kAXSizeAttribute as CFString, sizeValue))
+            errors.append(Self.setFrameAttribute(element, kAXSizeAttribute, sizeValue))
         }
-        if plan.writesPosition {
-            errors.append(AXUIElementSetAttributeValue(element, kAXPositionAttribute as CFString, positionValue))
+        if plan.writesPosition, proceeds() {
+            errors.append(Self.setFrameAttribute(element, kAXPositionAttribute, positionValue))
         }
-        if plan.writesFinalSize {
-            errors.append(AXUIElementSetAttributeValue(element, kAXSizeAttribute as CFString, sizeValue))
+        if plan.writesFinalSize, proceeds() {
+            errors.append(Self.setFrameAttribute(element, kAXSizeAttribute, sizeValue))
         }
 
-        let accepted: [AXError] = [.success, .attributeUnsupported]
-        guard errors.allSatisfy({ accepted.contains($0) }) else {
+        guard proceeds() else {
             elements.removeValue(forKey: windowID)
             throw WindowSystemError.operationFailed(
                 "macOS rejected the window frame update (\(errors.map { String($0.rawValue) }.joined(separator: ", ")))."
@@ -698,7 +709,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
     private nonisolated static func confirmsSynchronousWrites(_ element: AXUIElement, at position: CGPoint) -> Bool {
         var nudged = CGPoint(x: position.x + 1, y: position.y)
         guard let nudgedValue = AXValueCreate(.cgPoint, &nudged),
-              AXUIElementSetAttributeValue(element, kAXPositionAttribute as CFString, nudgedValue) == .success
+              Self.setFrameAttribute(element, kAXPositionAttribute, nudgedValue) == .success
         else { return false }
         let observed = readPosition(element)
         let returned = restorePosition(element, to: position)
@@ -727,6 +738,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         var target = position
         guard let value = AXValueCreate(.cgPoint, &target) else { return false }
         return (0..<2).contains { _ in
+            // Not gated: putting the user's window back outweighs a timeout.
             _ = AXUIElementSetAttributeValue(element, kAXPositionAttribute as CFString, value)
             return isBack()
         }
@@ -754,10 +766,17 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         continuousSizeSettable.removeAll()
         let suspensions = frameWriteSuspensions ?? [:]
         frameWriteSuspensions = nil
-        for suspension in suspensions.values { suspension.restore() }
+        finish(suspensions)
     }
 
     public func measuredFrameAfterWrite(for windowID: WindowID) -> BTRect? { lastWriteReadback[windowID] }
+
+    public func isApplicationUnresponsive(for windowID: WindowID) -> Bool {
+        // The identity record outlives the cached element, which a failed
+        // write drops.
+        guard let pid = identities.records[windowID]?.application.processIdentifier else { return false }
+        return Self.isUnresponsive(pid)
+    }
 
 
     /// One application's share of a concurrent intermediate write.
@@ -782,13 +801,16 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
     public func setIntermediateFrames(_ writes: [Placement], knownCurrentFrames: [WindowID: BTRect]) throws {
         try ensurePermission()
         var groups: [pid_t: [IntermediateJob]] = [:]
-        for write in writes {
+        // Every window is checked before any is written, so a failure here
+        // leaves every window where it was.
+        do { for write in writes {
             guard let element = elements[write.windowID] ?? refreshElement(for: write.windowID) else {
                 throw WindowSystemError.windowNotFound(write.windowID)
             }
+            try requireResponsive(element)
             let movable: Bool
             if let cached = continuousSettable[write.windowID] { movable = cached } else {
-                movable = isSettable(kAXPositionAttribute, on: element) || isSettable(kAXSizeAttribute, on: element)
+                movable = try movability(of: element)
                 if continuousWriteDepth > 0 { continuousSettable[write.windowID] = movable }
             }
             guard movable else { throw WindowSystemError.unsupportedWindow(write.windowID) }
@@ -800,6 +822,8 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
             if !sizeIsSettable(write.windowID, on: element) { plan.writesInitialSize = false }
             groups[pid, default: []].append(IntermediateJob(windowID: write.windowID, element: element,
                                                             frame: write.frame, previous: previous, plan: plan))
+        } } catch {
+            throw FrameWritesNotStarted(error)
         }
         let jobs = Array(groups.values)
         let lock = NSLock()
@@ -891,7 +915,10 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
                 guard let element = elements[write.windowID] ?? refreshElement(for: write.windowID) else {
                     throw WindowSystemError.windowNotFound(write.windowID)
                 }
-                guard isSettable(kAXPositionAttribute, on: element) || isSettable(kAXSizeAttribute, on: element) else {
+                try requireResponsive(element)
+                // An application that stops answering here is reported as not
+                // responding, not as a window that cannot move.
+                guard try movability(of: element) else {
                     throw WindowSystemError.unsupportedWindow(write.windowID)
                 }
                 _ = suspendEnhancedUserInterfaceIfNeeded(for: element)
@@ -973,16 +1000,19 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         AXUIElementSetMessagingTimeout(job.element, frameWriteMessagingTimeout)
         defer { AXUIElementSetMessagingTimeout(job.element, 0) }
         var errors: [AXError] = []
+        // As in `writeFrame`, a refusal ends the sequence and skips the
+        // readback: the write has failed, and the caller ignores the frame.
+        func proceeds() -> Bool { errors.allSatisfy { acceptedWriteErrors.contains($0) } }
         if job.plan.writesInitialSize {
-            errors.append(AXUIElementSetAttributeValue(job.element, kAXSizeAttribute as CFString, sizeValue))
+            errors.append(Self.setFrameAttribute(job.element, kAXSizeAttribute, sizeValue))
         }
-        if job.plan.writesPosition {
-            errors.append(AXUIElementSetAttributeValue(job.element, kAXPositionAttribute as CFString, positionValue))
+        if job.plan.writesPosition, proceeds() {
+            errors.append(Self.setFrameAttribute(job.element, kAXPositionAttribute, positionValue))
         }
-        if job.plan.writesFinalSize {
-            errors.append(AXUIElementSetAttributeValue(job.element, kAXSizeAttribute as CFString, sizeValue))
+        if job.plan.writesFinalSize, proceeds() {
+            errors.append(Self.setFrameAttribute(job.element, kAXSizeAttribute, sizeValue))
         }
-        guard job.plan.writesInitialSize || job.plan.writesFinalSize else {
+        guard proceeds(), job.plan.writesInitialSize || job.plan.writesFinalSize else {
             return CommittedResult(windowID: job.windowID, errors: errors, actual: nil, confirmedClamp: false)
         }
         func read() -> BTRect? {
@@ -1014,15 +1044,16 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         AXUIElementSetMessagingTimeout(job.element, frameWriteMessagingTimeout)
         defer { AXUIElementSetMessagingTimeout(job.element, 0) }
         var errors: [AXError] = []
+        func proceeds() -> Bool { errors.allSatisfy { acceptedWriteErrors.contains($0) } }
         if job.plan.writesInitialSize {
-            errors.append(AXUIElementSetAttributeValue(job.element, kAXSizeAttribute as CFString, sizeValue))
+            errors.append(Self.setFrameAttribute(job.element, kAXSizeAttribute, sizeValue))
         }
-        if job.plan.writesPosition {
-            errors.append(AXUIElementSetAttributeValue(job.element, kAXPositionAttribute as CFString, positionValue))
+        if job.plan.writesPosition, proceeds() {
+            errors.append(Self.setFrameAttribute(job.element, kAXPositionAttribute, positionValue))
         }
         var actual: BTRect?
         var p: CFTypeRef?, s: CFTypeRef?
-        if AXUIElementCopyAttributeValue(job.element, kAXPositionAttribute as CFString, &p) == .success,
+        if proceeds(), AXUIElementCopyAttributeValue(job.element, kAXPositionAttribute as CFString, &p) == .success,
            AXUIElementCopyAttributeValue(job.element, kAXSizeAttribute as CFString, &s) == .success,
            let p, let s,
            // A value of another type is no measurement, not a zero frame.
@@ -1035,11 +1066,12 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
 
     public func withFrameWriteBatch(_ updates: () throws -> Void) rethrows {
         if frameWriteSuspensions != nil { try updates(); return }
+        retryPendingEnhancedUserInterfaceRestores()
         frameWriteSuspensions = [:]
         defer {
             let suspensions = frameWriteSuspensions ?? [:]
             frameWriteSuspensions = nil
-            for suspension in suspensions.values { suspension.restore() }
+            finish(suspensions)
         }
         try updates()
     }
@@ -1050,16 +1082,19 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         var applicationElement: AXUIElement?
         var shouldRestore: Bool
 
-        func restore() {
-            guard shouldRestore, let applicationElement else { return }
+        /// Returns false when the application is held as unresponsive or
+        /// did not answer in time; the caller keeps the restore and retries.
+        func restore() -> Bool {
+            guard shouldRestore, let applicationElement else { return true }
             // Restoring is what makes Chromium rebuild its accessibility tree,
             // so this is the slowest write in the whole sequence and needs the
-            // full budget rather than the short read default.
-            let error = AccessibilityWindowSystem.writeEnhancedUserInterface(
-                true,
-                to: applicationElement
-            )
-            guard error != .success else { return }
+            // full budget rather than the short read default. It is gated, so
+            // a hung application costs nothing here.
+            let error = AccessibilityWindowSystem.gatedCall(applicationElement) {
+                AccessibilityWindowSystem.writeEnhancedUserInterface(true, to: applicationElement)
+            }
+            if error == .cannotComplete { return false }
+            guard error != .success else { return true }
             // Deliberately not thrown: the frame write already succeeded, and
             // failing it here would roll back a correct placement. Logged
             // because a silent failure downgrades disableAndRestore to
@@ -1067,7 +1102,32 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
             AccessibilityWindowSystem.log.warning(
                 "Could not restore AXEnhancedUserInterface (\(error.rawValue, privacy: .public))."
             )
+            return true
         }
+    }
+
+    /// Restores that waited for an application to answer again, by process.
+    private var pendingEnhancedUserInterfaceRestores: [pid_t: EnhancedUserInterfaceSuspension] = [:]
+
+    private func finish(_ suspension: EnhancedUserInterfaceSuspension) {
+        guard let element = suspension.applicationElement, !suspension.restore() else { return }
+        pendingEnhancedUserInterfaceRestores[Self.processIdentifier(of: element)] = suspension
+    }
+
+    private func finish(_ suspensions: [pid_t: EnhancedUserInterfaceSuspension]) {
+        for (pid, suspension) in suspensions where !suspension.restore() {
+            pendingEnhancedUserInterfaceRestores[pid] = suspension
+        }
+    }
+
+    /// Puts back the setting of applications that answer again. One that is
+    /// still held keeps waiting; one that quit needs nothing.
+    private func retryPendingEnhancedUserInterfaceRestores() {
+        guard !pendingEnhancedUserInterfaceRestores.isEmpty else { return }
+        let running = Set(NSWorkspace.shared.runningApplications.map(\.processIdentifier))
+        let pending = pendingEnhancedUserInterfaceRestores.filter { running.contains($0.key) }
+        pendingEnhancedUserInterfaceRestores = [:]
+        finish(pending)
     }
 
     /// Both enhanced-accessibility writes run on the application element, which
@@ -1079,6 +1139,8 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
     ) -> AXError {
         AXUIElementSetMessagingTimeout(applicationElement, frameWriteMessagingTimeout)
         defer { AXUIElementSetMessagingTimeout(applicationElement, 0) }
+        // Not gated. The disable runs only after a gated read found the
+        // attribute on, and the restore puts the user's setting back.
         return AXUIElementSetAttributeValue(
             applicationElement,
             enhancedUserInterfaceAttribute as CFString,
@@ -1220,15 +1282,15 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
               let observer = observers[pid],
               let existing = registrations[pid]
         else { return }
-        let windowRegistrations = existing.filter { $0.windowID == windowID }
-        for registration in windowRegistrations {
-            AXObserverRemoveNotification(
-                observer,
-                window,
-                registration.notification as CFString
-            )
+        // A window of a hung application drops out of a sweep, and each
+        // removal would wait out the timeout. A removal that did not complete
+        // stays recorded, since the notification may still be registered.
+        let removed = existing.filter { registration in
+            registration.windowID == windowID && Self.gatedCall(window) {
+                AXObserverRemoveNotification(observer, window, registration.notification as CFString)
+            } != .cannotComplete
         }
-        registrations[pid] = existing.subtracting(windowRegistrations)
+        registrations[pid] = existing.subtracting(removed)
     }
 
     private func installObserver(for pid: pid_t) {
@@ -1518,12 +1580,9 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         let names = privateAPIsDisabled
             ? Array(Self.snapshotAttributeNames.prefix(7))
             : Self.snapshotAttributeNames
-        let error = AXUIElementCopyMultipleAttributeValues(
-            element,
-            names as CFArray,
-            [],
-            &copiedValues
-        )
+        let error = Self.gatedCall(element) {
+            AXUIElementCopyMultipleAttributeValues(element, names as CFArray, [], &copiedValues)
+        }
         guard error == .success,
               let values = copiedValues as? [Any],
               values.count == names.count
@@ -1834,7 +1893,8 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
 
     private func value<T>(_ attribute: String, from element: AXUIElement) -> T? {
         var rawValue: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(element, attribute as CFString, &rawValue) == .success else { return nil }
+        guard Self.gatedCall(element, { AXUIElementCopyAttributeValue(element, attribute as CFString, &rawValue) }) == .success
+        else { return nil }
         return rawValue as? T
     }
 
@@ -1861,8 +1921,84 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
     }
 
     private func isSettable(_ attribute: String, on element: AXUIElement) -> Bool {
+        settable(attribute, on: element) ?? false
+    }
+
+    /// Whether an attribute can be set, or nil when the application did not
+    /// answer in time or is held as unresponsive.
+    private func settable(_ attribute: String, on element: AXUIElement) -> Bool? {
         var settable = DarwinBoolean(false)
-        return AXUIElementIsAttributeSettable(element, attribute as CFString, &settable) == .success && settable.boolValue
+        switch Self.gatedCall(element, { AXUIElementIsAttributeSettable(element, attribute as CFString, &settable) }) {
+        case .success: return settable.boolValue
+        case .cannotComplete: return nil
+        default: return false
+        }
+    }
+
+    /// Whether a frame write can move or resize the window. An application
+    /// that did not answer fails this write without a verdict, so a gesture
+    /// does not keep a window it could not ask about as unmovable.
+    private func movability(of element: AXUIElement) throws -> Bool {
+        let position = settable(kAXPositionAttribute, on: element)
+        let size = position == true ? true : settable(kAXSizeAttribute, on: element)
+        guard let movable = Self.movability(position: position, size: size) else {
+            throw WindowSystemError.operationFailed(Self.unresponsiveApplicationMessage)
+        }
+        return movable
+    }
+
+    /// True when either attribute can be set, false only when both answered
+    /// that they cannot, nil when the answer is not known.
+    nonisolated static func movability(position: Bool?, size: Bool?) -> Bool? {
+        if position == true || size == true { return true }
+        if position == false, size == false { return false }
+        return nil
+    }
+
+    /// An Accessibility call to one application. While the application is
+    /// held as unresponsive it fails at once, as a timed-out call would, so a
+    /// hung application costs one timeout instead of one per call. A sweep
+    /// already treats a failed read as an unreadable application and keeps
+    /// its windows. Calls without an application are not gated.
+    private nonisolated static func gatedCall(_ element: AXUIElement, _ call: () -> AXError) -> AXError {
+        let pid = processIdentifier(of: element)
+        guard pid > 0 else { return call() }
+        if isUnresponsive(pid) { return .cannotComplete }
+        let start = ProcessInfo.processInfo.systemUptime
+        let error = call()
+        recordCall(pid, error: error, since: start)
+        return error
+    }
+
+    private nonisolated static func setFrameAttribute(
+        _ element: AXUIElement, _ attribute: String, _ value: CFTypeRef
+    ) -> AXError {
+        gatedCall(element) { AXUIElementSetAttributeValue(element, attribute as CFString, value) }
+    }
+
+    private nonisolated static func processIdentifier(of element: AXUIElement) -> pid_t {
+        var pid: pid_t = 0
+        return AXUIElementGetPid(element, &pid) == .success ? pid : 0
+    }
+
+    private nonisolated static func isUnresponsive(_ pid: pid_t) -> Bool {
+        let now = ProcessInfo.processInfo.systemUptime
+        return unresponsiveApplications.withLock { $0.isHeld(pid, now: now) }
+    }
+
+    private nonisolated static func recordCall(_ pid: pid_t, error: AXError, since start: TimeInterval) {
+        let now = ProcessInfo.processInfo.systemUptime
+        unresponsiveApplications.withLock {
+            $0.record(pid, cannotComplete: error == .cannotComplete, elapsed: now - start, now: now)
+        }
+    }
+
+    /// Fails a frame write before it makes any call that would wait out a
+    /// timeout on an application held as unresponsive.
+    private func requireResponsive(_ element: AXUIElement) throws {
+        if Self.isUnresponsive(Self.processIdentifier(of: element)) {
+            throw WindowSystemError.operationFailed(Self.unresponsiveApplicationMessage)
+        }
     }
 
     private func number(_ value: Any?) -> CGFloat? {
