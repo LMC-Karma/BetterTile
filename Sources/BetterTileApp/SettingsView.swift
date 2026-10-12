@@ -585,6 +585,13 @@ struct WindowLayoutSettings: View {
                     Label("Drag a divider to resize. Escape cancels the drag.", systemImage: "arrow.left.and.right")
                         .font(.callout)
                         .foregroundStyle(.secondary)
+                    Toggle("Restore pane size when switching tabs", isOn: configurationBinding(\.tabbedRestoresPaneSizes))
+                    Text(
+                        "If a tab needs more room, its pane grows. When you switch to a smaller tab, "
+                            + "the pane returns to the size you set."
+                    )
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
                 }
             }
 

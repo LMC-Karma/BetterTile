@@ -118,6 +118,9 @@ public struct BetterTileConfiguration: Codable, Hashable, Sendable {
     public var snappingEnabled: Bool
     public var linkedResizeEnabled: Bool
     public var defaultTabbedPreset: TabbedPreset = .single
+    /// When a tab that needs more room grows its pane, switching to a tab
+    /// that fits returns the panes to the sizes the user set.
+    public var tabbedRestoresPaneSizes = true
     public var defaultLayoutMode: LayoutMode
     public var singleWindowPlacement: WindowAction?
     public var resizeFeedbackMode: ResizeFeedbackMode
@@ -223,6 +226,7 @@ public struct BetterTileConfiguration: Codable, Hashable, Sendable {
         case enhancedUserInterfacePolicy
         case applicationRules, keyboardShortcutsEnabled
         case shortcuts, layoutWheel, menuBarActions
+        case tabbedRestoresPaneSizes
         case layoutMode, bentoEnabled, bentoStates
     }
 
@@ -233,6 +237,7 @@ public struct BetterTileConfiguration: Codable, Hashable, Sendable {
 
         schemaVersion = Self.currentSchemaVersion
         defaultTabbedPreset = try container.decodeIfPresent(TabbedPreset.self, forKey: .defaultTabbedPreset) ?? .single
+        tabbedRestoresPaneSizes = try container.decodeIfPresent(Bool.self, forKey: .tabbedRestoresPaneSizes) ?? true
         setupCompletionVersion = max(
             0,
             try container.decodeIfPresent(Int.self, forKey: .setupCompletionVersion) ?? 0
@@ -361,6 +366,7 @@ public struct BetterTileConfiguration: Codable, Hashable, Sendable {
         try container.encode(linkedResizeEnabled, forKey: .linkedResizeEnabled)
         try container.encode(defaultLayoutMode, forKey: .defaultLayoutMode)
         try container.encode(defaultTabbedPreset, forKey: .defaultTabbedPreset)
+        try container.encode(tabbedRestoresPaneSizes, forKey: .tabbedRestoresPaneSizes)
         try container.encodeIfPresent(singleWindowPlacement, forKey: .singleWindowPlacement)
         try container.encode(resizeFeedbackMode, forKey: .resizeFeedbackMode)
         try container.encode(dividerVisibility, forKey: .dividerVisibility)

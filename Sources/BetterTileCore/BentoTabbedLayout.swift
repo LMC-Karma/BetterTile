@@ -329,6 +329,10 @@ public struct BentoTabbedLayoutState: Hashable, Sendable {
 public struct TabbedLayoutState: Hashable, Sendable {
     public private(set) var groups: BentoTabbedLayoutState
     public private(set) var activePaneID: UUID
+    /// Pane sizes as the user last set them, by partition: with a divider,
+    /// an edge resize, a preset, or a split. A tab that needs more room grows
+    /// its pane without changing these, so the pane can return to them.
+    public private(set) var preferredPaneRatios: [UUID: [Double]] = [:]
     /// The tab strip, reserved above each window by Bento's content inset.
     public static let headerHeight = 34.0
     public static let maximumPaneCount = 12
@@ -364,6 +368,7 @@ public struct TabbedLayoutState: Hashable, Sendable {
                                       metrics: Self.tabbedMetrics(BentoLayoutMetrics(paneGap: Self.gap)))
         groups = BentoTabbedLayoutState(adopting: layout, contentTopInset: Self.headerHeight)!
         activePaneID = groups.panes[0].id
+        rememberPaneSizes()
     }
 
     /// Entering Tabbed from Bento keeps every pane where it is; each window
@@ -376,6 +381,7 @@ public struct TabbedLayoutState: Hashable, Sendable {
         guard let groups = BentoTabbedLayoutState(adopting: bento, contentTopInset: Self.headerHeight) else { return nil }
         self.groups = groups
         activePaneID = groups.panes[0].id
+        rememberPaneSizes()
     }
 
     /// Follows a tree that a Bento operation changed. A pane follows its
@@ -393,6 +399,37 @@ public struct TabbedLayoutState: Hashable, Sendable {
         }
         if !groups.panes.contains(where: { $0.id == activePaneID }) { activePaneID = groups.panes[0].id }
         for id in orphans { groups.add(id, to: activePaneID, select: false) }
+        rememberPaneSizes()
+    }
+
+    /// This layout with the pane sizes the user last set, or nil when it
+    /// already has them. A partition the user has not sized keeps its ratios.
+    public func withPreferredPaneSizes() -> Self? {
+        guard let root = layout.root else { return nil }
+        func restoring(_ node: BentoNode) -> BentoNode {
+            guard case var .partition(partition) = node else { return node }
+            if let ratios = preferredPaneRatios[partition.id], ratios.count == partition.children.count {
+                partition.ratios = ratios
+            }
+            partition.children = partition.children.map(restoring)
+            return .partition(partition)
+        }
+        let restored = restoring(root)
+        guard restored != root else { return nil }
+        var result = self
+        result.groups.layout.root = restored
+        return result
+    }
+
+    private mutating func rememberPaneSizes() {
+        var ratios: [UUID: [Double]] = [:]
+        func collect(_ node: BentoNode) {
+            guard case let .partition(partition) = node else { return }
+            ratios[partition.id] = partition.ratios
+            partition.children.forEach(collect)
+        }
+        layout.root.map(collect)
+        preferredPaneRatios = ratios
     }
 
     public mutating func activatePane(_ id: UUID) {
@@ -535,6 +572,7 @@ public struct TabbedLayoutState: Hashable, Sendable {
         guard found else { return }
         groups.synchronize(with: next)
         if let pane = groups.pane(containing: windowID) { activePaneID = pane.id }
+        rememberPaneSizes()
     }
 
     public mutating func removeEmptyPane(_ id: UUID) {
@@ -625,6 +663,7 @@ public struct TabbedLayoutState: Hashable, Sendable {
         }
         groups = next
         if !groups.panes.contains(where: { $0.id == activePaneID }) { activePaneID = groups.panes[0].id }
+        rememberPaneSizes()
     }
 
     /// Full pane frames, including the tab strip.

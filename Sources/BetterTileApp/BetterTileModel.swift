@@ -3665,15 +3665,18 @@ final class BetterTileModel {
         windows.filter(\.isEligible).map { "\($0.displayID.rawValue):\($0.id.rawValue)" }.sorted().joined(separator: "|")
     }
 
+    /// - Parameter feedback: A pill that already says what went wrong,
+    ///   used instead of one read from `error`.
     private func presentActionResult(
         succeeded: Bool,
         error: String? = nil,
         successMessage: String? = nil,
+        feedback: ResultPillFeedback? = nil,
         displayID: DisplayID?
     ) {
-        let feedback = succeeded
+        let feedback = feedback ?? (succeeded
             ? successMessage.map(ResultPillFeedback.success) ?? ResultPillFeedback.success()
-            : ResultPillFeedback.failure(error)
+            : ResultPillFeedback.failure(error))
         lastActionFeedback = feedback
         let displays = system.displays()
         guard let display = displayID.flatMap({ id in displays.first { $0.id == id } })
@@ -3938,6 +3941,8 @@ extension BetterTileModel {
         }
         let detached = (previous?.windowIDs ?? []).subtracting(state.windowIDs).intersection(state.floatingWindowIDs)
         var selectionOnly = selectionOnly
+        // Set when a selection fits the panes from the sizes the user set.
+        var fitsFromPreferredSizes = false
         func prepare(_ windows: [WindowSnapshot]) throws -> (state: TabbedLayoutState, placements: [Placement]) {
             if selectionOnly {
                 guard let focus, let window = windows.first(where: { $0.id == focus && $0.isEligible }),
@@ -3950,7 +3955,14 @@ extension BetterTileModel {
                 // its size is the minimum its pane must hold.
                 let fixed = !window.constraints.isResizable
                 let minimum = fixed ? window.frame.size : window.constraints.minimumSize
-                if content.size.width + 0.001 >= minimum.width,
+                // A pane that grew for a larger tab returns to the size the
+                // user set when the newly selected tab fits it; a tab that
+                // needs more room grows the pane from that size.
+                if self.configuration.tabbedRestoresPaneSizes, let preferred = state.withPreferredPaneSizes(),
+                   let restored = try? preferred.fittingMinimumWidths(in: display.visibleFrame, windows: windows),
+                   restored.layout != state.layout {
+                    fitsFromPreferredSizes = true
+                } else if content.size.width + 0.001 >= minimum.width,
                    content.size.height + 0.001 >= minimum.height {
                     if fixed {
                         return (state, try state.placements(in: display.visibleFrame, windows: windows).filter { $0.windowID == focus })
@@ -3962,6 +3974,7 @@ extension BetterTileModel {
             guard Set(state.selectedWindowIDs).isSubset(of: Set(windows.filter { $0.isEligible && $0.displayID == display.id }.map(\.id))) else {
                 throw WindowSystemError.operationFailed("One or more selected tabs are no longer available.")
             }
+            let base = fitsFromPreferredSizes ? state.withPreferredPaneSizes() ?? state : state
             let fitted: TabbedLayoutState
             if let snapAction {
                 guard let focus, let source = windows.first(where: { $0.id == focus }),
@@ -3974,7 +3987,16 @@ extension BetterTileModel {
                 }
                 fitted = plan.state
             } else {
-                fitted = try state.fittingMinimumWidths(in: display.visibleFrame, windows: windows)
+                do {
+                    fitted = try base.fittingMinimumWidths(in: display.visibleFrame, windows: windows)
+                    _ = try fitted.placements(in: display.visibleFrame, windows: windows)
+                } catch TabbedLayoutError.panesTooSmall {
+                    // Name the window that does not fit and what is in its way.
+                    if let focus, let failure = self.tabbedFitFailure(
+                        showing: focus, in: base, windows: windows, bounds: display.visibleFrame
+                    ) { throw failure }
+                    throw TabbedLayoutError.panesTooSmall
+                }
             }
             var proposed = try fitted.placements(in: display.visibleFrame, windows: windows)
             let baselineFrames = Dictionary(uniqueKeysWithValues: windows.filter { detached.contains($0.id) }.map {
@@ -3997,7 +4019,8 @@ extension BetterTileModel {
                 // pressed tab's highlight.
                 if let focus { tabbedOverlays[display.id]?.dropPressedSelection(of: focus) }
                 statusMessage = reason
-                presentActionResult(succeeded: false, error: reason, displayID: display.id)
+                presentActionResult(succeeded: false, error: reason,
+                                    feedback: (error as? TabbedFitFailure)?.feedback, displayID: display.id)
                 return
             }
             tabbedTaskIDs[display.id] = taskID
@@ -4066,6 +4089,7 @@ extension BetterTileModel {
             let repairsStackingAfterSelection = selectionOnly
                 && (self.system as? any TabbedWindowSystem)?.stackingOrder(for: windows, excluding: []) != nil
             var outcome: WindowMutationOutcome = .failed(reason: "The desktop changed.")
+            var fitFailure: TabbedFitFailure?
             for attempt in 0..<2 {
                 self.tabbedFocusSuppressedUntil = Date().addingTimeInterval(0.3)
                 let eligibleIDs = selectionOnly
@@ -4117,6 +4141,7 @@ extension BetterTileModel {
                     proposal = try prepare(refreshed)
                     windows = refreshed
                 } catch {
+                    fitFailure = error as? TabbedFitFailure
                     outcome = .failed(reason: error.localizedDescription)
                     break
                 }
@@ -4198,7 +4223,8 @@ extension BetterTileModel {
                     // Put their curtains below them again as well.
                     self.showTabbed(session: restored, display: display, windows: windows)
                 }
-                self.presentActionResult(succeeded: false, error: outcome.failureReason, displayID: display.id)
+                self.presentActionResult(succeeded: false, error: outcome.failureReason,
+                                         feedback: fitFailure?.feedback, displayID: display.id)
                 // An earlier step of this gesture may have pointed the
                 // divider at a selection the rollback just reverted.
                 self.refreshDividerBoundaries()
@@ -4208,6 +4234,50 @@ extension BetterTileModel {
             // An edge resize released during this placement is read now.
             self.schedulePendingWindowEvents()
         }
+    }
+
+    /// Names the window a Tabbed placement cannot show and what is in its way.
+    private func tabbedFitFailure(
+        showing id: WindowID, in state: TabbedLayoutState, windows: [WindowSnapshot], bounds: BTRect
+    ) -> TabbedFitFailure? {
+        guard let problem = state.fitProblem(showing: id, in: bounds, windows: windows) else { return nil }
+        let byID = Dictionary(windows.map { ($0.id, $0) }) { first, _ in first }
+        func name(_ id: WindowID) -> String { byID[id].map(Self.displayName(of:)) ?? "This window" }
+        let window = name(id)
+        switch problem {
+        case .largerThanDisplay:
+            return TabbedFitFailure(title: "\(window) is too large for this display",
+                                    detail: "Use a larger display or fewer panes.")
+        case .lockedDivider:
+            return TabbedFitFailure(title: "\(window) doesn’t fit here",
+                                    detail: "A locked divider keeps this pane from growing.")
+        case let .neighbors(ids):
+            var names: [String] = []
+            for other in ids where !names.contains(name(other)) { names.append(name(other)) }
+            guard !names.isEmpty else {
+                return TabbedFitFailure(title: "\(window) doesn’t fit here",
+                                        detail: "The empty panes beside it can’t get any smaller.")
+            }
+            // Shorten long names rather than the sentence, so the pill's two
+            // lines still say what is in the way.
+            let named = names.count > 3 ? Array(names.prefix(2)) : names
+            let detail = ResultPillLayout.detail(naming: named) { titles in
+                switch (titles.count, names.count) {
+                case (1, _): "It would overlap \(titles[0])."
+                case (2, 2): "It would overlap \(titles[0]) and \(titles[1])."
+                case (2, _): "It would overlap \(titles[0]), \(titles[1]), and \(names.count - 2) more."
+                default: "It would overlap \(titles[0]), \(titles[1]), and \(titles[2])."
+                }
+            }
+            return TabbedFitFailure(title: "\(window) doesn’t fit here", detail: detail)
+        }
+    }
+
+    /// The application name a person sees for a window.
+    private static func displayName(of window: WindowSnapshot) -> String {
+        if let name = NSRunningApplication(processIdentifier: window.processIdentifier)?.localizedName { return name }
+        if let bundleIdentifier = window.bundleIdentifier { return applicationName(for: bundleIdentifier) }
+        return window.title.isEmpty ? "This window" : window.title
     }
 
     private func rememberTabbedUndo(_ state: TabbedLayoutState, sessionID: DesktopSessionID,
@@ -4233,6 +4303,21 @@ extension BetterTileModel {
             tabbedQueuedIntents[displayID, default: []].append(.ui(intent))
             tabbedOverlays[displayID]?.yieldPressSelection()
             return
+        }
+        // A hidden tab that joined when the desktop entered Tabbed was never
+        // measured. Measure it now, while it is still behind its pane's
+        // selected tab, so its placement can grow the pane at once.
+        if case let .select(id) = intent, state.hiddenWindowIDs.contains(id) {
+            let original = (try? system.windowSnapshots(ids: [id]))?.first.map { Placement(windowID: id, frame: $0.frame) }
+            if case let .degraded(reason) = coordinator.probeMinimumSizes(for: [id]) {
+                // Put the window back now: a selection that does not fit
+                // writes no frames, so it cannot be left to the placement.
+                Self.bentoLog.error("\(reason, privacy: .public)")
+                if let original, !coordinator.applyPlacements([original], recordHistory: false).isApplied {
+                    statusMessage = reason
+                    presentActionResult(succeeded: false, error: reason, displayID: displayID)
+                }
+            }
         }
         // A selected tab's frame is already in its pane, so it comes to the
         // front before anything is read. The placement below verifies it; a
@@ -4729,4 +4814,13 @@ struct TabbedEarlyRaise {
     let raised: WindowID
     let previousSelected: WindowID?
     let previousFocus: WindowID?
+}
+
+/// A Tabbed placement that cannot show a window. The pill uses the title and
+/// detail as written; other surfaces read the description.
+private struct TabbedFitFailure: LocalizedError {
+    var title: String
+    var detail: String
+    var errorDescription: String? { "\(title). \(detail)" }
+    var feedback: ResultPillFeedback { .failure(title: title, detail: detail) }
 }
