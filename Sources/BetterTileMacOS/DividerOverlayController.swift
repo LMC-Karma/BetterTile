@@ -345,7 +345,7 @@ public final class DividerOverlayController {
     private var hoveredInteraction: DividerInteraction?
     private var activeInteraction: DividerInteraction?
     private var baselineInteraction: DividerInteraction?
-    private var isRetracting = false
+    private(set) var isRetracting = false
     private var handlePanel: DividerHandlePanel?
     let dragOverlay = DividerDragOverlay()
     private var isUpdatingOverlayPresentation = false
@@ -1044,13 +1044,20 @@ public final class DividerOverlayController {
     }
 
     func end(at releasePoint: CGPoint? = nil) {
+        let wasDragging = isDragging
         // Release bypasses display coalescing and applies the exact pointer.
-        if let point = releasePoint ?? latestDragPoint, isDragging {
+        if let point = releasePoint ?? latestDragPoint, wasDragging {
             latestDragPoint = point
             hasPendingDisplayUpdate = false
             applyDrag(to: point, validateParticipants: true)
         }
-        guard let interaction = activeInteraction, var transaction else { clearGesture(); return }
+        guard let interaction = activeInteraction, var transaction else {
+            // The release sample can cancel the gesture, for example when a
+            // participant closed. That cancel already cleared the gesture and
+            // started the handle's retraction; a second clear would end it.
+            if isDragging || !wasDragging { clearGesture() }
+            return
+        }
         let succeeded: Bool
         switch configuration.resizeFeedbackMode {
         case .ghost:

@@ -447,6 +447,29 @@ private func ghostOverlayCleansUpEveryGestureExit(ending: GhostEnd) throws {
     #expect(!input.ignoresMouseEvents)
 }
 
+/// A release can cancel its own gesture, here because a participant closed.
+/// The handle then retracts once. A second clear would end the retraction at
+/// once and hide the handle before its quick re-grab window ends.
+@Test(arguments: [false, true]) @MainActor
+func aReleaseThatCancelsItsGestureRetractsTheHandleOnce(live: Bool) throws {
+    let fixture = try GhostGestureFixture(live: live)
+    let controller = fixture.controller
+    defer { controller.hideAndCancel() }
+    let input = try #require(controller.visibleHandleView?.window as? DividerHandlePanel)
+    var endedCount = 0
+    controller.gestureEndedHandler = { endedCount += 1 }
+    fixture.tick(dx: 30)
+    fixture.system.windows.removeLast()
+    controller.end(at: fixture.point(dx: 30))
+    #expect(!controller.isDragging)
+    #expect(endedCount == 1)
+    #expect(input.ignoresMouseEvents)
+    // Reduce Motion skips the retraction, so the handle hides at once.
+    let retracts = !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+    #expect(controller.isRetracting == retracts)
+    #expect(input.isVisible == retracts)
+}
+
 /// A Live drag asks a window to shrink below a minimum it never reported, so
 /// the growing neighbour is held. With the pointer still, the display ticks
 /// stop solving and redrawing once a tick has nothing to write.
