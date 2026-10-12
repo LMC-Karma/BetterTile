@@ -1787,6 +1787,63 @@ func steppedApplicationTabIsSelectedWithoutResizeLoops(emitsEvents: Bool) async 
     held = false
 }
 
+/// A native edge resize that ends where it started changes no pane. The
+/// tab strips previewed the edge while the button was held, so they return
+/// to the committed panes at release.
+@Test @MainActor func tabStripsReturnWhenANativeEdgeResizeEndsUnchanged() async throws {
+    _ = NSApplication.shared
+    let system = FakeAppWindowSystem()
+    system.availableDisplays[0].frame.origin.x = 12000
+    system.availableDisplays[0].visibleFrame.origin.x = 12000
+    for index in system.windows.indices { system.windows[index].frame.origin.x += 12000 }
+    addTabbedWindows(1, to: system)
+    for index in system.windows.indices { system.windows[index].frame.origin.x = 12000 + 100 }
+    let store = ConfigurationStore(fileURL: URL(filePath: "/private/tmp/BetterTileAppTests-\(UUID().uuidString)/configuration.json"))
+    let model = BetterTileModel(store: store, system: system, startRuntime: false, presentsTabbedChrome: true)
+    var held = false
+    model.primaryButtonIsPressed = { held }
+    defer { model.shutdown() }
+    model.configuration.defaultTabbedPreset = .columns
+    model.setActiveMode(.tabbed)
+    try #require(await waitFor { model.activeTabbedState?.windowIDs.count == 2 })
+    let right = try #require(model.activeTabbedState?.panes[1].id)
+    model.performTabbed(.move(system.windows[1].id, pane: right, index: nil))
+    try #require(await waitFor { model.activeTabbedState?.panes[1].selected == system.windows[1].id })
+    try await Task.sleep(for: .milliseconds(400))
+    let display = system.mainDisplay.id
+    let committed = try #require(model.activeTabbedState)
+    let bounds = system.availableDisplays[0].visibleFrame
+    let before = try #require(model.presentedTabbedState(on: display)?.frames(in: bounds))
+    let leftPane = committed.panes[0].id
+    let original = system.windows[0].frame
+    // The callback for BetterTile's own last write ends its ownership of
+    // that frame, so the frame the edge returns to is the user's. Its
+    // processing reads the window list once.
+    let reads = system.cachedRefreshCount
+    system.eventHandler?(WindowSystemEvent(kind: .resized, windowID: system.windows[0].id,
+                                          processIdentifier: system.windows[0].processIdentifier))
+    try #require(await waitFor { system.cachedRefreshCount > reads })
+
+    held = true
+    var wider = original
+    wider.size.width += 120
+    system.windows[0].frame = wider
+    system.eventHandler?(WindowSystemEvent(kind: .resized, windowID: system.windows[0].id,
+                                          processIdentifier: system.windows[0].processIdentifier))
+    let during = try #require(model.presentedTabbedState(on: display)?.frames(in: bounds))
+    try #require((during[leftPane]?.maxX ?? 0) > (before[leftPane]?.maxX ?? 0) + 100)
+    // The edge returns within the preview's 30 Hz interval, so the strips
+    // keep the last preview while the button is held.
+    system.windows[0].frame = original
+    system.eventHandler?(WindowSystemEvent(kind: .resized, windowID: system.windows[0].id,
+                                          processIdentifier: system.windows[0].processIdentifier))
+    try #require(model.presentedTabbedState(on: display)?.frames(in: bounds) == during)
+    held = false
+    #expect(await waitFor(timeout: .seconds(3)) { model.presentedTabbedState(on: display)?.frames(in: bounds) == before })
+    #expect(model.activeTabbedState == committed)
+    #expect(system.windows[0].frame == original)
+}
+
 /// A fixed-size tab wider than its pane widens the pane when it is
 /// selected, like a resizable tab with a large minimum, instead of failing.
 @Test @MainActor func fixedSizeTabWiderThanItsPaneWidensThePane() async throws {

@@ -4321,7 +4321,14 @@ extension BetterTileModel {
             externalIDs.contains(window.id)
                 && session.lastObservedFrames[window.id]?.approximatelyEquals(window.frame, tolerance: 1) != true
         }.map(\.id))
-        guard !changed.isEmpty else { return }
+        guard !changed.isEmpty else {
+            // The edge came back to where it started. The 30 Hz preview can
+            // have skipped that last step, so the strips return to the panes.
+            if tabbedTasks[display.id] == nil, let overlay = tabbedOverlays[display.id], overlay.state != state {
+                overlay.refreshResize(state: state, bounds: display.visibleFrame)
+            }
+            return
+        }
         // A placement in progress reschedules these changes when it finishes.
         if tabbedTasks[display.id] != nil {
             pendingWindowEvents.recordFrameChanges(changed)

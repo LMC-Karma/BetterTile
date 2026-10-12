@@ -296,7 +296,8 @@ change a Bento operation made to the tree; writing it also writes the tree.
   tab strips and curtain; it moves no window. A shared pane edge moves that
   divider, stopping at each pane's minimum. Any other change, including One
   Pane, an outer edge, a move, or a macOS destination, puts the windows back.
-  Hidden tabs and strips then follow.
+  Hidden tabs and strips then follow. An edge released where it started
+  changes nothing, and the strips return from the preview to the panes.
 - Divider and native-edge resize proposals remain provisional until every
   selected window accepts its frame. Recovery uses the session's last verified
   frames, even when a divider gesture begins with a displaced window. Current
