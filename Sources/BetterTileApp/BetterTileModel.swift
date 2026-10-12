@@ -90,23 +90,34 @@ final class BetterTileModel {
     /// The Bento tree from before Focus mode, per desktop session, so ending
     /// Focus mode returns exactly the previous layout.
     private var bentoStateBeforeFocus: [DesktopSessionID: BentoLayoutState] = [:]
-    /// Finishes a layout command once Focus mode peers return. Any
-    /// newer layout action cancels it.
-    private var focusRestoreTask: Task<Void, Never>?
-    private var focusRestoreSession: LayoutSession?
-    private var focusRestoreSessionID: DesktopSessionID? { focusRestoreSession?.id }
+    /// Finishes a layout command once Focus mode peers return, one per
+    /// display. A newer layout action on the same display cancels it; an
+    /// action on another display leaves it running.
+    private struct FocusRestore {
+        var task: Task<Void, Never>
+        var session: LayoutSession
+        var generation: Int
+    }
+    private var focusRestores: [DisplayID: FocusRestore] = [:]
+    private var focusRestoreSessionIDs: Set<DesktopSessionID> { Set(focusRestores.values.map(\.session.id)) }
 
     private var focusRestoreGeneration = 0
-    private func cancelPendingFocusRestore() {
-        focusRestoreTask?.cancel()
-        focusRestoreTask = nil
-        focusRestoreSession = nil
+    /// Nil cancels the restore on every display.
+    private func cancelPendingFocusRestore(on displayID: DisplayID?) {
+        if let displayID {
+            focusRestores.removeValue(forKey: displayID)?.task.cancel()
+        } else {
+            focusRestores.values.forEach { $0.task.cancel() }
+            focusRestores.removeAll()
+        }
     }
+    /// The display a keyboard or menu action acts on.
+    private func actionDisplayID() -> DisplayID? { (try? system.focusedWindow())?.displayID ?? activeDisplayID }
     /// Ending Focus mode is still bringing the covered windows back. Repair
     /// runs after that restore, so it never lays the desktop out without
     /// them. A newer action that cancels the restore also wins over Repair.
-    private func repairsAfterFocusRestore(_ repair: @escaping @MainActor () -> Void) -> Bool {
-        guard let pending = focusRestoreTask else { return false }
+    private func repairsAfterFocusRestore(on displayID: DisplayID?, _ repair: @escaping @MainActor () -> Void) -> Bool {
+        guard let displayID, let pending = focusRestores[displayID]?.task else { return false }
         Task { @MainActor [weak self] in
             await pending.value
             guard let self, !self.isShutDown, !pending.isCancelled else { return }
@@ -198,7 +209,7 @@ final class BetterTileModel {
         dragSnap.activeModeProvider = { [weak self] displayID in self?.activeMode(for: displayID) }
         dragSnap.bentoStateProvider = { [weak self] displayID in self?.sessionStore.session(for: displayID)?.bentoState }
         dragSnap.bentoDragBeganHandler = { [weak self] displayID, sourceID, sourceFrame in
-            self?.prepareWindowGesture()
+            self?.cancelPendingFocusRestore(on: displayID)
             return self?.beginBentoDrag(displayID: displayID, sourceID: sourceID, sourceFrame: sourceFrame) ?? false
         }
         dragSnap.bentoPreviewHandler = { [weak self] displayID, sourceID, outcome in
@@ -360,7 +371,7 @@ final class BetterTileModel {
     }
 
     func setActiveMode(_ mode: LayoutMode) {
-        cancelPendingFocusRestore()
+        cancelPendingFocusRestore(on: actionDisplayID())
         let mode = mode.availableMode
         refreshActiveWindows(force: false)
         guard let displayID = activeDisplayID else {
@@ -395,10 +406,10 @@ final class BetterTileModel {
     }
 
     func perform(_ action: WindowAction) {
-        let restoringSession = focusRestoreSession
-        cancelPendingFocusRestore()
+        let originalDisplayID = actionDisplayID()
+        let restoringSession = originalDisplayID.flatMap { focusRestores[$0]?.session }
+        cancelPendingFocusRestore(on: originalDisplayID)
         guard !isShutDown else { return }
-        let originalDisplayID = (try? system.focusedWindow())?.displayID ?? activeDisplayID
         guard hasAccessibilityPermission || refreshPermission() else {
             statusMessage = "Accessibility permission is required. Open the Setup Assistant to grant access."
             presentActionResult(
@@ -522,9 +533,11 @@ final class BetterTileModel {
         cyclesShortcut: Bool
     ) {
         if command == .repairBento,
-           repairsAfterFocusRestore({ [weak self] in self?.performLayoutWheel(command, for: target) }) { return }
-        let restoringSession = focusRestoreSession
-        cancelPendingFocusRestore()
+           repairsAfterFocusRestore(on: target.displayID, { [weak self] in
+               self?.performLayoutWheel(command, for: target)
+           }) { return }
+        let restoringSession = focusRestores[target.displayID]?.session
+        cancelPendingFocusRestore(on: target.displayID)
         var outcome = planLayoutWheel(command, for: target, cyclesShortcut: cyclesShortcut)
         if case .ready(.bento(_)) = outcome,
            case let .windowAction(action) = command,
@@ -968,8 +981,9 @@ final class BetterTileModel {
     }
 
     func tileCurrentDisplay() {
-        if repairsAfterFocusRestore({ [weak self] in self?.tileCurrentDisplay() }) { return }
-        cancelPendingFocusRestore()
+        let repairDisplayID = actionDisplayID()
+        if repairsAfterFocusRestore(on: repairDisplayID, { [weak self] in self?.tileCurrentDisplay() }) { return }
+        cancelPendingFocusRestore(on: repairDisplayID)
         do {
             guard let focused = try system.focusedWindow() else {
                 statusMessage = "No eligible window or display."
@@ -1194,7 +1208,7 @@ final class BetterTileModel {
     }
 
     func beginBentoDrag(displayID: DisplayID, sourceID: WindowID, sourceFrame: BTRect? = nil) -> Bool {
-        cancelPendingFocusRestore()
+        cancelPendingFocusRestore(on: displayID)
         guard activeBentoDrag == nil, !tabbedExiting.contains(displayID),
               var layoutSession = sessionStore.session(for: displayID),
               layoutSession.mode == .bento || layoutSession.mode == .tabbed,
@@ -1693,7 +1707,7 @@ final class BetterTileModel {
     }
 
     func shutdown() {
-        cancelPendingFocusRestore()
+        cancelPendingFocusRestore(on: nil)
         guard !isShutDown else { return }
         absenceConfirmationTask?.cancel()
         arrivalSweepTask?.cancel()
@@ -2253,7 +2267,7 @@ final class BetterTileModel {
             }
             guard var session = sessionStore.session(for: displayID),
                   session.mode == .bento,
-                  session.id != focusRestoreSessionID,
+                  !focusRestoreSessionIDs.contains(session.id),
                   !session.automaticWritesSuspended,
                   let display = system.displays().first(where: { $0.id == displayID })
             else { continue }
@@ -2538,23 +2552,21 @@ final class BetterTileModel {
         // change the revision, so it cannot guard this wait.
         let sessionID = session.id
         let peers = session.excludedFocusWindowIDs
-        focusRestoreTask?.cancel()
+        cancelPendingFocusRestore(on: display.id)
         focusRestoreGeneration &+= 1
         let generation = focusRestoreGeneration
-        focusRestoreSession = session
-        focusRestoreTask = Task { @MainActor [weak self] in
+        let task = Task { @MainActor [weak self] in
             defer {
-                if let self, self.focusRestoreGeneration == generation {
-                    self.focusRestoreTask = nil
-                    self.focusRestoreSession = nil
+                if let self, self.focusRestores[display.id]?.generation == generation {
+                    self.focusRestores.removeValue(forKey: display.id)
                 }
             }
             let deadline = Date().addingTimeInterval(1.5)
             while let self, !self.isShutDown, !Task.isCancelled,
-                  self.focusRestoreGeneration == generation {
+                  self.focusRestores[display.id]?.generation == generation {
                 guard let current = self.sessionStore.session(for: display.id), current.mode == .bento,
                       current.id == sessionID else {
-                    self.cancelPendingFocusRestore()
+                    self.cancelPendingFocusRestore(on: display.id)
                     return
                 }
                 let windows = (try? self.system.visibleWindows()) ?? []
@@ -2564,14 +2576,13 @@ final class BetterTileModel {
                 if back || Date() >= deadline {
                     guard var restored = self.sessionStore.session(for: display.id), restored.mode == .bento,
                           restored.id == sessionID else {
-                        self.cancelPendingFocusRestore()
+                        self.cancelPendingFocusRestore(on: display.id)
                         return
                     }
                     if !back { Self.bentoLog.notice("focus-drop peer return wait timed out") }
                     if let onPeersReturned {
                         self.bentoStateBeforeFocus.removeValue(forKey: sessionID)
-                        self.focusRestoreTask = nil
-                        self.focusRestoreSession = nil
+                        self.focusRestores.removeValue(forKey: display.id)
                         onPeersReturned()
                         return
                     }
@@ -2596,6 +2607,7 @@ final class BetterTileModel {
                 try? await Task.sleep(for: .milliseconds(50))
             }
         }
+        focusRestores[display.id] = FocusRestore(task: task, session: session, generation: generation)
     }
 
     /// Applies a focus plan that arrived from macOS rather than from a drag.
@@ -3178,7 +3190,7 @@ final class BetterTileModel {
                 nativeSpaceID: nativeObservation?.currentSpace(on: display.id)
             )
             if focused?.displayID == display.id { resolvedActiveDisplay = display.id }
-            if activation.session.id == focusRestoreSessionID {
+            if focusRestoreSessionIDs.contains(activation.session.id) {
                 let committed = sessionStore.commit(
                     activation.session,
                     replacing: activation.session.revision
@@ -3474,7 +3486,9 @@ final class BetterTileModel {
     /// release stops. A minimum is not a permanent floor: every write reads
     /// the real size back, and any accepted smaller size, including the
     /// user's own edge resize, lowers it at once.
-    func prepareWindowGesture() { cancelPendingFocusRestore() }
+    /// Divider and linked-resize gestures do not name a display, so they
+    /// cancel every pending Focus mode restore.
+    func prepareWindowGesture() { cancelPendingFocusRestore(on: nil) }
 
     private func refreshDividerBoundaries(windows suppliedWindows: [WindowSnapshot]? = nil) {
         let presentation = dividerPresentation(windows: suppliedWindows ?? ((try? system.visibleWindows()) ?? []))
