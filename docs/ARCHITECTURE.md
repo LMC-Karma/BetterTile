@@ -101,7 +101,9 @@ sample and consume it on an AppKit display-link tick. Live Accessibility batches
 run at no more than 60 Hz; ghost-only feedback may follow the display's native
 rate. Intermediate ticks reuse one frame transaction, skip unchanged targets,
 and avoid repeated participant sweeps. They also skip the trailing
-clamp-correcting size write; the next tick or the release corrects a clamp. Mouse-up bypasses coalescing, validates
+clamp-correcting size write; the next tick or the release corrects a clamp.
+Once a window's minimum is measured, intermediate ticks also skip the size
+readback, and only a final write can confirm a new clamp with a position nudge. Mouse-up bypasses coalescing, validates
 the participants, and applies the exact final geometry. Linked resizing writes
 only the neighboring windows; the application keeps control of the window the
 user is resizing.

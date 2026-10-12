@@ -619,7 +619,9 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         }
         // Applications clamp a size synchronously. Reading it straight back
         // measures the minimum exactly, before anything is shown as settled.
+        let learnedMinimum = minimumSizeLearner.learnedSizes[windowID]
         if plan.writesInitialSize || plan.writesFinalSize,
+           WriteReadbackPolicy.readsBack(correctsClamping: correctsClamping, learnedMinimum: learnedMinimum),
            let actualPosition: CGPoint = axValue(kAXPositionAttribute, from: element, type: .cgPoint),
            let actualSize: CGSize = axValue(kAXSizeAttribute, from: element, type: .cgSize) {
             let actual = BTRect(x: actualPosition.x, y: actualPosition.y,
@@ -629,9 +631,10 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
                 requested: frame, previous: knownCurrentFrame, actual: actual
             ) {
                 snapshotGeneration &+= 1
-            } else if (actual.size.width > frame.size.width + 2 || actual.size.height > frame.size.height + 2),
-                      abs(actual.minX - frame.minX) <= 2, abs(actual.minY - frame.minY) <= 2,
-                      confirmsSynchronousWrites(element, at: actualPosition) {
+            } else if WriteReadbackPolicy.confirmsClamp(
+                requested: frame, actual: actual,
+                learnedMinimum: learnedMinimum, correctsClamping: correctsClamping
+            ), confirmsSynchronousWrites(element, at: actualPosition) {
                 // The window kept its size at the same origin, which an
                 // ignored write would also do. A 1 pt position nudge that the
                 // application follows proves it processes writes at once, so
