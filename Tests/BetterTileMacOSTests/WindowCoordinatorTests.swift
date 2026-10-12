@@ -1333,6 +1333,23 @@ func singleWindowPartialFailureRestoresBaselineAndPreservesHistory(actionPlan: B
     #expect(!transaction.hasTrailingWrites)
 }
 
+/// A rejected tick that only completes a trailing window clears the
+/// trailing mark, so a still pointer does not retry it every display tick.
+@Test @MainActor func aRejectedTrailingTickDoesNotKeepRetrying() throws {
+    let (system, coordinator) = sharedEdgeFixture()
+    var transaction = try #require(coordinator.beginTransaction(windowIDs: Set(system.windows.map(\.id))).startedTransaction)
+    _ = coordinator.applyLive(transaction: &transaction, placements: [
+        Placement(windowID: system.windows[0].id, frame: BTRect(x: 0, y: 0, width: 520, height: 800)),
+        Placement(windowID: system.windows[1].id, frame: BTRect(x: 520, y: 0, width: 480, height: 800)),
+    ], validateParticipants: false)
+    try #require(transaction.hasTrailingWrites)
+    system.failingWindowID = system.windows[0].id
+    let outcome = coordinator.applyLive(transaction: &transaction, placements: transaction.proposedPlacements,
+                                        validateParticipants: false)
+    #expect(!outcome.isApplied)
+    #expect(!transaction.hasTrailingWrites)
+}
+
 /// At a junction a window can shrink in width and grow in height in one
 /// tick. Its height trails one tick, like any growing window, so it never
 /// grows into the window below before that window has moved.

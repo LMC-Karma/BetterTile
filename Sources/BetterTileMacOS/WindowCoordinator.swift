@@ -598,6 +598,9 @@ public final class WindowCoordinator {
             transaction.hasDegradedApply = false
             return .applied
         } catch {
+            // The rejected tick rolled back. The next pointer sample retries
+            // it; a still pointer must not resend it every display tick.
+            transaction.hasTrailingWrites = false
             return applyFailureOutcome(for: error, transaction: &transaction)
         }
     }
