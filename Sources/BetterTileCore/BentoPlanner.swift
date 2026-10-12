@@ -469,8 +469,14 @@ public struct BentoPlanner: Sendable {
             // A new window opens beside the focused one unless that leaves a
             // pane too small to use, such as a sliver next to a window at its
             // minimum. Then the best split anywhere in the layout is used.
+            // Only panes this split creates or resizes count: a pane that was
+            // already narrow, and keeps its size, is not the split's doing.
             let besideFocus = solved(next, observation: observation, pill: .success("Pane added"))
-            if besideFocus.writesFrames, paneQuality(besideFocus.placements, in: observation.bounds) >= 1 {
+            if besideFocus.writesFrames,
+               paneQuality(
+                   placementsChanged(by: besideFocus.placements, inserting: windowID, observation: observation),
+                   in: observation.bounds
+               ) >= 1 {
                 return besideFocus
             }
             return scoredInsertion(windowID, state: state, observation: observation) ?? besideFocus
@@ -486,6 +492,22 @@ public struct BentoPlanner: Sendable {
         return placements.map { placement in
             min(placement.frame.size.width, placement.frame.size.height) / usable
         }.min() ?? 0
+    }
+
+    /// The new window's pane and every pane whose size differs from its
+    /// window's current frame, including a neighbour the solver squeezed.
+    private func placementsChanged(
+        by placements: [Placement],
+        inserting windowID: WindowID,
+        observation: BentoObservation
+    ) -> [Placement] {
+        placements.filter { placement in
+            guard placement.windowID != windowID,
+                  let current = observation.frames[placement.windowID]
+            else { return true }
+            return abs(placement.frame.size.width - current.size.width) > 1
+                || abs(placement.frame.size.height - current.size.height) > 1
+        }
     }
 
     /// Tries a split beside every pane on every edge and keeps the layout in
