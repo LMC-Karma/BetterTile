@@ -3985,6 +3985,9 @@ extension BetterTileModel {
             let reason = error.localizedDescription
             guard let rollbackFrames else {
                 if let earlyRaise { undoEarlyTabRaise(earlyRaise) }
+                // No placement starts, so no placement end drops the
+                // pressed tab's highlight.
+                if let focus { tabbedOverlays[display.id]?.dropPressedSelection(of: focus) }
                 statusMessage = reason
                 presentActionResult(succeeded: false, error: reason, displayID: display.id)
                 return
@@ -4236,7 +4239,12 @@ extension BetterTileModel {
             }
         }
         var handedOff = false
-        defer { if !handedOff, let earlyRaise { undoEarlyTabRaise(earlyRaise) } }
+        defer {
+            if !handedOff {
+                if let earlyRaise { undoEarlyTabRaise(earlyRaise) }
+                if case let .select(id) = intent { tabbedOverlays[displayID]?.dropPressedSelection(of: id) }
+            }
+        }
         // Refresh only this layout's windows when the snapshot cache is valid;
         // a full scan of every application costs 10-40 ms per action.
         guard let allWindows = (try? system.cachedVisibleWindows(refreshing: Set(state.windowIDs)))
