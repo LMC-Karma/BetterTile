@@ -116,7 +116,9 @@ and avoid repeated participant sweeps. They also skip the trailing
 clamp-correcting size write; the next tick or the release corrects a clamp.
 Live ticks read each written window back but never confirm a clamp with a
 position nudge; only a final write does, for a clamp the learned minimum does
-not already explain.
+not already explain and the readback cannot prove. A single-window write and a
+batched committed write use the same rule. The nudge confirms a clamp only when
+the window follows it and then returns to its position.
 Each tick writes every application at once, one thread per application, and
 returns only after every write. A shrinking window takes the new sample at
 once. A growing window, or the growing axis of a window at a junction, takes
