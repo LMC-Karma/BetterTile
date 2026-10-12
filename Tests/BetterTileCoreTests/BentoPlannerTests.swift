@@ -844,3 +844,24 @@ func adoptingSixExistingPanesStillRegistersOverflow(paneGap: Double) {
     let restoredB = try #require(results[0].first { $0.windowID == b.id })
     #expect(restoredB.frame.minX >= 599, "\(results[0])")
 }
+
+@Test func aNewWindowBesideAFullWidthRowOpensSideBySide() throws {
+    let top = plannerWindow("top", frame: BTRect(x: 0, y: 0, width: 1200, height: 480))
+    let bottom = plannerWindow("bottom", frame: BTRect(x: 0, y: 480, width: 1200, height: 320))
+    let new = plannerWindow("new")
+    let rows = BentoPartition(axis: .horizontal, children: [.leaf(top.id), .leaf(bottom.id)], ratios: [0.6, 0.4])
+    let result = BentoPlanner().plan(
+        state: BentoRuntimeState(layout: BentoLayoutState(root: .partition(rows))),
+        observation: BentoObservation(bounds: plannerBounds, windows: [top, bottom, new], focusedWindowID: bottom.id),
+        intent: .insert(new.id)
+    )
+
+    #expect(result.writesFrames)
+    let frames = Dictionary(uniqueKeysWithValues: result.placements.map { ($0.windowID, $0.frame) })
+    #expect(frames[top.id] == top.frame)
+    let left = try #require(frames[bottom.id])
+    let right = try #require(frames[new.id])
+    #expect(left.minY == 480 && right.minY == 480)
+    #expect(left.size.height == 320 && right.size.height == 320)
+    #expect(left.maxX <= right.minX)
+}
