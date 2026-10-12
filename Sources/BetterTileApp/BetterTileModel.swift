@@ -4318,9 +4318,6 @@ extension BetterTileModel {
         }
     }
 
-    /// The user resized a selected window by its edge. As in Bento, a shared
-    /// pane edge moves that divider, stopping at each pane's minimum, and any
-    /// other change snaps back. Hidden tabs and strips then follow the panes.
     /// Keeps a native edge resize's frame changes until the button is
     /// released, then processes them again.
     private func deferTabbedResizeUntilRelease(_ windowIDs: Set<WindowID>) {
@@ -4336,6 +4333,9 @@ extension BetterTileModel {
         }
     }
 
+    /// The user resized a selected window by its edge. As in Bento, a shared
+    /// pane edge moves that divider, stopping at each pane's minimum, and any
+    /// other change snaps back. Hidden tabs and strips then follow the panes.
     private func adoptTabbedResize(of externalIDs: Set<WindowID>, session: LayoutSession, windows: [WindowSnapshot]) {
         guard !session.automaticWritesSuspended,
               let state = session.tabbedState,
