@@ -1838,6 +1838,10 @@ func steppedApplicationTabIsSelectedWithoutResizeLoops(emitsEvents: Bool) async 
     system.eventHandler?(WindowSystemEvent(kind: .resized, windowID: system.windows[0].id,
                                           processIdentifier: system.windows[0].processIdentifier))
     try #require(model.presentedTabbedState(on: display)?.frames(in: bounds) == during)
+    // The event pass runs while the button is still held; the gesture has not
+    // ended, so the strips keep the preview.
+    try await Task.sleep(for: .milliseconds(400))
+    #expect(model.presentedTabbedState(on: display)?.frames(in: bounds) == during)
     held = false
     #expect(await waitFor(timeout: .seconds(3)) { model.presentedTabbedState(on: display)?.frames(in: bounds) == before })
     #expect(model.activeTabbedState == committed)
