@@ -69,7 +69,9 @@ is no longer protected on the old display.
 
 Some applications close a document window without a destruction event; focus
 only moves to another window. When focus lands in a Bento layout, the model
-coalesces one check per event pass. The check reads the tiled panes of every
+marks a check for the next event pass. It resolves the focused window when the
+event arrives, so a later focus change elsewhere cannot clear the mark. The
+event pass runs one check however many events marked it. The check reads the tiled panes of every
 active Bento layout through the targeted cached refresh. A document closed on one
 display can move focus to its application's window on another display, so the
 check is not limited to the focused layout. If every pane is still visible and eligible,

@@ -131,7 +131,9 @@ final class BetterTileModel {
     private var lastVisibleSignature = ""
     private var lastDisplayWorkAreaSignature = ""
     private var pendingWindowEvents = WindowEventBuffer()
-    private var pendingBentoFocusEvent: WindowSystemEvent?
+    /// Set when focus lands in a Bento layout. Later focus elsewhere does not
+    /// clear it; only the event pass that runs the peer check does.
+    private var pendingBentoFocusCheck = false
     /// Windows a destroyed event has accounted for. Direct evidence, so their
     /// panes are released without waiting for absence to be corroborated.
     private var confirmedGoneWindowIDs: Set<WindowID> = []
@@ -1724,7 +1726,7 @@ final class BetterTileModel {
         watchdogTimer = nil
         permissionPollTask?.cancel()
         windowEventTask?.cancel()
-        pendingBentoFocusEvent = nil
+        pendingBentoFocusCheck = false
         spaceStabilizationTask?.cancel()
         displayRefreshDebouncer.cancel()
         settlementTasks.values.forEach { $0.cancel() }
@@ -2050,8 +2052,10 @@ final class BetterTileModel {
 
     private func receiveWindowSystemEvent(_ event: WindowSystemEvent) {
         guard !isShutDown else { return }
-        if event.kind == .focused, sessionStore.sessions.values.contains(where: { $0.mode == .bento }) {
-            pendingBentoFocusEvent = event
+        // Resolve the focus now, while it is still on that window. A later
+        // focus change elsewhere must not erase a check this one needs.
+        if event.kind == .focused, !pendingBentoFocusCheck, bentoFocusLandsInLayout(event) {
+            pendingBentoFocusCheck = true
         }
         // Lifecycle evidence survives gesture buffering and Space stabilization.
         // A stale scan must not restore a pane before minimization is observed.
@@ -2128,7 +2132,9 @@ final class BetterTileModel {
         schedulePendingWindowEvents()
     }
 
-    private func bentoFocusNeedsTopologyRefresh(_ event: WindowSystemEvent) -> Bool {
+    private func bentoFocusLandsInLayout(_ event: WindowSystemEvent) -> Bool {
+        let sessions = sessionStore.sessions.values.filter { $0.mode == .bento }
+        guard !sessions.isEmpty else { return false }
         let focusedID: WindowID
         if let windowID = event.windowID {
             focusedID = windowID
@@ -2137,8 +2143,11 @@ final class BetterTileModel {
                   focused.processIdentifier == event.processIdentifier else { return false }
             focusedID = focused.id
         }
+        return sessions.contains { $0.windowIDs.contains(focusedID) }
+    }
+
+    private func bentoPeersNeedTopologyRefresh() -> Bool {
         let sessions = sessionStore.sessions.values.filter { $0.mode == .bento }
-        guard sessions.contains(where: { $0.windowIDs.contains(focusedID) }) else { return false }
         let expectedPeers = sessions.flatMap { session in
             Set(session.bentoState.root?.windowIDs ?? [])
                 .subtracting(session.excludedFocusWindowIDs)
@@ -2161,7 +2170,7 @@ final class BetterTileModel {
         guard !isShutDown else { return }
         let isGestureActive = activeBentoDrag != nil || dragSnap.isGestureActive || dividerResize.isDragging
         guard !isGestureActive, !isStabilizingSpace,
-              !pendingWindowEvents.isEmpty || pendingBentoFocusEvent != nil else { return }
+              !pendingWindowEvents.isEmpty || pendingBentoFocusCheck else { return }
         windowEventTask?.cancel()
         windowEventTask = Task { @MainActor [weak self] in
             try? await Task.sleep(for: delay)
@@ -2173,13 +2182,13 @@ final class BetterTileModel {
     private func processPendingWindowEvents() {
         let isGestureActive = activeBentoDrag != nil || dragSnap.isGestureActive || dividerResize.isDragging
         guard !isGestureActive, !isStabilizingSpace,
-              !pendingWindowEvents.isEmpty || pendingBentoFocusEvent != nil else { return }
+              !pendingWindowEvents.isEmpty || pendingBentoFocusCheck else { return }
         let pendingEvents = pendingWindowEvents
         let changedIDs = pendingEvents.frameEventWindowIDs
         let refreshTopology = pendingEvents.topologyChanged
-            || pendingBentoFocusEvent.map(bentoFocusNeedsTopologyRefresh) == true
+            || (pendingBentoFocusCheck && bentoPeersNeedTopologyRefresh())
         if !refreshTopology, changedIDs.isEmpty {
-            pendingBentoFocusEvent = nil
+            pendingBentoFocusCheck = false
             windowEventRetryBackoff.reset()
             return
         }
@@ -2197,7 +2206,7 @@ final class BetterTileModel {
             windows = completeSweep
         }
         pendingWindowEvents.acknowledge(pendingEvents)
-        pendingBentoFocusEvent = nil
+        pendingBentoFocusCheck = false
         windowEventRetryBackoff.reset()
         let visibleIDs = Set(windows.map(\.id))
         let now = Date()

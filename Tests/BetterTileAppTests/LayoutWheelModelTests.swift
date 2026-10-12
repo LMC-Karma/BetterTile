@@ -2123,6 +2123,35 @@ func silentlyClosedWindowLeavesItsPaneWithinASecond(nilFocusID: Bool) async thro
     #expect(reflowed, "\(system.windows.map(\.frame)) after closing \(closed.id), sweeps \(system.completeSweepCount)")
 }
 
+/// A focus change to an unrelated application right after a silent close
+/// must not erase the pending check: the closed pane still leaves promptly.
+@Test(arguments: [false, true]) @MainActor
+func unrelatedFocusAfterASilentCloseKeepsThePendingCheck(nilFocusID: Bool) async throws {
+    _ = NSApplication.shared
+    let system = FakeAppWindowSystem()
+    for index in 1...2 {
+        system.windows.append(WindowSnapshot(id: WindowID(rawValue: "doc\(index)"), processIdentifier: 70,
+            frame: BTRect(x: 0, y: 0, width: 400, height: 300), displayID: system.mainDisplay.id))
+    }
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    model.setActiveMode(.bento)
+    try #require(await waitFor { Set(system.windows.map(\.frame)).count == 3 })
+    try await Task.sleep(for: .milliseconds(300))
+    let closed = system.windows.removeLast()
+    system.focusedID = system.windows[0].id
+    system.eventHandler?(WindowSystemEvent(kind: .focused, windowID: nilFocusID ? nil : system.windows[0].id,
+                                          processIdentifier: system.windows[0].processIdentifier))
+    // The user clicks another application before the event pass runs.
+    system.focusedID = WindowID(rawValue: "finder")
+    system.eventHandler?(WindowSystemEvent(kind: .focused, windowID: nilFocusID ? nil : WindowID(rawValue: "finder"),
+                                          processIdentifier: 99))
+    let reflowed = await waitFor(timeout: .seconds(3)) {
+        system.windows.allSatisfy { $0.frame.size.height == 800 } && Set(system.windows.map(\.frame)).count == 2
+    }
+    #expect(reflowed, "\(system.windows.map(\.frame)) after closing \(closed.id), sweeps \(system.completeSweepCount)")
+}
+
 /// Closing a document on one display can move focus to the same
 /// application's window on another display. The focus check covers every
 /// Bento layout, so the closed pane still leaves.
