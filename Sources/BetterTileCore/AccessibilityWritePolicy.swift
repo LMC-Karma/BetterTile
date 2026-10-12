@@ -141,4 +141,51 @@ public enum WriteReadbackPolicy {
             && actual.size.height > known.height + tolerance
         return widthIsNew || heightIsNew
     }
+
+    /// True when a readback proves that the application processed the
+    /// write: the window moved to the requested origin, or its size changed.
+    /// A frame that ignored the write proves nothing.
+    public static func readbackProvesWrite(
+        requested: BTRect,
+        previous: BTRect?,
+        actual: BTRect,
+        tolerance: Double = 2
+    ) -> Bool {
+        let movedToRequest = previous.map {
+            abs($0.minX - requested.minX) > tolerance || abs($0.minY - requested.minY) > tolerance
+        } ?? false
+        let atRequestedOrigin = abs(actual.minX - requested.minX) <= tolerance
+            && abs(actual.minY - requested.minY) <= tolerance
+        let sizeChanged = previous.map {
+            abs($0.size.width - actual.size.width) > tolerance || abs($0.size.height - actual.size.height) > tolerance
+        } ?? false
+        return (movedToRequest && atRequestedOrigin) || sizeChanged
+    }
+
+    /// True when a final write needs the position nudge. The readback must
+    /// show a clamp that the learned minimum does not explain, and that the
+    /// readback alone cannot prove. A single-window write and a batched
+    /// committed write use this same rule.
+    public static func needsClampConfirmation(
+        requested: BTRect,
+        previous: BTRect?,
+        actual: BTRect,
+        learnedMinimum: BTSize?
+    ) -> Bool {
+        confirmsClamp(requested: requested, actual: actual, learnedMinimum: learnedMinimum)
+            && !readbackProvesWrite(requested: requested, previous: previous, actual: actual)
+    }
+
+    /// True when a 1 pt position nudge proves that the application handles
+    /// writes at once. The window must follow the nudge and then return to
+    /// its position. A window left at the nudged position is no proof.
+    public static func nudgeConfirmsSynchronousWrites(
+        nudged: BTPoint,
+        observed: BTPoint?,
+        returned: Bool,
+        tolerance: Double = 0.5
+    ) -> Bool {
+        guard returned, let observed else { return false }
+        return abs(observed.x - nudged.x) <= tolerance
+    }
 }
