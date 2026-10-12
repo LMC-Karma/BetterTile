@@ -758,19 +758,14 @@ public final class WindowCoordinator {
     private func apply(
         _ frame: BTRect,
         to windowID: WindowID,
-        knownCurrentFrame: BTRect? = nil,
-        intermediate: Bool = false
+        knownCurrentFrame: BTRect? = nil
     ) throws {
         let generation = (generations[windowID] ?? 0) &+ 1
         generations[windowID] = generation
         guard generations[windowID] == generation else { return }
         expect(frame, for: windowID, generation: generation)
         do {
-            if intermediate {
-                try system.setIntermediateFrame(frame, knownCurrentFrame: knownCurrentFrame, for: windowID)
-            } else {
-                try system.setFrame(frame, knownCurrentFrame: knownCurrentFrame, for: windowID)
-            }
+            try system.setFrame(frame, knownCurrentFrame: knownCurrentFrame, for: windowID)
         } catch {
             cancelExpectedMutation(for: windowID, generation: generation)
             throw error
@@ -865,8 +860,7 @@ public final class WindowCoordinator {
                     try apply(
                         placement.frame,
                         to: placement.windowID,
-                        knownCurrentFrame: known[placement.windowID],
-                        intermediate: intermediate
+                        knownCurrentFrame: known[placement.windowID]
                     )
                 }
             } catch {
