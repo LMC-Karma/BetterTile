@@ -2421,7 +2421,9 @@ final class BetterTileModel {
               (after.bentoState.root?.windowIDs.count ?? 0) >= 6 else { return }
         let newlyFloating = after.automaticallyFloatingWindowIDs.subtracting(before.automaticallyFloatingWindowIDs)
         guard let window = windows.first(where: { newlyFloating.contains($0.id) }) else { return }
-        let name = window.title.isEmpty ? "This window" : "“\(window.title)”"
+        // A long title must not push the instruction out of the result pill.
+        let title = window.title.count > 40 ? "\(window.title.prefix(39))…" : window.title
+        let name = title.isEmpty ? "This window" : "“\(title)”"
         statusMessage = "Bento manages up to six windows. \(name) stays floating: drop it on a pane to swap, or switch this desktop to Tabbed."
         presentActionResult(succeeded: false, error: statusMessage, displayID: display.id)
     }
