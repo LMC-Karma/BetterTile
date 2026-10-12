@@ -1334,6 +1334,52 @@ func singleWindowPartialFailureRestoresBaselineAndPreservesHistory(actionPlan: B
     #expect(system.windows[0].frame.size.width == 540)
 }
 
+/// A held window waits for its neighbour. A tick without a new sample that
+/// writes nothing cannot release it, so it does not ask for another tick;
+/// a still pointer then stops the display ticks.
+@Test @MainActor func aHeldWindowDoesNotKeepIdleTicksAlive() throws {
+    let (system, coordinator) = sharedEdgeFixture()
+    system.enforcedMinimumWidths[system.windows[1].id] = 450
+    var transaction = try #require(coordinator.beginTransaction(windowIDs: Set(system.windows.map(\.id))).startedTransaction)
+    let sample = [
+        Placement(windowID: system.windows[0].id, frame: BTRect(x: 0, y: 0, width: 600, height: 800)),
+        Placement(windowID: system.windows[1].id, frame: BTRect(x: 600, y: 0, width: 400, height: 800)),
+    ]
+    #expect(coordinator.applyLive(transaction: &transaction, placements: sample, validateParticipants: false).isApplied)
+    // The growing window trails the shrinking neighbour's first write.
+    try #require(transaction.hasTrailingWrites)
+    let writes = system.frameWriteCounts
+    // The neighbour refused, so the next tick holds the growing window.
+    #expect(coordinator.applyLive(transaction: &transaction, placements: sample, validateParticipants: false).isApplied)
+    #expect(system.frameWriteCounts == writes)
+    #expect(!transaction.hasTrailingWrites)
+    #expect(system.windows[0].frame.maxX <= system.windows[1].frame.minX + 0.5)
+}
+
+/// A held window still asks for another tick when the neighbour was
+/// written: that write can give up the space, and the next tick, without a
+/// new sample, then completes the growing window.
+@Test @MainActor func aHeldWindowCompletesAfterItsNeighbourGivesWay() throws {
+    let (system, coordinator) = sharedEdgeFixture()
+    let left = system.windows[0].id, right = system.windows[1].id
+    system.enforcedMinimumWidths[right] = 450
+    var transaction = try #require(coordinator.beginTransaction(windowIDs: Set(system.windows.map(\.id))).startedTransaction)
+    func sample(_ edge: Double) -> [Placement] {
+        [Placement(windowID: left, frame: BTRect(x: 0, y: 0, width: edge, height: 800)),
+         Placement(windowID: right, frame: BTRect(x: edge, y: 0, width: 1000 - edge, height: 800))]
+    }
+    _ = coordinator.applyLive(transaction: &transaction, placements: sample(600), validateParticipants: false)
+    // The application now accepts the smaller size.
+    system.enforcedMinimumWidths[right] = nil
+    #expect(coordinator.applyLive(transaction: &transaction, placements: sample(620), validateParticipants: false).isApplied)
+    #expect(system.windows[1].frame.minX == 620)
+    #expect(system.windows[0].frame.maxX <= 500.5)
+    #expect(transaction.hasTrailingWrites)
+    #expect(coordinator.applyLive(transaction: &transaction, placements: sample(620), validateParticipants: false).isApplied)
+    #expect(system.windows[0].frame.maxX == 620)
+    #expect(!transaction.hasTrailingWrites)
+}
+
 /// A live tick writes every application before it reports a failure, so
 /// a rejected tick can leave other windows at the new sample. Rollback
 /// shrinks those windows back before it regrows their neighbours.

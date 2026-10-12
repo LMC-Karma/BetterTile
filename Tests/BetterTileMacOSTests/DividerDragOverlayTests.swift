@@ -469,3 +469,26 @@ func aReleaseThatCancelsItsGestureRetractsTheHandleOnce(live: Bool) throws {
     #expect(controller.isRetracting == retracts)
     #expect(input.isVisible == retracts)
 }
+
+/// A Live drag asks a window to shrink below a minimum it never reported, so
+/// the growing neighbour is held. With the pointer still, the display ticks
+/// stop solving and redrawing once a tick has nothing to write.
+@Test @MainActor func aHeldLiveWindowStopsIdleDisplayTicks() throws {
+    let fixture = try GhostGestureFixture(live: true)
+    let controller = fixture.controller
+    defer { controller.hideAndCancel() }
+    let right = fixture.system.windows[1].id
+    fixture.system.enforcedMinimumWidths[right] = 380
+    // The right window refuses to shrink to 300 points.
+    fixture.tick(dx: 100)
+    let writes = fixture.system.frameWriteCounts
+    let drawn = controller.overlayPresentationCount
+    for _ in 0..<10 { fixture.ticks.fire() }
+    // One idle tick finds the left window held and writes nothing.
+    #expect(controller.overlayPresentationCount <= drawn + 1)
+    #expect(fixture.system.frameWriteCounts == writes)
+    #expect(controller.isDragging)
+    let left = try #require(fixture.system.windows.first { $0.id != right })
+    let held = try #require(fixture.system.windows.first { $0.id == right })
+    #expect(left.frame.maxX <= held.frame.minX + 0.5)
+}
