@@ -996,7 +996,10 @@ public final class DividerOverlayController {
             }
             layoutChangedHandler?(interaction.displayID, frames)
         }
-        clearGesture(committed: succeeded)
+        // A correction cancelled inside applyDrag already cleared the gesture
+        // and started the handle's retraction; a second clear would end the
+        // quick re-grab window early.
+        if activeInteraction != nil { clearGesture(committed: succeeded) }
     }
 
     private func reportLiveBentoState(_ interaction: DividerInteraction) {

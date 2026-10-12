@@ -572,6 +572,15 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         try writeFrame(frame, knownCurrentFrame: knownCurrentFrame, for: windowID)
     }
 
+    /// One window's intermediate sample takes the same path as a batch, so
+    /// the two cannot diverge.
+    public func setIntermediateFrame(_ frame: BTRect, knownCurrentFrame: BTRect?, for windowID: WindowID) throws {
+        try setIntermediateFrames(
+            [Placement(windowID: windowID, frame: frame)],
+            knownCurrentFrames: knownCurrentFrame.map { [windowID: $0] } ?? [:]
+        )
+    }
+
     private func writeFrame(
         _ frame: BTRect,
         knownCurrentFrame: BTRect?,
