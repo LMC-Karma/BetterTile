@@ -2532,6 +2532,12 @@ final class BetterTileModel {
                         self.cancelPendingFocusRestore(on: display.id)
                         return
                     }
+                    // A peer seen back on screen is no longer minimized, even
+                    // if its restored notification has not arrived yet.
+                    // Otherwise the layout that follows leaves it out.
+                    self.confirmedMinimizedWindowIDs.subtract(peers.filter { id in
+                        windows.contains { $0.id == id && $0.displayID == display.id && $0.isEligible }
+                    })
                     if !back { Self.bentoLog.notice("focus-drop peer return wait timed out") }
                     if let onPeersReturned {
                         self.bentoStateBeforeFocus.removeValue(forKey: sessionID)
