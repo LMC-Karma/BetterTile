@@ -4332,6 +4332,21 @@ extension BetterTileModel {
         }
     }
 
+    /// Keeps a native edge resize's frame changes until the button is
+    /// released, then processes them again.
+    private func deferTabbedResizeUntilRelease(_ windowIDs: Set<WindowID>) {
+        pendingWindowEvents.recordFrameChanges(windowIDs)
+        guard tabbedResizeReleaseTask == nil else { return }
+        tabbedResizeReleaseTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled, self?.primaryButtonIsPressed() == true {
+                try? await Task.sleep(for: .milliseconds(50))
+            }
+            guard let self, !Task.isCancelled else { return }
+            self.tabbedResizeReleaseTask = nil
+            self.schedulePendingWindowEvents()
+        }
+    }
+
     /// The user resized a selected window by its edge. As in Bento, a shared
     /// pane edge moves that divider, stopping at each pane's minimum, and any
     /// other change snaps back. Hidden tabs and strips then follow the panes.
@@ -4346,23 +4361,29 @@ extension BetterTileModel {
             externalIDs.contains(window.id)
                 && session.lastObservedFrames[window.id]?.approximatelyEquals(window.frame, tolerance: 1) != true
         }.map(\.id))
-        guard !changed.isEmpty else { return }
+        guard !changed.isEmpty else {
+            // The edge came back to where it started. The 30 Hz preview can
+            // have skipped that last step, so the strips return to the panes,
+            // but only once the button is released: the edge may still move.
+            // A pass can also come from another window's event while the edge
+            // is held; the strips keep the preview until release either way.
+            if primaryButtonIsPressed() {
+                let paneEvents = externalIDs.intersection(paneWindows.map(\.id))
+                if !paneEvents.isEmpty { deferTabbedResizeUntilRelease(paneEvents) }
+                return
+            }
+            if tabbedTasks[display.id] == nil, let overlay = tabbedOverlays[display.id], overlay.state != state {
+                overlay.refreshResize(state: state, bounds: display.visibleFrame)
+            }
+            return
+        }
         // A placement in progress reschedules these changes when it finishes.
         if tabbedTasks[display.id] != nil {
             pendingWindowEvents.recordFrameChanges(changed)
             return
         }
         if primaryButtonIsPressed() {
-            pendingWindowEvents.recordFrameChanges(changed)
-            guard tabbedResizeReleaseTask == nil else { return }
-            tabbedResizeReleaseTask = Task { @MainActor [weak self] in
-                while !Task.isCancelled, self?.primaryButtonIsPressed() == true {
-                    try? await Task.sleep(for: .milliseconds(50))
-                }
-                guard let self, !Task.isCancelled else { return }
-                self.tabbedResizeReleaseTask = nil
-                self.schedulePendingWindowEvents()
-            }
+            deferTabbedResizeUntilRelease(changed)
             return
         }
         guard let adopted = state.adoptingResize(
