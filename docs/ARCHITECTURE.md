@@ -127,6 +127,12 @@ the participants, and applies the exact final geometry. Linked resizing writes
 only the neighboring windows; the application keeps control of the window the
 user is resizing.
 
+A Ghost Preview release commits the previewed layout and reads every window
+back. A window that refused its size gives a measured minimum, and the release
+solves the layout again with it, at most twice. Undo history records the
+release once, after any correction. If a correction fails or is cancelled,
+every window returns to its frame from before the gesture.
+
 Frame batches share enhanced-accessibility setup per application. The
 coordinator keeps placement and rollback in one synchronous batch. The macOS
 adapter restores each application's original setting before the batch returns,
