@@ -794,6 +794,57 @@ func restoringAFocusModePeerFromTheDockWaitsForTheOtherPeers(rejectLayout: Bool)
     }
 }
 
+/// Each display waits for its own Focus mode peers. Entering Focus mode on
+/// another display while the first display's peers are still returning
+/// must not cancel the first display's pending command.
+@Test @MainActor func focusModeOnAnotherDisplayDoesNotCancelAPendingPartition() async throws {
+    _ = NSApplication.shared
+    let system = FakeAppWindowSystem()
+    let second = DisplaySnapshot(id: DisplayID(rawValue: "second"),
+        frame: BTRect(x: 1000, y: 0, width: 1000, height: 800), visibleFrame: BTRect(x: 1000, y: 0, width: 1000, height: 800))
+    system.availableDisplays.append(second)
+    let peer = WindowID(rawValue: "peer")
+    system.windows.append(WindowSnapshot(id: peer, processIdentifier: 43, bundleIdentifier: "com.example.Peer",
+        frame: BTRect(x: 0, y: 0, width: 200, height: 300), displayID: system.mainDisplay.id))
+    for name in ["b1", "b2"] {
+        system.windows.append(WindowSnapshot(id: WindowID(rawValue: name), processIdentifier: 44,
+            bundleIdentifier: "com.example.Second", frame: BTRect(x: 1000, y: 0, width: 300, height: 300),
+            displayID: second.id))
+    }
+    system.emitsMinimizationEvents = true
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    model.updateConfiguration { $0.defaultLayoutMode = .bento }
+    model.setActiveMode(.bento)
+    let onSecond = { system.windows.filter { $0.displayID == second.id } }
+    try #require(await waitFor(timeout: .seconds(2)) {
+        model.activeMode(for: second.id) == .bento && onSecond().allSatisfy { $0.frame.size.width < 1000 }
+            && system.windows[0].frame.size.width < 1000
+    }, "\(system.windows.map(\.frame))")
+    try await Task.sleep(for: .milliseconds(350))
+    let focused = system.windows[0].id
+    system.focusedID = focused
+    model.perform(.maximize)
+    try #require(system.windows.first { $0.id == peer }?.isMinimized == true)
+    try await Task.sleep(for: .milliseconds(350))
+
+    // Right Half ends Focus mode and waits for the slow peer.
+    system.slowRestoreIDs = [peer]
+    model.perform(.rightHalf)
+    try #require(system.restoreRequests.contains(peer))
+    // Focus mode on the second display while the first one's peer is still returning.
+    system.focusedID = WindowID(rawValue: "b1")
+    model.perform(.maximize)
+    try #require(system.windows.first { $0.id == WindowID(rawValue: "b2") }?.isMinimized == true)
+    system.slowRestoreIDs = []
+    try system.setMinimized(false, for: peer)
+
+    #expect(await waitFor(timeout: .seconds(2)) {
+        let frame = system.windows[0].frame
+        return frame.minX > 400 && frame.size.width < 600
+    }, "\(system.windows.map(\.frame))")
+}
+
 /// Closing the Focus mode window leaves its peers minimized. Restoring one
 /// from the Dock must lay the peers out without the closed window's pane,
 /// not leave its area empty until a later sweep notices the window is gone.
