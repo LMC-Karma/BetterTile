@@ -177,6 +177,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
     public func refreshApplicationObservers() {
         guard AXIsProcessTrusted() else { return }
         synchronizeObservers()
+        retryPendingEnhancedUserInterfaceRestores()
     }
 
     public func stopWindowObservation() {
@@ -256,7 +257,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
             // As for a frame write: with enhanced accessibility on, an
             // application can reinterpret the size writes.
             let enhancedUserInterface = suspendEnhancedUserInterfaceIfNeeded(for: element)
-            defer { if frameWriteSuspensions == nil { enhancedUserInterface.restore() } }
+            defer { if frameWriteSuspensions == nil { finish(enhancedUserInterface) } }
             AXUIElementSetMessagingTimeout(element, Self.frameWriteMessagingTimeout)
             defer { AXUIElementSetMessagingTimeout(element, 0) }
             guard Self.setFrameAttribute(element, kAXSizeAttribute, tinyValue) == .success else { continue }
@@ -629,7 +630,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         // requested frame. Disable it for the duration of the write. The
         // attribute is only ever touched when the application had it enabled.
         let enhancedUserInterface = suspendEnhancedUserInterfaceIfNeeded(for: element)
-        defer { if frameWriteSuspensions == nil { enhancedUserInterface.restore() } }
+        defer { if frameWriteSuspensions == nil { finish(enhancedUserInterface) } }
 
         // A frame write deserves more patience than a bulk read. Passing 0
         // returns this element to the process-wide default afterwards.
@@ -757,7 +758,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         continuousSizeSettable.removeAll()
         let suspensions = frameWriteSuspensions ?? [:]
         frameWriteSuspensions = nil
-        for suspension in suspensions.values { suspension.restore() }
+        finish(suspensions)
     }
 
     public func measuredFrameAfterWrite(for windowID: WindowID) -> BTRect? { lastWriteReadback[windowID] }
@@ -1050,11 +1051,12 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
 
     public func withFrameWriteBatch(_ updates: () throws -> Void) rethrows {
         if frameWriteSuspensions != nil { try updates(); return }
+        retryPendingEnhancedUserInterfaceRestores()
         frameWriteSuspensions = [:]
         defer {
             let suspensions = frameWriteSuspensions ?? [:]
             frameWriteSuspensions = nil
-            for suspension in suspensions.values { suspension.restore() }
+            finish(suspensions)
         }
         try updates()
     }
@@ -1065,16 +1067,19 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         var applicationElement: AXUIElement?
         var shouldRestore: Bool
 
-        func restore() {
-            guard shouldRestore, let applicationElement else { return }
+        /// Returns false when the application is held as unresponsive or
+        /// did not answer in time; the caller keeps the restore and retries.
+        func restore() -> Bool {
+            guard shouldRestore, let applicationElement else { return true }
             // Restoring is what makes Chromium rebuild its accessibility tree,
             // so this is the slowest write in the whole sequence and needs the
-            // full budget rather than the short read default.
-            let error = AccessibilityWindowSystem.writeEnhancedUserInterface(
-                true,
-                to: applicationElement
-            )
-            guard error != .success else { return }
+            // full budget rather than the short read default. It is gated, so
+            // a hung application costs nothing here.
+            let error = AccessibilityWindowSystem.gatedCall(applicationElement) {
+                AccessibilityWindowSystem.writeEnhancedUserInterface(true, to: applicationElement)
+            }
+            if error == .cannotComplete { return false }
+            guard error != .success else { return true }
             // Deliberately not thrown: the frame write already succeeded, and
             // failing it here would roll back a correct placement. Logged
             // because a silent failure downgrades disableAndRestore to
@@ -1082,7 +1087,32 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
             AccessibilityWindowSystem.log.warning(
                 "Could not restore AXEnhancedUserInterface (\(error.rawValue, privacy: .public))."
             )
+            return true
         }
+    }
+
+    /// Restores that waited for an application to answer again, by process.
+    private var pendingEnhancedUserInterfaceRestores: [pid_t: EnhancedUserInterfaceSuspension] = [:]
+
+    private func finish(_ suspension: EnhancedUserInterfaceSuspension) {
+        guard let element = suspension.applicationElement, !suspension.restore() else { return }
+        pendingEnhancedUserInterfaceRestores[Self.processIdentifier(of: element)] = suspension
+    }
+
+    private func finish(_ suspensions: [pid_t: EnhancedUserInterfaceSuspension]) {
+        for (pid, suspension) in suspensions where !suspension.restore() {
+            pendingEnhancedUserInterfaceRestores[pid] = suspension
+        }
+    }
+
+    /// Puts back the setting of applications that answer again. One that is
+    /// still held keeps waiting; one that quit needs nothing.
+    private func retryPendingEnhancedUserInterfaceRestores() {
+        guard !pendingEnhancedUserInterfaceRestores.isEmpty else { return }
+        let running = Set(NSWorkspace.shared.runningApplications.map(\.processIdentifier))
+        let pending = pendingEnhancedUserInterfaceRestores.filter { running.contains($0.key) }
+        pendingEnhancedUserInterfaceRestores = [:]
+        finish(pending)
     }
 
     /// Both enhanced-accessibility writes run on the application element, which
