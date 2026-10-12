@@ -605,18 +605,18 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         guard let element = elements[windowID] ?? refreshElement(for: windowID) else {
             throw WindowSystemError.windowNotFound(windowID)
         }
+        try requireResponsive(element)
         // A continuous gesture checks once whether the window can move.
         let movable: Bool
         if continuousWriteDepth > 0, let cached = continuousSettable[windowID] {
             movable = cached
         } else {
-            movable = isSettable(kAXPositionAttribute, on: element) || isSettable(kAXSizeAttribute, on: element)
+            movable = try movability(of: element)
             if continuousWriteDepth > 0 { continuousSettable[windowID] = movable }
         }
         guard movable else {
             throw WindowSystemError.unsupportedWindow(windowID)
         }
-        try requireResponsive(element)
 
         var position = CGPoint(x: frame.minX, y: frame.minY)
         var size = CGSize(width: frame.size.width, height: frame.size.height)
@@ -785,17 +785,19 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
     public func setIntermediateFrames(_ writes: [Placement], knownCurrentFrames: [WindowID: BTRect]) throws {
         try ensurePermission()
         var groups: [pid_t: [IntermediateJob]] = [:]
-        for write in writes {
+        // Every window is checked before any is written, so a failure here
+        // leaves every window where it was.
+        do { for write in writes {
             guard let element = elements[write.windowID] ?? refreshElement(for: write.windowID) else {
                 throw WindowSystemError.windowNotFound(write.windowID)
             }
+            try requireResponsive(element)
             let movable: Bool
             if let cached = continuousSettable[write.windowID] { movable = cached } else {
-                movable = isSettable(kAXPositionAttribute, on: element) || isSettable(kAXSizeAttribute, on: element)
+                movable = try movability(of: element)
                 if continuousWriteDepth > 0 { continuousSettable[write.windowID] = movable }
             }
             guard movable else { throw WindowSystemError.unsupportedWindow(write.windowID) }
-            try requireResponsive(element)
             _ = suspendEnhancedUserInterfaceIfNeeded(for: element)
             var pid: pid_t = 0
             AXUIElementGetPid(element, &pid)
@@ -804,6 +806,8 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
             if !sizeIsSettable(write.windowID, on: element) { plan.writesInitialSize = false }
             groups[pid, default: []].append(IntermediateJob(windowID: write.windowID, element: element,
                                                             frame: write.frame, previous: previous, plan: plan))
+        } } catch {
+            throw FrameWritesNotStarted(error)
         }
         let jobs = Array(groups.values)
         let lock = NSLock()
@@ -1790,9 +1794,38 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
     }
 
     private func isSettable(_ attribute: String, on element: AXUIElement) -> Bool {
+        settable(attribute, on: element) ?? false
+    }
+
+    /// Whether an attribute can be set, or nil when the application did not
+    /// answer in time or is held as unresponsive.
+    private func settable(_ attribute: String, on element: AXUIElement) -> Bool? {
         var settable = DarwinBoolean(false)
-        return Self.gatedCall(element) { AXUIElementIsAttributeSettable(element, attribute as CFString, &settable) } == .success
-            && settable.boolValue
+        switch Self.gatedCall(element, { AXUIElementIsAttributeSettable(element, attribute as CFString, &settable) }) {
+        case .success: return settable.boolValue
+        case .cannotComplete: return nil
+        default: return false
+        }
+    }
+
+    /// Whether a frame write can move or resize the window. An application
+    /// that did not answer fails this write without a verdict, so a gesture
+    /// does not keep a window it could not ask about as unmovable.
+    private func movability(of element: AXUIElement) throws -> Bool {
+        let position = settable(kAXPositionAttribute, on: element)
+        let size = position == true ? true : settable(kAXSizeAttribute, on: element)
+        guard let movable = Self.movability(position: position, size: size) else {
+            throw WindowSystemError.operationFailed(Self.unresponsiveApplicationMessage)
+        }
+        return movable
+    }
+
+    /// True when either attribute can be set, false only when both answered
+    /// that they cannot, nil when the answer is not known.
+    nonisolated static func movability(position: Bool?, size: Bool?) -> Bool? {
+        if position == true || size == true { return true }
+        if position == false, size == false { return false }
+        return nil
     }
 
     /// An Accessibility call to one application. While the application is

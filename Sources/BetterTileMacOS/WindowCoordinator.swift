@@ -858,6 +858,12 @@ public final class WindowCoordinator {
                 }
                 do {
                     try system.setIntermediateFrames(placements, knownCurrentFrames: known)
+                } catch let notStarted as FrameWritesNotStarted {
+                    // Nothing was written, so there is nothing to roll back.
+                    // A held application must not turn a skipped sample into
+                    // a failed rollback; the next sample tries again.
+                    for (id, generation) in generationsWritten { cancelExpectedMutation(for: id, generation: generation) }
+                    throw notStarted.underlying
                 } catch {
                     for (id, generation) in generationsWritten { cancelExpectedMutation(for: id, generation: generation) }
                     var rollbackFailed = false

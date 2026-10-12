@@ -1623,3 +1623,33 @@ func singleWindowPartialFailureRestoresBaselineAndPreservesHistory(actionPlan: B
     #expect(system.frameWriteCounts[left, default: 0] == 0)
     #expect(system.windows[0].frame == leftFrame)
 }
+
+/// A live tick that fails before writing anything, such as while an
+/// application is held as unresponsive, rolls nothing back. It is a
+/// transient failure: the gesture continues and the next tick writes every
+/// window.
+@Test @MainActor func aLiveTickThatWritesNothingFailsWithoutARollback() throws {
+    let system = FakeWindowSystem()
+    system.addSecondWindow()
+    let coordinator = WindowCoordinator(system: system)
+    let ids = system.windows.map(\.id)
+    let baseline = system.windows.map { Placement(windowID: $0.id, frame: $0.frame) }
+    var transaction = try #require(coordinator.beginTransaction(windowIDs: Set(ids)).startedTransaction)
+    let target = baseline.map { Placement(windowID: $0.windowID, frame: $0.frame.offsetBy(dx: -20, dy: 0)) }
+    // A rollback write to the held application would fail too.
+    system.unpreparedIntermediateWindowID = ids[1]
+    system.failingWindowID = ids[1]
+    let writes = system.frameWriteCounts
+    guard case .failed = coordinator.applyLive(transaction: &transaction, placements: target, validateParticipants: false) else {
+        Issue.record("Expected a transient failure, not a degraded rollback"); return
+    }
+    #expect(system.frameWriteCounts == writes)
+    #expect(!transaction.hasDegradedApply)
+    #expect(system.windows.map(\.frame) == baseline.map(\.frame))
+
+    system.unpreparedIntermediateWindowID = nil
+    system.failingWindowID = nil
+    #expect(coordinator.applyLive(transaction: &transaction, placements: target, validateParticipants: false).isApplied)
+    #expect(system.windows.map(\.frame) == target.map(\.frame))
+}
+

@@ -160,7 +160,14 @@ final class FakeWindowSystem: WindowSystem, TargetedWindowSystem, WindowEventSou
     /// before it reports the first failure.
     var attemptsWholeIntermediateBatch = true
 
+    /// Fails a live tick that includes this window before writing any window,
+    /// as the adapter does while an application is held as unresponsive.
+    var unpreparedIntermediateWindowID: WindowID?
+
     func setIntermediateFrames(_ writes: [Placement], knownCurrentFrames: [WindowID: BTRect]) throws {
+        if let unpreparedIntermediateWindowID, writes.contains(where: { $0.windowID == unpreparedIntermediateWindowID }) {
+            throw FrameWritesNotStarted(WindowSystemError.operationFailed(AccessibilityWindowSystem.unresponsiveApplicationMessage))
+        }
         var failure: Error?
         for write in writes {
             do {

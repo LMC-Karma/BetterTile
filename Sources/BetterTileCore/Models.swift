@@ -259,6 +259,15 @@ public protocol WindowEventSource: AnyObject {
     func stopWindowObservation()
 }
 
+/// Thrown by `setIntermediateFrames` when it fails before writing any
+/// window, for example while an application is held as unresponsive. The
+/// caller has nothing to roll back.
+public struct FrameWritesNotStarted: Error, LocalizedError {
+    public let underlying: any Error
+    public init(_ underlying: any Error) { self.underlying = underlying }
+    public var errorDescription: String? { underlying.localizedDescription }
+}
+
 public enum WindowSystemError: Error, LocalizedError, Equatable {
     case accessibilityPermissionRequired
     case windowNotFound(WindowID)
