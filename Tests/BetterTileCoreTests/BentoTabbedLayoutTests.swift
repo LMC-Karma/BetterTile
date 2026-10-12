@@ -456,3 +456,78 @@ private func adoptionWindow(_ name: String, minimumWidth: Double = 120) -> Windo
     #expect(state.frames(in: bounds) == framesBefore)
     _ = try state.placements(in: bounds, windows: windows)
 }
+
+private func vacancyCount(_ node: BentoNode?) -> Int {
+    switch node {
+    case nil, .leaf?: 0
+    case .vacant?: 1
+    case let .partition(partition)?: partition.children.reduce(0) { $0 + vacancyCount($1) }
+    }
+}
+
+@Test func unstackingPutsAHiddenTabInAnEmptyPaneBeforeSplitting() throws {
+    let a = window("a"), b = window("b")
+    let empty = UUID()
+    var state = try #require(BentoTabbedLayoutState(adopting: BentoLayoutState(root: .partition(BentoPartition(
+        axis: .vertical, children: [.leaf(a), .vacant(empty)]
+    ))), contentTopInset: 34))
+    let added = state.add(b, to: state.panes[0].id, select: false)
+    #expect(added)
+    let paneFrames = try #require(state.paneFrames(in: tabbedBounds))
+
+    let bento = state.unstacked(in: tabbedBounds)
+    #expect(vacancyCount(bento.root) == 0)
+    let frames = bento.paneFrames(in: tabbedBounds)
+    #expect(frames[a] == paneFrames[state.panes[0].id])
+    #expect(frames[b] == paneFrames[empty])
+}
+
+@Test func unstackingRemovesAnEmptyPaneThatNoHiddenTabFills() throws {
+    let a = window("a"), c = window("c"), d = window("d")
+    let empty = UUID()
+    let grid = BentoNode.partition(BentoPartition(axis: .vertical, children: [
+        .partition(BentoPartition(axis: .horizontal, children: [.leaf(a), .vacant(empty)])),
+        .partition(BentoPartition(axis: .horizontal, children: [.leaf(c), .leaf(d)])),
+    ]))
+    let state = try #require(BentoTabbedLayoutState(adopting: BentoLayoutState(root: grid), contentTopInset: 34))
+
+    let bento = state.unstacked(in: tabbedBounds)
+    #expect(vacancyCount(bento.root) == 0)
+    let frames = bento.paneFrames(in: tabbedBounds)
+    // The empty pane's partner takes the whole column; the other column keeps its size.
+    #expect(frames[a] == BTRect(x: 0, y: 0, width: 500, height: 600))
+    #expect(frames[c] == BTRect(x: 500, y: 0, width: 500, height: 300))
+    #expect(frames[d] == BTRect(x: 500, y: 300, width: 500, height: 300))
+}
+
+@Test func unstackingFillsAnEmptyPaneFromTheNearestPane() throws {
+    let a = window("a"), a2 = window("a2"), b = window("b"), b2 = window("b2"), d = window("d")
+    let empty = UUID()
+    // Top-left a (+a2), bottom-left b (+b2), top-right empty, bottom-right d.
+    let grid = BentoNode.partition(BentoPartition(axis: .vertical, children: [
+        .partition(BentoPartition(axis: .horizontal, children: [.leaf(a), .leaf(b)])),
+        .partition(BentoPartition(axis: .horizontal, children: [.vacant(empty), .leaf(d)])),
+    ]))
+    var state = try #require(BentoTabbedLayoutState(adopting: BentoLayoutState(root: grid), contentTopInset: 34))
+    let paneA = try #require(state.pane(containing: a)?.id)
+    let paneB = try #require(state.pane(containing: b)?.id)
+    let addedA = state.add(a2, to: paneA, select: false)
+    let addedB = state.add(b2, to: paneB, select: false)
+    #expect(addedA && addedB)
+
+    let bento = state.unstacked(in: tabbedBounds)
+    #expect(vacancyCount(bento.root) == 0)
+    #expect(Set(bento.root?.windowIDs ?? []) == [a, a2, b, b2, d])
+    let frames = bento.paneFrames(in: tabbedBounds)
+    #expect(frames[a2] == BTRect(x: 500, y: 0, width: 500, height: 300))
+    #expect(frames[a] == BTRect(x: 0, y: 0, width: 500, height: 300))
+    // b2 had no empty pane left, so it splits b's pane.
+    let bFrame = try #require(frames[b]), b2Frame = try #require(frames[b2])
+    #expect(bFrame.minY >= 300 && b2Frame.minY >= 300)
+    #expect(bFrame.maxX <= 500 && b2Frame.maxX <= 500)
+}
+
+@Test func unstackingOnlyEmptyPanesLeavesNoTree() {
+    let state = TabbedLayoutState(preset: .columns)
+    #expect(state.unstacked(in: tabbedBounds).root == nil)
+}

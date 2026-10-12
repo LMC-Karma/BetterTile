@@ -203,16 +203,37 @@ public struct BentoTabbedLayoutState: Hashable, Sendable {
     }
 
     /// The Bento layout for leaving Tabbed: every hidden tab gets its own
-    /// pane, split from its group's pane along that pane's longer side, and
-    /// the strip reserve is removed.
+    /// pane and the strip reserve is removed. Hidden tabs first fill empty
+    /// panes, each taking the nearest pane's next hidden tab. The others
+    /// split from their group's pane along that pane's longer side. An empty
+    /// pane left over is removed, and the panes beside it take its space.
     public func unstacked(in bounds: BTRect) -> BentoLayoutState {
         var result = layout
         result.metrics.contentTopInset = 0
         result.metrics.vacantMinimumSize = BTSize(width: 0, height: 0)
+        let occupiedFrames = result.paneFrames(in: bounds)
+        var hidden: [(frame: BTRect, tabs: [WindowID])] = panes.compactMap { pane in
+            guard let selected = pane.selected, let frame = occupiedFrames[selected] else { return nil }
+            let tabs = pane.tabs.filter { $0 != selected }
+            return tabs.isEmpty ? nil : (frame, tabs)
+        }
+        let emptyPanes = result.vacantFrames(in: bounds).sorted {
+            $0.value.area != $1.value.area ? $0.value.area > $1.value.area : $0.key.uuidString < $1.key.uuidString
+        }
+        func distance(_ first: BTRect, _ second: BTRect) -> Double {
+            hypot(first.midX - second.midX, first.midY - second.midY)
+        }
+        for (vacancyID, frame) in emptyPanes {
+            guard let source = hidden.indices.filter({ !hidden[$0].tabs.isEmpty }).min(by: {
+                distance(hidden[$0].frame, frame) < distance(hidden[$1].frame, frame)
+            }) else { break }
+            result.fillVacancy(vacancyID, with: hidden[source].tabs.removeFirst())
+        }
+        let filled = Set(result.root?.windowIDs ?? [])
         for pane in panes {
             guard let selected = pane.selected else { continue }
             var anchor = selected
-            for hidden in pane.tabs where hidden != selected {
+            for hidden in pane.tabs where hidden != selected && !filled.contains(hidden) {
                 let frame = result.paneFrames(in: bounds)[anchor] ?? bounds
                 result.split(anchor, inserting: hidden,
                              axis: frame.size.width >= frame.size.height ? .vertical : .horizontal,
@@ -220,6 +241,7 @@ public struct BentoTabbedLayoutState: Hashable, Sendable {
                 anchor = hidden
             }
         }
+        result.removeVacancies()
         return result
     }
 
