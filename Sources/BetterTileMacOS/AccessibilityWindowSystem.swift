@@ -288,11 +288,11 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
             let application = applicationKeys[id] ?? "unknown"
             if let size = minimumSizeLearner.learnedSizes[id] {
                 Self.log.debug("""
-                    probe measured a \(application, privacy: .public) window: \
+                    probe measured a \(application, privacy: .private) window: \
                     minimum \(size.width, format: .fixed(precision: 0)) x \(size.height, format: .fixed(precision: 0))
                     """)
             } else {
-                Self.log.debug("probe measured nothing for a \(application, privacy: .public) window")
+                Self.log.debug("probe measured nothing for a \(application, privacy: .private) window")
             }
         }
         if measured { snapshotGeneration &+= 1 }
@@ -1712,7 +1712,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
     /// instance from a relaunch, and each new window is measured anyway.
     private func forgetMinimumSizeSeeds(of quitApplications: Set<String>) {
         for bundleIdentifier in Self.forgetSeeds(of: quitApplications, in: &minimumSizeLearner) {
-            Self.log.debug("forgot minimum-size seed of \(bundleIdentifier, privacy: .public) after it quit")
+            Self.log.debug("forgot minimum-size seed of \(bundleIdentifier, privacy: .private) after it quit")
         }
     }
 
