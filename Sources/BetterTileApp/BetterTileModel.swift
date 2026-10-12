@@ -87,17 +87,32 @@ final class BetterTileModel {
     private var absenceConfirmationTask: Task<Void, Never>?
     private var arrivalSweepTask: Task<Void, Never>?
     private var lastTabbedNativeResizePreview = Date.distantPast
-    /// The Bento tree from before focus mode, per desktop session, so ending
-    /// focus mode returns exactly the previous layout.
+    /// The Bento tree from before Focus mode, per desktop session, so ending
+    /// Focus mode returns exactly the previous layout.
     private var bentoStateBeforeFocus: [DesktopSessionID: BentoLayoutState] = [:]
-    /// Restores the layout once focus-mode peers return from the Dock. Any
+    /// Finishes a layout command once Focus mode peers return. Any
     /// newer layout action cancels it.
     private var focusRestoreTask: Task<Void, Never>?
+    private var focusRestoreSession: LayoutSession?
+    private var focusRestoreSessionID: DesktopSessionID? { focusRestoreSession?.id }
 
     private var focusRestoreGeneration = 0
     private func cancelPendingFocusRestore() {
         focusRestoreTask?.cancel()
         focusRestoreTask = nil
+        focusRestoreSession = nil
+    }
+    /// Ending Focus mode is still bringing the covered windows back. Repair
+    /// runs after that restore, so it never lays the desktop out without
+    /// them. A newer action that cancels the restore also wins over Repair.
+    private func repairsAfterFocusRestore(_ repair: @escaping @MainActor () -> Void) -> Bool {
+        guard let pending = focusRestoreTask else { return false }
+        Task { @MainActor [weak self] in
+            await pending.value
+            guard let self, !self.isShutDown, !pending.isCancelled else { return }
+            repair()
+        }
+        return true
     }
     /// The tab the user last selected. Activating its application can make
     /// that application's previous main window key instead; for a short
@@ -116,6 +131,9 @@ final class BetterTileModel {
     private var lastVisibleSignature = ""
     private var lastDisplayWorkAreaSignature = ""
     private var pendingWindowEvents = WindowEventBuffer()
+    /// Set when focus lands in a Bento layout. Later focus elsewhere does not
+    /// clear it; only the event pass that runs the peer check does.
+    private var pendingBentoFocusCheck = false
     /// Windows a destroyed event has accounted for. Direct evidence, so their
     /// panes are released without waiting for absence to be corroborated.
     private var confirmedGoneWindowIDs: Set<WindowID> = []
@@ -377,6 +395,7 @@ final class BetterTileModel {
     }
 
     func perform(_ action: WindowAction) {
+        let restoringSession = focusRestoreSession
         cancelPendingFocusRestore()
         guard !isShutDown else { return }
         let originalDisplayID = (try? system.focusedWindow())?.displayID ?? activeDisplayID
@@ -407,6 +426,11 @@ final class BetterTileModel {
         }
         if let focused, isTabbedMember(focused.id), !BentoDropPlanner.partitionActions.contains(action) {
             presentLayoutWheelUnavailable(tabbedSnapUnavailableReason(action), displayID: focused.displayID)
+            return
+        }
+        if let focused, endBentoFocusForPartition(
+            action, window: focused, restoringSession: restoringSession, cyclesShortcut: true
+        ) {
             return
         }
         if let focused, let succeeded = performBentoFocusMode(action, window: focused) {
@@ -489,8 +513,31 @@ final class BetterTileModel {
         _ command: LayoutWheelCommand,
         for target: LayoutWheelTarget
     ) {
+        performLayoutWheel(command, for: target, cyclesShortcut: false)
+    }
+
+    private func performLayoutWheel(
+        _ command: LayoutWheelCommand,
+        for target: LayoutWheelTarget,
+        cyclesShortcut: Bool
+    ) {
+        if command == .repairBento,
+           repairsAfterFocusRestore({ [weak self] in self?.performLayoutWheel(command, for: target) }) { return }
+        let restoringSession = focusRestoreSession
         cancelPendingFocusRestore()
-        switch planLayoutWheel(command, for: target) {
+        var outcome = planLayoutWheel(command, for: target, cyclesShortcut: cyclesShortcut)
+        if case .ready(.bento(_)) = outcome,
+           case let .windowAction(action) = command,
+           BentoDropPlanner.partitionActions.contains(action),
+           (sessionStore.session(for: target.displayID)?.excludedFocusWindowIDs.isEmpty == false
+                || restoringSession?.excludedFocusWindowIDs.isEmpty == false),
+           let window = (try? system.windowSnapshots(ids: [target.windowID]))?.first {
+            if endBentoFocusForPartition(action, window: window, target: target, restoringSession: restoringSession) {
+                return
+            }
+            outcome = planLayoutWheel(command, for: target, cyclesShortcut: cyclesShortcut)
+        }
+        switch outcome {
         case let .unavailable(reason, displayID):
             statusMessage = reason
             presentActionResult(succeeded: false, error: reason, displayID: displayID)
@@ -552,7 +599,8 @@ final class BetterTileModel {
 
     private func planLayoutWheel(
         _ command: LayoutWheelCommand,
-        for target: LayoutWheelTarget
+        for target: LayoutWheelTarget,
+        cyclesShortcut: Bool = false
     ) -> LayoutWheelPlanOutcome {
         guard !isShutDown, !tabbedExiting.contains(target.displayID) else {
             return .unavailable(reason: "The captured desktop is no longer available.", displayID: target.displayID)
@@ -618,7 +666,10 @@ final class BetterTileModel {
                 return .ready(.tabbed(plan, action, target.displayID))
             }
             let actionPlan: WindowActionPlan
-            switch coordinator.planExact(action, for: target.windowID) {
+            let planned = cyclesShortcut
+                ? coordinator.plan(action, for: target.windowID)
+                : coordinator.planExact(action, for: target.windowID)
+            switch planned {
             case let .ready(plan): actionPlan = plan
             case .unavailable:
                 return .unavailable(
@@ -635,7 +686,7 @@ final class BetterTileModel {
             )
             guard usesBento else { return .ready(.action(actionPlan)) }
             guard let proposal = layoutWheelBentoProposal(
-                intent: .snap(action: action, frame: actionPlan.targetFrame),
+                intent: .snap(action: actionPlan.resolvedAction, frame: actionPlan.targetFrame),
                 sourceWindowID: target.windowID,
                 displayID: actionPlan.displayID
             ) else {
@@ -917,17 +968,7 @@ final class BetterTileModel {
     }
 
     func tileCurrentDisplay() {
-        // Ending focus mode is still bringing the covered windows back.
-        // Repair after that restore, so it never lays the desktop out without
-        // them. A newer action that cancels the restore also wins over this.
-        if let pending = focusRestoreTask {
-            Task { @MainActor [weak self] in
-                await pending.value
-                guard let self, !self.isShutDown, !pending.isCancelled else { return }
-                self.tileCurrentDisplay()
-            }
-            return
-        }
+        if repairsAfterFocusRestore({ [weak self] in self?.tileCurrentDisplay() }) { return }
         cancelPendingFocusRestore()
         do {
             guard let focused = try system.focusedWindow() else {
@@ -943,7 +984,7 @@ final class BetterTileModel {
     }
 
     private func repairBento(displayID: DisplayID, focusedWindowID: WindowID) {
-        // Repair during focus mode ends it: the covered peers come back and the
+        // Repair during Focus mode ends it: the covered peers come back and the
         // previous layout returns, instead of forgetting the minimized peers.
         if sessionStore.session(for: displayID)?.excludedFocusWindowIDs.isEmpty == false,
            let focused = (try? system.windowSnapshots(ids: [focusedWindowID]))?.first,
@@ -1092,7 +1133,7 @@ final class BetterTileModel {
             } else if displayWindows.count > 6 {
                 "Bento manages up to six windows. The others stay floating."
             } else if !overlapNames.isEmpty {
-                "\(overlapNames.prefix(2).joined(separator: " and ")) cannot fit beside each other at their minimum sizes."
+                Self.overlapMessage(overlapNames)
             } else if !session.automaticallyFloatingWindowIDs.isEmpty {
                 "Some windows are floating because their minimum sizes do not fit this display."
             } else {
@@ -1652,6 +1693,7 @@ final class BetterTileModel {
     }
 
     func shutdown() {
+        cancelPendingFocusRestore()
         guard !isShutDown else { return }
         absenceConfirmationTask?.cancel()
         arrivalSweepTask?.cancel()
@@ -1684,6 +1726,7 @@ final class BetterTileModel {
         watchdogTimer = nil
         permissionPollTask?.cancel()
         windowEventTask?.cancel()
+        pendingBentoFocusCheck = false
         spaceStabilizationTask?.cancel()
         displayRefreshDebouncer.cancel()
         settlementTasks.values.forEach { $0.cancel() }
@@ -2009,6 +2052,11 @@ final class BetterTileModel {
 
     private func receiveWindowSystemEvent(_ event: WindowSystemEvent) {
         guard !isShutDown else { return }
+        // Resolve the focus now, while it is still on that window. A later
+        // focus change elsewhere must not erase a check this one needs.
+        if event.kind == .focused, !pendingBentoFocusCheck, bentoFocusLandsInLayout(event) {
+            pendingBentoFocusCheck = true
+        }
         // Lifecycle evidence survives gesture buffering and Space stabilization.
         // A stale scan must not restore a pane before minimization is observed.
         if let windowID = event.windowID {
@@ -2067,6 +2115,10 @@ final class BetterTileModel {
                     sessionStore.update(displayID) {
                         $0.excludedFocusWindowIDs.removeAll()
                     }
+                    if session.mode == .bento,
+                       let display = system.displays().first(where: { $0.id == displayID }) {
+                        scheduleBentoFocusRestore(session: session, display: display)
+                    }
                 }
                 dragSnap.prepareForRestoredWindowDrag(windowID: windowID)
             }
@@ -2076,23 +2128,49 @@ final class BetterTileModel {
         case .focused:
             handleTabbedFocus()
             layoutWheel.handleFocusedWindowChanged()
-            // Closing a document window often only moves focus: some
-            // applications keep the window alive off screen and send no
-            // destroyed event. A sweep then notices the missing pane.
-            if sessionStore.sessions.values.contains(where: { $0.mode == .bento }) {
-                pendingWindowEvents.recordTopologyChange()
-            }
         }
         schedulePendingWindowEvents()
+    }
+
+    private func bentoFocusLandsInLayout(_ event: WindowSystemEvent) -> Bool {
+        let sessions = sessionStore.sessions.values.filter { $0.mode == .bento }
+        guard !sessions.isEmpty else { return false }
+        let focusedID: WindowID
+        if let windowID = event.windowID {
+            focusedID = windowID
+        } else {
+            guard let focused = try? system.focusedWindow(),
+                  focused.processIdentifier == event.processIdentifier else { return false }
+            focusedID = focused.id
+        }
+        return sessions.contains { $0.windowIDs.contains(focusedID) }
+    }
+
+    private func bentoPeersNeedTopologyRefresh() -> Bool {
+        let sessions = sessionStore.sessions.values.filter { $0.mode == .bento }
+        let expectedPeers = sessions.flatMap { session in
+            Set(session.bentoState.root?.windowIDs ?? [])
+                .subtracting(session.excludedFocusWindowIDs)
+                .subtracting(confirmedGoneWindowIDs)
+                .subtracting(confirmedMinimizedWindowIDs)
+                .map { (windowID: $0, displayID: session.displayID) }
+        }
+        let expectedIDs = Set(expectedPeers.map(\.windowID))
+        guard !expectedIDs.isEmpty else { return false }
+        guard let refreshed = try? system.cachedVisibleWindows(refreshing: expectedIDs) else { return true }
+        let snapshots = Dictionary(uniqueKeysWithValues: refreshed.map { ($0.id, $0) })
+        return expectedPeers.contains { peer in
+            guard let snapshot = snapshots[peer.windowID] else { return true }
+            return !snapshot.isEligible || snapshot.isFloating
+                || !rule(for: snapshot).allowsBentoParticipation || snapshot.displayID != peer.displayID
+        }
     }
 
     private func schedulePendingWindowEvents(after delay: Duration = WindowEventRetryBackoff.initialDelay) {
         guard !isShutDown else { return }
         let isGestureActive = activeBentoDrag != nil || dragSnap.isGestureActive || dividerResize.isDragging
-        guard pendingWindowEvents.isReadyForProcessing(
-            isGestureActive: isGestureActive,
-            isStabilizingSpace: isStabilizingSpace
-        ) else { return }
+        guard !isGestureActive, !isStabilizingSpace,
+              !pendingWindowEvents.isEmpty || pendingBentoFocusCheck else { return }
         windowEventTask?.cancel()
         windowEventTask = Task { @MainActor [weak self] in
             try? await Task.sleep(for: delay)
@@ -2103,13 +2181,17 @@ final class BetterTileModel {
 
     private func processPendingWindowEvents() {
         let isGestureActive = activeBentoDrag != nil || dragSnap.isGestureActive || dividerResize.isDragging
-        guard pendingWindowEvents.isReadyForProcessing(
-            isGestureActive: isGestureActive,
-            isStabilizingSpace: isStabilizingSpace
-        ) else { return }
+        guard !isGestureActive, !isStabilizingSpace,
+              !pendingWindowEvents.isEmpty || pendingBentoFocusCheck else { return }
         let pendingEvents = pendingWindowEvents
         let changedIDs = pendingEvents.frameEventWindowIDs
         let refreshTopology = pendingEvents.topologyChanged
+            || (pendingBentoFocusCheck && bentoPeersNeedTopologyRefresh())
+        if !refreshTopology, changedIDs.isEmpty {
+            pendingBentoFocusCheck = false
+            windowEventRetryBackoff.reset()
+            return
+        }
         let windows: [WindowSnapshot]
         if !refreshTopology,
            !changedIDs.isEmpty,
@@ -2117,12 +2199,14 @@ final class BetterTileModel {
             windows = targeted
         } else {
             guard let completeSweep = try? system.visibleWindows() else {
+                if refreshTopology { pendingWindowEvents.recordTopologyChange() }
                 schedulePendingWindowEvents(after: windowEventRetryBackoff.nextDelayAfterFailure())
                 return
             }
             windows = completeSweep
         }
         pendingWindowEvents.acknowledge(pendingEvents)
+        pendingBentoFocusCheck = false
         windowEventRetryBackoff.reset()
         let visibleIDs = Set(windows.map(\.id))
         let now = Date()
@@ -2169,6 +2253,7 @@ final class BetterTileModel {
             }
             guard var session = sessionStore.session(for: displayID),
                   session.mode == .bento,
+                  session.id != focusRestoreSessionID,
                   !session.automaticWritesSuspended,
                   let display = system.displays().first(where: { $0.id == displayID })
             else { continue }
@@ -2340,76 +2425,83 @@ final class BetterTileModel {
     /// A window beyond Bento's six panes floats where it opened. Say so at
     /// once, with what the user can do, instead of leaving it over the tiles
     /// silently.
+    /// A long window title must not push the rest of a result-pill
+    /// message out of its two lines.
+    nonisolated static func pillTitle(_ title: String) -> String {
+        title.count > 40 ? "\(title.prefix(39))…" : title
+    }
+
+    nonisolated static func overlapMessage(_ names: [String]) -> String {
+        "\(names.prefix(2).map(pillTitle).joined(separator: " and ")) cannot fit beside each other at their minimum sizes."
+    }
+
     private func announceBentoOverflow(before: LayoutSession, on display: DisplaySnapshot, windows: [WindowSnapshot]) {
         guard let after = sessionStore.session(for: display.id), after.mode == .bento,
               (after.bentoState.root?.windowIDs.count ?? 0) >= 6 else { return }
         let newlyFloating = after.automaticallyFloatingWindowIDs.subtracting(before.automaticallyFloatingWindowIDs)
         guard let window = windows.first(where: { newlyFloating.contains($0.id) }) else { return }
-        let name = window.title.isEmpty ? "This window" : "“\(window.title)”"
+        let name = window.title.isEmpty ? "This window" : "“\(Self.pillTitle(window.title))”"
         statusMessage = "Bento manages up to six windows. \(name) stays floating: drop it on a pane to swap, or switch this desktop to Tabbed."
         presentActionResult(succeeded: false, error: statusMessage, displayID: display.id)
     }
 
-    /// Maximize on a tiled Bento window enters focus mode at once: the window
+    private func endBentoFocusForPartition(
+        _ action: WindowAction,
+        window: WindowSnapshot,
+        target: LayoutWheelTarget? = nil,
+        restoringSession: LayoutSession?,
+        cyclesShortcut: Bool = false
+    ) -> Bool {
+        guard BentoDropPlanner.partitionActions.contains(action),
+              var session = sessionStore.session(for: window.displayID), session.mode == .bento,
+              let display = system.displays().first(where: { $0.id == window.displayID }) else { return false }
+        if restoringSession?.id == session.id, let restoringSession {
+            session.excludedFocusWindowIDs.formUnion(restoringSession.excludedFocusWindowIDs)
+        }
+        let peers = session.excludedFocusWindowIDs
+        guard !peers.isEmpty else { return false }
+        let target = target ?? LayoutWheelTarget(
+            windowID: window.id,
+            displayID: display.id,
+            visibleFrame: display.visibleFrame,
+            desktopSessionID: session.id,
+            nativeSpaceID: session.nativeSpaceID
+                ?? system.refreshNativeDesktopObservation()?.currentSpace(on: display.id),
+            layoutMode: session.mode
+        )
+        if case let .failed(reason) = coordinator.restoreFocusDropPeers(peers) {
+            Self.bentoLog.notice("focus-drop peer restore incomplete: \(reason, privacy: .public)")
+        }
+        sessionStore.update(display.id) { $0.excludedFocusWindowIDs.removeAll() }
+        if let windows = try? system.visibleWindows(),
+           peers.allSatisfy({ id in windows.contains { $0.id == id && $0.displayID == display.id && $0.isEligible } }) {
+            bentoStateBeforeFocus.removeValue(forKey: session.id)
+            return false
+        }
+        scheduleBentoFocusRestore(session: session, display: display) { [weak self] in
+            self?.performLayoutWheel(.windowAction(action), for: target, cyclesShortcut: cyclesShortcut)
+        }
+        return true
+    }
+
+    /// Maximize on a tiled Bento window enters Focus mode at once: the window
     /// covers the display and its peers are minimized in one transaction.
     /// Restore, Maximize again, or restoring any peer from the Dock ends it
-    /// and returns the previous layout. Nil means the action is not a focus
-    /// mode action for this window.
+    /// and returns the previous layout. Nil means the action is not a
+    /// Focus mode action for this window.
     private func performBentoFocusMode(_ action: WindowAction, window: WindowSnapshot) -> Bool? {
-        // A partition shortcut during focus mode first brings the covered
-        // peers back, then snaps normally; the minimized peers must not keep
-        // regions that no window fills.
-        if BentoDropPlanner.partitionActions.contains(action),
-           let session = sessionStore.session(for: window.displayID), session.mode == .bento,
-           !session.excludedFocusWindowIDs.isEmpty {
-            _ = coordinator.restoreFocusDropPeers(session.excludedFocusWindowIDs)
-            sessionStore.update(window.displayID) { $0.excludedFocusWindowIDs.removeAll() }
-            return nil
-        }
         guard action == .maximize || action == .restore,
               var session = sessionStore.session(for: window.displayID), session.mode == .bento,
               !session.automaticWritesSuspended, session.windowIDs.contains(window.id),
               let display = system.displays().first(where: { $0.id == window.displayID }) else { return nil }
         lastBentoFocusMessage = nil
         if !session.excludedFocusWindowIDs.isEmpty {
-            // Either action on the focused window ends focus mode.
+            // Either action on the focused window ends Focus mode.
             let peers = session.excludedFocusWindowIDs
             let outcome = coordinator.restoreFocusDropPeers(peers)
             sessionStore.update(display.id) { $0.excludedFocusWindowIDs.removeAll() }
+            scheduleBentoFocusRestore(session: session, display: display)
             if case let .failed(reason) = outcome { statusMessage = reason; return false }
-            // Applications restore minimized windows asynchronously. Lay the
-            // display out only once every peer is back, or the focused window
-            // keeps a frame that overlaps the returning peers.
-            // Only this desktop's layout may be restored; after a Space
-            // switch the display shows another session. The returning peers
-            // change the revision, so it cannot guard this wait.
-            let sessionID = session.id
-            focusRestoreTask?.cancel()
-            focusRestoreGeneration &+= 1
-            let generation = focusRestoreGeneration
-            focusRestoreTask = Task { @MainActor [weak self] in
-                defer {
-                    if let self, self.focusRestoreGeneration == generation { self.focusRestoreTask = nil }
-                }
-                let deadline = Date().addingTimeInterval(1.5)
-                while let self, !self.isShutDown, !Task.isCancelled {
-                    let windows = (try? self.system.visibleWindows()) ?? []
-                    let back = peers.allSatisfy { id in windows.contains { $0.id == id && $0.isEligible } }
-                    if back || Date() >= deadline {
-                        guard var restored = self.sessionStore.session(for: display.id), restored.mode == .bento,
-                              restored.id == sessionID else { return }
-                        if let previous = self.bentoStateBeforeFocus.removeValue(forKey: restored.id) {
-                            restored.bentoState = previous
-                        }
-                        let displayWindows = windows.filter {
-                            $0.displayID == display.id && restored.windowIDs.contains($0.id) && $0.isEligible
-                        }
-                        self.restoreBentoLayout(session: restored, displayWindows: displayWindows, display: display)
-                        return
-                    }
-                    try? await Task.sleep(for: .milliseconds(50))
-                }
-            }
             lastBentoFocusMessage = "Layout restored"
             return true
         }
@@ -2429,8 +2521,81 @@ final class BetterTileModel {
             statusMessage = statusMessage ?? "Focus mode could not minimize the other windows."
             return false
         }
-        lastBentoFocusMessage = "Focus · \(covered) minimized"
+        lastBentoFocusMessage = "Focus mode · \(covered) minimized"
         return true
+    }
+
+    private func scheduleBentoFocusRestore(
+        session: LayoutSession,
+        display: DisplaySnapshot,
+        onPeersReturned: (@MainActor () -> Void)? = nil
+    ) {
+        // Applications restore minimized windows asynchronously. Lay the
+        // display out only once every peer is back, or the focused window
+        // keeps a frame that overlaps the returning peers.
+        // Only this desktop's layout may be restored; after a Space
+        // switch the display shows another session. The returning peers
+        // change the revision, so it cannot guard this wait.
+        let sessionID = session.id
+        let peers = session.excludedFocusWindowIDs
+        focusRestoreTask?.cancel()
+        focusRestoreGeneration &+= 1
+        let generation = focusRestoreGeneration
+        focusRestoreSession = session
+        focusRestoreTask = Task { @MainActor [weak self] in
+            defer {
+                if let self, self.focusRestoreGeneration == generation {
+                    self.focusRestoreTask = nil
+                    self.focusRestoreSession = nil
+                }
+            }
+            let deadline = Date().addingTimeInterval(1.5)
+            while let self, !self.isShutDown, !Task.isCancelled,
+                  self.focusRestoreGeneration == generation {
+                guard let current = self.sessionStore.session(for: display.id), current.mode == .bento,
+                      current.id == sessionID else {
+                    self.cancelPendingFocusRestore()
+                    return
+                }
+                let windows = (try? self.system.visibleWindows()) ?? []
+                let back = peers.allSatisfy { id in
+                    windows.contains { $0.id == id && $0.displayID == display.id && $0.isEligible }
+                }
+                if back || Date() >= deadline {
+                    guard var restored = self.sessionStore.session(for: display.id), restored.mode == .bento,
+                          restored.id == sessionID else {
+                        self.cancelPendingFocusRestore()
+                        return
+                    }
+                    if !back { Self.bentoLog.notice("focus-drop peer return wait timed out") }
+                    if let onPeersReturned {
+                        self.bentoStateBeforeFocus.removeValue(forKey: sessionID)
+                        self.focusRestoreTask = nil
+                        self.focusRestoreSession = nil
+                        onPeersReturned()
+                        return
+                    }
+                    if var previous = self.bentoStateBeforeFocus.removeValue(forKey: restored.id) {
+                        // A window closed during Focus mode must not keep an
+                        // empty pane. Peers still on their way back keep theirs.
+                        let present = Set(windows.filter { $0.displayID == display.id && $0.isEligible }.map(\.id))
+                        for id in Set(previous.root?.windowIDs ?? []).subtracting(present).subtracting(peers) {
+                            previous.remove(id)
+                        }
+                        restored.bentoState = previous
+                    }
+                    let displayWindows = windows.filter {
+                        $0.displayID == display.id && restored.windowIDs.contains($0.id) && $0.isEligible
+                    }
+                    self.restoreBentoLayout(
+                        session: restored, displayWindows: displayWindows, display: display,
+                        suspendOnRejection: true
+                    )
+                    return
+                }
+                try? await Task.sleep(for: .milliseconds(50))
+            }
+        }
     }
 
     /// Applies a focus plan that arrived from macOS rather than from a drag.
@@ -2684,7 +2849,8 @@ final class BetterTileModel {
     private func restoreBentoLayout(
         session: LayoutSession,
         displayWindows: [WindowSnapshot],
-        display: DisplaySnapshot
+        display: DisplaySnapshot,
+        suspendOnRejection: Bool = false
     ) {
         guard !session.automaticWritesSuspended else { return }
         let placements = BentoLayoutEngine(state: session.bentoState)
@@ -2697,7 +2863,7 @@ final class BetterTileModel {
             display: display,
             surfaceFailure: false
         )
-        if commitResult.result.needsRepair {
+        if commitResult.result.needsRepair || (suspendOnRejection && commitResult.result == .rejected) {
             suspendAutomaticBentoWrites(
                 displayID: display.id,
                 windows: (try? system.visibleWindows()) ?? displayWindows,
@@ -3012,6 +3178,14 @@ final class BetterTileModel {
                 nativeSpaceID: nativeObservation?.currentSpace(on: display.id)
             )
             if focused?.displayID == display.id { resolvedActiveDisplay = display.id }
+            if activation.session.id == focusRestoreSessionID {
+                let committed = sessionStore.commit(
+                    activation.session,
+                    replacing: activation.session.revision
+                ) != nil
+                sweepCommitted = sweepCommitted && committed
+                continue
+            }
             if nativeObservation?.allowsAutomaticLayout(on: display.id) == false {
                 tabbedOverlays[display.id]?.hide()
                 let committed = sessionStore.commit(
@@ -4036,6 +4210,9 @@ extension BetterTileModel {
         guard let session = sessionStore.sessions.values.first(where: {
                   $0.mode == .tabbed && $0.tabbedState?.selectedWindowIDs.contains(windowID) == true
               }),
+              // A suspended layout does not adopt the resize at release, so
+              // the strips must not preview it either.
+              !session.automaticWritesSuspended,
               tabbedTasks[session.displayID] == nil,
               let state = session.tabbedState,
               let overlay = tabbedOverlays[session.displayID],

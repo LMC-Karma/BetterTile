@@ -35,6 +35,8 @@ import Testing
 
 @MainActor private final class ButtonState {
     var held = true
+    /// The real pointer, when a test reads it after a lost mouse-up.
+    var pointer: BTPoint?
 }
 
 @MainActor private final class TabDragFixture {
@@ -62,7 +64,7 @@ import Testing
             panel.appearance = appearance
             made.append(panel)
             return panel
-        }, orderPanel: orderPanel, primaryButtonIsPressed: { button.held })
+        }, orderPanel: orderPanel, primaryButtonIsPressed: { button.held }, pointerLocation: { button.pointer })
         let windows = ids.enumerated().map { index, id in
             WindowSnapshot(id: id, processIdentifier: 1, title: "Document \(index + 1)", frame: bounds,
                            displayID: DisplayID(rawValue: "drag-check"))
@@ -451,6 +453,30 @@ func tabDragDefersAccessibilityUntilDropCompletes(success: Bool) throws {
     let sent = intents.count
     try f.release(x: f.bounds.minX + 300, y: f.bounds.minY + 400)
     #expect(intents.count == sent)
+}
+
+/// A lost mouse-up drops the tab where the pointer really is. The last
+/// preview sample can be stale when the pointer moved after it.
+@Test @MainActor func aTabWhoseMouseUpWasLostDropsAtTheRealPointer() throws {
+    let f = try TabDragFixture()
+    defer { f.overlay.hide() }
+    var intents: [TabbedUIIntent] = []
+    f.overlay.onIntent = { intents.append($0) }
+    try f.start()
+    // The last sample is still over the source pane.
+    try f.drag(x: f.bounds.minX + 300, y: f.bounds.minY + 400)
+    f.ticks.fire()
+    // The pointer then reaches the right pane, and the mouse-up is lost.
+    f.button.pointer = BTPoint(x: f.bounds.minX + 1200, y: f.bounds.minY + 400)
+    f.button.held = false
+    f.ticks.fire()
+    #expect(!f.overlay.isInteracting)
+    let moves = intents.compactMap { intent -> (WindowID, UUID)? in
+        if case let .move(id, pane, _) = intent { return (id, pane) } else { return nil }
+    }
+    #expect(moves.count == 1)
+    #expect(moves.first?.0 == f.ids[0])
+    #expect(moves.first?.1 == f.state.panes[1].id)
 }
 
 /// A new press arrives before any tick noticed the lost mouse-up. The old
