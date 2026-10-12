@@ -141,6 +141,9 @@ public final class WindowCoordinator {
     private var generations: [WindowID: UInt64] = [:]
     private var expectedMutations: [WindowID: [ExpectedMutation]] = [:]
     private var lastCycle: (windowID: WindowID, requestedAction: WindowAction, index: Int, date: Date)?
+    /// Repeating a half shortcut within this many seconds cycles to the next
+    /// size. Tests on a loaded runner lengthen it.
+    public var shortcutCycleInterval: TimeInterval = 2
 
     public init(system: any WindowSystem, historyCapacity: Int = 10, actionEngine: StandardActionEngine = StandardActionEngine()) {
         self.system = system
@@ -1021,7 +1024,7 @@ public final class WindowCoordinator {
         }
         let now = Date()
         let nextIndex: Int
-        if let lastCycle, lastCycle.windowID == windowID, lastCycle.requestedAction == requested, now.timeIntervalSince(lastCycle.date) < 2 {
+        if let lastCycle, lastCycle.windowID == windowID, lastCycle.requestedAction == requested, now.timeIntervalSince(lastCycle.date) < shortcutCycleInterval {
             nextIndex = (lastCycle.index + 1) % sequence.count
         } else {
             nextIndex = 0
