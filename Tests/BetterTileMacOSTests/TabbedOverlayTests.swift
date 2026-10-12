@@ -54,7 +54,7 @@ import Testing
                                         windowNumber: panel.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1))
     }
     var moves: [Int?] = []
-    overlay.onIntent = { if case let .move(_, _, index) = $0 { moves.append(index) } }
+    overlay.onIntent = { if case let .move(_, _, index, _) = $0 { moves.append(index) } }
     overlay.acceptsTabDrags = false
     view.mouseDown(with: try event(.leftMouseDown, x: 80))
     view.mouseDragged(with: try event(.leftMouseDragged, x: 650))
@@ -357,7 +357,7 @@ func tabbedDragUsesReleaseDestination(cancel: Bool) throws {
                                              timestamp: 0, windowNumber: panel.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1))
     }
     var destination: UUID?
-    overlay.onIntent = { if case let .move(_, pane, _) = $0 { destination = pane } }
+    overlay.onIntent = { if case let .move(_, pane, _, _) = $0 { destination = pane } }
     view.mouseDown(with: try event(.leftMouseDown, point: BTPoint(x: 12060, y: 17)))
     view.mouseDragged(with: try event(.leftMouseDragged, point: BTPoint(x: 12250, y: 400)))
     ticks.fire()
@@ -765,7 +765,7 @@ func tabbedStripFitsNarrowAndCrowdedPanes(width: Double, count: Int) {
     view.mouseDragged(with: try event(.leftMouseDragged, screenPoint: center))
     ticks.fire()
     view.mouseUp(with: try event(.leftMouseUp, screenPoint: center))
-    guard case let .move(movedID, pane, index) = intents.last else {
+    guard case let .move(movedID, pane, index, _) = intents.last else {
         Issue.record("Center drag did not emit a move intent")
         return
     }

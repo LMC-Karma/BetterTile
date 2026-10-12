@@ -237,7 +237,7 @@ func pendingTabDropPreservesExactClickReleaseAndBlocksAnotherDrag(crossPane: Boo
     let f = try TabDragFixture()
     defer { f.overlay.hide() }
     var moves: [(UUID, Int?)] = []
-    f.overlay.onIntent = { if case let .move(_, pane, index) = $0 { moves.append((pane, index)) } }
+    f.overlay.onIntent = { if case let .move(_, pane, index, _) = $0 { moves.append((pane, index)) } }
     try f.start()
     try f.drag(x: 12300)
     try f.drag(x: 12650)
@@ -444,7 +444,7 @@ func tabDragDefersAccessibilityUntilDropCompletes(success: Bool) throws {
     f.ticks.fire()
     #expect(!f.overlay.isInteracting)
     let moves = intents.compactMap { intent -> (WindowID, UUID)? in
-        if case let .move(id, pane, _) = intent { return (id, pane) } else { return nil }
+        if case let .move(id, pane, _, _) = intent { return (id, pane) } else { return nil }
     }
     #expect(moves.count == 1)
     #expect(moves.first?.0 == f.ids[0])
@@ -472,7 +472,7 @@ func tabDragDefersAccessibilityUntilDropCompletes(success: Bool) throws {
     f.ticks.fire()
     #expect(!f.overlay.isInteracting)
     let moves = intents.compactMap { intent -> (WindowID, UUID)? in
-        if case let .move(id, pane, _) = intent { return (id, pane) } else { return nil }
+        if case let .move(id, pane, _, _) = intent { return (id, pane) } else { return nil }
     }
     #expect(moves.count == 1)
     #expect(moves.first?.0 == f.ids[0])
@@ -515,7 +515,7 @@ func tabDragDefersAccessibilityUntilDropCompletes(success: Bool) throws {
     try f.release(x: f.bounds.minX + 1200, y: f.bounds.minY + 400)
     #expect(!f.overlay.isInteracting)
     let moves = intents.compactMap { intent -> WindowID? in
-        if case let .move(id, _, _) = intent { return id } else { return nil }
+        if case let .move(id, _, _, _) = intent { return id } else { return nil }
     }
     #expect(moves == [f.ids[1]])
 }
@@ -538,7 +538,7 @@ func tabDragDefersAccessibilityUntilDropCompletes(success: Bool) throws {
     try f.release(x: f.bounds.minX + 1200, y: f.bounds.minY + 400)
     #expect(!f.overlay.isInteracting)
     let moves = intents.compactMap { intent -> WindowID? in
-        if case let .move(id, _, _) = intent { return id } else { return nil }
+        if case let .move(id, _, _, _) = intent { return id } else { return nil }
     }
     #expect(moves == [f.ids[1]])
 }
@@ -595,4 +595,121 @@ func tabDragDefersAccessibilityUntilDropCompletes(success: Bool) throws {
     // The model rejects the selection and keeps the previous tab.
     f.overlay.acceptsTabDrags = true
     #expect(f.view.displayedSelection == selected)
+}
+
+/// The dragged tab and the previous selection a drop intent carries.
+private func droppedTab(_ intent: TabbedUIIntent) -> (id: WindowID, reselecting: WindowID?)? {
+    switch intent {
+    case let .move(id, _, _, reselecting), let .split(id, _, _, reselecting), let .float(id, reselecting):
+        (id, reselecting)
+    default: nil
+    }
+}
+
+enum TabDragDestination: CaseIterable, Sendable { case otherPane, split, float }
+
+extension TabDragFixture {
+    func point(for destination: TabDragDestination) throws -> BTPoint {
+        let right = TabbedLayoutState.contentFrame(try #require(state.frames(in: bounds)[state.panes[1].id]))
+        switch destination {
+        case .otherPane: return BTPoint(x: right.midX, y: right.midY)
+        case .split: return BTPoint(x: right.minX + 10, y: right.midY)
+        case .float: return BTPoint(x: bounds.midX, y: bounds.maxY - 46)
+        }
+    }
+
+    func press(tab index: Int) throws {
+        let tab = view.strip.tabFrame(index)
+        view.mouseDown(with: try event(.leftMouseDown, x: bounds.minX + tab.midX, y: bounds.minY + 17))
+    }
+}
+
+/// A press that selected a background tab started the drag, so the drop
+/// names the tab the pane showed before the press.
+@Test(arguments: TabDragDestination.allCases) @MainActor
+func aDragFromAPressSelectedTabCarriesThePreviousSelection(destination: TabDragDestination) throws {
+    let f = try TabDragFixture()
+    defer { f.overlay.hide() }
+    var intents: [TabbedUIIntent] = []
+    f.overlay.onIntent = { intents.append($0) }
+    try #require(f.view.pane.selected == f.ids[0])
+    try f.press(tab: 1)
+    let target = try f.point(for: destination)
+    try f.drag(x: target.x, y: target.y)
+    f.ticks.fire()
+    try f.release(x: target.x, y: target.y)
+    let drops = intents.compactMap(droppedTab)
+    #expect(drops.count == 1)
+    #expect(drops.first?.id == f.ids[1])
+    #expect(drops.first?.reselecting == f.ids[0])
+    switch (destination, intents.last) {
+    case (.otherPane, .move?), (.split, .split?), (.float, .float?): break
+    default: Issue.record("Unexpected drop \(String(describing: intents.last)) for \(destination)")
+    }
+}
+
+/// A tab that was already selected before the press keeps today's drop: the
+/// pane promotes its next tab, so the intent names no previous selection.
+@Test(arguments: TabDragDestination.allCases) @MainActor
+func aDragFromTheSelectedTabCarriesNoPreviousSelection(destination: TabDragDestination) throws {
+    let f = try TabDragFixture()
+    defer { f.overlay.hide() }
+    var intents: [TabbedUIIntent] = []
+    f.overlay.onIntent = { intents.append($0) }
+    try f.press(tab: 0)
+    let target = try f.point(for: destination)
+    try f.drag(x: target.x, y: target.y)
+    f.ticks.fire()
+    try f.release(x: target.x, y: target.y)
+    #expect(!intents.contains { if case .select = $0 { true } else { false } })
+    let drops = intents.compactMap(droppedTab)
+    #expect(drops.count == 1)
+    #expect(drops.first?.id == f.ids[0])
+    #expect(drops.first?.reselecting == nil)
+}
+
+/// The press of a tab whose earlier click has not settled sees that tab
+/// drawn as selected already, so its drag names no previous selection.
+@Test @MainActor func aDragFromATabStillSettlingAnEarlierClickCarriesNoPreviousSelection() throws {
+    let f = try TabDragFixture()
+    defer { f.overlay.hide() }
+    var intents: [TabbedUIIntent] = []
+    f.overlay.onIntent = { intents.append($0) }
+    try f.press(tab: 1)
+    let tab = f.view.strip.tabFrame(1)
+    try f.release(x: f.bounds.minX + tab.midX, y: f.bounds.minY + 17)
+    try #require(f.view.displayedSelection == f.ids[1])
+    try f.press(tab: 1)
+    let target = try f.point(for: .otherPane)
+    try f.drag(x: target.x, y: target.y)
+    f.ticks.fire()
+    try f.release(x: target.x, y: target.y)
+    let drops = intents.compactMap(droppedTab)
+    #expect(drops.count == 1)
+    #expect(drops.first?.id == f.ids[1])
+    #expect(drops.first?.reselecting == nil)
+}
+
+/// A drag blocked while its press's selection placed still names the
+/// previous selection, whether it starts at release or its release comes
+/// before that selection settles.
+@Test(arguments: [false, true]) @MainActor
+func aBlockedDragFromAPressSelectedTabCarriesThePreviousSelection(settlesBeforeRelease: Bool) throws {
+    let f = try TabDragFixture()
+    defer { f.overlay.hide() }
+    var intents: [TabbedUIIntent] = []
+    f.overlay.onIntent = { [weak overlay = f.overlay] intent in
+        intents.append(intent)
+        if case .select = intent { overlay?.acceptsTabDrags = false }
+    }
+    try f.press(tab: 1)
+    let target = try f.point(for: .otherPane)
+    try f.drag(x: target.x, y: target.y)
+    #expect(!f.overlay.isInteracting)
+    if settlesBeforeRelease { f.overlay.acceptsTabDrags = true }
+    try f.release(x: target.x, y: target.y)
+    let drops = intents.compactMap(droppedTab)
+    #expect(drops.count == 1)
+    #expect(drops.first?.id == f.ids[1])
+    #expect(drops.first?.reselecting == f.ids[0])
 }
