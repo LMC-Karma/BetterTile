@@ -569,18 +569,13 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
     }
 
     public func setFrame(_ frame: BTRect, knownCurrentFrame: BTRect?, for windowID: WindowID) throws {
-        try writeFrame(frame, knownCurrentFrame: knownCurrentFrame, for: windowID, correctsClamping: true)
-    }
-
-    public func setIntermediateFrame(_ frame: BTRect, knownCurrentFrame: BTRect?, for windowID: WindowID) throws {
-        try writeFrame(frame, knownCurrentFrame: knownCurrentFrame, for: windowID, correctsClamping: false)
+        try writeFrame(frame, knownCurrentFrame: knownCurrentFrame, for: windowID)
     }
 
     private func writeFrame(
         _ frame: BTRect,
         knownCurrentFrame: BTRect?,
-        for windowID: WindowID,
-        correctsClamping: Bool
+        for windowID: WindowID
     ) throws {
         try ensurePermission()
         guard let element = elements[windowID] ?? refreshElement(for: windowID) else {
@@ -620,11 +615,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         // sequence is size, position, size. When the size is not changing the
         // leading write asks for the value the window already has, so it is
         // skipped; the trailing write still corrects any clamping.
-        let plan = FrameWritePlanner.plan(
-            target: frame,
-            knownCurrentFrame: knownCurrentFrame,
-            correctsClamping: correctsClamping
-        )
+        let plan = FrameWritePlanner.plan(target: frame, knownCurrentFrame: knownCurrentFrame)
         // A measurement belongs to one write; an older one is not evidence.
         lastWriteReadback.removeValue(forKey: windowID)
         var errors: [AXError] = []
@@ -649,7 +640,6 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         // measures the minimum exactly, before anything is shown as settled.
         let learnedMinimum = minimumSizeLearner.learnedSizes[windowID]
         if plan.writesInitialSize || plan.writesFinalSize,
-           WriteReadbackPolicy.readsBack(correctsClamping: correctsClamping, learnedMinimum: learnedMinimum),
            let actualPosition: CGPoint = axValue(kAXPositionAttribute, from: element, type: .cgPoint),
            let actualSize: CGSize = axValue(kAXSizeAttribute, from: element, type: .cgSize) {
             let actual = BTRect(x: actualPosition.x, y: actualPosition.y,
@@ -661,8 +651,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
             ) {
                 snapshotGeneration &+= 1
             } else if WriteReadbackPolicy.confirmsClamp(
-                requested: frame, actual: actual,
-                learnedMinimum: learnedMinimum, correctsClamping: correctsClamping
+                requested: frame, actual: actual, learnedMinimum: learnedMinimum
             ), confirmsSynchronousWrites(element, at: actualPosition) {
                 // The window kept its size at the same origin, which an
                 // ignored write would also do. A 1 pt position nudge that the

@@ -106,7 +106,7 @@ Escape cancels synchronously on the main actor, including when a managed app
 retains keyboard focus. The global monitor only observes the event; the local
 monitor consumes Escape and passes other keys through.
 
-All window mutations pass through the main-actor coordinator. Multi-window operations preflight every participant, apply in deterministic order, and roll back already-applied frames when a later Accessibility write fails. Ghost resize transactions do not mutate real windows before commit; live transactions can restore their original baseline on cancellation. AX move/resize events are debounced, while events matching a recent coordinator generation and expected frame are suppressed to prevent feedback loops.
+All window mutations pass through the main-actor coordinator. Multi-window operations preflight every participant, apply in deterministic order, and roll back already-applied frames when a later Accessibility write fails. Ghost resize transactions do not mutate real windows before commit; live transactions can restore their original baseline on cancellation. A Ghost release whose post-commit correction fails or is cancelled also restores the baseline. AX move/resize events are debounced, while events matching a recent coordinator generation and expected frame are suppressed to prevent feedback loops.
 
 Continuous resize gestures keep only the newest pointer or observed-window
 sample and consume it on an AppKit display-link tick. Live Accessibility batches
@@ -114,9 +114,9 @@ run at no more than 60 Hz; ghost-only feedback may follow the display's native
 rate. Intermediate ticks reuse one frame transaction, skip unchanged targets,
 and avoid repeated participant sweeps. They also skip the trailing
 clamp-correcting size write; the next tick or the release corrects a clamp.
-Once a window's minimum is measured, intermediate ticks also skip the size
-readback in the single-window write, and only a final write can confirm a new
-clamp with a position nudge.
+Live ticks read each written window back but never confirm a clamp with a
+position nudge; only a final write does, for a clamp the learned minimum does
+not already explain.
 Each tick writes every application at once, one thread per application, and
 returns only after every write. A shrinking window takes the new sample at
 once. A growing window, or the growing axis of a window at a junction, takes
