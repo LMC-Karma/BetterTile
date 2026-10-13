@@ -55,9 +55,13 @@ jobs:
           # Everything not matched here is treated as code, so a path nobody
           # anticipated is built rather than silently skipped. Workflow files
           # are deliberately absent: a change to CI must still run CI.
+          # LICENSE and THIRD_PARTY_NOTICES.md ship inside the app, and the
+          # release tool checks the bundled copies, so they count as code.
           code=$(printf '%s\n' "$changed" \
-            | grep -vE '(^docs/|^\.github/ISSUE_TEMPLATE/|^LICENSE$|\.md$)' \
+            | grep -vE '(^docs/|^\.github/ISSUE_TEMPLATE/|\.md$)' \
             || true)
+          bundled=$(printf '%s\n' "$changed" | grep -xE 'THIRD_PARTY_NOTICES\.md' || true)
+          code="$code$bundled"
 
           if [ -n "$code" ]; then
             echo "Build-affecting paths changed, running the full suite."
