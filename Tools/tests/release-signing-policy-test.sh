@@ -60,6 +60,26 @@ echo "release publication requires the stable signing identity"
 expect_rejection "rejects a missing signing identity" unset
 expect_rejection "rejects the ad-hoc signing identity" -
 
+echo "release tools explain a missing Sparkle signing key"
+# Run the exact key lookup from the release tool with a generate_keys that
+# fails as Sparkle's does when the login Keychain has no key.
+key_lookup="$(awk '/^public_key="\$\("\$generate_keys" -p\)" \|\| \{$/ { found = 1 } found { print } found && /^}$/ { exit }' "$release_script")"
+if [[ "$key_lookup" != *'No Sparkle signing key was found'* ]]; then
+    fail "the Sparkle key lookup was not found"
+else
+    missing_key_tool="$(mktemp /private/tmp/bettertile-generate-keys.XXXXXX)"
+    printf '#!/bin/bash\necho "ERROR: No existing signing key found!"\nexit 1\n' > "$missing_key_tool"
+    chmod +x "$missing_key_tool"
+    key_status=0
+    key_output="$(generate_keys="$missing_key_tool"; eval "$key_lookup" 2>&1)" || key_status=$?
+    rm -f "$missing_key_tool"
+    if [[ "$key_status" -eq 1 && "$key_output" == *"No Sparkle signing key was found in this Mac's login Keychain."* ]]; then
+        pass "a missing Sparkle key stops with an explanation"
+    else
+        fail "a missing Sparkle key did not explain itself (status $key_status: $key_output)"
+    fi
+fi
+
 if [[ "$failures" -eq 0 ]]; then
     echo "release signing policy tests passed"
 else
