@@ -256,9 +256,8 @@ Writes that put a user's window back stay ungated: the probe's size restore
 and the position restore. The enhanced-accessibility restore is gated. If the
 application is held or does not answer, the restore waits. BetterTile tries
 it again at the start of the next frame batch and when it refreshes its
-application observers. When observation stops, at quit or on a permission
-change, BetterTile makes one last ungated try; a restore that fails stays
-pending. An application that quit needs no restore. A notification removal
+application observers. When BetterTile quits, after its last frame writes, it
+makes one last ungated try; a restore that fails stays pending. An application that quit needs no restore. A notification removal
 that does not complete stays recorded, because the notification may still be
 registered.
 
