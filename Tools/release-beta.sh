@@ -272,6 +272,14 @@ read_info() {
 [[ "$(read_info SUEnableSystemProfiling)" == "false" ]]
 [[ "$(read_info SUShowReleaseNotes)" == "true" ]]
 
+# The license and third-party notices ship inside the application.
+for notice in LICENSE THIRD_PARTY_NOTICES.md; do
+    cmp -s "$app_path/Contents/Resources/$notice" "$repo_root/$notice" || {
+        echo "The application does not contain the current $notice." >&2
+        exit 1
+    }
+done
+
 mkdir -p "$stage_dir"
 ditto "$app_path" "$stage_dir/BetterTile.app"
 ln -s /Applications "$stage_dir/Applications"
