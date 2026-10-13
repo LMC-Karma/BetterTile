@@ -139,3 +139,25 @@ private func leftWidth(_ state: TabbedLayoutState) -> Double {
     #expect(state.fitProblem(showing: large, in: fitBounds, windows: either) == .neighbors([b, c]))
 }
 
+
+/// An edit elsewhere keeps the size the user set for a pane that a larger
+/// tab grew; only the partitions the edit changed take new sizes.
+@Test func anUnrelatedEditKeepsTheSizeOfAGrownPane() throws {
+    var state = twoColumns()
+    let divider = try #require(state.dividers(in: fitBounds).first?.branchID)
+    let adjusted = state.adjustDivider(divider, by: -0.2, in: fitBounds)
+    #expect(adjusted)
+    let narrow = leftWidth(state)
+    state.select(WindowID(rawValue: "large"))
+    let windows = [window("small"), window("large", minimumWidth: 600), window("peer"), window("extra")]
+    var grown = try state.fittingMinimumWidths(in: fitBounds, windows: windows)
+    #expect(leftWidth(grown) >= 600)
+
+    grown.reconcile(windowIDs: (["small", "large", "peer", "extra"]).map { WindowID(rawValue: $0) },
+                    removed: [], focused: nil)
+    grown.split(paneID: grown.panes[1].id, moving: WindowID(rawValue: "extra"), edge: .bottom)
+    #expect(grown.panes.count == 3)
+    grown.select(WindowID(rawValue: "small"))
+    let restored = try #require(grown.withPreferredPaneSizes())
+    #expect(abs(leftWidth(restored) - narrow) < 0.001)
+}

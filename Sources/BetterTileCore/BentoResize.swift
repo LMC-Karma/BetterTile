@@ -124,6 +124,7 @@ public struct BentoConstraintSolver: Sendable {
 public struct WindowMinimumSizeLearner: Sendable {
     public private(set) var learnedSizes: [WindowID: BTSize]
     private var smallerSizeCandidates: [WindowID: BTSize] = [:]
+    private var probedWindowIDs: Set<WindowID> = []
     /// The latest measurement for each application, by bundle identifier.
     /// Applications rarely report a minimum, so a new window starts from its
     /// application's measured size instead of the default floor. Its own
@@ -260,6 +261,7 @@ public struct WindowMinimumSizeLearner: Sendable {
     public mutating func remove(_ windowID: WindowID) {
         learnedSizes.removeValue(forKey: windowID)
         smallerSizeCandidates.removeValue(forKey: windowID)
+        probedWindowIDs.remove(windowID)
     }
 
     /// Drops one application's seed, for example when it quits. A relaunch,
@@ -271,11 +273,19 @@ public struct WindowMinimumSizeLearner: Sendable {
 
     public func hasMeasurement(for windowID: WindowID) -> Bool { learnedSizes[windowID] != nil }
 
+    /// Records that a probe wrote a tiny size to a window. A window is probed
+    /// once: an application that applies its minimum late gives no
+    /// measurement, and probing it again would only resize it again.
+    public mutating func recordProbe(of windowID: WindowID) {
+        probedWindowIDs.insert(windowID)
+    }
+
     /// The windows that still need their own measurement, in ID order. An
     /// application seed does not count: it came from another window of the
-    /// same application, which can have a larger minimum.
+    /// same application, which can have a larger minimum. A window already
+    /// probed is not probed again.
     public func windowsNeedingMeasurement(_ windowIDs: Set<WindowID>) -> [WindowID] {
-        windowIDs.sorted().filter { !hasMeasurement(for: $0) }
+        windowIDs.sorted().filter { !hasMeasurement(for: $0) && !probedWindowIDs.contains($0) }
     }
 
     /// Records a clamp that the caller proved synchronous by other means, for

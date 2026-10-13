@@ -390,6 +390,7 @@ public struct TabbedLayoutState: Hashable, Sendable {
     public mutating func synchronize(with bento: BentoLayoutState) {
         var bento = bento
         bento.metrics = Self.tabbedMetrics(bento.metrics)
+        let previousRoot = layout.root
         let orphans = groups.synchronize(with: bento)
         if groups.panes.isEmpty {
             let paneID = UUID()
@@ -399,7 +400,7 @@ public struct TabbedLayoutState: Hashable, Sendable {
         }
         if !groups.panes.contains(where: { $0.id == activePaneID }) { activePaneID = groups.panes[0].id }
         for id in orphans { groups.add(id, to: activePaneID, select: false) }
-        rememberPaneSizes()
+        rememberPaneSizes(changedFrom: previousRoot)
     }
 
     /// This layout with the pane sizes the user last set, or nil when it
@@ -421,11 +422,27 @@ public struct TabbedLayoutState: Hashable, Sendable {
         return result
     }
 
-    private mutating func rememberPaneSizes() {
+    /// Records the pane sizes of the partitions an edit changed. A partition
+    /// the edit left alone keeps the size the user set, even while a larger
+    /// tab has grown it, so its pane can still return to that size.
+    /// - Parameter previous: The tree before the edit; nil records every
+    ///   partition.
+    private mutating func rememberPaneSizes(changedFrom previous: BentoNode? = nil) {
+        var before: [UUID: [Double]] = [:]
+        func collectBefore(_ node: BentoNode) {
+            guard case let .partition(partition) = node else { return }
+            before[partition.id] = partition.ratios
+            partition.children.forEach(collectBefore)
+        }
+        previous.map(collectBefore)
         var ratios: [UUID: [Double]] = [:]
         func collect(_ node: BentoNode) {
             guard case let .partition(partition) = node else { return }
-            ratios[partition.id] = partition.ratios
+            if before[partition.id] == partition.ratios, let kept = preferredPaneRatios[partition.id] {
+                ratios[partition.id] = kept
+            } else {
+                ratios[partition.id] = partition.ratios
+            }
             partition.children.forEach(collect)
         }
         layout.root.map(collect)
@@ -592,7 +609,7 @@ public struct TabbedLayoutState: Hashable, Sendable {
         guard found else { return }
         groups.synchronize(with: next)
         if let pane = groups.pane(containing: windowID) { activePaneID = pane.id }
-        rememberPaneSizes()
+        rememberPaneSizes(changedFrom: root)
     }
 
     public mutating func removeEmptyPane(_ id: UUID) {

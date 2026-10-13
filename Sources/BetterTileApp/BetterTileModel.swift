@@ -3988,8 +3988,6 @@ extension BetterTileModel {
         let detached = (previous?.windowIDs ?? []).subtracting(state.windowIDs)
             .union(restorationFrames.keys).intersection(state.floatingWindowIDs)
         var selectionOnly = selectionOnly
-        // Set when a selection fits the panes from the sizes the user set.
-        var fitsFromPreferredSizes = false
         func prepare(_ windows: [WindowSnapshot]) throws -> (state: TabbedLayoutState, placements: [Placement]) {
             if selectionOnly {
                 guard let focus, let window = windows.first(where: { $0.id == focus && $0.isEligible }),
@@ -4003,13 +4001,14 @@ extension BetterTileModel {
                 let fixed = !window.constraints.isResizable
                 let minimum = fixed ? window.frame.size : window.constraints.minimumSize
                 // A pane that grew for a larger tab returns to the size the
-                // user set when the newly selected tab fits it; a tab that
-                // needs more room grows the pane from that size.
-                if self.configuration.tabbedRestoresPaneSizes, let preferred = state.withPreferredPaneSizes(),
-                   let restored = try? preferred.fittingMinimumWidths(in: display.visibleFrame, windows: windows),
-                   restored.layout != state.layout {
-                    fitsFromPreferredSizes = true
-                } else if content.size.width + 0.001 >= minimum.width,
+                // user set when the newly selected tab fits it, so the full
+                // placement below runs; a tab that needs more room grows the
+                // pane from that size.
+                let returnsToPreferredSizes = self.configuration.tabbedRestoresPaneSizes
+                    && state.withPreferredPaneSizes().flatMap {
+                        try? $0.fittingMinimumWidths(in: display.visibleFrame, windows: windows)
+                    }.map { $0.layout != state.layout } == true
+                if !returnsToPreferredSizes, content.size.width + 0.001 >= minimum.width,
                    content.size.height + 0.001 >= minimum.height {
                     if fixed {
                         return (state, try state.placements(in: display.visibleFrame, windows: windows).filter { $0.windowID == focus })
@@ -4021,7 +4020,16 @@ extension BetterTileModel {
             guard Set(state.selectedWindowIDs).isSubset(of: Set(windows.filter { $0.isEligible && $0.displayID == display.id }.map(\.id))) else {
                 throw WindowSystemError.operationFailed("One or more selected tabs are no longer available.")
             }
-            let base = fitsFromPreferredSizes ? state.withPreferredPaneSizes() ?? state : state
+            // Any placement starts from the sizes the user set, so a pane
+            // that grew for a tab that has since moved, closed, or floated
+            // returns to them. A tab that needs more room grows its pane
+            // again from there.
+            var base = state
+            if self.configuration.tabbedRestoresPaneSizes,
+               let preferred = state.withPreferredPaneSizes(),
+               (try? preferred.fittingMinimumWidths(in: display.visibleFrame, windows: windows)) != nil {
+                base = preferred
+            }
             let fitted: TabbedLayoutState
             if let snapAction {
                 guard let focus, let source = windows.first(where: { $0.id == focus }),
