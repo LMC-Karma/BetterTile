@@ -159,7 +159,14 @@ generate_appcast="$repo_root/.build/artifacts/sparkle/Sparkle/bin/generate_appca
     exit 1
 }
 
-public_key="$("$generate_keys" -p)"
+# generate_keys fails when this Mac's login Keychain has no Sparkle key, and
+# set -e would otherwise end the script without a reason.
+public_key="$("$generate_keys" -p)" || {
+    echo "No Sparkle signing key was found in this Mac's login Keychain." >&2
+    echo "Release from the Mac that holds the key, or import it with" >&2
+    echo "Sparkle's generate_keys -f before running this tool." >&2
+    exit 1
+}
 expected_public_key="$(/usr/libexec/PlistBuddy -c 'Print :SUPublicEDKey' Sources/BetterTileApp/Info.plist)"
 [[ "$public_key" == "$expected_public_key" ]] || {
     echo "The configured release signing key does not match Info.plist." >&2
