@@ -20,16 +20,17 @@ is available in its [upstream repository](https://github.com/sparkle-project/Spa
 - License: GNU General Public License v3.0 or later
 
 BetterTile contains portions adapted from Vorssaint's SwiftUI settings and
-menu-panel presentation code. Vorssaint's demand-based service ownership and
-teardown patterns also informed BetterTile's runtime lifecycle.
+menu-panel presentation code: the settings sidebar and its search field, and the
+menu panel's cards and footer buttons in `Sources/BetterTileApp/SettingsView.swift`
+and `Sources/BetterTileApp/BetterTileApp.swift`. Those files carry Vorssaint's
+copyright notice. BetterTile modified the adapted code.
 
-The divider's colored track beneath a glass knob builds on
-`LiquidGlassMixerSlider` in `UI/MenuPanel/MixerSection.swift` at commit
-`2641eb1c01cc92c0a671717ad2b39415e7082a69`. BetterTile draws its own lens optics
-and divider geometry with public Core Animation layers and the Core Image
-`CIGlassLozenge` filter. The shared glass preference
-and accessibility fallback follow the `HUDBackdrop` pattern in
-`UI/SharedUI.swift` at that revision. Other glass surfaces use native AppKit glass.
+Vorssaint's demand-based service ownership and teardown patterns informed
+BetterTile's runtime lifecycle, and its `LiquidGlassMixerSlider` and
+`HUDBackdrop` inspired the divider's glass knob and the glass accessibility
+fallback. BetterTile's divider and glass surfaces are its own code; they use
+public Core Animation layers, the Core Image `CIGlassLozenge` filter, and native
+AppKit glass.
 
 BetterTile is distributed under the GNU General Public License v3.0 or later.
 The complete license terms are provided in [LICENSE](LICENSE).
@@ -40,11 +41,12 @@ The complete license terms are provided in [LICENSE](LICENSE).
 - Copyright: Copyright (c) 2019–2026 Ryan Hanson
 - License: MIT License
 
-Rectangle's `StageUtil.swift` documented the bounded WindowManager
-group/list/button Accessibility hierarchy used to find `AXWindowIDs`. BetterTile
-adapts that hierarchy pattern, then applies its own strict WindowServer
-validation and single-window drag policy. Rectangle's complete license text is
-available in its [upstream repository](https://github.com/rxhanson/Rectangle/blob/main/LICENSE).
+BetterTile learned the bounded WindowManager group/list/button Accessibility
+hierarchy that exposes `AXWindowIDs` from Rectangle's `StageUtil.swift`.
+`StageManagerGroupResolver` is BetterTile's own code; no Rectangle code is
+included. BetterTile adds strict WindowServer validation and a single-window
+drag policy. Rectangle's license is available in its
+[upstream repository](https://github.com/rxhanson/Rectangle/blob/main/LICENSE).
 
 ## AeroSpace
 
