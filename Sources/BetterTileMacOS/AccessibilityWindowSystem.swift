@@ -183,7 +183,6 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
     }
 
     public func stopWindowObservation() {
-        restorePendingEnhancedUserInterfaceSettings()
         observationCallbackContext?.system = nil
         for observer in observers.values {
             CFRunLoopRemoveSource(CFRunLoopGetMain(), AXObserverGetRunLoopSource(observer), .commonModes)
@@ -1095,8 +1094,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
             // so this is the slowest write in the whole sequence and needs the
             // full budget rather than the short read default. It is gated, so
             // a hung application costs nothing here; a refused restore waits
-            // for a later batch, an application event, or the end of
-            // observation.
+            // for a later batch, an application event, or the quit.
             let error = AccessibilityWindowSystem.gatedCall(applicationElement) {
                 AccessibilityWindowSystem.writeEnhancedUserInterface(true, to: applicationElement)
             }
@@ -1128,12 +1126,10 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
     }
 
     /// Puts back the setting of every application still waiting, without the
-    /// gate, because no later write may retry it. Runs when observation
-    /// stops: when BetterTile quits, and when Accessibility permission
-    /// changes. A restore that fails stays pending, so a permission change
-    /// does not lose it; an application that is still hung costs one
-    /// frame-write timeout.
-    private func restorePendingEnhancedUserInterfaceSettings() {
+    /// gate, because no later write will retry it. Only for quitting:
+    /// an application that is still hung costs one frame-write timeout. A
+    /// restore that fails stays pending.
+    public func restoreEnhancedUserInterfaceBeforeQuit() {
         guard !pendingEnhancedUserInterfaceRestores.isEmpty, AXIsProcessTrusted() else { return }
         let running = Set(NSWorkspace.shared.runningApplications.map(\.processIdentifier))
         pendingEnhancedUserInterfaceRestores = pendingEnhancedUserInterfaceRestores.filter { pid, suspension in
@@ -1168,7 +1164,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         // The disable is not gated: it runs only after a gated read found the
         // attribute on. The restore is gated and waits in
         // `pendingEnhancedUserInterfaceRestores`; the last try, when
-        // observation stops, is not gated.
+        // BetterTile quits, is not gated.
         return AXUIElementSetAttributeValue(
             applicationElement,
             enhancedUserInterfaceAttribute as CFString,
