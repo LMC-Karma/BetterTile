@@ -112,6 +112,10 @@ public final class DragSnapController {
     public var bentoStateProvider: ((DisplayID) -> BentoLayoutState?)?
     public var gestureEndedHandler: (() -> Void)?
     public var actionResultHandler: ((DisplayID, Bool, String?) -> Void)?
+    /// Whether the left mouse button is down. Tests replace this so the
+    /// physical button cannot start or hold a gesture.
+    public var primaryButtonIsPressed: () -> Bool = { NSEvent.pressedMouseButtons & 1 == 1 }
+
     public var isGestureActive: Bool {
         dragGate.isTracking
             || draggedWindowID != nil
@@ -291,7 +295,7 @@ public final class DragSnapController {
     /// event. Retry briefly from the Accessibility restore notification so the
     /// user does not need to generate extra drag events by shaking the mouse.
     public func prepareForRestoredWindowDrag(windowID: WindowID) {
-        guard configuration.snappingEnabled, NSEvent.pressedMouseButtons & 1 == 1 else { return }
+        guard configuration.snappingEnabled, primaryButtonIsPressed() else { return }
         installGestureMonitors()
         pendingRestoredWindowID = windowID
         pendingStageManagerWindowID = nil
@@ -299,7 +303,7 @@ public final class DragSnapController {
         restoredDragTask = Task { @MainActor [weak self] in
             _ = await WindowExposureRetry.run {
                 guard let self, !Task.isCancelled,
-                      NSEvent.pressedMouseButtons & 1 == 1
+                      self.primaryButtonIsPressed()
                 else { return .stop }
                 return self.beginPendingRestoredWindowDrag(windowID: windowID)
                     ? .resolved
@@ -337,7 +341,7 @@ public final class DragSnapController {
         case .leftMouseDown:
             guard Self.acceptsMouseDown(
                 from: source,
-                pressedMouseButtons: NSEvent.pressedMouseButtons
+                pressedMouseButtons: primaryButtonIsPressed() ? 1 : 0
             ) else { return }
             mousePressed(event)
         case .leftMouseDragged where isGestureActive:
@@ -805,7 +809,7 @@ public final class DragSnapController {
         restoredDragTask = Task { @MainActor [weak self] in
             let resolved = await WindowExposureRetry.run {
                 guard let self, !Task.isCancelled,
-                      NSEvent.pressedMouseButtons & 1 == 1
+                      self.primaryButtonIsPressed()
                 else { return .stop }
                 return self.beginPendingStageManagerDrag(exactWindowID: exactWindowID)
                     ? .resolved

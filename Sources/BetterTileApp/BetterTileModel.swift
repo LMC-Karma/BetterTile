@@ -211,6 +211,7 @@ final class BetterTileModel {
         }
         titleBarDoubleClick.isTabbedMember = { [weak self] id in self?.isTabbedMember(id) == true }
         dragSnap.isTabbedMember = { [weak self] id in self?.isTabbedMember(id) == true }
+        dragSnap.primaryButtonIsPressed = { [weak self] in self?.primaryButtonIsPressed() == true }
         dragSnap.activeModeProvider = { [weak self] displayID in self?.activeMode(for: displayID) }
         dragSnap.bentoStateProvider = { [weak self] displayID in self?.sessionStore.session(for: displayID)?.bentoState }
         dragSnap.bentoDragBeganHandler = { [weak self] displayID, sourceID, sourceFrame in
