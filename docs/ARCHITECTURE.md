@@ -53,6 +53,33 @@ Core geometry uses logical points with a top-left origin. Display visible frames
 
 BetterTile operates on eligible on-screen windows exposed by its macOS integration layer. It refreshes the current window set immediately when apps, Spaces, or displays change. A validated native desktop observation selects one process-local runtime layout session for each display and Space pair. Missing or malformed native observations retain the public-API window-overlap matcher. Empty window membership remains unknown, windows reported on several Spaces float, and native fullscreen Spaces expose neither automatic layout writes nor dividers. BetterTile never attempts to move windows across Spaces.
 
+## Popup and fixed-size windows
+
+A popup window floats at its own size and never joins a Bento or Tabbed
+layout. Examples are file pickers, settings and progress dialogs, and About
+windows. `PopupWindowClassifier` in Core makes the decision from attributes
+that `AccessibilityWindowSystem` reads. The rules adapt AeroSpace's
+`isDialogHeuristic`; see [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md).
+
+- A modal window is a popup.
+- A window whose subrole is not `AXStandardWindow` is a popup.
+- A window without an enabled full-screen button is a popup. Listed terminals,
+  editors, Chromium browsers, and a few other applications are exceptions,
+  because their ordinary windows can lack that button. Firefox and Ghostty
+  have their own rules.
+
+Some windows cannot be judged yet. A minimized or fullscreen window, a window
+whose attributes cannot be read, and a window with an attached sheet get no
+verdict, and a later sweep judges them again. A sheet disables its window's
+close button, so a document with an open Save sheet stays tiled. A verdict
+lasts for the life of the window.
+
+A fixed-size window is a window whose size or position attribute is not
+settable. A Bento pane would ask it for a frame it refuses, so it floats on a
+Bento desktop, including after the desktop leaves Tabbed for Bento. Tabbed keeps
+it as a tab. A window that cannot be resized keeps its own size, centred in
+its pane's window area, and the pane must be large enough to hold it.
+
 ## Event ordering
 
 Window identities survive off-screen and incomplete Accessibility sweeps.
@@ -152,9 +179,14 @@ which window the pane's Bento leaf holds and checks both minimum dimensions.
 If it needs more space, Bento's constraint solver adjusts the pane boundaries.
 `TabbedLayoutState.preferredPaneRatios` records the pane sizes from the user's
 own layout edits: divider drags, edge resizes, presets, splits, and pane
-removal. Fitting a selection does not change them. With **Restore pane size
-when switching tabs** on, a selection fits from those sizes, so a pane that grew
-for a larger tab returns to its size when a smaller tab is selected. A hidden
+removal. An edit records new sizes only for the partitions whose ratios it
+changed. Other partitions keep the size the user set, even while a larger tab
+has grown them. Fitting a tab does not change the recorded sizes. With
+**Restore pane size when switching tabs** on, every Tabbed placement starts
+from those sizes when they fit. A pane that grew for a larger tab therefore
+returns to its size when a smaller tab is selected, and when the larger tab
+moves, floats, or closes. A tab that needs more room grows its pane again from
+those sizes. With the setting off, a grown pane stays grown. A hidden
 tab is measured with `probeMinimumSizes` before it is raised, while it is still
 behind its pane's selected tab. An impossible arrangement retains the previous
 selection. `TabbedLayoutState.fitProblem` then names the cause for the result
@@ -179,9 +211,85 @@ application, changes keyboard focus or selection, or moves a window. Without
 a readable order, selection still raises the selected tabs of panes that
 share the selected window's application, and activation changes nothing.
 
+## Minimum sizes
+
+Applications rarely report a minimum size, so `WindowMinimumSizeLearner`
+learns it. A window that refuses a smaller size gives a learned minimum. A new
+window on a managed desktop is measured before its first placement:
+`probeMinimumSizes` writes a 1×1 size, reads the clamped size back, and
+restores the original frame within about 10 ms. Entering a mode or returning
+to a desktop measures nothing, because those windows are already visible. A
+window is probed at most once, even when the probe measures nothing, so an
+application that applies its minimum late is not resized again on every
+selection.
+
+Each application also keeps a seed: the latest measurement from any of its
+windows. A new window plans with its application's seed until the probe
+measures it. Its own measurement then replaces the seed for that window and
+becomes the application's new seed. BetterTile drops an application's seed
+when a process of that application quits, so a relaunch starts without it.
+Hiding an application keeps its seed. Measurements and seeds stay in process
+memory and are never saved.
+
+## Unresponsive applications
+
+An Accessibility call to a hung application blocks the main actor until its
+messaging timeout. The timeout is 0.35 s for a read and 1.5 s for a frame
+write. `UnresponsiveApplicationGate` in Core limits that cost to about one
+timeout for each hang.
+
+- A call that fails with `cannotComplete` after at least 0.3 s holds its
+  application for 2 s.
+- A quick `cannotComplete` is a busy application that answered. It neither
+  starts nor ends a hold.
+- Any completed call ends the hold.
+
+`AccessibilityWindowSystem` routes reads, settable checks, frame writes, and
+notification removals through `gatedCall`. `requireResponsive` stops a frame
+write or minimum-size probe before its first call. While an application is
+held, these calls fail at once, as a timed-out call would. A sweep already
+treats a failed read as an unreadable application and keeps its windows, so
+its panes stay in the layout. A frame-write sequence stops at the first
+refused call.
+
+Writes that put a user's window back stay ungated: the probe's size restore
+and the position restore. The enhanced-accessibility restore is gated. If the
+application is held or does not answer, the restore waits. BetterTile tries
+it again at the start of the next frame batch and when it refreshes its
+application observers. When observation stops, at quit or on a permission
+change, BetterTile makes one last ungated try; a restore that fails stays
+pending. An application that quit needs no restore. A notification removal
+that does not complete stays recorded, because the notification may still be
+registered.
+
+While the front application is held, `focusedWindow()` reports it as not
+responding. It does not fall back to a recently used application, so a
+shortcut never acts on a window the user is not looking at.
+
 ## Bento
 
-Bento uses a binary split tree held by each display's runtime `LayoutSession`. Leaves reference currently visible windows and branches carry an axis, normalized weight, and lock state. New windows are inserted by evaluating every unlocked leaf and choosing the split with the lowest movement/area-change score; closed or hidden windows are removed from the current tree. `BentoResizeEngine` changes branch weights and recursively derives all affected frames, `BentoLayoutFitter` adopts native edge changes, and `BentoBoundaryResolver` exposes only shared segments verified against current window frames.
+Bento uses a binary split tree held by each display's runtime `LayoutSession`. Leaves reference currently visible windows and branches carry an axis, normalized weight, and lock state. Closed or hidden windows are removed from the current tree. `BentoResizeEngine` changes branch weights and recursively derives all affected frames, `BentoLayoutFitter` adopts native edge changes, and `BentoBoundaryResolver` exposes only shared segments verified against current window frames.
+
+`BentoPlanner` places a new window in this order. An explicit **New window
+side**, described below, applies first. Bento holds at most six windows; a
+seventh floats where it is.
+
+1. While the tree still matches the automatic layout, the planner rebuilds the
+   automatic layout with the new window.
+2. Otherwise the largest empty slot takes the new window before any pane is
+   split. An empty slot is a region of the tree without a window, such as the
+   rest of the screen after a half-screen snap.
+3. Otherwise the new window splits the focused pane along its longer side
+   (`BentoLayoutState.split(_:inserting:in:)`). A wide pane gets the new pane
+   beside it, a tall pane gets it below, and a square pane splits side by side.
+4. If that split leaves a pane too small to use, the planner tries a split
+   beside every pane on every edge. It keeps the layout whose smallest pane is
+   largest, then the layout that moves existing windows least.
+
+A window restored without a reinsertion anchor, and a window dropped onto
+another window, also split their target along its longer side. Snaps can leave
+an empty slot on purpose. Repair Bento removes empty slots, and the panes
+beside a slot take its space.
 
 After a placement writes the full Bento tree with multiple windows,
 `commitBentoProposal` reads their measured sizes. If an application clamps a
@@ -367,8 +475,11 @@ change a Bento operation made to the tree; writing it also writes the tree.
   fits there, and the result pill says it does not fit in any pane.
   Entering Tabbed from Bento adopts the tree, so every pane stays where it was.
   Leaving for Bento gives every hidden tab its own pane (`unstacked(in:)`) and
-  removes the reserve. Leaving for Native restores the pre-Tabbed frames and
-  keeps the tab groups for the next Tabbed visit.
+  removes the reserve. Hidden tabs fill empty panes first, largest empty pane
+  first, each taking the next hidden tab from the nearest pane. The other
+  hidden tabs split their own pane along its longer side. An empty pane left
+  over is removed, so Bento shows no empty slot. Leaving for Native restores
+  the pre-Tabbed frames and keeps the tab groups for the next Tabbed visit.
 
 ## Overlay appearance
 

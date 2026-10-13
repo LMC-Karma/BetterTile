@@ -49,6 +49,28 @@ The real windows represented by one Stage Manager thumbnail. BetterTile may
 select one validated frontmost member for a drag. It does not create a layout
 session for the group or synchronize the other members.
 
+## Bento
+
+A per-desktop layout mode that divides the work area among up to six visible
+windows. Its layout is a tree of splits: a new window takes room from existing
+panes, and a closed window gives its room back. A region of the tree without a
+window, such as the rest of the screen after a half-screen snap, is an empty
+slot.
+
+## Repair Bento
+
+A command that rebuilds the Bento layout of one display from its visible
+windows. It picks the arrangement closest to the current window frames, with
+equal shares and no empty slots. It ends Focus mode and resumes automatic
+placement after a degraded mutation. With one window, it restores that
+window's configured placement instead.
+
+## Balance on new window
+
+A Bento setting, off by default. After a new window joins, each partition
+gives its children equal shares. A window that cannot shrink that far keeps
+its minimum size. Tabbed is not affected.
+
 ## Tabbed
 
 A per-desktop layout mode that divides the work area into panes and shows each
@@ -70,17 +92,26 @@ tabs. The selected tab's window is in front; the others stay open behind it.
 
 _Avoid_: native tab (the tabs inside one application's window)
 
+## Hidden tab
+
+A tab that is not its pane's selected tab. It stays open behind the selected
+tab, at its pane's window frame. Only the selected tab counts toward the pane's
+minimum size, so selecting a larger hidden tab can grow its pane.
+
 ## Tabbed curtain
 
 A single frosted surface behind all selected tabs on a Tabbed display. It
-covers inactive tabs, including portions that extend beyond their panes.
+covers hidden tabs, including portions that extend beyond their panes.
 
 ## Floating window
 
 A window on a managed desktop that the active layout leaves in place. The user
-can float a window out of Bento or out of a Tabbed pane, and BetterTile floats
-windows that appear on several Spaces. A floating window keeps its own frame
-until the user returns it to the layout.
+can float a window out of Bento or out of a Tabbed pane. BetterTile floats
+popup windows, such as file pickers and dialogs, and windows that appear on
+several Spaces. On a Bento desktop it also floats windows that cannot be
+resized or moved, and a seventh window. On a Tabbed desktop it floats a new
+window that fits no pane. A floating window keeps its own frame until the user
+returns it to the layout.
 
 ## Focus mode
 
@@ -94,3 +125,29 @@ partition shortcut ends Focus mode before applying the requested partition.
 
 A starting pane arrangement for Tabbed: One Pane, Two Columns, Two Rows,
 Bento — Focus, or Four Panes. The user picks the default in Settings.
+
+## Minimum size
+
+The smallest size a window accepts. Applications rarely report it, so
+BetterTile measures each new window with a brief size probe and learns from
+sizes a window refuses. Each application keeps a seed: the latest measurement
+from any of its windows. A new window plans with the seed until it is measured,
+and the seed is dropped when the application quits.
+
+## Ghost Preview
+
+A resize feedback mode for shared dividers. During the drag, BetterTile draws
+the new frames and moves no window. Release applies the previewed layout, and
+Escape cancels it.
+
+## Live Resize
+
+A resize feedback mode for shared dividers. Windows follow the divider during
+the drag. Escape returns them to their frames from before the drag.
+
+## Result pill
+
+A short message capsule that reports the outcome of a user action on its
+display, such as "Pane added" or "Couldn’t apply layout". A failure pill can
+add a second line that gives the reason. The pill dismisses itself after a
+moment.
