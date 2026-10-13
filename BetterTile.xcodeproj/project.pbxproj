@@ -21,6 +21,8 @@
 		100000000000000000000011 /* AppIconIceDebug.icon in Resources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000011 /* AppIconIceDebug.icon */; };
 		100000000000000000000012 /* AppIconDark.icon in Resources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000012 /* AppIconDark.icon */; };
 		100000000000000000000013 /* AppIconDarkDebug.icon in Resources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000013 /* AppIconDarkDebug.icon */; };
+		100000000000000000000014 /* LICENSE in Resources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000014 /* LICENSE */; };
+		100000000000000000000015 /* THIRD_PARTY_NOTICES.md in Resources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000015 /* THIRD_PARTY_NOTICES.md */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -40,6 +42,8 @@
 		200000000000000000000011 /* AppIconIceDebug.icon */ = {isa = PBXFileReference; lastKnownFileType = folder.iconcomposer.icon; path = Resources/AppIconIceDebug.icon; sourceTree = "<group>"; };
 		200000000000000000000012 /* AppIconDark.icon */ = {isa = PBXFileReference; lastKnownFileType = folder.iconcomposer.icon; path = Resources/AppIconDark.icon; sourceTree = "<group>"; };
 		200000000000000000000013 /* AppIconDarkDebug.icon */ = {isa = PBXFileReference; lastKnownFileType = folder.iconcomposer.icon; path = Resources/AppIconDarkDebug.icon; sourceTree = "<group>"; };
+		200000000000000000000014 /* LICENSE */ = {isa = PBXFileReference; lastKnownFileType = text; path = LICENSE; sourceTree = "<group>"; };
+		200000000000000000000015 /* THIRD_PARTY_NOTICES.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = THIRD_PARTY_NOTICES.md; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -69,6 +73,8 @@
 				20000000000000000000000B /* AppIconDebug.icon */,
 				200000000000000000000009 /* Signing.xcconfig */,
 				200000000000000000000006 /* README.md */,
+				200000000000000000000014 /* LICENSE */,
+				200000000000000000000015 /* THIRD_PARTY_NOTICES.md */,
 				400000000000000000000003 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -169,6 +175,8 @@
 				100000000000000000000011 /* AppIconIceDebug.icon in Resources */,
 				100000000000000000000006 /* AppIcon.icon in Resources */,
 				100000000000000000000009 /* AppIconDebug.icon in Resources */,
+				100000000000000000000014 /* LICENSE in Resources */,
+				100000000000000000000015 /* THIRD_PARTY_NOTICES.md in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

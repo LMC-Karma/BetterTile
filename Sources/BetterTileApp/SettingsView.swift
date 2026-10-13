@@ -262,6 +262,53 @@ private struct SettingsPageHeader: View {
     }
 }
 
+/// A license file shipped in the application's resources.
+private enum LegalDocument: String, CaseIterable, Identifiable {
+    case license = "LICENSE"
+    case notices = "THIRD_PARTY_NOTICES.md"
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .license: "License"
+        case .notices: "Third-Party Notices"
+        }
+    }
+
+    /// Nil when the file is missing, as in a SwiftPM build.
+    var contents: String? {
+        Bundle.main.url(forResource: rawValue, withExtension: nil)
+            .flatMap { try? String(contentsOf: $0, encoding: .utf8) }
+    }
+}
+
+private struct LegalDocumentView: View {
+    let document: LegalDocument
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(spacing: 0) {
+            ScrollView {
+                Text(document.contents ?? "")
+                    .font(.system(size: 11, design: .monospaced))
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(16)
+            }
+            Divider()
+            HStack {
+                Text(document.title).font(.headline)
+                Spacer()
+                Button("Done") { dismiss() }
+                    .keyboardShortcut(.defaultAction)
+            }
+            .padding(12)
+        }
+        .frame(width: 640, height: 520)
+    }
+}
+
 private struct GeneralSettings: View {
     @Bindable var model: BetterTileModel
 #if !DEBUG
@@ -271,6 +318,7 @@ private struct GeneralSettings: View {
 #endif
     let openSetup: () -> Void
     @AppStorage(AppAppearance.defaultsKey) private var appearanceRawValue = AppAppearance.system.rawValue
+    @State private var shownLegalDocument: LegalDocument?
 
     var body: some View {
         Form {
@@ -404,9 +452,25 @@ private struct GeneralSettings: View {
                 .foregroundStyle(.secondary)
             }
 
+            Section("License") {
+                Text(
+                    "Copyright (C) 2026 LMC-Karma. BetterTile is free software under the GNU General Public "
+                        + "License v3.0 or later, and comes with no warranty."
+                )
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+                HStack {
+                    ForEach(LegalDocument.allCases) { document in
+                        Button("\(document.title)…") { shownLegalDocument = document }
+                            .disabled(document.contents == nil)
+                    }
+                }
+            }
+
             StatusMessage(model: model)
         }
         .modifier(SettingsFormPresentation())
+        .sheet(item: $shownLegalDocument) { LegalDocumentView(document: $0) }
     }
 
     private var appearanceBinding: Binding<AppAppearance> {
