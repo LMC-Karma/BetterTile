@@ -236,6 +236,8 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, TabbedWindowSystem, Min
     func stopWindowObservation() {}
     func refreshApplicationObservers() {}
     func resetCachedWindows() {}
+    var quitRestoreCount = 0
+    func restoreEnhancedUserInterfaceBeforeQuit() { quitRestoreCount += 1 }
     func nativeDesktopObservation() -> NativeDesktopObservation? { desktopObservation }
     func refreshNativeDesktopObservation() -> NativeDesktopObservation? { desktopObservation }
     func observeApplicationEnforcedMinimum(
@@ -2917,4 +2919,15 @@ func restoringAWindowKeepsAUserChangeMadeAfterAnEarlierMinimize(change: String) 
     try #require(await waitFor { tiled(3) }, "\(frames())")
     try await settle()
     #expect(frames() == changed, "before the change: \(beforeChange)")
+}
+
+
+/// The ungated enhanced-accessibility restore can wait out a hung
+/// application, so only shutdown makes it.
+@Test @MainActor func shutdownMakesTheLastEnhancedAccessibilityRestore() {
+    let system = FakeAppWindowSystem()
+    let model = makeModel(system: system)
+    #expect(system.quitRestoreCount == 0)
+    model.shutdown()
+    #expect(system.quitRestoreCount == 1)
 }

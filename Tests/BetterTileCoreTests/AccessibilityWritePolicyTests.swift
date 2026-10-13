@@ -222,3 +222,15 @@ private let target = BTRect(x: 100, y: 100, width: 600, height: 400)
     gate.record(42, cannotComplete: false, elapsed: 0.01, now: 12.2)
     #expect(!gate.isHeld(42, now: 12.3))
 }
+
+@Test func aHoldKeepsItsLengthUntilTheApplicationAnswers() {
+    var gate = UnresponsiveApplicationGate()
+    // A refusal just under the stall threshold is still an answer.
+    gate.record(42, cannotComplete: true, elapsed: UnresponsiveApplicationGate.stallSeconds - 0.01, now: 10)
+    #expect(!gate.isHeld(42, now: 10))
+    gate.record(42, cannotComplete: true, elapsed: 0.35, now: 10)
+    // A quick refusal during a hold neither ends nor extends it.
+    gate.record(42, cannotComplete: true, elapsed: 0.01, now: 11)
+    #expect(gate.isHeld(42, now: 10 + UnresponsiveApplicationGate.holdSeconds - 0.01))
+    #expect(!gate.isHeld(42, now: 10 + UnresponsiveApplicationGate.holdSeconds))
+}

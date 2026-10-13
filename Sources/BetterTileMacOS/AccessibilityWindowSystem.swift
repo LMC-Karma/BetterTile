@@ -653,7 +653,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         // A measurement belongs to one write; an older one is not evidence.
         lastWriteReadback.removeValue(forKey: windowID)
         // A fixed-size window, such as Calculator, rejects any size write.
-        if !sizeIsSettable(windowID, on: element) { plan.writesInitialSize = false; plan.writesFinalSize = false }
+        if try !sizeIsSettable(windowID, on: element) { plan.writesInitialSize = false; plan.writesFinalSize = false }
         var errors: [AXError] = []
         // A refused call fails the write, so the sequence stops there: a hung
         // application makes every further call wait out its timeout.
@@ -750,10 +750,14 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
     }
 
     /// Whether a window's size can be written. A continuous gesture asks the
-    /// application once, not on every tick.
-    private func sizeIsSettable(_ windowID: WindowID, on element: AXUIElement) -> Bool {
+    /// application once, not on every tick. An application that does not
+    /// answer fails the write without a verdict, so a gesture does not keep
+    /// the window as fixed-size after the application recovers.
+    private func sizeIsSettable(_ windowID: WindowID, on element: AXUIElement) throws -> Bool {
         if continuousWriteDepth > 0, let cached = continuousSizeSettable[windowID] { return cached }
-        let settable = isSettable(kAXSizeAttribute, on: element)
+        guard let settable = settable(kAXSizeAttribute, on: element) else {
+            throw WindowSystemError.operationFailed(Self.unresponsiveApplicationMessage)
+        }
         if continuousWriteDepth > 0 { continuousSizeSettable[windowID] = settable }
         return settable
     }
@@ -819,7 +823,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
             AXUIElementGetPid(element, &pid)
             let previous = knownCurrentFrames[write.windowID]
             var plan = FrameWritePlanner.plan(target: write.frame, knownCurrentFrame: previous, correctsClamping: false)
-            if !sizeIsSettable(write.windowID, on: element) { plan.writesInitialSize = false }
+            if try !sizeIsSettable(write.windowID, on: element) { plan.writesInitialSize = false }
             groups[pid, default: []].append(IntermediateJob(windowID: write.windowID, element: element,
                                                             frame: write.frame, previous: previous, plan: plan))
         } } catch {
@@ -926,7 +930,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
                 AXUIElementGetPid(element, &pid)
                 let previous = knownCurrentFrames[write.windowID]
                 var plan = FrameWritePlanner.plan(target: write.frame, knownCurrentFrame: previous, correctsClamping: true)
-                if !isSettable(kAXSizeAttribute, on: element) { plan.writesInitialSize = false; plan.writesFinalSize = false }
+                if try !sizeIsSettable(write.windowID, on: element) { plan.writesInitialSize = false; plan.writesFinalSize = false }
                 prepared[write.windowID] = (pid, CommittedJob(
                     windowID: write.windowID, element: element, frame: write.frame, previous: previous,
                     plan: plan, learnedMinimum: minimumSizeLearner.learnedSizes[write.windowID]
@@ -1089,7 +1093,8 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
             // Restoring is what makes Chromium rebuild its accessibility tree,
             // so this is the slowest write in the whole sequence and needs the
             // full budget rather than the short read default. It is gated, so
-            // a hung application costs nothing here.
+            // a hung application costs nothing here; a refused restore waits
+            // for a later batch, an application event, or the quit.
             let error = AccessibilityWindowSystem.gatedCall(applicationElement) {
                 AccessibilityWindowSystem.writeEnhancedUserInterface(true, to: applicationElement)
             }
@@ -1120,6 +1125,23 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         }
     }
 
+    /// Puts back the setting of every application still waiting, without the
+    /// gate, because no later write will retry it. Only for quitting:
+    /// an application that is still hung costs one frame-write timeout. A
+    /// restore that fails stays pending.
+    public func restoreEnhancedUserInterfaceBeforeQuit() {
+        guard !pendingEnhancedUserInterfaceRestores.isEmpty, AXIsProcessTrusted() else { return }
+        let running = Set(NSWorkspace.shared.runningApplications.map(\.processIdentifier))
+        pendingEnhancedUserInterfaceRestores = pendingEnhancedUserInterfaceRestores.filter { pid, suspension in
+            guard running.contains(pid), suspension.shouldRestore,
+                  let element = suspension.applicationElement else { return false }
+            let error = Self.writeEnhancedUserInterface(true, to: element)
+            guard error != .success else { return false }
+            Self.log.warning("Could not restore AXEnhancedUserInterface (\(error.rawValue, privacy: .public)).")
+            return true
+        }
+    }
+
     /// Puts back the setting of applications that answer again. One that is
     /// still held keeps waiting; one that quit needs nothing.
     private func retryPendingEnhancedUserInterfaceRestores() {
@@ -1139,8 +1161,10 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
     ) -> AXError {
         AXUIElementSetMessagingTimeout(applicationElement, frameWriteMessagingTimeout)
         defer { AXUIElementSetMessagingTimeout(applicationElement, 0) }
-        // Not gated. The disable runs only after a gated read found the
-        // attribute on, and the restore puts the user's setting back.
+        // The disable is not gated: it runs only after a gated read found the
+        // attribute on. The restore is gated and waits in
+        // `pendingEnhancedUserInterfaceRestores`; the last try, when
+        // BetterTile quits, is not gated.
         return AXUIElementSetAttributeValue(
             applicationElement,
             enhancedUserInterfaceAttribute as CFString,
