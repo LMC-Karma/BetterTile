@@ -2921,6 +2921,22 @@ func restoringAWindowKeepsAUserChangeMadeAfterAnEarlierMinimize(change: String) 
     #expect(frames() == changed, "before the change: \(beforeChange)")
 }
 
+/// A shortcut that cannot read the front window says why, so a hung front
+/// application is named instead of reported as having no window.
+@Test @MainActor func aShortcutNamesWhyItCouldNotReadTheFrontWindow() async throws {
+    _ = NSApplication.shared
+    let system = FakeAppWindowSystem()
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    let before = system.windows.map(\.frame)
+    system.focusedWindowReadFails = true
+    model.perform(.leftHalf)
+    #expect(model.statusMessage?.contains("Simulated focused-window failure") == true)
+    #expect(system.windows.map(\.frame) == before)
+    system.focusedWindowReadFails = false
+    model.perform(.leftHalf)
+    #expect(await waitFor { system.windows[0].frame != before[0] })
+}
 
 /// The ungated enhanced-accessibility restore can wait out a hung
 /// application, so only shutdown makes it.
