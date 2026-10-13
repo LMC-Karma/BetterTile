@@ -590,3 +590,17 @@ private let readbackID = WindowID(rawValue: "readback")
     #expect(learner.merging(WindowConstraints(), for: WindowID(rawValue: "other"), application: "com.apple.Preview")
         .minimumSize.width == 708)
 }
+
+/// A window is probed once. An application that applies its minimum late
+/// gives no measurement, and probing it on every selection would only resize
+/// it again and again.
+@Test func aProbedWindowIsNotProbedAgainWithoutAMeasurement() {
+    var learner = WindowMinimumSizeLearner()
+    let late = WindowID(rawValue: "late"), other = WindowID(rawValue: "other")
+    #expect(learner.windowsNeedingMeasurement([late, other]) == [late, other])
+    learner.recordProbe(of: late)
+    #expect(learner.windowsNeedingMeasurement([late, other]) == [other])
+    // A window ID that comes back after its window closed is a new window.
+    learner.remove(late)
+    #expect(learner.windowsNeedingMeasurement([late]) == [late])
+}

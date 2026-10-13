@@ -173,3 +173,30 @@ func aLargerHiddenTabGrowsItsPaneAndTheSmallerTabRestoresIt(restores: Bool) asyn
     #expect(detail.hasSuffix("."))
     #expect(ResultPillLayout.detailFits(detail))
 }
+
+/// A pane that grew for a larger tab returns to the size the user set when
+/// that tab leaves it, not only when another tab of the pane is clicked.
+@Test(arguments: [false, true]) @MainActor
+func aPaneReturnsToItsSizeWhenTheLargerTabLeaves(floats: Bool) async throws {
+    let system = FakeAppWindowSystem()
+    let (model, large, _) = try await narrowLeftPaneWithAHiddenTab(system, restores: true)
+    defer { model.shutdown() }
+    let small = system.windows[0].id
+    let narrow = leftPaneWidth(model, system)
+    system.windows[1].constraints.minimumSize.width = 600
+    model.performTabbed(.select(large))
+    try #require(await waitFor { model.activeTabbedState?.panes[0].selected == large })
+    try #require(leftPaneWidth(model, system) >= 600)
+    try await Task.sleep(for: .milliseconds(300))
+
+    if floats {
+        model.performTabbed(.float(large, reselecting: small))
+        try #require(await waitFor { model.activeTabbedState?.floatingWindowIDs.contains(large) == true })
+    } else {
+        let right = try #require(model.activeTabbedState?.panes[1].id)
+        model.performTabbed(.move(large, pane: right, index: nil, reselecting: small))
+        try #require(await waitFor { model.activeTabbedState?.panes[1].selected == large })
+    }
+    #expect(await waitFor { abs(leftPaneWidth(model, system) - narrow) < 1 })
+    #expect(model.activeTabbedState?.panes[0].selected == small)
+}

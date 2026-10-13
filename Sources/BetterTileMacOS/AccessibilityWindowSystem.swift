@@ -232,7 +232,8 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
     /// a size write synchronously: asking for a tiny size and reading the
     /// size back gives the exact minimum in about 10 ms. The original size is
     /// restored at once. Only for new windows, which are animating in and
-    /// about to move; never for settled, visible windows.
+    /// about to move, and for a hidden tab about to be shown; never for
+    /// settled, visible windows. Each window is probed at most once.
     public func probeMinimumSizes(for ids: Set<WindowID>) -> Set<WindowID> {
         guard AXIsProcessTrusted() else { return [] }
         var measured = false
@@ -259,6 +260,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
             AXUIElementSetMessagingTimeout(element, Self.frameWriteMessagingTimeout)
             defer { AXUIElementSetMessagingTimeout(element, 0) }
             guard Self.setFrameAttribute(element, kAXSizeAttribute, tinyValue) == .success else { continue }
+            minimumSizeLearner.recordProbe(of: id)
             let clamped: CGSize? = axValue(kAXSizeAttribute, from: element, type: .cgSize)
             // Confirm the original size; try once more before reporting it.
             let sizeRestored = (0..<2).contains { _ in
