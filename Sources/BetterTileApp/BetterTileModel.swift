@@ -425,7 +425,8 @@ final class BetterTileModel {
             )
             return
         }
-        let focused = try? system.focusedWindow()
+        let focusRead = Result { try system.focusedWindow() }
+        let focused = (try? focusRead.get()) ?? nil
         let focusedRule = focused.map(rule(for:)) ?? .manageNormally
         if !focusedRule.allowsDirectPlacement {
             statusMessage = "BetterTile is set to ignore this app."
@@ -460,7 +461,13 @@ final class BetterTileModel {
         case let .ready(plan):
             actionPlan = plan
         case .unavailable:
-            statusMessage = "No eligible focused window."
+            // A front application that stopped answering is named as the
+            // reason, not reported as having no window.
+            if case let .failure(error) = focusRead {
+                statusMessage = error.localizedDescription
+            } else {
+                statusMessage = "No eligible focused window."
+            }
             presentActionResult(
                 succeeded: false,
                 error: statusMessage,

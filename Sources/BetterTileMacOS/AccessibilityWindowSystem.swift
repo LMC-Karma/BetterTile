@@ -362,6 +362,12 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
                 }
                 return snapshot
             }
+            // A front application that stopped answering still has the
+            // user's focus. Falling back to a recent application would act
+            // on a window the user is not looking at.
+            if pid == frontmostPID, Self.isUnresponsive(pid) {
+                throw WindowSystemError.operationFailed(Self.unresponsiveApplicationMessage)
+            }
         }
         return nil
     }
