@@ -2,7 +2,7 @@
 
 Last updated: 2026-10-04.
 
-This is the status record for the experimental Tabbed implementation. Update
+This is the status record for the Tabbed implementation. Update
 the relevant row after each test or fix. An attempted action is not a passed
 test. Use [TABBED_TESTING.md](TABBED_TESTING.md) for the manual procedure.
 
