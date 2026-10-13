@@ -9,9 +9,146 @@
   2014 Petroules Corporation; 2014 Big Nerd Ranch
 - License: MIT License
 
-BetterTile links Sparkle to discover, verify, and install application updates.
-The complete Sparkle license text is included with the resolved dependency and
-is available in its [upstream repository](https://github.com/sparkle-project/Sparkle/blob/2.9.5/LICENSE).
+BetterTile links Sparkle to discover, verify, and install application updates,
+and ships the Sparkle framework inside the application. Sparkle's license at
+version 2.9.5, including the licenses of the code it bundles:
+
+```text
+Copyright (c) 2006-2013 Andy Matuschak.
+Copyright (c) 2009-2013 Elgato Systems GmbH.
+Copyright (c) 2011-2014 Kornel Lesiński.
+Copyright (c) 2015-2017 Mayur Pawashe.
+Copyright (c) 2014 C.W. Betts.
+Copyright (c) 2014 Petroules Corporation.
+Copyright (c) 2014 Big Nerd Ranch.
+All rights reserved.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+this software and associated documentation files (the "Software"), to deal in
+the Software without restriction, including without limitation the rights to
+use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software is furnished to do so,
+subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
+FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
+COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
+IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+=================
+EXTERNAL LICENSES
+=================
+
+bspatch.c and bsdiff.c, from bsdiff 4.3 <http://www.daemonology.net/bsdiff/>:
+
+Copyright 2003-2005 Colin Percival
+All rights reserved
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted providing that the following conditions 
+are met:
+1. Redistributions of source code must retain the above copyright
+   notice, this list of conditions and the following disclaimer.
+2. Redistributions in binary form must reproduce the above copyright
+   notice, this list of conditions and the following disclaimer in the
+   documentation and/or other materials provided with the distribution.
+
+THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR
+IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY
+DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
+STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING
+IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+POSSIBILITY OF SUCH DAMAGE.
+
+--
+
+sais.c and sais.h, from sais-lite (2010/08/07) <https://sites.google.com/site/yuta256/sais>:
+
+The sais-lite copyright is as follows:
+
+Copyright (c) 2008-2010 Yuta Mori All Rights Reserved.
+
+Permission is hereby granted, free of charge, to any person
+obtaining a copy of this software and associated documentation
+files (the "Software"), to deal in the Software without
+restriction, including without limitation the rights to use,
+copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the
+Software is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice shall be
+included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES
+OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
+HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+OTHER DEALINGS IN THE SOFTWARE.
+
+--
+
+Portable C implementation of Ed25519, from https://github.com/orlp/ed25519
+
+Copyright (c) 2015 Orson Peters <orsonpeters@gmail.com>
+
+This software is provided 'as-is', without any express or implied warranty. In no event will the
+authors be held liable for any damages arising from the use of this software.
+
+Permission is granted to anyone to use this software for any purpose, including commercial
+applications, and to alter it and redistribute it freely, subject to the following restrictions:
+
+1. The origin of this software must not be misrepresented; you must not claim that you wrote the
+   original software. If you use this software in a product, an acknowledgment in the product
+   documentation would be appreciated but is not required.
+
+2. Altered source versions must be plainly marked as such, and must not be misrepresented as
+   being the original software.
+
+3. This notice may not be removed or altered from any source distribution.
+
+--
+
+SUSignatureVerifier.m:
+
+Copyright (c) 2011 Mark Hamlin.
+
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted providing that the following conditions
+are met:
+1. Redistributions of source code must retain the above copyright
+   notice, this list of conditions and the following disclaimer.
+2. Redistributions in binary form must reproduce the above copyright
+   notice, this list of conditions and the following disclaimer in the
+   documentation and/or other materials provided with the distribution.
+
+THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR
+IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY
+DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
+STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING
+IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+POSSIBILITY OF SUCH DAMAGE.
+```
 
 ## Vorssaint
 
@@ -20,16 +157,17 @@ is available in its [upstream repository](https://github.com/sparkle-project/Spa
 - License: GNU General Public License v3.0 or later
 
 BetterTile contains portions adapted from Vorssaint's SwiftUI settings and
-menu-panel presentation code. Vorssaint's demand-based service ownership and
-teardown patterns also informed BetterTile's runtime lifecycle.
+menu-panel presentation code: the settings sidebar and its search field, and the
+menu panel's cards and footer buttons in `Sources/BetterTileApp/SettingsView.swift`
+and `Sources/BetterTileApp/BetterTileApp.swift`. Those files carry Vorssaint's
+copyright notice. BetterTile modified the adapted code.
 
-The divider's colored track beneath a glass knob builds on
-`LiquidGlassMixerSlider` in `UI/MenuPanel/MixerSection.swift` at commit
-`2641eb1c01cc92c0a671717ad2b39415e7082a69`. BetterTile draws its own lens optics
-and divider geometry with public Core Animation layers and the Core Image
-`CIGlassLozenge` filter. The shared glass preference
-and accessibility fallback follow the `HUDBackdrop` pattern in
-`UI/SharedUI.swift` at that revision. Other glass surfaces use native AppKit glass.
+Vorssaint's demand-based service ownership and teardown patterns informed
+BetterTile's runtime lifecycle, and its `LiquidGlassMixerSlider` and
+`HUDBackdrop` inspired the divider's glass knob and the glass accessibility
+fallback. BetterTile's divider and glass surfaces are its own code; they use
+public Core Animation layers, the Core Image `CIGlassLozenge` filter, and native
+AppKit glass.
 
 BetterTile is distributed under the GNU General Public License v3.0 or later.
 The complete license terms are provided in [LICENSE](LICENSE).
@@ -40,11 +178,12 @@ The complete license terms are provided in [LICENSE](LICENSE).
 - Copyright: Copyright (c) 2019–2026 Ryan Hanson
 - License: MIT License
 
-Rectangle's `StageUtil.swift` documented the bounded WindowManager
-group/list/button Accessibility hierarchy used to find `AXWindowIDs`. BetterTile
-adapts that hierarchy pattern, then applies its own strict WindowServer
-validation and single-window drag policy. Rectangle's complete license text is
-available in its [upstream repository](https://github.com/rxhanson/Rectangle/blob/main/LICENSE).
+BetterTile learned the bounded WindowManager group/list/button Accessibility
+hierarchy that exposes `AXWindowIDs` from Rectangle's `StageUtil.swift`.
+`StageManagerGroupResolver` is BetterTile's own code; no Rectangle code is
+included. BetterTile adds strict WindowServer validation and a single-window
+drag policy. Rectangle's license is available in its
+[upstream repository](https://github.com/rxhanson/Rectangle/blob/main/LICENSE).
 
 ## AeroSpace
 
@@ -53,11 +192,37 @@ available in its [upstream repository](https://github.com/rxhanson/Rectangle/blo
 - License: MIT License
 
 AeroSpace's `isDialogHeuristic` in
-`Sources/AppBundle/model/AxUiElementWindowType.swift` decides whether a window
-is a dialog from its subrole, modal state, and full-screen button.
-`PopupWindowClassifier` adapts those rules and their application-specific
-cases: terminals, editors, and Chromium browsers that lack an enabled
-full-screen button; Firefox windows without an enabled minimize button; and
-Ghostty. BetterTile adds its own handling for
-attached sheets and failed Accessibility reads. AeroSpace's complete license
-text is available in its [upstream repository](https://github.com/nikitabobko/AeroSpace/blob/main/LICENSE).
+[`Sources/AppBundle/model/AxUiElementWindowType.swift`](https://github.com/nikitabobko/AeroSpace/blob/d56e1637c3a1ed660d0cadd7534e94fb3218d1c3/Sources/AppBundle/model/AxUiElementWindowType.swift)
+at commit `d56e1637c3a1ed660d0cadd7534e94fb3218d1c3` decides whether a window
+is a dialog from its subrole and its title-bar buttons.
+`PopupWindowClassifier` adapts those rules, their order, and their
+application-specific cases: terminals, editors, and Chromium browsers that lack
+an enabled full-screen button; Firefox windows without an enabled minimize
+button; Ghostty; and qutebrowser's subrole. BetterTile adds its own modal check,
+attached-sheet handling, and handling of failed Accessibility reads.
+
+AeroSpace's license:
+
+```text
+MIT License
+
+Copyright (c) 2023 Nikita Bobko
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
