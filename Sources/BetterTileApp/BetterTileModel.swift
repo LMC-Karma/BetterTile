@@ -27,9 +27,15 @@ protocol BetterTileWindowSystem: TargetedWindowSystem, WindowEventSource {
     func startDisplayReconfigurationMonitoring(onChange: @escaping @MainActor () -> Void)
     func stopDisplayReconfigurationMonitoring()
     func updateManagedWindowIDs(_ ids: Set<WindowID>)
+    /// Puts back settings that BetterTile changed and could not restore yet.
+    func restoreEnhancedUserInterfaceBeforeQuit()
 }
 
 extension AccessibilityWindowSystem: BetterTileWindowSystem {}
+
+extension BetterTileWindowSystem {
+    func restoreEnhancedUserInterfaceBeforeQuit() {}
+}
 
 @Observable
 @MainActor
@@ -1793,6 +1799,8 @@ final class BetterTileModel {
         settlementTasks.values.forEach { $0.cancel() }
         system.stopDockFootprintMonitoring()
         system.stopDisplayReconfigurationMonitoring()
+        // After the last frame writes above, so none is left to restore.
+        system.restoreEnhancedUserInterfaceBeforeQuit()
         system.stopWindowObservation()
         layoutWheel.stop()
         shortcuts.stop()
