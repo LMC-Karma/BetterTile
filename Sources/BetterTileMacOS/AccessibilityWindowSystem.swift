@@ -1128,19 +1128,21 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
     }
 
     /// Puts back the setting of every application still waiting, without the
-    /// gate, because no later write will retry it. Runs when observation
-    /// stops, which includes quitting BetterTile; an application that is
-    /// still hung costs one frame-write timeout.
+    /// gate, because no later write may retry it. Runs when observation
+    /// stops: when BetterTile quits, and when Accessibility permission
+    /// changes. A restore that fails stays pending, so a permission change
+    /// does not lose it; an application that is still hung costs one
+    /// frame-write timeout.
     private func restorePendingEnhancedUserInterfaceSettings() {
+        guard !pendingEnhancedUserInterfaceRestores.isEmpty, AXIsProcessTrusted() else { return }
         let running = Set(NSWorkspace.shared.runningApplications.map(\.processIdentifier))
-        let pending = pendingEnhancedUserInterfaceRestores.filter { running.contains($0.key) }
-        pendingEnhancedUserInterfaceRestores = [:]
-        for suspension in pending.values where suspension.shouldRestore {
-            guard let element = suspension.applicationElement else { continue }
+        pendingEnhancedUserInterfaceRestores = pendingEnhancedUserInterfaceRestores.filter { pid, suspension in
+            guard running.contains(pid), suspension.shouldRestore,
+                  let element = suspension.applicationElement else { return false }
             let error = Self.writeEnhancedUserInterface(true, to: element)
-            if error != .success {
-                Self.log.warning("Could not restore AXEnhancedUserInterface (\(error.rawValue, privacy: .public)).")
-            }
+            guard error != .success else { return false }
+            Self.log.warning("Could not restore AXEnhancedUserInterface (\(error.rawValue, privacy: .public)).")
+            return true
         }
     }
 
