@@ -4600,7 +4600,7 @@ extension BetterTileModel {
                     self.refreshDividerBoundaries()
                 }
             } else {
-                Self.tabbedLog.error("placement failed\(gestureSourceID == nil ? "" : " after a drag", privacy: .public): \(outcome.failureReason ?? "", privacy: .public)")
+                Self.tabbedLog.error("placement failed\(gestureSourceID == nil ? "" : " after a drag", privacy: .public): \(outcome.failureReason ?? "", privacy: .private)")
                 _ = restoreGestureMembership()
                 // A new window refused the size its pane offered. Adopt it
                 // again, once, with the minimum the write revealed: it joins

@@ -107,9 +107,10 @@ because its application could bring it in front of the other panes. The cue is
 invalid and names the window and the axis, for example "Safari is too wide for
 this pane"; `TabbedLayoutState.fitFailure(showing:in:windows:)` gives the
 axis. A strip and an empty pane arm at once; a pane center waits for its
-hover delay. A tab strip under the pointer wins over a snap area, except in
-the screen-edge bands: without a permanent menu bar the top strips reach the
-top edge, and the top edge, its corners, and the side edges still snap there.
+hover delay. A tab strip under the pointer wins over a snap area, except at
+the screen edge itself, within the snap edge band: without a permanent menu
+bar the top strips reach the top edge, and a pointer at that edge still snaps.
+Farther inside the strip, the strip also wins over a corner area.
 An empty pane does not win over a snap area. A pane's only tab dragged over
 its own strip shows no drop, because the drop would change nothing. If the
 placement of a floating window's tab drop fails, the window stays where it was

@@ -501,9 +501,10 @@ public final class DragSnapController {
                snapAreas: configuration.snapAreaBindings,
                window: snapSourceWindow
            )
-        // A tab strip under the pointer wins over a snap area, except in the
-        // screen-edge bands: without a permanent menu bar, the top strips
-        // reach the top edge, which must still snap. An empty pane wins only
+        // A tab strip under the pointer wins over a snap area, except at the
+        // screen edge itself (the edge band): without a permanent menu bar,
+        // the top strips reach the top edge, which must still snap. Farther
+        // inside, a strip wins over a corner area. An empty pane wins only
         // outside a snap area, like a pane center.
         let edgeBand = SnapZoneDetector().edgeActivationDistance
         let insideEdgeBands = display.frame.insetBy(dx: edgeBand, dy: edgeBand).contains(point)
