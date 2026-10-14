@@ -252,7 +252,9 @@ func tabbedPlacementDoesNotLearnASizeAppliedLate(milliseconds: Int) async throws
     let system = FakeWindowSystem()
     let id = system.windows[0].id
     let target = BTRect(x: 0, y: 34, width: 400, height: 300)
-    system.sizeApplicationDelays[id] = .seconds(5)
+    // The size never arrives during the test, however slow the runner: the
+    // loop must report it as a refusal once the delay has passed.
+    system.sizeApplicationDelays[id] = .seconds(3600)
     let probe = TabbedLearnerProbe(system)
     _ = await WindowCoordinator(system: system).applyTabbed(
         placements: [Placement(windowID: id, frame: target)],
