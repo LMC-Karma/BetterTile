@@ -3059,6 +3059,8 @@ final class BetterTileModel {
             let started = ContinuousClock.now
             for _ in 0..<8 {
                 try? await Task.sleep(for: .milliseconds(40))
+                // Timed before the read, so a stall after it does not age the sample.
+                let elapsed = ContinuousClock.now - started
                 guard !Task.isCancelled,
                       self.sessionStore.isCurrent(sessionID, revision: revision, on: displayID),
                       let sampled = try? (self.system.cachedVisibleWindows(refreshing: scheduledSession.windowIDs)
@@ -3075,8 +3077,7 @@ final class BetterTileModel {
                    hasResponded,
                    frames.allSatisfy({ id, frame in previous[id]?.approximatelyEquals(frame, tolerance: 1) == true }),
                    !Self.awaitsClampConfirmation(
-                       sampled, changed: changedWindowIDs, requested: requestedFrames,
-                       elapsed: ContinuousClock.now - started
+                       sampled, changed: changedWindowIDs, requested: requestedFrames, elapsed: elapsed
                    ) {
                     break
                 }
@@ -3112,7 +3113,9 @@ final class BetterTileModel {
     ) -> Bool {
         guard let requested, elapsed < .seconds(WindowMinimumSizeLearner.clampConfirmationDelay) else { return false }
         return windows.contains { window in
-            guard changed.contains(window.id), let frame = requested[window.id] else { return false }
+            // A fixed-size window keeps its size; that is no pending clamp.
+            guard changed.contains(window.id), window.constraints.isResizable,
+                  let frame = requested[window.id] else { return false }
             let size = window.frame.size, minimum = window.constraints.minimumSize
             return (size.width > frame.size.width + 2 && minimum.width < size.width - 2)
                 || (size.height > frame.size.height + 2 && minimum.height < size.height - 2)

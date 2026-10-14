@@ -1063,18 +1063,97 @@ enum DividerLimitCase: CaseIterable { case straight, junction, linked }
     return (system, coordinator, controller, baseline)
 }
 
-/// A window the user moves within the delay is not a refusal: the delayed
-/// check ends without moving it back.
-@Test @MainActor func ghostReleaseCheckLeavesAWindowTheUserMoved() async throws {
+/// A window the user moves, or resizes from a corner that keeps its origin,
+/// within the delay is not a refusal: the delayed check ends without
+/// changing it back.
+@Test(arguments: [false, true]) @MainActor
+func ghostReleaseCheckLeavesAWindowTheUserMoved(resized: Bool) async throws {
     let (system, _, controller, _) = try grownGhostRelease(minimumWidth: 500)
     defer { controller.hideAndCancel() }
     let right = WindowID(rawValue: "right")
     let index = try #require(system.windows.firstIndex { $0.id == right })
-    system.windows[index].frame.origin.y += 40
+    if resized { system.windows[index].frame.size.height -= 40 } else { system.windows[index].frame.origin.y += 40 }
     let moved = system.windows[index].frame
     await controller.releaseVerificationTask?.value
     #expect(system.windows[index].frame == moved)
     #expect(system.frameWriteCounts[WindowID(rawValue: "left")] == 1)
+}
+
+/// Another write to a released window supersedes the delayed check, which
+/// then changes nothing.
+@Test @MainActor func ghostReleaseCheckGivesUpAfterAnotherWrite() async throws {
+    let (system, coordinator, controller, baseline) = try grownGhostRelease(minimumWidth: 500)
+    defer { controller.hideAndCancel() }
+    let left = WindowID(rawValue: "left"), right = WindowID(rawValue: "right")
+    // Rewrite the left window's own frame: every frame still matches the
+    // release, so only the newer write can end the check.
+    let leftFrame = try #require(system.windows.first { $0.id == left }?.frame)
+    let generation = coordinator.mutationGeneration(for: left)
+    #expect(coordinator.applyPlacements([Placement(windowID: left, frame: leftFrame)]).isApplied)
+    #expect(coordinator.mutationGeneration(for: left) != generation)
+    #expect(system.windows.first { $0.id == left }?.frame != baseline[0])
+    let frames = system.windows.map(\.frame)
+    let writes = system.frameWriteCounts
+    await controller.releaseVerificationTask?.value
+    #expect(system.windows.map(\.frame) == frames)
+    #expect(system.frameWriteCounts == writes)
+    #expect(system.windows.first { $0.id == right }?.frame.size.width == 500)
+}
+
+/// A native linked Live Resize release has no settlement either. A window
+/// that grew while the gesture ran, and still holds that size 0.25 s after
+/// the release, is solved for once: both windows end inside the display
+/// without overlap, and Restore has exactly one step.
+@Test @MainActor func liveReleaseCorrectsAWindowThatGrewAfterTheDelay() async throws {
+    _ = NSApplication.shared
+    let system = FakeWindowSystem()
+    system.roundsSizesAndReportsReadback = true
+    let bounds = BTRect(x: -10_000, y: -10_000, width: 800, height: 600)
+    let display = DisplayID(rawValue: "main")
+    system.availableDisplays = [DisplaySnapshot(id: display, frame: bounds, visibleFrame: bounds, isMain: true)]
+    let left = WindowID(rawValue: "left"), right = WindowID(rawValue: "right")
+    system.windows = [
+        WindowSnapshot(id: left, processIdentifier: 1, frame: BTRect(x: bounds.minX, y: bounds.minY, width: 400, height: 600), displayID: display),
+        WindowSnapshot(id: right, processIdentifier: 2, frame: BTRect(x: bounds.minX + 400, y: bounds.minY, width: 400, height: 600), displayID: display),
+    ]
+    let baseline = system.windows.map(\.frame)
+    system.enforcedMinimumWidths[right] = 500
+    var config = BetterTileConfiguration()
+    config.resizeFeedbackMode = .live
+    let coordinator = WindowCoordinator(system: system)
+    let controller = DividerOverlayController(coordinator: coordinator, configuration: config)
+    defer { controller.hideAndCancel() }
+    let boundary = BoundaryDescriptor(
+        id: "native", displayID: display, axis: .vertical, coordinate: bounds.minX + 400,
+        spanStart: bounds.minY, spanEnd: bounds.maxY, beforeWindowIDs: [left], afterWindowIDs: [right]
+    )
+    let start = BTPoint(x: bounds.minX + 400, y: bounds.minY + 80)
+    let interaction = try #require(DividerInteractionResolver.resolve(at: start, in: [boundary], hitWidth: 18, adjacencyTolerance: 6, paneGap: 0))
+    let screen = try #require(NSScreen.screens.first)
+    controller.beginGesture(interaction: interaction, at: start)
+    controller.drag(to: CGPoint(x: start.x + 120, y: screen.frame.maxY - start.y))
+    controller.displayTick()
+    controller.end()
+    let task = try #require(controller.releaseVerificationTask)
+    await task.value
+    let leftFrame = try #require(system.windows.first { $0.id == left }?.frame)
+    let rightFrame = try #require(system.windows.first { $0.id == right }?.frame)
+    #expect(rightFrame.size.width == 500, "right \(rightFrame)")
+    #expect(abs(leftFrame.maxX - rightFrame.minX) < 0.5, "left \(leftFrame) right \(rightFrame)")
+    for frame in [leftFrame, rightFrame] {
+        #expect(frame.minX >= bounds.minX && frame.maxX <= bounds.maxX, "\(frame)")
+    }
+    system.focusedWindowID = left
+    guard case let .ready(plan) = coordinator.plan(.restore) else {
+        Issue.record("Restore should be available")
+        return
+    }
+    #expect(plan.targetFrame == baseline[0])
+    #expect(coordinator.perform(plan).isApplied)
+    guard case .unavailable = coordinator.plan(.restore) else {
+        Issue.record("Restore should have only one step")
+        return
+    }
 }
 
 /// A refusal that no contained layout fits returns the windows to their
