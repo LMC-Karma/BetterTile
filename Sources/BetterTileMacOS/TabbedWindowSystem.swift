@@ -4,9 +4,13 @@ import BetterTileCore
 public enum ApplicationFocusMatch: Equatable, Sendable {
     /// The application reports this window as its focused window.
     case confirmed
-    /// The application reports another focused window.
-    case contradicted
-    /// The application reports no focused window, or the read failed.
+    /// The application reports another window as focused. A transient
+    /// popup closes when it loses focus, such as a browser toolbar bubble.
+    case otherWindow(isTransientPopup: Bool)
+    /// The application's focus is on no window, such as Finder's desktop,
+    /// so there is no window focus to protect.
+    case noWindow
+    /// The focused window could not be read.
     case unknown
 }
 

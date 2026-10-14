@@ -299,6 +299,45 @@ func aFocusReportedInPlaceOfAnUnreadablePopupSelectsNothing(unknownFocus: Bool) 
     #expect(model.tabbedRepairDeferred.isEmpty)
 }
 
+/// Live: after a click on Finder's bare desktop, Finder reports its desktop,
+/// a scroll area, as the focused window. No window focus needs protecting,
+/// so Finder's hidden tab that activation lifted goes back behind at once.
+@Test @MainActor func desktopFocusInTheFrontApplicationDoesNotDeferTheRepair() async throws {
+    let system = FakeAppWindowSystem()
+    let model = try await makeOnePaneWithHiddenTabs(system)
+    defer { model.shutdown() }
+    let state = try #require(model.activeTabbedState)
+    // focusedWindow() falls back to Finder's hidden tab.
+    system.stack = [1, 0, 2, 3].map { stackEntry(system.windows[$0]) }
+    system.focusedID = system.windows[1].id
+    system.focusedWindowIsDesktop = true
+    let raises = system.raiseRequests.count
+    model.handleApplicationActivation()
+    #expect(await waitFor(timeout: .seconds(3)) { system.raiseRequests.count > raises })
+    try await Task.sleep(for: .milliseconds(200))
+    #expect(system.raiseRequests.dropFirst(raises).map(\.0) == [system.windows[0].id])
+    #expect(!system.raiseRequests.dropFirst(raises).contains { $0.1 })
+    #expect(model.tabbedRepairDeferred.isEmpty)
+    #expect(model.activeTabbedState == state) // The fallback selects nothing.
+}
+
+/// A drag that takes over a pending re-application and then restores the
+/// group without a placement hands the re-application back, so a hidden
+/// tab that drifted still returns to its pane.
+@Test @MainActor func aRestoreWithoutPlacementKeepsAPendingReapplication() async throws {
+    let system = FakeAppWindowSystem()
+    let model = try await makeOnePaneWithHiddenTabs(system)
+    defer { model.shutdown() }
+    let paneFrame = system.windows[1].frame
+    system.windows[1].frame.origin.x += 30
+    model.tabbedNeedsReapply.insert(system.mainDisplay.id)
+    let raises = system.raiseRequests.count
+    #expect(model.completeBentoDrag(displayID: system.mainDisplay.id, sourceID: system.windows[0].id, outcome: .restore))
+    #expect(await waitFor(timeout: .seconds(3)) { system.windows[1].frame == paneFrame })
+    #expect(model.tabbedNeedsReapply.isEmpty)
+    #expect(!system.raiseRequests.dropFirst(raises).contains { $0.1 })
+}
+
 /// A dialog or floating panel, such as the Font panel or a file dialog,
 /// gets focus back when it is raised last, so the repair still runs while
 /// it is open and hidden tabs do not stay exposed.
