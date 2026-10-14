@@ -419,6 +419,36 @@ func aTabbedPlacementKeepsAPopupsFocusAndDoesNotRefocusTheFocusedTab(popupFocuse
     }
 }
 
+/// Review: a placement in one pane also orders the selected tab of every
+/// other pane. While another pane's application has a popup focused, the
+/// placement orders none of that application's windows.
+@Test @MainActor func aPlacementInOnePaneLeavesAnotherPanesPopupApplicationAlone() async throws {
+    let system = FakeAppWindowSystem()
+    let model = try await makeTwoTabbedColumns(system)
+    defer { model.shutdown() }
+    let right = try #require(model.activeTabbedState?.panes[1].selected)
+    model.performTabbed(.select(right))
+    try #require(await waitFor { model.activeTabbedState?.activeWindowID == right })
+    try await Task.sleep(for: .milliseconds(400)) // Let focus refreshes settle.
+    let state = try #require(model.activeTabbedState)
+    // The left pane's application comes forward with its bubble focused.
+    let bubble = addToolbarBubble(to: system)
+    system.focusedID = bubble.id
+    let popupProcess = bubble.processIdentifier
+    let original = try #require(frame(right, in: system))
+    let raises = system.raiseRequests.count
+    #expect(model.beginBentoDrag(displayID: system.mainDisplay.id, sourceID: right))
+    let index = try #require(system.windows.firstIndex { $0.id == right })
+    system.windows[index].frame.origin.x += 40
+    model.finishBentoDrag(displayID: system.mainDisplay.id, sourceID: right, outcome: .restore)
+    #expect(await waitFor(timeout: .seconds(3)) { frame(right, in: system) == original })
+    try await Task.sleep(for: .milliseconds(300))
+    let raised = system.raiseRequests.dropFirst(raises).map(\.0)
+    #expect(raised.contains(right))
+    #expect(!raised.contains { id in system.windows.first { $0.id == id }?.processIdentifier == popupProcess })
+    #expect(model.activeTabbedState == state)
+}
+
 @Test(arguments: [false, true]) @MainActor
 func stackingRepairKeepsAWindowInFrontOrLeavesAnUnreadableOneAlone(readable: Bool) async throws {
     let system = FakeAppWindowSystem()

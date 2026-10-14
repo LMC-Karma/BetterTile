@@ -226,7 +226,7 @@ left-out raises wait for the next focus change. The watchdog retries them, for
 each display, in case the popup closed without a notification. When the
 application's focus is on no window, such as Finder's desktop, there is no
 focus to protect, and the repair raises normally. A Tabbed placement does not activate or order a
-window of an application whose popup has focus. When the selection does not
+window in any pane of an application whose popup has focus. When the selection does not
 change, it only orders a selected tab that already has focus. Without
 a readable order, selection still raises the selected tabs of panes that
 share the selected window's application, and activation changes nothing.
