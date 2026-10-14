@@ -1258,9 +1258,12 @@ extension WindowCoordinator {
             // can confirm a kept size, so an application that applies a size
             // late is not reported as refusing it.
             let written = ContinuousClock.now
+            // Timed at the sample read, so a stall after the read does not
+            // age the sample.
+            var sampledAt = written
             func refusalCanSettle(_ attempt: Int) -> Bool {
                 attempt >= 3 && (attempt == 11
-                    || ContinuousClock.now - written >= .seconds(WindowMinimumSizeLearner.clampConfirmationDelay))
+                    || sampledAt - written >= .seconds(WindowMinimumSizeLearner.clampConfirmationDelay))
             }
             // Frames settle within four samples. Activation can take longer,
             // so accepted frames keep waiting for focus instead of rolling back.
@@ -1268,6 +1271,7 @@ extension WindowCoordinator {
                 guard isCurrent(), !Task.isCancelled else {
                     return touched ? .degraded(reason: "The desktop changed during Tabbed placement. Return to that desktop and use Repair Tabbed.") : .failed(reason: "The desktop changed.")
                 }
+                sampledAt = ContinuousClock.now
                 let actual = Dictionary(uniqueKeysWithValues: try snapshots(ids: ids).map { ($0.id, $0.frame) })
                 // An application that resizes in steps settles just short of
                 // the request. Once that frame is stable it is accepted; the
@@ -1300,7 +1304,7 @@ extension WindowCoordinator {
                         }
                     }
                     previousHiddenFrames = Dictionary(uniqueKeysWithValues: hiddenFrames.map { ($0.id, $0.frame) })
-                    if unsettledHidden, attempt < 11, attempt < 3 || !refusalCanSettle(attempt) {
+                    if unsettledHidden, !refusalCanSettle(attempt) {
                         try await Task.sleep(for: .milliseconds(50))
                         continue
                     }

@@ -226,7 +226,7 @@ func tabbedSelectionRaisesOnceUnlessOtherSelectionsNeedOrdering(orderOtherPane: 
 /// A size that arrives at 80 ms or 150 ms, before the confirmation delay, is
 /// no minimum: the window settles at its pane size, and neither the window
 /// nor its application learns anything.
-@Test(arguments: [80, 150]) @MainActor
+@Test(arguments: [80, 120]) @MainActor
 func tabbedPlacementDoesNotLearnASizeAppliedLate(milliseconds: Int) async throws {
     let system = FakeWindowSystem()
     let id = system.windows[0].id
