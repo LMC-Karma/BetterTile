@@ -405,6 +405,17 @@ func aBackgroundDialogKeepsItsPlaceWithoutARaiseLoop(activationFocus: String) as
     }
 }
 
+/// Waits until no raise request arrives for 30 polling steps of 20 ms. The
+/// budget counts steps, not wall-clock time, so a busy test machine cannot
+/// end the wait before a pending repair round has run.
+@MainActor func waitForRaisesToSettle(_ system: FakeAppWindowSystem) async {
+    var last = system.raiseRequests.count, quiet = 0
+    for _ in 0..<1_000 where quiet < 30 {
+        try? await Task.sleep(for: .milliseconds(20))
+        if system.raiseRequests.count == last { quiet += 1 } else { last = system.raiseRequests.count; quiet = 0 }
+    }
+}
+
 /// Review: Cmd-Tab to an application whose hidden tab sits in front of
 /// another application's floating dialog. Raising the background dialog
 /// above the hidden tab is ignored by macOS, so that plan never verified and
@@ -436,10 +447,10 @@ func aBackgroundDialogKeepsItsPlaceWithoutARaiseLoop(activationFocus: String) as
     system.focusedID = dialog.id
     system.stack = [dialog, system.windows[2], system.windows[0], system.windows[1], system.windows[3]].map(stackEntry)
     model.handleApplicationActivation()
-    try await Task.sleep(for: .milliseconds(600))
+    await waitForRaisesToSettle(system)
     let settled = system.raiseRequests.count
     model.handleApplicationActivation()
-    try await Task.sleep(for: .milliseconds(600))
+    await waitForRaisesToSettle(system)
     #expect(system.raiseRequests.count == settled)
     try expectOneVerifiedRound(model, system, state: state, above: [dialog.id, system.windows[0].id],
                                below: [system.windows[1].id, system.windows[2].id, system.windows[3].id])
