@@ -21,6 +21,9 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
     /// Size settability, checked once per continuous gesture like moving.
     private var continuousSizeSettable: [WindowID: Bool] = [:]
     private var lastWriteReadback: [WindowID: BTRect] = [:]
+    /// The size each window's latest live tick asked for. During a gesture
+    /// an application can still be applying it when the next tick reads back.
+    private var liveRequestedSizes: [WindowID: BTSize] = [:]
     /// Decided popup classifications, kept for each window's lifetime.
     private var popupVerdicts: [WindowID: PopupWindowClassifier.Verdict] = [:]
     private var identities = WindowIdentityRegistry()
@@ -198,6 +201,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
     }
 
     public func resetCachedWindows() {
+        liveRequestedSizes.removeAll()
         elements.removeAll()
         identities.removeAll()
         snapshotCache.invalidate()
@@ -227,7 +231,8 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
             actual: actual,
             now: ProcessInfo.processInfo.systemUptime
         )
-        // Cached snapshots carry the old constraints.
+        // As on every other learning path, a new measurement starts a new
+        // snapshot generation.
         if learned { snapshotGeneration &+= 1 }
         return learned
     }
@@ -657,6 +662,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         var plan = FrameWritePlanner.plan(target: frame, knownCurrentFrame: knownCurrentFrame)
         // A measurement belongs to one write; an older one is not evidence.
         lastWriteReadback.removeValue(forKey: windowID)
+        liveRequestedSizes.removeValue(forKey: windowID)
         minimumSizeLearner.discardClampCandidate(for: windowID)
         // A fixed-size window, such as Calculator, rejects any size write.
         if try !sizeIsSettable(windowID, on: element) { plan.writesInitialSize = false; plan.writesFinalSize = false }
@@ -770,10 +776,33 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         return settable
     }
 
+    /// Reads one live tick back. The readback of a gesture often trails its
+    /// requests by a few ticks, so a size that only shrank toward an earlier
+    /// request is no clamp: a shrink is measured from the smaller of the
+    /// previous readback and the previous tick's request. Records this tick's
+    /// request for the next one.
+    nonisolated static func observeLiveReadback(
+        _ learner: inout WindowMinimumSizeLearner,
+        requestedSizes: inout [WindowID: BTSize],
+        windowID: WindowID,
+        application: String?,
+        requested: BTRect,
+        previous: BTRect?,
+        actual: BTRect,
+        now: Double
+    ) -> Bool {
+        let previousRequest = requestedSizes.updateValue(requested.size, forKey: windowID)
+        return learner.observeWriteReadback(
+            windowID: windowID, application: application, requested: requested,
+            previous: previous, previousRequest: previousRequest, actual: actual, now: now
+        )
+    }
+
     public func endContinuousWrites() {
         guard continuousWriteDepth > 0 else { return }
         continuousWriteDepth -= 1
         guard continuousWriteDepth == 0 else { return }
+        liveRequestedSizes.removeAll()
         continuousSettable.removeAll()
         continuousSizeSettable.removeAll()
         let suspensions = frameWriteSuspensions ?? [:]
@@ -857,9 +886,13 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
                 failure = failure ?? result.windowID
                 continue
             }
-            guard let actual = result.actual else { continue }
+            guard let actual = result.actual else {
+                liveRequestedSizes[result.windowID] = job.frame.size
+                continue
+            }
             lastWriteReadback[result.windowID] = actual
-            if minimumSizeLearner.observeWriteReadback(
+            if Self.observeLiveReadback(
+                &minimumSizeLearner, requestedSizes: &liveRequestedSizes,
                 windowID: result.windowID, application: applicationKeys[result.windowID],
                 requested: job.frame, previous: job.previous, actual: actual, now: now
             ) { snapshotGeneration &+= 1 }
@@ -977,6 +1010,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         let now = ProcessInfo.processInfo.systemUptime
         for write in writes {
             lastWriteReadback.removeValue(forKey: write.windowID)
+            liveRequestedSizes.removeValue(forKey: write.windowID)
             minimumSizeLearner.discardClampCandidate(for: write.windowID)
             guard let result = results[write.windowID] else { continue }
             guard result.errors.allSatisfy({ accepted.contains($0) }) else {
@@ -1410,6 +1444,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
             popupVerdicts.removeValue(forKey: windowID)
             applicationKeys.removeValue(forKey: windowID)
             lastWriteReadback.removeValue(forKey: windowID)
+            liveRequestedSizes.removeValue(forKey: windowID)
             continuousSettable.removeValue(forKey: windowID)
             continuousSizeSettable.removeValue(forKey: windowID)
         }

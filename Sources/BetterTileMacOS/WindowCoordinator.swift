@@ -504,8 +504,17 @@ public final class WindowCoordinator {
 
     /// Records a committed transaction's changed frames for Restore, for a
     /// caller that committed with `recordHistory: false`.
-    public func recordHistory(of transaction: WindowFrameTransaction) {
+    /// Returns the frames it added, for `discardHistory(_:)`.
+    @discardableResult
+    public func recordHistory(of transaction: WindowFrameTransaction) -> [WindowID: BTRect] {
         recordChangedHistoryFrames(transaction.baselineFrames, proposedPlacements: transaction.proposedPlacements)
+    }
+
+    /// Removes Restore steps that `recordHistory(of:)` added, when the change
+    /// they undo was rolled back without Restore. A step is removed only
+    /// while it is still the newest one for its window.
+    public func discardHistory(_ frames: [WindowID: BTRect]) {
+        for (id, frame) in frames { history.removeLast(frame, for: id) }
     }
 
     public func applyLive(
@@ -659,13 +668,14 @@ public final class WindowCoordinator {
         min(a.maxX, b.maxX) - max(a.minX, b.minX) > 2 && min(a.maxY, b.maxY) - max(a.minY, b.minY) > 2
     }
 
-    public func finishLive(transaction: WindowFrameTransaction, recordHistory: Bool = true) {
-        if recordHistory, transaction.hasLiveChanges {
-            recordChangedHistoryFrames(
-                transaction.baselineFrames,
-                proposedPlacements: transaction.proposedPlacements
-            )
-        }
+    /// Returns the frames it added to the history, for `discardHistory(_:)`.
+    @discardableResult
+    public func finishLive(transaction: WindowFrameTransaction, recordHistory: Bool = true) -> [WindowID: BTRect] {
+        guard recordHistory, transaction.hasLiveChanges else { return [:] }
+        return recordChangedHistoryFrames(
+            transaction.baselineFrames,
+            proposedPlacements: transaction.proposedPlacements
+        )
     }
 
     public func cancel(transaction: WindowFrameTransaction) -> WindowMutationOutcome {
@@ -991,20 +1001,26 @@ public final class WindowCoordinator {
         return try system.visibleWindows().filter { ids.contains($0.id) }
     }
 
-    private func recordHistoryFrames(_ frames: [WindowID: BTRect]) {
-        for (id, frame) in frames.sorted(by: { $0.key < $1.key }) { history.record(frame, for: id) }
+    @discardableResult
+    private func recordHistoryFrames(_ frames: [WindowID: BTRect]) -> [WindowID: BTRect] {
+        var recorded: [WindowID: BTRect] = [:]
+        for (id, frame) in frames.sorted(by: { $0.key < $1.key }) where history.record(frame, for: id) {
+            recorded[id] = frame
+        }
+        return recorded
     }
 
+    @discardableResult
     private func recordChangedHistoryFrames(
         _ baselineFrames: [WindowID: BTRect],
         proposedPlacements: [Placement]
-    ) {
+    ) -> [WindowID: BTRect] {
         let proposedFrames = Dictionary(uniqueKeysWithValues: proposedPlacements.map { ($0.windowID, $0.frame) })
         let changed = baselineFrames.filter { id, baseline in
             guard let proposed = proposedFrames[id] else { return false }
             return !baseline.approximatelyEquals(proposed, tolerance: 0.01)
         }
-        recordHistoryFrames(changed)
+        return recordHistoryFrames(changed)
     }
 
     private func expect(_ frame: BTRect, for windowID: WindowID, generation: UInt64) {

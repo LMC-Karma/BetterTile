@@ -100,3 +100,44 @@ import Testing
     #expect(AccessibilityWindowSystem.movability(position: nil, size: nil) == nil)
     #expect(AccessibilityWindowSystem.movability(position: false, size: nil) == nil)
 }
+
+/// During a shrinking live drag, Chromium's readbacks trail the requests by
+/// two ticks. Each readback lies between an older readback and the newest
+/// request, but above the previous request, so it is no clamp. A real clamp
+/// below the previous request is still measured at once.
+@Test func liveTickReadbacksThatLagBehindTheirRequestsAreNotLearned() {
+    var learner = WindowMinimumSizeLearner()
+    var requested: [WindowID: BTSize] = [:]
+    let id = WindowID(rawValue: "chrome")
+    let widths = [800.0, 750, 700, 650, 600, 550, 500]
+    var previous = BTRect(x: 200, y: 0, width: widths[0], height: 600)
+    for tick in 1..<widths.count {
+        let request = BTRect(x: 1000 - widths[tick], y: 0, width: widths[tick], height: 600)
+        // The position is applied at once; the size two ticks late.
+        let actual = BTRect(x: request.minX, y: 0, width: widths[max(0, tick - 2)], height: 600)
+        let learned = AccessibilityWindowSystem.observeLiveReadback(
+            &learner, requestedSizes: &requested, windowID: id, application: "com.google.Chrome",
+            requested: request, previous: previous, actual: actual, now: Double(tick) / 60
+        )
+        #expect(!learned, "tick \(tick)")
+        previous = actual
+    }
+    #expect(learner.learnedSizes.isEmpty)
+    #expect(learner.applicationSizes.isEmpty)
+
+    // A window that took 650 and then stops at its 620 pt minimum.
+    var clamped = WindowMinimumSizeLearner()
+    var clampedRequests: [WindowID: BTSize] = [:]
+    _ = AccessibilityWindowSystem.observeLiveReadback(
+        &clamped, requestedSizes: &clampedRequests, windowID: id, application: nil,
+        requested: BTRect(x: 350, y: 0, width: 650, height: 600), previous: BTRect(x: 300, y: 0, width: 700, height: 600),
+        actual: BTRect(x: 350, y: 0, width: 650, height: 600), now: 0
+    )
+    let learned = AccessibilityWindowSystem.observeLiveReadback(
+        &clamped, requestedSizes: &clampedRequests, windowID: id, application: nil,
+        requested: BTRect(x: 400, y: 0, width: 600, height: 600), previous: BTRect(x: 350, y: 0, width: 650, height: 600),
+        actual: BTRect(x: 400, y: 0, width: 620, height: 600), now: 1.0 / 60
+    )
+    #expect(learned)
+    #expect(clamped.learnedSizes[id] == BTSize(width: 620, height: 0))
+}

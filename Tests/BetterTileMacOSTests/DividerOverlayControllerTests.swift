@@ -782,6 +782,8 @@ enum DividerLimitCase: CaseIterable { case straight, junction, linked }
     var config = BetterTileConfiguration()
     config.resizeFeedbackMode = .live
     let controller = DividerOverlayController(coordinator: WindowCoordinator(system: system), configuration: config)
+    // Ticks arrive 60 ms apart, past the floor for a proven refusal.
+    controller.clock = steppingClock()
     var willBegin = 0
     controller.gestureWillBeginHandler = { willBegin += 1 }
     let boundary = BoundaryDescriptor(
@@ -1003,11 +1005,7 @@ enum DividerLimitCase: CaseIterable { case straight, junction, linked }
     #expect(system.windows.first { $0.id == left }?.frame.size.width == 520)
     #expect(system.frameWriteCounts[left] == 1)
 
-    // The check runs once the delay has passed; a busy main actor can run
-    // it later.
-    for _ in 0..<150 where system.frameWriteCounts[left, default: 0] < 2 {
-        try await Task.sleep(for: .milliseconds(20))
-    }
+    await controller.releaseVerificationTask?.value
     let leftFrame = try #require(system.windows.first { $0.id == left }?.frame)
     let rightFrame = try #require(system.windows.first { $0.id == right }?.frame)
     #expect(rightFrame.size.width == 500, "right \(rightFrame)")
@@ -1030,6 +1028,70 @@ enum DividerLimitCase: CaseIterable { case straight, junction, linked }
     }
 }
 
+/// Builds a native linked Ghost release whose right window reads back wider
+/// than its new pane, as `minimumWidth` requires.
+@MainActor private func grownGhostRelease(minimumWidth: Double) throws
+    -> (system: FakeWindowSystem, coordinator: WindowCoordinator, controller: DividerOverlayController, baseline: [BTRect]) {
+    _ = NSApplication.shared
+    let system = FakeWindowSystem()
+    system.roundsSizesAndReportsReadback = true
+    let bounds = BTRect(x: -10_000, y: -10_000, width: 800, height: 600)
+    let display = DisplayID(rawValue: "main")
+    system.availableDisplays = [DisplaySnapshot(id: display, frame: bounds, visibleFrame: bounds, isMain: true)]
+    let left = WindowID(rawValue: "left"), right = WindowID(rawValue: "right")
+    system.windows = [
+        WindowSnapshot(id: left, processIdentifier: 1, frame: BTRect(x: bounds.minX, y: bounds.minY, width: 400, height: 600), displayID: display),
+        WindowSnapshot(id: right, processIdentifier: 2, frame: BTRect(x: bounds.minX + 400, y: bounds.minY, width: 400, height: 600), displayID: display),
+    ]
+    let baseline = system.windows.map(\.frame)
+    system.enforcedMinimumWidths[right] = minimumWidth
+    var config = BetterTileConfiguration()
+    config.resizeFeedbackMode = .ghost
+    let coordinator = WindowCoordinator(system: system)
+    let controller = DividerOverlayController(coordinator: coordinator, configuration: config)
+    let boundary = BoundaryDescriptor(
+        id: "native", displayID: display, axis: .vertical, coordinate: bounds.minX + 400,
+        spanStart: bounds.minY, spanEnd: bounds.maxY, beforeWindowIDs: [left], afterWindowIDs: [right]
+    )
+    let start = BTPoint(x: bounds.minX + 400, y: bounds.minY + 80)
+    let interaction = try #require(DividerInteractionResolver.resolve(at: start, in: [boundary], hitWidth: 18, adjacencyTolerance: 6, paneGap: 0))
+    let screen = try #require(NSScreen.screens.first)
+    controller.beginGesture(interaction: interaction, at: start)
+    controller.drag(to: CGPoint(x: start.x + 120, y: screen.frame.maxY - start.y))
+    controller.displayTick()
+    controller.end()
+    return (system, coordinator, controller, baseline)
+}
+
+/// A window the user moves within the delay is not a refusal: the delayed
+/// check ends without moving it back.
+@Test @MainActor func ghostReleaseCheckLeavesAWindowTheUserMoved() async throws {
+    let (system, _, controller, _) = try grownGhostRelease(minimumWidth: 500)
+    defer { controller.hideAndCancel() }
+    let right = WindowID(rawValue: "right")
+    let index = try #require(system.windows.firstIndex { $0.id == right })
+    system.windows[index].frame.origin.y += 40
+    let moved = system.windows[index].frame
+    await controller.releaseVerificationTask?.value
+    #expect(system.windows[index].frame == moved)
+    #expect(system.frameWriteCounts[WindowID(rawValue: "left")] == 1)
+}
+
+/// A refusal that no contained layout fits returns the windows to their
+/// frames from before the gesture, and the release leaves no Restore step.
+@Test @MainActor func ghostReleaseRollbackRemovesItsRestoreStep() async throws {
+    let (system, coordinator, controller, baseline) = try grownGhostRelease(minimumWidth: 700)
+    defer { controller.hideAndCancel() }
+    let left = WindowID(rawValue: "left")
+    await controller.releaseVerificationTask?.value
+    #expect(system.windows.first { $0.id == left }?.frame == baseline[0])
+    system.focusedWindowID = left
+    guard case .unavailable = coordinator.plan(.restore) else {
+        Issue.record("The rolled-back release should leave no Restore step")
+        return
+    }
+}
+
 /// The application took a 350 pt width on the first tick and then applies
 /// further widths late. Two readbacks of the same 350 pt are a kept size,
 /// not a refusal, until the size has held for the confirmation delay.
@@ -1047,6 +1109,10 @@ enum DividerLimitCase: CaseIterable { case straight, junction, linked }
     var config = BetterTileConfiguration()
     config.resizeFeedbackMode = .live
     let controller = DividerOverlayController(coordinator: WindowCoordinator(system: system), configuration: config)
+    // The test sets the refusal clock, so a stalled main thread cannot age
+    // the evidence.
+    var now = 0.0
+    controller.clock = { now }
     let boundary = BoundaryDescriptor(
         id: "native", displayID: display, axis: .vertical, coordinate: bounds.minX + 400,
         spanStart: bounds.minY, spanEnd: bounds.maxY, beforeWindowIDs: [left], afterWindowIDs: [right]
@@ -1054,24 +1120,66 @@ enum DividerLimitCase: CaseIterable { case straight, junction, linked }
     let start = BTPoint(x: bounds.minX + 400, y: bounds.minY + 80)
     let interaction = try #require(DividerInteractionResolver.resolve(at: start, in: [boundary], hitWidth: 18, adjacencyTolerance: 6, paneGap: 0))
     let screen = try #require(NSScreen.screens.first)
-    func drag(_ dx: Double) {
+    func drag(_ dx: Double, at time: Double) {
+        now = time
         controller.drag(to: CGPoint(x: start.x + dx, y: screen.frame.maxY - start.y))
         controller.displayTick()
     }
 
     controller.beginGesture(interaction: interaction, at: start)
     defer { controller.hideAndCancel() }
-    drag(50)
+    drag(50, at: 0)
     #expect(system.windows.first { $0.id == right }?.frame.size.width == 350)
-    system.sizeApplicationDelays[right] = .seconds(5)
-    drag(100)
-    drag(120)
+    system.sizeApplicationDelays[right] = .seconds(60)
+    drag(100, at: 0.02)
+    drag(120, at: 0.1)
     #expect(!controller.dragLimit.isLimited)
-    drag(130)
+    drag(130, at: 0.2)
     #expect(!controller.dragLimit.isLimited)
     // A size still held after the delay is a refusal for this gesture.
-    try await Task.sleep(for: .seconds(WindowMinimumSizeLearner.clampConfirmationDelay + 0.05))
-    drag(140)
+    drag(140, at: 0.02 + WindowMinimumSizeLearner.clampConfirmationDelay)
+    #expect(controller.dragLimit.width)
+}
+
+/// At 120 Hz a 60 Hz application can report one lagging length on two
+/// ticks in a row. A shrink that stopped short is a refusal only when a
+/// tick at least `provenRefusalFloor` later still holds it.
+@Test @MainActor func liveDragNeedsTimeBetweenTwoHeldTicks() throws {
+    _ = NSApplication.shared
+    let system = FakeWindowSystem()
+    let bounds = BTRect(x: -10_000, y: -10_000, width: 800, height: 600)
+    let display = DisplayID(rawValue: "main")
+    system.availableDisplays = [DisplaySnapshot(id: display, frame: bounds, visibleFrame: bounds, isMain: true)]
+    let left = WindowID(rawValue: "left"), right = WindowID(rawValue: "right")
+    system.windows = [
+        WindowSnapshot(id: left, processIdentifier: 1, frame: BTRect(x: bounds.minX, y: bounds.minY, width: 400, height: 600), displayID: display),
+        WindowSnapshot(id: right, processIdentifier: 2, frame: BTRect(x: bounds.minX + 400, y: bounds.minY, width: 400, height: 600), displayID: display),
+    ]
+    system.enforcedMinimumWidths[right] = 340
+    var config = BetterTileConfiguration()
+    config.resizeFeedbackMode = .live
+    let controller = DividerOverlayController(coordinator: WindowCoordinator(system: system), configuration: config)
+    var now = 0.0
+    controller.clock = { now }
+    let boundary = BoundaryDescriptor(
+        id: "native", displayID: display, axis: .vertical, coordinate: bounds.minX + 400,
+        spanStart: bounds.minY, spanEnd: bounds.maxY, beforeWindowIDs: [left], afterWindowIDs: [right]
+    )
+    let start = BTPoint(x: bounds.minX + 400, y: bounds.minY + 80)
+    let interaction = try #require(DividerInteractionResolver.resolve(at: start, in: [boundary], hitWidth: 18, adjacencyTolerance: 6, paneGap: 0))
+    let screen = try #require(NSScreen.screens.first)
+    func drag(_ dx: Double, at time: Double) {
+        now = time
+        controller.drag(to: CGPoint(x: start.x + dx, y: screen.frame.maxY - start.y))
+        controller.displayTick()
+    }
+
+    controller.beginGesture(interaction: interaction, at: start)
+    defer { controller.hideAndCancel() }
+    drag(90, at: 0)
+    drag(95, at: 1.0 / 120)
+    #expect(!controller.dragLimit.isLimited)
+    drag(100, at: DividerOverlayController.provenRefusalFloor)
     #expect(controller.dragLimit.width)
 }
 
@@ -1146,6 +1254,8 @@ enum DividerLimitCase: CaseIterable { case straight, junction, linked }
     config.resizeFeedbackMode = .live
     config.bentoInnerGap = 0
     let controller = DividerOverlayController(coordinator: WindowCoordinator(system: system), configuration: config)
+    // Ticks arrive 60 ms apart, past the floor for a proven refusal.
+    controller.clock = steppingClock()
     controller.bentoStateProvider = { _ in state }
     let boundaries = BentoBoundaryResolver().boundaries(state: state, windows: system.windows, displayID: display, bounds: bounds)
     let start = BTPoint(x: bounds.midX, y: bounds.midY)
@@ -1188,6 +1298,8 @@ enum DividerLimitCase: CaseIterable { case straight, junction, linked }
     var config = BetterTileConfiguration()
     config.resizeFeedbackMode = .live
     let controller = DividerOverlayController(coordinator: WindowCoordinator(system: system), configuration: config)
+    // Ticks arrive 60 ms apart, past the floor for a proven refusal.
+    controller.clock = steppingClock()
     let boundary = BoundaryDescriptor(
         id: "native", displayID: display, axis: .vertical, coordinate: bounds.midX,
         spanStart: bounds.minY, spanEnd: bounds.maxY, beforeWindowIDs: [left], afterWindowIDs: [right]
@@ -1226,6 +1338,8 @@ enum DividerLimitCase: CaseIterable { case straight, junction, linked }
     var config = BetterTileConfiguration()
     config.resizeFeedbackMode = .live
     let controller = DividerOverlayController(coordinator: WindowCoordinator(system: system), configuration: config)
+    // Ticks arrive 60 ms apart, past the floor for a proven refusal.
+    controller.clock = steppingClock()
     let boundary = BoundaryDescriptor(
         id: "native", displayID: display, axis: .vertical, coordinate: bounds.midX,
         spanStart: bounds.minY, spanEnd: bounds.maxY, beforeWindowIDs: [left], afterWindowIDs: [right]
@@ -1373,6 +1487,8 @@ func liveDividerReleaseRecomputesANewlyLearnedMinimum(height: Bool) throws {
     var config = BetterTileConfiguration()
     config.resizeFeedbackMode = .live
     let controller = DividerOverlayController(coordinator: WindowCoordinator(system: system), configuration: config)
+    // Ticks arrive 60 ms apart, past the floor for a proven refusal.
+    controller.clock = steppingClock()
     defer { controller.hideAndCancel() }
     let boundary = BoundaryDescriptor(id: "native", displayID: display, axis: height ? .horizontal : .vertical,
         coordinate: height ? bounds.midY : bounds.midX,
@@ -1500,3 +1616,12 @@ func aLiveDragContinuesAfterAnApplicationStopsAnsweringForAWhile(midWrite: Bool)
     #expect(abs((system.windows.first { $0.id == right }?.frame.minX ?? 0) - (bounds.midX - 80)) < 1)
 }
 
+/// A refusal clock that advances 60 ms on every reading, as live ticks
+/// spaced 60 ms apart would. Each tick reads it once.
+@MainActor func steppingClock(step: Double = 0.06) -> () -> Double {
+    var now = 0.0
+    return {
+        now += step
+        return now
+    }
+}

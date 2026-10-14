@@ -163,21 +163,27 @@ user is resizing.
 During a Live Resize, a window that holds a size larger than requested gives
 a minimum for that gesture only. Each readback is compared with the size
 before its write. An axis that shrank and stopped short of its request is a
-refusal once the next tick still holds it. An axis that kept its size is a
-refusal only after it held for 0.25 s, because the application can still be
-applying an earlier size.
+refusal once a later tick, at least 50 ms later, still holds it. At 120 Hz a
+60 Hz application can report one lagging length on two ticks in a row; 50 ms
+spans three of its frames. An axis that kept its size is a refusal only after
+it held for 0.25 s, because the application can still be applying an earlier
+size. The persistent learner reads live ticks the same way: their readbacks
+often trail the requests by a few ticks, so a shrink is measured from the
+smaller of the previous readback and the previous tick's request.
 
 A Ghost Preview release commits the previewed layout and reads every window
 back. A window that shrank toward its size and stopped short of it gives a
 measured minimum, and the release solves the layout again with it, at most
 twice. Each commit is compared with the frames before it. A window that kept
 its size or grew gives no evidence at once. A Bento release leaves it to
-settlement. A native linked release has no settlement, so BetterTile reads
-its windows again 0.25 s later. A size still held then is a refusal: the
-release is solved again once with it, if the result stays inside the display
-without overlaps. Otherwise the windows return to their frames from before the
-gesture. Neither path adds an Undo entry, and a new gesture or another write
-to the windows cancels the check. Undo history records the
+settlement. A native linked release, Ghost Preview or Live Resize, has no
+settlement, so BetterTile reads its windows again 0.25 s later. A size still
+held then, at the same origin, is a refusal: the release is solved again once
+with it, if the result stays inside the display without overlaps and above
+every minimum. Otherwise the windows return to their frames from before the
+gesture, and the release's Restore step is removed. The correction adds no
+Restore step. A new gesture, another write to the windows, or a window that
+moved, for example by the user, ends the check. Undo history records the
 release once, after any correction. If a correction fails or is cancelled,
 every window returns to its frame from before the gesture.
 

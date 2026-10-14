@@ -743,6 +743,22 @@ func anEarlySettledFrameLeavesAPendingClampPending(settledAfter: Double) {
     #expect(settled.learnedSizes[readbackID] == BTSize(width: 600, height: 0))
 }
 
+/// A readback that lags behind the previous request is measured from that
+/// request: it lies above it, so it is no clamp.
+@Test func aReadbackAboveThePreviousRequestIsNoClamp() {
+    var learner = WindowMinimumSizeLearner()
+    let lagging = learner.observeWriteReadback(windowID: readbackID, requested: BTRect(x: 350, y: 0, width: 650, height: 600),
+        previous: BTRect(x: 200, y: 0, width: 800, height: 600), previousRequest: BTSize(width: 700, height: 600),
+        actual: BTRect(x: 350, y: 0, width: 750, height: 600), now: 0)
+    #expect(!lagging)
+    #expect(learner.learnedSizes.isEmpty)
+    let clamped = learner.observeWriteReadback(windowID: readbackID, requested: BTRect(x: 400, y: 0, width: 600, height: 600),
+        previous: BTRect(x: 350, y: 0, width: 750, height: 600), previousRequest: BTSize(width: 650, height: 600),
+        actual: BTRect(x: 400, y: 0, width: 620, height: 600), now: 0)
+    #expect(clamped)
+    #expect(learner.learnedSizes[readbackID] == BTSize(width: 620, height: 0))
+}
+
 /// A newer write replaces the request a candidate belonged to, and a
 /// snapshot of another size disproves it.
 @Test func aNewerWriteOrAnotherSizeDropsAPendingClamp() {

@@ -259,12 +259,19 @@ public struct WindowMinimumSizeLearner: Sendable {
     /// does, or the window can still report its size from another display.
     /// That axis becomes a pending clamp; see `confirmClampCandidate`. A
     /// requested size that was accepted lowers an older, larger bound.
+    ///
+    /// `previousRequest` is the size the window's previous write asked for,
+    /// when that write may still be applied late, as during a live gesture.
+    /// A shrink is then measured from the smaller of the two on each axis: a
+    /// readback that lags behind the requests and still lies above the
+    /// previous request proves nothing.
     @discardableResult
     public mutating func observeWriteReadback(
         windowID: WindowID,
         application: String? = nil,
         requested: BTRect,
         previous: BTRect?,
+        previousRequest: BTSize? = nil,
         actual: BTRect,
         now: Double,
         tolerance: Double = 2
@@ -274,7 +281,12 @@ public struct WindowMinimumSizeLearner: Sendable {
         guard WriteReadbackPolicy.readbackProvesWrite(
             requested: requested, previous: previous, actual: actual, tolerance: tolerance
         ), let previous else { return false }
-        let kept = measure(windowID: windowID, requested: requested.size, previous: previous.size,
+        var before = previous.size
+        if let previousRequest {
+            before.width = min(before.width, previousRequest.width)
+            before.height = min(before.height, previousRequest.height)
+        }
+        let kept = measure(windowID: windowID, requested: requested.size, previous: before,
                            actual: actual.size, tolerance: tolerance)
         if kept.width || kept.height {
             clampCandidates[windowID] = ClampCandidate(
