@@ -11,10 +11,11 @@ private func window(_ name: String, minimumWidth: Double = 120) -> WindowSnapsho
     )
 }
 
-/// A new window that no pane can show now still fits the work area, so it
-/// waits as a hidden tab of the active pane instead of floating. Before, it
-/// floated (#145), and nothing ever brought it back.
-@Test func aNewWindowThatFitsNoPaneNowWaitsAsAHiddenTab() throws {
+/// A new window too wide for every pane, but not for the work area, floats
+/// as an automatic float; the panes keep their sizes and selections. A
+/// hidden tab here would overflow its pane. Changing to One Pane makes room,
+/// and returning it makes it the selected tab.
+@Test func aWindowTooWideForEveryPaneFloatsUntilALayoutHasRoom() throws {
     var state = TabbedLayoutState(preset: .columns)
     let small = WindowID(rawValue: "small"), peer = WindowID(rawValue: "peer"), big = WindowID(rawValue: "big")
     state.reconcile(windowIDs: [small, peer], removed: [], focused: nil)
@@ -24,16 +25,22 @@ private func window(_ name: String, minimumWidth: Double = 120) -> WindowSnapsho
     let windows = [window("small"), window("peer"), window("big", minimumWidth: 950)]
 
     let adoptions = state.reconcile(windowIDs: [small, peer, big], removed: [], fittingIn: arrivalBounds, windows: windows)
-    #expect(adoptions.map(\.outcome) == [.hiddenFallback(state.panes[0].id)])
+    #expect(adoptions.map(\.outcome) == [.floated(.fitsNoPane)])
     #expect(adoptions.first?.trials.map(\.result) == [.doesNotFit, .doesNotFit])
-    #expect(state.pane(containing: big)?.id == state.panes[0].id)
+    #expect(!state.windowIDs.contains(big))
+    #expect(state.automaticallyFloatingWindowIDs == [big])
     #expect(state.panes[0].selected == small)
-    #expect(!state.floatingWindowIDs.contains(big))
     #expect(state.frames(in: arrivalBounds) == framesBefore)
-    #expect((try? state.placements(in: arrivalBounds, windows: windows)) != nil)
     let settled = state
     state.reconcile(windowIDs: [small, peer, big], removed: [], fittingIn: arrivalBounds, windows: windows)
     #expect(state == settled)
+
+    state.applyPreset(.single)
+    let returned = state.returnAutomaticFloats(state.automaticallyFloatingWindowIDs, fittingIn: arrivalBounds,
+                                               windows: windows, selecting: true)
+    #expect(returned.map(\.outcome) == [.selected(state.panes[0].id)])
+    #expect(state.panes[0].selected == big)
+    #expect(state.floatingWindowIDs.isEmpty)
 }
 
 /// Only a window that no pane could ever show floats: a fixed-size window,
@@ -59,9 +66,10 @@ func aWindowLargerThanTheWorkAreaWithAProvenMinimumFloats(source: MinimumSizeSou
 }
 
 /// A minimum borrowed from another window of the application, or the
-/// default, proves nothing about this window: it waits as a hidden tab.
+/// default, proves nothing about this window. It still floats, but the log
+/// says only that no pane of this layout fits it.
 @Test(arguments: [MinimumSizeSource.seed, .default])
-func aWindowLargerThanTheWorkAreaWithAnUnprovenMinimumWaitsAsAHiddenTab(source: MinimumSizeSource) throws {
+func aWindowLargerThanTheWorkAreaWithAnUnprovenMinimumFloatsForThisLayout(source: MinimumSizeSource) throws {
     var state = TabbedLayoutState(preset: .single)
     let small = WindowID(rawValue: "small"), huge = WindowID(rawValue: "huge")
     state.reconcile(windowIDs: [small], removed: [], focused: nil)
@@ -71,15 +79,14 @@ func aWindowLargerThanTheWorkAreaWithAnUnprovenMinimumWaitsAsAHiddenTab(source: 
 
     let adoptions = state.reconcile(windowIDs: [small, huge], removed: [], fittingIn: arrivalBounds,
                                     windows: [window("small"), tooTall])
-    #expect(adoptions.map(\.outcome) == [.hiddenFallback(state.panes[0].id)])
-    #expect(state.hiddenWindowIDs == [huge])
-    #expect(state.floatingWindowIDs.isEmpty)
+    #expect(adoptions.map(\.outcome) == [.floated(.fitsNoPane)])
+    #expect(state.automaticallyFloatingWindowIDs == [huge])
 }
 
-/// A fixed-size window keeps its own size, so it floats only when that size
-/// is larger than the work area below the strip; otherwise it waits hidden.
+/// A fixed-size window keeps its own size. One that fits no pane floats; the
+/// log says whether it is larger than the work area below the strip.
 @Test(arguments: [false, true])
-func aFixedSizeWindowFloatsOnlyWhenLargerThanTheWorkArea(larger: Bool) throws {
+func aFixedSizeWindowThatFitsNoPaneFloats(larger: Bool) throws {
     var state = TabbedLayoutState(preset: .columns)
     let a = WindowID(rawValue: "a"), b = WindowID(rawValue: "b"), fixed = WindowID(rawValue: "fixed")
     state.reconcile(windowIDs: [a, b], removed: [], focused: nil)
@@ -91,13 +98,8 @@ func aFixedSizeWindowFloatsOnlyWhenLargerThanTheWorkArea(larger: Bool) throws {
 
     let adoptions = state.reconcile(windowIDs: [a, b, fixed], removed: [], fittingIn: arrivalBounds,
                                     windows: [window("a", minimumWidth: 400), window("b", minimumWidth: 400), calculator])
-    if larger {
-        #expect(adoptions.map(\.outcome) == [.floated(.fixedSizeLargerThanWorkArea)])
-        #expect(state.automaticallyFloatingWindowIDs == [fixed])
-    } else {
-        #expect(adoptions.map(\.outcome) == [.hiddenFallback(state.panes[0].id)])
-        #expect(state.hiddenWindowIDs == [fixed])
-    }
+    #expect(adoptions.map(\.outcome) == [.floated(larger ? .fixedSizeLargerThanWorkArea : .fitsNoPane)])
+    #expect(state.automaticallyFloatingWindowIDs == [fixed])
 }
 
 /// One Pane can show any window that fits the work area, so it never
@@ -234,29 +236,30 @@ private func floatingState() -> (TabbedLayoutState, [WindowSnapshot]) {
     #expect(state.automaticallyFloatingWindowIDs.isEmpty)
 }
 
-/// A hidden tab larger than its pane, resizable or fixed-size, is placed so
-/// its whole size stays inside the work area, where the curtain covers it.
-@Test(arguments: [true, false])
-func aHiddenTabLargerThanItsPaneStaysInsideTheWorkArea(resizable: Bool) throws {
-    var state = TabbedLayoutState(preset: .columns)
-    let a = WindowID(rawValue: "a"), b = WindowID(rawValue: "b"), big = WindowID(rawValue: "big")
-    state.reconcile(windowIDs: [a, b], removed: [], focused: nil)
-    state.move(b, to: state.panes[1].id)
-    var large = window("big")
-    if resizable {
-        large.constraints.minimumSize = BTSize(width: 900, height: 700)
-    } else {
-        large.constraints.isResizable = false
-        large.frame = BTRect(x: 0, y: 0, width: 900, height: 700)
-    }
-    var windows = [window("a"), window("b"), large]
-    windows[1].constraints.minimumSize = BTSize(width: 120, height: 80)
-    state.reconcile(windowIDs: [a, b, big], removed: [], fittingIn: arrivalBounds, windows: windows)
-    state.select(b)
-    #expect(state.pane(containing: big)?.id == state.panes[1].id)
-    #expect(state.hiddenWindowIDs == [big])
-    let placement = try #require(try state.placements(in: arrivalBounds, windows: windows).first { $0.windowID == big })
-    let size = resizable ? BTSize(width: 900, height: 700) : placement.frame.size
-    #expect(PlacementBounds.isContained(BTRect(origin: placement.frame.origin, size: size), in: arrivalBounds),
-            "\(placement.frame)")
+/// A layout change returns an automatic float as the selected tab of the
+/// pane that can show it, even when that is not the active pane; other
+/// returns add it there as a hidden tab.
+@Test(arguments: [false, true])
+func aReturnedFloatCanBecomeTheSelectedTabOfAnotherPane(selecting: Bool) throws {
+    let a = WindowID(rawValue: "a"), b = WindowID(rawValue: "b"), c = WindowID(rawValue: "c")
+    let locked = UUID()
+    let tree = BentoLayoutState(root: .partition(BentoPartition(
+        axis: .vertical, children: [.leaf(a), .leaf(b), .leaf(c)], ratios: [0.3, 0.35, 0.35],
+        boundaryIDs: [locked, UUID()], lockedBoundaryIDs: [locked]
+    )))
+    var state = try #require(TabbedLayoutState(adopting: tree))
+    state.select(a)
+    let new = WindowID(rawValue: "new")
+    var windows = [window("a"), window("b"), window("c"), window("new", minimumWidth: 990)]
+    state.reconcile(windowIDs: [a, b, c, new], removed: [], fittingIn: arrivalBounds, windows: windows)
+    try #require(state.automaticallyFloatingWindowIDs == [new])
+    windows[3].constraints.minimumSize.width = 400
+
+    let returned = state.returnAutomaticFloats([new], fittingIn: arrivalBounds, windows: windows, selecting: selecting)
+    let pane = try #require(state.pane(containing: b)?.id)
+    #expect(returned.map(\.outcome) == [selecting ? .selected(pane) : .hidden(pane)])
+    #expect(state.pane(containing: new)?.id == pane)
+    #expect(state.panes.first { $0.id == pane }?.selected == (selecting ? new : b))
+    #expect(state.activeWindowID == a)
+    #expect((try? state.placements(in: arrivalBounds, windows: windows)) != nil)
 }

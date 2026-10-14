@@ -52,9 +52,10 @@ windows look correct.
   'subsystem == "com.lmckarma.BetterTile" AND category == "Tabbed"'`. Each
   window that joins, returns, or floats logs its frame, its resizability and
   minimum with their sources, and the result for each pane it tried. A window
-  that fits the work area never floats; it joins as a selected or hidden tab.
-  Repair Tabbed returns the windows Tabbed floated on its own and keeps the
-  windows you floated.
+  that no pane can show floats. Change Layout, removing a pane, or a larger
+  work area returns it as a selected tab when a pane can show it. Repair
+  Tabbed returns the windows Tabbed floated on its own and keeps the windows
+  you floated.
 - For a hung application, put a window of a test application, such as
   TextEdit, in a Bento layout. Stop it with `kill -STOP <pid>`. Drag dividers
   next to its pane, snap other windows, and drag windows by their title bars.

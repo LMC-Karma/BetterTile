@@ -110,13 +110,11 @@ can float a window out of Bento or out of a Tabbed pane. BetterTile floats
 popup windows, such as file pickers and dialogs, and windows that appear on
 several Spaces. On a Bento desktop it also floats windows that cannot be
 resized or moved, and a seventh window. On a Tabbed desktop it floats a window
-that no pane could ever show: a fixed-size window, or a window with a measured
-or reported minimum size, that is larger than the work area below the tab
-strip. It also floats a window that fits no pane while every pane is empty,
-because no tab can hide it. Any other window that fits no pane waits as a
-hidden tab. A floating window keeps its own frame until the user returns it to
-the layout. Repair Tabbed returns the windows that BetterTile floated on its
-own; the windows the user floated stay floating.
+that no pane can show, even after boundaries adapt. A floating window keeps
+its own frame until the user returns it to the layout. A window that
+BetterTile floated on its own returns to a pane when the pane layout changes
+and a pane can show it, and when the user chooses Repair Tabbed. The windows
+the user floated stay floating.
 
 ## Focus mode
 

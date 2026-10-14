@@ -4,15 +4,15 @@ import BetterTileCore
 import Testing
 @testable import BetterTileApp
 
-/// A window that no pane could ever show, because its reported minimum is
-/// taller than the work area below the tab strip, floats at its own size,
-/// moved fully onto the work area, and the pill says why it is not a tab.
+/// A window too wide for every pane, but not for the display, floats at its
+/// own size as an automatic float, moved fully onto the work area. The pill
+/// names the window by its title, though Peer belongs to the same app.
 @Test @MainActor func aNewWindowThatFitsNoPaneFloatsOnScreenAndSaysSo() async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
     let peer = WindowID(rawValue: "peer")
     system.windows.append(WindowSnapshot(
-        id: peer, processIdentifier: 900_011, title: "Peer",
+        id: peer, processIdentifier: 900_011, bundleIdentifier: "com.apple.finder", title: "Peer",
         frame: BTRect(x: 500, y: 0, width: 500, height: 800), displayID: system.mainDisplay.id
     ))
     let model = makeModel(system: system)
@@ -27,11 +27,10 @@ import Testing
 
     let big = WindowID(rawValue: "big")
     var window = WindowSnapshot(
-        id: big, processIdentifier: 900_012, title: "Big",
-        frame: BTRect(x: 300, y: 100, width: 600, height: 790), displayID: system.mainDisplay.id
+        id: big, processIdentifier: 900_012, bundleIdentifier: "com.apple.finder", title: "Big",
+        frame: BTRect(x: 300, y: 100, width: 950, height: 500), displayID: system.mainDisplay.id
     )
-    window.constraints.minimumSize = BTSize(width: 600, height: 780)
-    window.constraints.minimumSizeSource = .hint
+    window.constraints.minimumSize = BTSize(width: 950, height: 400)
     system.windows.append(window)
     system.eventHandler?(WindowSystemEvent(kind: .created, windowID: big, processIdentifier: 900_012))
 
@@ -44,15 +43,15 @@ import Testing
         return frame.map { PlacementBounds.isContained($0, in: system.mainDisplay.visibleFrame) } == true
     }
     #expect(placed, "\(system.windows.first { $0.id == big }?.frame as Any)")
-    #expect(system.windows.first { $0.id == big }?.frame.size == BTSize(width: 600, height: 790))
+    #expect(system.windows.first { $0.id == big }?.frame.size == BTSize(width: 950, height: 500))
     #expect(model.activeTabbedState?.automaticallyFloatingWindowIDs == [big])
 }
 
 /// A new window whose minimum shows only when it refuses its pane's size is
 /// adopted again with that minimum. No pane can show it beside the other
-/// pane, but it fits the work area, so it waits as a hidden tab instead of
-/// floating (#145 floated it), and no refusal is reported.
-@Test @MainActor func aNewWindowThatRefusesItsPaneIsAdoptedAgainAsAHiddenTab() async throws {
+/// pane, so it floats automatically, and the pill says so instead of
+/// reporting the refused size.
+@Test @MainActor func aNewWindowThatRefusesItsPaneIsAdoptedAgainAndFloats() async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
     let peer = WindowID(rawValue: "peer")
@@ -88,13 +87,15 @@ import Testing
     #expect(await waitFor(timeout: .seconds(3)) {
         if model.lastActionFeedback != feedback, let message = model.lastActionFeedback?.message,
            shown.last != message { shown.append(message) }
-        return model.activeTabbedState?.hiddenWindowIDs.contains(big) == true
+        return model.activeTabbedState?.automaticallyFloatingWindowIDs == [big]
+            && model.lastActionFeedback?.message == "Big is floating"
     }, "\(model.lastActionFeedback as Any) \(model.activeTabbedState?.panes.map(\.tabs) as Any)")
-    #expect(model.activeTabbedState?.pane(containing: big)?.id == model.activeTabbedState?.panes[0].id)
-    #expect(model.activeTabbedState?.floatingWindowIDs.isEmpty == true)
-    try await Task.sleep(for: .milliseconds(300))
-    #expect(shown.isEmpty, "\(shown)")
+    #expect(shown == ["Big is floating"], "\(shown)")
+    #expect(model.activeTabbedState?.windowIDs.contains(big) == false)
     #expect(model.statusMessage == nil)
+    #expect(await waitFor {
+        system.windows.first { $0.id == big }.map { PlacementBounds.isContained($0.frame, in: system.mainDisplay.visibleFrame) } == true
+    })
 }
 
 /// Two windows that float in the same sweep are both named in one pill.
@@ -440,52 +441,17 @@ private func addFalselyMeasuredWindow(_ name: String, pid: Int32, to system: Fak
     #expect(model.activeTabbedState?.automaticallyFloatingWindowIDs == [overflow])
 }
 
-/// A hidden tab whose minimum is larger than its pane but fits the work
-/// area stays inside the work area, where the curtain covers it.
-@Test @MainActor func aHiddenTabLargerThanItsPaneStaysUnderTheCurtain() async throws {
-    _ = NSApplication.shared
-    let system = FakeAppWindowSystem()
-    let peer = WindowID(rawValue: "peer")
-    system.windows.append(WindowSnapshot(id: peer, processIdentifier: 930_301, title: "Peer",
-        frame: BTRect(x: 500, y: 0, width: 500, height: 800), displayID: system.mainDisplay.id))
-    let model = makeModel(system: system)
-    defer { model.shutdown() }
-    model.configuration.defaultTabbedPreset = .columns
-    model.setActiveMode(.tabbed)
-    try #require(await waitFor { model.activeTabbedState?.windowIDs.count == 2 })
-    let right = try #require(model.activeTabbedState?.panes[1].id)
-    model.performTabbed(.move(peer, pane: right, index: nil))
-    try #require(await waitFor { model.activeTabbedState?.panes[1].selected == peer })
-    model.performTabbed(.select(peer))
-    try await Task.sleep(for: .milliseconds(300))
-
-    let wide = WindowID(rawValue: "wide")
-    var window = WindowSnapshot(id: wide, processIdentifier: 930_302, title: "Wide",
-        frame: BTRect(x: 100, y: 100, width: 950, height: 500), displayID: system.mainDisplay.id)
-    window.constraints.minimumSize = BTSize(width: 950, height: 300)
-    system.windows.append(window)
-    system.enforcedMinimumWidths[wide] = 950
-    system.eventHandler?(WindowSystemEvent(kind: .created, windowID: wide, processIdentifier: 930_302))
-
-    #expect(await waitFor { model.activeTabbedState?.hiddenWindowIDs.contains(wide) == true })
-    #expect(await waitFor { system.requestedFrames[wide]?.isEmpty == false })
-    let frame = try #require(system.windows.first { $0.id == wide }?.frame)
-    #expect(PlacementBounds.isContained(frame, in: system.mainDisplay.visibleFrame), "\(frame)")
-}
-
 /// Selecting a hidden tab that is larger than its pane grows the pane when
-/// the other pane can give the room. When it cannot, the pill names the
-/// problem and the previous selection stays; nothing overlaps.
+/// the other pane can give the room. When the other windows have since grown
+/// and it cannot, the pill names the problem and the previous selection
+/// stays; nothing overlaps.
 @Test(arguments: [false, true]) @MainActor
 func selectingALargeHiddenTabGrowsItsPaneOrKeepsTheSelection(impossible: Bool) async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
     let peer = WindowID(rawValue: "peer")
-    var peerWindow = WindowSnapshot(id: peer, processIdentifier: 930_401, title: "Peer",
-        frame: BTRect(x: 500, y: 0, width: 500, height: 800), displayID: system.mainDisplay.id)
-    peerWindow.constraints.minimumSize = BTSize(width: impossible ? 400 : 120, height: 80)
-    system.windows.append(peerWindow)
-    system.windows[0].constraints.minimumSize = BTSize(width: impossible ? 400 : 120, height: 80)
+    system.windows.append(WindowSnapshot(id: peer, processIdentifier: 930_401, title: "Peer",
+        frame: BTRect(x: 500, y: 0, width: 500, height: 800), displayID: system.mainDisplay.id))
     let model = makeModel(system: system)
     defer { model.shutdown() }
     model.configuration.defaultTabbedPreset = .columns
@@ -503,16 +469,19 @@ func selectingALargeHiddenTabGrowsItsPaneOrKeepsTheSelection(impossible: Bool) a
     window.constraints.minimumSize = BTSize(width: 700, height: 300)
     system.windows.append(window)
     system.eventHandler?(WindowSystemEvent(kind: .created, windowID: wide, processIdentifier: 930_402))
-    if !impossible {
-        // It fits the active pane once the divider moves, so it arrives
-        // selected; showing the other tab again hides it.
-        try #require(await waitFor { model.activeTabbedState?.panes[0].selected == wide })
-        try await Task.sleep(for: .milliseconds(300))
-        model.performTabbed(.select(first))
-    }
+    // It fits the active pane once the divider moves, so it arrives
+    // selected; showing the other tab again hides it.
+    try #require(await waitFor { model.activeTabbedState?.panes[0].selected == wide })
+    try await Task.sleep(for: .milliseconds(300))
+    model.performTabbed(.select(first))
     try #require(await waitFor { model.activeTabbedState?.hiddenWindowIDs.contains(wide) == true })
     #expect(model.activeTabbedState?.pane(containing: wide)?.id == model.activeTabbedState?.panes[0].id)
     try await Task.sleep(for: .milliseconds(300))
+    if impossible {
+        for index in system.windows.indices where system.windows[index].id != wide {
+            system.windows[index].constraints.minimumSize = BTSize(width: 400, height: 80)
+        }
+    }
 
     model.performTabbed(.select(wide))
 
@@ -654,4 +623,129 @@ func theLaterCheckWaitsForABusyDisplayOrGivesUp(staysBusy: Bool) async throws {
     #expect(model.lastActionFeedback == feedback)
     #expect(model.statusMessage == nil)
     #expect(model.activeTabbedState?.automaticallyFloatingWindowIDs == [tall])
+}
+
+/// A window 950 pt wide at least: too wide for a pane beside another, but
+/// not for the 1000-pt work area.
+@MainActor
+private func addWideWindow(_ name: String, pid: Int32, to system: FakeAppWindowSystem) -> WindowID {
+    let id = WindowID(rawValue: name)
+    var window = WindowSnapshot(id: id, processIdentifier: pid, title: name.capitalized,
+                                frame: BTRect(x: 20, y: 100, width: 950, height: 500), displayID: system.mainDisplay.id)
+    window.constraints.minimumSize = BTSize(width: 950, height: 300)
+    system.windows.append(window)
+    system.eventHandler?(WindowSystemEvent(kind: .created, windowID: id, processIdentifier: pid))
+    return id
+}
+
+/// Changing the layout to One Pane makes room for an automatic float, so it
+/// returns as the selected tab without a repair. A window the user floated
+/// stays floating.
+@Test @MainActor func changingToOnePaneReturnsAnAutomaticFloatAndKeepsUserFloats() async throws {
+    _ = NSApplication.shared
+    let system = FakeAppWindowSystem()
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    // The one later check must not be what brings it in.
+    model.tabbedAutomaticFloatRetryDelay = .seconds(60)
+    model.configuration.defaultTabbedPreset = .columns
+    model.setActiveMode(.tabbed)
+    try #require(await waitFor { model.activeTabbedState?.windowIDs.count == 1 })
+    let user = WindowID(rawValue: "user")
+    system.windows.append(WindowSnapshot(id: user, processIdentifier: 931_001, title: "User",
+                                         frame: BTRect(x: 50, y: 50, width: 400, height: 300), displayID: system.mainDisplay.id))
+    system.eventHandler?(WindowSystemEvent(kind: .created, windowID: user, processIdentifier: 931_001))
+    try #require(await waitFor { model.activeTabbedState?.windowIDs.contains(user) == true })
+    try await Task.sleep(for: .milliseconds(300))
+    model.performTabbed(.float(user))
+    try #require(await waitFor { model.activeTabbedState?.floatingWindowIDs.contains(user) == true })
+    try await Task.sleep(for: .milliseconds(300))
+    let wide = addWideWindow("wide", pid: 931_002, to: system)
+    try #require(await waitFor { model.activeTabbedState?.automaticallyFloatingWindowIDs == [wide] })
+    try await Task.sleep(for: .milliseconds(300))
+
+    model.performTabbed(.preset(.single))
+
+    #expect(await waitFor { model.activeTabbedState?.panes.first?.selected == wide },
+            "\(model.activeTabbedState?.panes.map(\.tabs) as Any)")
+    #expect(model.activeTabbedState?.floatingWindowIDs == [user])
+    let content = TabbedLayoutState.contentFrame(system.mainDisplay.visibleFrame)
+    #expect(await waitFor { system.windows.first { $0.id == wide }?.frame == content })
+}
+
+/// Removing the empty pane beside an automatic float's only possible pane
+/// returns it as that pane's selected tab.
+@Test @MainActor func removingAPaneReturnsAnAutomaticFloat() async throws {
+    _ = NSApplication.shared
+    let system = FakeAppWindowSystem()
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    model.tabbedAutomaticFloatRetryDelay = .seconds(60)
+    model.configuration.defaultTabbedPreset = .columns
+    model.setActiveMode(.tabbed)
+    try #require(await waitFor { model.activeTabbedState?.windowIDs.count == 1 })
+    try await Task.sleep(for: .milliseconds(300))
+    let wide = addWideWindow("wide", pid: 931_101, to: system)
+    try #require(await waitFor { model.activeTabbedState?.automaticallyFloatingWindowIDs == [wide] })
+    try await Task.sleep(for: .milliseconds(300))
+    let empty = try #require(model.activeTabbedState?.panes.first { $0.tabs.isEmpty }?.id)
+
+    model.performTabbed(.removePane(empty))
+
+    #expect(await waitFor { model.activeTabbedState?.panes.first?.selected == wide },
+            "\(model.activeTabbedState?.panes.map(\.tabs) as Any)")
+    #expect(model.activeTabbedState?.floatingWindowIDs.isEmpty == true)
+}
+
+/// A work area that grows, for example when the Dock hides, returns an
+/// automatic float that now fits.
+@Test @MainActor func aLargerWorkAreaReturnsAnAutomaticFloat() async throws {
+    _ = NSApplication.shared
+    let system = FakeAppWindowSystem()
+    system.availableDisplays[0].visibleFrame.size.width = 800
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    model.tabbedAutomaticFloatRetryDelay = .seconds(60)
+    model.configuration.defaultTabbedPreset = .single
+    model.setActiveMode(.tabbed)
+    try #require(await waitFor { model.activeTabbedState?.windowIDs.count == 1 })
+    try await Task.sleep(for: .milliseconds(300))
+    let wide = addWideWindow("wide", pid: 931_201, to: system)
+    try #require(await waitFor { model.activeTabbedState?.automaticallyFloatingWindowIDs == [wide] })
+    try await Task.sleep(for: .milliseconds(300))
+
+    system.availableDisplays[0].visibleFrame.size.width = 1000
+    system.eventHandler?(WindowSystemEvent(kind: .created, windowID: wide, processIdentifier: 931_201))
+
+    #expect(await waitFor { model.activeTabbedState?.panes.first?.selected == wide },
+            "\(model.activeTabbedState?.panes.map(\.tabs) as Any)")
+    #expect(model.activeTabbedState?.floatingWindowIDs.isEmpty == true)
+}
+
+/// A layout change that still leaves no room keeps the automatic float and
+/// says nothing: the user did not ask for the check.
+@Test @MainActor func aLayoutChangeWithoutRoomKeepsTheFloatSilently() async throws {
+    _ = NSApplication.shared
+    let system = FakeAppWindowSystem()
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    model.tabbedAutomaticFloatRetryDelay = .seconds(60)
+    model.configuration.defaultTabbedPreset = .columns
+    model.setActiveMode(.tabbed)
+    try #require(await waitFor { model.activeTabbedState?.windowIDs.count == 1 })
+    try await Task.sleep(for: .milliseconds(300))
+    let wide = addWideWindow("wide", pid: 931_301, to: system)
+    try #require(await waitFor { model.lastActionFeedback?.message == "Wide is floating" })
+    try await Task.sleep(for: .milliseconds(300))
+    let feedback = model.lastActionFeedback
+    let writes = system.frameWriteCounts[wide, default: 0]
+
+    model.performTabbed(.preset(.grid))
+    try #require(await waitFor { model.activeTabbedState?.panes.count == 4 })
+    try await Task.sleep(for: .milliseconds(500))
+
+    #expect(model.activeTabbedState?.automaticallyFloatingWindowIDs == [wide])
+    #expect(system.frameWriteCounts[wide, default: 0] == writes)
+    #expect(model.lastActionFeedback == feedback)
+    #expect(model.statusMessage == nil)
 }

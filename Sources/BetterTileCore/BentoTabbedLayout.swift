@@ -484,9 +484,8 @@ public struct TabbedLayoutState: Hashable, Sendable {
     /// from another Space, joins as the selected tab of the active pane when
     /// it fits there, moving boundaries only as far as it needs. Otherwise it
     /// joins, as a hidden tab, the other pane that can show it with the least
-    /// change to the panes, as is or after boundaries adapt. When no pane can
-    /// show it, it still joins the active pane as a hidden tab. Only a window
-    /// that no pane could ever show floats; see `floatReason`.
+    /// change to the panes, as is or after boundaries adapt. A window that no
+    /// pane can show floats automatically.
     /// - Returns: How each new window joined, for diagnostics.
     @discardableResult
     public mutating func reconcile(
@@ -505,38 +504,39 @@ public struct TabbedLayoutState: Hashable, Sendable {
     /// Takes windows that float automatically back into the panes, as new
     /// windows join. A window that still fits no pane at all floats again,
     /// automatically. User-floated windows are not affected.
+    /// - Parameter selecting: A window that joins a pane other than the
+    ///   active one becomes its selected tab instead of a hidden tab.
     /// - Returns: How each window joined, for diagnostics.
     @discardableResult
     public mutating func returnAutomaticFloats(
         _ ids: Set<WindowID>,
         fittingIn bounds: BTRect,
-        windows: [WindowSnapshot]
+        windows: [WindowSnapshot],
+        selecting: Bool = false
     ) -> [TabbedAdoption] {
         let present = Set(windows.map(\.id))
         return ids.intersection(automaticallyFloatingWindowIDs).intersection(present).sorted().map { id in
             groups.forgetFloating(id)
             automaticFloats.remove(id)
-            return adopt(id, fittingIn: bounds, windows: windows)
+            return adopt(id, fittingIn: bounds, windows: windows, selecting: selecting)
         }
     }
 
-    /// Why a window that no pane can show floats instead of joining as a
-    /// hidden tab, or nil when it can wait as a hidden tab. A hidden tab
-    /// needs no room, but selecting it later needs a pane that can show it,
-    /// and the largest possible pane is the whole work area below the strip.
-    /// A fixed-size window larger than that floats. So does a resizable
-    /// window whose minimum is larger and proven by the window or its
-    /// application; a default or another window's seed is not enough.
-    public static func floatReason(for window: WindowSnapshot?, in bounds: BTRect) -> TabbedAdoption.FloatReason? {
-        guard let window else { return nil }
+    /// Why a window that no pane can show floats, for the decision log. A
+    /// fixed-size window, or a proven minimum, larger than the work area
+    /// below the strip fits no pane of any layout.
+    public static func floatReason(for window: WindowSnapshot?, in bounds: BTRect) -> TabbedAdoption.FloatReason {
+        guard let window else { return .fitsNoPane }
         let largest = contentFrame(bounds).size
         let required = window.constraints.isResizable ? window.constraints.minimumSize : window.frame.size
-        guard required.width > largest.width + 0.001 || required.height > largest.height + 0.001 else { return nil }
+        guard required.width > largest.width + 0.001 || required.height > largest.height + 0.001 else { return .fitsNoPane }
         if !window.constraints.isResizable { return .fixedSizeLargerThanWorkArea }
-        return window.constraints.minimumSizeSource.isProven ? .minimumLargerThanWorkArea : nil
+        return window.constraints.minimumSizeSource.isProven ? .minimumLargerThanWorkArea : .fitsNoPane
     }
 
-    private mutating func adopt(_ id: WindowID, fittingIn bounds: BTRect, windows: [WindowSnapshot]) -> TabbedAdoption {
+    private mutating func adopt(
+        _ id: WindowID, fittingIn bounds: BTRect, windows: [WindowSnapshot], selecting: Bool = false
+    ) -> TabbedAdoption {
         let window = windows.first { $0.id == id }
         let current = frames(in: bounds)
         var trials: [TabbedAdoption.Trial] = []
@@ -567,7 +567,7 @@ public struct TabbedLayoutState: Hashable, Sendable {
         // Otherwise the pane that can show it with the least change to the
         // other panes, as is or after boundaries adapt. It joins as a hidden
         // tab; selecting it fits the panes again.
-        var best: (change: Double, paneID: UUID)?
+        var best: (change: Double, paneID: UUID, shown: Self)?
         for paneID in groups.panes.map(\.id) where paneID != activePaneID {
             var candidate = self
             guard candidate.groups.add(id, to: paneID) else {
@@ -582,31 +582,22 @@ public struct TabbedLayoutState: Hashable, Sendable {
                 return total + abs(old.minX - entry.value.minX) + abs(old.minY - entry.value.minY)
                     + abs(old.size.width - entry.value.size.width) + abs(old.size.height - entry.value.size.height)
             }
-            if best.map({ change < $0.change - 0.5 }) ?? true { best = (change, paneID) }
+            if best.map({ change < $0.change - 0.5 }) ?? true { best = (change, paneID, shown) }
         }
         if let best {
+            if selecting {
+                self = best.shown
+                return TabbedAdoption(windowID: id, outcome: .selected(best.paneID), trials: trials)
+            }
             groups.add(id, to: best.paneID, select: false)
             return TabbedAdoption(windowID: id, outcome: .hidden(best.paneID), trials: trials)
         }
-        // No pane can show it now. A hidden tab needs no room, so it waits
-        // behind a pane's selected tab instead of floating: in the active
-        // pane, or else in the largest pane that shows a tab. Selecting it
-        // later fits the panes again, or names what is in the way.
-        if let reason = Self.floatReason(for: window, in: bounds) {
-            groups.layout.floatingWindowIDs.insert(id)
-            automaticFloats.insert(id)
-            return TabbedAdoption(windowID: id, outcome: .floated(reason), trials: trials)
-        }
-        let host = groups.panes.first { $0.id == activePaneID && $0.selected != nil }?.id
-            ?? groups.panes.filter { $0.selected != nil }
-                .max { (current[$0.id]?.area ?? 0) < (current[$1.id]?.area ?? 0) }?.id
-        if let host, groups.add(id, to: host, select: false) {
-            return TabbedAdoption(windowID: id, outcome: .hiddenFallback(host), trials: trials)
-        }
-        // Every pane is empty and none can show it: nothing can hide it.
+        // No pane can show it, even after boundaries adapt. It floats at its
+        // own size instead of hiding behind a pane it overflows, as an
+        // automatic float that a later layout change can return to a pane.
         groups.layout.floatingWindowIDs.insert(id)
         automaticFloats.insert(id)
-        return TabbedAdoption(windowID: id, outcome: .floated(.noPaneToHideBehind), trials: trials)
+        return TabbedAdoption(windowID: id, outcome: .floated(Self.floatReason(for: window, in: bounds)), trials: trials)
     }
 
     /// The last tab of a pane leaves the pane empty, ready for another tab.
@@ -855,12 +846,6 @@ public struct TabbedLayoutState: Hashable, Sendable {
         let snapshots = Dictionary(uniqueKeysWithValues: windows.map { ($0.id, $0) })
         let paneFrames = frames(in: bounds)
         var result: [Placement] = []
-        // A hidden tab larger than its pane moves back inside the work area,
-        // so the curtain, which covers the work area, hides all of it.
-        func inside(_ origin: BTPoint, _ size: BTSize) -> BTPoint {
-            BTPoint(x: max(bounds.minX, min(origin.x, bounds.maxX - size.width)),
-                    y: max(bounds.minY, min(origin.y, bounds.maxY - size.height)))
-        }
         for pane in groups.panes {
             guard let paneFrame = paneFrames[pane.id] else { continue }
             let frame = Self.contentFrame(paneFrame)
@@ -874,21 +859,18 @@ public struct TabbedLayoutState: Hashable, Sendable {
                        size.width > frame.size.width + 0.001 || size.height > frame.size.height + 0.001 {
                         throw TabbedLayoutError.panesTooSmall
                     }
-                    let origin = inside(BTPoint(
+                    result.append(Placement(windowID: id, frame: BTRect(
                         x: frame.minX + max(0, ((frame.size.width - size.width) / 2).rounded(.down)),
-                        y: frame.minY + max(0, ((frame.size.height - size.height) / 2).rounded(.down))), size)
-                    result.append(Placement(windowID: id, frame: BTRect(origin: origin, size: size)))
+                        y: frame.minY + max(0, ((frame.size.height - size.height) / 2).rounded(.down)),
+                        width: size.width, height: size.height)))
                     continue
                 }
-                let minimum = window.constraints.minimumSize
                 if id == pane.selected {
-                    guard frame.size.width + 0.001 >= minimum.width,
-                          frame.size.height + 0.001 >= minimum.height
+                    guard frame.size.width + 0.001 >= window.constraints.minimumSize.width,
+                          frame.size.height + 0.001 >= window.constraints.minimumSize.height
                     else { throw TabbedLayoutError.panesTooSmall }
                 }
-                // The application keeps at least its minimum, growing from the origin.
-                let grown = BTSize(width: max(frame.size.width, minimum.width), height: max(frame.size.height, minimum.height))
-                result.append(Placement(windowID: id, frame: BTRect(origin: inside(frame.origin, grown), size: frame.size)))
+                result.append(Placement(windowID: id, frame: frame))
             }
         }
         return result
@@ -933,19 +915,18 @@ public struct TabbedLayoutState: Hashable, Sendable {
 /// it tried, for the decision log.
 public struct TabbedAdoption: Hashable, Sendable {
     public enum Outcome: Hashable, Sendable {
-        /// The selected tab of this pane, the active pane.
+        /// The selected tab of this pane.
         case selected(UUID)
         /// A hidden tab of the other pane that can show it with the least change.
         case hidden(UUID)
-        /// A hidden tab of this pane, because no pane can show it now.
-        case hiddenFallback(UUID)
         case floated(FloatReason)
     }
 
     public enum FloatReason: String, Hashable, Sendable {
+        /// No pane of this layout can show it.
+        case fitsNoPane
         case fixedSizeLargerThanWorkArea
         case minimumLargerThanWorkArea
-        case noPaneToHideBehind
     }
 
     public enum TrialResult: String, Hashable, Sendable {
@@ -982,13 +963,5 @@ public struct TabbedAdoption: Hashable, Sendable {
     public var floated: Bool {
         if case .floated = outcome { return true }
         return false
-    }
-
-    /// The window joined without being shown.
-    public var isHidden: Bool {
-        switch outcome {
-        case .hidden, .hiddenFallback: true
-        case .selected, .floated: false
-        }
     }
 }

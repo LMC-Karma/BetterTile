@@ -4,12 +4,13 @@ import BetterTileCore
 import Testing
 @testable import BetterTileApp
 
-/// A window with a name the pill can use: no running application has this
-/// process identifier, so the title stands in for the application name.
-@MainActor private func namedWindow(_ name: String, pid: Int32, in system: FakeAppWindowSystem) -> WindowID {
+/// A window with a title, which the pill uses as its name.
+@MainActor private func namedWindow(
+    _ name: String, pid: Int32, bundleIdentifier: String? = nil, in system: FakeAppWindowSystem
+) -> WindowID {
     let id = WindowID(rawValue: name)
     system.windows.append(WindowSnapshot(
-        id: id, processIdentifier: pid, title: name,
+        id: id, processIdentifier: pid, bundleIdentifier: bundleIdentifier, title: name,
         frame: BTRect(x: 200, y: 200, width: 600, height: 400), displayID: system.mainDisplay.id
     ))
     return id
@@ -18,11 +19,11 @@ import Testing
 /// Two columns: `focused` selected over hidden `Large` on the left, `Peer`
 /// on the right, with the left pane narrowed by the user to about 300 pt.
 @MainActor private func narrowLeftPaneWithAHiddenTab(
-    _ system: FakeAppWindowSystem, restores: Bool
+    _ system: FakeAppWindowSystem, restores: Bool, bundleIdentifier: String? = nil
 ) async throws -> (BetterTileModel, large: WindowID, peer: WindowID) {
     _ = NSApplication.shared
-    let large = namedWindow("Large", pid: 900_001, in: system)
-    let peer = namedWindow("Peer", pid: 900_002, in: system)
+    let large = namedWindow("Large", pid: 900_001, bundleIdentifier: bundleIdentifier, in: system)
+    let peer = namedWindow("Peer", pid: 900_002, bundleIdentifier: bundleIdentifier, in: system)
     let model = makeModel(system: system)
     model.configuration.tabbedRestoresPaneSizes = restores
     model.configuration.defaultTabbedPreset = .columns
@@ -114,9 +115,13 @@ func aLargerHiddenTabGrowsItsPaneAndTheSmallerTabRestoresIt(restores: Bool) asyn
     #expect(system.probeRequests.dropFirst(requests).contains([large]))
 }
 
-@Test @MainActor func aTabThatCannotFitNamesTheWindowInItsWay() async throws {
+/// The pill names windows by title, so two windows of one application,
+/// here Finder, are told apart rather than both called "Finder".
+@Test(arguments: [nil, "com.apple.finder"]) @MainActor
+func aTabThatCannotFitNamesTheWindowInItsWay(bundleIdentifier: String?) async throws {
     let system = FakeAppWindowSystem()
-    let (model, large, peer) = try await narrowLeftPaneWithAHiddenTab(system, restores: true)
+    let (model, large, peer) = try await narrowLeftPaneWithAHiddenTab(system, restores: true,
+                                                                      bundleIdentifier: bundleIdentifier)
     defer { model.shutdown() }
     let before = try #require(model.activeTabbedState)
     system.windows[1].constraints.minimumSize.width = 600

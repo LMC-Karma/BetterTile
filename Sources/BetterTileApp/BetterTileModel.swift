@@ -88,6 +88,9 @@ final class BetterTileModel {
     private var tabbedReadoptedArrivals: Set<WindowID> = []
     /// Automatic floats already checked again once after they floated.
     private var tabbedRetriedAutomaticFloats: Set<WindowID> = []
+    /// The pane frames of each display's last committed Tabbed placement. A
+    /// change means room may have appeared for an automatic float.
+    private var tabbedCommittedPaneFrames: [DisplayID: [UUID: BTRect]] = [:]
     /// How long after a placement settles an automatic float is checked
     /// again with a fresh snapshot. Settable for tests.
     var tabbedAutomaticFloatRetryDelay: Duration = .seconds(1)
@@ -4349,12 +4352,23 @@ extension BetterTileModel {
                     }
                     self.showTabbed(session: committed, display: display, windows: windows)
                     if let committedState = committed.tabbedState {
+                        let paneFrames = committedState.frames(in: display.visibleFrame)
+                        let earlierFrames = self.tabbedCommittedPaneFrames.updateValue(paneFrames, forKey: display.id)
+                        let floating = committedState.automaticallyFloatingWindowIDs
                         if consumeUndo {
                             // Undo brought these floats back on purpose; a later
                             // check must not undo part of it.
-                            self.tabbedRetriedAutomaticFloats.formUnion(committedState.automaticallyFloatingWindowIDs)
+                            self.tabbedRetriedAutomaticFloats.formUnion(floating)
                         } else {
                             self.scheduleAutomaticFloatRetry(on: display.id, state: committedState)
+                            // A preset, pane, divider, or work-area change may
+                            // have made room for a window that floated on its own.
+                            if let earlierFrames, earlierFrames != paneFrames, !floating.isEmpty {
+                                Task { @MainActor [weak self] in
+                                    self?.retryAutomaticFloats(floating, on: display.id, deferrals: 0,
+                                                               transition: "layout change", selecting: true)
+                                }
+                            }
                         }
                     }
                     // Said only once the placement that makes it true landed.
@@ -4451,11 +4465,13 @@ extension BetterTileModel {
         }
     }
 
-    /// The application name a person sees for a window.
+    /// The name a person sees for a window: its title, which tells two
+    /// windows of one application apart, or else its application's name.
     private static func displayName(of window: WindowSnapshot) -> String {
+        if !window.title.isEmpty { return window.title }
         if let name = NSRunningApplication(processIdentifier: window.processIdentifier)?.localizedName { return name }
         if let bundleIdentifier = window.bundleIdentifier { return applicationName(for: bundleIdentifier) }
-        return window.title.isEmpty ? "This window" : window.title
+        return "This window"
     }
 
     private func rememberTabbedUndo(_ state: TabbedLayoutState, sessionID: DesktopSessionID,
@@ -4660,7 +4676,12 @@ extension BetterTileModel {
         }
     }
 
-    private func retryAutomaticFloats(_ ids: Set<WindowID>, on displayID: DisplayID, deferrals: Int) {
+    /// - Parameter selecting: A returned window is shown as its pane's
+    ///   selected tab, as it was visible while it floated.
+    private func retryAutomaticFloats(
+        _ ids: Set<WindowID>, on displayID: DisplayID, deferrals: Int,
+        transition: String = "retry", selecting: Bool = false
+    ) {
         guard !isShutDown, !isStabilizingSpace,
               let session = sessionStore.session(for: displayID), session.mode == .tabbed,
               !session.automaticWritesSuspended,
@@ -4677,7 +4698,8 @@ extension BetterTileModel {
             let deferral = tabbedAutomaticFloatRetryDeferral
             Task { @MainActor [weak self] in
                 try? await Task.sleep(for: deferral)
-                self?.retryAutomaticFloats(ids, on: displayID, deferrals: deferrals + 1)
+                self?.retryAutomaticFloats(ids, on: displayID, deferrals: deferrals + 1,
+                                           transition: transition, selecting: selecting)
             }
             return
         }
@@ -4687,8 +4709,9 @@ extension BetterTileModel {
         let windows = Self.ignoringOversizedSeeds(bentoEligible((observation?.windowsOnCurrentSpaces(allWindows) ?? allWindows)
             .filter { $0.displayID == displayID && $0.isEligible && !$0.isFloating }), in: display.visibleFrame)
         var state = current
-        let returned = state.returnAutomaticFloats(ids, fittingIn: display.visibleFrame, windows: windows)
-        logTabbedAdoptions(returned, transition: "retry", before: current, windows: windows, bounds: display.visibleFrame)
+        let returned = state.returnAutomaticFloats(ids, fittingIn: display.visibleFrame, windows: windows,
+                                                   selecting: selecting)
+        logTabbedAdoptions(returned, transition: transition, before: current, windows: windows, bounds: display.visibleFrame)
         guard state != current else { return }
         // The user did not ask for this check: a failure leaves the window an
         // automatic float for Repair Tabbed and only logs.
@@ -4711,9 +4734,8 @@ extension BetterTileModel {
         for adoption in adoptions {
             let window = byID[adoption.windowID]
             let outcome: String = switch adoption.outcome {
-            case let .selected(id): "selected tab of active pane \(pane(id))"
+            case let .selected(id): "selected tab of pane \(pane(id))"
             case let .hidden(id): "hidden tab of pane \(pane(id)), which can show it"
-            case let .hiddenFallback(id): "hidden tab of pane \(pane(id)); no pane can show it now"
             case let .floated(reason): "floating (\(reason.rawValue))"
             }
             let trials = adoption.trials.map { "\(pane($0.paneID)) \(text($0.contentFrame)): \($0.result.rawValue)" }
