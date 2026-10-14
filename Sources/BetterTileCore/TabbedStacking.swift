@@ -69,10 +69,13 @@ public extension TabbedLayoutState {
             if id.map({ !hidden.contains($0) && !anchors.contains($0) && !leftUnder.contains($0) }) ?? true,
                order[index].frame.intersection(curtainBounds) != nil { raised.insert(index) }
         }
+        // A background float whose raise macOS ignores stays where it is,
+        // even where a raised window will cover part of it.
         var grew = true
         while grew {
             grew = false
-            for index in order.indices where !raised.contains(index) {
+            for index in order.indices where !raised.contains(index)
+                && order[index].windowID.map({ !ignoresRaise.contains($0) }) ?? true {
                 let mustStayInFront = raised.contains { other in
                     rank[index, default: 0] < rank[other, default: 0]
                         && order[index].frame.intersection(order[other].frame) != nil
