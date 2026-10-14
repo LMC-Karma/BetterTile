@@ -157,3 +157,73 @@ private func slot(_ id: WindowID, _ state: TabbedLayoutState) throws -> BTRect {
     #expect(snap.snaps.isEmpty)
     #expect(snap.state.layout == state.layout)
 }
+
+/// The request for more than one step less never goes below a minimum the
+/// write itself would refuse. A seed is another window's minimum and is
+/// not a floor.
+@Test func theStepDownRequestKeepsAKnownMinimum() throws {
+    let state = rows()
+    let before = try slot(top, state)
+    let lower = try slot(bottom, state)
+    let settled = [top: BTSize(width: before.size.width, height: before.size.height + 4)]
+    let neighbour = window(bottom, minimumHeight: lower.size.height)
+    var proven = window(top, minimumHeight: before.size.height - 10)
+    proven.constraints.minimumSizeSource = .probe
+    let clamped = try #require(state.snappingToSteppedSizes(settled, in: bounds, windows: [proven, neighbour]))
+    #expect(clamped.placements.first { $0.windowID == top }?.frame.size.height == before.size.height - 10)
+    var seeded = proven
+    seeded.constraints.minimumSizeSource = .seed
+    let free = try #require(state.snappingToSteppedSizes(settled, in: bounds, windows: [seeded, neighbour]))
+    #expect(free.placements.first { $0.windowID == top }?.frame.size.height
+        == before.size.height + 4 - SteppedSizeAcceptance.maximumShortfall - 1)
+}
+
+@Test func aGridIsLearnedFromSettledLengths() throws {
+    // Terminal on a 1920×968 display: heights are 4 + 15·k.
+    let grid = try #require(SteppedGrid(observed: [454, 424]))
+    #expect(grid.step == 15)
+    #expect(grid.contains(439) && grid.contains(499) && !grid.contains(447))
+    #expect(grid.request(inside: 447) == 439)
+    #expect(grid.lengths(near: 447, within: 24).sorted() == [424, 439, 454, 469])
+    #expect(SteppedGrid(observed: [454])?.step == nil)
+    #expect(SteppedGrid(observed: [454])?.request(inside: 470) == 454)
+    #expect(SteppedGrid(observed: [454])?.request(inside: 500) == nil)
+    // An area smaller than the one known length asks for more than a step
+    // less, which rounds to a lower row and teaches the step.
+    #expect(SteppedGrid(observed: [454])?.request(inside: 447) == 454 - SteppedSizeAcceptance.maximumShortfall - 1)
+    // Lengths one point apart are no window's steps.
+    #expect(SteppedGrid(observed: [454, 455]) == nil)
+}
+
+/// Live, Two Rows on a 968-point work area: each window area is 447 high,
+/// and both Terminals take 4 + 15·k. 439 + 454 = 893 of 894 points: the
+/// divider moves 7 points so one Terminal fills its pane and the other
+/// takes 439 with one point to spare. Which tab is selected in the top pane
+/// does not change it.
+@Test func twoTerminalGridsShareTheirDivider() throws {
+    let work = BTRect(x: 0, y: 30, width: 1920, height: 968)
+    let t1 = WindowID(rawValue: "t1"), t2 = WindowID(rawValue: "t2"), recents = WindowID(rawValue: "recents")
+    var state = TabbedLayoutState(preset: .rows)
+    state.reconcile(windowIDs: [t1, recents, t2], removed: [], focused: nil)
+    state.move(t2, to: state.panes[1].id)
+    state.select(t1)
+    let windows = [t1, t2, recents].map {
+        WindowSnapshot(id: $0, processIdentifier: 1, frame: work, displayID: DisplayID(rawValue: "live"),
+                       constraints: WindowConstraints(minimumSize: BTSize(width: 177, height: 124)))
+    }
+    let grid = try #require(SteppedGrid(observed: [454, 439]))
+    let grids: [WindowID: [SplitAxis: SteppedGrid]] = [t1: [.horizontal: grid], t2: [.horizontal: grid]]
+    func heights(_ state: TabbedLayoutState) -> [Double] {
+        state.panes.compactMap { state.frames(in: work)[$0.id] }.map { TabbedLayoutState.contentFrame($0).size.height }
+    }
+    #expect(heights(state).map { $0.rounded() } == [447, 447])
+    let fitted = state.fittingSteppedGrids(grids, in: work, windows: windows)
+    #expect(heights(fitted).map { $0.rounded() } == [440, 454])
+    #expect(fitted.preferredPaneRatios == state.preferredPaneRatios)
+    let requests = TabbedLayoutState.requestingSteppedGrids(try fitted.placements(in: work, windows: windows), grids)
+    #expect(requests.first { $0.windowID == t1 }?.frame.size.height == 439)
+    #expect(abs((requests.first { $0.windowID == t2 }?.frame.size.height ?? 0) - 454) < 0.01)
+    var other = state
+    other.select(recents)
+    #expect(heights(other.fittingSteppedGrids(grids, in: work, windows: windows)) == heights(fitted))
+}

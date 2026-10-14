@@ -1161,6 +1161,8 @@ extension WindowCoordinator {
     /// - Parameter acceptsSteppedGrowth: Also accept a window that settles up
     ///   to one resize step larger than requested, once it held that size for
     ///   the refusal delay. The caller then fits the panes to it.
+    /// - Parameter onApplied: Receives the required windows' accepted frames
+    ///   when the placement applies.
     public func applyTabbed(
         placements allPlacements: [Placement],
         rollbackFrames: [WindowID: BTRect]? = nil,
@@ -1174,6 +1176,7 @@ extension WindowCoordinator {
         focusCheckpoint: WindowID? = nil,
         onSizeMismatch: (@MainActor (WindowID, BTRect, BTRect, BTRect) -> Void)? = nil,
         acceptsSteppedGrowth: Bool = false,
+        onApplied: (@MainActor ([WindowID: BTRect]) -> Void)? = nil,
         isCurrent: @MainActor () -> Bool
     ) async -> WindowMutationOutcome {
         let placements = required.map { ids in allPlacements.filter { ids.contains($0.windowID) } } ?? allPlacements
@@ -1318,6 +1321,7 @@ extension WindowCoordinator {
                         continue
                     }
                     expectSteppedFrames(placements, actual: actual, allowsGrowth: acceptsSteppedGrowth)
+                    onApplied?(actual)
                     return .applied
                 }
                 if framesMatch {
@@ -1325,6 +1329,7 @@ extension WindowCoordinator {
                     // that never arrives is left to the focus observer.
                     if attempt == 11 {
                         expectSteppedFrames(placements, actual: actual, allowsGrowth: acceptsSteppedGrowth)
+                        onApplied?(actual)
                         return .applied
                     }
                     try await Task.sleep(for: .milliseconds(50))

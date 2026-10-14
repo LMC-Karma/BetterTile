@@ -42,7 +42,7 @@ private let rowStep = 14.0
 
 @MainActor private func content(_ pane: Int, _ model: BetterTileModel, _ system: FakeAppWindowSystem) -> BTRect? {
     guard let state = model.activeTabbedState,
-          let frame = state.frames(in: system.mainDisplay.visibleFrame)[state.panes[pane].id] else { return nil }
+          let frame = state.frames(in: system.availableDisplays[0].visibleFrame)[state.panes[pane].id] else { return nil }
     return TabbedLayoutState.contentFrame(frame)
 }
 
@@ -142,9 +142,11 @@ private func near(_ lhs: Double?, _ rhs: Double?, _ tolerance: Double = 0.6) -> 
 }
 
 /// The pane below is at its minimum, so it cannot give up the overflow.
-/// The Terminal is asked for more than one step less, rounds down, and
-/// keeps a gap.
-@Test @MainActor func aNeighbourAtItsMinimumLeavesAGapInstead() async throws {
+/// The Terminal is asked for more than one step less. Whatever its row
+/// height and rounding, it lands inside its pane and keeps a gap; it may
+/// round up toward the pane, and that is accepted.
+@Test(arguments: [11.0, 14.0, 17.0, 20.0], [false, true]) @MainActor
+func aNeighbourAtItsMinimumLeavesAGapInstead(step: Double, roundsUp: Bool) async throws {
     let system = FakeAppWindowSystem()
     let model = try await makeTabbed(system, .rows, ["upper", "lower"])
     defer { model.shutdown() }
@@ -152,20 +154,25 @@ private func near(_ lhs: Double?, _ rhs: Double?, _ tolerance: Double = 0.6) -> 
     let lowerSlot = try #require(content(1, model, system))
     let index = try #require(system.windows.firstIndex { $0.id.rawValue == "lower" })
     system.windows[index].constraints.minimumSize.height = lowerSlot.size.height - 0.5
-    // 3 points over a 14-point row: the pane minus the overflow would round
-    // back up to the same row, so the request is more than one step less.
-    let terminal = addTerminal(system, heightGrid: slot.size.height + 3)
+    // 3 points over: the pane minus the overflow would round back up to the
+    // same row.
+    let terminal = addTerminal(system)
+    let settled = slot.size.height + 3
+    system.sizeGrids[terminal] = (BTSize(width: 0, height: step), BTSize(width: 0, height: settled))
+    if roundsUp { system.sizeGridsRoundUp.insert(terminal) }
+    let request = settled - SteppedSizeAcceptance.maximumShortfall - 1
+    let cells = (request - settled) / step
+    let landed = settled + (roundsUp ? cells.rounded(.up) : cells.rounded()) * step
     system.eventHandler?(WindowSystemEvent(kind: .created, windowID: terminal, processIdentifier: 399))
 
     #expect(await waitFor(timeout: .seconds(3)) {
-        model.activeTabbedState?.panes[0].selected == terminal
-            && near(frame("terminal", system)?.size.height, slot.size.height + 3 - 2 * rowStep)
+        model.activeTabbedState?.panes[0].selected == terminal && near(frame("terminal", system)?.size.height, landed)
     }, "\(slot) \(system.requestedFrames[terminal] ?? []) \(model.statusMessage ?? "-")")
-    try await Task.sleep(for: .milliseconds(300))
+    try await Task.sleep(for: .milliseconds(400))
+    #expect(landed < slot.size.height)
+    #expect(near(frame("terminal", system)?.size.height, landed))
     #expect(near(content(0, model, system)?.size.height, slot.size.height))
-    #expect(system.requestedFrames[terminal]?.last.map {
-        near($0.size.height, slot.size.height + 3 - SteppedSizeAcceptance.maximumShortfall - 1)
-    } == true)
+    #expect(system.requestedFrames[terminal]?.last.map { near($0.size.height, request) } == true)
     #expect(model.statusMessage == nil)
 }
 
@@ -246,9 +253,9 @@ private func near(_ lhs: Double?, _ rhs: Double?, _ tolerance: Double = 0.6) -> 
     #expect(model.statusMessage == nil)
 }
 
-/// Selecting another tab returns the pane to the user's size. Selecting the
-/// Terminal again fits the pane to the size it is known to keep before the
-/// write, so it takes one write, not a refused one and a correction.
+/// A pane keeps the edge it snapped to for its Terminal while another tab is
+/// selected, so selecting the Terminal again takes at most one write, not a
+/// refused one and a correction.
 @Test @MainActor func reselectingASteppedTabTakesOneWrite() async throws {
     let system = FakeAppWindowSystem()
     let model = try await makeTabbed(system, .rows, ["upper", "lower"])
@@ -261,8 +268,10 @@ private func near(_ lhs: Double?, _ rhs: Double?, _ tolerance: Double = 0.6) -> 
     })
     try await Task.sleep(for: .milliseconds(300))
 
+    // The hidden Terminal keeps its pane at the height it fills.
     model.performTabbed(.select(WindowID(rawValue: "upper")))
-    #expect(await waitFor { near(content(0, model, system)?.size.height, slot.size.height) })
+    #expect(await waitFor { model.activeTabbedState?.panes[0].selected == WindowID(rawValue: "upper") })
+    #expect(near(content(0, model, system)?.size.height, slot.size.height + 4))
     try await Task.sleep(for: .milliseconds(400))
     let writes = system.frameWriteCounts[terminal, default: 0]
     let requests = system.requestedFrames[terminal]?.count ?? 0
@@ -391,4 +400,118 @@ func aSteppedNeighbourThatLandedExactlyKeepsTheDivider(sameApplication: Bool) as
             && model.activeTabbedState?.panes[1].tabs.contains(big) == true
     }, "\(String(describing: system.windows.first { $0.id == big }?.constraints)) \(String(describing: model.activeTabbedState?.panes.map(\.tabs))) \(model.statusMessage ?? "-")")
     #expect(model.statusMessage == nil)
+}
+
+/// Two Terminals stacked, the upper one sharing its pane with another tab,
+/// with grids that do not both fit the panes: one rounds up and one lands
+/// exactly, or both round up. The first selections learn the grids. After
+/// that, switching tabs in the upper pane writes no Terminal, fails nothing,
+/// and leaves no Terminal larger than its pane.
+@Test(arguments: [(3.0, 0.0), (5.0, 5.0)]) @MainActor
+func switchingTabsBesideTwoSteppedTerminalsSettles(upperOver: Double, lowerOver: Double) async throws {
+    let system = FakeAppWindowSystem()
+    let model = try await makeTabbed(system, .rows, ["t1", "t2", "other"])
+    defer { model.shutdown() }
+    let slot = try #require(content(0, model, system))
+    let lowerSlot = try #require(content(1, model, system))
+    let t1 = WindowID(rawValue: "t1"), t2 = WindowID(rawValue: "t2"), other = WindowID(rawValue: "other")
+    for (id, area, over) in [(t1, slot, upperOver), (t2, lowerSlot, lowerOver)] {
+        system.sizeGrids[id] = (BTSize(width: 0, height: rowStep), BTSize(width: 0, height: area.size.height + over))
+        let index = try #require(system.windows.firstIndex { $0.id == id })
+        system.windows[index].bundleIdentifier = "com.apple.Terminal"
+        // Each holds its own row size, off its pane, so placements write it.
+        system.windows[index].frame = BTRect(x: 7, y: area.minY, width: area.size.width, height: area.size.height + over)
+    }
+    var failures = 0
+    func select(_ id: WindowID) async throws {
+        model.performTabbed(.select(id))
+        try #require(await waitFor { model.activeTabbedState?.panes[0].selected == id })
+        try await Task.sleep(for: .milliseconds(600))
+        if model.statusMessage != nil { failures += 1; model.statusMessage = nil }
+    }
+    model.performTabbed(.repair)
+    try await Task.sleep(for: .milliseconds(800))
+    for id in [other, t1, other, t1] { try await select(id) }
+    let settled = (frame("t1", system), frame("t2", system))
+    let writes = (system.frameWriteCounts[t1, default: 0], system.frameWriteCounts[t2, default: 0])
+    for _ in 0..<3 {
+        try await select(other)
+        #expect(frame("t1", system) == settled.0 && frame("t2", system) == settled.1)
+        try await select(t1)
+        #expect(frame("t1", system) == settled.0 && frame("t2", system) == settled.1)
+    }
+    #expect(failures == 0)
+    #expect(system.frameWriteCounts[t1, default: 0] == writes.0)
+    #expect(system.frameWriteCounts[t2, default: 0] == writes.1)
+    for (pane, frame) in [(0, settled.0), (1, settled.1)] {
+        let area = try #require(content(pane, model, system))
+        #expect((frame?.size.height ?? .infinity) <= area.size.height + 0.5, "\(String(describing: frame)) \(area)")
+        #expect(area.size.height - (frame?.size.height ?? 0) < rowStep)
+        #expect(near(frame?.minY, area.minY))
+    }
+}
+
+/// The live sequence on a 1920×968 work area in Two Rows: Finder's Recents
+/// and Terminal T1 share the top pane, Terminal T2 is alone below. Terminal
+/// heights are 4 + 15·k, rounded to the nearest row. Selecting T1 and then
+/// switching between Recents and T1 three times settles the divider so T2
+/// fills its pane at 454 and T1 takes 439, and then writes no Terminal again.
+@Test @MainActor func liveTwoTerminalsInTwoRowsSettleOnTheirGrids() async throws {
+    _ = NSApplication.shared
+    let system = FakeAppWindowSystem()
+    system.availableDisplays[0].frame = BTRect(x: 0, y: 0, width: 1920, height: 1080)
+    system.availableDisplays[0].visibleFrame = BTRect(x: 0, y: 30, width: 1920, height: 968)
+    let base = system.windows[0]
+    let t1 = WindowID(rawValue: "t1"), t2 = WindowID(rawValue: "t2"), recents = WindowID(rawValue: "recents")
+    system.windows = [(t1, "com.apple.Terminal"), (t2, "com.apple.Terminal"), (recents, "com.apple.finder")]
+        .enumerated().map { index, entry in
+            var window = base
+            window.id = entry.0
+            window.processIdentifier = pid_t(500 + index)
+            window.bundleIdentifier = entry.1
+            window.title = entry.0.rawValue
+            window.frame = BTRect(x: 100, y: 100, width: 800, height: entry.0 == recents ? 500 : 424)
+            return window
+        }
+    for id in [t1, t2] { system.sizeGrids[id] = (BTSize(width: 0, height: 15), BTSize(width: 0, height: 4)) }
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    model.configuration.defaultTabbedPreset = .rows
+    model.setActiveMode(.tabbed)
+    try #require(await waitFor { model.activeTabbedState?.windowIDs.count == 3 })
+    let lower = try #require(model.activeTabbedState?.panes[1].id)
+    model.performTabbed(.move(t2, pane: lower, index: nil))
+    try #require(await waitFor { model.activeTabbedState?.panes[1].selected == t2 })
+    try await Task.sleep(for: .milliseconds(500))
+
+    var failures = 0
+    func select(_ id: WindowID) async throws {
+        model.performTabbed(.select(id))
+        try #require(await waitFor { model.activeTabbedState?.panes[0].selected == id })
+        try await Task.sleep(for: .milliseconds(600))
+        if model.statusMessage != nil { failures += 1; model.statusMessage = nil }
+    }
+    try await select(t1)
+    try await select(recents)
+    try await select(t1)
+    let settled = (frame("t1", system), frame("t2", system))
+    let writes = (system.frameWriteCounts[t1, default: 0], system.frameWriteCounts[t2, default: 0])
+    for _ in 0..<3 {
+        try await select(recents)
+        #expect(frame("t1", system) == settled.0 && frame("t2", system) == settled.1)
+        try await select(t1)
+        #expect(frame("t1", system) == settled.0 && frame("t2", system) == settled.1)
+    }
+    #expect(failures == 0)
+    #expect(system.frameWriteCounts[t1, default: 0] == writes.0)
+    #expect(system.frameWriteCounts[t2, default: 0] == writes.1)
+    let heights = [settled.0?.size.height, settled.1?.size.height].compactMap { $0 }.sorted()
+    #expect(heights == [439, 454], "\(String(describing: settled))")
+    // No Terminal is larger than its window area.
+    for (pane, frame) in [(0, settled.0), (1, settled.1)] {
+        let state = try #require(model.activeTabbedState)
+        let area = TabbedLayoutState.contentFrame(try #require(state.frames(in: system.availableDisplays[0].visibleFrame)[state.panes[pane].id]))
+        #expect((frame?.size.height ?? .infinity) <= area.size.height + 0.5)
+        #expect(near(frame?.minY, area.minY))
+    }
 }

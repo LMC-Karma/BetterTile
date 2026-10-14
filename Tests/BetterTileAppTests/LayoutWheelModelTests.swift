@@ -31,6 +31,8 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, TabbedWindowSystem, Min
     /// axis to the nearest `offset + n * step`, as Terminal does: asked for
     /// 495 it can settle at 499. A zero step leaves that axis free.
     var sizeGrids: [WindowID: (step: BTSize, offset: BTSize)] = [:]
+    /// Grids that round up to the next cell instead of the nearest one.
+    var sizeGridsRoundUp: Set<WindowID> = []
     var frameWriteCounts: [WindowID: Int] = [:]
     var failedFrameWriteNumbers: [WindowID: Set<Int>] = [:]
     var completeSweepCount = 0
@@ -220,8 +222,10 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, TabbedWindowSystem, Min
             windows[index].frame.size.width = (windows[index].frame.size.width / step).rounded(.down) * step
         }
         if let grid = sizeGrids[windowID] {
+            let roundsUp = sizeGridsRoundUp.contains(windowID)
             func cell(_ value: Double, _ step: Double, _ offset: Double) -> Double {
-                step > 0 ? offset + ((value - offset) / step).rounded() * step : value
+                let cells = (value - offset) / step
+                return step > 0 ? offset + (roundsUp ? (cells - 1e-9).rounded(.up) : cells.rounded()) * step : value
             }
             windows[index].frame.size = BTSize(
                 width: cell(windows[index].frame.size.width, grid.step.width, grid.offset.width),

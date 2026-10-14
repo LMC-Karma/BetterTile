@@ -917,9 +917,10 @@ public struct TabbedLayoutState: Hashable, Sendable {
     /// unlocked divider. A divider between two such windows stays put, so
     /// neither chases the other. Like any fit, it records no pane sizes.
     /// - Parameter settled: Sizes the selected windows hold now.
-    /// - Parameter protecting: Windows whose pane edges must stay, such as
-    ///   other windows known to resize in steps. The windows that settled
-    ///   off their panes are always protected from each other's snaps.
+    /// - Parameter protecting: Windows whose panes' edges must stay, such as
+    ///   other windows known to resize in steps, selected or hidden. The
+    ///   windows that settled off their panes are always protected from each
+    ///   other's snaps.
     /// - Returns: Nil when no window needs another write. Otherwise the
     ///   fitted state, its placements, and the snaps. A window larger than its
     ///   area that no edge can follow is asked for more than one step less:
@@ -944,6 +945,9 @@ public struct TabbedLayoutState: Hashable, Sendable {
             if !moved.isEmpty { deltas[id] = Dictionary(uniqueKeysWithValues: moved) }
         }
         guard !deltas.isEmpty else { return nil }
+        // A pane that holds a protected tab, shown or hidden, keeps its edges,
+        // so its edges do not move with which tab is selected.
+        let pinned = Set(protecting.compactMap { pane(containing: $0)?.selected })
         var result = self
         var snaps: [TabbedSteppedSnap] = []
         var overflow: [WindowID: BTSize] = [:]
@@ -967,7 +971,7 @@ public struct TabbedLayoutState: Hashable, Sendable {
                         in: bounds, constraints: constraints) else { continue }
                     let placed = Dictionary(uniqueKeysWithValues: fitted.state.placements(in: bounds).map { ($0.windowID, $0.frame) })
                     guard placed[id]?.approximatelyEquals(target, tolerance: 0.5) == true,
-                          Set(deltas.keys).union(protecting).allSatisfy({ other in
+                          Set(deltas.keys).union(pinned).allSatisfy({ other in
                               other == id || current[other].map { placed[other]?.approximatelyEquals($0, tolerance: 0.5) == true } != false })
                     else { continue }
                     let neighbors = current.keys.filter { $0 != id && placed[$0]?.approximatelyEquals(current[$0]!, tolerance: 0.5) == false }
@@ -988,13 +992,98 @@ public struct TabbedLayoutState: Hashable, Sendable {
         }
         guard !snaps.isEmpty || !overflow.isEmpty,
               let placements = try? result.placements(in: bounds, windows: windows) else { return nil }
+        let minimums = Dictionary(windows.map { ($0.id, $0.constraints) }, uniquingKeysWith: { first, _ in first })
         let stepped = placements.map { placement -> Placement in
             guard let less = overflow[placement.windowID] else { return placement }
             var frame = placement.frame
-            frame.size = BTSize(width: frame.size.width - less.width, height: frame.size.height - less.height)
+            // Never below a minimum the write itself would refuse; a seed is
+            // another window's minimum and is not checked.
+            let floor = minimums[placement.windowID].flatMap { $0.minimumSizeSource == .seed ? nil : $0.minimumSize } ?? .zero
+            frame.size = BTSize(width: max(frame.size.width - less.width, min(frame.size.width, floor.width)),
+                                height: max(frame.size.height - less.height, min(frame.size.height, floor.height)))
             return Placement(windowID: placement.windowID, frame: frame)
         }
         return (result, stepped, snaps)
+    }
+
+    /// Moves each divider beside a window that resizes in steps, by at most
+    /// `SteppedSizeAcceptance.maximumShortfall`, to the closest position where
+    /// the most such windows fill their window areas exactly on their grids.
+    /// Hidden tabs count too, so a pane keeps its edge whichever tab is
+    /// selected. Ties go to the smaller move, then toward the top or left.
+    /// Like any fit, it records no pane sizes.
+    /// - Parameter grids: Each window's grid per axis: `.vertical` for widths,
+    ///   `.horizontal` for heights.
+    public func fittingSteppedGrids(
+        _ grids: [WindowID: [SplitAxis: SteppedGrid]], in bounds: BTRect, windows: [WindowSnapshot]
+    ) -> Self {
+        guard !grids.isEmpty else { return self }
+        let constraints = Self.fittingConstraints(windows)
+        let halfGap = layout.metrics.paneGap / 2
+        let reach = SteppedSizeAcceptance.maximumShortfall
+        var result = self
+        let branches = dividers(in: bounds).sorted {
+            ($0.axis.rawValue, $0.coordinate) < ($1.axis.rawValue, $1.coordinate)
+        }.compactMap(\.branchID)
+        for branch in branches {
+            guard let divider = result.dividers(in: bounds).first(where: { $0.branchID == branch }) else { continue }
+            let vertical = divider.axis == .vertical
+            let frames = result.frames(in: bounds)
+            // Each gridded pane beside the divider: its grids, its window
+            // area's length across the divider, and +1 before it, -1 after.
+            var sides: [(grids: [SteppedGrid], length: Double, sign: Double)] = []
+            for pane in result.groups.panes {
+                guard let frame = frames[pane.id] else { continue }
+                let (low, high) = vertical ? (frame.minX, frame.maxX) : (frame.minY, frame.maxY)
+                let (spanLow, spanHigh) = vertical ? (frame.minY, frame.maxY) : (frame.minX, frame.maxX)
+                guard min(spanHigh, divider.spanEnd) - max(spanLow, divider.spanStart) > 1 else { continue }
+                let sign: Double = abs(high + halfGap - divider.coordinate) <= 1 ? 1
+                    : abs(low - halfGap - divider.coordinate) <= 1 ? -1 : 0
+                let paneGrids = pane.tabs.compactMap { grids[$0]?[divider.axis] }
+                guard sign != 0, !paneGrids.isEmpty else { continue }
+                let content = Self.contentFrame(frame)
+                sides.append((paneGrids, vertical ? content.size.width : content.size.height, sign))
+            }
+            guard !sides.isEmpty else { continue }
+            var moves: Set<Double> = [0]
+            for side in sides {
+                for grid in side.grids {
+                    for length in grid.lengths(near: side.length, within: reach) {
+                        moves.insert((length - side.length) * side.sign)
+                    }
+                }
+            }
+            func fits(_ move: Double) -> Int {
+                sides.reduce(0) { count, side in
+                    count + side.grids.filter { $0.contains(side.length + side.sign * move) }.count
+                }
+            }
+            let ordered = moves.sorted { (-fits($0), abs($0), $0) < (-fits($1), abs($1), $1) }
+            for move in ordered {
+                guard abs(move) > 0.5 else { break }
+                let target = divider.coordinate + move
+                guard let moved = BentoResizeEngine().resize(
+                    state: result.layout, branchCoordinates: [branch: target], in: bounds, constraints: constraints),
+                    let applied = moved.appliedCoordinates[branch], abs(applied - target) <= 0.5 else { continue }
+                result.groups.synchronize(with: moved.state)
+                break
+            }
+        }
+        return result
+    }
+
+    /// Asks each window that resizes in steps for the largest length on its
+    /// grid that fits its window area, so it settles exactly there.
+    public static func requestingSteppedGrids(
+        _ placements: [Placement], _ grids: [WindowID: [SplitAxis: SteppedGrid]]
+    ) -> [Placement] {
+        placements.map { placement in
+            guard let axes = grids[placement.windowID] else { return placement }
+            var frame = placement.frame
+            if let width = axes[.vertical]?.request(inside: frame.size.width), width > 0 { frame.size.width = width }
+            if let height = axes[.horizontal]?.request(inside: frame.size.height), height > 0 { frame.size.height = height }
+            return Placement(windowID: placement.windowID, frame: frame)
+        }
     }
 
     /// Minimum sizes for fitting. A fixed-size window needs a pane whose

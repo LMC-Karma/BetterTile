@@ -462,30 +462,46 @@ change a Bento operation made to the tree; writing it also writes the tree.
   (`SteppedSizeAcceptance.maximumShortfall`, 24 points) larger or smaller
   than its pane. The placement accepts that frame once it is stable. A larger
   frame must also hold for the 0.25 s refusal delay, because it can be a size
-  applied late. One more write then fits the panes to the window
-  (`TabbedLayoutState.snappingToSteppedSizes`). On each axis, one pane edge
-  moves so the window area equals the settled size. The neighbour gives or
-  takes the points, above its own minimum and across an unlocked divider.
-  The far edge moves first; a pane at the display edge moves its near edge.
-  A snap leaves the pane edges of other windows that resize in steps in
-  place: windows that settled off their panes in this write, windows that
-  snapped earlier, and other windows of their applications, such as a second
-  Terminal that landed exactly on its pane. A window whose step shows only
-  when its edge moves teaches this on the first try; the retry keeps that
-  edge. When no edge can follow, a smaller window keeps its gap, and a
-  larger window is asked for its settled size less 25 points, one whole step
-  and a point. Any step up to 24 points rounds into the pane and leaves a gap.
-  The extra write accepts no growth. A window that still keeps its size there
-  refuses it: the minimum is learned, and the retry fits or floats the window
-  as usual. A window that grew when no snap could follow, for example because
-  its frame could not be read, returns every window to its frame from before
-  the first write. A rollback accepts a window that lands within one step of
-  its old frame. Like a fit, a snap records no pane sizes. The model keeps
-  the windows that snapped in memory until they close or their desktop
-  leaves Tabbed. A later placement, including a
-  tab selection, fits their panes to the sizes they hold before it writes, so
-  it needs one write. Each snap writes a debug line in the `Tabbed` log
-  category with the window, the axis, the points, and the neighbours.
+  applied late.
+  - The model remembers each such window, until it closes or its desktop
+    leaves Tabbed, with the lengths it settled at on each axis where it ever
+    settled off its request. Two lengths give its grid (`SteppedGrid`): the
+    step is their common difference, up to 24 points. Terminal's heights on
+    one display, for example, are 4 + 15·k. One length is a grid with that
+    single length.
+  - Before it writes, a placement moves each divider beside a remembered
+    window by at most 24 points, to the closest position where the most such
+    windows fill their window areas exactly on their grids
+    (`TabbedLayoutState.fittingSteppedGrids`). Hidden tabs count too, so a
+    pane keeps its edge whichever tab is selected. Ties go to the smaller
+    move, then toward the top or left. Each remembered window is then asked
+    for the largest length on its grid that fits its area
+    (`requestingSteppedGrids`), so it settles exactly there, and switching
+    tabs writes nothing. Example: two Terminals in Two Rows on a 968-point
+    work area have 894 points of window area. 439 + 454 fits with one point
+    to spare, so the divider moves 7 points: one Terminal fills its pane and
+    the other leaves a one-point gap.
+  - A window not yet remembered snaps instead. One more write fits the panes
+    to it (`TabbedLayoutState.snappingToSteppedSizes`). On each axis, one pane
+    edge moves so the window area equals the settled size. The neighbour gives
+    or takes the points, above its own minimum and across an unlocked divider.
+    The far edge moves first; a pane at the display edge moves its near edge.
+    The edges of panes that hold a remembered window, or another window that
+    settled off its pane in this write, stay in place. When no edge can follow,
+    a smaller window keeps its gap, and a larger window is asked for its
+    settled size less 25 points, one whole step and a point, but never less
+    than a minimum that is not a seed. A window with one known length is asked
+    for that too when its area is smaller, which teaches its step.
+  - A window that rounds up toward its area is accepted. A window that still
+    keeps its whole size refuses the request: the minimum is learned, and the
+    retry fits or floats it as usual. After either write, a selected window
+    larger than its window area would overlap its neighbour, so every window
+    returns to its frame from before the first write. When that window grew
+    within one step, it is remembered, and the retry plans with its length. A
+    rollback accepts a window that lands within one step of its old frame.
+  - Like a fit, none of this records pane sizes. Each snap writes a debug
+    line in the `Tabbed` log category with the window, the axis, the points,
+    and the neighbours.
 - One Tabbed curtain covers the display's work area.
   It sits below every selected tab and above inactive tabs, including portions
   that extend outside their panes. `TabbedOverlayController` orders this
