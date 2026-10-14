@@ -50,6 +50,10 @@ public struct WindowConstraints: Codable, Hashable, Sendable {
     public var isResizable: Bool
     public var minimumSizeSource: MinimumSizeSource
     public var settabilitySource: SettabilitySource
+    /// The window's own minimum before its application's seed raised it,
+    /// with the source the seed replaced. Nil when no seed applies.
+    public var unseededMinimumSize: BTSize?
+    public var unseededMinimumSizeSource: MinimumSizeSource?
 
     public init(
         minimumSize: BTSize = BTSize(width: 120, height: 80),

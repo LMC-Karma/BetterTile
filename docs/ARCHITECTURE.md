@@ -309,6 +309,10 @@ a seed. So far only `remove(_:)`, for a closed window, calls
 `forget(windowID:)`. `WindowConstraints.minimumSizeSource` names where a
 minimum came from: the default floor, an application hint, a seed, a learned
 clamp, or a probe. A hint, a learned clamp, and a probe count as proven.
+A seed keeps the window's own minimum and its source in
+`unseededMinimumSize` and `unseededMinimumSizeSource`. The write veto and
+every place that ignores a seed use that minimum, so a seed that raises one
+axis never drops a hint on the other.
 
 ## Unresponsive applications
 

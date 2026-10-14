@@ -459,7 +459,12 @@ public struct WindowMinimumSizeLearner: Sendable {
         guard learnedSizes[windowID] == nil, let application, let seed = applicationSizes[application] else {
             return merging(constraints, for: windowID)
         }
-        return Self.raising(constraints, to: seed, source: .seed)
+        var result = Self.raising(constraints, to: seed, source: .seed)
+        if result.minimumSizeSource == .seed {
+            result.unseededMinimumSize = constraints.minimumSize
+            result.unseededMinimumSizeSource = constraints.minimumSizeSource
+        }
+        return result
     }
 
     public func merging(_ constraints: WindowConstraints, for windowID: WindowID) -> WindowConstraints {

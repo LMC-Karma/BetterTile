@@ -829,9 +829,11 @@ public final class WindowCoordinator {
                 throw WindowSystemError.unsupportedWindow(placement.windowID)
             }
             // A seed is another window's minimum; the write shows this window's own.
-            if snapshot.constraints.isResizable, snapshot.constraints.minimumSizeSource != .seed {
-                guard placement.frame.size.width + sizeTolerance >= snapshot.constraints.minimumSize.width,
-                      placement.frame.size.height + sizeTolerance >= snapshot.constraints.minimumSize.height
+            let minimum = snapshot.constraints.minimumSizeSource == .seed
+                ? snapshot.constraints.unseededMinimumSize ?? .zero : snapshot.constraints.minimumSize
+            if snapshot.constraints.isResizable {
+                guard placement.frame.size.width + sizeTolerance >= minimum.width,
+                      placement.frame.size.height + sizeTolerance >= minimum.height
                 else { throw WindowSystemError.operationFailed("A window reached its minimum size.") }
             }
             // A legal size is not enough: a stale display frame or a split

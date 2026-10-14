@@ -4669,13 +4669,15 @@ extension BetterTileModel {
         }
     }
 
-    /// The window planned with the default floor instead of its application's
+    /// The window planned with its own minimum instead of its application's
     /// seed. The write then shows its real minimum.
     private static func ignoringSeed(_ window: WindowSnapshot) -> WindowSnapshot {
         guard window.constraints.minimumSizeSource == .seed else { return window }
         var result = window
-        result.constraints.minimumSize = WindowConstraints().minimumSize
-        result.constraints.minimumSizeSource = .default
+        result.constraints.minimumSize = window.constraints.unseededMinimumSize ?? WindowConstraints().minimumSize
+        result.constraints.minimumSizeSource = window.constraints.unseededMinimumSizeSource ?? .default
+        result.constraints.unseededMinimumSize = nil
+        result.constraints.unseededMinimumSizeSource = nil
         return result
     }
 
