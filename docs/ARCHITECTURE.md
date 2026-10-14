@@ -586,7 +586,8 @@ change a Bento operation made to the tree; writing it also writes the tree.
   window moved to another display leaves this layout and joins the other
   display's layout as an arrival. Repair Tabbed adopts each automatic float again: it keeps a proven
   minimum, ignores the application's seed for that decision, and probes only
-  a window that was never probed. The pill counts the windows returned. User
+  a window that was never probed. A returned window becomes its pane's
+  selected tab, as in the checks above. The pill counts the windows returned. User
   floats stay floating. Every Tabbed sweep and placement ignores a seed
   larger than the work area below the strip, so the write shows the
   window's real minimum. A
@@ -598,7 +599,9 @@ change a Bento operation made to the tree; writing it also writes the tree.
   Entering Tabbed from Bento adopts the tree, so every pane stays where it was.
   Windows that Bento floated on its own, such as a seventh window, become
   automatic floats, and every entry to Tabbed, from Bento or Native, adopts
-  the automatic floats again. Leaving for Bento gives Tabbed's automatic floats
+  the automatic floats again. On entry, a window that joins a pane other than
+  the active one joins it as a hidden tab, so the windows that were visible
+  before the entry stay visible. Leaving for Bento gives Tabbed's automatic floats
   back to Bento as its own.
   Leaving for Bento gives every hidden tab its own pane (`unstacked(in:)`) and
   removes the reserve. Hidden tabs fill empty panes first, largest empty pane

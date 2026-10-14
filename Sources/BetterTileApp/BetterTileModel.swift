@@ -4384,7 +4384,7 @@ extension BetterTileModel {
                             if let earlier, earlier != layout, !waiting.isEmpty {
                                 Task { @MainActor [weak self] in
                                     self?.retryAutomaticFloats(waiting, on: display.id, deferrals: 0,
-                                                               transition: "layout change", selecting: true)
+                                                               transition: "layout change")
                                 }
                             }
                         }
@@ -4612,7 +4612,8 @@ extension BetterTileModel {
             if !returning.isEmpty {
                 windows = remeasuredForRepair(returning, windows: windows, displayID: displayID)
                 let before = state
-                let returned = state.returnAutomaticFloats(returning, fittingIn: display.visibleFrame, windows: windows)
+                let returned = state.returnAutomaticFloats(returning, fittingIn: display.visibleFrame, windows: windows,
+                                                           selecting: true)
                 logTabbedAdoptions(returned, transition: "repair", before: before,
                                    windows: windows, bounds: display.visibleFrame)
                 let count = returned.filter { !$0.floated }.count
@@ -4697,11 +4698,10 @@ extension BetterTileModel {
         }
     }
 
-    /// - Parameter selecting: A returned window is shown as its pane's
-    ///   selected tab, as it was visible while it floated.
+    /// A returned window is shown as its pane's selected tab, as it was
+    /// visible while it floated.
     private func retryAutomaticFloats(
-        _ ids: Set<WindowID>, on displayID: DisplayID, deferrals: Int,
-        transition: String = "retry", selecting: Bool = false
+        _ ids: Set<WindowID>, on displayID: DisplayID, deferrals: Int, transition: String = "retry"
     ) {
         guard !isShutDown, !isStabilizingSpace,
               let session = sessionStore.session(for: displayID), session.mode == .tabbed,
@@ -4719,8 +4719,7 @@ extension BetterTileModel {
             let deferral = tabbedAutomaticFloatRetryDeferral
             Task { @MainActor [weak self] in
                 try? await Task.sleep(for: deferral)
-                self?.retryAutomaticFloats(ids, on: displayID, deferrals: deferrals + 1,
-                                           transition: transition, selecting: selecting)
+                self?.retryAutomaticFloats(ids, on: displayID, deferrals: deferrals + 1, transition: transition)
             }
             return
         }
@@ -4736,7 +4735,7 @@ extension BetterTileModel {
         // pane's tab is treated as focused.
         let focused = ((try? system.focusedWindow()) ?? nil)?.id ?? current.activeWindowID
         let returned = state.returnAutomaticFloats(ids, fittingIn: display.visibleFrame, windows: windows,
-                                                   selecting: selecting, keeping: focused)
+                                                   selecting: true, keeping: focused)
         logTabbedAdoptions(returned, transition: transition, before: current, windows: windows, bounds: display.visibleFrame)
         guard state != current else { return }
         // The user did not ask for this check: a failure leaves the window an
