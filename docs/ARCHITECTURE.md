@@ -219,7 +219,12 @@ would have to shrink below their own minimum sizes. A focus change
 selects a tab only when that
 window's application is frontmost. While BetterTile or an application it cannot
 read is in front, `focusedWindow()` reports the last managed application's
-window, and selecting it would take focus away.
+window, and selecting it would take focus away. When `focusedWindow()` cannot
+read an application's focused window, such as a small popup, it reports the
+application's main window. A focus change therefore selects a tab or corrects
+focus only when `TabbedWindowSystem.applicationFocus(of:)` confirms that the
+application reports that window as focused. A missing focused window or a
+failed read confirms nothing.
 
 After a focus change, application activation, or tab selection,
 `TabbedLayoutState.sharedCurtainStackingRepair` compares the WindowServer
@@ -231,7 +236,22 @@ no repair runs. A missing identity hides the curtain. An order that cannot be
 verified keeps a curtain already shown, at the same bounds, for up to four
 refreshes while the model checks again 80 ms later; then the curtain hides. A
 window list that cannot be read hides it at once. The repair never activates an
-application, changes keyboard focus or selection, or moves a window. Without
+application, changes keyboard focus or selection, or moves a window. A raise
+of a window makes it its application's main window, so the key window can
+lose focus. When the key window is a tab, a standard window including one the
+user floated, a dialog, or a floating panel such as the Font panel, the repair
+raises it again last. A transient key window cannot get focus back that way:
+a popup whose subrole is not standard, dialog, or floating, such as a browser
+toolbar bubble, closes when it loses focus. A focused window that cannot be
+read counts as transient too. The repair then leaves out every window of that
+application and every other raise that would cover one of them. The rest of
+the repair runs. The curtain is handled as for an unverified order, and the
+left-out raises wait for the next focus change. The watchdog retries them, for
+each display, in case the popup closed without a notification. When the
+application's focus is on no window, such as Finder's desktop, there is no
+focus to protect, and the repair raises normally. A Tabbed placement does not activate or order a
+window in any pane of an application whose popup has focus. When the selection does not
+change, it only orders a selected tab that already has focus. Without
 a readable order, selection still raises the selected tabs of panes that
 share the selected window's application, and activation changes nothing.
 
@@ -472,8 +492,11 @@ change a Bento operation made to the tree; writing it also writes the tree.
   strips move. During a divider drag, the strips and curtains follow each
   accepted sample without repeating tab ordering; hidden tabs follow at
   release. A window drag first tears the tab out of its
-  group when the group has other tabs; a center drop adds the window to that
-  pane as a tab, and a torn tab dropped nowhere returns to its group.
+  group when the group has other tabs. A press and release without any drag
+  sample is a click and starts no drag. A sample suppressed by the snap
+  modifiers still counts. A center drop adds the window to
+  that pane as a tab, and a torn tab dropped nowhere returns to its group.
+  When no selected tab moved, it returns without a placement.
 - Fixed partition snaps use `TabbedSnapPlanner` through one model route for
   keyboard/menu actions, captured Layout Wheel commands, and native snap zones.
   Commands use the pane scope: the source's pane moves with all its tabs,

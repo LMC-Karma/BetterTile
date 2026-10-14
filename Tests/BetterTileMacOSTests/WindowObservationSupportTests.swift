@@ -343,3 +343,15 @@ func invalidAccessibilityElementConfirmsClosureOnlyAfterSuccessfulAbsentInventor
         }
     }
 }
+
+/// Only a popup that closes without focus, such as a browser bubble, is
+/// transient. Standard windows, dialogs, and floating panels are not.
+@Test func transientPopupsAreThePopupsThatAreNotDialogsOrPanels() {
+    #expect(WindowFloatingClassifier.isTransientPopup(subrole: "AXUnknown"))
+    #expect(!WindowFloatingClassifier.isTransientPopup(subrole: "AXStandardWindow"))
+    #expect(!WindowFloatingClassifier.isTransientPopup(subrole: "AXDialog"))
+    #expect(!WindowFloatingClassifier.isTransientPopup(subrole: "AXSystemDialog"))
+    #expect(!WindowFloatingClassifier.isTransientPopup(subrole: "AXFloatingWindow"))
+    #expect(!WindowFloatingClassifier.isTransientPopup(subrole: "AXSystemFloatingWindow"))
+    #expect(!WindowFloatingClassifier.isTransientPopup(subrole: nil))
+}

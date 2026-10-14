@@ -321,4 +321,12 @@ enum WindowFloatingClassifier {
     static func isFloating(subrole: String?) -> Bool {
         subrole.map(floatingSubroles.contains) ?? false
     }
+
+    /// A window with a subrole that is neither standard, dialog, nor
+    /// floating, such as a browser bubble's AXUnknown, closes when it loses
+    /// focus. An unreadable subrole proves nothing.
+    static func isTransientPopup(subrole: String?) -> Bool {
+        guard let subrole else { return false }
+        return subrole != kAXStandardWindowSubrole && !floatingSubroles.contains(subrole)
+    }
 }
