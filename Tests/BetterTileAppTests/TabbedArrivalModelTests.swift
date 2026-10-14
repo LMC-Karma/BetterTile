@@ -366,6 +366,28 @@ private func addFalselyMeasuredWindow(_ name: String, pid: Int32, to system: Fak
     #expect(model.activeTabbedState?.floatingWindowIDs.isEmpty == true)
 }
 
+/// Repair Tabbed returns an automatic float that a pane can now show, but
+/// never in place of the focused window: it joins that window's pane as a
+/// hidden tab.
+@Test @MainActor func repairTabbedKeepsTheFocusedWindowSelected() async throws {
+    let (system, model) = try await onePaneFixture()
+    defer { model.shutdown() }
+    model.tabbedAutomaticFloatRetryDelay = .seconds(60)
+    let focused = system.windows[0].id
+    system.focusedID = focused
+    let tall = addFalselyMeasuredWindow("tall", pid: 930_031, to: system)
+    try #require(await waitFor { model.activeTabbedState?.automaticallyFloatingWindowIDs == [tall] })
+    try await Task.sleep(for: .milliseconds(300))
+    let index = try #require(system.windows.firstIndex { $0.id == tall })
+    system.windows[index].constraints = WindowConstraints()
+
+    model.performTabbed(.repair)
+
+    #expect(await waitFor { model.activeTabbedState?.windowIDs.contains(tall) == true })
+    #expect(model.activeTabbedState?.panes.first?.selected == focused)
+    #expect(await waitFor { model.lastActionFeedback?.message == "1 window returned to a pane" })
+}
+
 /// A window that still fits no pane at all is checked once, then left
 /// floating: the check does not repeat or move it again.
 @Test @MainActor func anAutomaticFloatThatStillCannotFitIsCheckedOnlyOnce() async throws {

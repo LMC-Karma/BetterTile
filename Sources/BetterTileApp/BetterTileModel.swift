@@ -4613,8 +4613,9 @@ extension BetterTileModel {
             if !returning.isEmpty {
                 windows = remeasuredForRepair(returning, windows: windows, displayID: displayID)
                 let before = state
+                let focused = ((try? system.focusedWindow()) ?? nil)?.id ?? state.activeWindowID
                 let returned = state.returnAutomaticFloats(returning, fittingIn: display.visibleFrame, windows: windows,
-                                                           selecting: true)
+                                                           selecting: true, keeping: focused)
                 logTabbedAdoptions(returned, transition: "repair", before: before,
                                    windows: windows, bounds: display.visibleFrame)
                 let count = returned.filter { !$0.floated }.count

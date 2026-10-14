@@ -587,7 +587,7 @@ change a Bento operation made to the tree; writing it also writes the tree.
   display's layout as an arrival. Repair Tabbed adopts each automatic float again: it keeps a proven
   minimum, ignores the application's seed for that decision, and probes only
   a window that was never probed. A returned window becomes its pane's
-  selected tab, as in the checks above. The pill counts the windows returned. User
+  selected tab, or a hidden tab beside the focused window, as in the checks above. The pill counts the windows returned. User
   floats stay floating. Every Tabbed sweep and placement ignores a seed
   larger than the work area below the strip, so the write shows the
   window's real minimum. A
