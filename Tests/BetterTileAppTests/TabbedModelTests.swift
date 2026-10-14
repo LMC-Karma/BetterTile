@@ -260,6 +260,151 @@ func aFocusReportedInPlaceOfAnUnreadablePopupSelectsNothing(unknownFocus: Bool) 
     #expect(model.tabbedRepairDeferred.isEmpty)
 }
 
+/// A standard window of the selected tab's application that BetterTile
+/// floats as a popup, such as Finder's Connect to Server.
+@MainActor private func addFloatedDialog(_ name: String, to system: FakeAppWindowSystem, x: Double) -> WindowSnapshot {
+    var dialog = system.windows[0]
+    dialog.id = WindowID(rawValue: name)
+    dialog.frame = BTRect(x: x, y: 200, width: 486, height: 234)
+    dialog.isFloating = true
+    system.windows.append(dialog)
+    return dialog
+}
+
+/// Checks the verified order: floating windows above the curtain, hidden
+/// tabs behind it, and a second repair raises nothing.
+@MainActor private func expectOneVerifiedRound(_ model: BetterTileModel, _ system: FakeAppWindowSystem,
+                                               state: TabbedLayoutState, above: [WindowID], below: [WindowID]) throws {
+    let raises = system.raiseRequests.count
+    let anchor = try #require(model.repairTabbedOrder(state: state, windows: system.windows,
+                                                      bounds: system.mainDisplay.visibleFrame))
+    #expect(system.raiseRequests.count == raises)
+    let order = try #require(system.stack?.compactMap { $0.windowID })
+    let curtain = try #require(order.firstIndex(of: anchor))
+    #expect(above.allSatisfy { (order.firstIndex(of: $0) ?? .max) <= curtain })
+    #expect(below.allSatisfy { (order.firstIndex(of: $0) ?? .min) > curtain })
+}
+
+/// Live: Cmd-Tab back to Finder lifted its hidden tab above the curtain.
+/// The repair raised the floated Connect to Server dialog and then the key
+/// window again last, which put the dialog back behind the selected tab and
+/// so behind the curtain. The readback never verified, so every focus event
+/// the raises caused started another round. Now the dialog keeps its place
+/// in front of the curtain, the key window keeps focus, and one round ends
+/// the repair.
+@Test(arguments: [true, false]) @MainActor
+func aFrontApplicationDialogStaysAboveTheCurtainAfterActivation(dialogHasFocus: Bool) async throws {
+    let system = FakeAppWindowSystem()
+    let model = try await makeOnePaneWithHiddenTabs(system)
+    defer { model.shutdown() }
+    let state = try #require(model.activeTabbedState)
+    system.windows[1].processIdentifier = system.windows[0].processIdentifier
+    let selected = system.windows[0].id, hidden = system.windows[1].id
+    let dialog = addFloatedDialog("connect-to-server", to: system, x: 700)
+    system.stack = [system.windows[1], system.windows[0], dialog, system.windows[2], system.windows[3]].map(stackEntry)
+    system.raiseFocusesFrontmostApplicationWindow = true
+    let key = dialogHasFocus ? dialog.id : selected
+    system.focusedID = key
+    let raises = system.raiseRequests.count
+
+    model.handleApplicationActivation()
+    #expect(await waitFor(timeout: .seconds(3)) { system.raiseRequests.count > raises })
+    try await Task.sleep(for: .milliseconds(200))
+    let raised = system.raiseRequests.dropFirst(raises)
+    #expect(raised.map(\.0) == (dialogHasFocus ? [selected, dialog.id] : [dialog.id, selected]))
+    #expect(!raised.contains { $0.1 })
+    #expect(system.focusedID == key)
+    try expectOneVerifiedRound(model, system, state: state, above: [selected, dialog.id], below: [hidden])
+
+    // The raises' own focus events start no further round.
+    let rounds = system.raiseRequests.count
+    model.handleApplicationActivation()
+    try await Task.sleep(for: .milliseconds(500))
+    #expect(system.raiseRequests.count == rounds)
+    #expect(system.focusedID == key)
+    #expect(model.activeTabbedState == state)
+    #expect(model.tabbedRepairDeferred.isEmpty)
+}
+
+/// Two floating windows of the front application keep their front-to-back
+/// order around the selected tab; the focused one is raised last.
+@Test @MainActor func frontApplicationFloatsKeepTheirOrderAfterActivation() async throws {
+    let system = FakeAppWindowSystem()
+    let model = try await makeOnePaneWithHiddenTabs(system)
+    defer { model.shutdown() }
+    let state = try #require(model.activeTabbedState)
+    system.windows[1].processIdentifier = system.windows[0].processIdentifier
+    let selected = system.windows[0].id, hidden = system.windows[1].id
+    let front = addFloatedDialog("front-dialog", to: system, x: 100)
+    let back = addFloatedDialog("back-dialog", to: system, x: 900)
+    system.stack = [system.windows[1], front, system.windows[0], back, system.windows[2], system.windows[3]].map(stackEntry)
+    system.raiseFocusesFrontmostApplicationWindow = true
+    system.focusedID = front.id
+    let raises = system.raiseRequests.count
+
+    model.handleApplicationActivation()
+    #expect(await waitFor(timeout: .seconds(3)) { system.raiseRequests.count > raises })
+    try await Task.sleep(for: .milliseconds(200))
+    #expect(system.raiseRequests.dropFirst(raises).map(\.0) == [back.id, selected, front.id])
+    #expect(system.stack?.prefix(4).map(\.windowID) == [front.id, selected, back.id, hidden])
+    #expect(system.focusedID == front.id)
+    try expectOneVerifiedRound(model, system, state: state, above: [front.id, selected, back.id], below: [hidden])
+}
+
+/// Live: after a click on another application's tab, Finder's floated
+/// Connect to Server dialog sat behind the new selected tab. The repair
+/// raised it about ten times: AXRaise of a background application's window
+/// was ignored, so the order never verified and every focus event repeated
+/// the raise. The dialog now keeps its place above the curtain. Cmd-Tab
+/// back, with Finder's focus on its tab or unreadable, starts no loop either.
+@Test(arguments: ["tab", "unknown"]) @MainActor
+func aBackgroundDialogKeepsItsPlaceWithoutARaiseLoop(activationFocus: String) async throws {
+    let system = FakeAppWindowSystem()
+    let model = try await makeOnePaneWithHiddenTabs(system)
+    defer { model.shutdown() }
+    let selected = system.windows[0].id, finderTab = system.windows[1].id
+    var dialog = addFloatedDialog("connect-to-server", to: system, x: 700)
+    dialog.processIdentifier = system.windows[1].processIdentifier
+    system.windows[system.windows.count - 1] = dialog
+    system.stack = [system.windows[0], dialog, system.windows[1], system.windows[2], system.windows[3]].map(stackEntry)
+    system.updatesStackOnRaise = false
+    system.raiseFocusesFrontmostApplicationWindow = true
+    let raises = system.raiseRequests.count
+
+    model.handleApplicationActivation()
+    try await Task.sleep(for: .milliseconds(500))
+    #expect(system.raiseRequests.count == raises)
+    let state = try #require(model.activeTabbedState)
+    try expectOneVerifiedRound(model, system, state: state, above: [selected, dialog.id],
+                               below: [finderTab, system.windows[2].id, system.windows[3].id])
+
+    // Cmd-Tab to Finder lifts its windows; its focus is on the hidden tab or
+    // cannot be read. Whatever the first round does, it is not repeated.
+    system.updatesStackOnRaise = true
+    system.stack = [system.windows[1], dialog, system.windows[0], system.windows[2], system.windows[3]].map(stackEntry)
+    system.focusedID = activationFocus == "tab" ? finderTab : dialog.id
+    system.focusedWindowIsUnknown = activationFocus == "unknown"
+    model.handleApplicationActivation()
+    try await Task.sleep(for: .milliseconds(600))
+    #expect(await waitFor { activationFocus != "tab" || model.activeTabbedState?.activeWindowID == finderTab })
+    try await Task.sleep(for: .milliseconds(600)) // The selection's own focus refresh.
+    let settled = system.raiseRequests.count
+    model.handleApplicationActivation()
+    try await Task.sleep(for: .milliseconds(600))
+    #expect(system.raiseRequests.dropFirst(settled).map(\.0.rawValue) == [])
+    #expect(!system.raiseRequests.dropFirst(raises).contains { $0.0 == dialog.id })
+    if activationFocus == "tab" {
+        #expect(model.activeTabbedState?.activeWindowID == finderTab)
+        #expect(system.focusedID == finderTab)
+        let state = try #require(model.activeTabbedState)
+        try expectOneVerifiedRound(model, system, state: state, above: [finderTab, dialog.id], below: [selected])
+    } else {
+        // An unreadable focus may be a popup: the repair waits, as before.
+        #expect(model.activeTabbedState?.activeWindowID == selected)
+        #expect(model.tabbedRepairDeferred == [system.mainDisplay.id])
+    }
+}
+
 /// A clean repair on one display must not forget a repair that waits on
 /// another. The watchdog still retries the waiting display after its popup
 /// closes without a notification, and then stops.

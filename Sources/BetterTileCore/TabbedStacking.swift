@@ -19,11 +19,15 @@ public extension TabbedLayoutState {
     /// safely; an empty plan means a shared curtain can already be inserted.
     /// `aboveCurtain` names windows outside the panes, such as floating
     /// windows, that must never end up behind the curtain where they would
-    /// be invisible.
+    /// be invisible. `keptInPlace` names floating windows of the frontmost
+    /// application. A raise of one takes keyboard focus, so they keep their
+    /// place among the selected tabs, and the curtain goes behind the
+    /// backmost of them (see `curtainAnchor`).
     func sharedCurtainStackingRepair(
         order: [TabbedStackEntry],
         curtainBounds: BTRect,
-        aboveCurtain: Set<WindowID> = []
+        aboveCurtain: Set<WindowID> = [],
+        keptInPlace: Set<WindowID> = []
     ) -> [WindowID]? {
         var position: [WindowID: Int] = [:]
         for (index, entry) in order.enumerated() {
@@ -34,7 +38,8 @@ public extension TabbedLayoutState {
         // unreadable windows. A curtain needs verified order for every tab.
         guard !selected.isEmpty, windowIDs.allSatisfy({ position[$0] != nil }) else { return nil }
         let hidden = Set(panes.flatMap(\.tabs)).subtracting(selected)
-        let selectedIndices = selected.compactMap { position[$0] }
+        let anchors = selected.union(keptInPlace.subtracting(windowIDs))
+        let selectedIndices = anchors.compactMap { position[$0] }
         guard let backmost = selectedIndices.max() else { return nil }
         let exposed = Set(order.indices.filter { index in
             index < backmost && order[index].windowID.map { hidden.contains($0) } == true
@@ -42,7 +47,7 @@ public extension TabbedLayoutState {
         // Floating windows behind the backmost selected tab would be covered
         // by the curtain. Raise them, back to front, above every pane.
         let buried = order.indices.filter { index in
-            index > backmost && order[index].windowID.map { aboveCurtain.contains($0) } == true
+            index > backmost && order[index].windowID.map { aboveCurtain.contains($0) && !anchors.contains($0) } == true
                 && order[index].frame.intersection(curtainBounds) != nil
         }
         guard !exposed.isEmpty || !buried.isEmpty else { return [] }
@@ -58,7 +63,7 @@ public extension TabbedLayoutState {
         var raised = Set(selectedIndices.filter { index in exposed.contains { $0 < index } })
         for index in order.indices where index < backmost {
             let id = order[index].windowID
-            if id.map({ !hidden.contains($0) && !selected.contains($0) }) ?? true,
+            if id.map({ !hidden.contains($0) && !anchors.contains($0) }) ?? true,
                order[index].frame.intersection(curtainBounds) != nil { raised.insert(index) }
         }
         var grew = true
@@ -75,6 +80,13 @@ public extension TabbedLayoutState {
         let plan = raised.sorted { rank[$0, default: 0] > rank[$1, default: 0] }.map { order[$0].windowID }
         guard plan.allSatisfy({ $0 != nil }) else { return nil }
         return plan.compactMap { $0 } + buried.sorted(by: >).compactMap { order[$0].windowID }
+    }
+
+    /// The window the curtain goes directly behind in a repaired order: the
+    /// backmost selected tab or window kept in place.
+    func curtainAnchor(order: [TabbedStackEntry], keptInPlace: Set<WindowID> = []) -> WindowID? {
+        let anchors = Set(selectedWindowIDs).union(keptInPlace.subtracting(windowIDs))
+        return order.last(where: { $0.windowID.map(anchors.contains) == true })?.windowID
     }
 }
 

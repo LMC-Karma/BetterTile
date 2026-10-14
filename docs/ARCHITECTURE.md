@@ -216,7 +216,15 @@ application, changes keyboard focus or selection, or moves a window. A raise
 of a window makes it its application's main window, so the key window can
 lose focus. When the key window is a tab, a standard window including one the
 user floated, a dialog, or a floating panel such as the Font panel, the repair
-raises it again last. A transient key window cannot get focus back that way:
+raises it again last. Floating windows, such as a dialog BetterTile floated,
+keep their place in the order instead of being raised above every pane. The
+curtain goes directly behind the backmost selected tab or floating window, and
+hidden tabs go behind that window. A raise of a floating window of the front
+application would take focus, and raising the key window again last would
+put it back behind the selected tab. A background application's window often
+ignores the raise, so the order would never verify and every focus event would
+repeat it. While the front application's focus is transient or cannot be read,
+its floating windows keep the older rule below. A transient key window cannot get focus back that way:
 a popup whose subrole is not standard, dialog, or floating, such as a browser
 toolbar bubble, closes when it loses focus. A focus the application does not
 confirm counts as transient too. The repair then leaves out every window of that application and every

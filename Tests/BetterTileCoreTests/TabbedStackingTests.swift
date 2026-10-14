@@ -148,3 +148,22 @@ private func entry(_ name: String?, _ frame: BTRect) -> TabbedStackEntry {
     #expect(state.sharedCurtainStackingRepair(order: order, curtainBounds: bounds,
                                               aboveCurtain: [id("floating")]) == [id("floating")])
 }
+
+/// A floating dialog of the front application behind its selected tab is
+/// kept in place: raising it would take focus, and raising the key tab last
+/// would put it back. The curtain goes behind it instead.
+@Test func sharedCurtainKeepsAFrontApplicationFloatInPlaceBehindTheSelectedTab() {
+    let state = twoPanes()
+    let dialog = BTRect(x: 100, y: 100, width: 300, height: 200)
+    let order = [entry("a", left), entry("c", right), entry("dialog", dialog), entry("b", left), entry("d", right)]
+    #expect(state.sharedCurtainStackingRepair(order: order, curtainBounds: bounds,
+                                              aboveCurtain: [id("dialog")]) == [id("dialog")])
+    #expect(state.sharedCurtainStackingRepair(order: order, curtainBounds: bounds, aboveCurtain: [id("dialog")],
+                                              keptInPlace: [id("dialog")]) == [])
+    #expect(state.curtainAnchor(order: order) == id("c"))
+    #expect(state.curtainAnchor(order: order, keptInPlace: [id("dialog")]) == id("dialog"))
+    // A hidden tab in front of the kept window moves behind it.
+    let exposed = [entry("a", left), entry("c", right), entry("b", left), entry("dialog", dialog), entry("d", right)]
+    #expect(state.sharedCurtainStackingRepair(order: exposed, curtainBounds: bounds, aboveCurtain: [id("dialog")],
+                                              keptInPlace: [id("dialog")]) == [id("dialog"), id("a")])
+}
