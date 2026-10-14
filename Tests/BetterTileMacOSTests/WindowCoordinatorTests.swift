@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import BetterTileCore
 @testable import BetterTileMacOS
@@ -1681,3 +1682,37 @@ func singleWindowPartialFailureRestoresBaselineAndPreservesHistory(actionPlan: B
     #expect(system.windows.map(\.frame) == target.map(\.frame))
 }
 
+/// A window moved to a display with another backing scale can report its old
+/// size at the new origin straight after the write. That readback is no
+/// minimum, and a later read at the requested size drops it.
+@Test @MainActor func aMoveToAnotherDisplayThatReportsTheOldSizeIsNotLearned() async throws {
+    let system = FakeWindowSystem()
+    let id = system.windows[0].id
+    system.availableDisplays.append(DisplaySnapshot(
+        id: DisplayID(rawValue: "second"),
+        frame: BTRect(x: 1000, y: 0, width: 1600, height: 1000),
+        visibleFrame: BTRect(x: 1000, y: 0, width: 1600, height: 1000),
+        isMain: false
+    ))
+    system.sizeApplicationDelays[id] = .milliseconds(30)
+    var learner = WindowMinimumSizeLearner()
+    var readback: BTRect?
+    system.writeReadbackHandler = { windowID, requested, previous, actual in
+        readback = actual
+        learner.observeWriteReadback(windowID: windowID, application: "com.example.Editor",
+                                     requested: requested, previous: previous, actual: actual,
+                                     now: ProcessInfo.processInfo.systemUptime)
+    }
+    let target = BTRect(x: 1200, y: 100, width: 500, height: 300)
+    try system.setFrame(target, knownCurrentFrame: system.windows[0].frame, for: id)
+    #expect(readback == BTRect(x: 1200, y: 100, width: 600, height: 400))
+    #expect(system.windows[0].displayID == DisplayID(rawValue: "second"))
+    #expect(learner.learnedSizes.isEmpty)
+    try await Task.sleep(for: .milliseconds(60))
+    let later = try system.windowSnapshots(ids: [id]).first?.frame
+    #expect(later == target)
+    learner.confirmClampCandidate(windowID: id, application: "com.example.Editor",
+                                  size: target.size, now: ProcessInfo.processInfo.systemUptime + 1)
+    #expect(learner.learnedSizes.isEmpty)
+    #expect(learner.applicationSizes.isEmpty)
+}

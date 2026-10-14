@@ -30,6 +30,8 @@ func liveJunctionReleaseSettlesBothNewlyLearnedMinima(rootAxis: SplitAxis, scena
     configuration.resizeFeedbackMode = .live
     configuration.bentoInnerGap = 0
     let controller = DividerOverlayController(coordinator: WindowCoordinator(system: system), configuration: configuration)
+    // Ticks arrive 60 ms apart, past the floor for a proven refusal.
+    controller.clock = steppingClock()
     controller.bentoStateProvider = { _ in state }
     defer { controller.hideAndCancel() }
     let boundaries = BentoBoundaryResolver().boundaries(state: state, windows: system.windows, displayID: display, bounds: bounds)

@@ -731,8 +731,9 @@ func tabbedSnapGestureUsesMouseDownFrameAndPlansItsFixedZonePreview(available: B
             // delay. The callback above still verifies it never arms early.
             #expect(panels().isEmpty)
         }
-        let deadline = ContinuousClock.now.advanced(by: .seconds(2))
-        while centerCalls == 0, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(10)) }
+        // Count polling steps, not wall-clock time. Other tests can block the
+        // main actor for seconds; the hover task needs its turn after that.
+        for _ in 0..<500 where centerCalls == 0 { try await Task.sleep(for: .milliseconds(20)) }
         #expect(centerCalls == 1)
         #expect(panels().isEmpty)
         var dropped: BentoDragOutcome?
