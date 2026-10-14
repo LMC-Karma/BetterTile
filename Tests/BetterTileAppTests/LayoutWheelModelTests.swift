@@ -98,10 +98,14 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, TabbedWindowSystem, Min
     /// Popups that close when they lose focus, such as browser bubbles.
     var transientPopupIDs: Set<WindowID> = []
     func isTransientPopup(_ window: WindowSnapshot) -> Bool { transientPopupIDs.contains(window.id) }
+    /// Simulates Finder's desktop: the application's focus is on no window.
+    var focusedWindowIsDesktop = false
     func applicationFocus(of window: WindowSnapshot) -> ApplicationFocusMatch {
         if focusedWindowIsUnknown { return .unknown }
-        guard !focusedWindowIsFallback else { return .contradicted }
-        return window.id == (windows.first { $0.id == focusedID } ?? windows.first)?.id ? .confirmed : .contradicted
+        if focusedWindowIsDesktop { return .noWindow }
+        guard !focusedWindowIsFallback else { return .otherWindow(isTransientPopup: true) }
+        return window.id == (windows.first { $0.id == focusedID } ?? windows.first)?.id
+            ? .confirmed : .otherWindow(isTransientPopup: false)
     }
     func raiseWindow(_ id: WindowID, activate: Bool) throws {
         if failingNextRaiseWindowID == id || failingRaiseWindowIDs.contains(id) {

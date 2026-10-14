@@ -1397,13 +1397,15 @@ extension WindowCoordinator {
         guard let process, tabSystem.frontmostProcessIdentifier == process,
               let reported = (try? system.focusedWindow()) ?? nil, reported.processIdentifier == process
         else { return .elsewhere }
-        let match = tabSystem.applicationFocus(of: reported)
-        if reported.id == id { return match == .confirmed ? .alreadyFocused : .heldByPopup }
-        // Another standard window or a dialog of the application can lose
-        // focus to the selection, as before. A popup that closes without
-        // focus keeps it, including one the application reports while
-        // `focusedWindow()` could not read it.
-        return tabSystem.isTransientPopup(reported) || match == .contradicted ? .heldByPopup : .elsewhere
+        // A standard window, a dialog, the desktop, or an unreadable focus can
+        // lose focus to the selection, as before. A popup that closes without
+        // focus keeps it, including one `focusedWindow()` could not read.
+        switch tabSystem.applicationFocus(of: reported) {
+        case .confirmed where reported.id == id: return .alreadyFocused
+        case .confirmed: return tabSystem.isTransientPopup(reported) ? .heldByPopup : .elsewhere
+        case .otherWindow(isTransientPopup: true): return .heldByPopup
+        case .otherWindow, .noWindow, .unknown: return .elsewhere
+        }
     }
 
     /// Restores Tabbed stacking without moving a window, activating an app,
