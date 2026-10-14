@@ -2634,3 +2634,30 @@ func steppedApplicationTabIsSelectedWithoutResizeLoops(emitsEvents: Bool) async 
     let filled = await waitFor { system.windows[0].frame.area > visible.area * 0.95 }
     #expect(filled, "\(system.windows[0].frame) in \(visible)")
 }
+
+/// A snapshot can confirm a window's kept size before the Tabbed mismatch
+/// report sees it, so the report learns nothing new. The fit retry still
+/// runs, because the window's constraints gained a larger minimum during the
+/// placement.
+@Test @MainActor func tabbedFitRetriesWhenASnapshotConfirmsTheMinimumFirst() async throws {
+    _ = NSApplication.shared
+    let system = FakeAppWindowSystem()
+    system.measuresOnWrite = true
+    let id = system.windows[0].id
+    // Already at its minimum width, so the readback only shows a kept size.
+    system.windows[0].frame = BTRect(x: 0, y: 0, width: 600, height: 800)
+    system.enforcedMinimumWidths[id] = 600
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    model.configuration.singleWindowPlacement = nil
+    model.configuration.defaultTabbedPreset = .columns
+    model.statusMessage = nil
+    model.setActiveMode(.tabbed)
+    try #require(await waitFor(timeout: .seconds(3)) {
+        model.activeTabbedState != nil || model.statusMessage != nil
+    })
+    #expect(model.activeTabbedState?.panes.count == 2, "\(String(describing: model.statusMessage))")
+    #expect(system.windows[0].frame.size.width == 600)
+    #expect(system.windows[0].frame.minY == 34)
+    #expect(system.windows[0].constraints.minimumSize.width == 600)
+}
