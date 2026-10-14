@@ -2146,6 +2146,30 @@ extension AccessibilityWindowSystem: TabbedWindowSystem {
         NSWorkspace.shared.frontmostApplication?.processIdentifier
     }
 
+    public func applicationFocus(of window: WindowSnapshot) -> ApplicationFocusMatch {
+        guard (try? ensurePermission()) != nil, let element = elements[window.id] else { return .unknown }
+        let application = makeApplicationElement(pid: window.processIdentifier)
+        var raw: CFTypeRef?
+        let result = Self.gatedCall(application) {
+            AXUIElementCopyAttributeValue(application, kAXFocusedWindowAttribute as CFString, &raw)
+        }
+        let focused = raw.flatMap { CFGetTypeID($0) == AXUIElementGetTypeID() ? unsafeDowncast($0, to: AXUIElement.self) : nil }
+        return Self.applicationFocus(readResult: focused == nil && result == .success ? .noValue : result,
+                                     matchesWindow: focused.map { CFEqual($0, element) } ?? false)
+    }
+
+    public func isTransientPopup(_ window: WindowSnapshot) -> Bool {
+        guard (try? ensurePermission()) != nil, let element = elements[window.id] else { return false }
+        return WindowFloatingClassifier.isTransientPopup(subrole: value(kAXSubroleAttribute, from: element))
+    }
+
+    /// Only a successful read that names the window confirms focus. A
+    /// missing focused window or a failed read proves nothing.
+    nonisolated static func applicationFocus(readResult: AXError, matchesWindow: Bool) -> ApplicationFocusMatch {
+        guard readResult == .success else { return .unknown }
+        return matchesWindow ? .confirmed : .contradicted
+    }
+
     public func raiseWindow(_ id: WindowID, activate: Bool) throws {
         try ensurePermission()
         guard let element = elements[id] ?? refreshElement(for: id) else { throw WindowSystemError.windowNotFound(id) }

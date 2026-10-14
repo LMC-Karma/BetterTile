@@ -786,3 +786,46 @@ func excludedTabbedMembersNeverUseRawNativeSnapping(membership: String) {
         #expect(resultCount == 0)
     }
 }
+
+/// Live: a click on a browser's toolbar in a Tabbed pane with hidden tabs
+/// started a drag at release. The drag tore the tab from its group, and the
+/// release placed the group again, activating the window and closing the
+/// popup the click opened. A click without drag samples starts no drag.
+@Test @MainActor func aClickWithoutDragSamplesStartsNoTabbedDrag() {
+    let system = FakeWindowSystem()
+    let controller = DragSnapController(coordinator: WindowCoordinator(system: system), configuration: BetterTileConfiguration())
+    controller.activeModeProvider = { _ in .tabbed }
+    controller.bentoStateProvider = { _ in BentoLayoutState(root: .leaf(system.windows[0].id)) }
+    controller.isTabbedMember = { _ in true }
+    var began = 0
+    var ended = 0
+    controller.bentoDragBeganHandler = { _, _, _ in began += 1; return true }
+    controller.bentoDragEndedHandler = { _, _, _ in ended += 1 }
+    controller.setUsesSharedGestureEvents(true)
+    let frame = system.windows[0].frame
+    controller.handleSharedGestureEvent(GlobalGestureEvent(
+        kind: .leftMouseDown, position: BTPoint(x: 300, y: 220), button: 0, modifiers: [], timestamp: 1))
+    #expect(controller.isGestureActive)
+    controller.handleSharedGestureEvent(GlobalGestureEvent(
+        kind: .leftMouseUp, position: BTPoint(x: 300, y: 220), button: 0, modifiers: [], timestamp: 2))
+    #expect(began == 0)
+    #expect(ended == 0)
+    #expect(!controller.isGestureActive)
+    #expect(system.windows[0].frame == frame)
+}
+
+/// Drag samples suppressed by the snap modifiers still make a drag. When
+/// the modifiers are released before the button, the release snaps.
+@Test @MainActor func aReleaseAfterSuppressedDragSamplesStillSnaps() {
+    let system = FakeWindowSystem()
+    let controller = DragSnapController(coordinator: WindowCoordinator(system: system), configuration: BetterTileConfiguration())
+    controller.setUsesSharedGestureEvents(true)
+    func send(_ kind: GlobalGestureEventKind, x: Double, y: Double, modifiers: ShortcutModifiers = []) {
+        controller.handleSharedGestureEvent(GlobalGestureEvent(kind: kind, position: BTPoint(x: x, y: y), button: 0, modifiers: modifiers, timestamp: 1))
+    }
+    send(.leftMouseDown, x: 300, y: 220)
+    system.windows[0].frame.origin.x += 3
+    send(.leftMouseDragged, x: 1, y: 400, modifiers: .option)
+    send(.leftMouseUp, x: 1, y: 400)
+    #expect(system.windows[0].frame == BTRect(x: 0, y: 0, width: 500, height: 800))
+}

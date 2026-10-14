@@ -87,6 +87,19 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, TabbedWindowSystem, Min
     var frontmostProcessIdentifier: Int32? {
         frontmostOverride ?? (windows.first { $0.id == focusedID } ?? windows.first)?.processIdentifier
     }
+    /// Simulates an application whose focused window, such as a small
+    /// popup, `focusedWindow()` cannot report, so it reports another window.
+    var focusedWindowIsFallback = false
+    /// Simulates an application that reports no focused window.
+    var focusedWindowIsUnknown = false
+    /// Popups that close when they lose focus, such as browser bubbles.
+    var transientPopupIDs: Set<WindowID> = []
+    func isTransientPopup(_ window: WindowSnapshot) -> Bool { transientPopupIDs.contains(window.id) }
+    func applicationFocus(of window: WindowSnapshot) -> ApplicationFocusMatch {
+        if focusedWindowIsUnknown { return .unknown }
+        guard !focusedWindowIsFallback else { return .contradicted }
+        return window.id == (windows.first { $0.id == focusedID } ?? windows.first)?.id ? .confirmed : .contradicted
+    }
     func raiseWindow(_ id: WindowID, activate: Bool) throws {
         if failingNextRaiseWindowID == id || failingRaiseWindowIDs.contains(id) {
             if failingNextRaiseWindowID == id { failingNextRaiseWindowID = nil }

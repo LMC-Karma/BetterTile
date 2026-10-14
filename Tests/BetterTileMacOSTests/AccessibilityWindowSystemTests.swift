@@ -100,3 +100,14 @@ import Testing
     #expect(AccessibilityWindowSystem.movability(position: nil, size: nil) == nil)
     #expect(AccessibilityWindowSystem.movability(position: false, size: nil) == nil)
 }
+
+/// Only a successful read that names the window confirms focus. An
+/// application without a focused window, or a failed read, proves nothing.
+@Test func applicationFocusRequiresAPositiveRead() {
+    #expect(AccessibilityWindowSystem.applicationFocus(readResult: .success, matchesWindow: true) == .confirmed)
+    #expect(AccessibilityWindowSystem.applicationFocus(readResult: .success, matchesWindow: false) == .contradicted)
+    #expect(AccessibilityWindowSystem.applicationFocus(readResult: .noValue, matchesWindow: false) == .unknown)
+    #expect(AccessibilityWindowSystem.applicationFocus(readResult: .cannotComplete, matchesWindow: false) == .unknown)
+    #expect(AccessibilityWindowSystem.applicationFocus(readResult: .attributeUnsupported, matchesWindow: false) == .unknown)
+    #expect(AccessibilityWindowSystem.applicationFocus(readResult: .apiDisabled, matchesWindow: true) == .unknown)
+}
