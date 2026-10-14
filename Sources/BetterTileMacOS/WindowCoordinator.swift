@@ -504,8 +504,17 @@ public final class WindowCoordinator {
 
     /// Records a committed transaction's changed frames for Restore, for a
     /// caller that committed with `recordHistory: false`.
-    public func recordHistory(of transaction: WindowFrameTransaction) {
+    /// Returns the frames it added, for `discardHistory(_:)`.
+    @discardableResult
+    public func recordHistory(of transaction: WindowFrameTransaction) -> [WindowID: BTRect] {
         recordChangedHistoryFrames(transaction.baselineFrames, proposedPlacements: transaction.proposedPlacements)
+    }
+
+    /// Removes Restore steps that `recordHistory(of:)` added, when the change
+    /// they undo was rolled back without Restore. A step is removed only
+    /// while it is still the newest one for its window.
+    public func discardHistory(_ frames: [WindowID: BTRect]) {
+        for (id, frame) in frames { history.removeLast(frame, for: id) }
     }
 
     public func applyLive(
@@ -659,13 +668,14 @@ public final class WindowCoordinator {
         min(a.maxX, b.maxX) - max(a.minX, b.minX) > 2 && min(a.maxY, b.maxY) - max(a.minY, b.minY) > 2
     }
 
-    public func finishLive(transaction: WindowFrameTransaction, recordHistory: Bool = true) {
-        if recordHistory, transaction.hasLiveChanges {
-            recordChangedHistoryFrames(
-                transaction.baselineFrames,
-                proposedPlacements: transaction.proposedPlacements
-            )
-        }
+    /// Returns the frames it added to the history, for `discardHistory(_:)`.
+    @discardableResult
+    public func finishLive(transaction: WindowFrameTransaction, recordHistory: Bool = true) -> [WindowID: BTRect] {
+        guard recordHistory, transaction.hasLiveChanges else { return [:] }
+        return recordChangedHistoryFrames(
+            transaction.baselineFrames,
+            proposedPlacements: transaction.proposedPlacements
+        )
     }
 
     public func cancel(transaction: WindowFrameTransaction) -> WindowMutationOutcome {
@@ -991,20 +1001,26 @@ public final class WindowCoordinator {
         return try system.visibleWindows().filter { ids.contains($0.id) }
     }
 
-    private func recordHistoryFrames(_ frames: [WindowID: BTRect]) {
-        for (id, frame) in frames.sorted(by: { $0.key < $1.key }) { history.record(frame, for: id) }
+    @discardableResult
+    private func recordHistoryFrames(_ frames: [WindowID: BTRect]) -> [WindowID: BTRect] {
+        var recorded: [WindowID: BTRect] = [:]
+        for (id, frame) in frames.sorted(by: { $0.key < $1.key }) where history.record(frame, for: id) {
+            recorded[id] = frame
+        }
+        return recorded
     }
 
+    @discardableResult
     private func recordChangedHistoryFrames(
         _ baselineFrames: [WindowID: BTRect],
         proposedPlacements: [Placement]
-    ) {
+    ) -> [WindowID: BTRect] {
         let proposedFrames = Dictionary(uniqueKeysWithValues: proposedPlacements.map { ($0.windowID, $0.frame) })
         let changed = baselineFrames.filter { id, baseline in
             guard let proposed = proposedFrames[id] else { return false }
             return !baseline.approximatelyEquals(proposed, tolerance: 0.01)
         }
-        recordHistoryFrames(changed)
+        return recordHistoryFrames(changed)
     }
 
     private func expect(_ frame: BTRect, for windowID: WindowID, generation: UInt64) {
@@ -1237,12 +1253,24 @@ extension WindowCoordinator {
             var previousFrames: [WindowID: BTRect] = [:]
             var previousSamples: [WindowID: BTRect] = [:]
             var previousHiddenFrames: [WindowID: BTRect] = [:]
+            // A size refusal is reported only once the minimum-size learner
+            // can confirm a kept size, so an application that applies a size
+            // late is not reported as refusing it.
+            let written = ContinuousClock.now
+            // Timed at the sample read, so a stall after the read does not
+            // age the sample.
+            var sampledAt = written
+            func refusalCanSettle(_ attempt: Int) -> Bool {
+                attempt >= 3 && (attempt == 11
+                    || sampledAt - written >= .seconds(WindowMinimumSizeLearner.clampConfirmationDelay))
+            }
             // Frames settle within four samples. Activation can take longer,
             // so accepted frames keep waiting for focus instead of rolling back.
             for attempt in 0..<12 {
                 guard isCurrent(), !Task.isCancelled else {
                     return touched ? .degraded(reason: "The desktop changed during Tabbed placement. Return to that desktop and use Repair Tabbed.") : .failed(reason: "The desktop changed.")
                 }
+                sampledAt = ContinuousClock.now
                 let actual = Dictionary(uniqueKeysWithValues: try snapshots(ids: ids).map { ($0.id, $0.frame) })
                 // An application that resizes in steps settles just short of
                 // the request. Once that frame is stable it is accepted; the
@@ -1268,14 +1296,14 @@ extension WindowCoordinator {
                         guard let placement = changedBestEffort.first(where: { $0.windowID == window.id }),
                               let before = bestEffortBaseline[window.id],
                               !window.frame.approximatelyEquals(placement.frame, tolerance: 2) else { continue }
-                        if attempt >= 3, previousHiddenFrames[window.id]?.approximatelyEquals(window.frame, tolerance: 1) == true {
+                        if refusalCanSettle(attempt), previousHiddenFrames[window.id]?.approximatelyEquals(window.frame, tolerance: 1) == true {
                             onSizeMismatch?(window.id, placement.frame, before, window.frame)
                         } else {
                             unsettledHidden = true
                         }
                     }
                     previousHiddenFrames = Dictionary(uniqueKeysWithValues: hiddenFrames.map { ($0.id, $0.frame) })
-                    if unsettledHidden, attempt < 3 {
+                    if unsettledHidden, !refusalCanSettle(attempt) {
                         try await Task.sleep(for: .milliseconds(50))
                         continue
                     }
@@ -1294,7 +1322,8 @@ extension WindowCoordinator {
                 }
                 // Stable size refusals in either axis can inform a retry.
                 // Report before rollback loses the evidence.
-                if attempt == 3, focusMatches, placements.allSatisfy({ placement in
+                let settled = refusalCanSettle(attempt)
+                if settled, focusMatches, placements.allSatisfy({ placement in
                     guard let frame = actual[placement.windowID] else { return false }
                     return previousFrames[placement.windowID]?.approximatelyEquals(frame, tolerance: 1) == true
                 }) {
@@ -1305,7 +1334,7 @@ extension WindowCoordinator {
                     }
                 }
                 previousFrames = actual
-                if attempt >= 3 { break }
+                if settled { break }
                 try await Task.sleep(for: .milliseconds(50))
             }
             throw WindowSystemError.operationFailed("A window did not accept its Tabbed size. Choose a larger pane or try Repair Tabbed.")

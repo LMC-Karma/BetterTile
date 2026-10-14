@@ -174,18 +174,24 @@ private let target = BTRect(x: 100, y: 100, width: 600, height: 400)
 }
 
 @Test func clampConfirmationAgreesWithTheLearner() {
-    // A nudge runs only when the readback teaches the learner nothing.
+    // A nudge runs only when the readback gives the learner no evidence: no
+    // measurement now and no pending clamp for a later snapshot.
     let requested = BTRect(x: 100, y: 50, width: 200, height: 150)
     let actual = BTRect(x: 100, y: 50, width: 300, height: 150)
+    let id = WindowID(rawValue: "w")
     for previous in [nil, actual, actual.offsetBy(dx: 400, dy: 0),
                      BTRect(x: 100, y: 50, width: 500, height: 150)] as [BTRect?] {
         var learner = WindowMinimumSizeLearner()
-        let learned = learner.observeWriteReadback(
-            windowID: WindowID(rawValue: "w"), requested: requested, previous: previous, actual: actual)
+        let learnedNow = learner.observeWriteReadback(
+            windowID: id, requested: requested, previous: previous, actual: actual, now: 0)
+        let learned = learnedNow || learner.confirmClampCandidate(
+            windowID: id, size: actual.size, now: WindowMinimumSizeLearner.clampConfirmationDelay)
         #expect(learned == WriteReadbackPolicy.readbackProvesWrite(
             requested: requested, previous: previous, actual: actual))
         #expect(learned != WriteReadbackPolicy.needsClampConfirmation(
             requested: requested, previous: previous, actual: actual, learnedMinimum: nil))
+        // Only a size that shrank and stopped is learned at once.
+        #expect(learnedNow == (previous?.size.width == 500))
     }
 }
 

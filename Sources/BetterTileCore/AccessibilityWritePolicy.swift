@@ -119,10 +119,11 @@ public enum FrameWritePlanner {
 }
 
 /// Decides whether a final size write that kept a larger size is worth a
-/// clamp confirmation. The confirmation adds a position nudge and its restore,
-/// so it runs only for a clamp the learned minimum does not already explain.
-/// Live gesture ticks never confirm; they write through
-/// `setIntermediateFrames`.
+/// position nudge. The nudge and its restore prove that the application
+/// handles writes, so the kept size can become a pending clamp. They run only
+/// for a clamp the learned minimum does not already explain. The nudge never
+/// proves the size: a later observation must still confirm it. Live gesture
+/// ticks never nudge; they write through `setIntermediateFrames`.
 public enum WriteReadbackPolicy {
     /// True when the window stayed at the requested origin, larger than
     /// requested on an axis the learned minimum does not already explain.
@@ -163,9 +164,9 @@ public enum WriteReadbackPolicy {
     }
 
     /// True when a final write needs the position nudge. The readback must
-    /// show a clamp that the learned minimum does not explain, and that the
-    /// readback alone cannot prove. A single-window write and a batched
-    /// committed write use this same rule.
+    /// show a kept size that the learned minimum does not explain, at a frame
+    /// that does not prove the write was processed. A single-window write
+    /// and a batched committed write use this same rule.
     public static func needsClampConfirmation(
         requested: BTRect,
         previous: BTRect?,
@@ -177,8 +178,9 @@ public enum WriteReadbackPolicy {
     }
 
     /// True when a 1 pt position nudge proves that the application handles
-    /// writes at once. The window must follow the nudge and then return to
-    /// its position. A window left at the nudged position is no proof.
+    /// position writes at once. The window must follow the nudge and then
+    /// return to its position. A window left at the nudged position is no
+    /// proof. An application can still apply a size later.
     public static func nudgeConfirmsSynchronousWrites(
         nudged: BTPoint,
         observed: BTPoint?,

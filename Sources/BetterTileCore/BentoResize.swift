@@ -118,34 +118,85 @@ public struct BentoConstraintSolver: Sendable {
     }
 }
 
-/// Learns minimum sizes only when a requested shrink settles at a larger size
-/// between the request and the gesture baseline. This avoids treating ordinary
-/// moves or expansions as application constraints.
+/// Learns minimum sizes only from evidence: a requested shrink that stopped
+/// at a larger size, or a kept size that is still there at least
+/// `clampConfirmationDelay` after the write. Ordinary moves and expansions
+/// are not application constraints, and neither is a size an application
+/// applies within that delay.
 public struct WindowMinimumSizeLearner: Sendable {
+    /// How long a kept size must stay before any observation confirms it as
+    /// a clamp. Chromium-style applications apply a new position at once and
+    /// the new size later, usually within a few display frames, and a move to
+    /// a display with another backing scale can report the old size for a
+    /// moment. A size applied later than this is still learned; two smaller
+    /// stable snapshots then lower it again.
+    public static let clampConfirmationDelay = 0.25
+
+    /// The axes of `actual` that prove a minimum at once: each shrank from
+    /// `previous` toward `requested` and stopped short of it. Any other size
+    /// larger than requested can be a size the application applies later.
+    public static func provenMinimum(
+        requested: BTSize,
+        previous: BTSize,
+        actual: BTSize,
+        tolerance: Double = 2
+    ) -> (width: Double?, height: Double?) {
+        func axis(_ requested: Double, _ previous: Double, _ actual: Double) -> Double? {
+            actual > requested + tolerance && actual < previous - tolerance ? actual : nil
+        }
+        return (axis(requested.width, previous.width, actual.width),
+                axis(requested.height, previous.height, actual.height))
+    }
+
+    /// A window stayed larger than requested on an axis, and the readback
+    /// could not tell a clamp from a size still to come. Each axis holds its
+    /// kept length, or nil, and is confirmed or dropped on its own: the other
+    /// axis can still take a late size.
+    private struct ClampCandidate: Sendable {
+        var requested: BTSize
+        var width: Double?
+        var height: Double?
+        var observedAt: Double
+    }
+
     public private(set) var learnedSizes: [WindowID: BTSize]
     private var smallerSizeCandidates: [WindowID: BTSize] = [:]
+    private var clampCandidates: [WindowID: ClampCandidate] = [:]
     private var probedWindowIDs: Set<WindowID> = []
     /// The latest measurement for each application, by bundle identifier.
     /// Applications rarely report a minimum, so a new window starts from its
     /// application's measured size instead of the default floor. Its own
     /// measurement replaces the seed as soon as one exists. A seed lasts
-    /// until its application quits. Process memory only; nothing is saved.
+    /// until its application quits. Only proven measurements become seeds.
+    /// Process memory only; nothing is saved.
     public private(set) var applicationSizes: [String: BTSize] = [:]
 
     public init(learnedSizes: [WindowID: BTSize] = [:]) {
         self.learnedSizes = learnedSizes
     }
 
+    /// Reads a settled frame after a write. A pending clamp that the settled
+    /// frame still shows is confirmed, but only `clampConfirmationDelay`
+    /// after its write; an earlier settled frame leaves it pending for a
+    /// later observation. A measurement becomes the application's seed.
     @discardableResult
     public mutating func observe(
         windowID: WindowID,
+        application: String? = nil,
         requested: BTRect,
         baseline: BTRect,
         actual: BTRect,
+        now: Double,
         tolerance: Double = 2
     ) -> Bool {
+        var changed = false
+        if let candidate = clampCandidates[windowID],
+           Self.sizesMatch(candidate.requested, requested.size, tolerance: tolerance) {
+            changed = confirm(candidate, windowID: windowID, size: actual.size, now: now, tolerance: tolerance)
+        }
+        defer { if changed { rememberApplication(application, from: windowID) } }
         // An unchanged frame can be an ignored or queued write, not a minimum.
-        guard !actual.approximatelyEquals(baseline, tolerance: tolerance) else { return false }
+        guard !actual.approximatelyEquals(baseline, tolerance: tolerance) else { return changed }
         var learned = learnedSizes[windowID] ?? .zero
         let previous = learned
         var observedMinimum = false
@@ -162,8 +213,9 @@ public struct WindowMinimumSizeLearner: Sendable {
             observedMinimum = true
         }
         if observedMinimum { smallerSizeCandidates.removeValue(forKey: windowID) }
-        guard learned != previous else { return false }
+        guard learned != previous else { return changed }
         learnedSizes[windowID] = learned
+        changed = true
         return true
     }
 
@@ -197,40 +249,194 @@ public struct WindowMinimumSizeLearner: Sendable {
         return true
     }
 
-    /// Reads a frame straight after a write. Applications clamp a size
-    /// synchronously, so a size larger than the request is the minimum in
-    /// that axis, measured now. The request must have been processed: either
-    /// the window moved to the requested origin, or its size changed. A frame
-    /// that ignored the write entirely proves nothing and is never learned.
-    /// A requested size that was accepted lowers an older, larger bound.
+    /// Reads a frame straight after a write. The request must have been
+    /// processed: either the window moved to the requested origin, or its
+    /// size changed. A frame that ignored the write entirely proves nothing.
+    ///
+    /// An axis that shrank toward the request and stopped short of it is the
+    /// minimum, measured now. Any other axis larger than requested proves
+    /// nothing yet: the application can apply the size later, as Chromium
+    /// does, or the window can still report its size from another display.
+    /// That axis becomes a pending clamp; see `confirmClampCandidate`. A
+    /// requested size that was accepted lowers an older, larger bound.
+    ///
+    /// `previousRequest` is the size the window's previous write asked for,
+    /// when that write may still be applied late, as during a live gesture.
+    /// A shrink is then measured from the smaller of the two on each axis: a
+    /// readback that lags behind the requests and still lies above the
+    /// previous request proves nothing.
     @discardableResult
     public mutating func observeWriteReadback(
         windowID: WindowID,
         application: String? = nil,
         requested: BTRect,
         previous: BTRect?,
+        previousRequest: BTSize? = nil,
         actual: BTRect,
+        now: Double,
         tolerance: Double = 2
     ) -> Bool {
         defer { rememberApplication(application, from: windowID) }
+        clampCandidates.removeValue(forKey: windowID)
         guard WriteReadbackPolicy.readbackProvesWrite(
             requested: requested, previous: previous, actual: actual, tolerance: tolerance
-        ) else { return false }
+        ), let previous else { return false }
+        var before = previous.size
+        if let previousRequest {
+            before.width = min(before.width, previousRequest.width)
+            before.height = min(before.height, previousRequest.height)
+        }
+        let kept = measure(windowID: windowID, requested: requested.size, previous: before,
+                           actual: actual.size, tolerance: tolerance)
+        if kept.width || kept.height {
+            clampCandidates[windowID] = ClampCandidate(
+                requested: requested.size,
+                width: kept.width ? actual.size.width : nil,
+                height: kept.height ? actual.size.height : nil,
+                observedAt: now
+            )
+        }
+        return kept.learned
+    }
+
+    /// Reads a window straight after a probe wrote a 1×1 size at its origin.
+    /// Only an axis that shrank and stopped short of the request is the
+    /// minimum. A kept size is no evidence: the window can be at its minimum
+    /// already, or its application can apply sizes late. The probe restores
+    /// the size at once, so no later observation can confirm it either, and
+    /// the window stays without a measurement.
+    @discardableResult
+    public mutating func observeProbe(
+        windowID: WindowID,
+        application: String? = nil,
+        original: BTSize,
+        clamped: BTSize,
+        tolerance: Double = 2
+    ) -> Bool {
+        defer { rememberApplication(application, from: windowID) }
+        clampCandidates.removeValue(forKey: windowID)
+        return measure(windowID: windowID, requested: BTSize(width: 1, height: 1), previous: original,
+                       actual: clamped, tolerance: tolerance).learned
+    }
+
+    /// Learns each axis that shrank toward the request and stopped short of
+    /// it, and lowers a bound that an accepted size disproves. Returns
+    /// whether a bound changed, and the axes that stayed larger than
+    /// requested without that proof: they kept their size, or grew, which a
+    /// late size from an earlier write can also do.
+    private mutating func measure(
+        windowID: WindowID,
+        requested: BTSize,
+        previous: BTSize,
+        actual: BTSize,
+        tolerance: Double
+    ) -> (learned: Bool, width: Bool, height: Bool) {
         let before = learnedSizes[windowID]
         var learned = before ?? .zero
-        func measure(_ requestedLength: Double, _ actualLength: Double, _ bound: inout Double) {
-            if actualLength > requestedLength + tolerance {
-                bound = actualLength
-            } else if abs(actualLength - requestedLength) <= tolerance, bound > actualLength {
+        let proven = Self.provenMinimum(requested: requested, previous: previous, actual: actual, tolerance: tolerance)
+        func axis(_ requestedLength: Double, _ actualLength: Double, _ proven: Double?,
+                  _ bound: inout Double) -> Bool {
+            if let proven {
+                bound = proven
+                return false
+            }
+            if actualLength > requestedLength + tolerance { return true }
+            if abs(actualLength - requestedLength) <= tolerance, bound > actualLength {
                 bound = actualLength
             }
+            return false
         }
-        measure(requested.size.width, actual.size.width, &learned.width)
-        measure(requested.size.height, actual.size.height, &learned.height)
-        guard learned != (before ?? .zero) else { return false }
+        let keptWidth = axis(requested.width, actual.width, proven.width, &learned.width)
+        let keptHeight = axis(requested.height, actual.height, proven.height, &learned.height)
+        guard learned != (before ?? .zero) else { return (false, keptWidth, keptHeight) }
         if learned == .zero { learnedSizes.removeValue(forKey: windowID) } else { learnedSizes[windowID] = learned }
         smallerSizeCandidates.removeValue(forKey: windowID)
+        return (true, keptWidth, keptHeight)
+    }
+
+    /// Records a kept size after a position nudge proved that the application
+    /// handles writes, for a write that left the window where it was. The
+    /// nudge proves the position, not the size: an application can follow a
+    /// move at once and apply a size later. Each axis that stayed larger than
+    /// requested becomes a pending clamp; see `confirmClampCandidate`.
+    public mutating func recordClampCandidate(
+        windowID: WindowID,
+        requested: BTSize,
+        actual: BTSize,
+        now: Double,
+        tolerance: Double = 2
+    ) {
+        let width = actual.width > requested.width + tolerance
+        let height = actual.height > requested.height + tolerance
+        guard width || height else { return }
+        clampCandidates[windowID] = ClampCandidate(
+            requested: requested,
+            width: width ? actual.width : nil,
+            height: height ? actual.height : nil,
+            observedAt: now
+        )
+    }
+
+    /// Checks a pending clamp against a later snapshot, axis by axis. A kept
+    /// axis that the snapshot still shows at least `clampConfirmationDelay`
+    /// after the write is the minimum, and the measurement becomes the
+    /// application's seed. A kept axis with another length is dropped. An
+    /// earlier snapshot leaves the axis pending.
+    @discardableResult
+    public mutating func confirmClampCandidate(
+        windowID: WindowID,
+        application: String? = nil,
+        size: BTSize,
+        now: Double,
+        tolerance: Double = 2
+    ) -> Bool {
+        guard let candidate = clampCandidates[windowID] else { return false }
+        let learned = confirm(candidate, windowID: windowID, size: size, now: now, tolerance: tolerance)
+        if learned { rememberApplication(application, from: windowID) }
+        return learned
+    }
+
+    /// Discards a pending clamp, for example because a newer write replaced
+    /// the request it belonged to.
+    public mutating func discardClampCandidate(for windowID: WindowID) {
+        clampCandidates.removeValue(forKey: windowID)
+    }
+
+    /// Learns each kept axis that `size` still shows at least
+    /// `clampConfirmationDelay` after the write, and drops each kept axis
+    /// with another length. An axis seen earlier at its kept length stays
+    /// pending. The candidate ends when no axis is pending.
+    private mutating func confirm(
+        _ candidate: ClampCandidate, windowID: WindowID, size: BTSize, now: Double, tolerance: Double
+    ) -> Bool {
+        let due = now - candidate.observedAt >= Self.clampConfirmationDelay
+        var pending = candidate
+        let before = learnedSizes[windowID] ?? .zero
+        var learned = before
+        func check(_ kept: inout Double?, _ observed: Double, _ bound: inout Double) {
+            guard let length = kept else { return }
+            if abs(length - observed) > tolerance {
+                kept = nil
+            } else if due {
+                bound = length
+                kept = nil
+            }
+        }
+        check(&pending.width, size.width, &learned.width)
+        check(&pending.height, size.height, &learned.height)
+        if pending.width == nil, pending.height == nil {
+            clampCandidates.removeValue(forKey: windowID)
+        } else {
+            clampCandidates[windowID] = pending
+        }
+        guard learned != before else { return false }
+        learnedSizes[windowID] = learned
+        smallerSizeCandidates.removeValue(forKey: windowID)
         return true
+    }
+
+    private static func sizesMatch(_ lhs: BTSize, _ rhs: BTSize, tolerance: Double) -> Bool {
+        abs(lhs.width - rhs.width) <= tolerance && abs(lhs.height - rhs.height) <= tolerance
     }
 
     private mutating func rememberApplication(_ application: String?, from windowID: WindowID) {
@@ -258,10 +464,21 @@ public struct WindowMinimumSizeLearner: Sendable {
         return result
     }
 
+    /// Forgets everything about a window that closed. A window ID that comes
+    /// back is a new window and can be probed again.
     public mutating func remove(_ windowID: WindowID) {
+        forget(windowID: windowID)
+        probedWindowIDs.remove(windowID)
+    }
+
+    /// Forgets one window's measurement and its pending evidence, for example
+    /// when a repair distrusts it. The window plans with its application's
+    /// seed, if any, until a later write measures it again. It is not probed
+    /// again, because a probe resizes a visible window.
+    public mutating func forget(windowID: WindowID) {
         learnedSizes.removeValue(forKey: windowID)
         smallerSizeCandidates.removeValue(forKey: windowID)
-        probedWindowIDs.remove(windowID)
+        clampCandidates.removeValue(forKey: windowID)
     }
 
     /// Drops one application's seed, for example when it quits. A relaunch,
@@ -274,8 +491,8 @@ public struct WindowMinimumSizeLearner: Sendable {
     public func hasMeasurement(for windowID: WindowID) -> Bool { learnedSizes[windowID] != nil }
 
     /// Records that a probe wrote a tiny size to a window. A window is probed
-    /// once: an application that applies its minimum late gives no
-    /// measurement, and probing it again would only resize it again.
+    /// once: a window that kept its size gives no measurement, and probing it
+    /// again would only resize it again.
     public mutating func recordProbe(of windowID: WindowID) {
         probedWindowIDs.insert(windowID)
     }
@@ -286,28 +503,6 @@ public struct WindowMinimumSizeLearner: Sendable {
     /// probed is not probed again.
     public func windowsNeedingMeasurement(_ windowIDs: Set<WindowID>) -> [WindowID] {
         windowIDs.sorted().filter { !hasMeasurement(for: $0) && !probedWindowIDs.contains($0) }
-    }
-
-    /// Records a clamp that the caller proved synchronous by other means, for
-    /// a write that left the window where it was: each axis that stayed
-    /// larger than requested is the minimum.
-    @discardableResult
-    public mutating func observeConfirmedClamp(
-        windowID: WindowID,
-        application: String? = nil,
-        requested: BTSize,
-        actual: BTSize,
-        tolerance: Double = 2
-    ) -> Bool {
-        defer { rememberApplication(application, from: windowID) }
-        let before = learnedSizes[windowID] ?? .zero
-        var learned = before
-        if actual.width > requested.width + tolerance { learned.width = actual.width }
-        if actual.height > requested.height + tolerance { learned.height = actual.height }
-        guard learned != before else { return false }
-        learnedSizes[windowID] = learned
-        smallerSizeCandidates.removeValue(forKey: windowID)
-        return true
     }
 
     /// Records the window's current measurement as its application's seed.
