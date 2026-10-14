@@ -235,12 +235,14 @@ older raise rule when its key window is transient, so those raises wait as
 described below, and when no key window is known, such as after a failed focus
 read, so they run at once. A transient key window cannot get focus back by a raise:
 a popup whose subrole is not standard, dialog, or floating, such as a browser
-toolbar bubble, closes when it loses focus. A focus the application does not
-confirm counts as transient too. The repair then leaves out every window of that application and every
-other raise that would cover one of them. The rest of the repair runs. The
-curtain is handled as for an unverified order, and the left-out raises wait
-for the next focus change. The watchdog retries them, for each display, in case
-the popup closed without a notification. A Tabbed placement does not activate or order a
+toolbar bubble, closes when it loses focus. A focused window that cannot be
+read counts as transient too. The repair then leaves out every window of that
+application and every other raise that would cover one of them. The rest of
+the repair runs. The curtain is handled as for an unverified order, and the
+left-out raises wait for the next focus change. The watchdog retries them, for
+each display, in case the popup closed without a notification. When the
+application's focus is on no window, such as Finder's desktop, there is no
+focus to protect, and the repair raises normally. A Tabbed placement does not activate or order a
 window of an application whose popup has focus. When the selection does not
 change, it only orders a selected tab that already has focus. Without
 a readable order, selection still raises the selected tabs of panes that
