@@ -84,8 +84,11 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, TabbedWindowSystem, Min
     /// Simulates BetterTile or an unreadable app in front; otherwise the
     /// focused window's app is frontmost.
     var frontmostOverride: Int32?
+    /// Simulates macOS reporting no frontmost application.
+    var frontmostIsUnknown = false
     var frontmostProcessIdentifier: Int32? {
-        frontmostOverride ?? (windows.first { $0.id == focusedID } ?? windows.first)?.processIdentifier
+        if frontmostIsUnknown { return nil }
+        return frontmostOverride ?? (windows.first { $0.id == focusedID } ?? windows.first)?.processIdentifier
     }
     /// Simulates an application whose focused window, such as a small
     /// popup, `focusedWindow()` cannot report, so it reports another window.
