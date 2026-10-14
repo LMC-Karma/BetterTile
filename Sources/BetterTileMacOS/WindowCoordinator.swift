@@ -1257,9 +1257,10 @@ extension WindowCoordinator {
             }
             // Focus is requested only when it can change something. A raise
             // of any window of the front application takes focus from its
-            // popup, which then closes, so a popup keeps focus.
-            let focusState = focus.map { tabbedFocusState(of: $0, process: participantProcesses[$0], in: tabSystem) }
-            let focus = focusState == .heldByPopup ? nil : focus
+            // popup, which then closes, so no pane raises a window of it.
+            let popupProcess = popupHoldingProcess(in: tabSystem)
+            let heldByPopup = { (id: WindowID) in popupProcess != nil && participantProcesses[id] == popupProcess }
+            let focus = focus.flatMap { heldByPopup($0) ? nil : $0 }
             if let focus {
                 touched = true
                 // A selection may already have requested focus when it was
@@ -1267,13 +1268,11 @@ extension WindowCoordinator {
                 // application does not receive a second activation. When the
                 // selection is unchanged, a window that already has focus is
                 // only ordered.
-                let keepsFocus = focusState == .alreadyFocused && Set(selected) == Set(previousSelected)
+                let keepsFocus = Set(selected) == Set(previousSelected)
+                    && tabbedWindowHasFocus(focus, process: participantProcesses[focus], in: tabSystem)
                 try tabSystem.raiseWindow(focus, activate: !focusAlreadyRequested && !keepsFocus)
             }
-            for id in selected where id != focus {
-                // Never order a window of an application whose popup has focus.
-                if focusState == .heldByPopup, let process = participantProcesses[id],
-                   tabSystem.frontmostProcessIdentifier == process { continue }
+            for id in selected where id != focus && !heldByPopup(id) {
                 touched = true
                 try tabSystem.raiseWindow(id, activate: false)
             }
@@ -1382,30 +1381,27 @@ extension WindowCoordinator {
         }
     }
 
-    enum TabbedFocusState: Equatable {
-        /// The window is its frontmost application's focused window.
-        case alreadyFocused
-        /// The window's application is frontmost and a popup has focus.
-        case heldByPopup
-        /// Focus is in another application or another standard window, or
-        /// cannot be read. Selection may move it, as before.
-        case elsewhere
+    /// The frontmost application, when a transient popup has its focus.
+    /// A standard window, a dialog, the desktop, or an unreadable focus can
+    /// lose focus to a placement, as before. A popup that closes without
+    /// focus keeps it, including one `focusedWindow()` could not read.
+    func popupHoldingProcess(in tabSystem: any TabbedWindowSystem) -> Int32? {
+        guard let process = tabSystem.frontmostProcessIdentifier,
+              let reported = (try? system.focusedWindow()) ?? nil, reported.processIdentifier == process
+        else { return nil }
+        switch tabSystem.applicationFocus(of: reported) {
+        case .confirmed: return tabSystem.isTransientPopup(reported) ? process : nil
+        case .otherWindow(isTransientPopup: true): return process
+        case .otherWindow, .noWindow, .unknown: return nil
+        }
     }
 
-    /// Where keyboard focus is relative to a Tabbed selection's focus target.
-    func tabbedFocusState(of id: WindowID, process: Int32?, in tabSystem: any TabbedWindowSystem) -> TabbedFocusState {
+    /// True when the window is its frontmost application's focused window.
+    func tabbedWindowHasFocus(_ id: WindowID, process: Int32?, in tabSystem: any TabbedWindowSystem) -> Bool {
         guard let process, tabSystem.frontmostProcessIdentifier == process,
-              let reported = (try? system.focusedWindow()) ?? nil, reported.processIdentifier == process
-        else { return .elsewhere }
-        // A standard window, a dialog, the desktop, or an unreadable focus can
-        // lose focus to the selection, as before. A popup that closes without
-        // focus keeps it, including one `focusedWindow()` could not read.
-        switch tabSystem.applicationFocus(of: reported) {
-        case .confirmed where reported.id == id: return .alreadyFocused
-        case .confirmed: return tabSystem.isTransientPopup(reported) ? .heldByPopup : .elsewhere
-        case .otherWindow(isTransientPopup: true): return .heldByPopup
-        case .otherWindow, .noWindow, .unknown: return .elsewhere
-        }
+              let reported = (try? system.focusedWindow()) ?? nil, reported.id == id
+        else { return false }
+        return tabSystem.applicationFocus(of: reported) == .confirmed
     }
 
     /// Restores Tabbed stacking without moving a window, activating an app,
