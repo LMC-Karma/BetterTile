@@ -3319,8 +3319,11 @@ final class BetterTileModel {
             }
             var previous: [WindowID: BTRect]?
             var latestWindows: [WindowSnapshot] = []
+            let started = ContinuousClock.now
             for _ in 0..<8 {
                 try? await Task.sleep(for: .milliseconds(40))
+                // Timed before the read, so a stall after it does not age the sample.
+                let elapsed = ContinuousClock.now - started
                 guard !Task.isCancelled,
                       self.sessionStore.isCurrent(sessionID, revision: revision, on: displayID),
                       let sampled = try? (self.system.cachedVisibleWindows(refreshing: scheduledSession.windowIDs)
@@ -3335,7 +3338,10 @@ final class BetterTileModel {
                 }
                 if let previous, frames.count == changedWindowIDs.count,
                    hasResponded,
-                   frames.allSatisfy({ id, frame in previous[id]?.approximatelyEquals(frame, tolerance: 1) == true }) {
+                   frames.allSatisfy({ id, frame in previous[id]?.approximatelyEquals(frame, tolerance: 1) == true }),
+                   !Self.awaitsClampConfirmation(
+                       sampled, changed: changedWindowIDs, requested: requestedFrames, elapsed: elapsed
+                   ) {
                     break
                 }
                 previous = frames
@@ -3353,6 +3359,40 @@ final class BetterTileModel {
                 isAuthoritative: isAuthoritative,
                 workArea: workArea
             )
+        }
+    }
+
+    /// True while a changed window that settled larger than requested, and
+    /// larger than its known minimum, can still be a pending clamp. The
+    /// minimum-size learner confirms one only
+    /// `WindowMinimumSizeLearner.clampConfirmationDelay` after the write, so
+    /// settlement samples until then and the confirmed minimum reaches the
+    /// correction below.
+    nonisolated static func awaitsClampConfirmation(
+        _ windows: [WindowSnapshot],
+        changed: Set<WindowID>,
+        requested: [WindowID: BTRect]?,
+        elapsed: Duration
+    ) -> Bool {
+        guard let requested, elapsed < .seconds(WindowMinimumSizeLearner.clampConfirmationDelay) else { return false }
+        return windows.contains { window in
+            // A fixed-size window keeps its size; that is no pending clamp.
+            guard changed.contains(window.id), window.constraints.isResizable,
+                  let frame = requested[window.id] else { return false }
+            let size = window.frame.size, minimum = window.constraints.minimumSize
+            return (size.width > frame.size.width + 2 && minimum.width < size.width - 2)
+                || (size.height > frame.size.height + 2 && minimum.height < size.height - 2)
+        }
+    }
+
+    /// True when a window's constraints now require a larger minimum than
+    /// they did in `earlier`.
+    nonisolated static func gainedMinimumSize(_ windows: [WindowSnapshot], since earlier: [WindowSnapshot]) -> Bool {
+        let before = Dictionary(earlier.map { ($0.id, $0.constraints.minimumSize) }, uniquingKeysWith: { first, _ in first })
+        return windows.contains { window in
+            guard let minimum = before[window.id] else { return false }
+            return window.constraints.minimumSize.width > minimum.width + 0.5
+                || window.constraints.minimumSize.height > minimum.height + 0.5
         }
     }
 
@@ -4510,12 +4550,17 @@ extension BetterTileModel {
                 // A tab drop keeps the tabs its overlay showed; only the panes
                 // adapt to the size the application revealed. A snap drag
                 // commits exactly the snap its overlay showed, or fails.
-                guard case .failed = outcome, attempt == 0, learnedSize, preparedDrop == nil || snapAction == nil,
+                guard case .failed = outcome, attempt == 0, preparedDrop == nil || snapAction == nil,
                       !Task.isCancelled, isCurrent() else { break }
+                let ids = Set(windows.map(\.id))
+                // A snapshot can confirm a kept size before the mismatch
+                // report sees it, so a larger minimum in the refreshed
+                // constraints is the same new observation.
+                let reread = try? self.system.windowSnapshots(ids: ids)
+                guard learnedSize || reread.map({ Self.gainedMinimumSize($0, since: windows) }) == true else { break }
                 refitsPreparedDrop = true
                 do {
-                    let ids = Set(windows.map(\.id))
-                    let refreshed = try self.system.windowSnapshots(ids: ids)
+                    let refreshed = try reread ?? self.system.windowSnapshots(ids: ids)
                     guard Set(refreshed.map(\.id)) == ids,
                           refreshed.allSatisfy({ ($0.displayID == display.id || $0.id == gestureSourceID) && $0.isEligible })
                     else { break }

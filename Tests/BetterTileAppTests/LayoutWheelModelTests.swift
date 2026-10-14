@@ -157,6 +157,10 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, TabbedWindowSystem, Min
     private func refreshLearnedConstraints() {
         for index in windows.indices {
             let id = windows[index].id
+            minimumSizeLearner.confirmClampCandidate(
+                windowID: id, application: windows[index].bundleIdentifier,
+                size: windows[index].frame.size, now: ProcessInfo.processInfo.systemUptime
+            )
             minimumSizeLearner.observeAcceptedSize(windowID: id, size: windows[index].frame.size)
             if measuresOnWrite {
                 if reportedConstraints[id] == nil { reportedConstraints[id] = windows[index].constraints }
@@ -185,6 +189,8 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, TabbedWindowSystem, Min
         }
         frameWriteCounts[windowID, default: 0] += 1
         requestedFrames[windowID, default: []].append(frame)
+        // Like the adapter, a new write replaces any pending clamp.
+        minimumSizeLearner.discardClampCandidate(for: windowID)
         if failedFrameWriteNumbers[windowID]?.contains(frameWriteCounts[windowID, default: 0]) == true {
             throw WindowSystemError.operationFailed("Injected frame write failure.")
         }
@@ -205,10 +211,21 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, TabbedWindowSystem, Min
             // Like the Accessibility adapter, read the size straight back.
             if measuresOnWrite {
                 if reportedConstraints[windowID] == nil { reportedConstraints[windowID] = windows[index].constraints }
-                minimumSizeLearner.observeWriteReadback(
+                let now = ProcessInfo.processInfo.systemUptime
+                let actual = windows[index].frame
+                if !minimumSizeLearner.observeWriteReadback(
                     windowID: windowID, application: windows[index].bundleIdentifier,
-                    requested: frame, previous: before, actual: windows[index].frame
-                )
+                    requested: frame, previous: before, actual: actual, now: now
+                ), WriteReadbackPolicy.needsClampConfirmation(
+                    requested: frame, previous: before, actual: actual,
+                    learnedMinimum: minimumSizeLearner.learnedSizes[windowID]
+                ) {
+                    // This application handles writes at once, so the nudge
+                    // would follow: the kept size is a pending clamp.
+                    minimumSizeLearner.recordClampCandidate(
+                        windowID: windowID, requested: frame.size, actual: actual.size, now: now
+                    )
+                }
                 refreshLearnedConstraints()
             }
         }
@@ -276,7 +293,8 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, TabbedWindowSystem, Min
         actual: BTRect
     ) -> Bool {
         let learned = minimumSizeLearner.observe(
-            windowID: windowID, requested: requested, baseline: baseline, actual: actual
+            windowID: windowID, application: windows.first { $0.id == windowID }?.bundleIdentifier,
+            requested: requested, baseline: baseline, actual: actual, now: ProcessInfo.processInfo.systemUptime
         )
         if let index = windows.firstIndex(where: { $0.id == windowID }) {
             if reportedConstraints[windowID] == nil { reportedConstraints[windowID] = windows[index].constraints }
@@ -295,14 +313,13 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, TabbedWindowSystem, Min
         for id in ids where !unprobeableWindowIDs.contains(id) {
             guard let index = windows.firstIndex(where: { $0.id == id }) else { continue }
             let frame = windows[index].frame
-            let tiny = BTRect(x: frame.minX, y: frame.minY, width: 1, height: 1)
-            let clamped = BTRect(x: frame.minX, y: frame.minY,
-                                 width: max(1, enforcedMinimumWidths[id] ?? 1),
+            let clamped = BTSize(width: max(1, enforcedMinimumWidths[id] ?? 1),
                                  height: max(1, enforcedMinimumHeights[id] ?? 1))
             if reportedConstraints[id] == nil { reportedConstraints[id] = windows[index].constraints }
-            minimumSizeLearner.observeWriteReadback(
+            minimumSizeLearner.discardClampCandidate(for: id)
+            minimumSizeLearner.observeProbe(
                 windowID: id, application: windows[index].bundleIdentifier,
-                requested: tiny, previous: frame, actual: clamped
+                original: frame.size, clamped: clamped
             )
         }
         refreshLearnedConstraints()
@@ -2602,10 +2619,12 @@ func bentoFocusCheckWaitsForDesktopInteraction(interaction: String) async throws
     let arrival = WindowID(rawValue: "arrival")
     system.windows.append(WindowSnapshot(id: arrival, processIdentifier: 81, bundleIdentifier: "com.example.Arrival",
         frame: BTRect(x: 100, y: 100, width: 400, height: 300), displayID: system.mainDisplay.id))
-    // The wide window refuses its new pane width, so the correction moves
-    // both right-hand windows. The arrival moves first; the other window's
-    // write fails, and so does the rollback of the arrival.
-    system.enforcedMinimumWidths[wide] = 600
+    // The right-hand window refuses to shrink below 600 pt when the arrival
+    // splits its pane, so the correction moves both right-hand windows. The
+    // arrival moves first; the other window's write fails, and so does the
+    // rollback of the arrival.
+    let right = WindowID(rawValue: "focused")
+    system.enforcedMinimumHeights[right] = 600
     for window in system.windows {
         let next = system.frameWriteCounts[window.id, default: 0] + (window.id == arrival ? 3 : 2)
         system.failedFrameWriteNumbers[window.id] = Set(next...(next + 20))
@@ -2637,12 +2656,14 @@ func bentoFocusCheckWaitsForDesktopInteraction(interaction: String) async throws
     let arrival = WindowID(rawValue: "arrival")
     system.windows.append(WindowSnapshot(id: arrival, processIdentifier: 81, bundleIdentifier: "com.example.Arrival",
         frame: BTRect(x: 100, y: 100, width: 400, height: 300), displayID: system.mainDisplay.id))
-    // The wide window refuses its new pane width, so the correction moves
-    // both right-hand windows. The arrival moves first; only the wide
-    // window's correction write fails, so the arrival rolls back cleanly.
-    system.enforcedMinimumWidths[wide] = 600
-    let correction = system.frameWriteCounts[wide, default: 0] + 2
-    system.failedFrameWriteNumbers[wide] = [correction]
+    // The right-hand window refuses to shrink below 600 pt when the arrival
+    // splits its pane, so the correction moves both right-hand windows. The
+    // arrival moves first; only the other window's correction write fails,
+    // so the arrival rolls back cleanly.
+    let right = WindowID(rawValue: "focused")
+    system.enforcedMinimumHeights[right] = 600
+    let correction = system.frameWriteCounts[right, default: 0] + 2
+    system.failedFrameWriteNumbers[right] = [correction]
     let arrivalWrites = system.requestedFrames[arrival]?.count ?? 0
     system.focusedID = wide
     system.eventHandler?(WindowSystemEvent(kind: .created, windowID: arrival, processIdentifier: 81))
@@ -2678,8 +2699,10 @@ func bentoFocusCheckWaitsForDesktopInteraction(interaction: String) async throws
     let lead = try #require(system.windows.max { $0.frame.size.height < $1.frame.size.height })
     let before = lead.frame
     let narrow = try #require(system.windows.first { $0.id != lead.id })
-    // A right-hand window now refuses its width; Repair rewrites the same
-    // frames, the window clamps, and the correction narrows the lead pane.
+    // A right-hand window was widened by hand and now refuses its width;
+    // Repair rewrites the same frames, the window shrinks only to its
+    // minimum, and the correction narrows the lead pane.
+    system.windows[try #require(system.windows.firstIndex { $0.id == narrow.id })].frame.size.width += 300
     system.enforcedMinimumWidths[narrow.id] = narrow.frame.size.width + 150
     system.focusedID = lead.id
     model.tileCurrentDisplay()
@@ -3225,4 +3248,53 @@ func aStaleBentoPlanWritesNothingButTheDraggedWindowsReturn(end: String) async t
     #expect(system.windows[index].frame == focus.placements.first?.frame)
     #expect(system.windows[index].displayID == main)
     #expect(system.windows.first { $0.id == short.id }?.isMinimized == true)
+}
+
+/// Settlement keeps sampling while a changed window that settled larger than
+/// requested can still hold a pending clamp, so the confirmed minimum reaches
+/// its correction. A known minimum, an accepted size, or the passed delay
+/// end the wait.
+@Test func settlementWaitsForAPendingClampOnlyUntilTheDelay() {
+    let id = WindowID(rawValue: "kept")
+    let requested = [id: BTRect(x: 0, y: 0, width: 400, height: 800)]
+    var window = WindowSnapshot(id: id, processIdentifier: 1, frame: BTRect(x: 0, y: 0, width: 600, height: 800),
+                                displayID: DisplayID(rawValue: "main"))
+    let early = Duration.milliseconds(80)
+    #expect(BetterTileModel.awaitsClampConfirmation([window], changed: [id], requested: requested, elapsed: early))
+    #expect(!BetterTileModel.awaitsClampConfirmation([window], changed: [id], requested: requested,
+        elapsed: .seconds(WindowMinimumSizeLearner.clampConfirmationDelay)))
+    #expect(!BetterTileModel.awaitsClampConfirmation([window], changed: [], requested: requested, elapsed: early))
+    #expect(!BetterTileModel.awaitsClampConfirmation([window], changed: [id], requested: nil, elapsed: early))
+    window.constraints.minimumSize.width = 600
+    #expect(!BetterTileModel.awaitsClampConfirmation([window], changed: [id], requested: requested, elapsed: early))
+    window.constraints.minimumSize.width = 0
+    window.frame.size.width = 400
+    #expect(!BetterTileModel.awaitsClampConfirmation([window], changed: [id], requested: requested, elapsed: early))
+}
+
+/// A window already at its minimum keeps its size when Bento asks it to
+/// shrink. The readback cannot prove that, so settlement waits for the
+/// confirmation delay; the confirmed minimum then solves the layout without
+/// an overlap.
+@Test @MainActor func bentoSettlementCorrectsAWindowAlreadyAtItsMinimum() async throws {
+    _ = NSApplication.shared
+    let system = FakeAppWindowSystem()
+    system.measuresOnWrite = true
+    let kept = system.windows[0].id
+    system.enforcedMinimumWidths[kept] = 600
+    system.windows.append(WindowSnapshot(id: WindowID(rawValue: "peer"), processIdentifier: 43,
+        bundleIdentifier: "com.example.Peer", frame: BTRect(x: 0, y: 0, width: 400, height: 300),
+        displayID: system.mainDisplay.id))
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    model.setActiveMode(.bento)
+    let corrected = await waitFor(timeout: .seconds(3)) {
+        system.windows.count == 2
+            && system.windows.first { $0.id == kept }?.constraints.minimumSize.width == 600
+            && BentoLayoutVerifier.overlappingWindowIDs(
+                Dictionary(uniqueKeysWithValues: system.windows.map { ($0.id, $0.frame) })).isEmpty
+            && model.settlementTasks.isEmpty
+    }
+    #expect(corrected, "\(system.windows.map(\.frame))")
+    #expect(system.windows.first { $0.id == kept }?.frame.size.width == 600)
 }
