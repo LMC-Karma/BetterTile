@@ -599,9 +599,7 @@ change a Bento operation made to the tree; writing it also writes the tree.
   Entering Tabbed from Bento adopts the tree, so every pane stays where it was.
   Windows that Bento floated on its own, such as a seventh window, become
   automatic floats, and every entry to Tabbed, from Bento or Native, adopts
-  the automatic floats again. On entry, a window that joins a pane other than
-  the active one joins it as a hidden tab, so the windows that were visible
-  before the entry stay visible. Leaving for Bento gives Tabbed's automatic floats
+  the automatic floats again. Leaving for Bento gives Tabbed's automatic floats
   back to Bento as its own.
   Leaving for Bento gives every hidden tab its own pane (`unstacked(in:)`) and
   removes the reserve. Hidden tabs fill empty panes first, largest empty pane
