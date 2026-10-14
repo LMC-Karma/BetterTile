@@ -53,7 +53,8 @@ windows look correct.
   window that joins, returns, or floats logs its frame, its resizability and
   minimum with their sources, and the result for each pane it tried. A window
   that no pane can show floats. Change Layout, removing a pane, or a larger
-  work area returns it as a selected tab when a pane can show it. Repair
+  work area returns it when a pane can show it: as that pane's selected tab,
+  or as a hidden tab when the pane shows the focused window. Repair
   Tabbed returns the windows Tabbed floated on its own and keeps the windows
   you floated.
 - For a hung application, put a window of a test application, such as
