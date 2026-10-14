@@ -620,10 +620,17 @@ func theLaterCheckWaitsForABusyDisplayOrGivesUp(staysBusy: Bool) async throws {
     let feedback = model.lastActionFeedback
     let index = try #require(system.windows.firstIndex { $0.id == tall })
     system.windows[index].constraints = WindowConstraints()
-    // Its pane write fails, so the check's placement fails.
+    // It keeps focus, so the check makes it the selected tab rather than a
+    // hidden tab behind the focused window. Its pane write fails, so the
+    // check's placement fails.
+    system.focusedID = tall
+    system.acceptsFocusRequests = false
     system.failedFrameWriteNumbers[tall] = Set(1...100)
+    let writesBefore = system.frameWriteCounts[tall, default: 0]
     try await Task.sleep(for: .milliseconds(1_000))
 
+    // The check ran and tried to show it.
+    #expect(system.frameWriteCounts[tall, default: 0] > writesBefore)
     #expect(model.lastActionFeedback == feedback)
     #expect(model.statusMessage == nil)
     #expect(model.activeTabbedState?.automaticallyFloatingWindowIDs == [tall])
