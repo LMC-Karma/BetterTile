@@ -88,9 +88,10 @@ final class BetterTileModel {
     private var tabbedReadoptedArrivals: Set<WindowID> = []
     /// Automatic floats already checked again once after they floated.
     private var tabbedRetriedAutomaticFloats: Set<WindowID> = []
-    /// The pane frames of each display's last committed Tabbed placement. A
-    /// change means room may have appeared for an automatic float.
-    private var tabbedCommittedPaneFrames: [DisplayID: [UUID: BTRect]] = [:]
+    /// The pane frames and selected tabs of each session's last committed
+    /// Tabbed placement. A change means room may have appeared for an
+    /// automatic float. Dropped when the session leaves Tabbed.
+    private var tabbedCommittedLayouts: [DesktopSessionID: TabbedCommittedLayout] = [:]
     /// How long after a placement settles an automatic float is checked
     /// again with a fresh snapshot. Settable for tests.
     var tabbedAutomaticFloatRetryDelay: Duration = .seconds(1)
@@ -3814,6 +3815,11 @@ private struct ActiveBentoDrag {
     var tabbedWindows: [WindowSnapshot]
 }
 
+private struct TabbedCommittedLayout: Equatable {
+    var paneFrames: [UUID: BTRect]
+    var selected: Set<WindowID>
+}
+
 private struct TabbedUndoStep {
     var state: TabbedLayoutState
     var floatingFrames: [WindowID: BTRect] = [:]
@@ -3881,7 +3887,8 @@ extension BetterTileModel {
         let floatedNames = windows.filter { floated.contains($0.id) }.map(Self.displayName(of:))
         var floatedFeedback: ResultPillFeedback?
         if floatedNames.count == 1 {
-            floatedFeedback = .failure(title: "\(floatedNames[0]) is floating", detail: "It doesn’t fit in any pane.")
+            floatedFeedback = .failure(title: ResultPillLayout.title(naming: floatedNames[0]) { "\($0) is floating" },
+                                       detail: "It doesn’t fit in any pane.")
         } else if floatedNames.count > 1 {
             // One pill names them all; long names shorten, not the sentence.
             let named = floatedNames.count > 3 ? Array(floatedNames.prefix(2)) : floatedNames
@@ -4352,20 +4359,24 @@ extension BetterTileModel {
                     }
                     self.showTabbed(session: committed, display: display, windows: windows)
                     if let committedState = committed.tabbedState {
-                        let paneFrames = committedState.frames(in: display.visibleFrame)
-                        let earlierFrames = self.tabbedCommittedPaneFrames.updateValue(paneFrames, forKey: display.id)
+                        let layout = TabbedCommittedLayout(paneFrames: committedState.frames(in: display.visibleFrame),
+                                                           selected: Set(committedState.selectedWindowIDs))
+                        let earlier = self.tabbedCommittedLayouts.updateValue(layout, forKey: original.id)
                         let floating = committedState.automaticallyFloatingWindowIDs
+                        // A window this placement floated was just checked.
+                        let waiting = floating.intersection(previous?.automaticallyFloatingWindowIDs ?? [])
                         if consumeUndo {
                             // Undo brought these floats back on purpose; a later
                             // check must not undo part of it.
                             self.tabbedRetriedAutomaticFloats.formUnion(floating)
                         } else {
                             self.scheduleAutomaticFloatRetry(on: display.id, state: committedState)
-                            // A preset, pane, divider, or work-area change may
-                            // have made room for a window that floated on its own.
-                            if let earlierFrames, earlierFrames != paneFrames, !floating.isEmpty {
+                            // A preset, pane, divider, work-area, or selection
+                            // change may have made room for a window that
+                            // floated on its own.
+                            if let earlier, earlier != layout, !waiting.isEmpty {
                                 Task { @MainActor [weak self] in
-                                    self?.retryAutomaticFloats(floating, on: display.id, deferrals: 0,
+                                    self?.retryAutomaticFloats(waiting, on: display.id, deferrals: 0,
                                                                transition: "layout change", selecting: true)
                                 }
                             }
@@ -4436,18 +4447,19 @@ extension BetterTileModel {
         let byID = Dictionary(windows.map { ($0.id, $0) }) { first, _ in first }
         func name(_ id: WindowID) -> String { byID[id].map(Self.displayName(of:)) ?? "This window" }
         let window = name(id)
+        let doesNotFit = ResultPillLayout.title(naming: window) { "\($0) doesn’t fit here" }
         switch problem {
         case .largerThanDisplay:
-            return TabbedFitFailure(title: "\(window) is too large for this display",
+            return TabbedFitFailure(title: ResultPillLayout.title(naming: window) { "\($0) is too large for this display" },
                                     detail: "Use a larger display or fewer panes.")
         case .lockedDivider:
-            return TabbedFitFailure(title: "\(window) doesn’t fit here",
+            return TabbedFitFailure(title: doesNotFit,
                                     detail: "A locked divider keeps this pane from growing.")
         case let .neighbors(ids):
             var names: [String] = []
             for other in ids where !names.contains(name(other)) { names.append(name(other)) }
             guard !names.isEmpty else {
-                return TabbedFitFailure(title: "\(window) doesn’t fit here",
+                return TabbedFitFailure(title: doesNotFit,
                                         detail: "The empty panes beside it can’t get any smaller.")
             }
             // Shorten long names rather than the sentence, so the pill's two
@@ -4461,7 +4473,7 @@ extension BetterTileModel {
                 default: "It would overlap \(titles[0]), \(titles[1]), and \(titles[2])."
                 }
             }
-            return TabbedFitFailure(title: "\(window) doesn’t fit here", detail: detail)
+            return TabbedFitFailure(title: doesNotFit, detail: detail)
         }
     }
 
@@ -4709,8 +4721,10 @@ extension BetterTileModel {
         let windows = Self.ignoringOversizedSeeds(bentoEligible((observation?.windowsOnCurrentSpaces(allWindows) ?? allWindows)
             .filter { $0.displayID == displayID && $0.isEligible && !$0.isFloating }), in: display.visibleFrame)
         var state = current
+        // A silent check never takes the focused window's place.
+        let focused = ((try? system.focusedWindow()) ?? nil)?.id
         let returned = state.returnAutomaticFloats(ids, fittingIn: display.visibleFrame, windows: windows,
-                                                   selecting: selecting)
+                                                   selecting: selecting, keeping: focused)
         logTabbedAdoptions(returned, transition: transition, before: current, windows: windows, bounds: display.visibleFrame)
         guard state != current else { return }
         // The user did not ask for this check: a failure leaves the window an
@@ -5104,6 +5118,7 @@ extension BetterTileModel {
 
     private func leaveTabbed(displayID: DisplayID, destination: LayoutMode) {
         guard tabbedExiting.insert(displayID).inserted else { return }
+        if let sessionID = sessionStore.session(for: displayID)?.id { tabbedCommittedLayouts.removeValue(forKey: sessionID) }
         tabbedQueuedIntents.removeValue(forKey: displayID)
         let pending = tabbedTasks[displayID]
         pending?.cancel()

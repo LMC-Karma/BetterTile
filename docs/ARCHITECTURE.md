@@ -557,25 +557,34 @@ change a Bento operation made to the tree; writing it also writes the tree.
   fixed-size window or a window with a proven minimum (see
   [Minimum sizes](#minimum-sizes)) larger than the work area below the strip.
 - Result pills name a window by its title, so two windows of one application
-  are told apart. A window without a title is named by its application.
+  are told apart. A window without a title is named by its application. A
+  long title is shortened, not the words around it, so the one-line pill
+  title still says what happened.
 - `TabbedLayoutState.automaticallyFloatingWindowIDs` tells these automatic
   floats from the user's floats. Moving, splitting, adding, floating by hand,
   or closing the window ends an automatic float. The set is part of the
   state, so Undo and rollback keep it. Each new automatic float is checked
   again once, 1 s after its placement settles or fails, with fresh
   snapshots; an Undo that brings floats back does not start that check.
-  When a committed placement changes the pane frames, for example after
-  Change Layout, a removed or added pane, a divider or pane-size change, or a
-  new work area, every automatic float on that display is checked again. A
+  When a committed placement changes the pane frames or the set of selected
+  tabs, for example after Change Layout, a removed or added pane, a divider or
+  pane-size change, a new work area, or a smaller tab selected or a large one
+  closed, every automatic float that was already floating is checked again.
+  The comparison is per session and starts again on each entry to Tabbed. A
   window that a pane can show joins that pane as its selected tab, and the
-  boundaries adapt as for an arrival; any other window stays an automatic
-  float. This check is silent: a failure is logged and shows no pill. A
+  boundaries adapt as for an arrival. If that pane shows the focused window,
+  the returned window joins it as a hidden tab instead, so a check the user
+  did not ask for never hides or unfocuses the focused window; the 1 s check
+  follows the same rule. Any other window stays an automatic float. This
+  check is silent: a failure is logged and shows no pill. A
   window moved to another display leaves this layout and joins the other
   display's layout as an arrival. Repair Tabbed adopts each automatic float again: it keeps a proven
   minimum, ignores the application's seed for that decision, and probes only
   a window that was never probed. The pill counts the windows returned. User
   floats stay floating. Selecting a tab ignores a seed larger than the work
-  area below the strip, so the write shows the window's real minimum. Entry to Tabbed is stored before its placement, so
+  area below the strip, so the write shows the window's real minimum. A
+  hidden tab larger than its pane, for example after its pane shrank, is
+  moved back inside the work area, where the curtain covers it. Entry to Tabbed is stored before its placement, so
   a failed entry placement does not repeat the entry on later sweeps. Each adoption, return, and float writes a debug line
   in the `Tabbed` log category with the window's frame, its resizability and
   minimum with their sources, and the result for each pane it tried.

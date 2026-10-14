@@ -179,6 +179,23 @@ func aTabThatCannotFitNamesTheWindowInItsWay(bundleIdentifier: String?) async th
     #expect(ResultPillLayout.detailFits(detail))
 }
 
+/// A long window title is shortened in the pill's one-line title, so the
+/// words that say what happened still show.
+@Test @MainActor func aLongTitleKeepsThePillTitleReadable() async throws {
+    let system = FakeAppWindowSystem()
+    let (model, large, _) = try await narrowLeftPaneWithAHiddenTab(system, restores: true)
+    defer { model.shutdown() }
+    system.windows[1].constraints.minimumSize.width = 600
+    system.windows[2].constraints.minimumSize.width = 500
+    system.windows[1].title = String(repeating: "Quarterly Report Draft ", count: 8)
+    model.performTabbed(.select(large))
+    #expect(await waitFor { model.lastActionFeedback?.kind == .failure })
+    let title = try #require(model.lastActionFeedback?.message)
+    #expect(title.hasPrefix("Quarterly Report"))
+    #expect(title.hasSuffix("… doesn’t fit here"), "\(title)")
+    #expect(ResultPillLayout.titleFits(title))
+}
+
 /// A pane that grew for a larger tab returns to the size the user set when
 /// that tab leaves it, not only when another tab of the pane is clicked.
 @Test(arguments: [false, true]) @MainActor

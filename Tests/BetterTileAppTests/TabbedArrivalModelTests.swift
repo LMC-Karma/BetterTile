@@ -639,9 +639,12 @@ private func addWideWindow(_ name: String, pid: Int32, to system: FakeAppWindowS
 }
 
 /// Changing the layout to One Pane makes room for an automatic float, so it
-/// returns as the selected tab without a repair. A window the user floated
-/// stays floating.
-@Test @MainActor func changingToOnePaneReturnsAnAutomaticFloatAndKeepsUserFloats() async throws {
+/// returns without a repair. Change Layout focuses the pane's tab, so the
+/// float joins behind it as a hidden tab and focus stays; when the float
+/// itself keeps focus, it becomes the selected tab. A window the user
+/// floated stays floating.
+@Test(arguments: [false, true]) @MainActor
+func changingToOnePaneReturnsAnAutomaticFloatAndKeepsUserFloats(floatIsFocused: Bool) async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
     let model = makeModel(system: system)
@@ -664,13 +667,26 @@ private func addWideWindow(_ name: String, pid: Int32, to system: FakeAppWindowS
     try #require(await waitFor { model.activeTabbedState?.automaticallyFloatingWindowIDs == [wide] })
     try await Task.sleep(for: .milliseconds(300))
 
+    let shown = system.windows[0].id
+    if floatIsFocused {
+        system.focusedID = wide
+        system.acceptsFocusRequests = false
+    }
+
     model.performTabbed(.preset(.single))
 
-    #expect(await waitFor { model.activeTabbedState?.panes.first?.selected == wide },
+    #expect(await waitFor { model.activeTabbedState?.pane(containing: wide) != nil },
             "\(model.activeTabbedState?.panes.map(\.tabs) as Any)")
     #expect(model.activeTabbedState?.floatingWindowIDs == [user])
-    let content = TabbedLayoutState.contentFrame(system.mainDisplay.visibleFrame)
-    #expect(await waitFor { system.windows.first { $0.id == wide }?.frame == content })
+    if !floatIsFocused {
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(model.activeTabbedState?.panes.first?.selected == shown)
+        #expect(system.focusedID == shown)
+    } else {
+        #expect(model.activeTabbedState?.panes.first?.selected == wide)
+        let content = TabbedLayoutState.contentFrame(system.mainDisplay.visibleFrame)
+        #expect(await waitFor { system.windows.first { $0.id == wide }?.frame == content })
+    }
 }
 
 /// Removing the empty pane beside an automatic float's only possible pane
@@ -689,6 +705,7 @@ private func addWideWindow(_ name: String, pid: Int32, to system: FakeAppWindowS
     try #require(await waitFor { model.activeTabbedState?.automaticallyFloatingWindowIDs == [wide] })
     try await Task.sleep(for: .milliseconds(300))
     let empty = try #require(model.activeTabbedState?.panes.first { $0.tabs.isEmpty }?.id)
+    system.focusedID = wide
 
     model.performTabbed(.removePane(empty))
 
@@ -714,6 +731,7 @@ private func addWideWindow(_ name: String, pid: Int32, to system: FakeAppWindowS
     try #require(await waitFor { model.activeTabbedState?.automaticallyFloatingWindowIDs == [wide] })
     try await Task.sleep(for: .milliseconds(300))
 
+    system.focusedID = wide
     system.availableDisplays[0].visibleFrame.size.width = 1000
     system.eventHandler?(WindowSystemEvent(kind: .created, windowID: wide, processIdentifier: 931_201))
 
@@ -748,4 +766,49 @@ private func addWideWindow(_ name: String, pid: Int32, to system: FakeAppWindowS
     #expect(system.frameWriteCounts[wide, default: 0] == writes)
     #expect(model.lastActionFeedback == feedback)
     #expect(model.statusMessage == nil)
+}
+
+/// Showing a smaller tab beside the pane an automatic float needs makes
+/// room, so the float returns to that pane without a repair.
+@Test @MainActor func selectingASmallerTabNextDoorReturnsAnAutomaticFloat() async throws {
+    _ = NSApplication.shared
+    let system = FakeAppWindowSystem()
+    system.windows[0].constraints.minimumSize = BTSize(width: 400, height: 80)
+    let large = system.windows[0].id
+    let peer = WindowID(rawValue: "peer"), small = WindowID(rawValue: "small")
+    for (index, id) in [peer, small].enumerated() {
+        var window = WindowSnapshot(id: id, processIdentifier: 931_401 + Int32(index), title: id.rawValue.capitalized,
+                                    frame: BTRect(x: 500, y: 0, width: 500, height: 800), displayID: system.mainDisplay.id)
+        window.constraints.minimumSize = BTSize(width: id == peer ? 400 : 120, height: 80)
+        system.windows.append(window)
+    }
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    model.tabbedAutomaticFloatRetryDelay = .seconds(60)
+    model.configuration.defaultTabbedPreset = .columns
+    model.setActiveMode(.tabbed)
+    try #require(await waitFor { model.activeTabbedState?.windowIDs.count == 3 })
+    let right = try #require(model.activeTabbedState?.panes[1].id)
+    model.performTabbed(.move(small, pane: right, index: nil))
+    try #require(await waitFor { model.activeTabbedState?.pane(containing: small)?.id == right })
+    model.performTabbed(.move(peer, pane: right, index: nil))
+    try #require(await waitFor { model.activeTabbedState?.panes[1].selected == peer })
+    model.performTabbed(.select(large))
+    try #require(await waitFor { model.activeTabbedState?.activePaneID == model.activeTabbedState?.panes[0].id })
+    try await Task.sleep(for: .milliseconds(300))
+    let wide = WindowID(rawValue: "wide")
+    var window = WindowSnapshot(id: wide, processIdentifier: 931_410, title: "Wide",
+                                frame: BTRect(x: 20, y: 100, width: 700, height: 500), displayID: system.mainDisplay.id)
+    window.constraints.minimumSize = BTSize(width: 700, height: 300)
+    system.windows.append(window)
+    system.eventHandler?(WindowSystemEvent(kind: .created, windowID: wide, processIdentifier: 931_410))
+    try #require(await waitFor { model.activeTabbedState?.automaticallyFloatingWindowIDs == [wide] },
+                 "\(model.activeTabbedState?.panes.map(\.tabs) as Any)")
+    try await Task.sleep(for: .milliseconds(300))
+
+    model.performTabbed(.select(small))
+
+    #expect(await waitFor { model.activeTabbedState?.pane(containing: wide)?.id == model.activeTabbedState?.panes[0].id },
+            "\(model.activeTabbedState?.panes.map(\.tabs) as Any)")
+    #expect(model.activeTabbedState?.floatingWindowIDs.isEmpty == true)
 }

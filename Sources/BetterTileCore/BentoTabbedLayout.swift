@@ -504,21 +504,26 @@ public struct TabbedLayoutState: Hashable, Sendable {
     /// Takes windows that float automatically back into the panes, as new
     /// windows join. A window that still fits no pane at all floats again,
     /// automatically. User-floated windows are not affected.
-    /// - Parameter selecting: A window that joins a pane other than the
-    ///   active one becomes its selected tab instead of a hidden tab.
+    /// - Parameters:
+    ///   - selecting: A window that joins a pane other than the active one
+    ///     becomes its selected tab instead of a hidden tab.
+    ///   - focused: The focused window, for a check the user did not ask
+    ///     for. A returned window joins the pane that shows it as a hidden
+    ///     tab, so it never takes the focused window's place.
     /// - Returns: How each window joined, for diagnostics.
     @discardableResult
     public mutating func returnAutomaticFloats(
         _ ids: Set<WindowID>,
         fittingIn bounds: BTRect,
         windows: [WindowSnapshot],
-        selecting: Bool = false
+        selecting: Bool = false,
+        keeping focused: WindowID? = nil
     ) -> [TabbedAdoption] {
         let present = Set(windows.map(\.id))
         return ids.intersection(automaticallyFloatingWindowIDs).intersection(present).sorted().map { id in
             groups.forgetFloating(id)
             automaticFloats.remove(id)
-            return adopt(id, fittingIn: bounds, windows: windows, selecting: selecting)
+            return adopt(id, fittingIn: bounds, windows: windows, selecting: selecting, keeping: focused)
         }
     }
 
@@ -535,9 +540,13 @@ public struct TabbedLayoutState: Hashable, Sendable {
     }
 
     private mutating func adopt(
-        _ id: WindowID, fittingIn bounds: BTRect, windows: [WindowSnapshot], selecting: Bool = false
+        _ id: WindowID, fittingIn bounds: BTRect, windows: [WindowSnapshot], selecting: Bool = false,
+        keeping focused: WindowID? = nil
     ) -> TabbedAdoption {
         let window = windows.first { $0.id == id }
+        func showsFocus(_ paneID: UUID) -> Bool {
+            focused.map { $0 != id && groups.panes.first { $0.id == paneID }?.selected == $0 } == true
+        }
         let current = frames(in: bounds)
         var trials: [TabbedAdoption.Trial] = []
         func trial(_ paneID: UUID, _ result: TabbedAdoption.TrialResult) -> TabbedAdoption.Trial {
@@ -558,6 +567,10 @@ public struct TabbedLayoutState: Hashable, Sendable {
             let (shown, result) = attempt(active)
             trials.append(trial(activePaneID, result))
             if let shown {
+                if showsFocus(activePaneID) {
+                    groups.add(id, to: activePaneID, select: false)
+                    return TabbedAdoption(windowID: id, outcome: .hidden(activePaneID), trials: trials)
+                }
                 self = shown
                 return TabbedAdoption(windowID: id, outcome: .selected(activePaneID), trials: trials)
             }
@@ -585,7 +598,7 @@ public struct TabbedLayoutState: Hashable, Sendable {
             if best.map({ change < $0.change - 0.5 }) ?? true { best = (change, paneID, shown) }
         }
         if let best {
-            if selecting {
+            if selecting, !showsFocus(best.paneID) {
                 self = best.shown
                 return TabbedAdoption(windowID: id, outcome: .selected(best.paneID), trials: trials)
             }
@@ -846,6 +859,13 @@ public struct TabbedLayoutState: Hashable, Sendable {
         let snapshots = Dictionary(uniqueKeysWithValues: windows.map { ($0.id, $0) })
         let paneFrames = frames(in: bounds)
         var result: [Placement] = []
+        // A hidden tab larger than its pane, for example after its pane
+        // shrank, moves back inside the work area, so the curtain, which
+        // covers the work area, hides all of it.
+        func inside(_ origin: BTPoint, _ size: BTSize) -> BTPoint {
+            BTPoint(x: max(bounds.minX, min(origin.x, bounds.maxX - size.width)),
+                    y: max(bounds.minY, min(origin.y, bounds.maxY - size.height)))
+        }
         for pane in groups.panes {
             guard let paneFrame = paneFrames[pane.id] else { continue }
             let frame = Self.contentFrame(paneFrame)
@@ -859,18 +879,21 @@ public struct TabbedLayoutState: Hashable, Sendable {
                        size.width > frame.size.width + 0.001 || size.height > frame.size.height + 0.001 {
                         throw TabbedLayoutError.panesTooSmall
                     }
-                    result.append(Placement(windowID: id, frame: BTRect(
+                    let origin = inside(BTPoint(
                         x: frame.minX + max(0, ((frame.size.width - size.width) / 2).rounded(.down)),
-                        y: frame.minY + max(0, ((frame.size.height - size.height) / 2).rounded(.down)),
-                        width: size.width, height: size.height)))
+                        y: frame.minY + max(0, ((frame.size.height - size.height) / 2).rounded(.down))), size)
+                    result.append(Placement(windowID: id, frame: BTRect(origin: origin, size: size)))
                     continue
                 }
+                let minimum = window.constraints.minimumSize
                 if id == pane.selected {
-                    guard frame.size.width + 0.001 >= window.constraints.minimumSize.width,
-                          frame.size.height + 0.001 >= window.constraints.minimumSize.height
+                    guard frame.size.width + 0.001 >= minimum.width,
+                          frame.size.height + 0.001 >= minimum.height
                     else { throw TabbedLayoutError.panesTooSmall }
                 }
-                result.append(Placement(windowID: id, frame: frame))
+                // The application keeps at least its minimum, growing from the origin.
+                let grown = BTSize(width: max(frame.size.width, minimum.width), height: max(frame.size.height, minimum.height))
+                result.append(Placement(windowID: id, frame: BTRect(origin: inside(frame.origin, grown), size: frame.size)))
             }
         }
         return result

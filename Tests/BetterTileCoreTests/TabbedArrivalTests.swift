@@ -263,3 +263,54 @@ func aReturnedFloatCanBecomeTheSelectedTabOfAnotherPane(selecting: Bool) throws 
     #expect(state.activeWindowID == a)
     #expect((try? state.placements(in: arrivalBounds, windows: windows)) != nil)
 }
+
+/// A hidden tab larger than its pane, for example after a layout change
+/// shrank the pane, is placed so its whole size stays inside the work area,
+/// where the curtain covers it, resizable or fixed-size.
+@Test(arguments: [true, false])
+func aHiddenTabLargerThanItsPaneStaysInsideTheWorkArea(resizable: Bool) throws {
+    var state = TabbedLayoutState(preset: .columns)
+    let a = WindowID(rawValue: "a"), b = WindowID(rawValue: "b"), big = WindowID(rawValue: "big")
+    state.reconcile(windowIDs: [a, b, big], removed: [], focused: nil)
+    state.move(b, to: state.panes[1].id)
+    state.move(big, to: state.panes[1].id)
+    state.select(b)
+    var large = window("big")
+    if resizable {
+        large.constraints.minimumSize = BTSize(width: 900, height: 700)
+    } else {
+        large.constraints.isResizable = false
+        large.frame = BTRect(x: 0, y: 0, width: 900, height: 700)
+    }
+    let windows = [window("a"), window("b"), large]
+    #expect(state.hiddenWindowIDs == [big])
+    let placement = try #require(try state.placements(in: arrivalBounds, windows: windows).first { $0.windowID == big })
+    let size = resizable ? BTSize(width: 900, height: 700) : placement.frame.size
+    #expect(PlacementBounds.isContained(BTRect(origin: placement.frame.origin, size: size), in: arrivalBounds),
+            "\(placement.frame)")
+}
+
+/// A check the user did not ask for never takes the focused window's
+/// place: the returned window joins that pane as a hidden tab.
+@Test func aReturnedFloatDoesNotReplaceTheFocusedWindow() throws {
+    var state = TabbedLayoutState(preset: .columns)
+    let small = WindowID(rawValue: "small"), peer = WindowID(rawValue: "peer"), big = WindowID(rawValue: "big")
+    state.reconcile(windowIDs: [small, peer], removed: [], focused: nil)
+    state.move(peer, to: state.panes[1].id)
+    state.activatePane(state.panes[0].id)
+    let windows = [window("small"), window("peer"), window("big", minimumWidth: 950)]
+    state.reconcile(windowIDs: [small, peer, big], removed: [], fittingIn: arrivalBounds, windows: windows)
+    state.applyPreset(.single)
+    let shown = try #require(state.panes[0].selected)
+
+    var kept = state
+    let returned = kept.returnAutomaticFloats([big], fittingIn: arrivalBounds, windows: windows,
+                                              selecting: true, keeping: shown)
+    #expect(returned.map(\.outcome) == [.hidden(kept.panes[0].id)])
+    #expect(kept.panes[0].selected == shown)
+    #expect(kept.hiddenWindowIDs.contains(big))
+
+    // Focus elsewhere, it is shown.
+    state.returnAutomaticFloats([big], fittingIn: arrivalBounds, windows: windows, selecting: true, keeping: big)
+    #expect(state.panes[0].selected == big)
+}

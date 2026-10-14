@@ -94,6 +94,7 @@ public enum ResultPillLayout {
     /// The width the detail text can use on the widest pill.
     public static let maximumDetailTextWidth = maximumDetailWidth - detailChrome - labelTextInset - measurementMargin
     static var detailFont: NSFont { .systemFont(ofSize: 11) }
+    static var titleFont: NSFont { .systemFont(ofSize: 13, weight: .semibold) }
 
     /// The number of lines `text` takes in the detail font, wrapped by word
     /// at `width`. It measures rendered glyphs, so wide characters such as
@@ -122,8 +123,25 @@ public enum ResultPillLayout {
     /// it shortens the titles, not the sentence around them, so the
     /// instruction always stays visible.
     public static func detail(naming titles: [String], _ compose: ([String]) -> String) -> String {
+        shortening(titles, fits: detailFits, compose)
+    }
+
+    /// True when `text` shows on the title's one line on the widest pill.
+    public static func titleFits(_ text: String) -> Bool {
+        NSAttributedString(string: text, attributes: [.font: titleFont]).size().width <= maximumDetailTextWidth
+    }
+
+    /// Builds a title that names a window, shortening the name, not the
+    /// words around it, so "is floating" always shows.
+    public static func title(naming name: String, _ compose: (String) -> String) -> String {
+        shortening([name], fits: titleFits) { compose($0[0]) }
+    }
+
+    private static func shortening(
+        _ titles: [String], fits: (String) -> Bool, _ compose: ([String]) -> String
+    ) -> String {
         let full = compose(titles)
-        guard !detailFits(full) else { return full }
+        guard !fits(full) else { return full }
         func shortened(to length: Int) -> String {
             compose(titles.map { title in
                 guard title.count > length else { return title }
@@ -136,7 +154,7 @@ public enum ResultPillLayout {
         var tooLong = titles.map(\.count).max() ?? 0
         while tooLong - fitting > 1 {
             let middle = (fitting + tooLong) / 2
-            if detailFits(shortened(to: middle)) { fitting = middle } else { tooLong = middle }
+            if fits(shortened(to: middle)) { fitting = middle } else { tooLong = middle }
         }
         return shortened(to: fitting)
     }
@@ -146,7 +164,9 @@ public enum ResultPillLayout {
         let height: Double
         if let detail = feedback.detail {
             let spare = detailChrome + labelTextInset + measurementMargin
-            let textWidth = NSAttributedString(string: detail, attributes: [.font: detailFont]).size().width
+            // The pill is wide enough for its one-line title as well.
+            let textWidth = max(NSAttributedString(string: detail, attributes: [.font: detailFont]).size().width,
+                                NSAttributedString(string: feedback.message, attributes: [.font: titleFont]).size().width)
             width = min(maximumDetailWidth, max(minimumDetailWidth, (textWidth + spare).rounded(.up)))
             // A detail wider than the widest pill wraps to a second line.
             height = detailLineCount(detail, width: width - spare) > 1 ? 72 : 58
@@ -288,7 +308,7 @@ public final class ResultPillController {
 
         icon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 17, weight: .semibold)
         icon.setContentHuggingPriority(.required, for: .horizontal)
-        label.font = .systemFont(ofSize: 13, weight: .semibold)
+        label.font = ResultPillLayout.titleFont
         label.textColor = .labelColor
         label.lineBreakMode = .byTruncatingTail
 
