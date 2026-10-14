@@ -232,8 +232,8 @@ moved, has no validated window number; it is raised above the panes as before.
 When the anchor window has no validated number, the curtain goes behind the
 backmost selected tab. The front application's floating windows also keep the
 older raise rule when its key window is transient, so those raises wait as
-described below, and when no key window is known, such as after a failed focus
-read, so they run at once. A transient key window cannot get focus back by a raise:
+described below, and when no window has focus, such as on Finder's desktop, so
+they run at once. A transient key window cannot get focus back by a raise:
 a popup whose subrole is not standard, dialog, or floating, such as a browser
 toolbar bubble, closes when it loses focus. A focused window that cannot be
 read counts as transient too. The repair then leaves out every window of that

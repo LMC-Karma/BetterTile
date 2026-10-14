@@ -4884,9 +4884,9 @@ extension BetterTileModel {
         // repeated the raise. Raising one of the front application takes
         // focus, and raising the key window again last would put it back.
         // The front application's floats keep the older raise rule when its
-        // key window is transient (a popup, or a focus the application does
-        // not confirm), so those raises wait, and when no key window is
-        // known, such as after a failed focus read, so they run at once.
+        // key window is transient (a popup, or a focus that cannot be read),
+        // so those raises wait, and when no window has focus, such as on
+        // Finder's desktop, so they run at once.
         // The focus read runs only when the front application has a
         // floating window. Ineligible windows have no validated number to
         // order the curtain against.
