@@ -210,11 +210,13 @@ run at no more than 60 Hz; ghost-only feedback may follow the display's native
 rate. Intermediate ticks reuse one frame transaction, skip unchanged targets,
 and avoid repeated participant sweeps. They also skip the trailing
 clamp-correcting size write; the next tick or the release corrects a clamp.
-Live ticks read each written window back but never confirm a clamp with a
-position nudge; only a final write does, for a clamp the learned minimum does
-not already explain and the readback cannot prove. A single-window write and a
-batched committed write use the same rule. The nudge confirms a clamp only when
-the window follows it and then returns to its position.
+Live ticks read each written window back but never send a position nudge;
+only a final write does, for a kept size the learned minimum does not already
+explain at a frame that does not prove the write was processed. A single-window
+write and a batched committed write use the same rule. The nudge counts only
+when the window follows it and then returns to its position. It proves that
+the application handles writes, not that the size is final, so the kept size
+becomes a pending clamp; see [Minimum sizes](#minimum-sizes).
 Each tick writes every application at once, one thread per application, and
 returns only after every write. A shrinking window takes the new sample at
 once. A growing window, or the growing axis of a window at a junction, takes
@@ -227,9 +229,31 @@ the participants, and applies the exact final geometry. Linked resizing writes
 only the neighboring windows; the application keeps control of the window the
 user is resizing.
 
+During a Live Resize, a window that holds a size larger than requested gives
+a minimum for that gesture only. Each readback is compared with the size
+before its write. An axis that shrank and stopped short of its request is a
+refusal once a later tick, at least 50 ms later, still holds it. At 120 Hz a
+60 Hz application can report one lagging length on two ticks in a row; 50 ms
+spans three of its frames. An axis that kept its size is a refusal only after
+it held for 0.25 s, because the application can still be applying an earlier
+size. The persistent learner reads live ticks the same way: their readbacks
+often trail the requests by a few ticks, so a shrink is measured from the
+smaller of the previous readback and the previous tick's request.
+
 A Ghost Preview release commits the previewed layout and reads every window
-back. A window that refused its size gives a measured minimum, and the release
-solves the layout again with it, at most twice. Undo history records the
+back. A window that shrank toward its size and stopped short of it gives a
+measured minimum, and the release solves the layout again with it, at most
+twice. Each commit is compared with the frames before it. A window that kept
+its size or grew gives no evidence at once. A Bento release leaves it to
+settlement. A native linked release, Ghost Preview or Live Resize, has no
+settlement, so BetterTile reads its windows again 0.25 s later. A size still
+held then, in the frame read back at release, is a refusal: the release is
+solved again once with it, if the result stays inside the display without overlaps and above
+every minimum. Otherwise the windows return to their frames from before the
+gesture, and the release's Restore step is removed. The correction adds no
+Restore step. A new gesture, another write to the windows, or a window whose
+frame matches neither its release readback nor its placement, for example
+after the user moved or resized it, ends the check. Undo history records the
 release once, after any correction. If a correction fails or is cancelled,
 every window returns to its frame from before the gesture.
 
@@ -303,22 +327,66 @@ share the selected window's application, and activation changes nothing.
 ## Minimum sizes
 
 Applications rarely report a minimum size, so `WindowMinimumSizeLearner`
-learns it. A window that refuses a smaller size gives a learned minimum. A new
-window on a managed desktop is measured before its first placement:
-`probeMinimumSizes` writes a 1×1 size, reads the clamped size back, and
-restores the original frame within about 10 ms. Entering a mode or returning
-to a desktop measures nothing, because those windows are already visible. A
-window is probed at most once, even when the probe measures nothing, so an
-application that applies its minimum late is not resized again on every
-selection.
+learns it from evidence. Some applications, such as Chromium browsers, apply a
+new position at once and the new size later. A window that moves to a display
+with another backing scale can also report its old size for a moment. A
+readback straight after such a write shows a size larger than requested that
+is not a minimum.
+
+The adapter reads each written window back, axis by axis:
+
+- An axis that shrank toward the request and stopped short of it is the
+  minimum at once.
+- An axis that kept its size, or grew, proves nothing yet. If the write was
+  processed, it becomes a pending clamp. A write was processed when the window
+  moved to the requested origin, its size changed, or it followed a position
+  nudge.
+- An axis that took the requested size lowers an older, larger minimum.
+
+A pending clamp is confirmed axis by axis. An axis becomes the minimum only
+when an observation at least 0.25 s after the write still shows the same
+length. That observation can be a snapshot or the settled frame that Bento
+settlement or the Tabbed placement loop reports. An earlier observation of the
+same length leaves the axis pending. An observation with another length drops
+that axis only, so a height applied late does not discard a width the window
+kept. Any newer write to the window drops the whole clamp. The rule is
+time-based: an application that applies a size more than 0.25 s after the
+write still teaches the old size, until two smaller stable
+snapshots lower it again. Chromium usually applies a size within a few display
+frames, so 0.25 s leaves a wide margin while it still fits inside the
+settlement and Tabbed sampling windows. The stable-mismatch path also learns a
+shrink that settled short of its request. A minimum confirmed on any path
+becomes the application's seed and invalidates cached snapshots.
+
+Because of the delay, the sampling loops wait for it before they treat a kept
+size as a refusal. Bento settlement keeps sampling, up to its usual limit,
+while a changed window is larger than requested and larger than its known
+minimum, until 0.25 s have passed. The Tabbed placement loop reports a stable
+size mismatch, and gives up on a refused size, only after 0.25 s. The Tabbed
+fit retry runs when the mismatch report learned a minimum or when the window's
+refreshed constraints show a larger minimum, because a snapshot can confirm
+the clamp first.
+
+A new window on a managed desktop is measured before its first placement:
+`probeMinimumSizes` writes a 1×1 size, reads the size back, and restores the
+original frame within about 10 ms. Only an axis that shrank and stopped is a
+measurement. A window that kept its size stays unmeasured, because the restore
+leaves nothing to confirm later. Entering a mode or returning to a desktop
+measures nothing, because those windows are already visible. A window is
+probed at most once, even when the probe measures nothing, so an application
+that applies its minimum late is not resized again on every selection.
 
 Each application also keeps a seed: the latest measurement from any of its
-windows. A new window plans with its application's seed until the probe
+windows. Only a proven measurement or a confirmed clamp becomes a seed, never
+a pending clamp. A new window plans with its application's seed until the probe
 measures it. Its own measurement then replaces the seed for that window and
 becomes the application's new seed. BetterTile drops an application's seed
 when a process of that application quits, so a relaunch starts without it.
 Hiding an application keeps its seed. Measurements and seeds stay in process
-memory and are never saved.
+memory and are never saved. `forget(windowID:)` drops one window's measurement
+and pending clamp without probing it again, and `forgetApplication(_:)` drops
+a seed. So far only `remove(_:)`, for a closed window, calls
+`forget(windowID:)`.
 
 ## Unresponsive applications
 
@@ -384,7 +452,9 @@ After a placement writes the full Bento tree with multiple windows,
 window larger than requested, BetterTile solves the same tree with the learned
 minimum sizes. A changed, valid solution gets at most one correction write
 through `WindowCoordinator` within that commit, avoiding a later placement
-jump. Settlement compares against the corrected frames. A failed correction
+jump. Only a shrink that stopped short of its request is learned in time for
+this correction; a pending clamp is corrected by settlement once it is
+confirmed. Settlement compares against the corrected frames. A failed correction
 with a successful rollback keeps the first placement. If the correction and
 its rollback both fail, the outcome is degraded and automatic writes stop
 until a new transaction or Repair.

@@ -21,6 +21,9 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
     /// Size settability, checked once per continuous gesture like moving.
     private var continuousSizeSettable: [WindowID: Bool] = [:]
     private var lastWriteReadback: [WindowID: BTRect] = [:]
+    /// The size each window's latest live tick asked for. During a gesture
+    /// an application can still be applying it when the next tick reads back.
+    private var liveRequestedSizes: [WindowID: BTSize] = [:]
     /// Decided popup classifications, kept for each window's lifetime.
     private var popupVerdicts: [WindowID: PopupWindowClassifier.Verdict] = [:]
     private var identities = WindowIdentityRegistry()
@@ -198,6 +201,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
     }
 
     public func resetCachedWindows() {
+        liveRequestedSizes.removeAll()
         elements.removeAll()
         identities.removeAll()
         snapshotCache.invalidate()
@@ -219,19 +223,27 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         baseline: BTRect,
         actual: BTRect
     ) -> Bool {
-        minimumSizeLearner.observe(
+        let learned = minimumSizeLearner.observe(
             windowID: windowID,
+            application: applicationKeys[windowID],
             requested: requested,
             baseline: baseline,
-            actual: actual
+            actual: actual,
+            now: ProcessInfo.processInfo.systemUptime
         )
+        // As on every other learning path, a new measurement starts a new
+        // snapshot generation.
+        if learned { snapshotGeneration &+= 1 }
+        return learned
     }
 
     /// Measures the minimum size of windows that just appeared, before their
-    /// first placement. No application reports its minimum, but each clamps
-    /// a size write synchronously: asking for a tiny size and reading the
-    /// size back gives the exact minimum in about 10 ms. The original size is
-    /// restored at once. Only for new windows, which are animating in and
+    /// first placement. Few applications report their minimum, but most
+    /// clamp a size write synchronously: asking for a tiny size and reading
+    /// the size back gives the exact minimum in about 10 ms. The original
+    /// size is restored at once. A window that kept its size gives no
+    /// measurement: it can be at its minimum already, or its application can
+    /// apply sizes late. Only for new windows, which are animating in and
     /// about to move, and for a hidden tab about to be shown; never for
     /// settled, visible windows. Each window is probed at most once.
     public func probeMinimumSizes(for ids: Set<WindowID>) -> Set<WindowID> {
@@ -259,6 +271,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
             defer { if frameWriteSuspensions == nil { finish(enhancedUserInterface) } }
             AXUIElementSetMessagingTimeout(element, Self.frameWriteMessagingTimeout)
             defer { AXUIElementSetMessagingTimeout(element, 0) }
+            minimumSizeLearner.discardClampCandidate(for: id)
             guard Self.setFrameAttribute(element, kAXSizeAttribute, tinyValue) == .success else { continue }
             minimumSizeLearner.recordProbe(of: id)
             let clamped: CGSize? = axValue(kAXSizeAttribute, from: element, type: .cgSize)
@@ -274,24 +287,13 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
             let positionRestored = Self.restorePosition(element, to: position)
             if !sizeRestored || !positionRestored { unrestored.insert(id) }
             guard let clamped else { continue }
-            let before = BTRect(x: position.x, y: position.y, width: original.width, height: original.height)
-            if minimumSizeLearner.observeWriteReadback(
+            // Only an axis that shrank and stopped is a minimum. A kept size
+            // stays unmeasured; the restore above leaves nothing to confirm.
+            if minimumSizeLearner.observeProbe(
                 windowID: id, application: applicationKeys[id],
-                requested: BTRect(x: position.x, y: position.y, width: 1, height: 1),
-                previous: before,
-                actual: BTRect(x: position.x, y: position.y, width: clamped.width, height: clamped.height)
+                original: BTSize(width: original.width, height: original.height),
+                clamped: BTSize(width: clamped.width, height: clamped.height)
             ) {
-                measured = true
-            } else if abs(clamped.width - original.width) <= 1, abs(clamped.height - original.height) <= 1,
-                      !unrestored.contains(id), Self.confirmsSynchronousWrites(element, at: position),
-                      minimumSizeLearner.observeConfirmedClamp(
-                          windowID: id, application: applicationKeys[id],
-                          requested: BTSize(width: 1, height: 1),
-                          actual: BTSize(width: clamped.width, height: clamped.height)
-                      ) {
-                // A window already at its minimum keeps its size, which an
-                // ignored write would also do. The position nudge proves the
-                // application handles writes at once, as for a frame write.
                 measured = true
             }
             // The window had no measurement before this probe.
@@ -660,6 +662,8 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         var plan = FrameWritePlanner.plan(target: frame, knownCurrentFrame: knownCurrentFrame)
         // A measurement belongs to one write; an older one is not evidence.
         lastWriteReadback.removeValue(forKey: windowID)
+        liveRequestedSizes.removeValue(forKey: windowID)
+        minimumSizeLearner.discardClampCandidate(for: windowID)
         // A fixed-size window, such as Calculator, rejects any size write.
         if try !sizeIsSettable(windowID, on: element) { plan.writesInitialSize = false; plan.writesFinalSize = false }
         var errors: [AXError] = []
@@ -682,8 +686,9 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
                 "macOS rejected the window frame update (\(errors.map { String($0.rawValue) }.joined(separator: ", ")))."
             )
         }
-        // Applications clamp a size synchronously. Reading it straight back
-        // measures the minimum exactly, before anything is shown as settled.
+        // Most applications clamp a size synchronously. Reading it straight
+        // back measures a shrink that stopped early, before anything is shown
+        // as settled. A kept size waits for a later observation.
         let learnedMinimum = minimumSizeLearner.learnedSizes[windowID]
         if plan.writesInitialSize || plan.writesFinalSize,
            let actualPosition: CGPoint = axValue(kAXPositionAttribute, from: element, type: .cgPoint),
@@ -691,9 +696,10 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
             let actual = BTRect(x: actualPosition.x, y: actualPosition.y,
                                 width: actualSize.width, height: actualSize.height)
             lastWriteReadback[windowID] = actual
+            let now = ProcessInfo.processInfo.systemUptime
             if minimumSizeLearner.observeWriteReadback(
                 windowID: windowID, application: applicationKeys[windowID],
-                requested: frame, previous: knownCurrentFrame, actual: actual
+                requested: frame, previous: knownCurrentFrame, actual: actual, now: now
             ) {
                 snapshotGeneration &+= 1
             } else if WriteReadbackPolicy.needsClampConfirmation(
@@ -701,12 +707,12 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
             ), Self.confirmsSynchronousWrites(element, at: actualPosition) {
                 // The window kept its size at the same origin, which an
                 // ignored write would also do. A 1 pt position nudge that the
-                // application follows proves it processes writes at once, so
-                // the kept size is its minimum.
-                if minimumSizeLearner.observeConfirmedClamp(
-                    windowID: windowID, application: applicationKeys[windowID],
-                    requested: frame.size, actual: actual.size
-                ) { snapshotGeneration &+= 1 }
+                // application follows proves it processes writes, but not
+                // that the size is final: the kept size is only a candidate
+                // until a later snapshot still shows it.
+                minimumSizeLearner.recordClampCandidate(
+                    windowID: windowID, requested: frame.size, actual: actual.size, now: now
+                )
             }
         }
     }
@@ -770,10 +776,33 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         return settable
     }
 
+    /// Reads one live tick back. The readback of a gesture often trails its
+    /// requests by a few ticks, so a size that only shrank toward an earlier
+    /// request is no clamp: a shrink is measured from the smaller of the
+    /// previous readback and the previous tick's request. Records this tick's
+    /// request for the next one.
+    nonisolated static func observeLiveReadback(
+        _ learner: inout WindowMinimumSizeLearner,
+        requestedSizes: inout [WindowID: BTSize],
+        windowID: WindowID,
+        application: String?,
+        requested: BTRect,
+        previous: BTRect?,
+        actual: BTRect,
+        now: Double
+    ) -> Bool {
+        let previousRequest = requestedSizes.updateValue(requested.size, forKey: windowID)
+        return learner.observeWriteReadback(
+            windowID: windowID, application: application, requested: requested,
+            previous: previous, previousRequest: previousRequest, actual: actual, now: now
+        )
+    }
+
     public func endContinuousWrites() {
         guard continuousWriteDepth > 0 else { return }
         continuousWriteDepth -= 1
         guard continuousWriteDepth == 0 else { return }
+        liveRequestedSizes.removeAll()
         continuousSettable.removeAll()
         continuousSizeSettable.removeAll()
         let suspensions = frameWriteSuspensions ?? [:]
@@ -848,18 +877,24 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         }
         let accepted: [AXError] = [.success, .attributeUnsupported]
         var failure: WindowID?
+        let now = ProcessInfo.processInfo.systemUptime
         for (job, result) in results {
             lastWriteReadback.removeValue(forKey: result.windowID)
+            minimumSizeLearner.discardClampCandidate(for: result.windowID)
             if !result.errors.allSatisfy({ accepted.contains($0) }) {
                 elements.removeValue(forKey: result.windowID)
                 failure = failure ?? result.windowID
                 continue
             }
-            guard let actual = result.actual else { continue }
+            guard let actual = result.actual else {
+                liveRequestedSizes[result.windowID] = job.frame.size
+                continue
+            }
             lastWriteReadback[result.windowID] = actual
-            if minimumSizeLearner.observeWriteReadback(
+            if Self.observeLiveReadback(
+                &minimumSizeLearner, requestedSizes: &liveRequestedSizes,
                 windowID: result.windowID, application: applicationKeys[result.windowID],
-                requested: job.frame, previous: job.previous, actual: actual
+                requested: job.frame, previous: job.previous, actual: actual, now: now
             ) { snapshotGeneration &+= 1 }
         }
         if failure != nil {
@@ -884,7 +919,8 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         let errors: [AXError]
         let actual: BTRect?
         /// The window kept a larger size at the requested origin, followed a
-        /// 1 pt position nudge, and returned, so the kept size is its minimum.
+        /// 1 pt position nudge, and returned, so the kept size is a pending
+        /// clamp.
         let confirmedClamp: Bool
     }
 
@@ -971,8 +1007,11 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
             }
         }
         var failure: (windowID: WindowID, error: Error)?
+        let now = ProcessInfo.processInfo.systemUptime
         for write in writes {
             lastWriteReadback.removeValue(forKey: write.windowID)
+            liveRequestedSizes.removeValue(forKey: write.windowID)
+            minimumSizeLearner.discardClampCandidate(for: write.windowID)
             guard let result = results[write.windowID] else { continue }
             guard result.errors.allSatisfy({ accepted.contains($0) }) else {
                 elements.removeValue(forKey: write.windowID)
@@ -987,14 +1026,13 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
             lastWriteReadback[write.windowID] = actual
             if minimumSizeLearner.observeWriteReadback(
                 windowID: write.windowID, application: applicationKeys[write.windowID],
-                requested: write.frame, previous: knownCurrentFrames[write.windowID], actual: actual
+                requested: write.frame, previous: knownCurrentFrames[write.windowID], actual: actual, now: now
             ) {
                 snapshotGeneration &+= 1
-            } else if result.confirmedClamp, minimumSizeLearner.observeConfirmedClamp(
-                windowID: write.windowID, application: applicationKeys[write.windowID],
-                requested: write.frame.size, actual: actual.size
-            ) {
-                snapshotGeneration &+= 1
+            } else if result.confirmedClamp {
+                minimumSizeLearner.recordClampCandidate(
+                    windowID: write.windowID, requested: write.frame.size, actual: actual.size, now: now
+                )
             }
         }
         return FrameBatchResult(attempted: writes.map(\.windowID).filter { results[$0] != nil }, failure: failure)
@@ -1406,6 +1444,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
             popupVerdicts.removeValue(forKey: windowID)
             applicationKeys.removeValue(forKey: windowID)
             lastWriteReadback.removeValue(forKey: windowID)
+            liveRequestedSizes.removeValue(forKey: windowID)
             continuousSettable.removeValue(forKey: windowID)
             continuousSizeSettable.removeValue(forKey: windowID)
         }
@@ -1506,6 +1545,11 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
                 launchRecords[pid]?.bundleIdentifier = bundleIdentifier
             }
         }
+        // A pending clamp that this later read still shows is the minimum.
+        if minimumSizeLearner.confirmClampCandidate(
+            windowID: id, application: bundleIdentifier, size: frame.size,
+            now: ProcessInfo.processInfo.systemUptime
+        ) { snapshotGeneration &+= 1 }
         minimumSizeLearner.observeAcceptedSize(windowID: id, application: bundleIdentifier, size: frame.size)
         let constraints = minimumSizeLearner.merging(
             WindowConstraints(

@@ -52,7 +52,7 @@ func settledBentoPanesDoNotDrift(gap: Double, axis: SplitAxis) {
         requested: BTRect(x: 500, y: 0, width: 500, height: 800),
         baseline: baseline,
         actual: baseline
-    )
+    , now: 0)
     #expect(!learned)
     #expect(learner.learnedSizes.isEmpty)
 }
@@ -219,7 +219,7 @@ func nativeResizeWithAGapMovesTheDividerByTheActualDelta(axis: SplitAxis) throws
         requested: BTRect(x: 0, y: 0, width: 250, height: 700),
         baseline: BTRect(x: 0, y: 0, width: 500, height: 700),
         actual: BTRect(x: 0, y: 0, width: 360, height: 700)
-    )
+    , now: 0)
     #expect(didLearn)
     let constraints = [left: learner.merging(WindowConstraints(), for: left)]
     let branchID = UUID()
@@ -349,7 +349,7 @@ private func window(_ id: WindowID, x: Double, y: Double, width: Double, height:
         requested: BTRect(x: 0, y: 0, width: 200, height: 400),
         baseline: BTRect(x: 0, y: 0, width: 500, height: 400),
         actual: BTRect(x: 0, y: 0, width: 360, height: 400)
-    )
+    , now: 0)
     #expect(learned)
     #expect(learner.merging(WindowConstraints(), for: id).minimumSize.width == 360)
     learner.remove(id)
@@ -361,7 +361,7 @@ private func window(_ id: WindowID, x: Double, y: Double, width: Double, height:
     let baseline = BTRect(x: 100, y: 100, width: 600, height: 500)
     let learned = learner.observe(windowID: WindowID(rawValue: "ignored-size"),
         requested: BTRect(x: 0, y: 34, width: 400, height: 300), baseline: baseline,
-        actual: BTRect(x: 0, y: 34, width: 600, height: 500))
+        actual: BTRect(x: 0, y: 34, width: 600, height: 500), now: 0)
     #expect(!learned)
 }
 
@@ -423,7 +423,7 @@ func invalidAcceptedSizesCannotChangeLearnedMinimums(size: BTSize) {
     learner.remove(id)
     learner.observe(windowID: id, requested: BTRect(x: 0, y: 0, width: 300, height: 250),
                     baseline: BTRect(x: 0, y: 0, width: 800, height: 600),
-                    actual: BTRect(x: 0, y: 0, width: 600, height: 450))
+                    actual: BTRect(x: 0, y: 0, width: 600, height: 450), now: 0)
     let restarted = learner.observeAcceptedSize(windowID: id, size: BTSize(width: 400, height: 300))
     #expect(!restarted)
 }
@@ -436,7 +436,7 @@ func newLearnedMinimumEvidenceClearsSmallerSizeCandidates(increased: Bool) {
     let minimum = increased ? BTSize(width: 800, height: 600) : BTSize(width: 600, height: 450)
     learner.observe(windowID: id, requested: BTRect(x: 0, y: 0, width: 300, height: 250),
                     baseline: BTRect(x: 0, y: 0, width: 1000, height: 800),
-                    actual: BTRect(origin: BTPoint(x: 0, y: 0), size: minimum))
+                    actual: BTRect(origin: BTPoint(x: 0, y: 0), size: minimum), now: 0)
     let restarted = learner.observeAcceptedSize(windowID: id, size: BTSize(width: 400, height: 300))
     #expect(!restarted)
     #expect(learner.learnedSizes[id] == minimum)
@@ -474,16 +474,86 @@ func agreeingOrUnequalNativeEdgesKeepTheStrongestDividerEvidence(otherEdge: Doub
 }
 
 private let readbackID = WindowID(rawValue: "readback")
+private let afterDelay = WindowMinimumSizeLearner.clampConfirmationDelay
 
-@Test func writeReadbackMeasuresAClampAtTheStartingSizeWhenTheWindowMoved() {
+/// Brave at 500 wide was asked for 477 at a new origin. It moved at once and
+/// still showed 500, which a late size would also show. The kept size is
+/// learned only when a snapshot after the delay still shows it.
+@Test func writeReadbackKeepsAMovedWindowsSizeAsAPendingClamp() {
     var learner = WindowMinimumSizeLearner()
-    // Brave at 500 wide was asked for 477 at a new origin; it moved but kept 500.
     let previous = BTRect(x: 1440, y: 515, width: 500, height: 483)
     let requested = BTRect(x: 1463, y: 515, width: 477, height: 483)
     let actual = BTRect(x: 1463, y: 515, width: 500, height: 483)
-    let r1 = learner.observeWriteReadback(windowID: readbackID, requested: requested, previous: previous, actual: actual)
-    #expect(r1)
-    #expect(learner.learnedSizes[readbackID]?.width == 500)
+    let r1 = learner.observeWriteReadback(windowID: readbackID, application: "com.brave.Browser",
+        requested: requested, previous: previous, actual: actual, now: 10)
+    #expect(!r1)
+    #expect(learner.learnedSizes[readbackID] == nil)
+    #expect(learner.applicationSizes.isEmpty)
+    // A snapshot before the delay leaves the candidate pending.
+    let early = learner.confirmClampCandidate(windowID: readbackID, application: "com.brave.Browser",
+        size: actual.size, now: 10 + afterDelay / 2)
+    #expect(!early)
+    let confirmed = learner.confirmClampCandidate(windowID: readbackID, application: "com.brave.Browser",
+        size: actual.size, now: 10 + afterDelay)
+    #expect(confirmed)
+    #expect(learner.learnedSizes[readbackID] == BTSize(width: 500, height: 0))
+    #expect(learner.applicationSizes["com.brave.Browser"] == BTSize(width: 500, height: 0))
+}
+
+/// Chromium applies the position at once and the size later. The readback
+/// shows the old size at the new origin; the next snapshot shows the
+/// requested size. Nothing is learned, and no seed is taken.
+@Test func aLateAppliedSizeIsNeverLearned() {
+    var learner = WindowMinimumSizeLearner()
+    let previous = BTRect(x: 0, y: 0, width: 1400, height: 900)
+    let requested = BTRect(x: 700, y: 0, width: 700, height: 900)
+    let learned = learner.observeWriteReadback(windowID: readbackID, application: "com.google.Chrome",
+        requested: requested, previous: previous, actual: BTRect(x: 700, y: 0, width: 1400, height: 900), now: 0)
+    #expect(!learned)
+    let resized = learner.confirmClampCandidate(windowID: readbackID, application: "com.google.Chrome",
+        size: requested.size, now: 0.05)
+    #expect(!resized)
+    // The candidate is gone: a later snapshot at the old size proves nothing.
+    let stale = learner.confirmClampCandidate(windowID: readbackID, application: "com.google.Chrome",
+        size: previous.size, now: 1)
+    #expect(!stale)
+    #expect(learner.learnedSizes.isEmpty)
+    #expect(learner.applicationSizes.isEmpty)
+    #expect(learner.merging(WindowConstraints(), for: WindowID(rawValue: "other"), application: "com.google.Chrome")
+        .minimumSize == WindowConstraints().minimumSize)
+}
+
+/// A window that grew although it was asked to shrink can show a late size
+/// from an earlier, larger write. It is a pending clamp, not a minimum.
+@Test func aWindowThatGrewIsNotLearnedAtOnce() {
+    var learner = WindowMinimumSizeLearner()
+    let learned = learner.observeWriteReadback(windowID: readbackID, requested: BTRect(x: 0, y: 0, width: 500, height: 800),
+        previous: BTRect(x: 0, y: 0, width: 500, height: 800), actual: BTRect(x: 0, y: 0, width: 900, height: 800), now: 0)
+    #expect(!learned)
+    #expect(learner.learnedSizes[readbackID] == nil)
+    // The application then applies this write's size.
+    let resized = learner.confirmClampCandidate(windowID: readbackID, size: BTSize(width: 500, height: 800), now: afterDelay)
+    #expect(!resized)
+    #expect(learner.learnedSizes[readbackID] == nil)
+}
+
+/// A move to a display with another backing scale can report the old size
+/// at the new origin for a moment. That readback is not a minimum.
+@Test func aMoveToAnotherDisplayThatKeptItsSizeIsNotLearned() {
+    var learner = WindowMinimumSizeLearner()
+    let onFirstDisplay = BTRect(x: 200, y: 100, width: 1200, height: 800)
+    let onSecondDisplay = BTRect(x: 1800, y: 100, width: 800, height: 600)
+    let learned = learner.observeWriteReadback(windowID: readbackID, application: "com.example.Editor",
+        requested: onSecondDisplay, previous: onFirstDisplay,
+        actual: BTRect(x: 1800, y: 100, width: 1200, height: 800), now: 0)
+    #expect(!learned)
+    #expect(learner.learnedSizes[readbackID] == nil)
+    #expect(learner.applicationSizes.isEmpty)
+    // The window then takes the requested size on the new display.
+    let resized = learner.confirmClampCandidate(windowID: readbackID, application: "com.example.Editor",
+        size: onSecondDisplay.size, now: afterDelay)
+    #expect(!resized)
+    #expect(learner.learnedSizes[readbackID] == nil)
 }
 
 @Test func writeReadbackIgnoresAWriteTheApplicationDidNotProcess() {
@@ -491,12 +561,15 @@ private let readbackID = WindowID(rawValue: "readback")
     let previous = BTRect(x: 0, y: 0, width: 500, height: 400)
     // Nothing moved: an asynchronous application, or an ignored write.
     let r2 = learner.observeWriteReadback(windowID: readbackID,
-        requested: BTRect(x: 100, y: 0, width: 300, height: 400), previous: previous, actual: previous)
+        requested: BTRect(x: 100, y: 0, width: 300, height: 400), previous: previous, actual: previous, now: 0)
     #expect(!r2)
     // Same origin and same size: no proof the write was processed.
     let r3 = learner.observeWriteReadback(windowID: readbackID,
-        requested: BTRect(x: 0, y: 0, width: 300, height: 400), previous: previous, actual: previous)
+        requested: BTRect(x: 0, y: 0, width: 300, height: 400), previous: previous, actual: previous, now: 0)
     #expect(!r3)
+    // Neither leaves a candidate for a later snapshot to confirm.
+    let confirmed = learner.confirmClampCandidate(windowID: readbackID, size: previous.size, now: afterDelay)
+    #expect(!confirmed)
     #expect(learner.learnedSizes[readbackID] == nil)
 }
 
@@ -505,14 +578,203 @@ private let readbackID = WindowID(rawValue: "readback")
     let previous = BTRect(x: 0, y: 0, width: 900, height: 600)
     // The window shrank, but only to its 708 pt minimum.
     let r4 = learner.observeWriteReadback(windowID: readbackID, requested: BTRect(x: 0, y: 0, width: 500, height: 600),
-        previous: previous, actual: BTRect(x: 0, y: 0, width: 708, height: 600))
+        previous: previous, actual: BTRect(x: 0, y: 0, width: 708, height: 600), now: 0)
     #expect(r4)
     #expect(learner.learnedSizes[readbackID] == BTSize(width: 708, height: 0))
     // A sidebar closed; a later request below the bound is accepted.
     let r5 = learner.observeWriteReadback(windowID: readbackID, requested: BTRect(x: 0, y: 0, width: 600, height: 600),
-        previous: BTRect(x: 0, y: 0, width: 708, height: 600), actual: BTRect(x: 0, y: 0, width: 600, height: 600))
+        previous: BTRect(x: 0, y: 0, width: 708, height: 600), actual: BTRect(x: 0, y: 0, width: 600, height: 600), now: 0)
     #expect(r5)
     #expect(learner.learnedSizes[readbackID] == BTSize(width: 600, height: 0))
+}
+
+/// One axis shrank and stopped; the other kept its size. Only the first is
+/// proven now. The kept axis waits for a later snapshot.
+@Test func writeReadbackLearnsOnlyTheAxisThatShrankAndStopped() {
+    var learner = WindowMinimumSizeLearner()
+    let learned = learner.observeWriteReadback(windowID: readbackID, requested: BTRect(x: 0, y: 0, width: 400, height: 300),
+        previous: BTRect(x: 0, y: 0, width: 900, height: 500), actual: BTRect(x: 0, y: 0, width: 600, height: 500), now: 0)
+    #expect(learned)
+    #expect(learner.learnedSizes[readbackID] == BTSize(width: 600, height: 0))
+    let confirmed = learner.confirmClampCandidate(windowID: readbackID, size: BTSize(width: 600, height: 500), now: afterDelay)
+    #expect(confirmed)
+    #expect(learner.learnedSizes[readbackID] == BTSize(width: 600, height: 500))
+}
+
+/// A window already at its minimum keeps its size and origin. The position
+/// nudge proves the application handles writes, not that the size is final,
+/// so the kept size is learned only after a later snapshot.
+@Test func aWindowAtItsMinimumIsLearnedOnlyAfterDelayedConfirmation() {
+    var learner = WindowMinimumSizeLearner()
+    let kept = BTRect(x: 100, y: 50, width: 708, height: 484)
+    let requested = BTRect(x: 100, y: 50, width: 458, height: 484)
+    let learnedNow = learner.observeWriteReadback(windowID: readbackID, application: "com.apple.Preview",
+        requested: requested, previous: kept, actual: kept, now: 3)
+    #expect(!learnedNow)
+    #expect(WriteReadbackPolicy.needsClampConfirmation(
+        requested: requested, previous: kept, actual: kept, learnedMinimum: nil))
+    learner.recordClampCandidate(windowID: readbackID, requested: requested.size, actual: kept.size, now: 3)
+    #expect(learner.learnedSizes[readbackID] == nil)
+    #expect(learner.applicationSizes.isEmpty)
+    let early = learner.confirmClampCandidate(windowID: readbackID, application: "com.apple.Preview",
+        size: kept.size, now: 3.1)
+    #expect(!early)
+    let confirmed = learner.confirmClampCandidate(windowID: readbackID, application: "com.apple.Preview",
+        size: kept.size, now: 3 + afterDelay)
+    #expect(confirmed)
+    #expect(learner.learnedSizes[readbackID] == BTSize(width: 708, height: 0))
+    #expect(learner.merging(WindowConstraints(), for: WindowID(rawValue: "other"), application: "com.apple.Preview")
+        .minimumSize.width == 708)
+}
+
+/// A settled frame confirms a pending clamp only once the delay has passed
+/// since the write. Bento settlement can settle after about 80 ms and the
+/// Tabbed loop after about 150 ms; an application can still apply its size
+/// after either, so those frames leave the candidate pending.
+@Test(arguments: [0.08, 0.15])
+func anEarlySettledFrameLeavesAPendingClampPending(settledAfter: Double) {
+    let previous = BTRect(x: 200, y: 200, width: 600, height: 400)
+    let requested = BTRect(x: 0, y: 34, width: 400, height: 400)
+    let kept = BTRect(x: 0, y: 34, width: 600, height: 400)
+    var learner = WindowMinimumSizeLearner()
+    learner.observeWriteReadback(windowID: readbackID, application: "com.google.Chrome",
+        requested: requested, previous: previous, actual: kept, now: 10)
+    let early = learner.observe(windowID: readbackID, application: "com.google.Chrome",
+        requested: requested, baseline: previous, actual: kept, now: 10 + settledAfter)
+    #expect(!early)
+    #expect(learner.learnedSizes.isEmpty)
+    // The application applies the size at 200 ms: nothing is learned.
+    var late = learner
+    let resized = late.confirmClampCandidate(windowID: readbackID, application: "com.google.Chrome",
+        size: requested.size, now: 10.2)
+    #expect(!resized)
+    let stale = late.confirmClampCandidate(windowID: readbackID, size: kept.size, now: 11)
+    #expect(!stale)
+    #expect(late.learnedSizes.isEmpty)
+    #expect(late.applicationSizes.isEmpty)
+    // A real clamp keeps its size; a later observation confirms it.
+    let confirmed = learner.observe(windowID: readbackID, application: "com.google.Chrome",
+        requested: requested, baseline: previous, actual: kept, now: 10 + afterDelay)
+    #expect(confirmed)
+    #expect(learner.learnedSizes[readbackID] == BTSize(width: 600, height: 0))
+}
+
+/// A size applied after the delay is the documented limit: the kept size is
+/// learned, and only two smaller stable snapshots lower it again.
+@Test func aSizeAppliedAfterTheDelayIsLearnedUntilDisproved() {
+    let previous = BTRect(x: 200, y: 200, width: 600, height: 400)
+    let requested = BTRect(x: 0, y: 34, width: 400, height: 400)
+    let kept = BTRect(x: 0, y: 34, width: 600, height: 400)
+    var learner = WindowMinimumSizeLearner()
+    learner.observeWriteReadback(windowID: readbackID, requested: requested, previous: previous, actual: kept, now: 0)
+    let learned = learner.observe(windowID: readbackID, requested: requested, baseline: previous, actual: kept, now: 0.3)
+    #expect(learned)
+    learner.observeAcceptedSize(windowID: readbackID, size: requested.size)
+    let lowered = learner.observeAcceptedSize(windowID: readbackID, size: requested.size)
+    #expect(lowered)
+    #expect(learner.learnedSizes[readbackID] == BTSize(width: 400, height: 0))
+}
+
+/// A settled frame confirms only its own pending clamp: a settled frame of
+/// another size drops it, and one for another request leaves it alone. A
+/// confirmed clamp becomes the application's seed.
+@Test func aSettledFrameConfirmsOnlyItsOwnPendingClamp() {
+    let previous = BTRect(x: 200, y: 200, width: 600, height: 400)
+    let requested = BTRect(x: 0, y: 34, width: 400, height: 400)
+    let kept = BTRect(x: 0, y: 34, width: 600, height: 400)
+    var learner = WindowMinimumSizeLearner()
+    learner.observeWriteReadback(windowID: readbackID, requested: requested, previous: previous, actual: kept, now: 0)
+    let settled = learner.observe(windowID: readbackID, application: "com.apple.Preview",
+        requested: requested, baseline: previous, actual: kept, now: afterDelay)
+    #expect(settled)
+    #expect(learner.learnedSizes[readbackID] == BTSize(width: 600, height: 0))
+    #expect(learner.applicationSizes["com.apple.Preview"] == BTSize(width: 600, height: 0))
+
+    var late = WindowMinimumSizeLearner()
+    late.observeWriteReadback(windowID: readbackID, requested: requested, previous: previous, actual: kept, now: 0)
+    let resized = late.observe(windowID: readbackID, requested: requested, baseline: previous, actual: requested, now: afterDelay)
+    #expect(!resized)
+    #expect(late.learnedSizes.isEmpty)
+
+    var other = WindowMinimumSizeLearner()
+    other.observeWriteReadback(windowID: readbackID, requested: requested, previous: previous, actual: kept, now: 0)
+    let otherRequest = other.observe(windowID: readbackID, requested: BTRect(x: 0, y: 34, width: 300, height: 400),
+        baseline: previous, actual: kept, now: afterDelay)
+    #expect(!otherRequest)
+    #expect(other.learnedSizes.isEmpty)
+}
+
+/// A shrink that settled short of its request is also a seed.
+@Test func aSettledShrinkBecomesTheApplicationSeed() {
+    var learner = WindowMinimumSizeLearner()
+    let learned = learner.observe(windowID: readbackID, application: "com.apple.mail",
+        requested: BTRect(x: 0, y: 0, width: 200, height: 400), baseline: BTRect(x: 0, y: 0, width: 500, height: 400),
+        actual: BTRect(x: 0, y: 0, width: 360, height: 400), now: 0)
+    #expect(learned)
+    #expect(learner.applicationSizes["com.apple.mail"] == BTSize(width: 360, height: 0))
+}
+
+/// A window at its real minimum width of 600 is asked for 400 x 300 and
+/// moves at once. Its height reaches 300 after 100 ms, while its width stays
+/// clamped. The late height drops only the height axis: the kept width is
+/// still confirmed after the delay.
+@Test func eachAxisOfAPendingClampIsConfirmedOnItsOwn() {
+    var learner = WindowMinimumSizeLearner()
+    let learned = learner.observeWriteReadback(windowID: readbackID, application: "com.apple.Preview",
+        requested: BTRect(x: 0, y: 34, width: 400, height: 300), previous: BTRect(x: 200, y: 200, width: 600, height: 800),
+        actual: BTRect(x: 0, y: 34, width: 600, height: 800), now: 0)
+    #expect(!learned)
+    let lateHeight = learner.confirmClampCandidate(windowID: readbackID, size: BTSize(width: 600, height: 300), now: 0.1)
+    #expect(!lateHeight)
+    let confirmed = learner.confirmClampCandidate(windowID: readbackID, application: "com.apple.Preview",
+        size: BTSize(width: 600, height: 300), now: afterDelay)
+    #expect(confirmed)
+    #expect(learner.learnedSizes[readbackID] == BTSize(width: 600, height: 0))
+    #expect(learner.applicationSizes["com.apple.Preview"] == BTSize(width: 600, height: 0))
+
+    // The same through a settled frame.
+    var settled = WindowMinimumSizeLearner()
+    settled.observeWriteReadback(windowID: readbackID, requested: BTRect(x: 0, y: 34, width: 400, height: 300),
+        previous: BTRect(x: 200, y: 200, width: 600, height: 800), actual: BTRect(x: 0, y: 34, width: 600, height: 800), now: 0)
+    let reported = settled.observe(windowID: readbackID, requested: BTRect(x: 0, y: 34, width: 400, height: 300),
+        baseline: BTRect(x: 200, y: 200, width: 600, height: 800), actual: BTRect(x: 0, y: 34, width: 600, height: 300),
+        now: afterDelay)
+    #expect(reported)
+    #expect(settled.learnedSizes[readbackID] == BTSize(width: 600, height: 0))
+}
+
+/// A readback that lags behind the previous request is measured from that
+/// request: it lies above it, so it is no clamp.
+@Test func aReadbackAboveThePreviousRequestIsNoClamp() {
+    var learner = WindowMinimumSizeLearner()
+    let lagging = learner.observeWriteReadback(windowID: readbackID, requested: BTRect(x: 350, y: 0, width: 650, height: 600),
+        previous: BTRect(x: 200, y: 0, width: 800, height: 600), previousRequest: BTSize(width: 700, height: 600),
+        actual: BTRect(x: 350, y: 0, width: 750, height: 600), now: 0)
+    #expect(!lagging)
+    #expect(learner.learnedSizes.isEmpty)
+    let clamped = learner.observeWriteReadback(windowID: readbackID, requested: BTRect(x: 400, y: 0, width: 600, height: 600),
+        previous: BTRect(x: 350, y: 0, width: 750, height: 600), previousRequest: BTSize(width: 650, height: 600),
+        actual: BTRect(x: 400, y: 0, width: 620, height: 600), now: 0)
+    #expect(clamped)
+    #expect(learner.learnedSizes[readbackID] == BTSize(width: 620, height: 0))
+}
+
+/// A newer write replaces the request a candidate belonged to, and a
+/// snapshot of another size disproves it.
+@Test func aNewerWriteOrAnotherSizeDropsAPendingClamp() {
+    let kept = BTSize(width: 600, height: 400)
+    var learner = WindowMinimumSizeLearner()
+    learner.recordClampCandidate(windowID: readbackID, requested: BTSize(width: 400, height: 400), actual: kept, now: 0)
+    learner.discardClampCandidate(for: readbackID)
+    let afterNewerWrite = learner.confirmClampCandidate(windowID: readbackID, size: kept, now: afterDelay)
+    #expect(!afterNewerWrite)
+
+    learner.recordClampCandidate(windowID: readbackID, requested: BTSize(width: 400, height: 400), actual: kept, now: 0)
+    let resized = learner.confirmClampCandidate(windowID: readbackID, size: BTSize(width: 500, height: 400), now: afterDelay)
+    #expect(!resized)
+    let stale = learner.confirmClampCandidate(windowID: readbackID, size: kept, now: 2 * afterDelay)
+    #expect(!stale)
+    #expect(learner.learnedSizes.isEmpty)
 }
 
 @Test func applicationSeedStartsNewWindowsFromTheLatestMeasurement() {
@@ -520,7 +782,7 @@ private let readbackID = WindowID(rawValue: "readback")
     let first = WindowID(rawValue: "brave-1"), second = WindowID(rawValue: "brave-2")
     let measured = learner.observeWriteReadback(windowID: first, application: "com.brave.Browser",
         requested: BTRect(x: 100, y: 0, width: 300, height: 300), previous: BTRect(x: 0, y: 0, width: 800, height: 600),
-        actual: BTRect(x: 100, y: 0, width: 500, height: 375))
+        actual: BTRect(x: 100, y: 0, width: 500, height: 375), now: 0)
     #expect(measured)
     let seeded = learner.merging(WindowConstraints(), for: second, application: "com.brave.Browser")
     #expect(seeded.minimumSize == BTSize(width: 500, height: 375))
@@ -530,10 +792,23 @@ private let readbackID = WindowID(rawValue: "readback")
     // An accepted write measures no minimum, so the seed stays.
     let own = learner.observeWriteReadback(windowID: second, application: "com.brave.Browser",
         requested: BTRect(x: 50, y: 0, width: 600, height: 400), previous: BTRect(x: 0, y: 0, width: 800, height: 600),
-        actual: BTRect(x: 50, y: 0, width: 600, height: 400))
+        actual: BTRect(x: 50, y: 0, width: 600, height: 400), now: 0)
     #expect(!own)
     #expect(learner.merging(WindowConstraints(), for: second, application: "com.brave.Browser").minimumSize
         == BTSize(width: 500, height: 375))
+}
+
+/// An ambiguous readback of a new window must not replace a proven seed.
+@Test func anAmbiguousReadbackDoesNotChangeTheSeed() {
+    var learner = WindowMinimumSizeLearner()
+    let first = WindowID(rawValue: "chrome-1"), second = WindowID(rawValue: "chrome-2")
+    learner.observeProbe(windowID: first, application: "com.google.Chrome",
+        original: BTSize(width: 1200, height: 800), clamped: BTSize(width: 500, height: 300))
+    learner.observeWriteReadback(windowID: second, application: "com.google.Chrome",
+        requested: BTRect(x: 700, y: 0, width: 700, height: 900), previous: BTRect(x: 0, y: 0, width: 1400, height: 900),
+        actual: BTRect(x: 700, y: 0, width: 1400, height: 900), now: 0)
+    #expect(learner.applicationSizes["com.google.Chrome"] == BTSize(width: 500, height: 300))
+    #expect(learner.learnedSizes[second] == nil)
 }
 
 /// A seed from a large main window must not stay the floor of a smaller
@@ -541,15 +816,14 @@ private let readbackID = WindowID(rawValue: "readback")
 @Test func probeMeasurementReplacesALargerSeedForItsWindow() {
     var learner = WindowMinimumSizeLearner()
     let main = WindowID(rawValue: "mail-main"), compose = WindowID(rawValue: "mail-compose")
-    let tiny = BTRect(x: 0, y: 0, width: 1, height: 1)
-    learner.observeWriteReadback(windowID: main, application: "com.apple.mail", requested: tiny,
-        previous: BTRect(x: 0, y: 0, width: 1200, height: 800), actual: BTRect(x: 0, y: 0, width: 900, height: 600))
+    learner.observeProbe(windowID: main, application: "com.apple.mail",
+        original: BTSize(width: 1200, height: 800), clamped: BTSize(width: 900, height: 600))
     // Before its probe, the new window plans with the seed and still needs one.
     #expect(learner.merging(WindowConstraints(), for: compose, application: "com.apple.mail").minimumSize
         == BTSize(width: 900, height: 600))
     #expect(learner.windowsNeedingMeasurement([main, compose]) == [compose])
-    let probed = learner.observeWriteReadback(windowID: compose, application: "com.apple.mail", requested: tiny,
-        previous: BTRect(x: 0, y: 0, width: 700, height: 500), actual: BTRect(x: 0, y: 0, width: 400, height: 300))
+    let probed = learner.observeProbe(windowID: compose, application: "com.apple.mail",
+        original: BTSize(width: 700, height: 500), clamped: BTSize(width: 400, height: 300))
     #expect(probed)
     #expect(learner.windowsNeedingMeasurement([main, compose]).isEmpty)
     #expect(learner.merging(WindowConstraints(), for: compose, application: "com.apple.mail").minimumSize
@@ -560,15 +834,37 @@ private let readbackID = WindowID(rawValue: "readback")
     #expect(learner.applicationSizes["com.apple.mail"] == BTSize(width: 400, height: 300))
 }
 
+/// A probe that leaves the size unchanged measures nothing: the window can be
+/// at its minimum, or its application can apply the size late. The probe
+/// restores the size at once, so a later snapshot confirms nothing either,
+/// and the window is not probed again.
+@Test func aProbeThatKeptTheSizeMeasuresNothingAndIsNotRepeated() {
+    var learner = WindowMinimumSizeLearner()
+    let late = WindowID(rawValue: "late")
+    let original = BTSize(width: 800, height: 600)
+    learner.recordProbe(of: late)
+    let kept = learner.observeProbe(windowID: late, application: "com.google.Chrome", original: original, clamped: original)
+    #expect(!kept)
+    let confirmed = learner.confirmClampCandidate(windowID: late, application: "com.google.Chrome", size: original, now: 10)
+    #expect(!confirmed)
+    #expect(!learner.hasMeasurement(for: late))
+    #expect(learner.applicationSizes.isEmpty)
+    #expect(learner.windowsNeedingMeasurement([late]).isEmpty)
+    // One axis that shrank and stopped is still a measurement.
+    let partial = WindowID(rawValue: "partial")
+    let shrank = learner.observeProbe(windowID: partial, original: original, clamped: BTSize(width: 500, height: 600))
+    #expect(shrank)
+    #expect(learner.learnedSizes[partial] == BTSize(width: 500, height: 0))
+}
+
 @Test func forgettingAnApplicationKeepsOtherSeedsAndWindowMeasurements() {
     var learner = WindowMinimumSizeLearner()
     let mail = WindowID(rawValue: "mail"), notes = WindowID(rawValue: "notes")
-    let tiny = BTRect(x: 0, y: 0, width: 1, height: 1)
-    let previous = BTRect(x: 0, y: 0, width: 1200, height: 800)
-    learner.observeWriteReadback(windowID: mail, application: "com.apple.mail", requested: tiny,
-        previous: previous, actual: BTRect(x: 0, y: 0, width: 900, height: 600))
-    learner.observeWriteReadback(windowID: notes, application: "com.apple.Notes", requested: tiny,
-        previous: previous, actual: BTRect(x: 0, y: 0, width: 500, height: 400))
+    let original = BTSize(width: 1200, height: 800)
+    learner.observeProbe(windowID: mail, application: "com.apple.mail",
+        original: original, clamped: BTSize(width: 900, height: 600))
+    learner.observeProbe(windowID: notes, application: "com.apple.Notes",
+        original: original, clamped: BTSize(width: 500, height: 400))
 
     learner.forgetApplication("com.apple.mail")
     learner.forgetApplication("com.example.never-measured")
@@ -581,14 +877,32 @@ private let readbackID = WindowID(rawValue: "readback")
         == WindowConstraints().minimumSize)
 }
 
-@Test func confirmedClampRecordsOnlyTheAxesThatStayedLarger() {
+/// Forgetting one window drops its measurement and pending evidence. The
+/// window then plans with its application's seed, and it is not probed again.
+@Test func forgettingAWindowDropsItsMeasurementAndPendingClamp() {
     var learner = WindowMinimumSizeLearner()
-    let recorded = learner.observeConfirmedClamp(windowID: readbackID, application: "com.apple.Preview",
-        requested: BTSize(width: 458, height: 484), actual: BTSize(width: 708, height: 484))
-    #expect(recorded)
-    #expect(learner.learnedSizes[readbackID] == BTSize(width: 708, height: 0))
-    #expect(learner.merging(WindowConstraints(), for: WindowID(rawValue: "other"), application: "com.apple.Preview")
-        .minimumSize.width == 708)
+    let window = WindowID(rawValue: "window"), sibling = WindowID(rawValue: "sibling")
+    learner.observeProbe(windowID: sibling, application: "com.example.App",
+        original: BTSize(width: 1000, height: 800), clamped: BTSize(width: 400, height: 300))
+    learner.recordProbe(of: window)
+    learner.observeProbe(windowID: window, application: "com.example.App",
+        original: BTSize(width: 1000, height: 800), clamped: BTSize(width: 700, height: 500))
+    learner.recordClampCandidate(windowID: window, requested: BTSize(width: 300, height: 500),
+        actual: BTSize(width: 900, height: 500), now: 0)
+
+    learner.forget(windowID: window)
+
+    #expect(!learner.hasMeasurement(for: window))
+    let confirmed = learner.confirmClampCandidate(windowID: window, size: BTSize(width: 900, height: 500), now: afterDelay)
+    #expect(!confirmed)
+    #expect(learner.windowsNeedingMeasurement([window]).isEmpty)
+    #expect(learner.merging(WindowConstraints(), for: window, application: "com.example.App").minimumSize
+        == BTSize(width: 700, height: 500))
+    #expect(learner.learnedSizes[sibling] == BTSize(width: 400, height: 300))
+    // Dropping the seed too leaves the default floor.
+    learner.forgetApplication("com.example.App")
+    #expect(learner.merging(WindowConstraints(), for: window, application: "com.example.App").minimumSize
+        == WindowConstraints().minimumSize)
 }
 
 /// A window is probed once. An application that applies its minimum late
