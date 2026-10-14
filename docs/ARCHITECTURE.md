@@ -581,7 +581,7 @@ change a Bento operation made to the tree; writing it also writes the tree.
   boundaries adapt as for an arrival. If that pane shows the focused window,
   the returned window joins it as a hidden tab instead, so a check the user
   did not ask for never hides or unfocuses the focused window; the 1 s check
-  follows the same rule. Any other window stays an automatic float. This
+  and the return on entry to Tabbed follow the same rule. Any other window stays an automatic float. This
   check is silent: a failure is logged and shows no pill. A
   window moved to another display leaves this layout and joins the other
   display's layout as an arrival. Repair Tabbed adopts each automatic float again: it keeps a proven

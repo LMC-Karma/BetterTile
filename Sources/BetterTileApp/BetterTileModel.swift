@@ -3873,7 +3873,8 @@ extension BetterTileModel {
             if entering, !state.automaticallyFloatingWindowIDs.isEmpty {
                 let returning = state
                 let returned = state.returnAutomaticFloats(state.automaticallyFloatingWindowIDs,
-                                                           fittingIn: display.visibleFrame, windows: windows)
+                                                           fittingIn: display.visibleFrame, windows: windows,
+                                                           selecting: true, keeping: focused ?? state.activeWindowID)
                 logTabbedAdoptions(returned, transition: "entry return", before: returning,
                                    windows: windows, bounds: display.visibleFrame)
             }
