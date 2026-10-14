@@ -87,7 +87,9 @@ public struct SteppedGrid: Equatable, Sendable {
     /// the smallest less `maximumShortfall` and a point, which rounds to a
     /// lower row. Nil otherwise: the window is asked for its whole area. With
     /// one known length, which can be a minimum the window never reported, it
-    /// is asked for that length only in an area within 2 points of it.
+    /// is asked for that length only in an area 0 to 2 points larger. A
+    /// smaller area asks for less: a minimum settles at the same length as
+    /// asking for it, and any other window rounds to a lower row that fits.
     public func request(inside length: Double) -> Double? {
         guard let step else {
             // One length can be a minimum the window never reported: ask for

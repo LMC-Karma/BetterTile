@@ -5317,7 +5317,8 @@ extension BetterTileModel {
         guard tabbedExiting.insert(displayID).inserted else { return }
         if let session = sessionStore.session(for: displayID) {
             tabbedCommittedLayouts.removeValue(forKey: session.id)
-            for id in session.tabbedState?.windowIDs ?? [] { tabbedSteppedWindows.removeValue(forKey: id) }
+            let ids = (session.tabbedState?.windowIDs ?? []).union(session.tabbedState?.floatingWindowIDs ?? [])
+            for id in ids { tabbedSteppedWindows.removeValue(forKey: id) }
         }
         tabbedQueuedIntents.removeValue(forKey: displayID)
         let pending = tabbedTasks[displayID]

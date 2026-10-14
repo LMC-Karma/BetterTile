@@ -210,6 +210,7 @@ private func slot(_ id: WindowID, _ state: TabbedLayoutState) throws -> BTRect {
     // An area smaller than the one known length asks for more than a step
     // less, which rounds to a lower row and teaches the step.
     #expect(SteppedGrid(observed: [454])?.request(inside: 447) == 454 - SteppedSizeAcceptance.maximumShortfall - 1)
+    #expect(SteppedGrid(observed: [454])?.request(inside: 453) == 454 - SteppedSizeAcceptance.maximumShortfall - 1)
     // Lengths one point apart are no window's steps.
     #expect(SteppedGrid(observed: [454, 455]) == nil)
 }
