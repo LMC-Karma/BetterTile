@@ -428,6 +428,21 @@ func aBackgroundDialogKeepsItsPlaceWithoutARaiseLoop(activationFocus: String) as
     #expect(model.repairTabbedOrder(state: state, windows: system.windows,
                                     bounds: system.mainDisplay.visibleFrame) == [system.windows[0].id, system.windows[0].id])
     #expect(system.raiseRequests.count == raises)
+
+    // Activating the dialog's application lifts its windows, the hidden tab
+    // too. The dialog returns above the curtain, which covers the hidden tab,
+    // and the repair does not repeat.
+    system.updatesStackOnRaise = true
+    system.focusedID = dialog.id
+    system.stack = [dialog, system.windows[2], system.windows[0], system.windows[1], system.windows[3]].map(stackEntry)
+    model.handleApplicationActivation()
+    try await Task.sleep(for: .milliseconds(600))
+    let settled = system.raiseRequests.count
+    model.handleApplicationActivation()
+    try await Task.sleep(for: .milliseconds(600))
+    #expect(system.raiseRequests.count == settled)
+    try expectOneVerifiedRound(model, system, state: state, above: [dialog.id, system.windows[0].id],
+                               below: [system.windows[1].id, system.windows[2].id, system.windows[3].id])
 }
 
 /// An ineligible floating window has no validated window number, so it is
