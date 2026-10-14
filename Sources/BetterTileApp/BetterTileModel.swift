@@ -86,7 +86,7 @@ final class BetterTileModel {
     /// A second refusal is reported instead of adopting them forever.
     private var tabbedReadoptedArrivals: Set<WindowID> = []
     /// An apply arrived while another was running; re-apply the committed state after it.
-    private var tabbedNeedsReapply: Set<DisplayID> = []
+    var tabbedNeedsReapply: Set<DisplayID> = []
     private let presentsTabbedChrome: Bool
     private(set) var tabbedFocusTask: Task<Void, Never>?
     /// Displays whose stacking repair left raises out to keep a popup's focus.
@@ -4811,19 +4811,22 @@ extension BetterTileModel {
     }
 
     /// The window with keyboard focus in the frontmost application. Nil
-    /// while BetterTile or an application it cannot read is in front. A
-    /// popup that closes without focus, such as a browser bubble, or a focus
-    /// the application does not confirm, is transient. A standard window,
-    /// including one the user floated, a dialog, and a floating panel are
-    /// not: raising them last gives focus back.
+    /// while BetterTile or an application it cannot read is in front, and
+    /// when no window has focus, such as on Finder's desktop. A popup that
+    /// closes without focus, such as a browser bubble, or an unreadable
+    /// focus, is transient. A standard window, including one the user
+    /// floated, a dialog, and a floating panel are not: raising them last
+    /// gives focus back.
     private func tabbedKeyWindow() -> TabbedKeyWindow? {
-        guard let focused = (try? system.focusedWindow()) ?? nil, isFrontmost(focused) else { return nil }
-        let transient = !isTabbedMember(focused.id)
-            && ((system as? any TabbedWindowSystem)?.isTransientPopup(focused) ?? false)
-        guard isApplicationFocusedWindow(focused), !transient else {
-            return .transient(processIdentifier: focused.processIdentifier)
+        guard let focused = (try? system.focusedWindow()) ?? nil, isFrontmost(focused),
+              let tabbed = system as? any TabbedWindowSystem else { return nil }
+        let transient = TabbedKeyWindow.transient(processIdentifier: focused.processIdentifier)
+        switch tabbed.applicationFocus(of: focused) {
+        case .confirmed:
+            return !isTabbedMember(focused.id) && tabbed.isTransientPopup(focused) ? transient : .window(focused.id)
+        case .otherWindow(isTransientPopup: true), .unknown: return transient
+        case .otherWindow, .noWindow: return nil
         }
-        return .window(focused.id)
     }
 
     /// The watchdog retries a repair that waited for a popup, in case the

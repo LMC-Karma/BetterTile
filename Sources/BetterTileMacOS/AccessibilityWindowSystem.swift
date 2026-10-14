@@ -2155,6 +2155,8 @@ extension AccessibilityWindowSystem: TabbedWindowSystem {
         }
         let focused = raw.flatMap { CFGetTypeID($0) == AXUIElementGetTypeID() ? unsafeDowncast($0, to: AXUIElement.self) : nil }
         return Self.applicationFocus(readResult: focused == nil && result == .success ? .noValue : result,
+                                     focusedRole: focused.flatMap { value(kAXRoleAttribute, from: $0) },
+                                     focusedSubrole: focused.flatMap { value(kAXSubroleAttribute, from: $0) },
                                      matchesWindow: focused.map { CFEqual($0, element) } ?? false)
     }
 
@@ -2163,11 +2165,17 @@ extension AccessibilityWindowSystem: TabbedWindowSystem {
         return WindowFloatingClassifier.isTransientPopup(subrole: value(kAXSubroleAttribute, from: element))
     }
 
-    /// Only a successful read that names the window confirms focus. A
-    /// missing focused window or a failed read proves nothing.
-    nonisolated static func applicationFocus(readResult: AXError, matchesWindow: Bool) -> ApplicationFocusMatch {
+    /// Only a successful read that names the window confirms focus. Finder
+    /// reports its desktop, a scroll area, as the focused window; that and
+    /// an empty read leave no window focus to protect.
+    nonisolated static func applicationFocus(
+        readResult: AXError, focusedRole: String?, focusedSubrole: String?, matchesWindow: Bool
+    ) -> ApplicationFocusMatch {
+        if readResult == .noValue { return .noWindow }
         guard readResult == .success else { return .unknown }
-        return matchesWindow ? .confirmed : .contradicted
+        guard focusedRole == kAXWindowRole else { return .noWindow }
+        if matchesWindow { return .confirmed }
+        return .otherWindow(isTransientPopup: WindowFloatingClassifier.isTransientPopup(subrole: focusedSubrole))
     }
 
     public func raiseWindow(_ id: WindowID, activate: Bool) throws {
