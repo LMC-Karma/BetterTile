@@ -2162,6 +2162,7 @@ final class BetterTileModel {
             if event.kind == .destroyed {
                 confirmedGoneWindowIDs.insert(windowID)
                 sessionStore.removeClosedTabbedWindow(windowID)
+                tabbedSteppedWindowIDs.remove(windowID)
                 tabbedUndo = tabbedUndo.mapValues { histories in
                     histories.map { original in
                         var step = original
@@ -4270,11 +4271,16 @@ extension BetterTileModel {
                 }
                 var learnedSize = false
                 let onSizeMismatch: @MainActor (WindowID, BTRect, BTRect, BTRect) -> Void = { id, requested, baseline, actual in
+                    guard proposal.state.windowIDs.contains(id) || detached.contains(id) else { return }
                     // A size within one step of the request is the window's
-                    // step, not its minimum.
-                    guard proposal.state.windowIDs.contains(id) || detached.contains(id),
-                          SteppedSizeAcceptance.evaluate(requested: requested, actual: actual, allowsGrowth: true) == .rejected
-                    else { return }
+                    // step, not its minimum. A window that grew by a step
+                    // where no growth was accepted resizes in steps: the
+                    // retry keeps its pane edges in place.
+                    guard SteppedSizeAcceptance.evaluate(requested: requested, actual: actual, allowsGrowth: true) == .rejected else {
+                        if actual.size.width > requested.size.width + 2 || actual.size.height > requested.size.height + 2,
+                           self.tabbedSteppedWindowIDs.insert(id).inserted { learnedSize = true }
+                        return
+                    }
                     learnedSize = self.system.observeApplicationEnforcedMinimum(
                         windowID: id, requested: requested, baseline: baseline, actual: actual
                     ) || learnedSize
@@ -4300,10 +4306,21 @@ extension BetterTileModel {
                 // its pane. One more write fits the panes to it, or asks an
                 // overflowing window for one step less. That write accepts
                 // no growth, so two stepped windows never chase each other.
-                if outcome.isApplied, !Task.isCancelled, isCurrent(),
-                   let settled = try? self.system.windowSnapshots(ids: Set(proposal.state.selectedWindowIDs)),
-                   let snap = proposal.state.snappingToSteppedSizes(
+                let checkpoint = rollbackFrames
+                    ?? Dictionary(windows.map { ($0.id, $0.frame) }, uniquingKeysWith: { first, _ in first })
+                let settled = outcome.isApplied && !Task.isCancelled && isCurrent()
+                    ? try? self.system.windowSnapshots(ids: Set(proposal.state.selectedWindowIDs)) : nil
+                let settledSizes = Dictionary((settled ?? []).map { ($0.id, $0.frame.size) }, uniquingKeysWith: { first, _ in first })
+                let requested = Dictionary(proposal.placements.map { ($0.windowID, $0.frame.size) }, uniquingKeysWith: { first, _ in first })
+                let deviating = Set(settledSizes.filter { id, size in
+                    requested[id].map { abs($0.width - size.width) > 2 || abs($0.height - size.height) > 2 } == true
+                }.keys)
+                let grew = settledSizes.contains { id, size in
+                    requested[id].map { size.width > $0.width + 2 || size.height > $0.height + 2 } == true
+                }
+                if let settled, let snap = proposal.state.snappingToSteppedSizes(
                        Dictionary(settled.map { ($0.id, $0.frame.size) }, uniquingKeysWith: { first, _ in first }),
+                       protecting: self.steppedNeighbours(deviating, windows: windows),
                        in: display.visibleFrame, windows: windows),
                    Set(snap.state.selectedWindowIDs).isSubset(of: Set(snap.placements.map(\.windowID))) {
                     for step in snap.snaps {
@@ -4317,8 +4334,6 @@ extension BetterTileModel {
                     self.tabbedSteppedWindowIDs.formUnion(snap.snaps.map(\.windowID))
                     let floating = proposal.placements.filter { !snap.state.windowIDs.contains($0.windowID) }
                     proposal = (snap.state, snap.placements + floating)
-                    let checkpoint = rollbackFrames
-                        ?? Dictionary(windows.map { ($0.id, $0.frame) }, uniquingKeysWith: { first, _ in first })
                     outcome = await self.coordinator.applyTabbed(
                         placements: proposal.placements,
                         rollbackFrames: checkpoint,
@@ -4332,6 +4347,16 @@ extension BetterTileModel {
                         onSizeMismatch: onSizeMismatch,
                         isCurrent: isCurrent
                     )
+                } else if outcome.isApplied, settled == nil || grew {
+                    // A window grew past its pane and no snap followed, so it
+                    // would overlap its neighbour. Put the windows back.
+                    let restored = await self.coordinator.restoreTabbedFrames(
+                        checkpoint, required: Set(proposal.state.selectedWindowIDs).intersection(checkpoint.keys),
+                        on: display.id, isCurrent: isCurrent)
+                    _ = self.coordinator.raiseTabbedWindows(previous?.selectedWindowIDs.filter(eligibleIDs.contains) ?? [])
+                    outcome = restored.isApplied
+                        ? .failed(reason: "A window did not accept its Tabbed size. Choose a larger pane or try Repair Tabbed.")
+                        : restored
                 }
                 // Retry once, only after a complete rollback and a new size
                 // observation. Ignored writes and degraded outcomes never retry.
@@ -4504,7 +4529,19 @@ extension BetterTileModel {
         let sizes = Dictionary(windows.filter { tabbedSteppedWindowIDs.contains($0.id) }.map { ($0.id, $0.frame.size) },
                                uniquingKeysWith: { first, _ in first })
         guard !sizes.isEmpty else { return state }
-        return state.snappingToSteppedSizes(sizes, in: bounds, windows: windows)?.state ?? state
+        return state.snappingToSteppedSizes(sizes, protecting: steppedNeighbours([], windows: windows),
+                                            in: bounds, windows: windows)?.state ?? state
+    }
+
+    /// Windows whose pane edges a snap must leave in place: windows known to
+    /// resize in steps, the windows that just settled off their panes, and
+    /// other windows of their applications, such as a second Terminal that
+    /// happened to settle exactly. Moving their edge would ask them for a
+    /// size they round away from.
+    private func steppedNeighbours(_ deviating: Set<WindowID>, windows: [WindowSnapshot]) -> Set<WindowID> {
+        let known = tabbedSteppedWindowIDs.union(deviating)
+        let applications = Set(windows.filter { known.contains($0.id) }.compactMap(\.bundleIdentifier))
+        return known.union(windows.filter { $0.bundleIdentifier.map(applications.contains) == true }.map(\.id))
     }
 
     /// Names the window a Tabbed placement cannot show and what is in its way.
@@ -5186,7 +5223,10 @@ extension BetterTileModel {
 
     private func leaveTabbed(displayID: DisplayID, destination: LayoutMode) {
         guard tabbedExiting.insert(displayID).inserted else { return }
-        if let sessionID = sessionStore.session(for: displayID)?.id { tabbedCommittedLayouts.removeValue(forKey: sessionID) }
+        if let session = sessionStore.session(for: displayID) {
+            tabbedCommittedLayouts.removeValue(forKey: session.id)
+            tabbedSteppedWindowIDs.subtract(session.tabbedState?.windowIDs ?? [])
+        }
         tabbedQueuedIntents.removeValue(forKey: displayID)
         let pending = tabbedTasks[displayID]
         pending?.cancel()

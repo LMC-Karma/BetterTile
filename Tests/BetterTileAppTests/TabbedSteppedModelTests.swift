@@ -22,6 +22,7 @@ private let rowStep = 14.0
         window.id = WindowID(rawValue: name)
         window.processIdentifier = pid_t(300 + index)
         window.title = name
+        window.bundleIdentifier = "com.example.\(name)"
         window.frame = BTRect(x: 20 * Double(index), y: 20, width: 500, height: 400)
         return window
     }
@@ -54,6 +55,7 @@ private let rowStep = 14.0
     window.id = WindowID(rawValue: "terminal")
     window.processIdentifier = 399
     window.title = "Terminal"
+    window.bundleIdentifier = "com.apple.Terminal"
     window.frame = BTRect(x: 60, y: 60, width: 480, height: 300)
     system.windows.append(window)
     system.sizeGrids[window.id] = (BTSize(width: widthGrid == nil ? 0 : rowStep, height: heightGrid == nil ? 0 : rowStep),
@@ -140,7 +142,8 @@ private func near(_ lhs: Double?, _ rhs: Double?, _ tolerance: Double = 0.6) -> 
 }
 
 /// The pane below is at its minimum, so it cannot give up the overflow.
-/// The Terminal is asked for one step less, rounds down, and keeps a gap.
+/// The Terminal is asked for more than one step less, rounds down, and
+/// keeps a gap.
 @Test @MainActor func aNeighbourAtItsMinimumLeavesAGapInstead() async throws {
     let system = FakeAppWindowSystem()
     let model = try await makeTabbed(system, .rows, ["upper", "lower"])
@@ -149,16 +152,20 @@ private func near(_ lhs: Double?, _ rhs: Double?, _ tolerance: Double = 0.6) -> 
     let lowerSlot = try #require(content(1, model, system))
     let index = try #require(system.windows.firstIndex { $0.id.rawValue == "lower" })
     system.windows[index].constraints.minimumSize.height = lowerSlot.size.height - 0.5
-    let terminal = addTerminal(system, heightGrid: slot.size.height + 4)
+    // 3 points over a 14-point row: the pane minus the overflow would round
+    // back up to the same row, so the request is more than one step less.
+    let terminal = addTerminal(system, heightGrid: slot.size.height + 3)
     system.eventHandler?(WindowSystemEvent(kind: .created, windowID: terminal, processIdentifier: 399))
 
     #expect(await waitFor(timeout: .seconds(3)) {
         model.activeTabbedState?.panes[0].selected == terminal
-            && near(frame("terminal", system)?.size.height, slot.size.height + 4 - rowStep)
-    }, "\(String(describing: frame("terminal", system)))")
+            && near(frame("terminal", system)?.size.height, slot.size.height + 3 - 2 * rowStep)
+    }, "\(slot) \(system.requestedFrames[terminal] ?? []) \(model.statusMessage ?? "-")")
     try await Task.sleep(for: .milliseconds(300))
     #expect(near(content(0, model, system)?.size.height, slot.size.height))
-    #expect(system.requestedFrames[terminal]?.last.map { near($0.size.height, slot.size.height - 4) } == true)
+    #expect(system.requestedFrames[terminal]?.last.map {
+        near($0.size.height, slot.size.height + 3 - SteppedSizeAcceptance.maximumShortfall - 1)
+    } == true)
     #expect(model.statusMessage == nil)
 }
 
@@ -182,7 +189,7 @@ private func near(_ lhs: Double?, _ rhs: Double?, _ tolerance: Double = 0.6) -> 
 
     #expect(await waitFor(timeout: .seconds(3)) {
         near(frame("lower", system)?.size.height, lowerSlot.size.height - 3)
-            && near(frame("upper", system)?.size.height, upperSlot.size.height + 4 - rowStep)
+            && near(frame("upper", system)?.size.height, upperSlot.size.height + 4 - 2 * rowStep)
     }, "\(String(describing: frame("upper", system))) \(String(describing: frame("lower", system)))")
     try await Task.sleep(for: .milliseconds(600))
     let writes = system.frameWriteCounts
@@ -313,5 +320,75 @@ private func near(_ lhs: Double?, _ rhs: Double?, _ tolerance: Double = 0.6) -> 
         model.activeTabbedState?.panes[0].selected == first && model.activeTabbedState?.panes[1].selected == second
     }, "\(model.statusMessage ?? "")")
     try await Task.sleep(for: .milliseconds(500))
+    #expect(model.statusMessage == nil)
+}
+
+/// Two Terminals in Two Rows: the upper one rounds up, the lower one lands
+/// exactly on its pane. The divider between them stays, because moving it
+/// would ask the lower Terminal for a size it rounds away from; the upper
+/// one takes a gap instead. With another application below that is not yet
+/// known to step, the first try finds out, and the retry keeps the divider.
+@Test(arguments: [true, false]) @MainActor
+func aSteppedNeighbourThatLandedExactlyKeepsTheDivider(sameApplication: Bool) async throws {
+    let system = FakeAppWindowSystem()
+    let model = try await makeTabbed(system, .rows, ["upper", "lower"])
+    defer { model.shutdown() }
+    let upperSlot = try #require(content(0, model, system))
+    let lowerSlot = try #require(content(1, model, system))
+    let upper = WindowID(rawValue: "upper"), lower = WindowID(rawValue: "lower")
+    system.sizeGrids[upper] = (BTSize(width: 0, height: rowStep), BTSize(width: 0, height: upperSlot.size.height + 4))
+    system.sizeGrids[lower] = (BTSize(width: 0, height: rowStep), BTSize(width: 0, height: lowerSlot.size.height))
+    for index in system.windows.indices {
+        system.windows[index].bundleIdentifier = sameApplication ? "com.apple.Terminal" : "com.example.\(index)"
+        // Their real frames sit on their own rows, off to one side.
+        system.windows[index].frame.origin.x += 7
+    }
+    let upperIndex = try #require(system.windows.firstIndex { $0.id == upper })
+    system.windows[upperIndex].frame.size.height = upperSlot.size.height + 4
+    model.performTabbed(.repair)
+
+    #expect(await waitFor(timeout: .seconds(4)) {
+        near(frame("lower", system)?.minX, lowerSlot.minX) && near(frame("upper", system)?.minX, upperSlot.minX)
+            && (frame("upper", system)?.size.height ?? .infinity) < upperSlot.size.height
+    }, "\(String(describing: frame("upper", system))) \(String(describing: frame("lower", system))) \(model.statusMessage ?? "-")")
+    try await Task.sleep(for: .milliseconds(600))
+    #expect(frame("lower", system)?.approximatelyEquals(lowerSlot, tolerance: 0.6) == true)
+    #expect(near(content(1, model, system)?.size.height, lowerSlot.size.height))
+    #expect(model.statusMessage == nil)
+    let writes = system.frameWriteCounts
+    try await Task.sleep(for: .milliseconds(500))
+    #expect(system.frameWriteCounts == writes)
+}
+
+/// A window that is not stepped at all refuses 10 points of its pane, and
+/// the pane below is at its minimum. The request for more than one step
+/// less shows the window keeps its size, so its minimum is learned and the
+/// arrival is placed by the usual rules, here as a hidden tab of the pane
+/// that can show it, instead of failing the same way on every placement.
+@Test @MainActor func aRealMinimumJustAboveThePaneIsLearned() async throws {
+    let system = FakeAppWindowSystem()
+    let model = try await makeTabbed(system, .rows, ["upper", "lower"])
+    defer { model.shutdown() }
+    let slot = try #require(content(0, model, system))
+    let lowerSlot = try #require(content(1, model, system))
+    let lowerIndex = try #require(system.windows.firstIndex { $0.id.rawValue == "lower" })
+    system.windows[lowerIndex].constraints.minimumSize.height = lowerSlot.size.height - 0.5
+    system.measuresOnWrite = true
+    var window = system.windows[0]
+    let big = WindowID(rawValue: "big")
+    window.id = big
+    window.processIdentifier = 398
+    window.title = "Big"
+    window.bundleIdentifier = "com.example.big"
+    window.frame = BTRect(x: 60, y: 60, width: 480, height: 400)
+    system.windows.append(window)
+    system.enforcedMinimumHeights[big] = slot.size.height + 10
+    system.unprobeableWindowIDs = [big]
+    system.eventHandler?(WindowSystemEvent(kind: .created, windowID: big, processIdentifier: 398))
+
+    #expect(await waitFor(timeout: .seconds(5)) {
+        (system.windows.first { $0.id == big }?.constraints.minimumSize.height ?? 0) >= slot.size.height + 9
+            && model.activeTabbedState?.panes[1].tabs.contains(big) == true
+    }, "\(String(describing: system.windows.first { $0.id == big }?.constraints)) \(String(describing: model.activeTabbedState?.panes.map(\.tabs))) \(model.statusMessage ?? "-")")
     #expect(model.statusMessage == nil)
 }

@@ -917,12 +917,17 @@ public struct TabbedLayoutState: Hashable, Sendable {
     /// unlocked divider. A divider between two such windows stays put, so
     /// neither chases the other. Like any fit, it records no pane sizes.
     /// - Parameter settled: Sizes the selected windows hold now.
+    /// - Parameter protecting: Windows whose pane edges must stay, such as
+    ///   other windows known to resize in steps. The windows that settled
+    ///   off their panes are always protected from each other's snaps.
     /// - Returns: Nil when no window needs another write. Otherwise the
     ///   fitted state, its placements, and the snaps. A window larger than its
-    ///   area that no edge can follow is asked for one step less (its area
-    ///   minus the overflow), so it rounds down and leaves a gap instead.
+    ///   area that no edge can follow is asked for more than one step less:
+    ///   its settled size minus `maximumShortfall` and 1 point. Any step up
+    ///   to that size rounds to a cell inside the pane. A window that still
+    ///   keeps its size there refuses it, and the write learns its minimum.
     public func snappingToSteppedSizes(
-        _ settled: [WindowID: BTSize], in bounds: BTRect, windows: [WindowSnapshot]
+        _ settled: [WindowID: BTSize], protecting: Set<WindowID> = [], in bounds: BTRect, windows: [WindowSnapshot]
     ) -> (state: Self, placements: [Placement], snaps: [TabbedSteppedSnap])? {
         let tolerance = 2.0
         let constraints = Self.fittingConstraints(windows)
@@ -962,7 +967,7 @@ public struct TabbedLayoutState: Hashable, Sendable {
                         in: bounds, constraints: constraints) else { continue }
                     let placed = Dictionary(uniqueKeysWithValues: fitted.state.placements(in: bounds).map { ($0.windowID, $0.frame) })
                     guard placed[id]?.approximatelyEquals(target, tolerance: 0.5) == true,
-                          deltas.keys.allSatisfy({ other in
+                          Set(deltas.keys).union(protecting).allSatisfy({ other in
                               other == id || current[other].map { placed[other]?.approximatelyEquals($0, tolerance: 0.5) == true } != false })
                     else { continue }
                     let neighbors = current.keys.filter { $0 != id && placed[$0]?.approximatelyEquals(current[$0]!, tolerance: 0.5) == false }
@@ -972,9 +977,13 @@ public struct TabbedLayoutState: Hashable, Sendable {
                     snapped = true
                     break
                 }
-                if !snapped, delta > 0 { overflow[id, default: .zero] = BTSize(
-                    width: overflow[id, default: .zero].width + grow.width,
-                    height: overflow[id, default: .zero].height + grow.height) }
+                if !snapped, delta > 0 {
+                    // The pane less this is the settled size less one step and a point.
+                    let less = SteppedSizeAcceptance.maximumShortfall + 1 - delta
+                    overflow[id, default: .zero] = BTSize(
+                        width: overflow[id, default: .zero].width + (axis == .vertical ? less : 0),
+                        height: overflow[id, default: .zero].height + (axis == .horizontal ? less : 0))
+                }
             }
         }
         guard !snaps.isEmpty || !overflow.isEmpty,

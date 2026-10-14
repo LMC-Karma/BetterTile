@@ -467,13 +467,22 @@ change a Bento operation made to the tree; writing it also writes the tree.
   moves so the window area equals the settled size. The neighbour gives or
   takes the points, above its own minimum and across an unlocked divider.
   The far edge moves first; a pane at the display edge moves its near edge.
-  A divider between two such windows stays where it is, so they never chase
-  each other. When no edge can follow, a smaller window keeps its gap, and a
-  larger window is asked for its pane minus the overflow, so it rounds down
-  and leaves a gap. The extra write accepts no growth. A window that is still
-  larger fails the placement, which returns every window to its frame from
-  before the first write. Like a fit, a snap records no pane sizes. The model
-  keeps the windows that snapped in memory. A later placement, including a
+  A snap leaves the pane edges of other windows that resize in steps in
+  place: windows that settled off their panes in this write, windows that
+  snapped earlier, and other windows of their applications, such as a second
+  Terminal that landed exactly on its pane. A window whose step shows only
+  when its edge moves teaches this on the first try; the retry keeps that
+  edge. When no edge can follow, a smaller window keeps its gap, and a
+  larger window is asked for its settled size less 25 points, one whole step
+  and a point. Any step up to 24 points rounds into the pane and leaves a gap.
+  The extra write accepts no growth. A window that still keeps its size there
+  refuses it: the minimum is learned, and the retry fits or floats the window
+  as usual. A window that grew when no snap could follow, for example because
+  its frame could not be read, returns every window to its frame from before
+  the first write. A rollback accepts a window that lands within one step of
+  its old frame. Like a fit, a snap records no pane sizes. The model keeps
+  the windows that snapped in memory until they close or their desktop
+  leaves Tabbed. A later placement, including a
   tab selection, fits their panes to the sizes they hold before it writes, so
   it needs one write. Each snap writes a debug line in the `Tabbed` log
   category with the window, the axis, the points, and the neighbours.

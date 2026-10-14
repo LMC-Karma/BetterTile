@@ -77,7 +77,9 @@ private func slot(_ id: WindowID, _ state: TabbedLayoutState) throws -> BTRect {
         [top: settled], in: bounds, windows: [window(top), window(bottom, minimumHeight: lower.size.height)]))
     #expect(snap.snaps.isEmpty)
     #expect(snap.state.layout == state.layout)
-    #expect(snap.placements.first { $0.windowID == top }?.frame.size.height == before.size.height - 4)
+    // The settled size less one whole step and a point, so any step rounds inside the pane.
+    #expect(snap.placements.first { $0.windowID == top }?.frame.size.height
+        == before.size.height + 4 - SteppedSizeAcceptance.maximumShortfall - 1)
     // A window that settled smaller with nowhere to go keeps its gap: nothing to write.
     let smaller = BTSize(width: before.size.width, height: before.size.height - 4)
     let constrained = [window(top, minimumHeight: before.size.height), window(bottom)]
@@ -95,7 +97,8 @@ private func slot(_ id: WindowID, _ state: TabbedLayoutState) throws -> BTRect {
          bottom: BTSize(width: lower.size.width, height: lower.size.height - 3)],
         in: bounds, windows: [window(top), window(bottom)]))
     #expect(snap.state.layout == state.layout)
-    #expect(snap.placements.first { $0.windowID == top }?.frame.size.height == upper.size.height - 4)
+    #expect(snap.placements.first { $0.windowID == top }?.frame.size.height
+        == upper.size.height + 4 - SteppedSizeAcceptance.maximumShortfall - 1)
     #expect(snap.placements.first { $0.windowID == bottom }?.frame == lower)
 }
 
@@ -141,4 +144,16 @@ private func slot(_ id: WindowID, _ state: TabbedLayoutState) throws -> BTRect {
         windowID: id, requested: BTRect(x: 0, y: 0, width: 800, height: 495),
         previous: BTRect(x: 0, y: 0, width: 800, height: 600), actual: BTRect(x: 0, y: 0, width: 800, height: 499), now: 0)
     #expect(learned)
+}
+
+/// A protected neighbour, such as a second Terminal that landed exactly on
+/// its pane, keeps its edges; the overflowing window takes a gap instead.
+@Test func aProtectedNeighbourKeepsTheDivider() throws {
+    let state = rows()
+    let upper = try slot(top, state)
+    let snap = try #require(state.snappingToSteppedSizes(
+        [top: BTSize(width: upper.size.width, height: upper.size.height + 4)], protecting: [bottom],
+        in: bounds, windows: [window(top), window(bottom)]))
+    #expect(snap.snaps.isEmpty)
+    #expect(snap.state.layout == state.layout)
 }

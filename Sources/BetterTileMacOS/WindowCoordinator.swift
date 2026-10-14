@@ -1140,8 +1140,9 @@ extension WindowCoordinator {
                   isCurrent(), !Task.isCancelled else { return degraded }
             if required.allSatisfy({ id in
                 guard let frame = frames[id] else { return false }
+                // A window that resizes in steps lands within one step.
                 return restored.contains { $0.id == id && $0.isEligible && $0.displayID == displayID
-                    && $0.frame.approximatelyEquals(frame, tolerance: 2) }
+                    && SteppedSizeAcceptance.evaluate(requested: frame, actual: $0.frame, allowsGrowth: true) != .rejected }
             }) { return .applied }
             guard attempt < 3 else { break }
             do { try await Task.sleep(for: .milliseconds(50)) }
@@ -1367,7 +1368,9 @@ extension WindowCoordinator {
                 }
             }
             let restored = (try? snapshots(ids: ids)) ?? []
-            if baseline.contains(where: { id, frame in !restored.contains { $0.id == id && $0.frame.approximatelyEquals(frame, tolerance: 2) } }) { failed = true }
+            if baseline.contains(where: { id, frame in !restored.contains {
+                $0.id == id && SteppedSizeAcceptance.evaluate(requested: frame, actual: $0.frame, allowsGrowth: true) != .rejected
+            } }) { failed = true }
             return failed ? .degraded(reason: "Tabbed could not fully restore the previous arrangement. Use Repair Tabbed or switch to Native.") : .failed(reason: error.localizedDescription)
         }
     }
