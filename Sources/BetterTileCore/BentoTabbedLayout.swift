@@ -1048,7 +1048,10 @@ public struct TabbedLayoutState: Hashable, Sendable {
             var moves: Set<Double> = [0]
             for side in sides {
                 for grid in side.grids {
-                    for length in grid.lengths(near: side.length, within: reach) {
+                    // One known length can be a minimum the window never
+                    // reported, so it only grows a pane that is too small.
+                    for length in grid.lengths(near: side.length, within: reach)
+                    where grid.step != nil || grid.known.count > 1 || length >= side.length - 0.5 {
                         moves.insert((length - side.length) * side.sign)
                     }
                 }

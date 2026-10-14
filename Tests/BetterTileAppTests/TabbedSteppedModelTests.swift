@@ -522,8 +522,26 @@ func switchingTabsBesideTwoSteppedTerminalsSettles(upperOver: Double, lowerOver:
     }
     model.statusMessage = nil
     model.performTabbed(.repair)
-    try await Task.sleep(for: .milliseconds(1200))
+    try await waitForIdle(model, system)
     return model.statusMessage == nil ? 0 : 1
+}
+
+/// Waits on conditions, not a fixed time, so a busy runner cannot fail a
+/// test: every placement has finished and no window moved for 300 ms.
+@MainActor private func waitForIdle(_ model: BetterTileModel, _ system: FakeAppWindowSystem) async throws {
+    var frames = system.windows.map(\.frame)
+    let settled = await waitFor(timeout: .seconds(20)) {
+        guard !model.hasPendingTabbedPlacement else { frames = system.windows.map(\.frame); return false }
+        return true
+    }
+    try #require(settled, "a Tabbed placement never finished")
+    for _ in 0..<100 {
+        try await Task.sleep(for: .milliseconds(300))
+        let now = system.windows.map(\.frame)
+        if now == frames, !model.hasPendingTabbedPlacement { return }
+        frames = now
+    }
+    Issue.record("the windows never settled")
 }
 
 /// A font change gives Terminal another grid. Its next placement settles off
@@ -617,7 +635,7 @@ func switchingTabsBesideTwoSteppedTerminalsSettles(upperOver: Double, lowerOver:
         model.performTabbed(.move(WindowID(rawValue: name), pane: state.panes[index + 2].id, index: nil))
         try #require(await waitFor { model.activeTabbedState?.panes[index + 2].selected == WindowID(rawValue: name) })
     }
-    try await Task.sleep(for: .milliseconds(400))
+    try await waitForIdle(model, system)
     let stepped = ["a", "b", "c"].map { WindowID(rawValue: $0) }
     for (offset, id) in stepped.enumerated() {
         system.sizeGrids[id] = (BTSize(width: 9 + Double(offset), height: 15), BTSize(width: 2, height: 4 + Double(offset)))
@@ -642,4 +660,36 @@ func switchingTabsBesideTwoSteppedTerminalsSettles(upperOver: Double, lowerOver:
         // Within the write tolerance.
         #expect(placed.size.width <= area.size.width + 2 && placed.size.height <= area.size.height + 2, "\(id) \(placed) \(area)")
     }
+}
+
+/// A small divider drag beside a window held up by a minimum it never
+/// reported. That window settles at one length off its request, which is no
+/// grid, so the drag sticks and the window fills its new area.
+@Test(arguments: [10.0, 1.5]) @MainActor
+func aSmallDragBesideAMinimumHeldWindowSticks(minimumAbovePane: Double) async throws {
+    let system = FakeAppWindowSystem()
+    let model = try await makeTabbed(system, .rows, ["upper", "lower"])
+    defer { model.shutdown() }
+    let slot = try #require(content(0, model, system))
+    var window = system.windows[0]
+    let big = WindowID(rawValue: "big")
+    window.id = big
+    window.processIdentifier = 398
+    window.bundleIdentifier = "com.example.big"
+    window.frame = BTRect(x: 60, y: 60, width: 480, height: 400)
+    system.windows.append(window)
+    system.enforcedMinimumHeights[big] = slot.size.height + minimumAbovePane
+    system.eventHandler?(WindowSystemEvent(kind: .created, windowID: big, processIdentifier: 398))
+    try #require(await waitFor(timeout: .seconds(5)) { model.activeTabbedState?.panes[0].selected == big })
+    try await waitForIdle(model, system)
+    let before = try #require(content(0, model, system))
+    // About 12 points: less than one step.
+    let branch = try #require(model.activeTabbedState?.dividers(in: system.availableDisplays[0].visibleFrame).first?.branchID)
+    model.performTabbed(.adjustDivider(branch, by: 12 / system.availableDisplays[0].visibleFrame.size.height))
+    try await waitForIdle(model, system)
+    let area = try #require(content(0, model, system))
+    #expect(area.size.height > before.size.height + 10, "the drag was undone: \(before) \(area)")
+    #expect(model.activeTabbedState?.withPreferredPaneSizes() == nil, "the divider drifted from the user's size")
+    #expect(frame("big", system)?.approximatelyEquals(area, tolerance: 0.6) == true)
+    #expect(model.statusMessage == nil)
 }

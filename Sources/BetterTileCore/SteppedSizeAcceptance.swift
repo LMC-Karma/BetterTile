@@ -80,19 +80,27 @@ public struct SteppedGrid: Equatable, Sendable {
 
     /// The length to ask for in a window area `length` long: the largest
     /// length on the grid that fits. Without a step, the largest known length
-    /// that fits, with less than one step to spare, or two when two lengths
-    /// are known. When the area is smaller than every known length, the smallest
-    /// less `maximumShortfall` and a point, which rounds to a lower row and
-    /// teaches the step. Nil otherwise.
+    /// that fits with less than one step to spare. With more to spare, the
+    /// midpoint of the known lengths around the area, when it fits: the step
+    /// is at most `maximumShortfall`, so the window settles between them and
+    /// shows a new length. When the area is smaller than every known length,
+    /// the smallest less `maximumShortfall` and a point, which rounds to a
+    /// lower row. Nil otherwise: the window is asked for its whole area. With
+    /// one known length, which can be a minimum the window never reported, it
+    /// is asked for that length only in an area within 2 points of it.
     public func request(inside length: Double) -> Double? {
         guard let step else {
-            if let fits = known.last(where: { $0 <= length + 0.5 }) {
-                // Two known lengths can be two rows apart.
-                let spare = (SteppedSizeAcceptance.maximumShortfall + 1) * (known.count > 1 ? 2 : 1)
-                return length - fits <= spare ? fits : nil
-            }
-            let below = (known.first ?? offset) - SteppedSizeAcceptance.maximumShortfall - 1
-            return below > 0 && below <= length ? below : nil
+            // One length can be a minimum the window never reported: ask for
+            // it only when it is the area, give the window a larger area
+            // whole, and ask a smaller area for less.
+            if known.count == 1, length >= offset - 0.5 { return abs(length - offset) <= 2 ? offset : nil }
+            let below = known.last { $0 <= length + 0.5 }
+            let above = known.first { $0 > length + 0.5 }
+            if let below, length - below <= SteppedSizeAcceptance.maximumShortfall + 1 { return below }
+            if let below, let above { return min(length, (below + above) / 2) }
+            guard below == nil, let above else { return nil }
+            let less = above - SteppedSizeAcceptance.maximumShortfall - 1
+            return less > 0 && less <= length ? less : nil
         }
         return offset + ((length + 0.5 - offset) / step).rounded(.down) * step
     }

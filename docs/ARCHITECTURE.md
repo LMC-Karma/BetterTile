@@ -467,14 +467,18 @@ change a Bento operation made to the tree; writing it also writes the tree.
   applied late.
   - The model remembers each window that settles more than half a point off
     its request, until it closes or its desktop leaves Tabbed, with each
-    length it settled at off its request. A length that takes its request
-    is not recorded: a window whose minimum is just above its pane takes any
-    larger pane exactly and gets no grid. The lengths give a grid
+    length it settled at off its request. A length that takes its request,
+    or that the window's known minimum explains, is not recorded. The
+    lengths give a grid
     (`SteppedGrid`): the step is their greatest common difference when it is
     2 to 24 points. Terminal's heights on one display, for example, are
     4 + 15·k. A larger common difference leaves the step unknown, because
     lengths 60 points apart can be steps of 15, 20, or 30; the known lengths
-    are used until another length shows the step. Lengths that share no step
+    are used until another length shows the step. One length can be a
+    minimum the window never reported, so it only grows a pane too small for
+    it, and the window is asked for it only in an area within 2 points of it;
+    a larger area, such as after a small divider drag, is given whole.
+    Lengths that share no step
     of 2 points, such as rounded fractional cells, give no grid. A window that
     settles off a length on its own grid, for example after a font change,
     starts its lengths again from the new one and snaps in the same
@@ -487,7 +491,10 @@ change a Bento operation made to the tree; writing it also writes the tree.
     move, then toward the top or left. Each remembered window is then asked
     for the largest length on its grid that fits its area
     (`requestingSteppedGrids`), so it settles exactly there, and switching
-    tabs writes nothing. Example: two Terminals in Two Rows on a 968-point
+    tabs writes nothing. Without a known step, it is asked for the largest
+    known length within one step of its area. With more room than that, it is
+    asked for the midpoint of the known lengths around the area; a step is at
+    most 24 points, so it settles between them and shows a new length. Example: two Terminals in Two Rows on a 968-point
     work area have 894 points of window area. 439 + 454 fits with one point
     to spare, so the divider moves 7 points: one Terminal fills its pane and
     the other leaves a one-point gap.
@@ -500,8 +507,9 @@ change a Bento operation made to the tree; writing it also writes the tree.
     settled off its pane in this write, stay in place. When no edge can follow,
     a smaller window keeps its gap, and a larger window is asked for its
     settled size less 25 points, one whole step and a point, but never less
-    than a minimum that is not a seed. A window with one known length is asked
-    for that too when its area is smaller, which teaches its step.
+    than a minimum that is not a seed. A window whose area is smaller than
+    every length it took is asked for the smallest less 25 points, which
+    teaches its step.
   - A window that rounds up toward its area is accepted. A window that still
     keeps its whole size refuses the request: the minimum is learned, and the
     retry fits or floats it as usual. After either write, a selected window

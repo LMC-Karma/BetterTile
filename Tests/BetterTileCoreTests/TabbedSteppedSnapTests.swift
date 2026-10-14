@@ -180,8 +180,8 @@ private func slot(_ id: WindowID, _ state: TabbedLayoutState) throws -> BTRect {
 
 @Test func aGridIsLearnedFromSettledLengths() throws {
     // Terminal on a 1920×968 display: heights are 4 + 15·k. Two lengths 30
-    // or 60 points apart cannot tell 15 from 20 or 30, so only the latest
-    // length is kept until a third shows the step.
+    // or 60 points apart cannot tell 15 from 10, 20, or 30, so the step stays
+    // unknown and only the known lengths are used until a third shows it.
     let two = try #require(SteppedGrid(observed: [454, 424]))
     #expect(two.step == nil && two.offset == 424)
     #expect(SteppedGrid(observed: [439, 499])?.step == nil)
@@ -194,13 +194,19 @@ private func slot(_ id: WindowID, _ state: TabbedLayoutState) throws -> BTRect {
     // Without a step, both known lengths stay usable.
     #expect(two.contains(454) && two.contains(424) && !two.contains(439))
     #expect(two.request(inside: 447) == 424)
-    #expect(two.request(inside: 500) == 454)
-    #expect(two.request(inside: 520) == nil)
-        // Fractional cells rounded to whole points share no step: no grid.
+    #expect(two.request(inside: 470) == 454)
+    // More than a step to spare asks for the whole area, which shows the step.
+    #expect(two.request(inside: 500) == nil)
+    // Lengths 60 apart around the area: their midpoint lands between them.
+    #expect(SteppedGrid(observed: [439, 499])?.request(inside: 489) == 469)
+    // Fractional cells rounded to whole points share no step: no grid.
     #expect(SteppedGrid(observed: [366.1, 373.4, 380.7]) == nil)
+    // One length can be a minimum the window never reported: it is asked
+    // for only in an area within 2 points of it, and a larger area is given
+    // whole.
     #expect(SteppedGrid(observed: [454])?.step == nil)
-    #expect(SteppedGrid(observed: [454])?.request(inside: 470) == 454)
-    #expect(SteppedGrid(observed: [454])?.request(inside: 500) == nil)
+    #expect(SteppedGrid(observed: [454])?.request(inside: 455) == 454)
+    #expect(SteppedGrid(observed: [454])?.request(inside: 470) == nil)
     // An area smaller than the one known length asks for more than a step
     // less, which rounds to a lower row and teaches the step.
     #expect(SteppedGrid(observed: [454])?.request(inside: 447) == 454 - SteppedSizeAcceptance.maximumShortfall - 1)
@@ -239,4 +245,19 @@ private func slot(_ id: WindowID, _ state: TabbedLayoutState) throws -> BTRect {
     var other = state
     other.select(recents)
     #expect(heights(other.fittingSteppedGrids(grids, in: work, windows: windows)) == heights(fitted))
+}
+
+/// One length can be a minimum the window never reported. It grows a pane
+/// that is too small for it, but never pulls back a pane the user made larger.
+@Test func oneLengthOnlyGrowsAPane() throws {
+    let state = rows()
+    let upper = try slot(top, state)
+    let windows = [window(top), window(bottom)]
+    func height(_ state: TabbedLayoutState) throws -> Double { try slot(top, state).size.height }
+    let larger = state.fittingSteppedGrids([top: [.horizontal: SteppedGrid(observed: [upper.size.height + 10])!]],
+                                           in: bounds, windows: windows)
+    #expect(abs(try height(larger) - (upper.size.height + 10)) < 0.01)
+    let smaller = state.fittingSteppedGrids([top: [.horizontal: SteppedGrid(observed: [upper.size.height - 12])!]],
+                                            in: bounds, windows: windows)
+    #expect(abs(try height(smaller) - upper.size.height) < 0.01)
 }
