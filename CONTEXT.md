@@ -117,9 +117,10 @@ its own frame until the user returns it to the layout.
 
 A floating window that Tabbed or Bento floated on its own, for example a
 window that no pane can show, or a seventh Bento window. Tabbed returns it to
-a pane when a pane can show it. It checks once about 1 second after the window
-floats, again when the pane layout changes, and when the user chooses Repair
-Tabbed. A window the user floated never returns on its own.
+a pane when a pane can show it. It checks on each entry to Tabbed, once about
+1 second after the window floats, again when the pane layout changes, and when
+the user chooses Repair Tabbed. A window the user floated never returns on its
+own.
 
 ## Focus mode
 
