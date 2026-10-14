@@ -201,3 +201,16 @@ private func entry(_ name: String?, _ frame: BTRect) -> TabbedStackEntry {
                                               keptInPlace: [id("dialog")], ignoresRaise: [id("dialog")]) == [])
     #expect(state.curtainAnchor(order: raised, keptInPlace: [id("dialog")], ignoresRaise: [id("dialog")]) == id("a"))
 }
+
+/// Review: a hidden tab is exposed in front of everything, and a background
+/// float sits between it and its pane's selected tab. Raising that selected
+/// tab never pulls the float into the plan, because macOS ignores its raise.
+@Test func sharedCurtainKeepsABackgroundFloatOutOfARaiseThatOverlapsIt() {
+    let state = twoPanes()
+    let dialog = BTRect(x: 100, y: 100, width: 300, height: 200)
+    let order = [entry("b", left), entry("dialog", dialog), entry("a", left), entry("c", right), entry("d", right)]
+    let plan = state.sharedCurtainStackingRepair(order: order, curtainBounds: bounds, aboveCurtain: [id("dialog")],
+                                                 keptInPlace: [id("dialog")], ignoresRaise: [id("dialog")])
+    #expect(plan?.contains(id("dialog")) == false)
+    #expect(plan?.contains(id("a")) == true)
+}
