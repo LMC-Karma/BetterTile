@@ -49,9 +49,77 @@ manual update command.
 
 Core geometry uses logical points with a top-left origin. Display visible frames and Accessibility window frames are converted at the macOS boundary. Core code never sees AppKit's bottom-left global screen coordinate system.
 
+## Window drag drops
+
+A window drag has one decision: the drop that its overlay shows.
+`DragSnapController` records that drop as a `WindowDropTarget` when it shows a
+snap preview or an armed Bento cue. An ordinary snap records its action and
+frame. A Bento or Tabbed drop records the `PreparedLayoutDrop` that the model
+planned for the overlay: the outcome, the frames shown, and the Bento plan or
+Tabbed arrangement. A Bento snap preview shows the planned frame of the dragged
+window, with its gaps, and the frames of the windows that move. The value
+clears when the overlay hides, for example when the pointer leaves the snap
+area, a suppression modifier is held, or Escape cancels the drag.
+
+A drop that cannot apply shows invalid feedback: a red snap frame or a red
+pane cue. It is recorded as a non-committable target with a reason. Release
+over it applies nothing and shows the reason in the result pill. A window
+tiled in Bento or Tabbed returns to its slot. Any other window, such as a
+Native window or a floating window, stays where the user dropped it, as after
+any drag without a snap. A Bento snap whose remaining windows cannot fit, a
+Tabbed snap that cannot keep its target, a Tabbed tab that no pane fit can
+hold, and a snap whose window minimum is larger than the snap frame all show
+invalid feedback.
+
+Release commits the recorded drop. It does not evaluate the release point
+again, run the Bento hover delay again, or plan or fit the drop again. Before
+any write, release checks that the desktop is the one the plan was made for:
+the same layout session and revision, mode, Space, and work area. A plan from
+another drag, or for a desktop that changed during the drag, writes none of
+its frames, and the pill reports that the layout changed. After such a change,
+every release, including one over nothing or over invalid feedback, puts the
+dragged window in its slot of the current layout, for example after a shortcut
+moved it during the drag. Settlement retries that write if the application
+ignores it. A torn-off Tabbed tab returns to its pane if the pane remains;
+otherwise the pill asks for Repair Tabbed. Nothing is written on another Space
+or after a mode change. A Bento or Tabbed window released or cancelled without a drop
+returns to its slot; a floating one stays where it is. Only a drop that the
+overlay showed adds a window to the layout. Only a drag
+that showed nothing, such as a fast flick to a screen edge, evaluates the
+release point once. A suppression modifier held at release cancels the drop. A
+Bento cue arms only after its hover delay, because the armed cue is the drop.
+At a screen edge, a snap area wins over the edge of the pane under it, so the
+overlay shows the snap and not a pane cue.
+
+`PointerDisplay` maps the pointer to exactly one display. Display frames are
+half-open, as in CoreGraphics: a point on an edge that two displays share
+belongs to the right display of a side-by-side pair and to the lower display
+of a stack.
+
+The dragged window's own display does not take part in the drop. At a shared
+edge, its center is often on the neighbouring display. Drag commits pass a
+`DropDestination` to `WindowCoordinator`, which checks the dragged window's
+reachability on the drop's display. Every other window keeps its own display,
+so a window that an application moved to another display during the drag
+makes the drop fail. Tabbed participant, restore, and rollback checks accept
+the dragged window on either display. A frame that is mostly off the drop's
+display is still rejected.
+
+A snap preview shows the frame that the window will take. If the window's
+known minimum size is larger than the snap area, the frame grows from the
+snapped edges and stays inside the drop display's visible frame. Every drop,
+including Bento, Focus mode, and Tabbed drops, carries the minimum sizes that
+its overlay planned with. Release checks each frame against them, so a minimum
+read again at release does not reject or change a drop that the overlay showed
+as valid. A write that an application refuses still follows the usual readback
+and rollback rules. A Bento or Tabbed drag stays on the display where
+it started. If a Bento drop is not committed and the dragged window cannot
+return to its frame from before the drag, BetterTile reports the failure and
+stops automatic writes until Repair, as for a degraded mutation.
+
 ## Space boundary
 
-BetterTile operates on eligible on-screen windows exposed by its macOS integration layer. It refreshes the current window set immediately when apps, Spaces, or displays change. A validated native desktop observation selects one process-local runtime layout session for each display and Space pair. Missing or malformed native observations retain the public-API window-overlap matcher. Empty window membership remains unknown, windows reported on several Spaces float, and native fullscreen Spaces expose neither automatic layout writes nor dividers. BetterTile never attempts to move windows across Spaces.
+BetterTile operates on eligible on-screen windows exposed by its macOS integration layer. It refreshes the current window set immediately when apps, Spaces, or displays change. A validated native desktop observation selects one process-local runtime layout session for each display and Space pair. Missing or malformed native observations retain the public-API window-overlap matcher. Empty window membership remains unknown, windows reported on several Spaces float, and native fullscreen Spaces expose neither automatic layout writes nor dividers. With separate Spaces per display, a window's center can lie on a display whose current Space does not hold it, for example while the window is dragged across a shared edge. A window whose one Space is current on another display stays visible and is reported on that Space's display; only a window whose Space is current on no display is left out. BetterTile never attempts to move windows across Spaces.
 
 ## Popup and fixed-size windows
 
@@ -110,7 +178,8 @@ One listen-only session event tap forwards ordered scalar left-button values
 from a dedicated run loop to the main actor. Drag snapping and linked resizing
 share that stream. If tap creation or recovery fails, both consumers switch to
 their existing `NSEvent` monitors as one unit so one physical event has one
-owner.
+owner. Those monitors read each event's own location, so a stalled
+main actor cannot move a release point.
 
 Layout Wheel keyboard activation uses paired local and global AppKit monitors,
 so it works whether BetterTile or another app receives the event. Modifier

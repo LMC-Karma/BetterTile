@@ -388,8 +388,19 @@ private func snapFixture(preset: TabbedPreset = .columns) async throws -> (FakeA
     if failure == "floating-frame" {
         system.failedFrameWriteNumbers[id] = [system.frameWriteCounts[id, default: 0] + 1]
     } else { system.failingNextRaiseWindowID = before.selectedWindowIDs.first }
+    let dropped = system.windows[0].frame, sourceWrites = system.frameWriteCounts[id]
     try #require(model.completeBentoDrag(displayID: system.mainDisplay.id, sourceID: id,
         outcome: .snap(action: .rightHalf, frame: system.mainDisplay.visibleFrame), sourceFrame: frame))
+    if failure == "floating-frame" {
+        // The overlay showed invalid feedback. A floating window has no slot
+        // to return to, so it stays where it was dropped and nothing is
+        // written; the pill gives the reason.
+        #expect(model.statusMessage != nil)
+        #expect(system.windows[0].frame == dropped)
+        #expect(system.frameWriteCounts[id] == sourceWrites)
+        #expect(model.activeTabbedState == before)
+        return
+    }
     try #require(await waitFor { model.statusMessage?.contains("restore") == true })
     #expect(model.activeTabbedState == before)
     let writes = system.frameWriteCounts
@@ -653,4 +664,166 @@ func spaceStabilizationDelaysOnlyTabbedWindowActions(mode: LayoutMode, wheel: Bo
     #expect(model.activeTabbedState?.panes.count == 2)
     model.performTabbed(.undo)
     #expect(await waitFor { model.activeTabbedState == before })
+}
+
+/// The dragged window's center can cross to the neighbouring display while
+/// the pointer shows a Tabbed drop. The drop still lands on the Tabbed
+/// display, and no participant check degrades it.
+@Test(arguments: ["snap", "center"]) @MainActor
+func tabbedDropAfterTheSourceCenterCrossedIsNotDegraded(entry: String) async throws {
+    let (system, model) = try await snapFixture()
+    defer { model.shutdown() }
+    let source = system.windows[0].id, right = system.windows[2].id
+    let main = system.mainDisplay.id
+    let destination = try #require(model.activeTabbedState?.panes[1].id)
+    let second = DisplayID(rawValue: "second")
+    system.availableDisplays.append(DisplaySnapshot(id: second,
+        frame: BTRect(x: 1000, y: 0, width: 1000, height: 800),
+        visibleFrame: BTRect(x: 1000, y: 0, width: 1000, height: 800)))
+    let frame = try #require(StandardActionEngine().targetFrame(for: .rightHalf,
+        window: system.windows[0], display: system.mainDisplay))
+    try #require(model.beginBentoDrag(displayID: main, sourceID: source))
+    // macOS moved the window with the pointer: its center is now on the
+    // second display, while the pointer is still on the Tabbed display.
+    let index = try #require(system.windows.firstIndex { $0.id == source })
+    system.windows[index].frame.origin.x = 1050 - system.windows[index].frame.size.width / 2
+    system.windows[index].displayID = second
+    model.finishBentoDrag(displayID: main, sourceID: source,
+        outcome: entry == "snap" ? .snap(action: .rightHalf, frame: frame) : .swap(targetWindowID: right))
+    #expect(await waitFor(timeout: .seconds(2)) {
+        model.activeTabbedState?.panes.first { $0.id == destination }?.selected == source
+    })
+    #expect(model.statusMessage == nil, "\(model.statusMessage ?? "")")
+    let placed = try #require(system.windows.first { $0.id == source })
+    #expect(placed.displayID == main)
+    #expect(PlacementBounds.isContained(placed.frame, in: system.mainDisplay.visibleFrame))
+}
+
+/// A Tabbed center drop is fitted when the overlay shows it. Release commits
+/// those panes, and a tab that cannot fit is invalid feedback.
+@Test(arguments: [600.0, 1100.0]) @MainActor
+func tabbedCenterDropIsFittedByItsPreview(sourceMinimumWidth: Double) async throws {
+    let (system, model) = try await snapFixture()
+    defer { model.shutdown() }
+    let source = system.windows[0].id, right = system.windows[2].id
+    let main = system.mainDisplay.id, bounds = system.mainDisplay.visibleFrame
+    let destination = try #require(model.activeTabbedState?.panes[1].id)
+    system.windows[0].constraints.minimumSize.width = sourceMinimumWidth
+    try #require(model.beginBentoDrag(displayID: main, sourceID: source))
+    let preview = model.previewBentoDrag(displayID: main, sourceID: source, outcome: .swap(targetWindowID: right))
+    guard sourceMinimumWidth < bounds.size.width else {
+        guard case .invalid? = preview else { Issue.record("A tab that cannot fit must be invalid"); return }
+        model.finishBentoDrag(displayID: main, sourceID: source, end: .restore)
+        return
+    }
+    guard case let .ready(plan)? = preview, let fitted = plan.tabbedState else {
+        Issue.record("Expected a fitted center drop"); return
+    }
+    let fittedFrames = fitted.logicalFrames(in: bounds)
+    #expect((fittedFrames[destination]?.size.width ?? 0) >= sourceMinimumWidth)
+    model.finishBentoDrag(displayID: main, sourceID: source, end: .commit(plan))
+    #expect(await waitFor(timeout: .seconds(2)) {
+        model.activeTabbedState?.panes.first { $0.id == destination }?.selected == source
+    })
+    #expect(model.activeTabbedState?.logicalFrames(in: bounds) == fittedFrames)
+}
+
+/// A Tabbed snap commits with the constraints its overlay planned with. A
+/// larger minimum read at release does not change or reject it.
+@Test @MainActor func tabbedSnapIsNotVetoedByAMinimumReadAtRelease() async throws {
+    let (system, model) = try await snapFixture()
+    defer { model.shutdown() }
+    let source = system.windows[0].id, main = system.mainDisplay.id
+    let destination = try #require(model.activeTabbedState?.panes[1].id)
+    let frame = try #require(StandardActionEngine().targetFrame(for: .rightHalf,
+        window: system.windows[0], display: system.mainDisplay))
+    try #require(model.beginBentoDrag(displayID: main, sourceID: source))
+    guard case let .ready(plan)? = model.previewBentoDrag(displayID: main, sourceID: source,
+                                                          outcome: .snap(action: .rightHalf, frame: frame)) else {
+        Issue.record("Expected a snap plan"); return
+    }
+    system.windows[0].constraints.minimumSize.width = 700
+    model.finishBentoDrag(displayID: main, sourceID: source, end: .commit(plan))
+    #expect(await waitFor(timeout: .seconds(2)) {
+        model.activeTabbedState?.panes.first { $0.id == destination }?.selected == source
+    })
+    #expect(model.statusMessage == nil, "\(model.statusMessage ?? "")")
+}
+
+/// A floating Tabbed window's snap must hold its minimum size, or the
+/// overlay shows invalid feedback.
+@Test @MainActor func floatingTabbedSnapChecksTheMinimumSize() async throws {
+    let (system, model) = try await snapFixture()
+    defer { model.shutdown() }
+    let id = system.windows[0].id, main = system.mainDisplay.id
+    model.performTabbed(.float(id))
+    try #require(await waitFor { model.activeTabbedState?.floatingWindowIDs.contains(id) == true })
+    try await Task.sleep(for: .milliseconds(200))
+    let frame = try #require(StandardActionEngine().targetFrame(for: .almostMaximize,
+        window: system.windows[0], display: system.mainDisplay))
+    system.windows[0].constraints.minimumSize.width = frame.size.width + 20
+    try #require(model.beginBentoDrag(displayID: main, sourceID: id, sourceFrame: system.windows[0].frame))
+    let preview = model.previewBentoDrag(displayID: main, sourceID: id, outcome: .snap(action: .almostMaximize, frame: frame))
+    #expect(preview == .invalid(reason: "The window’s minimum size does not fit in that snap area."))
+    model.finishBentoDrag(displayID: main, sourceID: id, end: .restore)
+}
+
+/// A Tabbed drop whose layout changed during the drag writes nothing of its
+/// plan. The dragged window takes its frame in the current arrangement.
+@Test @MainActor func aStaleTabbedPlanPutsTheDraggedWindowInTheCurrentLayout() async throws {
+    let (system, model) = try await snapFixture()
+    defer { model.shutdown() }
+    let source = system.windows[0].id, main = system.mainDisplay.id, bounds = system.mainDisplay.visibleFrame
+    let frame = try #require(StandardActionEngine().targetFrame(for: .rightHalf,
+        window: system.windows[0], display: system.mainDisplay))
+    try #require(model.beginBentoDrag(displayID: main, sourceID: source))
+    guard case let .ready(plan)? = model.previewBentoDrag(displayID: main, sourceID: source,
+                                                          outcome: .snap(action: .rightHalf, frame: frame)) else {
+        Issue.record("Expected a snap plan"); return
+    }
+    let before = try #require(model.activeTabbedState)
+    let destination = before.panes[1].id
+    // The Dock grows during the drag: the work area the plan was made for is gone.
+    system.availableDisplays[0].visibleFrame.size.height -= 50
+    let shrunk = system.availableDisplays[0].visibleFrame
+    system.windows[0].frame.origin.x += 140
+    model.finishBentoDrag(displayID: main, sourceID: source, end: .commit(plan))
+    #expect(model.statusMessage?.hasPrefix("The layout changed during the drag.") == true, "\(model.statusMessage ?? "nil")")
+    #expect(await waitFor(timeout: .seconds(3)) {
+        guard let state = model.activeTabbedState,
+              let placed = try? state.placements(in: shrunk, windows: system.windows)
+                .first(where: { $0.windowID == source })?.frame else { return false }
+        return system.windows[0].frame.approximatelyEquals(placed, tolerance: 1)
+    }, "\(system.windows[0].frame)")
+    // The plan's arrangement never applied: the source stays in its own pane.
+    #expect(model.activeTabbedState?.panes.first { $0.id == destination }?.tabs.contains(source) == false)
+    _ = bounds
+}
+
+/// Release over invalid feedback for a Tabbed tab restores the verified
+/// checkpoint and the original group, and reports the reason.
+@Test @MainActor func aFailedTabbedDropRestoresTheCheckpoint() async throws {
+    let (system, model) = try await snapFixture()
+    defer { model.shutdown() }
+    let source = system.windows[0].id, main = system.mainDisplay.id
+    let before = try #require(model.activeTabbedState), frames = system.windows.map(\.frame)
+    try #require(model.beginBentoDrag(displayID: main, sourceID: source))
+    system.windows[0].frame.origin.x += 140
+    model.finishBentoDrag(displayID: main, sourceID: source, end: .failed(reason: "That pane cannot hold it."))
+    #expect(await waitFor(timeout: .seconds(2)) { model.statusMessage == "That pane cannot hold it." })
+    #expect(await waitFor(timeout: .seconds(2)) { system.windows.map(\.frame) == frames })
+    #expect(model.activeTabbedState == before)
+}
+
+/// A Tabbed center drop onto a window outside every pane is invalid; it is
+/// never planned as a Bento swap instead.
+@Test @MainActor func aTabbedCenterDropOutsideAPaneIsInvalid() async throws {
+    let (system, model) = try await snapFixture()
+    defer { model.shutdown() }
+    let source = system.windows[0].id, main = system.mainDisplay.id
+    try #require(model.beginBentoDrag(displayID: main, sourceID: source))
+    let preview = model.previewBentoDrag(displayID: main, sourceID: source,
+                                         outcome: .swap(targetWindowID: WindowID(rawValue: "not-a-tab")))
+    #expect(preview == .invalid(reason: "The layout changed during the drag. Try again."))
+    model.finishBentoDrag(displayID: main, sourceID: source, end: .restore)
 }

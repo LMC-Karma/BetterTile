@@ -232,8 +232,8 @@ final class BetterTileModel {
         dragSnap.bentoPreviewHandler = { [weak self] displayID, sourceID, outcome in
             self?.previewBentoDrag(displayID: displayID, sourceID: sourceID, outcome: outcome)
         }
-        dragSnap.bentoDragEndedHandler = { [weak self] displayID, sourceID, outcome in
-            self?.finishBentoDrag(displayID: displayID, sourceID: sourceID, outcome: outcome)
+        dragSnap.bentoDragEndedHandler = { [weak self] displayID, sourceID, end in
+            self?.finishBentoDrag(displayID: displayID, sourceID: sourceID, end: end)
         }
         dragSnap.gestureEndedHandler = { [weak self] in
             guard let self else { return }
@@ -1308,31 +1308,80 @@ final class BetterTileModel {
         return true
     }
 
-    private func previewBentoDrag(
+    private static let bentoDropMinimumFailure = "That Bento drop cannot satisfy the windows’ minimum sizes."
+    private static let dropLayoutChanged = "The layout changed during the drag. Try again."
+    private static let minimumSizeDoesNotFitSnap = "The window’s minimum size does not fit in that snap area."
+
+    /// Whether the desktop a drag froze is still the one its drop would
+    /// change: the same layout session and revision, mode, Space, and work
+    /// area. A drop on a changed desktop must write nothing.
+    private func dragDesktopIsCurrent(_ active: ActiveBentoDrag, displayID: DisplayID) -> Bool {
+        guard let session = sessionStore.session(for: displayID),
+              session.id == active.layoutSession.id, session.revision == active.layoutSession.revision,
+              session.mode == active.layoutSession.mode,
+              system.displays().first(where: { $0.id == displayID })?.visibleFrame == active.session.workArea
+        else { return false }
+        // An unavailable observation cannot show a Space change.
+        guard let space = active.tabbedSpaceID,
+              let current = system.refreshNativeDesktopObservation()?.currentSpace(on: displayID) else { return true }
+        return current == space
+    }
+
+    /// Plans a drop for the drag overlay. Release commits this plan as it is;
+    /// it never plans the drop again. Nil means the drag is not current.
+    func previewBentoDrag(
         displayID: DisplayID,
         sourceID: WindowID,
         outcome: BentoDragOutcome
-    ) -> [Placement]? {
+    ) -> LayoutDropPreview? {
         guard let active = activeBentoDrag,
               active.session.displayID == displayID,
               active.session.sourceWindowID == sourceID
         else { return nil }
-        // In Tabbed, a center drop adds a tab; there is no reflow to preview.
-        if active.layoutSession.mode == .tabbed, case .swap = outcome { return nil }
-        if active.layoutSession.mode == .tabbed, case let .snap(action, _) = outcome {
+        let dragID = active.transaction.id
+        // In Tabbed, a center drop adds the window to that pane as a tab.
+        // The panes are fitted now, so release moves no divider the overlay
+        // did not show; a tab that cannot fit is invalid feedback.
+        if active.layoutSession.mode == .tabbed, case let .swap(targetWindowID) = outcome {
+            guard let session = sessionStore.session(for: displayID),
+                  session.id == active.layoutSession.id, session.revision == active.layoutSession.revision,
+                  var state = session.tabbedState, let pane = state.paneID(containing: targetWindowID)
+            else { return .invalid(reason: Self.dropLayoutChanged) }
+            state.move(sourceID, to: pane)
+            do {
+                let fitted = try fittedTabbedState(state, in: active.session.workArea,
+                                                   windows: active.tabbedWindows, focus: sourceID)
+                return .ready(PreparedLayoutDrop(outcome: outcome, placements: [], plan: .tabbed(fitted), dragID: dragID))
+            } catch {
+                return .invalid(reason: error.localizedDescription)
+            }
+        }
+        if active.layoutSession.mode == .tabbed, case let .snap(action, frame) = outcome {
             guard let baseline = active.tabbedUndoBaseline,
                   sessionStore.isCurrent(active.layoutSession.id, revision: active.layoutSession.revision, on: displayID),
                   system.displays().first(where: { $0.id == displayID })?.visibleFrame == active.session.workArea,
                   active.tabbedSpaceID == nil || system.nativeDesktopObservation()?.currentSpace(on: displayID) == active.tabbedSpaceID
-            else { return nil }
-            if baseline.floatingWindowIDs.contains(sourceID), !BentoDropPlanner.partitionActions.contains(action),
-               let window = active.tabbedWindows.first(where: { $0.id == sourceID }),
-               let display = system.displays().first(where: { $0.id == displayID }),
-               let frame = StandardActionEngine().targetFrame(for: action, window: window, display: display) {
-                return [Placement(windowID: sourceID, frame: frame)]
+            else { return .invalid(reason: Self.dropLayoutChanged) }
+            // A floating source takes the snap area's frame, which the drag
+            // computed on the display under the pointer, if it can hold the
+            // window's minimum size.
+            if baseline.floatingWindowIDs.contains(sourceID), !BentoDropPlanner.partitionActions.contains(action) {
+                if let constraints = active.session.constraints[sourceID], constraints.isResizable,
+                   !SnapFrameFit.holds(frame, minimumSize: constraints.minimumSize) {
+                    return .invalid(reason: Self.minimumSizeDoesNotFitSnap)
+                }
+                return .ready(PreparedLayoutDrop(outcome: outcome, placements: [Placement(windowID: sourceID, frame: frame)],
+                                                 plan: .frame, dragID: dragID))
             }
-            return TabbedSnapPlanner.plan(sourceWindowID: sourceID, action: action, scope: .window, state: baseline,
-                windows: active.tabbedWindows, in: active.session.workArea)?.placements
+            guard let plan = TabbedSnapPlanner.plan(sourceWindowID: sourceID, action: action, scope: .window, state: baseline,
+                      windows: active.tabbedWindows, in: active.session.workArea),
+                  plan.preservesTarget(in: plan.state, within: active.session.workArea)
+            else {
+                return .invalid(reason: BentoDropPlanner.partitionActions.contains(action)
+                    ? Self.tabbedSnapFailure : tabbedSnapUnavailableReason(action))
+            }
+            return .ready(PreparedLayoutDrop(outcome: outcome, placements: plan.placements,
+                                             plan: .tabbed(plan.state), dragID: dragID))
         }
         let intent: BentoDropIntent? = switch outcome {
         case let .swap(targetWindowID): .pane(targetWindowID)
@@ -1341,7 +1390,7 @@ final class BetterTileModel {
         case .restore: nil
         }
         guard let intent else { return nil }
-        return BentoDropPlanner().plan(
+        guard let plan = BentoDropPlanner().plan(
             intent: intent,
             sourceWindowID: sourceID,
             state: active.session.originalState,
@@ -1349,10 +1398,28 @@ final class BetterTileModel {
             constraints: active.session.constraints,
             contextWindowIDs: active.session.contextWindowIDs,
             in: active.session.workArea
-        )?.placements
+        ) else { return .invalid(reason: Self.bentoDropMinimumFailure) }
+        return .ready(PreparedLayoutDrop(outcome: outcome, placements: plan.placements, plan: .bento(plan), dragID: dragID))
     }
 
+    /// Ends a drag with a known outcome, planned as the overlay plans it.
+    /// Tests use this seam; the live path ends with the overlay's plan.
     func finishBentoDrag(displayID: DisplayID, sourceID: WindowID, outcome: BentoDragOutcome) {
+        let end: LayoutDragEnd
+        if outcome == .restore {
+            end = .restore
+        } else {
+            switch previewBentoDrag(displayID: displayID, sourceID: sourceID, outcome: outcome) {
+            case let .ready(prepared): end = .commit(prepared)
+            case let .invalid(reason): end = .failed(reason: reason)
+            case nil: return
+            }
+        }
+        finishBentoDrag(displayID: displayID, sourceID: sourceID, end: end)
+    }
+
+    /// Commits the plan the drag overlay showed, or restores the window.
+    func finishBentoDrag(displayID: DisplayID, sourceID: WindowID, end: LayoutDragEnd) {
         guard var active = activeBentoDrag,
               active.session.displayID == displayID,
               active.session.sourceWindowID == sourceID
@@ -1377,24 +1444,82 @@ final class BetterTileModel {
                 await pending.value
                 guard let self, self.activeBentoDrag?.layoutSession.id == sessionID,
                       self.activeBentoDrag?.layoutSession.revision == revision else { return }
-                self.finishBentoDrag(displayID: displayID, sourceID: sourceID, outcome: outcome)
+                self.finishBentoDrag(displayID: displayID, sourceID: sourceID, end: end)
             }
             return
         }
-        if active.layoutSession.mode == .tabbed, case let .snap(action, _) = outcome {
+        var end = end
+        let desktopChanged = !dragDesktopIsCurrent(active, displayID: displayID)
+        if case let .commit(prepared) = end, prepared.dragID != active.transaction.id || desktopChanged {
+            // A plan from another drag, or for a desktop that changed since
+            // the overlay showed it, is not this drop. Nothing is written but
+            // the dragged window's return.
+            end = .failed(reason: Self.dropLayoutChanged)
+        }
+        if desktopChanged {
+            // The slot and checkpoint from before the drag are gone, whatever
+            // the release showed: the window takes its slot in the current
+            // layout, and one pill at most explains a failed drop.
+            _ = coordinator.cancel(transaction: active.transaction)
+            let failurePresented = returnDraggedWindowToCurrentLayout(active, sourceID: sourceID, displayID: displayID)
+            if case let .failed(reason) = end, !failurePresented {
+                statusMessage = reason
+                presentActionResult(succeeded: false, error: reason, displayID: displayID)
+            }
+            activeBentoDrag = nil
+            replayBufferedBentoDragEvents()
+            refreshDividerBoundaries()
+            return
+        }
+        if case let .failed(reason) = end, active.layoutSession.mode == .tabbed,
+           let baseline = active.tabbedUndoBaseline, !baseline.floatingWindowIDs.contains(sourceID),
+           let session = sessionStore.session(for: displayID),
+           session.id == active.layoutSession.id, session.revision == active.layoutSession.revision,
+           let display = system.displays().first(where: { $0.id == displayID && $0.visibleFrame == active.session.workArea }) {
+            // Invalid feedback applies nothing. Tabbed restores its verified
+            // checkpoint and original membership, and the pill says why. A
+            // floating window has no slot and takes the path below.
+            _ = coordinator.cancel(transaction: active.transaction)
+            activeBentoDrag = nil
+            applyTabbedState(baseline, session: session, display: display, windows: active.tabbedWindows,
+                focus: nil, rollbackFrames: active.tabbedRollbackFrames, gestureBaseline: baseline,
+                gestureSourceID: sourceID, expectedSpaceID: active.tabbedSpaceID, rejection: reason)
+            replayBufferedBentoDragEvents()
+            refreshDividerBoundaries()
+            return
+        }
+        if case let .failed(reason) = end {
+            // Invalid feedback applies nothing. A tiled window returns to its
+            // slot, a floating one stays where it was dropped, and the pill
+            // says why.
+            statusMessage = reason
+            if active.tabbedOrigin != nil {
+                _ = finishTabbedDrop(active, sourceID: sourceID, end: .restore)
+            }
+            if !restoreBentoDragIfNeeded(active.session) {
+                presentActionResult(succeeded: false, error: reason, displayID: displayID)
+            }
+            activeBentoDrag = nil
+            replayBufferedBentoDragEvents()
+            refreshDividerBoundaries()
+            return
+        }
+        if active.layoutSession.mode == .tabbed, case let .commit(prepared) = end,
+           case let .snap(action, _) = prepared.outcome {
             _ = coordinator.cancel(transaction: active.transaction)
             activeBentoDrag = nil
             if let baseline = active.tabbedUndoBaseline,
-               let context = tabbedSnapContext(windowID: sourceID, displayID: displayID),
+               let context = tabbedSnapContext(windowID: sourceID, displayID: displayID, draggedWindowID: sourceID),
                context.session.id == active.layoutSession.id,
                context.session.revision == active.layoutSession.revision,
                context.display.visibleFrame == active.session.workArea,
                active.tabbedSpaceID == nil || system.refreshNativeDesktopObservation()?.currentSpace(on: displayID) == active.tabbedSpaceID {
-                if baseline.floatingWindowIDs.contains(sourceID), !BentoDropPlanner.partitionActions.contains(action),
-                   case let .ready(plan) = coordinator.planExact(action, for: sourceID),
+                // The frame the preview showed, from the display under the
+                // pointer; never planned again on the window's own display.
+                if case .frame = prepared.plan, let frame = prepared.placements.first?.frame,
                    let before = active.tabbedRollbackFrames[sourceID] {
                     let placement = WindowPlacementPlan(windowID: sourceID, displayID: displayID,
-                        sourceFrame: before, targetFrame: plan.targetFrame)
+                        sourceFrame: before, targetFrame: frame)
                     let outcome = coordinator.perform(placement)
                     presentActionResult(succeeded: outcome.isApplied, error: outcome.failureReason, displayID: displayID)
                     if outcome.isApplied { verifyPlacementLanded(placement, displayID: displayID) }
@@ -1402,6 +1527,7 @@ final class BetterTileModel {
                     applyTabbedState(baseline, session: context.session, display: context.display,
                         windows: context.windows, focus: sourceID, rememberUndo: true,
                         rollbackFrames: active.tabbedRollbackFrames, snapAction: action, snapScope: .window,
+                        preparedDrop: prepared.tabbedState.map { PreparedTabbedArrangement(state: $0, windows: active.tabbedWindows) },
                         gestureBaseline: baseline, gestureSourceID: sourceID, expectedSpaceID: active.tabbedSpaceID)
                 }
             } else if let baseline = active.tabbedUndoBaseline,
@@ -1413,14 +1539,16 @@ final class BetterTileModel {
                 // verifies current participants before restoring any frame.
                 applyTabbedState(baseline, session: session, display: display, windows: active.tabbedWindows,
                     focus: nil, rollbackFrames: active.tabbedRollbackFrames,
-                    snapAction: action, snapScope: .window, gestureBaseline: baseline, gestureSourceID: sourceID,
+                    snapAction: action, snapScope: .window,
+                    preparedDrop: prepared.tabbedState.map { PreparedTabbedArrangement(state: $0, windows: active.tabbedWindows) },
+                    gestureBaseline: baseline, gestureSourceID: sourceID,
                     expectedSpaceID: active.tabbedSpaceID)
             }
             replayBufferedBentoDragEvents()
             refreshDividerBoundaries()
             return
         }
-        if active.layoutSession.mode == .tabbed, finishTabbedDrop(active, sourceID: sourceID, outcome: outcome) {
+        if active.layoutSession.mode == .tabbed, finishTabbedDrop(active, sourceID: sourceID, end: end) {
             activeBentoDrag = nil
             replayBufferedBentoDragEvents()
             refreshDividerBoundaries()
@@ -1429,26 +1557,28 @@ final class BetterTileModel {
         var committed = false
         var frameTransactionCommitted = false
         var recoveryFailurePresented = false
-        let intent: BentoDropIntent? = switch outcome {
-        case let .swap(targetWindowID): .pane(targetWindowID)
-        case let .insert(targetWindowID, edge): .insert(targetWindowID: targetWindowID, edge: edge)
-        case let .snap(action, frame): .snap(action: action, frame: frame)
-        case .restore where active.session.originalState.root?.windowIDs.contains(sourceID) != true: .automatic
-        case .restore: nil
+        let isDrop: Bool
+        let plannedDrop: BentoDropPlan?
+        switch end {
+        case let .commit(prepared):
+            isDrop = true
+            plannedDrop = prepared.bentoPlan
+        case .restore, .failed:
+            // Only a drop the overlay showed changes the layout. A floating
+            // window released or cancelled without one stays floating.
+            isDrop = false
+            plannedDrop = nil
         }
-        if let intent {
-            guard let plan = BentoDropPlanner().plan(
-               intent: intent,
-               sourceWindowID: sourceID,
-               state: active.session.originalState,
-               baselineFrames: active.session.baselineFrames,
-               constraints: active.session.constraints,
-               contextWindowIDs: active.session.contextWindowIDs,
-               in: active.session.workArea
-            ) else {
-                statusMessage = "That Bento drop cannot satisfy the windows’ minimum sizes."
+        // The drop lands on the display the overlay showed it on. The source's
+        // center can be on the neighbouring display by now. Each window is
+        // checked against the minimum size the overlay planned it with.
+        let destination = DropDestination(displayID: displayID, sourceWindowID: sourceID,
+                                          minimumSizes: active.session.constraints.mapValues(\.minimumSize))
+        if isDrop {
+            guard let plan = plannedDrop else {
+                statusMessage = Self.bentoDropMinimumFailure
                 if active.tabbedOrigin != nil {
-                    _ = finishTabbedDrop(active, sourceID: sourceID, outcome: .restore)
+                    _ = finishTabbedDrop(active, sourceID: sourceID, end: .restore)
                 }
                 let recoveryFailurePresented = restoreBentoDragIfNeeded(active.session)
                 if !recoveryFailurePresented {
@@ -1465,13 +1595,15 @@ final class BetterTileModel {
                 dropOutcome = coordinator.applyFocusDrop(
                     placement: placement,
                     minimizing: plan.minimizedWindowIDs,
-                    sourceBaselineFrame: baseline
+                    sourceBaselineFrame: baseline,
+                    destination: destination
                 )
             } else {
                 dropOutcome = coordinator.commit(
                     transaction: &active.transaction,
                     placements: plan.placements,
-                    recordHistory: true
+                    recordHistory: true,
+                    destination: destination
                 )
             }
             committed = dropOutcome.isApplied
@@ -1564,9 +1696,9 @@ final class BetterTileModel {
             recoveryFailurePresented = restoreBentoDragIfNeeded(active.session)
         }
         if !committed, active.tabbedOrigin != nil {
-            _ = finishTabbedDrop(active, sourceID: sourceID, outcome: .restore)
+            _ = finishTabbedDrop(active, sourceID: sourceID, end: .restore)
         }
-        if intent != nil, !recoveryFailurePresented {
+        if isDrop, !recoveryFailurePresented {
             presentActionResult(
                 succeeded: committed,
                 error: committed ? nil : statusMessage,
@@ -1602,34 +1734,34 @@ final class BetterTileModel {
     /// Tabbed drops that are not Bento reflows. A center drop adds the window
     /// to that pane as a tab. A torn-off tab dropped nowhere returns to its
     /// group. Returns false to let Bento handle splits and snaps.
-    private func finishTabbedDrop(_ active: ActiveBentoDrag, sourceID: WindowID, outcome: BentoDragOutcome) -> Bool {
+    private func finishTabbedDrop(_ active: ActiveBentoDrag, sourceID: WindowID, end: LayoutDragEnd) -> Bool {
         guard let display = system.displays().first(where: { $0.id == active.session.displayID }),
-              let initial = sessionStore.session(for: active.session.displayID)?.tabbedState
+              sessionStore.session(for: active.session.displayID)?.tabbedState != nil
         else { return false }
-        let destination: UUID?
-        switch outcome {
-        case let .swap(targetWindowID): destination = initial.paneID(containing: targetWindowID)
-        case .restore: destination = active.tabbedOrigin
-        case .insert, .snap: destination = nil
+        // The tab arrangement the overlay prepared for a center drop.
+        let preparedState: TabbedLayoutState?
+        switch end {
+        case let .commit(prepared):
+            guard case .swap = prepared.outcome, let state = prepared.tabbedState else { return false }
+            preparedState = state
+        case .restore:
+            guard active.tabbedOrigin != nil else { return false }
+            preparedState = nil
+        case .failed:
+            return false
         }
-        guard let destination else { return false }
         _ = coordinator.cancel(transaction: active.transaction)
         if let session = sessionStore.session(for: active.session.displayID),
            session.id == active.layoutSession.id, session.revision == active.layoutSession.revision,
            display.visibleFrame == active.session.workArea,
-           let baseline = active.tabbedUndoBaseline, var state = session.tabbedState {
+           let baseline = active.tabbedUndoBaseline {
             var session = session
-            let restoring: Bool
-            if case .restore = outcome {
-                state = baseline
-                restoring = true
-            } else {
-                state.move(sourceID, to: destination)
-                restoring = false
-            }
+            let restoring = preparedState == nil
+            let state = preparedState ?? baseline
             let windows = (try? system.visibleWindows()) ?? active.tabbedWindows
+            // The dragged window's center can be on the neighbouring display.
             let displayWindows = bentoEligible(windows.filter {
-                $0.displayID == display.id && $0.isEligible && !$0.isFloating
+                ($0.displayID == display.id || $0.id == sourceID) && $0.isEligible && !$0.isFloating
             })
             // A press that moved no selected tab, such as a click in a title
             // bar or toolbar, puts the group back without a placement. A
@@ -1652,8 +1784,9 @@ final class BetterTileModel {
             // after placement succeeds, restoring the original group on failure.
             applyTabbedState(state, session: session, display: display, windows: displayWindows,
                 focus: restoring ? baseline.activeWindowID : sourceID, rememberUndo: !restoring,
-                rollbackFrames: active.tabbedRollbackFrames, gestureBaseline: baseline,
-                gestureSourceID: sourceID, expectedSpaceID: active.tabbedSpaceID)
+                rollbackFrames: active.tabbedRollbackFrames,
+                preparedDrop: preparedState.map { PreparedTabbedArrangement(state: $0, windows: active.tabbedWindows) },
+                gestureBaseline: baseline, gestureSourceID: sourceID, expectedSpaceID: active.tabbedSpaceID)
             return true
         }
         statusMessage = "The desktop changed during the drop. Use Repair Tabbed to return the window to a pane."
@@ -1663,14 +1796,91 @@ final class BetterTileModel {
         return true
     }
 
+    /// Puts a dragged window in its slot of the current layout after the
+    /// layout changed during the drag, for example by a shortcut. Only that
+    /// window is written in Bento; Tabbed writes only the frames its current
+    /// arrangement changes. Nothing is written on another Space, in another
+    /// mode, or when the window is no longer in the layout. Returns true when
+    /// a failure was already presented.
+    private func returnDraggedWindowToCurrentLayout(
+        _ active: ActiveBentoDrag, sourceID: WindowID, displayID: DisplayID
+    ) -> Bool {
+        guard let session = sessionStore.session(for: displayID), session.id == active.layoutSession.id,
+              session.mode == active.layoutSession.mode,
+              let display = system.displays().first(where: { $0.id == displayID }),
+              active.tabbedSpaceID == nil
+                || system.refreshNativeDesktopObservation()?.currentSpace(on: displayID) == active.tabbedSpaceID
+        else { return false }
+        if session.mode == .tabbed {
+            // Tabbed queues its own intents during a drag, so its layout
+            // changes under a drag only with the display, work area, or a
+            // sweep. While the drag's revision stands, its tear-off is still
+            // provisional and the arrangement from before the drag is current.
+            let unchangedRevision = session.revision == active.layoutSession.revision
+            guard var state = unchangedRevision ? active.tabbedUndoBaseline ?? session.tabbedState : session.tabbedState,
+                  let windows = try? system.visibleWindows() else { return false }
+            if !state.windowIDs.contains(sourceID) {
+                // A newer revision can still hold the drag's provisional
+                // tear-off. The tab returns to its pane if that pane remains.
+                guard let origin = active.tabbedOrigin, state.floatingWindowIDs.contains(sourceID) else { return false }
+                guard state.panes.contains(where: { $0.id == origin }) else {
+                    statusMessage = "The desktop changed during the drop. Use Repair Tabbed to return the window to a pane."
+                    presentActionResult(succeeded: false, error: statusMessage, displayID: displayID)
+                    return true
+                }
+                state.move(sourceID, to: origin)
+            }
+            applyTabbedState(state, session: session, display: display, windows: bentoEligible(windows.filter {
+                ($0.displayID == displayID || $0.id == sourceID) && $0.isEligible && !$0.isFloating
+            }), focus: nil, gestureBaseline: unchangedRevision ? active.tabbedUndoBaseline : nil,
+                gestureSourceID: sourceID)
+            return false
+        }
+        guard session.mode == .bento,
+              let slot = session.bentoState.placements(in: display.visibleFrame).first(where: { $0.windowID == sourceID })?.frame,
+              let source = try? system.windowSnapshots(ids: [sourceID]).first,
+              !source.frame.approximatelyEquals(slot, tolerance: 1)
+        else { return false }
+        switch coordinator.applyPlacements([Placement(windowID: sourceID, frame: slot)], recordHistory: false,
+                                           destination: DropDestination(displayID: displayID, sourceWindowID: sourceID)) {
+        case .applied:
+            // An application can ignore a write that lands while it finishes
+            // its own window drag. Settlement checks the frame and retries.
+            scheduleBentoSettlement(displayID: displayID, changedWindowIDs: [sourceID],
+                                    requestedFrames: [sourceID: slot], baselineFrames: [sourceID: source.frame])
+            return false
+        case let .degraded(reason), let .failed(reason):
+            suspendAutomaticBentoWrites(displayID: displayID, windows: (try? system.visibleWindows()) ?? [],
+                error: "The dragged window could not return to its pane. \(reason)")
+            return true
+        }
+    }
+
+    /// Returns the dragged window to its frame from before the drag. Returns
+    /// true when that failed and the failure was already presented.
     @discardableResult
     private func restoreBentoDragIfNeeded(_ session: BentoDragSession) -> Bool {
+        // A floating window has no slot; it stays where the drag left it.
+        guard session.originalState.root?.windowIDs.contains(session.sourceWindowID) == true else { return false }
         let restorePlacement = session.restorePlacement
         guard let source = try? system.visibleWindows().first(where: { $0.id == session.sourceWindowID }),
               !source.frame.approximatelyEquals(restorePlacement.frame, tolerance: 1)
         else { return false }
-        guard case let .degraded(reason) = coordinator.applyPlacements([restorePlacement], recordHistory: false) else {
+        // The source returns to its start display, wherever its center is now.
+        let outcome = coordinator.applyPlacements(
+            [restorePlacement], recordHistory: false,
+            destination: DropDestination(displayID: session.displayID, sourceWindowID: session.sourceWindowID)
+        )
+        let reason: String
+        switch outcome {
+        case .applied:
             return false
+        case let .degraded(degradedReason):
+            reason = degradedReason
+        case let .failed(failureReason):
+            // Nothing was written, so the window is still where the drag left
+            // it, away from its pane: the drop did not undo cleanly.
+            reason = "The dragged window could not return to its pane. \(failureReason)"
         }
         suspendAutomaticBentoWrites(
             displayID: session.displayID,
@@ -3819,6 +4029,13 @@ private struct BentoCommandProposal {
     var baselineFrames: [WindowID: BTRect]
 }
 
+/// The Tabbed arrangement a drag overlay showed, with the window snapshots it
+/// was planned from. Release places exactly this.
+private struct PreparedTabbedArrangement {
+    var state: TabbedLayoutState
+    var windows: [WindowSnapshot]
+}
+
 private struct ActiveBentoDrag {
     var session: BentoDragSession
     var layoutSession: LayoutSession
@@ -3982,14 +4199,18 @@ extension BetterTileModel {
         }
     }
 
-    private func usesTabbedSnap(window: WindowSnapshot) -> Bool {
+    /// - Parameter displayID: The Tabbed display, when a dragged window's
+    ///   center may already be on another display.
+    private func usesTabbedSnap(window: WindowSnapshot, on displayID: DisplayID? = nil) -> Bool {
         guard !window.isFloating, rule(for: window).allowsBentoParticipation,
-              let session = sessionStore.session(for: window.displayID), session.mode == .tabbed,
+              let session = sessionStore.session(for: displayID ?? window.displayID), session.mode == .tabbed,
               let state = session.tabbedState else { return false }
         return state.windowIDs.contains(window.id) || state.floatingWindowIDs.contains(window.id)
     }
 
-    private func tabbedSnapContext(windowID: WindowID, displayID: DisplayID)
+    /// - Parameter draggedWindowID: A dragged window that belongs to this
+    ///   display's layout even if its center crossed to another display.
+    private func tabbedSnapContext(windowID: WindowID, displayID: DisplayID, draggedWindowID: WindowID? = nil)
         -> (session: LayoutSession, state: TabbedLayoutState, display: DisplaySnapshot, windows: [WindowSnapshot])? {
         guard !isShutDown, !isStabilizingSpace, hasAccessibilityPermission,
               !tabbedExiting.contains(displayID), !nativeFullscreenDisplayIDs.contains(displayID),
@@ -4002,8 +4223,9 @@ extension BetterTileModel {
         if let space = session.nativeSpaceID,
            observation?.currentSpace(on: displayID) != space { return nil }
         let windows = bentoEligible((observation?.windowsOnCurrentSpaces(allWindows) ?? allWindows)
-            .filter { $0.displayID == displayID && $0.isEligible && !$0.isFloating })
-        guard let source = windows.first(where: { $0.id == windowID }), usesTabbedSnap(window: source) else { return nil }
+            .filter { ($0.displayID == displayID || $0.id == draggedWindowID) && $0.isEligible && !$0.isFloating })
+        guard let source = windows.first(where: { $0.id == windowID }),
+              usesTabbedSnap(window: source, on: displayID) else { return nil }
         return (session, state, display, windows)
     }
 
@@ -4026,13 +4248,39 @@ extension BetterTileModel {
             windows: context.windows, focus: windowID, rememberUndo: true, snapAction: action, expectedSpaceID: expectedSpaceID)
     }
 
+    /// The arrangement a Tabbed state takes on a display. Any placement
+    /// starts from the sizes the user set, so a pane that grew for a tab that
+    /// has since moved, closed, or floated returns to them. A tab that needs
+    /// more room grows its pane again from there.
+    private func fittedTabbedState(_ state: TabbedLayoutState, in bounds: BTRect,
+                                   windows: [WindowSnapshot], focus: WindowID?) throws -> TabbedLayoutState {
+        var base = state
+        if configuration.tabbedRestoresPaneSizes,
+           let preferred = state.withPreferredPaneSizes(),
+           (try? preferred.fittingMinimumWidths(in: bounds, windows: windows)) != nil {
+            base = preferred
+        }
+        do {
+            let fitted = try base.fittingMinimumWidths(in: bounds, windows: windows)
+            _ = try fitted.placements(in: bounds, windows: windows)
+            return fitted
+        } catch TabbedLayoutError.panesTooSmall {
+            // Name the window that does not fit and what is in its way.
+            if let focus, let failure = tabbedFitFailure(showing: focus, in: base, windows: windows, bounds: bounds) {
+                throw failure
+            }
+            throw TabbedLayoutError.panesTooSmall
+        }
+    }
+
     private func applyTabbedState(
         _ state: TabbedLayoutState, session original: LayoutSession, display: DisplaySnapshot,
         windows: [WindowSnapshot], focus: WindowID?, rememberUndo: Bool = false, consumeUndo: Bool = false,
         selectionOnly: Bool = false, earlyRaise: TabbedEarlyRaise? = nil, rollbackFrames: [WindowID: BTRect]? = nil,
-        snapAction: WindowAction? = nil, snapScope: TabbedSnapScope = .pane, gestureBaseline: TabbedLayoutState? = nil,
+        snapAction: WindowAction? = nil, snapScope: TabbedSnapScope = .pane, preparedDrop: PreparedTabbedArrangement? = nil,
+        gestureBaseline: TabbedLayoutState? = nil,
         gestureSourceID: WindowID? = nil, expectedSpaceID: NativeSpaceID? = nil, restorationFrames: [WindowID: BTRect] = [:],
-        arrivals: Set<WindowID> = [], appliedFeedback: ResultPillFeedback? = nil
+        arrivals: Set<WindowID> = [], appliedFeedback: ResultPillFeedback? = nil, rejection: String? = nil
     ) {
         guard tabbedTasks[display.id] == nil else {
             tabbedNeedsReapply.insert(display.id)
@@ -4073,6 +4321,9 @@ extension BetterTileModel {
             .union(restorationFrames.keys).intersection(state.floatingWindowIDs)
         var selectionOnly = selectionOnly
         func prepare(_ windows: [WindowSnapshot]) throws -> (state: TabbedLayoutState, placements: [Placement]) {
+            // A drag released over invalid feedback places nothing and
+            // restores its checkpoint below.
+            if let rejection { throw WindowSystemError.operationFailed(rejection) }
             if selectionOnly {
                 guard let focus, let window = windows.first(where: { $0.id == focus && $0.isEligible }),
                       let pane = state.panes.first(where: { $0.tabs.contains(focus) }),
@@ -4101,43 +4352,35 @@ extension BetterTileModel {
                 }
                 selectionOnly = false
             }
-            guard Set(state.selectedWindowIDs).isSubset(of: Set(windows.filter { $0.isEligible && $0.displayID == display.id }.map(\.id))) else {
+            guard Set(state.selectedWindowIDs).isSubset(of: Set(windows.filter {
+                $0.isEligible && ($0.displayID == display.id || $0.id == gestureSourceID)
+            }.map(\.id))) else {
                 throw WindowSystemError.operationFailed("One or more selected tabs are no longer available.")
-            }
-            // Any placement starts from the sizes the user set, so a pane
-            // that grew for a tab that has since moved, closed, or floated
-            // returns to them. A tab that needs more room grows its pane
-            // again from there.
-            var base = state
-            if self.configuration.tabbedRestoresPaneSizes,
-               let preferred = state.withPreferredPaneSizes(),
-               (try? preferred.fittingMinimumWidths(in: display.visibleFrame, windows: windows)) != nil {
-                base = preferred
             }
             let fitted: TabbedLayoutState
             if let snapAction {
+                let failure = WindowSystemError.operationFailed(BentoDropPlanner.partitionActions.contains(snapAction)
+                    ? Self.tabbedSnapFailure : self.tabbedSnapUnavailableReason(snapAction))
                 guard let focus, let source = windows.first(where: { $0.id == focus }),
-                      self.usesTabbedSnap(window: source),
-                      let plan = TabbedSnapPlanner.plan(sourceWindowID: focus, action: snapAction, scope: snapScope,
-                          state: state, windows: windows, in: display.visibleFrame),
-                      plan.preservesTarget(in: plan.state, within: display.visibleFrame) else {
-                    throw WindowSystemError.operationFailed(BentoDropPlanner.partitionActions.contains(snapAction)
-                        ? Self.tabbedSnapFailure : self.tabbedSnapUnavailableReason(snapAction))
+                      self.usesTabbedSnap(window: source, on: display.id) else { throw failure }
+                if let preparedDrop {
+                    // A drag commits the arrangement its overlay showed.
+                    fitted = preparedDrop.state
+                } else {
+                    guard let plan = TabbedSnapPlanner.plan(sourceWindowID: focus, action: snapAction, scope: snapScope,
+                              state: state, windows: windows, in: display.visibleFrame),
+                          plan.preservesTarget(in: plan.state, within: display.visibleFrame) else { throw failure }
+                    fitted = plan.state
                 }
-                fitted = plan.state
+            } else if let preparedDrop {
+                // A drag commits the panes its overlay fitted.
+                fitted = preparedDrop.state
             } else {
-                do {
-                    fitted = try base.fittingMinimumWidths(in: display.visibleFrame, windows: windows)
-                    _ = try fitted.placements(in: display.visibleFrame, windows: windows)
-                } catch TabbedLayoutError.panesTooSmall {
-                    // Name the window that does not fit and what is in its way.
-                    if let focus, let failure = self.tabbedFitFailure(
-                        showing: focus, in: base, windows: windows, bounds: display.visibleFrame
-                    ) { throw failure }
-                    throw TabbedLayoutError.panesTooSmall
-                }
+                fitted = try self.fittedTabbedState(state, in: display.visibleFrame, windows: windows, focus: focus)
             }
-            var proposed = try fitted.placements(in: display.visibleFrame, windows: windows)
+            // A drag places its windows with the constraints its overlay
+            // planned with; a minimum read again cannot change the panes.
+            var proposed = try fitted.placements(in: display.visibleFrame, windows: preparedDrop?.windows ?? windows)
             let baselineFrames = Dictionary(uniqueKeysWithValues: windows.filter { detached.contains($0.id) }.map {
                 ($0.id, restorationFrames[$0.id] ?? original.tabbedBaselineFrames[$0.id]
                     ?? $0.frame.offsetBy(dx: 35, dy: 35).clamped(to: display.visibleFrame))
@@ -4174,7 +4417,7 @@ extension BetterTileModel {
                 }
                 var restored = await self.coordinator.restoreTabbedFrames(rollbackFrames,
                     required: Set(previous?.selectedWindowIDs ?? []).union(gestureSourceID.map { [$0] } ?? []),
-                    on: display.id, isCurrent: isCurrent)
+                    on: display.id, exempting: gestureSourceID, isCurrent: isCurrent)
                 guard self.tabbedTaskIDs[display.id] == taskID else { return }
                 self.tabbedTaskIDs.removeValue(forKey: display.id)
                 self.tabbedTasks[display.id] = nil
@@ -4259,6 +4502,13 @@ extension BetterTileModel {
                     focus: focus.flatMap { eligibleIDs.contains($0) ? $0 : nil },
                     focusAlreadyRequested: earlyRaise != nil && attempt == 0,
                     focusCheckpoint: earlyRaise?.previousFocus,
+                    // A drag drops on this display, whatever display the
+                    // dragged window's center reached, with the minimums its
+                    // overlay planned with.
+                    destination: gestureSourceID.map { DropDestination(displayID: display.id, sourceWindowID: $0,
+                        minimumSizes: Dictionary(
+                            (preparedDrop?.windows ?? []).map { ($0.id, $0.constraints.minimumSize) },
+                            uniquingKeysWith: { first, _ in first })) },
                     onSizeMismatch: { id, requested, baseline, actual in
                         guard proposal.state.windowIDs.contains(id) || detached.contains(id) else { return }
                         learnedSize = self.system.observeApplicationEnforcedMinimum(
@@ -4269,7 +4519,8 @@ extension BetterTileModel {
                 )
                 // Retry once, only after a complete rollback and a new size
                 // observation. Ignored writes and degraded outcomes never retry.
-                guard case .failed = outcome, attempt == 0,
+                // A drag commits only the arrangement its overlay showed.
+                guard case .failed = outcome, attempt == 0, preparedDrop == nil,
                       !Task.isCancelled, isCurrent() else { break }
                 let ids = Set(windows.map(\.id))
                 // A snapshot can confirm a kept size before the mismatch
@@ -4280,7 +4531,8 @@ extension BetterTileModel {
                 do {
                     let refreshed = try reread ?? self.system.windowSnapshots(ids: ids)
                     guard Set(refreshed.map(\.id)) == ids,
-                          refreshed.allSatisfy({ $0.displayID == display.id && $0.isEligible }) else { break }
+                          refreshed.allSatisfy({ ($0.displayID == display.id || $0.id == gestureSourceID) && $0.isEligible })
+                    else { break }
                     selectionOnly = false
                     proposal = try prepare(refreshed)
                     windows = refreshed
