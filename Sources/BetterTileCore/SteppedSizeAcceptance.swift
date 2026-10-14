@@ -11,18 +11,24 @@ public enum SteppedSizeAcceptance {
     public enum Verdict: Equatable, Sendable {
         /// Within the ordinary write tolerance.
         case exact
-        /// Short of the request by less than one step in at least one axis.
+        /// Short of the request by less than one step in at least one axis,
+        /// or past it when growth is allowed.
         case stepped
         case rejected
     }
 
-    public static func evaluate(requested: BTRect, actual: BTRect, tolerance: Double = 2) -> Verdict {
+    /// - Parameter allowsGrowth: Also accept a frame up to one step larger,
+    ///   for a caller that then fits the layout to it.
+    public static func evaluate(
+        requested: BTRect, actual: BTRect, tolerance: Double = 2, allowsGrowth: Bool = false
+    ) -> Verdict {
         guard abs(actual.minX - requested.minX) <= tolerance,
               abs(actual.minY - requested.minY) <= tolerance else { return .rejected }
         let widthShortfall = requested.size.width - actual.size.width
         let heightShortfall = requested.size.height - actual.size.height
-        guard widthShortfall >= -tolerance, heightShortfall >= -tolerance,
+        let largest = allowsGrowth ? maximumShortfall : tolerance
+        guard widthShortfall >= -largest, heightShortfall >= -largest,
               widthShortfall <= maximumShortfall, heightShortfall <= maximumShortfall else { return .rejected }
-        return widthShortfall <= tolerance && heightShortfall <= tolerance ? .exact : .stepped
+        return abs(widthShortfall) <= tolerance && abs(heightShortfall) <= tolerance ? .exact : .stepped
     }
 }

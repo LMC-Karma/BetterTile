@@ -1030,10 +1030,10 @@ public final class WindowCoordinator {
 
     /// A stepped frame accepted for a Tabbed placement is this placement's
     /// result too. Its events are expected; other near frames are not.
-    private func expectSteppedFrames(_ placements: [Placement], actual: [WindowID: BTRect]) {
+    private func expectSteppedFrames(_ placements: [Placement], actual: [WindowID: BTRect], allowsGrowth: Bool) {
         for placement in placements {
             guard let frame = actual[placement.windowID],
-                  SteppedSizeAcceptance.evaluate(requested: placement.frame, actual: frame) == .stepped,
+                  SteppedSizeAcceptance.evaluate(requested: placement.frame, actual: frame, allowsGrowth: allowsGrowth) == .stepped,
                   let generation = generations[placement.windowID] else { continue }
             expect(frame, for: placement.windowID, generation: generation)
         }
@@ -1157,6 +1157,9 @@ extension WindowCoordinator {
     /// - Parameter required: Windows whose frames must fit and settle. Other
     ///   placements (hidden tabs stacked behind their pane's selected tab) are
     ///   best effort: a refusal never fails the layout. Nil requires all.
+    /// - Parameter acceptsSteppedGrowth: Also accept a window that settles up
+    ///   to one resize step larger than requested, once it held that size for
+    ///   the refusal delay. The caller then fits the panes to it.
     public func applyTabbed(
         placements allPlacements: [Placement],
         rollbackFrames: [WindowID: BTRect]? = nil,
@@ -1169,6 +1172,7 @@ extension WindowCoordinator {
         focusAlreadyRequested: Bool = false,
         focusCheckpoint: WindowID? = nil,
         onSizeMismatch: (@MainActor (WindowID, BTRect, BTRect, BTRect) -> Void)? = nil,
+        acceptsSteppedGrowth: Bool = false,
         isCurrent: @MainActor () -> Bool
     ) async -> WindowMutationOutcome {
         let placements = required.map { ids in allPlacements.filter { ids.contains($0.windowID) } } ?? allPlacements
@@ -1229,12 +1233,14 @@ extension WindowCoordinator {
         do {
             let changed = placements.filter { !(currentFrames[$0.windowID]?.approximatelyEquals($0.frame, tolerance: 0.5) ?? false) }
             touched = !changed.isEmpty || !changedBestEffort.isEmpty
-            try system.withFrameWriteBatch {
+            // A window that resizes in steps settles within one step of its
+            // request; that size is its step, not a minimum to learn.
+            try system.withSteppedSizes { try system.withFrameWriteBatch {
                 try applyAtomically(changed, rollbackFrames: baseline, currentFrames: currentFrames)
                 for placement in changedBestEffort {
                     try? apply(placement.frame, to: placement.windowID, knownCurrentFrame: bestEffortCurrent[placement.windowID])
                 }
-            }
+            } }
             if let focus {
                 touched = true
                 // A selection may already have requested focus when it was
@@ -1271,12 +1277,18 @@ extension WindowCoordinator {
                 let actual = Dictionary(uniqueKeysWithValues: try snapshots(ids: ids).map { ($0.id, $0.frame) })
                 // An application that resizes in steps settles just short of
                 // the request. Once that frame is stable it is accepted; the
-                // curtain covers the remainder of the pane.
+                // curtain covers the remainder of the pane. A larger frame
+                // can also be a late size, so it waits for the refusal delay.
                 let framesMatch = placements.allSatisfy { placement in
                     guard let frame = actual[placement.windowID] else { return false }
-                    switch SteppedSizeAcceptance.evaluate(requested: placement.frame, actual: frame) {
+                    switch SteppedSizeAcceptance.evaluate(requested: placement.frame, actual: frame,
+                                                          allowsGrowth: acceptsSteppedGrowth) {
                     case .exact: return true
-                    case .stepped: return previousSamples[placement.windowID]?.approximatelyEquals(frame, tolerance: 0.5) == true
+                    case .stepped:
+                        let grew = frame.size.width > placement.frame.size.width + 2
+                            || frame.size.height > placement.frame.size.height + 2
+                        return previousSamples[placement.windowID]?.approximatelyEquals(frame, tolerance: 0.5) == true
+                            && (!grew || refusalCanSettle(attempt))
                     case .rejected: return false
                     }
                 }
@@ -1304,14 +1316,14 @@ extension WindowCoordinator {
                         try await Task.sleep(for: .milliseconds(50))
                         continue
                     }
-                    expectSteppedFrames(placements, actual: actual)
+                    expectSteppedFrames(placements, actual: actual, allowsGrowth: acceptsSteppedGrowth)
                     return .applied
                 }
                 if framesMatch {
                     // The window was raised and its frame accepted. A focus
                     // that never arrives is left to the focus observer.
                     if attempt == 11 {
-                        expectSteppedFrames(placements, actual: actual)
+                        expectSteppedFrames(placements, actual: actual, allowsGrowth: acceptsSteppedGrowth)
                         return .applied
                     }
                     try await Task.sleep(for: .milliseconds(50))

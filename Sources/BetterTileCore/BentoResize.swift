@@ -132,6 +132,18 @@ public struct WindowMinimumSizeLearner: Sendable {
     /// stable snapshots then lower it again.
     public static let clampConfirmationDelay = 0.25
 
+    /// While true, a write readback up to one resize step
+    /// (`SteppedSizeAcceptance.maximumShortfall`) larger than requested is
+    /// no evidence: an application such as Terminal rounds to its next
+    /// character cell there, which is not its minimum. Set only around writes
+    /// whose caller accepts stepped sizes, such as Tabbed placements.
+    public var acceptsSteppedSizes = false
+
+    private func isStep(_ requested: Double, _ actual: Double, tolerance: Double) -> Bool {
+        acceptsSteppedSizes && actual > requested + tolerance
+            && actual <= requested + SteppedSizeAcceptance.maximumShortfall
+    }
+
     /// The axes of `actual` that prove a minimum at once: each shrank from
     /// `previous` toward `requested` and stopped short of it. Any other size
     /// larger than requested can be a size the application applies later.
@@ -343,6 +355,7 @@ public struct WindowMinimumSizeLearner: Sendable {
         let proven = Self.provenMinimum(requested: requested, previous: previous, actual: actual, tolerance: tolerance)
         func axis(_ requestedLength: Double, _ actualLength: Double, _ proven: Double?,
                   _ bound: inout Double) -> Bool {
+            if isStep(requestedLength, actualLength, tolerance: tolerance) { return false }
             if let proven {
                 bound = proven
                 return false
@@ -373,8 +386,8 @@ public struct WindowMinimumSizeLearner: Sendable {
         now: Double,
         tolerance: Double = 2
     ) {
-        let width = actual.width > requested.width + tolerance
-        let height = actual.height > requested.height + tolerance
+        let width = actual.width > requested.width + tolerance && !isStep(requested.width, actual.width, tolerance: tolerance)
+        let height = actual.height > requested.height + tolerance && !isStep(requested.height, actual.height, tolerance: tolerance)
         guard width || height else { return }
         clampCandidates[windowID] = ClampCandidate(
             requested: requested,

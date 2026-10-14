@@ -901,10 +901,98 @@ public struct TabbedLayoutState: Hashable, Sendable {
 
     /// Solves the selected tabs' minimum sizes with Bento's solver.
     public func fittingMinimumWidths(in bounds: BTRect, windows: [WindowSnapshot]) throws -> Self {
-        let constraints = Dictionary(windows.map { window -> (WindowID, WindowConstraints) in
+        guard let fitted = groups.fitted(in: bounds, constraints: Self.fittingConstraints(windows)) else {
+            throw TabbedLayoutError.panesTooSmall
+        }
+        var result = self
+        result.groups = fitted
+        return result
+    }
+
+    /// Fits panes to selected windows that settled up to one resize step
+    /// (`SteppedSizeAcceptance.maximumShortfall`) larger or smaller than
+    /// their window area, such as Terminal on whole character cells. One pane
+    /// edge moves per axis, so the window area matches the settled size; the
+    /// neighbour gives or takes the difference above its minimum, across an
+    /// unlocked divider. A divider between two such windows stays put, so
+    /// neither chases the other. Like any fit, it records no pane sizes.
+    /// - Parameter settled: Sizes the selected windows hold now.
+    /// - Returns: Nil when no window needs another write. Otherwise the
+    ///   fitted state, its placements, and the snaps. A window larger than its
+    ///   area that no edge can follow is asked for one step less (its area
+    ///   minus the overflow), so it rounds down and leaves a gap instead.
+    public func snappingToSteppedSizes(
+        _ settled: [WindowID: BTSize], in bounds: BTRect, windows: [WindowSnapshot]
+    ) -> (state: Self, placements: [Placement], snaps: [TabbedSteppedSnap])? {
+        let tolerance = 2.0
+        let constraints = Self.fittingConstraints(windows)
+        let resizable = Set(windows.filter(\.constraints.isResizable).map(\.id))
+        let slots = Dictionary(uniqueKeysWithValues: layout.placements(in: bounds).map { ($0.windowID, $0.frame) })
+        func extent(_ size: BTSize, _ axis: SplitAxis) -> Double { axis == .vertical ? size.width : size.height }
+        // Per axis, how far each stepped window settled from its area.
+        var deltas: [WindowID: [SplitAxis: Double]] = [:]
+        for id in selectedWindowIDs where resizable.contains(id) {
+            guard let slot = slots[id], let size = settled[id] else { continue }
+            let axes = [SplitAxis.vertical, .horizontal].map { ($0, extent(size, $0) - extent(slot.size, $0)) }
+            guard axes.allSatisfy({ abs($0.1) <= SteppedSizeAcceptance.maximumShortfall }) else { continue }
+            let moved = axes.filter { abs($0.1) > tolerance }
+            if !moved.isEmpty { deltas[id] = Dictionary(uniqueKeysWithValues: moved) }
+        }
+        guard !deltas.isEmpty else { return nil }
+        var result = self
+        var snaps: [TabbedSteppedSnap] = []
+        var overflow: [WindowID: BTSize] = [:]
+        for id in deltas.keys.sorted(by: { $0.rawValue < $1.rawValue }) {
+            for axis in [SplitAxis.vertical, .horizontal] {
+                guard let delta = deltas[id]?[axis] else { continue }
+                let current = Dictionary(uniqueKeysWithValues: result.layout.placements(in: bounds).map { ($0.windowID, $0.frame) })
+                guard let slot = current[id] else { continue }
+                let grow = axis == .vertical ? BTSize(width: delta, height: 0) : BTSize(width: 0, height: delta)
+                let size = BTSize(width: slot.size.width + grow.width, height: slot.size.height + grow.height)
+                // The far edge first: the window kept its origin.
+                let targets = [BTRect(origin: slot.origin, size: size),
+                               BTRect(x: slot.minX - grow.width, y: slot.minY - grow.height,
+                                      width: size.width, height: size.height)]
+                var snapped = false
+                for target in targets {
+                    var frames = current
+                    frames[id] = target
+                    guard let fitted = BentoLayoutFitter(tolerance: 1).fit(
+                        state: result.layout, currentFrames: frames, changedWindowIDs: [id],
+                        in: bounds, constraints: constraints) else { continue }
+                    let placed = Dictionary(uniqueKeysWithValues: fitted.state.placements(in: bounds).map { ($0.windowID, $0.frame) })
+                    guard placed[id]?.approximatelyEquals(target, tolerance: 0.5) == true,
+                          deltas.keys.allSatisfy({ other in
+                              other == id || current[other].map { placed[other]?.approximatelyEquals($0, tolerance: 0.5) == true } != false })
+                    else { continue }
+                    let neighbors = current.keys.filter { $0 != id && placed[$0]?.approximatelyEquals(current[$0]!, tolerance: 0.5) == false }
+                    snaps.append(TabbedSteppedSnap(windowID: id, axis: axis, delta: delta,
+                                                   neighbors: neighbors.sorted { $0.rawValue < $1.rawValue }))
+                    result.groups.synchronize(with: fitted.state)
+                    snapped = true
+                    break
+                }
+                if !snapped, delta > 0 { overflow[id, default: .zero] = BTSize(
+                    width: overflow[id, default: .zero].width + grow.width,
+                    height: overflow[id, default: .zero].height + grow.height) }
+            }
+        }
+        guard !snaps.isEmpty || !overflow.isEmpty,
+              let placements = try? result.placements(in: bounds, windows: windows) else { return nil }
+        let stepped = placements.map { placement -> Placement in
+            guard let less = overflow[placement.windowID] else { return placement }
+            var frame = placement.frame
+            frame.size = BTSize(width: frame.size.width - less.width, height: frame.size.height - less.height)
+            return Placement(windowID: placement.windowID, frame: frame)
+        }
+        return (result, stepped, snaps)
+    }
+
+    /// Minimum sizes for fitting. A fixed-size window needs a pane whose
+    /// window area holds it; the solver adds the tab strip, as for any minimum.
+    private static func fittingConstraints(_ windows: [WindowSnapshot]) -> [WindowID: WindowConstraints] {
+        Dictionary(windows.map { window -> (WindowID, WindowConstraints) in
             var value = window.constraints
-            // A fixed-size window needs a pane whose window area holds it.
-            // The solver adds the tab strip, as for any minimum.
             if !value.isResizable {
                 value.minimumSize = BTSize(
                     width: max(value.minimumSize.width, window.frame.size.width),
@@ -912,10 +1000,6 @@ public struct TabbedLayoutState: Hashable, Sendable {
             }
             return (window.id, value)
         }, uniquingKeysWith: { first, _ in first })
-        guard let fitted = groups.fitted(in: bounds, constraints: constraints) else { throw TabbedLayoutError.panesTooSmall }
-        var result = self
-        result.groups = fitted
-        return result
     }
 
     private static func tree(_ preset: TabbedPreset, leaves: [BentoNode]) -> BentoNode {
@@ -987,4 +1071,15 @@ public struct TabbedAdoption: Hashable, Sendable {
         if case .floated = outcome { return true }
         return false
     }
+}
+
+/// A pane edge that moved so a window resizing in steps fills its pane.
+public struct TabbedSteppedSnap: Equatable, Sendable {
+    public var windowID: WindowID
+    /// `.vertical` changes the width, `.horizontal` the height.
+    public var axis: SplitAxis
+    /// Settled size minus the pane's window area, in points.
+    public var delta: Double
+    /// Selected windows whose frames changed to give or take the points.
+    public var neighbors: [WindowID]
 }

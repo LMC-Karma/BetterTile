@@ -262,6 +262,14 @@ The adapter reads each written window back, axis by axis:
   nudge.
 - An axis that took the requested size lowers an older, larger minimum.
 
+Tabbed placement writes accept stepped sizes (`WindowSystem.withSteppedSizes`).
+Inside them, an axis that settles up to one step
+(`SteppedSizeAcceptance.maximumShortfall`, 24 points) larger than requested
+is the application's step, such as Terminal's next row, and proves nothing:
+it is neither a minimum nor a pending clamp. A Tabbed size mismatch within one
+step teaches nothing either. Other writes, such as Bento's and divider
+drags', learn as before.
+
 A pending clamp is confirmed axis by axis. An axis becomes the minimum only
 when an observation at least 0.25 s after the write still shows the same
 length. That observation can be a snapshot or the settled frame that Bento
@@ -449,6 +457,26 @@ change a Bento operation made to the tree; writing it also writes the tree.
   (`WindowCoordinator.applyTabbed(required:)`): a hidden tab that refuses the
   size never fails the layout. Only hidden tabs whose frame changes are
   written, in the same frame-write batch, and they return if the layout fails.
+- Some applications resize in steps, such as Terminal on whole character
+  cells. Such a window settles at its pane's origin up to one step
+  (`SteppedSizeAcceptance.maximumShortfall`, 24 points) larger or smaller
+  than its pane. The placement accepts that frame once it is stable. A larger
+  frame must also hold for the 0.25 s refusal delay, because it can be a size
+  applied late. One more write then fits the panes to the window
+  (`TabbedLayoutState.snappingToSteppedSizes`). On each axis, one pane edge
+  moves so the window area equals the settled size. The neighbour gives or
+  takes the points, above its own minimum and across an unlocked divider.
+  The far edge moves first; a pane at the display edge moves its near edge.
+  A divider between two such windows stays where it is, so they never chase
+  each other. When no edge can follow, a smaller window keeps its gap, and a
+  larger window is asked for its pane minus the overflow, so it rounds down
+  and leaves a gap. The extra write accepts no growth. A window that is still
+  larger fails the placement, which returns every window to its frame from
+  before the first write. Like a fit, a snap records no pane sizes. The model
+  keeps the windows that snapped in memory. A later placement, including a
+  tab selection, fits their panes to the sizes they hold before it writes, so
+  it needs one write. Each snap writes a debug line in the `Tabbed` log
+  category with the window, the axis, the points, and the neighbours.
 - One Tabbed curtain covers the display's work area.
   It sits below every selected tab and above inactive tabs, including portions
   that extend outside their panes. `TabbedOverlayController` orders this
