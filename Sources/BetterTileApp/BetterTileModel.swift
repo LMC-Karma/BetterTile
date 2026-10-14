@@ -3896,8 +3896,8 @@ extension BetterTileModel {
         let obscuring = focused.flatMap { window in
             window.displayID == display.id && !state.windowIDs.contains(window.id) ? window.frame : nil
         }
-        let anchor = repairTabbedOrder(state: state, windows: windows, bounds: display.visibleFrame, displayID: display.id)
-        let numbered = Set(state.selectedWindowIDs).union([anchor].compactMap { $0 })
+        let anchors = repairTabbedOrder(state: state, windows: windows, bounds: display.visibleFrame, displayID: display.id)
+        let numbered = Set(state.selectedWindowIDs).union(anchors ?? [])
         let windowNumbers = (system as? any TabbedWindowSystem)?.windowNumbers(
             for: windows.filter { numbered.contains($0.id) }
         ) ?? [:]
@@ -3905,7 +3905,8 @@ extension BetterTileModel {
                         obscuringFrames: obscuring.map { [$0] } ?? [],
                         canUndo: !(tabbedUndo[session.id]?.isEmpty ?? true),
                         selectedWindowNumbers: windowNumbers,
-                        curtainAnchorWindowNumber: anchor.flatMap { windowNumbers[$0] })
+                        // A window without a validated number falls back to the backmost selected tab.
+                        curtainAnchorWindowNumber: anchors?.lazy.compactMap { windowNumbers[$0] }.first)
         tabbedOverlays[display.id] = overlay
         // A kept curtain over an unverified order is checked again shortly.
         if overlay.needsCurtainVerification, tabbedCurtainRecheckTask == nil {
@@ -4860,12 +4861,13 @@ extension BetterTileModel {
 
     /// A shared curtain needs every selected tab above every inactive tab.
     /// Verify the readback after raising; never expose a curtain on intent alone.
-    /// Returns the window the curtain goes directly behind, or nil while
-    /// the order is not verified.
+    /// Returns the windows the curtain may go directly behind, preferred
+    /// first: the backmost kept window or selected tab, then the backmost
+    /// selected tab. Nil while the order is not verified.
     /// - Parameter displayID: The display whose deferred repair this
     ///   records or clears.
     func repairTabbedOrder(state: TabbedLayoutState, windows: [WindowSnapshot], bounds: BTRect,
-                           displayID: DisplayID? = nil) -> WindowID? {
+                           displayID: DisplayID? = nil) -> [WindowID]? {
         guard let system = system as? any TabbedWindowSystem else { return nil }
         let chrome = tabbedOverlays.values.reduce(into: Set<Int>()) { $0.formUnion($1.windowNumbers) }
         // Floating windows and other windows outside the panes must stay
@@ -4878,18 +4880,25 @@ extension BetterTileModel {
         // AXRaise, so raising it never verified and every focus event
         // repeated the raise. Raising one of the front application takes
         // focus, and raising the key window again last would put it back.
-        // Only while a transient popup has focus, or focus cannot be read,
-        // do the front application's floats keep the older raise rule, so
-        // the repair waits for the popup. The focus read runs only when the
-        // front application has a floating window.
+        // The front application's floats keep the older raise rule when its
+        // key window is transient (a popup, or a focus the application does
+        // not confirm), so those raises wait, and when no key window is
+        // known, such as after a failed focus read, so they run at once.
+        // The focus read runs only when the front application has a
+        // floating window. Ineligible windows have no validated number to
+        // order the curtain against.
         let front = system.frontmostProcessIdentifier
-        let floats = windows.filter { aboveCurtain.contains($0.id) && $0.frame.intersection(bounds) != nil }
+        let floats = windows.filter {
+            aboveCurtain.contains($0.id) && $0.isEligible && $0.frame.intersection(bounds) != nil
+        }
         let key = floats.contains { $0.processIdentifier == front } ? tabbedKeyWindow() : nil
         let keepsFrontFloats = if case .window? = key { true } else { false }
         let keptInPlace = Set(floats.filter { keepsFrontFloats || $0.processIdentifier != front }.map(\.id))
+        let ignoresRaise = Set(floats.filter { $0.processIdentifier != front }.map(\.id))
         guard var order = system.stackingOrder(for: windows, excluding: chrome),
               let repair = state.sharedCurtainStackingRepair(order: order, curtainBounds: bounds,
-                                                             aboveCurtain: aboveCurtain, keptInPlace: keptInPlace) else {
+                                                             aboveCurtain: aboveCurtain, keptInPlace: keptInPlace,
+                                                             ignoresRaise: ignoresRaise) else {
             // No raise can repair an order that cannot be read; nothing waits.
             if let displayID { tabbedRepairDeferred.remove(displayID) }
             return nil
@@ -4925,9 +4934,11 @@ extension BetterTileModel {
             order = readback
         }
         guard state.sharedCurtainStackingRepair(order: order, curtainBounds: bounds, aboveCurtain: aboveCurtain,
-                                                keptInPlace: keptInPlace)?.isEmpty == true else { return nil }
+                                                keptInPlace: keptInPlace, ignoresRaise: ignoresRaise)?.isEmpty == true
+        else { return nil }
         if let displayID { tabbedRepairDeferred.remove(displayID) }
-        return state.curtainAnchor(order: order, keptInPlace: keptInPlace)
+        return [state.curtainAnchor(order: order, keptInPlace: keptInPlace, ignoresRaise: ignoresRaise),
+                state.curtainAnchor(order: order)].compactMap { $0 }
     }
 
     private func tabbedRestorationPlacements(

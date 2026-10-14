@@ -277,7 +277,7 @@ func aFocusReportedInPlaceOfAnUnreadablePopupSelectsNothing(unknownFocus: Bool) 
                                                state: TabbedLayoutState, above: [WindowID], below: [WindowID]) throws {
     let raises = system.raiseRequests.count
     let anchor = try #require(model.repairTabbedOrder(state: state, windows: system.windows,
-                                                      bounds: system.mainDisplay.visibleFrame))
+                                                      bounds: system.mainDisplay.visibleFrame)?.first)
     #expect(system.raiseRequests.count == raises)
     let order = try #require(system.stack?.compactMap { $0.windowID })
     let curtain = try #require(order.firstIndex(of: anchor))
@@ -403,6 +403,55 @@ func aBackgroundDialogKeepsItsPlaceWithoutARaiseLoop(activationFocus: String) as
         #expect(model.activeTabbedState?.activeWindowID == selected)
         #expect(model.tabbedRepairDeferred == [system.mainDisplay.id])
     }
+}
+
+/// Review: Cmd-Tab to an application whose hidden tab sits in front of
+/// another application's floating dialog. Raising the background dialog
+/// above the hidden tab is ignored by macOS, so that plan never verified and
+/// repeated until the curtain gave way. The dialog stays under the curtain.
+@Test @MainActor func aBackgroundFloatBehindAHiddenTabStartsNoRaiseLoop() async throws {
+    let system = FakeAppWindowSystem()
+    let model = try await makeOnePaneWithHiddenTabs(system)
+    defer { model.shutdown() }
+    let state = try #require(model.activeTabbedState)
+    system.windows[1].processIdentifier = system.windows[0].processIdentifier
+    var dialog = addFloatedDialog("background-dialog", to: system, x: 700)
+    dialog.processIdentifier = system.windows[2].processIdentifier
+    system.windows[system.windows.count - 1] = dialog
+    system.stack = [system.windows[0], system.windows[1], dialog, system.windows[2], system.windows[3]].map(stackEntry)
+    system.updatesStackOnRaise = false
+    let raises = system.raiseRequests.count
+
+    model.handleApplicationActivation()
+    try await Task.sleep(for: .milliseconds(500))
+    #expect(system.raiseRequests.count == raises)
+    #expect(model.repairTabbedOrder(state: state, windows: system.windows,
+                                    bounds: system.mainDisplay.visibleFrame) == [system.windows[0].id, system.windows[0].id])
+    #expect(system.raiseRequests.count == raises)
+}
+
+/// An ineligible floating window has no validated window number, so it is
+/// never the curtain anchor. A kept window comes with the backmost selected
+/// tab as a fallback anchor.
+@Test @MainActor func curtainAnchorsSkipIneligibleFloatsAndFallBackToTheSelectedTab() async throws {
+    let system = FakeAppWindowSystem()
+    let model = try await makeOnePaneWithHiddenTabs(system)
+    defer { model.shutdown() }
+    var state = try #require(model.activeTabbedState)
+    let selected = system.windows[0].id, floated = system.windows[3].id
+    state.float(floated)
+    let index = try #require(system.windows.firstIndex { $0.id == floated })
+    system.windows[index].frame = BTRect(x: 700, y: 200, width: 486, height: 234)
+    let dialog = addFloatedDialog("background-dialog", to: system, x: 100)
+    system.windows[system.windows.count - 1].processIdentifier = system.windows[2].processIdentifier
+    system.stack = [system.windows[0], dialog, system.windows[1], system.windows[2]].map(stackEntry)
+    #expect(model.repairTabbedOrder(state: state, windows: system.windows,
+                                    bounds: system.mainDisplay.visibleFrame) == [dialog.id, selected])
+    // An unmovable floating window behind the selected tab is no anchor.
+    system.windows[index].constraints.isMovable = false
+    system.stack = [system.windows[0], system.windows[3], system.windows[1], system.windows[2]].map(stackEntry)
+    let anchors = model.repairTabbedOrder(state: state, windows: system.windows, bounds: system.mainDisplay.visibleFrame)
+    #expect(anchors?.contains(floated) != true)
 }
 
 /// A clean repair on one display must not forget a repair that waits on

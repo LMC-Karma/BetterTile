@@ -167,3 +167,18 @@ private func entry(_ name: String?, _ frame: BTRect) -> TabbedStackEntry {
     #expect(state.sharedCurtainStackingRepair(order: exposed, curtainBounds: bounds, aboveCurtain: [id("dialog")],
                                               keptInPlace: [id("dialog")]) == [id("dialog"), id("a")])
 }
+
+/// A background application's floating window behind a hidden tab stays
+/// under the curtain: macOS often ignores its raise, so a plan that raises
+/// it would never verify.
+@Test func sharedCurtainLeavesABackgroundFloatBehindAHiddenTabUnderTheCurtain() {
+    let state = twoPanes()
+    let dialog = BTRect(x: 100, y: 100, width: 300, height: 200)
+    let order = [entry("a", left), entry("c", right), entry("b", left), entry("dialog", dialog), entry("d", right)]
+    #expect(state.sharedCurtainStackingRepair(order: order, curtainBounds: bounds, aboveCurtain: [id("dialog")],
+                                              keptInPlace: [id("dialog")], ignoresRaise: [id("dialog")]) == [])
+    #expect(state.curtainAnchor(order: order, keptInPlace: [id("dialog")], ignoresRaise: [id("dialog")]) == id("c"))
+    // In front of every hidden tab, it keeps its place above the curtain.
+    let front = [entry("a", left), entry("c", right), entry("dialog", dialog), entry("b", left), entry("d", right)]
+    #expect(state.curtainAnchor(order: front, keptInPlace: [id("dialog")], ignoresRaise: [id("dialog")]) == id("dialog"))
+}

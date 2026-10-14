@@ -217,14 +217,23 @@ of a window makes it its application's main window, so the key window can
 lose focus. When the key window is a tab, a standard window including one the
 user floated, a dialog, or a floating panel such as the Font panel, the repair
 raises it again last. Floating windows, such as a dialog BetterTile floated,
-keep their place in the order instead of being raised above every pane. The
-curtain goes directly behind the backmost selected tab or floating window, and
-hidden tabs go behind that window. A raise of a floating window of the front
-application would take focus, and raising the key window again last would
-put it back behind the selected tab. A background application's window often
-ignores the raise, so the order would never verify and every focus event would
-repeat it. While the front application's focus is transient or cannot be read,
-its floating windows keep the older rule below. A transient key window cannot get focus back that way:
+keep their place in the order: the repair does not raise them above every pane
+just because they are behind a selected tab. The curtain goes directly behind
+the backmost selected tab or floating window, and hidden tabs go behind that
+window. The repair still raises a floating window of the front application
+when a hidden tab is in front of it, when a raised window would cover it, or
+when it has focus and is raised again last. A raise of such a window would
+take focus, and raising the key window again last would put it back behind
+the selected tab. A background application's window often ignores the raise,
+so the order would never verify and every focus event would repeat it. Such a
+window behind a hidden tab stays under the curtain until its application is
+activated. A floating window that is not eligible, such as one that cannot be
+moved, has no validated window number; it is raised above the panes as before.
+When the anchor window has no validated number, the curtain goes behind the
+backmost selected tab. The front application's floating windows also keep the
+older raise rule when its key window is transient, so those raises wait as
+described below, and when no key window is known, such as after a failed focus
+read, so they run at once. A transient key window cannot get focus back by a raise:
 a popup whose subrole is not standard, dialog, or floating, such as a browser
 toolbar bubble, closes when it loses focus. A focus the application does not
 confirm counts as transient too. The repair then leaves out every window of that application and every
