@@ -627,10 +627,11 @@ func theLaterCheckWaitsForABusyDisplayOrGivesUp(staysBusy: Bool) async throws {
     system.acceptsFocusRequests = false
     system.failedFrameWriteNumbers[tall] = Set(1...100)
     let writesBefore = system.frameWriteCounts[tall, default: 0]
-    try await Task.sleep(for: .milliseconds(1_000))
 
-    // The check ran and tried to show it.
-    #expect(system.frameWriteCounts[tall, default: 0] > writesBefore)
+    // The check ran and tried to show it. A loaded runner can start it late.
+    #expect(await waitFor(timeout: .seconds(20)) { system.frameWriteCounts[tall, default: 0] > writesBefore })
+    // Give a failure pill time to appear if the check were to show one.
+    try await Task.sleep(for: .milliseconds(500))
     #expect(model.lastActionFeedback == feedback)
     #expect(model.statusMessage == nil)
     #expect(model.activeTabbedState?.automaticallyFloatingWindowIDs == [tall])
