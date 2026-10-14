@@ -105,9 +105,11 @@ public final class DragSnapController {
         }
     }
     public var bentoDragBeganHandler: ((DisplayID, WindowID, BTRect) -> Bool)?
-    public var bentoPreviewHandler: ((DisplayID, WindowID, BentoDragOutcome) -> [Placement]?)?
+    /// Plans a Bento or Tabbed drop for the overlay. Nil means the drag is no
+    /// longer current, which the overlay shows as invalid.
+    public var bentoPreviewHandler: ((DisplayID, WindowID, BentoDragOutcome) -> LayoutDropPreview?)?
     public var isTabbedMember: ((WindowID) -> Bool)?
-    public var bentoDragEndedHandler: ((DisplayID, WindowID, BentoDragOutcome) -> Void)?
+    public var bentoDragEndedHandler: ((DisplayID, WindowID, LayoutDragEnd) -> Void)?
     public var activeModeProvider: ((DisplayID) -> LayoutMode?)?
     public var bentoStateProvider: ((DisplayID) -> BentoLayoutState?)?
     public var gestureEndedHandler: (() -> Void)?
@@ -130,13 +132,18 @@ public final class DragSnapController {
     private var escapeMonitor: Any?
     private var gestureEventSource = GestureEventSourceGate()
     private var eventTapHandoff = GestureEventSourceHandoff()
-    private var target: SnapTarget?
+    /// The drop the overlay shows: the only decision. Release commits it and
+    /// does not evaluate the release point again.
+    private(set) var dropTarget: WindowDropTarget? {
+        didSet { if dropTarget != nil { showedDropTarget = true } }
+    }
+    /// Whether this gesture showed any drop. A fast flick shows none, so its
+    /// release evaluates the release point once.
+    private var showedDropTarget = false
     private var dragGate = WindowDragGate()
     private var draggedWindowID: WindowID?
     private var snapSourceWindow: WindowSnapshot?
-    private var targetDisplayID: DisplayID?
     private var bentoDragDisplayID: DisplayID?
-    private var bentoSnapTarget: SnapTarget?
     private var bentoHover = BentoDropHoverState()
     private var bentoHoverPreviewTask: Task<Void, Never>?
     private var presentedBentoCandidate: BentoHoverCandidate?
@@ -166,6 +173,8 @@ public final class DragSnapController {
 
     private static let bentoCueArmDelay = 0.12
     private static let bentoReflowPreviewDelay = 0.22
+    private static let unavailableDropReason = "The layout changed during the drag. Try again."
+    private static let minimumSizeDoesNotFitReason = "The window’s minimum size does not fit in that snap area."
 
     public convenience init(coordinator: WindowCoordinator, configuration: BetterTileConfiguration) {
         self.init(coordinator: coordinator, configuration: configuration, displayTicks: ResizeDisplayLink())
@@ -289,7 +298,7 @@ public final class DragSnapController {
     }
 
     public func cancel() {
-        finishActiveBentoDrag(outcome: .restore)
+        finishActiveBentoDrag(end: .restore)
         clear()
         gestureEndedHandler?()
     }
@@ -362,15 +371,7 @@ public final class DragSnapController {
             // no drag: in Tabbed, a drag tears the tab from its group and the
             // release places the group again, which activates the window and
             // closes any popup the click opened.
-            guard sawDragSample || resolvedDragTarget else {
-                mouseReleased()
-                return
-            }
-            // The final position/modifiers can differ from the last delivered
-            // drag sample. Never commit a stale edge or a suppressed snap.
-            pendingDragEvent = nil
-            mouseDragged(event)
-            mouseReleased()
+            mouseReleased(event, evaluatesRelease: sawDragSample || resolvedDragTarget)
         case .leftMouseDragged, .leftMouseUp: return
         }
     }
@@ -385,7 +386,7 @@ public final class DragSnapController {
     var hasPendingDragSample: Bool { pendingDragEvent != nil }
 
     private func startDisplayTicks(at point: BTPoint) {
-        guard let display = coordinator.system.displays().first(where: { $0.frame.contains(point) }),
+        guard let display = PointerDisplay.display(at: point, in: coordinator.system.displays()),
               pacingDisplayID != display.id else { return }
         pacingDisplayID = display.id
         let screen = NSScreen.screens.first { screen in
@@ -480,39 +481,47 @@ public final class DragSnapController {
             clearTargets()
             return
         }
-        let displays = coordinator.system.displays()
-        guard let display = displays.first(where: { $0.frame.contains(point) }) else { clearTargets(); return }
+        // The display under the pointer decides the drop. The dragged
+        // window's center can already be on the neighbouring display.
+        guard let display = PointerDisplay.display(at: point, in: coordinator.system.displays()) else {
+            clearTargets()
+            return
+        }
         if let bentoDragDisplayID, display.id != bentoDragDisplayID {
             clearTargets()
             return
         }
-        targetDisplayID = display.id
         let snapTarget = bentoDragDisplayID == nil ? nil : SnapZoneDetector().target(
                at: point,
                display: display,
                snapAreas: configuration.snapAreaBindings,
                window: snapSourceWindow
            )
-        bentoSnapTarget = snapTarget
         let bentoPlacements = bentoDragDisplayID != nil && usesBentoDrops(display.id)
             ? bentoStateProvider?(display.id)?.placements(in: display.visibleFrame) ?? [] : []
-        if let draggedWindowID,
-           let placement = bentoPlacements.first(where: { $0.windowID != draggedWindowID && $0.frame.contains(point) }) {
+        let hoveredPlacement = draggedWindowID.flatMap { source in
+            bentoPlacements.first { $0.windowID != source && $0.frame.contains(point) }
+        }
+        let hoveredPosition = hoveredPlacement.map { placement in
+            BentoPaneDropPosition.resolve(
+                point,
+                in: placement.frame,
+                retaining: bentoHover.candidate?.targetWindowID == placement.windowID
+                    ? bentoHover.candidate?.position
+                    : nil,
+                edgeFraction: activeModifiers.contains(.option) ? 0.2 : 0.15
+            )
+        }
+        // A snap area that wins over the pane edge under it is the drop, so
+        // the overlay shows the snap and not a pane cue.
+        if let draggedWindowID, let placement = hoveredPlacement, let position = hoveredPosition,
+           !BentoDropDecision.snapWins(snapTarget, over: position) {
             let baselineFrames = Dictionary(
                 uniqueKeysWithValues: bentoPlacements.map {
                     ($0.windowID, $0.frame)
                 }
             )
             let now = ProcessInfo.processInfo.systemUptime
-            let previousPosition = bentoHover.candidate?.targetWindowID == placement.windowID
-                ? bentoHover.candidate?.position
-                : nil
-            let position = BentoPaneDropPosition.resolve(
-                point,
-                in: placement.frame,
-                retaining: previousPosition,
-                edgeFraction: activeModifiers.contains(.option) ? 0.2 : 0.15
-            )
             let candidate = BentoHoverCandidate(
                 displayID: display.id,
                 targetWindowID: placement.windowID,
@@ -526,13 +535,15 @@ public final class DragSnapController {
             let hoverDelay = position == .center ? configuration.bentoSwapHoverDelay : 0
             let waitingSnapTarget = bentoHover.armedCandidate(at: now, delay: hoverDelay) == nil && hoverDelay > 0
                 ? snapTarget : nil
-            let retainsSnapWireframes = waitingSnapTarget != nil && activeModeProvider?(display.id) == .tabbed
+            // A waiting snap preview shows the snap's plan; the pane cue appears
+            // only when it arms.
+            let retainsSnapWireframes = waitingSnapTarget != nil
             if changed {
                 bentoHoverPreviewTask?.cancel()
                 bentoHoverPreviewTask = nil
                 presentedBentoCandidate = nil
                 preview?.hide()
-                target = nil
+                dropTarget = nil
                 if !retainsSnapWireframes {
                     activeBentoPreview.showCue(
                         targetFrame: placement.frame,
@@ -543,7 +554,9 @@ public final class DragSnapController {
                     )
                 }
                 bentoHoverPreviewTask = Task { @MainActor [weak self] in
-                    let cueDelay = retainsSnapWireframes ? max(Self.bentoCueArmDelay, hoverDelay) : Self.bentoCueArmDelay
+                    // The armed cue is the drop, so it never arms before the
+                    // hover delay that makes the drop real.
+                    let cueDelay = max(Self.bentoCueArmDelay, hoverDelay)
                     try? await Task.sleep(
                         for: .milliseconds(Int(cueDelay * 1_000))
                     )
@@ -583,11 +596,11 @@ public final class DragSnapController {
                 )
             }
             if let snapTarget = waitingSnapTarget {
-                target = snapTarget
                 showSnapPreview(snapTarget, displayID: display.id, mainScreenFrame: mainFrame)
             } else {
                 preview?.hide()
-                target = nil
+                // A cue that has not armed yet shows no drop.
+                if presentedBentoCandidate != candidate { dropTarget = nil }
             }
             return
         }
@@ -595,7 +608,7 @@ public final class DragSnapController {
         bentoHoverPreviewTask = nil
         presentedBentoCandidate = nil
         bentoHover.clear()
-        target = snapTarget ?? SnapZoneDetector().target(
+        let target = snapTarget ?? SnapZoneDetector().target(
                 at: point,
                 display: display,
                 snapAreas: configuration.snapAreaBindings,
@@ -606,20 +619,46 @@ public final class DragSnapController {
         } else {
             preview?.hide()
             bentoPreview?.hide()
+            dropTarget = nil
         }
     }
 
+    /// Shows a snap area's preview and records it as the drop. An ordinary
+    /// snap's target frame already includes the window's known minimum size,
+    /// so the preview shows the frame the window will really take. A Bento or
+    /// Tabbed snap shows the plan that release commits.
     private func showSnapPreview(_ target: SnapTarget, displayID: DisplayID, mainScreenFrame: CGRect) {
-        guard bentoDragDisplayID != nil, activeModeProvider?(displayID) == .tabbed else {
+        guard bentoDragDisplayID != nil else {
             bentoPreview?.hide()
+            // A minimum larger than the display leaves a clamped frame the
+            // window cannot take. That is not a drop.
+            if let window = snapSourceWindow, window.constraints.isResizable,
+               !SnapFrameFit.holds(target.frame, minimumSize: window.constraints.minimumSize) {
+                showPreview(frame: target.frame, invalid: true, mainScreenFrame: mainScreenFrame)
+                dropTarget = WindowDropTarget(displayID: displayID, drop: .invalid(reason: Self.minimumSizeDoesNotFitReason))
+                return
+            }
             showPreview(frame: target.frame, mainScreenFrame: mainScreenFrame)
+            dropTarget = WindowDropTarget(displayID: displayID, drop: .snap(target))
             return
         }
-        guard let source = draggedWindowID, let action = target.action,
-              let placements = bentoPreviewHandler?(displayID, source, .snap(action: action, frame: target.frame)),
-              let sourceFrame = placements.first(where: { $0.windowID == source })?.frame else {
+        guard let source = draggedWindowID, let action = target.action else {
             preview?.hide()
             bentoPreview?.hide()
+            dropTarget = nil
+            return
+        }
+        let prepared = recordLayoutPreview(
+            bentoPreviewHandler?(displayID, source, .snap(action: action, frame: target.frame)),
+            displayID: displayID
+        )
+        guard let prepared,
+              let sourceFrame = prepared.placements.first(where: { $0.windowID == source })?.frame else {
+            bentoPreview?.hide()
+            if prepared != nil {
+                dropTarget = WindowDropTarget(displayID: displayID, drop: .invalid(reason: Self.unavailableDropReason))
+            }
+            showPreview(frame: target.frame, invalid: true, mainScreenFrame: mainScreenFrame)
             return
         }
         showPreview(frame: sourceFrame, mainScreenFrame: mainScreenFrame)
@@ -627,7 +666,23 @@ public final class DragSnapController {
             (bentoStateProvider?(displayID)?.placements(in: coordinator.system.displays()
                 .first(where: { $0.id == displayID })?.visibleFrame ?? target.frame) ?? []).map { ($0.windowID, $0.frame) })
         activeBentoPreview.showSnapWireframes(placements: BentoDragPreview.changedPlacements(
-            placements, baselineFrames: baseline, excluding: source), baselineFrames: baseline)
+            prepared.placements, baselineFrames: baseline, excluding: source), baselineFrames: baseline)
+    }
+
+    /// Records a planned Bento or Tabbed drop. A drop that cannot be planned
+    /// is recorded as invalid feedback, which release never commits.
+    private func recordLayoutPreview(_ preview: LayoutDropPreview?, displayID: DisplayID) -> PreparedLayoutDrop? {
+        switch preview {
+        case let .ready(prepared):
+            dropTarget = WindowDropTarget(displayID: displayID, drop: .layout(prepared))
+            return prepared
+        case let .invalid(reason):
+            dropTarget = WindowDropTarget(displayID: displayID, drop: .invalid(reason: reason))
+            return nil
+        case nil:
+            dropTarget = WindowDropTarget(displayID: displayID, drop: .invalid(reason: Self.unavailableDropReason))
+            return nil
+        }
     }
 
     private func armBentoCue(
@@ -637,17 +692,14 @@ public final class DragSnapController {
         sourceOriginalFrame: BTRect?,
         mainScreenFrame: CGRect
     ) -> [Placement]? {
-        if bentoPreview?.showsSnapWireframes == true {
-            preview?.hide()
-            target = nil
-        }
-        let outcome: BentoDragOutcome = candidate.position == .center
-            ? .swap(targetWindowID: candidate.targetWindowID)
-            : .insert(targetWindowID: candidate.targetWindowID, edge: candidate.position)
-        guard let placements = bentoPreviewHandler?(
-            candidate.displayID,
-            sourceWindowID,
-            outcome
+        // The armed cue replaces a competing snap preview as the drop.
+        preview?.hide()
+        let outcome = BentoDropDecision.outcome(candidate: candidate, isArmed: true, snapTarget: nil)
+        // An invalid cue is recorded as invalid feedback: release applies
+        // nothing and reports why.
+        guard let prepared = recordLayoutPreview(
+            bentoPreviewHandler?(candidate.displayID, sourceWindowID, outcome),
+            displayID: candidate.displayID
         ) else {
             presentedBentoCandidate = candidate
             activeBentoPreview.showCue(
@@ -659,6 +711,7 @@ public final class DragSnapController {
             )
             return nil
         }
+        let placements = prepared.placements
         let sourceDestination = placements.first { $0.windowID == sourceWindowID }?.frame
         presentedBentoCandidate = candidate
         activeBentoPreview.showCue(
@@ -692,30 +745,45 @@ public final class DragSnapController {
         )
     }
 
-    private func mouseReleased() {
+    /// Commits the drop the overlay showed. The release position does not
+    /// choose a new target: a drop decided at a shared display edge stays on
+    /// its display even if the button comes up a point further along.
+    private func mouseReleased(_ event: GlobalGestureEvent, evaluatesRelease: Bool) {
         defer {
             clear()
             gestureEndedHandler?()
         }
+        pendingDragEvent = nil
+        if !configuration.snappingEnabled || event.modifiers.isSuperset(of: configuration.snapSuppressionModifiers) {
+            clearTargets()
+        } else if evaluatesRelease, !showedDropTarget {
+            // A flick can reach a snap area only with the release.
+            mouseDragged(event)
+        }
+        let drop = dropTarget
         if bentoDragDisplayID != nil {
-            let hoverDelay = bentoHover.candidate?.position == .center
-                ? configuration.bentoSwapHoverDelay
-                : 0
-            let outcome = bentoHover.outcome(
-                at: ProcessInfo.processInfo.systemUptime,
-                delay: hoverDelay,
-                snapTarget: bentoSnapTarget
-            )
-            finishActiveBentoDrag(outcome: outcome)
+            finishActiveBentoDrag(end: drop?.layoutEnd ?? .restore)
             return
         }
         guard let windowID = draggedWindowID else { return }
         guard isTabbedMember?(windowID) != true else { return }
-        guard let target else { return }
-        let displayID = targetDisplayID
-        let outcome = coordinator.applyPlacements([Placement(windowID: windowID, frame: target.frame)])
-        if let displayID {
-            actionResultHandler?(displayID, outcome.isApplied, outcome.failureReason)
+        guard let drop else { return }
+        switch drop.drop {
+        case let .snap(target):
+            // The overlay planned the frame with this minimum size.
+            let minimumSizes = snapSourceWindow.map { [windowID: $0.constraints.minimumSize] } ?? [:]
+            let outcome = coordinator.applyPlacements(
+                [Placement(windowID: windowID, frame: target.frame)],
+                destination: DropDestination(displayID: drop.displayID, sourceWindowID: windowID,
+                                             minimumSizes: minimumSizes)
+            )
+            actionResultHandler?(drop.displayID, outcome.isApplied, outcome.failureReason)
+        case let .invalid(reason):
+            // The overlay showed no valid drop. The window stays where the
+            // user dropped it, as after any drag without a snap.
+            actionResultHandler?(drop.displayID, false, reason)
+        case .layout:
+            return
         }
     }
 
@@ -729,6 +797,7 @@ public final class DragSnapController {
         mouseDownPoint = nil
         resolvedDragTarget = false
         sawDragSample = false
+        showedDropTarget = false
         pendingDragEvent = nil
         pacingDisplayID = nil
         displayTicks.stop()
@@ -737,9 +806,7 @@ public final class DragSnapController {
     }
 
     private func clearTargets() {
-        target = nil
-        targetDisplayID = nil
-        bentoSnapTarget = nil
+        dropTarget = nil
         bentoHoverPreviewTask?.cancel()
         bentoHoverPreviewTask = nil
         presentedBentoCandidate = nil
@@ -755,18 +822,18 @@ public final class DragSnapController {
         return controller
     }
 
-    private func finishActiveBentoDrag(outcome: BentoDragOutcome) {
+    private func finishActiveBentoDrag(end: LayoutDragEnd) {
         guard let displayID = bentoDragDisplayID,
               let sourceID = draggedWindowID ?? dragGate.candidateWindowID
         else { return }
-        bentoDragEndedHandler?(displayID, sourceID, outcome)
+        bentoDragEndedHandler?(displayID, sourceID, end)
         bentoDragDisplayID = nil
     }
 
-    private func showPreview(frame: BTRect, mainScreenFrame: CGRect) {
+    private func showPreview(frame: BTRect, invalid: Bool = false, mainScreenFrame: CGRect) {
         let panel = preview ?? SnapPreviewPanel()
         preview = panel
-        panel.show(frame: frame, mainScreenFrame: mainScreenFrame)
+        panel.show(frame: frame, invalid: invalid, mainScreenFrame: mainScreenFrame)
     }
 
     private func windowUnderTitleBar(at point: BTPoint) -> WindowSnapshot? {
@@ -887,7 +954,8 @@ private final class SnapPreviewPanel {
         panel.contentView = PlacementWireframeView()
     }
 
-    func show(frame: BTRect, mainScreenFrame: CGRect) {
+    func show(frame: BTRect, invalid: Bool, mainScreenFrame: CGRect) {
+        (panel.contentView as? PlacementWireframeView)?.isInvalid = invalid
         let destination = CoordinateConverter.toAppKit(
             frame,
             mainScreenFrame: mainScreenFrame
@@ -1456,6 +1524,11 @@ final class PlacementWireframeController {
 
 @MainActor
 final class PlacementWireframeView: NSView {
+    /// Invalid feedback: a frame the drop cannot take.
+    var isInvalid = false {
+        didSet { if isInvalid != oldValue { needsDisplay = true } }
+    }
+
     override var isOpaque: Bool { false }
 
     override func draw(_ dirtyRect: NSRect) {
@@ -1468,7 +1541,8 @@ final class PlacementWireframeView: NSView {
         )
         let path = NSBezierPath(roundedRect: rect, xRadius: radius, yRadius: radius)
         let increaseContrast = NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast
-        NSColor.controlAccentColor
+        let color = isInvalid ? NSColor.systemRed : NSColor.controlAccentColor
+        color
             .withAlphaComponent(increaseContrast ? 0.16 : 0.10)
             .setFill()
         path.fill()
@@ -1476,7 +1550,7 @@ final class PlacementWireframeView: NSView {
         path.lineWidth = increaseContrast ? 3 : 2
         let pattern: [CGFloat] = [8, 5]
         path.setLineDash(pattern, count: pattern.count, phase: 0)
-        NSColor.controlAccentColor
+        color
             .withAlphaComponent(increaseContrast ? 0.95 : 0.78)
             .setStroke()
         path.stroke()
