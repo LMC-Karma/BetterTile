@@ -465,12 +465,20 @@ change a Bento operation made to the tree; writing it also writes the tree.
   than its pane. The placement accepts that frame once it is stable. A larger
   frame must also hold for the 0.25 s refusal delay, because it can be a size
   applied late.
-  - The model remembers each such window, until it closes or its desktop
-    leaves Tabbed, with the lengths it settled at on each axis where it ever
-    settled off its request. Two lengths give its grid (`SteppedGrid`): the
-    step is their common difference, up to 24 points. Terminal's heights on
-    one display, for example, are 4 + 15·k. One length is a grid with that
-    single length.
+  - The model remembers each window that settles more than half a point off
+    its request, until it closes or its desktop leaves Tabbed, with each
+    length it settled at off its request. A length that takes its request
+    is not recorded: a window whose minimum is just above its pane takes any
+    larger pane exactly and gets no grid. The lengths give a grid
+    (`SteppedGrid`): the step is their greatest common difference when it is
+    2 to 24 points. Terminal's heights on one display, for example, are
+    4 + 15·k. A larger common difference leaves the step unknown, because
+    lengths 60 points apart can be steps of 15, 20, or 30; the known lengths
+    are used until another length shows the step. Lengths that share no step
+    of 2 points, such as rounded fractional cells, give no grid. A window that
+    settles off a length on its own grid, for example after a font change,
+    starts its lengths again from the new one and snaps in the same
+    placement.
   - Before it writes, a placement moves each divider beside a remembered
     window by at most 24 points, to the closest position where the most such
     windows fill their window areas exactly on their grids
@@ -483,7 +491,7 @@ change a Bento operation made to the tree; writing it also writes the tree.
     work area have 894 points of window area. 439 + 454 fits with one point
     to spare, so the divider moves 7 points: one Terminal fills its pane and
     the other leaves a one-point gap.
-  - A window not yet remembered snaps instead. One more write fits the panes
+  - A window without a grid snaps instead. One more write fits the panes
     to it (`TabbedLayoutState.snappingToSteppedSizes`). On each axis, one pane
     edge moves so the window area equals the settled size. The neighbour gives
     or takes the points, above its own minimum and across an unlocked divider.
@@ -499,8 +507,9 @@ change a Bento operation made to the tree; writing it also writes the tree.
     retry fits or floats it as usual. After either write, a selected window
     larger than its window area would overlap its neighbour, so every window
     returns to its frame from before the first write. When that window grew
-    within one step, it is remembered, and the retry plans with its length. A
-    rollback accepts a window that lands within one step of its old frame.
+    within one step and that changed its grid, the retry plans with the new
+    grid. A rollback accepts a remembered window that lands within one step
+    of its old frame; any other window must land within 2 points.
   - Like a fit, none of this records pane sizes. Each snap writes a debug
     line in the `Tabbed` log category with the window, the axis, the points,
     and the neighbours.

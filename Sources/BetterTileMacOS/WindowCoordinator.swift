@@ -1107,8 +1107,11 @@ extension WindowCoordinator {
     /// Restores a previously verified Tabbed resize checkpoint. New size hints
     /// must not prevent attempting that restoration; actual readback decides
     /// whether it succeeded. Hidden tabs remain best effort.
+    /// - Parameter steppedWindowIDs: Windows known to resize in steps. Each
+    ///   counts as restored within one step of its frame.
     public func restoreTabbedFrames(
         _ frames: [WindowID: BTRect], required: Set<WindowID>, on displayID: DisplayID,
+        steppedWindowIDs: Set<WindowID> = [],
         isCurrent: @MainActor () -> Bool
     ) async -> WindowMutationOutcome {
         let degraded = WindowMutationOutcome.degraded(reason: "Tabbed could not fully restore the previous arrangement. Use Repair Tabbed or switch to Native.")
@@ -1140,9 +1143,8 @@ extension WindowCoordinator {
                   isCurrent(), !Task.isCancelled else { return degraded }
             if required.allSatisfy({ id in
                 guard let frame = frames[id] else { return false }
-                // A window that resizes in steps lands within one step.
                 return restored.contains { $0.id == id && $0.isEligible && $0.displayID == displayID
-                    && SteppedSizeAcceptance.evaluate(requested: frame, actual: $0.frame, allowsGrowth: true) != .rejected }
+                    && Self.isRestored($0.frame, to: frame, stepped: steppedWindowIDs.contains(id)) }
             }) { return .applied }
             guard attempt < 3 else { break }
             do { try await Task.sleep(for: .milliseconds(50)) }
@@ -1163,6 +1165,8 @@ extension WindowCoordinator {
     ///   the refusal delay. The caller then fits the panes to it.
     /// - Parameter onApplied: Receives the required windows' accepted frames
     ///   when the placement applies.
+    /// - Parameter steppedWindowIDs: Windows known to resize in steps. A
+    ///   rollback counts each as restored within one step of its frame.
     public func applyTabbed(
         placements allPlacements: [Placement],
         rollbackFrames: [WindowID: BTRect]? = nil,
@@ -1177,6 +1181,7 @@ extension WindowCoordinator {
         onSizeMismatch: (@MainActor (WindowID, BTRect, BTRect, BTRect) -> Void)? = nil,
         acceptsSteppedGrowth: Bool = false,
         onApplied: (@MainActor ([WindowID: BTRect]) -> Void)? = nil,
+        steppedWindowIDs: Set<WindowID> = [],
         isCurrent: @MainActor () -> Bool
     ) async -> WindowMutationOutcome {
         let placements = required.map { ids in allPlacements.filter { ids.contains($0.windowID) } } ?? allPlacements
@@ -1217,7 +1222,8 @@ extension WindowCoordinator {
             baseline = currentFrames.merging(rollbackFrames?.filter { ids.contains($0.key) } ?? [:]) { _, checkpoint in checkpoint }
         } catch {
             if let rollbackFrames, let rollbackDisplayID {
-                let restored = await restoreTabbedFrames(rollbackFrames, required: ids.union(rollbackRequired ?? []), on: rollbackDisplayID, isCurrent: isCurrent)
+                let restored = await restoreTabbedFrames(rollbackFrames, required: ids.union(rollbackRequired ?? []), on: rollbackDisplayID,
+                                                         steppedWindowIDs: steppedWindowIDs, isCurrent: isCurrent)
                 if case .degraded = restored { return restored }
             }
             return .failed(reason: error.localizedDescription)
@@ -1362,7 +1368,7 @@ extension WindowCoordinator {
             guard let participantDisplayID else { return .failed(reason: error.localizedDescription) }
             let restoration = await restoreTabbedFrames(
                 baseline.merging(bestEffortBaseline) { before, _ in before }, required: ids.union(rollbackRequired ?? []),
-                on: participantDisplayID, isCurrent: isCurrent)
+                on: participantDisplayID, steppedWindowIDs: steppedWindowIDs, isCurrent: isCurrent)
             guard isCurrent(), !Task.isCancelled else {
                 return .degraded(reason: "The desktop changed before Tabbed could restore its windows.")
             }
@@ -1378,10 +1384,16 @@ extension WindowCoordinator {
             }
             let restored = (try? snapshots(ids: ids)) ?? []
             if baseline.contains(where: { id, frame in !restored.contains {
-                $0.id == id && SteppedSizeAcceptance.evaluate(requested: frame, actual: $0.frame, allowsGrowth: true) != .rejected
+                $0.id == id && Self.isRestored($0.frame, to: frame, stepped: steppedWindowIDs.contains(id))
             } }) { failed = true }
             return failed ? .degraded(reason: "Tabbed could not fully restore the previous arrangement. Use Repair Tabbed or switch to Native.") : .failed(reason: error.localizedDescription)
         }
+    }
+
+    /// A window that resizes in steps lands within one step of its old frame.
+    private static func isRestored(_ actual: BTRect, to frame: BTRect, stepped: Bool) -> Bool {
+        stepped ? SteppedSizeAcceptance.evaluate(requested: frame, actual: actual, allowsGrowth: true) != .rejected
+            : actual.approximatelyEquals(frame, tolerance: 2)
     }
 
     /// Restores Tabbed stacking without moving a window, activating an app,

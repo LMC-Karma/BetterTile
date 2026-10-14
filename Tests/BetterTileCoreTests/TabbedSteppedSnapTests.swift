@@ -179,12 +179,25 @@ private func slot(_ id: WindowID, _ state: TabbedLayoutState) throws -> BTRect {
 }
 
 @Test func aGridIsLearnedFromSettledLengths() throws {
-    // Terminal on a 1920×968 display: heights are 4 + 15·k.
-    let grid = try #require(SteppedGrid(observed: [454, 424]))
+    // Terminal on a 1920×968 display: heights are 4 + 15·k. Two lengths 30
+    // or 60 points apart cannot tell 15 from 20 or 30, so only the latest
+    // length is kept until a third shows the step.
+    let two = try #require(SteppedGrid(observed: [454, 424]))
+    #expect(two.step == nil && two.offset == 424)
+    #expect(SteppedGrid(observed: [439, 499])?.step == nil)
+    #expect(SteppedGrid(observed: [439, 499, 454])?.step == 15)
+    let grid = try #require(SteppedGrid(observed: [454, 424, 439]))
     #expect(grid.step == 15)
     #expect(grid.contains(439) && grid.contains(499) && !grid.contains(447))
     #expect(grid.request(inside: 447) == 439)
     #expect(grid.lengths(near: 447, within: 24).sorted() == [424, 439, 454, 469])
+    // Without a step, both known lengths stay usable.
+    #expect(two.contains(454) && two.contains(424) && !two.contains(439))
+    #expect(two.request(inside: 447) == 424)
+    #expect(two.request(inside: 500) == 454)
+    #expect(two.request(inside: 520) == nil)
+        // Fractional cells rounded to whole points share no step: no grid.
+    #expect(SteppedGrid(observed: [366.1, 373.4, 380.7]) == nil)
     #expect(SteppedGrid(observed: [454])?.step == nil)
     #expect(SteppedGrid(observed: [454])?.request(inside: 470) == 454)
     #expect(SteppedGrid(observed: [454])?.request(inside: 500) == nil)

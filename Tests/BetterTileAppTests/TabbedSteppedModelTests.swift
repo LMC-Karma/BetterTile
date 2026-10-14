@@ -446,7 +446,7 @@ func switchingTabsBesideTwoSteppedTerminalsSettles(upperOver: Double, lowerOver:
     for (pane, frame) in [(0, settled.0), (1, settled.1)] {
         let area = try #require(content(pane, model, system))
         #expect((frame?.size.height ?? .infinity) <= area.size.height + 0.5, "\(String(describing: frame)) \(area)")
-        #expect(area.size.height - (frame?.size.height ?? 0) < rowStep)
+        #expect(area.size.height - (frame?.size.height ?? 0) <= SteppedSizeAcceptance.maximumShortfall + 1)
         #expect(near(frame?.minY, area.minY))
     }
 }
@@ -513,5 +513,133 @@ func switchingTabsBesideTwoSteppedTerminalsSettles(upperOver: Double, lowerOver:
         let area = TabbedLayoutState.contentFrame(try #require(state.frames(in: system.availableDisplays[0].visibleFrame)[state.panes[pane].id]))
         #expect((frame?.size.height ?? .infinity) <= area.size.height + 0.5)
         #expect(near(frame?.minY, area.minY))
+    }
+}
+
+@MainActor private func settleAfterRepair(_ model: BetterTileModel, _ system: FakeAppWindowSystem, drifting ids: [WindowID]) async throws -> Int {
+    for index in system.windows.indices where ids.contains(system.windows[index].id) {
+        system.windows[index].frame.origin.x += 7
+    }
+    model.statusMessage = nil
+    model.performTabbed(.repair)
+    try await Task.sleep(for: .milliseconds(1200))
+    return model.statusMessage == nil ? 0 : 1
+}
+
+/// A font change gives Terminal another grid. Its next placement settles off
+/// the length it was asked for on its old grid, so its lengths start again
+/// from the new one, and the retry fits its pane to it without a failure.
+@Test @MainActor func aFontChangeStartsTheGridAgain() async throws {
+    let system = FakeAppWindowSystem()
+    let model = try await makeTabbed(system, .rows, ["upper", "lower"])
+    defer { model.shutdown() }
+    let slot = try #require(content(0, model, system))
+    let terminal = addTerminal(system, heightGrid: slot.size.height + 4)
+    system.eventHandler?(WindowSystemEvent(kind: .created, windowID: terminal, processIdentifier: 399))
+    try #require(await waitFor(timeout: .seconds(3)) {
+        model.activeTabbedState?.panes[0].selected == terminal && near(content(0, model, system)?.size.height, slot.size.height + 4)
+    })
+    try await Task.sleep(for: .milliseconds(400))
+    // A larger font: rows of 17 points.
+    system.sizeGrids[terminal] = (BTSize(width: 0, height: 17), BTSize(width: 0, height: slot.size.height + 9))
+    var failures = 0
+    for _ in 0..<2 { failures += try await settleAfterRepair(model, system, drifting: [terminal]) }
+    #expect(failures == 0)
+    #expect(near(frame("terminal", system)?.size.height, slot.size.height + 9))
+    #expect(near(content(0, model, system)?.size.height, slot.size.height + 9))
+}
+
+/// A window whose lengths share no step, such as one with fractional cells,
+/// gets no grid. It still snaps one placement at a time and never fails or
+/// overlaps its neighbour.
+@Test @MainActor func fractionalCellsGetNoGridAndNeverFail() async throws {
+    let system = FakeAppWindowSystem()
+    let model = try await makeTabbed(system, .rows, ["upper", "lower"])
+    defer { model.shutdown() }
+    let slot = try #require(content(0, model, system))
+    let terminal = addTerminal(system)
+    system.sizeGrids[terminal] = (BTSize(width: 0, height: 7.3), BTSize(width: 0, height: slot.size.height + 3.3))
+    system.eventHandler?(WindowSystemEvent(kind: .created, windowID: terminal, processIdentifier: 399))
+    try #require(await waitFor(timeout: .seconds(3)) { model.activeTabbedState?.panes[0].selected == terminal })
+    try await Task.sleep(for: .milliseconds(600))
+    var failures = 0
+    for step in 0..<3 {
+        let branch = try #require(model.activeTabbedState?.dividers(in: system.availableDisplays[0].visibleFrame).first?.branchID)
+        model.performTabbed(.adjustDivider(branch, by: step % 2 == 0 ? 0.03 : -0.05))
+        try await Task.sleep(for: .milliseconds(1200))
+        if model.statusMessage != nil { failures += 1; model.statusMessage = nil }
+        let area = try #require(content(0, model, system))
+        #expect((frame("terminal", system)?.size.height ?? .infinity) <= area.size.height + 2)
+    }
+    #expect(failures == 0)
+}
+
+/// A window that is not stepped but whose minimum is just above its pane
+/// snaps its pane once. A larger pane later takes its request exactly, which
+/// teaches no grid, so the divider stays where the user put it.
+@Test @MainActor func aMinimumNearThePaneTeachesNoGrid() async throws {
+    let system = FakeAppWindowSystem()
+    let model = try await makeTabbed(system, .rows, ["upper", "lower"])
+    defer { model.shutdown() }
+    let slot = try #require(content(0, model, system))
+    var window = system.windows[0]
+    let big = WindowID(rawValue: "big")
+    window.id = big
+    window.processIdentifier = 398
+    window.bundleIdentifier = "com.example.big"
+    window.frame = BTRect(x: 60, y: 60, width: 480, height: 400)
+    system.windows.append(window)
+    system.enforcedMinimumHeights[big] = slot.size.height + 10
+    system.eventHandler?(WindowSystemEvent(kind: .created, windowID: big, processIdentifier: 398))
+    try #require(await waitFor(timeout: .seconds(3)) {
+        model.activeTabbedState?.panes[0].selected == big && near(content(0, model, system)?.size.height, slot.size.height + 10)
+    })
+    try await Task.sleep(for: .milliseconds(400))
+    for fraction in [0.08, 0.02] {
+        let branch = try #require(model.activeTabbedState?.dividers(in: system.availableDisplays[0].visibleFrame).first?.branchID)
+        model.performTabbed(.adjustDivider(branch, by: fraction))
+        try await Task.sleep(for: .milliseconds(800))
+        let area = try #require(content(0, model, system))
+        #expect(frame("big", system)?.approximatelyEquals(area, tolerance: 0.6) == true)
+        #expect(model.activeTabbedState?.withPreferredPaneSizes() == nil, "the divider drifted from the user's size")
+    }
+    #expect(model.statusMessage == nil)
+}
+
+/// Four Panes with Terminals in three of them, whose grids fit no layout
+/// exactly. Placements settle on one arrangement and then write nothing.
+@Test @MainActor func fourPanesWithThreeSteppedWindowsSettle() async throws {
+    let system = FakeAppWindowSystem()
+    let model = try await makeTabbed(system, .grid, ["a", "b", "c", "d"])
+    defer { model.shutdown() }
+    let state = try #require(model.activeTabbedState)
+    for (index, name) in ["c", "d"].enumerated() {
+        model.performTabbed(.move(WindowID(rawValue: name), pane: state.panes[index + 2].id, index: nil))
+        try #require(await waitFor { model.activeTabbedState?.panes[index + 2].selected == WindowID(rawValue: name) })
+    }
+    try await Task.sleep(for: .milliseconds(400))
+    let stepped = ["a", "b", "c"].map { WindowID(rawValue: $0) }
+    for (offset, id) in stepped.enumerated() {
+        system.sizeGrids[id] = (BTSize(width: 9 + Double(offset), height: 15), BTSize(width: 2, height: 4 + Double(offset)))
+        let index = try #require(system.windows.firstIndex { $0.id == id })
+        system.windows[index].bundleIdentifier = "com.apple.Terminal"
+    }
+    var failures = 0
+    for _ in 0..<3 { failures += try await settleAfterRepair(model, system, drifting: stepped) }
+    let frames = system.windows.map(\.frame)
+    let layout = model.activeTabbedState?.layout
+    let writes = system.frameWriteCounts
+    for _ in 0..<2 { failures += try await settleAfterRepair(model, system, drifting: []) }
+    #expect(failures == 0)
+    #expect(system.windows.map(\.frame) == frames)
+    #expect(model.activeTabbedState?.layout == layout)
+    #expect(system.frameWriteCounts == writes, "\(writes) \(system.frameWriteCounts) \(system.windows.map { "\($0.id.rawValue) \($0.frame)" })")
+    let current = try #require(model.activeTabbedState)
+    let areas = current.frames(in: system.availableDisplays[0].visibleFrame)
+    for pane in current.panes {
+        guard let id = pane.selected, let area = areas[pane.id].map(TabbedLayoutState.contentFrame),
+              let placed = system.windows.first(where: { $0.id == id })?.frame else { continue }
+        // Within the write tolerance.
+        #expect(placed.size.width <= area.size.width + 2 && placed.size.height <= area.size.height + 2, "\(id) \(placed) \(area)")
     }
 }
