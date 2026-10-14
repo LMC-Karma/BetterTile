@@ -155,7 +155,8 @@ public final class TabbedOverlayController {
     /// panes' selected windows. With a number, a pane's chrome joins the
     /// normal window stack beside that window, so a window in front of the
     /// selected tab also covers its strip. Without one, chrome floats and
-    /// hides only under `obscuringFrames`.
+    /// hides only under `obscuringFrames`. It also holds the number of the
+    /// curtain anchor when that is not a selected tab.
     public func refresh(state: TabbedLayoutState, bounds: BTRect, windows: [WindowSnapshot], obscuringFrames: [BTRect] = [], canUndo: Bool = false, selectedWindowNumbers: [WindowID: Int] = [:], curtainAnchorWindowNumber: Int? = nil) {
         if isDropPending, self.state != state || self.bounds != bounds { completeDrop() }
         if isInteracting, self.state != state || self.bounds != bounds { cancelInteraction() }
@@ -210,7 +211,9 @@ public final class TabbedOverlayController {
         let hasSelectedIdentities = !state.selectedWindowIDs.isEmpty
             && state.selectedWindowIDs.allSatisfy { numbers[$0] != nil }
         let anchor = curtainAnchorWindowNumber.flatMap { number in
-            hasSelectedIdentities && state.selectedWindowIDs.contains(where: { numbers[$0] == number }) ? number : nil
+            // The anchor is a selected tab or a floating window kept in place
+            // with them; either way it needs a validated number.
+            hasSelectedIdentities && numbers.values.contains(number) ? number : nil
         }
         refreshCurtain(anchor: anchor, identitiesValid: hasSelectedIdentities)
         refreshDividerControls()
