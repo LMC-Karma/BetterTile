@@ -961,6 +961,120 @@ enum DividerLimitCase: CaseIterable { case straight, junction, linked }
     #expect(leftFrame.size.width == 520, "left \(leftFrame)")
 }
 
+/// A window that grew on the release commit can show a late size from an
+/// earlier write, not a refusal of this one, so the release is not solved
+/// again at once. A native linked release has no settlement: once the delay
+/// has passed, the window still holds its size, and the release is solved
+/// again once with that minimum. Both windows end inside the display, they
+/// do not overlap, and Restore has exactly one step.
+@Test @MainActor func ghostReleaseCorrectsAWindowThatGrewOnlyAfterTheDelay() async throws {
+    _ = NSApplication.shared
+    let system = FakeWindowSystem()
+    system.roundsSizesAndReportsReadback = true
+    let bounds = BTRect(x: -10_000, y: -10_000, width: 800, height: 600)
+    let display = DisplayID(rawValue: "main")
+    system.availableDisplays = [DisplaySnapshot(id: display, frame: bounds, visibleFrame: bounds, isMain: true)]
+    let left = WindowID(rawValue: "left"), right = WindowID(rawValue: "right")
+    system.windows = [
+        WindowSnapshot(id: left, processIdentifier: 1, frame: BTRect(x: bounds.minX, y: bounds.minY, width: 400, height: 600), displayID: display),
+        WindowSnapshot(id: right, processIdentifier: 2, frame: BTRect(x: bounds.minX + 400, y: bounds.minY, width: 400, height: 600), displayID: display),
+    ]
+    let baseline = system.windows.map(\.frame)
+    // The right window reads back 500 wide: larger than its 400 pt baseline.
+    system.enforcedMinimumWidths[right] = 500
+    var config = BetterTileConfiguration()
+    config.resizeFeedbackMode = .ghost
+    let coordinator = WindowCoordinator(system: system)
+    let controller = DividerOverlayController(coordinator: coordinator, configuration: config)
+    let boundary = BoundaryDescriptor(
+        id: "native", displayID: display, axis: .vertical, coordinate: bounds.minX + 400,
+        spanStart: bounds.minY, spanEnd: bounds.maxY, beforeWindowIDs: [left], afterWindowIDs: [right]
+    )
+    let start = BTPoint(x: bounds.minX + 400, y: bounds.minY + 80)
+    let interaction = try #require(DividerInteractionResolver.resolve(at: start, in: [boundary], hitWidth: 18, adjacencyTolerance: 6, paneGap: 0))
+    let screen = try #require(NSScreen.screens.first)
+
+    controller.beginGesture(interaction: interaction, at: start)
+    defer { controller.hideAndCancel() }
+    controller.drag(to: CGPoint(x: start.x + 120, y: screen.frame.maxY - start.y))
+    controller.displayTick()
+    controller.end()
+    // No correction at release: the grown size is not yet evidence.
+    #expect(system.windows.first { $0.id == left }?.frame.size.width == 520)
+    #expect(system.frameWriteCounts[left] == 1)
+
+    // The check runs once the delay has passed; a busy main actor can run
+    // it later.
+    for _ in 0..<150 where system.frameWriteCounts[left, default: 0] < 2 {
+        try await Task.sleep(for: .milliseconds(20))
+    }
+    let leftFrame = try #require(system.windows.first { $0.id == left }?.frame)
+    let rightFrame = try #require(system.windows.first { $0.id == right }?.frame)
+    #expect(rightFrame.size.width == 500, "right \(rightFrame)")
+    #expect(abs(leftFrame.maxX - rightFrame.minX) < 0.5, "left \(leftFrame) right \(rightFrame)")
+    for frame in [leftFrame, rightFrame] {
+        #expect(frame.minX >= bounds.minX && frame.maxX <= bounds.maxX, "\(frame)")
+    }
+    #expect(BentoLayoutVerifier.overlappingWindowIDs([left: leftFrame, right: rightFrame]).isEmpty)
+    // One Restore step returns the release to its baseline; there is no second.
+    system.focusedWindowID = left
+    guard case let .ready(plan) = coordinator.plan(.restore) else {
+        Issue.record("Restore should be available")
+        return
+    }
+    #expect(plan.targetFrame == baseline[0])
+    #expect(coordinator.perform(plan).isApplied)
+    guard case .unavailable = coordinator.plan(.restore) else {
+        Issue.record("Restore should have only one step")
+        return
+    }
+}
+
+/// The application took a 350 pt width on the first tick and then applies
+/// further widths late. Two readbacks of the same 350 pt are a kept size,
+/// not a refusal, until the size has held for the confirmation delay.
+@Test @MainActor func liveDragDoesNotLearnASizeAppliedLate() async throws {
+    _ = NSApplication.shared
+    let system = FakeWindowSystem()
+    let bounds = BTRect(x: -10_000, y: -10_000, width: 800, height: 600)
+    let display = DisplayID(rawValue: "main")
+    system.availableDisplays = [DisplaySnapshot(id: display, frame: bounds, visibleFrame: bounds, isMain: true)]
+    let left = WindowID(rawValue: "left"), right = WindowID(rawValue: "right")
+    system.windows = [
+        WindowSnapshot(id: left, processIdentifier: 1, frame: BTRect(x: bounds.minX, y: bounds.minY, width: 400, height: 600), displayID: display),
+        WindowSnapshot(id: right, processIdentifier: 2, frame: BTRect(x: bounds.minX + 400, y: bounds.minY, width: 400, height: 600), displayID: display),
+    ]
+    var config = BetterTileConfiguration()
+    config.resizeFeedbackMode = .live
+    let controller = DividerOverlayController(coordinator: WindowCoordinator(system: system), configuration: config)
+    let boundary = BoundaryDescriptor(
+        id: "native", displayID: display, axis: .vertical, coordinate: bounds.minX + 400,
+        spanStart: bounds.minY, spanEnd: bounds.maxY, beforeWindowIDs: [left], afterWindowIDs: [right]
+    )
+    let start = BTPoint(x: bounds.minX + 400, y: bounds.minY + 80)
+    let interaction = try #require(DividerInteractionResolver.resolve(at: start, in: [boundary], hitWidth: 18, adjacencyTolerance: 6, paneGap: 0))
+    let screen = try #require(NSScreen.screens.first)
+    func drag(_ dx: Double) {
+        controller.drag(to: CGPoint(x: start.x + dx, y: screen.frame.maxY - start.y))
+        controller.displayTick()
+    }
+
+    controller.beginGesture(interaction: interaction, at: start)
+    defer { controller.hideAndCancel() }
+    drag(50)
+    #expect(system.windows.first { $0.id == right }?.frame.size.width == 350)
+    system.sizeApplicationDelays[right] = .seconds(5)
+    drag(100)
+    drag(120)
+    #expect(!controller.dragLimit.isLimited)
+    drag(130)
+    #expect(!controller.dragLimit.isLimited)
+    // A size still held after the delay is a refusal for this gesture.
+    try await Task.sleep(for: .seconds(WindowMinimumSizeLearner.clampConfirmationDelay + 0.05))
+    drag(140)
+    #expect(controller.dragLimit.width)
+}
+
 @Test @MainActor func ignoredLiveResizesDoNotBecomeMinimumSizes() throws {
     _ = NSApplication.shared
     let system = FakeWindowSystem()

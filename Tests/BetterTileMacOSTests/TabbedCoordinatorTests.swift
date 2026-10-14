@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import BetterTileCore
 @testable import BetterTileMacOS
@@ -196,10 +197,111 @@ func tabbedSelectionRaisesOnceUnlessOtherSelectionsNeedOrdering(orderOtherPane: 
         placements: [Placement(windowID: shown, frame: target), Placement(windowID: hidden, frame: target)],
         required: [shown], selected: [shown], previousSelected: [], focus: nil,
         onSizeMismatch: { id, requested, baseline, actual in
-            learner.observe(windowID: id, requested: requested, baseline: baseline, actual: actual)
+            learner.observe(windowID: id, requested: requested, baseline: baseline, actual: actual, now: ProcessInfo.processInfo.systemUptime)
         }, isCurrent: { true })
     #expect(result.isApplied)
     #expect(learner.learnedSizes.isEmpty)
+}
+
+/// Wires a learner to the fake's write readbacks and the Tabbed mismatch
+/// report, as the Accessibility adapter wires its own.
+@MainActor private final class TabbedLearnerProbe {
+    var learner = WindowMinimumSizeLearner()
+    var learnedOnSettle = false
+    init(_ system: FakeWindowSystem) {
+        system.writeReadbackHandler = { [unowned self] windowID, requested, previous, actual in
+            learner.observeWriteReadback(windowID: windowID, application: "com.google.Chrome", requested: requested,
+                                         previous: previous, actual: actual, now: ProcessInfo.processInfo.systemUptime)
+        }
+    }
+    func report(_ id: WindowID, _ requested: BTRect, _ baseline: BTRect, _ actual: BTRect) {
+        learnedOnSettle = learner.observe(windowID: id, application: "com.google.Chrome", requested: requested,
+                                          baseline: baseline, actual: actual,
+                                          now: ProcessInfo.processInfo.systemUptime) || learnedOnSettle
+    }
+}
+
+/// Chromium applies the position of a write at once and its size later. The
+/// readback straight after the write shows the old size at the new origin.
+/// A size that arrives at 80 ms or 150 ms, before the confirmation delay, is
+/// no minimum: the window settles at its pane size, and neither the window
+/// nor its application learns anything.
+@Test(arguments: [80, 150]) @MainActor
+func tabbedPlacementDoesNotLearnASizeAppliedLate(milliseconds: Int) async throws {
+    let system = FakeWindowSystem()
+    let id = system.windows[0].id
+    let target = BTRect(x: 0, y: 34, width: 400, height: 300)
+    system.sizeApplicationDelays[id] = .milliseconds(milliseconds)
+    let probe = TabbedLearnerProbe(system)
+    let result = await WindowCoordinator(system: system).applyTabbed(
+        placements: [Placement(windowID: id, frame: target)],
+        required: [id], selected: [id], previousSelected: [], focus: nil,
+        onSizeMismatch: probe.report, isCurrent: { true })
+    #expect(result.isApplied)
+    #expect(system.windows[0].frame == target)
+    probe.learner.confirmClampCandidate(windowID: id, application: "com.google.Chrome",
+                                        size: system.windows[0].frame.size, now: ProcessInfo.processInfo.systemUptime + 1)
+    #expect(probe.learner.learnedSizes.isEmpty)
+    #expect(probe.learner.applicationSizes.isEmpty)
+}
+
+/// A size that arrives after the confirmation delay is indistinguishable
+/// from a refusal when the loop reports it. This is the documented limit of
+/// the time-based rule.
+@Test @MainActor func tabbedPlacementLearnsASizeAppliedAfterTheDelay() async throws {
+    let system = FakeWindowSystem()
+    let id = system.windows[0].id
+    let target = BTRect(x: 0, y: 34, width: 400, height: 300)
+    system.sizeApplicationDelays[id] = .seconds(5)
+    let probe = TabbedLearnerProbe(system)
+    _ = await WindowCoordinator(system: system).applyTabbed(
+        placements: [Placement(windowID: id, frame: target)],
+        required: [id], selected: [id], previousSelected: [], focus: nil,
+        onSizeMismatch: probe.report, isCurrent: { true })
+    #expect(probe.learnedOnSettle)
+    #expect(probe.learner.learnedSizes[id]?.width == 600)
+}
+
+/// A window already at its minimum keeps its size when asked smaller. The
+/// readback cannot tell that from a late size, so the loop waits for the
+/// confirmation delay before it reports the refusal, and the settled frame
+/// confirms it in time for the learned-minimum retry.
+@Test @MainActor func tabbedPlacementLearnsAWindowAtItsMinimumOnceItSettles() async throws {
+    let system = FakeWindowSystem()
+    let id = system.windows[0].id
+    system.enforcedMinimumWidths[id] = 600
+    let target = BTRect(x: 0, y: 34, width: 400, height: 300)
+    let probe = TabbedLearnerProbe(system)
+    let started = ContinuousClock.now
+    let result = await WindowCoordinator(system: system).applyTabbed(
+        placements: [Placement(windowID: id, frame: target)],
+        required: [id], selected: [id], previousSelected: [], focus: nil,
+        onSizeMismatch: probe.report, isCurrent: { true })
+    #expect(!result.isApplied)
+    #expect(ContinuousClock.now - started >= .seconds(WindowMinimumSizeLearner.clampConfirmationDelay))
+    #expect(probe.learnedOnSettle)
+    #expect(probe.learner.learnedSizes[id]?.width == 600)
+    #expect(probe.learner.applicationSizes["com.google.Chrome"]?.width == 600)
+}
+
+/// A window at its real minimum width moves at once and takes its new
+/// height 100 ms later. The late height does not discard the kept width:
+/// the refusal is still learned for the retry.
+@Test @MainActor func tabbedPlacementLearnsAKeptWidthDespiteALateHeight() async throws {
+    let system = FakeWindowSystem()
+    let id = system.windows[0].id
+    system.windows[0].frame = BTRect(x: 200, y: 0, width: 600, height: 800)
+    system.enforcedMinimumWidths[id] = 600
+    system.sizeApplicationDelays[id] = .milliseconds(100)
+    let target = BTRect(x: 0, y: 34, width: 400, height: 300)
+    let probe = TabbedLearnerProbe(system)
+    let result = await WindowCoordinator(system: system).applyTabbed(
+        placements: [Placement(windowID: id, frame: target)],
+        required: [id], selected: [id], previousSelected: [], focus: nil,
+        onSizeMismatch: probe.report, isCurrent: { true })
+    #expect(!result.isApplied)
+    #expect(probe.learnedOnSettle)
+    #expect(probe.learner.learnedSizes[id] == BTSize(width: 600, height: 0))
 }
 
 @Test @MainActor func tabbedResizeUsesActualFramesAsWriteHintsInsteadOfItsCheckpoint() async throws {

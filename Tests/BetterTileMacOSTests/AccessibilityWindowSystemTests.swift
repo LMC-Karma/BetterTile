@@ -50,7 +50,7 @@ import Testing
     func measure(_ id: WindowID, _ application: String) {
         _ = learner.observeWriteReadback(windowID: id, application: application,
             requested: BTRect(x: 0, y: 0, width: 100, height: 100), previous: BTRect(x: 0, y: 0, width: 800, height: 600),
-            actual: BTRect(x: 0, y: 0, width: 500, height: 375))
+            actual: BTRect(x: 0, y: 0, width: 500, height: 375), now: 0)
     }
     measure(mail, "com.apple.mail")
     measure(notes, "com.apple.Notes")

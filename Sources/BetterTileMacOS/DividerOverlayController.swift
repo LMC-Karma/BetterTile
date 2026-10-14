@@ -371,9 +371,24 @@ public final class DividerOverlayController {
     private var latestDragPoint: CGPoint?
     private var hasPendingDisplayUpdate = false
     private var holdsContinuousWrites = false
-    /// Consecutive live ticks on which a window held its size while asked to
-    /// shrink. One tick is not proof: an application can apply a write late.
-    private var heldSizeTicks: [WindowID: (size: BTSize, widthCount: Int, heightCount: Int)] = [:]
+    /// One axis of a window that stayed larger than requested on a live tick.
+    /// `proven` means the axis shrank toward its request and stopped short of
+    /// it; otherwise it kept its size, which a late write also shows.
+    private struct HeldAxis {
+        var length: Double
+        var proven: Bool
+        var ticks: Int
+        var since: Double
+    }
+    /// The axes each window currently holds while asked to shrink. One tick
+    /// is not proof: an application can apply a write late.
+    private var heldAxes: [WindowID: (width: HeldAxis?, height: HeldAxis?)] = [:]
+    /// Each window's size before its latest live write: its baseline, then
+    /// the size read back after each write.
+    private var precedingSizes: [WindowID: BTSize] = [:]
+    /// Checks a native linked Ghost release again once a late size would have
+    /// arrived.
+    private var releaseVerificationTask: Task<Void, Never>?
 
     public convenience init(coordinator: WindowCoordinator, configuration: BetterTileConfiguration) {
         self.init(coordinator: coordinator, configuration: configuration, displayTicks: ResizeDisplayLink())
@@ -421,6 +436,7 @@ public final class DividerOverlayController {
     deinit {
         ownWindowObservationTask?.cancel()
         activationObservationTask?.cancel()
+        releaseVerificationTask?.cancel()
     }
 
     private func observeOwnWindows() {
@@ -644,6 +660,8 @@ public final class DividerOverlayController {
 
     func beginGesture(interaction: DividerInteraction, at point: BTPoint) {
         gestureWillBeginHandler?()
+        releaseVerificationTask?.cancel()
+        releaseVerificationTask = nil
         guard let mainFrame = NSScreen.screens.first?.frame,
               let display = coordinator.system.displays().first(where: { $0.id == interaction.displayID }),
               let windows = try? coordinator.system.visibleWindows()
@@ -1068,7 +1086,10 @@ public final class DividerOverlayController {
             // reported. The commit reads each window back, so a refused size
             // is measured at once; the layout is solved again with it.
             var corrections = 0
-            while outcome.isApplied, corrections < 2, learnCommittedMinimums(baseline: transaction.baselineFrames),
+            // Each commit is measured against the frames before it: the
+            // baseline, then the previous commit's readback.
+            var preceding = transaction.baselineFrames.mapValues(\.size)
+            while outcome.isApplied, corrections < 2, learnCommittedMinimums(preceding: &preceding),
                   let point = latestDragPoint {
                 corrections += 1
                 self.transaction = transaction
@@ -1083,7 +1104,10 @@ public final class DividerOverlayController {
                 outcome = coordinator.commit(transaction: &transaction, placements: latestPlacements, recordHistory: false)
             }
             succeeded = outcome.isApplied
-            if succeeded { coordinator.recordHistory(of: transaction) }
+            if succeeded {
+                coordinator.recordHistory(of: transaction)
+                if !interaction.isBento { scheduleReleaseVerification(baseline: transaction.baselineFrames) }
+            }
             // A failed correction can follow a commit that already moved the
             // windows; return them all to the baseline.
             if case .degraded = outcome {
@@ -1123,9 +1147,12 @@ public final class DividerOverlayController {
         bentoStateLiveHandler?(interaction.displayID, proposedBentoState, displayBounds)
     }
 
-    /// Learns a held size only after that axis actually shrank from its
-    /// gesture baseline. An unchanged window can mean ignored AX writes.
-    /// Two held ticks establish a minimum for this gesture only.
+    /// Learns a held size for this gesture only, by the shared evidence rule:
+    /// each readback is compared with the size before its write. An axis
+    /// that shrank toward its request and stopped short of it is a refusal
+    /// once the next tick still holds it. An axis that kept its size can be a
+    /// size the application applies later, so it is a refusal only after it
+    /// held for `WindowMinimumSizeLearner.clampConfirmationDelay`.
     private func recordRefusedMinimums(_ placements: [Placement], written: Set<WindowID>) -> (width: Bool, height: Bool) {
         let baseline = Dictionary(baselineWindows.map { ($0.id, $0.frame.size) }, uniquingKeysWith: { first, _ in first })
         let shrinking = placements.filter { placement in
@@ -1133,9 +1160,14 @@ public final class DividerOverlayController {
             return placement.frame.size.width < start.width - 2 || placement.frame.size.height < start.height - 2
         }
         let shrinkingIDs = Set(shrinking.map(\.windowID))
-        heldSizeTicks = heldSizeTicks.filter { shrinkingIDs.contains($0.key) }
+        // Every written window gets a new preceding size. Without a readback
+        // it falls back to its baseline, as at the start of the gesture.
+        for id in written.subtracting(shrinkingIDs) {
+            precedingSizes[id] = coordinator.system.measuredFrameAfterWrite(for: id)?.size
+        }
+        heldAxes = heldAxes.filter { shrinkingIDs.contains($0.key) }
         guard !shrinking.isEmpty else {
-            heldSizeTicks = [:]
+            heldAxes = [:]
             return (false, false)
         }
         // An application clamps a size while it handles the write, so the
@@ -1151,68 +1183,177 @@ public final class DividerOverlayController {
             guard let targeted = coordinator.system as? any TargetedWindowSystem,
                   let actual = try? targeted.windowSnapshots(ids: unread)
             else {
-                heldSizeTicks = [:]
+                heldAxes = [:]
+                for id in unread.intersection(written) { precedingSizes[id] = nil }
                 return (false, false)
             }
             for snapshot in actual where actualSizes[snapshot.id] == nil { actualSizes[snapshot.id] = snapshot.frame.size }
         }
+        let now = ProcessInfo.processInfo.systemUptime
+        func held(_ previous: HeldAxis?, requested: Double, before: Double, actual: Double, proven: Double?) -> HeldAxis? {
+            guard actual > requested + 2 else { return nil }
+            if let proven { return HeldAxis(length: proven, proven: true, ticks: 1, since: now) }
+            // A window that grew shows no refusal of this write.
+            guard abs(actual - before) <= 2 else { return nil }
+            if var previous, abs(previous.length - actual) <= 1 {
+                previous.ticks += 1
+                return previous
+            }
+            return HeldAxis(length: actual, proven: false, ticks: 1, since: now)
+        }
+        func refusal(_ axis: HeldAxis?) -> Double? {
+            guard let axis else { return nil }
+            let confirmed = (axis.proven && axis.ticks >= 2)
+                || now - axis.since >= WindowMinimumSizeLearner.clampConfirmationDelay
+            return confirmed ? axis.length : nil
+        }
         var refused = (width: false, height: false)
-        // A window not written on this tick keeps its count: its readback is
-        // the evidence already counted.
+        // A window not written on this tick keeps its evidence: its readback
+        // is the evidence already counted.
         for placement in shrinking where written.contains(placement.windowID) {
-            guard let size = actualSizes[placement.windowID] else {
-                heldSizeTicks[placement.windowID] = nil
+            let id = placement.windowID
+            guard let size = actualSizes[id] else {
+                heldAxes[id] = nil
+                precedingSizes[id] = nil
                 continue
             }
-            guard let start = baseline[placement.windowID] else { continue }
-            let heldWidth = size.width < start.width - 2 && size.width > placement.frame.size.width + 2
-            let heldHeight = size.height < start.height - 2 && size.height > placement.frame.size.height + 2
-            guard heldWidth || heldHeight else {
-                heldSizeTicks[placement.windowID] = nil
-                continue
-            }
-            let previous = heldSizeTicks[placement.windowID]
+            let before = precedingSizes[id] ?? baseline[id] ?? size
+            precedingSizes[id] = size
+            let proven = WindowMinimumSizeLearner.provenMinimum(
+                requested: placement.frame.size, previous: before, actual: size
+            )
             // A junction can keep shrinking one axis while the other grows.
             // Refusal evidence belongs to each axis, not the complete size.
-            let widthCount = heldWidth ? (previous.map { abs($0.size.width - size.width) <= 1 ? $0.widthCount + 1 : 1 } ?? 1) : 0
-            let heightCount = heldHeight ? (previous.map { abs($0.size.height - size.height) <= 1 ? $0.heightCount + 1 : 1 } ?? 1) : 0
-            heldSizeTicks[placement.windowID] = (size, widthCount, heightCount)
-            guard let index = baselineWindows.firstIndex(where: { $0.id == placement.windowID }) else { continue }
+            let width = held(heldAxes[id]?.width, requested: placement.frame.size.width,
+                             before: before.width, actual: size.width, proven: proven.width)
+            let height = held(heldAxes[id]?.height, requested: placement.frame.size.height,
+                              before: before.height, actual: size.height, proven: proven.height)
+            heldAxes[id] = width == nil && height == nil ? nil : (width, height)
+            guard let index = baselineWindows.firstIndex(where: { $0.id == id }) else { continue }
             var minimum = baselineWindows[index].constraints.minimumSize
-            let learnedWidth = widthCount >= 2 && size.width > minimum.width
-            let learnedHeight = heightCount >= 2 && size.height > minimum.height
-            if learnedWidth { minimum.width = size.width }
-            if learnedHeight { minimum.height = size.height }
+            if let length = refusal(width), length > minimum.width {
+                minimum.width = length
+                refused.width = true
+            }
+            if let length = refusal(height), length > minimum.height {
+                minimum.height = length
+                refused.height = true
+            }
             baselineWindows[index].constraints.minimumSize = minimum
-            refused.width = refused.width || learnedWidth
-            refused.height = refused.height || learnedHeight
         }
         return refused
     }
 
     /// Records each size a committed window refused as its minimum for this
-    /// gesture. Returns true when a minimum changed. A window still at its
-    /// baseline size gives no evidence: it may apply the write later.
-    private func learnCommittedMinimums(baseline: [WindowID: BTRect]) -> Bool {
+    /// gesture. Returns true when a minimum changed. Only an axis that shrank
+    /// from `preceding` toward its request and stopped short of it is a
+    /// refusal. A window that kept its size, or grew, can still apply this
+    /// write, or an earlier one, later; it gives no evidence and no
+    /// correction. Updates `preceding` to the frames read back.
+    private func learnCommittedMinimums(preceding: inout [WindowID: BTSize]) -> Bool {
         var learned = false
         for placement in latestPlacements {
-            guard let actual = coordinator.system.measuredFrameAfterWrite(for: placement.windowID)?.size,
+            guard let actual = coordinator.system.measuredFrameAfterWrite(for: placement.windowID)?.size else { continue }
+            defer { preceding[placement.windowID] = actual }
+            guard let before = preceding[placement.windowID],
                   let index = baselineWindows.firstIndex(where: { $0.id == placement.windowID }) else { continue }
-            let before = baseline[placement.windowID]?.size
+            let proven = WindowMinimumSizeLearner.provenMinimum(
+                requested: placement.frame.size, previous: before, actual: actual
+            )
             var minimum = baselineWindows[index].constraints.minimumSize
-            if actual.width > placement.frame.size.width + 2, actual.width > minimum.width + 0.5,
-               before.map({ abs($0.width - actual.width) > 0.5 }) ?? true {
-                minimum.width = actual.width
+            if let width = proven.width, width > minimum.width + 0.5 {
+                minimum.width = width
                 learned = true
             }
-            if actual.height > placement.frame.size.height + 2, actual.height > minimum.height + 0.5,
-               before.map({ abs($0.height - actual.height) > 0.5 }) ?? true {
-                minimum.height = actual.height
+            if let height = proven.height, height > minimum.height + 0.5 {
+                minimum.height = height
                 learned = true
             }
             baselineWindows[index].constraints.minimumSize = minimum
         }
         return learned
+    }
+
+    /// A native linked Ghost release has no settlement. A window that kept
+    /// or grew its size on the release commit can still apply its size late,
+    /// so it is read again once `WindowMinimumSizeLearner.clampConfirmationDelay`
+    /// has passed. A length still held then is a refusal: the release is
+    /// solved again once with it, or returns to the baseline when no
+    /// contained layout fits. Neither adds an Undo entry.
+    private func scheduleReleaseVerification(baseline: [WindowID: BTRect]) {
+        guard let boundary = baselineInteraction?.boundaries.first, let startPoint, let displayBounds,
+              let dragPoint = latestDragPoint else { return }
+        let committed = Dictionary(latestPlacements.map { ($0.windowID, $0.frame) }, uniquingKeysWith: { first, _ in first })
+        var released: [WindowID: BTSize] = [:]
+        for id in committed.keys {
+            if let size = coordinator.system.measuredFrameAfterWrite(for: id)?.size { released[id] = size }
+        }
+        let unread = Set(committed.keys).subtracting(released.keys)
+        if !unread.isEmpty, let targeted = coordinator.system as? any TargetedWindowSystem,
+           let read = try? targeted.windowSnapshots(ids: unread) {
+            for snapshot in read { released[snapshot.id] = snapshot.frame.size }
+        }
+        func larger(_ size: BTSize, than frame: BTRect) -> Bool {
+            size.width > frame.size.width + 2 || size.height > frame.size.height + 2
+        }
+        guard released.contains(where: { id, size in committed[id].map { larger(size, than: $0) } ?? false }) else { return }
+        let point = topLeftPoint(dragPoint)
+        let delta = boundary.axis == .vertical ? point.x - startPoint.x : point.y - startPoint.y
+        let windows = baselineWindows
+        let generations = Dictionary(uniqueKeysWithValues: committed.keys.map { ($0, coordinator.mutationGeneration(for: $0)) })
+        let tolerance = configuration.adjacencyTolerance
+        releaseVerificationTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(WindowMinimumSizeLearner.clampConfirmationDelay))
+            guard let self, !Task.isCancelled, !self.isDragging,
+                  generations.allSatisfy({ self.coordinator.mutationGeneration(for: $0.key) == $0.value }),
+                  let targeted = self.coordinator.system as? any TargetedWindowSystem,
+                  let actual = try? targeted.windowSnapshots(ids: Set(committed.keys)),
+                  actual.count == committed.count else { return }
+            var corrected = windows
+            var refused = false
+            for window in actual {
+                guard let frame = committed[window.id], let before = released[window.id],
+                      let index = corrected.firstIndex(where: { $0.id == window.id }) else { continue }
+                var minimum = corrected[index].constraints.minimumSize
+                let size = window.frame.size
+                if size.width > frame.size.width + 2, abs(size.width - before.width) <= 2 {
+                    minimum.width = max(minimum.width, size.width)
+                    refused = true
+                }
+                if size.height > frame.size.height + 2, abs(size.height - before.height) <= 2 {
+                    minimum.height = max(minimum.height, size.height)
+                    refused = true
+                }
+                corrected[index].constraints.minimumSize = minimum
+            }
+            guard refused else { return }
+            if let result = LinkedResizeEngine(tolerance: tolerance).resize(
+                boundary: boundary, delta: delta, windows: corrected, bounds: displayBounds
+            ) {
+                let placements = Self.keepingFixedSizes(result.placements, windows: corrected)
+                if Self.isContained(placements, in: displayBounds),
+                   self.coordinator.applyPlacements(placements, recordHistory: false).isApplied {
+                    self.layoutChangedHandler?(boundary.displayID, Dictionary(
+                        placements.map { ($0.windowID, $0.frame) }, uniquingKeysWith: { first, _ in first }))
+                    return
+                }
+            }
+            let restored = self.coordinator.applyPlacements(
+                baseline.map { Placement(windowID: $0.key, frame: $0.value) }, recordHistory: false
+            )
+            self.reportRollbackFailure(displayID: boundary.displayID, outcome: restored)
+            self.layoutChangedHandler?(boundary.displayID, baseline)
+        }
+    }
+
+    /// True when every placement lies inside `bounds` and no two overlap.
+    static func isContained(_ placements: [Placement], in bounds: BTRect) -> Bool {
+        let inside = placements.allSatisfy { placement in
+            placement.frame.minX >= bounds.minX - 0.5 && placement.frame.minY >= bounds.minY - 0.5
+                && placement.frame.maxX <= bounds.maxX + 0.5 && placement.frame.maxY <= bounds.maxY + 0.5
+        }
+        let frames = Dictionary(placements.map { ($0.windowID, $0.frame) }, uniquingKeysWith: { first, _ in first })
+        return inside && BentoLayoutVerifier.overlappingWindowIDs(frames).isEmpty
     }
 
     func cancelActiveGesture() {
@@ -1263,7 +1404,8 @@ public final class DividerOverlayController {
         latestPlacements = []
         latestDragPoint = nil
         hasPendingDisplayUpdate = false
-        heldSizeTicks = [:]
+        heldAxes = [:]
+        precedingSizes = [:]
         handlePanel?.setLimit(DragLimit())
         displayTicks.stop()
         removeEscapeMonitor()

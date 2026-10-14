@@ -87,6 +87,15 @@ final class FakeWindowSystem: WindowSystem, TargetedWindowSystem, WindowEventSou
     /// loop: the write is accepted, but the new frame is only observable after
     /// this many reads.
     var readsBeforeSettling = 0
+    /// Simulates an application that applies a new position at once and the
+    /// new size only after this delay, as Chromium does and as a window that
+    /// moved to a display with another backing scale can appear. A read after
+    /// the delay shows the new size.
+    var sizeApplicationDelays: [WindowID: Duration] = [:]
+    private var lateSizes: [WindowID: (frame: BTRect, due: ContinuousClock.Instant)] = [:]
+    /// Receives each frame write with the frame read straight back, as the
+    /// adapter reads it for minimum-size learning.
+    var writeReadbackHandler: ((_ windowID: WindowID, _ requested: BTRect, _ previous: BTRect?, _ actual: BTRect) -> Void)?
     /// When set, WindowServer reports these frames instead of the windows'
     /// Accessibility frames, as for an application that has not drawn yet.
     var drawnFrameOverrides: [WindowID: BTRect]?
@@ -107,6 +116,10 @@ final class FakeWindowSystem: WindowSystem, TargetedWindowSystem, WindowEventSou
     private var pendingFrames: [WindowID: (frame: BTRect, readsRemaining: Int)] = [:]
 
     private func settlePendingFrames() {
+        for (id, late) in lateSizes where ContinuousClock.now >= late.due {
+            lateSizes.removeValue(forKey: id)
+            if let index = windows.firstIndex(where: { $0.id == id }) { windows[index].frame = late.frame }
+        }
         for (id, pending) in pendingFrames {
             let remaining = pending.readsRemaining - 1
             if remaining <= 0 {
@@ -256,8 +269,15 @@ final class FakeWindowSystem: WindowSystem, TargetedWindowSystem, WindowEventSou
             pendingFrames[windowID] = (applied, readsBeforeSettling)
             return
         }
-        windows[index].frame = applied
-        windows[index].displayID = availableDisplays.first(where: { $0.visibleFrame.intersection(applied)?.area ?? 0 > applied.area / 2 })?.id ?? windows[index].displayID
+        var shown = applied
+        lateSizes.removeValue(forKey: windowID)
+        if let delay = sizeApplicationDelays[windowID], applied.size != windows[index].frame.size {
+            shown.size = windows[index].frame.size
+            lateSizes[windowID] = (applied, ContinuousClock.now + delay)
+        }
+        windows[index].frame = shown
+        windows[index].displayID = availableDisplays.first(where: { $0.visibleFrame.intersection(shown)?.area ?? 0 > shown.area / 2 })?.id ?? windows[index].displayID
+        writeReadbackHandler?(windowID, frame, knownCurrentFrame, shown)
     }
 
     func setMinimized(_ minimized: Bool, for windowID: WindowID) throws {

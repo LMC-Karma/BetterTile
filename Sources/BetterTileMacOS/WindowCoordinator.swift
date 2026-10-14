@@ -1237,6 +1237,14 @@ extension WindowCoordinator {
             var previousFrames: [WindowID: BTRect] = [:]
             var previousSamples: [WindowID: BTRect] = [:]
             var previousHiddenFrames: [WindowID: BTRect] = [:]
+            // A size refusal is reported only once the minimum-size learner
+            // can confirm a kept size, so an application that applies a size
+            // late is not reported as refusing it.
+            let written = ContinuousClock.now
+            func refusalCanSettle(_ attempt: Int) -> Bool {
+                attempt >= 3 && (attempt == 11
+                    || ContinuousClock.now - written >= .seconds(WindowMinimumSizeLearner.clampConfirmationDelay))
+            }
             // Frames settle within four samples. Activation can take longer,
             // so accepted frames keep waiting for focus instead of rolling back.
             for attempt in 0..<12 {
@@ -1268,14 +1276,14 @@ extension WindowCoordinator {
                         guard let placement = changedBestEffort.first(where: { $0.windowID == window.id }),
                               let before = bestEffortBaseline[window.id],
                               !window.frame.approximatelyEquals(placement.frame, tolerance: 2) else { continue }
-                        if attempt >= 3, previousHiddenFrames[window.id]?.approximatelyEquals(window.frame, tolerance: 1) == true {
+                        if refusalCanSettle(attempt), previousHiddenFrames[window.id]?.approximatelyEquals(window.frame, tolerance: 1) == true {
                             onSizeMismatch?(window.id, placement.frame, before, window.frame)
                         } else {
                             unsettledHidden = true
                         }
                     }
                     previousHiddenFrames = Dictionary(uniqueKeysWithValues: hiddenFrames.map { ($0.id, $0.frame) })
-                    if unsettledHidden, attempt < 3 {
+                    if unsettledHidden, attempt < 11, attempt < 3 || !refusalCanSettle(attempt) {
                         try await Task.sleep(for: .milliseconds(50))
                         continue
                     }
@@ -1294,7 +1302,8 @@ extension WindowCoordinator {
                 }
                 // Stable size refusals in either axis can inform a retry.
                 // Report before rollback loses the evidence.
-                if attempt == 3, focusMatches, placements.allSatisfy({ placement in
+                let settled = refusalCanSettle(attempt)
+                if settled, focusMatches, placements.allSatisfy({ placement in
                     guard let frame = actual[placement.windowID] else { return false }
                     return previousFrames[placement.windowID]?.approximatelyEquals(frame, tolerance: 1) == true
                 }) {
@@ -1305,7 +1314,7 @@ extension WindowCoordinator {
                     }
                 }
                 previousFrames = actual
-                if attempt >= 3 { break }
+                if settled { break }
                 try await Task.sleep(for: .milliseconds(50))
             }
             throw WindowSystemError.operationFailed("A window did not accept its Tabbed size. Choose a larger pane or try Repair Tabbed.")
