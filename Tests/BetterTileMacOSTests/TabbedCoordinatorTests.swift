@@ -366,6 +366,20 @@ func tabbedCheckpointVerificationStopsWhenItsDesktopOrTaskChanges(cancelled: Boo
     #expect(system.raisedWindows.isEmpty)
 }
 
+@Test(arguments: [(10.0, true, true), (10.0, false, false), (40.0, true, false)]) @MainActor
+func tabbedRollbackAcceptsOnlyAStepShortfallForASteppedWindow(shortfall: Double, stepped: Bool, restores: Bool) async {
+    let system = FakeWindowSystem()
+    let id = system.windows[0].id
+    let checkpoint = system.windows[0].frame
+    system.windows[0].frame.size.width += 150
+    // The window settles short of the checkpoint, as a stepped window rounds down.
+    system.clampWidth = checkpoint.size.width - shortfall
+    let outcome = await WindowCoordinator(system: system).restoreTabbedFrames([id: checkpoint], required: [id],
+        on: system.availableDisplays[0].id, steppedWindowIDs: stepped ? [id] : [], isCurrent: { true })
+    #expect(outcome.isApplied == restores)
+    #expect(system.windows[0].frame.size.width == checkpoint.size.width - shortfall)
+}
+
 @Test @MainActor func tabbedRequiredSelectionsCannotBeOmittedFromPlacement() async {
     let system = FakeWindowSystem()
     system.addSecondWindow()
