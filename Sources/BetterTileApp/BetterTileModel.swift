@@ -97,7 +97,7 @@ final class BetterTileModel {
     /// on each axis where it stepped. Their grids decide where pane dividers
     /// go and what each window is asked for, so it is never asked for a
     /// length it rounds away from.
-    private var tabbedSteppedWindows: [WindowID: [SplitAxis: [Double]]] = [:]
+    private(set) var tabbedSteppedWindows: [WindowID: [SplitAxis: [Double]]] = [:]
     /// How long after a placement settles an automatic float is checked
     /// again with a fresh snapshot. Settable for tests.
     var tabbedAutomaticFloatRetryDelay: Duration = .seconds(1)

@@ -693,3 +693,24 @@ func aSmallDragBesideAMinimumHeldWindowSticks(minimumAbovePane: Double) async th
     #expect(frame("big", system)?.approximatelyEquals(area, tolerance: 0.6) == true)
     #expect(model.statusMessage == nil)
 }
+
+/// Review: leaving Tabbed forgets a learned grid, also for a stepped window
+/// that floats inside Tabbed at that moment.
+@Test @MainActor func leavingTabbedForgetsAFloatingSteppedWindowsGrid() async throws {
+    let system = FakeAppWindowSystem()
+    let model = try await makeTabbed(system, .rows, ["upper", "lower"])
+    defer { model.shutdown() }
+    let slot = try #require(content(0, model, system))
+    let terminal = addTerminal(system, heightGrid: slot.size.height + 4)
+    system.eventHandler?(WindowSystemEvent(kind: .created, windowID: terminal, processIdentifier: 399))
+    try #require(await waitFor(timeout: .seconds(3)) { model.tabbedSteppedWindows[terminal] != nil })
+    try await Task.sleep(for: .milliseconds(300))
+    model.performTabbed(.float(terminal))
+    try #require(await waitFor { model.activeTabbedState?.floatingWindowIDs.contains(terminal) == true })
+    try await Task.sleep(for: .milliseconds(300))
+    #expect(model.tabbedSteppedWindows[terminal] != nil)
+
+    model.setActiveMode(.bento)
+
+    #expect(await waitFor { model.tabbedSteppedWindows[terminal] == nil })
+}
