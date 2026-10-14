@@ -1213,3 +1213,150 @@ func bentoReleaseWithASuppressionModifierRestores(modified: Bool) {
     // After the write the window is on its Space's display; reads keep it.
     #expect(try system.windowSnapshots(ids: [system.windows[0].id]).first?.displayID == first)
 }
+
+// MARK: - Tabbed tab strip drops
+
+/// Over a pane's tab strip, the overlay shows an insertion line at a tab
+/// index, above the dragged window, and release adds the window there. The
+/// strip wins over a snap area only inside the strip; the top edge still
+/// snaps elsewhere.
+@Test @MainActor func tabStripHoverShowsAnInsertionAndCommitsATabDrop() throws {
+    _ = NSApplication.shared
+    let system = FakeWindowSystem()
+    system.availableDisplays[0].frame.origin.x = 12000
+    system.availableDisplays[0].visibleFrame.origin.x = 12000
+    system.windows[0].frame.origin.x += 12000
+    system.addSecondWindow()
+    let source = system.windows[0].id, other = system.windows[1].id
+    let controller = DragSnapController(coordinator: WindowCoordinator(system: system),
+                                        configuration: BetterTileConfiguration(),
+                                        displayTicks: ResizeDisplayLink(automatic: false))
+    defer { controller.cancel() }
+    controller.activeModeProvider = { _ in .tabbed }
+    let layout = BentoLayoutState(root: .partition(BentoPartition(axis: .vertical,
+        children: [.leaf(source), .leaf(other)])))
+    controller.bentoStateProvider = { _ in layout }
+    controller.bentoDragBeganHandler = { _, _, _ in true }
+    let paneID = UUID()
+    // The left pane's strip: x 12000-12500, y 10-34. Edges at 12250 split
+    // it. Below y 500 the left side is an empty pane.
+    let emptyPaneID = UUID()
+    controller.tabbedDropZoneProvider = { _, point, id in
+        #expect(id == source)
+        if point.x < 12500, point.y >= 500 {
+            return TabbedDropZone(paneID: emptyPaneID, index: nil,
+                                  paneFrame: BTRect(x: 12000, y: 500, width: 500, height: 300), indicator: nil)
+        }
+        guard point.x < 12500, point.y >= 10, point.y < 34 else { return nil }
+        let index = point.x < 12250 ? 0 : 1
+        return TabbedDropZone(paneID: paneID, index: index,
+                              paneFrame: BTRect(x: 12000, y: 10, width: 500, height: 790),
+                              indicator: BTRect(x: index == 0 ? 12030 : 12248, y: 14, width: 4, height: 26))
+    }
+    var state = TabbedLayoutState()
+    state.reconcile(windowIDs: [source], removed: [], focused: source)
+    controller.bentoPreviewHandler = { _, _, outcome in
+        if case let .snap(_, frame) = outcome { return prepared(outcome, [Placement(windowID: source, frame: frame)]) }
+        return .ready(PreparedLayoutDrop(outcome: outcome, placements: [], plan: .tabbed(state), dragID: UUID()))
+    }
+    var dropped: LayoutDragEnd?
+    controller.bentoDragEndedHandler = { _, _, end in dropped = end }
+    controller.setUsesSharedGestureEvents(true)
+    let mainFrame = try #require(NSScreen.screens.first?.frame)
+    func indicators() -> [NSWindow] {
+        NSApplication.shared.windows.filter { $0.isVisible && $0.contentView is TabInsertionIndicatorView }
+    }
+
+    send(controller, .leftMouseDown, x: 12300, y: 220)
+    system.windows[0].frame.origin.x += 3
+    send(controller, .leftMouseDragged, x: 12100, y: 20)
+    #expect(committedOutcome(controller.dropTarget.map { $0.layoutEnd }) == .tab(paneID: paneID, index: 0))
+    send(controller, .leftMouseDragged, x: 12300, y: 20)
+    controller.displayTick()
+    #expect(committedOutcome(controller.dropTarget.map { $0.layoutEnd }) == .tab(paneID: paneID, index: 1))
+    let indicator = try #require(indicators().first)
+    #expect(indicators().count == 1)
+    #expect(indicator.level == .floating)
+    #expect(indicator.frame == CoordinateConverter.toAppKit(BTRect(x: 12248, y: 14, width: 4, height: 26),
+                                                            mainScreenFrame: mainFrame))
+
+    // Inside the strip, the strip wins over the left edge's snap area.
+    send(controller, .leftMouseDragged, x: 12002, y: 20)
+    controller.displayTick()
+    #expect(committedOutcome(controller.dropTarget.map { $0.layoutEnd }) == .tab(paneID: paneID, index: 0))
+    // Outside every strip, the top edge still snaps.
+    send(controller, .leftMouseDragged, x: 12700, y: 2)
+    controller.displayTick()
+    guard case .snap(action: .almostMaximize, frame: _)? = committedOutcome(controller.dropTarget.map { $0.layoutEnd }) else {
+        Issue.record("The top edge must still snap outside a strip"); return
+    }
+    #expect(indicators().isEmpty)
+
+    send(controller, .leftMouseDragged, x: 12300, y: 20)
+    controller.displayTick()
+    send(controller, .leftMouseUp, x: 12300, y: 20)
+    #expect(committedOutcome(dropped) == .tab(paneID: paneID, index: 1))
+    #expect(indicators().isEmpty)
+}
+
+/// An empty pane is a drop target without an insertion line. A snap area
+/// over it wins, as over a pane center.
+@Test @MainActor func emptyPaneHoverCommitsATabDropUnlessASnapAreaWins() throws {
+    _ = NSApplication.shared
+    let system = FakeWindowSystem()
+    system.availableDisplays[0].frame.origin.x = 12000
+    system.availableDisplays[0].visibleFrame.origin.x = 12000
+    system.windows[0].frame.origin.x += 12000
+    system.addSecondWindow()
+    let source = system.windows[0].id
+    let controller = DragSnapController(coordinator: WindowCoordinator(system: system),
+                                        configuration: BetterTileConfiguration(),
+                                        displayTicks: ResizeDisplayLink(automatic: false))
+    defer { controller.cancel() }
+    controller.activeModeProvider = { _ in .tabbed }
+    let layout = BentoLayoutState(root: .partition(BentoPartition(axis: .vertical,
+        children: [.vacant(UUID()), .leaf(system.windows[1].id)])))
+    controller.bentoStateProvider = { _ in layout }
+    controller.bentoDragBeganHandler = { _, _, _ in true }
+    let emptyPaneID = UUID()
+    controller.tabbedDropZoneProvider = { _, point, _ in
+        point.x < 12500 ? TabbedDropZone(paneID: emptyPaneID, index: nil,
+                                         paneFrame: BTRect(x: 12000, y: 0, width: 500, height: 800), indicator: nil) : nil
+    }
+    var state = TabbedLayoutState()
+    state.reconcile(windowIDs: [source], removed: [], focused: source)
+    controller.bentoPreviewHandler = { _, _, outcome in
+        if case let .snap(_, frame) = outcome { return prepared(outcome, [Placement(windowID: source, frame: frame)]) }
+        return .ready(PreparedLayoutDrop(outcome: outcome, placements: [], plan: .tabbed(state), dragID: UUID()))
+    }
+    var dropped: LayoutDragEnd?
+    controller.bentoDragEndedHandler = { _, _, end in dropped = end }
+    controller.setUsesSharedGestureEvents(true)
+    send(controller, .leftMouseDown, x: 12300, y: 220)
+    system.windows[0].frame.origin.x += 3
+    send(controller, .leftMouseDragged, x: 12002, y: 400)
+    controller.displayTick()
+    guard case .snap(action: .leftHalf, frame: _)? = committedOutcome(controller.dropTarget.map { $0.layoutEnd }) else {
+        Issue.record("The left edge's snap area wins over an empty pane"); return
+    }
+    send(controller, .leftMouseDragged, x: 12250, y: 400)
+    controller.displayTick()
+    #expect(NSApplication.shared.windows.filter { $0.isVisible && $0.contentView is TabInsertionIndicatorView }.isEmpty)
+    send(controller, .leftMouseUp, x: 12250, y: 400)
+    #expect(committedOutcome(dropped) == .tab(paneID: emptyPaneID, index: nil))
+}
+
+/// The cue says whether the window shows in its pane or joins it hidden.
+@Test @MainActor func tabDropCueNamesASelectedOrHiddenTab() {
+    let a = WindowID(rawValue: "a"), b = WindowID(rawValue: "b")
+    var state = TabbedLayoutState()
+    state.reconcile(windowIDs: [a, b], removed: [], focused: a)
+    let pane = state.panes[0].id
+    func label(_ outcome: BentoDragOutcome, _ source: WindowID) -> String? {
+        DragSnapController.tabCueLabel(PreparedLayoutDrop(outcome: outcome, placements: [], plan: .tabbed(state),
+                                                          dragID: UUID()), sourceWindowID: source)
+    }
+    #expect(label(.tab(paneID: pane, index: 0), a) == "Add as tab")
+    #expect(label(.swap(targetWindowID: a), b) == "Add as hidden tab")
+    #expect(label(.snap(action: .leftHalf, frame: BTRect(x: 0, y: 0, width: 1, height: 1)), a) == nil)
+}

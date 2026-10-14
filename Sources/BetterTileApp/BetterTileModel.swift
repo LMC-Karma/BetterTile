@@ -222,6 +222,9 @@ final class BetterTileModel {
         }
         titleBarDoubleClick.isTabbedMember = { [weak self] id in self?.isTabbedMember(id) == true }
         dragSnap.isTabbedMember = { [weak self] id in self?.isTabbedMember(id) == true }
+        dragSnap.tabbedDropZoneProvider = { [weak self] displayID, point, windowID in
+            self?.tabbedOverlays[displayID]?.tabDropZone(at: point, dragging: windowID)
+        }
         dragSnap.primaryButtonIsPressed = { [weak self] in self?.primaryButtonIsPressed() == true }
         dragSnap.activeModeProvider = { [weak self] displayID in self?.activeMode(for: displayID) }
         dragSnap.bentoStateProvider = { [weak self] displayID in self?.sessionStore.session(for: displayID)?.bentoState }
@@ -1339,18 +1342,19 @@ final class BetterTileModel {
               active.session.sourceWindowID == sourceID
         else { return nil }
         let dragID = active.transaction.id
-        // In Tabbed, a center drop adds the window to that pane as a tab.
-        // The panes are fitted now, so release moves no divider the overlay
-        // did not show; a tab that cannot fit is invalid feedback.
-        if active.layoutSession.mode == .tabbed, case let .swap(targetWindowID) = outcome {
+        // In Tabbed, a center, tab strip, or empty pane drop adds the window
+        // to that pane as a tab: selected when it fits, otherwise hidden. The
+        // panes are fitted now, so release moves no divider the overlay did
+        // not show; a window that cannot join at all is invalid feedback.
+        if active.layoutSession.mode == .tabbed, outcome.addsTab {
             guard let session = sessionStore.session(for: displayID),
                   session.id == active.layoutSession.id, session.revision == active.layoutSession.revision,
-                  var state = session.tabbedState, let pane = state.paneID(containing: targetWindowID)
+                  let state = session.tabbedState, let drop = state.tabDrop(for: outcome)
             else { return .invalid(reason: Self.dropLayoutChanged) }
-            state.move(sourceID, to: pane)
             do {
-                let fitted = try fittedTabbedState(state, in: active.session.workArea,
-                                                   windows: active.tabbedWindows, focus: sourceID)
+                let fitted = try state.droppingTab(sourceID, into: drop.paneID, at: drop.index) {
+                    try fittedTabbedState($0, in: active.session.workArea, windows: active.tabbedWindows, focus: sourceID)
+                }
                 return .ready(PreparedLayoutDrop(outcome: outcome, placements: [], plan: .tabbed(fitted), dragID: dragID))
             } catch {
                 return .invalid(reason: error.localizedDescription)
@@ -1387,7 +1391,7 @@ final class BetterTileModel {
         case let .swap(targetWindowID): .pane(targetWindowID)
         case let .insert(targetWindowID, edge): .insert(targetWindowID: targetWindowID, edge: edge)
         case let .snap(action, frame): .snap(action: action, frame: frame)
-        case .restore: nil
+        case .tab, .restore: nil
         }
         guard let intent else { return nil }
         guard let plan = BentoDropPlanner().plan(
@@ -1742,7 +1746,7 @@ final class BetterTileModel {
         let preparedState: TabbedLayoutState?
         switch end {
         case let .commit(prepared):
-            guard case .swap = prepared.outcome, let state = prepared.tabbedState else { return false }
+            guard prepared.outcome.addsTab, let state = prepared.tabbedState else { return false }
             preparedState = state
         case .restore:
             guard active.tabbedOrigin != nil else { return false }
@@ -1782,11 +1786,23 @@ final class BetterTileModel {
             }
             // The tear-off is provisional. Publish membership and Undo only
             // after placement succeeds, restoring the original group on failure.
+            // A hidden tab stays behind its pane's selected tab.
+            let focus = restoring ? baseline.activeWindowID
+                : state.pane(containing: sourceID)?.selected ?? sourceID
+            // A floating window has no slot to return to. If the drop fails,
+            // it stays where it was dropped; Undo still floats it where it
+            // was before the drag.
+            var rollbackFrames = active.tabbedRollbackFrames
+            let floated = baseline.floatingWindowIDs.contains(sourceID)
+            if floated, let dropped = windows.first(where: { $0.id == sourceID })?.frame {
+                rollbackFrames[sourceID] = dropped
+            }
             applyTabbedState(state, session: session, display: display, windows: displayWindows,
-                focus: restoring ? baseline.activeWindowID : sourceID, rememberUndo: !restoring,
-                rollbackFrames: active.tabbedRollbackFrames,
+                focus: focus, rememberUndo: !restoring,
+                rollbackFrames: rollbackFrames,
                 preparedDrop: preparedState.map { PreparedTabbedArrangement(state: $0, windows: active.tabbedWindows) },
-                gestureBaseline: baseline, gestureSourceID: sourceID, expectedSpaceID: active.tabbedSpaceID)
+                gestureBaseline: baseline, floatingUndoFrame: floated ? active.tabbedRollbackFrames[sourceID] : nil,
+                gestureSourceID: sourceID, expectedSpaceID: active.tabbedSpaceID)
             return true
         }
         statusMessage = "The desktop changed during the drop. Use Repair Tabbed to return the window to a pane."
@@ -4240,7 +4256,7 @@ extension BetterTileModel {
         windows: [WindowSnapshot], focus: WindowID?, rememberUndo: Bool = false, consumeUndo: Bool = false,
         selectionOnly: Bool = false, earlyRaise: TabbedEarlyRaise? = nil, rollbackFrames: [WindowID: BTRect]? = nil,
         snapAction: WindowAction? = nil, snapScope: TabbedSnapScope = .pane, preparedDrop: PreparedTabbedArrangement? = nil,
-        gestureBaseline: TabbedLayoutState? = nil,
+        gestureBaseline: TabbedLayoutState? = nil, floatingUndoFrame: BTRect? = nil,
         gestureSourceID: WindowID? = nil, expectedSpaceID: NativeSpaceID? = nil, restorationFrames: [WindowID: BTRect] = [:],
         arrivals: Set<WindowID> = [], appliedFeedback: ResultPillFeedback? = nil, rejection: String? = nil
     ) {
@@ -4282,6 +4298,9 @@ extension BetterTileModel {
         let detached = (previous?.windowIDs ?? []).subtracting(state.windowIDs)
             .union(restorationFrames.keys).intersection(state.floatingWindowIDs)
         var selectionOnly = selectionOnly
+        // Set when a drag's placement retries after an application refused
+        // the size its overlay planned.
+        var refitsPreparedDrop = false
         func prepare(_ windows: [WindowSnapshot]) throws -> (state: TabbedLayoutState, placements: [Placement]) {
             // A drag released over invalid feedback places nothing and
             // restores its checkpoint below.
@@ -4325,7 +4344,7 @@ extension BetterTileModel {
                     ? Self.tabbedSnapFailure : self.tabbedSnapUnavailableReason(snapAction))
                 guard let focus, let source = windows.first(where: { $0.id == focus }),
                       self.usesTabbedSnap(window: source, on: display.id) else { throw failure }
-                if let preparedDrop {
+                if let preparedDrop, !refitsPreparedDrop {
                     // A drag commits the arrangement its overlay showed.
                     fitted = preparedDrop.state
                 } else {
@@ -4335,14 +4354,19 @@ extension BetterTileModel {
                     fitted = plan.state
                 }
             } else if let preparedDrop {
-                // A drag commits the panes its overlay fitted.
-                fitted = preparedDrop.state
+                // A drag commits the panes its overlay fitted. After an
+                // application refused its size, the same tabs fit again with
+                // the size it revealed, as any placement does.
+                fitted = refitsPreparedDrop
+                    ? try self.fittedTabbedState(preparedDrop.state, in: display.visibleFrame, windows: windows, focus: focus)
+                    : preparedDrop.state
             } else {
                 fitted = try self.fittedTabbedState(state, in: display.visibleFrame, windows: windows, focus: focus)
             }
             // A drag places its windows with the constraints its overlay
             // planned with; a minimum read again cannot change the panes.
-            var proposed = try fitted.placements(in: display.visibleFrame, windows: preparedDrop?.windows ?? windows)
+            var proposed = try fitted.placements(in: display.visibleFrame,
+                                                 windows: refitsPreparedDrop ? windows : preparedDrop?.windows ?? windows)
             let baselineFrames = Dictionary(uniqueKeysWithValues: windows.filter { detached.contains($0.id) }.map {
                 ($0.id, restorationFrames[$0.id] ?? original.tabbedBaselineFrames[$0.id]
                     ?? $0.frame.offsetBy(dx: 35, dy: 35).clamped(to: display.visibleFrame))
@@ -4481,9 +4505,11 @@ extension BetterTileModel {
                 )
                 // Retry once, only after a complete rollback and a new size
                 // observation. Ignored writes and degraded outcomes never retry.
-                // A drag commits only the arrangement its overlay showed.
-                guard case .failed = outcome, attempt == 0, learnedSize, preparedDrop == nil,
+                // A drag keeps the tabs its overlay showed; only the panes
+                // adapt to the size the application revealed.
+                guard case .failed = outcome, attempt == 0, learnedSize,
                       !Task.isCancelled, isCurrent() else { break }
+                refitsPreparedDrop = true
                 do {
                     let ids = Set(windows.map(\.id))
                     let refreshed = try self.system.windowSnapshots(ids: ids)
@@ -4549,9 +4575,13 @@ extension BetterTileModel {
                         || focus.map { previous?.paneID(containing: $0) != state.paneID(containing: $0) } == true
                     if rememberUndo, movedPane, let previous, previous != state {
                         var floatingFrames: [WindowID: BTRect] = [:]
-                        if snapAction != nil, let focus, previous.floatingWindowIDs.contains(focus),
-                           let frame = rollbackFrames?[focus] ?? windows.first(where: { $0.id == focus })?.frame {
-                            floatingFrames[focus] = frame
+                        // Undo puts a floating window that a drop placed back
+                        // where it floated.
+                        if let floated = gestureSourceID ?? (snapAction != nil ? focus : nil),
+                           previous.floatingWindowIDs.contains(floated),
+                           let frame = floatingUndoFrame ?? rollbackFrames?[floated]
+                            ?? windows.first(where: { $0.id == floated })?.frame {
+                            floatingFrames[floated] = frame
                         }
                         self.rememberTabbedUndo(previous, sessionID: original.id, floatingFrames: floatingFrames)
                     }
@@ -4567,6 +4597,7 @@ extension BetterTileModel {
                     self.refreshDividerBoundaries()
                 }
             } else {
+                Self.tabbedLog.error("placement failed\(gestureSourceID == nil ? "" : " after a drag", privacy: .public): \(outcome.failureReason ?? "", privacy: .public)")
                 _ = restoreGestureMembership()
                 // A new window refused the size its pane offered. Adopt it
                 // again, once, with the minimum the write revealed: it joins

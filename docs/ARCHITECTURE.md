@@ -67,8 +67,9 @@ over it applies nothing and shows the reason in the result pill. A window
 tiled in Bento or Tabbed returns to its slot. Any other window, such as a
 Native window or a floating window, stays where the user dropped it, as after
 any drag without a snap. A Bento snap whose remaining windows cannot fit, a
-Tabbed snap that cannot keep its target, a Tabbed tab that no pane fit can
-hold, and a snap whose window minimum is larger than the snap frame all show
+Tabbed snap that cannot keep its target, a Tabbed tab drop that cannot join
+its pane even as a hidden tab, such as a window too large for an empty pane,
+and a snap whose window minimum is larger than the snap frame all show
 invalid feedback.
 
 Release commits the recorded drop. It does not evaluate the release point
@@ -91,6 +92,26 @@ Bento cue arms only after its hover delay, because the armed cue is the drop.
 At a screen edge, a snap area wins over the edge of the pane under it, so the
 overlay shows the snap and not a pane cue.
 
+On a Tabbed desktop, a dragged window joins a pane as a tab in three places:
+the center of a pane's selected tab, a pane's tab strip, and an empty pane.
+This holds for a floating window and for a tab from another pane.
+`BentoDragOutcome.tab` carries the pane and, for a strip, the tab index.
+`TabbedOverlayController.tabDropZone(at:dragging:)` finds the strip or empty
+pane under the pointer, with the strip insertion geometry of tab drags; the
+model passes it to `DragSnapController` as a provider, so the macOS layer does
+not read application state. The dragged window covers the strip, so the
+insertion line is a floating-level panel, like the Bento drop cue. The
+overlay plans the drop when it shows it: the window is selected when the
+panes can show it, after boundaries adapt; otherwise it joins as a hidden tab
+and the panes keep their sizes. The cue says **Add as tab** or **Add as hidden
+tab**. A strip and an empty pane arm at once; a pane center waits for its
+hover delay. A tab strip under the pointer wins over a snap area; an empty
+pane does not, so the top edge still snaps outside every strip. If the
+placement of a floating window's tab drop fails, the window stays where it was
+dropped and the pill reports the failure. Undo returns a floating window to its
+frame from before the drag. The drop cue panels are excluded from screen
+capture (`sharingType = .none`), so screenshots do not show them.
+
 `PointerDisplay` maps the pointer to exactly one display. Display frames are
 half-open, as in CoreGraphics: a point on an edge that two displays share
 belongs to the right display of a side-by-side pair and to the lower display
@@ -112,7 +133,10 @@ including Bento, Focus mode, and Tabbed drops, carries the minimum sizes that
 its overlay planned with. Release checks each frame against them, so a minimum
 read again at release does not reject or change a drop that the overlay showed
 as valid. A write that an application refuses still follows the usual readback
-and rollback rules. A Bento or Tabbed drag stays on the display where
+and rollback rules. Like any Tabbed placement, a Tabbed drop then retries once
+with the size the application revealed, such as Terminal settling a row taller
+than its pane: the tabs stay as the overlay showed, and only the panes adapt.
+A Bento or Tabbed drag stays on the display where
 it started. If a Bento drop is not committed and the dragged window cannot
 return to its frame from before the drag, BetterTile reports the failure and
 stops automatic writes until Repair, as for a degraded mutation.
@@ -491,8 +515,10 @@ change a Bento operation made to the tree; writing it also writes the tree.
   release. A window drag first tears the tab out of its
   group when the group has other tabs. A press and release without any drag
   sample is a click and starts no drag. A sample suppressed by the snap
-  modifiers still counts. A center drop adds the window to
-  that pane as a tab, and a torn tab dropped nowhere returns to its group.
+  modifiers still counts. A drop on a pane's center, its tab strip, or an
+  empty pane adds the window to that pane as a tab, hidden when the pane
+  cannot show it (see Window drag drops). A torn tab dropped nowhere returns
+  to its group.
   When no selected tab moved, it returns without a placement.
 - Fixed partition snaps use `TabbedSnapPlanner` through one model route for
   keyboard/menu actions, captured Layout Wheel commands, and native snap zones.

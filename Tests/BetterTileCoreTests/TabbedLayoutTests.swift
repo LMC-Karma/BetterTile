@@ -479,3 +479,80 @@ func aTabDraggedOutPromotesTheNextTabWhenThePreviousSelectionLeftThePane(kind: T
     #expect(state.panes[0].selected == a)
     #expect(state.panes[0].tabs == [a, b, d])
 }
+
+/// A window drag adds a tab through a strip, an empty pane, or the center of
+/// a selected tab. Other outcomes, and a pane that is gone, add none.
+@Test func tabDropResolvesItsPaneAndIndex() {
+    let a = id("a"), b = id("b")
+    var state = TabbedLayoutState(preset: .columns)
+    state.reconcile(windowIDs: [a], removed: [], focused: a)
+    let first = state.panes[0].id, second = state.panes[1].id
+    let empty = state.tabDrop(for: .tab(paneID: second, index: nil))
+    #expect(empty?.paneID == second && empty?.index == nil)
+    let strip = state.tabDrop(for: .tab(paneID: first, index: 1))
+    #expect(strip?.paneID == first && strip?.index == 1)
+    let center = state.tabDrop(for: .swap(targetWindowID: a))
+    #expect(center?.paneID == first && center?.index == nil)
+    #expect(state.tabDrop(for: .tab(paneID: UUID(), index: 0)) == nil)
+    #expect(state.tabDrop(for: .swap(targetWindowID: b)) == nil)
+    #expect(state.tabDrop(for: .insert(targetWindowID: a, edge: .left)) == nil)
+    #expect(state.tabDrop(for: .restore) == nil)
+    #expect(BentoDragOutcome.tab(paneID: first, index: nil).addsTab)
+    #expect(BentoDragOutcome.swap(targetWindowID: a).addsTab)
+    #expect(!BentoDragOutcome.insert(targetWindowID: a, edge: .left).addsTab)
+}
+
+/// A strip edge maps to an index among the pane's other tabs.
+@Test func tabDropIndexCountsTheDraggedTabOnce() {
+    let a = id("a"), b = id("b"), c = id("c"), x = id("x")
+    var pane = TabbedPane()
+    pane.tabs = [a, b, c]
+    // A window from elsewhere: every edge is an index.
+    for edge in 0...3 { #expect(pane.dropIndex(atEdge: edge, in: pane.tabs, dragging: x) == edge) }
+    #expect(pane.dropIndex(atEdge: 9, in: pane.tabs, dragging: x) == 3)
+    #expect(pane.dropIndex(atEdge: -1, in: pane.tabs, dragging: x) == 0)
+    // Its own tab: an edge after its slot counts it once.
+    #expect(pane.dropIndex(atEdge: 0, in: pane.tabs, dragging: a) == 0)
+    #expect(pane.dropIndex(atEdge: 3, in: pane.tabs, dragging: a) == 2)
+    #expect(pane.dropIndex(atEdge: 1, in: pane.tabs, dragging: c) == 1)
+}
+
+/// A dropped window is selected when the panes can show it, and joins
+/// hidden when they cannot. Only a window that cannot join at all fails.
+@Test func droppedTabIsSelectedWhenItFitsAndHiddenOtherwise() throws {
+    let a = id("a"), b = id("b"), floating = id("floating")
+    var state = TabbedLayoutState(preset: .columns)
+    state.reconcile(windowIDs: [a, b, floating], removed: [], focused: a)
+    let first = state.panes[0].id, second = state.panes[1].id
+    state.move(b, to: second)
+    state.float(floating)
+    state.activatePane(first)
+    #expect(state.panes[0].tabs == [a] && state.floatingWindowIDs == [floating])
+    // The fit stands in for the minimum-size solver: it either can or
+    // cannot show the floating window.
+    func fit(showsFloating: Bool) -> (TabbedLayoutState) throws -> TabbedLayoutState {
+        { candidate in
+            if !showsFloating, candidate.selectedWindowIDs.contains(floating) { throw TabbedLayoutError.panesTooSmall }
+            return candidate
+        }
+    }
+    let shown = try state.droppingTab(floating, into: first, at: 0, fit: fit(showsFloating: true))
+    #expect(shown.pane(containing: floating)?.tabs == [floating, a])
+    #expect(shown.pane(containing: floating)?.selected == floating)
+    #expect(shown.activePaneID == first)
+
+    state.activatePane(second)
+    let hidden = try state.droppingTab(floating, into: first, at: 1, fit: fit(showsFloating: false))
+    #expect(hidden.pane(containing: floating)?.tabs == [a, floating])
+    #expect(hidden.pane(containing: floating)?.selected == a)
+    #expect(hidden.floatingWindowIDs.isEmpty)
+    // A hidden tab keeps the pane the user chose for new windows.
+    #expect(hidden.activePaneID == second)
+
+    // An empty pane always shows its first tab, so it cannot hide one.
+    var emptied = state
+    emptied.move(b, to: first)
+    #expect(throws: TabbedLayoutError.self) {
+        try emptied.droppingTab(floating, into: second, at: nil, fit: fit(showsFloating: false))
+    }
+}
