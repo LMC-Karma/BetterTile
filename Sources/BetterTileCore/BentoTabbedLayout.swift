@@ -561,24 +561,20 @@ public struct TabbedLayoutState: Hashable, Sendable {
 
     /// Moves a tab (or a floating window) into a pane at a position and
     /// selects it. Within one pane this only reorders.
-    /// - Parameters:
-    ///   - reselecting: The tab the source pane showed before the gesture
-    ///     that selected `id`. It applies only when the tab leaves its pane,
-    ///     and only while it is still a member of that pane.
-    ///   - select: False adds the tab hidden and keeps the active pane. An
-    ///     empty pane still selects its first tab.
-    public mutating func move(_ id: WindowID, to paneID: UUID, at index: Int? = nil, reselecting: WindowID? = nil,
-                              select: Bool = true) {
+    /// - Parameter reselecting: The tab the source pane showed before the
+    ///   gesture that selected `id`. It applies only when the tab leaves its
+    ///   pane, and only while it is still a member of that pane.
+    public mutating func move(_ id: WindowID, to paneID: UUID, at index: Int? = nil, reselecting: WindowID? = nil) {
         guard groups.panes.contains(where: { $0.id == paneID }),
               windowIDs.contains(id) || floatingWindowIDs.contains(id) else { return }
         if groups.pane(containing: id)?.id == paneID {
             if let index { groups.reorder(id, to: index) }
-            if select { self.select(id) }
+            select(id)
             return
         }
         groups.remove(id, reselecting: reselecting)
         groups.forgetFloating(id)
-        if groups.add(id, to: paneID, at: index, select: select), select { activePaneID = paneID }
+        if groups.add(id, to: paneID, at: index) { activePaneID = paneID }
     }
 
     /// The pane and tab index a window drag adds its window to: a tab strip
@@ -592,25 +588,6 @@ public struct TabbedLayoutState: Hashable, Sendable {
             paneID(containing: targetWindowID).map { ($0, nil) }
         case .insert, .snap, .restore:
             nil
-        }
-    }
-
-    /// Adds a dropped window to a pane as a tab. It is selected when `fit`
-    /// can show it, as is or after boundaries adapt; otherwise it joins as a
-    /// hidden tab and the panes keep their room. Throws the error from
-    /// showing it when it cannot join at all, for example in an empty pane
-    /// too small for it.
-    public func droppingTab(_ id: WindowID, into paneID: UUID, at index: Int?,
-                            fit: (Self) throws -> Self) throws -> Self {
-        var shown = self
-        shown.move(id, to: paneID, at: index)
-        do {
-            return try fit(shown)
-        } catch {
-            var hidden = self
-            hidden.move(id, to: paneID, at: index, select: false)
-            guard hidden.pane(containing: id)?.selected != id, let fitted = try? fit(hidden) else { throw error }
-            return fitted
         }
     }
 

@@ -1343,21 +1343,25 @@ final class BetterTileModel {
         else { return nil }
         let dragID = active.transaction.id
         // In Tabbed, a center, tab strip, or empty pane drop adds the window
-        // to that pane as a tab: selected when it fits, otherwise hidden. The
-        // panes are fitted now, so release moves no divider the overlay did
-        // not show; a window that cannot join at all is invalid feedback.
+        // to that pane as its selected tab. The panes are fitted now, so
+        // release moves no divider the overlay did not show. A window the
+        // pane cannot show is invalid feedback: it never joins as a hidden
+        // tab, which its application could bring in front of other panes.
         if active.layoutSession.mode == .tabbed, outcome.addsTab {
             guard let session = sessionStore.session(for: displayID),
                   session.id == active.layoutSession.id, session.revision == active.layoutSession.revision,
-                  let state = session.tabbedState, let drop = state.tabDrop(for: outcome)
+                  var state = session.tabbedState, let drop = state.tabDrop(for: outcome)
             else { return .invalid(reason: Self.dropLayoutChanged) }
+            state.move(sourceID, to: drop.paneID, at: drop.index)
+            let workArea = active.session.workArea, windows = active.tabbedWindows
             do {
-                let fitted = try state.droppingTab(sourceID, into: drop.paneID, at: drop.index) {
-                    try fittedTabbedState($0, in: active.session.workArea, windows: active.tabbedWindows, focus: sourceID)
-                }
+                let fitted = try fittedTabbedState(state, in: workArea, windows: windows, focus: sourceID)
                 return .ready(PreparedLayoutDrop(outcome: outcome, placements: [], plan: .tabbed(fitted), dragID: dragID))
             } catch {
-                return .invalid(reason: error.localizedDescription)
+                guard let tooWide = state.fitFailure(showing: sourceID, in: workArea, windows: windows)?.tooWide,
+                      let source = windows.first(where: { $0.id == sourceID })
+                else { return .invalid(reason: error.localizedDescription) }
+                return .invalid(reason: "\(Self.displayName(of: source)) is too \(tooWide ? "wide" : "tall") for this pane")
             }
         }
         if active.layoutSession.mode == .tabbed, case let .snap(action, frame) = outcome {
@@ -1786,10 +1790,7 @@ final class BetterTileModel {
             }
             // The tear-off is provisional. Publish membership and Undo only
             // after placement succeeds, restoring the original group on failure.
-            // A hidden tab stays behind its pane's selected tab, and the
-            // active pane keeps focus.
-            let focus = restoring ? baseline.activeWindowID
-                : state.selectedWindowIDs.contains(sourceID) ? sourceID : state.activeWindowID
+            let focus = restoring ? baseline.activeWindowID : sourceID
             // A floating window has no slot to return to. If the drop fails,
             // it stays where it was dropped; Undo still floats it where it
             // was before the drag.

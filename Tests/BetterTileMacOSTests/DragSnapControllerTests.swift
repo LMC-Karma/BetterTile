@@ -1352,17 +1352,17 @@ func bentoReleaseWithASuppressionModifierRestores(modified: Bool) {
     #expect(committedOutcome(dropped) == .tab(paneID: emptyPaneID, index: nil))
 }
 
-/// The cue says whether the window shows in its pane or joins it hidden.
-@Test @MainActor func tabDropCueNamesASelectedOrHiddenTab() {
-    let a = WindowID(rawValue: "a"), b = WindowID(rawValue: "b")
+/// A tab drop's cue says "Add as tab"; other drops keep their own badge.
+@Test @MainActor func tabDropCueSaysAddAsTab() {
+    let a = WindowID(rawValue: "a")
     var state = TabbedLayoutState()
-    state.reconcile(windowIDs: [a, b], removed: [], focused: a)
+    state.reconcile(windowIDs: [a], removed: [], focused: a)
     let pane = state.panes[0].id
-    func label(_ outcome: BentoDragOutcome, _ source: WindowID) -> String? {
+    func label(_ outcome: BentoDragOutcome) -> String? {
         DragSnapController.tabCueLabel(PreparedLayoutDrop(outcome: outcome, placements: [], plan: .tabbed(state),
-                                                          dragID: UUID()), sourceWindowID: source)
+                                                          dragID: UUID()))
     }
-    #expect(label(.tab(paneID: pane, index: 0), a) == "Add as tab")
-    #expect(label(.swap(targetWindowID: a), b) == "Add as hidden tab")
-    #expect(label(.snap(action: .leftHalf, frame: BTRect(x: 0, y: 0, width: 1, height: 1)), a) == nil)
+    #expect(label(.tab(paneID: pane, index: 0)) == "Add as tab")
+    #expect(label(.swap(targetWindowID: a)) == "Add as tab")
+    #expect(label(.snap(action: .leftHalf, frame: BTRect(x: 0, y: 0, width: 1, height: 1))) == nil)
 }

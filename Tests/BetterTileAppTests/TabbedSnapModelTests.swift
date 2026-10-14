@@ -398,7 +398,7 @@ private func snapFixture(preset: TabbedPreset = .columns) async throws -> (FakeA
         #expect(model.statusMessage != nil)
         #expect(system.windows[0].frame == dropped)
         #expect(system.frameWriteCounts[id] == sourceWrites)
-        #expect(model.activeTabbedState == before)
+        #expect(model.activeTabbedState == before, "\(model.statusMessage ?? "nil") \(String(describing: model.lastActionFeedback))")
         return
     }
     try #require(await waitFor { model.statusMessage?.contains("restore") == true })
@@ -520,7 +520,7 @@ func tabbedSnapExcludedMembersReceiveParticipationGuidance(action: WindowAction,
         model.statusMessage = nil
         if wheel { model.performLayoutWheel(.windowAction(action), for: target) }
         else { model.perform(action) }
-        #expect(model.activeTabbedState == before)
+        #expect(model.activeTabbedState == before, "\(model.statusMessage ?? "nil") \(String(describing: model.lastActionFeedback))")
         #expect(system.windows.map(\.frame) == frames)
         #expect(system.frameWriteCounts == writes)
         #expect(model.lastActionFeedback?.kind == .failure)
@@ -558,7 +558,7 @@ func tabbedSnapExcludedNonmembersRetainOrdinaryActions(action: WindowAction, flo
         #expect(system.frameWriteCounts != writes)
         #expect(model.lastActionFeedback?.kind == .success)
         #expect(model.statusMessage == nil)
-        #expect(model.activeTabbedState == before)
+        #expect(model.activeTabbedState == before, "\(model.statusMessage ?? "nil") \(String(describing: model.lastActionFeedback))")
     }
 }
 
@@ -700,27 +700,42 @@ func tabbedDropAfterTheSourceCenterCrossedIsNotDegraded(entry: String) async thr
 }
 
 /// A Tabbed center drop is fitted when the overlay shows it. Release commits
-/// those panes. A tab that cannot show in the pane joins it hidden.
-@Test(arguments: [600.0, 1100.0]) @MainActor
-func tabbedCenterDropIsFittedByItsPreview(sourceMinimumWidth: Double) async throws {
+/// those panes. A tab the pane cannot show is invalid feedback that names the
+/// window, and release returns it to its slot.
+@Test(arguments: [true, false]) @MainActor
+func tabbedCenterDropIsFittedByItsPreview(fits: Bool) async throws {
     let (system, model) = try await snapFixture()
     defer { model.shutdown() }
     let source = system.windows[0].id, right = system.windows[2].id
     let main = system.mainDisplay.id, bounds = system.mainDisplay.visibleFrame
-    let destination = try #require(model.activeTabbedState?.panes[1].id)
+    let before = try #require(model.activeTabbedState), frames = system.windows.map(\.frame)
+    let destination = before.panes[1].id
+    // Wider than half the display, the source makes the panes adapt. When
+    // it does not fit, it still fits its own slot, but the tab it leaves
+    // selected there cannot shrink to make room for it beside that pane.
+    let sourceMinimumWidth = fits ? 600.0 : 450.0
     system.windows[0].constraints.minimumSize.width = sourceMinimumWidth
+    if !fits { system.windows[1].constraints.minimumSize.width = bounds.size.width - sourceMinimumWidth }
     try #require(model.beginBentoDrag(displayID: main, sourceID: source))
     let preview = model.previewBentoDrag(displayID: main, sourceID: source, outcome: .swap(targetWindowID: right))
+    guard fits else {
+        guard case let .invalid(reason)? = preview else {
+            Issue.record("A window the pane cannot show is not a drop"); return
+        }
+        #expect(reason.hasSuffix(" is too wide for this pane"), "\(reason)")
+        model.finishBentoDrag(displayID: main, sourceID: source, end: .failed(reason: reason))
+        #expect(await waitFor(timeout: .seconds(2)) { model.activeTabbedState == before })
+        #expect(system.windows.map(\.frame) == frames)
+        return
+    }
     guard case let .ready(plan)? = preview, let fitted = plan.tabbedState else {
         Issue.record("Expected a fitted center drop"); return
     }
-    let fits = sourceMinimumWidth < bounds.size.width
     let fittedFrames = fitted.logicalFrames(in: bounds)
-    if fits { #expect((fittedFrames[destination]?.size.width ?? 0) >= sourceMinimumWidth) }
+    #expect((fittedFrames[destination]?.size.width ?? 0) >= sourceMinimumWidth)
     model.finishBentoDrag(displayID: main, sourceID: source, end: .commit(plan))
     #expect(await waitFor(timeout: .seconds(2)) {
-        guard let pane = model.activeTabbedState?.panes.first(where: { $0.id == destination }) else { return false }
-        return pane.tabs.contains(source) && pane.selected == (fits ? source : right)
+        model.activeTabbedState?.panes.first { $0.id == destination }?.selected == source
     })
     #expect(model.activeTabbedState?.logicalFrames(in: bounds) == fittedFrames)
 }
@@ -858,34 +873,38 @@ func tabbedCenterDropIsFittedByItsPreview(sourceMinimumWidth: Double) async thro
             "\(system.windows[0].frame)")
 }
 
-/// A floating window too large to show in the pane joins it as a hidden
-/// tab. The overlay shows that as a drop, not as invalid feedback, and the
-/// panes keep their sizes.
-@Test @MainActor func aFloatingWindowTooLargeForThePaneJoinsItHidden() async throws {
+/// A floating window the pane cannot show does not join it as a hidden tab.
+/// The overlay shows invalid feedback that names the window and the axis,
+/// and release leaves it floating where it was dropped, with no write.
+@Test(arguments: [true, false]) @MainActor
+func aFloatingWindowTooLargeForThePaneIsInvalid(tooWide: Bool) async throws {
     let (system, model) = try await snapFixture()
     defer { model.shutdown() }
-    let source = system.windows[0].id, right = system.windows[2].id, main = system.mainDisplay.id
+    let source = system.windows[0].id, main = system.mainDisplay.id
     let bounds = system.mainDisplay.visibleFrame
     try await float(source, in: model)
     let floated = try #require(model.activeTabbedState)
     let destination = floated.panes[1].id
-    system.windows[0].constraints.minimumSize.width = bounds.size.width + 100
-    try #require(model.beginBentoDrag(displayID: main, sourceID: source, sourceFrame: system.windows[0].frame))
-    guard case let .ready(plan)? = model.previewBentoDrag(displayID: main, sourceID: source,
-                                                          outcome: .tab(paneID: destination, index: nil)),
-          let state = plan.tabbedState else {
-        Issue.record("A window that can join hidden is a drop"); return
+    if tooWide {
+        system.windows[0].constraints.minimumSize.width = bounds.size.width + 100
+    } else {
+        system.windows[0].constraints.minimumSize.height = bounds.size.height + 100
     }
-    #expect(state.pane(containing: source)?.selected == right)
-    #expect(state.logicalFrames(in: bounds) == floated.logicalFrames(in: bounds))
-    model.finishBentoDrag(displayID: main, sourceID: source, end: .commit(plan))
-    #expect(await waitFor(timeout: .seconds(2)) {
-        model.activeTabbedState?.panes.first { $0.id == destination }?.tabs == [right, source]
-    })
-    #expect(model.activeTabbedState?.panes.first { $0.id == destination }?.selected == right)
-    #expect(model.activeTabbedState?.floatingWindowIDs.isEmpty == true)
-    // The active pane keeps focus; the hidden tab does not take it.
-    #expect(system.focusedID == model.activeTabbedState?.activeWindowID)
+    try #require(model.beginBentoDrag(displayID: main, sourceID: source, sourceFrame: system.windows[0].frame))
+    guard case let .invalid(reason)? = model.previewBentoDrag(displayID: main, sourceID: source,
+                                                              outcome: .tab(paneID: destination, index: nil)) else {
+        Issue.record("A window the pane cannot show is not a drop"); return
+    }
+    #expect(reason.hasSuffix(tooWide ? " is too wide for this pane" : " is too tall for this pane"), "\(reason)")
+    system.windows[0].frame.origin.x += 140
+    let dropped = system.windows[0].frame
+    let writes = system.frameWriteCounts[source, default: 0]
+    model.finishBentoDrag(displayID: main, sourceID: source, end: .failed(reason: reason))
+    #expect(await waitFor(timeout: .seconds(2)) { model.statusMessage == reason })
+    try await Task.sleep(for: .milliseconds(200))
+    #expect(model.activeTabbedState == floated)
+    #expect(system.windows[0].frame == dropped)
+    #expect(system.frameWriteCounts[source, default: 0] == writes)
 }
 
 /// A tab strip drop inserts the window at the strip's index, whether it

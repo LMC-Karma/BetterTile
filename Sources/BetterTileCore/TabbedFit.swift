@@ -18,6 +18,13 @@ extension TabbedLayoutState {
     /// Finds why `windowID`, selected in its pane, leaves no layout that meets
     /// every selected window's minimum size. Nil when one exists.
     public func fitProblem(showing windowID: WindowID, in bounds: BTRect, windows: [WindowSnapshot]) -> TabbedFitProblem? {
+        fitFailure(showing: windowID, in: bounds, windows: windows)?.problem
+    }
+
+    /// The fit problem and whether it is on the width axis: false means the
+    /// window is too tall.
+    public func fitFailure(showing windowID: WindowID, in bounds: BTRect,
+                           windows: [WindowSnapshot]) -> (problem: TabbedFitProblem, tooWide: Bool)? {
         var state = self
         state.select(windowID)
         guard state.selectedWindowIDs.contains(windowID), let root = state.layout.root,
@@ -40,9 +47,8 @@ extension TabbedLayoutState {
             minimums[id] ?? BTSize(width: defaultMinimum.width, height: defaultMinimum.height + metrics.contentTopInset)
         }
         let target = minimum(windowID)
-        if target.width > bounds.size.width + tolerance || target.height > bounds.size.height + tolerance {
-            return .largerThanDisplay
-        }
+        if target.width > bounds.size.width + tolerance { return (.largerThanDisplay, true) }
+        if target.height > bounds.size.height + tolerance { return (.largerThanDisplay, false) }
         let gap = metrics.paneGap
         func extent(_ size: BTSize, _ axis: SplitAxis) -> Double { axis == .vertical ? size.width : size.height }
         func minimumExtent(_ node: BentoNode, _ axis: SplitAxis) -> Double {
@@ -72,11 +78,12 @@ extension TabbedLayoutState {
         }
 
         /// `available` is the most room the node can get on each axis.
-        func check(_ node: BentoNode, available: BTSize) -> TabbedFitProblem? {
+        func check(_ node: BentoNode, available: BTSize) -> (problem: TabbedFitProblem, tooWide: Bool)? {
             guard case let .partition(partition) = node,
                   let index = partition.children.firstIndex(where: { $0.windowIDs.contains(windowID) })
             else { return nil }
             let axis = partition.axis
+            let tooWide = axis == .vertical
             let children = partition.children
             let room = extent(available, axis) - gap * Double(children.count - 1)
             let needs = children.map { minimumExtent($0, axis) }
@@ -91,7 +98,7 @@ extension TabbedLayoutState {
                 let othersNeed = otherIndices.reduce(0) { $0 + needs[$1] }
                 let forced = otherIndices.filter { othersNeed - needs[$0] < shortfall - tolerance }
                 let named = forced.isEmpty ? otherIndices : forced
-                return .neighbors(named.flatMap { binding(children[$0], axis) })
+                return (.neighbors(named.flatMap { binding(children[$0], axis) }), tooWide)
             }
             // Locked dividers fix the total size of each run between them.
             let locked = partition.boundaryIDs.indices.filter {
@@ -103,7 +110,7 @@ extension TabbedLayoutState {
             let runRoom = run.reduce(0) { $0 + partition.ratios[$1] } * room
             let runNeeds = run.reduce(0) { $0 + needs[$1] }
             if run.count < children.count, runNeeds > runRoom + tolerance {
-                return .lockedDivider
+                return (.lockedDivider, tooWide)
             }
             let othersInRun = run.filter { $0 != index }.reduce(0) { $0 + needs[$1] }
             let childRoom = (run.count < children.count ? runRoom : room) - othersInRun

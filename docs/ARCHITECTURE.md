@@ -67,10 +67,9 @@ over it applies nothing and shows the reason in the result pill. A window
 tiled in Bento or Tabbed returns to its slot. Any other window, such as a
 Native window or a floating window, stays where the user dropped it, as after
 any drag without a snap. A Bento snap whose remaining windows cannot fit, a
-Tabbed snap that cannot keep its target, a Tabbed tab drop that cannot join
-its pane even as a hidden tab, such as a window too large for an empty pane,
-and a snap whose window minimum is larger than the snap frame all show
-invalid feedback.
+Tabbed snap that cannot keep its target, a Tabbed tab drop whose pane cannot
+show the window as its selected tab, and a snap whose window minimum is larger
+than the snap frame all show invalid feedback.
 
 Release commits the recorded drop. It does not evaluate the release point
 again, run the Bento hover delay again, or plan or fit the drop again. Before
@@ -101,16 +100,18 @@ pane under the pointer, with the strip insertion geometry of tab drags; the
 model passes it to `DragSnapController` as a provider, so the macOS layer does
 not read application state. The dragged window covers the strip, so the
 insertion line is a floating-level panel, like the Bento drop cue. The
-overlay plans the drop when it shows it: the window is selected when the
-panes can show it, after boundaries adapt; otherwise it joins as a hidden tab
-and the panes keep their sizes. The cue says **Add as tab** or **Add as hidden
-tab**. A strip and an empty pane arm at once; a pane center waits for its
+overlay plans the drop when it shows it: the window joins as the pane's
+selected tab, and pane boundaries may adapt to show it. The cue says **Add as
+tab**. A window that the pane cannot show does not join it as a hidden tab,
+because its application could bring it in front of the other panes. The cue is
+invalid and names the window and the axis, for example "Safari is too wide for
+this pane"; `TabbedLayoutState.fitFailure(showing:in:windows:)` gives the
+axis. A strip and an empty pane arm at once; a pane center waits for its
 hover delay. A tab strip under the pointer wins over a snap area, except in
 the screen-edge bands: without a permanent menu bar the top strips reach the
 top edge, and the top edge, its corners, and the side edges still snap there.
 An empty pane does not win over a snap area. A pane's only tab dragged over
-its own strip shows no drop, because the drop would change nothing. A hidden
-tab drop leaves focus with the active pane. If the
+its own strip shows no drop, because the drop would change nothing. If the
 placement of a floating window's tab drop fails, the window stays where it was
 dropped and the pill reports the failure. Undo returns a floating window to its
 frame from before the drag. The drop cue panels are excluded from screen
@@ -522,9 +523,9 @@ change a Bento operation made to the tree; writing it also writes the tree.
   group when the group has other tabs. A press and release without any drag
   sample is a click and starts no drag. A sample suppressed by the snap
   modifiers still counts. A drop on a pane's center, its tab strip, or an
-  empty pane adds the window to that pane as a tab, hidden when the pane
-  cannot show it (see Window drag drops). A torn tab dropped nowhere returns
-  to its group.
+  empty pane adds the window to that pane as its selected tab, or shows
+  invalid feedback when the pane cannot show it (see Window drag drops). A
+  torn tab dropped nowhere returns to its group.
   When no selected tab moved, it returns without a placement.
 - Fixed partition snaps use `TabbedSnapPlanner` through one model route for
   keyboard/menu actions, captured Layout Wheel commands, and native snap zones.

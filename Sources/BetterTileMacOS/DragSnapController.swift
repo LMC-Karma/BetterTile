@@ -709,17 +709,21 @@ public final class DragSnapController {
             position: .center,
             phase: prepared == nil ? .invalid : .armed,
             seam: nil,
-            label: prepared.flatMap { Self.tabCueLabel($0, sourceWindowID: sourceWindowID) },
+            label: prepared.flatMap(Self.tabCueLabel) ?? invalidReason,
             insertion: prepared == nil ? nil : zone.indicator,
             mainScreenFrame: mainScreenFrame
         )
     }
 
-    /// What a Tabbed tab drop's cue says: whether the window shows in its
-    /// pane or joins it hidden. Nil for any other drop.
-    static func tabCueLabel(_ prepared: PreparedLayoutDrop, sourceWindowID: WindowID) -> String? {
-        guard prepared.outcome.addsTab, let state = prepared.tabbedState else { return nil }
-        return state.selectedWindowIDs.contains(sourceWindowID) ? "Add as tab" : "Add as hidden tab"
+    /// What a Tabbed tab drop's cue says. Nil for any other drop.
+    static func tabCueLabel(_ prepared: PreparedLayoutDrop) -> String? {
+        prepared.outcome.addsTab && prepared.tabbedState != nil ? "Add as tab" : nil
+    }
+
+    /// The reason recorded for invalid feedback, such as a window too wide
+    /// for the pane it is dragged to.
+    private var invalidReason: String? {
+        if case let .invalid(reason)? = dropTarget?.drop { reason } else { nil }
     }
 
     /// Records a planned Bento or Tabbed drop. A drop that cannot be planned
@@ -755,11 +759,13 @@ public final class DragSnapController {
             displayID: candidate.displayID
         ) else {
             presentedBentoCandidate = candidate
+            // A Tabbed center drop names why the window cannot join the pane.
             activeBentoPreview.showCue(
                 targetFrame: targetFrame,
                 position: candidate.position,
                 phase: .invalid,
                 seam: nil,
+                label: outcome.addsTab && activeModeProvider?(candidate.displayID) == .tabbed ? invalidReason : nil,
                 mainScreenFrame: mainScreenFrame
             )
             return nil
@@ -773,7 +779,7 @@ public final class DragSnapController {
             phase: .armed,
             seam: sourceDestination,
             sourceOriginalFrame: sourceOriginalFrame,
-            label: Self.tabCueLabel(prepared, sourceWindowID: sourceWindowID),
+            label: Self.tabCueLabel(prepared),
             mainScreenFrame: mainScreenFrame
         )
         NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
@@ -1200,7 +1206,8 @@ private final class BentoDropCueView: NSView {
     private var position = BentoPaneDropPosition.center
     private var phase = Phase.tracking
     private var seamFraction: CGFloat?
-    /// Replaces the swap badge, for example with "Add as tab".
+    /// Replaces the swap badge, for example with "Add as tab" or the reason
+    /// a tab drop is invalid.
     private var label: String?
 
     override var isOpaque: Bool { false }
