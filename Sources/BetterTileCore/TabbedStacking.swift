@@ -78,22 +78,68 @@ public extension TabbedLayoutState {
     }
 }
 
+/// The window that has keyboard focus in the frontmost application, as a
+/// Tabbed stacking repair must respect it.
+public enum TabbedKeyWindow: Hashable, Sendable {
+    /// A tab, a standard window including one the user floated, a dialog,
+    /// or a floating panel. A raise of another window of its application
+    /// takes focus from it, so the repair raises it again last.
+    case window(WindowID)
+    /// A transient window has focus: a popup that closes when it loses
+    /// focus, such as a browser toolbar bubble, or a window whose focus
+    /// cannot be confirmed. No raise gives focus back.
+    case transient(processIdentifier: Int32)
+}
+
+/// A raise plan and whether some of its raises wait for focus to return.
+public struct TabbedKeyPreservingPlan: Equatable, Sendable {
+    public var raises: [WindowID]
+    /// True when raises were left out to keep a transient window's focus.
+    public var isDeferred: Bool
+
+    public init(raises: [WindowID], isDeferred: Bool) {
+        self.raises = raises
+        self.isDeferred = isDeferred
+    }
+}
+
 public extension TabbedLayoutState {
     /// AXRaise makes a window its application's main window. When a repair
     /// raises another window of the key window's application, that
     /// application would move keyboard focus to the raised window. Raising
     /// the key window last keeps focus where the user put it. A hidden tab is
     /// never raised: it must stay behind the curtain.
+    ///
+    /// A transient key window cannot get focus back that way. The plan then
+    /// leaves out every window of its application, and every other raise
+    /// that would cover one of that application's windows. Those raises wait
+    /// until focus returns; the rest of the repair runs now.
     func keyPreservingRaisePlan(
         _ plan: [WindowID],
-        keyWindowID: WindowID?,
-        processIdentifiers: [WindowID: Int32]
-    ) -> [WindowID] {
-        guard let keyWindowID, let keyProcess = processIdentifiers[keyWindowID] else { return plan }
-        let hidden = Set(panes.flatMap(\.tabs)).subtracting(selectedWindowIDs)
-        guard !hidden.contains(keyWindowID),
-              plan.contains(where: { $0 != keyWindowID && processIdentifiers[$0] == keyProcess })
-        else { return plan }
-        return plan.filter { $0 != keyWindowID } + [keyWindowID]
+        key: TabbedKeyWindow?,
+        processIdentifiers: [WindowID: Int32],
+        frames: [WindowID: BTRect] = [:]
+    ) -> TabbedKeyPreservingPlan {
+        switch key {
+        case nil:
+            return TabbedKeyPreservingPlan(raises: plan, isDeferred: false)
+        case let .transient(keyProcess):
+            let protected = frames.filter { processIdentifiers[$0.key] == keyProcess }.map(\.value)
+            let raises = plan.filter { id in
+                guard processIdentifiers[id] != keyProcess else { return false }
+                guard let frame = frames[id] else { return true }
+                return !protected.contains { $0.intersection(frame) != nil }
+            }
+            return TabbedKeyPreservingPlan(raises: raises, isDeferred: raises.count != plan.count)
+        case let .window(keyWindowID):
+            guard let keyProcess = processIdentifiers[keyWindowID] else {
+                return TabbedKeyPreservingPlan(raises: plan, isDeferred: false)
+            }
+            let hidden = Set(panes.flatMap(\.tabs)).subtracting(selectedWindowIDs)
+            guard !hidden.contains(keyWindowID),
+                  plan.contains(where: { $0 != keyWindowID && processIdentifiers[$0] == keyProcess })
+            else { return TabbedKeyPreservingPlan(raises: plan, isDeferred: false) }
+            return TabbedKeyPreservingPlan(raises: plan.filter { $0 != keyWindowID } + [keyWindowID], isDeferred: false)
+        }
     }
 }

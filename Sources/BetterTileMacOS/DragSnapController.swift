@@ -147,6 +147,9 @@ public final class DragSnapController {
     private var pendingStageManagerWindowID: CGWindowID?
     private var mouseDownPoint: BTPoint?
     private var resolvedDragTarget = false
+    /// A drag sample arrived since the press, even one suppressed by the
+    /// snap modifiers.
+    private var sawDragSample = false
     private var isStarted = false
     private var mouseDownMonitorGeneration: UInt64 = 0
     private var fallbackMonitorGeneration: UInt64 = 0
@@ -345,6 +348,7 @@ public final class DragSnapController {
             ) else { return }
             mousePressed(event)
         case .leftMouseDragged where isGestureActive:
+            sawDragSample = true
             // The first sample resolves the dragged window at once. Later
             // samples keep only the newest and run once per display frame.
             if resolvedDragTarget {
@@ -354,6 +358,14 @@ public final class DragSnapController {
             }
             if isGestureActive { startDisplayTicks(at: event.position) }
         case .leftMouseUp where isGestureActive:
+            // A press and release with no drag sample is a click. It starts
+            // no drag: in Tabbed, a drag tears the tab from its group and the
+            // release places the group again, which activates the window and
+            // closes any popup the click opened.
+            guard sawDragSample || resolvedDragTarget else {
+                mouseReleased()
+                return
+            }
             // The final position/modifiers can differ from the last delivered
             // drag sample. Never commit a stale edge or a suppressed snap.
             pendingDragEvent = nil
@@ -391,6 +403,7 @@ public final class DragSnapController {
 
     private func mousePressed(_ event: GlobalGestureEvent) {
         dragGate.reset()
+        sawDragSample = false
         draggedWindowID = nil
         guard configuration.snappingEnabled,
               !event.modifiers.isSuperset(of: configuration.snapSuppressionModifiers)
@@ -715,6 +728,7 @@ public final class DragSnapController {
         bentoDragDisplayID = nil
         mouseDownPoint = nil
         resolvedDragTarget = false
+        sawDragSample = false
         pendingDragEvent = nil
         pacingDisplayID = nil
         displayTicks.stop()

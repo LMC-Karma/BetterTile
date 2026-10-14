@@ -2230,6 +2230,38 @@ extension AccessibilityWindowSystem: TabbedWindowSystem {
         NSWorkspace.shared.frontmostApplication?.processIdentifier
     }
 
+    public func applicationFocus(of window: WindowSnapshot) -> ApplicationFocusMatch {
+        guard (try? ensurePermission()) != nil, let element = elements[window.id] else { return .unknown }
+        let application = makeApplicationElement(pid: window.processIdentifier)
+        var raw: CFTypeRef?
+        let result = Self.gatedCall(application) {
+            AXUIElementCopyAttributeValue(application, kAXFocusedWindowAttribute as CFString, &raw)
+        }
+        let focused = raw.flatMap { CFGetTypeID($0) == AXUIElementGetTypeID() ? unsafeDowncast($0, to: AXUIElement.self) : nil }
+        return Self.applicationFocus(readResult: focused == nil && result == .success ? .noValue : result,
+                                     focusedRole: focused.flatMap { value(kAXRoleAttribute, from: $0) },
+                                     focusedSubrole: focused.flatMap { value(kAXSubroleAttribute, from: $0) },
+                                     matchesWindow: focused.map { CFEqual($0, element) } ?? false)
+    }
+
+    public func isTransientPopup(_ window: WindowSnapshot) -> Bool {
+        guard (try? ensurePermission()) != nil, let element = elements[window.id] else { return false }
+        return WindowFloatingClassifier.isTransientPopup(subrole: value(kAXSubroleAttribute, from: element))
+    }
+
+    /// Only a successful read that names the window confirms focus. Finder
+    /// reports its desktop, a scroll area, as the focused window; that and
+    /// an empty read leave no window focus to protect.
+    nonisolated static func applicationFocus(
+        readResult: AXError, focusedRole: String?, focusedSubrole: String?, matchesWindow: Bool
+    ) -> ApplicationFocusMatch {
+        if readResult == .noValue { return .noWindow }
+        guard readResult == .success else { return .unknown }
+        guard focusedRole == kAXWindowRole else { return .noWindow }
+        if matchesWindow { return .confirmed }
+        return .otherWindow(isTransientPopup: WindowFloatingClassifier.isTransientPopup(subrole: focusedSubrole))
+    }
+
     public func raiseWindow(_ id: WindowID, activate: Bool) throws {
         try ensurePermission()
         guard let element = elements[id] ?? refreshElement(for: id) else { throw WindowSystemError.windowNotFound(id) }

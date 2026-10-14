@@ -90,10 +90,10 @@ private func entry(_ name: String?, _ frame: BTRect) -> TabbedStackEntry {
     let state = twoPanes()
     let pids: [WindowID: Int32] = [id("a"): 1, id("b"): 1, id("c"): 1, id("d"): 2]
     // Raising `c` makes it the app's main window; `a` must be raised again.
-    #expect(state.keyPreservingRaisePlan([id("c")], keyWindowID: id("a"), processIdentifiers: pids)
+    #expect(state.keyPreservingRaisePlan([id("c")], key: .window(id("a")), processIdentifiers: pids).raises
         == [id("c"), id("a")])
     // An already-last key window is left in place.
-    #expect(state.keyPreservingRaisePlan([id("a"), id("c")], keyWindowID: id("a"), processIdentifiers: pids)
+    #expect(state.keyPreservingRaisePlan([id("a"), id("c")], key: .window(id("a")), processIdentifiers: pids).raises
         == [id("c"), id("a")])
 }
 
@@ -101,10 +101,41 @@ private func entry(_ name: String?, _ frame: BTRect) -> TabbedStackEntry {
     let state = twoPanes()
     let pids: [WindowID: Int32] = [id("a"): 1, id("b"): 1, id("c"): 2, id("d"): 2]
     // Another application's raise cannot steal this app's focus.
-    #expect(state.keyPreservingRaisePlan([id("c")], keyWindowID: id("a"), processIdentifiers: pids) == [id("c")])
+    #expect(state.keyPreservingRaisePlan([id("c")], key: .window(id("a")), processIdentifiers: pids).raises == [id("c")])
     // A hidden tab would cover its pane's selected tab.
-    #expect(state.keyPreservingRaisePlan([id("a")], keyWindowID: id("b"), processIdentifiers: pids) == [id("a")])
-    #expect(state.keyPreservingRaisePlan([id("c")], keyWindowID: nil, processIdentifiers: pids) == [id("c")])
+    #expect(state.keyPreservingRaisePlan([id("a")], key: .window(id("b")), processIdentifiers: pids).raises == [id("a")])
+    #expect(state.keyPreservingRaisePlan([id("c")], key: nil, processIdentifiers: pids).raises == [id("c")])
+}
+
+/// A browser toolbar bubble closes as soon as it loses focus, and raising
+/// any window of its application moves focus. Those raises wait, and so do
+/// raises that would cover that application's windows. Others proceed.
+@Test func keyPreservingPlanDefersRaisesThatWouldTakeAPopupsFocus() {
+    let state = twoPanes()
+    let pids: [WindowID: Int32] = [id("a"): 1, id("b"): 2, id("c"): 3, id("d"): 3, id("popup"): 1]
+    let frames: [WindowID: BTRect] = [id("a"): left, id("b"): left, id("c"): right, id("d"): right,
+                                      id("popup"): BTRect(x: 100, y: 100, width: 200, height: 200)]
+    let popup = TabbedKeyWindow.transient(processIdentifier: 1)
+    #expect(state.keyPreservingRaisePlan([id("a")], key: popup, processIdentifiers: pids, frames: frames)
+        == TabbedKeyPreservingPlan(raises: [], isDeferred: true))
+    // The right pane's raise covers nothing of the popup's application.
+    #expect(state.keyPreservingRaisePlan([id("c"), id("a"), id("popup")], key: popup,
+                                         processIdentifiers: pids, frames: frames)
+        == TabbedKeyPreservingPlan(raises: [id("c")], isDeferred: true))
+    // A raise over the popup's application waits too.
+    #expect(state.keyPreservingRaisePlan([id("b")], key: popup, processIdentifiers: pids, frames: frames)
+        == TabbedKeyPreservingPlan(raises: [], isDeferred: true))
+    #expect(state.keyPreservingRaisePlan([id("c")], key: popup, processIdentifiers: pids, frames: frames)
+        == TabbedKeyPreservingPlan(raises: [id("c")], isDeferred: false))
+}
+
+/// A standard window the user floated gets focus back when it is raised
+/// last, as a key tab does.
+@Test func keyPreservingPlanRaisesAFloatedStandardKeyWindowLast() {
+    let state = twoPanes()
+    let pids: [WindowID: Int32] = [id("a"): 1, id("b"): 2, id("c"): 3, id("d"): 3, id("floated"): 1]
+    #expect(state.keyPreservingRaisePlan([id("a")], key: .window(id("floated")), processIdentifiers: pids).raises
+        == [id("a"), id("floated")])
 }
 
 /// A floating window that ended behind the backmost selected tab would sit

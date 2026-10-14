@@ -47,8 +47,9 @@ final class BetterTileModel {
     ///   log stream --predicate 'subsystem == "com.lmckarma.BetterTile"'
     /// Window identifiers and frames only; never titles.
     static let bentoLog = Logger(subsystem: "com.lmckarma.BetterTile", category: "Bento")
-    /// Traces how Tabbed places a window that arrives, returns, or floats.
-    /// Read with:
+    /// Traces how Tabbed places a window that arrives, returns, or floats,
+    /// and its focus corrections and stacking repairs. Window identifiers
+    /// and frames only; never titles. Read with:
     ///   log stream --level debug --predicate 'subsystem == "com.lmckarma.BetterTile" AND category == "Tabbed"'
     static let tabbedLog = Logger(subsystem: "com.lmckarma.BetterTile", category: "Tabbed")
     private static let signposter = OSSignposter(
@@ -103,9 +104,11 @@ final class BetterTileModel {
     /// Checks that gave up on a busy display, for tests.
     private(set) var tabbedAutomaticFloatChecksGivenUp = 0
     /// An apply arrived while another was running; re-apply the committed state after it.
-    private var tabbedNeedsReapply: Set<DisplayID> = []
+    var tabbedNeedsReapply: Set<DisplayID> = []
     private let presentsTabbedChrome: Bool
     private(set) var tabbedFocusTask: Task<Void, Never>?
+    /// Displays whose stacking repair left raises out to keep a popup's focus.
+    private(set) var tabbedRepairDeferred: Set<DisplayID> = []
     private(set) var tabbedNeedsFocusRefresh = false
     private var tabbedFocusSuppressedUntil = Date.distantPast
     private var lastBentoFocusMessage: String?
@@ -1298,7 +1301,7 @@ final class BetterTileModel {
         // must not drain queued work into the provisional tear-off state.
         tabbedTasks[displayID]?.cancel()
         tabbedQueuedIntents.removeValue(forKey: displayID)
-        tabbedNeedsReapply.remove(displayID)
+        let droppedTabbedReapply = tabbedNeedsReapply.remove(displayID) != nil
         tabbedNeedsRefresh.remove(displayID)
         windowEventTask?.cancel()
         windowEventTask = nil
@@ -1318,7 +1321,8 @@ final class BetterTileModel {
             tabbedUndoBaseline: tabbedUndoBaseline,
             tabbedSpaceID: tabbedSpaceID,
             tabbedRollbackFrames: tabbedRollbackFrames,
-            tabbedWindows: bentoEligible(windows.filter { $0.displayID == displayID && $0.isEligible && !$0.isFloating })
+            tabbedWindows: bentoEligible(windows.filter { $0.displayID == displayID && $0.isEligible && !$0.isFloating }),
+            droppedTabbedReapply: droppedTabbedReapply
         )
         tabbedOverlays[displayID]?.acceptsTabDrags = false
         dividerResize.refresh(boundaries: [])
@@ -1606,6 +1610,16 @@ final class BetterTileModel {
         return true
     }
 
+    /// True when every window is still at its verified frame.
+    static func tabbedWindowsStayed(_ ids: Set<WindowID>, windows: [WindowSnapshot],
+                                    checkpoint: [WindowID: BTRect]) -> Bool {
+        let frames = Dictionary(windows.map { ($0.id, $0.frame) }) { first, _ in first }
+        return ids.allSatisfy { id in
+            guard let frame = frames[id], let verified = checkpoint[id] else { return false }
+            return frame.approximatelyEquals(verified, tolerance: 1)
+        }
+    }
+
     /// Tabbed drops that are not Bento reflows. A center drop adds the window
     /// to that pane as a tab. A torn-off tab dropped nowhere returns to its
     /// group. Returns false to let Bento handle splits and snaps.
@@ -1625,6 +1639,7 @@ final class BetterTileModel {
            session.id == active.layoutSession.id, session.revision == active.layoutSession.revision,
            display.visibleFrame == active.session.workArea,
            let baseline = active.tabbedUndoBaseline, var state = session.tabbedState {
+            var session = session
             let restoring: Bool
             if case .restore = outcome {
                 state = baseline
@@ -1637,6 +1652,23 @@ final class BetterTileModel {
             let displayWindows = bentoEligible(windows.filter {
                 $0.displayID == display.id && $0.isEligible && !$0.isFloating
             })
+            // A press that moved no selected tab, such as a click in a title
+            // bar or toolbar, puts the group back without a placement. A
+            // placement would activate the selected tab and close a popup
+            // the click opened.
+            if restoring, Self.tabbedWindowsStayed(Set(baseline.selectedWindowIDs).union([sourceID]),
+                                                   windows: displayWindows, checkpoint: active.tabbedRollbackFrames) {
+                session.tabbedState = baseline
+                session.windowIDs = baseline.windowIDs
+                Self.tabbedLog.debug("torn tab restored without placement: no selected tab moved")
+                if let committed = sessionStore.commit(session, replacing: session.revision) {
+                    // Without a placement, a re-application the gesture took
+                    // over still has to run.
+                    if active.droppedTabbedReapply { tabbedNeedsReapply.insert(display.id) }
+                    showTabbed(session: committed, display: display, windows: displayWindows)
+                    return true
+                }
+            }
             // The tear-off is provisional. Publish membership and Undo only
             // after placement succeeds, restoring the original group on failure.
             applyTabbedState(state, session: session, display: display, windows: displayWindows,
@@ -2116,9 +2148,10 @@ final class BetterTileModel {
         refreshDividerBoundaries()
     }
 
-    private func watchdog() {
+    func watchdog() {
         guard refreshPermission() else { return }
         guard activeBentoDrag == nil, !isStabilizingSpace else { return }
+        retryDeferredTabbedRepair()
         guard let windows = try? system.visibleWindows() else { return }
         if !dividerResize.isDragging {
             coordinator.verifyExpectedMutations(observing: windows)
@@ -3820,6 +3853,8 @@ private struct ActiveBentoDrag {
     var tabbedSpaceID: NativeSpaceID?
     var tabbedRollbackFrames: [WindowID: BTRect]
     var tabbedWindows: [WindowSnapshot]
+    /// A pending Tabbed re-application the gesture took over.
+    var droppedTabbedReapply = false
 }
 
 private struct TabbedCommittedLayout: Equatable {
@@ -3956,7 +3991,8 @@ extension BetterTileModel {
                         obscuringFrames: obscuring.map { [$0] } ?? [],
                         canUndo: !(tabbedUndo[session.id]?.isEmpty ?? true),
                         selectedWindowNumbers: windowNumbers,
-                        curtainAnchorWindowNumber: repairTabbedOrder(state: state, windows: windows, bounds: display.visibleFrame)
+                        curtainAnchorWindowNumber: repairTabbedOrder(state: state, windows: windows, bounds: display.visibleFrame,
+                                                                     displayID: display.id)
                             .flatMap { order in
                                 order.last(where: { $0.windowID.map(selected.contains) == true })?.windowID
                             }.flatMap { windowNumbers[$0] })
@@ -5005,6 +5041,13 @@ extension BetterTileModel {
                let session = self.sessionStore.session(for: focused.displayID), session.mode == .tabbed,
                !session.automaticWritesSuspended, let state = session.tabbedState,
                state.windowIDs.contains(focused.id), state.activeWindowID != focused.id {
+                // A main window reported in place of an unreadable popup is
+                // not the user's choice. Selecting it would close the popup.
+                guard self.isApplicationFocusedWindow(focused) else {
+                    Self.tabbedLog.debug("selection skipped: \(focused.id.rawValue, privacy: .public) is not its application's focused window")
+                    self.repairTabbedStacking()
+                    return
+                }
                 self.handleTabbed(.select(focused.id), on: focused.displayID, raisesEarly: false)
                 return
             }
@@ -5026,7 +5069,14 @@ extension BetterTileModel {
               state.windowIDs.contains(focused.id),
               let target = ((try? system.visibleWindows()) ?? []).first(where: { $0.id == intended.windowID }),
               target.processIdentifier == focused.processIdentifier else { return false }
+        // A main window reported in place of the application's real focused
+        // window, such as a popup, did not take focus from the selected tab.
+        guard isApplicationFocusedWindow(focused) else {
+            Self.tabbedLog.debug("focus correction skipped: \(focused.id.rawValue, privacy: .public) is not its application's focused window")
+            return false
+        }
         tabbedIntendedFocus = nil
+        Self.tabbedLog.debug("focus correction: \(focused.id.rawValue, privacy: .public) took focus from selected tab \(intended.windowID.rawValue, privacy: .public)")
         tabbedFocusSuppressedUntil = Date().addingTimeInterval(0.3)
         guard coordinator.focusTabbedWindow(intended.windowID).isApplied else {
             tabbedFocusSuppressedUntil = .distantPast
@@ -5045,6 +5095,43 @@ extension BetterTileModel {
         return frontmost == window.processIdentifier
     }
 
+    /// `focusedWindow()` reports an application's main window when it cannot
+    /// read the focused window, such as a small popup. Only a window its
+    /// application confirms as focused may select a tab or correct focus.
+    private func isApplicationFocusedWindow(_ window: WindowSnapshot) -> Bool {
+        guard let tabbed = system as? any TabbedWindowSystem else { return true }
+        return tabbed.applicationFocus(of: window) == .confirmed
+    }
+
+    /// The window with keyboard focus in the frontmost application. Nil
+    /// while BetterTile or an application it cannot read is in front, and
+    /// when no window has focus, such as on Finder's desktop. A popup that
+    /// closes without focus, such as a browser bubble, or an unreadable
+    /// focus, is transient. A standard window, including one the user
+    /// floated, a dialog, and a floating panel are not: raising them last
+    /// gives focus back.
+    private func tabbedKeyWindow() -> TabbedKeyWindow? {
+        guard let focused = (try? system.focusedWindow()) ?? nil, isFrontmost(focused),
+              let tabbed = system as? any TabbedWindowSystem else { return nil }
+        let transient = TabbedKeyWindow.transient(processIdentifier: focused.processIdentifier)
+        switch tabbed.applicationFocus(of: focused) {
+        case .confirmed:
+            return !isTabbedMember(focused.id) && tabbed.isTransientPopup(focused) ? transient : .window(focused.id)
+        case .otherWindow(isTransientPopup: true), .unknown: return transient
+        case .otherWindow, .noWindow: return nil
+        }
+    }
+
+    /// The watchdog retries a repair that waited for a popup, in case the
+    /// popup closed without a focus notification.
+    func retryDeferredTabbedRepair() {
+        // A display that left Tabbed has nothing left to repair.
+        tabbedRepairDeferred = tabbedRepairDeferred.filter { activeMode(for: $0) == .tabbed }
+        guard !tabbedRepairDeferred.isEmpty, !isStabilizingSpace else { return }
+        Self.tabbedLog.debug("retrying a deferred stacking repair")
+        repairTabbedStacking(on: tabbedRepairDeferred)
+    }
+
     /// Activation can bring an application's hidden tabs in front of their
     /// panes' selected tabs. This reads the real window order and raises only
     /// what must move. It never activates an application, changes a
@@ -5052,10 +5139,11 @@ extension BetterTileModel {
     /// selected tabs.
     /// Returns false when the window inventory could not be read.
     @discardableResult
-    private func repairTabbedStacking() -> Bool {
+    private func repairTabbedStacking(on displayIDs: Set<DisplayID>? = nil) -> Bool {
         guard let windows = try? system.visibleWindows() else { return false }
         let displays = system.displays()
         for session in sessionStore.sessions.values where session.mode == .tabbed {
+            if let displayIDs, !displayIDs.contains(session.displayID) { continue }
             guard !session.automaticWritesSuspended, tabbedTasks[session.displayID] == nil,
                   !nativeFullscreenDisplayIDs.contains(session.displayID),
                   let state = session.tabbedState,
@@ -5063,7 +5151,7 @@ extension BetterTileModel {
             if presentsTabbedChrome {
                 showTabbed(session: session, display: display, windows: windows)
             } else {
-                _ = repairTabbedOrder(state: state, windows: windows, bounds: display.visibleFrame)
+                _ = repairTabbedOrder(state: state, windows: windows, bounds: display.visibleFrame, displayID: display.id)
             }
         }
         return true
@@ -5071,7 +5159,10 @@ extension BetterTileModel {
 
     /// A shared curtain needs every selected tab above every inactive tab.
     /// Verify the readback after raising; never expose a curtain on intent alone.
-    func repairTabbedOrder(state: TabbedLayoutState, windows: [WindowSnapshot], bounds: BTRect) -> [TabbedStackEntry]? {
+    /// - Parameter displayID: The display whose deferred repair this
+    ///   records or clears.
+    func repairTabbedOrder(state: TabbedLayoutState, windows: [WindowSnapshot], bounds: BTRect,
+                           displayID: DisplayID? = nil) -> [TabbedStackEntry]? {
         guard let system = system as? any TabbedWindowSystem else { return nil }
         let chrome = tabbedOverlays.values.reduce(into: Set<Int>()) { $0.formUnion($1.windowNumbers) }
         // Floating windows and other windows outside the panes must stay
@@ -5081,18 +5172,34 @@ extension BetterTileModel {
         }.map(\.id)).union(state.floatingWindowIDs)
         guard var order = system.stackingOrder(for: windows, excluding: chrome),
               let repair = state.sharedCurtainStackingRepair(order: order, curtainBounds: bounds,
-                                                             aboveCurtain: aboveCurtain) else { return nil }
+                                                             aboveCurtain: aboveCurtain) else {
+            // No raise can repair an order that cannot be read; nothing waits.
+            if let displayID { tabbedRepairDeferred.remove(displayID) }
+            return nil
+        }
         if !repair.isEmpty {
             // Never reorder foreign windows during a held resize.
             guard !dividerResize.isDragging, tabbedResizeReleaseTask == nil else { return nil }
             // A raise of another window of the key window's application moves
-            // keyboard focus to it; the key window is raised again last.
-            let key = ((try? self.system.focusedWindow()) ?? nil).flatMap { isFrontmost($0) ? $0.id : nil }
-            let plan = state.keyPreservingRaisePlan(
+            // keyboard focus to it. A key tab or standard window is raised
+            // again last. A key popup would close, so raises of its
+            // application, and raises that would cover it, wait until focus
+            // returns; the curtain is held as for an unverified order.
+            let keyPlan = state.keyPreservingRaisePlan(
                 repair,
-                keyWindowID: key,
-                processIdentifiers: Dictionary(windows.map { ($0.id, $0.processIdentifier) }) { first, _ in first }
+                key: tabbedKeyWindow(),
+                processIdentifiers: Dictionary(windows.map { ($0.id, $0.processIdentifier) }) { first, _ in first },
+                frames: Dictionary(windows.map { ($0.id, $0.frame) }) { first, _ in first }
             )
+            if let displayID {
+                if keyPlan.isDeferred { tabbedRepairDeferred.insert(displayID) } else { tabbedRepairDeferred.remove(displayID) }
+            }
+            if keyPlan.isDeferred {
+                Self.tabbedLog.debug("stacking repair deferred: a popup has focus; \(repair.count - keyPlan.raises.count, privacy: .public) of \(repair.count, privacy: .public) raises wait")
+            }
+            let plan = keyPlan.raises
+            guard !plan.isEmpty else { return nil }
+            Self.tabbedLog.debug("stacking repair: raising \(plan.map(\.rawValue).joined(separator: ","), privacy: .public)")
             // Focus changes caused by these raises are not user selections.
             tabbedFocusSuppressedUntil = max(tabbedFocusSuppressedUntil, Date().addingTimeInterval(0.3))
             let outcome = coordinator.raiseTabbedWindows(plan)
@@ -5102,6 +5209,7 @@ extension BetterTileModel {
         }
         guard state.sharedCurtainStackingRepair(order: order, curtainBounds: bounds,
                                                 aboveCurtain: aboveCurtain)?.isEmpty == true else { return nil }
+        if let displayID { tabbedRepairDeferred.remove(displayID) }
         return order
     }
 
@@ -5139,6 +5247,7 @@ extension BetterTileModel {
     private func leaveTabbed(displayID: DisplayID, destination: LayoutMode) {
         guard tabbedExiting.insert(displayID).inserted else { return }
         if let sessionID = sessionStore.session(for: displayID)?.id { tabbedCommittedLayouts.removeValue(forKey: sessionID) }
+        tabbedRepairDeferred.remove(displayID)
         tabbedQueuedIntents.removeValue(forKey: displayID)
         let pending = tabbedTasks[displayID]
         pending?.cancel()

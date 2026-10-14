@@ -1183,6 +1183,7 @@ extension WindowCoordinator {
         let baseline: [WindowID: BTRect]
         let currentFrames: [WindowID: BTRect]
         let participantDisplayID: DisplayID?
+        var participantProcesses: [WindowID: Int32] = [:]
         // A selection that raised its tab early knows the focus before it.
         let oldFocus = focusCheckpoint ?? (try? system.focusedWindow()?.id)
         do {
@@ -1204,6 +1205,7 @@ extension WindowCoordinator {
                 throw WindowSystemError.operationFailed("The Tabbed participants changed.")
             }
             participantDisplayID = rollbackDisplayID ?? participants.first?.displayID
+            participantProcesses = Dictionary(participants.map { ($0.id, $0.processIdentifier) }) { first, _ in first }
             currentFrames = Dictionary(uniqueKeysWithValues: participants.map { ($0.id, $0.frame) })
             // A resize has already changed real frames. Keep its verified
             // checkpoint for refusal evidence and rollback, not that partial
@@ -1237,14 +1239,24 @@ extension WindowCoordinator {
                     try? apply(placement.frame, to: placement.windowID, knownCurrentFrame: bestEffortCurrent[placement.windowID])
                 }
             }
+            // Focus is requested only when it can change something. A raise
+            // of any window of the front application takes focus from its
+            // popup, which then closes, so no pane raises a window of it.
+            let popupProcess = popupHoldingProcess(in: tabSystem)
+            let heldByPopup = { (id: WindowID) in popupProcess != nil && participantProcesses[id] == popupProcess }
+            let focus = focus.flatMap { heldByPopup($0) ? nil : $0 }
             if let focus {
                 touched = true
                 // A selection may already have requested focus when it was
                 // pressed. Ask again only for the window order, so a slow
-                // application does not receive a second activation.
-                try tabSystem.raiseWindow(focus, activate: !focusAlreadyRequested)
+                // application does not receive a second activation. When the
+                // selection is unchanged, a window that already has focus is
+                // only ordered.
+                let keepsFocus = Set(selected) == Set(previousSelected)
+                    && tabbedWindowHasFocus(focus, process: participantProcesses[focus], in: tabSystem)
+                try tabSystem.raiseWindow(focus, activate: !focusAlreadyRequested && !keepsFocus)
             }
-            for id in selected where id != focus {
+            for id in selected where id != focus && !heldByPopup(id) {
                 touched = true
                 try tabSystem.raiseWindow(id, activate: false)
             }
@@ -1364,6 +1376,29 @@ extension WindowCoordinator {
             if baseline.contains(where: { id, frame in !restored.contains { $0.id == id && $0.frame.approximatelyEquals(frame, tolerance: 2) } }) { failed = true }
             return failed ? .degraded(reason: "Tabbed could not fully restore the previous arrangement. Use Repair Tabbed or switch to Native.") : .failed(reason: error.localizedDescription)
         }
+    }
+
+    /// The frontmost application, when a transient popup has its focus.
+    /// A standard window, a dialog, the desktop, or an unreadable focus can
+    /// lose focus to a placement, as before. A popup that closes without
+    /// focus keeps it, including one `focusedWindow()` could not read.
+    func popupHoldingProcess(in tabSystem: any TabbedWindowSystem) -> Int32? {
+        guard let process = tabSystem.frontmostProcessIdentifier,
+              let reported = (try? system.focusedWindow()) ?? nil, reported.processIdentifier == process
+        else { return nil }
+        switch tabSystem.applicationFocus(of: reported) {
+        case .confirmed: return tabSystem.isTransientPopup(reported) ? process : nil
+        case .otherWindow(isTransientPopup: true): return process
+        case .otherWindow, .noWindow, .unknown: return nil
+        }
+    }
+
+    /// True when the window is its frontmost application's focused window.
+    func tabbedWindowHasFocus(_ id: WindowID, process: Int32?, in tabSystem: any TabbedWindowSystem) -> Bool {
+        guard let process, tabSystem.frontmostProcessIdentifier == process,
+              let reported = (try? system.focusedWindow()) ?? nil, reported.id == id
+        else { return false }
+        return tabSystem.applicationFocus(of: reported) == .confirmed
     }
 
     /// Restores Tabbed stacking without moving a window, activating an app,
