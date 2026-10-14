@@ -884,6 +884,8 @@ func tabbedCenterDropIsFittedByItsPreview(sourceMinimumWidth: Double) async thro
     })
     #expect(model.activeTabbedState?.panes.first { $0.id == destination }?.selected == right)
     #expect(model.activeTabbedState?.floatingWindowIDs.isEmpty == true)
+    // The active pane keeps focus; the hidden tab does not take it.
+    #expect(system.focusedID == model.activeTabbedState?.activeWindowID)
 }
 
 /// A tab strip drop inserts the window at the strip's index, whether it
@@ -1005,4 +1007,30 @@ func aSteppedFloatingWindowJoinsAPaneByDrop(throughStrip: Bool) async throws {
     // The pane grew to the height the window settled at.
     let pane = try #require(model.activeTabbedState?.frames(in: system.mainDisplay.visibleFrame)[destination.id])
     #expect(TabbedLayoutState.contentFrame(pane).size.height + 0.5 >= system.windows[0].frame.size.height)
+}
+
+/// A snap drag commits exactly the snap its overlay showed. When the window
+/// refuses that size, the drop fails; it is not planned again with the size
+/// the window revealed.
+@Test @MainActor func aRefusedSnapDragIsNotPlannedAgain() async throws {
+    let (system, model) = try await snapFixture()
+    defer { model.shutdown() }
+    let source = system.windows[0].id, main = system.mainDisplay.id
+    let before = try #require(model.activeTabbedState)
+    let frame = try #require(StandardActionEngine().targetFrame(for: .rightHalf,
+        window: system.windows[0], display: system.mainDisplay))
+    try #require(model.beginBentoDrag(displayID: main, sourceID: source))
+    guard case let .ready(plan)? = model.previewBentoDrag(displayID: main, sourceID: source,
+                                                          outcome: .snap(action: .rightHalf, frame: frame)),
+          let planned = plan.placements.first(where: { $0.windowID == source })?.frame else {
+        Issue.record("Expected a snap plan"); return
+    }
+    // The window settles a row taller than any frame it is asked for.
+    system.heightSteps[source] = 17
+    system.windows[0].frame.origin.x += 140
+    model.finishBentoDrag(displayID: main, sourceID: source, end: .commit(plan))
+    #expect(await waitFor(timeout: .seconds(3)) { model.statusMessage != nil })
+    try await Task.sleep(for: .milliseconds(300))
+    #expect(system.requestedFrames[source]?.filter { $0 == planned }.count == 1, "\(system.requestedFrames[source] ?? [])")
+    #expect(model.activeTabbedState?.panes.map(\.tabs) == before.panes.map(\.tabs))
 }

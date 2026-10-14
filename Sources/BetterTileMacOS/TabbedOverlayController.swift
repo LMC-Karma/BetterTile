@@ -542,6 +542,8 @@ public final class TabbedOverlayController {
         guard let pane = state.panes.first(where: { frames[$0.id]?.contains(point) == true }),
               let frame = frames[pane.id] else { return nil }
         guard !pane.tabs.isEmpty else { return TabbedDropZone(paneID: pane.id, index: nil, paneFrame: frame, indicator: nil) }
+        // A pane's only tab dropped on its own strip changes nothing.
+        guard pane.tabs != [id] else { return nil }
         guard point.y < frame.minY + TabbedLayoutState.headerHeight else { return nil }
         let strip = (panes[pane.id]?.contentView as? TabbedPaneView)?.strip
             ?? TabbedStripLayout(width: frame.size.width, count: pane.tabs.count, selectedIndex: nil)

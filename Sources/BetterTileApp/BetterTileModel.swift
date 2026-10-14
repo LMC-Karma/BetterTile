@@ -1786,9 +1786,10 @@ final class BetterTileModel {
             }
             // The tear-off is provisional. Publish membership and Undo only
             // after placement succeeds, restoring the original group on failure.
-            // A hidden tab stays behind its pane's selected tab.
+            // A hidden tab stays behind its pane's selected tab, and the
+            // active pane keeps focus.
             let focus = restoring ? baseline.activeWindowID
-                : state.pane(containing: sourceID)?.selected ?? sourceID
+                : state.selectedWindowIDs.contains(sourceID) ? sourceID : state.activeWindowID
             // A floating window has no slot to return to. If the drop fails,
             // it stays where it was dropped; Undo still floats it where it
             // was before the drag.
@@ -4344,7 +4345,7 @@ extension BetterTileModel {
                     ? Self.tabbedSnapFailure : self.tabbedSnapUnavailableReason(snapAction))
                 guard let focus, let source = windows.first(where: { $0.id == focus }),
                       self.usesTabbedSnap(window: source, on: display.id) else { throw failure }
-                if let preparedDrop, !refitsPreparedDrop {
+                if let preparedDrop {
                     // A drag commits the arrangement its overlay showed.
                     fitted = preparedDrop.state
                 } else {
@@ -4505,9 +4506,10 @@ extension BetterTileModel {
                 )
                 // Retry once, only after a complete rollback and a new size
                 // observation. Ignored writes and degraded outcomes never retry.
-                // A drag keeps the tabs its overlay showed; only the panes
-                // adapt to the size the application revealed.
-                guard case .failed = outcome, attempt == 0, learnedSize,
+                // A tab drop keeps the tabs its overlay showed; only the panes
+                // adapt to the size the application revealed. A snap drag
+                // commits exactly the snap its overlay showed, or fails.
+                guard case .failed = outcome, attempt == 0, learnedSize, preparedDrop == nil || snapAction == nil,
                       !Task.isCancelled, isCurrent() else { break }
                 refitsPreparedDrop = true
                 do {

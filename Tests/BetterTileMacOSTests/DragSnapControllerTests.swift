@@ -1218,8 +1218,9 @@ func bentoReleaseWithASuppressionModifierRestores(modified: Bool) {
 
 /// Over a pane's tab strip, the overlay shows an insertion line at a tab
 /// index, above the dragged window, and release adds the window there. The
-/// strip wins over a snap area only inside the strip; the top edge still
-/// snaps elsewhere.
+/// display has no permanent menu bar, so the strip reaches the top edge. The
+/// strip wins over a snap area except in the screen-edge bands, where the top
+/// edge, its corners, and the side edges still snap.
 @Test @MainActor func tabStripHoverShowsAnInsertionAndCommitsATabDrop() throws {
     _ = NSApplication.shared
     let system = FakeWindowSystem()
@@ -1238,8 +1239,8 @@ func bentoReleaseWithASuppressionModifierRestores(modified: Bool) {
     controller.bentoStateProvider = { _ in layout }
     controller.bentoDragBeganHandler = { _, _, _ in true }
     let paneID = UUID()
-    // The left pane's strip: x 12000-12500, y 10-34. Edges at 12250 split
-    // it. Below y 500 the left side is an empty pane.
+    // A strip across the display: y 0-34, with edges at 12250 and 12500.
+    // Below y 500 the left side is an empty pane.
     let emptyPaneID = UUID()
     controller.tabbedDropZoneProvider = { _, point, id in
         #expect(id == source)
@@ -1247,7 +1248,7 @@ func bentoReleaseWithASuppressionModifierRestores(modified: Bool) {
             return TabbedDropZone(paneID: emptyPaneID, index: nil,
                                   paneFrame: BTRect(x: 12000, y: 500, width: 500, height: 300), indicator: nil)
         }
-        guard point.x < 12500, point.y >= 10, point.y < 34 else { return nil }
+        guard point.y < 34 else { return nil }
         let index = point.x < 12250 ? 0 : 1
         return TabbedDropZone(paneID: paneID, index: index,
                               paneFrame: BTRect(x: 12000, y: 10, width: 500, height: 790),
@@ -1280,17 +1281,22 @@ func bentoReleaseWithASuppressionModifierRestores(modified: Bool) {
     #expect(indicator.frame == CoordinateConverter.toAppKit(BTRect(x: 12248, y: 14, width: 4, height: 26),
                                                             mainScreenFrame: mainFrame))
 
-    // Inside the strip, the strip wins over the left edge's snap area.
-    send(controller, .leftMouseDragged, x: 12002, y: 20)
+    // Inside the strip but away from the edge bands, the strip wins over the
+    // top-left corner's snap area.
+    send(controller, .leftMouseDragged, x: 12030, y: 20)
     controller.displayTick()
     #expect(committedOutcome(controller.dropTarget.map { $0.layoutEnd }) == .tab(paneID: paneID, index: 0))
-    // Outside every strip, the top edge still snaps.
-    send(controller, .leftMouseDragged, x: 12700, y: 2)
-    controller.displayTick()
-    guard case .snap(action: .almostMaximize, frame: _)? = committedOutcome(controller.dropTarget.map { $0.layoutEnd }) else {
-        Issue.record("The top edge must still snap outside a strip"); return
+    // In the edge bands over the strip, the top edge and the top corners
+    // still snap; at strip height, a side edge is in its top corner.
+    for (x, y, action) in [(12700.0, 2.0, WindowAction.almostMaximize), (12002, 20, .topLeftQuarter),
+                           (12998, 20, .topRightQuarter)] {
+        send(controller, .leftMouseDragged, x: x, y: y)
+        controller.displayTick()
+        guard case .snap(action: action, frame: _)? = committedOutcome(controller.dropTarget.map { $0.layoutEnd }) else {
+            Issue.record("\(action) must still snap at the screen edge"); return
+        }
+        #expect(indicators().isEmpty)
     }
-    #expect(indicators().isEmpty)
 
     send(controller, .leftMouseDragged, x: 12300, y: 20)
     controller.displayTick()

@@ -1117,4 +1117,11 @@ func tabStripInsertionPointsMatchRenderedTabEdges(width: Double) {
     let emptyZone = try #require(overlay.tabDropZone(at: BTPoint(x: emptyFrame.midX, y: emptyFrame.midY), dragging: x))
     #expect(emptyZone == TabbedDropZone(paneID: empty.id, index: nil, paneFrame: emptyFrame, indicator: nil))
     #expect(overlay.tabDropZone(at: BTPoint(x: bounds.minX - 50, y: y), dragging: x) == nil)
+
+    // A pane's only tab over its own strip would change nothing.
+    state.move(b, to: empty.id)
+    overlay.refresh(state: state, bounds: bounds, windows: [])
+    let lone = BTPoint(x: emptyFrame.midX, y: emptyFrame.minY + TabbedLayoutState.headerHeight / 2)
+    #expect(overlay.tabDropZone(at: lone, dragging: b) == nil)
+    #expect(overlay.tabDropZone(at: lone, dragging: a)?.paneID == empty.id)
 }

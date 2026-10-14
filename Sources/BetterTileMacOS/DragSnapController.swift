@@ -501,11 +501,15 @@ public final class DragSnapController {
                snapAreas: configuration.snapAreaBindings,
                window: snapSourceWindow
            )
-        // A tab strip under the pointer wins over a snap area; an empty
-        // pane wins only outside one, like a pane center.
+        // A tab strip under the pointer wins over a snap area, except in the
+        // screen-edge bands: without a permanent menu bar, the top strips
+        // reach the top edge, which must still snap. An empty pane wins only
+        // outside a snap area, like a pane center.
+        let edgeBand = SnapZoneDetector().edgeActivationDistance
+        let insideEdgeBands = display.frame.insetBy(dx: edgeBand, dy: edgeBand).contains(point)
         if let draggedWindowID, bentoDragDisplayID != nil, activeModeProvider?(display.id) == .tabbed,
            let zone = tabbedDropZoneProvider?(display.id, point, draggedWindowID),
-           zone.indicator != nil || snapTarget == nil {
+           snapTarget == nil || (zone.indicator != nil && insideEdgeBands) {
             showTabbedDropZone(zone, sourceWindowID: draggedWindowID, displayID: display.id, mainScreenFrame: mainFrame)
             return
         }

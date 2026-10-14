@@ -105,8 +105,12 @@ overlay plans the drop when it shows it: the window is selected when the
 panes can show it, after boundaries adapt; otherwise it joins as a hidden tab
 and the panes keep their sizes. The cue says **Add as tab** or **Add as hidden
 tab**. A strip and an empty pane arm at once; a pane center waits for its
-hover delay. A tab strip under the pointer wins over a snap area; an empty
-pane does not, so the top edge still snaps outside every strip. If the
+hover delay. A tab strip under the pointer wins over a snap area, except in
+the screen-edge bands: without a permanent menu bar the top strips reach the
+top edge, and the top edge, its corners, and the side edges still snap there.
+An empty pane does not win over a snap area. A pane's only tab dragged over
+its own strip shows no drop, because the drop would change nothing. A hidden
+tab drop leaves focus with the active pane. If the
 placement of a floating window's tab drop fails, the window stays where it was
 dropped and the pill reports the failure. Undo returns a floating window to its
 frame from before the drag. The drop cue panels are excluded from screen
@@ -133,9 +137,11 @@ including Bento, Focus mode, and Tabbed drops, carries the minimum sizes that
 its overlay planned with. Release checks each frame against them, so a minimum
 read again at release does not reject or change a drop that the overlay showed
 as valid. A write that an application refuses still follows the usual readback
-and rollback rules. Like any Tabbed placement, a Tabbed drop then retries once
-with the size the application revealed, such as Terminal settling a row taller
+and rollback rules. Like any Tabbed placement, a Tabbed tab drop then retries
+once with the size the application revealed, such as Terminal settling a row taller
 than its pane: the tabs stay as the overlay showed, and only the panes adapt.
+A Tabbed snap drag does not retry; it commits the snap the overlay showed or
+fails.
 A Bento or Tabbed drag stays on the display where
 it started. If a Bento drop is not committed and the dragged window cannot
 return to its frame from before the drag, BetterTile reports the failure and
