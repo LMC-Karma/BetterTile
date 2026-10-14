@@ -456,6 +456,24 @@ func aBackgroundDialogKeepsItsPlaceWithoutARaiseLoop(activationFocus: String) as
                                below: [system.windows[1].id, system.windows[2].id, system.windows[3].id])
 }
 
+/// With no readable frontmost application, a floating dialog behind a
+/// hidden tab is not taken for a background window: it is raised back above
+/// the curtain instead of being left under it.
+@Test @MainActor func anUnknownFrontApplicationLeavesNoFloatUnderTheCurtain() async throws {
+    let system = FakeAppWindowSystem()
+    let model = try await makeOnePaneWithHiddenTabs(system)
+    defer { model.shutdown() }
+    let state = try #require(model.activeTabbedState)
+    let dialog = addFloatedDialog("front-dialog", to: system, x: 700)
+    system.stack = [system.windows[0], system.windows[1], dialog, system.windows[2], system.windows[3]].map(stackEntry)
+    system.frontmostIsUnknown = true
+    let raises = system.raiseRequests.count
+    _ = model.repairTabbedOrder(state: state, windows: system.windows, bounds: system.mainDisplay.visibleFrame)
+    #expect(system.raiseRequests.dropFirst(raises).contains { $0.0 == dialog.id })
+    let order = try #require(system.stack?.compactMap { $0.windowID })
+    #expect((order.firstIndex(of: dialog.id) ?? .max) < (order.firstIndex(of: system.windows[1].id) ?? .min))
+}
+
 /// An ineligible floating window has no validated window number, so it is
 /// never the curtain anchor. A kept window comes with the backmost selected
 /// tab as a fallback anchor.

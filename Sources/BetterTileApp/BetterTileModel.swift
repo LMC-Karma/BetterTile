@@ -4897,7 +4897,9 @@ extension BetterTileModel {
         let key = floats.contains { $0.processIdentifier == front } ? tabbedKeyWindow() : nil
         let keepsFrontFloats = if case .window? = key { true } else { false }
         let keptInPlace = Set(floats.filter { keepsFrontFloats || $0.processIdentifier != front }.map(\.id))
-        let ignoresRaise = Set(floats.filter { $0.processIdentifier != front }.map(\.id))
+        // With no readable front application no float is known to be in
+        // the background, so none is left under the curtain unraised.
+        let ignoresRaise = front == nil ? [] : Set(floats.filter { $0.processIdentifier != front }.map(\.id))
         guard var order = system.stackingOrder(for: windows, excluding: chrome),
               let repair = state.sharedCurtainStackingRepair(order: order, curtainBounds: bounds,
                                                              aboveCurtain: aboveCurtain, keptInPlace: keptInPlace,
