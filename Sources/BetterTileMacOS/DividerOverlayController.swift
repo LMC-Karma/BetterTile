@@ -482,6 +482,8 @@ public final class DividerOverlayController {
     }
 
     public func hideAndCancel() {
+        releaseVerificationTask?.cancel()
+        releaseVerificationTask = nil
         cancelActiveGesture()
         isRetracting = false
         handlePanel?.setActive(false, animated: false)
@@ -1293,10 +1295,11 @@ public final class DividerOverlayController {
     /// A native linked release has no settlement. A window that kept or grew
     /// its size on the release write can still apply its size late, so it
     /// is read again once `WindowMinimumSizeLearner.clampConfirmationDelay`
-    /// has passed. A length still held then, at the same origin, is a
-    /// refusal: the release is solved again once with it, or returns to the
-    /// baseline when no contained layout fits. A window that moved meanwhile,
-    /// for example by the user, ends the check. The correction adds no Undo
+    /// has passed. A length still held then, in the frame read back at
+    /// release, is a refusal: the release is solved again once with it, or
+    /// returns to the baseline when no contained layout fits. A window whose
+    /// frame matches neither its readback nor its placement, for example
+    /// after the user moved or resized it, ends the check. The correction adds no Undo
     /// entry, and the rollback removes the release's entry, `history`.
     private func scheduleReleaseVerification(baseline: [WindowID: BTRect], history: [WindowID: BTRect]) {
         guard let boundary = baselineInteraction?.boundaries.first, let startPoint, let displayBounds,
@@ -1327,9 +1330,12 @@ public final class DividerOverlayController {
                   let targeted = self.coordinator.system as? any TargetedWindowSystem,
                   let actual = try? targeted.windowSnapshots(ids: Set(committed.keys)),
                   actual.count == committed.count,
-                  actual.allSatisfy({ window in released[window.id].map {
-                      abs($0.minX - window.frame.minX) <= 2 && abs($0.minY - window.frame.minY) <= 2
-                  } ?? false })
+                  // Any other frame is a change since the release, for
+                  // example a move or resize by the user.
+                  actual.allSatisfy({ window in
+                      released[window.id]?.approximatelyEquals(window.frame, tolerance: 2) == true
+                          || committed[window.id]?.approximatelyEquals(window.frame, tolerance: 2) == true
+                  })
             else { return }
             var corrected = windows
             var refused = false

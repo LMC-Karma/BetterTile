@@ -187,12 +187,13 @@ twice. Each commit is compared with the frames before it. A window that kept
 its size or grew gives no evidence at once. A Bento release leaves it to
 settlement. A native linked release, Ghost Preview or Live Resize, has no
 settlement, so BetterTile reads its windows again 0.25 s later. A size still
-held then, at the same origin, is a refusal: the release is solved again once
-with it, if the result stays inside the display without overlaps and above
+held then, in the frame read back at release, is a refusal: the release is
+solved again once with it, if the result stays inside the display without overlaps and above
 every minimum. Otherwise the windows return to their frames from before the
 gesture, and the release's Restore step is removed. The correction adds no
-Restore step. A new gesture, another write to the windows, or a window that
-moved, for example by the user, ends the check. Undo history records the
+Restore step. A new gesture, another write to the windows, or a window whose
+frame matches neither its release readback nor its placement, for example
+after the user moved or resized it, ends the check. Undo history records the
 release once, after any correction. If a correction fails or is cancelled,
 every window returns to its frame from before the gesture.
 
@@ -312,9 +313,10 @@ when a process of that application quits, so a relaunch starts without it.
 Hiding an application keeps its seed. Measurements and seeds stay in process
 memory and are never saved. `forget(windowID:)` drops one window's measurement
 and pending clamp without probing it again, and `forgetApplication(_:)` drops
-a seed. No feature calls `forget(windowID:)` yet. `WindowConstraints.minimumSizeSource` names where a minimum came
-from: the default floor, an application hint, a seed, a learned clamp, or a
-probe. A hint, a learned clamp, and a probe count as proven.
+a seed. So far only `remove(_:)`, for a closed window, calls
+`forget(windowID:)`. `WindowConstraints.minimumSizeSource` names where a
+minimum came from: the default floor, an application hint, a seed, a learned
+clamp, or a probe. A hint, a learned clamp, and a probe count as proven.
 
 ## Unresponsive applications
 
@@ -634,8 +636,9 @@ change a Bento operation made to the tree; writing it also writes the tree.
   display's layout as an arrival. Repair Tabbed adopts each automatic float again: it keeps a proven
   minimum, ignores the application's seed for that decision, and probes only
   a window that was never probed. The pill counts the windows returned. User
-  floats stay floating. Selecting a tab ignores a seed larger than the work
-  area below the strip, so the write shows the window's real minimum. A
+  floats stay floating. Every Tabbed sweep and placement ignores a seed
+  larger than the work area below the strip, so the write shows the
+  window's real minimum. A
   hidden tab larger than its pane, for example after its pane shrank, is
   moved back inside the work area, where the curtain covers it. Entry to Tabbed is stored before its placement, so
   a failed entry placement does not repeat the entry on later sweeps. Each adoption, return, and float writes a debug line

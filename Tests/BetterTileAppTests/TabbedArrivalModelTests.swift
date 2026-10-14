@@ -331,14 +331,14 @@ private func addFalselyMeasuredWindow(_ name: String, pid: Int32, to system: Fak
 @Test @MainActor func anAutomaticFloatIsCheckedAgainOnce() async throws {
     let (system, model) = try await onePaneFixture()
     defer { model.shutdown() }
-    model.tabbedAutomaticFloatRetryDelay = .milliseconds(400)
+    model.tabbedAutomaticFloatRetryDelay = .seconds(1)
     let tall = addFalselyMeasuredWindow("tall", pid: 930_011, to: system)
     try #require(await waitFor { model.activeTabbedState?.automaticallyFloatingWindowIDs == [tall] })
     // The window's real minimum shows before the check.
     let index = try #require(system.windows.firstIndex { $0.id == tall })
     system.windows[index].constraints = WindowConstraints()
 
-    #expect(await waitFor(timeout: .seconds(3)) { model.activeTabbedState?.windowIDs.contains(tall) == true })
+    #expect(await waitFor(timeout: .seconds(5)) { model.activeTabbedState?.windowIDs.contains(tall) == true })
     #expect(model.activeTabbedState?.floatingWindowIDs.isEmpty == true)
 }
 
@@ -534,7 +534,8 @@ func selectingALargeHiddenTabGrowsItsPaneOrKeepsTheSelection(impossible: Bool) a
     model.tabbedAutomaticFloatRetryDelay = .milliseconds(200)
     let tall = addFalselyMeasuredWindow("tall", pid: 930_601, to: system)
     try #require(await waitFor { model.activeTabbedState?.automaticallyFloatingWindowIDs == [tall] })
-    try await Task.sleep(for: .milliseconds(600))
+    // Well past the later check, so it cannot return the window later.
+    try await Task.sleep(for: .milliseconds(1_500))
     let index = try #require(system.windows.firstIndex { $0.id == tall })
     system.windows[index].constraints = WindowConstraints()
     let pane = try #require(model.activeTabbedState?.panes[0].id)
@@ -579,20 +580,23 @@ func selectingALargeHiddenTabGrowsItsPaneOrKeepsTheSelection(impossible: Bool) a
 func theLaterCheckWaitsForABusyDisplayOrGivesUp(staysBusy: Bool) async throws {
     let (system, model) = try await onePaneFixture()
     defer { model.shutdown() }
-    model.tabbedAutomaticFloatRetryDelay = .milliseconds(300)
-    model.tabbedAutomaticFloatRetryDeferral = .milliseconds(staysBusy ? 10 : 100)
+    // Wide margins: the drag must begin before the check, and a loaded
+    // runner must not use up the ten waits before the drag ends.
+    model.tabbedAutomaticFloatRetryDelay = .seconds(1)
+    model.tabbedAutomaticFloatRetryDeferral = .milliseconds(staysBusy ? 10 : 400)
     let other = try #require(system.windows.first?.id)
     let tall = addFalselyMeasuredWindow("tall", pid: 930_801, to: system)
-    try #require(await waitFor(timeout: .milliseconds(250)) {
+    try #require(await waitFor(timeout: .milliseconds(900)) {
         model.activeTabbedState?.automaticallyFloatingWindowIDs == [tall]
     })
     try #require(model.beginBentoDrag(displayID: system.mainDisplay.id, sourceID: other))
     let index = try #require(system.windows.firstIndex { $0.id == tall })
     system.windows[index].constraints = WindowConstraints()
     if staysBusy {
-        try #require(await waitFor { model.tabbedAutomaticFloatChecksGivenUp == 1 })
+        try #require(await waitFor(timeout: .seconds(5)) { model.tabbedAutomaticFloatChecksGivenUp == 1 })
     } else {
-        try await Task.sleep(for: .milliseconds(500))
+        // The check runs at 1 s and waits for the drag until about 5 s.
+        try await Task.sleep(for: .milliseconds(1_500))
     }
     #expect(model.activeTabbedState?.automaticallyFloatingWindowIDs == [tall])
 
@@ -602,7 +606,7 @@ func theLaterCheckWaitsForABusyDisplayOrGivesUp(staysBusy: Bool) async throws {
         try await Task.sleep(for: .milliseconds(800))
         #expect(model.activeTabbedState?.automaticallyFloatingWindowIDs == [tall])
     } else {
-        #expect(await waitFor(timeout: .seconds(2)) { model.activeTabbedState?.windowIDs.contains(tall) == true })
+        #expect(await waitFor(timeout: .seconds(5)) { model.activeTabbedState?.windowIDs.contains(tall) == true })
     }
 }
 
@@ -616,10 +620,17 @@ func theLaterCheckWaitsForABusyDisplayOrGivesUp(staysBusy: Bool) async throws {
     let feedback = model.lastActionFeedback
     let index = try #require(system.windows.firstIndex { $0.id == tall })
     system.windows[index].constraints = WindowConstraints()
-    // Its pane write fails, so the check's placement fails.
+    // It keeps focus, so the check makes it the selected tab rather than a
+    // hidden tab behind the focused window. Its pane write fails, so the
+    // check's placement fails.
+    system.focusedID = tall
+    system.acceptsFocusRequests = false
     system.failedFrameWriteNumbers[tall] = Set(1...100)
+    let writesBefore = system.frameWriteCounts[tall, default: 0]
     try await Task.sleep(for: .milliseconds(1_000))
 
+    // The check ran and tried to show it.
+    #expect(system.frameWriteCounts[tall, default: 0] > writesBefore)
     #expect(model.lastActionFeedback == feedback)
     #expect(model.statusMessage == nil)
     #expect(model.activeTabbedState?.automaticallyFloatingWindowIDs == [tall])

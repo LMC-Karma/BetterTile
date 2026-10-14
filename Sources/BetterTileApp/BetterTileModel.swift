@@ -2094,6 +2094,7 @@ final class BetterTileModel {
             return
         }
         sessionStore.removeMissingNativeSpaces(observation.knownSpacesByDisplay)
+        forgetEndedTabbedSessions(displayIDs: system.displays().map(\.id))
         for (displayID, nativeSpaceID) in observation.currentSpaceByDisplay {
             sessionStore.select(
                 displayID: displayID,
@@ -2573,7 +2574,7 @@ final class BetterTileModel {
             layoutMode: session.mode
         )
         if case let .failed(reason) = coordinator.restoreFocusDropPeers(peers) {
-            Self.bentoLog.notice("focus-drop peer restore incomplete: \(reason, privacy: .public)")
+            Self.bentoLog.notice("focus-drop peer restore incomplete: \(reason, privacy: .private)")
         }
         sessionStore.update(display.id) { $0.excludedFocusWindowIDs.removeAll() }
         if let windows = try? system.visibleWindows(),
@@ -3087,6 +3088,8 @@ final class BetterTileModel {
             let started = ContinuousClock.now
             for _ in 0..<8 {
                 try? await Task.sleep(for: .milliseconds(40))
+                // Timed before the read, so a stall after it does not age the sample.
+                let elapsed = ContinuousClock.now - started
                 guard !Task.isCancelled,
                       self.sessionStore.isCurrent(sessionID, revision: revision, on: displayID),
                       let sampled = try? (self.system.cachedVisibleWindows(refreshing: scheduledSession.windowIDs)
@@ -3103,8 +3106,7 @@ final class BetterTileModel {
                    hasResponded,
                    frames.allSatisfy({ id, frame in previous[id]?.approximatelyEquals(frame, tolerance: 1) == true }),
                    !Self.awaitsClampConfirmation(
-                       sampled, changed: changedWindowIDs, requested: requestedFrames,
-                       elapsed: ContinuousClock.now - started
+                       sampled, changed: changedWindowIDs, requested: requestedFrames, elapsed: elapsed
                    ) {
                     break
                 }
@@ -3140,7 +3142,9 @@ final class BetterTileModel {
     ) -> Bool {
         guard let requested, elapsed < .seconds(WindowMinimumSizeLearner.clampConfirmationDelay) else { return false }
         return windows.contains { window in
-            guard changed.contains(window.id), let frame = requested[window.id] else { return false }
+            // A fixed-size window keeps its size; that is no pending clamp.
+            guard changed.contains(window.id), window.constraints.isResizable,
+                  let frame = requested[window.id] else { return false }
             let size = window.frame.size, minimum = window.constraints.minimumSize
             return (size.width > frame.size.width + 2 && minimum.width < size.width - 2)
                 || (size.height > frame.size.height + 2 && minimum.height < size.height - 2)
@@ -3354,6 +3358,7 @@ final class BetterTileModel {
         } else {
             nativeFullscreenDisplayIDs.removeAll()
         }
+        forgetEndedTabbedSessions(displayIDs: displayIDs)
         var resolvedActiveDisplay: DisplayID?
         var sweepCommitted = true
         let ambientReconciler = AmbientLayoutReconciler(
@@ -3407,7 +3412,7 @@ final class BetterTileModel {
                     if case let .degraded(reason) = coordinator.probeMinimumSizes(for: arrivals) {
                         // A window can float without another write, so put
                         // it back now instead of relying on its placement.
-                        Self.bentoLog.error("\(reason, privacy: .public)")
+                        Self.bentoLog.error("\(reason, privacy: .private)")
                         if !coordinator.applyPlacements(originalFrames, recordHistory: false).isApplied {
                             statusMessage = reason
                             presentActionResult(succeeded: false, error: reason, displayID: display.id)
@@ -4178,7 +4183,7 @@ extension BetterTileModel {
                 // No placement starts, so no placement end drops the
                 // pressed tab's highlight.
                 if let focus { tabbedOverlays[display.id]?.dropPressedSelection(of: focus) }
-                Self.tabbedLog.debug("placement not started: \(reason, privacy: .public)")
+                Self.tabbedLog.debug("placement not started: \(reason, privacy: .private)")
                 guard reportsFailure else { return }
                 statusMessage = reason
                 presentActionResult(succeeded: false, error: reason,
@@ -4517,7 +4522,7 @@ extension BetterTileModel {
                 }
             } else {
                 _ = restoreGestureMembership()
-                Self.tabbedLog.debug("placement failed: \(outcome.failureReason ?? "unknown", privacy: .public)")
+                Self.tabbedLog.debug("placement failed: \(outcome.failureReason ?? "unknown", privacy: .private)")
                 // Windows the placement would have returned stay automatic
                 // floats; they get their one later check or a repair.
                 if let stored = self.sessionStore.session(for: display.id)?.tabbedState {
@@ -4660,7 +4665,7 @@ extension BetterTileModel {
             if case let .degraded(reason) = coordinator.probeMinimumSizes(for: [id]) {
                 // Put the window back now: a selection that does not fit
                 // writes no frames, so it cannot be left to the placement.
-                Self.bentoLog.error("\(reason, privacy: .public)")
+                Self.bentoLog.error("\(reason, privacy: .private)")
                 if let original, !coordinator.applyPlacements([original], recordHistory: false).isApplied {
                     statusMessage = reason
                     presentActionResult(succeeded: false, error: reason, displayID: displayID)
@@ -4781,7 +4786,7 @@ extension BetterTileModel {
     private func remeasuredForRepair(_ ids: Set<WindowID>, windows: [WindowSnapshot], displayID: DisplayID) -> [WindowSnapshot] {
         let originals = windows.filter { ids.contains($0.id) }.map { Placement(windowID: $0.id, frame: $0.frame) }
         if case let .degraded(reason) = coordinator.probeMinimumSizes(for: ids) {
-            Self.tabbedLog.error("\(reason, privacy: .public)")
+            Self.tabbedLog.error("\(reason, privacy: .private)")
             if !coordinator.applyPlacements(originals, recordHistory: false).isApplied {
                 statusMessage = reason
             }
@@ -4863,8 +4868,10 @@ extension BetterTileModel {
         let windows = Self.ignoringOversizedSeeds(bentoEligible((observation?.windowsOnCurrentSpaces(allWindows) ?? allWindows)
             .filter { $0.displayID == displayID && $0.isEligible && !$0.isFloating }), in: display.visibleFrame)
         var state = current
-        // A silent check never takes the focused window's place.
-        let focused = ((try? system.focusedWindow()) ?? nil)?.id
+        // A silent check never takes the focused window's place. When focus
+        // cannot be read, for example from a hung application, the active
+        // pane's tab is treated as focused.
+        let focused = ((try? system.focusedWindow()) ?? nil)?.id ?? current.activeWindowID
         let returned = state.returnAutomaticFloats(ids, fittingIn: display.visibleFrame, windows: windows,
                                                    selecting: selecting, keeping: focused)
         logTabbedAdoptions(returned, transition: transition, before: current, windows: windows, bounds: display.visibleFrame)
@@ -5256,6 +5263,13 @@ extension BetterTileModel {
             }
             return Placement(windowID: id, frame: restored)
         }
+    }
+
+    /// Drops the committed layouts of sessions whose display or Space is gone.
+    private func forgetEndedTabbedSessions<IDs: Sequence<DisplayID>>(displayIDs: IDs) {
+        guard !tabbedCommittedLayouts.isEmpty else { return }
+        let live = Set(displayIDs.flatMap { sessionStore.allSessions(for: $0).map(\.id) })
+        tabbedCommittedLayouts = tabbedCommittedLayouts.filter { live.contains($0.key) }
     }
 
     private func leaveTabbed(displayID: DisplayID, destination: LayoutMode) {
