@@ -350,10 +350,12 @@ private func addFalselyMeasuredWindow(_ name: String, pid: Int32, to system: Fak
     model.tabbedAutomaticFloatRetryDelay = .milliseconds(200)
     let tall = addFalselyMeasuredWindow("tall", pid: 930_021, to: system)
     try #require(await waitFor { model.activeTabbedState?.automaticallyFloatingWindowIDs == [tall] })
-    try await Task.sleep(for: .milliseconds(800))
+    // Wait for the one later check. A loaded runner can start it late.
+    try #require(await waitFor(timeout: .seconds(20)) { model.tabbedAutomaticFloatChecksRun == 1 })
     let writes = system.frameWriteCounts[tall, default: 0]
     let sweeps = system.completeSweepCount
     try await Task.sleep(for: .milliseconds(800))
+    #expect(model.tabbedAutomaticFloatChecksRun == 1)
     #expect(model.activeTabbedState?.automaticallyFloatingWindowIDs == [tall])
     #expect(system.frameWriteCounts[tall, default: 0] == writes)
     #expect(system.completeSweepCount == sweeps)

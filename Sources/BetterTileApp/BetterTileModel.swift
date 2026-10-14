@@ -98,6 +98,8 @@ final class BetterTileModel {
     /// How long a check waits for a busy display before it asks again; it
     /// gives up after ten waits. Settable for tests.
     var tabbedAutomaticFloatRetryDeferral: Duration = .milliseconds(250)
+    /// Checks that read the windows again, for tests.
+    private(set) var tabbedAutomaticFloatChecksRun = 0
     /// Checks that gave up on a busy display, for tests.
     private(set) var tabbedAutomaticFloatChecksGivenUp = 0
     /// An apply arrived while another was running; re-apply the committed state after it.
@@ -4720,6 +4722,7 @@ extension BetterTileModel {
             }
             return
         }
+        tabbedAutomaticFloatChecksRun += 1
         guard let allWindows = try? system.visibleWindows() else { return }
         let observation = system.nativeDesktopObservation()
         guard observation?.allowsAutomaticLayout(on: displayID) != false else { return }
