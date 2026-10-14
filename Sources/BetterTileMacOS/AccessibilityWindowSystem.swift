@@ -18,6 +18,10 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
     /// Open while a continuous gesture writes on every display tick.
     private var continuousWriteDepth = 0
     private var continuousSettable: [WindowID: Bool] = [:]
+    /// The last answer each window's application gave about whether its
+    /// position and size can be set. A busy application can fail the
+    /// question without an answer; its window then keeps this verdict.
+    private var settabilityVerdicts: [WindowID: (movable: Bool?, resizable: Bool?)] = [:]
     /// Size settability, checked once per continuous gesture like moving.
     private var continuousSizeSettable: [WindowID: Bool] = [:]
     private var lastWriteReadback: [WindowID: BTRect] = [:]
@@ -1447,6 +1451,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
             liveRequestedSizes.removeValue(forKey: windowID)
             continuousSettable.removeValue(forKey: windowID)
             continuousSizeSettable.removeValue(forKey: windowID)
+            settabilityVerdicts.removeValue(forKey: windowID)
         }
         if event.kind != .moved, event.kind != .resized, event.kind != .focused {
             snapshotCache.invalidate()
@@ -1526,10 +1531,29 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
             exactWindowID: exactWindowIDResolver.windowID(for: element)
         )
         elements[id] = element
-        let movable = isSettable(kAXPositionAttribute, on: element)
-        let resizable = isSettable(kAXSizeAttribute, on: element)
+        // An application that does not answer in time says nothing about
+        // the window. Counting that as "cannot move" would drop the window
+        // from its layout or treat it as fixed-size; keep its last verdict
+        // instead, and read again on the next snapshot.
+        let previous = settabilityVerdicts[id]
+        let movability = Self.settabilityVerdict(answer: settable(kAXPositionAttribute, on: element),
+                                                 previous: previous?.movable)
+        let resizability = Self.settabilityVerdict(answer: settable(kAXSizeAttribute, on: element),
+                                                   previous: previous?.resizable)
+        settabilityVerdicts[id] = (movability.source == .reported ? movability.value : previous?.movable,
+                                   resizability.source == .reported ? resizability.value : previous?.resizable)
+        if movability.source != .reported || resizability.source != .reported {
+            Self.log.debug("""
+            settability of window \(id.rawValue, privacy: .public) unknown: \
+            movable \(movability.value) (\(movability.source.rawValue, privacy: .public)), \
+            resizable \(resizability.value) (\(resizability.source.rawValue, privacy: .public))
+            """)
+        }
+        let movable = movability.value
+        let resizable = resizability.value
+        let defaultMinimum = WindowConstraints().minimumSize
         let minimumSize = MinimumSizeHintValidator.merged(
-            defaultSize: WindowConstraints().minimumSize,
+            defaultSize: defaultMinimum,
             hints: attributes.minimumSizes,
             displaySize: display.frame.size
         )
@@ -1555,7 +1579,11 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
             WindowConstraints(
                 minimumSize: minimumSize,
                 isMovable: movable,
-                isResizable: resizable
+                isResizable: resizable,
+                minimumSizeSource: minimumSize == defaultMinimum ? .default : .hint,
+                // The less certain of the two answers.
+                settabilitySource: [movability.source, resizability.source].contains(.assumed) ? .assumed
+                    : [movability.source, resizability.source].contains(.previous) ? .previous : .reported
             ),
             for: id,
             application: bundleIdentifier
@@ -1905,6 +1933,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
                 minimumSizeLearner.remove(windowID)
                 popupVerdicts.removeValue(forKey: windowID)
                 minimizedWindowIDs.remove(windowID)
+                settabilityVerdicts.removeValue(forKey: windowID)
             }
             recentWindowIDs.removeAll { windowIDs.contains($0) }
             snapshotCache.invalidate()
@@ -2021,6 +2050,17 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
             throw WindowSystemError.operationFailed(Self.unresponsiveApplicationMessage)
         }
         return movable
+    }
+
+    /// A settable attribute's verdict for a snapshot. An answer is used as
+    /// is. Without one, because the application is busy or held as
+    /// unresponsive, the window keeps its previous answer, or counts as
+    /// settable when it never answered: a window that cannot be asked is
+    /// not proven fixed, and a later snapshot asks again.
+    nonisolated static func settabilityVerdict(answer: Bool?, previous: Bool?) -> (value: Bool, source: SettabilitySource) {
+        if let answer { return (answer, .reported) }
+        if let previous { return (previous, .previous) }
+        return (true, .assumed)
     }
 
     /// True when either attribute can be set, false only when both answered

@@ -828,7 +828,8 @@ public final class WindowCoordinator {
                   snapshot.constraints.isResizable || keepsSize else {
                 throw WindowSystemError.unsupportedWindow(placement.windowID)
             }
-            if snapshot.constraints.isResizable {
+            // A seed is another window's minimum; the write shows this window's own.
+            if snapshot.constraints.isResizable, snapshot.constraints.minimumSizeSource != .seed {
                 guard placement.frame.size.width + sizeTolerance >= snapshot.constraints.minimumSize.width,
                       placement.frame.size.height + sizeTolerance >= snapshot.constraints.minimumSize.height
                 else { throw WindowSystemError.operationFailed("A window reached its minimum size.") }

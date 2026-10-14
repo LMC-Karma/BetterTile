@@ -163,6 +163,8 @@ public struct WindowMinimumSizeLearner: Sendable {
     private var smallerSizeCandidates: [WindowID: BTSize] = [:]
     private var clampCandidates: [WindowID: ClampCandidate] = [:]
     private var probedWindowIDs: Set<WindowID> = []
+    /// Windows whose current measurement came from a size probe.
+    private var probeMeasuredWindowIDs: Set<WindowID> = []
     /// The latest measurement for each application, by bundle identifier.
     /// Applications rarely report a minimum, so a new window starts from its
     /// application's measured size instead of the default floor. Its own
@@ -215,6 +217,7 @@ public struct WindowMinimumSizeLearner: Sendable {
         if observedMinimum { smallerSizeCandidates.removeValue(forKey: windowID) }
         guard learned != previous else { return changed }
         learnedSizes[windowID] = learned
+        probeMeasuredWindowIDs.remove(windowID)
         changed = true
         return true
     }
@@ -246,6 +249,7 @@ public struct WindowMinimumSizeLearner: Sendable {
             height: min(previous.height, max(candidate.height, size.height))
         )
         smallerSizeCandidates.removeValue(forKey: windowID)
+        probeMeasuredWindowIDs.remove(windowID)
         return true
     }
 
@@ -288,6 +292,7 @@ public struct WindowMinimumSizeLearner: Sendable {
         }
         let kept = measure(windowID: windowID, requested: requested.size, previous: before,
                            actual: actual.size, tolerance: tolerance)
+        if kept.learned { probeMeasuredWindowIDs.remove(windowID) }
         if kept.width || kept.height {
             clampCandidates[windowID] = ClampCandidate(
                 requested: requested.size,
@@ -315,8 +320,10 @@ public struct WindowMinimumSizeLearner: Sendable {
     ) -> Bool {
         defer { rememberApplication(application, from: windowID) }
         clampCandidates.removeValue(forKey: windowID)
-        return measure(windowID: windowID, requested: BTSize(width: 1, height: 1), previous: original,
-                       actual: clamped, tolerance: tolerance).learned
+        let learned = measure(windowID: windowID, requested: BTSize(width: 1, height: 1), previous: original,
+                              actual: clamped, tolerance: tolerance).learned
+        if learned { probeMeasuredWindowIDs.insert(windowID) }
+        return learned
     }
 
     /// Learns each axis that shrank toward the request and stopped short of
@@ -432,6 +439,7 @@ public struct WindowMinimumSizeLearner: Sendable {
         guard learned != before else { return false }
         learnedSizes[windowID] = learned
         smallerSizeCandidates.removeValue(forKey: windowID)
+        probeMeasuredWindowIDs.remove(windowID)
         return true
     }
 
@@ -445,22 +453,28 @@ public struct WindowMinimumSizeLearner: Sendable {
     }
 
     /// The window's own measurement, or its application's seed when the
-    /// window has none yet.
+    /// window has none yet. The result names the source when the
+    /// measurement or seed raised the minimum.
     public func merging(_ constraints: WindowConstraints, for windowID: WindowID, application: String?) -> WindowConstraints {
         guard learnedSizes[windowID] == nil, let application, let seed = applicationSizes[application] else {
             return merging(constraints, for: windowID)
         }
-        var result = constraints
-        result.minimumSize.width = max(result.minimumSize.width, seed.width)
-        result.minimumSize.height = max(result.minimumSize.height, seed.height)
-        return result
+        return Self.raising(constraints, to: seed, source: .seed)
     }
 
     public func merging(_ constraints: WindowConstraints, for windowID: WindowID) -> WindowConstraints {
         guard let learned = learnedSizes[windowID] else { return constraints }
+        return Self.raising(constraints, to: learned,
+                            source: probeMeasuredWindowIDs.contains(windowID) ? .probe : .learned)
+    }
+
+    private static func raising(_ constraints: WindowConstraints, to size: BTSize, source: MinimumSizeSource) -> WindowConstraints {
         var result = constraints
-        result.minimumSize.width = max(result.minimumSize.width, learned.width)
-        result.minimumSize.height = max(result.minimumSize.height, learned.height)
+        if size.width > result.minimumSize.width || size.height > result.minimumSize.height {
+            result.minimumSizeSource = source
+        }
+        result.minimumSize.width = max(result.minimumSize.width, size.width)
+        result.minimumSize.height = max(result.minimumSize.height, size.height)
         return result
     }
 
@@ -479,6 +493,7 @@ public struct WindowMinimumSizeLearner: Sendable {
         learnedSizes.removeValue(forKey: windowID)
         smallerSizeCandidates.removeValue(forKey: windowID)
         clampCandidates.removeValue(forKey: windowID)
+        probeMeasuredWindowIDs.remove(windowID)
     }
 
     /// Drops one application's seed, for example when it quits. A relaunch,

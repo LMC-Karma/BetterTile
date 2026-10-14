@@ -89,6 +89,26 @@ import Testing
     #expect(system.frameWriteBatches.isEmpty)
 }
 
+/// A seed is another window's minimum, so it does not stop a write: the
+/// write shows this window's own. A learned or reported minimum still does.
+@Test(arguments: [MinimumSizeSource.seed, .learned, .hint])
+@MainActor func onlyAnUnprovenSeedLetsAWriteGoBelowTheMinimum(source: MinimumSizeSource) {
+    let system = FakeWindowSystem()
+    system.addSecondWindow()
+    system.windows[1].constraints.minimumSize = BTSize(width: 600, height: 400)
+    system.windows[1].constraints.minimumSizeSource = source
+    let coordinator = WindowCoordinator(system: system)
+    let placement = Placement(windowID: system.windows[1].id, frame: BTRect(x: 400, y: 200, width: 300, height: 300))
+
+    let outcome = coordinator.applyPlacements([placement])
+    if source == .seed {
+        #expect(outcome == .applied)
+    } else {
+        #expect(outcome == .failed(
+            reason: WindowSystemError.operationFailed("A window reached its minimum size.").localizedDescription))
+    }
+}
+
 @Test @MainActor func coordinatorCanPlanAnActionWithoutMovingTheWindow() throws {
     let system = FakeWindowSystem()
     let original = system.windows[0].frame

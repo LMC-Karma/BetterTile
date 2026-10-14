@@ -48,6 +48,13 @@ windows look correct.
   `probe measured a … window`, and each window shows a brief resize as it
   appears. After placement, no panes overlap. Quit the application; the log
   reports that its seed was dropped.
+- For Tabbed arrivals and floats, run `log stream --level debug --predicate
+  'subsystem == "com.lmckarma.BetterTile" AND category == "Tabbed"'`. Each
+  window that joins, returns, or floats logs its frame, its resizability and
+  minimum with their sources, and the result for each pane it tried. A window
+  that fits the work area never floats; it joins as a selected or hidden tab.
+  Repair Tabbed returns the windows Tabbed floated on its own and keeps the
+  windows you floated.
 - For a hung application, put a window of a test application, such as
   TextEdit, in a Bento layout. Stop it with `kill -STOP <pid>`. Drag dividers
   next to its pane, snap other windows, and drag windows by their title bars.

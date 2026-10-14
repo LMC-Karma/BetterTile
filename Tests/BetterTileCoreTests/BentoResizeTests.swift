@@ -918,3 +918,31 @@ func anEarlySettledFrameLeavesAPendingClampPending(settledAfter: Double) {
     learner.remove(late)
     #expect(learner.windowsNeedingMeasurement([late]) == [late])
 }
+
+/// Each merged minimum names where it came from, so Tabbed floats a window
+/// only for a minimum the window or its application proved.
+@Test func mergedMinimumNamesItsSource() {
+    var learner = WindowMinimumSizeLearner()
+    let probed = WindowID(rawValue: "probed"), written = WindowID(rawValue: "written")
+    let seeded = WindowID(rawValue: "seeded"), unknown = WindowID(rawValue: "unknown")
+    learner.observeProbe(windowID: probed, application: "com.example.App",
+        original: BTSize(width: 1000, height: 800), clamped: BTSize(width: 400, height: 300))
+    learner.observeWriteReadback(windowID: written, requested: BTRect(x: 0, y: 0, width: 200, height: 200),
+        previous: BTRect(x: 0, y: 0, width: 900, height: 700), actual: BTRect(x: 0, y: 0, width: 500, height: 200), now: 0)
+    let hinted = WindowConstraints(minimumSize: BTSize(width: 300, height: 200), minimumSizeSource: .hint)
+
+    #expect(learner.merging(WindowConstraints(), for: probed, application: "com.example.App").minimumSizeSource == .probe)
+    #expect(learner.merging(WindowConstraints(), for: written, application: nil).minimumSizeSource == .learned)
+    #expect(learner.merging(WindowConstraints(), for: seeded, application: "com.example.App").minimumSizeSource == .seed)
+    #expect(learner.merging(WindowConstraints(), for: unknown, application: "com.other.App").minimumSizeSource == .default)
+    // A reported minimum the measurement does not raise keeps its source.
+    #expect(learner.merging(hinted, for: written, application: nil).minimumSizeSource == .learned)
+    #expect(learner.merging(WindowConstraints(minimumSize: BTSize(width: 600, height: 400), minimumSizeSource: .hint),
+                            for: written, application: nil).minimumSizeSource == .hint)
+    // A later write that measures the probed window again replaces the probe.
+    learner.observeWriteReadback(windowID: probed, requested: BTRect(x: 0, y: 0, width: 100, height: 100),
+        previous: BTRect(x: 0, y: 0, width: 900, height: 700), actual: BTRect(x: 0, y: 0, width: 450, height: 350), now: 0)
+    #expect(learner.merging(WindowConstraints(), for: probed, application: nil).minimumSizeSource == .learned)
+    learner.forget(windowID: probed)
+    #expect(learner.merging(WindowConstraints(), for: probed, application: nil).minimumSizeSource == .default)
+}

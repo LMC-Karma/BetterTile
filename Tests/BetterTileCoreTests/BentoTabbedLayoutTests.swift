@@ -375,9 +375,10 @@ private func adoptionWindow(_ name: String, minimumWidth: Double = 120) -> Windo
 }
 
 /// A window that arrives later (from another Space) and fits no pane, even
-/// after boundaries adapt, floats at its own size instead of hiding behind a
-/// pane it overflows. The panes keep their sizes and selections.
-@Test func arrivingWindowThatCannotFitFloats() throws {
+/// after boundaries adapt, but fits the work area, waits as a hidden tab of
+/// the active pane. The panes keep their sizes and selections. It floated
+/// before (#145); selecting the tab now fits the panes or says why not.
+@Test func arrivingWindowThatCannotFitWaitsAsAHiddenTab() throws {
     let bounds = BTRect(x: 0, y: 0, width: 1000, height: 800)
     var state = TabbedLayoutState(preset: .columns)
     let a = adoptionWindow("a", minimumWidth: 480), b = adoptionWindow("b", minimumWidth: 480)
@@ -388,8 +389,9 @@ private func adoptionWindow(_ name: String, minimumWidth: Double = 120) -> Windo
     let framesBefore = state.frames(in: bounds)
     let wide = adoptionWindow("wide", minimumWidth: 708)
     state.reconcile(windowIDs: [a.id, b.id, wide.id], removed: [], fittingIn: bounds, windows: [a, b, wide])
-    #expect(!state.windowIDs.contains(wide.id))
-    #expect(state.floatingWindowIDs.contains(wide.id))
+    #expect(state.pane(containing: wide.id)?.id == state.panes[0].id)
+    #expect(state.hiddenWindowIDs == [wide.id])
+    #expect(state.floatingWindowIDs.isEmpty)
     #expect(state.panes[0].selected == a.id)
     #expect(state.frames(in: bounds) == framesBefore)
     #expect((try? state.placements(in: bounds, windows: [a, b, wide])) != nil)
