@@ -18,7 +18,8 @@ discussion, an issue, or the pull request. An issue is optional.
 
 Agree on the approach first when the goal is unclear, the work needs more than
 one pull request, or a project rule requires approval. Keep one topic in each
-pull request.
+pull request. Include the tests and documentation needed to complete that goal
+in the same pull request.
 
 ---
 
@@ -37,6 +38,10 @@ pull request.
    the architecture rules below.
 
 3. Add tests for geometry, state transitions, migrations, and failure paths.
+   For a bug fix, record a reproduction that fails before the change and passes
+   after it. For performance work, compare before and after on the same machine
+   with the same configuration and workload. Distinguish measured improvement
+   from a source-level explanation.
 
 4. Run focused checks while you work. Before opening a ready pull request, run:
 
@@ -45,6 +50,12 @@ pull request.
    xcodebuild -project BetterTile.xcodeproj -scheme BetterTile \
      -configuration Debug CODE_SIGNING_ALLOWED=NO build
    ```
+
+   Describe the problem, resulting behavior, evidence, limits, and safety impact
+   in the pull-request template. Record check results, including relevant manual
+   checks. Name checks that did not run and explain why. Do not present an
+   untested assumption as a verified result. The maintainer decides whether a
+   remaining manual check blocks merge or release.
 
 5. Stage the files you changed. Push and open a ready pull request against
    `main`:
