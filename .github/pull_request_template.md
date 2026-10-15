@@ -1,23 +1,28 @@
 ## Problem
 
+<!-- Name the trigger and its effect on the user before this change. -->
 
-## Before
+## Change
 
+<!-- Describe the resulting behavior. Keep one complete goal, with its tests and documentation. -->
 
-## After
+## Evidence
 
+<!-- For a fix, show the failing reproduction and passing result. For performance work, compare the same machine, configuration, and workload before and after. -->
 
-## Not changed
+- Before:
+- After:
+- Checks run and results:
 
+## Limits
 
-## Validation
+- Checks not run and why:
+- Remaining uncertainty:
 
-- Ran:
-- Not run:
-- Manual checks: record relevant results or explain why they were skipped. The
-  maintainer decides whether a remaining check blocks merge or release.
+Record relevant manual results or explain why they were skipped. The maintainer
+decides whether a remaining check blocks merge or release.
 
-## Safety and project limits
+## Safety
 
 [SECURITY.md](../SECURITY.md) is the canonical policy for networking, privacy,
 permissions, privileged components, dependencies, distribution, and user-data
