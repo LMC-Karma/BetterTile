@@ -104,7 +104,6 @@ struct SettingsView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding()
                 .background(.yellow.opacity(0.12))
-                .accessibilityElement(children: .combine)
             }
             settingsNavigation
         }
