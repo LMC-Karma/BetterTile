@@ -379,15 +379,25 @@ public struct WindowMinimumSizeLearner: Sendable {
     /// nudge proves the position, not the size: an application can follow a
     /// move at once and apply a size later. Each axis that stayed larger than
     /// requested becomes a pending clamp; see `confirmClampCandidate`.
+    ///
+    /// `workArea` is the size of the window's display work area. AppKit keeps
+    /// a window that is larger than its screen rather than apply another
+    /// size that is still too large, so an axis kept beyond the work area is
+    /// no candidate.
     public mutating func recordClampCandidate(
         windowID: WindowID,
         requested: BTSize,
         actual: BTSize,
+        workArea: BTSize? = nil,
         now: Double,
         tolerance: Double = 2
     ) {
-        let width = actual.width > requested.width + tolerance && !isStep(requested.width, actual.width, tolerance: tolerance)
-        let height = actual.height > requested.height + tolerance && !isStep(requested.height, actual.height, tolerance: tolerance)
+        func kept(_ requested: Double, _ actual: Double, _ limit: Double?) -> Bool {
+            actual > requested + tolerance && !isStep(requested, actual, tolerance: tolerance)
+                && actual <= (limit ?? .infinity) + tolerance
+        }
+        let width = kept(requested.width, actual.width, workArea?.width)
+        let height = kept(requested.height, actual.height, workArea?.height)
         guard width || height else { return }
         clampCandidates[windowID] = ClampCandidate(
             requested: requested,

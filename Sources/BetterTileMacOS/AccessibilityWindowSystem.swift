@@ -555,6 +555,13 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         }
     }
 
+    /// The work area of the display that holds most of `frame`.
+    private func workArea(holding frame: BTRect) -> BTSize? {
+        displays().max {
+            ($0.frame.intersection(frame)?.area ?? 0) < ($1.frame.intersection(frame)?.area ?? 0)
+        }?.visibleFrame.size
+    }
+
     /// Returns nil whenever the native topology is unavailable or rejected.
     /// Callers must keep their public-API inference path for that result.
     public func nativeDesktopObservation() -> NativeDesktopObservation? {
@@ -695,7 +702,8 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
                 // that the size is final: the kept size is only a candidate
                 // until a later snapshot still shows it.
                 minimumSizeLearner.recordClampCandidate(
-                    windowID: windowID, requested: frame.size, actual: actual.size, now: now
+                    windowID: windowID, requested: frame.size, actual: actual.size,
+                    workArea: workArea(holding: frame), now: now
                 )
             }
         }
@@ -1015,7 +1023,8 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
                 snapshotGeneration &+= 1
             } else if result.confirmedClamp {
                 minimumSizeLearner.recordClampCandidate(
-                    windowID: write.windowID, requested: write.frame.size, actual: actual.size, now: now
+                    windowID: write.windowID, requested: write.frame.size, actual: actual.size,
+                    workArea: workArea(holding: write.frame), now: now
                 )
             }
         }
