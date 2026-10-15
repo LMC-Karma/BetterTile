@@ -43,8 +43,9 @@ public enum AmbientLayoutTransition: Sendable {
     /// The single-window latch fired in any layout mode.
     case placeSingleWindow(session: LayoutSession, placement: Placement)
     /// Apply the derived Bento placements. A work area requests authoritative
-    /// settlement after a successful commit and deliberately remains absent
-    /// from `session.lastWorkArea` until that settlement succeeds.
+    /// settlement after a successful commit. It waits in
+    /// `session.pendingWorkArea` and reaches `session.lastWorkArea` only when
+    /// that settlement succeeds.
     case applyLayout(session: LayoutSession, placements: [Placement], settleWorkArea: BTRect?)
 
     public var session: LayoutSession {
@@ -88,9 +89,9 @@ public struct AmbientLayoutReconciler: Sendable {
         var session = original
         let before = session.bentoState
         let frames = Dictionary(uniqueKeysWithValues: observation.windows.map { ($0.id, $0.frame) })
-        let workAreaChanged = session.lastWorkArea.map {
-            !$0.approximatelyEquals(observation.display.visibleFrame, tolerance: 0.5)
-        } ?? false
+        let workAreaChanged = [session.lastWorkArea, session.pendingWorkArea].contains { area in
+            area.map { !$0.approximatelyEquals(observation.display.visibleFrame, tolerance: 0.5) } ?? false
+        }
 
         var shouldApply = false
         if session.mode == .bento, !session.automaticWritesSuspended {
@@ -170,7 +171,9 @@ public struct AmbientLayoutReconciler: Sendable {
             : nil
 
         session.lastObservedFrames = frames
-        if settleWorkArea == nil {
+        if let settleWorkArea {
+            session.pendingWorkArea = settleWorkArea
+        } else {
             session.lastWorkArea = observation.display.visibleFrame
         }
 

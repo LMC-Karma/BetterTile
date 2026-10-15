@@ -15,6 +15,7 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, TabbedWindowSystem, Min
         isMain: true
     )
     var enhancedUserInterfacePolicy: EnhancedUserInterfacePolicy = .disableAndRestore
+    var leavesSpaceForDock = false
     var permission = true
     var ignoredFrameWriteWindowIDs: Set<WindowID> = []
     var enforcedMinimumWidths: [WindowID: Double] = [:]
@@ -155,7 +156,15 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, TabbedWindowSystem, Min
         refreshLearnedConstraints()
         return windows.filter { !offscreenWindowIDs.contains($0.id) }
     }
-    func displays() -> [DisplaySnapshot] { availableDisplays }
+    func displays() -> [DisplaySnapshot] {
+        guard leavesSpaceForDock else { return availableDisplays }
+        // A bottom Dock 80 points thick, kept out of the work area.
+        return availableDisplays.map { display in
+            var display = display
+            display.visibleFrame.size.height -= 80
+            return display
+        }
+    }
     /// Windows that targeted reads leave out once they took this many frame
     /// writes, as for an application that stops answering after a write.
     var unreadableAfterWrites: [WindowID: Int] = [:]
@@ -364,9 +373,6 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, TabbedWindowSystem, Min
         return unrestored
     }
     var unrestoredProbeWindowIDs: Set<WindowID> = []
-    func startDockFootprintMonitoring(onChange: @escaping () -> Void) {}
-    func stopDockFootprintMonitoring() {}
-    func triggerDockFootprintCheck() {}
     func startDisplayReconfigurationMonitoring(onChange: @escaping @MainActor () -> Void) {}
     func stopDisplayReconfigurationMonitoring() {}
     func updateManagedWindowIDs(_ ids: Set<WindowID>) {}

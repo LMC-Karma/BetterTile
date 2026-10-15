@@ -616,3 +616,43 @@ func aTemporarilyMissingBentoPeerDoesNotMaximizeTheRemainingWindow(knownMember: 
     }
     #expect(stableSession == thirdSession)
 }
+
+/// The work area changes and changes back before the first layout settles,
+/// as when a display or Dock change is undone quickly. The windows already
+/// moved for the first change, so the change back must lay them out again.
+@Test func aWorkAreaThatChangesBackBeforeSettlingIsAppliedAgain() throws {
+    let windows = [ambientLeft, ambientRight]
+    let smaller = BTRect(x: 0, y: 0, width: 1_200, height: 720)
+    let session = LayoutSession(
+        displayID: ambientDisplayID,
+        mode: .bento,
+        bentoState: horizontalPaneState(windows),
+        windowIDs: Set(windows.map(\.id)),
+        bentoInsertionOrder: windows.map(\.id),
+        lastWorkArea: ambientBounds
+    )
+    let reconciler = ambientReconciler()
+    let shrink = reconciler.transition(
+        session: session,
+        observation: ambientObservation(
+            windows: windows,
+            display: DisplaySnapshot(id: ambientDisplayID, frame: ambientBounds, visibleFrame: smaller)
+        )
+    )
+    guard case let .applyLayout(shrunk, placements, _) = shrink else {
+        Issue.record("A smaller work area must apply the layout")
+        return
+    }
+    let moved = windows.map { window in
+        var window = window
+        window.frame = placements.first { $0.windowID == window.id }?.frame ?? window.frame
+        return window
+    }
+
+    let back = reconciler.transition(session: shrunk, observation: ambientObservation(windows: moved))
+    guard case let .applyLayout(_, restored, _) = back else {
+        Issue.record("The work area changed back, so the windows must be laid out for it again")
+        return
+    }
+    #expect(restored.allSatisfy { $0.frame.maxY == ambientBounds.maxY })
+}

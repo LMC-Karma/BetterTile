@@ -465,6 +465,16 @@ func invalidGlassStrengthIsRejected(strength: Double) {
     #expect(configuration.bentoSwapHoverDelay == 0.12)
     #expect(configuration.bentoInnerGap == 0)
     #expect(configuration.singleWindowPlacement == .maximize)
+    #expect(!configuration.leavesSpaceForDock)
+}
+
+@Test func leaveSpaceForDockIsOffByDefaultAndRoundTrips() throws {
+    let missing = try ConfigurationStore.decode(Data(#"{"schemaVersion":12}"#.utf8))
+    #expect(!missing.leavesSpaceForDock)
+    var changed = missing
+    changed.leavesSpaceForDock = true
+    #expect(try ConfigurationStore.decode(JSONEncoder().encode(changed)).leavesSpaceForDock)
+    #expect(ConfigurationChangeSet.between(missing, changed) == [.workArea])
 }
 
 @Test func schemaSixAddsGapAndKeepsExistingResizeFeedbackChoice() throws {

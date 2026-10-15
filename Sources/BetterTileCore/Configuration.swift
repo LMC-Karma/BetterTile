@@ -121,6 +121,9 @@ public struct BetterTileConfiguration: Codable, Hashable, Sendable {
     /// When a tab that needs more room grows its pane, switching to a tab
     /// that fits returns the panes to the sizes the user set.
     public var tabbedRestoresPaneSizes = true
+    /// Keeps the Dock's strip out of the work area even while the Dock hides,
+    /// so layouts stay put when it slides in and out.
+    public var leavesSpaceForDock = false
     public var defaultLayoutMode: LayoutMode
     public var singleWindowPlacement: WindowAction?
     public var resizeFeedbackMode: ResizeFeedbackMode
@@ -227,6 +230,7 @@ public struct BetterTileConfiguration: Codable, Hashable, Sendable {
         case applicationRules, keyboardShortcutsEnabled
         case shortcuts, layoutWheel, menuBarActions
         case tabbedRestoresPaneSizes
+        case leavesSpaceForDock
         case layoutMode, bentoEnabled, bentoStates
     }
 
@@ -238,6 +242,7 @@ public struct BetterTileConfiguration: Codable, Hashable, Sendable {
         schemaVersion = Self.currentSchemaVersion
         defaultTabbedPreset = try container.decodeIfPresent(TabbedPreset.self, forKey: .defaultTabbedPreset) ?? .single
         tabbedRestoresPaneSizes = try container.decodeIfPresent(Bool.self, forKey: .tabbedRestoresPaneSizes) ?? true
+        leavesSpaceForDock = try container.decodeIfPresent(Bool.self, forKey: .leavesSpaceForDock) ?? false
         setupCompletionVersion = max(
             0,
             try container.decodeIfPresent(Int.self, forKey: .setupCompletionVersion) ?? 0
@@ -367,6 +372,7 @@ public struct BetterTileConfiguration: Codable, Hashable, Sendable {
         try container.encode(defaultLayoutMode, forKey: .defaultLayoutMode)
         try container.encode(defaultTabbedPreset, forKey: .defaultTabbedPreset)
         try container.encode(tabbedRestoresPaneSizes, forKey: .tabbedRestoresPaneSizes)
+        try container.encode(leavesSpaceForDock, forKey: .leavesSpaceForDock)
         try container.encodeIfPresent(singleWindowPlacement, forKey: .singleWindowPlacement)
         try container.encode(resizeFeedbackMode, forKey: .resizeFeedbackMode)
         try container.encode(dividerVisibility, forKey: .dividerVisibility)
@@ -479,10 +485,11 @@ public struct ConfigurationChangeSet: OptionSet, Hashable, Sendable {
     public static let applicationRules = Self(rawValue: 1 << 8)
     public static let layoutWheel = Self(rawValue: 1 << 9)
     public static let overlayAppearance = Self(rawValue: 1 << 10)
+    public static let workArea = Self(rawValue: 1 << 11)
     public static let all: Self = [
         .shortcuts, .snapping, .linkedResize, .divider,
         .bentoGeometry, .activationPolicy, .titleBar, .accessibilityWrites,
-        .applicationRules, .layoutWheel, .overlayAppearance,
+        .applicationRules, .layoutWheel, .overlayAppearance, .workArea,
     ]
 
     public static func between(
@@ -535,6 +542,9 @@ public struct ConfigurationChangeSet: OptionSet, Hashable, Sendable {
         }
         if old.layoutWheel != new.layoutWheel {
             changes.insert(.layoutWheel)
+        }
+        if old.leavesSpaceForDock != new.leavesSpaceForDock {
+            changes.insert(.workArea)
         }
         return changes
     }

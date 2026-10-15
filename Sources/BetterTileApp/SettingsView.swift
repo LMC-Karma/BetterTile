@@ -36,7 +36,7 @@ private enum SettingsDestination: String, CaseIterable, Identifiable {
                 + "keyboard shortcuts master toggle macos tiling move resize edge "
                 + "advanced enhanced user interface chromium electron voiceover"
         case .windowLayout:
-            "mode manual native bento tabbed tabs pane preset resize linked divider appearance liquid glass transparency clear frosted shortcut keyboard hotkey halves thirds quarters sixths move display restore new window side automatic left right top bottom"
+            "mode manual native bento tabbed tabs pane preset resize linked divider appearance liquid glass transparency clear frosted shortcut keyboard hotkey halves thirds quarters sixths move display restore new window side automatic left right top bottom dock space hide auto-hide"
         case .snapZones:
             "drag snap edge corner title bar double click maximize"
         case .menuBar:
@@ -638,6 +638,10 @@ struct WindowLayoutSettings: View {
                 )
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
+                Toggle("Leave space for Dock", isOn: configurationBinding(\.leavesSpaceForDock))
+                Text("Keeps the Dock's area free even when the Dock hides automatically, so windows stay put when it appears.")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
             }
 
             if LayoutMode.availableModes.contains(.tabbed) {

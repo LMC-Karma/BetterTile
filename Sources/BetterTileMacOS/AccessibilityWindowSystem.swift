@@ -43,7 +43,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
     private var registrations: [pid_t: Set<Registration>] = [:]
     private var eventHandler: (@MainActor (WindowSystemEvent) -> Void)?
     private var minimumSizeLearner = WindowMinimumSizeLearner()
-    private let dockFootprintMonitor = DockFootprintMonitor()
+    private let dockSpaceReader = DockSpaceReader()
     private var recentApplicationPIDs: [pid_t] = []
     private var activationObserver: NSObjectProtocol?
     private var displayReconfigurationHandler: (@MainActor () -> Void)?
@@ -76,6 +76,9 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
     /// How frame writes treat `AXEnhancedUserInterface`. Owned by the app layer
     /// and refreshed from configuration.
     public var enhancedUserInterfacePolicy: EnhancedUserInterfacePolicy = .disableAndRestore
+    /// Keeps the Dock's strip out of the work area even while the Dock hides.
+    /// Owned by the app layer and refreshed from configuration.
+    public var leavesSpaceForDock = false
     private var frameWriteSuspensions: [pid_t: EnhancedUserInterfaceSuspension]?
 
     public init() {
@@ -103,20 +106,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
     isolated deinit {
         stopWindowObservation()
         stopDisplayReconfigurationMonitoring()
-        dockFootprintMonitor.stop()
         if let activationObserver { NSWorkspace.shared.notificationCenter.removeObserver(activationObserver) }
-    }
-
-    public func startDockFootprintMonitoring(onChange: @escaping () -> Void) {
-        dockFootprintMonitor.start(onChange: onChange)
-    }
-
-    public func triggerDockFootprintCheck() {
-        dockFootprintMonitor.triggerTransitionCheck()
-    }
-
-    public func stopDockFootprintMonitoring() {
-        dockFootprintMonitor.stop()
     }
 
     public func startDisplayReconfigurationMonitoring(
@@ -534,19 +524,27 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
     public func displays() -> [DisplaySnapshot] {
         let screens = NSScreen.screens
         guard let mainFrame = screens.first?.frame else { return [] }
-        return screens.map { screen in
+        let measured = screens.map { screen in
             let number = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber
-            let id = DisplayID(rawValue: number?.stringValue ?? String(screen.hash))
-            let frame = CoordinateConverter.toTopLeft(screen.frame, mainScreenFrame: mainFrame)
-            let appKitVisibleFrame = CoordinateConverter.toTopLeft(screen.visibleFrame, mainScreenFrame: mainFrame)
+            return (
+                id: DisplayID(rawValue: number?.stringValue ?? String(screen.hash)),
+                frame: CoordinateConverter.toTopLeft(screen.frame, mainScreenFrame: mainFrame),
+                screen: screen
+            )
+        }
+        let dock = dockSpaceReader.footprint(
+            displays: measured.map { ($0.id, $0.frame) },
+            whileHidden: leavesSpaceForDock
+        )
+        return measured.map { id, frame, screen in
+            var visibleFrame = CoordinateConverter.toTopLeft(screen.visibleFrame, mainScreenFrame: mainFrame)
+            if let dock, dock.displayID == id {
+                visibleFrame = dock.workArea(fullFrame: frame, appKitVisibleFrame: visibleFrame)
+            }
             return DisplaySnapshot(
                 id: id,
                 frame: frame,
-                visibleFrame: dockFootprintMonitor.effectiveFrame(
-                    displayID: id,
-                    fullFrame: frame,
-                    appKitVisibleFrame: appKitVisibleFrame
-                ),
+                visibleFrame: visibleFrame,
                 scaleFactor: screen.backingScaleFactor,
                 isMain: screen == NSScreen.main
             )
