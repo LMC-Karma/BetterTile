@@ -2,22 +2,14 @@ import Foundation
 import Testing
 @testable import BetterTileApp
 
-@Test func appIconChoiceRestoresAndFallsBackToClassic() throws {
-    let suite = "BetterTileIconTests-\(UUID().uuidString)"
-    let defaults = try #require(UserDefaults(suiteName: suite))
-    defer {
-        defaults.removePersistentDomain(forName: suite)
-        // Removing the domain leaves an empty plist behind, one per run.
-        try? FileManager.default.removeItem(at: FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Preferences/\(suite).plist"))
-    }
+@Test func appIconChoiceRestoresAndFallsBackToClassic() {
+    let defaults = MemoryDefaults()
 
     #expect(AppIconStyle.selected(in: defaults) == .classic)
     defaults.set("ice", forKey: AppIconStyle.defaultsKey)
-    let restoredDefaults = try #require(UserDefaults(suiteName: suite))
-    #expect(AppIconStyle.selected(in: restoredDefaults) == .ice)
+    #expect(AppIconStyle.selected(in: defaults) == .ice)
     defaults.set("dark", forKey: AppIconStyle.defaultsKey)
-    #expect(AppIconStyle.selected(in: restoredDefaults) == .dark)
+    #expect(AppIconStyle.selected(in: defaults) == .dark)
     defaults.set("unknown-future-icon", forKey: AppIconStyle.defaultsKey)
     #expect(AppIconStyle.selected(in: defaults) == .classic)
     defaults.set("classic", forKey: AppIconStyle.defaultsKey)
@@ -90,4 +82,13 @@ import Testing
             }
         }
     }
+}
+
+/// Keeps values in memory. A named suite leaves a preferences file behind:
+/// the preferences daemon writes it again after the test deletes it.
+private final class MemoryDefaults: UserDefaults, @unchecked Sendable {
+    private var values: [String: Any] = [:]
+    override func object(forKey key: String) -> Any? { values[key] }
+    override func string(forKey key: String) -> String? { values[key] as? String }
+    override func set(_ value: Any?, forKey key: String) { values[key] = value }
 }
