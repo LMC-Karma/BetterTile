@@ -44,8 +44,9 @@ failure paths. Test `BetterTileMacOS` with the fake window system in
 
 For a bug fix, record a reproduction that fails before the change and passes
 after it. For performance work, compare before and after on the same machine
-with the same configuration and workload. Do not present an untested
-assumption as a verified result.
+with the same configuration and workload. Distinguish measured improvement
+from a source-level explanation. Do not present an untested assumption as a
+verified result.
 
 Use judgment for checks that require live macOS behavior or hardware. Run them
 when the change affects behavior that automated tests cannot cover, and record
@@ -98,8 +99,9 @@ Sparkle is the only approved runtime dependency.
   discussion, an issue, or the pull-request body. A GitHub issue is optional.
 - Clarify an unclear goal before editing. Use a written design discussion when
   an approval rule requires one.
-- Keep one topic in each pull request. Report nearby problems without adding
-  them unless they block safe completion.
+- Keep one topic in each pull request, with the tests and documentation needed
+  to complete it. Report nearby problems without adding them unless they block
+  safe completion.
 - Use subagents only for independent work. Use separate branches and worktrees
   for parallel writers, give each writer non-overlapping files, and combine the
   work only after each part passes its checks.
