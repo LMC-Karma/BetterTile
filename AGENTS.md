@@ -42,6 +42,11 @@ Add tests for geometry, state transitions, configuration migrations, and
 failure paths. Test `BetterTileMacOS` with the fake window system in
 `Tests/BetterTileMacOSTests/`, not with live Accessibility.
 
+For a bug fix, record a reproduction that fails before the change and passes
+after it. For performance work, compare before and after on the same machine
+with the same configuration and workload. Do not present an untested
+assumption as a verified result.
+
 Use judgment for checks that require live macOS behavior or hardware. Run them
 when the change affects behavior that automated tests cannot cover, and record
 what was checked or skipped. The maintainer decides whether a remaining manual
