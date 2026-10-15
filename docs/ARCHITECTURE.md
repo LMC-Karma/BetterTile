@@ -45,6 +45,13 @@ Sparkle starts only in Release. Debug keeps the framework embedded through the
 shared target, but it has no feed URL, updater controller, update settings, or
 manual update command.
 
+`ConfigurationStore.load` returns defaults only for a confirmed missing file.
+Lookup, read, decode, schema, and validation failures propagate to the app model.
+The model retains the load error for its lifetime and blocks delayed saves,
+explicit flushes, and shutdown saves. Settings shows a persistent explanation
+independent of action status. Runtime configuration changes remain usable for
+the session. Restoring a valid file and relaunching resumes normal saving.
+
 ## Coordinate model
 
 Core geometry uses logical points with a top-left origin. Display visible frames and Accessibility window frames are converted at the macOS boundary. Core code never sees AppKit's bottom-left global screen coordinate system.

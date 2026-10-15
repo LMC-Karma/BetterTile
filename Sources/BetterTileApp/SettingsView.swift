@@ -91,6 +91,38 @@ struct SettingsView: View {
     @FocusState private var searchFocused: Bool
 
     var body: some View {
+        VStack(spacing: 0) {
+            if let reason = model.configurationSaveBlockedReason {
+                HStack(alignment: .top) {
+                    Image(systemName: "exclamationmark.triangle")
+                        .accessibilityHidden(true)
+                    Text(reason)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .textSelection(.enabled)
+                }
+                .font(.callout)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding()
+                .background(.yellow.opacity(0.12))
+            }
+            settingsNavigation
+        }
+        .font(.system(size: 13))
+        .controlSize(.regular)
+        .frame(minWidth: 980, minHeight: 640)
+        .onChange(of: search) {
+            if !matchesSearch(selection), let match = SettingsDestination.allCases.first(where: matchesSearch) {
+                selection = match
+            }
+        }
+        .background {
+            Button("Search settings") { searchFocused = true }
+                .keyboardShortcut("f", modifiers: .command)
+                .hidden()
+        }
+    }
+
+    private var settingsNavigation: some View {
         NavigationSplitView {
             VStack(spacing: 0) {
                 Label("BetterTile", systemImage: "rectangle.split.2x1")
@@ -139,20 +171,7 @@ struct SettingsView: View {
             }
             .background(Color(nsColor: .windowBackgroundColor))
         }
-        .font(.system(size: 13))
-        .controlSize(.regular)
         .navigationSplitViewStyle(.balanced)
-        .frame(minWidth: 980, minHeight: 640)
-        .onChange(of: search) {
-            if !matchesSearch(selection), let match = SettingsDestination.allCases.first(where: matchesSearch) {
-                selection = match
-            }
-        }
-        .background {
-            Button("Search settings") { searchFocused = true }
-                .keyboardShortcut("f", modifiers: .command)
-                .hidden()
-        }
     }
 
     private var searchField: some View {

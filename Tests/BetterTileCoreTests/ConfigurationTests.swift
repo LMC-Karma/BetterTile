@@ -43,6 +43,30 @@ func invalidGlassStrengthIsRejected(strength: Double) {
     #expect(store.fileURL.deletingLastPathComponent().lastPathComponent == "BetterTile Debug")
 }
 
+@Test func inaccessibleConfigurationIsNotTreatedAsMissing() throws {
+    let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+    let store = ConfigurationStore(fileURL: directory.appending(path: "configuration.json"))
+    try store.save(BetterTileConfiguration())
+    defer {
+        try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
+        try? FileManager.default.removeItem(at: directory)
+    }
+    try FileManager.default.setAttributes([.posixPermissions: 0], ofItemAtPath: directory.path)
+
+    #expect(throws: CocoaError.self) { try store.load() }
+}
+
+@Test func confirmedMissingConfigurationAndParentAllowDefaultsAndSaving() throws {
+    let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let store = ConfigurationStore(fileURL: directory.appending(path: "nested/configuration.json"))
+    #expect(try store.load() == BetterTileConfiguration())
+    var configuration = BetterTileConfiguration()
+    configuration.showDockIcon = true
+    try store.save(configuration)
+    #expect(try store.load() == configuration)
+}
+
 @Test func configurationAtomicRoundTrip() throws {
     let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: directory) }

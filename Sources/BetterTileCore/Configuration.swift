@@ -580,7 +580,11 @@ public struct ConfigurationStore: Sendable {
     }
 
     public func load(fileManager: FileManager = .default) throws -> BetterTileConfiguration {
-        guard fileManager.fileExists(atPath: fileURL.path) else { return BetterTileConfiguration() }
+        do {
+            _ = try fileManager.attributesOfItem(atPath: fileURL.path)
+        } catch CocoaError.fileReadNoSuchFile {
+            return BetterTileConfiguration()
+        }
         return try Self.decode(Data(contentsOf: fileURL))
     }
 
