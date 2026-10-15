@@ -4,7 +4,19 @@ public enum BentoDragOutcome: Equatable, Sendable {
     case swap(targetWindowID: WindowID)
     case insert(targetWindowID: WindowID, edge: BentoPaneDropPosition)
     case snap(action: WindowAction, frame: BTRect)
+    /// Tabbed: the window joins a pane as a tab, at a tab index from a tab
+    /// strip or, when nil, after the last tab.
+    case tab(paneID: UUID, index: Int?)
     case restore
+
+    /// Tabbed: the window joins a pane as a tab. A center drop on a selected
+    /// tab joins that tab's pane.
+    public var addsTab: Bool {
+        switch self {
+        case .swap, .tab: true
+        case .insert, .snap, .restore: false
+        }
+    }
 }
 
 public enum BentoPaneDropPosition: String, Equatable, Hashable, Sendable {
@@ -111,22 +123,11 @@ public struct BentoDropHoverState: Sendable {
         delay: TimeInterval,
         snapTarget: SnapTarget?
     ) -> BentoDragOutcome {
-        // At a screen edge the pointer is also on the outer edge of the
-        // nearest pane. The edge's snap area is the user's evident intent;
-        // inserting beside that pane gave a column at its minimum width.
-        if let snapTarget, let action = snapTarget.action,
-           let candidate, candidate.position != .center {
-            return .snap(action: action, frame: snapTarget.frame)
-        }
-        if let candidate = armedCandidate(at: time, delay: delay) {
-            return candidate.position == .center
-                ? .swap(targetWindowID: candidate.targetWindowID)
-                : .insert(targetWindowID: candidate.targetWindowID, edge: candidate.position)
-        }
-        if let snapTarget, let action = snapTarget.action {
-            return .snap(action: action, frame: snapTarget.frame)
-        }
-        return .restore
+        BentoDropDecision.outcome(
+            candidate: candidate,
+            isArmed: armedCandidate(at: time, delay: delay) != nil,
+            snapTarget: snapTarget
+        )
     }
 
     public mutating func clear() {

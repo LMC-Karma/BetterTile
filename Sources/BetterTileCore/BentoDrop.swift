@@ -7,7 +7,7 @@ public enum BentoDropIntent: Equatable, Sendable {
     case snap(action: WindowAction, frame: BTRect)
 }
 
-public struct BentoDropPlan: Sendable {
+public struct BentoDropPlan: Equatable, Sendable {
     public var state: BentoLayoutState
     public var placements: [Placement]
     public var minimizedWindowIDs: Set<WindowID>

@@ -1,3 +1,4 @@
+import AppKit
 import BetterTileCore
 import CoreGraphics
 import Foundation
@@ -281,4 +282,18 @@ private final class FakeGestureEventTapWorker: GestureEventTapWorking {
     #expect(!monitor.start())
     #expect(!monitor.isUsingEventTap)
     #expect(log.startAttempts == 0)
+}
+
+/// The fallback reads the event's own location. `NSEvent.mouseLocation`
+/// would report where the pointer is once a stalled main actor runs the
+/// handler, which can move a release across a display edge.
+@Test @MainActor func fallbackEventsUseTheirOwnLocation() throws {
+    let mainFrame = try #require(NSScreen.screens.first?.frame)
+    let location = CGPoint(x: mainFrame.minX + 37, y: mainFrame.minY + 61)
+    let event = try #require(NSEvent.mouseEvent(with: .leftMouseUp, location: location, modifierFlags: [],
+                                                timestamp: 2, windowNumber: 0, context: nil, eventNumber: 2,
+                                                clickCount: 1, pressure: 0))
+    #expect(GlobalGestureEvent.screenLocation(of: event) == location)
+    let gestureEvent = try #require(GlobalGestureEvent(event, kind: .leftMouseUp))
+    #expect(gestureEvent.position == CoordinateConverter.pointToTopLeft(location, mainScreenFrame: mainFrame))
 }

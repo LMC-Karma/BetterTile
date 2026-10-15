@@ -1720,6 +1720,102 @@ func singleWindowPartialFailureRestoresBaselineAndPreservesHistory(actionPlan: B
     #expect(system.windows.map(\.frame) == target.map(\.frame))
 }
 
+
+/// A drag drop is checked on the display the overlay showed it on. The
+/// dragged window's snapshot can name the neighbouring display, because its
+/// center crossed the shared edge during the gesture.
+@Test @MainActor func dragDropsValidateReachabilityOnTheDropDisplay() {
+    let system = FakeWindowSystem()
+    let first = system.availableDisplays[0].id
+    let second = DisplayID(rawValue: "second")
+    system.availableDisplays.append(DisplaySnapshot(
+        id: second,
+        frame: BTRect(x: 1000, y: 0, width: 1000, height: 800),
+        visibleFrame: BTRect(x: 1000, y: 0, width: 1000, height: 800)
+    ))
+    system.windows[0].frame.origin.x = 750
+    system.windows[0].displayID = second
+    let id = system.windows[0].id
+    let coordinator = WindowCoordinator(system: system)
+    let rightHalf = Placement(windowID: id, frame: BTRect(x: 500, y: 0, width: 500, height: 800))
+
+    // Without a drop destination the window's own display still decides.
+    #expect(coordinator.applyPlacements([rightHalf]) == .failed(reason: "A window would have been placed off screen."))
+    #expect(system.frameWriteCounts.isEmpty)
+
+    let destination = DropDestination(displayID: first, sourceWindowID: id)
+    #expect(coordinator.applyPlacements([rightHalf], destination: destination).isApplied)
+    #expect(system.windows[0].frame == rightHalf.frame)
+
+    // A frame mostly off the drop's display is still rejected.
+    let mostlyOff = Placement(windowID: id, frame: BTRect(x: 700, y: 0, width: 800, height: 800))
+    system.windows[0].displayID = second
+    #expect(coordinator.applyPlacements([mostlyOff], destination: destination)
+        == .failed(reason: "A window would have been placed off screen."))
+    #expect(system.windows[0].frame == rightHalf.frame)
+
+    // The focus-drop path uses the same destination.
+    #expect(coordinator.applyFocusDrop(placement: Placement(windowID: id, frame: system.availableDisplays[0].visibleFrame),
+                                       minimizing: [], sourceBaselineFrame: rightHalf.frame,
+                                       destination: destination).isApplied)
+}
+
+/// The dragged window is checked against the minimum the overlay planned
+/// with, so a larger minimum read at release cannot veto the shown frame. A
+/// frame below the overlay's own minimum is still rejected.
+@Test(arguments: [700.0, 750.0]) @MainActor
+func dropMinimumSizeCheckUsesTheOverlaysMinimum(overlayMinimum: Double) {
+    let system = FakeWindowSystem()
+    system.windows[0].constraints.minimumSize = BTSize(width: 760, height: 80)
+    let id = system.windows[0].id
+    let coordinator = WindowCoordinator(system: system)
+    let shown = Placement(windowID: id, frame: BTRect(x: 300, y: 0, width: 700, height: 800))
+    let destination = DropDestination(displayID: system.availableDisplays[0].id, sourceWindowID: id,
+                                      minimumSizes: [id: BTSize(width: overlayMinimum, height: 80)])
+    let outcome = coordinator.applyPlacements([shown], destination: destination)
+    #expect(outcome == (overlayMinimum <= 700 ? .applied : .failed(reason: "A window reached its minimum size.")))
+    // Without the overlay's minimum, the current one decides.
+    if overlayMinimum <= 700 {
+        system.windows[0].frame = BTRect(x: 0, y: 0, width: 800, height: 800)
+        #expect(coordinator.applyPlacements([shown], destination: DropDestination(
+            displayID: system.availableDisplays[0].id, sourceWindowID: id))
+            == .failed(reason: "A window reached its minimum size."))
+    }
+}
+
+/// Only the dragged window is checked on the drop's display. A peer that an
+/// application moved to another display during the drag keeps its own
+/// display, so the drop is rejected instead of pulling the peer back.
+@Test @MainActor func dropDestinationAppliesOnlyToTheDraggedWindow() {
+    let system = FakeWindowSystem()
+    system.addSecondWindow()
+    let first = system.availableDisplays[0].id
+    let second = DisplayID(rawValue: "second")
+    system.availableDisplays.append(DisplaySnapshot(
+        id: second,
+        frame: BTRect(x: 1000, y: 0, width: 1000, height: 800),
+        visibleFrame: BTRect(x: 1000, y: 0, width: 1000, height: 800)
+    ))
+    let source = system.windows[0].id, peer = system.windows[1].id
+    system.windows[0].frame.origin.x = 750
+    system.windows[0].displayID = second
+    system.windows[1].frame = BTRect(x: 1200, y: 200, width: 200, height: 400)
+    system.windows[1].displayID = second
+    let coordinator = WindowCoordinator(system: system)
+    let placements = [
+        Placement(windowID: source, frame: BTRect(x: 500, y: 0, width: 500, height: 800)),
+        Placement(windowID: peer, frame: BTRect(x: 0, y: 0, width: 500, height: 800)),
+    ]
+    let destination = DropDestination(displayID: first, sourceWindowID: source)
+    #expect(coordinator.applyPlacements(placements, destination: destination)
+        == .failed(reason: "A window would have been placed off screen."))
+    #expect(system.frameWriteCounts.isEmpty)
+    // With the peer back on the drop's display, the same drop applies.
+    system.windows[1].frame = BTRect(x: 800, y: 200, width: 200, height: 400)
+    system.windows[1].displayID = first
+    #expect(coordinator.applyPlacements(placements, destination: destination).isApplied)
+}
+
 /// A window moved to a display with another backing scale can report its old
 /// size at the new origin straight after the write. That readback is no
 /// minimum, and a later read at the requested size drops it.
