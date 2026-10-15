@@ -4380,6 +4380,11 @@ extension BetterTileModel {
             isSameDesktop() && self?.sessionStore.isCurrent(original.id, revision: original.revision, on: display.id) == true
         }
         guard isCurrent() else { return }
+        // Exact snaps must restore the actual checkpoint on both axes;
+        // one held length can be a minimum rather than a resize step.
+        func rollbackSteppedWindowIDs() -> Set<WindowID> {
+            snapAction == nil ? Set(self.tabbedSteppedWindows.keys) : []
+        }
         let previous = gestureBaseline ?? sessionStore.session(for: display.id)?.tabbedState
         func restoreGestureMembership() -> LayoutSession {
             guard let gestureBaseline, isCurrent() else { return original }
@@ -4508,7 +4513,7 @@ extension BetterTileModel {
                 }
                 var restored = await self.coordinator.restoreTabbedFrames(rollbackFrames,
                     required: Set(previous?.selectedWindowIDs ?? []).union(gestureSourceID.map { [$0] } ?? []),
-                    on: display.id, exempting: gestureSourceID, steppedWindowIDs: Set(self.tabbedSteppedWindows.keys),
+                    on: display.id, exempting: gestureSourceID, steppedWindowIDs: rollbackSteppedWindowIDs(),
                     isCurrent: isCurrent)
                 guard self.tabbedTaskIDs[display.id] == taskID else { return }
                 self.tabbedTaskIDs.removeValue(forKey: display.id)
@@ -4557,6 +4562,14 @@ extension BetterTileModel {
                 }
             }
             var proposal = initial
+            var snapPane = snapAction == nil ? nil : focus.flatMap { initial.state.pane(containing: $0) }
+            func preservesSnapTarget(_ state: TabbedLayoutState) -> Bool {
+                guard let snapAction else { return true }
+                guard let focus, let snapPane, let target = snapAction.partition?.frame(in: display.visibleFrame),
+                      let pane = state.pane(containing: focus) else { return false }
+                return pane.id == snapPane.id && pane.tabs == snapPane.tabs && pane.selected == focus
+                    && state.logicalFrames(in: display.visibleFrame)[pane.id]?.approximatelyEquals(target, tolerance: 0.001) == true
+            }
             var windows = windows
             // With a readable window order, the focus refresh after a
             // selection raises only panes that activation really exposed.
@@ -4627,7 +4640,7 @@ extension BetterTileModel {
                     onSizeMismatch: onSizeMismatch,
                     acceptsSteppedGrowth: true,
                     onApplied: { accepted = $0 },
-                    steppedWindowIDs: Set(self.tabbedSteppedWindows.keys),
+                    steppedWindowIDs: rollbackSteppedWindowIDs(),
                     isCurrent: isCurrent
                 )
                 // A window that resizes in steps settled up to one step off
@@ -4668,6 +4681,7 @@ extension BetterTileModel {
                        // Every remembered window keeps its pane edges, even one
                        // length that is no grid yet, so neighbours never chase.
                        protecting: Set(self.tabbedSteppedWindows.keys).union(deviating),
+                       fixedPaneIDs: Set(snapPane.map { [$0.id] } ?? []),
                        in: display.visibleFrame, windows: windows),
                    Set(snap.state.selectedWindowIDs).isSubset(of: Set(snap.placements.map(\.windowID))) {
                     for step in snap.snaps {
@@ -4700,7 +4714,7 @@ extension BetterTileModel {
                         onSizeMismatch: onSizeMismatch,
                         acceptsSteppedGrowth: true,
                         onApplied: { accepted = $0 },
-                        steppedWindowIDs: Set(self.tabbedSteppedWindows.keys),
+                        steppedWindowIDs: rollbackSteppedWindowIDs(),
                         isCurrent: isCurrent
                     )
                 }
@@ -4713,7 +4727,7 @@ extension BetterTileModel {
                     guard let frame = accepted[id], let area = areas[id] else { return false }
                     return frame.size.width > area.size.width + 2 || frame.size.height > area.size.height + 2
                 }
-                if outcome.isApplied, !overflowing.isEmpty {
+                if outcome.isApplied, !overflowing.isEmpty || !preservesSnapTarget(proposal.state) {
                     // A length that changes a grid gives the retry something new.
                     let asked = Dictionary(proposal.placements.map { ($0.windowID, $0.frame.size) }, uniquingKeysWith: { first, _ in first })
                     for id in overflowing {
@@ -4722,7 +4736,7 @@ extension BetterTileModel {
                     }
                     let restored = await self.coordinator.restoreTabbedFrames(
                         checkpoint, required: Set(proposal.state.selectedWindowIDs).intersection(checkpoint.keys),
-                        on: display.id, exempting: gestureSourceID, steppedWindowIDs: Set(self.tabbedSteppedWindows.keys),
+                        on: display.id, exempting: gestureSourceID, steppedWindowIDs: rollbackSteppedWindowIDs(),
                         isCurrent: isCurrent)
                     _ = self.coordinator.raiseTabbedWindows(previous?.selectedWindowIDs.filter(eligibleIDs.contains) ?? [])
                     outcome = restored.isApplied
@@ -4759,6 +4773,7 @@ extension BetterTileModel {
                     else { break }
                     selectionOnly = false
                     proposal = try prepare(refreshed)
+                    snapPane = snapAction == nil ? nil : focus.flatMap { proposal.state.pane(containing: $0) }
                     windows = refreshed
                 } catch {
                     fitFailure = error as? TabbedFitFailure

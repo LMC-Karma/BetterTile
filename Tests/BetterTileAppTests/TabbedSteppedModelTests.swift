@@ -714,3 +714,232 @@ func aSmallDragBesideAMinimumHeldWindowSticks(minimumAbovePane: Double) async th
 
     #expect(await waitFor { model.tabbedSteppedWindows[terminal] == nil })
 }
+
+/// Fixed commands move a whole pane; a native snap moves its selected window.
+/// A newly observed cell must not move the exact target, whichever pane steps.
+@Test(arguments: ["keyboard", "wheel", "native"], [(false, false), (false, true), (true, false), (true, true)]) @MainActor
+func aSteppedSnapKeepsItsExactLogicalRegion(entry: String, variant: (height: Bool, neighbour: Bool)) async throws {
+    let (height, neighbour) = variant
+    let system = FakeAppWindowSystem()
+    let model = try await makeTabbed(system, height ? .rows : .columns, ["source", "peer", "hidden"])
+    defer { model.shutdown() }
+    let source = WindowID(rawValue: "source")
+    let stepped = WindowID(rawValue: neighbour ? (entry == "native" ? "hidden" : "peer") : "source")
+    let before = try #require(model.activeTabbedState)
+    let slot = try #require(content(neighbour && entry != "native" ? 1 : 0, model, system))
+    system.sizeGrids[stepped] = (
+        BTSize(width: height ? 0 : 14, height: height ? 14 : 0),
+        BTSize(width: height ? 0 : slot.size.width + 5, height: height ? slot.size.height + 5 : 0))
+    system.emitsFrameEvents = true
+    system.focusedID = source
+    let action: WindowAction = height ? .bottomHalf : .rightHalf
+    let bounds = system.mainDisplay.visibleFrame
+    switch entry {
+    case "keyboard": model.perform(action)
+    case "wheel":
+        model.performLayoutWheel(.windowAction(action), for: LayoutWheelTarget(
+            windowID: source, displayID: system.mainDisplay.id, visibleFrame: bounds))
+    default:
+        try #require(model.completeBentoDrag(displayID: system.mainDisplay.id, sourceID: source,
+            outcome: .snap(action: action, frame: bounds)))
+    }
+    try await waitForIdle(model, system)
+    let state = try #require(model.activeTabbedState), pane = try #require(state.pane(containing: source))
+    #expect(model.statusMessage == nil)
+    #expect(state.logicalFrames(in: bounds)[pane.id] == action.partition?.frame(in: bounds))
+    #expect(state.windowIDs == before.windowIDs && state.floatingWindowIDs == before.floatingWindowIDs)
+    #expect(pane.selected == source && state.activeWindowID == source)
+    if entry == "native" {
+        #expect(pane.tabs == [WindowID(rawValue: "peer"), source])
+        #expect(state.pane(containing: WindowID(rawValue: "hidden"))?.tabs == [WindowID(rawValue: "hidden")])
+    } else { #expect(pane.tabs == before.pane(containing: source)?.tabs) }
+    for selected in state.selectedWindowIDs {
+        let selectedPane = try #require(state.paneID(containing: selected))
+        let area = TabbedLayoutState.contentFrame(try #require(state.frames(in: bounds)[selectedPane]))
+        let actual = try #require(system.windows.first { $0.id == selected }?.frame)
+        #expect(actual.minX >= area.minX - 0.6 && actual.minY >= area.minY - 0.6)
+        #expect(actual.maxX <= area.maxX + 0.6 && actual.maxY <= area.maxY + 0.6)
+    }
+    let writes = system.frameWriteCounts
+    try await Task.sleep(for: .milliseconds(350)) // Catch queued self-event reapplication after settlement.
+    #expect(system.frameWriteCounts == writes)
+    #expect(model.activeTabbedState == state)
+    model.performTabbed(.undo)
+    try await waitForIdle(model, system)
+    #expect(model.activeTabbedState?.panes.map(\.tabs) == before.panes.map(\.tabs))
+    #expect(model.activeTabbedState?.panes.map(\.selected) == before.panes.map(\.selected))
+}
+
+/// Ordinary adaptive placement learns two distinct cells first. A later fixed
+/// snap uses that grid inside the requested region instead of fitting its edge.
+@Test(arguments: ["keyboard", "wheel", "native"]) @MainActor
+func aLearnedGridFitsInsideAnExactSnap(entry: String) async throws {
+    let system = FakeAppWindowSystem()
+    let model = try await makeTabbed(system, .columns, ["source", "peer"])
+    defer { model.shutdown() }
+    let source = WindowID(rawValue: "source")
+    let area = try #require(content(0, model, system))
+    system.sizeGrids[source] = (BTSize(width: 14, height: 0), BTSize(width: area.size.width + 5, height: 0))
+    system.windows[0].frame.origin.x += 7 // Force the first grid observation on Repair.
+    model.performTabbed(.repair)
+    try await waitForIdle(model, system)
+    let branch = try #require(model.activeTabbedState?.dividers(in: system.mainDisplay.visibleFrame).first?.branchID)
+    model.performTabbed(.adjustDivider(branch, by: 0.02))
+    try await waitForIdle(model, system)
+    // These ordinary placements retain their adaptive behavior.
+    #expect(near(content(0, model, system)?.size.width, area.size.width + 19))
+    switch entry {
+    case "keyboard": model.perform(.rightHalf)
+    case "wheel":
+        model.performLayoutWheel(.windowAction(.rightHalf), for: LayoutWheelTarget(
+            windowID: source, displayID: system.mainDisplay.id, visibleFrame: system.mainDisplay.visibleFrame))
+    default:
+        try #require(model.completeBentoDrag(displayID: system.mainDisplay.id, sourceID: source,
+            outcome: .snap(action: .rightHalf, frame: system.mainDisplay.visibleFrame)))
+    }
+    try await waitForIdle(model, system)
+    let state = try #require(model.activeTabbedState), pane = try #require(state.paneID(containing: source))
+    #expect(state.logicalFrames(in: system.mainDisplay.visibleFrame)[pane] == BTRect(x: 500, y: 0, width: 500, height: 800))
+    #expect(near(system.windows[0].frame.size.width, area.size.width - 9))
+    #expect(near(system.requestedFrames[source]?.last?.size.width, area.size.width - 9))
+    #expect(model.statusMessage == nil)
+}
+
+/// A nearby minimum can look like one cell. Asking for less proves the
+/// refusal; it must reject the fixed snap and restore all original frames.
+@Test @MainActor func aMinimumHeldSnapRejectsAndRestoresBeforeALargerSnap() async throws {
+    let system = FakeAppWindowSystem()
+    let model = try await makeTabbed(system, .columns, ["source", "peer", "hidden"])
+    defer { model.shutdown() }
+    let source = WindowID(rawValue: "source")
+    let before = try #require(model.activeTabbedState), frames = system.windows.map(\.frame)
+    let bounds = system.mainDisplay.visibleFrame
+    let plan = try #require(TabbedSnapPlanner.plan(sourceWindowID: source, action: .rightThird,
+        scope: .pane, state: before, windows: system.windows, in: bounds))
+    let requested = try #require(plan.placements.first { $0.windowID == source }?.frame.size.width)
+    system.enforcedMinimumWidths[source] = requested + 5
+    model.perform(.rightThird)
+    try await waitForIdle(model, system)
+    #expect(model.statusMessage != nil)
+    #expect(model.activeTabbedState == before)
+    #expect(system.windows.map(\.frame) == frames)
+    // A larger request is accepted exactly, so the held length is not a grid.
+    model.perform(.rightHalf)
+    try await waitForIdle(model, system)
+    let after = try #require(model.activeTabbedState), pane = try #require(after.paneID(containing: source))
+    #expect(after.logicalFrames(in: bounds)[pane] == BTRect(x: 500, y: 0, width: 500, height: 800))
+    let area = TabbedLayoutState.contentFrame(try #require(after.frames(in: bounds)[pane]))
+    #expect(system.windows[0].frame.approximatelyEquals(area, tolerance: 0.6))
+    #expect(model.statusMessage == nil)
+}
+
+/// A failed corrective write and command retry restore the verified checkpoint
+/// without committing provisional pane membership or an Undo step.
+@Test(arguments: [false, true]) @MainActor
+func aFailedSteppedSnapCorrectionRestoresItsCheckpoint(native: Bool) async throws {
+    let system = FakeAppWindowSystem()
+    let model = try await makeTabbed(system, .columns, ["source", "peer", "hidden"])
+    defer { model.shutdown() }
+    let source = WindowID(rawValue: "source")
+    let slot = try #require(content(0, model, system))
+    system.sizeGrids[source] = (BTSize(width: 14, height: 0), BTSize(width: slot.size.width + 5, height: 0))
+    system.windows[0].frame.origin.x += 7
+    model.performTabbed(.repair) // Verify a grid-aligned checkpoint before the snap.
+    try await waitForIdle(model, system)
+    let before = try #require(model.activeTabbedState), frames = system.windows.map(\.frame)
+    let writes = system.frameWriteCounts[source, default: 0]
+    system.failedFrameWriteNumbers[source] = [writes + 2, writes + 4] // Correction and learned-grid retry.
+    if native {
+        try #require(model.completeBentoDrag(displayID: system.mainDisplay.id, sourceID: source,
+            outcome: .snap(action: .rightThird, frame: system.mainDisplay.visibleFrame)))
+    } else { model.perform(.rightThird) }
+    try await waitForIdle(model, system)
+    #expect(model.statusMessage?.contains("Injected frame write failure") == true)
+    #expect(model.activeTabbedState == before)
+    #expect(system.windows.map(\.frame) == frames)
+    model.performTabbed(.undo)
+    try await waitForIdle(model, system)
+    #expect(model.activeTabbedState?.panes[1].tabs.isEmpty == true)
+}
+
+/// A native gesture takes ownership while the smaller-cell write settles.
+/// The cancelled fixed snap cannot later commit over the gesture's recovery.
+@Test @MainActor func aNativeDragInterruptsASteppedSnapCorrection() async throws {
+    let system = FakeAppWindowSystem()
+    let model = try await makeTabbed(system, .columns, ["source", "peer"])
+    defer { model.shutdown() }
+    let source = WindowID(rawValue: "source"), display = system.mainDisplay.id
+    let slot = try #require(content(0, model, system))
+    let before = try #require(model.activeTabbedState)
+    system.sizeGrids[source] = (BTSize(width: 14, height: 0), BTSize(width: slot.size.width + 5, height: 0))
+    system.frameApplicationDelays[source] = .milliseconds(60)
+    let correctionWrite = system.frameWriteCounts[source, default: 0] + 2
+    model.perform(.rightHalf)
+    try #require(await waitFor { system.frameWriteCounts[source, default: 0] >= correctionWrite })
+    try #require(model.beginBentoDrag(displayID: display, sourceID: source))
+    // The application's in-flight correction finishes during the held drag.
+    try await Task.sleep(for: .milliseconds(100))
+    model.finishBentoDrag(displayID: display, sourceID: source, end: .restore)
+    try await waitForIdle(model, system)
+    let state = try #require(model.activeTabbedState)
+    #expect(state.panes.map(\.tabs) == before.panes.map(\.tabs))
+    #expect(state.paneID(containing: source) == before.paneID(containing: source))
+    let pane = try #require(state.paneID(containing: source))
+    #expect(state.logicalFrames(in: system.mainDisplay.visibleFrame)[pane]?.minX == 0)
+    #expect(model.statusMessage == nil)
+    let writes = system.frameWriteCounts
+    try await Task.sleep(for: .milliseconds(350))
+    #expect(system.frameWriteCounts == writes)
+    #expect(model.activeTabbedState == state)
+}
+
+/// A floating source gets a new destination pane. A retry may allocate that
+/// pane again; its new identity must retain the same exact snap region.
+@Test @MainActor func aFloatingSteppedSnapCanRetryIntoANewExactPane() async throws {
+    let system = FakeAppWindowSystem()
+    let model = try await makeTabbed(system, .columns, ["source", "peer"])
+    defer { model.shutdown() }
+    let source = WindowID(rawValue: "source")
+    model.performTabbed(.float(source))
+    try await waitForIdle(model, system)
+    let before = try #require(model.activeTabbedState), bounds = system.mainDisplay.visibleFrame
+    let plan = try #require(TabbedSnapPlanner.plan(sourceWindowID: source, action: .rightThird,
+        scope: .pane, state: before, windows: system.windows, in: bounds))
+    let area = try #require(plan.placements.first { $0.windowID == source }?.frame)
+    system.sizeGrids[source] = (BTSize(width: 14, height: 0), BTSize(width: area.size.width + 5, height: 0))
+    system.windows[0].frame.size.width = area.size.width + 145 // A valid floating cell for rollback.
+    system.failedFrameWriteNumbers[source] = [system.frameWriteCounts[source, default: 0] + 2]
+    model.perform(.rightThird)
+    try await waitForIdle(model, system)
+    let after = try #require(model.activeTabbedState), pane = try #require(after.pane(containing: source))
+    let target = try #require(WindowAction.rightThird.partition?.frame(in: bounds))
+    #expect(after.logicalFrames(in: bounds)[pane.id]?.approximatelyEquals(target, tolerance: 0.001) == true)
+    #expect(pane.tabs == [source] && pane.selected == source)
+    #expect(after.floatingWindowIDs.contains(source) == false)
+    #expect(system.windows[0].frame.maxX <= area.maxX + 0.6)
+    #expect(model.statusMessage == nil)
+}
+
+/// One held length is not proof of a grid. If a new minimum also prevents
+/// checkpoint recovery, report degradation and stop automatic frame writes.
+@Test(arguments: [false, true]) @MainActor
+func anImpossibleMinimumHeldSnapRollbackStopsAutomaticWrites(native: Bool) async throws {
+    let system = FakeAppWindowSystem()
+    let model = try await makeTabbed(system, .columns, ["source", "peer"])
+    defer { model.shutdown() }
+    let source = WindowID(rawValue: "source")
+    let before = try #require(model.activeTabbedState)
+    let area = try #require(content(0, model, system))
+    system.enforcedMinimumWidths[source] = area.size.width + 5
+    if native {
+        try #require(model.completeBentoDrag(displayID: system.mainDisplay.id, sourceID: source,
+            outcome: .snap(action: .rightHalf, frame: system.mainDisplay.visibleFrame)))
+    } else { model.perform(.rightHalf) }
+    try await waitForIdle(model, system)
+    #expect(model.statusMessage?.contains("could not fully restore") == true)
+    #expect(model.activeTabbedState == before)
+    let writes = system.frameWriteCounts
+    system.eventHandler?(WindowSystemEvent(kind: .resized, windowID: source, processIdentifier: system.windows[0].processIdentifier))
+    try await Task.sleep(for: .milliseconds(350)) // A degraded transaction must not trigger a background correction.
+    #expect(system.frameWriteCounts == writes)
+}
