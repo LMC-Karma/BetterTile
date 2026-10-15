@@ -93,6 +93,12 @@ final class BetterTileModel {
     /// Tabbed placement. A change means room may have appeared for an
     /// automatic float. Dropped when the session leaves Tabbed.
     private var tabbedCommittedLayouts: [DesktopSessionID: TabbedCommittedLayout] = [:]
+    /// Windows seen settling up to one step off their pane, such as
+    /// Terminal on whole character cells, with the lengths each settled at
+    /// on each axis where it stepped. Their grids decide where pane dividers
+    /// go and what each window is asked for, so it is never asked for a
+    /// length it rounds away from.
+    private(set) var tabbedSteppedWindows: [WindowID: [SplitAxis: [Double]]] = [:]
     /// How long after a placement settles an automatic float is checked
     /// again with a fresh snapshot. Settable for tests.
     var tabbedAutomaticFloatRetryDelay: Duration = .seconds(1)
@@ -2422,6 +2428,7 @@ final class BetterTileModel {
             if event.kind == .destroyed {
                 confirmedGoneWindowIDs.insert(windowID)
                 sessionStore.removeClosedTabbedWindow(windowID)
+                tabbedSteppedWindows.removeValue(forKey: windowID)
                 tabbedUndo = tabbedUndo.mapValues { histories in
                     histories.map { original in
                         var step = original
@@ -4409,16 +4416,21 @@ extension BetterTileModel {
                 // user set when the newly selected tab fits it, so the full
                 // placement below runs; a tab that needs more room grows the
                 // pane from that size.
-                let returnsToPreferredSizes = self.configuration.tabbedRestoresPaneSizes
-                    && state.withPreferredPaneSizes().flatMap {
+                // A window known to resize in steps keeps the pane that fits
+                // the size it holds; the full placement below sets that up.
+                let preferred = self.configuration.tabbedRestoresPaneSizes
+                    ? state.withPreferredPaneSizes().flatMap {
                         try? $0.fittingMinimumWidths(in: display.visibleFrame, windows: windows)
-                    }.map { $0.layout != state.layout } == true
-                if !returnsToPreferredSizes, content.size.width + 0.001 >= minimum.width,
+                    } : nil
+                let changesPaneSizes = (preferred ?? state).fittingSteppedGrids(
+                    self.tabbedSteppedGrids, in: display.visibleFrame, windows: windows).layout != state.layout
+                if !changesPaneSizes, content.size.width + 0.001 >= minimum.width,
                    content.size.height + 0.001 >= minimum.height {
                     if fixed {
                         return (state, try state.placements(in: display.visibleFrame, windows: windows).filter { $0.windowID == focus })
                     }
-                    return (state, [Placement(windowID: focus, frame: content)])
+                    return (state, self.requestingSteppedLengths(
+                        [Placement(windowID: focus, frame: content)]))
                 }
                 selectionOnly = false
             }
@@ -4427,7 +4439,7 @@ extension BetterTileModel {
             }.map(\.id))) else {
                 throw WindowSystemError.operationFailed("One or more selected tabs are no longer available.")
             }
-            let fitted: TabbedLayoutState
+            var fitted: TabbedLayoutState
             if let snapAction {
                 let failure = WindowSystemError.operationFailed(BentoDropPlanner.partitionActions.contains(snapAction)
                     ? Self.tabbedSnapFailure : self.tabbedSnapUnavailableReason(snapAction))
@@ -4450,12 +4462,14 @@ extension BetterTileModel {
                     ? try self.fittedTabbedState(preparedDrop.state, in: display.visibleFrame, windows: windows, focus: focus)
                     : preparedDrop.state
             } else {
+                // A remembered grid fits the panes to its window's steps.
                 fitted = try self.fittedTabbedState(state, in: display.visibleFrame, windows: windows, focus: focus)
+                    .fittingSteppedGrids(self.tabbedSteppedGrids, in: display.visibleFrame, windows: windows)
             }
             // A drag places its windows with the constraints its overlay
             // planned with; a minimum read again cannot change the panes.
-            var proposed = try fitted.placements(in: display.visibleFrame,
-                                                 windows: refitsPreparedDrop ? windows : preparedDrop?.windows ?? windows)
+            var proposed = self.requestingSteppedLengths(try fitted.placements(
+                in: display.visibleFrame, windows: refitsPreparedDrop ? windows : preparedDrop?.windows ?? windows))
             let baselineFrames = Dictionary(uniqueKeysWithValues: windows.filter { detached.contains($0.id) }.map {
                 ($0.id, restorationFrames[$0.id] ?? original.tabbedBaselineFrames[$0.id]
                     ?? $0.frame.offsetBy(dx: 35, dy: 35).clamped(to: display.visibleFrame))
@@ -4494,7 +4508,8 @@ extension BetterTileModel {
                 }
                 var restored = await self.coordinator.restoreTabbedFrames(rollbackFrames,
                     required: Set(previous?.selectedWindowIDs ?? []).union(gestureSourceID.map { [$0] } ?? []),
-                    on: display.id, exempting: gestureSourceID, isCurrent: isCurrent)
+                    on: display.id, exempting: gestureSourceID, steppedWindowIDs: Set(self.tabbedSteppedWindows.keys),
+                    isCurrent: isCurrent)
                 guard self.tabbedTaskIDs[display.id] == taskID else { return }
                 self.tabbedTaskIDs.removeValue(forKey: display.id)
                 self.tabbedTasks[display.id] = nil
@@ -4549,6 +4564,14 @@ extension BetterTileModel {
                 && (self.system as? any TabbedWindowSystem)?.stackingOrder(for: windows, excluding: []) != nil
             var outcome: WindowMutationOutcome = .failed(reason: "The desktop changed.")
             var fitFailure: TabbedFitFailure?
+            // A stepped snap writes again after a placement; if that write
+            // fails, focus returns to the window that had it before. Without
+            // a focus change, the coordinator reads it at that write.
+            let focusBefore = focus == nil ? nil
+                : earlyRaise?.previousFocus ?? ((try? self.system.focusedWindow()) ?? nil)?.id
+            let dropDestination = gestureSourceID.map { DropDestination(displayID: display.id, sourceWindowID: $0,
+                minimumSizes: Dictionary((preparedDrop?.windows ?? []).map { ($0.id, $0.constraints.minimumSize) },
+                                         uniquingKeysWith: { first, _ in first })) }
             for attempt in 0..<2 {
                 self.tabbedFocusSuppressedUntil = Date().addingTimeInterval(0.3)
                 let eligibleIDs = selectionOnly
@@ -4566,6 +4589,24 @@ extension BetterTileModel {
                         .compactMap(\.selected).filter(eligibleIDs.contains)
                 }
                 var learnedSize = false
+                // The frames the last write accepted, and the window areas
+                // they must stay inside.
+                var accepted: [WindowID: BTRect] = [:]
+                let onSizeMismatch: @MainActor (WindowID, BTRect, BTRect, BTRect) -> Void = { id, requested, baseline, actual in
+                    guard proposal.state.windowIDs.contains(id) || detached.contains(id) else { return }
+                    // A size within one step of the request is the window's
+                    // step, not its minimum. A window that grew by a step
+                    // where no growth was accepted resizes in steps: the
+                    // retry keeps its pane edges in place.
+                    guard SteppedSizeAcceptance.evaluate(requested: requested, actual: actual, allowsGrowth: true) == .rejected else {
+                        if actual.size.width > requested.size.width + 2 || actual.size.height > requested.size.height + 2,
+                           self.recordSteppedSize(id, requested: requested.size, settled: actual.size, windows: windows) { learnedSize = true }
+                        return
+                    }
+                    learnedSize = self.system.observeApplicationEnforcedMinimum(
+                        windowID: id, requested: requested, baseline: baseline, actual: actual
+                    ) || learnedSize
+                }
                 outcome = await self.coordinator.applyTabbed(
                     placements: proposal.placements,
                     rollbackFrames: rollbackFrames,
@@ -4582,18 +4623,119 @@ extension BetterTileModel {
                     // A drag drops on this display, whatever display the
                     // dragged window's center reached, with the minimums its
                     // overlay planned with.
-                    destination: gestureSourceID.map { DropDestination(displayID: display.id, sourceWindowID: $0,
-                        minimumSizes: Dictionary(
-                            (preparedDrop?.windows ?? []).map { ($0.id, $0.constraints.minimumSize) },
-                            uniquingKeysWith: { first, _ in first })) },
-                    onSizeMismatch: { id, requested, baseline, actual in
-                        guard proposal.state.windowIDs.contains(id) || detached.contains(id) else { return }
-                        learnedSize = self.system.observeApplicationEnforcedMinimum(
-                            windowID: id, requested: requested, baseline: baseline, actual: actual
-                        ) || learnedSize
-                    },
+                    destination: dropDestination,
+                    onSizeMismatch: onSizeMismatch,
+                    acceptsSteppedGrowth: true,
+                    onApplied: { accepted = $0 },
+                    steppedWindowIDs: Set(self.tabbedSteppedWindows.keys),
                     isCurrent: isCurrent
                 )
+                // A window that resizes in steps settled up to one step off
+                // its pane. One more write fits the panes to it, or asks an
+                // overflowing window for one step less. That write accepts
+                // no growth, so two stepped windows never chase each other.
+                let checkpoint = rollbackFrames
+                    ?? Dictionary(windows.map { ($0.id, $0.frame) }, uniquingKeysWith: { first, _ in first })
+                let requested = Dictionary(proposal.placements.map { ($0.windowID, $0.frame) }, uniquingKeysWith: { first, _ in first })
+                // Window areas, not requests: a window asked for a length on
+                // its grid may round up toward its area.
+                var areas = Dictionary(proposal.state.layout.placements(in: display.visibleFrame).map { ($0.windowID, $0.frame) },
+                                       uniquingKeysWith: { first, _ in first })
+                let deviating = Set(accepted.filter { id, frame in
+                    requested[id].map { abs($0.size.width - frame.size.width) > 2 || abs($0.size.height - frame.size.height) > 2 } == true
+                }.keys)
+                // A window with a grid on every axis it settled off was asked
+                // for lengths on them; any other window snaps its pane to the
+                // lengths it took. A window whose grid this write changed,
+                // such as after a font change, snaps too.
+                let grids = self.tabbedSteppedGrids
+                var known = Set(accepted.keys.filter { id in
+                    guard let axes = grids[id], let asked = requested[id]?.size, let size = accepted[id]?.size else { return false }
+                    return (abs(size.width - asked.width) <= 2 || axes[.vertical] != nil)
+                        && (abs(size.height - asked.height) <= 2 || axes[.horizontal] != nil)
+                })
+                if outcome.isApplied {
+                    for id in proposal.state.selectedWindowIDs {
+                        if let requested = requested[id]?.size, let settled = accepted[id]?.size,
+                           self.recordSteppedSize(id, requested: requested, settled: settled, windows: windows) {
+                            known.remove(id)
+                            learnedSize = true
+                        }
+                    }
+                }
+                if outcome.isApplied, !Task.isCancelled, isCurrent(), let snap = proposal.state.snappingToSteppedSizes(
+                       accepted.filter { !known.contains($0.key) }.mapValues(\.size),
+                       // Every remembered window keeps its pane edges, even one
+                       // length that is no grid yet, so neighbours never chase.
+                       protecting: Set(self.tabbedSteppedWindows.keys).union(deviating),
+                       in: display.visibleFrame, windows: windows),
+                   Set(snap.state.selectedWindowIDs).isSubset(of: Set(snap.placements.map(\.windowID))) {
+                    for step in snap.snaps {
+                        let axis = step.axis == .vertical ? "width" : "height"
+                        let neighbors = step.neighbors.map(\.rawValue).joined(separator: ",")
+                        Self.tabbedLog.debug("stepped snap: \(step.windowID.rawValue, privacy: .public) \(axis, privacy: .public) \(step.delta, privacy: .public) pt, neighbours \(neighbors, privacy: .public)")
+                    }
+                    if snap.snaps.isEmpty {
+                        Self.tabbedLog.debug("stepped snap: no pane edge can follow; asking for one step less")
+                    }
+                    let floating = proposal.placements.filter { !snap.state.windowIDs.contains($0.windowID) }
+                    // Windows with grids keep asking for lengths on them.
+                    proposal = (snap.state, self.requestingSteppedLengths(snap.placements) + floating)
+                    areas = Dictionary(snap.state.layout.placements(in: display.visibleFrame).map { ($0.windowID, $0.frame) },
+                                       uniquingKeysWith: { first, _ in first })
+                    // A window asked for less than its area can round up
+                    // toward it; growth past the area fails below.
+                    accepted = [:]
+                    outcome = await self.coordinator.applyTabbed(
+                        placements: proposal.placements,
+                        rollbackFrames: checkpoint,
+                        rollbackDisplayID: display.id,
+                        rollbackRequired: Set(previous?.selectedWindowIDs ?? []).intersection(checkpoint.keys),
+                        required: Set(proposal.state.selectedWindowIDs).union(detached.intersection(floating.map(\.windowID))),
+                        selected: [],
+                        previousSelected: previous?.selectedWindowIDs.filter(eligibleIDs.contains) ?? [],
+                        focus: nil,
+                        focusCheckpoint: focusBefore,
+                        destination: dropDestination,
+                        onSizeMismatch: onSizeMismatch,
+                        acceptsSteppedGrowth: true,
+                        onApplied: { accepted = $0 },
+                        steppedWindowIDs: Set(self.tabbedSteppedWindows.keys),
+                        isCurrent: isCurrent
+                    )
+                }
+                // A selected window that grew past its window area would
+                // overlap its neighbour: no snap followed, or a neighbour
+                // rounded back up. Put the windows back. A window that grew
+                // within one step resizes in steps, so the retry keeps its
+                // pane edges in place.
+                let overflowing = Set(proposal.state.selectedWindowIDs).filter { id in
+                    guard let frame = accepted[id], let area = areas[id] else { return false }
+                    return frame.size.width > area.size.width + 2 || frame.size.height > area.size.height + 2
+                }
+                if outcome.isApplied, !overflowing.isEmpty {
+                    // A length that changes a grid gives the retry something new.
+                    let asked = Dictionary(proposal.placements.map { ($0.windowID, $0.frame.size) }, uniquingKeysWith: { first, _ in first })
+                    for id in overflowing {
+                        if let request = asked[id], let settled = accepted[id]?.size,
+                           self.recordSteppedSize(id, requested: request, settled: settled, windows: windows), attempt == 0 { learnedSize = true }
+                    }
+                    let restored = await self.coordinator.restoreTabbedFrames(
+                        checkpoint, required: Set(proposal.state.selectedWindowIDs).intersection(checkpoint.keys),
+                        on: display.id, exempting: gestureSourceID, steppedWindowIDs: Set(self.tabbedSteppedWindows.keys),
+                        isCurrent: isCurrent)
+                    _ = self.coordinator.raiseTabbedWindows(previous?.selectedWindowIDs.filter(eligibleIDs.contains) ?? [])
+                    outcome = restored.isApplied
+                        ? .failed(reason: "A window did not accept its Tabbed size. Choose a larger pane or try Repair Tabbed.")
+                        : restored
+                } else if outcome.isApplied {
+                    // A length a stepped window settles at off its request
+                    // refines its grid.
+                    let asked = Dictionary(proposal.placements.map { ($0.windowID, $0.frame.size) }, uniquingKeysWith: { first, _ in first })
+                    for (id, frame) in accepted where proposal.state.selectedWindowIDs.contains(id) {
+                        if let request = asked[id] { self.recordSteppedSize(id, requested: request, settled: frame.size, windows: windows) }
+                    }
+                }
                 // Retry once, only after a complete rollback and a new size
                 // observation. Ignored writes and degraded outcomes never retry.
                 // A tab drop keeps the tabs its overlay showed; only the panes
@@ -4659,7 +4801,7 @@ extension BetterTileModel {
                 // events with the request would read it as a user resize.
                 for window in (try? self.system.windowSnapshots(ids: Set(placedFrames.keys))) ?? [] {
                     if let requested = placedFrames[window.id],
-                       SteppedSizeAcceptance.evaluate(requested: requested, actual: window.frame) == .stepped {
+                       SteppedSizeAcceptance.evaluate(requested: requested, actual: window.frame, allowsGrowth: true) == .stepped {
                         placedFrames[window.id] = window.frame
                     }
                 }
@@ -4766,6 +4908,45 @@ extension BetterTileModel {
         }
     }
 
+    /// Each known stepped window's grid per axis. One length is a grid that
+    /// only grows a pane too small for it: a window held up by a minimum the
+    /// model does not know settles at one length too.
+    private var tabbedSteppedGrids: [WindowID: [SplitAxis: SteppedGrid]] {
+        tabbedSteppedWindows.mapValues { $0.compactMapValues { SteppedGrid(observed: $0) } }.filter { !$0.value.isEmpty }
+    }
+
+    /// Asks each window with a grid for the length on it that fits its area.
+    private func requestingSteppedLengths(_ placements: [Placement]) -> [Placement] {
+        TabbedLayoutState.requestingSteppedGrids(placements, tabbedSteppedGrids)
+    }
+
+    /// Records each length a window settled at off its request, by more than
+    /// the half point that rounding a fractional request explains. A length
+    /// that takes its request proves no step: a window with a minimum near
+    /// its pane takes any larger request. A window that settles off a request
+    /// on its own grid has a new grid, such as after a font change, so its
+    /// lengths start again from this one.
+    /// - Returns: Whether the window's lengths changed.
+    @discardableResult
+    private func recordSteppedSize(_ id: WindowID, requested: BTSize, settled: BTSize, windows: [WindowSnapshot]) -> Bool {
+        let before = tabbedSteppedWindows[id]
+        var axes = tabbedSteppedWindows[id] ?? [:]
+        // A window held up at its known minimum shows that minimum, not a step.
+        let minimum = windows.first { $0.id == id }?.constraints.minimumSize
+        for (axis, asked, length, floor) in [(SplitAxis.vertical, requested.width, settled.width, minimum?.width),
+                                             (.horizontal, requested.height, settled.height, minimum?.height)]
+        where abs(length - asked) > 0.5 && !(length > asked && floor.map { abs(length - $0) <= 2 } == true) {
+            let lengths = axes[axis] ?? []
+            if SteppedGrid(observed: lengths)?.contains(asked) == true {
+                axes[axis] = [length]
+            } else {
+                axes[axis] = Array((lengths.filter { abs($0 - length) > 0.5 } + [length]).suffix(6))
+            }
+        }
+        if !axes.isEmpty { tabbedSteppedWindows[id] = axes }
+        return tabbedSteppedWindows[id] != before
+    }
+
     /// Names the window a Tabbed placement cannot show and what is in its way.
     private func tabbedFitFailure(
         showing id: WindowID, in state: TabbedLayoutState, windows: [WindowSnapshot], bounds: BTRect
@@ -4818,6 +4999,9 @@ extension BetterTileModel {
         tabbedUndo[sessionID, default: []].append(TabbedUndoStep(state: state, floatingFrames: floatingFrames))
         if tabbedUndo[sessionID, default: []].count > 20 { tabbedUndo[sessionID]?.removeFirst() }
     }
+
+    /// True while a Tabbed placement runs or waits on any display. For tests.
+    var hasPendingTabbedPlacement: Bool { !tabbedTasks.isEmpty || !tabbedNeedsReapply.isEmpty }
 
     private func isTabbedBusy(on displayID: DisplayID) -> Bool {
         tabbedTasks[displayID] != nil || (activeBentoDrag?.session.displayID == displayID
@@ -5557,7 +5741,11 @@ extension BetterTileModel {
 
     private func leaveTabbed(displayID: DisplayID, destination: LayoutMode) {
         guard tabbedExiting.insert(displayID).inserted else { return }
-        if let sessionID = sessionStore.session(for: displayID)?.id { tabbedCommittedLayouts.removeValue(forKey: sessionID) }
+        if let session = sessionStore.session(for: displayID) {
+            tabbedCommittedLayouts.removeValue(forKey: session.id)
+            let ids = (session.tabbedState?.windowIDs ?? []).union(session.tabbedState?.floatingWindowIDs ?? [])
+            for id in ids { tabbedSteppedWindows.removeValue(forKey: id) }
+        }
         tabbedRepairDeferred.remove(displayID)
         tabbedQueuedIntents.removeValue(forKey: displayID)
         let pending = tabbedTasks[displayID]

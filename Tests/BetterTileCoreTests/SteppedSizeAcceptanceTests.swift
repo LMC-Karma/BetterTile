@@ -24,3 +24,12 @@ private let request = BTRect(x: 0, y: 64, width: 957, height: 934)
     #expect(SteppedSizeAcceptance.evaluate(requested: request,
         actual: BTRect(x: 30, y: 64, width: 954, height: 934)) == .rejected)
 }
+
+@Test func steppedAcceptanceCanAcceptGrowthBelowOneStep() {
+    // Terminal rounded 934 up to the next row, 938.
+    let rounded = BTRect(x: 0, y: 64, width: 958, height: 938)
+    #expect(SteppedSizeAcceptance.evaluate(requested: request, actual: rounded) == .rejected)
+    #expect(SteppedSizeAcceptance.evaluate(requested: request, actual: rounded, allowsGrowth: true) == .stepped)
+    #expect(SteppedSizeAcceptance.evaluate(requested: request,
+        actual: BTRect(x: 0, y: 64, width: 1000, height: 934), allowsGrowth: true) == .rejected)
+}

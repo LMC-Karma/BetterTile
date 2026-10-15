@@ -1044,8 +1044,9 @@ func aSteppedFloatingWindowJoinsAPaneByDrop(throughStrip: Bool) async throws {
           let planned = plan.placements.first(where: { $0.windowID == source })?.frame else {
         Issue.record("Expected a snap plan"); return
     }
-    // The window settles a row taller than any frame it is asked for.
-    system.heightSteps[source] = 17
+    // The window refuses the planned height. A settle within one resize
+    // step would be a stepped window, which the placement accepts.
+    system.enforcedMinimumHeights[source] = planned.size.height + 100
     system.windows[0].frame.origin.x += 140
     model.finishBentoDrag(displayID: main, sourceID: source, end: .commit(plan))
     #expect(await waitFor(timeout: .seconds(3)) { model.statusMessage != nil })

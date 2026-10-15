@@ -27,6 +27,12 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, TabbedWindowSystem, Min
     /// Simulates an application that resizes in steps, such as Terminal's
     /// character cells: widths round down to a multiple of the step.
     var widthSteps: [WindowID: Double] = [:]
+    /// Simulates an application that resizes in whole cells, rounding each
+    /// axis to the nearest `offset + n * step`, as Terminal does: asked for
+    /// 495 it can settle at 499. A zero step leaves that axis free.
+    var sizeGrids: [WindowID: (step: BTSize, offset: BTSize)] = [:]
+    /// Grids that round up to the next cell instead of the nearest one.
+    var sizeGridsRoundUp: Set<WindowID> = []
     /// Heights round up to a multiple of the step: an application, such as
     /// Terminal, that settles a row taller than asked.
     var heightSteps: [WindowID: Double] = [:]
@@ -238,6 +244,16 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, TabbedWindowSystem, Min
         if let step = widthSteps[windowID] {
             windows[index].frame.size.width = (windows[index].frame.size.width / step).rounded(.down) * step
         }
+        if let grid = sizeGrids[windowID] {
+            let roundsUp = sizeGridsRoundUp.contains(windowID)
+            func cell(_ value: Double, _ step: Double, _ offset: Double) -> Double {
+                let cells = (value - offset) / step
+                return step > 0 ? offset + (roundsUp ? (cells - 1e-9).rounded(.up) : cells.rounded()) * step : value
+            }
+            windows[index].frame.size = BTSize(
+                width: cell(windows[index].frame.size.width, grid.step.width, grid.offset.width),
+                height: cell(windows[index].frame.size.height, grid.step.height, grid.offset.height))
+        }
         if let step = heightSteps[windowID] {
             windows[index].frame.size.height = (windows[index].frame.size.height / step).rounded(.up) * step
         }
@@ -256,6 +272,12 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, TabbedWindowSystem, Min
     var failedRestoreWindowIDs: Set<WindowID> = []
     var restoreRequests: [WindowID] = []
     var emitsMinimizationEvents = false
+    func withSteppedSizes(_ updates: () throws -> Void) rethrows {
+        let outer = minimumSizeLearner.acceptsSteppedSizes
+        minimumSizeLearner.acceptsSteppedSizes = true
+        defer { minimumSizeLearner.acceptsSteppedSizes = outer }
+        try updates()
+    }
     func setMinimized(_ minimized: Bool, for windowID: WindowID) throws {
         guard let index = windows.firstIndex(where: { $0.id == windowID }) else {
             throw WindowSystemError.windowNotFound(windowID)

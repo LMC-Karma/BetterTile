@@ -1118,6 +1118,13 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         return IntermediateResult(windowID: job.windowID, errors: errors, actual: actual)
     }
 
+    public func withSteppedSizes(_ updates: () throws -> Void) rethrows {
+        let outer = minimumSizeLearner.acceptsSteppedSizes
+        minimumSizeLearner.acceptsSteppedSizes = true
+        defer { minimumSizeLearner.acceptsSteppedSizes = outer }
+        try updates()
+    }
+
     public func withFrameWriteBatch(_ updates: () throws -> Void) rethrows {
         if frameWriteSuspensions != nil { try updates(); return }
         retryPendingEnhancedUserInterfaceRestores()

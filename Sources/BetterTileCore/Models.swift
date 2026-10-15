@@ -211,6 +211,10 @@ public protocol WindowSystem: AnyObject {
     /// Shares adapter setup across a synchronous group of frame writes and
     /// restores it before returning, including when a write or rollback fails.
     func withFrameWriteBatch(_ updates: () throws -> Void) rethrows
+    /// Frame writes inside accept a size up to one resize step larger than
+    /// requested as the application's step, so its readback teaches no
+    /// minimum. See `WindowMinimumSizeLearner.acceptsSteppedSizes`.
+    func withSteppedSizes(_ updates: () throws -> Void) rethrows
     func setMinimized(_ minimized: Bool, for windowID: WindowID) throws
     /// Keeps per-write adapter setup open across the ticks of a continuous
     /// gesture, such as a live divider drag, until `endContinuousWrites`.
@@ -236,6 +240,7 @@ public protocol WindowSystem: AnyObject {
 
 public extension WindowSystem {
     func withFrameWriteBatch(_ updates: () throws -> Void) rethrows { try updates() }
+    func withSteppedSizes(_ updates: () throws -> Void) rethrows { try updates() }
     func beginContinuousWrites() {}
     func endContinuousWrites() {}
     func measuredFrameAfterWrite(for windowID: WindowID) -> BTRect? { nil }
