@@ -61,6 +61,13 @@ final class BetterTileModel {
     var hasAccessibilityPermission = false
     private(set) var isWaitingForAccessibilityPermission = false
     var statusMessage: String?
+    let configurationLoadError: (any Error)?
+    var configurationSaveBlockedReason: String? {
+        guard let configurationLoadError else { return nil }
+        return "Settings could not be loaded: \(configurationLoadError.localizedDescription) "
+            + "Changes apply only for this session. Saving is blocked to preserve the configuration file. "
+            + "Restore a valid configuration at \(store.fileURL.path), then quit and reopen BetterTile."
+    }
     private(set) var lastActionFeedback: ResultPillFeedback?
     private(set) var activeDisplayID: DisplayID?
     private(set) var layoutWheelMonitoringFailure: String?
@@ -218,7 +225,14 @@ final class BetterTileModel {
     ) {
         self.store = store
         self.presentsTabbedChrome = presentsTabbedChrome ?? startRuntime
-        let loaded = (try? store.load()) ?? BetterTileConfiguration()
+        let loaded: BetterTileConfiguration
+        do {
+            loaded = try store.load()
+            configurationLoadError = nil
+        } catch {
+            loaded = BetterTileConfiguration()
+            configurationLoadError = error
+        }
         let windowSystem: any BetterTileWindowSystem = suppliedSystem ?? AccessibilityWindowSystem()
         configuration = loaded
         windowSystem.enhancedUserInterfacePolicy = loaded.enhancedUserInterfacePolicy
@@ -2103,6 +2117,7 @@ final class BetterTileModel {
     }
 
     private func scheduleConfigurationSave() {
+        guard configurationLoadError == nil else { return }
         configurationNeedsSave = true
         configurationSaveTask?.cancel()
         configurationSaveTask = Task { @MainActor [weak self] in
@@ -2114,7 +2129,7 @@ final class BetterTileModel {
     }
 
     private func persistConfiguration() {
-        guard configurationNeedsSave else { return }
+        guard configurationLoadError == nil, configurationNeedsSave else { return }
         let interval = Self.signposter.beginInterval("saveConfiguration")
         defer { Self.signposter.endInterval("saveConfiguration", interval) }
         do {

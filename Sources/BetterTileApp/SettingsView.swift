@@ -143,6 +143,16 @@ struct SettingsView: View {
         .controlSize(.regular)
         .navigationSplitViewStyle(.balanced)
         .frame(minWidth: 980, minHeight: 640)
+        .safeAreaInset(edge: .top, spacing: 0) {
+            if let reason = model.configurationSaveBlockedReason {
+                Label(reason, systemImage: "exclamationmark.triangle")
+                    .font(.callout)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding()
+                    .background(.yellow.opacity(0.12))
+            }
+        }
         .onChange(of: search) {
             if !matchesSearch(selection), let match = SettingsDestination.allCases.first(where: matchesSearch) {
                 selection = match

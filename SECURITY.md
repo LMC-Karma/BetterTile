@@ -18,6 +18,13 @@ stay on the Mac; update checks send no window data, configuration, analytics,
 telemetry, crash reports, or system profile. Product behavior and material data
 handling are disclosed in this repository.
 
+If an existing configuration cannot be read, decoded, or validated, BetterTile
+preserves the file and blocks all configuration saves for that session. Settings
+explains the failure. Changes still apply for the session. To resume saving,
+restore a valid configuration file, then quit and reopen BetterTile. Only a
+confirmed missing file permits defaults with normal saving. BetterTile creates
+no recovery copy and does not automatically retry a failed load.
+
 Two platform-safety boundaries are permanent:
 
 - do not inject code into other processes
