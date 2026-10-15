@@ -469,7 +469,8 @@ enum DividerTestEnding: CaseIterable {
     var config = BetterTileConfiguration()
     config.resizeFeedbackMode = feedback
     config.bentoInnerGap = 12
-    let controller = DividerOverlayController(coordinator: WindowCoordinator(system: system), configuration: config)
+    let coordinator = WindowCoordinator(system: system)
+    let controller = DividerOverlayController(coordinator: coordinator, configuration: config)
     controller.bentoStateProvider = { _ in state }
     let boundaries = BentoBoundaryResolver().boundaries(state: state, windows: system.windows, displayID: display, bounds: bounds)
     let start = BTPoint(x: bounds.midX + 14, y: bounds.midY - 12)
@@ -491,16 +492,20 @@ enum DividerTestEnding: CaseIterable {
     }
     if feedback == .ghost { #expect(system.frameWriteCounts.isEmpty) }
     if ending == .participantLoss {
+        coordinator.removeClosedWindow(try #require(system.windows.last).id)
         system.windows.removeLast()
         controller.drag(to: CGPoint(x: start.x + 60, y: screen.frame.maxY - (start.y + 60)))
         controller.displayTick()
         #expect(!controller.isDragging)
+        #expect(system.windows.map(\.frame) == Array(original.dropLast()))
         return
     } else if ending == .stationaryParticipantLoss {
         // A window-list refresh reports the closure without a pointer sample.
+        coordinator.removeClosedWindow(try #require(system.windows.last).id)
         system.windows.removeLast()
         controller.refresh(boundaries: boundaries)
         #expect(!controller.isDragging)
+        #expect(system.windows.map(\.frame) == Array(original.dropLast()))
         return
     } else if ending == .cancel {
         controller.cancelActiveGesture()

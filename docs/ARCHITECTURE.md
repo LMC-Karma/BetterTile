@@ -197,7 +197,20 @@ requires either its exact identity to be absent from the full public WindowServe
 list or its cached Accessibility element to report `invalidUIElement`. The latter
 confirms closure without an exact WindowServer identity. Other Accessibility read
 failures do not confirm closure. Destruction events and application termination
-also remove window identities.
+also remove window identities. Confirmed destruction retires that window's
+Restore history, write ownership, and placement baseline before gesture or Space
+buffering. Cancellation restores only participants that still hold write
+ownership. Temporary unreadability, minimization, and off-screen membership do
+not retire it.
+
+AX callbacks capture the known window identity and application observer's launch
+and installation token on the main run loop. Deferred delivery rejects a closed
+identity or replaced observer. Unknown callbacks never create identities; created
+and destroyed callbacks can still request a topology refresh. Policy removal and
+permission reset clear adapter caches without declaring surviving windows closed.
+Those resets already discard identity mappings, so a later snapshot can assign a
+new process-local ID; Restore across such a reset is not guaranteed.
+
 Native membership includes retained, nonhidden, nonminimized window identities.
 It keeps a temporarily missing pane in its desktop's tree. Confirmed destruction
 and minimization still remove the pane, and a window observed on another display

@@ -3323,3 +3323,51 @@ func aStaleBentoPlanWritesNothingButTheDraggedWindowsReturn(end: String) async t
     #expect(corrected, "\(system.windows.map(\.frame))")
     #expect(system.windows.first { $0.id == kept }?.frame.size.width == 600)
 }
+
+@Test @MainActor func confirmedCloseRetiresRestoreBeforeSpaceStabilizationGuard() throws {
+    _ = NSApplication.shared
+    let system = FakeAppWindowSystem()
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    model.setActiveMode(.manual)
+    let closed = system.windows[0]
+    model.perform(.leftHalf)
+    #expect(system.windows[0].frame != closed.frame)
+    model.beginActiveSpaceStabilization()
+    try #require(model.isStabilizingSpace)
+    system.windows.removeAll()
+    system.eventHandler?(WindowSystemEvent(kind: .destroyed, windowID: closed.id,
+                                          processIdentifier: closed.processIdentifier))
+    // Fake ID reuse makes any old Restore frame observable at the app seam.
+    var replacement = closed
+    replacement.frame = BTRect(x: 300, y: 300, width: 350, height: 250)
+    system.windows = [replacement]
+    model.perform(.restore)
+    #expect(system.windows[0].frame == replacement.frame)
+}
+
+@Test(arguments: ["minimized", "offscreen", "unreadable"]) @MainActor
+func temporaryWindowAbsenceKeepsRestoreDuringSpaceStabilization(reason: String) throws {
+    _ = NSApplication.shared
+    let system = FakeAppWindowSystem()
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    model.setActiveMode(.manual)
+    let original = system.windows[0]
+    model.perform(.leftHalf)
+    let displaced = system.windows[0]
+    model.beginActiveSpaceStabilization()
+    try #require(model.isStabilizingSpace)
+    if reason == "minimized" {
+        system.eventHandler?(WindowSystemEvent(kind: .minimized, windowID: original.id,
+                                               processIdentifier: original.processIdentifier))
+    } else {
+        if reason == "offscreen" { system.windows = [] }
+        else { system.focusedWindowReadFails = true }
+        model.perform(.rightHalf)
+        system.focusedWindowReadFails = false
+        system.windows = [displaced]
+    }
+    model.perform(.restore)
+    #expect(system.windows[0].frame == original.frame)
+}

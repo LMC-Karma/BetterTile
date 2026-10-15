@@ -12,24 +12,8 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
     )
 
     private var elements: [WindowID: AXUIElement] = [:]
-    /// Bundle identifiers of observed windows, for per-application minimum
-    /// size seeds.
-    private var applicationKeys: [WindowID: String] = [:]
-    /// Open while a continuous gesture writes on every display tick.
+    private var metadata = WindowMetadata()
     private var continuousWriteDepth = 0
-    private var continuousSettable: [WindowID: Bool] = [:]
-    /// The last answer each window's application gave about whether its
-    /// position and size can be set. A busy application can fail the
-    /// question without an answer; its window then keeps this verdict.
-    private var settabilityVerdicts: [WindowID: (movable: Bool?, resizable: Bool?)] = [:]
-    /// Size settability, checked once per continuous gesture like moving.
-    private var continuousSizeSettable: [WindowID: Bool] = [:]
-    private var lastWriteReadback: [WindowID: BTRect] = [:]
-    /// The size each window's latest live tick asked for. During a gesture
-    /// an application can still be applying it when the next tick reads back.
-    private var liveRequestedSizes: [WindowID: BTSize] = [:]
-    /// Decided popup classifications, kept for each window's lifetime.
-    private var popupVerdicts: [WindowID: PopupWindowClassifier.Verdict] = [:]
     private var identities = WindowIdentityRegistry()
     private let privateAPIsDisabled: Bool
     private let exactWindowIDResolver: ExactWindowIDResolver
@@ -49,6 +33,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
     private var nextLaunchGeneration: UInt64 = 0
     private var loggedBatchFallback = false
     private var observers: [pid_t: AXObserver] = [:]
+    private var observationLifetime = WindowObservationLifetime()
     private var observationCallbackContext: AccessibilityCallbackContext?
     private struct Registration: Hashable {
         var windowID: WindowID?
@@ -56,9 +41,6 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         var notification: String
     }
     private var registrations: [pid_t: Set<Registration>] = [:]
-    private var managedWindowIDs: Set<WindowID> = []
-    private var recentWindowIDs: [WindowID] = []
-    private var minimizedWindowIDs: Set<WindowID> = []
     private var eventHandler: (@MainActor (WindowSystemEvent) -> Void)?
     private var minimumSizeLearner = WindowMinimumSizeLearner()
     private let dockFootprintMonitor = DockFootprintMonitor()
@@ -195,6 +177,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
             CFRunLoopRemoveSource(CFRunLoopGetMain(), AXObserverGetRunLoopSource(observer), .commonModes)
         }
         observers.removeAll()
+        observationLifetime.removeAll()
         registrations.removeAll()
         observationCallbackContext = nil
     }
@@ -205,7 +188,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
     }
 
     public func resetCachedWindows() {
-        liveRequestedSizes.removeAll()
+        metadata.removeAll()
         elements.removeAll()
         identities.removeAll()
         snapshotCache.invalidate()
@@ -213,9 +196,6 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         nativeObservationGeneration = nil
         lastNativeDesktopObservation = nil
         launchRecords.removeAll()
-        managedWindowIDs.removeAll()
-        recentWindowIDs.removeAll()
-        minimizedWindowIDs.removeAll()
         minimumSizeLearner = WindowMinimumSizeLearner()
         stopWindowObservation()
     }
@@ -229,7 +209,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
     ) -> Bool {
         let learned = minimumSizeLearner.observe(
             windowID: windowID,
-            application: applicationKeys[windowID],
+            application: metadata.applicationKeys[windowID],
             requested: requested,
             baseline: baseline,
             actual: actual,
@@ -294,14 +274,14 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
             // Only an axis that shrank and stopped is a minimum. A kept size
             // stays unmeasured; the restore above leaves nothing to confirm.
             if minimumSizeLearner.observeProbe(
-                windowID: id, application: applicationKeys[id],
+                windowID: id, application: metadata.applicationKeys[id],
                 original: BTSize(width: original.width, height: original.height),
                 clamped: BTSize(width: clamped.width, height: clamped.height)
             ) {
                 measured = true
             }
             // The window had no measurement before this probe.
-            let application = applicationKeys[id] ?? "unknown"
+            let application = metadata.applicationKeys[id] ?? "unknown"
             if let size = minimumSizeLearner.learnedSizes[id] {
                 Self.log.debug("""
                     probe measured a \(application, privacy: .private) window: \
@@ -416,12 +396,12 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
                    ) { continue }
                 snapshots.append(snapshot)
                 refreshedElements[snapshot.id] = window
-                if managedWindowIDs.contains(snapshot.id) || recentWindowIDs.contains(snapshot.id) {
+                if metadata.managedWindowIDs.contains(snapshot.id) || metadata.recentWindowIDs.contains(snapshot.id) {
                     registerWindowNotifications(window, snapshot: snapshot)
                 }
             }
         }
-        let retainedIDs = managedWindowIDs.union(recentWindowIDs).union(minimizedWindowIDs)
+        let retainedIDs = metadata.managedWindowIDs.union(metadata.recentWindowIDs).union(metadata.minimizedWindowIDs)
         elements = elements.filter { retainedIDs.contains($0.key) }
         elements.merge(refreshedElements) { _, latest in latest }
         removeCachedState(for: identities.removeClosedWindowsAfterSweep(
@@ -443,16 +423,16 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
     }
 
     public func updateManagedWindowIDs(_ ids: Set<WindowID>) {
-        let releasedIDs = managedWindowIDs
+        let releasedIDs = metadata.managedWindowIDs
             .subtracting(ids)
-            .subtracting(recentWindowIDs)
-            .subtracting(minimizedWindowIDs)
+            .subtracting(metadata.recentWindowIDs)
+            .subtracting(metadata.minimizedWindowIDs)
         for id in releasedIDs {
             if let element = elements[id] {
                 unregisterWindowNotifications(element, windowID: id)
             }
         }
-        managedWindowIDs = ids
+        metadata.managedWindowIDs = ids
         for id in ids {
             guard let element = elements[id],
                   let snapshot = try? windowSnapshot(id: id)
@@ -461,8 +441,8 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         }
         elements = elements.filter {
             ids.contains($0.key)
-                || recentWindowIDs.contains($0.key)
-                || minimizedWindowIDs.contains($0.key)
+                || metadata.recentWindowIDs.contains($0.key)
+                || metadata.minimizedWindowIDs.contains($0.key)
         }
     }
 
@@ -592,7 +572,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         let hiddenPIDs = Set(NSWorkspace.shared.runningApplications.filter(\.isHidden).map(\.processIdentifier))
         let exactWindowIDs = Dictionary(uniqueKeysWithValues: identities.records.values.compactMap { record -> (WindowID, CGWindowID)? in
             guard !hiddenPIDs.contains(record.application.processIdentifier),
-                  !minimizedWindowIDs.contains(record.windowID),
+                  !metadata.minimizedWindowIDs.contains(record.windowID),
                   let exactID = record.exactWindowID
             else { return nil }
             return (record.windowID, exactID)
@@ -631,11 +611,11 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         try requireResponsive(element)
         // A continuous gesture checks once whether the window can move.
         let movable: Bool
-        if continuousWriteDepth > 0, let cached = continuousSettable[windowID] {
+        if continuousWriteDepth > 0, let cached = metadata.continuousSettable[windowID] {
             movable = cached
         } else {
             movable = try movability(of: element)
-            if continuousWriteDepth > 0 { continuousSettable[windowID] = movable }
+            if continuousWriteDepth > 0 { metadata.continuousSettable[windowID] = movable }
         }
         guard movable else {
             throw WindowSystemError.unsupportedWindow(windowID)
@@ -665,8 +645,8 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         // skipped; the trailing write still corrects any clamping.
         var plan = FrameWritePlanner.plan(target: frame, knownCurrentFrame: knownCurrentFrame)
         // A measurement belongs to one write; an older one is not evidence.
-        lastWriteReadback.removeValue(forKey: windowID)
-        liveRequestedSizes.removeValue(forKey: windowID)
+        metadata.lastWriteReadback.removeValue(forKey: windowID)
+        metadata.liveRequestedSizes.removeValue(forKey: windowID)
         minimumSizeLearner.discardClampCandidate(for: windowID)
         // A fixed-size window, such as Calculator, rejects any size write.
         if try !sizeIsSettable(windowID, on: element) { plan.writesInitialSize = false; plan.writesFinalSize = false }
@@ -699,10 +679,10 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
            let actualSize: CGSize = axValue(kAXSizeAttribute, from: element, type: .cgSize) {
             let actual = BTRect(x: actualPosition.x, y: actualPosition.y,
                                 width: actualSize.width, height: actualSize.height)
-            lastWriteReadback[windowID] = actual
+            metadata.lastWriteReadback[windowID] = actual
             let now = ProcessInfo.processInfo.systemUptime
             if minimumSizeLearner.observeWriteReadback(
-                windowID: windowID, application: applicationKeys[windowID],
+                windowID: windowID, application: metadata.applicationKeys[windowID],
                 requested: frame, previous: knownCurrentFrame, actual: actual, now: now
             ) {
                 snapshotGeneration &+= 1
@@ -772,11 +752,11 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
     /// answer fails the write without a verdict, so a gesture does not keep
     /// the window as fixed-size after the application recovers.
     private func sizeIsSettable(_ windowID: WindowID, on element: AXUIElement) throws -> Bool {
-        if continuousWriteDepth > 0, let cached = continuousSizeSettable[windowID] { return cached }
+        if continuousWriteDepth > 0, let cached = metadata.continuousSizeSettable[windowID] { return cached }
         guard let settable = settable(kAXSizeAttribute, on: element) else {
             throw WindowSystemError.operationFailed(Self.unresponsiveApplicationMessage)
         }
-        if continuousWriteDepth > 0 { continuousSizeSettable[windowID] = settable }
+        if continuousWriteDepth > 0 { metadata.continuousSizeSettable[windowID] = settable }
         return settable
     }
 
@@ -806,15 +786,15 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         guard continuousWriteDepth > 0 else { return }
         continuousWriteDepth -= 1
         guard continuousWriteDepth == 0 else { return }
-        liveRequestedSizes.removeAll()
-        continuousSettable.removeAll()
-        continuousSizeSettable.removeAll()
+        metadata.liveRequestedSizes.removeAll()
+        metadata.continuousSettable.removeAll()
+        metadata.continuousSizeSettable.removeAll()
         let suspensions = frameWriteSuspensions ?? [:]
         frameWriteSuspensions = nil
         finish(suspensions)
     }
 
-    public func measuredFrameAfterWrite(for windowID: WindowID) -> BTRect? { lastWriteReadback[windowID] }
+    public func measuredFrameAfterWrite(for windowID: WindowID) -> BTRect? { metadata.lastWriteReadback[windowID] }
 
     public func isApplicationUnresponsive(for windowID: WindowID) -> Bool {
         // The identity record outlives the cached element, which a failed
@@ -854,9 +834,9 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
             }
             try requireResponsive(element)
             let movable: Bool
-            if let cached = continuousSettable[write.windowID] { movable = cached } else {
+            if let cached = metadata.continuousSettable[write.windowID] { movable = cached } else {
                 movable = try movability(of: element)
-                if continuousWriteDepth > 0 { continuousSettable[write.windowID] = movable }
+                if continuousWriteDepth > 0 { metadata.continuousSettable[write.windowID] = movable }
             }
             guard movable else { throw WindowSystemError.unsupportedWindow(write.windowID) }
             _ = suspendEnhancedUserInterfaceIfNeeded(for: element)
@@ -883,7 +863,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         var failure: WindowID?
         let now = ProcessInfo.processInfo.systemUptime
         for (job, result) in results {
-            lastWriteReadback.removeValue(forKey: result.windowID)
+            metadata.lastWriteReadback.removeValue(forKey: result.windowID)
             minimumSizeLearner.discardClampCandidate(for: result.windowID)
             if !result.errors.allSatisfy({ accepted.contains($0) }) {
                 elements.removeValue(forKey: result.windowID)
@@ -891,13 +871,13 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
                 continue
             }
             guard let actual = result.actual else {
-                liveRequestedSizes[result.windowID] = job.frame.size
+                metadata.liveRequestedSizes[result.windowID] = job.frame.size
                 continue
             }
-            lastWriteReadback[result.windowID] = actual
+            metadata.lastWriteReadback[result.windowID] = actual
             if Self.observeLiveReadback(
-                &minimumSizeLearner, requestedSizes: &liveRequestedSizes,
-                windowID: result.windowID, application: applicationKeys[result.windowID],
+                &minimumSizeLearner, requestedSizes: &metadata.liveRequestedSizes,
+                windowID: result.windowID, application: metadata.applicationKeys[result.windowID],
                 requested: job.frame, previous: job.previous, actual: actual, now: now
             ) { snapshotGeneration &+= 1 }
         }
@@ -1013,8 +993,8 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         var failure: (windowID: WindowID, error: Error)?
         let now = ProcessInfo.processInfo.systemUptime
         for write in writes {
-            lastWriteReadback.removeValue(forKey: write.windowID)
-            liveRequestedSizes.removeValue(forKey: write.windowID)
+            metadata.lastWriteReadback.removeValue(forKey: write.windowID)
+            metadata.liveRequestedSizes.removeValue(forKey: write.windowID)
             minimumSizeLearner.discardClampCandidate(for: write.windowID)
             guard let result = results[write.windowID] else { continue }
             guard result.errors.allSatisfy({ accepted.contains($0) }) else {
@@ -1027,9 +1007,9 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
                 continue
             }
             guard let actual = result.actual else { continue }
-            lastWriteReadback[write.windowID] = actual
+            metadata.lastWriteReadback[write.windowID] = actual
             if minimumSizeLearner.observeWriteReadback(
-                windowID: write.windowID, application: applicationKeys[write.windowID],
+                windowID: write.windowID, application: metadata.applicationKeys[write.windowID],
                 requested: write.frame, previous: knownCurrentFrames[write.windowID], actual: actual, now: now
             ) {
                 snapshotGeneration &+= 1
@@ -1342,10 +1322,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
             return application.processIdentifier
         })
         for pid in observers.keys where !activePIDs.contains(pid) {
-            if let observer = observers.removeValue(forKey: pid) {
-                CFRunLoopRemoveSource(CFRunLoopGetMain(), AXObserverGetRunLoopSource(observer), .commonModes)
-            }
-            registrations.removeValue(forKey: pid)
+            removeObserver(for: pid)
             removeCachedState(for: identities.remove(processIdentifier: pid))
             launchRecords.removeValue(forKey: pid)
         }
@@ -1374,11 +1351,21 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         registrations[pid] = existing.subtracting(removed)
     }
 
+    private func removeObserver(for pid: pid_t) {
+        if let observer = observers.removeValue(forKey: pid) {
+            CFRunLoopRemoveSource(CFRunLoopGetMain(), AXObserverGetRunLoopSource(observer), .commonModes)
+        }
+        observationLifetime.remove(processIdentifier: pid)
+        registrations.removeValue(forKey: pid)
+    }
+
     private func installObserver(for pid: pid_t) {
         var observer: AXObserver?
         let error = AXObserverCreate(pid, betterTileAXObserverCallback, &observer)
         guard error == .success, let observer else { return }
+        guard let applicationInstance = launchRecords[pid]?.instance else { return }
         observers[pid] = observer
+        observationLifetime.install(applicationInstance)
         CFRunLoopAddSource(CFRunLoopGetMain(), AXObserverGetRunLoopSource(observer), .commonModes)
         let application = makeApplicationElement(pid: pid)
         register(kAXWindowCreatedNotification, element: application, observer: observer, pid: pid)
@@ -1432,10 +1419,10 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
 
     fileprivate func receiveWindowEvent(_ event: WindowSystemEvent) {
         if event.kind == .minimized, let windowID = event.windowID {
-            minimizedWindowIDs.insert(windowID)
+            metadata.minimizedWindowIDs.insert(windowID)
             retainRecent(windowID)
         } else if event.kind == .restored, let windowID = event.windowID {
-            minimizedWindowIDs.remove(windowID)
+            metadata.minimizedWindowIDs.remove(windowID)
             retainRecent(windowID)
         }
         if event.kind == .destroyed, let windowID = event.windowID {
@@ -1444,21 +1431,13 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
             }
             elements.removeValue(forKey: windowID)
             identities.remove(windowID)
-            recentWindowIDs.removeAll { $0 == windowID }
-            minimizedWindowIDs.remove(windowID)
             if let existing = registrations[event.processIdentifier] {
                 registrations[event.processIdentifier] = Set(
                     existing.filter { $0.windowID != windowID }
                 )
             }
             minimumSizeLearner.remove(windowID)
-            popupVerdicts.removeValue(forKey: windowID)
-            applicationKeys.removeValue(forKey: windowID)
-            lastWriteReadback.removeValue(forKey: windowID)
-            liveRequestedSizes.removeValue(forKey: windowID)
-            continuousSettable.removeValue(forKey: windowID)
-            continuousSizeSettable.removeValue(forKey: windowID)
-            settabilityVerdicts.removeValue(forKey: windowID)
+            metadata.remove(windowID)
         }
         if event.kind != .moved, event.kind != .resized, event.kind != .focused {
             snapshotCache.invalidate()
@@ -1466,30 +1445,21 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         eventHandler?(event)
     }
 
-    fileprivate func receiveAXEvent(
+    fileprivate func captureAXEvent(
+        observer: AXObserver,
         kind: WindowSystemEvent.Kind,
         processIdentifier: pid_t,
         accessibilityHash: CFHashCode
-    ) {
-        let windowID: WindowID?
-        if kind == .focused {
-            windowID = nil
-        } else {
-            let application = applicationInstance(forPID: processIdentifier)
-            windowID = identities.windowID(
-                application: application,
-                accessibilityHash: accessibilityHash
-            ) ?? identities.resolve(
-                application: application,
-                accessibilityHash: accessibilityHash,
-                exactWindowID: nil
-            )
-        }
-        receiveWindowEvent(WindowSystemEvent(
-            kind: kind,
-            windowID: windowID,
-            processIdentifier: processIdentifier
-        ))
+    ) -> CapturedWindowObservation? {
+        guard let installedObserver = observers[processIdentifier], observer === installedObserver,
+              let application = launchRecords[processIdentifier]?.instance else { return nil }
+        return observationLifetime.capture(kind: kind, application: application,
+            accessibilityHash: accessibilityHash, identities: identities)
+    }
+
+    fileprivate func receiveAXEvent(_ captured: CapturedWindowObservation) {
+        guard let event = observationLifetime.event(for: captured, identities: identities) else { return }
+        receiveWindowEvent(event)
     }
 
     struct SnapshotAttributes: Equatable {
@@ -1542,12 +1512,12 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         // the window. Counting that as "cannot move" would drop the window
         // from its layout or treat it as fixed-size; keep its last verdict
         // instead, and read again on the next snapshot.
-        let previous = settabilityVerdicts[id]
+        let previous = metadata.settabilityVerdicts[id]
         let movability = Self.settabilityVerdict(answer: settable(kAXPositionAttribute, on: element),
                                                  previous: previous?.movable)
         let resizability = Self.settabilityVerdict(answer: settable(kAXSizeAttribute, on: element),
                                                    previous: previous?.resizable)
-        settabilityVerdicts[id] = (movability.source == .reported ? movability.value : previous?.movable,
+        metadata.settabilityVerdicts[id] = (movability.source == .reported ? movability.value : previous?.movable,
                                    resizability.source == .reported ? resizability.value : previous?.resizable)
         if movability.source != .reported || resizability.source != .reported {
             Self.log.debug("""
@@ -1565,7 +1535,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
             displaySize: display.frame.size
         )
         if let bundleIdentifier {
-            applicationKeys[id] = bundleIdentifier
+            metadata.applicationKeys[id] = bundleIdentifier
             // A process registered while macOS could not name it learns its
             // bundle identifier from its windows, so its seed is still
             // dropped when it quits after its last window closed.
@@ -1603,7 +1573,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
             frame: frame,
             displayID: display.id,
             constraints: constraints,
-            isMinimized: attributes.minimized || minimizedWindowIDs.contains(id),
+            isMinimized: attributes.minimized || metadata.minimizedWindowIDs.contains(id),
             isFullScreen: attributes.fullScreen,
             isHidden: false,
             isFloating: WindowFloatingClassifier.isFloating(subrole: attributes.subrole)
@@ -1618,7 +1588,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
     private func popupVerdict(
         for id: WindowID, element: AXUIElement, attributes: SnapshotAttributes, bundleIdentifier: String?
     ) -> PopupWindowClassifier.Verdict {
-        if let cached = popupVerdicts[id] { return cached }
+        if let cached = metadata.popupVerdicts[id] { return cached }
         let verdict = PopupWindowClassifier.classify(PopupWindowClassifier.Attributes(
             subrole: attributes.subrole,
             fullScreenButton: buttonState(kAXFullScreenButtonAttribute, of: element),
@@ -1628,7 +1598,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
             isMinimized: attributes.minimized || attributes.fullScreen,
             bundleIdentifier: bundleIdentifier
         ))
-        if verdict != .undetermined { popupVerdicts[id] = verdict }
+        if verdict != .undetermined { metadata.popupVerdicts[id] = verdict }
         return verdict
     }
 
@@ -1812,12 +1782,12 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
     }
 
     private func retainRecent(_ windowID: WindowID) {
-        recentWindowIDs.removeAll { $0 == windowID }
-        recentWindowIDs.insert(windowID, at: 0)
-        if recentWindowIDs.count > 12 {
-            let evicted = Array(recentWindowIDs.dropFirst(12))
-            recentWindowIDs.removeLast(recentWindowIDs.count - 12)
-            for id in evicted where !managedWindowIDs.contains(id) {
+        metadata.recentWindowIDs.removeAll { $0 == windowID }
+        metadata.recentWindowIDs.insert(windowID, at: 0)
+        if metadata.recentWindowIDs.count > 12 {
+            let evicted = Array(metadata.recentWindowIDs.dropFirst(12))
+            metadata.recentWindowIDs.removeLast(metadata.recentWindowIDs.count - 12)
+            for id in evicted where !metadata.managedWindowIDs.contains(id) {
                 if let element = elements[id] {
                     unregisterWindowNotifications(element, windowID: id)
                 }
@@ -1836,6 +1806,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         }
         // A changed launch at a known process identifier means the previous
         // process quit, and its windows close with it.
+        if previous != nil { removeObserver(for: pid) }
         let closed = identities.remove(processIdentifier: pid)
         let quitApplications = previous == nil ? [] : bundleIdentifiers(of: pid, windows: closed)
         nextLaunchGeneration &+= 1
@@ -1858,7 +1829,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
     private func bundleIdentifiers(of pid: pid_t, windows: [WindowIdentityRecord]) -> Set<String> {
         Self.quitApplicationBundles(
             closedWindowIDs: windows.map(\.windowID),
-            applicationKeys: applicationKeys,
+            applicationKeys: metadata.applicationKeys,
             launchBundleIdentifier: launchRecords[pid]?.bundleIdentifier
         )
     }
@@ -1938,11 +1909,8 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
             for windowID in windowIDs {
                 elements.removeValue(forKey: windowID)
                 minimumSizeLearner.remove(windowID)
-                popupVerdicts.removeValue(forKey: windowID)
-                minimizedWindowIDs.remove(windowID)
-                settabilityVerdicts.removeValue(forKey: windowID)
+                metadata.remove(windowID)
             }
-            recentWindowIDs.removeAll { windowIDs.contains($0) }
             snapshotCache.invalidate()
         }
     }
@@ -2184,12 +2152,12 @@ private func betterTileAXObserverCallback(
     }
     let accessibilityHash = CFHash(element)
     let context = Unmanaged<AccessibilityCallbackContext>.fromOpaque(refcon).takeUnretainedValue()
-    Task { @MainActor [weak context] in
-        context?.system?.receiveAXEvent(
-            kind: kind,
-            processIdentifier: pid,
-            accessibilityHash: accessibilityHash
-        )
+    // AX sources are installed on CFRunLoopGetMain(); capture ownership before
+    // the asynchronous hop, then defer delivery to avoid mutation reentrancy.
+    MainActor.assumeIsolated {
+        guard let captured = context.system?.captureAXEvent(observer: observer,
+            kind: kind, processIdentifier: pid, accessibilityHash: accessibilityHash) else { return }
+        Task { @MainActor [weak context] in context?.system?.receiveAXEvent(captured) }
     }
 }
 
