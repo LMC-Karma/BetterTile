@@ -2426,6 +2426,7 @@ final class BetterTileModel {
                 confirmedMinimizedWindowIDs.remove(windowID)
             }
             if event.kind == .destroyed {
+                coordinator.removeClosedWindow(windowID)
                 confirmedGoneWindowIDs.insert(windowID)
                 sessionStore.removeClosedTabbedWindow(windowID)
                 tabbedSteppedWindows.removeValue(forKey: windowID)
@@ -3822,6 +3823,9 @@ final class BetterTileModel {
         settlementTasks[displayID]?.cancel()
         let taskGeneration = (settlementTaskGenerations[displayID] ?? 0) &+ 1
         settlementTaskGenerations[displayID] = taskGeneration
+        let ownedGenerations = Dictionary(uniqueKeysWithValues: placements.map {
+            ($0.windowID, coordinator.mutationGeneration(for: $0.windowID))
+        })
         settlementTasks[displayID] = Task { @MainActor [weak self] in
             guard let self else { return }
             defer {
@@ -3830,7 +3834,7 @@ final class BetterTileModel {
                     self.settlementTaskGenerations.removeValue(forKey: displayID)
                 }
             }
-            let outcome = await self.coordinator.settleAuthoritativePlacements(placements)
+            let outcome = await self.coordinator.settleAuthoritativePlacements(placements, since: ownedGenerations)
             guard !Task.isCancelled,
                   self.sessionStore.isCurrent(sessionID, revision: revision, on: displayID)
             else { return }

@@ -139,6 +139,7 @@ public final class WindowCoordinator {
 
     private var history: FrameHistory
     private var generations: [WindowID: UInt64] = [:]
+    private var nextWriteGeneration: UInt64 = 0
     private var expectedMutations: [WindowID: [ExpectedMutation]] = [:]
     private var lastCycle: (windowID: WindowID, requestedAction: WindowAction, index: Int, date: Date)?
     /// Repeating a half shortcut within this many seconds cycles to the next
@@ -149,6 +150,37 @@ public final class WindowCoordinator {
         self.system = system
         self.history = FrameHistory(capacity: historyCapacity)
         self.actionEngine = actionEngine
+    }
+
+    /// Retires only a window whose closure the window system confirmed.
+    public func removeClosedWindow(_ windowID: WindowID) {
+        history.remove(windowID: windowID)
+        generations.removeValue(forKey: windowID)
+        expectedMutations.removeValue(forKey: windowID)
+        lastPlacementBaselineFrames.removeValue(forKey: windowID)
+        if lastCycle?.windowID == windowID { lastCycle = nil }
+    }
+
+    struct RetainedWindowState: Equatable {
+        var historyFrames: Int
+        var hasGeneration: Bool
+        var expectedMutations: Int
+        var hasBaseline: Bool
+        var hasShortcutCycle: Bool
+    }
+
+    var retainedWindowKeyCounts: (generations: Int, expectations: Int, baselines: Int) {
+        (generations.count, expectedMutations.count, lastPlacementBaselineFrames.count)
+    }
+
+    func retainedState(for windowID: WindowID) -> RetainedWindowState {
+        RetainedWindowState(
+            historyFrames: history.count(for: windowID),
+            hasGeneration: generations[windowID] != nil,
+            expectedMutations: expectedMutations[windowID]?.count ?? 0,
+            hasBaseline: lastPlacementBaselineFrames[windowID] != nil,
+            hasShortcutCycle: lastCycle?.windowID == windowID
+        )
     }
 
     /// Returns whether an Accessibility event matches a BetterTile-owned frame.
@@ -364,8 +396,8 @@ public final class WindowCoordinator {
         return .inconclusive
     }
 
-    /// How many times BetterTile has written a frame for this window. Used to
-    /// tell a delayed check that its action has been superseded.
+    /// The latest write token for this window. Used to tell a delayed check
+    /// that its action has been superseded.
     public func mutationGeneration(for windowID: WindowID) -> UInt64 {
         generations[windowID] ?? 0
     }
@@ -400,6 +432,7 @@ public final class WindowCoordinator {
     /// whose Accessibility frames did not settle at the requested values.
     public func settleAuthoritativePlacements(
         _ placements: [Placement],
+        since ownedGenerations: [WindowID: UInt64]? = nil,
         maximumRetries: Int = 2,
         retryDelay: Duration = .milliseconds(100),
         tolerance: Double = 1
@@ -407,7 +440,7 @@ public final class WindowCoordinator {
         let unsettled = "One or more windows did not settle at the requested frame."
         let retryLimit = max(0, maximumRetries)
         let windowIDs = Set(placements.map(\.windowID))
-        var terminalGenerations = Dictionary(uniqueKeysWithValues: windowIDs.map {
+        var terminalGenerations = ownedGenerations ?? Dictionary(uniqueKeysWithValues: windowIDs.map {
             ($0, mutationGeneration(for: $0))
         })
         for attempt in 0...retryLimit {
@@ -418,6 +451,10 @@ public final class WindowCoordinator {
                 return .failed(reason: "The settlement check was interrupted.")
             }
 
+            guard terminalGenerations.allSatisfy({ mutationGeneration(for: $0.key) == $0.value }) else {
+                finishExpectedMutations(upTo: terminalGenerations)
+                return .failed(reason: "The settlement check was superseded.")
+            }
             let actualFrames: [WindowID: BTRect]
             do {
                 actualFrames = Dictionary(uniqueKeysWithValues: try snapshots(
@@ -696,7 +733,8 @@ public final class WindowCoordinator {
     public func restoreBaseline(of transaction: WindowFrameTransaction) -> WindowMutationOutcome {
         do {
             try applyAtomically(
-                transaction.baselineFrames.map { Placement(windowID: $0.key, frame: $0.value) },
+                transaction.baselineFrames.filter { generations[$0.key] != nil }
+                    .map { Placement(windowID: $0.key, frame: $0.value) },
                 rollbackFrames: transaction.lastAppliedFrames
             )
             return .applied
@@ -773,8 +811,7 @@ public final class WindowCoordinator {
         // window's current frame and must not read as an external change.
         var probeGenerations: [WindowID: UInt64] = [:]
         for snapshot in (try? snapshots(ids: windowIDs)) ?? [] {
-            let generation = (generations[snapshot.id] ?? 0) &+ 1
-            generations[snapshot.id] = generation
+            let generation = allocateGeneration(for: snapshot.id)
             probeGenerations[snapshot.id] = generation
             expect(snapshot.frame, for: snapshot.id, generation: generation)
         }
@@ -812,8 +849,7 @@ public final class WindowCoordinator {
         to windowID: WindowID,
         knownCurrentFrame: BTRect? = nil
     ) throws {
-        let generation = (generations[windowID] ?? 0) &+ 1
-        generations[windowID] = generation
+        let generation = allocateGeneration(for: windowID)
         guard generations[windowID] == generation else { return }
         expect(frame, for: windowID, generation: generation)
         do {
@@ -889,8 +925,7 @@ public final class WindowCoordinator {
             try system.withFrameWriteBatch {
                 var generationsWritten: [WindowID: UInt64] = [:]
                 for placement in placements {
-                    let generation = (generations[placement.windowID] ?? 0) &+ 1
-                    generations[placement.windowID] = generation
+                    let generation = allocateGeneration(for: placement.windowID)
                     generationsWritten[placement.windowID] = generation
                     expect(placement.frame, for: placement.windowID, generation: generation)
                 }
@@ -951,8 +986,7 @@ public final class WindowCoordinator {
                 // shrinking windows, then the growing ones. One application's
                 // windows keep this order.
                 for placement in ordered {
-                    let generation = (generations[placement.windowID] ?? 0) &+ 1
-                    generations[placement.windowID] = generation
+                    let generation = allocateGeneration(for: placement.windowID)
                     generationsWritten[placement.windowID] = generation
                     expect(placement.frame, for: placement.windowID, generation: generation)
                 }
@@ -1032,7 +1066,7 @@ public final class WindowCoordinator {
     @discardableResult
     private func recordHistoryFrames(_ frames: [WindowID: BTRect]) -> [WindowID: BTRect] {
         var recorded: [WindowID: BTRect] = [:]
-        for (id, frame) in frames.sorted(by: { $0.key < $1.key }) where history.record(frame, for: id) {
+        for (id, frame) in frames.sorted(by: { $0.key < $1.key }) where generations[id] != nil && history.record(frame, for: id) {
             recorded[id] = frame
         }
         return recorded
@@ -1049,6 +1083,12 @@ public final class WindowCoordinator {
             return !baseline.approximatelyEquals(proposed, tolerance: 0.01)
         }
         return recordHistoryFrames(changed)
+    }
+
+    private func allocateGeneration(for windowID: WindowID) -> UInt64 {
+        nextWriteGeneration &+= 1
+        generations[windowID] = nextWriteGeneration
+        return nextWriteGeneration
     }
 
     private func expect(_ frame: BTRect, for windowID: WindowID, generation: UInt64) {

@@ -1850,3 +1850,187 @@ func dropMinimumSizeCheckUsesTheOverlaysMinimum(overlayMinimum: Double) {
     #expect(learner.learnedSizes.isEmpty)
     #expect(learner.applicationSizes.isEmpty)
 }
+
+@Test @MainActor func confirmedClosureRetiresOnlyItsWindowStateAndPreservesSurvivorRestore() {
+    let system = FakeWindowSystem()
+    system.addSecondWindow()
+    let coordinator = WindowCoordinator(system: system)
+    let survivor = system.windows[0]
+    let closing = system.windows[1]
+    #expect(coordinator.applyPlacements([
+        Placement(windowID: survivor.id, frame: BTRect(x: 0, y: 0, width: 500, height: 800)),
+        Placement(windowID: closing.id, frame: BTRect(x: 500, y: 0, width: 500, height: 800)),
+    ]).isApplied)
+    coordinator.removeClosedWindow(closing.id)
+    #expect(coordinator.retainedState(for: closing.id) == .init(
+        historyFrames: 0, hasGeneration: false, expectedMutations: 0, hasBaseline: false, hasShortcutCycle: false))
+    system.windows.removeAll { $0.id == closing.id }
+    #expect(coordinator.performAction(.restore))
+    #expect(system.windows[0].frame == survivor.frame)
+}
+
+@Test(arguments: [0, 1]) @MainActor
+func cancellationRestoresSurvivorWithoutRevivingClosedParticipant(closingIndex: Int) throws {
+    let system = FakeWindowSystem()
+    system.addSecondWindow()
+    let coordinator = WindowCoordinator(system: system)
+    let baseline = system.windows
+    let closing = baseline[closingIndex]
+    let survivor = baseline[1 - closingIndex]
+    var transaction = try #require(coordinator.beginTransaction(windowIDs: Set(baseline.map(\.id))).startedTransaction)
+    #expect(coordinator.applyLive(transaction: &transaction, placements: [
+        Placement(windowID: baseline[0].id, frame: BTRect(x: 0, y: 0, width: 650, height: 800)),
+        Placement(windowID: baseline[1].id, frame: BTRect(x: 650, y: 0, width: 350, height: 800)),
+    ]).isApplied)
+    coordinator.removeClosedWindow(closing.id)
+    system.windows.removeAll { $0.id == closing.id }
+    let closedWrites = system.frameWriteCounts[closing.id]
+    #expect(coordinator.cancel(transaction: transaction).isApplied)
+    #expect(system.windows[0].frame == survivor.frame)
+    #expect(system.frameWriteCounts[closing.id] == closedWrites)
+    coordinator.finishLive(transaction: transaction)
+    coordinator.recordHistory(transaction.baselineFrames)
+    #expect(coordinator.retainedState(for: closing.id) == .init(
+        historyFrames: 0, hasGeneration: false, expectedMutations: 0, hasBaseline: false, hasShortcutCycle: false))
+}
+
+/// Production registry IDs are unique. Reusing a fake ID also must not let an
+/// old positive settlement token finish a later write's ownership.
+@Test @MainActor func retiredWindowTokensCannotFinishAReusedFakeIdentity() throws {
+    let system = FakeWindowSystem()
+    let coordinator = WindowCoordinator(system: system)
+    let id = system.windows[0].id
+    #expect(coordinator.performAction(.leftHalf))
+    let oldGeneration = coordinator.mutationGeneration(for: id)
+    coordinator.removeClosedWindow(id)
+    #expect(coordinator.performAction(.rightHalf))
+    let newGeneration = coordinator.mutationGeneration(for: id)
+    #expect(newGeneration > oldGeneration)
+    coordinator.finishExpectedMutations(upTo: [id: oldGeneration])
+    #expect(coordinator.matchesExpectedMutation(windowID: id, actualFrame: system.windows[0].frame))
+    #expect(coordinator.retainedState(for: id).hasShortcutCycle)
+}
+
+@Test @MainActor func retiredWindowDoesNotReceiveAnAuthoritativeSettlementRetry() async {
+    let system = FakeWindowSystem()
+    let coordinator = WindowCoordinator(system: system)
+    let id = system.windows[0].id
+    let target = BTRect(x: 0, y: 0, width: 500, height: 800)
+    let placements = [Placement(windowID: id, frame: target)]
+    system.ignoredFrameWriteCounts[id] = 1
+    #expect(coordinator.applyPlacements(placements).isApplied)
+    var started = false
+    let settlement = Task { @MainActor in
+        started = true
+        return await coordinator.settleAuthoritativePlacements(placements, retryDelay: .milliseconds(20))
+    }
+    while !started { await Task.yield() }
+    coordinator.removeClosedWindow(id)
+    // A stale readable snapshot is deliberately left behind by this fake.
+    #expect(!(await settlement.value).isApplied)
+    #expect(system.frameWriteCounts[id] == 1)
+    #expect(!coordinator.retainedState(for: id).hasGeneration)
+}
+
+@Test @MainActor func repeatedConfirmedClosuresRetainOnlySurvivingWindowOwnership() {
+    let system = FakeWindowSystem()
+    let survivor = system.windows[0]
+    let coordinator = WindowCoordinator(system: system)
+    #expect(coordinator.performAction(.leftHalf))
+    let survivorState = coordinator.retainedState(for: survivor.id)
+    var retiredIDs: [WindowID] = []
+    for sequence in 0..<256 {
+        var closing = survivor
+        closing.id = WindowID(rawValue: "closing-\(sequence)")
+        system.windows.append(closing)
+        #expect(coordinator.applyPlacements([Placement(windowID: closing.id,
+            frame: BTRect(x: 500, y: 0, width: 500, height: 800))]).isApplied)
+        coordinator.removeClosedWindow(closing.id)
+        system.windows.removeAll { $0.id == closing.id }
+        retiredIDs.append(closing.id)
+    }
+    for id in retiredIDs {
+        #expect(coordinator.retainedState(for: id) == .init(
+            historyFrames: 0, hasGeneration: false, expectedMutations: 0, hasBaseline: false, hasShortcutCycle: false))
+    }
+    #expect(coordinator.retainedWindowKeyCounts.generations == 1)
+    #expect(coordinator.retainedWindowKeyCounts.expectations == 1)
+    #expect(coordinator.retainedWindowKeyCounts.baselines == 0)
+    // The latest batch baseline can change, but survivor history and ownership stay.
+    #expect(coordinator.retainedState(for: survivor.id).historyFrames == survivorState.historyFrames)
+    #expect(coordinator.retainedState(for: survivor.id).hasGeneration)
+    #expect(coordinator.performAction(.restore))
+    #expect(system.windows[0].frame == survivor.frame)
+}
+
+@Test(arguments: [false, true]) @MainActor
+func unavailableSurvivorStillReceivesCancellationAndRetainsRestore(rejectRestore: Bool) throws {
+    let system = FakeWindowSystem()
+    let coordinator = WindowCoordinator(system: system)
+    let baseline = system.windows[0]
+    #expect(coordinator.performAction(.leftHalf))
+    var transaction = try #require(coordinator.beginTransaction(windowIDs: [baseline.id]).startedTransaction)
+    #expect(coordinator.applyLive(transaction: &transaction, placements: [Placement(windowID: baseline.id,
+        frame: BTRect(x: 0, y: 0, width: 650, height: 800))]).isApplied)
+    system.unreadableWindowIDs = [baseline.id]
+    if rejectRestore { system.failingWindowID = baseline.id }
+    let writes = system.frameWriteCounts[baseline.id, default: 0]
+    let outcome = coordinator.cancel(transaction: transaction)
+    if rejectRestore { guard case .degraded = outcome else { Issue.record("Rejected survivor restoration must degrade"); return } }
+    else { #expect(outcome.isApplied) }
+    #expect(system.frameWriteCounts[baseline.id, default: 0] > writes)
+    #expect(coordinator.retainedState(for: baseline.id).historyFrames == 1)
+    #expect(coordinator.retainedState(for: baseline.id).hasGeneration)
+    system.unreadableWindowIDs = []
+    system.failingWindowID = nil
+    #expect(coordinator.performAction(.restore))
+    #expect(system.windows[0].frame == baseline.frame)
+}
+
+@Test @MainActor func cancellationOfEntirelyRetiredTransactionWritesNothing() throws {
+    let system = FakeWindowSystem()
+    let coordinator = WindowCoordinator(system: system)
+    let id = system.windows[0].id
+    var transaction = try #require(coordinator.beginTransaction(windowIDs: [id]).startedTransaction)
+    #expect(coordinator.applyLive(transaction: &transaction, placements: [Placement(windowID: id,
+        frame: BTRect(x: 0, y: 0, width: 650, height: 800))]).isApplied)
+    coordinator.removeClosedWindow(id)
+    system.windows = []
+    let writes = system.frameWriteCounts
+    #expect(coordinator.cancel(transaction: transaction).isApplied)
+    #expect(system.frameWriteCounts == writes)
+}
+
+@Test @MainActor func cancellationDoesNotWriteUntouchedParticipants() throws {
+    let system = FakeWindowSystem()
+    system.addSecondWindow()
+    let baseline = system.windows
+    let coordinator = WindowCoordinator(system: system)
+    var transaction = try #require(coordinator.beginTransaction(windowIDs: Set(baseline.map(\.id))).startedTransaction)
+    #expect(coordinator.applyLive(transaction: &transaction, placements: [
+        Placement(windowID: baseline[0].id, frame: BTRect(x: 0, y: 0, width: 400, height: 400)),
+        Placement(windowID: baseline[1].id, frame: baseline[1].frame),
+    ], validateParticipants: false).isApplied)
+    #expect(coordinator.mutationGeneration(for: baseline[1].id) == 0)
+    #expect(coordinator.cancel(transaction: transaction).isApplied)
+    #expect(system.windows.map(\.frame) == baseline.map(\.frame))
+    #expect(system.frameWriteCounts[baseline[1].id] == nil)
+    #expect(coordinator.mutationGeneration(for: baseline[1].id) == 0)
+}
+
+@Test @MainActor func retirementBeforeScheduledSettlementStartsCannotRetry() async {
+    let system = FakeWindowSystem()
+    let coordinator = WindowCoordinator(system: system)
+    let id = system.windows[0].id
+    let placements = [Placement(windowID: id, frame: BTRect(x: 0, y: 0, width: 500, height: 800))]
+    system.ignoredFrameWriteCounts[id] = 1
+    #expect(coordinator.applyPlacements(placements).isApplied)
+    let ownership = [id: coordinator.mutationGeneration(for: id)]
+    let settlement = Task { @MainActor in
+        await coordinator.settleAuthoritativePlacements(placements, since: ownership, retryDelay: .zero)
+    }
+    coordinator.removeClosedWindow(id)
+    #expect(!(await settlement.value).isApplied)
+    #expect(system.frameWriteCounts[id] == 1)
+    #expect(!coordinator.retainedState(for: id).hasGeneration)
+}

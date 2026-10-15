@@ -330,3 +330,59 @@ enum WindowFloatingClassifier {
         return subrole != kAXStandardWindowSubrole && !floatingSubroles.contains(subrole)
     }
 }
+
+/// Scalar ownership captured on the observer's main run loop before delivery.
+struct CapturedWindowObservation {
+    var event: WindowSystemEvent
+    var application: ApplicationLaunchInstance
+    var observerToken: UInt64
+}
+
+struct WindowObservationLifetime {
+    private struct Installation {
+        var application: ApplicationLaunchInstance
+        var token: UInt64
+    }
+    private var installations: [pid_t: Installation] = [:]
+    private var nextToken: UInt64 = 0
+
+    mutating func install(_ application: ApplicationLaunchInstance) {
+        nextToken &+= 1
+        installations[application.processIdentifier] = Installation(application: application, token: nextToken)
+    }
+
+    mutating func remove(processIdentifier: pid_t) {
+        installations.removeValue(forKey: processIdentifier)
+    }
+
+    mutating func removeAll() { installations.removeAll() }
+
+    func capture(
+        kind: WindowSystemEvent.Kind,
+        application: ApplicationLaunchInstance,
+        accessibilityHash: CFHashCode,
+        identities: WindowIdentityRegistry
+    ) -> CapturedWindowObservation? {
+        guard let installation = installations[application.processIdentifier],
+              installation.application == application else { return nil }
+        let windowID = kind == .focused ? nil : identities.windowID(
+            application: application, accessibilityHash: accessibilityHash)
+        return CapturedWindowObservation(
+            event: WindowSystemEvent(kind: kind, windowID: windowID,
+                                     processIdentifier: application.processIdentifier),
+            application: application, observerToken: installation.token)
+    }
+
+    func event(for captured: CapturedWindowObservation, identities: WindowIdentityRegistry) -> WindowSystemEvent? {
+        guard let installation = installations[captured.application.processIdentifier],
+              installation.application == captured.application,
+              installation.token == captured.observerToken else { return nil }
+        let event = captured.event
+        if let windowID = event.windowID {
+            guard identities.records[windowID]?.application == captured.application else { return nil }
+        } else if event.kind != .created && event.kind != .destroyed && event.kind != .focused {
+            return nil
+        }
+        return event
+    }
+}
