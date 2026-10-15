@@ -73,44 +73,62 @@ public struct DockFootprint: Hashable, Sendable {
 @MainActor
 final class DockSpaceReader {
     private let defaults: UserDefaults
-    private let readDock: @MainActor () -> (list: BTRect?, edge: DockEdge)
+    private let readPreferences: @MainActor () -> (edge: DockEdge, autohides: Bool)
+    private let readList: @MainActor () -> BTRect?
     private var footprint: DockFootprint?
+    private var autohides = true
     private var lastRead = -Double.infinity
+    private var lastWhileHidden: Bool?
 
     init(
         defaults: UserDefaults = .standard,
-        readDock: @escaping @MainActor () -> (list: BTRect?, edge: DockEdge) = DockSpaceReader.readDock
+        readPreferences: @escaping @MainActor () -> (edge: DockEdge, autohides: Bool) = DockSpaceReader.readPreferences,
+        readList: @escaping @MainActor () -> BTRect? = DockSpaceReader.dockListFrame
     ) {
         self.defaults = defaults
-        self.readDock = readDock
+        self.readPreferences = readPreferences
+        self.readList = readList
     }
 
-    /// `displays` lists the main display first.
+    /// The strip to keep free, or nil. A Dock that hides gets one only when
+    /// `whileHidden` is true. A Dock that never hides always gets one: macOS
+    /// reserves the same strip, but AppKit can report it late on a secondary
+    /// display after the Dock moves. `displays` lists the main display first.
     func footprint(
         displays: [(id: DisplayID, frame: BTRect)],
+        whileHidden: Bool,
         now: TimeInterval = ProcessInfo.processInfo.systemUptime
     ) -> DockFootprint? {
-        guard now - lastRead >= 1 else { return footprint }
-        lastRead = now
-        let dock = readDock()
-        let key = "dockThickness.\(dock.edge.rawValue)"
-        if let list = dock.list, let read = DockFootprint(dockList: list, edge: dock.edge, displays: displays) {
-            footprint = read
-            if defaults.double(forKey: key) != read.thickness { defaults.set(read.thickness, forKey: key) }
-        } else if footprint?.edge != dock.edge {
-            let remembered = defaults.double(forKey: key)
-            footprint = remembered > 0
-                ? displays.first.map { DockFootprint(displayID: $0.id, edge: dock.edge, thickness: remembered) }
-                : nil
+        if now - lastRead >= 1 || whileHidden != lastWhileHidden {
+            lastRead = now
+            lastWhileHidden = whileHidden
+            read(displays: displays, whileHidden: whileHidden)
         }
-        return footprint
+        return whileHidden || !autohides ? footprint : nil
     }
 
-    private static func readDock() -> (list: BTRect?, edge: DockEdge) {
-        let edge = UserDefaults(suiteName: "com.apple.dock")?
-            .string(forKey: "orientation")
-            .flatMap(DockEdge.init(rawValue:)) ?? .bottom
-        return (dockListFrame(), edge)
+    private func read(displays: [(id: DisplayID, frame: BTRect)], whileHidden: Bool) {
+        let preferences = readPreferences()
+        autohides = preferences.autohides
+        // With nothing to keep free, a hiding Dock is not read at all.
+        guard whileHidden || !autohides else { return }
+        let edge = preferences.edge
+        let key = "dockThickness.\(edge.rawValue)"
+        if let list = readList(), let read = DockFootprint(dockList: list, edge: edge, displays: displays) {
+            footprint = read
+            if defaults.double(forKey: key) != read.thickness { defaults.set(read.thickness, forKey: key) }
+        } else if footprint?.edge != edge {
+            let remembered = defaults.double(forKey: key)
+            footprint = remembered > 0
+                ? displays.first.map { DockFootprint(displayID: $0.id, edge: edge, thickness: remembered) }
+                : nil
+        }
+    }
+
+    private static func readPreferences() -> (edge: DockEdge, autohides: Bool) {
+        let dock = UserDefaults(suiteName: "com.apple.dock")
+        let edge = dock?.string(forKey: "orientation").flatMap(DockEdge.init(rawValue:)) ?? .bottom
+        return (edge, dock?.bool(forKey: "autohide") ?? false)
     }
 
     private static func dockListFrame() -> BTRect? {

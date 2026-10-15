@@ -88,13 +88,14 @@ an identity from PID and frame. Known exact identities that are absent from
 the on-screen list do not force this fallback. Hover caches the result for at
 most 150 ms; an active drag retains its starting coverage until release.
 
-Leave space for Dock is off by default. When it is on, BetterTile reads the
-Dock through public APIs only: the position and size of the Dock's
-Accessibility list, at most once a second, and the Dock's `orientation`
-preference. It reads no Dock item names. It keeps the last measured thickness
-for each Dock edge in its own user defaults, so a Dock not yet shown after
-login still gets its space. With the setting off, BetterTile does not read the
-Dock.
+BetterTile reads the Dock's `orientation` and `autohide` preferences. When
+Leave space for Dock is on, which it is not by default, or when the Dock never
+hides, it also reads the position and size of the Dock's Accessibility list,
+at most once a second, through public APIs only. It reads no Dock item names.
+It keeps the last measured thickness for each Dock edge in its own user
+defaults, so a Dock not yet shown after login still gets its space. With the
+setting off and the Dock hiding automatically, BetterTile does not read the
+Dock list.
 
 The `defaults` commands below use the public app's domain. For BetterTile Debug,
 replace `com.lmckarma.BetterTile` with

@@ -532,9 +532,10 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
                 screen: screen
             )
         }
-        let dock = leavesSpaceForDock
-            ? dockSpaceReader.footprint(displays: measured.map { ($0.id, $0.frame) })
-            : nil
+        let dock = dockSpaceReader.footprint(
+            displays: measured.map { ($0.id, $0.frame) },
+            whileHidden: leavesSpaceForDock
+        )
         return measured.map { id, frame, screen in
             var visibleFrame = CoordinateConverter.toTopLeft(screen.visibleFrame, mainScreenFrame: mainFrame)
             if let dock, dock.displayID == id {

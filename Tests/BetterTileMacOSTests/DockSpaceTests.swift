@@ -81,16 +81,44 @@ private let main = BTRect(x: 0, y: 0, width: 2560, height: 1440)
     let defaults = MemoryDefaults()
     let other = DisplayID(rawValue: "other")
     let displays: [(id: DisplayID, frame: BTRect)] = [(mainID, main), (other, BTRect(x: 2560, y: 0, width: 1920, height: 1080))]
-    var dock: (list: BTRect?, edge: DockEdge) = (BTRect(x: 3000, y: 1080, width: 1000, height: 72), .bottom)
-    let earlier = DockSpaceReader(defaults: defaults) { dock }
-    #expect(earlier.footprint(displays: displays, now: 0) == DockFootprint(displayID: other, edge: .bottom, thickness: 78))
-    dock.list = nil
-    #expect(earlier.footprint(displays: displays, now: 1) == DockFootprint(displayID: other, edge: .bottom, thickness: 78))
+    var edge = DockEdge.bottom
+    var list: BTRect? = BTRect(x: 3000, y: 1080, width: 1000, height: 72)
+    func reader() -> DockSpaceReader {
+        DockSpaceReader(defaults: defaults, readPreferences: { (edge, true) }, readList: { list })
+    }
+    let earlier = reader()
+    #expect(earlier.footprint(displays: displays, whileHidden: true, now: 0) == DockFootprint(displayID: other, edge: .bottom, thickness: 78))
+    list = nil
+    #expect(earlier.footprint(displays: displays, whileHidden: true, now: 1) == DockFootprint(displayID: other, edge: .bottom, thickness: 78))
 
-    let afterLogin = DockSpaceReader(defaults: defaults) { dock }
-    #expect(afterLogin.footprint(displays: displays, now: 0) == DockFootprint(displayID: mainID, edge: .bottom, thickness: 78))
-    dock.edge = .left
-    #expect(afterLogin.footprint(displays: displays, now: 1) == nil)
+    let afterLogin = reader()
+    #expect(afterLogin.footprint(displays: displays, whileHidden: true, now: 0) == DockFootprint(displayID: mainID, edge: .bottom, thickness: 78))
+    edge = .left
+    #expect(afterLogin.footprint(displays: displays, whileHidden: true, now: 1) == nil)
+}
+
+/// With the setting off, a Dock that hides is not read at all. A Dock that
+/// never hides still keeps its strip: macOS reserves it too, but AppKit can
+/// report a secondary display's work area late after the Dock moves there.
+@Test @MainActor func settingOffKeepsOnlyADockThatNeverHides() {
+    var autohides = true
+    var listReads = 0
+    let reader = DockSpaceReader(
+        defaults: MemoryDefaults(),
+        readPreferences: { (.right, autohides) },
+        readList: {
+            listReads += 1
+            return BTRect(x: 2488, y: 100, width: 72, height: 1200)
+        }
+    )
+    let strip = DockFootprint(displayID: mainID, edge: .right, thickness: 78)
+    #expect(reader.footprint(displays: [(mainID, main)], whileHidden: false, now: 0) == nil)
+    #expect(listReads == 0)
+    // Turning the setting on reads at once, without waiting for the next second.
+    #expect(reader.footprint(displays: [(mainID, main)], whileHidden: true, now: 0.1) == strip)
+    #expect(reader.footprint(displays: [(mainID, main)], whileHidden: false, now: 0.2) == nil)
+    autohides = false
+    #expect(reader.footprint(displays: [(mainID, main)], whileHidden: false, now: 2) == strip)
 }
 
 /// Keeps values in memory, so the test leaves no preferences file behind.
