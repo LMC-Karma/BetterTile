@@ -45,9 +45,9 @@ jobs:
 
             Perform two checks:
 
-            1. Goal: compare the diff with the problem, before, after, unchanged
-               scope, and validation stated in the pull-request body. Check every
-               affected entry path and reverse transition when they apply.
+            1. Goal: compare the diff with the problem, change, evidence, limits,
+               and safety stated in the pull-request body. Check every affected
+               entry path and reverse transition when they apply.
             2. Repository rules: compare the diff with BetterTile's architecture,
                security, test, and product limits.
 
