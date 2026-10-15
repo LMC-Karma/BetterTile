@@ -56,7 +56,13 @@ public struct LayoutSession: Hashable, Sendable {
     public var excludedFocusWindowIDs: Set<WindowID>
     public var bentoReinsertionAnchors: [WindowID: BentoReinsertionAnchor]
     public var lastObservedFrames: [WindowID: BTRect]
-    public var lastWorkArea: BTRect?
+    /// The work area the layout was last confirmed for.
+    public var lastWorkArea: BTRect? {
+        didSet { pendingWorkArea = nil }
+    }
+    /// The work area of a layout written but not yet confirmed. The windows
+    /// already moved for it, so changing back to `lastWorkArea` is a change.
+    public var pendingWorkArea: BTRect?
     public var isBentoInitialized: Bool
     public var hasAppliedSingleWindowPlacement: Bool
     /// Corroborates a window's disappearance before its pane is given up.
