@@ -93,6 +93,18 @@ import Testing
 /// Only two real answers make a window unmovable. An application that did
 /// not answer leaves the question open, so a drag asks again on its next
 /// tick instead of keeping the window still for the rest of the drag.
+/// A busy application that fails the settable question with
+/// `cannotComplete` says nothing about its window. The window keeps its
+/// previous answer, or counts as movable and resizable when it never
+/// answered, instead of being read as fixed-size and dropped from Tabbed.
+@Test func anUnansweredSettableQuestionKeepsThePreviousVerdict() {
+    #expect(AccessibilityWindowSystem.settabilityVerdict(answer: true, previous: false) == (true, .reported))
+    #expect(AccessibilityWindowSystem.settabilityVerdict(answer: false, previous: true) == (false, .reported))
+    #expect(AccessibilityWindowSystem.settabilityVerdict(answer: nil, previous: false) == (false, .previous))
+    #expect(AccessibilityWindowSystem.settabilityVerdict(answer: nil, previous: true) == (true, .previous))
+    #expect(AccessibilityWindowSystem.settabilityVerdict(answer: nil, previous: nil) == (true, .assumed))
+}
+
 @Test func movabilityNeedsAnAnswerBeforeAWindowCountsAsUnmovable() {
     #expect(AccessibilityWindowSystem.movability(position: true, size: nil) == true)
     #expect(AccessibilityWindowSystem.movability(position: false, size: true) == true)

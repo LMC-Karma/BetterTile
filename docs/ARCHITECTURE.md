@@ -180,6 +180,15 @@ Bento desktop, including after the desktop leaves Tabbed for Bento. Tabbed keeps
 it as a tab. A window that cannot be resized keeps its own size, centred in
 its pane's window area, and the pane must be large enough to hold it.
 
+Only an answer makes a window fixed-size. A busy or unresponsive application
+can fail the question with `cannotComplete`. The snapshot then keeps the
+window's previous answer, or counts the window as movable and resizable when
+it never answered, and the next snapshot asks again.
+`WindowConstraints.settabilitySource` records which case applies. Before,
+an unanswered question made the window unmovable for that snapshot: Tabbed
+dropped it from its pane as ineligible and adopted it again later as a
+fixed-size window, which could float.
+
 ## Event ordering
 
 Window identities survive off-screen and incomplete Accessibility sweeps.
@@ -435,7 +444,13 @@ Hiding an application keeps its seed. Measurements and seeds stay in process
 memory and are never saved. `forget(windowID:)` drops one window's measurement
 and pending clamp without probing it again, and `forgetApplication(_:)` drops
 a seed. So far only `remove(_:)`, for a closed window, calls
-`forget(windowID:)`.
+`forget(windowID:)`. `WindowConstraints.minimumSizeSource` names where a
+minimum came from: the default floor, an application hint, a seed, a learned
+clamp, or a probe. A hint, a learned clamp, and a probe count as proven.
+A seed keeps the window's own minimum and its source in
+`unseededMinimumSize` and `unseededMinimumSizeSource`. The write veto and
+every place that ignores a seed use that minimum, so a seed that raises one
+axis never drops a hint on the other.
 
 ## Unresponsive applications
 
@@ -684,8 +699,51 @@ change a Bento operation made to the tree; writing it also writes the tree.
   fit there joins, as a hidden tab, the other pane that can show it with the
   least change to the panes: as is, or after boundaries adapt. If no pane can
   show it, it floats at its own size, moved fully onto the work area when it
-  fits there, and the result pill says it does not fit in any pane.
+  fits there, and the result pill says it does not fit in any pane. It does
+  not join as a hidden tab: a hidden tab larger than its pane extends past the
+  pane, and while its application is frontmost it can cover other panes. The
+  decision log says whether the window fits no pane of this layout, or is a
+  fixed-size window or a window with a proven minimum (see
+  [Minimum sizes](#minimum-sizes)) larger than the work area below the strip.
+- Result pills name a window by its title, so two windows of one application
+  are told apart. A window without a title is named by its application. A
+  long title is shortened, not the words around it, so the one-line pill
+  title still says what happened.
+- `TabbedLayoutState.automaticallyFloatingWindowIDs` tells these automatic
+  floats from the user's floats. Moving, splitting, adding, floating by hand,
+  or closing the window ends an automatic float. The set is part of the
+  state, so Undo and rollback keep it. Each new automatic float is checked
+  again once, 1 s after its placement settles or fails, with fresh
+  snapshots; an Undo that brings floats back does not start that check.
+  When a committed placement changes the pane frames or the set of selected
+  tabs, for example after Change Layout, a removed or added pane, a divider or
+  pane-size change, a new work area, or a smaller tab selected or a large one
+  closed, every automatic float that was already floating is checked again.
+  The comparison is per session and starts again on each entry to Tabbed. A
+  window that a pane can show joins that pane as its selected tab, and the
+  boundaries adapt as for an arrival. If that pane shows the focused window,
+  the returned window joins it as a hidden tab instead, so a check the user
+  did not ask for never hides or unfocuses the focused window; the 1 s check
+  and the return on entry to Tabbed follow the same rule. Any other window stays an automatic float. This
+  check is silent: a failure is logged and shows no pill. A
+  window moved to another display leaves this layout and joins the other
+  display's layout as an arrival. Repair Tabbed adopts each automatic float again: it keeps a proven
+  minimum, ignores the application's seed for that decision, and probes only
+  a window that was never probed. A returned window becomes its pane's
+  selected tab, or a hidden tab beside the focused window, as in the checks above. The pill counts the windows returned. User
+  floats stay floating. Every Tabbed sweep and placement ignores a seed
+  larger than the work area below the strip, so the write shows the
+  window's real minimum. A
+  hidden tab larger than its pane, for example after its pane shrank, is
+  moved back inside the work area, where the curtain covers it. Entry to Tabbed is stored before its placement, so
+  a failed entry placement does not repeat the entry on later sweeps. Each adoption, return, and float writes a debug line
+  in the `Tabbed` log category with the window's frame, its resizability and
+  minimum with their sources, and the result for each pane it tried.
   Entering Tabbed from Bento adopts the tree, so every pane stays where it was.
+  Windows that Bento floated on its own, such as a seventh window, become
+  automatic floats, and every entry to Tabbed, from Bento or Native, adopts
+  the automatic floats again. Leaving for Bento gives Tabbed's automatic floats
+  back to Bento as its own.
   Leaving for Bento gives every hidden tab its own pane (`unstacked(in:)`) and
   removes the reserve. Hidden tabs fill empty panes first, largest empty pane
   first, each taking the next hidden tab from the nearest pane. The other

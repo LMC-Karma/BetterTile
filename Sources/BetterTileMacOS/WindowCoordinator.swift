@@ -851,8 +851,11 @@ public final class WindowCoordinator {
             }
             let isDropSource = destination?.sourceWindowID == placement.windowID
             // The overlay planned a drop with the minimums it knew. A minimum
-            // read again at release must not veto that frame.
-            let minimumSize = destination?.minimumSizes[placement.windowID] ?? snapshot.constraints.minimumSize
+            // read again at release must not veto that frame. A seed is
+            // another window's minimum; the write shows this window's own.
+            let minimumSize = destination?.minimumSizes[placement.windowID]
+                ?? (snapshot.constraints.minimumSizeSource == .seed
+                    ? snapshot.constraints.unseededMinimumSize ?? .zero : snapshot.constraints.minimumSize)
             if snapshot.constraints.isResizable {
                 guard placement.frame.size.width + sizeTolerance >= minimumSize.width,
                       placement.frame.size.height + sizeTolerance >= minimumSize.height

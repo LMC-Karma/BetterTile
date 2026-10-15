@@ -47,8 +47,10 @@ final class BetterTileModel {
     ///   log stream --predicate 'subsystem == "com.lmckarma.BetterTile"'
     /// Window identifiers and frames only; never titles.
     static let bentoLog = Logger(subsystem: "com.lmckarma.BetterTile", category: "Bento")
-    /// Traces Tabbed focus corrections and stacking repairs, which act on
-    /// focus and activation events. Window identifiers only; never titles.
+    /// Traces how Tabbed places a window that arrives, returns, or floats,
+    /// and its focus corrections and stacking repairs. Window identifiers
+    /// and frames only; never titles. Read with:
+    ///   log stream --level debug --predicate 'subsystem == "com.lmckarma.BetterTile" AND category == "Tabbed"'
     static let tabbedLog = Logger(subsystem: "com.lmckarma.BetterTile", category: "Tabbed")
     private static let signposter = OSSignposter(
         subsystem: "com.lmckarma.BetterTile",
@@ -85,6 +87,22 @@ final class BetterTileModel {
     /// New windows already adopted again after refusing their first pane.
     /// A second refusal is reported instead of adopting them forever.
     private var tabbedReadoptedArrivals: Set<WindowID> = []
+    /// Automatic floats already checked again once after they floated.
+    private var tabbedRetriedAutomaticFloats: Set<WindowID> = []
+    /// The pane frames and selected tabs of each session's last committed
+    /// Tabbed placement. A change means room may have appeared for an
+    /// automatic float. Dropped when the session leaves Tabbed.
+    private var tabbedCommittedLayouts: [DesktopSessionID: TabbedCommittedLayout] = [:]
+    /// How long after a placement settles an automatic float is checked
+    /// again with a fresh snapshot. Settable for tests.
+    var tabbedAutomaticFloatRetryDelay: Duration = .seconds(1)
+    /// How long a check waits for a busy display before it asks again; it
+    /// gives up after ten waits. Settable for tests.
+    var tabbedAutomaticFloatRetryDeferral: Duration = .milliseconds(250)
+    /// Checks that read the windows again, for tests.
+    private(set) var tabbedAutomaticFloatChecksRun = 0
+    /// Checks that gave up on a busy display, for tests.
+    private(set) var tabbedAutomaticFloatChecksGivenUp = 0
     /// An apply arrived while another was running; re-apply the committed state after it.
     var tabbedNeedsReapply: Set<DisplayID> = []
     private let presentsTabbedChrome: Bool
@@ -412,7 +430,10 @@ final class BetterTileModel {
                 // From Bento, every pane stays put. Otherwise the tab groups
                 // from the last Tabbed visit (if any) come back.
                 if $0.mode == .bento, $0.isBentoInitialized, $0.bentoState.root != nil {
-                    $0.tabbedState = TabbedLayoutState(adopting: $0.bentoState)
+                    // Windows Bento floated on its own stay automatic
+                    // floats; the entry sweep offers them a pane.
+                    $0.tabbedState = TabbedLayoutState(
+                        adopting: $0.bentoState, automaticallyFloating: $0.automaticallyFloatingWindowIDs)
                 }
             }
             $0.mode = mode
@@ -2329,6 +2350,7 @@ final class BetterTileModel {
             return
         }
         sessionStore.removeMissingNativeSpaces(observation.knownSpacesByDisplay)
+        forgetEndedTabbedSessions(displayIDs: system.displays().map(\.id))
         for (displayID, nativeSpaceID) in observation.currentSpaceByDisplay {
             sessionStore.select(
                 displayID: displayID,
@@ -2808,7 +2830,7 @@ final class BetterTileModel {
             layoutMode: session.mode
         )
         if case let .failed(reason) = coordinator.restoreFocusDropPeers(peers) {
-            Self.bentoLog.notice("focus-drop peer restore incomplete: \(reason, privacy: .public)")
+            Self.bentoLog.notice("focus-drop peer restore incomplete: \(reason, privacy: .private)")
         }
         sessionStore.update(display.id) { $0.excludedFocusWindowIDs.removeAll() }
         if let windows = try? system.visibleWindows(),
@@ -3592,6 +3614,7 @@ final class BetterTileModel {
         } else {
             nativeFullscreenDisplayIDs.removeAll()
         }
+        forgetEndedTabbedSessions(displayIDs: displayIDs)
         var resolvedActiveDisplay: DisplayID?
         var sweepCommitted = true
         let ambientReconciler = AmbientLayoutReconciler(
@@ -3645,7 +3668,7 @@ final class BetterTileModel {
                     if case let .degraded(reason) = coordinator.probeMinimumSizes(for: arrivals) {
                         // A window can float without another write, so put
                         // it back now instead of relying on its placement.
-                        Self.bentoLog.error("\(reason, privacy: .public)")
+                        Self.bentoLog.error("\(reason, privacy: .private)")
                         if !coordinator.applyPlacements(originalFrames, recordHistory: false).isApplied {
                             statusMessage = reason
                             presentActionResult(succeeded: false, error: reason, displayID: display.id)
@@ -4069,6 +4092,11 @@ private struct ActiveBentoDrag {
     var droppedTabbedReapply = false
 }
 
+private struct TabbedCommittedLayout: Equatable {
+    var paneFrames: [UUID: BTRect]
+    var selected: Set<WindowID>
+}
+
 private struct TabbedUndoStep {
     var state: TabbedLayoutState
     var floatingFrames: [WindowID: BTRect] = [:]
@@ -4089,19 +4117,37 @@ extension BetterTileModel {
             tabbedNeedsRefresh.insert(display.id)
             return
         }
+        // Plan with the same minimums the placement uses.
+        let windows = Self.ignoringOversizedSeeds(windows, in: display.visibleFrame)
         var session = original
         let wasUninitialized = session.tabbedState == nil
         var state = session.tabbedState ?? TabbedLayoutState(preset: configuration.defaultTabbedPreset)
-        if !session.tabbedHasEntryBaseline {
+        let entering = !session.tabbedHasEntryBaseline
+        if entering {
             session.tabbedHasEntryBaseline = true
             session.tabbedBaselineFrames = Dictionary(uniqueKeysWithValues: windows.map { ($0.id, $0.frame) })
+            // Stored now, so a failed or deferred entry placement does not run
+            // the entry again on every later sweep.
+            if let committed = sessionStore.commit(session, replacing: session.revision) { session = committed }
         }
         let before = state
         if wasUninitialized {
             state.reconcile(windowIDs: windows.map(\.id), removed: removed, focused: focused)
         } else {
-            state.reconcile(windowIDs: windows.map(\.id), removed: removed,
-                            fittingIn: display.visibleFrame, windows: windows)
+            let arrivals = state.reconcile(windowIDs: windows.map(\.id), removed: removed,
+                                           fittingIn: display.visibleFrame, windows: windows)
+            logTabbedAdoptions(arrivals, transition: entering ? "entry arrival" : "arrival",
+                               before: before, windows: windows, bounds: display.visibleFrame)
+            // Entering Tabbed, from Bento or Native, offers the windows that
+            // floated on their own a pane again: the panes changed since.
+            if entering, !state.automaticallyFloatingWindowIDs.isEmpty {
+                let returning = state
+                let returned = state.returnAutomaticFloats(state.automaticallyFloatingWindowIDs,
+                                                           fittingIn: display.visibleFrame, windows: windows,
+                                                           selecting: true, keeping: focused ?? state.activeWindowID)
+                logTabbedAdoptions(returned, transition: "entry return", before: returning,
+                                   windows: windows, bounds: display.visibleFrame)
+            }
         }
         session.tabbedState = state
         session.windowIDs = state.windowIDs
@@ -4119,7 +4165,8 @@ extension BetterTileModel {
         let floatedNames = windows.filter { floated.contains($0.id) }.map(Self.displayName(of:))
         var floatedFeedback: ResultPillFeedback?
         if floatedNames.count == 1 {
-            floatedFeedback = .failure(title: "\(floatedNames[0]) is floating", detail: "It doesn’t fit in any pane.")
+            floatedFeedback = .failure(title: ResultPillLayout.title(naming: floatedNames[0]) { "\($0) is floating" },
+                                       detail: "It doesn’t fit in any pane.")
         } else if floatedNames.count > 1 {
             // One pill names them all; long names shorten, not the sentence.
             let named = floatedNames.count > 3 ? Array(floatedNames.prefix(2)) : floatedNames
@@ -4298,8 +4345,10 @@ extension BetterTileModel {
         snapAction: WindowAction? = nil, snapScope: TabbedSnapScope = .pane, preparedDrop: PreparedTabbedArrangement? = nil,
         gestureBaseline: TabbedLayoutState? = nil, floatingUndoFrame: BTRect? = nil,
         gestureSourceID: WindowID? = nil, expectedSpaceID: NativeSpaceID? = nil, restorationFrames: [WindowID: BTRect] = [:],
-        arrivals: Set<WindowID> = [], appliedFeedback: ResultPillFeedback? = nil, rejection: String? = nil
+        arrivals: Set<WindowID> = [], appliedFeedback: ResultPillFeedback? = nil, rejection: String? = nil,
+        reportsFailure: Bool = true
     ) {
+        let windows = Self.ignoringOversizedSeeds(windows, in: display.visibleFrame)
         guard tabbedTasks[display.id] == nil else {
             tabbedNeedsReapply.insert(display.id)
             return
@@ -4426,6 +4475,8 @@ extension BetterTileModel {
                 // No placement starts, so no placement end drops the
                 // pressed tab's highlight.
                 if let focus { tabbedOverlays[display.id]?.dropPressedSelection(of: focus) }
+                Self.tabbedLog.debug("placement not started: \(reason, privacy: .private)")
+                guard reportsFailure else { return }
                 statusMessage = reason
                 presentActionResult(succeeded: false, error: reason,
                                     feedback: (error as? TabbedFitFailure)?.feedback, displayID: display.id)
@@ -4554,11 +4605,13 @@ extension BetterTileModel {
                 // A snapshot can confirm a kept size before the mismatch
                 // report sees it, so a larger minimum in the refreshed
                 // constraints is the same new observation.
-                let reread = try? self.system.windowSnapshots(ids: ids)
+                let reread = (try? self.system.windowSnapshots(ids: ids))
+                    .map { Self.ignoringOversizedSeeds($0, in: display.visibleFrame) }
                 guard learnedSize || reread.map({ Self.gainedMinimumSize($0, since: windows) }) == true else { break }
                 refitsPreparedDrop = true
                 do {
-                    let refreshed = try reread ?? self.system.windowSnapshots(ids: ids)
+                    let refreshed = try reread
+                        ?? Self.ignoringOversizedSeeds(self.system.windowSnapshots(ids: ids), in: display.visibleFrame)
                     guard Set(refreshed.map(\.id)) == ids,
                           refreshed.allSatisfy({ ($0.displayID == display.id || $0.id == gestureSourceID) && $0.isEligible })
                     else { break }
@@ -4632,6 +4685,30 @@ extension BetterTileModel {
                         self.rememberTabbedUndo(previous, sessionID: original.id, floatingFrames: floatingFrames)
                     }
                     self.showTabbed(session: committed, display: display, windows: windows)
+                    if let committedState = committed.tabbedState {
+                        let layout = TabbedCommittedLayout(paneFrames: committedState.frames(in: display.visibleFrame),
+                                                           selected: Set(committedState.selectedWindowIDs))
+                        let earlier = self.tabbedCommittedLayouts.updateValue(layout, forKey: original.id)
+                        let floating = committedState.automaticallyFloatingWindowIDs
+                        // A window this placement floated was just checked.
+                        let waiting = floating.intersection(previous?.automaticallyFloatingWindowIDs ?? [])
+                        if consumeUndo {
+                            // Undo brought these floats back on purpose; a later
+                            // check must not undo part of it.
+                            self.tabbedRetriedAutomaticFloats.formUnion(floating)
+                        } else {
+                            self.scheduleAutomaticFloatRetry(on: display.id, state: committedState)
+                            // A preset, pane, divider, work-area, or selection
+                            // change may have made room for a window that
+                            // floated on its own.
+                            if let earlier, earlier != layout, !waiting.isEmpty {
+                                Task { @MainActor [weak self] in
+                                    self?.retryAutomaticFloats(waiting, on: display.id, deferrals: 0,
+                                                               transition: "layout change")
+                                }
+                            }
+                        }
+                    }
                     // Said only once the placement that makes it true landed.
                     if let appliedFeedback {
                         self.presentActionResult(succeeded: false, feedback: appliedFeedback, displayID: display.id)
@@ -4645,6 +4722,11 @@ extension BetterTileModel {
             } else {
                 Self.tabbedLog.error("placement failed\(gestureSourceID == nil ? "" : " after a drag", privacy: .public): \(outcome.failureReason ?? "", privacy: .private)")
                 _ = restoreGestureMembership()
+                // Windows the placement would have returned stay automatic
+                // floats; they get their one later check or a repair.
+                if let stored = self.sessionStore.session(for: display.id)?.tabbedState {
+                    self.scheduleAutomaticFloatRetry(on: display.id, state: stored)
+                }
                 // A new window refused the size its pane offered. Adopt it
                 // again, once, with the minimum the write revealed: it joins
                 // a pane that fits it or floats, and that result explains
@@ -4656,7 +4738,8 @@ extension BetterTileModel {
                     self.tabbedReadoptedArrivals.formUnion(fresh)
                     self.tabbedNeedsRefresh.insert(display.id)
                 }
-                self.statusMessage = readoptsArrivals ? nil : outcome.failureReason
+                let reports = reportsFailure && !readoptsArrivals
+                if reportsFailure { self.statusMessage = readoptsArrivals ? nil : outcome.failureReason }
                 if case .degraded = outcome {
                     self.sessionStore.update(display.id) { $0.suspendAutomaticWrites(observing: windows) }
                 } else if let restored = self.sessionStore.session(for: display.id) {
@@ -4668,7 +4751,7 @@ extension BetterTileModel {
                     // Put their curtains below them again as well.
                     self.showTabbed(session: restored, display: display, windows: windows)
                 }
-                if !readoptsArrivals {
+                if reports {
                     self.presentActionResult(succeeded: false, error: outcome.failureReason,
                                              feedback: fitFailure?.feedback, displayID: display.id)
                 }
@@ -4691,18 +4774,19 @@ extension BetterTileModel {
         let byID = Dictionary(windows.map { ($0.id, $0) }) { first, _ in first }
         func name(_ id: WindowID) -> String { byID[id].map(Self.displayName(of:)) ?? "This window" }
         let window = name(id)
+        let doesNotFit = ResultPillLayout.title(naming: window) { "\($0) doesn’t fit here" }
         switch problem {
         case .largerThanDisplay:
-            return TabbedFitFailure(title: "\(window) is too large for this display",
+            return TabbedFitFailure(title: ResultPillLayout.title(naming: window) { "\($0) is too large for this display" },
                                     detail: "Use a larger display or fewer panes.")
         case .lockedDivider:
-            return TabbedFitFailure(title: "\(window) doesn’t fit here",
+            return TabbedFitFailure(title: doesNotFit,
                                     detail: "A locked divider keeps this pane from growing.")
         case let .neighbors(ids):
             var names: [String] = []
             for other in ids where !names.contains(name(other)) { names.append(name(other)) }
             guard !names.isEmpty else {
-                return TabbedFitFailure(title: "\(window) doesn’t fit here",
+                return TabbedFitFailure(title: doesNotFit,
                                         detail: "The empty panes beside it can’t get any smaller.")
             }
             // Shorten long names rather than the sentence, so the pill's two
@@ -4716,15 +4800,17 @@ extension BetterTileModel {
                 default: "It would overlap \(titles[0]), \(titles[1]), and \(titles[2])."
                 }
             }
-            return TabbedFitFailure(title: "\(window) doesn’t fit here", detail: detail)
+            return TabbedFitFailure(title: doesNotFit, detail: detail)
         }
     }
 
-    /// The application name a person sees for a window.
+    /// The name a person sees for a window: its title, which tells two
+    /// windows of one application apart, or else its application's name.
     private static func displayName(of window: WindowSnapshot) -> String {
+        if !window.title.isEmpty { return window.title }
         if let name = NSRunningApplication(processIdentifier: window.processIdentifier)?.localizedName { return name }
         if let bundleIdentifier = window.bundleIdentifier { return applicationName(for: bundleIdentifier) }
-        return window.title.isEmpty ? "This window" : window.title
+        return "This window"
     }
 
     private func rememberTabbedUndo(_ state: TabbedLayoutState, sessionID: DesktopSessionID,
@@ -4759,7 +4845,7 @@ extension BetterTileModel {
             if case let .degraded(reason) = coordinator.probeMinimumSizes(for: [id]) {
                 // Put the window back now: a selection that does not fit
                 // writes no frames, so it cannot be left to the placement.
-                Self.bentoLog.error("\(reason, privacy: .public)")
+                Self.bentoLog.error("\(reason, privacy: .private)")
                 if let original, !coordinator.applyPlacements([original], recordHistory: false).isApplied {
                     statusMessage = reason
                     presentActionResult(succeeded: false, error: reason, displayID: displayID)
@@ -4791,13 +4877,14 @@ extension BetterTileModel {
                 ?? (try? system.visibleWindows()) else { return }
         let observation = system.nativeDesktopObservation()
         guard observation?.allowsAutomaticLayout(on: displayID) != false else { return }
-        let windows = bentoEligible((observation?.windowsOnCurrentSpaces(allWindows) ?? allWindows)
-            .filter { $0.displayID == displayID && $0.isEligible && !$0.isFloating })
+        var windows = Self.ignoringOversizedSeeds(bentoEligible((observation?.windowsOnCurrentSpaces(allWindows) ?? allWindows)
+            .filter { $0.displayID == displayID && $0.isEligible && !$0.isFloating }), in: display.visibleFrame)
         var focus: WindowID?
         var undo = true
         var consumeUndo = false
         var selectionOnly = false
         var restorationFrames: [WindowID: BTRect] = [:]
+        var appliedFeedback: ResultPillFeedback?
         switch intent {
         case let .select(id):
             guard state.paneID(containing: id) != nil else { return }
@@ -4838,10 +4925,30 @@ extension BetterTileModel {
             focus = state.activeWindowID; undo = false
         case .repair:
             session.resumeAutomaticWrites()
+            // Windows that floated on their own come back first, decided
+            // without their application's seed; a window the user floated
+            // stays floating.
+            let returning = state.automaticallyFloatingWindowIDs.intersection(windows.map(\.id))
+            if !returning.isEmpty {
+                windows = remeasuredForRepair(returning, windows: windows, displayID: displayID)
+                let before = state
+                let focused = ((try? system.focusedWindow()) ?? nil)?.id ?? state.activeWindowID
+                let returned = state.returnAutomaticFloats(returning, fittingIn: display.visibleFrame, windows: windows,
+                                                           selecting: true, keeping: focused)
+                logTabbedAdoptions(returned, transition: "repair", before: before,
+                                   windows: windows, bounds: display.visibleFrame)
+                let count = returned.filter { !$0.floated }.count
+                if count > 0 {
+                    appliedFeedback = .success(count == 1 ? "1 window returned to a pane" : "\(count) windows returned to panes")
+                }
+            }
             // Repair adopts every window outside the panes the same way a
             // late arrival joins, so none is left out of the layout.
-            state.reconcile(windowIDs: windows.map(\.id), removed: state.windowIDs.subtracting(windows.map(\.id)),
-                            fittingIn: display.visibleFrame, windows: windows)
+            let before = state
+            let arrivals = state.reconcile(windowIDs: windows.map(\.id), removed: state.windowIDs.subtracting(windows.map(\.id)),
+                                           fittingIn: display.visibleFrame, windows: windows)
+            logTabbedAdoptions(arrivals, transition: "repair arrival", before: before,
+                               windows: windows, bounds: display.visibleFrame)
             focus = state.activeWindowID; undo = false
         case let .removePane(id): state.removeEmptyPane(id)
         case let .adjustDivider(id, delta):
@@ -4851,7 +4958,147 @@ extension BetterTileModel {
         applyTabbedState(state, session: session, display: display, windows: windows, focus: focus,
                          rememberUndo: undo, consumeUndo: consumeUndo, selectionOnly: selectionOnly,
                          earlyRaise: earlyRaise,
-                         restorationFrames: restorationFrames)
+                         restorationFrames: restorationFrames, appliedFeedback: appliedFeedback)
+    }
+
+    /// Prepares automatic floats for Repair Tabbed. A proven minimum stays.
+    /// A window never measured is probed, and the snapshot is read again.
+    /// An application's seed came from another window, so this decision
+    /// does not use it.
+    private func remeasuredForRepair(_ ids: Set<WindowID>, windows: [WindowSnapshot], displayID: DisplayID) -> [WindowSnapshot] {
+        let originals = windows.filter { ids.contains($0.id) }.map { Placement(windowID: $0.id, frame: $0.frame) }
+        if case let .degraded(reason) = coordinator.probeMinimumSizes(for: ids) {
+            Self.tabbedLog.error("\(reason, privacy: .private)")
+            if !coordinator.applyPlacements(originals, recordHistory: false).isApplied {
+                statusMessage = reason
+            }
+        }
+        let fresh = Dictionary(((try? system.windowSnapshots(ids: ids)) ?? []).map { ($0.id, $0) }) { first, _ in first }
+        return windows.map { window in
+            guard ids.contains(window.id) else { return window }
+            let result = fresh[window.id].flatMap { $0.isEligible && $0.displayID == displayID ? $0 : nil } ?? window
+            return Self.ignoringSeed(result)
+        }
+    }
+
+    /// A seed larger than any pane would block every placement while its
+    /// window is selected. Plan without it; the write shows the real minimum.
+    private static func ignoringOversizedSeeds(_ windows: [WindowSnapshot], in bounds: BTRect) -> [WindowSnapshot] {
+        let largest = TabbedLayoutState.contentFrame(bounds).size
+        return windows.map { window in
+            let minimum = window.constraints.minimumSize
+            return minimum.width > largest.width || minimum.height > largest.height ? ignoringSeed(window) : window
+        }
+    }
+
+    /// The window planned with its own minimum instead of its application's
+    /// seed. The write then shows its real minimum.
+    private static func ignoringSeed(_ window: WindowSnapshot) -> WindowSnapshot {
+        guard window.constraints.minimumSizeSource == .seed else { return window }
+        var result = window
+        result.constraints.minimumSize = window.constraints.unseededMinimumSize ?? WindowConstraints().minimumSize
+        result.constraints.minimumSizeSource = window.constraints.unseededMinimumSizeSource ?? .default
+        result.constraints.unseededMinimumSize = nil
+        result.constraints.unseededMinimumSizeSource = nil
+        return result
+    }
+
+    /// Checks automatic floats again once, a moment after the placement that
+    /// floated them settles, with fresh snapshots: an application that was
+    /// busy, or applied its size late, may fit by then.
+    private func scheduleAutomaticFloatRetry(on displayID: DisplayID, state: TabbedLayoutState) {
+        let floating = Set(sessionStore.sessions.values.flatMap { $0.tabbedState?.automaticallyFloatingWindowIDs ?? [] })
+        tabbedRetriedAutomaticFloats.formIntersection(floating)
+        let fresh = state.automaticallyFloatingWindowIDs.subtracting(tabbedRetriedAutomaticFloats)
+        guard !fresh.isEmpty else { return }
+        tabbedRetriedAutomaticFloats.formUnion(fresh)
+        let delay = tabbedAutomaticFloatRetryDelay
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: delay)
+            self?.retryAutomaticFloats(fresh, on: displayID, deferrals: 0)
+        }
+    }
+
+    /// A returned window is shown as its pane's selected tab, as it was
+    /// visible while it floated.
+    private func retryAutomaticFloats(
+        _ ids: Set<WindowID>, on displayID: DisplayID, deferrals: Int, transition: String = "retry"
+    ) {
+        guard !isShutDown, !isStabilizingSpace,
+              let session = sessionStore.session(for: displayID), session.mode == .tabbed,
+              !session.automaticWritesSuspended,
+              let display = system.displays().first(where: { $0.id == displayID }),
+              let current = session.tabbedState,
+              !ids.isDisjoint(with: current.automaticallyFloatingWindowIDs) else { return }
+        // Another placement owns the display; check after it.
+        if isTabbedBusy(on: displayID) || tabbedExiting.contains(displayID) {
+            guard deferrals < 10 else {
+                tabbedAutomaticFloatChecksGivenUp += 1
+                Self.tabbedLog.debug("gave up checking automatic floats again: the display stayed busy")
+                return
+            }
+            let deferral = tabbedAutomaticFloatRetryDeferral
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(for: deferral)
+                self?.retryAutomaticFloats(ids, on: displayID, deferrals: deferrals + 1, transition: transition)
+            }
+            return
+        }
+        tabbedAutomaticFloatChecksRun += 1
+        guard let allWindows = try? system.visibleWindows() else { return }
+        let observation = system.nativeDesktopObservation()
+        guard observation?.allowsAutomaticLayout(on: displayID) != false else { return }
+        let windows = Self.ignoringOversizedSeeds(bentoEligible((observation?.windowsOnCurrentSpaces(allWindows) ?? allWindows)
+            .filter { $0.displayID == displayID && $0.isEligible && !$0.isFloating }), in: display.visibleFrame)
+        var state = current
+        // A silent check never takes the focused window's place. When focus
+        // cannot be read, for example from a hung application, the active
+        // pane's tab is treated as focused.
+        let focused = ((try? system.focusedWindow()) ?? nil)?.id ?? current.activeWindowID
+        let returned = state.returnAutomaticFloats(ids, fittingIn: display.visibleFrame, windows: windows,
+                                                   selecting: true, keeping: focused)
+        logTabbedAdoptions(returned, transition: transition, before: current, windows: windows, bounds: display.visibleFrame)
+        guard state != current else { return }
+        // The user did not ask for this check: a failure leaves the window an
+        // automatic float for Repair Tabbed and only logs.
+        applyTabbedState(state, session: session, display: display, windows: windows, focus: nil, reportsFailure: false)
+    }
+
+    /// Records how each window joined, or why it floats, with the inputs of
+    /// the decision. Window identifiers and frames only; never titles.
+    private func logTabbedAdoptions(
+        _ adoptions: [TabbedAdoption], transition: String, before: TabbedLayoutState,
+        windows: [WindowSnapshot], bounds: BTRect
+    ) {
+        guard !adoptions.isEmpty else { return }
+        let byID = Dictionary(windows.map { ($0.id, $0) }) { first, _ in first }
+        func text(_ frame: BTRect?) -> String {
+            guard let frame else { return "none" }
+            return String(format: "%.0f,%.0f %.0fx%.0f", frame.minX, frame.minY, frame.size.width, frame.size.height)
+        }
+        func pane(_ id: UUID) -> String { String(id.uuidString.prefix(8)) }
+        for adoption in adoptions {
+            let window = byID[adoption.windowID]
+            let outcome: String = switch adoption.outcome {
+            case let .selected(id): "selected tab of pane \(pane(id))"
+            case let .hidden(id): "hidden tab of pane \(pane(id)), which can show it"
+            case let .floated(reason): "floating (\(reason.rawValue))"
+            }
+            let trials = adoption.trials.map { "\(pane($0.paneID)) \(text($0.contentFrame)): \($0.result.rawValue)" }
+                .joined(separator: "; ")
+            let constraints = window?.constraints
+            let minimum = constraints.map { String(format: "%.0fx%.0f", $0.minimumSize.width, $0.minimumSize.height) } ?? "none"
+            Self.tabbedLog.debug("""
+                \(transition, privacy: .public): window \(adoption.windowID.rawValue, privacy: .public) \
+                (\(window?.bundleIdentifier ?? "unknown", privacy: .private)) -> \(outcome, privacy: .public). \
+                frame \(text(window?.frame), privacy: .public), \
+                resizable \(constraints.map { String($0.isResizable) } ?? "unknown", privacy: .public) \
+                (\(constraints?.settabilitySource.rawValue ?? "unknown", privacy: .public)), \
+                minimum \(minimum, privacy: .public) (\(constraints?.minimumSizeSource.rawValue ?? "unknown", privacy: .public)), \
+                work area \(text(bounds), privacy: .public), active pane \(pane(before.activePaneID), privacy: .public), \
+                trials: \(trials, privacy: .public)
+                """)
+        }
     }
 
     /// Puts back the tab order and focus from before a selection raised its
@@ -5301,8 +5548,16 @@ extension BetterTileModel {
         }
     }
 
+    /// Drops the committed layouts of sessions whose display or Space is gone.
+    private func forgetEndedTabbedSessions<IDs: Sequence<DisplayID>>(displayIDs: IDs) {
+        guard !tabbedCommittedLayouts.isEmpty else { return }
+        let live = Set(displayIDs.flatMap { sessionStore.allSessions(for: $0).map(\.id) })
+        tabbedCommittedLayouts = tabbedCommittedLayouts.filter { live.contains($0.key) }
+    }
+
     private func leaveTabbed(displayID: DisplayID, destination: LayoutMode) {
         guard tabbedExiting.insert(displayID).inserted else { return }
+        if let sessionID = sessionStore.session(for: displayID)?.id { tabbedCommittedLayouts.removeValue(forKey: sessionID) }
         tabbedRepairDeferred.remove(displayID)
         tabbedQueuedIntents.removeValue(forKey: displayID)
         let pending = tabbedTasks[displayID]
@@ -5332,6 +5587,8 @@ extension BetterTileModel {
                 }
                 session.bentoState = bento
                 session.isBentoInitialized = session.bentoState.root != nil
+                // Bento offers a pane again only to windows it floated itself.
+                session.automaticallyFloatingWindowIDs = state.automaticallyFloatingWindowIDs
                 session.tabbedState = nil
             }
             session.mode = destination

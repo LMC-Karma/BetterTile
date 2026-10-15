@@ -13,22 +13,62 @@ public struct DisplayID: RawRepresentable, Codable, Hashable, Sendable, Comparab
     public static func < (lhs: DisplayID, rhs: DisplayID) -> Bool { lhs.rawValue < rhs.rawValue }
 }
 
+/// Where a window's minimum size came from.
+public enum MinimumSizeSource: String, Codable, Hashable, Sendable {
+    /// BetterTile's floor; nothing else is known.
+    case `default`
+    /// The application reported it.
+    case hint
+    /// Another window of the same application was measured.
+    case seed
+    /// A write to this window proved it.
+    case learned
+    /// A size probe of this window measured it.
+    case probe
+
+    /// The window or its application gave this value: not a default and
+    /// not a guess from another window.
+    public var isProven: Bool { self == .hint || self == .learned || self == .probe }
+}
+
+/// Where a window's `isMovable` and `isResizable` came from.
+public enum SettabilitySource: String, Codable, Hashable, Sendable {
+    /// The application answered.
+    case reported
+    /// The application did not answer in time; the window keeps the answer
+    /// it gave before.
+    case previous
+    /// The application did not answer in time and never answered before;
+    /// the window counts as movable and resizable until it answers.
+    case assumed
+}
+
 public struct WindowConstraints: Codable, Hashable, Sendable {
     public var minimumSize: BTSize
     public var maximumSize: BTSize?
     public var isMovable: Bool
     public var isResizable: Bool
+    public var minimumSizeSource: MinimumSizeSource
+    public var settabilitySource: SettabilitySource
+    /// The window's own minimum before its application's seed raised it,
+    /// with the source the seed replaced. Nil when no seed applies.
+    public var unseededMinimumSize: BTSize?
+    public var unseededMinimumSizeSource: MinimumSizeSource?
 
     public init(
         minimumSize: BTSize = BTSize(width: 120, height: 80),
         maximumSize: BTSize? = nil,
         isMovable: Bool = true,
-        isResizable: Bool = true
+        isResizable: Bool = true,
+        minimumSizeSource: MinimumSizeSource = .default,
+        settabilitySource: SettabilitySource = .reported
     ) {
         self.minimumSize = minimumSize
         self.maximumSize = maximumSize
         self.isMovable = isMovable
         self.isResizable = isResizable
+        self.minimumSizeSource = minimumSizeSource
+        self.settabilitySource = settabilitySource
     }
 }
 
