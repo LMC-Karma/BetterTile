@@ -54,7 +54,7 @@ the session. Restoring a valid file and relaunching resumes normal saving.
 
 ## Coordinate model
 
-Core geometry uses logical points with a top-left origin. Display visible frames and Accessibility window frames are converted at the macOS boundary. Core code never sees AppKit's bottom-left global screen coordinate system.
+Core geometry uses logical points with a top-left origin. Display visible frames and Accessibility window frames are converted at the macOS boundary. Core code never sees AppKit's bottom-left global screen coordinate system. With Leave space for Dock on, the macOS boundary also removes the Dock's strip from its display's visible frame. The strip is the Dock's Accessibility list thickness plus 6 points, which matches what macOS reserves for a Dock that never hides, within a point. The list keeps its size while the Dock is hidden, so the work area stays the same as the Dock slides in and out. A Dock not shown since it started, as after login, reports no size; until it is shown, the thickness last measured on its edge stands in on the main display.
 
 ## Window drag drops
 
