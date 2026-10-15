@@ -10,6 +10,7 @@ import os
 @MainActor
 protocol BetterTileWindowSystem: TargetedWindowSystem, WindowEventSource {
     var enhancedUserInterfacePolicy: EnhancedUserInterfacePolicy { get set }
+    var leavesSpaceForDock: Bool { get set }
     func cachedVisibleWindows(refreshing ids: Set<WindowID>) throws -> [WindowSnapshot]?
     func nativeDesktopObservation() -> NativeDesktopObservation?
     func refreshNativeDesktopObservation() -> NativeDesktopObservation?
@@ -21,9 +22,6 @@ protocol BetterTileWindowSystem: TargetedWindowSystem, WindowEventSource {
     ) -> Bool
     func refreshApplicationObservers()
     func resetCachedWindows()
-    func startDockFootprintMonitoring(onChange: @escaping () -> Void)
-    func stopDockFootprintMonitoring()
-    func triggerDockFootprintCheck()
     func startDisplayReconfigurationMonitoring(onChange: @escaping @MainActor () -> Void)
     func stopDisplayReconfigurationMonitoring()
     func updateManagedWindowIDs(_ ids: Set<WindowID>)
@@ -183,7 +181,6 @@ final class BetterTileModel {
     private var tabbedResizeReleaseTask: Task<Void, Never>?
 
     private var watchdogTimer: Timer?
-    private var pendingDockReflow = false
     private var permissionPollTask: Task<Void, Never>?
     private var notificationTokens: [NSObjectProtocol] = []
     private var lastVisibleSignature = ""
@@ -236,6 +233,7 @@ final class BetterTileModel {
         let windowSystem: any BetterTileWindowSystem = suppliedSystem ?? AccessibilityWindowSystem()
         configuration = loaded
         windowSystem.enhancedUserInterfacePolicy = loaded.enhancedUserInterfacePolicy
+        windowSystem.leavesSpaceForDock = loaded.leavesSpaceForDock
         system = windowSystem
         coordinator = WindowCoordinator(system: windowSystem)
         shortcuts = GlobalShortcutMonitor { _ in }
@@ -278,7 +276,6 @@ final class BetterTileModel {
         }
         dragSnap.gestureEndedHandler = { [weak self] in
             guard let self else { return }
-            self.performDeferredDockReflow()
             self.schedulePendingWindowEvents()
         }
         dragSnap.actionResultHandler = { [weak self] displayID, succeeded, error in
@@ -348,7 +345,6 @@ final class BetterTileModel {
         dividerResize.gestureWillBeginHandler = { [weak self] in self?.prepareWindowGesture() }
         linkedResize.gestureWillBeginHandler = { [weak self] in self?.prepareWindowGesture() }
         dividerResize.gestureEndedHandler = { [weak self] in
-            self?.performDeferredDockReflow()
             self?.schedulePendingWindowEvents()
         }
         linkedResize.isEnabledForDisplay = { [weak self] displayID in
@@ -395,9 +391,6 @@ final class BetterTileModel {
             layoutWheel.start()
             refreshPermission()
             installWorkspaceTriggers()
-            system.startDockFootprintMonitoring { [weak self] in
-                self?.dockFootprintChanged()
-            }
             system.startDisplayReconfigurationMonitoring { [weak self] in
                 self?.scheduleDisplayRefresh()
             }
@@ -2101,7 +2094,6 @@ final class BetterTileModel {
         spaceStabilizationTask?.cancel()
         displayRefreshDebouncer.cancel()
         settlementTasks.values.forEach { $0.cancel() }
-        system.stopDockFootprintMonitoring()
         system.stopDisplayReconfigurationMonitoring()
         // After the last frame writes above, so none is left to restore.
         system.restoreEnhancedUserInterfaceBeforeQuit()
@@ -2176,6 +2168,10 @@ final class BetterTileModel {
         if changes.contains(.accessibilityWrites) {
             system.enhancedUserInterfacePolicy = configuration.enhancedUserInterfacePolicy
         }
+        if changes.contains(.workArea) {
+            system.leavesSpaceForDock = configuration.leavesSpaceForDock
+            scheduleDisplayRefresh()
+        }
         if changes.contains(.activationPolicy) {
             applyDockPolicy()
         }
@@ -2249,7 +2245,6 @@ final class BetterTileModel {
                         self.layoutWheel.cancel()
                     }
                     self.system.refreshApplicationObservers()
-                    self.system.triggerDockFootprintCheck()
                     self.dividerResize.hideAndCancel()
                     self.refreshActiveWindows(force: true)
                 }
@@ -2286,32 +2281,16 @@ final class BetterTileModel {
         watchdogTimer = timer
     }
 
-    private func dockFootprintChanged() {
-        if dragSnap.isGestureActive || dividerResize.isDragging {
-            pendingDockReflow = true
-        } else {
-            refreshActiveWindows(force: true)
-        }
-    }
-
     /// Coalesces Core Graphics and AppKit display notifications into the same
     /// refresh. AppKit remains the fallback when callback registration fails.
     private func scheduleDisplayRefresh() {
         layoutWheel.cancel()
         displayRefreshDebouncer.schedule { [weak self] in
             guard let self else { return }
-            self.system.triggerDockFootprintCheck()
             self.dragSnap.cancel()
             self.dividerResize.hideAndCancel()
             self.refreshActiveWindows(force: true)
         }
-    }
-
-    private func performDeferredDockReflow() {
-        schedulePendingWindowEvents()
-        guard pendingDockReflow, !dragSnap.isGestureActive, !dividerResize.isDragging else { return }
-        pendingDockReflow = false
-        refreshActiveWindows(force: true)
     }
 
     func beginActiveSpaceStabilization() {
