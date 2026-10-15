@@ -111,7 +111,9 @@ popup windows, such as file pickers and dialogs, and windows that appear on
 several Spaces. On a Bento desktop it also floats windows that cannot be
 resized or moved, and a seventh window. On a Tabbed desktop it floats a new
 window that fits no pane. A floating window keeps its own frame until the user
-returns it to the layout.
+returns it to the layout, for example by dragging it into a Tabbed pane as a
+tab. A dragged window joins a Tabbed pane only as its selected tab; a window
+that the pane cannot show stays floating.
 
 ## Focus mode
 

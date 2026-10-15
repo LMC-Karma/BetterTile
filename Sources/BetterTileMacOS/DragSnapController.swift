@@ -109,6 +109,9 @@ public final class DragSnapController {
     /// longer current, which the overlay shows as invalid.
     public var bentoPreviewHandler: ((DisplayID, WindowID, BentoDragOutcome) -> LayoutDropPreview?)?
     public var isTabbedMember: ((WindowID) -> Bool)?
+    /// The Tabbed tab strip or empty pane under the pointer, where the
+    /// dragged window joins a pane as a tab.
+    public var tabbedDropZoneProvider: ((DisplayID, BTPoint, WindowID) -> TabbedDropZone?)?
     public var bentoDragEndedHandler: ((DisplayID, WindowID, LayoutDragEnd) -> Void)?
     public var activeModeProvider: ((DisplayID) -> LayoutMode?)?
     public var bentoStateProvider: ((DisplayID) -> BentoLayoutState?)?
@@ -147,6 +150,7 @@ public final class DragSnapController {
     private var bentoHover = BentoDropHoverState()
     private var bentoHoverPreviewTask: Task<Void, Never>?
     private var presentedBentoCandidate: BentoHoverCandidate?
+    private var presentedTabbedZone: TabbedDropZone?
     private var preview: SnapPreviewPanel?
     private var bentoPreview: BentoDropPreviewController?
     private var restoredDragTask: Task<Void, Never>?
@@ -497,6 +501,20 @@ public final class DragSnapController {
                snapAreas: configuration.snapAreaBindings,
                window: snapSourceWindow
            )
+        // A tab strip under the pointer wins over a snap area, except at the
+        // screen edge itself (the edge band): without a permanent menu bar,
+        // the top strips reach the top edge, which must still snap. Farther
+        // inside, a strip wins over a corner area. An empty pane wins only
+        // outside a snap area, like a pane center.
+        let edgeBand = SnapZoneDetector().edgeActivationDistance
+        let insideEdgeBands = display.frame.insetBy(dx: edgeBand, dy: edgeBand).contains(point)
+        if let draggedWindowID, bentoDragDisplayID != nil, activeModeProvider?(display.id) == .tabbed,
+           let zone = tabbedDropZoneProvider?(display.id, point, draggedWindowID),
+           snapTarget == nil || (zone.indicator != nil && insideEdgeBands) {
+            showTabbedDropZone(zone, sourceWindowID: draggedWindowID, displayID: display.id, mainScreenFrame: mainFrame)
+            return
+        }
+        presentedTabbedZone = nil
         let bentoPlacements = bentoDragDisplayID != nil && usesBentoDrops(display.id)
             ? bentoStateProvider?(display.id)?.placements(in: display.visibleFrame) ?? [] : []
         let hoveredPlacement = draggedWindowID.flatMap { source in
@@ -669,6 +687,46 @@ public final class DragSnapController {
             prepared.placements, baselineFrames: baseline, excluding: source), baselineFrames: baseline)
     }
 
+    /// Shows and records a Tabbed tab drop at once: a strip or empty pane is
+    /// an exact target and needs no hover delay.
+    private func showTabbedDropZone(
+        _ zone: TabbedDropZone, sourceWindowID: WindowID, displayID: DisplayID, mainScreenFrame: CGRect
+    ) {
+        bentoHoverPreviewTask?.cancel()
+        bentoHoverPreviewTask = nil
+        presentedBentoCandidate = nil
+        bentoHover.clear()
+        preview?.hide()
+        guard zone != presentedTabbedZone else { return }
+        presentedTabbedZone = zone
+        // A pane cue's landing and wireframes belong to another drop.
+        bentoPreview?.hide()
+        let prepared = recordLayoutPreview(
+            bentoPreviewHandler?(displayID, sourceWindowID, .tab(paneID: zone.paneID, index: zone.index)),
+            displayID: displayID
+        )
+        activeBentoPreview.showCue(
+            targetFrame: zone.paneFrame,
+            position: .center,
+            phase: prepared == nil ? .invalid : .armed,
+            seam: nil,
+            label: prepared.flatMap(Self.tabCueLabel) ?? invalidReason,
+            insertion: prepared == nil ? nil : zone.indicator,
+            mainScreenFrame: mainScreenFrame
+        )
+    }
+
+    /// What a Tabbed tab drop's cue says. Nil for any other drop.
+    static func tabCueLabel(_ prepared: PreparedLayoutDrop) -> String? {
+        prepared.outcome.addsTab && prepared.tabbedState != nil ? "Add as tab" : nil
+    }
+
+    /// The reason recorded for invalid feedback, such as a window too wide
+    /// for the pane it is dragged to.
+    private var invalidReason: String? {
+        if case let .invalid(reason)? = dropTarget?.drop { reason } else { nil }
+    }
+
     /// Records a planned Bento or Tabbed drop. A drop that cannot be planned
     /// is recorded as invalid feedback, which release never commits.
     private func recordLayoutPreview(_ preview: LayoutDropPreview?, displayID: DisplayID) -> PreparedLayoutDrop? {
@@ -702,11 +760,13 @@ public final class DragSnapController {
             displayID: candidate.displayID
         ) else {
             presentedBentoCandidate = candidate
+            // A Tabbed center drop names why the window cannot join the pane.
             activeBentoPreview.showCue(
                 targetFrame: targetFrame,
                 position: candidate.position,
                 phase: .invalid,
                 seam: nil,
+                label: outcome.addsTab && activeModeProvider?(candidate.displayID) == .tabbed ? invalidReason : nil,
                 mainScreenFrame: mainScreenFrame
             )
             return nil
@@ -720,6 +780,7 @@ public final class DragSnapController {
             phase: .armed,
             seam: sourceDestination,
             sourceOriginalFrame: sourceOriginalFrame,
+            label: Self.tabCueLabel(prepared),
             mainScreenFrame: mainScreenFrame
         )
         NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
@@ -807,6 +868,7 @@ public final class DragSnapController {
 
     private func clearTargets() {
         dropTarget = nil
+        presentedTabbedZone = nil
         bentoHoverPreviewTask?.cancel()
         bentoHoverPreviewTask = nil
         presentedBentoCandidate = nil
@@ -995,6 +1057,8 @@ private final class BentoDropPreviewController {
     private let placementPreviews = PlacementWireframeController()
     private var landingPanel: NSPanel?
     private var swapOriginPanel: NSPanel?
+    /// The tab insertion line, above the dragged window that covers the strip.
+    private var insertionPanel: NSPanel?
     private(set) var showsSnapWireframes = false
 
     init() {
@@ -1008,12 +1072,14 @@ private final class BentoDropPreviewController {
         phase: BentoDropCueView.Phase,
         seam: BTRect?,
         sourceOriginalFrame: BTRect? = nil,
+        label: String? = nil,
+        insertion: BTRect? = nil,
         mainScreenFrame: CGRect
     ) {
         let interval = Self.signposter.beginInterval("showBentoCue")
         defer { Self.signposter.endInterval("showBentoCue", interval) }
         if phase != .armed || showsSnapWireframes { hideMotionPreviews() }
-        cueView.update(position: position, phase: phase, targetFrame: targetFrame, sourceFrame: seam)
+        cueView.update(position: position, phase: phase, targetFrame: targetFrame, sourceFrame: seam, label: label)
         cuePanel.setFrame(
             CoordinateConverter.toAppKit(targetFrame, mainScreenFrame: mainScreenFrame).insetBy(
                 dx: BentoPreviewMetrics.cuePanelInset,
@@ -1022,6 +1088,15 @@ private final class BentoDropPreviewController {
             display: true
         )
         cuePanel.orderFrontRegardless()
+        if let insertion {
+            let panel = insertionPanel ?? Self.makePanel()
+            if insertionPanel == nil { panel.contentView = TabInsertionIndicatorView() }
+            insertionPanel = panel
+            panel.setFrame(CoordinateConverter.toAppKit(insertion, mainScreenFrame: mainScreenFrame), display: true)
+            panel.orderFrontRegardless()
+        } else {
+            insertionPanel?.orderOut(nil)
+        }
         guard phase == .armed, let seam else { return }
         landingPanel = showLanding(
             frame: seam,
@@ -1049,6 +1124,7 @@ private final class BentoDropPreviewController {
 
     func showSnapWireframes(placements: [Placement], baselineFrames: [WindowID: BTRect]) {
         if cuePanel.isVisible { cuePanel.orderOut(nil) }
+        insertionPanel?.orderOut(nil)
         hideLandingPreviews()
         showWireframes(placements: placements, baselineFrames: baselineFrames)
         showsSnapWireframes = true
@@ -1058,6 +1134,7 @@ private final class BentoDropPreviewController {
         let interval = Self.signposter.beginInterval("hideBentoOverlay")
         defer { Self.signposter.endInterval("hideBentoOverlay", interval) }
         cuePanel.orderOut(nil)
+        insertionPanel?.orderOut(nil)
         hideMotionPreviews()
     }
 
@@ -1130,6 +1207,9 @@ private final class BentoDropCueView: NSView {
     private var position = BentoPaneDropPosition.center
     private var phase = Phase.tracking
     private var seamFraction: CGFloat?
+    /// Replaces the swap badge, for example with "Add as tab" or the reason
+    /// a tab drop is invalid.
+    private var label: String?
 
     override var isOpaque: Bool { false }
 
@@ -1137,10 +1217,12 @@ private final class BentoDropCueView: NSView {
         position: BentoPaneDropPosition,
         phase: Phase,
         targetFrame: BTRect,
-        sourceFrame: BTRect?
+        sourceFrame: BTRect?,
+        label: String? = nil
     ) {
         self.position = position
         self.phase = phase
+        self.label = label
         let rawSeamFraction: Double? = sourceFrame.flatMap { sourceFrame in
             switch position {
             case .left:
@@ -1258,6 +1340,10 @@ private final class BentoDropCueView: NSView {
         }
         color.withAlphaComponent(phase == .tracking ? 0.68 : 0.92).setStroke()
         path.stroke()
+        if let label {
+            drawLabelBadge(label, color: color)
+            return
+        }
 
         let badgeWidth = min(116, max(88, bounds.width - 36))
         let badgeHeight = min(68, max(56, bounds.height - 36))
@@ -1322,6 +1408,28 @@ private final class BentoDropCueView: NSView {
         )
     }
 
+    private func drawLabelBadge(_ label: String, color: NSColor) {
+        let text = NSAttributedString(string: label, attributes: [
+            .font: NSFont.systemFont(ofSize: 15, weight: .semibold),
+            .foregroundColor: NSColor.white,
+        ])
+        let size = text.size()
+        let width = min(bounds.width - 16, size.width + 32)
+        let badge = CGRect(x: bounds.midX - width / 2, y: bounds.midY - 22, width: width, height: 44)
+        let shadow = NSShadow()
+        shadow.shadowColor = NSColor.black.withAlphaComponent(0.32)
+        shadow.shadowBlurRadius = 8
+        shadow.shadowOffset = CGSize(width: 0, height: -2)
+        NSGraphicsContext.saveGraphicsState()
+        shadow.set()
+        color.withAlphaComponent(0.96).setFill()
+        NSBezierPath(roundedRect: badge, xRadius: BentoPreviewMetrics.cornerRadius,
+                     yRadius: BentoPreviewMetrics.cornerRadius).fill()
+        NSGraphicsContext.restoreGraphicsState()
+        text.draw(with: CGRect(x: badge.minX + 16, y: badge.midY - size.height / 2, width: badge.width - 32,
+                               height: size.height), options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine])
+    }
+
     private func drawExchangeArrow(from start: CGPoint, to end: CGPoint, pointingRight: Bool) {
         let path = NSBezierPath()
         path.move(to: start)
@@ -1335,6 +1443,24 @@ private final class BentoDropCueView: NSView {
         path.lineCapStyle = .round
         path.lineJoinStyle = .round
         NSColor.white.setStroke()
+        path.stroke()
+    }
+}
+
+/// The line where a dragged window joins a tab strip.
+@MainActor
+final class TabInsertionIndicatorView: NSView {
+    override var isOpaque: Bool { false }
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        // A light edge keeps the line visible over an accent-colored window.
+        let path = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5),
+                                xRadius: bounds.width / 2, yRadius: bounds.width / 2)
+        NSColor.controlAccentColor.setFill()
+        path.fill()
+        path.lineWidth = 1
+        NSColor.white.withAlphaComponent(0.85).setStroke()
         path.stroke()
     }
 }

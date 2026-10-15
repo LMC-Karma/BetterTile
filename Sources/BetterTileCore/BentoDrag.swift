@@ -4,7 +4,19 @@ public enum BentoDragOutcome: Equatable, Sendable {
     case swap(targetWindowID: WindowID)
     case insert(targetWindowID: WindowID, edge: BentoPaneDropPosition)
     case snap(action: WindowAction, frame: BTRect)
+    /// Tabbed: the window joins a pane as a tab, at a tab index from a tab
+    /// strip or, when nil, after the last tab.
+    case tab(paneID: UUID, index: Int?)
     case restore
+
+    /// Tabbed: the window joins a pane as a tab. A center drop on a selected
+    /// tab joins that tab's pane.
+    public var addsTab: Bool {
+        switch self {
+        case .swap, .tab: true
+        case .insert, .snap, .restore: false
+        }
+    }
 }
 
 public enum BentoPaneDropPosition: String, Equatable, Hashable, Sendable {

@@ -27,6 +27,9 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, TabbedWindowSystem, Min
     /// Simulates an application that resizes in steps, such as Terminal's
     /// character cells: widths round down to a multiple of the step.
     var widthSteps: [WindowID: Double] = [:]
+    /// Heights round up to a multiple of the step: an application, such as
+    /// Terminal, that settles a row taller than asked.
+    var heightSteps: [WindowID: Double] = [:]
     var frameWriteCounts: [WindowID: Int] = [:]
     var failedFrameWriteNumbers: [WindowID: Set<Int>] = [:]
     var completeSweepCount = 0
@@ -234,6 +237,9 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, TabbedWindowSystem, Min
         windows[index].frame.size.height = max(frame.size.height, enforcedMinimumHeights[windowID] ?? 0)
         if let step = widthSteps[windowID] {
             windows[index].frame.size.width = (windows[index].frame.size.width / step).rounded(.down) * step
+        }
+        if let step = heightSteps[windowID] {
+            windows[index].frame.size.height = (windows[index].frame.size.height / step).rounded(.up) * step
         }
         // Like the Accessibility adapter, a window belongs to the display
         // that holds most of it.
