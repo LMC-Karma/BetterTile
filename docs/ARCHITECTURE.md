@@ -718,8 +718,11 @@ change a Bento operation made to the tree; writing it also writes the tree.
   normal gaps and the tab-strip reserve apply once to window placements.
 - Snap membership remains provisional until all selected frames settle.
   Learned-minimum retries replan from the original state and must preserve
-  the exact requested region. Hidden tabs remain best effort on success;
-  rollback verifies the prior selections too. Native snaps keep the original
+  the exact requested region. Stepped-size corrections keep that region too,
+  asking for a smaller cell inside it when an edge cannot move. Snap rollback
+  verifies the actual checkpoint within the normal frame tolerance on both
+  axes; a held size alone does not prove a resize step. Hidden tabs remain best
+  effort on success; rollback verifies the prior selections too. Native snaps keep the original
   group state and verified frame checkpoint, including the mouse-down frame
   of a user-floated source. Undo records one successful change and retains
   that float frame without changing the Native-exit baseline. Queued snaps

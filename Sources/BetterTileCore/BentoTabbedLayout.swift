@@ -935,6 +935,8 @@ public struct TabbedLayoutState: Hashable, Sendable {
     ///   other windows known to resize in steps, selected or hidden. The
     ///   windows that settled off their panes are always protected from each
     ///   other's snaps.
+    /// - Parameter fixedPaneIDs: Panes whose logical regions must stay exact,
+    ///   including when their own selected window settles off its request.
     /// - Returns: Nil when no window needs another write. Otherwise the
     ///   fitted state, its placements, and the snaps. A window larger than its
     ///   area that no edge can follow is asked for more than one step less:
@@ -942,9 +944,11 @@ public struct TabbedLayoutState: Hashable, Sendable {
     ///   to that size rounds to a cell inside the pane. A window that still
     ///   keeps its size there refuses it, and the write learns its minimum.
     public func snappingToSteppedSizes(
-        _ settled: [WindowID: BTSize], protecting: Set<WindowID> = [], in bounds: BTRect, windows: [WindowSnapshot]
+        _ settled: [WindowID: BTSize], protecting: Set<WindowID> = [], fixedPaneIDs: Set<UUID> = [],
+        in bounds: BTRect, windows: [WindowSnapshot]
     ) -> (state: Self, placements: [Placement], snaps: [TabbedSteppedSnap])? {
         let tolerance = 2.0
+        let fixedFrames = logicalFrames(in: bounds).filter { fixedPaneIDs.contains($0.key) }
         let constraints = Self.fittingConstraints(windows)
         let resizable = Set(windows.filter(\.constraints.isResizable).map(\.id))
         let slots = Dictionary(uniqueKeysWithValues: layout.placements(in: bounds).map { ($0.windowID, $0.frame) })
@@ -983,6 +987,10 @@ public struct TabbedLayoutState: Hashable, Sendable {
                     guard let fitted = BentoLayoutFitter(tolerance: 1).fit(
                         state: result.layout, currentFrames: frames, changedWindowIDs: [id],
                         in: bounds, constraints: constraints) else { continue }
+                    var candidate = result
+                    candidate.groups.synchronize(with: fitted.state)
+                    let logical = candidate.logicalFrames(in: bounds)
+                    guard fixedFrames.allSatisfy({ logical[$0.key]?.approximatelyEquals($0.value, tolerance: 0.001) == true }) else { continue }
                     let placed = Dictionary(uniqueKeysWithValues: fitted.state.placements(in: bounds).map { ($0.windowID, $0.frame) })
                     guard placed[id]?.approximatelyEquals(target, tolerance: 0.5) == true,
                           Set(deltas.keys).union(pinned).allSatisfy({ other in

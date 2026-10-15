@@ -262,3 +262,22 @@ private func slot(_ id: WindowID, _ state: TabbedLayoutState) throws -> BTRect {
                                             in: bounds, windows: windows)
     #expect(abs(try height(smaller) - upper.size.height) < 0.01)
 }
+
+/// A fixed snap owns its gapless region even when its own tab or a neighbour
+/// rounds to another cell. Overflow asks for less instead of moving the edge.
+@Test(arguments: [top, bottom], [-4.0, 4.0])
+func aFixedPaneKeepsItsLogicalRegionDuringSteppedCorrection(fixed: WindowID, delta: Double) throws {
+    let state = rows()
+    let before = try slot(top, state)
+    let pane = try #require(state.paneID(containing: fixed))
+    let snap = state.snappingToSteppedSizes(
+        [top: BTSize(width: before.size.width, height: before.size.height + delta)],
+        fixedPaneIDs: [pane], in: bounds, windows: [window(top), window(bottom)])
+    if delta < 0 { #expect(snap == nil) }
+    else {
+        let correction = try #require(snap)
+        #expect(correction.state.logicalFrames(in: bounds) == state.logicalFrames(in: bounds))
+        #expect(correction.snaps.isEmpty)
+        #expect(correction.placements.first { $0.windowID == top }?.frame.size.height == before.size.height - 21)
+    }
+}
