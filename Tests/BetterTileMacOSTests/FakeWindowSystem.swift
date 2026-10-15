@@ -33,6 +33,8 @@ final class FakeWindowSystem: WindowSystem, TargetedWindowSystem, WindowEventSou
     func windowNumbers(for windows: [WindowSnapshot]) -> [WindowID: Int] { [:] }
     func stackingOrder(for windows: [WindowSnapshot], excluding windowNumbers: Set<Int>) -> [TabbedStackEntry]? { nil }
     var frontmostProcessIdentifier: Int32? { nil }
+    func applicationFocus(of window: WindowSnapshot) -> ApplicationFocusMatch { .confirmed }
+    func isTransientPopup(_ window: WindowSnapshot) -> Bool { false }
     func raiseWindow(_ id: WindowID, activate: Bool) throws {
         if failingRaiseWindowID == id { throw WindowSystemError.operationFailed("Simulated raise failure") }
         guard windows.contains(where: { $0.id == id }) else { throw WindowSystemError.windowNotFound(id) }
@@ -148,9 +150,12 @@ final class FakeWindowSystem: WindowSystem, TargetedWindowSystem, WindowEventSou
         }
         return focusedWindowID.flatMap { id in windows.first(where: { $0.id == id }) } ?? windows.first
     }
+    /// Native Space membership. Like the Accessibility adapter, reads
+    /// classify every snapshot with it when it is set.
+    var nativeObservation: NativeDesktopObservation?
     func visibleWindows() throws -> [WindowSnapshot] {
         settlePendingFrames()
-        return windows
+        return nativeObservation?.windowsOnCurrentSpaces(windows) ?? windows
     }
     /// Windows a targeted read leaves out, as Accessibility does for an
     /// element it cannot read at the moment.
@@ -162,7 +167,8 @@ final class FakeWindowSystem: WindowSystem, TargetedWindowSystem, WindowEventSou
         // A held application cannot be read.
         if !ids.isDisjoint(with: heldWindowIDs) { throw WindowSystemError.operationFailed("Simulated unresponsive read") }
         settlePendingFrames()
-        return windows.filter { ids.contains($0.id) && !unreadableWindowIDs.contains($0.id) }
+        let read = windows.filter { ids.contains($0.id) && !unreadableWindowIDs.contains($0.id) }
+        return nativeObservation?.windowsOnCurrentSpaces(read) ?? read
     }
     func displays() -> [DisplaySnapshot] { availableDisplays }
     func setWindowEventHandler(_ handler: (@MainActor (WindowSystemEvent) -> Void)?) { eventHandler = handler }

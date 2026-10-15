@@ -113,6 +113,26 @@ import Testing
     #expect(AccessibilityWindowSystem.movability(position: false, size: nil) == nil)
 }
 
+/// Only a successful read that names the window confirms focus. An
+/// application without a focused window, or a failed read, proves nothing.
+@Test func applicationFocusRequiresAPositiveRead() {
+    func focus(_ result: AXError, role: String? = "AXWindow", subrole: String? = "AXStandardWindow",
+               matches: Bool = false) -> ApplicationFocusMatch {
+        AccessibilityWindowSystem.applicationFocus(readResult: result, focusedRole: role,
+                                                   focusedSubrole: subrole, matchesWindow: matches)
+    }
+    #expect(focus(.success, matches: true) == .confirmed)
+    #expect(focus(.success) == .otherWindow(isTransientPopup: false))
+    #expect(focus(.success, subrole: "AXUnknown") == .otherWindow(isTransientPopup: true))
+    #expect(focus(.success, subrole: "AXDialog") == .otherWindow(isTransientPopup: false))
+    // Finder's desktop is a scroll area; no window has focus.
+    #expect(focus(.success, role: "AXScrollArea", subrole: nil) == .noWindow)
+    #expect(focus(.noValue, role: nil, subrole: nil) == .noWindow)
+    #expect(focus(.cannotComplete, role: nil, subrole: nil) == .unknown)
+    #expect(focus(.attributeUnsupported, role: nil, subrole: nil) == .unknown)
+    #expect(focus(.apiDisabled, matches: true) == .unknown)
+}
+
 /// During a shrinking live drag, Chromium's readbacks trail the requests by
 /// two ticks. Each readback lies between an older readback and the newest
 /// request, but above the previous request, so it is no clamp. A real clamp

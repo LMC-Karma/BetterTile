@@ -14,6 +14,16 @@ public enum TabbedUIIntent {
     case adjustDivider(UUID, by: Double)
 }
 
+/// Where a dragged real window joins a Tabbed pane as a tab.
+public struct TabbedDropZone: Equatable, Sendable {
+    public let paneID: UUID
+    /// The tab index in the strip; nil for an empty pane.
+    public let index: Int?
+    public let paneFrame: BTRect
+    /// The insertion line drawn over the strip; nil for an empty pane.
+    public let indicator: BTRect?
+}
+
 /// AppKit chrome only: tab strips, empty-pane targets, and a shared display curtain.
 /// It knows pane values and emits intents; it never writes Accessibility
 /// attributes or owns layout sessions. Pane dividers belong to Bento's overlay.
@@ -145,7 +155,8 @@ public final class TabbedOverlayController {
     /// panes' selected windows. With a number, a pane's chrome joins the
     /// normal window stack beside that window, so a window in front of the
     /// selected tab also covers its strip. Without one, chrome floats and
-    /// hides only under `obscuringFrames`.
+    /// hides only under `obscuringFrames`. It also holds the number of the
+    /// curtain anchor when that is not a selected tab.
     public func refresh(state: TabbedLayoutState, bounds: BTRect, windows: [WindowSnapshot], obscuringFrames: [BTRect] = [], canUndo: Bool = false, selectedWindowNumbers: [WindowID: Int] = [:], curtainAnchorWindowNumber: Int? = nil) {
         if isDropPending, self.state != state || self.bounds != bounds { completeDrop() }
         if isInteracting, self.state != state || self.bounds != bounds { cancelInteraction() }
@@ -200,7 +211,9 @@ public final class TabbedOverlayController {
         let hasSelectedIdentities = !state.selectedWindowIDs.isEmpty
             && state.selectedWindowIDs.allSatisfy { numbers[$0] != nil }
         let anchor = curtainAnchorWindowNumber.flatMap { number in
-            hasSelectedIdentities && state.selectedWindowIDs.contains(where: { numbers[$0] == number }) ? number : nil
+            // The anchor is a selected tab or a floating window kept in place
+            // with them; either way it needs a validated number.
+            hasSelectedIdentities && numbers.values.contains(number) ? number : nil
         }
         refreshCurtain(anchor: anchor, identitiesValid: hasSelectedIdentities)
         refreshDividerControls()
@@ -524,6 +537,29 @@ public final class TabbedOverlayController {
         return true
     }
 
+    /// Where a dragged real window under `point` joins a pane as a tab: a
+    /// tab strip, at the tab edge nearest the pointer, or an empty pane.
+    /// Nil anywhere else. The strip geometry is the one drawn now.
+    public func tabDropZone(at point: BTPoint, dragging id: WindowID) -> TabbedDropZone? {
+        let frames = state.frames(in: bounds)
+        guard let pane = state.panes.first(where: { frames[$0.id]?.contains(point) == true }),
+              let frame = frames[pane.id] else { return nil }
+        guard !pane.tabs.isEmpty else { return TabbedDropZone(paneID: pane.id, index: nil, paneFrame: frame, indicator: nil) }
+        // A pane's only tab dropped on its own strip changes nothing.
+        guard pane.tabs != [id] else { return nil }
+        guard point.y < frame.minY + TabbedLayoutState.headerHeight else { return nil }
+        let strip = (panes[pane.id]?.contentView as? TabbedPaneView)?.strip
+            ?? TabbedStripLayout(width: frame.size.width, count: pane.tabs.count, selectedIndex: nil)
+        let insertion = strip.insertion(at: point.x - frame.minX)
+        let indicatorWidth = 6.0
+        return TabbedDropZone(
+            paneID: pane.id,
+            index: pane.dropIndex(atEdge: insertion.index, in: pane.tabs, dragging: id),
+            paneFrame: frame,
+            indicator: BTRect(x: frame.minX + insertion.x - indicatorWidth / 2, y: frame.minY + 4,
+                              width: indicatorWidth, height: TabbedLayoutState.headerHeight - 8))
+    }
+
     private var floatFrame: BTRect { BTRect(x: bounds.midX - 95, y: bounds.maxY - 70, width: 190, height: 48) }
 
     fileprivate func queueDrag(to point: BTPoint) {
@@ -567,15 +603,13 @@ public final class TabbedOverlayController {
                     let view = panes[pane.id]?.contentView as? TabbedPaneView
                     let strip = view?.dropStrip(for: id)
                         ?? TabbedStripLayout(width: frame.size.width, count: pane.tabs.count, selectedIndex: nil)
-                    let insertion = strip.insertion(at: point.x - frame.minX)
-                    var index = insertion.index
                     // The strip draws the dragged tab where the preview put
                     // it, so an edge after that slot counts it once. Fitted
                     // tabs differ in width, so the committed index is not
                     // that slot, and using it flipped the preview each move.
                     let order = view?.dropOrder(for: id) ?? (pane.tabs.contains(id) ? pane.tabs : pane.tabs + [id])
-                    if let slot = order.firstIndex(of: id), slot < index { index -= 1 }
-                    index = min(pane.tabs.count - (pane.tabs.contains(id) ? 1 : 0), max(0, index))
+                    let index = pane.dropIndex(atEdge: strip.insertion(at: point.x - frame.minX).index,
+                                               in: order, dragging: id)
                     dropIntent = .move(id, pane: pane.id, index: index, reselecting: dragReselecting)
                     stripDestination = (pane.id, index)
                     proxyY = frame.minY

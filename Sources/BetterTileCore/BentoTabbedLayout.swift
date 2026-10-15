@@ -664,6 +664,20 @@ public struct TabbedLayoutState: Hashable, Sendable {
         if groups.add(id, to: paneID, at: index) { activePaneID = paneID }
     }
 
+    /// The pane and tab index a window drag adds its window to: a tab strip
+    /// or empty pane, or the center of a pane's selected tab, which appends.
+    /// Nil when the outcome adds no tab or its pane is gone.
+    public func tabDrop(for outcome: BentoDragOutcome) -> (paneID: UUID, index: Int?)? {
+        switch outcome {
+        case let .tab(paneID, index):
+            groups.panes.contains { $0.id == paneID } ? (paneID, index) : nil
+        case let .swap(targetWindowID):
+            paneID(containing: targetWindowID).map { ($0, nil) }
+        case .insert, .snap, .restore:
+            nil
+        }
+    }
+
     /// Moves a tab into a new pane on one edge of another pane.
     /// - Parameter reselecting: See `move(_:to:at:reselecting:)`.
     public mutating func split(paneID: UUID, moving windowID: WindowID, edge: TabbedEdge, reselecting: WindowID? = nil) {

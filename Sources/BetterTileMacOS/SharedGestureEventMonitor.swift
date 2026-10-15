@@ -47,13 +47,22 @@ public struct GlobalGestureEvent: Equatable, Sendable {
         )
     }
 
+    /// The event's own screen location in AppKit coordinates. A global
+    /// monitor's event has no window, so its location is already in screen
+    /// coordinates. Reading `NSEvent.mouseLocation` instead would report where
+    /// the pointer is when a stalled main actor finally runs the handler.
+    @MainActor
+    static func screenLocation(of event: NSEvent) -> CGPoint {
+        event.window.map { $0.convertPoint(toScreen: event.locationInWindow) } ?? event.locationInWindow
+    }
+
     @MainActor
     init?(_ event: NSEvent, kind: GlobalGestureEventKind) {
         guard let mainFrame = NSScreen.screens.first?.frame else { return nil }
         self.init(
             kind: kind,
             position: Self.position(
-                nsEventMouseLocation: NSEvent.mouseLocation,
+                nsEventMouseLocation: Self.screenLocation(of: event),
                 primaryScreenFrame: mainFrame
             ),
             button: Int64(event.buttonNumber),

@@ -370,12 +370,19 @@ public final class WindowCoordinator {
         generations[windowID] ?? 0
     }
 
-    public func applyPlacements(_ placements: [Placement], recordHistory: Bool = true) -> WindowMutationOutcome {
+    /// - Parameter destination: The display a window drag dropped on. Drag
+    ///   releases pass it; other callers validate on each window's display.
+    public func applyPlacements(
+        _ placements: [Placement],
+        recordHistory: Bool = true,
+        destination: DropDestination? = nil
+    ) -> WindowMutationOutcome {
         switch beginTransaction(windowIDs: Set(placements.map(\.windowID))) {
         case let .failed(reason):
             return .failed(reason: reason)
         case var .started(transaction):
-            return commit(transaction: &transaction, placements: placements, recordHistory: recordHistory)
+            return commit(transaction: &transaction, placements: placements, recordHistory: recordHistory,
+                          destination: destination)
         }
     }
 
@@ -476,14 +483,15 @@ public final class WindowCoordinator {
     public func commit(
         transaction: inout WindowFrameTransaction,
         placements: [Placement]? = nil,
-        recordHistory: Bool = true
+        recordHistory: Bool = true,
+        destination: DropDestination? = nil
     ) -> WindowMutationOutcome {
         lastPlacementBaselineFrames = transaction.baselineFrames
         if let placements, case let .failed(reason) = preview(transaction: &transaction, placements: placements) {
             return .failed(reason: reason)
         }
         do {
-            try validate(transaction.proposedPlacements)
+            try validate(transaction.proposedPlacements, destination: destination)
             // A corrective commit starts from the frames an earlier commit
             // wrote, so shrink-before-grow compares against those.
             try applyAtomically(transaction.proposedPlacements, rollbackFrames: transaction.baselineFrames,
@@ -705,12 +713,13 @@ public final class WindowCoordinator {
     public func applyFocusDrop(
         placement: Placement,
         minimizing windowIDs: Set<WindowID>,
-        sourceBaselineFrame: BTRect
+        sourceBaselineFrame: BTRect,
+        destination: DropDestination? = nil
     ) -> WindowMutationOutcome {
         var minimized: [WindowID] = []
         var sourceWriteCompleted = false
         do {
-            try validate([placement])
+            try validate([placement], destination: destination)
             try apply(placement.frame, to: placement.windowID, knownCurrentFrame: sourceBaselineFrame)
             sourceWriteCompleted = true
             for windowID in windowIDs.sorted() {
@@ -815,10 +824,22 @@ public final class WindowCoordinator {
         }
     }
 
-    private func validate(_ placements: [Placement], sizeTolerance: Double = 0) throws {
+    /// - Parameter destination: The dragged window of a drop is checked on
+    ///   the display the overlay showed the drop on. Its own display is
+    ///   wherever its center happens to be, often the neighbouring display at
+    ///   a shared edge. Every other window keeps its own display, so a window
+    ///   an application moved to another display is still rejected.
+    private func validate(
+        _ placements: [Placement],
+        sizeTolerance: Double = 0,
+        destination: DropDestination? = nil
+    ) throws {
         let ids = Set(placements.map(\.windowID))
         let snapshots = Dictionary(uniqueKeysWithValues: try snapshots(ids: ids).map { ($0.id, $0) })
         let displays = Dictionary(uniqueKeysWithValues: system.displays().map { ($0.id, $0) })
+        if let destination, displays[destination.displayID] == nil {
+            throw WindowSystemError.operationFailed("The display of the drop is no longer available.")
+        }
         for placement in placements {
             guard let snapshot = snapshots[placement.windowID] else { throw WindowSystemError.windowNotFound(placement.windowID) }
             // A fixed-size window can still be moved at its own size.
@@ -828,16 +849,22 @@ public final class WindowCoordinator {
                   snapshot.constraints.isResizable || keepsSize else {
                 throw WindowSystemError.unsupportedWindow(placement.windowID)
             }
-            // A seed is another window's minimum; the write shows this window's own.
-            if snapshot.constraints.isResizable, snapshot.constraints.minimumSizeSource != .seed {
-                guard placement.frame.size.width + sizeTolerance >= snapshot.constraints.minimumSize.width,
-                      placement.frame.size.height + sizeTolerance >= snapshot.constraints.minimumSize.height
+            let isDropSource = destination?.sourceWindowID == placement.windowID
+            // The overlay planned a drop with the minimums it knew. A minimum
+            // read again at release must not veto that frame. A seed is
+            // another window's minimum; the write shows this window's own.
+            let minimumSize = destination?.minimumSizes[placement.windowID]
+                ?? (snapshot.constraints.minimumSizeSource == .seed
+                    ? snapshot.constraints.unseededMinimumSize ?? .zero : snapshot.constraints.minimumSize)
+            if snapshot.constraints.isResizable {
+                guard placement.frame.size.width + sizeTolerance >= minimumSize.width,
+                      placement.frame.size.height + sizeTolerance >= minimumSize.height
                 else { throw WindowSystemError.operationFailed("A window reached its minimum size.") }
             }
             // A legal size is not enough: a stale display frame or a split
             // driven to an edge can produce a placement that leaves nothing on
             // screen to grab.
-            if let display = displays[snapshot.displayID],
+            if let display = displays[isDropSource ? destination?.displayID ?? snapshot.displayID : snapshot.displayID],
                !PlacementBounds.isReachable(placement.frame, in: display.visibleFrame) {
                 throw WindowSystemError.operationFailed(
                     "A window would have been placed off screen."
@@ -1107,11 +1134,13 @@ extension WindowCoordinator {
     /// Restores a previously verified Tabbed resize checkpoint. New size hints
     /// must not prevent attempting that restoration; actual readback decides
     /// whether it succeeded. Hidden tabs remain best effort.
+    /// - Parameter draggedWindowID: A dragged window whose center may have
+    ///   crossed to another display. It is restored to this display anyway.
     /// - Parameter steppedWindowIDs: Windows known to resize in steps. Each
     ///   counts as restored within one step of its frame.
     public func restoreTabbedFrames(
         _ frames: [WindowID: BTRect], required: Set<WindowID>, on displayID: DisplayID,
-        steppedWindowIDs: Set<WindowID> = [],
+        exempting draggedWindowID: WindowID? = nil, steppedWindowIDs: Set<WindowID> = [],
         isCurrent: @MainActor () -> Bool
     ) async -> WindowMutationOutcome {
         let degraded = WindowMutationOutcome.degraded(reason: "Tabbed could not fully restore the previous arrangement. Use Repair Tabbed or switch to Native.")
@@ -1122,7 +1151,7 @@ extension WindowCoordinator {
         // never write an unreadable, ineligible, or relocated participant.
         // A fixed-size window can be restored when its saved frame keeps its size.
         let current = Dictionary(snapshots.filter { snapshot in
-            snapshot.isEligible && snapshot.displayID == displayID
+            snapshot.isEligible && (snapshot.displayID == displayID || snapshot.id == draggedWindowID)
                 && (snapshot.constraints.isResizable || frames[snapshot.id].map {
                     abs($0.size.width - snapshot.frame.size.width) <= 1 && abs($0.size.height - snapshot.frame.size.height) <= 1
                 } == true)
@@ -1143,7 +1172,8 @@ extension WindowCoordinator {
                   isCurrent(), !Task.isCancelled else { return degraded }
             if required.allSatisfy({ id in
                 guard let frame = frames[id] else { return false }
-                return restored.contains { $0.id == id && $0.isEligible && $0.displayID == displayID
+                return restored.contains { $0.id == id && $0.isEligible
+                    && ($0.displayID == displayID || $0.id == draggedWindowID)
                     && Self.isRestored($0.frame, to: frame, stepped: steppedWindowIDs.contains(id)) }
             }) { return .applied }
             guard attempt < 3 else { break }
@@ -1167,6 +1197,9 @@ extension WindowCoordinator {
     ///   when the placement applies.
     /// - Parameter steppedWindowIDs: Windows known to resize in steps. A
     ///   rollback counts each as restored within one step of its frame.
+    /// - Parameter destination: The display a window drag dropped on. Its
+    ///   source window is a participant even when its center crossed to
+    ///   another display during the gesture.
     public func applyTabbed(
         placements allPlacements: [Placement],
         rollbackFrames: [WindowID: BTRect]? = nil,
@@ -1178,6 +1211,7 @@ extension WindowCoordinator {
         focus: WindowID?,
         focusAlreadyRequested: Bool = false,
         focusCheckpoint: WindowID? = nil,
+        destination: DropDestination? = nil,
         onSizeMismatch: (@MainActor (WindowID, BTRect, BTRect, BTRect) -> Void)? = nil,
         acceptsSteppedGrowth: Bool = false,
         onApplied: (@MainActor ([WindowID: BTRect]) -> Void)? = nil,
@@ -1194,13 +1228,14 @@ extension WindowCoordinator {
         let baseline: [WindowID: BTRect]
         let currentFrames: [WindowID: BTRect]
         let participantDisplayID: DisplayID?
+        var participantProcesses: [WindowID: Int32] = [:]
         // A selection that raised its tab early knows the focus before it.
         let oldFocus = focusCheckpoint ?? (try? system.focusedWindow()?.id)
         do {
             guard ids == Set(placements.map(\.windowID)) else {
                 throw WindowSystemError.operationFailed("One or more selected tabs are no longer available.")
             }
-            try validate(placements, sizeTolerance: 0.001)
+            try validate(placements, sizeTolerance: 0.001, destination: destination)
             let participants = try snapshots(ids: ids)
             let requestedSizes = Dictionary(uniqueKeysWithValues: placements.map { ($0.windowID, $0.frame.size) })
             guard isCurrent(), !Task.isCancelled,
@@ -1210,11 +1245,13 @@ extension WindowCoordinator {
                           abs($0.width - participant.frame.size.width) <= 1 && abs($0.height - participant.frame.size.height) <= 1
                       } ?? false
                       return participant.isEligible && (participant.constraints.isResizable || keepsSize)
-                          && (rollbackDisplayID == nil || participant.displayID == rollbackDisplayID)
+                          && (rollbackDisplayID == nil || participant.displayID == rollbackDisplayID
+                              || participant.id == destination?.sourceWindowID)
                   }) else {
                 throw WindowSystemError.operationFailed("The Tabbed participants changed.")
             }
-            participantDisplayID = rollbackDisplayID ?? participants.first?.displayID
+            participantDisplayID = rollbackDisplayID ?? destination?.displayID ?? participants.first?.displayID
+            participantProcesses = Dictionary(participants.map { ($0.id, $0.processIdentifier) }) { first, _ in first }
             currentFrames = Dictionary(uniqueKeysWithValues: participants.map { ($0.id, $0.frame) })
             // A resize has already changed real frames. Keep its verified
             // checkpoint for refusal evidence and rollback, not that partial
@@ -1223,7 +1260,8 @@ extension WindowCoordinator {
         } catch {
             if let rollbackFrames, let rollbackDisplayID {
                 let restored = await restoreTabbedFrames(rollbackFrames, required: ids.union(rollbackRequired ?? []), on: rollbackDisplayID,
-                                                         steppedWindowIDs: steppedWindowIDs, isCurrent: isCurrent)
+                                                         exempting: destination?.sourceWindowID, steppedWindowIDs: steppedWindowIDs,
+                                                         isCurrent: isCurrent)
                 if case .degraded = restored { return restored }
             }
             return .failed(reason: error.localizedDescription)
@@ -1251,14 +1289,24 @@ extension WindowCoordinator {
                     try? apply(placement.frame, to: placement.windowID, knownCurrentFrame: bestEffortCurrent[placement.windowID])
                 }
             } }
+            // Focus is requested only when it can change something. A raise
+            // of any window of the front application takes focus from its
+            // popup, which then closes, so no pane raises a window of it.
+            let popupProcess = popupHoldingProcess(in: tabSystem)
+            let heldByPopup = { (id: WindowID) in popupProcess != nil && participantProcesses[id] == popupProcess }
+            let focus = focus.flatMap { heldByPopup($0) ? nil : $0 }
             if let focus {
                 touched = true
                 // A selection may already have requested focus when it was
                 // pressed. Ask again only for the window order, so a slow
-                // application does not receive a second activation.
-                try tabSystem.raiseWindow(focus, activate: !focusAlreadyRequested)
+                // application does not receive a second activation. When the
+                // selection is unchanged, a window that already has focus is
+                // only ordered.
+                let keepsFocus = Set(selected) == Set(previousSelected)
+                    && tabbedWindowHasFocus(focus, process: participantProcesses[focus], in: tabSystem)
+                try tabSystem.raiseWindow(focus, activate: !focusAlreadyRequested && !keepsFocus)
             }
-            for id in selected where id != focus {
+            for id in selected where id != focus && !heldByPopup(id) {
                 touched = true
                 try tabSystem.raiseWindow(id, activate: false)
             }
@@ -1368,7 +1416,8 @@ extension WindowCoordinator {
             guard let participantDisplayID else { return .failed(reason: error.localizedDescription) }
             let restoration = await restoreTabbedFrames(
                 baseline.merging(bestEffortBaseline) { before, _ in before }, required: ids.union(rollbackRequired ?? []),
-                on: participantDisplayID, steppedWindowIDs: steppedWindowIDs, isCurrent: isCurrent)
+                on: participantDisplayID, exempting: destination?.sourceWindowID, steppedWindowIDs: steppedWindowIDs,
+                isCurrent: isCurrent)
             guard isCurrent(), !Task.isCancelled else {
                 return .degraded(reason: "The desktop changed before Tabbed could restore its windows.")
             }
@@ -1394,6 +1443,29 @@ extension WindowCoordinator {
     private static func isRestored(_ actual: BTRect, to frame: BTRect, stepped: Bool) -> Bool {
         stepped ? SteppedSizeAcceptance.evaluate(requested: frame, actual: actual, allowsGrowth: true) != .rejected
             : actual.approximatelyEquals(frame, tolerance: 2)
+    }
+
+    /// The frontmost application, when a transient popup has its focus.
+    /// A standard window, a dialog, the desktop, or an unreadable focus can
+    /// lose focus to a placement, as before. A popup that closes without
+    /// focus keeps it, including one `focusedWindow()` could not read.
+    func popupHoldingProcess(in tabSystem: any TabbedWindowSystem) -> Int32? {
+        guard let process = tabSystem.frontmostProcessIdentifier,
+              let reported = (try? system.focusedWindow()) ?? nil, reported.processIdentifier == process
+        else { return nil }
+        switch tabSystem.applicationFocus(of: reported) {
+        case .confirmed: return tabSystem.isTransientPopup(reported) ? process : nil
+        case .otherWindow(isTransientPopup: true): return process
+        case .otherWindow, .noWindow, .unknown: return nil
+        }
+    }
+
+    /// True when the window is its frontmost application's focused window.
+    func tabbedWindowHasFocus(_ id: WindowID, process: Int32?, in tabSystem: any TabbedWindowSystem) -> Bool {
+        guard let process, tabSystem.frontmostProcessIdentifier == process,
+              let reported = (try? system.focusedWindow()) ?? nil, reported.id == id
+        else { return false }
+        return tabSystem.applicationFocus(of: reported) == .confirmed
     }
 
     /// Restores Tabbed stacking without moving a window, activating an app,

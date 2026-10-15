@@ -49,9 +49,109 @@ manual update command.
 
 Core geometry uses logical points with a top-left origin. Display visible frames and Accessibility window frames are converted at the macOS boundary. Core code never sees AppKit's bottom-left global screen coordinate system.
 
+## Window drag drops
+
+A window drag has one decision: the drop that its overlay shows.
+`DragSnapController` records that drop as a `WindowDropTarget` when it shows a
+snap preview or an armed Bento cue. An ordinary snap records its action and
+frame. A Bento or Tabbed drop records the `PreparedLayoutDrop` that the model
+planned for the overlay: the outcome, the frames shown, and the Bento plan or
+Tabbed arrangement. A Bento snap preview shows the planned frame of the dragged
+window, with its gaps, and the frames of the windows that move. The value
+clears when the overlay hides, for example when the pointer leaves the snap
+area, a suppression modifier is held, or Escape cancels the drag.
+
+A drop that cannot apply shows invalid feedback: a red snap frame or a red
+pane cue. It is recorded as a non-committable target with a reason. Release
+over it applies nothing and shows the reason in the result pill. A window
+tiled in Bento or Tabbed returns to its slot. Any other window, such as a
+Native window or a floating window, stays where the user dropped it, as after
+any drag without a snap. A Bento snap whose remaining windows cannot fit, a
+Tabbed snap that cannot keep its target, a Tabbed tab drop whose pane cannot
+show the window as its selected tab, and a snap whose window minimum is larger
+than the snap frame all show invalid feedback.
+
+Release commits the recorded drop. It does not evaluate the release point
+again, run the Bento hover delay again, or plan or fit the drop again. Before
+any write, release checks that the desktop is the one the plan was made for:
+the same layout session and revision, mode, Space, and work area. A plan from
+another drag, or for a desktop that changed during the drag, writes none of
+its frames, and the pill reports that the layout changed. After such a change,
+every release, including one over nothing or over invalid feedback, puts the
+dragged window in its slot of the current layout, for example after a shortcut
+moved it during the drag. Settlement retries that write if the application
+ignores it. A torn-off Tabbed tab returns to its pane if the pane remains;
+otherwise the pill asks for Repair Tabbed. Nothing is written on another Space
+or after a mode change. A Bento or Tabbed window released or cancelled without a drop
+returns to its slot; a floating one stays where it is. Only a drop that the
+overlay showed adds a window to the layout. Only a drag
+that showed nothing, such as a fast flick to a screen edge, evaluates the
+release point once. A suppression modifier held at release cancels the drop. A
+Bento cue arms only after its hover delay, because the armed cue is the drop.
+At a screen edge, a snap area wins over the edge of the pane under it, so the
+overlay shows the snap and not a pane cue.
+
+On a Tabbed desktop, a dragged window joins a pane as a tab in three places:
+the center of a pane's selected tab, a pane's tab strip, and an empty pane.
+This holds for a floating window and for a tab from another pane.
+`BentoDragOutcome.tab` carries the pane and, for a strip, the tab index.
+`TabbedOverlayController.tabDropZone(at:dragging:)` finds the strip or empty
+pane under the pointer, with the strip insertion geometry of tab drags; the
+model passes it to `DragSnapController` as a provider, so the macOS layer does
+not read application state. The dragged window covers the strip, so the
+insertion line is a floating-level panel, like the Bento drop cue. The
+overlay plans the drop when it shows it: the window joins as the pane's
+selected tab, and pane boundaries may adapt to show it. The cue says **Add as
+tab**. A window that the pane cannot show does not join it as a hidden tab,
+because its application could bring it in front of the other panes. The cue is
+invalid and names the window and the axis, for example "Safari is too wide for
+this pane"; `TabbedLayoutState.fitFailure(showing:in:windows:)` gives the
+axis. A strip and an empty pane arm at once; a pane center waits for its
+hover delay. A tab strip under the pointer wins over a snap area, except at
+the screen edge itself, within the snap edge band: without a permanent menu
+bar the top strips reach the top edge, and a pointer at that edge still snaps.
+Farther inside the strip, the strip also wins over a corner area.
+An empty pane does not win over a snap area. A pane's only tab dragged over
+its own strip shows no drop, because the drop would change nothing. If the
+placement of a floating window's tab drop fails, the window stays where it was
+dropped and the pill reports the failure. Undo returns a floating window to its
+frame from before the drag. The drop cue panels are excluded from screen
+capture (`sharingType = .none`), so screenshots do not show them.
+
+`PointerDisplay` maps the pointer to exactly one display. Display frames are
+half-open, as in CoreGraphics: a point on an edge that two displays share
+belongs to the right display of a side-by-side pair and to the lower display
+of a stack.
+
+The dragged window's own display does not take part in the drop. At a shared
+edge, its center is often on the neighbouring display. Drag commits pass a
+`DropDestination` to `WindowCoordinator`, which checks the dragged window's
+reachability on the drop's display. Every other window keeps its own display,
+so a window that an application moved to another display during the drag
+makes the drop fail. Tabbed participant, restore, and rollback checks accept
+the dragged window on either display. A frame that is mostly off the drop's
+display is still rejected.
+
+A snap preview shows the frame that the window will take. If the window's
+known minimum size is larger than the snap area, the frame grows from the
+snapped edges and stays inside the drop display's visible frame. Every drop,
+including Bento, Focus mode, and Tabbed drops, carries the minimum sizes that
+its overlay planned with. Release checks each frame against them, so a minimum
+read again at release does not reject or change a drop that the overlay showed
+as valid. A write that an application refuses still follows the usual readback
+and rollback rules. Like any Tabbed placement, a Tabbed tab drop then retries
+once with the size the application revealed, such as Terminal settling a row taller
+than its pane: the tabs stay as the overlay showed, and only the panes adapt.
+A Tabbed snap drag does not retry; it commits the snap the overlay showed or
+fails.
+A Bento or Tabbed drag stays on the display where
+it started. If a Bento drop is not committed and the dragged window cannot
+return to its frame from before the drag, BetterTile reports the failure and
+stops automatic writes until Repair, as for a degraded mutation.
+
 ## Space boundary
 
-BetterTile operates on eligible on-screen windows exposed by its macOS integration layer. It refreshes the current window set immediately when apps, Spaces, or displays change. A validated native desktop observation selects one process-local runtime layout session for each display and Space pair. Missing or malformed native observations retain the public-API window-overlap matcher. Empty window membership remains unknown, windows reported on several Spaces float, and native fullscreen Spaces expose neither automatic layout writes nor dividers. BetterTile never attempts to move windows across Spaces.
+BetterTile operates on eligible on-screen windows exposed by its macOS integration layer. It refreshes the current window set immediately when apps, Spaces, or displays change. A validated native desktop observation selects one process-local runtime layout session for each display and Space pair. Missing or malformed native observations retain the public-API window-overlap matcher. Empty window membership remains unknown, windows reported on several Spaces float, and native fullscreen Spaces expose neither automatic layout writes nor dividers. With separate Spaces per display, a window's center can lie on a display whose current Space does not hold it, for example while the window is dragged across a shared edge. A window whose one Space is current on another display stays visible and is reported on that Space's display; only a window whose Space is current on no display is left out. BetterTile never attempts to move windows across Spaces.
 
 ## Popup and fixed-size windows
 
@@ -119,7 +219,8 @@ One listen-only session event tap forwards ordered scalar left-button values
 from a dedicated run loop to the main actor. Drag snapping and linked resizing
 share that stream. If tap creation or recovery fails, both consumers switch to
 their existing `NSEvent` monitors as one unit so one physical event has one
-owner.
+owner. Those monitors read each event's own location, so a stalled
+main actor cannot move a release point.
 
 Layout Wheel keyboard activation uses paired local and global AppKit monitors,
 so it works whether BetterTile or another app receives the event. Modifier
@@ -228,7 +329,12 @@ would have to shrink below their own minimum sizes. A focus change
 selects a tab only when that
 window's application is frontmost. While BetterTile or an application it cannot
 read is in front, `focusedWindow()` reports the last managed application's
-window, and selecting it would take focus away.
+window, and selecting it would take focus away. When `focusedWindow()` cannot
+read an application's focused window, such as a small popup, it reports the
+application's main window. A focus change therefore selects a tab or corrects
+focus only when `TabbedWindowSystem.applicationFocus(of:)` confirms that the
+application reports that window as focused. A missing focused window or a
+failed read confirms nothing.
 
 After a focus change, application activation, or tab selection,
 `TabbedLayoutState.sharedCurtainStackingRepair` compares the WindowServer
@@ -240,7 +346,39 @@ no repair runs. A missing identity hides the curtain. An order that cannot be
 verified keeps a curtain already shown, at the same bounds, for up to four
 refreshes while the model checks again 80 ms later; then the curtain hides. A
 window list that cannot be read hides it at once. The repair never activates an
-application, changes keyboard focus or selection, or moves a window. Without
+application, changes keyboard focus or selection, or moves a window. A raise
+of a window makes it its application's main window, so the key window can
+lose focus. When the key window is a tab, a standard window including one the
+user floated, a dialog, or a floating panel such as the Font panel, the repair
+raises it again last. Floating windows, such as a dialog BetterTile floated,
+keep their place in the order: the repair does not raise them above every pane
+just because they are behind a selected tab. The curtain goes directly behind
+the backmost selected tab or floating window, and hidden tabs go behind that
+window. The repair still raises a floating window of the front application
+when a hidden tab is in front of it, when a raised window would cover it, or
+when it has focus and is raised again last. A raise of such a window would
+take focus, and raising the key window again last would put it back behind
+the selected tab. A background application's window often ignores the raise,
+so the order would never verify and every focus event would repeat it. Such a
+window behind a hidden tab stays under the curtain until its application is
+activated. A floating window that is not eligible, such as one that cannot be
+moved, has no validated window number; it is raised above the panes as before.
+When the anchor window has no validated number, the curtain goes behind the
+backmost selected tab. The front application's floating windows also keep the
+older raise rule when its key window is transient, so those raises wait as
+described below, and when no window has focus, such as on Finder's desktop, so
+they run at once. A transient key window cannot get focus back by a raise:
+a popup whose subrole is not standard, dialog, or floating, such as a browser
+toolbar bubble, closes when it loses focus. A focused window that cannot be
+read counts as transient too. The repair then leaves out every window of that
+application and every other raise that would cover one of them. The rest of
+the repair runs. The curtain is handled as for an unverified order, and the
+left-out raises wait for the next focus change. The watchdog retries them, for
+each display, in case the popup closed without a notification. When the
+application's focus is on no window, such as Finder's desktop, there is no
+focus to protect, and the repair raises normally. A Tabbed placement does not activate or order a
+window in any pane of an application whose popup has focus. When the selection does not
+change, it only orders a selected tab that already has focus. Without
 a readable order, selection still raises the selected tabs of panes that
 share the selected window's application, and activation changes nothing.
 
@@ -317,6 +455,10 @@ a seed. So far only `remove(_:)`, for a closed window, calls
 `forget(windowID:)`. `WindowConstraints.minimumSizeSource` names where a
 minimum came from: the default floor, an application hint, a seed, a learned
 clamp, or a probe. A hint, a learned clamp, and a probe count as proven.
+A seed keeps the window's own minimum and its source in
+`unseededMinimumSize` and `unseededMinimumSizeSource`. The write veto and
+every place that ignores a seed use that minimum, so a seed that raises one
+axis never drops a hint on the other.
 
 ## Unresponsive applications
 
@@ -553,8 +695,13 @@ change a Bento operation made to the tree; writing it also writes the tree.
   strips move. During a divider drag, the strips and curtains follow each
   accepted sample without repeating tab ordering; hidden tabs follow at
   release. A window drag first tears the tab out of its
-  group when the group has other tabs; a center drop adds the window to that
-  pane as a tab, and a torn tab dropped nowhere returns to its group.
+  group when the group has other tabs. A press and release without any drag
+  sample is a click and starts no drag. A sample suppressed by the snap
+  modifiers still counts. A drop on a pane's center, its tab strip, or an
+  empty pane adds the window to that pane as its selected tab, or shows
+  invalid feedback when the pane cannot show it (see Window drag drops). A
+  torn tab dropped nowhere returns to its group.
+  When no selected tab moved, it returns without a placement.
 - Fixed partition snaps use `TabbedSnapPlanner` through one model route for
   keyboard/menu actions, captured Layout Wheel commands, and native snap zones.
   Commands use the pane scope: the source's pane moves with all its tabs,
@@ -647,12 +794,13 @@ change a Bento operation made to the tree; writing it also writes the tree.
   boundaries adapt as for an arrival. If that pane shows the focused window,
   the returned window joins it as a hidden tab instead, so a check the user
   did not ask for never hides or unfocuses the focused window; the 1 s check
-  follows the same rule. Any other window stays an automatic float. This
+  and the return on entry to Tabbed follow the same rule. Any other window stays an automatic float. This
   check is silent: a failure is logged and shows no pill. A
   window moved to another display leaves this layout and joins the other
   display's layout as an arrival. Repair Tabbed adopts each automatic float again: it keeps a proven
   minimum, ignores the application's seed for that decision, and probes only
-  a window that was never probed. The pill counts the windows returned. User
+  a window that was never probed. A returned window becomes its pane's
+  selected tab, or a hidden tab beside the focused window, as in the checks above. The pill counts the windows returned. User
   floats stay floating. Every Tabbed sweep and placement ignores a seed
   larger than the work area below the strip, so the write shows the
   window's real minimum. A

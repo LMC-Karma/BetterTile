@@ -90,10 +90,10 @@ private func entry(_ name: String?, _ frame: BTRect) -> TabbedStackEntry {
     let state = twoPanes()
     let pids: [WindowID: Int32] = [id("a"): 1, id("b"): 1, id("c"): 1, id("d"): 2]
     // Raising `c` makes it the app's main window; `a` must be raised again.
-    #expect(state.keyPreservingRaisePlan([id("c")], keyWindowID: id("a"), processIdentifiers: pids)
+    #expect(state.keyPreservingRaisePlan([id("c")], key: .window(id("a")), processIdentifiers: pids).raises
         == [id("c"), id("a")])
     // An already-last key window is left in place.
-    #expect(state.keyPreservingRaisePlan([id("a"), id("c")], keyWindowID: id("a"), processIdentifiers: pids)
+    #expect(state.keyPreservingRaisePlan([id("a"), id("c")], key: .window(id("a")), processIdentifiers: pids).raises
         == [id("c"), id("a")])
 }
 
@@ -101,10 +101,41 @@ private func entry(_ name: String?, _ frame: BTRect) -> TabbedStackEntry {
     let state = twoPanes()
     let pids: [WindowID: Int32] = [id("a"): 1, id("b"): 1, id("c"): 2, id("d"): 2]
     // Another application's raise cannot steal this app's focus.
-    #expect(state.keyPreservingRaisePlan([id("c")], keyWindowID: id("a"), processIdentifiers: pids) == [id("c")])
+    #expect(state.keyPreservingRaisePlan([id("c")], key: .window(id("a")), processIdentifiers: pids).raises == [id("c")])
     // A hidden tab would cover its pane's selected tab.
-    #expect(state.keyPreservingRaisePlan([id("a")], keyWindowID: id("b"), processIdentifiers: pids) == [id("a")])
-    #expect(state.keyPreservingRaisePlan([id("c")], keyWindowID: nil, processIdentifiers: pids) == [id("c")])
+    #expect(state.keyPreservingRaisePlan([id("a")], key: .window(id("b")), processIdentifiers: pids).raises == [id("a")])
+    #expect(state.keyPreservingRaisePlan([id("c")], key: nil, processIdentifiers: pids).raises == [id("c")])
+}
+
+/// A browser toolbar bubble closes as soon as it loses focus, and raising
+/// any window of its application moves focus. Those raises wait, and so do
+/// raises that would cover that application's windows. Others proceed.
+@Test func keyPreservingPlanDefersRaisesThatWouldTakeAPopupsFocus() {
+    let state = twoPanes()
+    let pids: [WindowID: Int32] = [id("a"): 1, id("b"): 2, id("c"): 3, id("d"): 3, id("popup"): 1]
+    let frames: [WindowID: BTRect] = [id("a"): left, id("b"): left, id("c"): right, id("d"): right,
+                                      id("popup"): BTRect(x: 100, y: 100, width: 200, height: 200)]
+    let popup = TabbedKeyWindow.transient(processIdentifier: 1)
+    #expect(state.keyPreservingRaisePlan([id("a")], key: popup, processIdentifiers: pids, frames: frames)
+        == TabbedKeyPreservingPlan(raises: [], isDeferred: true))
+    // The right pane's raise covers nothing of the popup's application.
+    #expect(state.keyPreservingRaisePlan([id("c"), id("a"), id("popup")], key: popup,
+                                         processIdentifiers: pids, frames: frames)
+        == TabbedKeyPreservingPlan(raises: [id("c")], isDeferred: true))
+    // A raise over the popup's application waits too.
+    #expect(state.keyPreservingRaisePlan([id("b")], key: popup, processIdentifiers: pids, frames: frames)
+        == TabbedKeyPreservingPlan(raises: [], isDeferred: true))
+    #expect(state.keyPreservingRaisePlan([id("c")], key: popup, processIdentifiers: pids, frames: frames)
+        == TabbedKeyPreservingPlan(raises: [id("c")], isDeferred: false))
+}
+
+/// A standard window the user floated gets focus back when it is raised
+/// last, as a key tab does.
+@Test func keyPreservingPlanRaisesAFloatedStandardKeyWindowLast() {
+    let state = twoPanes()
+    let pids: [WindowID: Int32] = [id("a"): 1, id("b"): 2, id("c"): 3, id("d"): 3, id("floated"): 1]
+    #expect(state.keyPreservingRaisePlan([id("a")], key: .window(id("floated")), processIdentifiers: pids).raises
+        == [id("a"), id("floated")])
 }
 
 /// A floating window that ended behind the backmost selected tab would sit
@@ -116,4 +147,70 @@ private func entry(_ name: String?, _ frame: BTRect) -> TabbedStackEntry {
     #expect(state.sharedCurtainStackingRepair(order: order, curtainBounds: bounds) == [])
     #expect(state.sharedCurtainStackingRepair(order: order, curtainBounds: bounds,
                                               aboveCurtain: [id("floating")]) == [id("floating")])
+}
+
+/// A floating dialog of the front application behind its selected tab is
+/// kept in place: raising it would take focus, and raising the key tab last
+/// would put it back. The curtain goes behind it instead.
+@Test func sharedCurtainKeepsAFrontApplicationFloatInPlaceBehindTheSelectedTab() {
+    let state = twoPanes()
+    let dialog = BTRect(x: 100, y: 100, width: 300, height: 200)
+    let order = [entry("a", left), entry("c", right), entry("dialog", dialog), entry("b", left), entry("d", right)]
+    #expect(state.sharedCurtainStackingRepair(order: order, curtainBounds: bounds,
+                                              aboveCurtain: [id("dialog")]) == [id("dialog")])
+    #expect(state.sharedCurtainStackingRepair(order: order, curtainBounds: bounds, aboveCurtain: [id("dialog")],
+                                              keptInPlace: [id("dialog")]) == [])
+    #expect(state.curtainAnchor(order: order) == id("c"))
+    #expect(state.curtainAnchor(order: order, keptInPlace: [id("dialog")]) == id("dialog"))
+    // A hidden tab in front of the kept window moves behind it.
+    let exposed = [entry("a", left), entry("c", right), entry("b", left), entry("dialog", dialog), entry("d", right)]
+    #expect(state.sharedCurtainStackingRepair(order: exposed, curtainBounds: bounds, aboveCurtain: [id("dialog")],
+                                              keptInPlace: [id("dialog")]) == [id("dialog"), id("a")])
+}
+
+/// A background application's floating window behind a hidden tab stays
+/// under the curtain: macOS often ignores its raise, so a plan that raises
+/// it would never verify.
+@Test func sharedCurtainLeavesABackgroundFloatBehindAHiddenTabUnderTheCurtain() {
+    let state = twoPanes()
+    let dialog = BTRect(x: 100, y: 100, width: 300, height: 200)
+    let order = [entry("a", left), entry("c", right), entry("b", left), entry("dialog", dialog), entry("d", right)]
+    #expect(state.sharedCurtainStackingRepair(order: order, curtainBounds: bounds, aboveCurtain: [id("dialog")],
+                                              keptInPlace: [id("dialog")], ignoresRaise: [id("dialog")]) == [])
+    #expect(state.curtainAnchor(order: order, keptInPlace: [id("dialog")], ignoresRaise: [id("dialog")]) == id("c"))
+    // In front of every hidden tab, it keeps its place above the curtain.
+    let front = [entry("a", left), entry("c", right), entry("dialog", dialog), entry("b", left), entry("d", right)]
+    #expect(state.curtainAnchor(order: front, keptInPlace: [id("dialog")], ignoresRaise: [id("dialog")]) == id("dialog"))
+}
+
+/// Review: a background float in front of every hidden tab overlaps the
+/// right pane's selected tab, and the right pane's hidden tab is exposed.
+/// The repair raises the selected tab over part of the float, and never
+/// raises the float, whose raise macOS ignores.
+@Test func sharedCurtainNeverRaisesABackgroundFloatThatAnotherRaiseCovers() {
+    let state = twoPanes()
+    let dialog = BTRect(x: 400, y: 100, width: 300, height: 200)
+    let order = [entry("dialog", dialog), entry("a", left), entry("d", right), entry("c", right), entry("b", left)]
+    #expect(state.sharedCurtainStackingRepair(order: order, curtainBounds: bounds, aboveCurtain: [id("dialog")],
+                                              keptInPlace: [id("dialog")]) == [id("c"), id("dialog")])
+    #expect(state.sharedCurtainStackingRepair(order: order, curtainBounds: bounds, aboveCurtain: [id("dialog")],
+                                              keptInPlace: [id("dialog")], ignoresRaise: [id("dialog")]) == [id("c")])
+    // The raise is ignored. The order still verifies, with the float as anchor.
+    let raised = [entry("c", right), entry("dialog", dialog), entry("a", left), entry("d", right), entry("b", left)]
+    #expect(state.sharedCurtainStackingRepair(order: raised, curtainBounds: bounds, aboveCurtain: [id("dialog")],
+                                              keptInPlace: [id("dialog")], ignoresRaise: [id("dialog")]) == [])
+    #expect(state.curtainAnchor(order: raised, keptInPlace: [id("dialog")], ignoresRaise: [id("dialog")]) == id("a"))
+}
+
+/// Review: a hidden tab is exposed in front of everything, and a background
+/// float sits between it and its pane's selected tab. Raising that selected
+/// tab never pulls the float into the plan, because macOS ignores its raise.
+@Test func sharedCurtainKeepsABackgroundFloatOutOfARaiseThatOverlapsIt() {
+    let state = twoPanes()
+    let dialog = BTRect(x: 100, y: 100, width: 300, height: 200)
+    let order = [entry("b", left), entry("dialog", dialog), entry("a", left), entry("c", right), entry("d", right)]
+    let plan = state.sharedCurtainStackingRepair(order: order, curtainBounds: bounds, aboveCurtain: [id("dialog")],
+                                                 keptInPlace: [id("dialog")], ignoresRaise: [id("dialog")])
+    #expect(plan?.contains(id("dialog")) == false)
+    #expect(plan?.contains(id("a")) == true)
 }

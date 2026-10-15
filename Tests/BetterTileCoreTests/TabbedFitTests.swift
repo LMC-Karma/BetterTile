@@ -63,6 +63,8 @@ private func leftWidth(_ state: TabbedLayoutState) -> Double {
     let windows = [window("small"), window("large", minimumWidth: 600), window("peer", minimumWidth: 500)]
     #expect(state.fitProblem(showing: WindowID(rawValue: "large"), in: fitBounds, windows: windows)
         == .neighbors([WindowID(rawValue: "peer")]))
+    // Columns share the width, so the window is too wide.
+    #expect(state.fitFailure(showing: WindowID(rawValue: "large"), in: fitBounds, windows: windows)?.tooWide == true)
     let fits = [window("small"), window("large", minimumWidth: 600), window("peer", minimumWidth: 300)]
     #expect(state.fitProblem(showing: WindowID(rawValue: "large"), in: fitBounds, windows: fits) == nil)
 }
@@ -71,9 +73,11 @@ private func leftWidth(_ state: TabbedLayoutState) -> Double {
     let state = twoColumns()
     let wide = [window("small"), window("large", minimumWidth: 1200), window("peer")]
     #expect(state.fitProblem(showing: WindowID(rawValue: "large"), in: fitBounds, windows: wide) == .largerThanDisplay)
+    #expect(state.fitFailure(showing: WindowID(rawValue: "large"), in: fitBounds, windows: wide)?.tooWide == true)
     // The tab strip counts toward the height.
     let tall = [window("small"), window("large", minimumHeight: 780), window("peer")]
     #expect(state.fitProblem(showing: WindowID(rawValue: "large"), in: fitBounds, windows: tall) == .largerThanDisplay)
+    #expect(state.fitFailure(showing: WindowID(rawValue: "large"), in: fitBounds, windows: tall)?.tooWide == false)
 }
 
 @Test func fitProblemReportsALockedDivider() throws {

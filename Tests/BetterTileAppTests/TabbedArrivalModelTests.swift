@@ -342,6 +342,52 @@ private func addFalselyMeasuredWindow(_ name: String, pid: Int32, to system: Fak
     #expect(model.activeTabbedState?.floatingWindowIDs.isEmpty == true)
 }
 
+/// Entering Tabbed again returns an automatic float that a pane can now
+/// show, but never in place of the focused window: it joins that window's
+/// pane as a hidden tab.
+@Test @MainActor func theEntryReturnKeepsTheFocusedWindowSelected() async throws {
+    let (system, model) = try await onePaneFixture()
+    defer { model.shutdown() }
+    model.tabbedAutomaticFloatRetryDelay = .seconds(60)
+    let focused = system.windows[0].id
+    system.focusedID = focused
+    let tall = addFalselyMeasuredWindow("tall", pid: 930_021, to: system)
+    try #require(await waitFor { model.activeTabbedState?.automaticallyFloatingWindowIDs == [tall] })
+    try await Task.sleep(for: .milliseconds(300))
+    model.setActiveMode(.manual)
+    try await Task.sleep(for: .milliseconds(300))
+    let index = try #require(system.windows.firstIndex { $0.id == tall })
+    system.windows[index].constraints = WindowConstraints()
+
+    model.setActiveMode(.tabbed)
+
+    #expect(await waitFor { model.activeTabbedState?.windowIDs.contains(tall) == true })
+    #expect(model.activeTabbedState?.panes.first?.selected == focused)
+    #expect(model.activeTabbedState?.floatingWindowIDs.isEmpty == true)
+}
+
+/// Repair Tabbed returns an automatic float that a pane can now show, but
+/// never in place of the focused window: it joins that window's pane as a
+/// hidden tab.
+@Test @MainActor func repairTabbedKeepsTheFocusedWindowSelected() async throws {
+    let (system, model) = try await onePaneFixture()
+    defer { model.shutdown() }
+    model.tabbedAutomaticFloatRetryDelay = .seconds(60)
+    let focused = system.windows[0].id
+    system.focusedID = focused
+    let tall = addFalselyMeasuredWindow("tall", pid: 930_031, to: system)
+    try #require(await waitFor { model.activeTabbedState?.automaticallyFloatingWindowIDs == [tall] })
+    try await Task.sleep(for: .milliseconds(300))
+    let index = try #require(system.windows.firstIndex { $0.id == tall })
+    system.windows[index].constraints = WindowConstraints()
+
+    model.performTabbed(.repair)
+
+    #expect(await waitFor { model.activeTabbedState?.windowIDs.contains(tall) == true })
+    #expect(model.activeTabbedState?.panes.first?.selected == focused)
+    #expect(await waitFor { model.lastActionFeedback?.message == "1 window returned to a pane" })
+}
+
 /// A window that still fits no pane at all is checked once, then left
 /// floating: the check does not repeat or move it again.
 @Test @MainActor func anAutomaticFloatThatStillCannotFitIsCheckedOnlyOnce() async throws {
@@ -428,7 +474,9 @@ private func addFalselyMeasuredWindow(_ name: String, pid: Int32, to system: Fak
     try await Task.sleep(for: .milliseconds(300))
     // Six windows are tiled; Bento floats the seventh where it was.
     let overflow = try #require(system.windows.first { $0.frame == area }?.id)
-    // Every write to the Bento float fails, so the entry placement fails.
+    // Every write to the focused Bento float fails, so the entry placement,
+    // which selects it, fails.
+    system.focusedID = overflow
     system.failedFrameWriteNumbers[overflow] = Set(1...200)
     model.setActiveMode(.tabbed)
     try #require(await waitFor { (system.frameWriteCounts[overflow] ?? 0) > 0 })
@@ -824,5 +872,47 @@ func changingToOnePaneReturnsAnAutomaticFloatAndKeepsUserFloats(floatIsFocused: 
 
     #expect(await waitFor { model.activeTabbedState?.pane(containing: wide)?.id == model.activeTabbedState?.panes[0].id },
             "\(model.activeTabbedState?.panes.map(\.tabs) as Any)")
+    #expect(model.activeTabbedState?.floatingWindowIDs.isEmpty == true)
+}
+
+/// Review: the later check and Repair Tabbed return a window to a pane
+/// other than the active one as its selected tab, as the layout-change check
+/// does. Hidden behind that pane's tab, the window was lost from view.
+@Test(arguments: ["later check", "repair"]) @MainActor
+func aFloatReturnedToAnotherPaneIsShown(path: String) async throws {
+    _ = NSApplication.shared
+    let system = FakeAppWindowSystem()
+    let first = system.windows[0].id, peer = WindowID(rawValue: "peer")
+    var window = WindowSnapshot(id: peer, processIdentifier: 931_501, title: "Peer",
+                                frame: BTRect(x: 500, y: 0, width: 500, height: 800), displayID: system.mainDisplay.id)
+    window.constraints.minimumSize = BTSize(width: 400, height: 80)
+    system.windows.append(window)
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    model.tabbedAutomaticFloatRetryDelay = path == "repair" ? .seconds(60) : .seconds(1)
+    model.configuration.defaultTabbedPreset = .columns
+    model.setActiveMode(.tabbed)
+    try #require(await waitFor { model.activeTabbedState?.windowIDs.count == 2 })
+    let right = try #require(model.activeTabbedState?.panes[1].id)
+    if model.activeTabbedState?.pane(containing: peer)?.id != right {
+        model.performTabbed(.move(peer, pane: right, index: nil))
+        try #require(await waitFor { model.activeTabbedState?.panes[1].selected == peer })
+    }
+    model.performTabbed(.select(first))
+    try #require(await waitFor { model.activeTabbedState?.activePaneID == model.activeTabbedState?.panes[0].id })
+    try await Task.sleep(for: .milliseconds(300))
+    system.focusedID = first
+    let tall = addFalselyMeasuredWindow("tall", pid: 931_502, to: system)
+    try #require(await waitFor { model.activeTabbedState?.automaticallyFloatingWindowIDs == [tall] })
+    try await Task.sleep(for: .milliseconds(300))
+    // Too wide for the active pane beside the peer; the right pane can grow.
+    let index = try #require(system.windows.firstIndex { $0.id == tall })
+    system.windows[index].constraints = WindowConstraints(minimumSize: BTSize(width: 700, height: 80))
+
+    if path == "repair" { model.performTabbed(.repair) }
+
+    #expect(await waitFor(timeout: .seconds(5)) { model.activeTabbedState?.panes[1].selected == tall },
+            "\(model.activeTabbedState?.panes.map(\.tabs) as Any)")
+    #expect(model.activeTabbedState?.panes[0].selected == first)
     #expect(model.activeTabbedState?.floatingWindowIDs.isEmpty == true)
 }

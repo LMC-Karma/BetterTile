@@ -629,6 +629,31 @@ private let sessionDisplay = DisplayID(rawValue: "main")
     #expect(observation.exclusiveWindowIDs(on: DisplayID(rawValue: "missing")).isEmpty)
 }
 
+/// With separate Spaces, a window's center can lie on a display whose
+/// current Space does not hold it, for example during a drag. A window on a
+/// current Space is kept on that Space's display; one on a Space current on
+/// no display is still removed.
+@Test func nativeMembershipKeepsAWindowWhoseCenterCrossedToAnotherDisplay() {
+    let first = DisplayID(rawValue: "first"), second = DisplayID(rawValue: "second")
+    let firstSpace = NativeSpaceID(rawValue: 1), secondSpace = NativeSpaceID(rawValue: 2)
+    let hiddenSpace = NativeSpaceID(rawValue: 3)
+    var crossed = testWindow("crossed", x: 0, width: 100, height: 100)
+    crossed.displayID = second
+    var elsewhere = testWindow("elsewhere", x: 0, width: 100, height: 100)
+    elsewhere.displayID = second
+    let observation = NativeDesktopObservation(
+        currentSpaceByDisplay: [first: firstSpace, second: secondSpace],
+        knownSpacesByDisplay: [first: [firstSpace, hiddenSpace], second: [secondSpace]],
+        windowMembership: [crossed.id: [firstSpace], elsewhere.id: [hiddenSpace]]
+    )
+
+    let visible = observation.windowsOnCurrentSpaces([crossed, elsewhere])
+
+    #expect(visible.map(\.id) == [crossed.id])
+    #expect(visible.first?.displayID == first)
+    #expect(visible.first?.isFloating == false)
+}
+
 @Test func nativeFullscreenSpaceDisablesOnlyAutomaticLayout() {
     let current = NativeSpaceID(rawValue: 11)
     let observation = NativeDesktopObservation(

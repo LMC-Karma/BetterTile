@@ -1082,3 +1082,46 @@ func tabStripInsertionPointsMatchRenderedTabEdges(width: Double) {
     #expect(crowded.hiddenCount > 0 && crowded.visibleRange.contains(8))
     #expect(crowded.tabFrame(crowded.visibleRange.upperBound - 1).maxX <= crowded.menuFrame.minX + 0.001)
 }
+
+/// A dragged real window joins a pane through its tab strip, at the drawn
+/// tab edge nearest the pointer, or anywhere in an empty pane. A pane's
+/// content is not a strip target.
+@Test @MainActor func tabDropZoneFindsTheStripIndexAndEmptyPanes() throws {
+    _ = NSApplication.shared
+    let a = WindowID(rawValue: "zone-a"), b = WindowID(rawValue: "zone-b"), x = WindowID(rawValue: "zone-x")
+    var state = TabbedLayoutState(preset: .columns)
+    state.reconcile(windowIDs: [a, b], removed: [], focused: a)
+    let bounds = BTRect(x: 12000, y: 100, width: 1600, height: 800)
+    let overlay = TabbedOverlayController()
+    defer { overlay.hide() }
+    overlay.refresh(state: state, bounds: bounds, windows: [])
+    let tabbed = state.panes[0], empty = state.panes[1]
+    let frames = state.frames(in: bounds)
+    let frame = try #require(frames[tabbed.id]), emptyFrame = try #require(frames[empty.id])
+    let view = try #require(NSApp.windows.compactMap(\.contentView).compactMap { $0 as? TabbedPaneView }
+        .first { $0.pane.id == tabbed.id })
+    let y = frame.minY + TabbedLayoutState.headerHeight / 2
+    let middle = frame.minX + view.strip.tabFrame(1).minX
+
+    for (pointX, index) in [(frame.minX + 33, 0), (middle + 1, 1), (frame.maxX - 20, 2)] {
+        let zone = try #require(overlay.tabDropZone(at: BTPoint(x: pointX, y: y), dragging: x))
+        #expect(zone.paneID == tabbed.id && zone.index == index && zone.paneFrame == frame)
+        let indicator = try #require(zone.indicator)
+        let edge = frame.minX + view.strip.insertion(at: pointX - frame.minX).x
+        #expect(abs(indicator.midX - edge) < 0.001)
+        #expect(indicator.minY >= frame.minY && indicator.maxY <= frame.minY + TabbedLayoutState.headerHeight)
+    }
+    // The pane's own tab counts once: its last edge is the last index.
+    #expect(overlay.tabDropZone(at: BTPoint(x: frame.maxX - 20, y: y), dragging: a)?.index == 1)
+    #expect(overlay.tabDropZone(at: BTPoint(x: frame.midX, y: frame.midY), dragging: x) == nil)
+    let emptyZone = try #require(overlay.tabDropZone(at: BTPoint(x: emptyFrame.midX, y: emptyFrame.midY), dragging: x))
+    #expect(emptyZone == TabbedDropZone(paneID: empty.id, index: nil, paneFrame: emptyFrame, indicator: nil))
+    #expect(overlay.tabDropZone(at: BTPoint(x: bounds.minX - 50, y: y), dragging: x) == nil)
+
+    // A pane's only tab over its own strip would change nothing.
+    state.move(b, to: empty.id)
+    overlay.refresh(state: state, bounds: bounds, windows: [])
+    let lone = BTPoint(x: emptyFrame.midX, y: emptyFrame.minY + TabbedLayoutState.headerHeight / 2)
+    #expect(overlay.tabDropZone(at: lone, dragging: b) == nil)
+    #expect(overlay.tabDropZone(at: lone, dragging: a)?.paneID == empty.id)
+}

@@ -111,15 +111,18 @@ popup windows, such as file pickers and dialogs, and windows that appear on
 several Spaces. On a Bento desktop it also floats windows that cannot be
 resized or moved, and a seventh window. On a Tabbed desktop it floats a window
 that no pane can show, even after boundaries adapt. A floating window keeps
-its own frame until the user returns it to the layout.
+its own frame until the user returns it to the layout, for example by dragging
+it into a Tabbed pane as a tab. A dragged window joins a Tabbed pane only as
+its selected tab; a window that the pane cannot show stays floating.
 
 ## Automatic float
 
 A floating window that Tabbed or Bento floated on its own, for example a
-window that no pane can show, or a seventh Bento window. It returns to a pane
-when room appears: when the pane layout changes and a pane can show it, and
-when the user chooses Repair Tabbed. A window the user floated never returns
-on its own.
+window that no pane can show, or a seventh Bento window. Tabbed returns it to
+a pane when a pane can show it. It checks on each entry to Tabbed, once about
+1 second after the window floats, again when the pane layout changes, and when
+the user chooses Repair Tabbed. A window the user floated never returns on its
+own.
 
 ## Focus mode
 

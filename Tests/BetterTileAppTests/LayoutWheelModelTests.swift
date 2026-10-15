@@ -33,6 +33,9 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, TabbedWindowSystem, Min
     var sizeGrids: [WindowID: (step: BTSize, offset: BTSize)] = [:]
     /// Grids that round up to the next cell instead of the nearest one.
     var sizeGridsRoundUp: Set<WindowID> = []
+    /// Heights round up to a multiple of the step: an application, such as
+    /// Terminal, that settles a row taller than asked.
+    var heightSteps: [WindowID: Double] = [:]
     var frameWriteCounts: [WindowID: Int] = [:]
     var failedFrameWriteNumbers: [WindowID: Set<Int>] = [:]
     var completeSweepCount = 0
@@ -90,8 +93,28 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, TabbedWindowSystem, Min
     /// Simulates BetterTile or an unreadable app in front; otherwise the
     /// focused window's app is frontmost.
     var frontmostOverride: Int32?
+    /// Simulates macOS reporting no frontmost application.
+    var frontmostIsUnknown = false
     var frontmostProcessIdentifier: Int32? {
-        frontmostOverride ?? (windows.first { $0.id == focusedID } ?? windows.first)?.processIdentifier
+        if frontmostIsUnknown { return nil }
+        return frontmostOverride ?? (windows.first { $0.id == focusedID } ?? windows.first)?.processIdentifier
+    }
+    /// Simulates an application whose focused window, such as a small
+    /// popup, `focusedWindow()` cannot report, so it reports another window.
+    var focusedWindowIsFallback = false
+    /// Simulates an application that reports no focused window.
+    var focusedWindowIsUnknown = false
+    /// Popups that close when they lose focus, such as browser bubbles.
+    var transientPopupIDs: Set<WindowID> = []
+    func isTransientPopup(_ window: WindowSnapshot) -> Bool { transientPopupIDs.contains(window.id) }
+    /// Simulates Finder's desktop: the application's focus is on no window.
+    var focusedWindowIsDesktop = false
+    func applicationFocus(of window: WindowSnapshot) -> ApplicationFocusMatch {
+        if focusedWindowIsUnknown { return .unknown }
+        if focusedWindowIsDesktop { return .noWindow }
+        guard !focusedWindowIsFallback else { return .otherWindow(isTransientPopup: true) }
+        return window.id == (windows.first { $0.id == focusedID } ?? windows.first)?.id
+            ? .confirmed : .otherWindow(isTransientPopup: false)
     }
     func raiseWindow(_ id: WindowID, activate: Bool) throws {
         if failingNextRaiseWindowID == id || failingRaiseWindowIDs.contains(id) {
@@ -231,6 +254,15 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, TabbedWindowSystem, Min
                 width: cell(windows[index].frame.size.width, grid.step.width, grid.offset.width),
                 height: cell(windows[index].frame.size.height, grid.step.height, grid.offset.height))
         }
+        if let step = heightSteps[windowID] {
+            windows[index].frame.size.height = (windows[index].frame.size.height / step).rounded(.up) * step
+        }
+        // Like the Accessibility adapter, a window belongs to the display
+        // that holds most of it.
+        let applied = windows[index].frame
+        windows[index].displayID = availableDisplays.first {
+            ($0.visibleFrame.intersection(applied)?.area ?? 0) > applied.area / 2
+        }?.id ?? windows[index].displayID
         if emitsFrameEvents {
             eventHandler?(WindowSystemEvent(kind: .resized, windowID: windowID, processIdentifier: windows[index].processIdentifier))
         }
@@ -2991,6 +3023,256 @@ func restoringAWindowKeepsAUserChangeMadeAfterAnEarlierMinimize(change: String) 
     #expect(system.quitRestoreCount == 0)
     model.shutdown()
     #expect(system.quitRestoreCount == 1)
+}
+
+/// The dragged window's center can cross to the neighbouring display while
+/// the pointer stays on the Bento display. A drop lands on the Bento display,
+/// a restore returns the window there, and a restore that fails leaves the
+/// window away from its pane, so it is reported and asks for Repair.
+@Test(arguments: ["swap", "restore", "restore-fails"]) @MainActor
+func bentoDropLandsOnItsDisplayAfterTheSourceCenterCrossed(entry: String) async throws {
+    _ = NSApplication.shared
+    let system = FakeAppWindowSystem()
+    for (index, name) in ["swap-b", "swap-c"].enumerated() {
+        system.windows.append(WindowSnapshot(id: WindowID(rawValue: name), processIdentifier: Int32(43 + index),
+            bundleIdentifier: "com.example.\(name)", frame: BTRect(x: 300 + Double(index) * 40, y: 300, width: 500, height: 400),
+            displayID: system.mainDisplay.id))
+    }
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    model.setActiveMode(.bento)
+    let visible = system.mainDisplay.visibleFrame
+    try #require(await waitFor {
+        system.windows.contains { $0.frame.size.height > visible.size.height * 0.75 }
+            && system.windows.filter { $0.frame.size.height < visible.size.height * 0.6 }.count == 2
+    })
+    try await Task.sleep(for: .milliseconds(400))
+    let second = DisplayID(rawValue: "second")
+    system.availableDisplays.append(DisplaySnapshot(id: second,
+        frame: BTRect(x: 1000, y: 0, width: 1000, height: 800),
+        visibleFrame: BTRect(x: 1000, y: 0, width: 1000, height: 800)))
+    let tall = try #require(system.windows.first { $0.frame.size.height > visible.size.height * 0.75 })
+    let short = try #require(system.windows.first { $0.frame.size.height < visible.size.height * 0.6 })
+    let main = system.mainDisplay.id
+    try #require(model.beginBentoDrag(displayID: main, sourceID: tall.id))
+    let index = try #require(system.windows.firstIndex { $0.id == tall.id })
+    system.windows[index].frame.origin.x = 1050 - tall.frame.size.width / 2
+    system.windows[index].displayID = second
+    if entry == "restore-fails" {
+        system.failedFrameWriteNumbers[tall.id] = [system.frameWriteCounts[tall.id, default: 0] + 1]
+    }
+    model.finishBentoDrag(displayID: main, sourceID: tall.id,
+                          outcome: entry == "swap" ? .swap(targetWindowID: short.id) : .restore)
+    let placed = try #require(system.windows.first { $0.id == tall.id })
+    switch entry {
+    case "swap":
+        #expect(model.statusMessage == nil, "\(model.statusMessage ?? "")")
+        #expect(placed.frame.approximatelyEquals(short.frame, tolerance: 1), "\(placed.frame)")
+        #expect(placed.displayID == main)
+    case "restore":
+        #expect(placed.frame == tall.frame)
+        #expect(placed.displayID == main)
+    default:
+        #expect(placed.displayID == second)
+        #expect(model.statusMessage?.hasPrefix("The dragged window could not return to its pane.") == true,
+                "\(model.statusMessage ?? "nil")")
+        #expect(model.statusMessage?.hasSuffix("Use Repair to rebuild Bento.") == true)
+    }
+}
+
+/// Release commits the plan the overlay showed. A plan prepared by another
+/// drag is not this drop: it fails with a reason and the window returns,
+/// instead of a different arrangement being chosen.
+@Test(arguments: [false, true]) @MainActor
+func bentoReleaseCommitsOnlyThePlanItsOverlayShowed(stale: Bool) async throws {
+    _ = NSApplication.shared
+    let system = FakeAppWindowSystem()
+    for (index, name) in ["swap-b", "swap-c"].enumerated() {
+        system.windows.append(WindowSnapshot(id: WindowID(rawValue: name), processIdentifier: Int32(43 + index),
+            bundleIdentifier: "com.example.\(name)", frame: BTRect(x: 300 + Double(index) * 40, y: 300, width: 500, height: 400),
+            displayID: system.mainDisplay.id))
+    }
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    model.setActiveMode(.bento)
+    let visible = system.mainDisplay.visibleFrame
+    try #require(await waitFor {
+        system.windows.contains { $0.frame.size.height > visible.size.height * 0.75 }
+            && system.windows.filter { $0.frame.size.height < visible.size.height * 0.6 }.count == 2
+    })
+    try await Task.sleep(for: .milliseconds(400))
+    let tall = try #require(system.windows.first { $0.frame.size.height > visible.size.height * 0.75 })
+    let short = try #require(system.windows.first { $0.frame.size.height < visible.size.height * 0.6 })
+    let main = system.mainDisplay.id
+    try #require(model.beginBentoDrag(displayID: main, sourceID: tall.id))
+    guard case let .ready(plan)? = model.previewBentoDrag(displayID: main, sourceID: tall.id,
+                                                          outcome: .swap(targetWindowID: short.id)) else {
+        Issue.record("Expected a swap plan"); return
+    }
+    if stale {
+        model.finishBentoDrag(displayID: main, sourceID: tall.id, end: .restore)
+        try #require(model.beginBentoDrag(displayID: main, sourceID: tall.id))
+    }
+    let index = try #require(system.windows.firstIndex { $0.id == tall.id })
+    system.windows[index].frame.origin.x += 40
+    let writes = system.frameWriteCounts
+    model.finishBentoDrag(displayID: main, sourceID: tall.id, end: .commit(plan))
+    if stale {
+        #expect(model.statusMessage?.hasPrefix("The layout changed during the drag.") == true, "\(model.statusMessage ?? "nil")")
+        #expect(system.windows.first { $0.id == tall.id }?.frame == tall.frame)
+        // Only the dragged window was written: it returned to its pane.
+        #expect(system.windows.filter { system.frameWriteCounts[$0.id] != writes[$0.id] }.map(\.id) == [tall.id])
+    } else {
+        #expect(model.statusMessage == nil, "\(model.statusMessage ?? "")")
+        for placement in plan.placements {
+            #expect(system.windows.first { $0.id == placement.windowID }?.frame == placement.frame)
+        }
+    }
+}
+
+/// Three windows tiled by Bento: one full-height pane and two half-height ones.
+@MainActor private func tiledBentoTrio() async throws -> (FakeAppWindowSystem, BetterTileModel, WindowSnapshot, WindowSnapshot) {
+    _ = NSApplication.shared
+    let system = FakeAppWindowSystem()
+    for (index, name) in ["swap-b", "swap-c"].enumerated() {
+        system.windows.append(WindowSnapshot(id: WindowID(rawValue: name), processIdentifier: Int32(43 + index),
+            bundleIdentifier: "com.example.\(name)", frame: BTRect(x: 300 + Double(index) * 40, y: 300, width: 500, height: 400),
+            displayID: system.mainDisplay.id))
+    }
+    let model = makeModel(system: system)
+    model.setActiveMode(.bento)
+    let visible = system.mainDisplay.visibleFrame
+    try #require(await waitFor {
+        system.windows.contains { $0.frame.size.height > visible.size.height * 0.75 }
+            && system.windows.filter { $0.frame.size.height < visible.size.height * 0.6 }.count == 2
+    })
+    try await Task.sleep(for: .milliseconds(400))
+    let tall = try #require(system.windows.first { $0.frame.size.height > visible.size.height * 0.75 })
+    let short = try #require(system.windows.first { $0.frame.size.height < visible.size.height * 0.6 })
+    return (system, model, tall, short)
+}
+
+/// A plan the overlay showed before the layout changed under the drag, such
+/// as a partition shortcut run while the button is held, writes nothing. The
+/// dragged window takes its slot in the current layout, no other window is
+/// written, and the pill says the layout changed.
+/// A release over nothing after the change also puts the window in its
+/// current slot, without a pill.
+@Test(arguments: ["commit", "restore"]) @MainActor
+func aStaleBentoPlanWritesNothingButTheDraggedWindowsReturn(end: String) async throws {
+    let (system, model, tall, short) = try await tiledBentoTrio()
+    defer { model.shutdown() }
+    let main = system.mainDisplay.id
+    try #require(model.beginBentoDrag(displayID: main, sourceID: tall.id))
+    guard case let .ready(plan)? = model.previewBentoDrag(displayID: main, sourceID: tall.id,
+                                                          outcome: .swap(targetWindowID: short.id)) else {
+        Issue.record("Expected a swap plan"); return
+    }
+    // The shortcut acts on the dragged window, as when the user presses it
+    // during the drag.
+    system.focusedID = tall.id
+    let tallIsLeft = tall.frame.minX < system.mainDisplay.visibleFrame.midX
+    model.perform(tallIsLeft ? .rightHalf : .leftHalf)
+    let index = try #require(system.windows.firstIndex { $0.id == tall.id })
+    let slot = system.windows[index].frame
+    try #require(slot != tall.frame)
+    let writes = system.frameWriteCounts, frames = Dictionary(uniqueKeysWithValues: system.windows.map { ($0.id, $0.frame) })
+    // macOS keeps moving the window with the pointer until release.
+    system.windows[index].frame.origin.x += 140
+    model.finishBentoDrag(displayID: main, sourceID: tall.id, end: end == "commit" ? .commit(plan) : .restore)
+    if end == "commit" {
+        #expect(model.statusMessage?.hasPrefix("The layout changed during the drag.") == true, "\(model.statusMessage ?? "nil")")
+    }
+    #expect(system.windows[index].frame == slot)
+    for window in system.windows where window.id != tall.id {
+        #expect(system.frameWriteCounts[window.id] == writes[window.id])
+        #expect(window.frame == frames[window.id])
+    }
+    // Settlement keeps the window in its slot.
+    try await Task.sleep(for: .milliseconds(600))
+    #expect(system.windows[index].frame == slot)
+}
+
+/// A Bento drop commits with the minimum sizes its overlay planned with. A
+/// larger minimum read at release cannot veto it.
+@Test @MainActor func aBentoDropIsNotVetoedByAMinimumReadAtRelease() async throws {
+    let (system, model, tall, short) = try await tiledBentoTrio()
+    defer { model.shutdown() }
+    let main = system.mainDisplay.id
+    try #require(model.beginBentoDrag(displayID: main, sourceID: tall.id))
+    guard case let .ready(plan)? = model.previewBentoDrag(displayID: main, sourceID: tall.id,
+                                                          outcome: .swap(targetWindowID: short.id)) else {
+        Issue.record("Expected a swap plan"); return
+    }
+    let index = try #require(system.windows.firstIndex { $0.id == tall.id })
+    system.windows[index].constraints.minimumSize.height = 700
+    model.finishBentoDrag(displayID: main, sourceID: tall.id, end: .commit(plan))
+    #expect(model.statusMessage == nil, "\(model.statusMessage ?? "")")
+    for placement in plan.placements {
+        #expect(system.windows.first { $0.id == placement.windowID }?.frame == placement.frame)
+    }
+}
+
+/// A floating window in a Bento desktop that is released or cancelled
+/// without a drop stays floating where it is. Only a drop the overlay showed
+/// adds it to the layout.
+@Test @MainActor func aFloatingBentoWindowReleasedWithoutADropStaysWhereItIs() async throws {
+    let (system, model, _, _) = try await tiledBentoTrio()
+    defer { model.shutdown() }
+    let main = system.mainDisplay.id
+    let floating = WindowID(rawValue: "floating")
+    system.windows.append(WindowSnapshot(id: floating, processIdentifier: 77, bundleIdentifier: "com.example.floating",
+        frame: BTRect(x: 120, y: 140, width: 300, height: 200), displayID: main))
+    try #require(model.beginBentoDrag(displayID: main, sourceID: floating))
+    let index = try #require(system.windows.firstIndex { $0.id == floating })
+    system.windows[index].frame.origin.x += 60
+    let dropped = system.windows[index].frame
+    let writes = system.frameWriteCounts
+    model.finishBentoDrag(displayID: main, sourceID: floating, end: .restore)
+    #expect(system.windows[index].frame == dropped)
+    #expect(system.frameWriteCounts == writes)
+}
+
+/// Release over invalid feedback for a tiled Bento window applies nothing:
+/// the window returns to its slot and the reason is reported.
+@Test @MainActor func aFailedBentoDropReturnsATiledWindowToItsSlot() async throws {
+    let (system, model, tall, _) = try await tiledBentoTrio()
+    defer { model.shutdown() }
+    let main = system.mainDisplay.id
+    try #require(model.beginBentoDrag(displayID: main, sourceID: tall.id))
+    let index = try #require(system.windows.firstIndex { $0.id == tall.id })
+    system.windows[index].frame.origin.x += 140
+    let others = system.windows.filter { $0.id != tall.id }
+    model.finishBentoDrag(displayID: main, sourceID: tall.id, end: .failed(reason: "Peers cannot fit."))
+    #expect(model.statusMessage == "Peers cannot fit.")
+    #expect(system.windows[index].frame == tall.frame)
+    for window in others { #expect(system.windows.first { $0.id == window.id }?.frame == window.frame) }
+}
+
+/// A Focus mode drop lands on the display the overlay showed it on, even
+/// when the dragged window's center crossed to the other display.
+@Test @MainActor func aFocusDropLandsOnItsDisplayAfterTheSourceCenterCrossed() async throws {
+    let (system, model, tall, short) = try await tiledBentoTrio()
+    defer { model.shutdown() }
+    let main = system.mainDisplay.id, second = DisplayID(rawValue: "second")
+    system.availableDisplays.append(DisplaySnapshot(id: second,
+        frame: BTRect(x: 1000, y: 0, width: 1000, height: 800),
+        visibleFrame: BTRect(x: 1000, y: 0, width: 1000, height: 800)))
+    try #require(model.beginBentoDrag(displayID: main, sourceID: tall.id))
+    let visible = system.mainDisplay.visibleFrame
+    guard case let .ready(plan)? = model.previewBentoDrag(displayID: main, sourceID: tall.id,
+                                                          outcome: .snap(action: .maximize, frame: visible)),
+          let focus = plan.bentoPlan, focus.isFocusDrop else {
+        Issue.record("Expected a Focus mode plan"); return
+    }
+    let index = try #require(system.windows.firstIndex { $0.id == tall.id })
+    system.windows[index].frame.origin.x = 1050 - tall.frame.size.width / 2
+    system.windows[index].displayID = second
+    model.finishBentoDrag(displayID: main, sourceID: tall.id, end: .commit(plan))
+    #expect(model.statusMessage == nil, "\(model.statusMessage ?? "")")
+    #expect(system.windows[index].frame == focus.placements.first?.frame)
+    #expect(system.windows[index].displayID == main)
+    #expect(system.windows.first { $0.id == short.id }?.isMinimized == true)
 }
 
 /// Settlement keeps sampling while a changed window that settled larger than

@@ -945,4 +945,10 @@ func anEarlySettledFrameLeavesAPendingClampPending(settledAfter: Double) {
     #expect(learner.merging(WindowConstraints(), for: probed, application: nil).minimumSizeSource == .learned)
     learner.forget(windowID: probed)
     #expect(learner.merging(WindowConstraints(), for: probed, application: nil).minimumSizeSource == .default)
+    // A seed over a reported minimum keeps that minimum for the write veto.
+    let tall = WindowConstraints(minimumSize: BTSize(width: 100, height: 500), minimumSizeSource: .hint)
+    let mixed = learner.merging(tall, for: seeded, application: "com.example.App")
+    #expect(mixed.minimumSize == BTSize(width: 400, height: 500) && mixed.minimumSizeSource == .seed)
+    #expect(mixed.unseededMinimumSize == tall.minimumSize && mixed.unseededMinimumSizeSource == .hint)
+    #expect(learner.merging(tall, for: written, application: nil).unseededMinimumSize == nil)
 }

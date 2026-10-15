@@ -54,6 +54,13 @@ public struct NativeDesktopObservation: Hashable, Sendable {
     /// Removes windows that are known to belong to another Space. A window on
     /// several Spaces is sticky and therefore floats instead of joining Bento.
     /// Missing membership remains unknown and preserves the public-API result.
+    ///
+    /// With separate Spaces per display, a window's center can cross to a
+    /// neighbouring display while the window still belongs to the current
+    /// Space of the display it came from, for example during a drag. That
+    /// window is on screen on a current Space, so it is kept and reported on
+    /// its Space's display. Only a window whose Space is current on no display
+    /// is removed.
     public func windowsOnCurrentSpaces(_ windows: [WindowSnapshot]) -> [WindowSnapshot] {
         windows.compactMap { window in
             guard let membership = windowMembership[window.id], !membership.isEmpty else {
@@ -64,10 +71,15 @@ public struct NativeDesktopObservation: Hashable, Sendable {
                 floating.isFloating = true
                 return floating
             }
-            guard let current = currentSpaceByDisplay[window.displayID], membership.contains(current) else {
-                return nil
+            if let current = currentSpaceByDisplay[window.displayID], membership.contains(current) {
+                return window
             }
-            return window
+            guard let spaceDisplay = currentSpaceByDisplay.keys.sorted().first(where: {
+                membership.contains(currentSpaceByDisplay[$0]!)
+            }) else { return nil }
+            var placed = window
+            placed.displayID = spaceDisplay
+            return placed
         }
     }
 }
