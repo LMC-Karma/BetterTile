@@ -4361,11 +4361,11 @@ extension BetterTileModel {
         guard sessionStore.isCurrent(original.id, revision: original.revision, on: display.id) else { return }
         let expectedSpace = expectedSpaceID ?? original.nativeSpaceID ?? (snapAction == nil ? nil
             : system.refreshNativeDesktopObservation()?.currentSpace(on: display.id))
-        let isSameDesktop = { @MainActor [weak self] in
+        // The same desktop, even if its work area changed after planning.
+        let isSameDesktopAnyWorkArea = { @MainActor [weak self] in
             guard let self, !self.isShutDown, !self.isStabilizingSpace, self.hasAccessibilityPermission,
                   !self.nativeFullscreenDisplayIDs.contains(display.id), !self.tabbedExiting.contains(display.id),
-                  self.activeMode(for: display.id) == .tabbed,
-                  self.system.displays().first(where: { $0.id == display.id })?.visibleFrame == display.visibleFrame else { return false }
+                  self.activeMode(for: display.id) == .tabbed else { return false }
             let observation = self.system.refreshNativeDesktopObservation()
             guard observation?.allowsAutomaticLayout(on: display.id) != false else { return false }
             if let space = expectedSpace, observation?.currentSpace(on: display.id) != space { return false }
@@ -4373,6 +4373,10 @@ extension BetterTileModel {
                 (state.windowIDs.contains($0.id) || $0.id == (gestureSourceID ?? focus)) && !self.rule(for: $0).allowsBentoParticipation
             }) { return false }
             return self.sessionStore.session(for: display.id)?.id == original.id
+        }
+        let isSameDesktop = { @MainActor [weak self] in
+            isSameDesktopAnyWorkArea()
+                && self?.system.displays().first(where: { $0.id == display.id })?.visibleFrame == display.visibleFrame
         }
         let isCurrent = { @MainActor [weak self] in
             isSameDesktop() && self?.sessionStore.isCurrent(original.id, revision: original.revision, on: display.id) == true
@@ -4522,6 +4526,9 @@ extension BetterTileModel {
                         self.tabbedNeedsReapply.remove(display.id)
                         self.tabbedNeedsRefresh.remove(display.id)
                     }
+                    // A work area that changed during the placement, for
+                    // example while the Dock settled, needs a placement too.
+                    if !Task.isCancelled, isSameDesktopAnyWorkArea() { self.refreshActiveWindows(force: true) }
                     return
                 }
                 guard isCurrent() else {
@@ -4790,6 +4797,9 @@ extension BetterTileModel {
                     self.tabbedNeedsReapply.remove(display.id)
                     self.tabbedNeedsRefresh.remove(display.id)
                 }
+                // A work area that changed during the placement, for
+                // example while the Dock settled, needs a placement too.
+                if !Task.isCancelled, isSameDesktopAnyWorkArea() { self.refreshActiveWindows(force: true) }
                 return
             }
             guard isCurrent() else {

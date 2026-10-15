@@ -37,6 +37,9 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, TabbedWindowSystem, Min
     /// Heights round up to a multiple of the step: an application, such as
     /// Terminal, that settles a row taller than asked.
     var heightSteps: [WindowID: Double] = [:]
+    /// Simulates AppKit's screen limit: a window wider than this keeps its
+    /// size when asked for another width that is still wider.
+    var appKitWidthLimit: Double?
     var frameWriteCounts: [WindowID: Int] = [:]
     var failedFrameWriteNumbers: [WindowID: Set<Int>] = [:]
     var completeSweepCount = 0
@@ -241,7 +244,9 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, TabbedWindowSystem, Min
                     // This application handles writes at once, so the nudge
                     // would follow: the kept size is a pending clamp.
                     minimumSizeLearner.recordClampCandidate(
-                        windowID: windowID, requested: frame.size, actual: actual.size, now: now
+                        windowID: windowID, requested: frame.size, actual: actual.size,
+                        workArea: availableDisplays.first { $0.id == windows[index].displayID }?.visibleFrame.size,
+                        now: now
                     )
                 }
                 refreshLearnedConstraints()
@@ -265,6 +270,9 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, TabbedWindowSystem, Min
         }
         if let step = heightSteps[windowID] {
             windows[index].frame.size.height = (windows[index].frame.size.height / step).rounded(.up) * step
+        }
+        if let limit = appKitWidthLimit, before.size.width > limit, windows[index].frame.size.width > limit {
+            windows[index].frame.size = before.size
         }
         // Like the Accessibility adapter, a window belongs to the display
         // that holds most of it.

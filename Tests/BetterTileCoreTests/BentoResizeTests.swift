@@ -777,6 +777,19 @@ func anEarlySettledFrameLeavesAPendingClampPending(settledAfter: Double) {
     #expect(learner.learnedSizes.isEmpty)
 }
 
+/// AppKit keeps a window that is wider than its screen rather than apply
+/// another width that is still too wide. Measured live: a 2560-point window
+/// kept its width for 2484 on a work area that settled at 2482. A kept size
+/// beyond the work area is no minimum; an axis within it still is.
+@Test func aSizeKeptBeyondTheWorkAreaIsNoMinimum() {
+    var learner = WindowMinimumSizeLearner()
+    learner.recordClampCandidate(windowID: readbackID, requested: BTSize(width: 2484, height: 1300),
+        actual: BTSize(width: 2560, height: 1376), workArea: BTSize(width: 2484, height: 1410), now: 0)
+    let confirmed = learner.confirmClampCandidate(windowID: readbackID, size: BTSize(width: 2560, height: 1376), now: afterDelay)
+    #expect(confirmed)
+    #expect(learner.learnedSizes[readbackID] == BTSize(width: 0, height: 1376))
+}
+
 @Test func applicationSeedStartsNewWindowsFromTheLatestMeasurement() {
     var learner = WindowMinimumSizeLearner()
     let first = WindowID(rawValue: "brave-1"), second = WindowID(rawValue: "brave-2")

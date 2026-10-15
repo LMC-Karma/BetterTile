@@ -418,7 +418,9 @@ The adapter reads each written window back, axis by axis:
 - An axis that kept its size, or grew, proves nothing yet. If the write was
   processed, it becomes a pending clamp. A write was processed when the window
   moved to the requested origin, its size changed, or it followed a position
-  nudge.
+  nudge. An axis kept larger than its display's work area is no pending
+  clamp: AppKit keeps a window that is larger than its screen rather than
+  apply another size that is still too large.
 - An axis that took the requested size lowers an older, larger minimum.
 
 Tabbed placement writes accept stepped sizes (`WindowSystem.withSteppedSizes`).
