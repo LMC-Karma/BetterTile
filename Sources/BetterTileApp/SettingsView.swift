@@ -523,7 +523,7 @@ private struct GeneralSettings: View {
 
 struct AppIconPicker: View {
     @Binding var showDockIcon: Bool
-    @AppStorage(AppIconStyle.defaultsKey) private var selectedRawValue = AppIconStyle.classic.rawValue
+    @AppStorage(AppIconStyle.defaultsKey) private var selectedRawValue = AppIconStyle.defaultStyle.rawValue
 
     var body: some View {
         Toggle("Show Dock icon", isOn: $showDockIcon)
@@ -535,7 +535,7 @@ struct AppIconPicker: View {
                 }
             }
             Text(showDockIcon
-                 ? "Changes the Dock icon while BetterTile is running. Finder uses Classic."
+                 ? "Changes the Dock icon while BetterTile is running. Finder uses Dark."
                  : "Your choice is saved. Turn on Show Dock icon above to display it in the Dock.")
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
@@ -544,7 +544,7 @@ struct AppIconPicker: View {
     }
 
     private func iconChoice(_ style: AppIconStyle) -> some View {
-        let selected = (AppIconStyle(rawValue: selectedRawValue) ?? .classic) == style
+        let selected = (AppIconStyle(rawValue: selectedRawValue) ?? .defaultStyle) == style
         return Button {
             select(style)
         } label: {

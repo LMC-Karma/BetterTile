@@ -92,6 +92,7 @@ enum AppAppearance: String, CaseIterable, Identifiable {
 
 enum AppIconStyle: String, CaseIterable, Identifiable {
     static let defaultsKey = "BetterTileAppIcon"
+    static let defaultStyle: Self = .dark
 
     case classic
     case ice
@@ -120,7 +121,7 @@ enum AppIconStyle: String, CaseIterable, Identifiable {
     }
 
     static func selected(in defaults: UserDefaults = .standard) -> Self {
-        defaults.string(forKey: defaultsKey).flatMap(Self.init(rawValue:)) ?? .classic
+        defaults.string(forKey: defaultsKey).flatMap(Self.init(rawValue:)) ?? defaultStyle
     }
 
     @MainActor
@@ -130,7 +131,7 @@ enum AppIconStyle: String, CaseIterable, Identifiable {
     static func apply(_ style: Self? = nil) {
         let selected = style ?? selected()
         // nil restores the system-rendered primary Icon Composer icon.
-        NSApp.applicationIconImage = selected == .classic ? nil : selected.image
+        NSApp.applicationIconImage = selected == defaultStyle ? nil : selected.image
         NSApp.dockTile.display()
     }
 }

@@ -1,5 +1,7 @@
 # App icon variants
 
+Dark is the default app icon in Debug and Release, including Finder and the
+installed app. Debug uses the matching Dark icon with its D badge.
 Classic uses the existing [AppIcon.icon](../../Resources/AppIcon.icon) document.
 [Ice Blue](../../Resources/AppIconIce.icon) derives from that document. It keeps
 the pane outlines, corner radii, canvas, layer order, positions, and scale.
@@ -22,8 +24,9 @@ composition, and matching Debug copies.
 Settings → General → Appearance has three buttons: Classic, Ice Blue, and Dark.
 Each button contains its centered preview and name. A border and checkmark show
 the selected choice. Tab moves between choices; Space or Return selects one.
-Classic is the default. The local `BetterTileAppIcon` preference saves
-the selection across launches. Unknown values use Classic. Debug and Release
+Dark is the default. The local `BetterTileAppIcon` preference saves
+the selection across launches. Missing and unknown values use Dark. Existing
+Classic, Ice Blue, and Dark choices are preserved. Debug and Release
 keep their existing separate preferences and Debug retains its D badge.
 
 Show Dock icon sits directly above the picker. When it is off, the picker
@@ -33,11 +36,19 @@ change the Dock visibility preference when selecting an icon.
 
 The picker loads icons from Xcode's compiled asset catalog and uses the public
 AppKit `NSApplication.applicationIconImage` API. It changes the running app's
-Dock icon. Finder and the installed app keep the Classic icon. Returning to
-Classic restores the system's primary icon. This follows
+Dock icon. Finder and the installed app use the Dark icon. Returning to
+Dark restores the system's primary icon. This follows
 [Apple's documented Dock icon behavior](https://developer.apple.com/documentation/appkit/nsapplication/applicationiconimage).
 No new dependency, permission, networking, private API, or window mutation is
 introduced. The only new stored value is the local icon preference.
+
+The picker does not set a custom Finder icon on the app bundle.
+An isolated signed test app on macOS 27.0.1 accepted the public
+`NSWorkspace.setIcon(_:forFile:options:)` call, but strict signature verification
+then failed with "resource fork, Finder information, or similar detritus not
+allowed". The call added an `Icon` file with a trailing carriage return and
+Finder metadata. Applying picker choices to Finder needs a separate design
+that preserves signature verification and the update path.
 
 ## Verification
 

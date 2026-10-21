@@ -2,16 +2,16 @@ import Foundation
 import Testing
 @testable import BetterTileApp
 
-@Test func appIconChoiceRestoresAndFallsBackToClassic() {
+@Test func appIconChoiceRestoresAndFallsBackToDark() {
     let defaults = MemoryDefaults()
 
-    #expect(AppIconStyle.selected(in: defaults) == .classic)
+    #expect(AppIconStyle.selected(in: defaults) == .dark)
     defaults.set("ice", forKey: AppIconStyle.defaultsKey)
     #expect(AppIconStyle.selected(in: defaults) == .ice)
     defaults.set("dark", forKey: AppIconStyle.defaultsKey)
     #expect(AppIconStyle.selected(in: defaults) == .dark)
     defaults.set("unknown-future-icon", forKey: AppIconStyle.defaultsKey)
-    #expect(AppIconStyle.selected(in: defaults) == .classic)
+    #expect(AppIconStyle.selected(in: defaults) == .dark)
     defaults.set("classic", forKey: AppIconStyle.defaultsKey)
     #expect(AppIconStyle.selected(in: defaults) == .classic)
 }
