@@ -524,6 +524,7 @@ private struct GeneralSettings: View {
 struct AppIconPicker: View {
     @Binding var showDockIcon: Bool
     @AppStorage(AppIconStyle.defaultsKey) private var selectedRawValue = AppIconStyle.defaultStyle.rawValue
+    @State private var finderIconUpdateFailed = false
 
     var body: some View {
         Toggle("Show Dock icon", isOn: $showDockIcon)
@@ -535,10 +536,15 @@ struct AppIconPicker: View {
                 }
             }
             Text(showDockIcon
-                 ? "Changes the Dock icon while BetterTile is running. Finder uses Dark."
-                 : "Your choice is saved. Turn on Show Dock icon above to display it in the Dock.")
+                 ? "Changes BetterTile’s icon in the Dock and Finder."
+                 : "Changes BetterTile’s icon in Finder. Turn on Show Dock icon above to display it in the Dock.")
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
+            if finderIconUpdateFailed {
+                Text("Finder’s icon couldn’t be updated. Make sure BetterTile is in a writable folder, then select the icon again.")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.red)
+            }
         }
         .padding(.vertical, 4)
     }
@@ -590,12 +596,12 @@ struct AppIconPicker: View {
         }
         .accessibilityLabel(style.title)
         .accessibilityAddTraits(selected ? .isSelected : [])
-        .help("Use the \(style.title) icon in the Dock")
+        .help("Use the \(style.title) icon in the Dock and Finder")
     }
 
     private func select(_ style: AppIconStyle) {
         selectedRawValue = style.rawValue
-        AppIconStyle.apply(style)
+        finderIconUpdateFailed = !AppIconStyle.apply(style)
     }
 }
 

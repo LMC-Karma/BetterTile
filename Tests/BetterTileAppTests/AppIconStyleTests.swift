@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Testing
 @testable import BetterTileApp
@@ -14,6 +15,56 @@ import Testing
     #expect(AppIconStyle.selected(in: defaults) == .dark)
     defaults.set("classic", forKey: AppIconStyle.defaultsKey)
     #expect(AppIconStyle.selected(in: defaults) == .classic)
+}
+
+@Test @MainActor func defaultFinderIconRemovesTheCustomIcon() {
+    let url = URL(fileURLWithPath: "/Applications/BetterTile.app")
+    var restored = false
+    #expect(AppIconStyle.dark.updateFinderIcon(at: url, loadImage: { _ in
+        Issue.record("Restoring the primary icon must not load a replacement image")
+        return nil
+    }, setIcon: { image, path in
+        restored = image == nil && path == url.path
+        return true
+    }))
+    #expect(restored)
+}
+
+@Test(arguments: [AppIconStyle.classic, .ice])
+@MainActor func alternateFinderIconUsesTheMatchingImage(style: AppIconStyle) {
+    let url = URL(fileURLWithPath: "/Applications/BetterTile.app")
+    let image = NSImage(size: NSSize(width: 128, height: 128))
+    var updated = false
+    let result = style.updateFinderIcon(at: url, loadImage: { name in
+        #expect(name == style.resourceName)
+        return image
+    }, setIcon: { selectedImage, path in
+        updated = selectedImage === image && path == url.path
+        return true
+    })
+    #expect(result)
+    #expect(updated)
+}
+
+@Test @MainActor func finderIconFailureDoesNotClearAnExistingIcon() {
+    let url = URL(fileURLWithPath: "/Applications/BetterTile.app")
+    #expect(!AppIconStyle.ice.updateFinderIcon(at: url, loadImage: { _ in nil }, setIcon: { _, _ in
+        Issue.record("A missing alternate must not write Finder metadata")
+        return true
+    }))
+    #expect(!AppIconStyle.ice.updateFinderIcon(at: url, loadImage: { _ in
+        NSImage(size: NSSize(width: 128, height: 128))
+    }, setIcon: { _, _ in false }))
+    #expect(!AppIconStyle.dark.updateFinderIcon(at: url, setIcon: { _, _ in false }))
+}
+
+@Test @MainActor func finderIconRequiresAnAppBundleURL() {
+    for url in [URL(fileURLWithPath: "/tmp/BetterTile"), URL(string: "https://example.com/BetterTile.app")!] {
+        #expect(!AppIconStyle.dark.updateFinderIcon(at: url, setIcon: { _, _ in
+            Issue.record("Only the local app bundle may receive Finder metadata")
+            return true
+        }))
+    }
 }
 
 @Test func appIconVariantsPreserveSourceGeometry() throws {
