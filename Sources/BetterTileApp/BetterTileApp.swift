@@ -92,6 +92,7 @@ enum AppAppearance: String, CaseIterable, Identifiable {
 
 enum AppIconStyle: String, CaseIterable, Identifiable {
     static let defaultsKey = "BetterTileAppIcon"
+    static let defaultStyle: Self = .dark
 
     case classic
     case ice
@@ -120,18 +121,47 @@ enum AppIconStyle: String, CaseIterable, Identifiable {
     }
 
     static func selected(in defaults: UserDefaults = .standard) -> Self {
-        defaults.string(forKey: defaultsKey).flatMap(Self.init(rawValue:)) ?? .classic
+        defaults.string(forKey: defaultsKey).flatMap(Self.init(rawValue:)) ?? defaultStyle
     }
 
     @MainActor
     var image: NSImage? { Bundle.main.image(forResource: resourceName) }
 
     @MainActor
-    static func apply(_ style: Self? = nil) {
-        let selected = style ?? selected()
-        // nil restores the system-rendered primary Icon Composer icon.
-        NSApp.applicationIconImage = selected == .classic ? nil : selected.image
-        NSApp.dockTile.display()
+    @discardableResult
+    static func apply(
+        _ style: Self? = nil,
+        defaults: UserDefaults = .standard,
+        updateFinder: @MainActor (Self) -> Bool = { $0.updateFinderIcon() },
+        updateDock: @MainActor (Self) -> Void = { selected in
+            // nil restores the system-rendered primary Icon Composer icon.
+            NSApp.applicationIconImage = selected == defaultStyle ? nil : selected.image
+            NSApp.dockTile.display()
+        }
+    ) -> Bool {
+        let selected = style ?? selected(in: defaults)
+        // A fresh install already has the primary icon. Only an explicit or saved
+        // choice should replace an icon the user may have set outside BetterTile.
+        let updatesFinder = style != nil || defaults.string(forKey: defaultsKey) != nil
+        let finderUpdated = !updatesFinder || updateFinder(selected)
+        // Clear the Finder override first so the Dock cannot pick up the old icon.
+        updateDock(selected)
+        return finderUpdated
+    }
+
+    @MainActor
+    func updateFinderIcon(
+        at bundleURL: URL = Bundle.main.bundleURL,
+        loadImage: (String) -> NSImage? = { Bundle.main.image(forResource: $0) },
+        setIcon: (NSImage?, String) -> Bool = { NSWorkspace.shared.setIcon($0, forFile: $1, options: []) }
+    ) -> Bool {
+        guard bundleURL.isFileURL, bundleURL.pathExtension == "app" else { return false }
+        if self == Self.defaultStyle {
+            return setIcon(nil, bundleURL.path)
+        }
+        // A missing alternate must not erase an existing Finder icon.
+        guard let image = loadImage(resourceName) else { return false }
+        return setIcon(image, bundleURL.path)
     }
 }
 
