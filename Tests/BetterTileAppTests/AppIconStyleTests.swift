@@ -17,6 +17,66 @@ import Testing
     #expect(AppIconStyle.selected(in: defaults) == .classic)
 }
 
+@Test @MainActor func freshInstallPreservesAnExternalFinderIcon() {
+    let defaults = MemoryDefaults()
+    var dockChoices: [AppIconStyle] = []
+    let result = AppIconStyle.apply(defaults: defaults, updateFinder: { _ in
+        Issue.record("A fresh install must preserve an external Finder icon")
+        return false
+    }, updateDock: { dockChoices.append($0) })
+    #expect(result)
+    #expect(dockChoices == [.dark])
+    #expect(defaults.string(forKey: AppIconStyle.defaultsKey) == nil)
+}
+
+@Test(arguments: ["classic", "ice", "dark", "unknown-future-icon"])
+@MainActor func launchReappliesASavedIconChoice(rawValue: String) {
+    let defaults = MemoryDefaults()
+    defaults.set(rawValue, forKey: AppIconStyle.defaultsKey)
+    let expected = AppIconStyle(rawValue: rawValue) ?? .defaultStyle
+    var operations: [String] = []
+    let result = AppIconStyle.apply(defaults: defaults, updateFinder: { style in
+        #expect(style == expected)
+        operations.append("Finder")
+        return true
+    }, updateDock: { style in
+        #expect(style == expected)
+        operations.append("Dock")
+    })
+    #expect(result)
+    #expect(operations == ["Finder", "Dock"])
+    #expect(defaults.string(forKey: AppIconStyle.defaultsKey) == rawValue)
+}
+
+@Test(arguments: AppIconStyle.allCases)
+@MainActor func explicitIconSelectionUpdatesFinderWithoutASavedChoice(style: AppIconStyle) {
+    let defaults = MemoryDefaults()
+    var finderChoices: [AppIconStyle] = []
+    var dockChoices: [AppIconStyle] = []
+    let result = AppIconStyle.apply(style, defaults: defaults, updateFinder: {
+        finderChoices.append($0)
+        return true
+    }, updateDock: { dockChoices.append($0) })
+    #expect(result)
+    #expect(finderChoices == [style])
+    #expect(dockChoices == [style])
+}
+
+@Test @MainActor func explicitIconSelectionOverridesASavedChoiceEvenWhenFinderFails() {
+    let defaults = MemoryDefaults()
+    defaults.set("classic", forKey: AppIconStyle.defaultsKey)
+    var finderChoices: [AppIconStyle] = []
+    var dockChoices: [AppIconStyle] = []
+    let result = AppIconStyle.apply(.ice, defaults: defaults, updateFinder: {
+        finderChoices.append($0)
+        return false
+    }, updateDock: { dockChoices.append($0) })
+    #expect(!result)
+    #expect(finderChoices == [.ice])
+    #expect(dockChoices == [.ice])
+    #expect(defaults.string(forKey: AppIconStyle.defaultsKey) == "classic")
+}
+
 @Test @MainActor func defaultFinderIconRemovesTheCustomIcon() {
     let url = URL(fileURLWithPath: "/Applications/BetterTile.app")
     var restored = false

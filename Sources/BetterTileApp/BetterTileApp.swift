@@ -129,16 +129,23 @@ enum AppIconStyle: String, CaseIterable, Identifiable {
 
     @MainActor
     @discardableResult
-    static func apply(_ style: Self? = nil) -> Bool {
-        let selected = style ?? selected()
+    static func apply(
+        _ style: Self? = nil,
+        defaults: UserDefaults = .standard,
+        updateFinder: @MainActor (Self) -> Bool = { $0.updateFinderIcon() },
+        updateDock: @MainActor (Self) -> Void = { selected in
+            // nil restores the system-rendered primary Icon Composer icon.
+            NSApp.applicationIconImage = selected == defaultStyle ? nil : selected.image
+            NSApp.dockTile.display()
+        }
+    ) -> Bool {
+        let selected = style ?? selected(in: defaults)
         // A fresh install already has the primary icon. Only an explicit or saved
         // choice should replace an icon the user may have set outside BetterTile.
-        let updatesFinder = style != nil || UserDefaults.standard.string(forKey: defaultsKey) != nil
-        let finderUpdated = !updatesFinder || selected.updateFinderIcon()
-        // nil restores the system-rendered primary Icon Composer icon.
+        let updatesFinder = style != nil || defaults.string(forKey: defaultsKey) != nil
+        let finderUpdated = !updatesFinder || updateFinder(selected)
         // Clear the Finder override first so the Dock cannot pick up the old icon.
-        NSApp.applicationIconImage = selected == defaultStyle ? nil : selected.image
-        NSApp.dockTile.display()
+        updateDock(selected)
         return finderUpdated
     }
 

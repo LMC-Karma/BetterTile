@@ -53,7 +53,10 @@ import Testing
         let data = try #require(image.tiffRepresentation)
         let bitmap = try #require(NSBitmapImageRep(data: data))
         let color = try #require(bitmap.colorAt(x: bitmap.pixelsWide / 2, y: bitmap.pixelsHigh / 2)?.usingColorSpace(.deviceRGB))
-        return color.blueComponent > 0.9 && color.redComponent < 0.1
+        // Finder can lighten the source color when it renders the icon.
+        // Identify the blue fixture by channel separation from the pale primary icon.
+        return color.blueComponent - color.redComponent > 0.5
+            && color.blueComponent - color.greenComponent > 0.2
     }
 
     #expect(try codesign(["--force", "--sign", "-"]) == 0)
