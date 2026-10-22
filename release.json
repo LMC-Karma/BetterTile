@@ -1,0 +1,29 @@
+{
+  "checked": "2026-10-21",
+  "latest": {
+    "version": "0.5.2 beta",
+    "tag": "v0.5.2-beta",
+    "date": "13 October 2026",
+    "notes": "https://github.com/LMC-Karma/BetterTile/releases/tag/v0.5.2-beta",
+    "dmg": "https://github.com/LMC-Karma/BetterTile/releases/download/v0.5.2-beta/BetterTile-0.5.2-beta.dmg",
+    "dmgName": "BetterTile-0.5.2-beta.dmg",
+    "sizeMB": 12.7
+  },
+  "recent": [
+    {
+      "version": "0.5.2 beta",
+      "date": "13 October 2026",
+      "notes": "https://github.com/LMC-Karma/BetterTile/releases/tag/v0.5.2-beta"
+    },
+    {
+      "version": "0.5.1 beta",
+      "date": "4 October 2026",
+      "notes": "https://github.com/LMC-Karma/BetterTile/releases/tag/v0.5.1-beta"
+    },
+    {
+      "version": "0.5.0 beta",
+      "date": "3 October 2026",
+      "notes": "https://github.com/LMC-Karma/BetterTile/releases/tag/v0.5.0-beta"
+    }
+  ]
+}

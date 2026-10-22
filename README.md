@@ -1,6 +1,6 @@
 # BetterTile website
 
-A static product website with an overview and six feature videos. Dark is the default; one header button switches to light. Current native Dark and Ice Blue icon exports are used throughout. Live site: https://lmc-karma.github.io/BetterTile/.
+A static product website with an overview and six feature videos. The site is Midnight only, with no appearance toggle. Current native Dark and Ice Blue icon exports are used throughout. Live site: https://lmc-karma.github.io/BetterTile/.
 
 ## Preview and build
 
@@ -18,15 +18,18 @@ Open http://127.0.0.1:4188/ and `brand.html#icon-colorways`. The build generates
 | Change | Source |
 | --- | --- |
 | Product name, headline, description, links | `content.mjs` → `brand` |
+| Version, release date, disk image link, recent releases | Run `npm run release` after each app release. It rewrites `release.json` from GitHub's public releases API. The build reads only that file. |
+| Comparison checklist | `content.mjs` → `checklist`; sources in `research/category.md` |
+| Link-preview image | Edit `social-preview.html`, render it at 1200 × 630, and save it as `assets/identity/social-preview.png`. The template is not deployed. |
 | Feature text, FAQ, comparison | `content.mjs` and supporting markup in `render.mjs` |
 | Videos, posters, dimensions and captions | `content.mjs` → `media` |
 | Colors, type, spacing and responsive layout | `redesign.css` |
-| In-view playback, pause and direct theme toggle | `redesign.js` |
+| In-view playback, pause, shared divider and scroll reveals | `redesign.js` |
 | Current native icon paths | `content.mjs` → `brand.assets` |
 | Social image / earlier vector studies | `identity.mjs` and `export.html` |
 | Separate historical brand board | `brand-base.css` and `brand.css` |
 
-Rebuild after content changes. Do not hand-edit generated HTML. Theme selection stays in localStorage. Generated HTML and identity SVGs are committed because Pages serves the branch root.
+Rebuild after content changes. Do not hand-edit generated HTML. Generated HTML and identity SVGs are committed because Pages serves the branch root.
 
 ## Videos
 
@@ -70,8 +73,8 @@ release is involved.
 
 ## Website data
 
-The site has no analytics or third-party scripts. Appearance is saved in this
-browser's local storage. Playback choices stay in memory. GitHub receives
+The site has no analytics or third-party scripts. Playback choices stay in
+memory. The site stores nothing in the browser. GitHub receives
 ordinary request metadata while hosting the page and media. Download and source
 links lead to the BetterTile GitHub repository.
 
