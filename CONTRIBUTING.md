@@ -54,8 +54,10 @@ in the same pull request.
    Describe the problem, resulting behavior, evidence, limits, and safety impact
    in the pull-request template. Record check results, including relevant manual
    checks. Name checks that did not run and explain why. Do not present an
-   untested assumption as a verified result. The maintainer decides whether a
-   remaining manual check blocks merge or release.
+   untested assumption as a verified result. Live macOS checks are not a CI or
+   contributor requirement. Record the ones you ran on a Mac, with its model and
+   macOS version. The maintainer decides whether a remaining manual check blocks
+   merge or release.
 
 5. Stage the files you changed. Push and open a ready pull request against
    `main`:
@@ -68,10 +70,18 @@ in the same pull request.
    Use `--draft` only when you want early feedback or the maintainer asks for a
    draft.
 
-6. Check automated review comments against the code and project rules. Resolve
-   every review thread. Merge only after CI passes and the maintainer approves
-   the final pushed version. If automated review cannot run, report the failure
-   and wait for a retry or a maintainer decision.
+6. AI review runs only when the maintainer requests it and is never a required
+   check. The maintainer requests Claude with the `review:claude` label or an
+   `@claude` comment, and removes and re-adds the label for another review. The
+   maintainer requests Codex with an `@codex review` comment, optionally followed
+   by focus text, through the Codex GitHub app. Codex automatic review stays off;
+   it needs no workflow or API key. See the
+   [Codex GitHub review guide](https://developers.openai.com/codex/integrations/github).
+
+   Check any requested review's comments against the code, tests, and project
+   rules. Fix confirmed faults and explain false alarms or infrastructure
+   failures. Merge only after CI passes, requested reviews are answered, review
+   threads are resolved, and the maintainer approves the final pushed version.
 
    The maintainer squash-merges each pull request. If your pull request depends
    on another open pull request, it merges only after that one is on `main`.
@@ -87,7 +97,8 @@ in the same pull request.
    `<old-parent-tip>` is the other pull request's last commit. Its branch is
    deleted on merge, so get the commit with
    `gh pr view <other-number> --json headRefOid`.
-   Your pull request merges only after its own CI and review pass.
+   Your pull request merges only after its own CI passes and requested reviews
+   are answered.
 
 ---
 

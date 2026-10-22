@@ -13,14 +13,14 @@
 - Before:
 - After:
 - Checks run and results:
+- Live checks on a Mac (Mac model, macOS version, displays/Spaces), or "not run":
+- What could not be checked and why:
 
 ## Limits
 
-- Checks not run and why:
 - Remaining uncertainty:
 
-Record relevant manual results or explain why they were skipped. The maintainer
-decides whether a remaining check blocks merge or release.
+The maintainer decides whether a remaining check blocks merge or release.
 
 ## Safety
 
