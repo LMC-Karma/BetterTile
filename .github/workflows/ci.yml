@@ -137,6 +137,8 @@ jobs:
   # check counts as passing. Always run `test` to reject failed classification
   # and require every build and test job to match that classification.
   # Add every new job to `needs` so the required check covers it.
+  # Keep `always()` rather than `!cancelled()`: a cancelled run must fail this
+  # check, because a skipped required check counts as passing.
   test:
     needs: [changes, unit-tests, release-package, app-debug, app-release]
     if: always()
