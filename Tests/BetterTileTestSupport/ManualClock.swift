@@ -13,7 +13,7 @@ public final class ManualClock: Clock, Sendable {
     }
 
     private struct State {
-        var now = ContinuousClock.now
+        var now = ContinuousClock.now // real-time: seeds the manual clock's origin once
         var nextID: UInt64 = 0
         var sleepers: [UInt64: Sleeper] = [:]
         var registrationWaiters: [(Int, CheckedContinuation<Void, Never>)] = []
@@ -95,8 +95,10 @@ public final class ManualClock: Clock, Sendable {
         }
     }
 
-    /// Wait for timer tasks to register before advancing. This avoids racing
-    /// a task that has been created but has not reached its first sleep.
+    /// Wait until at least `count` sleepers are registered in total, including
+    /// earlier ones that have not resumed. This avoids racing a task that has
+    /// been created but has not reached its first sleep. It waits until the
+    /// test's time limit if the sleep never happens.
     public func waitForSleepers(count: Int) async {
         await withCheckedContinuation { continuation in
             state.withLock { state in

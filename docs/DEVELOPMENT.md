@@ -206,6 +206,11 @@ sleep registration and advance to its deadline before joining the task.
 For cancellation tests, retain the task before cancelling, advance beyond
 every relevant deadline, and drain it before asserting no action occurred.
 
+`waitForSleepers(count:)` counts every registered sleeper that has not resumed,
+not only new ones. `waitForSleepers` and `drain` wait until the expected sleep
+or task happens. Give suites that use them a `.timeLimit`, so a missing sleep
+fails the test instead of stalling the run.
+
 ---
 
 ## 5. Branch, commit, and open a PR
