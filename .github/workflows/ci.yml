@@ -71,6 +71,18 @@ jobs:
             echo "code=false" >> "$GITHUB_OUTPUT"
           fi
 
+  guards:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Test the test timing guard
+        run: Tools/tests/check-test-timing-test.sh
+      - name: Check test timing and quarantine rules
+        run: Tools/ci/check-test-timing.sh
+
   unit-tests:
     needs: changes
     if: needs.changes.outputs.code == 'true'
@@ -140,7 +152,7 @@ jobs:
   # Keep `always()` rather than `!cancelled()`: a cancelled run must fail this
   # check, because a skipped required check counts as passing.
   test:
-    needs: [changes, unit-tests, release-package, app-debug, app-release]
+    needs: [changes, guards, unit-tests, release-package, app-debug, app-release]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
