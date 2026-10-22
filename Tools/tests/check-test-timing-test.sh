@@ -125,6 +125,8 @@ echo '@Test(.disabled("quarantine: #42 ")) func example() {}' > "$fixture"
 expect_fail
 echo '@Test(.disabled("quarantine: #42 tracks a system timer race")) func example() {}' > "$fixture"
 expect_pass
+echo '@Test(.disabled(if: isRunningOnCI)) func example() {}' > "$fixture"
+expect_pass
 cat > "$fixture" <<'SWIFT'
 @Test(.disabled(
     "quarantine: #42 tracks a system timer race"

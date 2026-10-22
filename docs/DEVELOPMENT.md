@@ -207,7 +207,7 @@ also supplied. Review any increase before accepting it.
 
 Disable a flaky test with `.disabled("quarantine: #123 <reason>")`. Use its issue
 number and a non-empty reason. Other `.disabled(...)` calls fail unless already
-baselined. Environment-gated `.enabled(if:)` traits are allowed.
+baselined. Condition gates, `.enabled(if:)` and `.disabled(if:)`, are allowed.
 
 The guard checks the known API spellings, including calls split across lines.
 It ignores comments, string contents, fixed dates such as

@@ -46,6 +46,8 @@ BEGIN {
     patterns["SuspendingClock"] = boundary "SuspendingClock(" dot "now([^[:alnum:]_]|$)|(" dot "init)?" ws "\\()"
     disabled = "[.]" ws "disabled" ws "\\("
     quarantine = "^[[:space:]]*\"quarantine: #[1-9][0-9]*[[:space:]]+[^\"[:space:]][^\"]*\"[[:space:]]*\\)"
+    # A condition gate, like `.enabled(if:)`, is not a quarantine.
+    conditional = "^[[:space:]]*if[[:space:]]*:"
 }
 # Mask comments and string contents while retaining offsets and newlines.
 # This is a spelling guard, not a Swift parser (aliases are outside its scope).
@@ -123,7 +125,7 @@ function scan(    key, rest, offset, start, size, line, argument, declaration) {
     while (match(rest, disabled)) {
         start = offset + RSTART; size = RLENGTH
         argument = substr(original, offset + RSTART + size)
-        if (argument !~ quarantine) printf "%s\tquarantine\t%d\n", file, line_at(start)
+        if (argument !~ quarantine && argument !~ conditional) printf "%s\tquarantine\t%d\n", file, line_at(start)
         offset += RSTART + size - 1
         rest = substr(source, offset + 1)
     }
