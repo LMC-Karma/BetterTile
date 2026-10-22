@@ -33,8 +33,10 @@ let package = Package(
             ],
             exclude: ["Info.plist"]
         ),
-        .testTarget(name: "BetterTileCoreTests", dependencies: ["BetterTileCore"]),
-        .testTarget(name: "BetterTileMacOSTests", dependencies: ["BetterTileMacOS", "BetterTileCore"]),
+        // Test-only support. Only test targets may depend on it.
+        .target(name: "BetterTileTestSupport", dependencies: ["BetterTileCore"], path: "Tests/BetterTileTestSupport"),
+        .testTarget(name: "BetterTileCoreTests", dependencies: ["BetterTileCore", "BetterTileTestSupport"]),
+        .testTarget(name: "BetterTileMacOSTests", dependencies: ["BetterTileMacOS", "BetterTileCore", "BetterTileTestSupport"]),
         .testTarget(name: "BetterTileAppTests", dependencies: ["BetterTileApp"]),
     ],
     swiftLanguageModes: [.v6]
