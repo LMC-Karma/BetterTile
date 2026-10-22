@@ -76,7 +76,8 @@ stay on the Mac. See [the security disclosure](../../SECURITY.md#app-icon-custom
 
 The Finder integration test uses a disposable ad-hoc-signed app. It verifies
 the actual icon change, unchanged signed contents, ordinary signature
-validation, and restoration of strict validation after selecting Dark:
+validation, the expected strict-verification rejection of custom Finder
+metadata, and restoration of strict validation after selecting Dark:
 
 ```sh
 BETTERTILE_TEST_FINDER_ICON=1 swift test \

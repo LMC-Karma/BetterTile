@@ -22,7 +22,7 @@ import Testing
     try PropertyListSerialization.data(fromPropertyList: info, format: .xml, options: 0)
         .write(to: contents.appendingPathComponent("Info.plist"))
 
-    func codesign(_ arguments: [String]) throws -> Int32 {
+    func codesign(_ arguments: [String]) throws -> (status: Int32, output: String) {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/codesign")
         process.arguments = arguments + [app.path]
@@ -33,10 +33,11 @@ import Testing
         // Drain before waiting so diagnostics cannot fill the pipe.
         let data = output.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
-        if process.terminationStatus != 0 {
-            Issue.record("\(String(decoding: data, as: UTF8.self))")
-        }
-        return process.terminationStatus
+        return (process.terminationStatus, String(decoding: data, as: UTF8.self))
+    }
+    func expectCodesignSuccess(_ arguments: [String]) throws {
+        let result = try codesign(arguments)
+        #expect(result.status == 0, "\(result.output)")
     }
     func signedContents() throws -> [String: Data] {
         let enumerator = try #require(fileManager.enumerator(at: contents, includingPropertiesForKeys: [.isRegularFileKey]))
@@ -59,8 +60,8 @@ import Testing
             && color.blueComponent - color.greenComponent > 0.2
     }
 
-    #expect(try codesign(["--force", "--sign", "-"]) == 0)
-    #expect(try codesign(["--verify", "--deep", "--strict"]) == 0)
+    try expectCodesignSuccess(["--force", "--sign", "-"])
+    try expectCodesignSuccess(["--verify", "--deep", "--strict"])
     let originalContents = try signedContents()
     #expect(try !iconIsBlue())
     let blue = NSImage(size: NSSize(width: 128, height: 128), flipped: false) { rect in
@@ -71,10 +72,14 @@ import Testing
     #expect(AppIconStyle.classic.updateFinderIcon(at: app, loadImage: { _ in blue }))
     #expect(try iconIsBlue())
     #expect(try signedContents() == originalContents)
-    #expect(try codesign(["--verify", "--deep"]) == 0)
+    try expectCodesignSuccess(["--verify", "--deep"])
+    let strictOverride = try codesign(["--verify", "--deep", "--strict"])
+    #expect(strictOverride.status != 0, "Strict verification must reject custom Finder metadata")
+    #expect(strictOverride.output.contains("resource fork, Finder information, or similar detritus not allowed"),
+            "\(strictOverride.output)")
 
     #expect(AppIconStyle.dark.updateFinderIcon(at: app))
     #expect(try !iconIsBlue())
     #expect(try signedContents() == originalContents)
-    #expect(try codesign(["--verify", "--deep", "--strict"]) == 0)
+    try expectCodesignSuccess(["--verify", "--deep", "--strict"])
 }
