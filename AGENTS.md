@@ -49,9 +49,9 @@ from a source-level explanation. Do not present an untested assumption as a
 verified result.
 
 Use judgment for checks that require live macOS behavior or hardware. These
-checks are not a CI or contributor requirement. The maintainer runs them locally
-when the change affects behavior that automated tests cannot cover. Record what
-was checked or skipped. The maintainer decides whether a remaining manual check
+checks are not a CI or contributor requirement. Run them on a local Mac when the
+change affects behavior that automated tests cannot cover. Record what was
+checked or skipped. The maintainer decides whether a remaining manual check
 blocks merge or release.
 
 `Package.swift` exposes libraries only. The runnable app comes from
@@ -147,10 +147,10 @@ comments, commit messages, and technical documentation.
 - Complete the pull-request body. Record checks that ran and checks that did not
   run.
 - AI review runs only when the maintainer requests it and is never a required
-  check. Request Claude with the `review:claude` label or an `@claude` comment.
-  Request Codex through the Codex GitHub app with `@codex review`, optionally
-  followed by focus text. Keep Codex automatic review off; it needs no workflow
-  or API key.
+  check. Do not request a review yourself. The maintainer requests Claude with
+  the `review:claude` label or an `@claude` comment, and Codex with an
+  `@codex review` comment through the Codex GitHub app. Codex automatic review
+  stays off; it needs no workflow or API key.
 - Verify any requested review's comments against the code, tests, and project
   rules. Fix confirmed faults. Explain false alarms and infrastructure failures.
 - Merge only after CI passes, requested reviews are answered, review threads are

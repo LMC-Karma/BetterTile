@@ -55,8 +55,9 @@ in the same pull request.
    in the pull-request template. Record check results, including relevant manual
    checks. Name checks that did not run and explain why. Do not present an
    untested assumption as a verified result. Live macOS checks are not a CI or
-   contributor requirement. The maintainer runs them locally and decides whether
-   a remaining manual check blocks merge or release.
+   contributor requirement. Record the ones you ran on a Mac, with its model and
+   macOS version. The maintainer decides whether a remaining manual check blocks
+   merge or release.
 
 5. Stage the files you changed. Push and open a ready pull request against
    `main`:
@@ -70,10 +71,11 @@ in the same pull request.
    draft.
 
 6. AI review runs only when the maintainer requests it and is never a required
-   check. Request Claude with the `review:claude` label or an `@claude` comment.
-   Remove and re-add the label to request another review. Request Codex through
-   the Codex GitHub app with `@codex review`, optionally followed by focus text.
-   Keep Codex automatic review off; it needs no workflow or API key. See the
+   check. The maintainer requests Claude with the `review:claude` label or an
+   `@claude` comment, and removes and re-adds the label for another review. The
+   maintainer requests Codex with an `@codex review` comment, optionally followed
+   by focus text, through the Codex GitHub app. Codex automatic review stays off;
+   it needs no workflow or API key. See the
    [Codex GitHub review guide](https://developers.openai.com/codex/integrations/github).
 
    Check any requested review's comments against the code, tests, and project
