@@ -178,6 +178,34 @@ must not be distributed. The release script still builds and validates
 > Check the command's exit status. Piping the output through `tail` hides a
 > failed build.
 
+### Testing timers without real time
+
+Use `BetterTileClock.live` as the product default. Timer tests can import the
+test-only `BetterTileTestSupport` target and inject `ManualClock().clock`.
+Keep the manual clock instance so the test can advance it:
+
+```swift
+let manual = ManualClock()
+let debouncer = DisplayRefreshDebouncer(clock: manual.clock)
+debouncer.schedule { refreshCount += 1 }
+let task = try #require(debouncer.task)
+await manual.waitForSleepers(count: 1)
+manual.advance(by: .milliseconds(120))
+await manual.drain(task)
+#expect(refreshCount == 1)
+```
+
+The task handle above is available through `@testable import BetterTileMacOS`.
+Wait for sleep registration before advancing. Otherwise a new task could
+start its delay after the advance. `advance(by:)` resumes due continuations
+in deadline order, with registration order breaking ties. The executor
+controls when their task bodies run. `drain(task)` waits for that known task
+to complete; it does not guess how many executor turns are enough, advance
+time, or drain the AppKit run loop. For chained delays, wait for each new
+sleep registration and advance to its deadline before joining the task.
+For cancellation tests, retain the task before cancelling, advance beyond
+every relevant deadline, and drain it before asserting no action occurred.
+
 ---
 
 ## 5. Branch, commit, and open a PR
