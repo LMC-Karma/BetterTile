@@ -158,6 +158,11 @@ That validation build is also named `BetterTile Debug.app`; it is unsigned and
 must not be distributed. The release script still builds and validates
 `BetterTile.app` from the Release configuration.
 
+CI runs unit tests, release tool tests and the release package build, and the
+Debug and Release app builds in four parallel macOS jobs. The required `test`
+check passes only after all four succeed. For documentation-only pull requests,
+it passes after `changes` succeeds and all four macOS jobs are skipped.
+
 > **Note:** `swift test` needs the full Xcode toolchain. If you see
 > `no such module 'Testing'`, point the command line at Xcode:
 > `sudo xcode-select -s /Applications/Xcode.app/Contents/Developer`.
