@@ -5,8 +5,9 @@ Generated from the working page. Includes section copy and product video caption
 ## Your windows. Working together.
 
 A native Mac window manager that keeps your workspace in step.
-[Download beta ](https://github.com/LMC-Karma/BetterTile/releases/latest)[ Watch demo](#overview)
-Free forever · Open source · macOS 26 or later
+[Download for Mac ](https://github.com/LMC-Karma/BetterTile/releases/download/v0.5.2-beta/BetterTile-0.5.2-beta.dmg)[ Watch demo](#overview)
+macOS 26 or later. Free and open source.
+Version 0.5.2 beta · 13 October 2026 · 12.7 MB disk image
 
 A quick tour of BetterTile
 
@@ -14,18 +15,18 @@ Video could not load. Try playing it again.
 
 [Open A quick tour of BetterTile video](assets/media/overview.mp4)
 
-[Linked resizing](#linked)[Bento](#bento)[Snapping](#snapping)[Tabbed](#tabbed)[Layout Wheel](#wheel)[Shortcuts](#keyboard)
+[Linked resizing](#linked)[Adaptive tiling](#adaptive)[Snapping](#snapping)[Tabbed](#tabbed)[Layout Wheel](#wheel)[Shortcuts](#keyboard)
 
-### Bento grows with your work.
+### Adaptive tiling. Grows as you work.
 
-Open a new window. Bento makes room in the layout, choosing a split that keeps movement and resizing to a minimum.
+Open a new window. Adaptive tiling makes room in the layout, choosing a split that keeps movement and resizing to a minimum.
 [Get started ](#start)
 
-Adaptive Bento
+Adaptive tiling
 
 Video could not load. Try playing it again.
 
-[Open Adaptive Bento video](assets/media/bento.mp4)
+[Open Adaptive tiling video](assets/media/bento.mp4)
 
 ### Resize together. Stay aligned.
 
@@ -81,7 +82,7 @@ Video could not load. Try playing it again.
 
 [Open Keyboard shortcuts and undo video](assets/media/keyboard.mp4)
 
-### Your windows. Your workspace.
+### No paid tier. No tracking.
 
 Free forever, with the source open to everyone. No paid tier, subscription, advertising, behavioral tracking, or sale of user data.
 [Explore the source ](https://github.com/LMC-Karma/BetterTile)
@@ -90,54 +91,105 @@ Free forever, with the source open to everyone. No paid tier, subscription, adve
 
 The whole app. Open source under GPL v3 or later.
 
+Linked resizing
+Adaptive tiling
+Drag snapping
+Tabbed panes
+Layout Wheel
+Shortcuts & undo
+
+#### One permission, explained.
+
+Accessibility lets BetterTile move and resize your windows. It is the only macOS permission the app requests.
+
+Privacy & Security
+AccessibilityBetterTile
+Screen RecordingNot requested
+Input MonitoringNot requested
+Full Disk AccessNot requested
+
 #### Window data stays on your Mac.
 
 Update checks contact GitHub and can be turned off. No behavioral tracking. [Read the network disclosure ](https://github.com/LMC-Karma/BetterTile/blob/main/SECURITY.md)
 
-#### One permission, explained.
+Stays on this MacWindow positions and sizes
+Settings and shortcuts
 
-Accessibility lets BetterTile move and resize your windows.
+Leaves this MacUpdate check to GitHubEvery 4 hours by default · Can be turned off
+Analytics and trackingNone
+
+Update checks send no window data, settings, analytics or crash reports.
+
+Drag the blue handle. Both sides resize together, just like in BetterTile.
 
 ### Different ways to make space.
 
 There are good tools in this category. Choose the interaction that suits your work.
 
-Workflow comparison · sources checked 3 October 2026ProductA good fit forCoordinated windowsOwnership
-BetterTileDirect shared-boundary control, adaptive Bento, and Tabbed panes.Drag the seam. Choose a ghost preview or live resizing.[Source ](https://github.com/LMC-Karma/BetterTile/blob/main/README.md) [Beta & privacy details ](https://github.com/LMC-Karma/BetterTile/blob/main/SECURITY.md)
-Free · GPL v3+ · macOS 26+ beta
-Rectangle ProCustom placement commands and saved workspaces, including automatic layout triggers.Adjacent windows adjust on release after an edge drag.[Source ](https://rectangleapp.com/pro/docs/general/) [Saved layouts ](https://rectangleapp.com/pro/docs/layouts/)
-US$9.99 displayed · 10-day trial
-MoomReusable arrangements and a configurable window-control palette.Saved multi-window arrangements. A shared seam was not verified.[Source ](https://manytricks.com/moom/help/customactions.html) [Product & price ](https://manytricks.com/moom/)
-$15 displayed · perpetual license, ≥1 year updates
-AeroSpaceKeyboard and CLI tiling with plain-text configuration and virtual workspaces.Tree resize and balance commands. Pointer seam behavior was not tested.[Source ](https://nikitabobko.github.io/AeroSpace/commands#resize) [Source & workflow ](https://github.com/nikitabobko/AeroSpace)
-Free · MIT · configuration-oriented
+Swipe to compare all four apps.
+Window manager comparison. Sources checked 3 October 2026.Documented by the developer—Not offered, or not verifiedBetterTileFree · Public betaRectangle ProUS$9.99 · 10-day trialMoom$15 · Perpetual licenseAeroSpaceFree
+Resize neighbours togetherMove one edge and the next window follows.Drag the shared edgeAfter release—Not verifiedResize commands
+Tile new windows automaticallyRoom is made as windows open.Adaptive tilingLayout triggers—Not verifiedTree tiling
+Drag to snapEdges, corners and custom zones.YesYesDrag zones—Not verified
+Keyboard shortcutsPlace windows without the pointer.YesYesYesKeyboard and CLI
+Pointer menuChoose a placement where the pointer is.Layout Wheel—Not verifiedPop-up palette—Not verified
+Tabbed panesSeveral windows share one pane.Yes—Not verified—Not verified—Not verified
+Saved layoutsStore an arrangement and apply it later.—Not offeredYesSaved arrangements—Not verified
+Open sourceRead and build the code yourself.GPL v3 or later—Not verified—Not verifiedMIT
+RequiresmacOS 26macOS 13.5macOS 10.13—Not verified
+A good fit forDirect shared-boundary control, adaptive tiling, and Tabbed panes.Custom placement commands and saved workspaces, including automatic layout triggers.Reusable arrangements and a configurable window-control palette.Keyboard and CLI tiling with plain-text configuration and virtual workspaces.
+Sources[Source ](https://github.com/LMC-Karma/BetterTile/blob/main/README.md) [Beta & privacy details ](https://github.com/LMC-Karma/BetterTile/blob/main/SECURITY.md)
+[Source ](https://rectangleapp.com/pro/docs/general/) [Saved layouts ](https://rectangleapp.com/pro/docs/layouts/)
+[Source ](https://manytricks.com/moom/help/customactions.html) [Product & price ](https://manytricks.com/moom/)
+[Source ](https://nikitabobko.github.io/AeroSpace/commands#resize) [Source & workflow ](https://github.com/nikitabobko/AeroSpace)
 
-“Not verified” is not a claim of no support. Prices are the values displayed on the check date; Moom’s page did not state a currency code. [Free Rectangle](https://rectangleapp.com/) and [Loop](https://github.com/MrKai77/Loop) also offer free placement tools. [Full research and sources ](research/category.md)
+Sources checked 3 October 2026. A dash is not a claim of no support. Prices are the values displayed on the check date; Moom’s page did not state a currency code. [Free Rectangle](https://rectangleapp.com/) and [Loop](https://github.com/MrKai77/Loop) also offer free placement tools. [Full research and sources ](research/category.md)
 
 ### Make the first move.
 
 macOS 26 or later Public beta · Free forever
 
-01
+BetterTileBetterTile
+Applications
+
+1
 
 #### Download the beta.
 
 Get the disk image from the official GitHub release. Open it and drag BetterTile into Applications.
-[Get the latest release ](https://github.com/LMC-Karma/BetterTile/releases/latest)
-02
+[Download the disk image ](https://github.com/LMC-Karma/BetterTile/releases/download/v0.5.2-beta/BetterTile-0.5.2-beta.dmg)
+Privacy & SecurityPrivacy & Security
+Security“BetterTile” was blocked to protect your Mac.
+Open Anyway
+
+2
 
 #### Allow the first launch.
 
 The beta is self-signed, without Apple Developer ID or notarization. After the first launch attempt, confirm the source, then choose Open Anyway in System Settings → Privacy & Security.
 
-03
+Desktop
+
+3
 
 #### Give your windows room.
 
 Follow the app’s explanation to grant Accessibility permission. Choose your layout and enable the controls you want.
 [Full installation guide ](https://github.com/LMC-Karma/BetterTile#install)
 
+#### Recent releases
+
+[0.5.2 beta13 October 2026Latest](https://github.com/LMC-Karma/BetterTile/releases/tag/v0.5.2-beta)
+[0.5.1 beta4 October 2026](https://github.com/LMC-Karma/BetterTile/releases/tag/v0.5.1-beta)
+[0.5.0 beta3 October 2026](https://github.com/LMC-Karma/BetterTile/releases/tag/v0.5.0-beta)
+[All release notes ](https://github.com/LMC-Karma/BetterTile/releases)
+
 ### A few good questions.
+
+#### Still curious?
+
+Read the guide, or ask on GitHub. Feature ideas and bug reports are welcome.
+[Read the docs ](https://github.com/LMC-Karma/BetterTile/blob/main/README.md)[Open an issue ](https://github.com/LMC-Karma/BetterTile/issues)
 
 Which Macs can run it?
 The current beta requires macOS 26 or later. Accessibility is the only macOS permission BetterTile requests. Check the latest release notes before installing a new version.
@@ -156,5 +208,5 @@ BetterTile can work with windows arranged by macOS tiling. For dragging to scree
 
 ### Your windows. Working together.
 
-[Download beta ](https://github.com/LMC-Karma/BetterTile/releases/latest)macOS 26 or later · Free forever · Open source
-Self-signed beta. [First-install instructions ](https://github.com/LMC-Karma/BetterTile#install)
+[Download for Mac ](https://github.com/LMC-Karma/BetterTile/releases/download/v0.5.2-beta/BetterTile-0.5.2-beta.dmg)macOS 26 or later. Free and open source.
+Version 0.5.2 beta · 13 October 2026 · 12.7 MB disk image. Self-signed beta: [first-install instructions ](https://github.com/LMC-Karma/BetterTile#install)

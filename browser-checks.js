@@ -10,14 +10,7 @@ export async function runChecks() {
   check('No old simulation, recording or replay buttons', !$('#shared-edge') && !$('[data-replay]') && !videos.some(v => v.dataset.videoSrc === 'assets/demo.mp4'));
   check('All videos are silent inline loops without native toolbars', videos.every(v => v.muted && v.defaultMuted && v.loop && v.playsInline && !v.controls));
   check('No missing-capture placeholders', !$('.is-pending'));
-  const startTheme = document.documentElement.dataset.theme;
-  $('.theme-toggle').click();
-  check('Theme switches in one click', document.documentElement.dataset.theme !== startTheme && !$('.appearance-picker'));
-  check('Theme persists locally', JSON.parse(localStorage.getItem('bettertile-appearance')).theme === document.documentElement.dataset.theme);
-  const light = document.documentElement.dataset.theme === 'light';
-  check('Theme button names its next action', $('.theme-toggle').getAttribute('aria-label') === `Switch to ${light ? 'dark' : 'light'} mode`);
-  check('Current native icon matches the theme', getComputedStyle($(light ? '.logo-light' : '.logo-dark')).display !== 'none' && $(light ? '.logo-light' : '.logo-dark').src.includes('app-icon-native-'));
-  $('.theme-toggle').click();
+  check('Midnight only, with no appearance toggle', !$('.theme-toggle') && document.documentElement.dataset.theme === 'dark');
   const hero = $('#video-overview'), heroButton = $('#overview .video-toggle');
   hero.scrollIntoView({behavior: 'instant', block: 'center'});
   await until(() => hero.readyState >= 2);
