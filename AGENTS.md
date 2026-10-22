@@ -48,10 +48,11 @@ with the same configuration and workload. Distinguish measured improvement
 from a source-level explanation. Do not present an untested assumption as a
 verified result.
 
-Use judgment for checks that require live macOS behavior or hardware. Run them
-when the change affects behavior that automated tests cannot cover, and record
-what was checked or skipped. The maintainer decides whether a remaining manual
-check blocks merge or release.
+Use judgment for checks that require live macOS behavior or hardware. These
+checks are not a CI or contributor requirement. The maintainer runs them locally
+when the change affects behavior that automated tests cannot cover. Record what
+was checked or skipped. The maintainer decides whether a remaining manual check
+blocks merge or release.
 
 `Package.swift` exposes libraries only. The runnable app comes from
 `BetterTile.xcodeproj`. Keep it that way.
@@ -145,10 +146,15 @@ comments, commit messages, and technical documentation.
   or the purpose is early feedback.
 - Complete the pull-request body. Record checks that ran and checks that did not
   run.
-- Verify automated review comments against the code, tests, and project rules.
-  Fix confirmed faults. Explain false alarms and infrastructure failures.
-- Merge only after CI passes, review is complete, review threads are resolved,
-  and the maintainer approves the final pushed version.
+- AI review runs only when the maintainer requests it and is never a required
+  check. Request Claude with the `review:claude` label or an `@claude` comment.
+  Request Codex through the Codex GitHub app with `@codex review`, optionally
+  followed by focus text. Keep Codex automatic review off; it needs no workflow
+  or API key.
+- Verify any requested review's comments against the code, tests, and project
+  rules. Fix confirmed faults. Explain false alarms and infrastructure failures.
+- Merge only after CI passes, requested reviews are answered, review threads are
+  resolved, and the maintainer approves the final pushed version.
 - Merge with squash. The pull-request title becomes the commit subject on
   `main`, so write it as a summary of the change.
 - Prefer independent pull requests against `main`. Stack a pull request on
@@ -159,10 +165,8 @@ comments, commit messages, and technical documentation.
   `git rebase --onto origin/main <old-parent-tip> <child>`. `<old-parent-tip>`
   is the parent pull request's last commit. Get it with
   `gh pr view <parent-number> --json headRefOid`, because the parent's branch
-  no longer exists. The rebase needs a force-push, so ask first. Merge the child only after its own CI and review
-  pass.
-- If automated review cannot run, report the failure and wait for a retry or a
-  maintainer decision.
+  no longer exists. The rebase needs a force-push, so ask first. Merge the child
+  only after its own CI passes and requested reviews are answered.
 - When abandoning work, close its pull request and return the workspace to
   `origin/main`. Keep the branch unless the user asks to delete it.
 
