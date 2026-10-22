@@ -191,6 +191,30 @@ succeeds and all four jobs are skipped. A new CI job must be added to the
 > Check the command's exit status. Piping the output through `tail` hides a
 > failed build.
 
+### Test timing and quarantine guard
+
+Run `Tools/ci/check-test-timing.sh` to check Swift files under `Tests/` without
+building them. It checks sleep calls and reads from real clocks. Use the
+injected clock in new tests. When a test needs real time, put
+`// real-time: <reason>` on the call line with a non-empty reason.
+
+The baseline records unannotated call counts by file and API. It survives line
+shifts, but cannot detect a removed call replaced by another call to the same
+API in the same file. A count increase fails. A decrease passes with a hint.
+After removing calls, run `Tools/ci/check-test-timing.sh --update-baseline` to
+lower the counts. This command refuses increases unless `--allow-increase` is
+also supplied. Review any increase before accepting it.
+
+Disable a flaky test with `.disabled("quarantine: #123 <reason>")`. Use its issue
+number and a non-empty reason. Other `.disabled(...)` calls fail unless already
+baselined. Environment-gated `.enabled(if:)` traits are allowed.
+
+The guard checks the known API spellings, including calls split across lines.
+It ignores comments, string contents, fixed dates such as
+`Date(timeIntervalSince1970:)`, and clock instant types. It does not resolve
+aliases or calls inside string interpolation. Run its fixture tests with
+`Tools/tests/check-test-timing-test.sh`.
+
 ---
 
 ## 5. Branch, commit, and open a PR
