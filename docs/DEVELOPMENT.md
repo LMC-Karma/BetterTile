@@ -169,7 +169,7 @@ build. Then four macOS jobs run in parallel:
 The required `test` check passes only when `changes` succeeds and all four jobs
 succeed. For a documentation-only pull request, it passes when `changes`
 succeeds and all four jobs are skipped. A new CI job must be added to the
-`needs` list of `test`; otherwise the required check does not cover it.
+`needs` list of `test`; `test` then checks its result automatically.
 
 > **Note:** `swift test` needs the full Xcode toolchain. If you see
 > `no such module 'Testing'`, point the command line at Xcode:
