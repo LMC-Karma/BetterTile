@@ -12,7 +12,6 @@ Tests/BetterTileAppTests/TabbedPaneSizeTests.swift	Task.sleep	7
 Tests/BetterTileAppTests/TabbedSnapModelTests.swift	Task.sleep	13
 Tests/BetterTileAppTests/TabbedSteppedModelTests.swift	Task.sleep	35
 Tests/BetterTileAppTests/TabbedWorkAreaModelTests.swift	Task.sleep	4
-Tests/BetterTileMacOSTests/DisplayRefreshDebouncerTests.swift	Task.sleep	1
 Tests/BetterTileMacOSTests/DividerDragOverlayTests.swift	Task.sleep	8
 Tests/BetterTileMacOSTests/DividerLensTests.swift	Task.sleep	2
 Tests/BetterTileMacOSTests/DividerOverlayControllerTests.swift	Task.sleep	1

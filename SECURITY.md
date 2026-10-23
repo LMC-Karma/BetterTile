@@ -265,6 +265,25 @@ Sparkle is the sole current runtime dependency. It verifies BetterTile update
 archives with an EdDSA signature. Its private signing key remains outside the
 repository and GitHub Actions.
 
+## App icon customization
+
+The App icon picker saves a local `BetterTileAppIcon` preference and changes
+BetterTile's Dock and Finder icons through public AppKit APIs. A Finder
+override writes generated icon data and Finder metadata at the running app
+bundle's root. It requires a writable app and never requests elevation. A
+failed write is reported in Settings when the user selects an icon; the saved
+choice remains available for the Dock and for the next launch. A fresh install
+does not replace a custom icon the user set outside BetterTile.
+
+This operation does not change the executable, Info.plist, signed resources,
+or signing identity, and does not re-sign the app. Ordinary signature
+verification passes in the isolated integration test. Strict signature
+verification rejects the Finder metadata while a custom icon is active;
+selecting the default Dark icon clears the override and restores strict
+verification. Release packaging retains its existing strict checks. No
+permission, private API, dependency, telemetry, or network request is added.
+See [icon validation and limits](docs/icon-composer/README.md#finder-metadata-and-signature-checks).
+
 ## Distribution
 
 Public beta builds are signed with the maintainer-held, self-signed

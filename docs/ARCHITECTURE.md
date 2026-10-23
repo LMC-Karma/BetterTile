@@ -52,6 +52,14 @@ explicit flushes, and shutdown saves. Settings shows a persistent explanation
 independent of action status. Runtime configuration changes remain usable for
 the session. Restoring a valid file and relaunching resumes normal saving.
 
+## Time source
+
+`BetterTileClock` in Core wraps Swift's `Clock` protocol with `Duration` and
+monotonic `ContinuousClock.Instant` values. Its live default uses
+`ContinuousClock`. Display-refresh debouncing accepts this clock; its delay
+and cancellation behavior stay the same. Other timer paths have not yet
+migrated. Clock injection does not change the layer dependencies.
+
 ## Coordinate model
 
 Core geometry uses logical points with a top-left origin. Display visible frames and Accessibility window frames are converted at the macOS boundary. Core code never sees AppKit's bottom-left global screen coordinate system. With Leave space for Dock on, or with a Dock that never hides, the macOS boundary also removes the Dock's strip from its display's visible frame. macOS already reserves that strip for a Dock that never hides, but AppKit can report a secondary display's visible frame late after the Dock moves there or changes edge. The strip is the Dock's Accessibility list thickness plus 6 points, which matches what macOS reserves for a Dock that never hides, within a point. The list keeps its size while the Dock is hidden, so the work area stays the same as the Dock slides in and out. A Dock not shown since it started, as after login, reports no size; until it is shown, the thickness last measured on its edge stands in on the main display.

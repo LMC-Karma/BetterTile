@@ -1,19 +1,130 @@
+import AppKit
 import Foundation
 import Testing
 @testable import BetterTileApp
 
-@Test func appIconChoiceRestoresAndFallsBackToClassic() {
+@Test func appIconChoiceRestoresAndFallsBackToDark() {
     let defaults = MemoryDefaults()
 
-    #expect(AppIconStyle.selected(in: defaults) == .classic)
+    #expect(AppIconStyle.selected(in: defaults) == .dark)
     defaults.set("ice", forKey: AppIconStyle.defaultsKey)
     #expect(AppIconStyle.selected(in: defaults) == .ice)
     defaults.set("dark", forKey: AppIconStyle.defaultsKey)
     #expect(AppIconStyle.selected(in: defaults) == .dark)
     defaults.set("unknown-future-icon", forKey: AppIconStyle.defaultsKey)
-    #expect(AppIconStyle.selected(in: defaults) == .classic)
+    #expect(AppIconStyle.selected(in: defaults) == .dark)
     defaults.set("classic", forKey: AppIconStyle.defaultsKey)
     #expect(AppIconStyle.selected(in: defaults) == .classic)
+}
+
+@Test @MainActor func freshInstallPreservesAnExternalFinderIcon() {
+    let defaults = MemoryDefaults()
+    var dockChoices: [AppIconStyle] = []
+    let result = AppIconStyle.apply(defaults: defaults, updateFinder: { _ in
+        Issue.record("A fresh install must preserve an external Finder icon")
+        return false
+    }, updateDock: { dockChoices.append($0) })
+    #expect(result)
+    #expect(dockChoices == [.dark])
+    #expect(defaults.string(forKey: AppIconStyle.defaultsKey) == nil)
+}
+
+@Test(arguments: ["classic", "ice", "dark", "unknown-future-icon"])
+@MainActor func launchReappliesASavedIconChoice(rawValue: String) {
+    let defaults = MemoryDefaults()
+    defaults.set(rawValue, forKey: AppIconStyle.defaultsKey)
+    let expected = AppIconStyle(rawValue: rawValue) ?? .defaultStyle
+    var operations: [String] = []
+    let result = AppIconStyle.apply(defaults: defaults, updateFinder: { style in
+        #expect(style == expected)
+        operations.append("Finder")
+        return true
+    }, updateDock: { style in
+        #expect(style == expected)
+        operations.append("Dock")
+    })
+    #expect(result)
+    #expect(operations == ["Finder", "Dock"])
+    #expect(defaults.string(forKey: AppIconStyle.defaultsKey) == rawValue)
+}
+
+@Test(arguments: AppIconStyle.allCases)
+@MainActor func explicitIconSelectionUpdatesFinderWithoutASavedChoice(style: AppIconStyle) {
+    let defaults = MemoryDefaults()
+    var finderChoices: [AppIconStyle] = []
+    var dockChoices: [AppIconStyle] = []
+    let result = AppIconStyle.apply(style, defaults: defaults, updateFinder: {
+        finderChoices.append($0)
+        return true
+    }, updateDock: { dockChoices.append($0) })
+    #expect(result)
+    #expect(finderChoices == [style])
+    #expect(dockChoices == [style])
+}
+
+@Test @MainActor func explicitIconSelectionOverridesASavedChoiceEvenWhenFinderFails() {
+    let defaults = MemoryDefaults()
+    defaults.set("classic", forKey: AppIconStyle.defaultsKey)
+    var finderChoices: [AppIconStyle] = []
+    var dockChoices: [AppIconStyle] = []
+    let result = AppIconStyle.apply(.ice, defaults: defaults, updateFinder: {
+        finderChoices.append($0)
+        return false
+    }, updateDock: { dockChoices.append($0) })
+    #expect(!result)
+    #expect(finderChoices == [.ice])
+    #expect(dockChoices == [.ice])
+    #expect(defaults.string(forKey: AppIconStyle.defaultsKey) == "classic")
+}
+
+@Test @MainActor func defaultFinderIconRemovesTheCustomIcon() {
+    let url = URL(fileURLWithPath: "/Applications/BetterTile.app")
+    var restored = false
+    #expect(AppIconStyle.dark.updateFinderIcon(at: url, loadImage: { _ in
+        Issue.record("Restoring the primary icon must not load a replacement image")
+        return nil
+    }, setIcon: { image, path in
+        restored = image == nil && path == url.path
+        return true
+    }))
+    #expect(restored)
+}
+
+@Test(arguments: [AppIconStyle.classic, .ice])
+@MainActor func alternateFinderIconUsesTheMatchingImage(style: AppIconStyle) {
+    let url = URL(fileURLWithPath: "/Applications/BetterTile.app")
+    let image = NSImage(size: NSSize(width: 128, height: 128))
+    var updated = false
+    let result = style.updateFinderIcon(at: url, loadImage: { name in
+        #expect(name == style.resourceName)
+        return image
+    }, setIcon: { selectedImage, path in
+        updated = selectedImage === image && path == url.path
+        return true
+    })
+    #expect(result)
+    #expect(updated)
+}
+
+@Test @MainActor func finderIconFailureDoesNotClearAnExistingIcon() {
+    let url = URL(fileURLWithPath: "/Applications/BetterTile.app")
+    #expect(!AppIconStyle.ice.updateFinderIcon(at: url, loadImage: { _ in nil }, setIcon: { _, _ in
+        Issue.record("A missing alternate must not write Finder metadata")
+        return true
+    }))
+    #expect(!AppIconStyle.ice.updateFinderIcon(at: url, loadImage: { _ in
+        NSImage(size: NSSize(width: 128, height: 128))
+    }, setIcon: { _, _ in false }))
+    #expect(!AppIconStyle.dark.updateFinderIcon(at: url, setIcon: { _, _ in false }))
+}
+
+@Test @MainActor func finderIconRequiresAnAppBundleURL() {
+    for url in [URL(fileURLWithPath: "/tmp/BetterTile"), URL(string: "https://example.com/BetterTile.app")!] {
+        #expect(!AppIconStyle.dark.updateFinderIcon(at: url, setIcon: { _, _ in
+            Issue.record("Only the local app bundle may receive Finder metadata")
+            return true
+        }))
+    }
 }
 
 @Test func appIconVariantsPreserveSourceGeometry() throws {
