@@ -159,16 +159,17 @@ must not be distributed. The release script still builds and validates
 `BetterTile.app` from the Release configuration.
 
 CI first runs `changes`, which decides whether the pull request can affect a
-build. Then four macOS jobs run in parallel:
+build. Then these jobs run in parallel:
 
+- `guards`: the test timing and quarantine guard and its self-test, on Ubuntu.
 - `unit-tests`: the Core, MacOS and App test targets.
 - `release-package`: the release tool tests and `swift build -c release`.
 - `app-debug`: the Debug app build.
 - `app-release`: the Release app build.
 
-The required `test` check passes only when `changes` succeeds and all four jobs
+The required `test` check passes only when `changes` succeeds and all five jobs
 succeed. For a documentation-only pull request, it passes when `changes`
-succeeds and all four jobs are skipped. A new CI job must be added to the
+succeeds and all five jobs are skipped. A new CI job must be added to the
 `needs` list of `test`; `test` then checks its result automatically.
 
 > **Note:** `swift test` needs the full Xcode toolchain. If you see
@@ -223,6 +224,30 @@ every relevant deadline, and drain it before asserting no action occurred.
 not only new ones. `waitForSleepers` and `drain` wait until the expected sleep
 or task happens. Give suites that use them a `.timeLimit`, so a missing sleep
 fails the test instead of stalling the run.
+
+### Test timing and quarantine guard
+
+Run `Tools/ci/check-test-timing.sh` to check Swift files under `Tests/` without
+building them. It checks sleep calls and reads from real clocks. Use the
+injected clock in new tests. When a test needs real time, put
+`// real-time: <reason>` on the call line with a non-empty reason.
+
+The baseline records unannotated call counts by file and API. It survives line
+shifts, but cannot detect a removed call replaced by another call to the same
+API in the same file. A count increase fails. A decrease passes with a hint.
+After removing calls, run `Tools/ci/check-test-timing.sh --update-baseline` to
+lower the counts. This command refuses increases unless `--allow-increase` is
+also supplied. Review any increase before accepting it.
+
+Disable a flaky test with `.disabled("quarantine: #123 <reason>")`. Use its issue
+number and a non-empty reason. Other `.disabled(...)` calls fail unless already
+baselined. Condition gates, `.enabled(if:)` and `.disabled(if:)`, are allowed.
+
+The guard checks the known API spellings, including calls split across lines.
+It ignores comments, string contents, fixed dates such as
+`Date(timeIntervalSince1970:)`, and clock instant types. It does not resolve
+aliases or calls inside string interpolation. Run its fixture tests with
+`Tools/tests/check-test-timing-test.sh`.
 
 ---
 
