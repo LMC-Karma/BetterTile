@@ -122,7 +122,7 @@ import Testing
             }
         }
         let size = NSSize(width: variant.width, height: scene == .firstUse ? 560 : 1000)
-        let page = SavedLayoutSettings(editor: editor, model: model, paletteSource: source,
+        let page = SavedLayoutSettings(editor: editor, model: model, displayTriggers: nil, paletteSource: source,
             suppliedSession: fixture.session, targetOverride: desktop, targetNameOverride: "Virtual 16:9")
             .frame(width: size.width, height: size.height)
             .background(Color(nsColor: .windowBackgroundColor))

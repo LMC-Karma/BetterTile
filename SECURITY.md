@@ -576,13 +576,19 @@ check shader compilation. Removing the CI cache only causes a fresh download.
 ## Saved Layout files
 
 Only layout format version 2 is accepted. An unsupported layout remains in the
-library as an unreadable entry with a reason. Reading, Import and Apply refuse it without rewriting, renaming or deleting the file.
+library as an unreadable entry with a reason. Reading, Import, Apply and
+Automatic Apply refuse it without rewriting, renaming or deleting the file.
 
 `App Groups.json` is a local file beside the Saved Layouts folder. It stores
 group names, app display names and bundle IDs only. BetterTile never sends it
 anywhere. Layout exports may embed the App Groups they use in an export-only
 `appGroups` member. This adds no permission,
 network use or dependency.
+
+The Saved Layouts page stores its expanded/collapsed display-binding section as
+`savedLayoutsBindingsExpanded` in the app's local UserDefaults. It defaults to
+expanded and contains only a Boolean. It is not exported or uploaded and does
+not enable Automatic Apply. Removing the key restores the default.
 
 The Saved Layouts editor lets users prepare and exchange a layout without
 capturing or controlling live windows. This is the user benefit for storing
@@ -644,7 +650,7 @@ Apply arranges eligible open windows on one display's current desktop. It never
 launches an app or requests a window. User-started Apply can reuse a window
 matching a preference from another visible display when it is unreserved and
 belongs to no Adaptive or Tabbed pane there. Exact current-desktop membership
-and both displays are revalidated.
+and both displays are revalidated. Automatic Apply uses only the target display.
 No Apply takes a window from another desktop. Ignore rules exclude windows.
 Apply refuses a target that is fullscreen, uses Stage Manager, is settling, or
 waits for Repair Layout.
@@ -700,7 +706,8 @@ plan as Apply without starting requests, creating reservations or writing window
 
 ### Saved Layout actions on this Mac
 
-`Layout Actions.json` sits outside the Saved Layouts folder. It is optional and keyed by the library file name. Each entry
+`Layout Actions.json` sits beside `Display Triggers.json`, outside the Saved
+Layouts folder. It is optional and keyed by the library file name. Each entry
 holds one keyboard shortcut (virtual key code, modifiers and its key label) and
 two booleans: show in the menu bar panel and show in the Layout Wheel. It holds
 no window titles, IDs, PIDs, frames, app bundle data, display identity or history.
@@ -745,6 +752,69 @@ shortcut, so Settings explains that limit. Input is not recorded or uploaded.
 The target-display provenance is in memory for this session only: a managed
 focus observation or a BetterTile action can remember a display; reconciliation,
 launch initialization and display refresh cannot. Disconnect clears it.
+
+### Saved Layouts display bindings
+
+The Saved Layouts card can bind a layout to one display in an exact display set.
+This adds local data that can identify the user's hardware.
+
+- **What is stored.** For each display in a bound set: the display UUID, vendor
+  number, model number, **serial number** (0 when the display reports none), a
+  built-in flag, the display name, and its frame. The binding also stores the
+  layout file name and two switches that are off by default.
+- **Where.** `Display Triggers.json` in
+  `~/Library/Application Support/BetterTile/` (`BetterTile Debug/` for Debug),
+  next to the Saved Layouts folder. It is never uploaded, exported, logged, or
+  added to a layout file. There is no telemetry.
+- **How long.** Until the user presses **Remove** for the binding, selects the
+  delete dialog’s **Also remove this layout’s display binding** checkbox, or
+  deletes the bindings file. Deleting a layout file alone keeps its binding.
+  Settings lists it as "Layout missing" with **Remove**. Automatic Apply silently
+  skips a missing layout on connect; an existing but unreadable layout still
+  reports a failure.
+- **Source.** Public CoreGraphics and AppKit calls only. No private API.
+- **Handling.** The read is limited to 256 KiB. BetterTile refuses a symbolic
+  link or a folder, accepts only a plain `.json` layout file name, and writes
+  through native file coordination after a byte comparison. A corrupt or
+  newer-version file is reported and kept; BetterTile never overwrites it.
+- **Not added.** No permission, dependency, or network use. The two switches
+  are off by default; they enable the automatic Apply described below.
+
+#### Automatic Apply
+
+With **Apply when these displays connect** on, BetterTile applies the layout
+to the bound display after the display set connects. This is a window write that
+the user did not trigger at that moment, so it is limited:
+
+- **Opt in.** Each binding starts off. Only an exact display-set match applies. An
+  uncertain match only offers an Apply button.
+- **Same engine.** It uses the Apply path of **Apply**: current desktop of one
+  display, revalidation before every write, one Undo step for each display. It
+  never opens or launches an app, and
+  never moves a window from another desktop. It does not request new windows.
+- **Stops on input.** While it waits or applies, a temporary AppKit mouse-down and
+  key-down monitor cancels it. The monitor reads the event kind only, keeps
+  nothing, and is removed when the wait ends. It is not installed otherwise.
+- **No loop.** One connect applies once. A failed or cancelled attempt is not
+  retried, and a repeated display notification does not start another.
+- **Data and permissions.** No new permission, private API, dependency or
+  network use. It reads window frames through the same Accessibility path that
+  Apply uses, and only while a wait is pending. It also reads the frontmost app’s
+  bundle identifier through NSWorkspace and observes session active/resign
+  notifications to hold attempts at the lock screen or during a switched-out
+  session. A hold cancels a started automatic Apply and blocks further frame
+  writes, including restoration. Unused pending attempts settle again after
+  the user returns; a started attempt is not retried. Cancellation shows no
+  result pill while the session is held. If windows were left changed, the result
+  appears once after return; incomplete recovery explains Undo or Repair Layout.
+  These transient identifiers and notifications are not stored or logged.
+- **Visible.** When windows change, a Result pill offers **Undo** and **Details**.
+  Nothing to place or an already arranged layout produces no pill.
+
+Tests cover the matcher, the file format, unknown keys, bounds, corrupt and
+conflicting files, atomic writes, and the card states with a fake display reader.
+Real multi-display behavior and identity values on real hardware remain manual
+checks.
 
 ## App icon customization
 

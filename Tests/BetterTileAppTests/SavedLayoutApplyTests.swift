@@ -1062,7 +1062,7 @@ private func twoAppDocument(_ first: String = "com.example.Editor", _ second: St
 }
 
 @Test(.appTestApplication, arguments: [LayoutMode.bento, .tabbed]) @MainActor
-func savedLayoutFlowRepeatedAppsAndFloatStayIdempotentForManualApply(mode: LayoutMode) async {
+func savedLayoutFlowRepeatedAppsAndFloatStayIdempotent(mode: LayoutMode) async {
     let h = ApplyHarness()
     defer { h.close() }
     let app = "com.example.Editor"
@@ -1087,6 +1087,8 @@ func savedLayoutFlowRepeatedAppsAndFloatStayIdempotentForManualApply(mode: Layou
     #expect(second.placed == 3)
     #expect(h.system.newWindowRequests.isEmpty)
     #expect(h.commits.count == commits)
+    #expect(feedback == 1)
+    _ = await h.applier.apply(doc, automatic: true)
     #expect(feedback == 1)
 }
 
@@ -1226,7 +1228,7 @@ func savedLayoutVisibleExistingWindowMovesAndUndoRestoresItsExactSource(mode: La
     #expect(!applier.canUndo)
 }
 
-@Test(.appTestApplication, arguments: ["unknown", "multiple", "hidden", "minimized", "fullscreen", "reserved", "pane", "tabs", "busy", "suspended"])
+@Test(.appTestApplication, arguments: ["unknown", "multiple", "hidden", "minimized", "fullscreen", "reserved", "pane", "tabs", "automatic", "busy", "suspended"])
 @MainActor func savedLayoutVisibleReuseExcludesUnsafeSources(reason: String) async {
     let h = ApplyHarness()
     defer { h.close() }
@@ -1252,7 +1254,7 @@ func savedLayoutVisibleExistingWindowMovesAndUndoRestoresItsExactSource(mode: La
         return state
     }
     h.applier.reservesOtherOwnerWindow = { _ in reason == "reserved" }
-    let result = await h.applier.apply(h.document())
+    let result = await h.applier.apply(h.document(), automatic: reason == "automatic")
     #expect(result.placed == 0)
     #expect(h.system.requestedFrames[id] == nil)
     #expect(h.system.windows[0].frame == original)

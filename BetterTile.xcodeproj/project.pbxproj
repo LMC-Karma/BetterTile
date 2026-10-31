@@ -28,6 +28,9 @@
 		B2A100000000000000000011 /* SavedLayoutApplySession.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2A100000000000000000012 /* SavedLayoutApplySession.swift */; };
 		1000000000000000000000027 /* SavedLayoutApplyViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2000000000000000000000027 /* SavedLayoutApplyViews.swift */; };
 		1000000000000000000000026 /* SavedLayoutApplier.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2000000000000000000000026 /* SavedLayoutApplier.swift */; };
+		1000000000000000000000028 /* DisplayTriggerStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2000000000000000000000028 /* DisplayTriggerStore.swift */; };
+		1000000000000000000000029 /* DisplayTriggerCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2000000000000000000000029 /* DisplayTriggerCard.swift */; };
+		1000000000000000000000030 /* DisplayTriggerRuntime.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2000000000000000000000030 /* DisplayTriggerRuntime.swift */; };
 		100000000000000000000025 /* SavedLayoutSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000025 /* SavedLayoutSettings.swift */; };
 		100000000000000000000024 /* SavedLayoutEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000024 /* SavedLayoutEditor.swift */; };
 		1000000000000000000000F1 /* SavedLayoutCanvasView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2000000000000000000000F1 /* SavedLayoutCanvasView.swift */; };
@@ -86,6 +89,9 @@
 		B2A100000000000000000012 /* SavedLayoutApplySession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SavedLayoutApplySession.swift; sourceTree = "<group>"; };
 		2000000000000000000000027 /* SavedLayoutApplyViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SavedLayoutApplyViews.swift; sourceTree = "<group>"; };
 		2000000000000000000000026 /* SavedLayoutApplier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SavedLayoutApplier.swift; sourceTree = "<group>"; };
+		2000000000000000000000028 /* DisplayTriggerStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DisplayTriggerStore.swift; sourceTree = "<group>"; };
+		2000000000000000000000029 /* DisplayTriggerCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DisplayTriggerCard.swift; sourceTree = "<group>"; };
+		2000000000000000000000030 /* DisplayTriggerRuntime.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DisplayTriggerRuntime.swift; sourceTree = "<group>"; };
 		200000000000000000000025 /* SavedLayoutSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SavedLayoutSettings.swift; sourceTree = "<group>"; };
 		200000000000000000000024 /* SavedLayoutEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SavedLayoutEditor.swift; sourceTree = "<group>"; };
 		2000000000000000000000F1 /* SavedLayoutCanvasView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SavedLayoutCanvasView.swift; sourceTree = "<group>"; };
@@ -174,6 +180,9 @@
 				B2A000000000000000000012 /* AppGroupsStore.swift */,
 				B2A000000000000000000022 /* AppGroupResolver.swift */,
 				2000000000000000000000026 /* SavedLayoutApplier.swift */,
+				2000000000000000000000028 /* DisplayTriggerStore.swift */,
+				2000000000000000000000029 /* DisplayTriggerCard.swift */,
+				2000000000000000000000030 /* DisplayTriggerRuntime.swift */,
 				2000000000000000000000027 /* SavedLayoutApplyViews.swift */,
 				200000000000000000000025 /* SavedLayoutSettings.swift */,
 				B20000000000000000000001 /* SavedLayoutNewLayoutSheet.swift */,
@@ -318,6 +327,9 @@
 				B2A000000000000000000011 /* AppGroupsStore.swift in Sources */,
 				B2A000000000000000000021 /* AppGroupResolver.swift in Sources */,
 				1000000000000000000000026 /* SavedLayoutApplier.swift in Sources */,
+				1000000000000000000000028 /* DisplayTriggerStore.swift in Sources */,
+				1000000000000000000000029 /* DisplayTriggerCard.swift in Sources */,
+				1000000000000000000000030 /* DisplayTriggerRuntime.swift in Sources */,
 				1000000000000000000000027 /* SavedLayoutApplyViews.swift in Sources */,
 				100000000000000000000025 /* SavedLayoutSettings.swift in Sources */,
 				B10000000000000000000001 /* SavedLayoutNewLayoutSheet.swift in Sources */,

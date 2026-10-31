@@ -455,6 +455,38 @@ extension SavedLayoutFollowingTests {
         try await repeatSweep(model, h)
     }
 
+    @Test func automaticTriggerStartsFollowingWithTheLibraryFileIdentity() async throws {
+        let h = ApplyHarness(); defer { h.close() }
+        h.addWindow()
+        let model = h.model(); defer { model.shutdown() }
+        let applier = try #require(model.savedLayoutApplier); applier.observesKeyboard = false
+        let display = h.system.mainDisplay.id
+        let fingerprint = DisplayFingerprint(uuid: "MAIN", vendor: 1, model: 1, serial: 1,
+            builtIn: true, name: "Fixture", frame: h.system.mainDisplay.frame)
+        let runtime = DisplayTriggerRuntime(applier: applier, initial: [])
+        defer { runtime.stop() }
+        runtime.observesInput = false
+        runtime.triggers = { [.init(layoutFile: "Work.json", enabled: true, alsoAfterWake: false, displays: [fingerprint], target: 0)] }
+        runtime.liveDisplays = { [.init(id: display, fingerprint: fingerprint)] }
+        let document = document(h)
+        runtime.loadLayout = { _ in document }
+        runtime.observeFrames = { _ in Dictionary(uniqueKeysWithValues: h.system.windows.map { ($0.id, $0.frame) }) }
+        var uptime = 1000.0
+        runtime.uptime = { uptime }
+        runtime.sleep = { duration in
+            uptime += Double(duration.components.seconds) + Double(duration.components.attoseconds) / 1e18
+            await Task.yield()
+        }
+        runtime.displaysChanged()
+        try #require(await waitFor { runtime.isIdle && runtime.runs["Work.json"] != nil })
+        #expect(try session(model, display).followed?.layoutFileID == "Work.json")
+        #expect(h.system.windows[0].frame == h.system.mainDisplay.visibleFrame)
+        let writes = h.system.frameWriteCounts, revision = try session(model, display).revision
+        runtime.displaysChanged()
+        for _ in 0..<20 { await Task.yield() }
+        #expect(h.system.frameWriteCounts == writes)
+        #expect(try session(model, display).revision == revision)
+    }
 }
 
 extension SavedLayoutFollowingTests {

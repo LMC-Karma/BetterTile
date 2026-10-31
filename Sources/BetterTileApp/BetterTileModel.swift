@@ -92,6 +92,9 @@ final class BetterTileModel {
     /// Fake-system callers can supply an input turn without starting the native runtime.
     var savedLayoutInputCheckpoint: @MainActor () async -> Bool = { true }
     private var savedLayoutFollowingDisplayID: DisplayID?
+    /// The display bindings of Saved Layouts. Settings and the automatic Apply share this one store.
+    let displayTriggerStore: DisplayTriggerStore
+    private(set) var displayTriggerRuntime: DisplayTriggerRuntime?
     /// The Settings page that a Result pill button asks to show. Settings clears it.
     var requestedSettingsDestination: SettingsDestination?
     var openSettings: () -> Void = {}
@@ -125,6 +128,8 @@ final class BetterTileModel {
     let dividerResize: DividerOverlayController
     private var resultPill: ResultPillController?
     var resultPillFactory: () -> ResultPillController = { ResultPillController() }
+    /// Automatic Apply shows one pill on each display, so two displays do not replace each other's.
+    private var automaticResultPills: [DisplayID: ResultPillController] = [:]
     private var sessionStore = LayoutSessionStore() {
         didSet {
             if let applier = savedLayoutApplier, applier.tracksUndoSessions {
@@ -456,6 +461,7 @@ final class BetterTileModel {
     }
     private var permissionPollTask: Task<Void, Never>?
     private var notificationTokens: [NSObjectProtocol] = []
+    private var notificationCenters: [NotificationCenter] = []
     private var lastVisibleSignature = ""
     private var lastDisplayWorkAreaSignature = ""
     private var pendingWindowEvents = WindowEventBuffer()
@@ -519,6 +525,7 @@ final class BetterTileModel {
         system suppliedSystem: (any BetterTileWindowSystem)? = nil,
         startRuntime: Bool = true,
         presentsTabbedChrome: Bool? = nil,
+        displayTriggerStore: DisplayTriggerStore? = nil,
         savedLayoutFiles: SavedLayoutFiles? = nil,
         appGroupsStore: AppGroupsStore? = nil,
         shortcutMonitor: GlobalShortcutMonitor? = nil,
@@ -546,6 +553,8 @@ final class BetterTileModel {
         self.appGroupsStore = appGroupsStore ?? (startRuntime
             ? AppGroupsStore(directory: savedLayoutActions.files.directory.deletingLastPathComponent())
             : AppGroupsStore(directory: savedLayoutActions.files.directory.deletingLastPathComponent(), catalog: { [] }, defaultBrowserURL: { nil }))
+        self.displayTriggerStore = displayTriggerStore ?? (startRuntime ? .standard()
+            : DisplayTriggerStore(url: store.fileURL.deletingLastPathComponent().appendingPathComponent("Display Triggers.json")))
         self.presentsTabbedChrome = presentsTabbedChrome ?? startRuntime
         let loaded: BetterTileConfiguration
         do {
@@ -2812,6 +2821,7 @@ final class BetterTileModel {
 
     func shutdown() {
         savedLayoutActions.stop()
+        displayTriggerRuntime?.stop()
         savedLayoutApplier?.stop()
         cancelPaneApplicationRequest()
         for id in Array(completedRequestFocus.keys) { releaseCompletedRequestFocus(id) }
@@ -2854,10 +2864,10 @@ final class BetterTileModel {
         applicationRecoveryPendingWindows.removeAll()
         applicationRecoveryFrameEventPIDs.removeAll()
         for token in notificationTokens {
-            NotificationCenter.default.removeObserver(token)
-            NSWorkspace.shared.notificationCenter.removeObserver(token)
+            for center in notificationCenters { center.removeObserver(token) }
         }
         notificationTokens.removeAll()
+        notificationCenters.removeAll()
         actionVerificationTask?.cancel()
         flushConfiguration()
         watchdogTimer?.invalidate()
@@ -2883,6 +2893,8 @@ final class BetterTileModel {
         linkedResize.stop()
         resultPill?.hide()
         resultPill = nil
+        automaticResultPills.values.forEach { $0.hide() }
+        automaticResultPills.removeAll()
     }
 
     private func scheduleConfigurationSave() {
@@ -2987,10 +2999,12 @@ final class BetterTileModel {
         if configuration.showDockIcon { AppIconStyle.apply() }
     }
 
-    func installWorkspaceTriggers() {
+    func installWorkspaceTriggers(center: NotificationCenter = .default,
+                                  workspaceCenter: NotificationCenter = NSWorkspace.shared.notificationCenter) {
         guard !isShutDown else { return }
-        let center = NotificationCenter.default
-        let workspaceCenter = NSWorkspace.shared.notificationCenter
+        for candidate in [center, workspaceCenter] where !notificationCenters.contains(where: { $0 === candidate }) {
+            notificationCenters.append(candidate)
+        }
         notificationTokens.append(center.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in
             Task { @MainActor in
                 guard let self, !self.isShutDown else { return }
@@ -3036,6 +3050,25 @@ final class BetterTileModel {
                 }
             })
         }
+        // Each sleep allows one wake Apply, even though a wake sends two notifications. Display changes
+        // during sleep are held until the wake.
+        for name in [NSWorkspace.willSleepNotification, NSWorkspace.screensDidSleepNotification] {
+            notificationTokens.append(workspaceCenter.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                Task { @MainActor in
+                    guard let self, !self.isShutDown else { return }
+                    self.displayTriggerRuntime?.sleeping()
+                }
+            })
+        }
+        for name in [NSWorkspace.didWakeNotification, NSWorkspace.screensDidWakeNotification] {
+            notificationTokens.append(workspaceCenter.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                Task { @MainActor in
+                    guard let self, !self.isShutDown else { return }
+                    self.displayTriggerRuntime?.wake()
+                }
+            })
+        }
+        // After a wake at the lock screen, a different app becoming active means the user unlocked.
         notificationTokens.append(workspaceCenter.addObserver(forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main) { [weak self] notification in
             let application = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
             let bundleID = application?.bundleIdentifier
@@ -3044,11 +3077,22 @@ final class BetterTileModel {
             // placement continuation can raise or finish the request.
             MainActor.assumeIsolated {
                 guard let self, !self.isShutDown else { return }
+                self.displayTriggerRuntime?.applicationActivated(bundleID: bundleID)
                 self.requestApplicationActivated(bundleID, processIdentifier: processIdentifier)
             }
-
         })
-
+        notificationTokens.append(workspaceCenter.addObserver(forName: NSWorkspace.sessionDidResignActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, !self.isShutDown else { return }
+                self.displayTriggerRuntime?.sessionResigned()
+            }
+        })
+        notificationTokens.append(workspaceCenter.addObserver(forName: NSWorkspace.sessionDidBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, !self.isShutDown else { return }
+                self.displayTriggerRuntime?.sessionBecameActive()
+            }
+        })
         notificationTokens.append(workspaceCenter.addObserver(
             forName: NSWorkspace.activeSpaceDidChangeNotification,
             object: nil,
@@ -3113,6 +3157,7 @@ final class BetterTileModel {
             self.refreshActiveWindows(force: true)
             self.savedLayoutInventoryRevision &+= 1
             self.refreshSavedLayoutActionTarget()
+            self.displayTriggerRuntime?.displaysChanged()
         }
     }
 
@@ -5262,6 +5307,9 @@ final class BetterTileModel {
         let displays = system.displays()
         lastDisplayWorkAreaSignature = displayWorkAreaSignature(displays)
         let displayIDs = Set(displays.map(\.id))
+        for id in automaticResultPills.keys.filter({ !displayIDs.contains($0) }) {
+            automaticResultPills.removeValue(forKey: id)?.hide()
+        }
         for id in tabbedOverlays.keys.filter({ !displayIDs.contains($0) }) {
             tabbedOverlays[id]?.hide()
             tabbedOverlays.removeValue(forKey: id)
@@ -8859,6 +8907,55 @@ extension BetterTileModel {
         applier.reservesOtherOwnerWindow = { [weak self] window in self?.reservesPaneOwnerWindow(window) ?? true }
         applier.didFinish = { [weak self] in self?.schedulePendingWindowEvents() }
         savedLayoutApplier = applier
+        configureDisplayTriggers(applier)
+    }
+
+    private func configureDisplayTriggers(_ applier: SavedLayoutApplier) {
+        let runtime = DisplayTriggerRuntime(applier: applier, initial: DisplayFingerprintReader.current().map(\.fingerprint))
+        let files = SavedLayoutFiles.standard
+        let triggerStore = displayTriggerStore
+        runtime.triggers = { [weak self] in self?.hasAccessibilityPermission == true ? triggerStore.document.triggers : [] }
+        runtime.liveDisplays = { DisplayFingerprintReader.current() }
+        runtime.isScreenLocked = {
+            NSWorkspace.shared.frontmostApplication?.bundleIdentifier == DisplayTriggerRuntime.loginWindowBundleID
+        }
+        runtime.loadLayout = { file in
+            guard DisplayTriggerDocument.isValidLayoutFile(file) else { return nil }
+            return try SavedLayoutValidator.decode(files.read(files.directory.appendingPathComponent(file)))
+        }
+        runtime.isReady = { [weak self] id in
+            guard let self else { return false }
+            return !self.isStabilizingSpace && !self.isTabbedBusy(on: id) && self.settlementTasks[id] == nil
+        }
+        runtime.isInteracting = { [weak self] in
+            guard let self else { return false }
+            return self.activeBentoDrag != nil || self.dragSnap.isGestureActive || self.dividerResize.isDragging
+                || self.layoutWheel.isOpen || NSEvent.pressedMouseButtons != 0
+        }
+        runtime.observeFrames = { [weak self] displays in
+            guard let self, let windows = try? self.observeVisibleWindows() else { return nil }
+            return Dictionary(uniqueKeysWithValues: windows.filter { displays.contains($0.displayID) && $0.isEligible && !$0.isFloating }
+                .map { ($0.id, $0.frame) })
+        }
+        runtime.notice = { [weak self] in self?.presentAutomaticNotice($0) }
+        displayTriggerRuntime = runtime
+    }
+
+    private func presentAutomaticNotice(_ notice: DisplayTriggerNotice) {
+        statusMessage = notice.detail
+        showAutomaticPill(.layoutResult(title: notice.title, detail: notice.detail, kind: notice.kind, actions: notice.actions),
+                          displayID: notice.displayID)
+    }
+
+    private func showAutomaticPill(_ feedback: ResultPillFeedback, displayID: DisplayID?) {
+        lastActionFeedback = feedback
+        let displays = system.displays()
+        guard let display = displayID.flatMap({ id in displays.first { $0.id == id } })
+                ?? displays.first(where: \.isMain) ?? displays.first else { return }
+        let controller = automaticResultPills[display.id] ?? resultPillFactory()
+        automaticResultPills[display.id] = controller
+        controller.overlayAppearance = configuration.overlayAppearance
+        controller.show(feedback, on: display)
     }
 
     /// The sessions as Saved Layouts reads them: process-local state, never saved.
@@ -8886,7 +8983,11 @@ extension BetterTileModel {
             })
         }
         let feedback = ResultPillFeedback.layoutResult(title: result.title, detail: result.detail, kind: result.kind, actions: actions)
-        presentActionResult(succeeded: result.kind == .success, feedback: feedback, displayID: result.displayID)
+        if result.automatic {
+            showAutomaticPill(feedback, displayID: result.displayID)
+        } else {
+            presentActionResult(succeeded: result.kind == .success, feedback: feedback, displayID: result.displayID)
+        }
     }
 
     private func commitSavedLayout(_ plan: SavedLayoutApplyPlan, desktop: SavedLayoutDesktop,
@@ -8924,7 +9025,7 @@ extension BetterTileModel {
             try self.system.cachedVisibleWindows(refreshing: ids) ?? self.observeVisibleWindows()
         }
         let ownerMatchesObservation = { @MainActor [weak self] (visible: [WindowSnapshot], observation: NativeDesktopObservation?) in
-            guard let self, !self.isShutDown, self.hasAccessibilityPermission, !self.isStabilizingSpace,
+            guard snapshot.sessionIsAvailable(), let self, !self.isShutDown, self.hasAccessibilityPermission, !self.isStabilizingSpace,
                   self.sessionStore.isCurrent(sessionID, revision: revision, on: desktop.displayID),
                   self.system.displays().first(where: { $0.id == desktop.displayID })?.visibleFrame == display.visibleFrame,
                   let observation,
@@ -8997,7 +9098,8 @@ extension BetterTileModel {
             let rollback = self.coordinator.applyPlacements(restore, recordHistory: false, displayDestinations: rollbackDisplays, revalidateBeforeEachWrite: true, validating: canRestore)
             if !rollback.isApplied {
                 self.suspendAutomaticBentoWrites(displayID: desktop.displayID, sessionID: sessionID,
-                    error: "Saved Layout could not restore all previous frames.")
+                    error: "Saved Layout could not restore all previous frames.",
+                    surfaceFailure: snapshot.sessionIsAvailable())
             }
         }
         // A window that keeps a larger size than its pane asked for names the cause of a rollback.
@@ -9044,7 +9146,8 @@ extension BetterTileModel {
             noteRefusals()
             if case .degraded = outcome {
                 self.suspendAutomaticBentoWrites(displayID: desktop.displayID, sessionID: sessionID,
-                    error: "Saved Layout left an incomplete layout.")
+                    error: "Saved Layout left an incomplete layout.",
+                    surfaceFailure: snapshot.sessionIsAvailable())
             }
             return false
         }

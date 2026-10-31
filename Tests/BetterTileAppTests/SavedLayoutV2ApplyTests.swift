@@ -107,14 +107,14 @@ import Testing
     /// A settled repeat must not enter that commit seam, write frames, raise, or replace Undo.
     private func repeatAndUndo(_ h: ApplyHarness, _ document: SavedLayoutDocument,
                                before: [BTRect], previous: SavedLayoutSession = .manual,
-                               choices: [String: WindowID] = [:]) async throws {
+                               choices: [String: WindowID] = [:], automatic: Bool = false) async throws {
         let writes = h.system.frameWriteCounts
         let raises = h.system.raiseRequests.count
         let commits = h.commits.count
         let session = h.sessions[h.system.mainDisplay.id]
         var feedback: [SavedLayoutFeedback] = []
         h.applier.feedback = { feedback.append($0) }
-        _ = await h.applier.apply(document, choices: choices)
+        _ = await h.applier.apply(document, choices: choices, automatic: automatic)
         #expect(h.applier.lastPlan?.isEmpty == true)
         #expect(h.system.frameWriteCounts == writes)
         #expect(h.system.raiseRequests.count == raises)
@@ -123,8 +123,11 @@ import Testing
         #expect(h.applier.lastRun?.presentation.pillDetail == "Already arranged.")
         #expect(h.applier.lastRun?.offersUndo == false)
         #expect(h.applier.hasUndo)
-        #expect(feedback.last?.title == document.name + " · already arranged")
-        #expect(feedback.last?.offersUndo == false && feedback.last?.detail == nil)
+        if automatic { #expect(feedback.isEmpty) }
+        else {
+            #expect(feedback.last?.title == document.name + " · already arranged")
+            #expect(feedback.last?.offersUndo == false && feedback.last?.detail == nil)
+        }
         await h.applier.undoLastApply()
         #expect(h.system.windows.map(\.frame) == before)
         #expect(h.sessions[h.system.mainDisplay.id] == previous)
@@ -318,7 +321,7 @@ extension SavedLayoutV2ApplyTests {
         try await repeatAndUndo(h, document, before: before)
     }
 
-    @Test func foreignGroupPreferenceForManualApply() async throws {
+    @Test(arguments: [false, true]) func foreignGroupPreferenceAndAutomaticScope(automatic: Bool) async throws {
         let h = ApplyHarness(); defer { h.close() }
         let other = DisplaySnapshot(id: .init(rawValue: "other"), frame: .init(x: 1000, y: 0, width: 1000, height: 800),
             visibleFrame: .init(x: 1000, y: 0, width: 1000, height: 800), isMain: false)
@@ -349,12 +352,22 @@ extension SavedLayoutV2ApplyTests {
         }
         var feedback: [SavedLayoutFeedback] = []
         h.applier.feedback = { feedback.append($0) }
-        _ = await h.applier.apply(document, choices: [:])
-        #expect(h.applier.lastPlan?.assignments.count == 1)
+        // Automatic Apply must discard even caller-supplied foreign explicit choices.
+        _ = await h.applier.apply(document, choices: automatic ? ["group": h.system.windows[0].id] : [:], automatic: automatic)
+        #expect(h.applier.lastPlan?.assignments.count == (automatic ? 0 : 1))
         #expect(h.system.windows[1].frame == before[1] && h.system.windows[1].displayID == other.id)
-        #expect(h.system.windows[0].frame == BTRect(x: 0, y: 0, width: 500, height: 800))
-        #expect(h.applier.lastRun?.planPresentation?.lines.first?.contains("moved from Studio Display") == true)
-        try await repeatAndUndo(h, document, before: before)
+        if !automatic {
+            #expect(h.system.windows[0].frame == BTRect(x: 0, y: 0, width: 500, height: 800))
+            #expect(h.applier.lastRun?.planPresentation?.lines.first?.contains("moved from Studio Display") == true)
+        }
+        if automatic {
+            #expect(h.commits.isEmpty && !h.applier.hasUndo)
+            let writes = h.system.frameWriteCounts
+            _ = await h.applier.apply(document, automatic: true)
+            #expect(h.commits.isEmpty && h.system.frameWriteCounts == writes)
+            #expect(h.sessions.isEmpty && !h.applier.hasUndo)
+            #expect(feedback.isEmpty)
+        } else { try await repeatAndUndo(h, document, before: before) }
         #expect(h.system.windows.allSatisfy { $0.displayID == other.id })
     }
 
@@ -376,7 +389,22 @@ extension SavedLayoutV2ApplyTests {
         try await repeatAndUndo(h, document, before: [], previous: previous)
     }
 
-
+    @Test func automaticPartialApplyCommitsTheFullShapeIncludingEmptySlots() async throws {
+        let h = ApplyHarness(); defer { h.close() }
+        h.addWindow(id: "only")
+        ordered(h)
+        let before = h.system.windows.map(\.frame)
+        let document = SavedLayoutDocument(name: "Partial", mode: .bento,
+            layout: .split(axis: .vertical, ratios: [0.6, 0.4], children: [.slot("left"), .slot("right")]),
+            slots: [.init(id: "left"), .init(id: "right", prefer: [.app("com.example.NotRunning")])])
+        _ = await h.applier.apply(document, automatic: true)
+        #expect(h.commits.count == 1)
+        #expect(h.applier.lastPlan?.emptySlots == ["right"])
+        #expect(h.system.windows[0].frame == BTRect(x: 0, y: 0, width: 600, height: 800))
+        guard case let .bento(state) = h.sessions[h.system.mainDisplay.id] else { Issue.record("Missing full Adaptive shape"); return }
+        #expect(state.vacantFrames(in: h.system.mainDisplay.visibleFrame).count == 1)
+        try await repeatAndUndo(h, document, before: before, automatic: true)
+    }
 }
 
 extension SavedLayoutV2ApplyTests {
@@ -541,7 +569,20 @@ extension SavedLayoutV2ApplyTests {
         try await repeatAndUndo(h, document, before: before)
     }
 
-
+    @Test func automaticIgnoresALocalExplicitChoice() async throws {
+        let h = ApplyHarness(); defer { h.close() }
+        h.addWindow("com.example.Preferred", id: "preferred")
+        h.addWindow("com.example.Other", id: "chosen", pid: 43)
+        ordered(h)
+        let before = h.system.windows.map(\.frame)
+        let document = h.document("com.example.Preferred")
+        var feedback: [SavedLayoutFeedback] = []
+        h.applier.feedback = { feedback.append($0) }
+        _ = await h.applier.apply(document, choices: ["slot": h.system.windows[1].id], automatic: true)
+        #expect(h.applier.lastPlan?.assignments["slot"] == h.system.windows[0].id)
+        #expect(feedback.count == 1)
+        try await repeatAndUndo(h, document, before: before, automatic: true)
+    }
 
     @Test func unavailablePreferredAppNeverExposesItsBundleIDInPreviewOrDetails() async throws {
         let h = ApplyHarness(); defer { h.close() }
@@ -594,7 +635,7 @@ extension SavedLayoutV2ApplyTests {
             groups: [.init(id: "left", slots: ["one"], selected: "one"), .init(id: "right", slots: ["two"], selected: "two")])
     }
 
-    @Test func tabbedSettledRepeatWithRealRaiseOrderForManualApply() async throws {
+    @Test(arguments: [false, true]) func tabbedSettledRepeatWithRealRaiseOrder(automatic: Bool) async throws {
         let h = ApplyHarness(); defer { h.close() }
         h.addWindow("com.example.Editor", id: "editor")
         h.addWindow("com.example.Music", id: "music", pid: 43)
@@ -604,8 +645,8 @@ extension SavedLayoutV2ApplyTests {
         let applier = try #require(model.savedLayoutApplier)
         applier.observesKeyboard = false
         let before = h.system.windows.map(\.frame)
-        let document = tabbedPair([.app("com.example.NotRunning")])
-        let first = await applier.apply(document)
+        let document = tabbedPair(automatic ? [] : [.app("com.example.NotRunning")])
+        let first = await applier.apply(document, automatic: automatic)
         try #require(first.issues.isEmpty)
         #expect(applier.lastPlan?.assignments == ["one": h.system.windows[0].id, "two": h.system.windows[1].id])
         // 70/30 of 1000; the 34-point Tabbed strip leaves 766 points of content.
@@ -615,18 +656,19 @@ extension SavedLayoutV2ApplyTests {
         let raises = h.system.raiseRequests.count, sessions = model.savedLayoutSessions()
         var feedback: [SavedLayoutFeedback] = []
         applier.feedback = { feedback.append($0) }
-        _ = await applier.apply(document)
+        _ = await applier.apply(document, automatic: automatic)
         #expect(applier.lastPlan?.isEmpty == true && applier.lastPlan?.assignments == assignments)
         #expect(h.system.frameWriteCounts == writes && h.system.raiseRequests.count == raises)
         #expect(model.savedLayoutSessions() == sessions)
         #expect(applier.lastRun?.offersUndo == false && applier.hasUndo)
-        #expect(feedback.last?.title == "Two panes · already arranged" && feedback.last?.offersUndo == false)
+        if automatic { #expect(feedback.isEmpty) }
+        else { #expect(feedback.last?.title == "Two panes · already arranged" && feedback.last?.offersUndo == false) }
         await applier.undoLastApply()
         #expect(h.system.windows.map(\.frame) == before)
         #expect(model.activeMode(for: h.system.mainDisplay.id) == .manual)
     }
 
-    @Test func newlyEligiblePreferenceReplacesARememberedFallbackForManualApply() async throws {
+    @Test(arguments: [false, true]) func newlyEligiblePreferenceReplacesARememberedFallback(automatic: Bool) async throws {
         let h = ApplyHarness(); defer { h.close() }
         h.addWindow("com.example.Editor", id: "editor")
         h.addWindow("com.example.Music", id: "music", pid: 43)
@@ -636,15 +678,15 @@ extension SavedLayoutV2ApplyTests {
         let applier = try #require(model.savedLayoutApplier)
         applier.observesKeyboard = false
         let document = tabbedPair([.app("com.example.Pages")])
-        _ = await applier.apply(document)
+        _ = await applier.apply(document, automatic: automatic)
         h.addWindow("com.example.Pages", id: "pages", pid: 44)
         h.system.stack?.append(.init(windowID: h.system.windows[2].id, frame: h.system.windows[2].frame))
         let before = h.system.windows.map(\.frame), previous = model.savedLayoutSessions()
-        _ = await applier.apply(document)
+        _ = await applier.apply(document, automatic: automatic)
         #expect(applier.lastPlan?.assignments["one"] == h.system.windows[2].id)
         let writes = h.system.frameWriteCounts, raises = h.system.raiseRequests.count
         let settled = model.savedLayoutSessions()
-        _ = await applier.apply(document)
+        _ = await applier.apply(document, automatic: automatic)
         #expect(applier.lastPlan?.isEmpty == true && model.savedLayoutSessions() == settled)
         #expect(h.system.frameWriteCounts == writes && h.system.raiseRequests.count == raises)
         await applier.undoLastApply()
@@ -783,20 +825,20 @@ extension SavedLayoutV2ApplyTests {
 }
 
 extension SavedLayoutV2ApplyTests {
-    @Test func firstChoiceArrivalReplacesRememberedSecondChoiceForManualApply() async throws {
+    @Test(arguments: [false, true]) func firstChoiceArrivalReplacesRememberedSecondChoice(automatic: Bool) async throws {
         let h = ApplyHarness(); defer { h.close() }
         h.addWindow("com.example.Chrome", id: "chrome")
         let document = SavedLayoutDocument(name: "Browser", mode: .manual,
             slots: [.init(id: "browser", prefer: [.app("com.example.Safari"), .app("com.example.Chrome")])],
             windows: [.init(slot: "browser", rect: .init(x: 0, y: 0, width: 1, height: 1))])
-        _ = await h.applier.apply(document)
+        _ = await h.applier.apply(document, automatic: automatic)
         h.addWindow("com.example.Safari", id: "safari", pid: 43)
         #expect(try h.applier.preview(document).plan?.assignments["browser"] == h.system.windows[1].id)
-        _ = await h.applier.apply(document)
+        _ = await h.applier.apply(document, automatic: automatic)
         #expect(h.applier.lastPlan?.assignments["browser"] == h.system.windows[1].id)
         #expect(h.applier.lastPlan?.slotReasons["browser"] == .preferred(rank: 0))
         let writes = h.system.frameWriteCounts
-        _ = await h.applier.apply(document)
+        _ = await h.applier.apply(document, automatic: automatic)
         #expect(h.applier.lastPlan?.isEmpty == true && h.system.frameWriteCounts == writes)
     }
 
@@ -986,7 +1028,28 @@ extension SavedLayoutV2ApplyTests {
 }
 
 extension SavedLayoutV2ApplyTests {
-
+    @Test(arguments: [false, true])
+    func changedBindingReportsTheCauseAndRetainsUndoForWrittenFrames(afterWrites: Bool) async throws {
+        let h = ApplyHarness(); defer { h.close() }
+        h.addWindow()
+        let before = h.system.windows.map(\.frame)
+        var bindingCurrent = true
+        if afterWrites { h.afterCommit = { bindingCurrent = false } }
+        else { h.onCommit = { bindingCurrent = false } }
+        let result = await h.applier.apply(h.document(), automatic: true, validating: { bindingCurrent })
+        #expect(result.issues.contains { $0.message.contains("display binding changed") })
+        #expect(!result.issues.contains { $0.kind == .couldNotFit })
+        if afterWrites {
+            #expect(h.system.windows.map(\.frame) != before)
+            #expect(h.applier.hasUndo)
+            #expect(result.issues.contains { $0.message.contains("Undo") })
+            await h.applier.undoLastApply()
+            #expect(h.system.windows.map(\.frame) == before)
+        } else {
+            #expect(h.system.frameWriteCounts.isEmpty && !h.applier.hasUndo)
+            #expect(result.issues.contains { $0.message.contains("Nothing was moved") })
+        }
+    }
 
     @Test func partialMemoryKeepsTheFreshFillReasonForANewWindow() async throws {
         let h = ApplyHarness(); defer { h.close() }
@@ -1007,5 +1070,34 @@ extension SavedLayoutV2ApplyTests {
 }
 
 extension SavedLayoutV2ApplyTests {
-
+    @Test func bindingChangeDuringRealCoordinatorWritesKeepsUndoAfterAFailedRollback() async throws {
+        let h = ApplyHarness(); defer { h.close() }
+        h.addWindow(id: "one"); h.addWindow("com.example.Other", id: "two", pid: 43)
+        let model = h.model(); defer { model.shutdown() }
+        let applier = try #require(model.savedLayoutApplier)
+        applier.observesKeyboard = false
+        let before = h.system.windows.map(\.frame)
+        let document = SavedLayoutDocument(name: "Two rectangles", mode: .manual,
+            slots: [.init(id: "a", prefer: [.app("com.example.Editor")]), .init(id: "b", prefer: [.app("com.example.Other")])],
+            windows: [.init(slot: "a", rect: .init(x: 0, y: 0, width: 0.5, height: 1)),
+                      .init(slot: "b", rect: .init(x: 0.5, y: 0, width: 0.5, height: 1))])
+        var bindingCurrent = true
+        var firstWrite: WindowID?
+        h.system.onFrameWrite = { id, _ in
+            guard firstWrite == nil else { return }
+            firstWrite = id
+            bindingCurrent = false
+            // The model attempts recovery after noticing invalidation. Leave one changed frame
+            // to exercise the actual coordinator failure path and the retained Undo instruction.
+            h.system.failedFrameWriteNumbers[id] = [2]
+        }
+        let result = await applier.apply(document, automatic: true, validating: { bindingCurrent })
+        #expect(firstWrite != nil && h.system.windows.map(\.frame) != before)
+        #expect(result.issues.contains { $0.message.contains("display binding changed") && $0.message.contains("Undo") })
+        #expect(!result.issues.contains { $0.kind == .couldNotFit })
+        #expect(applier.hasUndo)
+        h.system.onFrameWrite = nil; h.system.failedFrameWriteNumbers = [:]
+        await applier.undoLastApply()
+        #expect(h.system.windows.map(\.frame) == before)
+    }
 }

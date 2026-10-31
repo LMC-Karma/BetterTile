@@ -74,7 +74,7 @@ public struct SavedLayoutApplyResult: Equatable, Sendable {
 
     /// The only result policy. Pills, Settings, Details, Last run and pane badges read this projection.
     /// Counts are accepted for older callers without a document; production Apply records every slot.
-    public func presentation(layout name: String) -> SavedLayoutResultPresentation {
+    public func presentation(layout name: String, declared: SavedLayoutResultPresentation.Status? = nil) -> SavedLayoutResultPresentation {
         var outcomes = slots
         if slots.isEmpty {
             for id in placedSlots { outcomes[id] = .placed }
@@ -95,7 +95,11 @@ public struct SavedLayoutApplyResult: Equatable, Sendable {
         let status: SavedLayoutResultPresentation.Status
         let severity: SavedLayoutResultPresentation.Severity
         let title: String
-        if placedCount == 0 {
+        if declared == .offered {
+            status = .offered; severity = .warning; title = "Displays look like the set for \(name)"
+        } else if declared == .cancelled {
+            status = .notApplied; severity = .failure; title = "\(name) not applied"
+        } else if placedCount == 0 {
             status = .notApplied; severity = .failure; title = "\(name) not applied"
         } else {
             status = .applied
@@ -132,7 +136,7 @@ public enum SavedLayoutSlotOutcome: Equatable, Sendable {
 }
 
 public struct SavedLayoutResultPresentation: Equatable, Sendable {
-    public enum Status: String, Sendable { case applied = "Applied", notApplied = "Not applied" }
+    public enum Status: String, Sendable { case applied = "Applied", cancelled = "Cancelled", offered = "Offered", notApplied = "Not applied" }
     public enum Severity: Sendable { case success, warning, failure }
     public struct Slot: Equatable, Sendable {
         public var outcome: SavedLayoutSlotOutcome

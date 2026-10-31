@@ -216,18 +216,30 @@ current session.
 
 The exact group of connected displays, identified by each display's identity
 (UUID, or vendor, model, and serial number), not by resolution or position. A
-set with an extra or a missing display is a different set.
+display binding ties one Saved Layout to one display of one display set. A set
+with an extra or a missing display is a different set.
+
+## Automatic Apply
+
+An Apply that BetterTile starts when a bound display set connects, or when the
+Mac wakes for a binding with **Also after wake**. It runs only for an exact
+match, waits for macOS and BetterTile to finish settling, and stops when the
+user presses a mouse button or key. It uses eligible windows on the target display and never opens an app.
 
 ## Apply
 
 The operation that arranges eligible open windows using a Saved Layout on one
 display's current desktop. It never launches an app or requests a window.
 User-started Apply can reuse a preference-matching window from another visible
-display when it is unreserved and belongs to no pane there. Apply never takes a window from another desktop.
+display when it is unreserved and belongs to no pane there. Automatic Apply
+uses only the target display. Neither takes a window from another desktop.
 Escape cancels through the final input checkpoint before session commit,
 including input queued during frame writes. Once final validation and session
 commit begin, a later Escape does not cancel that Apply. Cancellation restores
 the original frames while the desktop owner remains valid.
+An automatic Apply shows no result while the screen is locked or this user's
+session is inactive. If windows were left changed, it shows one result when
+the user returns. Incomplete recovery explains that Undo or Repair Layout is needed.
 Undo restores the previous session and frames while the touched desktops remain
 visible and their session structures have not changed. Mode, preset, Repair
 Layout, and pane membership changes expire Undo. A repeat that reports “already

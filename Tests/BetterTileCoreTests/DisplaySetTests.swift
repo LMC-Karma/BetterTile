@@ -87,4 +87,76 @@ import Testing
         #expect(DisplaySetMatcher.match(stored: mixed, live: [display("A-live", serial: 11), display("B-live", serial: shared, x: 2560)]).kind == .exact)
     }
 
+    // MARK: Trigger file
+
+    private func trigger(_ file: String = "one.json", target: Int = 0) -> DisplayTrigger {
+        .init(layoutFile: file, displays: [display("A", serial: 11), display("B", model: 41022, x: -1512, builtIn: true)], target: target)
+    }
+
+    @Test func aTriggerIsOffByDefaultAndRoundTrips() throws {
+        let document = DisplayTriggerDocument(triggers: [trigger()])
+        #expect(document.triggers[0].enabled == false)
+        #expect(document.triggers[0].alsoAfterWake == false)
+        let decoded = try DisplayTriggerDocument.decode(document.encoded())
+        #expect(decoded == document)
+    }
+
+    @Test func theFileUsesTheFlatShapeFromTheDesign() throws {
+        let text = String(decoding: try DisplayTriggerDocument(triggers: [trigger()]).encoded(), as: UTF8.self)
+        #expect(text.contains("\"frame\""))
+        #expect(text.contains("\"width\" : 2560"))
+        #expect(!text.contains("\"origin\""))
+    }
+
+    @Test func unknownKeysSurviveASave() throws {
+        let json = """
+        {"version":1,"futureTop":{"a":[1,2.5,null,true,"x"]},"triggers":[{"layoutFile":"one.json","enabled":true,
+        "alsoAfterWake":false,"target":0,"openIfNotRunning":["browser"],"displays":[{"uuid":"A","vendor":1,"model":2,"serial":0,
+        "builtIn":false,"name":"X","frame":{"x":0,"y":0,"width":10,"height":10}}]}]}
+        """
+        var document = try DisplayTriggerDocument.decode(Data(json.utf8))
+        #expect(document.triggers[0].enabled)
+        document.triggers[0].alsoAfterWake = true
+        let saved = try DisplayTriggerDocument.decode(document.encoded())
+        #expect(saved.unknownKeys["futureTop"] == .object(["a": .array([.int(1), .double(2.5), .null, .bool(true), .string("x")])]))
+        #expect(saved.triggers[0].unknownKeys["openIfNotRunning"] == .array([.string("browser")]))
+        #expect(saved.triggers[0].alsoAfterWake)
+    }
+
+    @Test func invalidFilesAreRejected() throws {
+        func bad(_ json: String) { #expect(throws: DisplayTriggerError.self) { try DisplayTriggerDocument.decode(Data(json.utf8)) } }
+        bad("not json")
+        bad(#"{"version":2,"triggers":[]}"#)
+        bad(#"{"triggers":[]}"#)
+        let display = #"{"uuid":"A","vendor":1,"model":2,"serial":0,"builtIn":false,"name":"X","frame":{"x":0,"y":0,"width":1,"height":1}}"#
+        bad(#"{"version":1,"triggers":[{"layoutFile":"../x.json","target":0,"displays":[\#(display)]}]}"#)
+        bad(#"{"version":1,"triggers":[{"layoutFile":"x.json","target":1,"displays":[\#(display)]}]}"#)
+        bad(#"{"version":1,"triggers":[{"layoutFile":"x.json","target":0,"displays":[]}]}"#)
+        bad(#"{"version":1,"triggers":[{"layoutFile":"x.json","target":0,"displays":[\#(display)]},{"layoutFile":"x.json","target":0,"displays":[\#(display)]}]}"#)
+        bad(String(repeating: " ", count: DisplayTriggerDocument.maximumBytes + 1))
+    }
+
+    @Test func oneTriggerPerLayoutAndAConflictNamesTheOwner() {
+        var document = DisplayTriggerDocument()
+        document.set(trigger("one.json"))
+        var changed = trigger("one.json"); changed.enabled = true
+        document.set(changed)
+        #expect(document.triggers.count == 1 && document.triggers[0].enabled)
+        let same = trigger("two.json").displays
+        #expect(document.conflict(displays: same, target: 0, excluding: "two.json")?.layoutFile == "one.json")
+        #expect(document.conflict(displays: same, target: 1, excluding: "two.json") == nil)
+        #expect(document.conflict(displays: same, target: 0, excluding: "one.json") == nil)
+        #expect(document.conflict(displays: [same[0]], target: 0, excluding: "two.json") == nil)
+        document.remove(layoutFile: "one.json")
+        #expect(document.triggers.isEmpty)
+    }
+
+    @Test func theDocumentedTriggerExampleDecodes() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let text = try String(contentsOf: root.appendingPathComponent("docs/SAVED_LAYOUTS.md"), encoding: .utf8)
+        let examples = text.components(separatedBy: "```jsonc\n").dropFirst().map { $0.components(separatedBy: "```")[0] }
+        #expect(examples.count == 1)
+        let document = try DisplayTriggerDocument.decode(Data(try #require(examples.first).utf8))
+        #expect(document.triggers.count == 1 && !document.triggers[0].enabled)
+    }
 }

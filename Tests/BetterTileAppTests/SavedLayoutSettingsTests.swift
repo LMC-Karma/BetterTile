@@ -99,7 +99,7 @@ import Testing
                 badgeChooser: { _ in chooser ? AnyView(Text("Fixture window choice").onAppear(perform: badgeActivated)) : nil },
                 badgeAction: { _ in chooser ? nil : badgeActivated }, interaction: interaction))
         } else {
-            content = AnyView(SavedLayoutSettings(editor: editor, model: model,
+            content = AnyView(SavedLayoutSettings(editor: editor, model: model, displayTriggers: nil,
                                                 paletteSource: palette, canvasInteraction: interaction, editing: true))
         }
         host = NSHostingView(rootView: AnyView(content.environment(\.accessibilityEnabled, true)
