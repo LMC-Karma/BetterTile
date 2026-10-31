@@ -377,6 +377,10 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         return nil
     }
 
+    private var knownWindowSnapshots: [WindowID: WindowSnapshot] = [:]
+    public func knownWindows() -> [WindowSnapshot] {
+        knownWindowSnapshots.values.filter { identities.records[$0.id] != nil }
+    }
     public func visibleWindows() throws -> [WindowSnapshot] {
         var recoveryPIDs: Set<Int32>?
         return try visibleWindows(recoveryPIDs: &recoveryPIDs)
@@ -450,6 +454,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
                     bundleIdentifier: application.bundleIdentifier,
                     displays: availableDisplays
                 ) else { continue }
+                knownWindowSnapshots[snapshot.id] = snapshot
                 if let windowServer,
                    !windowServer.contains(
                        snapshot,
@@ -474,6 +479,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
                 return AXUIElementCopyAttributeValue(element, kAXRoleAttribute as CFString, &role)
             }
         ), notifyClosure: true)
+        knownWindowSnapshots = knownWindowSnapshots.filter { identities.records[$0.key] != nil }
         let sorted = snapshots.sorted { $0.id < $1.id }
         snapshotCache.recordFullSweep(sorted)
         snapshotGeneration &+= 1
@@ -2532,3 +2538,142 @@ extension AccessibilityWindowSystem: WindowStackReading {
 }
 
 extension AccessibilityWindowSystem: MinimumSizeProbing {}
+
+extension AccessibilityWindowSystem: WindowHitTesting {}
+
+extension AccessibilityWindowSystem: ApplicationActivating {
+    /// BetterTile is an inactive accessory app when it restores focus. Since macOS 14,
+    /// `NSRunningApplication.activate` from an inactive app is a cooperative request the
+    /// system can decline, so the public Accessibility frontmost attribute comes first,
+    /// as in `raiseWindow`. The workspace request remains the fallback.
+    public func activateApplication(bundleIdentifier: String, processIdentifier: Int32?) -> ApplicationActivationResult {
+        let copies = NSRunningApplication.runningApplications(withBundleIdentifier: bundleIdentifier).filter {
+            !$0.isTerminated && $0.processIdentifier != getpid()
+        }
+        // A named process must still be a copy of this app. Without one, only a single copy qualifies.
+        let application: NSRunningApplication?
+        if let processIdentifier { application = copies.first { $0.processIdentifier == processIdentifier } }
+        else { application = copies.count == 1 ? copies.first : nil }
+        guard let application else { return .unavailable }
+        if AXIsProcessTrusted(), AXUIElementSetAttributeValue(makeApplicationElement(pid: application.processIdentifier),
+                                                              kAXFrontmostAttribute as CFString, kCFBooleanTrue) == .success {
+            return .accessibility
+        }
+        return application.activate(options: []) ? .workspaceRequest : .unavailable
+    }
+}
+
+
+/// AX handles stay within this menu request; the worker only reads them. The
+/// main-actor coordinator retains ownership of the final AXPress mutation.
+private struct NewWindowMenuElement: @unchecked Sendable {
+    let ax: AXUIElement
+}
+
+extension AccessibilityWindowSystem: ApplicationWindowRequesting {
+    public func activateForWindowRequest(processIdentifier: Int32, bundleIdentifier: String) -> Bool {
+        guard let application = NSRunningApplication(processIdentifier: processIdentifier),
+              application.bundleIdentifier == bundleIdentifier, !application.isTerminated,
+              application.activationPolicy == .regular else { return false }
+        return application.activate()
+    }
+
+    public func requestNewWindow(processIdentifier: Int32, bundleIdentifier: String,
+                                 validating isCurrent: @escaping @MainActor () -> Bool) async -> ApplicationWindowRequestResult {
+        guard let application = NSRunningApplication(processIdentifier: processIdentifier),
+              application.bundleIdentifier == bundleIdentifier, !application.isTerminated,
+              application.activationPolicy == .regular else { return .failed("The application is no longer running.") }
+        let name = application.localizedName
+        let candidate = await NewWindowMenuReadBudget.inBackground { budget in
+            Self.discoverNewWindow(processIdentifier: processIdentifier, applicationName: name, bundleIdentifier: bundleIdentifier, budget: budget)
+        }
+        guard !Task.isCancelled, isCurrent(), !application.isTerminated,
+              application.bundleIdentifier == bundleIdentifier else { return .failed("The application or destination changed.") }
+        guard let candidate else { return .unsupported }
+        let title = candidate.command.title
+        // Re-read off actor with a fresh budget. A discovery deadline expiring
+        // after a command was found must not discard that command.
+        let current = await NewWindowMenuReadBudget.inBackground { budget in
+            Self.newWindowCommand(from: candidate.element, budget: budget)
+        }
+        guard current.title == title, current.isPressable,
+              current.canRequestWindow(bundleIdentifier: bundleIdentifier,
+                  language: Locale.current.language.languageCode?.identifier ?? "en") else { return .unsupported }
+        guard !Task.isCancelled, isCurrent(), !application.isTerminated,
+              application.bundleIdentifier == bundleIdentifier else { return .failed("The application or destination changed.") }
+        let item = candidate.element.ax
+        guard AXUIElementSetMessagingTimeout(item, 0.05) == .success else { return .unsupported }
+        defer { AXUIElementSetMessagingTimeout(item, 0) }
+        let result = Self.gatedCall(item) { AXUIElementPerformAction(item, kAXPressAction as CFString) }
+        return result == .success ? .requested : .failed("The application couldn’t open a new window.")
+    }
+
+    private nonisolated static func menuValue<T>(_ attribute: String, from item: NewWindowMenuElement,
+                                                  budget: NewWindowMenuReadBudget) -> T? {
+        budget.read { timeout in
+            guard AXUIElementSetMessagingTimeout(item.ax, timeout) == .success else { return nil }
+            defer { AXUIElementSetMessagingTimeout(item.ax, 0) }
+            var raw: CFTypeRef?
+            guard gatedCall(item.ax, { AXUIElementCopyAttributeValue(item.ax, attribute as CFString, &raw) }) == .success
+            else { return nil }
+            return raw as? T
+        }
+    }
+
+    private nonisolated static func menuChildren(_ item: NewWindowMenuElement,
+        limit: Int, budget: NewWindowMenuReadBudget) -> [NewWindowMenuElement]? {
+        // Bound the IPC payload too: do not fetch an arbitrarily large child array.
+        budget.read { timeout in
+            guard AXUIElementSetMessagingTimeout(item.ax, timeout) == .success else { return nil }
+            defer { AXUIElementSetMessagingTimeout(item.ax, 0) }
+            var raw: CFArray?
+            guard gatedCall(item.ax, { AXUIElementCopyAttributeValues(item.ax, kAXChildrenAttribute as CFString,
+                0, limit + 1, &raw) }) == .success,
+                let children = raw as? [AXUIElement], children.count <= limit else { return nil }
+            return children.map { NewWindowMenuElement(ax: $0) }
+        }
+    }
+
+    private nonisolated static func discoverNewWindow(processIdentifier: Int32, applicationName: String?, bundleIdentifier: String,
+        budget: NewWindowMenuReadBudget) -> (element: NewWindowMenuElement, command: NewWindowMenuCommand)? {
+        let app = NewWindowMenuElement(ax: AXUIElementCreateApplication(processIdentifier))
+        guard !isUnresponsive(processIdentifier),
+              let bar: AXUIElement = menuValue(kAXMenuBarAttribute, from: app, budget: budget),
+              let entries = menuChildren(.init(ax: bar), limit: 32, budget: budget) else { return nil }
+        var applicationMenuIndex: Int?
+        if let applicationName {
+            for (index, entry) in entries.enumerated() {
+                guard budget.remaining > 0 else { break }
+                let title: String? = menuValue(kAXTitleAttribute, from: entry, budget: budget)
+                if title == applicationName { applicationMenuIndex = index; break }
+            }
+        }
+        let discovery = NewWindowMenuDiscovery<NewWindowMenuElement>(children: {
+            menuChildren($0, limit: 128, budget: budget)
+        }, command: { newWindowCommand(from: $0, budget: budget) }, applicationMenuIndex: applicationMenuIndex, bundleIdentifier: bundleIdentifier,
+            language: Locale.current.language.languageCode?.identifier ?? "en")
+        return discovery.find(in: entries, validating: { budget.remaining > 0 })
+    }
+
+    private nonisolated static func newWindowCommand(from item: NewWindowMenuElement,
+        budget: NewWindowMenuReadBudget) -> NewWindowMenuCommand {
+        let title: String? = menuValue(kAXTitleAttribute, from: item, budget: budget)
+        let character: String? = menuValue(kAXMenuItemCmdCharAttribute, from: item, budget: budget)
+        let modifiers: Int? = menuValue(kAXMenuItemCmdModifiersAttribute, from: item, budget: budget)
+        guard NewWindowMenuCommand.isKnownWindowTitle(title, language: Locale.current.language.languageCode?.identifier ?? "en")
+            || (["N", "n"].contains(character) && modifiers == 0) else {
+            return .init(title: title, role: nil, enabled: nil, actions: [], commandCharacter: character, commandModifiers: modifiers)
+        }
+        let role: String? = menuValue(kAXRoleAttribute, from: item, budget: budget)
+        let enabled: Bool? = menuValue(kAXEnabledAttribute, from: item, budget: budget)
+        let actions: [String]? = role == "AXMenuItem" && enabled == true ? budget.read { timeout in
+            guard AXUIElementSetMessagingTimeout(item.ax, timeout) == .success else { return nil }
+            defer { AXUIElementSetMessagingTimeout(item.ax, 0) }
+            var names: CFArray?
+            guard gatedCall(item.ax, { AXUIElementCopyActionNames(item.ax, &names) }) == .success else { return nil }
+            return names as? [String]
+        } : nil
+        return .init(title: title, role: role, enabled: enabled, actions: actions ?? [],
+                     commandCharacter: character, commandModifiers: modifiers)
+    }
+}

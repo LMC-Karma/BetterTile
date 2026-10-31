@@ -434,7 +434,9 @@ func tabbedStripFitsNarrowAndCrowdedPanes(width: Double, count: Int) {
     #expect(tabItems.filter { $0.title == windows[0].title }.count == 2)
     #expect(menu.item(withTitle: "Document 8")?.state == .on)
     #expect(menu.item(withTitle: "Undo Layout Change")?.isEnabled == false)
-    #expect(menu.item(withTitle: "Change Layout")?.submenu?.items.count == TabbedPreset.allCases.count)
+    let gallery = try #require(menu.item(withTitle: "Layout Gallery…"))
+    #expect(gallery.submenu == nil)
+    #expect(gallery.action != nil)
     var selected: WindowID?
     overlay.onIntent = { if case let .select(id) = $0 { selected = id } }
     for (index, item) in tabItems.enumerated() {
@@ -605,7 +607,7 @@ func tabbedStripFitsNarrowAndCrowdedPanes(width: Double, count: Int) {
     view.titles = (0..<9).map { "Document \($0)" }
     panel.contentView = view
     view.updateAccessibility()
-    let actions = try #require(view.accessibilityChildren() as? [NSAccessibilityElement])
+    let actions = try #require(view.accessibilityChildren()?.compactMap { $0 as? NSAccessibilityElement })
     #expect(actions.contains { $0.accessibilityLabel() == "Document 8, selected" })
     #expect(actions.allSatisfy { panel.frame.contains($0.accessibilityFrame()) })
     let menu = try #require(actions.last)
@@ -625,7 +627,7 @@ func tabbedStripFitsNarrowAndCrowdedPanes(width: Double, count: Int) {
     view.titles = ["Document"]
     panel.contentView = view
     view.updateAccessibility()
-    let actions = try #require(view.accessibilityChildren() as? [NSAccessibilityElement])
+    let actions = try #require(view.accessibilityChildren()?.compactMap { $0 as? NSAccessibilityElement })
     let close = try #require(actions.first { $0.accessibilityLabel() == "Close Document" })
     let frame = panel.convertFromScreen(close.accessibilityFrame())
     let point = NSPoint(x: frame.midX, y: frame.midY)
@@ -791,7 +793,9 @@ func tabbedStripFitsNarrowAndCrowdedPanes(width: Double, count: Int) {
     overlay.onIntent = { intent in if case let .activate(id) = intent { activated = id } }
     overlay.refresh(state: state, bounds: bounds, windows: windows)
     let paneView = try #require(NSApp.windows.compactMap(\.contentView).first { $0.accessibilityLabel() == "Pane 2, empty" })
-    let actions = try #require(paneView.accessibilityChildren() as? [NSAccessibilityElement])
+    let children = try #require(paneView.accessibilityChildren())
+    let actions = children.compactMap { $0 as? NSAccessibilityElement }
+    #expect(children.contains { ($0 as? NSButton)?.title == "Choose Layout" })
     #expect(actions.allSatisfy { $0.isAccessibilityEnabled() })
     let activate = try #require(actions.first { $0.accessibilityLabel() == "Use pane 2 for new windows" })
     #expect(activate.accessibilityPerformPress())
@@ -866,7 +870,8 @@ func tabStripInsertionPointsMatchRenderedTabEdges(width: Double) {
     var adjustments: [Double] = []
     overlay.onIntent = { if case let .adjustDivider(_, delta) = $0 { adjustments.append(delta) } }
     overlay.refresh(state: state, bounds: bounds, windows: [])
-    let slider = try #require(NSApp.windows.compactMap { $0.contentView as? TabbedDividerAccessibilityView }.first)
+    let slider = try #require(NSApp.windows.filter { overlay.windowNumbers.contains($0.windowNumber) }
+        .compactMap { $0.contentView as? TabbedDividerAccessibilityView }.first)
     #expect(slider.accessibilityRole() == .slider)
     #expect(slider.window?.ignoresMouseEvents == true)
     #expect(slider.accessibilityPerformIncrement())
@@ -904,9 +909,15 @@ func tabStripInsertionPointsMatchRenderedTabEdges(width: Double) {
                         styleMask: [.borderless], backing: .buffered, defer: false)
     let view = TabbedPaneView()
     panel.contentView = view
+    view.layoutSubtreeIfNeeded()
+    view.content.layoutSubtreeIfNeeded()
     for x in stride(from: 4.0, to: 330.0, by: 40) {
         let point = view.convert(NSPoint(x: x, y: 17), to: view.superview)
-        #expect(view.hitTest(point) is TabbedPaneContentView)
+        if view.content.addButton.frame.contains(NSPoint(x: x, y: 17)) {
+            #expect(view.hitTest(point) === view.content.addButton)
+        } else {
+            #expect(view.hitTest(point) is TabbedPaneContentView)
+        }
     }
 }
 
@@ -922,7 +933,7 @@ func tabStripInsertionPointsMatchRenderedTabEdges(width: Double) {
     defer { overlay.hide() }
     overlay.refresh(state: state, bounds: bounds, windows: [])
     func stripFrames() -> [NSRect] {
-        NSApp.windows.filter { $0.isVisible && $0.contentView is TabbedPaneView }.map(\.frame).sorted { $0.minX < $1.minX }
+        NSApp.windows.filter { overlay.windowNumbers.contains($0.windowNumber) && $0.isVisible && $0.contentView is TabbedPaneView }.map(\.frame).sorted { $0.minX < $1.minX }
     }
     let before = stripFrames()
     #expect(before.count == 2)
@@ -1063,7 +1074,7 @@ func tabStripInsertionPointsMatchRenderedTabEdges(width: Double) {
 @Test(.macOSTestApplication) func contentFittedTabsCompressBeforeHiding() {
     let width = 500.0
     let strip = TabbedStripLayout(width: width, count: 4, selectedIndex: 3, preferredWidths: [200, 200, 120, 160])
-    let available = strip.menuFrame.minX - 32
+    let available = strip.addFrame.minX - 32
     #expect(strip.hiddenCount == 0)
     let widths = strip.visibleRange.map { strip.tabFrame($0).width }
     #expect(abs(widths.reduce(0, +) - available) < 0.001)
@@ -1124,4 +1135,163 @@ func tabStripInsertionPointsMatchRenderedTabEdges(width: Double) {
     let lone = BTPoint(x: emptyFrame.midX, y: emptyFrame.minY + TabbedLayoutState.headerHeight / 2)
     #expect(overlay.tabDropZone(at: lone, dragging: b) == nil)
     #expect(overlay.tabDropZone(at: lone, dragging: a)?.paneID == empty.id)
+}
+
+
+/// While a pane waits for a click on a window BetterTile asked an app to open, only that pane's panel
+/// drops below the window, so the window is visible and clickable; the other pane keeps its order.
+@Test(.macOSTestApplication) @MainActor func tabbedRequestPaneMovesBelowTheArrivedWindow() throws {
+    _ = NSApplication.shared
+    let state = TabbedLayoutState(preset: .columns)
+    var ordered: [(NSPanel, NSWindow.OrderingMode, Int)] = []
+    let overlay = TabbedOverlayController(orderPanel: { ordered.append(($0, $1, $2)) })
+    defer { overlay.hide() }
+    let bounds = BTRect(x: 12000, y: 100, width: 1000, height: 800)
+    overlay.refresh(state: state, bounds: bounds, windows: [])
+    let pane = state.panes[1].id
+    overlay.setPaneRequestStatus(PaneRequestStatus(requestID: UUID(), paneID: pane, appName: "Safari",
+        kind: .awaitingClick([PaneRequestWindow(id: WindowID(rawValue: "new"), title: "Start Page")])))
+    ordered.removeAll()
+    overlay.revealRequestWindow(number: 4242)
+    let (panel, mode, number) = try #require(ordered.last)
+    #expect(mode == .below && number == 4242)
+    #expect(panel.level == .normal)
+    #expect((panel.contentView as? TabbedPaneView)?.pane.id == pane)
+    // A refresh keeps the request pane below the window; the other empty pane stays floating.
+    ordered.removeAll()
+    overlay.refresh(state: state, bounds: bounds, windows: [])
+    #expect(ordered.contains { $0.0 === panel && $0.1 == .below && $0.2 == 4242 })
+    #expect(panel.level == .normal)
+    overlay.revealRequestWindow(number: nil)
+    #expect(panel.level == .floating)
+}
+
+/// Records ordering without showing a window or taking focus.
+@MainActor private final class RevealOrderPanel: NSPanel {
+    var shown = false
+    var orders: [String] = []
+    override var isVisible: Bool { shown }
+    override var isKeyWindow: Bool { false }
+    override func orderFrontRegardless() { shown = true; orders.append("front") }
+    override func orderOut(_ sender: Any?) { shown = false; orders.append("out") }
+    override func order(_ place: NSWindow.OrderingMode, relativeTo otherWin: Int) {
+        shown = place != .out
+        orders.append("\(place == .above ? "above" : place == .below ? "below" : "out") \(otherWin)")
+    }
+}
+
+@MainActor private final class RequestRevealFixture {
+    var panels: [RevealOrderPanel] = []
+    var overlay: TabbedOverlayController!
+    var state = TabbedLayoutState(preset: .columns)
+    let bounds = BTRect(x: 12000, y: 100, width: 1000, height: 800)
+    let a = WindowID(rawValue: "reveal-a"), b = WindowID(rawValue: "reveal-b")
+    let paneID: UUID
+
+    /// Pane 2 shows `b`. With `anchored`, the model validated both selected windows' numbers, so the
+    /// strip sits at the normal level above `b` (1002). Without, the strip floats and a focused
+    /// window over pane 2 hides it.
+    init(anchored: Bool) throws {
+        _ = NSApplication.shared
+        state.reconcile(windowIDs: [a, b], removed: [], focused: a)
+        paneID = state.panes[1].id
+        state.move(b, to: paneID)
+        overlay = TabbedOverlayController(panelFactory: { [unowned self] in
+            let panel = RevealOrderPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+            panels.append(panel)
+            return panel
+        })
+        let paneFrame = try #require(state.frames(in: bounds)[paneID])
+        overlay.refresh(state: state, bounds: bounds, windows: [], obscuringFrames: anchored ? [] : [paneFrame],
+                        selectedWindowNumbers: anchored ? [a: 1001, b: 1002] : [:])
+    }
+
+    func panel() throws -> RevealOrderPanel {
+        try #require(panels.first { ($0.contentView as? TabbedPaneView)?.pane.id == paneID })
+    }
+
+    func request(_ kind: PaneRequestStatus.Kind = .awaitingClick([PaneRequestWindow(id: WindowID(rawValue: "new"), title: "Start Page")])) -> PaneRequestStatus {
+        PaneRequestStatus(requestID: UUID(), paneID: paneID, appName: "Safari", kind: kind)
+    }
+}
+
+/// Ending a request reveal puts the pane's strip back where the last refresh ordered it at once:
+/// above its selected tab at the normal level, or floating and hidden under the focused window.
+/// Before, it floated in front of every window until the next refresh, or, when only the status
+/// was cleared, stayed below the request window.
+@Test(.macOSTestApplication, arguments: [true, false], ["reveal", "status", "next request"]) @MainActor
+func tabbedRequestRevealEndRestoresThePaneOrderAtOnce(anchored: Bool, ending: String) throws {
+    let fixture = try RequestRevealFixture(anchored: anchored)
+    defer { fixture.overlay.hide() }
+    let overlay = fixture.overlay!
+    let panel = try fixture.panel()
+    overlay.setPaneRequestStatus(fixture.request())
+    overlay.revealRequestWindow(number: 4242)
+    #expect(panel.level == .normal && panel.orders.last == "below 4242")
+    panel.orders.removeAll()
+    func expectRestored(_ step: String) {
+        if anchored {
+            #expect(panel.level == .normal, "\(step)")
+            #expect(panel.orders.last == "above 1002", "\(step): \(panel.orders)")
+            #expect(!panel.orders.contains("front"), "\(step): \(panel.orders)")
+        } else {
+            #expect(panel.level == .floating, "\(step)")
+            #expect(!panel.isVisible, "\(step): \(panel.orders)")
+        }
+    }
+    switch ending {
+    case "reveal":
+        // BetterTileModel.cancelPaneApplicationRequest ends the reveal, then clears the status.
+        overlay.revealRequestWindow(number: nil)
+        expectRestored("reveal ended")
+        overlay.setPaneRequestStatus(nil)
+        expectRestored("status cleared")
+    case "status":
+        overlay.setPaneRequestStatus(nil)
+        expectRestored("status cleared")
+    default:
+        // A new request in the same pane does not keep the previous request's reveal.
+        overlay.setPaneRequestStatus(fixture.request(.opening(launching: false)))
+        expectRestored("next request")
+        panel.orders.removeAll()
+        overlay.revealRequestWindow(number: 4242)
+        #expect(panel.level == .normal && panel.orders.last == "below 4242")
+    }
+}
+
+/// The reveal ends after the anchor's window closed: the replacement tab is not verified yet, so
+/// the strip floats instead of joining the stack beside a closed window.
+@Test(.macOSTestApplication) @MainActor func tabbedRequestRevealEndDropsAClosedAnchor() throws {
+    let fixture = try RequestRevealFixture(anchored: true)
+    defer { fixture.overlay.hide() }
+    let panel = try fixture.panel()
+    fixture.overlay.setPaneRequestStatus(fixture.request())
+    fixture.overlay.revealRequestWindow(number: 4242)
+    fixture.overlay.removeUnavailableWindows([fixture.b])
+    panel.orders.removeAll()
+    fixture.overlay.revealRequestWindow(number: nil)
+    #expect(panel.level == .floating)
+    #expect(!panel.orders.contains("above 1002"), "\(panel.orders)")
+}
+
+/// A reveal that ends while the overlay is hidden or suspended for a Space change orders nothing;
+/// the next refresh orders the strip.
+@Test(.macOSTestApplication, arguments: ["hide", "space change"]) @MainActor
+func tabbedRequestRevealEndOrdersNothingWhileHiddenOrSuspended(_ lifecycle: String) throws {
+    let fixture = try RequestRevealFixture(anchored: true)
+    defer { fixture.overlay.hide() }
+    let overlay = fixture.overlay!
+    let panel = try fixture.panel()
+    overlay.setPaneRequestStatus(fixture.request())
+    overlay.revealRequestWindow(number: 4242)
+    if lifecycle == "hide" { overlay.hide() } else { overlay.prepareForSpaceChange() }
+    let shown = panel.isVisible
+    panel.orders.removeAll()
+    overlay.revealRequestWindow(number: nil)
+    overlay.setPaneRequestStatus(nil)
+    #expect(panel.orders.isEmpty, "\(panel.orders)")
+    #expect(panel.isVisible == shown)
+    overlay.refresh(state: fixture.state, bounds: fixture.bounds, windows: [],
+                    selectedWindowNumbers: [fixture.a: 1001, fixture.b: 1002])
+    #expect(panel.level == .normal && panel.orders.last == "above 1002")
 }

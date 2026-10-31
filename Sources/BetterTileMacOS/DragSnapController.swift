@@ -104,6 +104,13 @@ public final class DragSnapController {
             syncMonitoring()
         }
     }
+    /// Reuses the existing fallback left-mouse monitor for Tabbed chooser dismissal.
+    public var observesChooserMouseDown = false { didSet { syncMonitoring() } }
+    public var chooserMouseDownHandler: ((GlobalGestureEvent) -> Void)?
+    /// A pane request places a clicked window only after the click's mouse-up. Without the shared
+    /// tap, the fallback forwards drag and up events to it, with or without drag snapping.
+    public var observesRequestMouseSequence = false { didSet { syncMonitoring() } }
+    public var requestMouseSequenceHandler: ((GlobalGestureEvent) -> Void)?
     public var bentoDragBeganHandler: ((DisplayID, WindowID, BTRect) -> Bool)?
     /// Plans a Bento or Tabbed drop for the overlay. Nil means the drag is no
     /// longer current, which the overlay shows as invalid.
@@ -130,6 +137,8 @@ public final class DragSnapController {
 
     private let coordinator: WindowCoordinator
     private var mouseDownMonitor: Any?
+    private var requestDragMonitor: Any?
+    private var requestUpMonitor: Any?
     private var dragMonitor: Any?
     private var mouseUpMonitor: Any?
     private var escapeMonitor: Any?
@@ -167,6 +176,7 @@ public final class DragSnapController {
     private var sawDragSample = false
     private var isStarted = false
     private var mouseDownMonitorGeneration: UInt64 = 0
+    private var requestMonitorGeneration: UInt64 = 0
     private var fallbackMonitorGeneration: UInt64 = 0
     private var escapeMonitorGeneration: UInt64 = 0
     var addGlobalMonitor: (NSEvent.EventTypeMask, @escaping (NSEvent) -> Void) -> Any? = {
@@ -203,6 +213,7 @@ public final class DragSnapController {
         isStarted = false
         eventTapHandoff.clear()
         removeMouseDownMonitor()
+        removeRequestMonitors()
         removeGestureMonitors()
         cancel()
     }
@@ -231,18 +242,47 @@ public final class DragSnapController {
     }
 
     private func syncMonitoring() {
-        if isStarted, configuration.snappingEnabled {
+        if isStarted, configuration.snappingEnabled || observesChooserMouseDown || observesRequestMouseSequence {
             if gestureEventSource.usesEventTap {
                 removeMouseDownMonitor()
+                removeRequestMonitors()
                 removeFallbackGestureMonitors()
             } else {
                 installMouseDownMonitor()
+                if observesRequestMouseSequence { installRequestMonitors() } else { removeRequestMonitors() }
                 if isGestureActive { installGestureMonitors() }
             }
         } else {
             removeMouseDownMonitor()
+            removeRequestMonitors()
             removeGestureMonitors()
         }
+    }
+
+    /// Separate from the drag-snap gesture monitors, which a finished drag removes.
+    private func installRequestMonitors() {
+        guard !gestureEventSource.usesEventTap, requestDragMonitor == nil else { return }
+        let generation = requestMonitorGeneration
+        func forward(_ kind: GlobalGestureEventKind) -> (NSEvent) -> Void {
+            { [weak self] event in
+                Task { @MainActor in
+                    guard let self, self.isStarted, self.requestMonitorGeneration == generation,
+                          self.gestureEventSource.accepts(.nsEvent),
+                          let gestureEvent = GlobalGestureEvent(event, kind: kind) else { return }
+                    self.forwardFallbackMouseEvent(gestureEvent)
+                }
+            }
+        }
+        requestDragMonitor = addGlobalMonitor([.leftMouseDragged], forward(.leftMouseDragged))
+        requestUpMonitor = addGlobalMonitor([.leftMouseUp], forward(.leftMouseUp))
+    }
+
+    private func removeRequestMonitors() {
+        requestMonitorGeneration &+= 1
+        if let requestDragMonitor { removeEventMonitor(requestDragMonitor) }
+        if let requestUpMonitor { removeEventMonitor(requestUpMonitor) }
+        requestDragMonitor = nil
+        requestUpMonitor = nil
     }
 
     private func installMouseDownMonitor() {
@@ -351,7 +391,17 @@ public final class DragSnapController {
         guard gestureEventSource.accepts(.nsEvent),
               let gestureEvent = GlobalGestureEvent(event, kind: kind)
         else { return }
+        if kind == .leftMouseDown { forwardFallbackMouseEvent(gestureEvent) }
         receive(gestureEvent, from: .nsEvent)
+    }
+
+    /// Routes one AppKit fallback event. Chooser dismissal receives only mouse-down.
+    public func forwardFallbackMouseEvent(_ event: GlobalGestureEvent) {
+        switch event.kind {
+        case .leftMouseDown: chooserMouseDownHandler?(event)
+        case .leftMouseDragged, .leftMouseUp:
+            if observesRequestMouseSequence { requestMouseSequenceHandler?(event) }
+        }
     }
 
     func receive(_ event: GlobalGestureEvent, from source: GestureEventSource) {

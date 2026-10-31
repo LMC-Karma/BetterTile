@@ -111,7 +111,35 @@ import Testing
     let panel = try #require(Mirror(reflecting: pill).children.first { $0.label == "panel" }?.value as? NSPanel)
     #expect(type(of: panel) == NSPanel.self)
     #expect(panel.level == .statusBar)
+    let overlay = model.tabbedOverlayFactory()
+    defer { overlay.hide() }
+    #expect(overlay.chooserPresenterFactory == nil)
+    let state = TabbedLayoutState(preset: .single)
+    overlay.refresh(state: state, bounds: BTRect(x: 100_000, y: 0, width: 1000, height: 800), windows: [])
+    let strip = try #require(NSApp.windows.first { ($0.contentView as? TabbedPaneView)?.pane.id == state.panes[0].id })
+    #expect(type(of: strip) == TabbedStripPanel.self)
+    #expect(!strip.canBecomeKey)
+}
 
+@Test(.appTestApplication) @MainActor func offscreenStripStillRunsTheScreenDependentChooserPresentation() throws {
+    _ = NSApplication.shared
+    let screen = try #require(NSScreen.screens.first)
+    let strip = OffscreenTestWindows.tabbedPanel()
+    strip.isReleasedWhenClosed = false
+    defer { strip.close() }
+    let anchor = NSView(frame: NSRect(x: 0, y: 0, width: 600, height: 34))
+    strip.contentView = anchor
+    strip.setFrame(NSRect(x: screen.frame.midX, y: screen.frame.midY, width: 600, height: 34), display: false)
+    strip.orderFrontForTesting()
+    #expect(strip.isVisible)
+    #expect(strip.screen != nil)
+    let content = NSView(frame: NSRect(x: 0, y: 0, width: 320, height: 420))
+    let presenter = OffscreenTestWindows.chooserPresenter(content, content.frame.size)
+    defer { presenter.dismiss() }
+    presenter.show(relativeTo: NSRect(x: 10, y: 0, width: 24, height: 24), of: anchor, paneFrame: nil)
+    #expect(presenter.isPresented)
+    #expect(presenter.panel.isVisible)
+    OffscreenTestWindows.check(presenter.panel)
 }
 
 // These tests require a real key window; run only while the Mac is unattended.
@@ -132,6 +160,18 @@ import Testing
             window.setFrame(screen.visibleFrame, display: true)
             OffscreenTestWindows.check(window)
         }
-
+        let strip = OffscreenTestWindows.tabbedPanel()
+        strip.isReleasedWhenClosed = false
+        defer { strip.close() }
+        let productionStrip = try #require(strip as? TabbedStripPanel)
+        #expect(!strip.canBecomeKey)
+        productionStrip.allowsKeyboardFocus = true
+        #expect(strip.canBecomeKey)
+        strip.setFrame(screen.visibleFrame.insetBy(dx: 100, dy: 100), display: false)
+        strip.makeKeyAndOrderFrontForTesting()
+        #expect(strip.isVisible)
+        #expect(strip.isKeyWindow, Comment(rawValue: keyWindowDiagnostics(strip)))
+        strip.orderOutForTesting()
+        OffscreenTestWindows.check(strip)
     }
 }

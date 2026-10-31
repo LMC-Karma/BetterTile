@@ -280,7 +280,7 @@ cross-application flicker.
 
 ## Current live checks
 
-The fixture pass verified Native → Tabbed with One Pane and Two Columns, and
+The fixture pass verified Native → Tabbed with Single Pane and 2 Columns, and
 Native → Bento → Tabbed. Selecting an inactive same-app tab sent typed input
 to its window. Tab reorder changed order and selection; dragging a tab to an
 edge created a split. An adopted Tabbed divider moved from 50 to 55 percent.

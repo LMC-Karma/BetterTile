@@ -755,3 +755,32 @@ private func testWindow(_ id: String, x: Double, y: Double = 0, width: Double = 
     store.suspendAutomaticWrites(sessionID: original.id, on: sessionDisplay)
     #expect(store.allSessions(for: sessionDisplay) == [active])
 }
+
+
+@Test func minimizingTabbedWindowUpdatesInactiveSessionAndPreservesEntryFrame() throws {
+    let window = WindowID(rawValue: "minimized-tab")
+    let frame = BTRect(x: 10, y: 20, width: 300, height: 400)
+    let a = NativeSpaceID(rawValue: 1), b = NativeSpaceID(rawValue: 2)
+    var store = LayoutSessionStore()
+    store.select(displayID: sessionDisplay, nativeSpaceID: a, defaultMode: .tabbed)
+    store.update(sessionDisplay) {
+        var state = TabbedLayoutState()
+        state.reconcile(windowIDs: [window], removed: [], focused: window)
+        $0.tabbedState = state
+        $0.windowIDs = [window]
+        $0.tabbedBaselineFrames = [window: frame]
+    }
+    let original = try #require(store.session(for: sessionDisplay))
+    store.select(displayID: sessionDisplay, nativeSpaceID: b, defaultMode: .manual)
+    store.removeMinimizedTabbedWindow(window)
+    let minimized = try #require(store.allSessions(for: sessionDisplay).first { $0.id == original.id })
+    #expect(minimized.tabbedState?.windowIDs.isEmpty == true)
+    #expect(minimized.windowIDs.isEmpty)
+    #expect(minimized.tabbedBaselineFrames[window] == frame)
+    #expect(minimized.revision > original.revision)
+    store.removeMinimizedTabbedWindow(window)
+    #expect(store.allSessions(for: sessionDisplay).first { $0.id == original.id }?.revision == minimized.revision)
+    store.removeClosedTabbedWindow(window)
+    #expect(store.allSessions(for: sessionDisplay).first { $0.id == original.id }?.tabbedBaselineFrames[window] == nil)
+    #expect(store.session(for: sessionDisplay)?.nativeSpaceID == b)
+}

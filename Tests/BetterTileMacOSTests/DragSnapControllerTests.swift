@@ -1420,4 +1420,91 @@ func tabStripHoverShowsAnInsertionAndCommitsATabDrop(edgeWidth: Double) throws {
     controller.displayTick()
     #expect(controller.dropTarget == nil)
     send(controller, .leftMouseUp, x: 150, y: 150, modifiers: .option)
+    #expect(system.frameWriteCounts.isEmpty)
+}
+
+@Test(.macOSTestApplication) @MainActor func tabbedChooserReusesExistingMouseDownFallbackWithSnappingOff() async throws {
+    _ = NSApplication.shared
+    let system = FakeWindowSystem()
+    var configuration = BetterTileConfiguration()
+    configuration.snappingEnabled = false
+    let controller = DragSnapController(coordinator: WindowCoordinator(system: system), configuration: configuration)
+    var callbacks: [(NSEvent.EventTypeMask, (NSEvent) -> Void)] = []
+    var removed = 0
+    controller.addGlobalMonitor = { mask, handler in callbacks.append((mask, handler)); return NSObject() }
+    controller.removeEventMonitor = { _ in removed += 1 }
+    var downs = 0
+    controller.chooserMouseDownHandler = { _ in downs += 1 }
+    controller.start()
+    defer { controller.stop() }
+    #expect(callbacks.isEmpty)
+    controller.observesChooserMouseDown = true
+    #expect(callbacks.count == 1)
+    let monitor = try #require(callbacks.first)
+    #expect(monitor.0 == .leftMouseDown)
+    let event = try #require(NSEvent.mouseEvent(with: .leftMouseDown, location: NSPoint(x: 400, y: 200),
+        modifierFlags: [], timestamp: 1, windowNumber: 0, context: nil,
+        eventNumber: 1, clickCount: 1, pressure: 1))
+    monitor.1(event)
+    try #require(await waitUntil { downs == 1 })
+    #expect(downs == 1)
+    #expect(!controller.isGestureActive)
+    controller.observesChooserMouseDown = false
+    #expect(removed == 1)
+    controller.observesChooserMouseDown = true
+    controller.setUsesSharedGestureEvents(true)
+    #expect(removed == 2) // A working tap removes the fallback instead of duplicating it.
+}
+
+@Test(.macOSTestApplication, arguments: [false, true])
+@MainActor func paneRequestFallbackForwardsTheWholeClickWithoutTheTap(snapping: Bool) async throws {
+    _ = NSApplication.shared
+    let system = FakeWindowSystem()
+    var configuration = BetterTileConfiguration()
+    configuration.snappingEnabled = snapping
+    let controller = DragSnapController(coordinator: WindowCoordinator(system: system), configuration: configuration)
+    controller.primaryButtonIsPressed = { false }
+    var monitors: [ObjectIdentifier: (mask: NSEvent.EventTypeMask, handler: (NSEvent) -> Void)] = [:]
+    controller.addGlobalMonitor = { mask, handler in
+        let token = NSObject()
+        monitors[ObjectIdentifier(token)] = (mask, handler)
+        return token
+    }
+    controller.removeEventMonitor = { monitors[ObjectIdentifier($0 as AnyObject)] = nil }
+    var downs: [GlobalGestureEventKind] = []
+    var sequence: [GlobalGestureEventKind] = []
+    controller.chooserMouseDownHandler = { downs.append($0.kind) }
+    controller.requestMouseSequenceHandler = { sequence.append($0.kind) }
+    controller.start()
+    defer { controller.stop() }
+    controller.observesChooserMouseDown = true
+    controller.observesRequestMouseSequence = true
+    func send(_ type: NSEvent.EventType, x: Double) throws {
+        let mask = NSEvent.EventTypeMask(type: type)
+        let matching = monitors.values.filter { $0.mask == mask }
+        try #require(matching.count == 1, "One fallback monitor delivers \(type) to the request")
+        let event = try #require(NSEvent.mouseEvent(with: type, location: NSPoint(x: x, y: 200), modifierFlags: [],
+            timestamp: 1_000, windowNumber: 0, context: nil, eventNumber: 1, clickCount: 1, pressure: type == .leftMouseUp ? 0 : 1))
+        matching[0].handler(event)
+    }
+    func drain() async {
+        // The monitors hop to the main actor. The main queue is FIFO.
+        await withCheckedContinuation { done in DispatchQueue.main.async { done.resume() } }
+    }
+    try send(.leftMouseDown, x: 400)
+    try send(.leftMouseDragged, x: 440)
+    try send(.leftMouseDragged, x: 400) // A drag back to the start still reaches the request.
+    try send(.leftMouseUp, x: 400)
+    await drain()
+    #expect(downs == [.leftMouseDown], "Chooser dismissal receives only mouse-down")
+    #expect(sequence == [.leftMouseDragged, .leftMouseDragged, .leftMouseUp])
+    #expect(!controller.isGestureActive)
+    try send(.leftMouseUp, x: 400)
+    await drain()
+    #expect(sequence.count == 4, "A finished click keeps the request monitors")
+    controller.observesRequestMouseSequence = false
+    #expect(monitors.values.allSatisfy { $0.mask == .leftMouseDown })
+    controller.observesRequestMouseSequence = true
+    controller.setUsesSharedGestureEvents(true)
+    #expect(monitors.isEmpty, "A working tap removes the fallback instead of duplicating it")
 }

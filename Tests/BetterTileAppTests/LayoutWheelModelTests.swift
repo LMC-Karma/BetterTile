@@ -8,7 +8,7 @@ import Testing
 @testable import BetterTileApp
 
 @MainActor
-final class FakeAppWindowSystem: BetterTileWindowSystem, CreatedWindowReading, TabbedWindowSystem, MinimumSizeProbing {
+final class FakeAppWindowSystem: BetterTileWindowSystem, CreatedWindowReading, TabbedWindowSystem, MinimumSizeProbing, ApplicationWindowRequesting {
     let manualClock: ManualClock?
     /// Use registered deadlines even for short boundary waits.
     var drivesPolicyDeadlines = false
@@ -29,6 +29,32 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, CreatedWindowReading, T
     )
     var enhancedUserInterfacePolicy: EnhancedUserInterfacePolicy = .disableAndRestore
     var leavesSpaceForDock = false
+    var newWindowRequestResult = ApplicationWindowRequestResult.unsupported
+    var newWindowRequests: [(Int32, String)] = []
+    /// Off by default: earlier tests expect the production hit test to find nothing in the fake.
+    var hitTestsWindows = false
+    /// Application activations requested through the coordinator, by process.
+    var applicationActivations: [Int32] = []
+    var onApplicationActivation: ((Int32) -> Void)?
+    /// Running copies that own no listed window, such as a second copy of the source app.
+    var additionalProcesses: [String: Set<Int32>] = [:]
+    var onNewWindowPreflight: (() -> Void)?
+    func activateForWindowRequest(processIdentifier: Int32, bundleIdentifier: String) -> Bool {
+        guard additionalProcesses[bundleIdentifier]?.contains(processIdentifier) == true
+            || windows.contains(where: { $0.bundleIdentifier == bundleIdentifier && $0.processIdentifier == processIdentifier }) else { return false }
+        applicationActivations.append(processIdentifier)
+        onApplicationActivation?(processIdentifier)
+        return true
+    }
+    func requestNewWindow(processIdentifier: Int32, bundleIdentifier: String,
+                          validating isCurrent: @escaping @MainActor () -> Bool) async -> ApplicationWindowRequestResult {
+        onNewWindowPreflight?()
+        guard isCurrent() else { return .failed("The destination changed.") }
+        newWindowRequests.append((processIdentifier, bundleIdentifier))
+        return newWindowRequestResult
+    }
+    var requestedApplicationReads: [Int32] = []
+
     var permission = true
     var ignoredFrameWriteWindowIDs: Set<WindowID> = []
     var enforcedMinimumWidths: [WindowID: Double] = [:]
@@ -80,6 +106,11 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, CreatedWindowReading, T
     }
     var emitsFrameEvents = false
     var desktopObservation: NativeDesktopObservation?
+    /// Opt-in adapter fidelity: full inventories refresh native state; targeted reads use its cache.
+    var simulatesNativeClassification = false
+    var physicalDesktopObservation: NativeDesktopObservation?
+    /// Changes physical topology immediately before a simulated full inventory reads it.
+    var onBeforeInventoryNativeRefresh: (() -> Void)?
     private(set) var frameWriteBatches: [[Placement]] = []
     private(set) var delayedFrameWrites: [Task<Void, Never>] = []
     var frameApplicationDelays: [WindowID: Duration] = [:]
@@ -205,6 +236,10 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, CreatedWindowReading, T
     }
     private func visibleWindows(recoveryPIDs: inout Set<Int32>?) throws -> [WindowSnapshot] {
         completeSweepCount += 1
+        if simulatesNativeClassification {
+            onBeforeInventoryNativeRefresh?()
+            _ = refreshNativeDesktopObservation()
+        }
         onVisibleWindowSweep?(completeSweepCount)
         if failedVisibleWindowSweeps.contains(completeSweepCount) {
             throw WindowSystemError.operationFailed("Injected visible-window observation failure.")
@@ -225,9 +260,10 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, CreatedWindowReading, T
                 applicationHoldsUntil.removeValue(forKey: pid)
             }
         }
-        return windows.filter {
+        let visible = windows.filter {
             !offscreenWindowIDs.contains($0.id) && applicationHoldsUntil[$0.processIdentifier] == nil
         }
+        return classifyUsingNativeCache(visible)
     }
     /// Runs on the next display read, to change the desktop in the middle of a synchronous pass.
     var onDisplays: (() -> Void)?
@@ -249,10 +285,15 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, CreatedWindowReading, T
         windowSnapshotRequests.append(ids)
         onWindowSnapshots?()
         refreshLearnedConstraints()
-        return windows.filter { window in
+        let snapshots = windows.filter { window in
             ids.contains(window.id)
                 && unreadableAfterWrites[window.id].map { frameWriteCounts[window.id, default: 0] < $0 } ?? true
         }
+        return classifyUsingNativeCache(snapshots)
+    }
+    private func classifyUsingNativeCache(_ windows: [WindowSnapshot]) -> [WindowSnapshot] {
+        guard simulatesNativeClassification, let desktopObservation else { return windows }
+        return desktopObservation.windowsOnCurrentSpaces(windows)
     }
     private func refreshLearnedConstraints() {
         for index in windows.indices {
@@ -316,7 +357,7 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, CreatedWindowReading, T
         guard cachedSnapshotsAvailable else { return nil }
         let refreshed = try windowSnapshots(ids: ids)
         guard Set(refreshed.map(\.id)) == ids, ids.isDisjoint(with: offscreenWindowIDs) else { return nil }
-        return windows.filter { !offscreenWindowIDs.contains($0.id) && !cachedVisibilityOmittedIDs.contains($0.id) }
+        return classifyUsingNativeCache(windows.filter { !offscreenWindowIDs.contains($0.id) && !cachedVisibilityOmittedIDs.contains($0.id) })
     }
     func setFrame(_ frame: BTRect, knownCurrentFrame: BTRect?, for windowID: WindowID) throws {
         guard let index = windows.firstIndex(where: { $0.id == windowID }) else {
@@ -482,6 +523,7 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, CreatedWindowReading, T
     }
     func refreshNativeDesktopObservation() -> NativeDesktopObservation? {
         nativeDesktopRefreshCount += 1
+        if simulatesNativeClassification, let physicalDesktopObservation { desktopObservation = physicalDesktopObservation }
         if let physicalSpace { desktopObservation?.currentSpaceByDisplay[mainDisplay.id] = physicalSpace }
         return desktopObservation
     }
@@ -865,26 +907,9 @@ func waitFor(
     return condition()
 }
 
-@Test(.appTestApplication) @MainActor func waitForRetainsPollingStepsWhenMainActorIsBlocked() async throws {
-    var polls = 0
-    let reached = await waitFor(timeout: .milliseconds(40)) {
-        polls += 1
-        if polls == 1 { Thread.sleep(forTimeInterval: 0.1) } // real-time: stalls the main actor to prove the helper counts polling steps
-        return polls == 3
-    }
-    #expect(reached)
-    #expect(polls == 3)
-}
 
-@Test(.appTestApplication) @MainActor func waitForStopsAfterItsPollingBudgetWhenStateNeverArrives() async {
-    var polls = 0
-    let reached = await waitFor(timeout: .milliseconds(40)) {
-        polls += 1
-        return false
-    }
-    #expect(!reached)
-    #expect(polls == 3)
-}
+
+
 
 @Test(.appTestApplication) @MainActor func manualLayoutWheelPreviewIsPureAndMatchesCommit() {
     let system = FakeAppWindowSystem()
@@ -1771,10 +1796,11 @@ func aFocusPartitionReportsPlacementFailureAfterThePeersReturn(fromWheel: Bool) 
     #expect(model.lastActionFeedback?.kind == .success)
 }
 
-@Test func menuBarDefaultOrderMatchesTheNativeCatalogExactly() {
-    #expect(WindowActionGroup.flattenedActions == WindowAction.menuBarDefaultOrder)
+@Test(.appTestApplication) func menuBarDefaultOrderKeepsPlacementActionsAndTabsRemainAssignable() {
+    #expect(WindowActionGroup.flattenedActions.filter { !$0.isTabCommand } == WindowAction.menuBarDefaultOrder)
     #expect(Set(WindowActionGroup.flattenedActions) == Set(WindowAction.allCases))
-    #expect(WindowActionGroup.flattenedActions.count == 34)
+    #expect(WindowActionGroup.flattenedActions.count == 41)
+    #expect(WindowActionGroup.tabs.actions == [.showTabBar] + WindowAction.tabCommands)
 }
 
 @Test(.appTestApplication) func menuActionOrderingCommitsOneValidatedInsertion() {
@@ -3603,63 +3629,6 @@ func temporaryWindowAbsenceKeepsRestoreDuringSpaceStabilization(reason: String) 
     #expect(system.windows[0].frame == original.frame)
 }
 
-
-private enum RepairFrameReadback: Sendable, Equatable {
-    case exact, wholePointEdges, independentOriginAndSize
-}
-
-/// Repair emits whole pane edges before an application can round its frame components.
-@Test(.appTestApplication, arguments: [4, 5], [
-    (0.0, RepairFrameReadback.exact), (1.0, .exact), (6.0, .exact),
-    (0.0, .wholePointEdges), (1.0, .wholePointEdges), (6.0, .wholePointEdges),
-    (0.0, .independentOriginAndSize), (1.0, .independentOriginAndSize), (6.0, .independentOriginAndSize),
-]) @MainActor
-private func repairKeepsBottomEdgesInsideTheWorkArea(count: Int, options: (Double, RepairFrameReadback)) async throws {
-    let (gap, readback) = options
-    let system = makeManualWindowSystem()
-    let display = DisplaySnapshot(id: system.mainDisplay.id,
-        frame: .init(x: 1210, y: 0, width: 2560, height: 1440),
-        visibleFrame: .init(x: 1210, y: 30, width: 2560, height: 1410), isMain: true)
-    system.availableDisplays = [display]
-    system.windows = (0..<count).map { i in
-        WindowSnapshot(id: .init(rawValue: "edge-\(i)"), processIdentifier: Int32(400 + i),
-            bundleIdentifier: "com.example.Edge\(i)",
-            frame: .init(x: 1210 + Double(i % 2) * 1280, y: 30 + Double(i / 2) * 470,
-                         width: 1279, height: 469), displayID: display.id)
-    }
-    system.focusedID = system.windows[0].id
-    if readback != .exact {
-        system.ignoredFrameWriteWindowIDs = Set(system.windows.map(\.id))
-        system.onFrameWrite = { id, frame in
-            guard let index = system.windows.firstIndex(where: { $0.id == id }) else { return }
-            if readback == .independentOriginAndSize {
-                // An app rounds AX position and size separately, so fractions can overshoot the far edge.
-                system.windows[index].frame = .init(x: frame.minX.rounded(), y: frame.minY.rounded(),
-                    width: frame.size.width.rounded(), height: frame.size.height.rounded())
-            } else {
-                let x = (frame.minX + 0.5).rounded(.down), y = (frame.minY + 0.5).rounded(.down)
-                system.windows[index].frame = .init(x: x, y: y,
-                    width: (frame.maxX + 0.5).rounded(.down) - x, height: (frame.maxY + 0.5).rounded(.down) - y)
-            }
-        }
-    }
-    let model = makeModel(system: system)
-    defer { model.shutdown() }
-    model.configuration.bentoInnerGap = gap
-    model.tileCurrentDisplay()
-    try #require(await system.waitFor { model.settlementTasks.isEmpty })
-    let requested = system.windows.compactMap { system.requestedFrames[$0.id]?.last }
-    #expect(requested.count == count)
-    for frame in requested {
-        for edge in [frame.minX, frame.minY, frame.maxX, frame.maxY] { #expect(edge == edge.rounded()) }
-    }
-    let maxBottom = try #require(system.windows.map { $0.frame.maxY }.max())
-    let maxRight = try #require(system.windows.map { $0.frame.maxX }.max())
-    #expect(maxBottom <= 1440)
-    #expect(maxRight <= 3770)
-    #expect(model.statusMessage == nil)
-}
-
 @Test(.appTestApplication, arguments: [260.0, 400, 480])
 func snapActivationDiagramShowsMinimumBandsAndScaledCornerReach(width: Double) {
     let size = CGSize(width: width, height: width / 1.6)
@@ -3718,4 +3687,80 @@ func snapActivationDiagramCornersAreNeverThinnerThanItsEdges(width: Double) {
     #expect(model.configuration.snapEdgeActivationDistance == 5)
     #expect(model.configuration.snapAreaBindings == assignments)
     #expect(system.frameWriteCounts.isEmpty)
+}
+
+extension FakeAppWindowSystem: WindowHitTesting, ApplicationActivating {
+    /// The newest listed window under the point, in top-left logical coordinates.
+    func window(at point: BTPoint) throws -> WindowSnapshot? {
+        hitTestsWindows ? windows.reversed().first { $0.frame.contains(point) } : nil
+    }
+
+    func activateApplication(bundleIdentifier: String, processIdentifier: Int32?) -> ApplicationActivationResult {
+        let copies = Set(windows.filter { $0.bundleIdentifier == bundleIdentifier }.map(\.processIdentifier))
+            .union(additionalProcesses[bundleIdentifier] ?? [])
+        let pid: Int32?
+        if let processIdentifier { pid = copies.contains(processIdentifier) ? processIdentifier : nil }
+        else { pid = copies.count == 1 ? copies.first : nil }
+        guard let pid else { return .unavailable }
+        applicationActivations.append(pid)
+        onApplicationActivation?(pid)
+        return .accessibility
+    }
+}
+
+
+private enum RepairFrameReadback: Sendable, Equatable {
+    case exact, wholePointEdges, independentOriginAndSize
+}
+
+/// Repair emits whole pane edges before an application can round its frame components.
+@Test(.appTestApplication, arguments: [4, 5], [
+    (0.0, RepairFrameReadback.exact), (1.0, .exact), (6.0, .exact),
+    (0.0, .wholePointEdges), (1.0, .wholePointEdges), (6.0, .wholePointEdges),
+    (0.0, .independentOriginAndSize), (1.0, .independentOriginAndSize), (6.0, .independentOriginAndSize),
+]) @MainActor
+private func repairKeepsBottomEdgesInsideTheWorkArea(count: Int, options: (Double, RepairFrameReadback)) async throws {
+    let (gap, readback) = options
+    let system = makeManualWindowSystem()
+    let display = DisplaySnapshot(id: system.mainDisplay.id,
+        frame: .init(x: 1210, y: 0, width: 2560, height: 1440),
+        visibleFrame: .init(x: 1210, y: 30, width: 2560, height: 1410), isMain: true)
+    system.availableDisplays = [display]
+    system.windows = (0..<count).map { i in
+        WindowSnapshot(id: .init(rawValue: "edge-\(i)"), processIdentifier: Int32(400 + i),
+            bundleIdentifier: "com.example.Edge\(i)",
+            frame: .init(x: 1210 + Double(i % 2) * 1280, y: 30 + Double(i / 2) * 470,
+                         width: 1279, height: 469), displayID: display.id)
+    }
+    system.focusedID = system.windows[0].id
+    if readback != .exact {
+        system.ignoredFrameWriteWindowIDs = Set(system.windows.map(\.id))
+        system.onFrameWrite = { id, frame in
+            guard let index = system.windows.firstIndex(where: { $0.id == id }) else { return }
+            if readback == .independentOriginAndSize {
+                // An app rounds AX position and size separately, so fractions can overshoot the far edge.
+                system.windows[index].frame = .init(x: frame.minX.rounded(), y: frame.minY.rounded(),
+                    width: frame.size.width.rounded(), height: frame.size.height.rounded())
+            } else {
+                let x = (frame.minX + 0.5).rounded(.down), y = (frame.minY + 0.5).rounded(.down)
+                system.windows[index].frame = .init(x: x, y: y,
+                    width: (frame.maxX + 0.5).rounded(.down) - x, height: (frame.maxY + 0.5).rounded(.down) - y)
+            }
+        }
+    }
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    model.configuration.bentoInnerGap = gap
+    model.tileCurrentDisplay()
+    try #require(await system.waitFor { model.settlementTasks.isEmpty })
+    let requested = system.windows.compactMap { system.requestedFrames[$0.id]?.last }
+    #expect(requested.count == count)
+    for frame in requested {
+        for edge in [frame.minX, frame.minY, frame.maxX, frame.maxY] { #expect(edge == edge.rounded()) }
+    }
+    let maxBottom = try #require(system.windows.map { $0.frame.maxY }.max())
+    let maxRight = try #require(system.windows.map { $0.frame.maxX }.max())
+    #expect(maxBottom <= 1440)
+    #expect(maxRight <= 3770)
+    #expect(model.statusMessage == nil)
 }

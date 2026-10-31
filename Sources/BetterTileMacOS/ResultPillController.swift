@@ -42,6 +42,10 @@ public struct ResultPillFeedback: Equatable, Sendable {
             message = "Accessibility required"
         } else if value.contains("ignore this app") {
             message = "App is ignored"
+        } else if value.contains("tab commands work on tabbed desktops") {
+            message = "Tabbed not active"
+        } else if value.contains("focus a tab to use tab commands") {
+            message = "Focus a tab to use tab commands."
         } else if value.contains("repair layout is available only on an adaptive desktop") {
             message = "Adaptive not active"
         } else if value.contains("eligible") || value.contains("focused window") {
@@ -52,8 +56,8 @@ public struct ResultPillFeedback: Equatable, Sendable {
             message = "Can’t fit this layout"
         } else if value.contains("tabbed size") {
             message = "Window refused this size"
-        } else if value.contains("change layout → one pane") {
-            message = "Choose One Pane"
+        } else if value.contains("single pane in layout gallery") {
+            message = "Choose Single Pane"
         } else if value.contains("use tabbed undo") {
             message = "Use Tabbed Undo"
         } else if value.contains("float the window to use this action") {
@@ -72,7 +76,7 @@ public struct ResultPillFeedback: Equatable, Sendable {
         }
         // Titles that do not say why carry the reason as a second line.
         let reason = error?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let explains = ["Couldn’t apply layout", "Can’t fit this layout", "Window refused this size", "Adaptive is full", "Use Repair Layout"].contains(message)
+        let explains = ["Couldn’t apply layout", "Can’t fit this layout", "Window refused this size", "Adaptive is full", "Tabbed not active", "Use Repair Layout"].contains(message)
         let detail = explains && !reason.isEmpty ? reason : nil
         return Self(kind: .failure, message: message, detail: detail, symbolName: "xmark",
                     dismissDelay: detail == nil ? 1.6 : 3)

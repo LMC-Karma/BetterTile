@@ -1,14 +1,35 @@
 import Foundation
 
+public enum TabbedPresetGrouping: CaseIterable, Sendable {
+    case keepTabGroups, distributeWindows
+}
+
+/// The reserve is independent of whether an auto-hidden bar is revealed.
+public enum TabbedStripPresentation: String, Codable, CaseIterable, Sendable {
+    case alwaysVisible, compact, autoHide
+
+    public var title: String {
+        switch self {
+        case .alwaysVisible: "Always visible"
+        case .compact: "Compact"
+        case .autoHide: "Auto-hide"
+        }
+    }
+    public var reservedInset: Double {
+        switch self { case .alwaysVisible: 34; case .compact: 24; case .autoHide: 6 }
+    }
+    public var barHeight: Double { self == .compact ? 24 : 34 }
+}
+
 public enum TabbedPreset: String, Codable, CaseIterable, Sendable {
     case single, columns, rows, focus, grid
     public var title: String {
         switch self {
-        case .single: "One Pane"
-        case .columns: "Two Columns"
-        case .rows: "Two Rows"
-        case .focus: "Adaptive — Focus"
-        case .grid: "Four Panes"
+        case .single: "Single Pane"
+        case .columns: "2 Columns"
+        case .rows: "2 Rows"
+        case .focus: "Main + 2"
+        case .grid: "2×2 Grid"
         }
     }
     public var paneCount: Int {

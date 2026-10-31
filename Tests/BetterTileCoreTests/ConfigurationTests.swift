@@ -116,7 +116,7 @@ func invalidGlassStrengthIsRejected(strength: Double) {
 @Test func menuBarActionsUseTheNativeDefaultOrderAndPreserveAnEmptyChoice() throws {
     let defaults = BetterTileConfiguration()
     #expect(defaults.menuBarActions == WindowAction.menuBarDefaultOrder)
-    #expect(defaults.menuBarActions.count == 34)
+    #expect(defaults.menuBarActions.count == 35)
 
     var customized = defaults
     customized.menuBarActions = [.rightHalf, .rightHalf, .leftHalf]
@@ -699,4 +699,77 @@ func invalidSnapCornerExtensionIsRejected(value: Double) {
     #expect(throws: ConfigurationError.invalidFile) {
         try ConfigurationStore.decode(Data(#"{"schemaVersion":12,"snapEdgeActivationDistance":"wide"}"#.utf8))
     }
+}
+
+private let placementActionIDsBeforeTabCommands = [
+    "leftHalf", "rightHalf", "topHalf", "bottomHalf",
+    "leftThird", "centerThird", "rightThird", "leftTwoThirds", "rightTwoThirds",
+    "topLeftQuarter", "topRightQuarter", "bottomLeftQuarter", "bottomRightQuarter",
+    "topLeftSixth", "topCenterSixth", "topRightSixth",
+    "bottomLeftSixth", "bottomCenterSixth", "bottomRightSixth",
+    "maximize", "almostMaximize", "center", "centerResize", "previousDisplay", "nextDisplay",
+    "moveLeft", "moveRight", "moveUp", "moveDown", "growWidth", "shrinkWidth", "growHeight", "shrinkHeight", "restore",
+]
+
+@Test func tabCommandsLeaveEveryExistingDefaultShortcutUnchanged() {
+    let defaults = BetterTileConfiguration.defaultShortcuts
+    #expect(defaults.prefix(34).map { $0.action.rawValue } == placementActionIDsBeforeTabCommands)
+    let expected: [(String, UInt32, ShortcutModifiers, String)] = [
+        ("leftHalf", 123, [.control, .option], "←"), ("rightHalf", 124, [.control, .option], "→"),
+        ("topHalf", 126, [.control, .option], "↑"), ("bottomHalf", 125, [.control, .option], "↓"),
+        ("topLeftQuarter", 32, [.control, .option], "U"), ("topRightQuarter", 34, [.control, .option], "I"),
+        ("bottomLeftQuarter", 38, [.control, .option], "J"), ("bottomRightQuarter", 40, [.control, .option], "K"),
+        ("maximize", 36, [.control, .option], "↩"), ("restore", 51, [.control, .option], "⌫"),
+        ("center", 8, [.control, .option], "C"), ("leftThird", 2, [.control, .option], "D"),
+        ("leftTwoThirds", 14, [.control, .option], "E"), ("centerThird", 3, [.control, .option], "F"),
+        ("rightThird", 5, [.control, .option], "G"), ("rightTwoThirds", 17, [.control, .option], "T"),
+        ("growWidth", 24, [.control, .option], "="), ("shrinkWidth", 27, [.control, .option], "-"),
+        ("nextDisplay", 124, [.control, .option, .command], "→"),
+        ("previousDisplay", 123, [.control, .option, .command], "←"),
+    ]
+    #expect(defaults.filter { $0.shortcut != nil }.count == expected.count)
+    for (id, key, modifiers, label) in expected {
+        #expect(defaults.first { $0.action.rawValue == id }?.shortcut
+            == KeyboardShortcut(keyCode: key, modifiers: modifiers, keyLabel: label))
+    }
+    #expect(defaults.filter { $0.action.isTabCommand }.map(\.action) == WindowAction.tabCommands)
+    #expect(defaults.filter { $0.action.isTabCommand }.allSatisfy { $0.shortcut == nil })
+    #expect(BetterTileConfiguration.legacyDefaultShortcutsV2.count == 34)
+    #expect(!LayoutWheelConfiguration.defaultInnerSlots.contains { command in
+        if case let .windowAction(action) = command { return action.isTabCommand }
+        return false
+    })
+    #expect(!LayoutWheelConfiguration.defaultOuterSlots.contains { command in
+        if case let .windowAction(action) = command { return action.isTabCommand }
+        return false
+    })
+}
+
+@Test func oldShortcutOrderAndWheelAssignmentsSurviveAddingTabCommands() throws {
+    var saved = BetterTileConfiguration()
+    saved.shortcuts = placementActionIDsBeforeTabCommands.reversed().compactMap(WindowAction.init(rawValue:))
+        .map { ShortcutBinding(action: $0, shortcut: nil) }
+    saved.shortcuts[0].shortcut = .init(keyCode: 11, modifiers: [.control, .command], keyLabel: "B")
+    saved.layoutWheel.levelCount = .two
+    saved.layoutWheel.innerSlots = [.repairBento, nil, .windowAction(.center), nil, nil, nil, nil, .windowAction(.restore)]
+    saved.layoutWheel.outerSlots = [nil, .windowAction(.nextDisplay), nil, nil, .windowAction(.moveLeft), nil, nil, nil]
+    saved.menuBarActions = [.restore, .center, .leftHalf]
+    let restored = try ConfigurationStore.decode(JSONEncoder().encode(saved))
+    #expect(restored == saved)
+    #expect(restored.shortcuts.map(\.action) == saved.shortcuts.map(\.action))
+    #expect(restored.shortcuts.filter { $0.action.isTabCommand }.isEmpty)
+    #expect(restored.layoutWheel == saved.layoutWheel)
+    #expect(try ConfigurationStore.decode(JSONEncoder().encode(restored)) == saved)
+}
+
+@Test func assignedTabCommandsRoundTripWithoutAConfigurationSchemaChange() throws {
+    var saved = BetterTileConfiguration()
+    for (index, action) in WindowAction.tabCommands.enumerated() {
+        let binding = try #require(saved.shortcuts.firstIndex { $0.action == action })
+        saved.shortcuts[binding].shortcut = .init(keyCode: UInt32(index), modifiers: [.control, .shift], keyLabel: "\(index)")
+        saved.layoutWheel.innerSlots[index] = .windowAction(action)
+    }
+    saved.menuBarActions = WindowAction.tabCommands
+    #expect(try ConfigurationStore.decode(JSONEncoder().encode(saved)) == saved)
+    #expect(saved.schemaVersion == 12)
 }

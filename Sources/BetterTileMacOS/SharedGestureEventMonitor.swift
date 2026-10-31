@@ -278,6 +278,47 @@ protocol GestureEventTapWorking: AnyObject {
     func stop()
 }
 
+/// Keeps a press on BetterTile's AppKit controls out of native window gestures.
+@MainActor
+public struct AppKitWindowGestureFilter {
+    private let appKitWindowAtPoint: (BTPoint) -> Bool
+    private var appKitOwnsGesture = false
+
+    public init() {
+        self.init(appKitWindowAtPoint: Self.isAppKitWindow)
+    }
+
+    init(appKitWindowAtPoint: @escaping (BTPoint) -> Bool) {
+        self.appKitWindowAtPoint = appKitWindowAtPoint
+    }
+
+    public mutating func allows(_ event: GlobalGestureEvent) -> Bool {
+        switch event.kind {
+        case .leftMouseDown:
+            appKitOwnsGesture = appKitWindowAtPoint(event.position)
+        case .leftMouseUp:
+            let allowed = !appKitOwnsGesture
+            appKitOwnsGesture = false
+            return allowed
+        case .leftMouseDragged: break
+        }
+        return !appKitOwnsGesture
+    }
+
+    private static func isAppKitWindow(at point: BTPoint) -> Bool {
+        guard let mainFrame = NSScreen.screens.first?.frame else { return false }
+        let location = NSPoint(x: point.x, y: mainFrame.maxY - point.y)
+        var below = 0
+        while true {
+            let number = NSWindow.windowNumber(at: location, belowWindowWithWindowNumber: below)
+            guard number > 0, number != below, let window = NSApp.window(withWindowNumber: number) else { return false }
+            if window.isVisible, !window.ignoresMouseEvents, window.alphaValue > 0 { return true }
+            // Click-through drawing does not own input. Check the window below it.
+            below = number
+        }
+    }
+}
+
 /// Owns one listen-only session event tap. The callback copies only scalar
 /// gesture data before forwarding it to the main actor.
 @MainActor

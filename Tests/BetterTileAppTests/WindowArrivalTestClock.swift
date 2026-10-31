@@ -31,3 +31,18 @@ func waitForWindowEventsToDrain(_ model: BetterTileModel, _ system: FakeAppWindo
     // Shutdown retains a cancelled task handle. Await completion before calling it quiet.
     await model.windowEventTask?.value
 }
+
+/// Pane application deadlines, click limits, and arrival guards read this clock instead of system uptime.
+/// It moves only when a test advances it, so a slow full-suite run cannot expire a guard or a timeout.
+@MainActor
+final class PaneApplicationTestClock {
+    var now: TimeInterval
+
+    init(_ model: BetterTileModel) {
+        now = model.paneApplicationUptime()
+        model.paneApplicationUptime = { [self] in self.now }
+    }
+
+    /// An event timestamp at the current test time, in nanoseconds of uptime.
+    var timestamp: UInt64 { UInt64(now * 1_000_000_000) }
+}

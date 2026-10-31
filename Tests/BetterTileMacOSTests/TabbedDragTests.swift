@@ -339,11 +339,11 @@ func tabDragDefersAccessibilityUntilDropCompletes(success: Bool) throws {
     let f = try TabDragFixture()
     defer { f.overlay.hide() }
     f.overlay.onIntent = { _ in }
-    let original = try #require(f.view.accessibilityChildren() as? [NSAccessibilityElement])
+    let original = try #require(f.view.accessibilityChildren()?.compactMap { $0 as? NSAccessibilityElement })
     try f.start()
     try f.drag(x: 12650)
     f.ticks.fire()
-    let during = try #require(f.view.accessibilityChildren() as? [NSAccessibilityElement])
+    let during = try #require(f.view.accessibilityChildren()?.compactMap { $0 as? NSAccessibilityElement })
     #expect(original.count == during.count && zip(original, during).allSatisfy { $0 === $1 })
     try f.release(x: 12650)
     #expect(f.overlay.isDropPending)
@@ -353,7 +353,7 @@ func tabDragDefersAccessibilityUntilDropCompletes(success: Bool) throws {
     }
     f.overlay.completeDrop()
     #expect(f.view.content.previewOrder == nil)
-    let after = try #require(f.view.accessibilityChildren() as? [NSAccessibilityElement])
+    let after = try #require(f.view.accessibilityChildren()?.compactMap { $0 as? NSAccessibilityElement })
     #expect(after.count == original.count)
     #expect(after.first !== original.first)
     #expect(f.view.pane.tabs == (success ? [f.ids[1], f.ids[2], f.ids[0]] : f.ids))

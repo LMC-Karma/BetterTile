@@ -14,8 +14,8 @@ extension OverlayAppearance {
     }
 }
 
-/// One surface for popups and choosers: the regular Tabbed glass,
-/// its Glass transparency frosting, a lit rim, and the Settings radius family. The Settings picker
+/// One surface for popups, choosers and pane request panels: the regular Tabbed glass,
+/// its Glass transparency frosting, a lit rim, and the Settings radius family. The chooser
 /// panel adds the soft window shadow. Glass off, Reduce Transparency and Increase Contrast
 /// select the opaque system surface instead.
 ///
@@ -99,7 +99,7 @@ class OverlayGlassView: NSView {
     /// The shared Tabbed backdrop keeps a frost floor even at Clear, without
     /// adding an outline around its work-area-sized surface.
     var isCurtain = false { didSet { refreshAppearance() } }
-    /// Popups carry text over any window, so they keep
+    /// Popups and pane request panels carry text over any window, so they keep
     /// regular glass and a lit rim.
     var isPopup = false { didSet { refreshAppearance() } }
     // Injectable process input for offscreen tests; all popup hosts share the same calculation.

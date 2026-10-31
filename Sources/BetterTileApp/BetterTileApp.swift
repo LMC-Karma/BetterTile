@@ -185,6 +185,7 @@ enum WindowActionGroup: String, CaseIterable, Identifiable {
     case move
     case resize
     case displaysAndRestore
+    case tabs
 
     var id: Self { self }
 
@@ -198,6 +199,7 @@ enum WindowActionGroup: String, CaseIterable, Identifiable {
         case .move: "Move"
         case .resize: "Resize"
         case .displaysAndRestore: "Displays & Restore"
+        case .tabs: "Tabs"
         }
     }
 
@@ -222,6 +224,8 @@ enum WindowActionGroup: String, CaseIterable, Identifiable {
             [.growWidth, .shrinkWidth, .growHeight, .shrinkHeight]
         case .displaysAndRestore:
             [.previousDisplay, .nextDisplay, .restore]
+        case .tabs:
+            [.showTabBar] + WindowAction.tabCommands
         }
     }
 
@@ -274,7 +278,7 @@ enum BetterTileApplication {
 }
 
 @MainActor
-final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSWindowDelegate {
+final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private static let signposter = OSSignposter(
         subsystem: "com.lmckarma.BetterTile",
         category: "ApplicationUI"
@@ -295,8 +299,7 @@ final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSPopoverDel
     private var mainUpdateMenuItem: NSMenuItem?
 #endif
     private var modelStarted = false
-    private let popover = NSPopover()
-    private var popoverHost: NSHostingController<BetterTileMenuPanel>?
+    private var menuPanel: MenuPanelController<BetterTileMenuPanel>?
     private var statusItem: NSStatusItem!
     private var repairStatusItem: NSStatusItem!
     private var settingsWindow: NSWindow?
@@ -304,7 +307,15 @@ final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSPopoverDel
     private var globalDismissMonitor: Any?
     private var localDismissMonitor: Any?
 
+#if BETTERTILE_TEST_HOOKS
+    private var closeMenuPanelForTesting: ((MenuPanelCloseReason) -> Void)?
 
+    convenience init(model: BetterTileModel, closeMenuPanel: @escaping (MenuPanelCloseReason) -> Void) {
+        self.init()
+        self.model = model
+        closeMenuPanelForTesting = closeMenuPanel
+    }
+#endif
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         guard !isRunningFromReadOnlyVolume else {
@@ -314,7 +325,6 @@ final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSPopoverDel
         guard quitRunningSiblingIfNeeded() else { return }
         modelStarted = true
         model.openSettings = { [weak self] in self?.showSettings() }
-        _ = model
         WindowActionGroup.assertComplete()
         AppAppearance.apply()
         AppIconStyle.apply()
@@ -323,7 +333,6 @@ final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSPopoverDel
 #if !DEBUG
         renderUpdateIndicator()
 #endif
-        configurePopover()
         model.setMenuBarIconVisible = { [weak self] in self?.setStatusItemsVisible($0) }
         setStatusItemsVisible(model.configuration.showMenuBarIcon)
 #if !DEBUG
@@ -465,7 +474,7 @@ final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSPopoverDel
         button.image = Self.statusImage(availableUpdate: nil)
         button.target = self
         button.action = #selector(statusItemClicked)
-        button.sendAction(on: [.leftMouseUp, .rightMouseUp])
+        MenuPanelStatusButton.configure(button)
         button.toolTip = BetterTileVariant.displayName
 
         repairStatusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
@@ -498,17 +507,11 @@ final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSPopoverDel
         return image
     }
 
-    private func configurePopover() {
-        popover.behavior = .applicationDefined
-        popover.animates = !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-        popover.delegate = self
-    }
-
     @objc private func statusItemClicked() {
         if NSApp.currentEvent?.type == .rightMouseUp {
             showContextMenu()
-        } else if popover.isShown {
-            closePopover()
+        } else if let menuPanel, menuPanel.isShown {
+            menuPanel.toggle(relativeTo: .zero, visibleFrame: .zero)
         } else {
             showPopover()
         }
@@ -524,19 +527,20 @@ final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSPopoverDel
     private func showPopover() {
         let interval = Self.signposter.beginInterval("showPopover")
         defer { Self.signposter.endInterval("showPopover", interval) }
-        guard let button = statusItem.button else { return }
-        popover.animates = !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-        let visibleHeight = button.window?.screen?.visibleFrame.height
-            ?? NSScreen.main?.visibleFrame.height
-            ?? 760
-        let panelHeight = max(0, visibleHeight - 24)
+        guard let button = statusItem.button,
+              let geometry = MenuPanelStatusButton.presentationGeometry(
+                for: button, isVisible: statusItem.isVisible, window: button.window,
+                visibleFrame: button.window?.screen?.visibleFrame) else { return }
+        let panelHeight = max(0, geometry.visibleFrame.height - 24)
 #if DEBUG
         let panel = BetterTileMenuPanel(
             model: model,
             panelHeight: panelHeight,
             openSetup: { [weak self] in self?.showSetupAssistant() },
             openSettings: { [weak self] in self?.showSettings() },
-            quit: { NSApp.terminate(nil) }
+            quit: { NSApp.terminate(nil) },
+            close: { [weak self] in self?.closePopover(reason: .command) },
+            surfaceChanged: { [weak self] in self?.menuPanel?.glass.overlayAppearance = $0 }
         )
 #else
         let panel = BetterTileMenuPanel(
@@ -546,45 +550,45 @@ final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSPopoverDel
             checkForUpdates: { [weak self] in self?.checkForUpdates(nil) },
             openSetup: { [weak self] in self?.showSetupAssistant() },
             openSettings: { [weak self] in self?.showSettings() },
-            quit: { NSApp.terminate(nil) }
+            quit: { NSApp.terminate(nil) },
+            close: { [weak self] in self?.closePopover(reason: .command) },
+            surfaceChanged: { [weak self] in self?.menuPanel?.glass.overlayAppearance = $0 }
         )
 #endif
-        let host: NSHostingController<BetterTileMenuPanel>
-        if let existing = popoverHost {
-            existing.rootView = panel
-            host = existing
+        let controller: MenuPanelController<BetterTileMenuPanel>
+        if let existing = menuPanel {
+            existing.update(rootView: panel, appearance: model.configuration.overlayAppearance)
+            controller = existing
         } else {
             let creation = Self.signposter.beginInterval("createPopoverHost")
-            host = NSHostingController(rootView: panel)
-            popoverHost = host
+            let closeCallbacks = MenuPanelCloseCallbacks(model: model,
+                closeReason: { [weak self] in self?.menuPanel?.closeReason },
+                onDismiss: { [weak self, weak button] in
+                    if let button { MenuPanelStatusButton.setPanelShown(false, on: button) }
+                    self?.removeDismissMonitors()
+                })
+            controller = MenuPanelController(rootView: panel, appearance: model.configuration.overlayAppearance,
+                onShow: { [weak button] in
+                    if let button { MenuPanelStatusButton.setPanelShown(true, on: button) }
+                }, onDismiss: closeCallbacks.onDismiss)
+            menuPanel = controller
             Self.signposter.endInterval("createPopoverHost", creation)
         }
-        host.sizingOptions = .preferredContentSize
-        popover.contentViewController = host
-        popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
-
-        if let window = popover.contentViewController?.view.window {
-            window.collectionBehavior.insert([.canJoinAllSpaces, .fullScreenAuxiliary])
-            if let panel = window as? NSPanel {
-                panel.hidesOnDeactivate = false
-            }
-            window.makeKey()
-        }
+        model.menuPanelIsShown = { [weak self] in self?.menuPanel?.isShown == true }
+        model.menuPanelWillOpen()
+        controller.show(relativeTo: geometry.anchor, visibleFrame: geometry.visibleFrame)
         NSApp.activate(ignoringOtherApps: true)
         installDismissMonitors()
     }
 
-    private func closePopover() {
-        guard popover.isShown else {
-            removeDismissMonitors()
-            return
-        }
+    private func closePopover(reason: MenuPanelCloseReason = .programmatic) {
         let interval = Self.signposter.beginInterval("closePopover")
         defer { Self.signposter.endInterval("closePopover", interval) }
-        popover.performClose(nil)
-    }
-
-    func popoverDidClose(_ notification: Notification) {
+#if BETTERTILE_TEST_HOOKS
+        if let closeMenuPanelForTesting { closeMenuPanelForTesting(reason); return }
+#endif
+        menuPanel?.dismiss(reason: reason)
+        if let button = statusItem?.button { MenuPanelStatusButton.setPanelShown(false, on: button) }
         removeDismissMonitors()
     }
 
@@ -592,31 +596,29 @@ final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSPopoverDel
         removeDismissMonitors()
         globalDismissMonitor = NSEvent.addGlobalMonitorForEvents(
             matching: [.leftMouseDown, .rightMouseDown]
-        ) { [weak self] _ in
-            Task { @MainActor in self?.closePopover() }
+        ) { [weak self] event in
+            // AppKit invokes monitors on the main thread. Route mouse-down before the button's mouse-up action.
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.menuPanel?.routeGlobalMouseDown(event, isOverStatusItem: self.statusButtonContainsMouse())
+            }
         }
         localDismissMonitor = NSEvent.addLocalMonitorForEvents(
             matching: [.leftMouseDown, .rightMouseDown, .keyDown]
         ) { [weak self] event in
             guard let self else { return event }
-            if event.type == .keyDown, event.keyCode == 53 {
-                closePopover()
-                return nil
+            guard let menuPanel else { return event }
+            let excluded = [settingsWindow, setupWindow].contains { candidate in
+                guard let candidate else { return false }
+                return candidate === event.window || (event.type == .keyDown && candidate === NSApp.keyWindow)
             }
-            guard event.type != .keyDown else { return event }
-            if popover.contentViewController?.view.window === event.window
-                || settingsWindow === event.window
-                || setupWindow === event.window
-                || statusButtonContainsMouse() {
-                return event
-            }
-            closePopover()
-            return event
+            return menuPanel.route(event, isExcludedWindow: excluded, isOverStatusItem: statusButtonContainsMouse())
         }
     }
 
     private func statusButtonContainsMouse() -> Bool {
-        guard let frame = statusItem.button?.window?.frame else { return false }
+        guard let button = statusItem?.button, let window = button.window else { return false }
+        let frame = window.convertToScreen(button.convert(button.bounds, to: nil))
         return frame.insetBy(dx: -4, dy: -8).contains(NSEvent.mouseLocation)
     }
 
@@ -677,14 +679,20 @@ final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSPopoverDel
             populateApplicationCommands(in: menu)
             statusItem.menu = menu
             statusItem.button?.performClick(nil)
-            DispatchQueue.main.async { [weak self] in self?.statusItem.menu = nil }
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                statusItem.menu = nil
+                if let button = statusItem.button {
+                    MenuPanelStatusButton.setPanelShown(menuPanel?.isShown == true, on: button)
+                }
+            }
         }
     }
 
     @objc private func showSettings() {
         let interval = Self.signposter.beginInterval("showSettings")
         defer { Self.signposter.endInterval("showSettings", interval) }
-        closePopover()
+        closePopover(reason: .settings)
         let created = settingsWindow == nil
         if settingsWindow == nil {
             let creation = Self.signposter.beginInterval("createSettings")
@@ -750,7 +758,7 @@ final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSPopoverDel
     }
 
     private func presentSetupAssistant(page: SetupPage) {
-        closePopover()
+        closePopover(reason: .command)
         let created = setupWindow == nil
         if setupWindow == nil {
             let host = NSHostingController(rootView: SetupAssistantView(
@@ -791,10 +799,12 @@ final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSPopoverDel
         }
     }
 
+    @objc private func showTabBar() {
+        MenuPanelCommand.showTabBar.perform(model: model) { closePopover(reason: $0) }
+    }
 
     @objc private func repairCurrentLayout() {
-        closePopover()
-        model.repairCurrentLayout()
+        MenuPanelCommand.repairLayout.perform(model: model) { closePopover(reason: $0) }
     }
 
     @objc private func quitApplication() {
@@ -807,7 +817,7 @@ final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSPopoverDel
     /// when it brings an existing update back into focus, so close Settings for
     /// that active session here. A newly found update closes it in the callback.
     @objc private func checkForUpdates(_ sender: Any?) {
-        closePopover()
+        closePopover(reason: .command)
         NSApp.activate(ignoringOtherApps: true)
         let updater = updaterController.updater
         if updatePresentation.state.availableUpdate != nil,
@@ -945,6 +955,7 @@ final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSPopoverDel
 
         addItem("Setup Assistant…", action: #selector(showSetupAssistant))
         addItem("Settings…", action: #selector(showSettings), keyEquivalent: ",")
+        addItem("Show Tab Bar", action: #selector(showTabBar))
         var updateItem: NSMenuItem?
 #if !DEBUG
         updateItem = addItem("Check for Updates…", action: #selector(checkForUpdates(_:)))
@@ -990,8 +1001,8 @@ enum PanelSurface {
         return scheme == .light ? Color.white.opacity(0.72) : Color.black.opacity(0.48)
     }
 
-    static func card(for scheme: ColorScheme) -> Color {
-        scheme == .light ? Color.white.opacity(0.52) : Color.white.opacity(0.075)
+    static func card(for scheme: ColorScheme) -> AnyShapeStyle {
+        scheme == .light ? AnyShapeStyle(Color.white.opacity(0.52)) : AnyShapeStyle(.fill.quaternary)
     }
 
     static func border(for scheme: ColorScheme, increaseContrast: Bool) -> Color {
@@ -1010,6 +1021,8 @@ private struct BetterTileMenuPanel: View {
     let openSetup: () -> Void
     let openSettings: () -> Void
     let quit: () -> Void
+    let close: () -> Void
+    let surfaceChanged: (OverlayAppearance) -> Void
 
     var body: some View {
         MenuPanelContent(
@@ -1017,7 +1030,8 @@ private struct BetterTileMenuPanel: View {
             availableHeight: panelHeight,
             openSetup: openSetup,
             openSettings: openSettings,
-            quit: quit
+            quit: quit,
+            close: close
         ) {
             LazyVGrid(columns: MenuPanelMetrics.columns, spacing: MenuPanelMetrics.gap) {
                 ForEach(model.configuration.menuBarActions) { action in
@@ -1026,6 +1040,7 @@ private struct BetterTileMenuPanel: View {
                         shortcut: model.configuration.shortcuts.first(where: { $0.action == action })?.shortcut,
                         isEnabled: model.hasAccessibilityPermission
                     ) {
+                        close()
                         model.perform(action)
                     }
                 }
@@ -1037,13 +1052,23 @@ private struct BetterTileMenuPanel: View {
                     HStack {
                         Label("Update available", systemImage: "arrow.down.circle.fill")
                         Spacer()
-                        UpdateVersionBadge(version: update.displayVersion)
+                        Text(update.displayVersion)
+                            .font(.caption2.weight(.semibold))
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 2)
+                            .background(.fill.quaternary, in: Capsule())
+                            .overlay(Capsule().strokeBorder(.separator, lineWidth: 0.5))
+                            .lineLimit(1)
+                            .accessibilityLabel("Update available, version \(update.displayVersion)")
                     }
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("View update, version \(update.displayVersion)")
             }
 #endif
+        }
+        .onChange(of: model.configuration.overlayAppearance) { _, appearance in
+            surfaceChanged(appearance)
         }
     }
 }
@@ -1057,6 +1082,7 @@ struct MenuPanelContent<Actions: View, Notice: View>: View {
     var openSetup: (() -> Void)?
     var openSettings: (() -> Void)?
     var quit: (() -> Void)?
+    var close: (() -> Void)?
     @ViewBuilder let actions: () -> Actions
     @ViewBuilder let notice: () -> Notice
     @State private var chromeHeight: CGFloat = 286
@@ -1076,7 +1102,7 @@ struct MenuPanelContent<Actions: View, Notice: View>: View {
                 setSnappingEnabled: isEditing ? nil : { value in
                     model.updateConfiguration { $0.snappingEnabled = value }
                 },
-                repairLayout: isEditing ? nil : { model.repairCurrentLayout() },
+                repairLayout: isEditing ? nil : { close?(); model.repairCurrentLayout() },
                 openSetup: openSetup
             )
     }
@@ -1091,7 +1117,7 @@ struct MenuPanelContent<Actions: View, Notice: View>: View {
                 Spacer()
                 Text(model.activeLayoutMode.title)
                     .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(PopupGlass.secondaryText)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 3)
                     .overlay(Capsule().strokeBorder(.separator))
@@ -1101,13 +1127,14 @@ struct MenuPanelContent<Actions: View, Notice: View>: View {
 
             controls
 
+
             HStack {
                 Text("Window actions")
                 Spacer()
                 Text("\(model.configuration.menuBarActions.count) selected")
             }
             .font(.system(size: 11))
-            .foregroundStyle(.secondary)
+            .foregroundStyle(PopupGlass.secondaryText)
 
             Group {
                 if isEditing && !model.configuration.menuBarActions.isEmpty {
@@ -1118,7 +1145,7 @@ struct MenuPanelContent<Actions: View, Notice: View>: View {
                             VStack(spacing: 6) {
                                 Text("No window actions").fontWeight(.medium)
                                 Text(isEditing ? "Choose actions on the left." : "Add actions in Menu Bar Settings.")
-                                    .foregroundStyle(.secondary)
+                                    .foregroundStyle(PopupGlass.secondaryText)
                             }
                             .font(.system(size: 12))
                             .frame(maxWidth: .infinity, minHeight: 72)
@@ -1133,11 +1160,15 @@ struct MenuPanelContent<Actions: View, Notice: View>: View {
 
             Group {
                 if !isEditing, let feedback = model.lastActionFeedback {
-                    Label(feedback.message, systemImage: "\(feedback.symbolName).circle.fill")
-                        .foregroundStyle(feedback.kind == .success ? Color.green : Color.orange)
+                    Label {
+                        Text(feedback.message)
+                    } icon: {
+                        Image(systemName: "\(feedback.symbolName).circle.fill")
+                            .foregroundStyle(feedback.kind == .success ? Color.green : Color.orange)
+                    }
                 } else {
                     Text(isEditing ? "Drag window actions into your preferred order." : "Choose an action for the focused window.")
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(PopupGlass.secondaryText)
                 }
             }
             .font(.system(size: 11))
@@ -1146,18 +1177,507 @@ struct MenuPanelContent<Actions: View, Notice: View>: View {
             Divider()
             MenuPanelFooter(openSettings: openSettings, quit: quit)
         }
+        .foregroundStyle(PopupGlass.secondaryText)
         .padding(MenuPanelMetrics.padding)
         .frame(width: MenuPanelMetrics.width)
         .fixedSize(horizontal: false, vertical: true)
-        .background {
-            // NSPopover supplies the native glass. Another material here
-            // would hide its optics and make the transparency control ineffective.
-            GlassBacking(model.configuration.overlayAppearance)
-        }
         .onGeometryChange(for: CGFloat.self) { [actionHeight] proxy in
             proxy.size.height - actionHeight
         } action: { height in
             if abs(chromeHeight - height) > 0.5 { chromeHeight = height }
+        }
+    }
+}
+
+/// Use the native button's persistent on/off state without drawing menu-bar chrome.
+@MainActor enum MenuPanelStatusButton {
+    static func configure(_ button: NSStatusBarButton) {
+        button.setButtonType(.pushOnPushOff)
+        button.sendAction(on: [.leftMouseUp, .rightMouseUp])
+        button.state = .off
+    }
+
+    static func presentationGeometry(for button: NSStatusBarButton, isVisible: Bool,
+                                     window: NSWindow?, visibleFrame: NSRect?) -> (anchor: NSRect, visibleFrame: NSRect)? {
+        // The push-on/push-off button toggles before its action, even when opening cannot proceed.
+        setPanelShown(false, on: button)
+        guard isVisible, let window, let visibleFrame else { return nil }
+        return (window.convertToScreen(button.convert(button.bounds, to: nil)), visibleFrame)
+    }
+
+    static func setPanelShown(_ shown: Bool, on button: NSStatusBarButton) {
+        button.state = shown ? .on : .off
+        if !shown { button.isHighlighted = false }
+    }
+}
+
+enum MenuPanelPhase { case hidden, opening, shown, closing }
+/// Commands that close the menu panel before dispatching their action.
+enum MenuPanelCommand: CaseIterable {
+    case showTabBar, repairLayout
+
+    @MainActor func perform(model: BetterTileModel, close: (MenuPanelCloseReason) -> Void) {
+        close(.command)
+        switch self {
+        case .showTabBar: model.perform(.showTabBar)
+        case .repairLayout: model.repairCurrentLayout()
+        }
+    }
+}
+
+/// The production close callbacks, shared with fake-system panel lifecycle tests.
+@MainActor struct MenuPanelCloseCallbacks {
+    let onDismiss: () -> Void
+
+    init(model: BetterTileModel, closeReason: @escaping () -> MenuPanelCloseReason?,
+         applicationIsActive: @escaping () -> Bool = { NSApp.isActive },
+         onDismiss: @escaping () -> Void = {}) {
+        self.init(closeReason: closeReason, applicationIsActive: applicationIsActive, onDismiss: onDismiss,
+            didDismiss: { [weak model] in model?.menuPanelDidDismiss(authorization: $0) })
+    }
+
+    /// `didDismiss` receives the dismissal's focus rule. The model applies it at once, and again when a
+    /// placement that commits after the dismissal ends its wait, with the application activity then.
+    init(closeReason: @escaping () -> MenuPanelCloseReason?, applicationIsActive: @escaping () -> Bool,
+         onDismiss: @escaping () -> Void = {}, didDismiss: @escaping (@escaping () -> Bool) -> Void) {
+        self.onDismiss = {
+            onDismiss()
+            let reason = closeReason()
+            didDismiss { reason?.allowsDeferredFocus(applicationIsActive: applicationIsActive()) == true }
+        }
+    }
+}
+
+enum MenuPanelCloseReason: CaseIterable {
+    case statusItem, outsideClick, escape, command, settings, programmatic
+
+    var restoresDeferredFocus: Bool {
+        self == .statusItem || self == .escape
+    }
+
+    func allowsDeferredFocus(applicationIsActive: Bool) -> Bool {
+        applicationIsActive && restoresDeferredFocus
+    }
+}
+
+struct MenuPanelAnimation {
+    let opening: Bool
+    let reduceMotion: Bool
+    var duration: TimeInterval { reduceMotion ? 0.12 : opening ? 0.26 : 0.18 }
+    var hiddenScale: CGFloat { reduceMotion ? 1 : 0.25 }
+
+    static func transform(scale: CGFloat, pivot: NSPoint, origin: NSPoint) -> CATransform3D {
+        CATransform3DMakeAffineTransform(CGAffineTransform(a: scale, b: 0, c: 0, d: scale,
+            tx: (pivot.x - origin.x) * (1 - scale), ty: (pivot.y - origin.y) * (1 - scale)))
+    }
+}
+
+/// A single popup material, without NSPopover's additional system backing or arrow.
+@MainActor final class MenuPanelController<Content: View> {
+    let panel = MenuPanelWindow(contentRect: .zero, styleMask: [.borderless], backing: .buffered, defer: false)
+    let glass: PopupGlassHost
+    var animationLayer: CALayer? { host.view.layer }
+    private let host: MenuPanelHostingController<Content>
+    private let presentWindow: (NSPanel) -> Void
+    private let onShow: () -> Void
+    private let onDismiss: () -> Void
+    private let onDidClose: (MenuPanelCloseReason) -> Void
+    private weak var responderBeforeClosing: NSResponder?
+    private var anchor = NSRect.zero
+    private var visibleFrame = NSRect.zero
+    private var presentationGeneration = 0
+    private(set) var phase = MenuPanelPhase.hidden
+    private(set) var closeReason: MenuPanelCloseReason?
+    var isShown: Bool { phase == .opening || phase == .shown }
+    private let reduceMotion: () -> Bool
+    private let animate: ((MenuPanelAnimation, @escaping @MainActor () -> Void) -> Void)?
+
+    init(rootView: Content, appearance: OverlayAppearance,
+         presentWindow: @escaping (NSPanel) -> Void = { $0.makeKeyAndOrderFront(nil) },
+         onShow: @escaping () -> Void = {},
+         onDismiss: @escaping () -> Void = {},
+         onDidClose: @escaping (MenuPanelCloseReason) -> Void = { _ in },
+         reduceMotion: @escaping () -> Bool = { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion },
+         animate: ((MenuPanelAnimation, @escaping @MainActor () -> Void) -> Void)? = nil) {
+        self.reduceMotion = reduceMotion
+        self.animate = animate
+        host = MenuPanelHostingController(rootView: rootView)
+        host.view.wantsLayer = true
+        glass = PopupGlassHost(content: host.view, appearance: appearance)
+        self.presentWindow = presentWindow
+        self.onShow = onShow
+        self.onDismiss = onDismiss
+        self.onDidClose = onDidClose
+        panel.isReleasedWhenClosed = false
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hasShadow = true
+        // Keep the glass stationary while the window fades and its controls grow from the status item.
+        panel.animationBehavior = .none
+        panel.hidesOnDeactivate = false
+        panel.becomesKeyOnlyIfNeeded = false
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        panel.level = .popUpMenu
+        panel.contentView = glass
+        panel.onCancel = { [weak self] in self?.dismiss(reason: .escape) }
+        host.onSizeChange = { [weak self] in self?.position() }
+        host.sizingOptions = .preferredContentSize
+    }
+
+    func update(rootView: Content, appearance: OverlayAppearance) {
+        host.rootView = rootView
+        glass.overlayAppearance = appearance
+        if isShown { position() }
+    }
+
+    func show(relativeTo anchor: NSRect, visibleFrame: NSRect) {
+        self.anchor = anchor
+        self.visibleFrame = visibleFrame
+        // The menu bar window can retain the system appearance when the app overrides it.
+        // Resolve glass, plate and hosted labels in the app appearance, like other popups.
+        panel.appearance = NSApp.appearance
+        host.view.appearance = NSApp.appearance
+        let wasHidden = phase == .hidden
+        phase = .opening
+        closeReason = nil
+        presentationGeneration += 1
+        let generation = presentationGeneration
+        panel.ignoresMouseEvents = false
+        panel.acceptsControlInput = true
+        position()
+        let transition = MenuPanelAnimation(opening: true, reduceMotion: reduceMotion())
+        if wasHidden, let layer = animationLayer {
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            panel.alphaValue = 0
+            layer.opacity = 1
+            layer.transform = hiddenTransform(for: transition)
+            CATransaction.commit()
+        }
+        presentWindow(panel)
+        if let responderBeforeClosing { panel.makeFirstResponder(responderBeforeClosing) }
+        guard isShown, presentationGeneration == generation else { return }
+        onShow()
+        transitionAnimation(transition) { [weak self] in
+            guard let self, self.presentationGeneration == generation, self.phase == .opening else { return }
+            self.phase = .shown
+        }
+        // The status button's mouse-up tracking can clear its highlight after the action.
+        // Reapply only for this opening; a queued callback must not revive a closed panel.
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.isShown, self.presentationGeneration == generation else { return }
+            self.onShow()
+        }
+    }
+
+    func toggle(relativeTo anchor: NSRect, visibleFrame: NSRect) {
+        if isShown { dismiss(reason: .statusItem) } else { show(relativeTo: anchor, visibleFrame: visibleFrame) }
+    }
+
+    func dismiss(reason: MenuPanelCloseReason = .programmatic) {
+        guard isShown else { return }
+        phase = .closing
+        closeReason = reason
+        presentationGeneration += 1
+        let generation = presentationGeneration
+        panel.ignoresMouseEvents = true
+        responderBeforeClosing = panel.firstResponder
+        panel.makeFirstResponder(nil)
+        panel.acceptsControlInput = false
+        onDismiss()
+        guard phase == .closing, presentationGeneration == generation else { return }
+        transitionAnimation(MenuPanelAnimation(opening: false, reduceMotion: reduceMotion())) { [weak self] in
+            guard let self, self.presentationGeneration == generation, self.phase == .closing else { return }
+            self.panel.orderOut(nil)
+            self.phase = .hidden
+            self.responderBeforeClosing = nil
+            self.onDidClose(reason)
+        }
+    }
+
+    private func hiddenTransform(for transition: MenuPanelAnimation) -> CATransform3D {
+        guard !transition.reduceMotion, let layer = animationLayer else { return CATransform3DIdentity }
+        let glassPivot = NSPoint(x: min(glass.bounds.maxX, max(glass.bounds.minX, anchor.midX - panel.frame.minX)),
+                                 y: glass.bounds.maxY)
+        let pivot = host.view.convert(glassPivot, from: glass)
+        let origin = NSPoint(x: layer.bounds.minX + layer.anchorPoint.x * layer.bounds.width,
+                             y: layer.bounds.minY + layer.anchorPoint.y * layer.bounds.height)
+        return MenuPanelAnimation.transform(scale: transition.hiddenScale, pivot: pivot, origin: origin)
+    }
+
+    private func transitionAnimation(_ transition: MenuPanelAnimation, completion: @escaping @MainActor () -> Void) {
+        if let animate { animate(transition, completion); return }
+        guard let layer = animationLayer else { completion(); return }
+        let current = layer.presentation() ?? layer
+        let transform = CABasicAnimation(keyPath: "transform")
+        transform.fromValue = NSValue(caTransform3D: current.transform)
+        transform.toValue = NSValue(caTransform3D: transition.opening ? CATransform3DIdentity : hiddenTransform(for: transition))
+        let group = CAAnimationGroup()
+        group.animations = transition.reduceMotion ? [] : [transform]
+        group.duration = transition.duration
+        group.timingFunction = transition.opening
+            ? CAMediaTimingFunction(controlPoints: 0.16, 1, 0.3, 1)
+            : CAMediaTimingFunction(name: .easeIn)
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        layer.removeAnimation(forKey: "menuPanelTransition")
+        layer.opacity = 1
+        layer.transform = transition.opening ? CATransform3DIdentity : hiddenTransform(for: transition)
+        if !transition.reduceMotion { layer.add(group, forKey: "menuPanelTransition") }
+        CATransaction.commit()
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = transition.duration
+            context.timingFunction = group.timingFunction
+            panel.animator().alphaValue = transition.opening ? 1 : 0
+        } completionHandler: {
+            Task { @MainActor in completion() }
+        }
+    }
+
+    func route(_ event: NSEvent, isExcludedWindow: Bool = false, isOverStatusItem: Bool = false) -> NSEvent? {
+        guard isShown else { return event }
+        if event.type == .keyDown {
+            if event.keyCode == 53 {
+                if isExcludedWindow { return event }
+                dismiss(reason: .escape)
+                return nil
+            }
+            return event
+        }
+        if event.window !== panel && !isExcludedWindow && !isOverStatusItem { dismiss(reason: .outsideClick) }
+        return event
+    }
+
+    func routeGlobalMouseDown(_ event: NSEvent, isOverStatusItem: Bool) {
+        _ = route(event, isOverStatusItem: isOverStatusItem)
+    }
+
+    private func position() {
+        guard isShown, !visibleFrame.isEmpty else { return }
+        let height = min(host.view.fittingSize.height, max(0, visibleFrame.height - 16))
+        let frame = Self.frame(height: height, anchor: anchor, visibleFrame: visibleFrame)
+        if panel.frame != frame { panel.setFrame(frame, display: false) }
+    }
+
+    static func frame(height: CGFloat, anchor: NSRect, visibleFrame: NSRect) -> NSRect {
+        let width = MenuPanelMetrics.width
+        let x = max(visibleFrame.minX + 8, min(anchor.midX - width / 2, visibleFrame.maxX - 8 - width))
+        let top = min(anchor.minY - 4, visibleFrame.maxY - 4)
+        let y = max(visibleFrame.minY + 8, top - height)
+        return NSRect(x: x, y: y, width: width, height: height)
+    }
+}
+
+@MainActor final class MenuPanelWindow: NSPanel {
+    var onCancel: (() -> Void)?
+    var acceptsControlInput = true
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { false }
+    override func cancelOperation(_ sender: Any?) { onCancel?() }
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if !acceptsControlInput { return true }
+        return super.performKeyEquivalent(with: event)
+    }
+    override func sendEvent(_ event: NSEvent) {
+        if !acceptsControlInput, event.type == .keyDown || event.type == .keyUp { return }
+        super.sendEvent(event)
+    }
+}
+
+@MainActor private final class MenuPanelHostingController<Content: View>: NSHostingController<Content> {
+    var onSizeChange: (() -> Void)?
+    override var preferredContentSize: NSSize {
+        didSet { if preferredContentSize != oldValue { onSizeChange?() } }
+    }
+}
+
+/// Draw only the menu's dense mode track.
+struct MenuPanelModePicker: NSViewRepresentable {
+    @Binding var selection: LayoutMode
+    var isInteractive = true
+
+    func makeNSView(context: Context) -> MenuPanelModeControl {
+        let control = MenuPanelModeControl(selection: selection)
+        updateNSView(control, context: context)
+        return control
+    }
+
+    func updateNSView(_ control: MenuPanelModeControl, context: Context) {
+        control.isInteractive = isInteractive
+        control.setSelection(selection)
+        control.onSelect = { [weak control] mode in
+            selection = mode
+            // Read back even when the model refuses the request and SwiftUI has no update to send.
+            control?.setSelection(selection)
+        }
+    }
+
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: MenuPanelModeControl, context: Context) -> CGSize? {
+        NSSize(width: MenuPanelModeControl.width, height: MenuPanelModeControl.height)
+    }
+}
+
+private struct MenuPanelModeTrack: View {
+    var body: some View {
+        RoundedRectangle(cornerRadius: PopupGlass.controlRadius, style: .continuous)
+            .fill(.fill.quaternary)
+            .allowsHitTesting(false)
+    }
+}
+
+/// One material-free track, with native buttons for focus and activation.
+@MainActor final class MenuPanelModeControl: NSView {
+    static let width: CGFloat = 284
+    static let height: CGFloat = 24
+    private let track = NSHostingView(rootView: MenuPanelModeTrack())
+    private(set) var buttons: [MenuPanelModeButton] = []
+    private(set) var selection: LayoutMode = .manual
+    private var focusedMode: LayoutMode?
+    var isInteractive = true
+    var onSelect: ((LayoutMode) -> Void)?
+    var fullKeyboardAccess: () -> Bool = { NSApp.isFullKeyboardAccessEnabled }
+
+    init(selection: LayoutMode) {
+        super.init(frame: NSRect(x: 0, y: 0, width: Self.width, height: Self.height))
+        addSubview(track)
+        for mode in LayoutMode.availableModes {
+            let button = MenuPanelModeButton(mode: mode)
+            button.owner = self
+            button.target = self
+            button.action = #selector(choose(_:))
+            buttons.append(button)
+            addSubview(button)
+        }
+        setSelection(selection)
+    }
+
+    required init?(coder: NSCoder) { nil }
+    override var intrinsicContentSize: NSSize { NSSize(width: Self.width, height: Self.height) }
+    override var isFlipped: Bool { true }
+
+    override func layout() {
+        super.layout()
+        track.frame = bounds
+        let width = bounds.width / CGFloat(buttons.count)
+        for (i, button) in buttons.enumerated() {
+            button.frame = NSRect(x: CGFloat(i) * width, y: 0, width: width, height: bounds.height)
+        }
+    }
+
+    func setSelection(_ mode: LayoutMode) {
+        selection = mode.availableMode
+        if !buttons.contains(where: { window?.firstResponder === $0 }) { focusedMode = nil }
+        for button in buttons {
+            button.isSelected = button.mode == selection
+            button.setAccessibilityValue(button.isSelected ? "Selected" : "Not selected")
+        }
+    }
+
+    func acceptsFocus(on mode: LayoutMode) -> Bool {
+        isInteractive && fullKeyboardAccess() && mode == (focusedMode ?? selection)
+    }
+
+    @objc private func choose(_ sender: MenuPanelModeButton) {
+        guard isInteractive else { return }
+        onSelect?(sender.mode)
+    }
+
+    func move(from mode: LayoutMode, by offset: Int) {
+        guard isInteractive, let index = buttons.firstIndex(where: { $0.mode == mode }) else { return }
+        let next = min(buttons.count - 1, max(0, index + offset))
+        guard next != index else { return }
+        let previous = focusedMode
+        focusedMode = buttons[next].mode
+        if window?.makeFirstResponder(buttons[next]) != true { focusedMode = previous }
+    }
+}
+
+@MainActor final class MenuPanelModeButton: NSButton {
+    let mode: LayoutMode
+    weak var owner: MenuPanelModeControl?
+    var isSelected = false { didSet { needsDisplay = true } }
+    private(set) var isHovered = false
+    static var titleFont: NSFont { .systemFont(ofSize: 13) }
+
+    init(mode: LayoutMode) {
+        self.mode = mode
+        super.init(frame: .zero)
+        title = mode.title
+        isBordered = false
+        setButtonType(.momentaryChange)
+        focusRingType = .exterior
+        setAccessibilityLabel(mode.title)
+        setAccessibilityRole(.radioButton)
+    }
+    required init?(coder: NSCoder) { nil }
+    override var isFlipped: Bool { true }
+    // This custom artwork uses OverlayButton's opaque shade/white-ink palette.
+    // NSButton's automatic vibrancy would brighten that already-shaded fill.
+    override var allowsVibrancy: Bool { false }
+    override var acceptsFirstResponder: Bool { isEnabled && (owner?.acceptsFocus(on: mode) ?? false) }
+    override var isHighlighted: Bool { didSet { needsDisplay = true } }
+    override var isEnabled: Bool { didSet { needsDisplay = true } }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        trackingAreas.forEach(removeTrackingArea)
+        addTrackingArea(NSTrackingArea(rect: .zero, options: [.activeAlways, .inVisibleRect, .mouseEnteredAndExited],
+                                      owner: self, userInfo: nil))
+    }
+    override func mouseEntered(with event: NSEvent) { isHovered = true; needsDisplay = true }
+    override func mouseExited(with event: NSEvent) { isHovered = false; needsDisplay = true }
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+    override var focusRingMaskBounds: NSRect { bounds }
+    override func drawFocusRingMask() {
+        NSBezierPath(roundedRect: bounds, xRadius: PopupGlass.controlRadius, yRadius: PopupGlass.controlRadius).fill()
+    }
+
+    override func keyDown(with event: NSEvent) {
+        guard event.modifierFlags.intersection([.command, .control, .option]).isEmpty else {
+            super.keyDown(with: event)
+            return
+        }
+        switch event.keyCode {
+        case 123, 126: owner?.move(from: mode, by: -1)
+        case 124, 125: owner?.move(from: mode, by: 1)
+        case 49, 36, 76: performClick(nil)
+        default: super.keyDown(with: event)
+        }
+    }
+
+    func palette(pressed: Bool? = nil, hovered: Bool? = nil) -> (fill: NSColor?, ink: NSColor, overlay: NSColor?) {
+        let overlay = (pressed ?? isHighlighted) ? OverlayButtonMetrics.pressedBlackOpacity
+            : ((hovered ?? isHovered) && isEnabled ? OverlayButtonMetrics.hoverBlackOpacity : 0)
+        return (isSelected ? PopupGlass.accentShadeColor : nil, isSelected ? .white : .labelColor,
+                overlay > 0 ? NSColor.black.withAlphaComponent(overlay) : nil)
+    }
+
+    var fillRect: NSRect { isSelected ? bounds.insetBy(dx: 2, dy: 2) : bounds }
+    var fillRadius: CGFloat { isSelected ? PopupGlass.controlRadius - 2 : PopupGlass.controlRadius }
+
+    func contentRects() -> (glyph: NSRect, title: NSRect) {
+        let size = (title as NSString).size(withAttributes: [.font: Self.titleFont])
+        let canvas = LayoutModePicker.glyphSize
+        let x = (bounds.width - canvas - LayoutModePicker.glyphSpacing - size.width) / 2
+        return (NSRect(x: x, y: (bounds.height - canvas) / 2, width: canvas, height: canvas),
+                NSRect(x: x + canvas + LayoutModePicker.glyphSpacing, y: (bounds.height - size.height) / 2,
+                       width: size.width, height: size.height))
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        guard let context = NSGraphicsContext.current else { return }
+        context.saveGraphicsState()
+        defer { context.restoreGraphicsState() }
+        if !isEnabled { context.cgContext.setAlpha(OverlayButtonMetrics.disabledOpacity) }
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            let colors = palette()
+            let shape = NSBezierPath(roundedRect: fillRect, xRadius: fillRadius, yRadius: fillRadius)
+            if let fill = colors.fill?.usingColorSpace(.sRGB) { fill.setFill(); shape.fill() }
+            if let overlay = colors.overlay { overlay.setFill(); shape.fill() }
+            let rects = contentRects()
+            LayoutGlyph.mode(mode).stroke(in: context.cgContext, origin: rects.glyph.origin,
+                                          canvasSize: rects.glyph.width, color: colors.ink.cgColor, flipped: isFlipped)
+            (title as NSString).draw(in: rects.title, withAttributes: [.font: Self.titleFont, .foregroundColor: colors.ink])
         }
     }
 }
@@ -1172,7 +1692,7 @@ struct MenuPanelControls: View {
         case .tabbed: "Rebuild this desktop's panes and tabs from its current windows."
         case .bento: "Re-tile this desktop's windows into a clean Adaptive layout."
         case .manual, .linked:
-            "Tile this display's windows with Adaptive. A single window moves to its configured placement."
+            "Tile this display's windows with Adaptive. A single window moves to its configured placement; several windows switch the desktop to Adaptive."
         }
     }
     let snappingEnabled: Bool
@@ -1192,34 +1712,29 @@ struct MenuPanelControls: View {
         VStack(alignment: .leading, spacing: 9) {
             if !hasAccessibilityPermission {
                 HStack {
-                    Label("Accessibility required", systemImage: "hand.raised.fill")
-                        .foregroundStyle(.orange)
+                    Label {
+                        Text("Accessibility required")
+                    } icon: {
+                        Image(systemName: "hand.raised.fill").foregroundStyle(.orange)
+                    }
                     Spacer()
                     Button("Setup…") { openSetup?() }
                         .controlSize(.small)
                 }
             }
 
-            HStack {
+            // The icons need about 61 pt more than the text-only control. The label moves to its own
+            // line and the picker takes the full width of the card.
+            VStack(alignment: .leading, spacing: 6) {
                 Text("Window mode")
                     .font(.system(size: 12))
-                Spacer()
-                Picker("Window mode", selection: Binding(
-                    get: { activeMode },
-                    set: { setMode?($0) }
-                )) {
-                    ForEach(LayoutMode.availableModes, id: \.self) { mode in
-                        Text(mode.title).tag(mode)
-                    }
-                }
-                .labelsHidden()
-                .pickerStyle(.segmented)
-                .frame(width: LayoutMode.availableModes.contains(.tabbed) ? 230 : 138)
+                MenuPanelModePicker(selection: Binding(get: { activeMode }, set: { setMode?($0) }),
+                                    isInteractive: setMode != nil)
             }
 
             Text(contextDescription)
                 .font(.system(size: 11))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(PopupGlass.secondaryText)
                 .lineLimit(1)
                 .help(contextDescription)
 
@@ -1243,6 +1758,7 @@ struct MenuPanelControls: View {
             .controlSize(.regular)
             .disabled(!hasAccessibilityPermission)
         }
+        .foregroundStyle(PopupGlass.secondaryText)
         .allowsHitTesting(isInteractive)
         .accessibilityHidden(!isInteractive)
         .panelCard(
@@ -1293,6 +1809,7 @@ struct MenuActionButtonStyle: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
+            .foregroundStyle(PopupGlass.secondaryText)
             .background {
                 RoundedRectangle(cornerRadius: 8)
                     .fill(PanelSurface.card(for: scheme))
@@ -1330,7 +1847,6 @@ struct ShortcutLabel: View {
             }
         }
         .font(.system(size: size, weight: .medium))
-        .foregroundStyle(.secondary)
         .fixedSize()
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(shortcut?.displayText ?? emptyLabel)
@@ -1386,7 +1902,7 @@ struct MenuPanelFooter: View {
                 .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
         }
         .buttonStyle(.plain)
-        .foregroundStyle(.secondary)
+        .foregroundStyle(PopupGlass.secondaryText)
     }
 }
 

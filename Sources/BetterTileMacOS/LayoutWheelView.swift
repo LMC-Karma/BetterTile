@@ -249,6 +249,13 @@ public extension WindowAction {
         case .growHeight: "arrow.up.and.down"
         case .shrinkHeight: "arrow.down.and.line.horizontal.and.arrow.up"
         case .restore: "arrow.uturn.backward"
+        case .nextTab: "chevron.right"
+        case .previousTab: "chevron.left"
+        case .moveTabLeft: "arrow.left.to.line"
+        case .moveTabRight: "arrow.right.to.line"
+        case .moveTabToNextPane: "rectangle.righthalf.inset.filled.arrow.right"
+        case .moveTabToPreviousPane: "rectangle.lefthalf.inset.filled.arrow.left"
+        case .showTabBar: "rectangle.topthird.inset.filled"
         }
     }
 }
@@ -279,6 +286,7 @@ public struct LayoutWheelActionGroup: Sendable {
             .growWidth, .shrinkWidth, .growHeight, .shrinkHeight,
         ]),
         Self(title: "History", actions: [.restore]),
+        Self(title: "Tabs", actions: WindowAction.tabCommands),
     ]
 
     /// Every action stays reachable from the inspector, so a command can never

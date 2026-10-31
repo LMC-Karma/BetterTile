@@ -34,6 +34,39 @@ import Testing
                            backing: .buffered, defer: true)
     }
 
+    static func tabbedPanel() -> NSPanel {
+        OffscreenTabbedTestPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel],
+                                 backing: .buffered, defer: true)
+    }
+
+    static func chooserPresenter(_ content: NSView, _ size: NSSize) -> TabbedChooserPresenter {
+        chooserPresenter(content, size, appearance: OverlayAppearance())
+    }
+
+    static func chooserPresenter(_ content: NSView, _ size: NSSize, appearance: OverlayAppearance) -> TabbedChooserPresenter {
+        TabbedChooserPresenter(content: content, size: size, appearance: appearance,
+            panel: OffscreenChooserTestPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel],
+                                            backing: .buffered, defer: true))
+    }
+}
+
+@MainActor class OffscreenChooserTestPanel: TabbedChooserPanel {
+    override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect {
+        OffscreenTestWindows.windowFrame(frameRect)
+    }
+    override func setFrame(_ frameRect: NSRect, display flag: Bool) {
+        super.setFrame(OffscreenTestWindows.windowFrame(frameRect), display: flag)
+    }
+    override func order(_ place: NSWindow.OrderingMode, relativeTo otherWin: Int) {
+        if place != .out { setFrame(frame, display: false) }
+        withoutTestWindowAnimations(self) { super.order(place, relativeTo: otherWin) }
+        if place != .out { OffscreenTestWindows.check(self) }
+    }
+    override func orderFrontRegardless() {
+        setFrame(frame, display: false)
+        withoutTestWindowAnimations(self) { super.orderFrontRegardless() }
+        OffscreenTestWindows.check(self)
+    }
 }
 
 /// A real AppKit window with normal ordering, focus and view rendering.
@@ -78,8 +111,32 @@ import Testing
     }
 }
 
+/// Retains the production strip's conditional keyboard-focus behavior.
+@MainActor final class OffscreenTabbedTestPanel: TabbedStripPanel {
+    // Keep the screen-dependent chooser path active. The actual frame remains
+    // offscreen; this supplies the same screen geometry as an on-screen strip.
+    override var screen: NSScreen? { super.screen ?? NSScreen.screens.first }
+    override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect {
+        OffscreenTestWindows.windowFrame(frameRect)
+    }
+    override func setFrame(_ frameRect: NSRect, display flag: Bool) {
+        super.setFrame(OffscreenTestWindows.windowFrame(frameRect), display: flag)
+    }
+    override func order(_ place: NSWindow.OrderingMode, relativeTo otherWin: Int) {
+        if place != .out { setFrame(frame, display: false) }
+        withoutTestWindowAnimations(self) { super.order(place, relativeTo: otherWin) }
+        if place != .out { OffscreenTestWindows.check(self) }
+    }
+    override func orderFrontRegardless() {
+        setFrame(frame, display: false)
+        withoutTestWindowAnimations(self) { super.orderFrontRegardless() }
+        OffscreenTestWindows.check(self)
+    }
+}
+
 /// Keep the model's fake window geometry unchanged. Its real AppKit presenters
 /// receive offscreen panels through their existing per-instance factories.
+/// Translated panels make Tabbed's source-target frame comparisons always take the "changed" branch.
 @MainActor func makeOffscreenModel(
     store: ConfigurationStore = .init(fileURL: FileManager.default.temporaryDirectory
         .appendingPathComponent("OffscreenModel-" + UUID().uuidString).appendingPathComponent("configuration.json")),
@@ -94,9 +151,23 @@ import Testing
     if let fakeSystem { modelUptime = { fakeSystem.applicationHoldUptime() } }
     else { modelUptime = nil }
     let model = BetterTileModel(store: store, system: system, startRuntime: startRuntime,
-                               presentsTabbedChrome: presentsTabbedChrome, gestureEvents: gestureEvents,
+                               presentsTabbedChrome: presentsTabbedChrome,
+                               gestureEvents: gestureEvents,
                                clock: fakeSystem?.clock ?? .live, uptime: modelUptime)
     model.resultPillFactory = { ResultPillController(panel: OffscreenTestWindows.panel()) }
+    model.tabbedOverlayFactory = {
+        let overlay = TabbedOverlayController(panelFactory: OffscreenTestWindows.tabbedPanel)
+        overlay.chooserPresenterFactory = { [weak overlay] content, size in
+            OffscreenTestWindows.chooserPresenter(content, size, appearance: overlay?.overlayAppearance ?? OverlayAppearance())
+        }
+        return overlay
+    }
+    model.paneApplicationPopoverFactory = { request, appearance in
+        PaneApplicationPopover(request: request, appearance: appearance,
+                               presenterFactory: { content, size in
+            OffscreenTestWindows.chooserPresenter(content, size, appearance: appearance)
+        })
+    }
     model.dividerResize.panelFrameTransform = OffscreenTestWindows.frame
     return model
 }

@@ -169,6 +169,36 @@ func primaryOverlayButtonWhiteTitleStaysAtFourPointFiveAtRestHoverAndPressed(dar
     }
 }
 
+@Test(.macOSTestApplication, .macOSUI, arguments: [140.0, 200.0, 230.0, 366.0, 726.0]) @MainActor
+func emptyPaneButtonsKeepTheirNaturalWidthAndStackWhenTooNarrow(width: Double) throws {
+    let content = TabbedPaneContentView(frame: NSRect(x: 0, y: 0, width: width, height: 260))
+    content.layoutSubtreeIfNeeded()
+    let open = content.emptyAddButton, layout = content.galleryButton
+    try #require(!open.isHidden && !layout.isHidden)
+    #expect(open.frame.width == open.intrinsicContentSize.width)
+    #expect(layout.frame.width == layout.intrinsicContentSize.width)
+    #expect(open.frame.height == 24 && layout.frame.height == 24)
+    let needed = open.frame.width + 8 + layout.frame.width
+    if needed <= width - 24 {
+        #expect(open.frame.minY == layout.frame.minY, "buttons fit, so they share a row")
+        #expect(open.frame.maxX + 8 == layout.frame.minX)
+    } else {
+        #expect(layout.frame.minY >= open.frame.maxY, "too narrow: stacked, with no overlap")
+        #expect(open.frame.minX >= 0 || width < open.frame.width)
+    }
+    #expect(layout.frame.maxY <= 260)
+}
+
+@Test(.macOSTestApplication, .macOSUI) @MainActor func emptyPaneButtonsStackOnlyInANarrowPane() throws {
+    let wide = TabbedPaneContentView(frame: NSRect(x: 0, y: 0, width: 420, height: 260))
+    wide.layoutSubtreeIfNeeded()
+    #expect(wide.emptyAddButton.frame.minY == wide.galleryButton.frame.minY)
+    let narrow = TabbedPaneContentView(frame: NSRect(x: 0, y: 0, width: 190, height: 260))
+    narrow.layoutSubtreeIfNeeded()
+    #expect(narrow.galleryButton.frame.minY > narrow.emptyAddButton.frame.minY)
+    #expect(narrow.emptyAddButton.frame.width == wide.emptyAddButton.frame.width, "same natural width at any pane width")
+}
+
 @Test(.macOSTestApplication, .macOSUI) @MainActor func buttonRowStacksOnlyWhenItsButtonsDoNotFit() {
     let row = OverlayButtonRow {
         Button("Try Again") {}.buttonStyle(OverlayButtonStyle(.primary)).fixedSize()
@@ -184,6 +214,32 @@ func primaryOverlayButtonWhiteTitleStaysAtFourPointFiveAtRestHoverAndPressed(dar
     #expect(narrow.width > 0 && narrow.width < natural.width)
 }
 
+@Test(.macOSTestApplication, .macOSUI) @MainActor func requestPanelStatusesRenderTheirOverlayButtons() throws {
+    // A window's colour pipeline shifts the pixels a little, so compare with the shaded
+    // accent drawn as a plain rectangle in an identical window, not with the raw value.
+    let reference = NSHostingView(rootView: Color(nsColor: PopupGlass.accentShadeColor).frame(width: 40, height: 40))
+    reference.frame = NSRect(x: 0, y: 0, width: 40, height: 40)
+    let referencePanel = try offscreenPanel(content: reference, key: false, dark: true)
+    defer { referencePanel.orderOutForTesting() }
+    let swatch = try #require(try pixels(of: reference).colorAt(x: 20, y: 20)?.usingColorSpace(.sRGB))
+
+    let status = PaneRequestStatus(requestID: UUID(), paneID: UUID(), appName: "Alpha", kind: .failed)
+    let host = NSHostingView(rootView: PaneRequestStatusBody(status: status, action: { _ in }))
+    host.frame = NSRect(x: 0, y: 0, width: 420, height: 260)
+    let panel = try offscreenPanel(content: host, key: false, dark: true)
+    defer { panel.orderOutForTesting() }
+    let rep = try pixels(of: host)
+    var matches = 0
+    for y in 0..<rep.pixelsHigh {
+        for x in 0..<rep.pixelsWide {
+            guard let c = rep.colorAt(x: x, y: y)?.usingColorSpace(.sRGB) else { continue }
+            if abs(c.redComponent - swatch.redComponent) < 0.01 && abs(c.greenComponent - swatch.greenComponent) < 0.01
+                && abs(c.blueComponent - swatch.blueComponent) < 0.01 { matches += 1 }
+        }
+    }
+    // "Try Again" is about 78 x 24 points at 2x, less its rounded corners and title.
+    #expect(matches > 3000, "Try Again is drawn with the shaded accent fill in a window that is not key")
+}
 
 // MARK: Links
 
@@ -240,6 +296,29 @@ func inlineLinksAreUnderlinedLabelColourAndNeverAccent(dark: Bool) throws {
 
 // MARK: Layout Gallery buttons
 
+@MainActor private func galleryView(current: TabbedPreset = .columns) -> TabbedLayoutGalleryView {
+    let gallery = TabbedLayoutGalleryView(current: current)
+    gallery.select(current == .columns ? .grid : .columns) // Enables Apply.
+    return gallery
+}
+
+@Test(.macOSTestApplication, .macOSUI) @MainActor func galleryApplyAndCancelAreOverlayButtonsWithTheRightKinds() throws {
+    let gallery = galleryView()
+    let apply = try #require(gallery.applyButton as? OverlayButton)
+    let cancel = try #require(gallery.cancelButton as? OverlayButton)
+    #expect(apply.kind == .primary && cancel.kind == .secondary)
+    #expect(apply.frame.height == 24 && cancel.frame.height == 24)
+    #expect(apply.frame.width == apply.intrinsicContentSize.width && cancel.frame.width == cancel.intrinsicContentSize.width)
+    #expect(cancel.frame.maxX < apply.frame.minX && apply.frame.maxX <= gallery.bounds.width)
+    #expect(apply.keyEquivalent == "\r" && cancel.keyEquivalent == "\u{1b}")
+    // White title on the shaded accent, at rest.
+    #expect(contrast(.white, composite(PopupGlass.accentShade(for: .controlAccentColor), apply.palette().overlay)) >= 4.5)
+    // Tab order is unchanged: choices, grouping, Cancel, Apply, then around.
+    var chain: [NSView] = [gallery.choices[0]]
+    while let next = chain.last?.nextKeyView, next !== chain[0], chain.count < 20 { chain.append(next) }
+    #expect(Array(chain.suffix(2)) == [cancel, apply])
+    #expect(chain.count == gallery.choices.count + 3)
+}
 
 
 
@@ -255,6 +334,51 @@ func inlineLinksAreUnderlinedLabelColourAndNeverAccent(dark: Bool) throws {
     let handler: () -> Void
     init(_ handler: @escaping () -> Void) { self.handler = handler }
     @objc func press() { handler() }
+}
+
+// MARK: Pane-number badge
+
+@Test(.macOSTestApplication, .macOSUI, arguments: [false, true]) @MainActor
+func activePaneNumberBadgeUsesTheShadedAccentForItsWhiteDigit(dark: Bool) throws {
+    let content = TabbedPaneContentView(frame: NSRect(x: 0, y: 0, width: 300, height: 120))
+    content.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+    content.active = true
+    content.number = 1
+    let host = NSView(frame: content.frame)
+    host.addSubview(content)
+    let panel = try offscreenPanel(content: host, key: false, dark: dark)
+    defer { panel.orderOutForTesting() }
+    let reference = NSHostingView(rootView: Color(nsColor: PopupGlass.accentShadeColor).frame(width: 40, height: 40))
+    reference.frame = NSRect(x: 0, y: 0, width: 40, height: 40)
+    let referencePanel = try offscreenPanel(content: reference, key: false, dark: dark)
+    defer { referencePanel.orderOutForTesting() }
+    let swatch = try #require(try pixels(of: reference).colorAt(x: 20, y: 20)?.usingColorSpace(.sRGB))
+    let rep = try pixels(of: content)
+    // The badge's left margin is fill only. Rows run from the top in a flipped view.
+    let scale = Double(rep.pixelsWide) / 300
+    let sample = try #require(rep.colorAt(x: Int(8 * scale), y: Int(15 * scale))?.usingColorSpace(.sRGB))
+    #expect(abs(sample.redComponent - swatch.redComponent) < 0.01 && abs(sample.greenComponent - swatch.greenComponent) < 0.01
+            && abs(sample.blueComponent - swatch.blueComponent) < 0.01, "badge fill is the shaded accent")
+    #expect(contrast(.white, composite(PopupGlass.accentShade(for: .controlAccentColor), nil)) >= 4.5)
+    // The badge has no hover or pressed state; the shaded fill passes at rest, and in the darker
+    // button states checked above.
+}
+
+/// The gallery draws its current-layout checkmark in white on this green fill.
+@Test(.macOSTestApplication, arguments: [false, true]) @MainActor
+func galleryCurrentCheckmarkKeepsThreeToOneContrast(dark: Bool) throws {
+    let appearance = try #require(NSAppearance(named: dark ? .darkAqua : .aqua))
+    appearance.performAsCurrentDrawingAppearance {
+        let green = NSColor.systemGreen.usingColorSpace(.sRGB)!
+        let fill = TabbedLayoutChoiceButton.currentBadgeColor.usingColorSpace(.sRGB)!
+        let ratio = contrast(.white, fill)
+        #expect(ratio >= 3, "white on current-layout green: \(ratio):1")
+        // Darkening preserves the green's channel proportions in both appearances.
+        let scale = fill.greenComponent / green.greenComponent
+        #expect(scale > 0 && scale < 1)
+        #expect(abs(fill.redComponent - green.redComponent * scale) < 0.001)
+        #expect(abs(fill.blueComponent - green.blueComponent * scale) < 0.001)
+    }
 }
 
 // These tests inspect key state or share a real-key fixture; run only while the Mac is unattended.
@@ -293,6 +417,51 @@ func inlineLinksAreUnderlinedLabelColourAndNeverAccent(dark: Bool) throws {
         try #require(!backgroundIsKey, Comment(rawValue: backgroundDiagnostics))
         try #require(keyedIsKey, "the key-window case needs a real key window; \(keyedDiagnostics)")
         #expect(background == keyed)
+    }
+
+    @Test(.macOSTestApplication, .macOSUI, arguments: [false, true]) @MainActor
+    func galleryButtonsLookTheSameInAKeyAndABackgroundWindow(dark: Bool) throws {
+        func render(key: Bool) throws -> (Data, Data, Bool, String) {
+            let gallery = galleryView()
+            let panel = try offscreenPanel(content: gallery, key: key, dark: dark)
+            defer { panel.orderOutForTesting() }
+            return (try bitmap(of: gallery.applyButton), try bitmap(of: gallery.cancelButton), panel.isKeyWindow, keyWindowDiagnostics(panel))
+        }
+        let (applyBackground, cancelBackground, backgroundIsKey, backgroundDiagnostics) = try render(key: false)
+        let (applyKey, cancelKey, keyIsKey, keyedDiagnostics) = try render(key: true)
+        try #require(!backgroundIsKey, Comment(rawValue: backgroundDiagnostics))
+        try #require(keyIsKey, "the key-window case needs a real key window; \(keyedDiagnostics)")
+        #expect(applyBackground == applyKey)
+        #expect(cancelBackground == cancelKey)
+    }
+
+    @Test(.macOSTestApplication, .macOSUI) @MainActor func galleryKeyEquivalentsAndDisabledStateStillWork() throws {
+        let gallery = galleryView()
+        var applied: [TabbedPreset] = [], cancels = 0
+        gallery.onApply = { preset, _ in applied.append(preset) }
+        gallery.onCancel = { cancels += 1 }
+        let panel = try offscreenPanel(content: gallery, key: true, dark: true)
+        defer { panel.orderOutForTesting() }
+        func key(_ text: String, _ code: UInt16) throws -> NSEvent {
+            try #require(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+                windowNumber: panel.windowNumber, context: nil, characters: text, charactersIgnoringModifiers: text,
+                isARepeat: false, keyCode: code))
+        }
+        #expect(try withNativeEventLoop { panel.performKeyEquivalent(with: try key("\r", 36)) })
+        #expect(applied == [.grid])
+        #expect(try withNativeEventLoop { panel.performKeyEquivalent(with: try key("\u{1b}", 53)) })
+        #expect(cancels == 1)
+        // Disabled Apply draws at 40 % and ignores Return.
+        gallery.select(.columns)
+        #expect(!gallery.applyButton.isEnabled)
+        _ = try withNativeEventLoop { panel.performKeyEquivalent(with: try key("\r", 36)) }
+        #expect(applied == [.grid])
+        // Mouse activation reaches the same actions.
+        gallery.select(.grid)
+        try performNativeClick(gallery.cancelButton)
+        try performNativeClick(gallery.applyButton)
+        panel.orderOutForTesting()
+        #expect(cancels == 2 && applied == [.grid, .grid])
     }
 
     @Test(.macOSTestApplication, .macOSUI) @MainActor func overlayButtonTakesKeyboardFocusOnlyWithFullKeyboardAccess() throws {

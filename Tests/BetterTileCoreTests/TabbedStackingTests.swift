@@ -63,6 +63,20 @@ private func entry(_ name: String?, _ frame: BTRect) -> TabbedStackEntry {
     #expect(state.sharedCurtainStackingRepair(order: apart, curtainBounds: bounds) == [id("a"), id("c")])
 }
 
+/// Settings has no managed identity because BetterTile excludes its own
+/// process. At normal level it must still retain its place over the panes.
+@Test func sharedCurtainHoldsRepairWhileUnidentifiedSettingsCoversAnExposedTab() {
+    let state = twoPanes()
+    let settings = entry(nil, BTRect(x: 600, y: 100, width: 300, height: 500))
+    let exposed = [entry("d", right), entry("c", right), entry("a", left), entry("b", left)]
+    #expect(state.sharedCurtainStackingRepair(order: [settings] + exposed, curtainBounds: bounds) == nil)
+    // Removing Settings lets the same exposed tab be repaired.
+    #expect(state.sharedCurtainStackingRepair(order: exposed, curtainBounds: bounds) == [id("a"), id("c")])
+    // Settings alone does not block an already verified order.
+    let settled = [entry("c", right), entry("a", left), entry("d", right), entry("b", left)]
+    #expect(state.sharedCurtainStackingRepair(order: [settings] + settled, curtainBounds: bounds) == [])
+}
+
 @Test func sharedCurtainRequiresAllSelectedIdentities() {
     let state = twoPanes()
     #expect(state.sharedCurtainStackingRepair(order: [entry("d", right), entry("c", right)], curtainBounds: bounds) == nil)

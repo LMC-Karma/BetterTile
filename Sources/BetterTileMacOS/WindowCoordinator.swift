@@ -132,7 +132,7 @@ public final class WindowCoordinator {
     #endif
 
     private let clock: BetterTileClock
-    public let system: any WindowSystem
+    public let system: any WindowSystem & ApplicationActivating & ApplicationWindowRequesting
     public var actionEngine: StandardActionEngine
 
     /// Marks an apply whose rollback also failed, so callers can distinguish a
@@ -151,7 +151,7 @@ public final class WindowCoordinator {
     /// size. Tests on a loaded runner lengthen it.
     public var shortcutCycleInterval: TimeInterval = 2
 
-    public init(system: any WindowSystem, historyCapacity: Int = 10, actionEngine: StandardActionEngine = StandardActionEngine(), clock: BetterTileClock = .live) {
+    public init(system: any WindowSystem & ApplicationActivating & ApplicationWindowRequesting, historyCapacity: Int = 10, actionEngine: StandardActionEngine = StandardActionEngine(), clock: BetterTileClock = .live) {
         self.system = system
         self.clock = clock
         self.history = FrameHistory(capacity: historyCapacity)

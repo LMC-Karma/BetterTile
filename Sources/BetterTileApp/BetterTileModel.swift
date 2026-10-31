@@ -8,7 +8,7 @@ import os
 /// The macOS observations the app model coordinates. The Accessibility adapter
 /// and the deterministic app-test adapter meet at this seam.
 @MainActor
-protocol BetterTileWindowSystem: TargetedWindowSystem, WindowEventSource {
+protocol BetterTileWindowSystem: TargetedWindowSystem, WindowEventSource, WindowHitTesting, ApplicationActivating, ApplicationWindowRequesting {
     var enhancedUserInterfacePolicy: EnhancedUserInterfacePolicy { get set }
     var leavesSpaceForDock: Bool { get set }
     var unresponsiveApplicationRecoveryDeadlines: [Int32: TimeInterval] { get }
@@ -100,13 +100,193 @@ final class BetterTileModel {
     private let linkedResize: LinkedResizeController
     private let layoutWheel: LayoutWheelController
     private let sharedGestureEvents: SharedGestureEventMonitor
+    var appKitWindowGestureFilter = AppKitWindowGestureFilter()
     let dividerResize: DividerOverlayController
     private var resultPill: ResultPillController?
     var resultPillFactory: () -> ResultPillController = { ResultPillController() }
     private var sessionStore = LayoutSessionStore()
+    private(set) var paneApplicationRequest: PaneApplicationRequest? { didSet { syncSharedGestureMonitoring() } }
+    var paneApplicationLauncher: any PaneApplicationLaunching = WorkspacePaneApplicationLauncher()
+    var paneApplicationTimeout: TimeInterval = 10
+    var tabbedClock: BetterTileClock = .live
+    var paneApplicationClock: BetterTileClock = .live
+    /// Nil builds the production helper from the sources below.
+    var paneApplicationRequestFocusFactory: (() -> ApplicationRequestFocus)?
+    var applicationRequestFrontmost: () -> String? = { NSWorkspace.shared.frontmostApplication?.bundleIdentifier }
+    var menuPanelIsShown: () -> Bool = { false }
+    private struct MenuPanelDeferredFocus {
+        let windowID: WindowID
+        let displayID: DisplayID
+        let sessionID: DesktopSessionID
+        let spaceID: NativeSpaceID?
+        let usesNativeObservation: Bool
+        let generation: Int
+        let focusEpoch: Int
+    }
+    private var menuPanelDeferredFocus: MenuPanelDeferredFocus?
+    /// Counts panel presentations, commands, and other focus choices. A placement that started
+    /// under an earlier count must not replay its focus.
+    private var menuPanelFocusEpoch = 0
+    /// The dismissal's focus rule. A placement that commits after the dismissal evaluates it when its wait ends.
+    private var menuPanelDismissalAuthorization: () -> Bool = { true }
+    var menuPanelClock: BetterTileClock = .live
+    /// How long a placement that commits after the dismissal waits before it focuses. macOS reports a
+    /// Space switch only when its animation ends, about half a second after the switch key.
+    var menuPanelLateFocusDelay: Duration = .milliseconds(700)
+    private(set) var menuPanelLateFocusTask: Task<Void, Never>?
+
+    func menuPanelWillOpen() {
+        invalidateMenuPanelFocusReplay()
+        menuPanelDismissalAuthorization = { true }
+    }
+
+    /// Focus returns when the user dismisses the panel, before its fade. A Space switch that starts
+    /// during the fade is not reported until it ends, so a replay at the fade's end could focus a window
+    /// on the desktop the user is leaving.
+    func menuPanelDidDismiss(authorization: @escaping () -> Bool = { true }) {
+        menuPanelDismissalAuthorization = authorization
+        // One dismissal focuses once. A placement that commits after this focus must not focus again.
+        if replayMenuPanelFocus(authorized: authorization()) { menuPanelDismissalAuthorization = { false } }
+    }
+
+    /// A command or a newer focus choice replaces the focus that the menu panel deferred.
+    func invalidateMenuPanelFocusReplay() {
+        menuPanelFocusEpoch += 1
+        menuPanelDeferredFocus = nil
+        menuPanelLateFocusTask?.cancel()
+        menuPanelLateFocusTask = nil
+    }
+
+    /// A placement that commits after the dismissal waits for a Space switch to be reported. A Space
+    /// change, another app's activation, a command or a reopened panel cancels the wait.
+    private func scheduleLateMenuPanelFocus() {
+        menuPanelLateFocusTask?.cancel()
+        let clock = menuPanelClock
+        let delay = menuPanelLateFocusDelay
+        menuPanelLateFocusTask = Task { @MainActor [weak self] in
+            try? await clock.sleep(for: delay)
+            guard !Task.isCancelled, let self else { return }
+            self.menuPanelLateFocusTask = nil
+            self.replayMenuPanelFocus(authorized: self.menuPanelDismissalAuthorization())
+        }
+    }
+
+    @discardableResult
+    private func replayMenuPanelFocus(authorized: Bool) -> Bool {
+        let target = menuPanelDeferredFocus
+        menuPanelDeferredFocus = nil
+        guard authorized, let target, target.focusEpoch == menuPanelFocusEpoch,
+              !isShutDown, !isStabilizingSpace, hasAccessibilityPermission,
+              target.generation == spaceStabilizationGeneration,
+              !nativeFullscreenDisplayIDs.contains(target.displayID),
+              system.displays().contains(where: { $0.id == target.displayID }),
+              let session = sessionStore.session(for: target.displayID), session.id == target.sessionID,
+              session.mode == .tabbed, !session.automaticWritesSuspended,
+              session.tabbedState?.selectedWindowIDs.contains(target.windowID) == true else { return false }
+        let observation = system.refreshNativeDesktopObservation()
+        guard (observation != nil) == target.usesNativeObservation,
+              observation?.allowsAutomaticLayout(on: target.displayID) != false,
+              observation?.currentSpace(on: target.displayID) == target.spaceID else { return false }
+        if let space = target.spaceID {
+            guard session.nativeSpaceID == space,
+                  observation?.windowMembership[target.windowID] == [space] else { return false }
+        }
+        guard let window = (try? system.windowSnapshots(ids: [target.windowID]))?.first,
+              window.isEligible, !window.isFloating, window.displayID == target.displayID else { return false }
+        return coordinator.focusTabbedWindow(target.windowID).isApplied
+    }
+    var applicationRequestKeyboard: any KeyboardEventCounting = SessionKeyDownCounter()
+    var applicationRequestWindowAtPoint: ((BTPoint) -> WindowSnapshot?)?
+    private let applicationRequestIntent = ApplicationRequestIntent()
+    private var completedRequestFocus: [UUID: ApplicationRequestFocus] = [:]
+    private var completedRequestFocusDeadline: [UUID: TimeInterval] = [:]
+    private var completedRequestFocusExpiry: [UUID: Task<Void, Never>] = [:]
+    var registeredApplicationRequestFocusCount: Int { applicationRequestIntent.registeredFocusCount }
+    func makeApplicationRequestFocus() -> ApplicationRequestFocus {
+        let focus = paneApplicationRequestFocusFactory?() ?? makeProductionRequestFocus()
+        focus.shareIntent(applicationRequestIntent)
+        return focus
+    }
+    func makeProductionRequestFocus() -> ApplicationRequestFocus {
+        ApplicationRequestFocus(frontmost: applicationRequestFrontmost, keyboard: applicationRequestKeyboard,
+                                activator: coordinator)
+    }
+    func requestApplicationActivated(_ bundleID: String?, processIdentifier: Int32? = nil) {
+        if processIdentifier != ProcessInfo.processInfo.processIdentifier,
+           bundleID == nil || bundleID != Bundle.main.bundleIdentifier {
+            invalidateMenuPanelFocusReplay()
+        }
+        expireCompletedRequestFocus()
+        applicationRequestIntent.activated(bundleID, processIdentifier: processIdentifier)
+        guard let bundleID else { return }
+        for (id, focus) in completedRequestFocus where focus.requested.contains(bundleID) {
+            if focus.restoreUserFocusIfNeeded() { releaseCompletedRequestFocus(id) }
+        }
+    }
+    private func observeCompletedRequestFocus(_ focus: ApplicationRequestFocus) {
+        guard focus.needsObservation else { focus.finish(); return }
+        let id = focus.id
+        completedRequestFocus[id] = focus
+        completedRequestFocusDeadline[id] = paneApplicationUptime() + 2
+        syncSharedGestureMonitoring()
+        ApplicationRequestIntent.log.debug("restore observation=start seconds=2")
+        let clock = paneApplicationClock
+        completedRequestFocusExpiry[id] = Task { @MainActor [weak self] in
+            try? await clock.sleep(for: .seconds(2))
+            guard !Task.isCancelled else { return }
+            self?.releaseCompletedRequestFocus(id)
+        }
+    }
+    private func expireCompletedRequestFocus() {
+        for (id, deadline) in completedRequestFocusDeadline where paneApplicationUptime() >= deadline {
+            releaseCompletedRequestFocus(id)
+        }
+    }
+    private func releaseCompletedRequestFocus(_ id: UUID) {
+        guard let focus = completedRequestFocus.removeValue(forKey: id) else { return }
+        completedRequestFocusDeadline[id] = nil
+        completedRequestFocusExpiry.removeValue(forKey: id)?.cancel()
+        ApplicationRequestIntent.log.debug("restore observation=end")
+        focus.finish()
+        syncSharedGestureMonitoring()
+    }
+    /// Delivers one AppKit fallback event as the drag-snap monitors do.
+    func receiveFallbackRequestMouseEvent(_ event: GlobalGestureEvent) { dragSnap.forwardFallbackMouseEvent(event) }
+    var observesApplicationRequestMouseDown: Bool { dragSnap.observesChooserMouseDown }
+    var observesApplicationRequestMouseSequence: Bool { dragSnap.observesRequestMouseSequence }
+    /// How long a pane waits for a click on a window that arrived before it gives up.
+    var paneApplicationClickTimeout: TimeInterval = 60
+    /// A pending click older than this lost its mouse-up and no longer delays the click timeout.
+    var paneApplicationPendingClickLimit: TimeInterval = 5
+    /// System uptime for pane application deadlines, click limits, and arrival guards. Tests replace it.
+    var paneApplicationUptime: () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
+    /// How long after the mouse-up of a click on an arrived window the model reads the focused window.
+    var paneApplicationClickConfirmDelay: Duration = .milliseconds(250)
+    private(set) var paneApplicationTask: Task<Void, Never>?
+    private(set) var paneApplicationClickTask: Task<Void, Never>?
+    var isPollingPaneApplicationRequest: Bool { paneApplicationTask != nil }
+    private var paneApplicationPickerTask: Task<Void, Never>?
+    private(set) var paneApplicationLaunchTask: Task<Void, Never>?
+    var paneApplicationPopover: PaneApplicationPopover? {
+        didSet { syncSharedGestureMonitoring() }
+    }
+    private var paneApplicationArrivalGuards: [PaneApplicationArrivalGuard] = []
     private var tabbedOverlays: [DisplayID: TabbedOverlayController] = [:]
+    var tabbedOverlayFactory: () -> TabbedOverlayController = { TabbedOverlayController() }
+    var paneApplicationPopoverFactory: (PaneApplicationRequest, OverlayAppearance) -> PaneApplicationPopover = {
+        PaneApplicationPopover(request: $0, appearance: $1)
+    }
+    private var spacePanelOverlays: [DesktopSessionID: TabbedOverlayController] = [:]
+    private var spacePanelCorrections: Set<DesktopSessionID> = []
+
+    private var allTabbedOverlays: [TabbedOverlayController] {
+        let active = Array(tabbedOverlays.values)
+        return active + spacePanelOverlays.values.filter { retained in !active.contains { $0 === retained } }
+    }
     private var tabbedTasks: [DisplayID: Task<Void, Never>] = [:]
     private var tabbedTaskIDs: [DisplayID: UUID] = [:]
+    /// The mode and layout to keep if entry cannot place its selected tabs.
+    private var tabbedEntryBaselines: [DesktopSessionID: LayoutSession] = [:]
     private var tabbedExiting: Set<DisplayID> = []
     private var tabbedQueuedIntents: [DisplayID: [PendingTabbedIntent]] = [:]
     private var tabbedUndo: [DesktopSessionID: [TabbedUndoStep]] = [:]
@@ -143,12 +323,12 @@ final class BetterTileModel {
     /// Displays whose stacking repair left raises out to keep a popup's focus.
     private(set) var tabbedRepairDeferred: Set<DisplayID> = []
     private(set) var tabbedNeedsFocusRefresh = false
-    private var tabbedFocusSuppressedUntil = Date.distantPast
+    private var tabbedFocusSuppressedUntil: BetterTileClock.Instant?
     private var lastBentoFocusMessage: String?
     private var tabbedCurtainRecheckTask: Task<Void, Never>?
     private var absenceConfirmationTask: Task<Void, Never>?
     private var arrivalSweepTask: Task<Void, Never>?
-    private var lastTabbedNativeResizePreview = Date.distantPast
+    private var lastTabbedNativeResizePreview: BetterTileClock.Instant?
     /// The Bento tree from before Focus mode, per desktop session, so ending
     /// Focus mode returns exactly the previous layout.
     private var bentoStateBeforeFocus: [DesktopSessionID: BentoLayoutState] = [:]
@@ -191,7 +371,7 @@ final class BetterTileModel {
     /// that application's previous main window key instead; for a short
     /// time such a focus change is corrected rather than treated as a
     /// selection.
-    private var tabbedIntendedFocus: (windowID: WindowID, until: Date)?
+    private var tabbedIntendedFocus: (windowID: WindowID, until: BetterTileClock.Instant)?
     /// Tabbed reads a window-edge resize only after the user lets go, so it
     /// never fights the drag. Tests replace this.
     var primaryButtonIsPressed: () -> Bool = { NSEvent.pressedMouseButtons & 1 == 1 }
@@ -377,7 +557,7 @@ final class BetterTileModel {
         }
         dividerResize.ownProcess = getpid()
         dividerResize.nonOccludingWindowNumbersProvider = { [weak self] in
-            self?.tabbedOverlays.values.reduce(into: Set<Int>()) { $0.formUnion($1.windowNumbers) } ?? []
+            self?.allTabbedOverlays.reduce(into: Set<Int>()) { $0.formUnion($1.windowNumbers) } ?? []
         }
         dividerResize.bentoStateProvider = { [weak self] displayID in
             self?.sessionStore.session(for: displayID)?.bentoState
@@ -458,15 +638,23 @@ final class BetterTileModel {
         layoutWheel.monitoringFailureHandler = { [weak self] failure in
             self?.layoutWheelMonitoringFailure = failure
         }
-        layoutWheel.gestureBeganHandler = { [weak self] in
-            self?.shortcuts.suspend()
-        }
+        layoutWheel.gestureBeganHandler = { [weak self] in self?.layoutWheelDidOpen() }
         layoutWheel.gestureEndedHandler = { [weak self] in
             guard let self, !self.isShortcutCaptureActive else { return }
             self.shortcuts.resume()
         }
+        dragSnap.chooserMouseDownHandler = { [weak self] event in
+            self?.receiveTabbedChooserMouseEvent(event)
+            self?.receivePaneApplicationMouseEvent(event, feed: "fallback")
+        }
+        dragSnap.requestMouseSequenceHandler = { [weak self] event in
+            self?.receivePaneApplicationMouseEvent(event, feed: "fallback")
+        }
         sharedGestureEvents.eventHandler = { [weak self] event in
             guard let self else { return }
+            self.receiveTabbedChooserMouseEvent(event)
+            self.receivePaneApplicationMouseEvent(event, feed: "event-tap")
+            guard self.appKitWindowGestureFilter.allows(event) else { return }
             self.dragSnap.handleSharedGestureEvent(event)
             self.linkedResize.handleSharedGestureEvent(event)
         }
@@ -514,6 +702,7 @@ final class BetterTileModel {
     }
 
     func setActiveMode(_ mode: LayoutMode) {
+        cancelPaneApplicationRequest()
         cancelPendingFocusRestore(on: actionDisplayID())
         refreshActiveWindows(force: false)
         guard let displayID = activeDisplayID else {
@@ -526,12 +715,16 @@ final class BetterTileModel {
 
     /// Shared by the menu bar and the captured Layout Wheel desktop.
     private func setMode(_ mode: LayoutMode, on displayID: DisplayID, focusedWindowID: WindowID?) {
+        cancelPaneApplicationRequest()
         cancelPendingFocusRestore(on: displayID)
         let mode = mode.availableMode
         sessionStore.ensure(displayID: displayID, defaultMode: configuration.defaultLayoutMode)
         if activeMode(for: displayID) == .tabbed, mode != .tabbed {
-            leaveTabbed(displayID: displayID, destination: mode)
+            leaveTabbed(displayID: displayID, destination: mode, focusedWindowID: focusedWindowID)
             return
+        }
+        if mode == .tabbed, let session = sessionStore.session(for: displayID), session.mode != .tabbed {
+            tabbedEntryBaselines[session.id] = session
         }
         sessionStore.update(displayID) {
             if $0.mode != .tabbed, mode == .tabbed {
@@ -544,7 +737,7 @@ final class BetterTileModel {
                     // Windows Bento floated on its own stay automatic
                     // floats; the entry sweep offers them a pane.
                     $0.tabbedState = TabbedLayoutState(
-                        adopting: $0.bentoState, automaticallyFloating: $0.automaticallyFloatingWindowIDs)
+                        adopting: $0.bentoState, automaticallyFloating: $0.automaticallyFloatingWindowIDs, presentation: configuration.tabbedStripPresentation)
                 }
             }
             $0.mode = mode
@@ -559,6 +752,8 @@ final class BetterTileModel {
     }
 
     func perform(_ action: WindowAction) {
+        invalidateMenuPanelFocusReplay()
+        if action == .showTabBar { showTabBar(); return }
         let originalDisplayID = actionDisplayID()
         let restoringSession = originalDisplayID.flatMap { focusRestores[$0]?.session }
         cancelPendingFocusRestore(on: originalDisplayID)
@@ -583,6 +778,12 @@ final class BetterTileModel {
         if let focused, waitsForSpaceStabilization(focused) {
             statusMessage = Self.tabbedSpaceSwitchPending
             presentActionResult(succeeded: false, error: statusMessage, displayID: focused.displayID)
+            return
+        }
+        if action.isTabCommand {
+            if let displayID = focused?.displayID ?? originalDisplayID {
+                performTabbedCommand(action, windowID: focused?.id, displayID: displayID)
+            }
             return
         }
         if let focused, isTabbedMember(focused.id), !usesTabbedSnap(window: focused) {
@@ -683,7 +884,7 @@ final class BetterTileModel {
             return .ready(placements: proposal.plan.placements)
         case let .ready(.tabbed(plan, _, _)):
             return .ready(placements: plan.placements)
-        case .ready(.repairBento):
+        case .ready(.repairBento), .ready(.tabCommand):
             return .ready(placements: [])
         case let .unavailable(reason, _):
             return .unavailable(reason: reason)
@@ -704,6 +905,7 @@ final class BetterTileModel {
         for target: LayoutWheelTarget,
         cyclesShortcut: Bool
     ) {
+        invalidateMenuPanelFocusReplay()
         if command == .repairBento,
            repairsAfterFocusRestore(on: target.displayID, { [weak self] in
                self?.performLayoutWheel(command, for: target)
@@ -728,6 +930,8 @@ final class BetterTileModel {
             presentActionResult(succeeded: false, error: reason, displayID: displayID)
         case let .ready(.repairBento(displayID, focusedWindowID)):
             repairBento(displayID: displayID, focusedWindowID: focusedWindowID)
+        case let .ready(.tabCommand(action, displayID)):
+            performTabbedCommand(action, windowID: target.windowID, displayID: displayID)
         case let .ready(.tabbed(_, action, displayID)):
             performTabbedSnap(action, windowID: target.windowID, displayID: displayID, expectedSpaceID: target.nativeSpaceID)
         case let .ready(.action(plan)):
@@ -759,6 +963,11 @@ final class BetterTileModel {
                 displayID: proposal.display.id
             )
         }
+    }
+
+    func layoutWheelDidOpen() {
+        invalidateMenuPanelFocusReplay()
+        shortcuts.suspend()
     }
 
     func captureLayoutWheelTarget() -> LayoutWheelTarget? {
@@ -839,6 +1048,12 @@ final class BetterTileModel {
 
         switch command {
         case let .windowAction(action):
+            if action.isTabCommand {
+                guard activeMode(for: window.displayID) == .tabbed else {
+                    return .unavailable(reason: Self.tabCommandsUnavailable, displayID: window.displayID)
+                }
+                return .ready(.tabCommand(action, window.displayID))
+            }
             if isTabbedMember(window.id) || (usesTabbedSnap(window: window) && BentoDropPlanner.partitionActions.contains(action)) {
                 guard usesTabbedSnap(window: window) else {
                     return .unavailable(reason: Self.tabbedParticipationChanged, displayID: target.displayID)
@@ -1621,6 +1836,7 @@ final class BetterTileModel {
     }
 
     func beginBentoDrag(displayID: DisplayID, sourceID: WindowID, sourceFrame: BTRect? = nil) -> Bool {
+        invalidateMenuPanelFocusReplay()
         cancelPendingFocusRestore(on: displayID)
         guard activeBentoDrag == nil, !tabbedExiting.contains(displayID),
               var layoutSession = sessionStore.session(for: displayID),
@@ -1629,6 +1845,7 @@ final class BetterTileModel {
               let windows = try? observeVisibleWindows()
         else { return false }
         // Dragging one tab of a group moves only that window.
+        cancelPaneApplicationRequest()
         var tabbedOrigin: UUID?
         let tabbedUndoBaseline = layoutSession.mode == .tabbed ? layoutSession.tabbedState : nil
         let tabbedSpaceID = layoutSession.nativeSpaceID
@@ -2305,8 +2522,9 @@ final class BetterTileModel {
 
         guard changed else { return trusted }
         if !trusted {
+            cancelPaneApplicationRequest()
             tabbedTasks.values.forEach { $0.cancel() }
-            tabbedOverlays.values.forEach { $0.hide() }
+            allTabbedOverlays.forEach { $0.hide() }
             dragSnap.cancel()
             layoutWheel.cancel()
         }
@@ -2360,6 +2578,7 @@ final class BetterTileModel {
             let previous = configuration
             let changes = ConfigurationChangeSet.between(previous, validated)
             let gapChanged = validated.bentoInnerGap != previous.bentoInnerGap
+            let presentationChanged = validated.tabbedStripPresentation != previous.tabbedStripPresentation
             configuration = validated
             applyRuntimeConfiguration(changes)
             scheduleConfigurationSave()
@@ -2370,6 +2589,7 @@ final class BetterTileModel {
                 paneGapRelayoutPending = true
                 schedulePaneGapRelayout()
             }
+            if presentationChanged { refreshActiveWindows(force: false) }
         } catch {
             statusMessage = error.localizedDescription
         }
@@ -2463,6 +2683,9 @@ final class BetterTileModel {
     }
 
     func shutdown() {
+        cancelPaneApplicationRequest()
+        for id in Array(completedRequestFocus.keys) { releaseCompletedRequestFocus(id) }
+        paneApplicationArrivalGuards.removeAll()
         cancelPendingFocusRestore(on: nil)
         guard !isShutDown else { return }
         paneGapRelayoutTask?.cancel()
@@ -2486,12 +2709,14 @@ final class BetterTileModel {
         tabbedTasks.values.forEach { $0.cancel() }
         tabbedFocusTask?.cancel()
         tabbedResizeReleaseTask?.cancel()
-        tabbedOverlays.values.forEach {
+        allTabbedOverlays.forEach {
             $0.hide()
             $0.acceptsTabDrags = true
         }
         isShutDown = true
         tabbedOverlays.removeAll()
+        spacePanelOverlays.removeAll()
+        spacePanelCorrections.removeAll()
         #if DEBUG
         tracePendingArrivals("arrival_dropped", reason: "shutdown")
         #endif
@@ -2573,7 +2798,7 @@ final class BetterTileModel {
             dividerResize.configuration = configuration
         }
         if changes.contains(.overlayAppearance) {
-            tabbedOverlays.values.forEach { $0.overlayAppearance = configuration.overlayAppearance }
+            allTabbedOverlays.forEach { $0.overlayAppearance = configuration.overlayAppearance }
             resultPill?.overlayAppearance = configuration.overlayAppearance
         }
         if changes.contains(.shortcuts) {
@@ -2606,8 +2831,13 @@ final class BetterTileModel {
     }
 
     private func syncSharedGestureMonitoring() {
-        guard hasAccessibilityPermission,
-              configuration.snappingEnabled || configuration.linkedResizeEnabled
+        let hasChooser = paneApplicationPopover != nil || tabbedOverlays.values.contains(where: \.hasLayoutGallery)
+        let observesRequests = paneApplicationRequest != nil
+            || !completedRequestFocus.isEmpty
+        dragSnap.observesChooserMouseDown = hasChooser || observesRequests
+        dragSnap.observesRequestMouseSequence = paneApplicationRequest != nil
+        guard !isShutDown, hasAccessibilityPermission,
+              configuration.snappingEnabled || configuration.linkedResizeEnabled || hasChooser || observesRequests
         else {
             sharedGestureEvents.stop()
             setUsesSharedGestureEvents(false)
@@ -2691,6 +2921,15 @@ final class BetterTileModel {
             object: nil,
             queue: .main
         ) { [weak self] notification in
+            let application = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
+            let bundleID = application?.bundleIdentifier
+            let processIdentifier = application?.processIdentifier
+            // The observer runs on the main queue. Record intent before a queued
+            // placement continuation can raise or finish the request.
+            MainActor.assumeIsolated {
+                guard let self, !self.isShutDown else { return }
+                self.requestApplicationActivated(bundleID, processIdentifier: processIdentifier)
+            }
             Task { @MainActor in
                 guard let self, !self.isShutDown else { return }
                 self.handleApplicationActivation()
@@ -2720,6 +2959,7 @@ final class BetterTileModel {
         system.refreshApplicationObservers()
         dividerResize.hideAndCancel()
         refreshActiveWindows(force: true)
+        refreshPaneApplicationWindowChoices()
     }
 
     /// Coalesces Core Graphics and AppKit display notifications into the same
@@ -2735,6 +2975,8 @@ final class BetterTileModel {
     }
 
     func beginActiveSpaceStabilization() {
+        invalidateMenuPanelFocusReplay()
+        cancelPaneApplicationRequest()
         #if DEBUG
         tracePendingArrivals("arrival_dropped", reason: "space_stabilization_restarts_discovery")
         #endif
@@ -2749,7 +2991,10 @@ final class BetterTileModel {
         tabbedNeedsRefresh.removeAll()
         tabbedNeedsReapply.removeAll()
         tabbedTasks.values.forEach { $0.cancel() }
-        tabbedOverlays.values.forEach { $0.hide() }
+        for overlay in allTabbedOverlays {
+            if overlay.keepsPanelsOnSpace { overlay.prepareForSpaceChange() }
+            else { overlay.hide() }
+        }
         dragSnap.cancel()
         layoutWheel.cancel()
         dividerResize.hideAndCancel()
@@ -2759,6 +3004,7 @@ final class BetterTileModel {
         settlementTasks.removeAll()
         spaceStabilizationTask?.cancel()
         selectNativeDesktopSessions()
+        selectSpacePanelOverlays()
         spaceStabilizationGeneration &+= 1
         let generation = spaceStabilizationGeneration
         isStabilizingSpace = true
@@ -2770,6 +3016,7 @@ final class BetterTileModel {
                 guard !Task.isCancelled, self.spaceStabilizationGeneration == generation else { return }
                 guard let sampled = try? self.observeVisibleWindows() else {
                     self.isStabilizingSpace = false
+                    self.allTabbedOverlays.forEach { $0.hide() }
                     self.schedulePendingWindowEvents()
                     return
                 }
@@ -2799,6 +3046,53 @@ final class BetterTileModel {
 
     /// A native Space change selects an established exact runtime session immediately.
     /// Membership still stabilizes twice before the normal refresh may write.
+    private func spacePanelOwnerIsCurrent(_ session: LayoutSession, overlay: TabbedOverlayController) -> Bool {
+        guard tabbedOverlays[session.displayID] === overlay else { return false }
+        let observation = system.refreshNativeDesktopObservation()
+        guard observation?.allowsAutomaticLayout(on: session.displayID) != false else { return false }
+        guard let space = session.nativeSpaceID, let observation else { return !overlay.keepsPanelsOnSpace }
+        return overlay.keepsPanelsOnSpace && observation.currentSpace(on: session.displayID) == space
+            && observation.allowsAutomaticLayout(on: session.displayID)
+    }
+
+    private func selectTabbedOverlay(for session: LayoutSession) {
+        guard system.nativeDesktopObservation() != nil else {
+            discardSpacePanelOverlays()
+            return
+        }
+        guard session.nativeSpaceID != nil else { return }
+        let incoming = spacePanelOverlays[session.id]
+        if let previous = tabbedOverlays[session.displayID], previous !== incoming {
+            if previous.keepsPanelsOnSpace { previous.prepareForSpaceChange() }
+            else { previous.hide() }
+        }
+        tabbedOverlays[session.displayID] = incoming
+    }
+
+    private func discardSpacePanelOverlays() {
+        spacePanelOverlays.values.forEach { $0.hide() }
+        tabbedOverlays = tabbedOverlays.filter { !$0.value.keepsPanelsOnSpace }
+        spacePanelOverlays.removeAll()
+        spacePanelCorrections.removeAll()
+    }
+
+    private func selectSpacePanelOverlays() {
+        guard let observation = system.nativeDesktopObservation() else {
+            discardSpacePanelOverlays()
+            return
+        }
+        spacePanelCorrections.formUnion(spacePanelOverlays.keys)
+        for display in system.displays() {
+            if let active = sessionStore.session(for: display.id),
+               active.nativeSpaceID == observation.currentSpace(on: display.id),
+               observation.allowsAutomaticLayout(on: display.id), active.mode == .tabbed {
+                tabbedOverlays[display.id] = spacePanelOverlays[active.id]
+            } else if tabbedOverlays[display.id]?.keepsPanelsOnSpace == true {
+                tabbedOverlays.removeValue(forKey: display.id)
+            }
+        }
+    }
+
     private func selectNativeDesktopSessions() {
         guard let observation = system.refreshNativeDesktopObservation() else {
             nativeFullscreenDisplayIDs.removeAll()
@@ -2826,7 +3120,7 @@ final class BetterTileModel {
     }
 
     func handleApplicationActivation() {
-        layoutWheel.handleApplicationDeactivated()
+        layoutWheel.cancel()
         refreshFocusedDisplayWithoutLayout()
         handleTabbedFocus()
     }
@@ -3090,6 +3384,8 @@ final class BetterTileModel {
             windowID: event.windowID, reason: "window_destroyed") }
         #endif
         guard !isShutDown else { return }
+        receiveApplicationRequestLifecycle(event)
+        if event.kind == .focused { receivePaneApplicationFocus(event) }
         // Resolve the focus now, while it is still on that window. A later
         // focus change elsewhere must not erase a check this one needs.
         if event.kind == .focused, !pendingBentoFocusCheck, bentoFocusLandsInLayout(event) {
@@ -3100,6 +3396,7 @@ final class BetterTileModel {
         if let windowID = event.windowID {
             if event.kind == .minimized {
                 confirmedMinimizedWindowIDs.insert(windowID)
+                sessionStore.removeMinimizedTabbedWindow(windowID)
             }
             if event.kind == .restored || event.kind == .destroyed {
                 confirmedMinimizedWindowIDs.remove(windowID)
@@ -3123,6 +3420,12 @@ final class BetterTileModel {
                         return step
                     }
                 }
+            }
+        }
+        if let windowID = event.windowID, event.kind == .destroyed || event.kind == .minimized {
+            // Update cached content before stabilization or gesture buffering can defer a sweep.
+            for overlay in spacePanelOverlays.values {
+                overlay.removeUnavailableWindows([windowID])
             }
         }
         guard !isStabilizingSpace else { return }
@@ -3208,6 +3511,13 @@ final class BetterTileModel {
         case .created, .destroyed, .minimized:
             pendingWindowEvents.record(event)
         case .focused:
+            // AX focus events already have their own coalesced visibility checks below.
+            // Record the target without the activation path's divider inventory.
+            if !isStabilizingSpace, let focused = try? system.focusedWindow(), focused.isEligible,
+               focused.processIdentifier == event.processIdentifier,
+               event.windowID == nil || event.windowID == focused.id,
+               rule(for: focused).allowsDirectPlacement {
+            }
             handleTabbedFocus()
             layoutWheel.handleFocusedWindowChanged()
         }
@@ -3238,6 +3548,9 @@ final class BetterTileModel {
             // The deadline and an unreadable element hand the arrival to the complete inventory.
             guard arrival.deadline > now else { pendingWindowArrivals[index].creationToken = nil; return false }
             let result = reader.readCreatedWindow(token: token)
+            if case let .window(window) = result {
+                resolveApplicationRequestCreation(window, token: token)
+            }
             #if DEBUG
             arrivalTrace.record("targeted_read", pid: arrival.processIdentifier, windowID: { if case let .window(w) = result { w.id } else { nil } }(),
                 outcome: { switch result { case .window: "readable"; case .notReady: "not_ready"; case .unavailable: "unavailable" } }())
@@ -4237,7 +4550,9 @@ final class BetterTileModel {
         if observedRuleWindows != windows { observedRuleWindows = windows }
     }
     /// Snapshots already read by normal reconciliation. Settings never polls AX.
-    private(set) var observedRuleWindows: [WindowSnapshot] = []
+    private(set) var observedRuleWindows: [WindowSnapshot] = [] {
+        didSet { refreshPaneApplicationWindowChoices() }
+    }
 
     /// Running applications the user could give a rule to, minus the ones that
     /// already have one and minus BetterTile itself.
@@ -4725,6 +5040,9 @@ final class BetterTileModel {
             applicationRecoveryGeneration = spaceStabilizationGeneration
         }
         defer { applicationRecoveryGeneration = priorRecoveryGeneration }
+        if let request = paneApplicationRequest, !paneApplicationOwnerIsCurrent(request) {
+            cancelPaneApplicationRequest(id: request.id)
+        }
         guard var observedWindows = suppliedWindows ?? (try? observeVisibleWindows(reconcilesRecovery: true)) else { return }
         // Classification can outlast a Space change whose notification is still queued, so a reused
         // inventory needs fresh native membership for every window. Without it, observe again.
@@ -4744,6 +5062,7 @@ final class BetterTileModel {
         #endif
         defer { scheduleUnresponsiveApplicationRecovery() }
         recordObservedWindows(observedWindows, observation: nativeObservation)
+        if nativeObservation == nil { discardSpacePanelOverlays() }
         let windows = nativeObservation?.windowsOnCurrentSpaces(observedWindows) ?? observedWindows
         let previousFallbackMatches = applicationRecoveryFallbackMatches
         defer { applicationRecoveryFallbackMatches = previousFallbackMatches }
@@ -4793,6 +5112,7 @@ final class BetterTileModel {
         let displays = system.displays()
         lastDisplayWorkAreaSignature = displayWorkAreaSignature(displays)
         let displayIDs = Set(displays.map(\.id))
+
         for id in tabbedOverlays.keys.filter({ !displayIDs.contains($0) }) {
             tabbedOverlays[id]?.hide()
             tabbedOverlays.removeValue(forKey: id)
@@ -4846,6 +5166,7 @@ final class BetterTileModel {
                 commitObservation: false,
                 nativeSpaceID: nativeObservation?.currentSpace(on: display.id)
             )
+            selectTabbedOverlay(for: activation.session)
             if focused?.displayID == display.id { resolvedActiveDisplay = display.id }
             #if DEBUG
             if arrivalTrace.isEnabled {
@@ -4868,7 +5189,7 @@ final class BetterTileModel {
                 continue
             }
             if nativeObservation?.allowsAutomaticLayout(on: display.id) == false {
-                tabbedOverlays[display.id]?.hide()
+                hideTabbedOverlay(on: display.id)
                 let committed = sessionStore.commit(
                     activation.session,
                     replacing: activation.session.revision
@@ -4884,7 +5205,7 @@ final class BetterTileModel {
             if activation.session.mode != .manual, !activation.wasCreated, !desktopTransition,
                !activation.session.automaticWritesSuspended {
                 let known = activation.previousWindowIDs
-                let arrivals = Set(displayWindows.map(\.id)).subtracting(known)
+                let arrivals = Set(displayWindows.filter { !reservesPaneApplicationWindow($0) }.map(\.id)).subtracting(known)
                 if !arrivals.isEmpty {
                     #if DEBUG
                     if arrivalTrace.isEnabled { for id in arrivals {
@@ -4931,7 +5252,7 @@ final class BetterTileModel {
                 )
                 continue
             }
-            tabbedOverlays[display.id]?.hide()
+            hideTabbedOverlay(on: display.id)
             let shouldLogHeldAbsences = activation.session.mode == .bento
                 && !activation.session.automaticWritesSuspended
                 && !activation.wasCreated
@@ -5196,7 +5517,7 @@ final class BetterTileModel {
                 windows: windows,
                 focusedWindowID: session.focusedWindowID
             ),
-            paneGap: configuration.bentoInnerGap,
+            paneGap: paneGapForLayout,
             confirmedGone: confirmedGone,
             minimized: minimized.union(confirmedMinimizedWindowIDs),
             knownSpaceWindowIDs: system.nativeDesktopObservation()?.exclusiveWindowIDs(on: display.id) ?? [],
@@ -5254,7 +5575,10 @@ final class BetterTileModel {
     /// user's own edge resize, lowers it at once.
     /// Divider and linked-resize gestures do not name a display, so they
     /// cancel every pending Focus mode restore.
-    func prepareWindowGesture() { cancelPendingFocusRestore(on: nil) }
+    func prepareWindowGesture() {
+        invalidateMenuPanelFocusReplay()
+        cancelPendingFocusRestore(on: nil)
+    }
 
     private func refreshDividerBoundaries(windows suppliedWindows: [WindowSnapshot]? = nil) {
         let presentation = dividerPresentation(windows: suppliedWindows ?? ((try? observeVisibleWindows()) ?? []))
@@ -5269,7 +5593,7 @@ final class BetterTileModel {
         var boundaries: [BoundaryDescriptor] = []
         var managedWindowIDs: [DisplayID: Set<WindowID>] = [:]
         var tabbedObscuringFrames: [BTRect] = []
-        let chrome = tabbedOverlays.values.reduce(into: Set<Int>()) { $0.formUnion($1.windowNumbers) }
+        let chrome = allTabbedOverlays.reduce(into: Set<Int>()) { $0.formUnion($1.windowNumbers) }
         let order = sessionStore.sessions.values.contains(where: { $0.mode == .tabbed })
             ? (system as? any TabbedWindowSystem)?.stackingOrder(for: windows, excluding: chrome) : nil
         var displaysWithVerifiedOrder: Set<DisplayID> = []
@@ -5376,6 +5700,7 @@ private enum LayoutWheelModelPlan {
     case action(WindowActionPlan)
     case bento(BentoCommandProposal)
     case tabbed(TabbedSnapPlan, WindowAction, DisplayID)
+    case tabCommand(WindowAction, DisplayID)
     case repairBento(displayID: DisplayID, focusedWindowID: WindowID)
 }
 
@@ -5436,6 +5761,7 @@ private struct TabbedUndoStep {
 private enum PendingTabbedIntent {
     case ui(TabbedUIIntent)
     case snap(WindowID, WindowAction, NativeSpaceID?)
+    case command(WindowAction, WindowID, NativeSpaceID?)
 }
 
 // MARK: - Experimental Tabbed sessions
@@ -5445,21 +5771,36 @@ extension BetterTileModel {
         removed: Set<WindowID>, focused: WindowID?, force: Bool
     ) {
         guard tabbedTasks[display.id] == nil else {
+            #if DEBUG
+            if arrivalTrace.isEnabled { for window in windows {
+                arrivalTrace.disposition("arrival_deferred", windowID: window.id, reason: "tabbed_reconciliation_in_progress")
+            } }
+            #endif
             tabbedNeedsRefresh.insert(display.id)
             return
         }
+        // A requested arrival goes directly to its final pane before ordinary
+        // reconciliation can run an intermediate placement of the old selections.
+        if let request = paneApplicationRequest, request.displayID == display.id,
+           automaticallyPlacePaneApplicationArrival(request, windows: windows) { return }
         #if DEBUG
         if arrivalTrace.isEnabled { for window in windows {
             arrivalTrace.disposition("tabbed_plan_started", windowID: window.id, reason: "reconcile_membership")
         } }
         #endif
         // Plan with the same minimums the placement uses.
-        let windows = Self.ignoringOversizedSeeds(windows, in: display.visibleFrame)
+        let windows = ignoringOversizedSeeds(windows, in: display.visibleFrame)
         var session = original
         let wasUninitialized = session.tabbedState == nil
-        var state = session.tabbedState ?? TabbedLayoutState(preset: configuration.defaultTabbedPreset)
+        var state = session.tabbedState ?? TabbedLayoutState(preset: configuration.defaultTabbedPreset, presentation: configuration.tabbedStripPresentation)
         let entering = !session.tabbedHasEntryBaseline
         if entering {
+            if tabbedEntryBaselines[session.id] == nil {
+                // A desktop that starts in Tabbed has no prior managed mode.
+                var baseline = original
+                baseline.mode = .manual
+                tabbedEntryBaselines[session.id] = baseline
+            }
             session.tabbedHasEntryBaseline = true
             session.tabbedBaselineFrames = Dictionary(uniqueKeysWithValues: windows.map { ($0.id, $0.frame) })
             // Stored now, so a failed or deferred entry placement does not run
@@ -5467,6 +5808,8 @@ extension BetterTileModel {
             if let committed = sessionStore.commit(session, replacing: session.revision) { session = committed }
         }
         let before = state
+        reservePaneApplicationArrivals(in: &state, session: session, windows: windows)
+        state.setPresentation(configuration.tabbedStripPresentation)
         if wasUninitialized {
             state.reconcile(windowIDs: windows.map(\.id), removed: removed, focused: focused)
         } else {
@@ -5491,6 +5834,7 @@ extension BetterTileModel {
         // area at its own size when it can be, and say why it is not a tab.
         let floated = wasUninitialized ? [] : state.floatingWindowIDs
             .subtracting(before.floatingWindowIDs).subtracting(before.windowIDs)
+            .intersection(state.automaticallyFloatingWindowIDs)
         var restorationFrames: [WindowID: BTRect] = [:]
         for window in windows where floated.contains(window.id) {
             let bounds = display.visibleFrame
@@ -5520,8 +5864,15 @@ extension BetterTileModel {
         // Removals include windows on other displays. Reconciliation above
         // already records actual membership changes; unrelated IDs must not
         // trigger placement and a queued sweep on each display forever.
-        let changed = wasUninitialized || before != state || session.lastWorkArea != display.visibleFrame
-        if (changed || force), !session.automaticWritesSuspended {
+        let selectionNeedsPlacement = tabbedCommittedLayouts[session.id].map {
+            $0.selected != Set(state.selectedWindowIDs)
+        } ?? false
+        let changed = wasUninitialized || before != state || selectionNeedsPlacement
+            || session.lastWorkArea != display.visibleFrame
+        if spacePanelCorrections.contains(session.id), changed {
+            tabbedOverlays[display.id]?.hide()
+        }
+        if (changed || force || tabbedEntryBaselines[session.id] != nil), !session.automaticWritesSuspended {
             applyTabbedState(state, session: session, display: display, windows: windows,
                              focus: wasUninitialized || before.activeWindowID != state.activeWindowID ? state.activeWindowID : nil,
                              restorationFrames: restorationFrames,
@@ -5535,18 +5886,89 @@ extension BetterTileModel {
         }
     }
 
+    private func hideTabbedOverlay(on displayID: DisplayID) {
+        tabbedOverlays[displayID]?.hide()
+        if let session = sessionStore.session(for: displayID) { spacePanelCorrections.remove(session.id) }
+    }
+
     private func showTabbed(session: LayoutSession, display: DisplaySnapshot, windows: [WindowSnapshot]) {
+        if let request = paneApplicationRequest, request.displayID == display.id, !paneApplicationOwnerIsCurrent(request) {
+            cancelPaneApplicationRequest(id: request.id)
+        }
         guard presentsTabbedChrome, session.mode == .tabbed, let state = session.tabbedState, !isStabilizingSpace,
+              tabbedEntryBaselines[session.id] == nil,
               !nativeFullscreenDisplayIDs.contains(display.id) else { return }
-        let overlay = tabbedOverlays[display.id] ?? TabbedOverlayController()
+        let observation = system.nativeDesktopObservation()
+        if let space = session.nativeSpaceID, let observation {
+            guard sessionStore.session(for: display.id)?.id == session.id,
+                  observation.currentSpace(on: display.id) == space,
+                  observation.allowsAutomaticLayout(on: display.id) else { return }
+        }
+        selectTabbedOverlay(for: session)
+        let overlay = tabbedOverlays[display.id] ?? tabbedOverlayFactory()
+        if session.nativeSpaceID != nil, observation != nil {
+            overlay.keepsPanelsOnSpace = true
+            spacePanelOverlays[session.id] = overlay
+        }
         overlay.acceptsTabDrags = !isTabbedBusy(on: display.id)
+        overlay.dividerIsDragging = { [weak self] in self?.dividerResize.isDragging == true }
         overlay.overlayAppearance = configuration.overlayAppearance
         let sessionID = session.id
+        overlay.onChooserVisibilityChange = { [weak self] in self?.syncSharedGestureMonitoring() }
+        overlay.onAddApplication = { [weak self, weak overlay] paneID, view, rect in
+            guard let self, let overlay, self.sessionStore.session(for: display.id)?.id == sessionID else { return }
+            guard self.spacePanelOwnerIsCurrent(session, overlay: overlay) else { return }
+            self.invalidateMenuPanelFocusReplay()
+            if self.isTabbedBusy(on: display.id) {
+                // App selection is independent of tab dragging. Keep one click
+                // until the current placement releases the display.
+                self.paneApplicationPickerTask?.cancel()
+                let clock = self.paneApplicationClock
+                self.paneApplicationPickerTask = Task { @MainActor [weak self, weak overlay] in
+                    guard let self, let overlay else { return }
+                    let deadline = self.paneApplicationUptime() + self.paneApplicationTimeout
+                    while self.isTabbedBusy(on: display.id) {
+                        guard !Task.isCancelled, self.paneApplicationUptime() < deadline,
+                              self.spacePanelOwnerIsCurrent(session, overlay: overlay) else { return }
+                        try? await clock.sleep(for: .milliseconds(10))
+                    }
+                    guard !Task.isCancelled, self.spacePanelOwnerIsCurrent(session, overlay: overlay),
+                          self.sessionStore.session(for: display.id)?.id == sessionID else { return }
+                    self.paneApplicationPickerTask = nil
+                    overlay.showPaneApplicationPicker(paneID)
+                }
+                return
+            }
+            guard let request = self.beginPaneApplicationPicker(paneID: paneID, on: display.id) else { return }
+            overlay.holdApplicationPicker(paneID, enabled: true)
+            let picker = self.paneApplicationPopoverFactory(request, self.configuration.overlayAppearance)
+            picker.onDismiss = { [weak self] in self?.dismissPaneApplicationPicker(requestID: request.id) }
+            self.paneApplicationPopover = picker
+            picker.show(relativeTo: rect, of: view, paneFrame: overlay.paneFrameInAppKit(paneID))
+        }
+        overlay.onPaneRequestAction = { [weak self] requestID, action in
+            guard let self, let request = self.paneApplicationRequest, request.id == requestID,
+                  request.displayID == display.id, request.sessionID == sessionID else { return }
+            self.invalidateMenuPanelFocusReplay()
+            self.handlePaneRequestAction(action, requestID: request.id)
+        }
+        overlay.onDismissApplicationPicker = { [weak self, weak overlay] in
+            guard let self, let overlay, self.tabbedOverlays[display.id] === overlay,
+                  let request = self.paneApplicationRequest,
+                  request.displayID == display.id, request.sessionID == sessionID else { return }
+            self.cancelPaneApplicationRequest(id: request.id)
+        }
         overlay.onIntent = { [weak self, weak overlay] intent in
             guard let self, self.sessionStore.session(for: display.id)?.id == sessionID else {
                 overlay?.completeDrop()
                 return
             }
+            guard let overlay, self.spacePanelOwnerIsCurrent(session, overlay: overlay) else {
+                overlay?.completeDrop()
+                return
+            }
+            // Tab-strip intents go to `handleTabbed` directly; they are user choices like `performTabbed`.
+            self.invalidateMenuPanelFocusReplay()
             self.handleTabbed(intent, on: display.id)
             if !self.isTabbedBusy(on: display.id), self.tabbedQueuedIntents[display.id] == nil {
                 self.tabbedOverlays[display.id]?.completeDrop()
@@ -5561,6 +5983,13 @@ extension BetterTileModel {
         let windowNumbers = (system as? any TabbedWindowSystem)?.windowNumbers(
             for: windows.filter { numbered.contains($0.id) }
         ) ?? [:]
+        let latest = system.refreshNativeDesktopObservation()
+        guard sessionStore.session(for: display.id)?.id == session.id,
+              latest?.currentSpace(on: display.id) == observation?.currentSpace(on: display.id),
+              latest?.allowsAutomaticLayout(on: display.id) != false else {
+            overlay.prepareForSpaceChange()
+            return
+        }
         overlay.refresh(state: state, bounds: display.visibleFrame, windows: windows,
                         obscuringFrames: obscuring.map { [$0] } ?? [],
                         canUndo: !(tabbedUndo[session.id]?.isEmpty ?? true),
@@ -5568,19 +5997,72 @@ extension BetterTileModel {
                         // A window without a validated number falls back to the backmost selected tab.
                         curtainAnchorWindowNumber: anchors?.lazy.compactMap { windowNumbers[$0] }.first)
         tabbedOverlays[display.id] = overlay
+        spacePanelCorrections.remove(session.id)
         // A kept curtain over an unverified order is checked again shortly.
         if overlay.needsCurtainVerification, tabbedCurtainRecheckTask == nil {
+            let clock = tabbedClock
             tabbedCurtainRecheckTask = Task { @MainActor [weak self] in
-                try? await Task.sleep(for: .milliseconds(80))
+                try? await clock.sleep(for: .milliseconds(80))
                 guard let self, !Task.isCancelled else { return }
                 self.tabbedCurtainRecheckTask = nil
                 // Without a window inventory the order cannot be verified;
                 // the curtain gives way instead of waiting for one.
                 if !self.repairTabbedStacking() {
-                    self.tabbedOverlays.values.forEach { $0.releaseUnverifiedCurtain() }
+                    self.allTabbedOverlays.forEach { $0.releaseUnverifiedCurtain() }
                 }
             }
         }
+    }
+
+    /// Frame rollback belongs to the coordinator. Entry also rolls back the
+    /// mode and content reserve, so unchanged title bars never get tab strips.
+    @discardableResult
+    private func rejectTabbedEntry(on displayID: DisplayID, outcome: WindowMutationOutcome,
+                                   selected: [WindowID], windows: [WindowSnapshot]) -> Bool {
+        guard let current = sessionStore.session(for: displayID),
+              let baseline = tabbedEntryBaselines.removeValue(forKey: current.id) else { return false }
+        sessionStore.update(displayID) {
+            $0.mode = baseline.mode
+            $0.tabbedState = baseline.tabbedState
+            $0.bentoState = baseline.bentoState
+            $0.windowIDs = baseline.windowIDs
+            $0.tabbedHasEntryBaseline = baseline.tabbedHasEntryBaseline
+            $0.tabbedBaselineFrames = baseline.tabbedBaselineFrames
+            $0.automaticWritesSuspended = baseline.automaticWritesSuspended
+            if case .degraded = outcome { $0.suspendAutomaticWrites(observing: windows) }
+        }
+        let ids = (current.tabbedState?.windowIDs ?? []).union(current.tabbedState?.floatingWindowIDs ?? [])
+            .union(selected)
+        for id in ids { tabbedSteppedWindows.removeValue(forKey: id) }
+        tabbedOverlays[displayID]?.hide()
+        tabbedOverlays.removeValue(forKey: displayID)
+        let needsRefresh = tabbedNeedsRefresh.remove(displayID) != nil
+        tabbedNeedsReapply.remove(displayID)
+        tabbedQueuedIntents.removeValue(forKey: displayID)
+        let reason: String
+        if case .degraded = outcome {
+            reason = "The previous arrangement could not be fully restored. Choose a layout to continue."
+        } else if let unresponsive = selected.first(where: system.isApplicationUnresponsive(for:)) {
+            reason = unavailableTabbedWindowReason(unresponsive, windows: windows)
+        } else {
+            reason = outcome.failureReason ?? "The layout could not be applied."
+        }
+        statusMessage = reason
+        presentActionResult(succeeded: false,
+                            feedback: .failure(title: "Couldn’t enter Tabbed", detail: reason), displayID: displayID)
+        refreshDividerBoundaries()
+        if needsRefresh { refreshActiveWindows(force: false) }
+        schedulePendingWindowEvents()
+        return true
+    }
+
+    private func unavailableTabbedWindowReason(_ id: WindowID, windows: [WindowSnapshot]) -> String {
+        let window = windows.first { $0.id == id } ?? (try? system.windowSnapshots(ids: [id]))?.first
+        if let bundleIdentifier = window?.bundleIdentifier {
+            let name = Self.applicationName(for: bundleIdentifier)
+            if name != bundleIdentifier { return "\(name) is not responding." }
+        }
+        return "An application is not responding."
     }
 
     private static let tabbedSnapFailure = "That snap cannot fit every pane within its minimum size and the 12-pane limit."
@@ -5596,7 +6078,7 @@ extension BetterTileModel {
 
     private func tabbedSnapUnavailableReason(_ action: WindowAction) -> String {
         switch action {
-        case .maximize: "Use Change Layout → One Pane to maximize the Tabbed layout."
+        case .maximize: "Choose Single Pane in Layout Gallery to maximize the Tabbed layout."
         case .restore: "Use Tabbed Undo to restore the previous pane arrangement."
         default: "Tabbed supports fixed half, third, two-thirds, quarter, and sixth snaps. Float the window to use this action."
         }
@@ -5620,7 +6102,7 @@ extension BetterTileModel {
               let session = sessionStore.session(for: displayID), session.mode == .tabbed,
               let state = session.tabbedState,
               let display = system.displays().first(where: { $0.id == displayID }),
-              let allWindows = try? system.visibleWindows() else { return nil }
+              let allWindows = try? observeVisibleWindows() else { return nil }
         let observation = system.refreshNativeDesktopObservation()
         guard observation?.allowsAutomaticLayout(on: displayID) != false else { return nil }
         if let space = session.nativeSpaceID,
@@ -5630,6 +6112,70 @@ extension BetterTileModel {
         guard let source = windows.first(where: { $0.id == windowID }),
               usesTabbedSnap(window: source, on: displayID) else { return nil }
         return (session, state, display, windows)
+    }
+
+    private static let tabCommandsUnavailable = "Tab commands work on Tabbed desktops."
+
+    private func performTabbedCommand(_ action: WindowAction, windowID: WindowID?, displayID: DisplayID,
+                                      expectedSpaceID: NativeSpaceID? = nil) {
+        guard activeMode(for: displayID) == .tabbed else {
+            presentLayoutWheelUnavailable(Self.tabCommandsUnavailable, displayID: displayID)
+            return
+        }
+        guard !isShutDown, !isStabilizingSpace, hasAccessibilityPermission,
+              !tabbedExiting.contains(displayID), !nativeFullscreenDisplayIDs.contains(displayID),
+              let session = sessionStore.session(for: displayID), session.mode == .tabbed,
+              let state = session.tabbedState,
+              expectedSpaceID == nil || session.nativeSpaceID == expectedSpaceID else { return }
+        let observation = system.refreshNativeDesktopObservation()
+        guard observation?.allowsAutomaticLayout(on: displayID) != false else { return }
+        if let space = session.nativeSpaceID,
+           observation?.currentSpace(on: displayID) != space { return }
+        guard let windowID else { return }
+        guard let sampled = try? system.windowSnapshots(ids: [windowID]),
+              let source = (observation?.windowsOnCurrentSpaces(sampled) ?? sampled).first,
+              source.displayID == displayID, source.isEligible, !source.isFloating,
+              rule(for: source).allowsBentoParticipation,
+              state.paneID(containing: windowID) != nil else {
+            presentLayoutWheelUnavailable("Focus a tab to use tab commands.", displayID: displayID)
+            return
+        }
+        if isTabbedBusy(on: displayID) {
+            tabbedQueuedIntents[displayID, default: []].append(.command(action, windowID, session.nativeSpaceID))
+            tabbedOverlays[displayID]?.yieldPressSelection()
+            return
+        }
+        guard let pane = state.pane(containing: windowID), let selected = pane.selected,
+              let index = pane.tabs.firstIndex(of: selected) else { return }
+        statusMessage = nil
+        let intent: TabbedUIIntent
+        switch action {
+        case .nextTab, .previousTab:
+            guard pane.tabs.count > 1 else { return }
+            let offset = action == .nextTab ? 1 : -1
+            intent = .select(pane.tabs[(index + offset + pane.tabs.count) % pane.tabs.count])
+        case .moveTabLeft, .moveTabRight:
+            let destination = index + (action == .moveTabRight ? 1 : -1)
+            guard pane.tabs.indices.contains(destination) else { return }
+            intent = .move(selected, pane: pane.id, index: destination)
+        case .moveTabToNextPane, .moveTabToPreviousPane:
+            let panes = state.panes
+            guard panes.count > 1, let paneIndex = panes.firstIndex(where: { $0.id == pane.id }) else { return }
+            let offset = action == .moveTabToNextPane ? 1 : -1
+            let destination = panes[(paneIndex + offset + panes.count) % panes.count]
+            intent = .move(selected, pane: destination.id, index: nil)
+        default: return
+        }
+        if case let .select(id) = intent {
+            guard let sampled = try? system.windowSnapshots(ids: [id]),
+                  let target = (observation?.windowsOnCurrentSpaces(sampled) ?? sampled).first,
+                  target.displayID == displayID, target.isEligible, !target.isFloating,
+                  rule(for: target).allowsBentoParticipation else {
+                presentLayoutWheelUnavailable("That window is no longer available.", displayID: displayID)
+                return
+            }
+        }
+        handleTabbed(intent, on: displayID)
     }
 
     private func performTabbedSnap(_ action: WindowAction, windowID: WindowID, displayID: DisplayID,
@@ -5682,12 +6228,21 @@ extension BetterTileModel {
         selectionOnly: Bool = false, earlyRaise: TabbedEarlyRaise? = nil, rollbackFrames: [WindowID: BTRect]? = nil,
         snapAction: WindowAction? = nil, snapScope: TabbedSnapScope = .pane, preparedDrop: PreparedTabbedArrangement? = nil,
         gestureBaseline: TabbedLayoutState? = nil, floatingUndoFrame: BTRect? = nil,
-        gestureSourceID: WindowID? = nil, expectedSpaceID: NativeSpaceID? = nil, restorationFrames: [WindowID: BTRect] = [:],
+        floatingUndoSourceID: WindowID? = nil, gestureSourceID: WindowID? = nil,
+        expectedSpaceID: NativeSpaceID? = nil, restorationFrames: [WindowID: BTRect] = [:],
         arrivals: Set<WindowID> = [], appliedFeedback: ResultPillFeedback? = nil, rejection: String? = nil,
-        reportsFailure: Bool = true, focusedBeforePlacement: WindowID? = nil
+        reportsFailure: Bool = true, focusedBeforePlacement: WindowID? = nil,
+        startsImmediately: Bool = false,
+        allowingRequestRaise: @escaping @MainActor () -> Bool = { true },
+        validating additionalValidation: @escaping @MainActor () -> Bool = { true }
     ) {
-        let windows = Self.ignoringOversizedSeeds(windows, in: display.visibleFrame)
+        let windows = ignoringOversizedSeeds(windows, in: display.visibleFrame)
         guard tabbedTasks[display.id] == nil else {
+            #if DEBUG
+            if arrivalTrace.isEnabled { for window in windows {
+                arrivalTrace.disposition("arrival_deferred", windowID: window.id, reason: "tabbed_placement_in_progress")
+            } }
+            #endif
             tabbedNeedsReapply.insert(display.id)
             return
         }
@@ -5700,7 +6255,7 @@ extension BetterTileModel {
         let isSameDesktopAnyWorkArea = { @MainActor [weak self] in
             guard let self, !self.isShutDown, !self.isStabilizingSpace, self.hasAccessibilityPermission,
                   !self.nativeFullscreenDisplayIDs.contains(display.id), !self.tabbedExiting.contains(display.id),
-                  self.activeMode(for: display.id) == .tabbed else { return false }
+                  self.activeMode(for: display.id) == .tabbed, additionalValidation() else { return false }
             let observation = self.system.refreshNativeDesktopObservation()
             guard (observation != nil) == (nativeObservation != nil),
                   observation?.allowsAutomaticLayout(on: display.id) != false else { return false }
@@ -5750,7 +6305,7 @@ extension BetterTileModel {
                       let frame = state.frames(in: display.visibleFrame)[pane.id] else {
                     throw WindowSystemError.operationFailed("That window is no longer available.")
                 }
-                let content = TabbedLayoutState.contentFrame(frame)
+                let content = state.windowArea(frame)
                 // A fixed-size window keeps its size, centred by the planner;
                 // its size is the minimum its pane must hold.
                 let fixed = !window.constraints.isResizable
@@ -5777,9 +6332,10 @@ extension BetterTileModel {
                 }
                 selectionOnly = false
             }
-            guard Set(state.selectedWindowIDs).isSubset(of: Set(windows.filter {
+            let available = Set(windows.filter {
                 $0.isEligible && ($0.displayID == display.id || $0.id == gestureSourceID)
-            }.map(\.id))) else {
+            }.map(\.id))
+            guard Set(state.selectedWindowIDs).isSubset(of: available) else {
                 throw WindowSystemError.operationFailed("One or more selected tabs are no longer available.")
             }
             var fitted: TabbedLayoutState
@@ -5847,6 +6403,7 @@ extension BetterTileModel {
                 // pressed tab's highlight.
                 if let focus { tabbedOverlays[display.id]?.dropPressedSelection(of: focus) }
                 Self.tabbedLog.debug("placement not started: \(reason, privacy: .private)")
+                if rejectTabbedEntry(on: display.id, outcome: .failed(reason: reason), selected: state.selectedWindowIDs, windows: windows) { return }
                 guard reportsFailure else { return }
                 statusMessage = reason
                 presentActionResult(succeeded: false, error: reason,
@@ -5858,6 +6415,7 @@ extension BetterTileModel {
             tabbedTasks[display.id] = Task { @MainActor [weak self] in
                 guard let self else { return }
                 defer {
+                    self.resumeIdlePaneApplicationRequest(on: display.id)
                     if !self.isTabbedBusy(on: display.id), self.tabbedQueuedIntents[display.id] == nil {
                         self.tabbedOverlays[display.id]?.completeDrop()
                         self.tabbedOverlays[display.id]?.acceptsTabDrags = true
@@ -5916,8 +6474,12 @@ extension BetterTileModel {
         #endif
         // A new window is placed in this turn: its first write waits for no queued
         // task, and the focus the caller just read stands for the focus before it.
-        let startsNow = placesCreatedWindowsInThisTurn && !arrivals.isEmpty
+        let startsNow = startsImmediately || (placesCreatedWindowsInThisTurn && !arrivals.isEmpty)
         let focusBeforeHint = startsNow ? focusedBeforePlacement : nil
+        // The menu panel's ownership of focus is decided for the whole request. A retry after
+        // dismissal keeps the deferral, so only the authorized close path can replay focus.
+        let requestDefersFocus = menuPanelIsShown()
+        let requestFocusEpoch = menuPanelFocusEpoch
         let placement = Self.startTabbedPlacement(immediately: startsNow) { @MainActor [weak self] in
             guard let self else { return }
             #if DEBUG
@@ -5927,6 +6489,7 @@ extension BetterTileModel {
             } }
             #endif
             defer {
+                self.resumeIdlePaneApplicationRequest(on: display.id)
                 if !self.isTabbedBusy(on: display.id), self.tabbedQueuedIntents[display.id] == nil {
                     self.tabbedOverlays[display.id]?.completeDrop()
                     self.tabbedOverlays[display.id]?.acceptsTabDrags = true
@@ -5947,6 +6510,9 @@ extension BetterTileModel {
             let repairsStackingAfterSelection = selectionOnly
                 && (self.system as? any TabbedWindowSystem)?.stackingOrder(for: windows, excluding: []) != nil
             var outcome: WindowMutationOutcome = .failed(reason: "The desktop changed.")
+            var deferredFocus: WindowID?
+            var defersFocus = requestDefersFocus
+            var deferredFocusEpoch = requestFocusEpoch
             var fitFailure: TabbedFitFailure?
             // A stepped snap writes again after a placement; if that write
             // fails, focus returns to the window that had it before. Without
@@ -5958,7 +6524,7 @@ extension BetterTileModel {
                                          uniquingKeysWith: { first, _ in first })) }
             for attempt in 0..<2 {
                 rollbackFailed = false
-                self.tabbedFocusSuppressedUntil = Date().addingTimeInterval(0.3)
+                self.tabbedFocusSuppressedUntil = self.tabbedClock.now.advanced(by: .milliseconds(300))
                 let eligibleIDs = selectionOnly
                     ? Set(windows.filter(\.isEligible).map(\.id))
                     : Set(proposal.placements.map(\.windowID))
@@ -5995,6 +6561,14 @@ extension BetterTileModel {
                 #if DEBUG
                 self.arrivalTrace.decided(proposal.placements, mode: "Tabbed")
                 #endif
+                let requestedFocus = focus.flatMap { eligibleIDs.contains($0) ? $0 : nil }
+                // A panel that opens during the placement starts a deferral. A deferral never ends
+                // early and never takes a newer epoch.
+                if !defersFocus, self.menuPanelIsShown() {
+                    defersFocus = true
+                    deferredFocusEpoch = self.menuPanelFocusEpoch
+                }
+                deferredFocus = defersFocus && allowingRequestRaise() ? requestedFocus : nil
                 outcome = await self.coordinator.applyTabbed(
                     placements: proposal.placements,
                     rollbackFrames: rollbackFrames,
@@ -6005,9 +6579,11 @@ extension BetterTileModel {
                     required: selectionOnly ? nil : Set(proposal.state.selectedWindowIDs).union(detached),
                     selected: selected,
                     previousSelected: previous?.selectedWindowIDs.filter(eligibleIDs.contains) ?? [],
-                    focus: focus.flatMap { eligibleIDs.contains($0) ? $0 : nil },
+                    // Keep the menu key; replay successful focus requests after it closes.
+                    focus: defersFocus ? nil : requestedFocus,
+                    allowingRaise: allowingRequestRaise,
                     focusAlreadyRequested: earlyRaise != nil && attempt == 0,
-                    focusCheckpoint: earlyRaise?.previousFocus,
+                    focusCheckpoint: earlyRaise?.previousFocus ?? focusBeforeHint,
                     // A drag drops on this display, whatever display the
                     // dragged window's center reached, with the minimums its
                     // overlay planned with.
@@ -6082,6 +6658,7 @@ extension BetterTileModel {
                         selected: [],
                         previousSelected: previous?.selectedWindowIDs.filter(eligibleIDs.contains) ?? [],
                         focus: nil,
+                        allowingRaise: allowingRequestRaise,
                         focusCheckpoint: focusBefore,
                         destination: dropDestination,
                         onSizeMismatch: onSizeMismatch,
@@ -6111,7 +6688,9 @@ extension BetterTileModel {
                         checkpoint, required: Set(proposal.state.selectedWindowIDs).intersection(checkpoint.keys),
                         on: display.id, exempting: gestureSourceID, steppedWindowIDs: rollbackSteppedWindowIDs(),
                         onRollbackFailure: { rollbackFailed = true }, isCurrent: isCurrent)
-                    _ = self.coordinator.raiseTabbedWindows(previous?.selectedWindowIDs.filter(eligibleIDs.contains) ?? [])
+                    if allowingRequestRaise() {
+                        _ = self.coordinator.raiseTabbedWindows(previous?.selectedWindowIDs.filter(eligibleIDs.contains) ?? [])
+                    }
                     outcome = restored.isApplied
                         ? .failed(reason: "A window did not accept its Tabbed size. Choose a larger pane or try Repair Layout.")
                         : restored
@@ -6135,12 +6714,12 @@ extension BetterTileModel {
                 // report sees it, so a larger minimum in the refreshed
                 // constraints is the same new observation.
                 let reread = (try? self.system.windowSnapshots(ids: ids))
-                    .map { Self.ignoringOversizedSeeds($0, in: display.visibleFrame) }
+                    .map { self.ignoringOversizedSeeds($0, in: display.visibleFrame) }
                 guard learnedSize || reread.map({ Self.gainedMinimumSize($0, since: windows) }) == true else { break }
                 refitsPreparedDrop = true
                 do {
                     let refreshed = try reread
-                        ?? Self.ignoringOversizedSeeds(self.system.windowSnapshots(ids: ids), in: display.visibleFrame)
+                        ?? self.ignoringOversizedSeeds(self.system.windowSnapshots(ids: ids), in: display.visibleFrame)
                     guard Set(refreshed.map(\.id)) == ids,
                           refreshed.allSatisfy({ ($0.displayID == display.id || $0.id == gestureSourceID) && $0.isEligible })
                     else { break }
@@ -6154,9 +6733,9 @@ extension BetterTileModel {
                     break
                 }
             }
-            retainInvalidatedDegradation(outcome)
             let state = proposal.state
             let placements = proposal.placements
+            retainInvalidatedDegradation(outcome)
             guard self.tabbedTaskIDs[display.id] == taskID else { return }
             self.tabbedTaskIDs.removeValue(forKey: display.id)
             self.tabbedTasks[display.id] = nil
@@ -6181,7 +6760,7 @@ extension BetterTileModel {
                 // saw the selected tab focused; after that, it is the user's.
                 if selectionOnly, let focus {
                     let confirmed = ((try? self.system.focusedWindow()) ?? nil)?.id == focus
-                    self.tabbedIntendedFocus = confirmed ? nil : (focus, Date().addingTimeInterval(1))
+                    self.tabbedIntendedFocus = confirmed ? nil : (focus, self.tabbedClock.now.advanced(by: .seconds(1)))
                 }
                 var proposed = original
                 proposed.tabbedState = state
@@ -6205,6 +6784,21 @@ extension BetterTileModel {
                     : placedFrames
                 proposed.resumeAutomaticWrites()
                 if let committed = self.sessionStore.commit(proposed, replacing: original.revision) {
+                    if let deferredFocus {
+                        self.menuPanelDeferredFocus = MenuPanelDeferredFocus(windowID: deferredFocus,
+                            displayID: display.id, sessionID: committed.id, spaceID: expectedSpace,
+                            usesNativeObservation: nativeObservation != nil, generation: self.spaceStabilizationGeneration,
+                            focusEpoch: deferredFocusEpoch)
+                        // The panel was dismissed while this placement ran. It focuses only after the Space settles.
+                        if !self.menuPanelIsShown() {
+                            if deferredFocusEpoch == self.menuPanelFocusEpoch, self.menuPanelDismissalAuthorization() {
+                                self.scheduleLateMenuPanelFocus()
+                            } else {
+                                self.menuPanelDeferredFocus = nil
+                            }
+                        }
+                    }
+                    self.tabbedEntryBaselines.removeValue(forKey: original.id)
                     self.completeApplicationRecoveryReconciliation(windows: windows, session: committed)
                     self.statusMessage = nil
                     if consumeUndo { self.tabbedUndo[original.id]?.removeLast() }
@@ -6212,9 +6806,9 @@ extension BetterTileModel {
                         || focus.map { previous?.paneID(containing: $0) != state.paneID(containing: $0) } == true
                     if rememberUndo, movedPane, let previous, previous != state {
                         var floatingFrames: [WindowID: BTRect] = [:]
-                        // Undo puts a floating window that a drop placed back
-                        // where it floated.
-                        if let floated = gestureSourceID ?? (snapAction != nil ? focus : nil),
+                        // Undo keeps a float's frame without granting picker choices
+                        // the display-transfer exemption of a drag.
+                        if let floated = floatingUndoSourceID ?? gestureSourceID ?? (snapAction != nil ? focus : nil),
                            previous.floatingWindowIDs.contains(floated),
                            let frame = floatingUndoFrame ?? rollbackFrames?[floated]
                             ?? windows.first(where: { $0.id == floated })?.frame {
@@ -6260,6 +6854,7 @@ extension BetterTileModel {
                 }
             } else {
                 Self.tabbedLog.error("placement failed\(gestureSourceID == nil ? "" : " after a drag", privacy: .public): \(outcome.failureReason ?? "", privacy: .private)")
+                if self.rejectTabbedEntry(on: display.id, outcome: outcome, selected: state.selectedWindowIDs, windows: windows) { return }
                 _ = restoreGestureMembership()
                 // Windows the placement would have returned stay automatic
                 // floats; they get their one later check or a repair.
@@ -6305,9 +6900,7 @@ extension BetterTileModel {
         }
         // A placement that finished in this turn has already cleared its own entry.
         if tabbedTaskIDs[display.id] == taskID { tabbedTasks[display.id] = placement }
-    }
-
-    /// `Task.immediate` runs the placement up to its first suspension before returning.
+    }    /// `Task.immediate` runs the placement up to its first suspension before returning.
     private static func startTabbedPlacement(
         immediately: Bool, _ operation: sending @escaping @isolated(any) () async -> Void
     ) -> Task<Void, Never> {
@@ -6418,6 +7011,9 @@ extension BetterTileModel {
     ///   before the placement. A selection that follows a focus change the
     ///   user made does not: that window is already in front.
     private func handleTabbed(_ intent: TabbedUIIntent, on displayID: DisplayID, raisesEarly: Bool = true) {
+        // A manual destination supersedes the request. Observing focus on another
+        // pane only changes selection; the captured destination still owns the arrival.
+        if raisesEarly { cancelPaneApplicationRequest() }
         guard !isStabilizingSpace, !isShutDown,
               var session = sessionStore.session(for: displayID), session.mode == .tabbed,
               let display = system.displays().first(where: { $0.id == displayID }),
@@ -6448,8 +7044,8 @@ extension BetterTileModel {
         var earlyRaise: TabbedEarlyRaise?
         if raisesEarly, case let .select(id) = intent,
            let pane = state.panes.first(where: { $0.tabs.contains(id) && $0.selected != id }) {
-            tabbedFocusSuppressedUntil = Date().addingTimeInterval(0.3)
-            tabbedIntendedFocus = (id, Date().addingTimeInterval(1))
+            tabbedFocusSuppressedUntil = tabbedClock.now.advanced(by: .milliseconds(300))
+            tabbedIntendedFocus = (id, tabbedClock.now.advanced(by: .seconds(1)))
             if coordinator.focusTabbedWindow(id).isApplied {
                 earlyRaise = TabbedEarlyRaise(raised: id, previousSelected: pane.selected, previousFocus: state.activeWindowID)
             }
@@ -6464,10 +7060,10 @@ extension BetterTileModel {
         // Refresh only this layout's windows when the snapshot cache is valid;
         // a full scan of every application costs 10-40 ms per action.
         guard let allWindows = (try? system.cachedVisibleWindows(refreshing: Set(state.windowIDs)))
-                ?? (try? system.visibleWindows()) else { return }
+                ?? (try? observeVisibleWindows()) else { return }
         let observation = system.nativeDesktopObservation()
         guard observation?.allowsAutomaticLayout(on: displayID) != false else { return }
-        var windows = Self.ignoringOversizedSeeds(bentoEligible((observation?.windowsOnCurrentSpaces(allWindows) ?? allWindows)
+        var windows = ignoringOversizedSeeds(bentoEligible((observation?.windowsOnCurrentSpaces(allWindows) ?? allWindows)
             .filter { $0.displayID == displayID && $0.isEligible && !$0.isFloating }), in: display.visibleFrame)
         var focus: WindowID?
         var undo = true
@@ -6494,7 +7090,9 @@ extension BetterTileModel {
             return
         // A tab drag whose press selected the dragged tab gives its source
         // pane back the tab shown before that press.
-        case let .float(id, reselecting): state.float(id, reselecting: reselecting); focus = id
+        case let .float(id, reselecting):
+            guard windows.contains(where: { $0.id == id }) else { return }
+            state.float(id, reselecting: reselecting); focus = id
         case let .move(id, pane, index, reselecting):
             guard state.panes.contains(where: { $0.id == pane }),
                   windows.contains(where: { $0.id == id }) else { return }
@@ -6503,10 +7101,13 @@ extension BetterTileModel {
             guard state.panes.contains(where: { $0.id == pane }),
                   windows.contains(where: { $0.id == id }) else { return }
             state.split(paneID: pane, moving: id, edge: edge, reselecting: reselecting); focus = id
-        case let .preset(preset): state.applyPreset(preset); focus = state.activeWindowID
+        case let .preset(preset, grouping):
+            state.applyPreset(preset, grouping: grouping)
+            focus = state.activeWindowID
         case .undo:
             guard let step = tabbedUndo[session.id]?.last else { return }
             var previous = step.state
+            previous.setPresentation(configuration.tabbedStripPresentation)
             restorationFrames = step.floatingFrames
             let visible = Set(windows.map(\.id))
             previous.reconcile(windowIDs: windows.map(\.id), removed: previous.windowIDs.subtracting(visible), focused: nil)
@@ -6514,6 +7115,7 @@ extension BetterTileModel {
             consumeUndo = true
             focus = state.activeWindowID; undo = false
         case .repair:
+            session.prepareForRepair()
             session.resumeAutomaticWrites()
             // Windows that floated on their own come back first, decided
             // without their application's seed; a window the user floated
@@ -6573,11 +7175,11 @@ extension BetterTileModel {
 
     /// A seed larger than any pane would block every placement while its
     /// window is selected. Plan without it; the write shows the real minimum.
-    private static func ignoringOversizedSeeds(_ windows: [WindowSnapshot], in bounds: BTRect) -> [WindowSnapshot] {
-        let largest = TabbedLayoutState.contentFrame(bounds).size
+    private func ignoringOversizedSeeds(_ windows: [WindowSnapshot], in bounds: BTRect) -> [WindowSnapshot] {
+        let largest = TabbedLayoutState.contentFrame(bounds, presentation: configuration.tabbedStripPresentation).size
         return windows.map { window in
             let minimum = window.constraints.minimumSize
-            return minimum.width > largest.width || minimum.height > largest.height ? ignoringSeed(window) : window
+            return minimum.width > largest.width || minimum.height > largest.height ? Self.ignoringSeed(window) : window
         }
     }
 
@@ -6603,8 +7205,9 @@ extension BetterTileModel {
         guard !fresh.isEmpty else { return }
         tabbedRetriedAutomaticFloats.formUnion(fresh)
         let delay = tabbedAutomaticFloatRetryDelay
+        let clock = tabbedClock
         Task { @MainActor [weak self] in
-            try? await Task.sleep(for: delay)
+            try? await clock.sleep(for: delay)
             self?.retryAutomaticFloats(fresh, on: displayID, deferrals: 0)
         }
     }
@@ -6628,17 +7231,18 @@ extension BetterTileModel {
                 return
             }
             let deferral = tabbedAutomaticFloatRetryDeferral
+            let clock = tabbedClock
             Task { @MainActor [weak self] in
-                try? await Task.sleep(for: deferral)
+                try? await clock.sleep(for: deferral)
                 self?.retryAutomaticFloats(ids, on: displayID, deferrals: deferrals + 1, transition: transition)
             }
             return
         }
         tabbedAutomaticFloatChecksRun += 1
-        guard let allWindows = try? system.visibleWindows() else { return }
+        guard let allWindows = try? observeVisibleWindows() else { return }
         let observation = system.nativeDesktopObservation()
         guard observation?.allowsAutomaticLayout(on: displayID) != false else { return }
-        let windows = Self.ignoringOversizedSeeds(bentoEligible((observation?.windowsOnCurrentSpaces(allWindows) ?? allWindows)
+        let windows = ignoringOversizedSeeds(bentoEligible((observation?.windowsOnCurrentSpaces(allWindows) ?? allWindows)
             .filter { $0.displayID == displayID && $0.isEligible && !$0.isFloating }), in: display.visibleFrame)
         var state = current
         // A silent check never takes the focused window's place. When focus
@@ -6710,9 +7314,10 @@ extension BetterTileModel {
     private func deferTabbedResizeUntilRelease(_ windowIDs: Set<WindowID>) {
         pendingWindowEvents.recordFrameChanges(windowIDs)
         guard tabbedResizeReleaseTask == nil else { return }
+        let clock = tabbedClock
         tabbedResizeReleaseTask = Task { @MainActor [weak self] in
             while !Task.isCancelled, self?.primaryButtonIsPressed() == true {
-                try? await Task.sleep(for: .milliseconds(50))
+                try? await clock.sleep(for: .milliseconds(50))
             }
             guard let self, !Task.isCancelled else { return }
             self.tabbedResizeReleaseTask = nil
@@ -6785,7 +7390,7 @@ extension BetterTileModel {
     /// and the committed layout still follow only at release.
     private func previewTabbedNativeResize(_ windowID: WindowID) {
         guard primaryButtonIsPressed(), !dividerResize.isDragging,
-              Date().timeIntervalSince(lastTabbedNativeResizePreview) >= 1.0 / 30 else { return }
+              (lastTabbedNativeResizePreview.map { $0.duration(to: tabbedClock.now) >= .seconds(1.0 / 30) } ?? true) else { return }
         guard let session = sessionStore.sessions.values.first(where: {
                   $0.mode == .tabbed && $0.tabbedState?.selectedWindowIDs.contains(windowID) == true
               }),
@@ -6798,7 +7403,7 @@ extension BetterTileModel {
               let display = system.displays().first(where: { $0.id == session.displayID }),
               let windows = try? system.windowSnapshots(ids: Set(state.selectedWindowIDs))
         else { return }
-        lastTabbedNativeResizePreview = Date()
+        lastTabbedNativeResizePreview = tabbedClock.now
         var frames = session.lastObservedFrames.filter { state.selectedWindowIDs.contains($0.key) }
         for window in windows where window.id == windowID { frames[window.id] = window.frame }
         guard let adopted = state.adoptingResize(
@@ -6826,7 +7431,7 @@ extension BetterTileModel {
         guard let session = sessionStore.session(for: displayID), session.mode == .tabbed,
               let state = session.tabbedState,
               let display = system.displays().first(where: { $0.id == displayID }),
-              let windows = try? system.visibleWindows()
+              let windows = try? observeVisibleWindows()
         else { return }
         // The Bento change already committed, so the state from before it is
         // the Undo step.
@@ -6869,6 +7474,7 @@ extension BetterTileModel {
             switch intent {
             case let .ui(intent): handleTabbed(intent, on: displayID)
             case let .snap(id, action, space): performTabbedSnap(action, windowID: id, displayID: displayID, expectedSpaceID: space)
+            case let .command(action, id, space): performTabbedCommand(action, windowID: id, displayID: displayID, expectedSpaceID: space)
             }
         }
         guard !isTabbedBusy(on: displayID) else { return }
@@ -6884,7 +7490,25 @@ extension BetterTileModel {
         activeDisplayID.flatMap { sessionStore.session(for: $0)?.tabbedState }
     }
 
+    func showTabBar() {
+        guard !isShutDown, !isStabilizingSpace, let displayID = actionDisplayID(),
+              sessionStore.session(for: displayID)?.mode == .tabbed else {
+            statusMessage = "Show Tab Bar is available on a Tabbed desktop."
+            return
+        }
+        guard let overlay = tabbedOverlays[displayID] else {
+            statusMessage = "The tab bar is not available right now."
+            return
+        }
+        guard overlay.showTabBar() else {
+            statusMessage = overlay.showTabBarFailureReason
+            return
+        }
+        statusMessage = nil
+    }
+
     func performTabbed(_ intent: TabbedUIIntent) {
+        invalidateMenuPanelFocusReplay()
         guard let activeDisplayID else { return }
         handleTabbed(intent, on: activeDisplayID)
     }
@@ -6900,9 +7524,10 @@ extension BetterTileModel {
         guard !isStabilizingSpace, sessionStore.sessions.values.contains(where: { $0.mode == .tabbed }) else { return }
         tabbedNeedsFocusRefresh = true
         tabbedFocusTask?.cancel()
-        let delay = max(0.08, tabbedFocusSuppressedUntil.timeIntervalSinceNow)
+        let clock = tabbedClock
+        let delay = max(.milliseconds(80), tabbedFocusSuppressedUntil.map { tabbedClock.now.duration(to: $0) } ?? .zero)
         tabbedFocusTask = Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .seconds(delay))
+            try? await clock.sleep(for: delay)
             guard let self, !Task.isCancelled, !self.isStabilizingSpace else { return }
             // An unreadable focus cannot become readable by retrying after each
             // placement, so only busy displays keep the refresh pending.
@@ -6935,12 +7560,12 @@ extension BetterTileModel {
         guard let intended = tabbedIntendedFocus else { return false }
         // Once the selected tab has had focus, a later focus change is the
         // user's own choice. Expiry ends the correction too.
-        guard intended.until > Date(), focused.id != intended.windowID else { tabbedIntendedFocus = nil; return false }
+        guard intended.until > tabbedClock.now, focused.id != intended.windowID else { tabbedIntendedFocus = nil; return false }
         guard isFrontmost(focused),
               let session = sessionStore.session(for: focused.displayID), session.mode == .tabbed,
               let state = session.tabbedState, state.selectedWindowIDs.contains(intended.windowID),
               state.windowIDs.contains(focused.id),
-              let target = ((try? system.visibleWindows()) ?? []).first(where: { $0.id == intended.windowID }),
+              let target = ((try? observeVisibleWindows()) ?? []).first(where: { $0.id == intended.windowID }),
               target.processIdentifier == focused.processIdentifier else { return false }
         // A main window reported in place of the application's real focused
         // window, such as a popup, did not take focus from the selected tab.
@@ -6950,9 +7575,9 @@ extension BetterTileModel {
         }
         tabbedIntendedFocus = nil
         Self.tabbedLog.debug("focus correction: \(focused.id.rawValue, privacy: .public) took focus from selected tab \(intended.windowID.rawValue, privacy: .public)")
-        tabbedFocusSuppressedUntil = Date().addingTimeInterval(0.3)
+        tabbedFocusSuppressedUntil = tabbedClock.now.advanced(by: .milliseconds(300))
         guard coordinator.focusTabbedWindow(intended.windowID).isApplied else {
-            tabbedFocusSuppressedUntil = .distantPast
+            tabbedFocusSuppressedUntil = nil
             return false
         }
         repairTabbedStacking()
@@ -7013,7 +7638,7 @@ extension BetterTileModel {
     /// Returns false when the window inventory could not be read.
     @discardableResult
     private func repairTabbedStacking(on displayIDs: Set<DisplayID>? = nil) -> Bool {
-        guard let windows = try? system.visibleWindows() else { return false }
+        guard let windows = try? observeVisibleWindows() else { return false }
         let displays = system.displays()
         for session in sessionStore.sessions.values where session.mode == .tabbed {
             if let displayIDs, !displayIDs.contains(session.displayID) { continue }
@@ -7040,7 +7665,7 @@ extension BetterTileModel {
     func repairTabbedOrder(state: TabbedLayoutState, windows: [WindowSnapshot], bounds: BTRect,
                            displayID: DisplayID? = nil) -> [WindowID]? {
         guard let system = system as? any TabbedWindowSystem else { return nil }
-        let chrome = tabbedOverlays.values.reduce(into: Set<Int>()) { $0.formUnion($1.windowNumbers) }
+        let chrome = allTabbedOverlays.reduce(into: Set<Int>()) { $0.formUnion($1.windowNumbers) }
         // Floating windows and other windows outside the panes must stay
         // visible above the curtain.
         let aboveCurtain = Set(windows.filter { window in
@@ -7100,7 +7725,7 @@ extension BetterTileModel {
             guard !plan.isEmpty else { return nil }
             Self.tabbedLog.debug("stacking repair: raising \(plan.map(\.rawValue).joined(separator: ","), privacy: .public); floats kept in place: \(keptInPlace.map(\.rawValue).sorted().joined(separator: ","), privacy: .public)")
             // Focus changes caused by these raises are not user selections.
-            tabbedFocusSuppressedUntil = max(tabbedFocusSuppressedUntil, Date().addingTimeInterval(0.3))
+            tabbedFocusSuppressedUntil = max(tabbedFocusSuppressedUntil ?? tabbedClock.now, tabbedClock.now.advanced(by: .milliseconds(300)))
             let outcome = coordinator.raiseTabbedWindows(plan)
             guard outcome.isApplied else { statusMessage = outcome.failureReason; return nil }
             guard let readback = system.stackingOrder(for: windows, excluding: chrome) else { return nil }
@@ -7140,12 +7765,20 @@ extension BetterTileModel {
 
     /// Drops the committed layouts of sessions whose display or Space is gone.
     private func forgetEndedTabbedSessions<IDs: Sequence<DisplayID>>(displayIDs: IDs) {
-        guard !tabbedCommittedLayouts.isEmpty else { return }
-        let live = Set(displayIDs.flatMap { sessionStore.allSessions(for: $0).map(\.id) })
+        let sessions = displayIDs.flatMap { sessionStore.allSessions(for: $0) }
+        let tabbed = Set(sessions.filter { $0.mode == .tabbed }.map(\.id))
+        for id in spacePanelOverlays.keys.filter({ !tabbed.contains($0) }) {
+            guard let overlay = spacePanelOverlays.removeValue(forKey: id) else { continue }
+            overlay.hide()
+            tabbedOverlays = tabbedOverlays.filter { $0.value !== overlay }
+            spacePanelCorrections.remove(id)
+        }
+        let live = Set(sessions.map(\.id))
         tabbedCommittedLayouts = tabbedCommittedLayouts.filter { live.contains($0.key) }
+        tabbedEntryBaselines = tabbedEntryBaselines.filter { live.contains($0.key) }
     }
 
-    private func leaveTabbed(displayID: DisplayID, destination: LayoutMode) {
+    private func leaveTabbed(displayID: DisplayID, destination: LayoutMode, focusedWindowID: WindowID?) {
         guard tabbedExiting.insert(displayID).inserted else { return }
         if let session = sessionStore.session(for: displayID) {
             tabbedCommittedLayouts.removeValue(forKey: session.id)
@@ -7164,7 +7797,7 @@ extension BetterTileModel {
                   var session = self.sessionStore.session(for: displayID),
                   session.mode == .tabbed, !self.isStabilizingSpace,
                   let display = self.system.displays().first(where: { $0.id == displayID }),
-                  let windows = try? self.system.visibleWindows() else { return }
+                  let windows = try? self.observeVisibleWindows() else { return }
             if destination == .manual {
                 let placements = self.tabbedRestorationPlacements(baselineFrames: session.tabbedBaselineFrames, on: display, windows: windows)
                 let outcome: WindowMutationOutcome = placements.isEmpty ? .applied : self.coordinator.applyPlacements(placements, recordHistory: false)
@@ -7188,7 +7821,10 @@ extension BetterTileModel {
             session.mode = destination
             session.resumeAutomaticWrites()
             guard self.sessionStore.commit(session, replacing: session.revision) != nil else { return }
+            self.tabbedEntryBaselines.removeValue(forKey: session.id)
             self.tabbedOverlays[displayID]?.hide()
+            self.tabbedOverlays.removeValue(forKey: displayID)
+            self.forgetEndedTabbedSessions(displayIDs: self.system.displays().map(\.id))
             if destination == .bento, var bento = self.sessionStore.session(for: displayID), bento.bentoState.root != nil {
                 // Keep the arrangement the user built: apply the unstacked tree
                 // instead of re-tiling from scratch.
@@ -7197,10 +7833,10 @@ extension BetterTileModel {
                 })
                 let placements = BentoLayoutEngine(state: bento.bentoState).placements(for: displayWindows, in: display)
                 let result = self.commitBentoProposal(placements, session: &bento, display: display, surfaceFailure: false)
-                if result.result != .committed { self.tileCurrentDisplay() }
+                if result.result != .committed { self.repairBento(displayID: displayID, focusedWindowID: focusedWindowID) }
                 self.refreshDividerBoundaries()
             } else if destination == .bento {
-                self.tileCurrentDisplay()
+                self.repairBento(displayID: displayID, focusedWindowID: focusedWindowID)
             } else {
                 self.refreshActiveWindows(force: true)
             }
@@ -7222,4 +7858,664 @@ private struct TabbedFitFailure: LocalizedError {
     var detail: String
     var errorDescription: String? { "\(title). \(detail)" }
     var feedback: ResultPillFeedback { .failure(title: title, detail: detail) }
+}
+
+// MARK: - User-requested application arrival in a captured pane
+extension BetterTileModel {
+    @discardableResult
+    func beginPaneApplicationPicker(paneID: UUID, on displayID: DisplayID) -> PaneApplicationRequest? {
+        cancelPaneApplicationRequest()
+        guard hasAccessibilityPermission else {
+            let reason = "Enable Accessibility for BetterTile in System Settings to add windows to a pane."
+            statusMessage = reason
+            presentActionResult(succeeded: false, error: reason, displayID: displayID)
+            return nil
+        }
+        guard !isShutDown, !isStabilizingSpace,
+              !isTabbedBusy(on: displayID),
+              let session = sessionStore.session(for: displayID), session.mode == .tabbed,
+              !session.automaticWritesSuspended, tabbedEntryBaselines[session.id] == nil,
+              let state = session.tabbedState, let index = state.panes.firstIndex(where: { $0.id == paneID }),
+              let display = system.displays().first(where: { $0.id == displayID }) else { return nil }
+        let observation = system.refreshNativeDesktopObservation()
+        guard observation?.allowsAutomaticLayout(on: displayID) != false,
+              observation == nil || session.nativeSpaceID == observation?.currentSpace(on: displayID) else { return nil }
+        let request = PaneApplicationRequest(paneID: paneID, paneNumber: index + 1, displayID: displayID,
+            sessionID: session.id, spaceID: observation?.currentSpace(on: displayID), generation: spaceStabilizationGeneration,
+            workArea: display.visibleFrame)
+        paneApplicationRequest = request
+        request.windowAtPoint = { [weak self] point in
+            try? self?.system.window(at: point)
+        }
+        updatePaneApplicationPickerWindows(request)
+        request.windows = { [weak request] application in
+            request?.pickerWindowsByApplication[application.id]
+        }
+        request.onChooseWindow = { [weak self] application, window in
+            self?.useChoosingPaneApplicationWindow(WindowID(rawValue: window.id), application: application, requestID: request.id)
+        }
+        request.onChoose = { [weak self] app in self?.choosePaneApplication(app, requestID: request.id) }
+        request.onExisting = { [weak self] id in self?.useExistingPaneApplicationWindow(id, requestID: request.id) }
+        request.onRetry = { [weak self] in
+            guard let app = request.application else { return }
+            self?.choosePaneApplication(app, requestID: request.id, retry: true)
+        }
+        request.onCancel = { [weak self] in self?.cancelPaneApplicationRequest(id: request.id) }
+        tabbedOverlays[displayID]?.holdApplicationPicker(paneID, enabled: true)
+        return request
+    }
+
+    private func resumeIdlePaneApplicationRequest(on displayID: DisplayID) {
+        guard let request = paneApplicationRequest, request.displayID == displayID, !request.needsPolling else { return }
+        advancePaneApplicationRequest()
+    }
+
+    private func syncPaneApplicationPolling() {
+        guard let request = paneApplicationRequest, request.needsPolling else {
+            paneApplicationTask?.cancel(); paneApplicationTask = nil
+            return
+        }
+        guard paneApplicationTask == nil else { return }
+        let clock = paneApplicationClock
+        paneApplicationTask = Task { @MainActor [weak self, weak request] in
+            while !Task.isCancelled {
+                try? await clock.sleep(for: .milliseconds(200))
+                guard !Task.isCancelled, let self, let request,
+                      self.paneApplicationRequest?.id == request.id, request.needsPolling else { return }
+                self.advancePaneApplicationRequest()
+            }
+        }
+    }
+
+    private func updatePaneApplicationPickerWindows(_ request: PaneApplicationRequest) {
+        let grouped = Dictionary(grouping: observedRuleWindows, by: \.bundleIdentifier)
+        let running = paneApplicationLauncher.runningApplicationBundleIdentifiers().union(grouped.keys.compactMap { $0 })
+        let windows = running.reduce(into: [String: [ApplicationPickerWindow]]()) { result, app in
+            result[app] = paneApplicationWindows(request, applicationID: app, from: grouped[app] ?? []).map {
+                ApplicationPickerWindow(id: $0.id.rawValue, title: $0.title)
+            }
+        }
+        if request.pickerWindowsByApplication != windows { request.pickerWindowsByApplication = windows }
+    }
+
+    /// Window and application events refresh choices once and validate an idle request's owner.
+    private func refreshPaneApplicationWindowChoices() {
+        guard let request = paneApplicationRequest else { return }
+        guard paneApplicationOwnerIsCurrent(request) else { cancelPaneApplicationRequest(id: request.id); return }
+        if request.phase == .choosing { updatePaneApplicationPickerWindows(request) }
+        else if case .fallback = request.phase {
+            request.existingWindows = paneApplicationWindows(request, from: observedRuleWindows)
+            presentPaneApplicationRequest(request)
+        }
+    }
+
+    private func receiveApplicationRequestLifecycle(_ event: WindowSystemEvent) {
+        guard let request = paneApplicationRequest, acceptsPaneApplicationCreation(request),
+              request.instance == nil || request.instance?.processIdentifier == event.processIdentifier else { return }
+        if event.kind == .created {
+            request.arrivalOrder.created(id: event.windowID, token: event.creationToken)
+            if let id = event.windowID, !request.baseline.contains(id) {
+                request.arrivals.insert(id)
+                request.createdAfterRequest.insert(id)
+            }
+            if let token = event.creationToken { request.creationTokens.insert(token) }
+        }
+    }
+
+    private func resolveApplicationRequestCreation(_ window: WindowSnapshot, token: UInt64) {
+        guard let request = paneApplicationRequest, acceptsPaneApplicationCreation(request),
+              request.creationTokens.contains(token), !request.baseline.contains(window.id),
+              request.instance == nil || request.instance?.processIdentifier == window.processIdentifier else { return }
+        request.arrivals.insert(window.id)
+        request.createdAfterRequest.insert(window.id)
+        request.arrivalOrder.resolve(window.id, token: token)
+    }
+
+    private func acceptsPaneApplicationCreation(_ request: PaneApplicationRequest) -> Bool {
+        guard request.deadline.map({ paneApplicationUptime() < $0 }) == true else { return false }
+        if request.phase == .waiting { return true }
+        if case .fallback = request.phase { return request.fallbackReason == .arrived }
+        return false
+    }
+
+    /// Creation tokens outlive ordinary arrival readiness. Resolve them even when a
+    /// full inventory or a focus event bypassed the optimized creation-event path.
+    @discardableResult
+    private func automaticallyPlacePaneApplicationArrival(_ request: PaneApplicationRequest,
+                                                          windows: [WindowSnapshot]) -> Bool {
+        guard acceptsPaneApplicationCreation(request), paneApplicationOwnerIsCurrent(request),
+              !isTabbedBusy(on: request.displayID), let app = request.application,
+              let instance = request.instance, paneApplicationLauncher.contains(instance, of: app) else { return false }
+        if let reader = system as? any CreatedWindowReading {
+            for token in request.creationTokens.sorted().prefix(32) {
+                switch reader.readCreatedWindow(token: token) {
+                case let .window(window):
+                    resolveApplicationRequestCreation(window, token: token)
+                    // The adapter clears a provisional popup classification on
+                    // each targeted read. Keep its element until that verdict settles.
+                    if !window.isFloating { request.creationTokens.remove(token) }
+                case .unavailable: request.creationTokens.remove(token)
+                case .notReady: break
+                }
+            }
+        }
+        request.arrivalOrder.observe(windows.filter { !request.baseline.contains($0.id) })
+        guard let window = PaneApplicationRequest.automaticArrival(in: paneApplicationWindows(request, from: windows),
+            applicationID: app.id, processIdentifier: instance.processIdentifier, baseline: request.baseline,
+            displayID: request.displayID, spaceID: request.spaceID, observation: system.nativeDesktopObservation(),
+            arrivalOrder: request.arrivalOrder.ids,
+            createdAfterRequest: request.launchedInstance == instance ? Set(request.arrivalOrder.ids) : request.createdAfterRequest) else { return false }
+        request.automaticPlacement = true
+        placePaneApplicationWindow(window.id, request: request, observedWindows: windows)
+        return true
+    }
+
+    private func paneApplicationOwnerIsCurrent(_ request: PaneApplicationRequest) -> Bool {
+        guard paneApplicationRequest?.id == request.id, !isShutDown, !isStabilizingSpace,
+              hasAccessibilityPermission, spaceStabilizationGeneration == request.generation,
+              let session = sessionStore.session(for: request.displayID), session.id == request.sessionID,
+              session.mode == .tabbed, !session.automaticWritesSuspended,
+              session.tabbedState?.panes.contains(where: { $0.id == request.paneID }) == true,
+              system.displays().first(where: { $0.id == request.displayID })?.visibleFrame == request.workArea else { return false }
+        let observation = system.refreshNativeDesktopObservation()
+        return observation?.allowsAutomaticLayout(on: request.displayID) != false
+            && observation?.currentSpace(on: request.displayID) == request.spaceID
+    }
+
+    func cancelPaneApplicationRequest(id: UUID? = nil) {
+        if id == nil || paneApplicationRequest?.id == id {
+            paneApplicationPickerTask?.cancel(); paneApplicationPickerTask = nil
+        }
+        guard let request = paneApplicationRequest, id == nil || id == request.id else { return }
+        paneApplicationClickTask?.cancel(); paneApplicationClickTask = nil
+        request.finishFocusIntent()
+        if request.dispatched { retainPaneApplicationArrivalGuard(request) }
+        paneApplicationRequest = nil
+        request.clickDeadline = nil
+        paneApplicationTask?.cancel(); paneApplicationTask = nil
+        paneApplicationLaunchTask?.cancel(); paneApplicationLaunchTask = nil
+        let picker = paneApplicationPopover
+        paneApplicationPopover = nil
+        picker?.close()
+        request.onChoose = nil; request.onExisting = nil; request.onRetry = nil; request.onCancel = nil
+        request.windows = nil; request.onChooseWindow = nil
+        tabbedOverlays[request.displayID]?.revealRequestWindow(number: nil)
+        tabbedOverlays[request.displayID]?.setPaneRequestStatus(nil)
+        tabbedOverlays[request.displayID]?.holdApplicationPicker(request.paneID, enabled: false)
+    }
+
+    private func retainPaneApplicationArrivalGuard(_ request: PaneApplicationRequest) {
+        guard let app = request.application else { return }
+        let now = paneApplicationUptime()
+        paneApplicationArrivalGuards.removeAll { $0.expiresAt <= now }
+        paneApplicationArrivalGuards.append(PaneApplicationArrivalGuard(applicationID: app.id,
+            instance: request.instance, baseline: request.baseline, expiresAt: now + 30))
+        request.dispatched = false
+    }
+
+    func choosePaneApplication(_ application: ApplicationChoice, requestID: UUID, retry: Bool = false) {
+        guard let request = paneApplicationRequest, request.id == requestID,
+              request.phase != .waiting,
+              ApplicationPickerModel.validationMessage(for: application, excluding: []) == nil else { return }
+        if case .placing = request.phase { return }
+        paneApplicationLaunchTask?.cancel()
+        if request.dispatched { retainPaneApplicationArrivalGuard(request) }
+        request.application = application
+        request.instance = nil
+        request.launchedInstance = nil
+        request.clickCandidate = nil; request.clickDeadline = nil; request.revealedWindowID = nil
+        request.fallbackReason = .other; request.showingWindows = false
+        request.arrivals = []; request.createdAfterRequest = []; request.creationTokens = []; request.pendingExistingWindowID = nil
+        request.arrivalOrder = ApplicationRequestArrivalOrder()
+        request.stillOpening = false
+        request.launching = paneApplicationLauncher.runningInstances(of: application).isEmpty
+        request.openingStartedAt = paneApplicationUptime()
+        request.automaticPlacement = false
+        request.finishFocusIntent()
+        request.focusIntent = makeApplicationRequestFocus()
+        request.focusIntent?.requested.insert(application.id)
+        request.focusIntent?.requestStarted(target: application.id)
+        request.deadline = paneApplicationUptime() + (request.launching ? max(30, paneApplicationTimeout) : paneApplicationTimeout)
+        request.phase = .waiting
+        syncPaneApplicationPolling()
+        // Publish before any AX inventory or menu discovery. Dispatch yields so AppKit can draw it.
+        closeChosenPaneApplicationPicker(request)
+        let coordinator = coordinator
+        let clock = paneApplicationClock
+        paneApplicationLaunchTask = Task { @MainActor [weak self, weak request] in
+            await Task.yield()
+            guard let self, let request else { return }
+            while self.isTabbedBusy(on: request.displayID) {
+                guard !Task.isCancelled, self.paneApplicationOwnerIsCurrent(request),
+                      request.phase == .waiting else { return }
+                try? await clock.sleep(for: .milliseconds(10))
+            }
+            guard !Task.isCancelled, self.paneApplicationOwnerIsCurrent(request), request.phase == .waiting,
+                  let visible = try? self.observeVisibleWindows() else { return }
+            request.baseline = Set(visible.map(\.id))
+                .union((self.system as? AccessibilityWindowSystem)?.knownWindows().map(\.id) ?? [])
+                .union(self.sessionStore.sessions.values.flatMap {
+                    ($0.tabbedState?.windowIDs ?? []).union($0.tabbedState?.floatingWindowIDs ?? [])
+                })
+            let now = self.paneApplicationUptime()
+            self.paneApplicationArrivalGuards.removeAll { $0.expiresAt <= now }
+            guard retry || !self.paneApplicationArrivalGuards.contains(where: { $0.applicationID == application.id }) else {
+                self.paneApplicationFallback(request, reason: "An earlier request may still open a window. Choose a window from this desktop, or try again.")
+                return
+            }
+            let instances = self.paneApplicationLauncher.runningInstances(of: application)
+            request.instances = instances
+            let preferred = self.paneApplicationLauncher.preferredInstance(in: instances)
+            guard instances.isEmpty || preferred != nil else {
+                self.paneApplicationFallback(request, reason: "Choose a window from this desktop.", kind: .severalCopies)
+                return
+            }
+            request.launching = instances.isEmpty
+            request.deadline = self.paneApplicationUptime()
+                + (request.launching ? max(30, self.paneApplicationTimeout) : self.paneApplicationTimeout)
+            request.dispatched = true
+            request.focusIntent?.expectActivation(of: application.id)
+            let valid: @MainActor () -> Bool = { [weak self] in
+                !Task.isCancelled && self?.paneApplicationOwnerIsCurrent(request) == true && request.phase == .waiting
+            }
+            if let instance = preferred {
+                request.instance = instance
+                let result = await coordinator.requestNewApplicationWindow(processIdentifier: instance.processIdentifier,
+                    bundleIdentifier: application.id, validating: valid)
+                guard valid() else { return }
+                switch result {
+                case .requested: break // Never reopen after a successfully dispatched command.
+                case .unsupported:
+                    do { try await self.paneApplicationLauncher.reopen(application, instance: instance,
+                            activating: request.focusIntent?.prepareReopen(of: application.id) == true) }
+                    catch {
+                        request.focusIntent?.reopenFailed()
+                        guard valid() else { return }
+                        self.paneApplicationFallback(request, reason: "The application couldn’t be reopened. Use a window from this desktop.", kind: .failed)
+                    }
+                case let .failed(reason):
+                    request.focusIntent?.reopenFailed()
+                    self.paneApplicationFallback(request, reason: reason)
+                }
+            } else {
+                do {
+                    let instance = try await self.paneApplicationLauncher.launch(application)
+                    guard valid() else { return }
+                    request.instance = instance
+                    request.launchedInstance = instance
+                } catch {
+                    guard valid() else { return }
+                    request.focusIntent?.reopenFailed()
+                    self.paneApplicationFallback(request, reason: "The application couldn’t be launched. Choose an existing window or try again.", kind: .failed)
+                }
+            }
+        }
+    }
+
+    private func paneApplicationFallback(_ request: PaneApplicationRequest, reason: String,
+                                         kind: PaneApplicationRequest.FallbackReason = .other) {
+        guard paneApplicationRequest?.id == request.id else { return }
+        if kind != .arrived { request.finishFocusIntent() }
+        if request.dispatched { retainPaneApplicationArrivalGuard(request) }
+        request.phase = .fallback(reason)
+        request.fallbackReason = kind
+        syncPaneApplicationPolling()
+        if kind == .arrived, request.clickDeadline == nil {
+            request.clickDeadline = paneApplicationUptime() + paneApplicationClickTimeout
+        }
+        request.existingWindows = paneApplicationWindows(request, from: observedRuleWindows)
+        presentPaneApplicationRequest(request)
+    }
+
+    private func paneApplicationWindows(_ request: PaneApplicationRequest, applicationID: String? = nil,
+                                        from windows: [WindowSnapshot]) -> [WindowSnapshot] {
+        let observation = system.nativeDesktopObservation()
+        let localWindows = windows.filter { $0.displayID == request.displayID }
+        return PaneApplicationRequest.candidateWindows(applicationID: applicationID ?? request.application?.id ?? "",
+            displayID: request.displayID,
+            windows: bentoEligible(observation?.windowsOnCurrentSpaces(localWindows) ?? localWindows))
+    }
+
+    /// New windows wait outside the layout until the user chooses one explicitly.
+    private func reservesPaneApplicationWindow(_ window: WindowSnapshot) -> Bool {
+        reservesPaneOwnerWindow(window)
+    }
+
+    private func reservesPaneOwnerWindow(_ window: WindowSnapshot, excluding guards: Set<UUID> = []) -> Bool {
+        let now = paneApplicationUptime()
+        paneApplicationArrivalGuards.removeAll { $0.expiresAt <= now }
+        if paneApplicationArrivalGuards.contains(where: { !guards.contains($0.id) && $0.reserves(window) }) { return true }
+        guard let request = paneApplicationRequest, request.phase != .choosing,
+              window.bundleIdentifier == request.application?.id, !request.baseline.contains(window.id) else { return false }
+        return true
+    }
+
+    private func reservePaneApplicationArrivals(in state: inout TabbedLayoutState, session: LayoutSession, windows: [WindowSnapshot]) {
+        var layout = state.layout
+        for window in windows where reservesPaneApplicationWindow(window) {
+            guard !state.windowIDs.contains(window.id), !state.floatingWindowIDs.contains(window.id) else { continue }
+            layout.setFloating(true, windowID: window.id)
+
+        }
+        if state.layout != layout { state.synchronize(with: layout) }
+    }
+
+    func advancePaneApplicationRequest() {
+        guard let request = paneApplicationRequest else { return }
+        guard paneApplicationOwnerIsCurrent(request) else { cancelPaneApplicationRequest(); return }
+        defer {
+            syncPaneApplicationPolling()
+            if paneApplicationRequest?.id == request.id { presentPaneApplicationRequest(request) }
+        }
+        if case .fallback = request.phase, request.fallbackReason == .arrived,
+           automaticallyPlacePaneApplicationArrival(request, windows: observedRuleWindows) { return }
+        switch request.phase {
+        case .choosing: break
+        case .fallback:
+            request.existingWindows = paneApplicationWindows(request, from: observedRuleWindows)
+            // A click in progress (mouse-down on the window, waiting for mouse-up or the focus read) is
+            // not cut off by the timeout. A click pending longer than that lost its mouse-up, for example
+            // because the event tap stopped mid-press; it no longer holds the request open.
+            let now = paneApplicationUptime()
+            let clickPending = request.clickCandidate.map { now - $0.downTime <= paneApplicationPendingClickLimit } ?? false
+            if request.fallbackReason == .arrived,
+               request.deadline.map({ paneApplicationUptime() >= $0 }) == true {
+                // Use here can remain visible after automatic placement has expired.
+                request.finishFocusIntent()
+            }
+            if request.fallbackReason == .arrived, !clickPending, let deadline = request.clickDeadline, now >= deadline {
+                // Nobody clicked the new window. Stop waiting; the window stays where macOS put it,
+                // and the arrival guard still keeps it out of the layout for a while.
+                let name = request.application?.name ?? "app"
+                cancelPaneApplicationRequest(id: request.id)
+                presentActionResult(succeeded: false, feedback: .failure(title: "Stopped waiting for a click",
+                    detail: "The new \(name) window stays where it is."), displayID: request.displayID)
+                return
+            }
+            if request.fallbackReason == .arrived {
+                request.arrivals.formUnion(request.existingWindows.filter {
+                    !request.baseline.contains($0.id) && $0.processIdentifier == request.instance?.processIdentifier
+                }.map(\.id))
+            }
+            if let id = request.pendingExistingWindowID, !isTabbedBusy(on: request.displayID) {
+                request.pendingExistingWindowID = nil
+                placePaneApplicationWindow(id, request: request)
+            }
+        case let .placing(id):
+            guard !isTabbedBusy(on: request.displayID) else { return }
+            if sessionStore.session(for: request.displayID)?.tabbedState?.pane(containing: id)?.id == request.paneID {
+                ApplicationRequestIntent.log.info("placement done target=\(request.application?.id ?? "none", privacy: .private)")
+                if let focus = request.focusIntent {
+                    _ = focus.restoreUserFocusIfNeeded()
+                    request.focusIntent = nil
+                    observeCompletedRequestFocus(focus)
+                }
+                cancelPaneApplicationRequest()
+            } else {
+                paneApplicationFallback(request, reason: statusMessage ?? "The window couldn’t be added. Choose another window or try again.")
+            }
+        case .waiting:
+            refreshActiveWindows(force: false)
+            guard paneApplicationOwnerIsCurrent(request), request.phase == .waiting else { return }
+            let now = paneApplicationUptime()
+            request.stillOpening = request.launching && now - (request.openingStartedAt ?? now) >= 10
+            if let deadline = request.deadline, now >= deadline {
+                paneApplicationFallback(request, reason: "No new window arrived. Choose an existing window, or try again.", kind: .timedOut)
+                return
+            }
+            guard let instance = request.instance, let app = request.application,
+                  paneApplicationLauncher.contains(instance, of: app) else { return }
+            guard !isTabbedBusy(on: request.displayID) else { return }
+            if automaticallyPlacePaneApplicationArrival(request, windows: observedRuleWindows) { return }
+            let candidates = paneApplicationWindows(request, from: observedRuleWindows)
+            if request.creationTokens.isEmpty, candidates.contains(where: { !request.baseline.contains($0.id)
+                && $0.processIdentifier == instance.processIdentifier && $0.constraints.isResizable }) {
+                paneApplicationFallback(request, reason: "Use a window from this desktop.", kind: .arrived)
+            }
+        }
+    }
+
+    func useExistingPaneApplicationWindow(_ id: WindowID, requestID: UUID) {
+        guard let request = paneApplicationRequest, request.id == requestID, case .fallback = request.phase else { return }
+        request.automaticPlacement = false
+        if isTabbedBusy(on: request.displayID) {
+            request.pendingExistingWindowID = id
+        } else {
+            placePaneApplicationWindow(id, request: request)
+        }
+    }
+
+    /// Shows the request in its pane. While BetterTile waits for a click on a window it asked the app to
+    /// open, that one window is raised (without activating its app) and the pane's panel moves below it,
+    /// so the user can see and click it.
+    private func presentPaneApplicationRequest(_ request: PaneApplicationRequest) {
+        let overlay = tabbedOverlays[request.displayID]
+        overlay?.setPaneRequestStatus(request.status)
+        guard case .fallback = request.phase, request.fallbackReason == .arrived,
+              let window = request.existingWindows.first(where: { request.arrivals.contains($0.id) }),
+              let number = (system as? any TabbedWindowSystem)?.windowNumbers(for: [window])[window.id], number > 0,
+              request.focusIntent?.allowsRaising == true else {
+            overlay?.revealRequestWindow(number: nil)
+            return
+        }
+        if request.revealedWindowID != window.id {
+            request.revealedWindowID = window.id
+            _ = coordinator.raiseTabbedWindows([window.id])
+        }
+        overlay?.revealRequestWindow(number: number)
+    }
+
+    func dismissPaneApplicationPicker(requestID: UUID) {
+        guard let request = paneApplicationRequest, request.id == requestID else { return }
+        paneApplicationPopover = nil
+        if request.phase == .choosing { cancelPaneApplicationRequest(id: requestID) }
+    }
+
+    private func closeChosenPaneApplicationPicker(_ request: PaneApplicationRequest) {
+        guard paneApplicationRequest?.id == request.id, request.phase != .choosing else { return }
+        let picker = paneApplicationPopover
+        paneApplicationPopover = nil
+        picker?.close()
+        presentPaneApplicationRequest(request)
+    }
+
+    func useChoosingPaneApplicationWindow(_ id: WindowID, application: ApplicationChoice, requestID: UUID) {
+        guard let request = paneApplicationRequest, request.id == requestID, request.phase == .choosing,
+              paneApplicationOwnerIsCurrent(request),
+              ApplicationPickerModel.validationMessage(for: application, excluding: []) == nil else { return }
+        request.application = application
+        request.automaticPlacement = false
+        placePaneApplicationWindow(id, request: request)
+        closeChosenPaneApplicationPicker(request)
+    }
+
+    func handlePaneRequestAction(_ action: PaneRequestAction, requestID: UUID) {
+        guard let request = paneApplicationRequest, request.id == requestID,
+              paneApplicationOwnerIsCurrent(request) else { return }
+        switch action {
+        case .cancel: cancelPaneApplicationRequest(id: requestID)
+        case .tryAgain: request.onRetry?()
+        case let .useWindow(id): useExistingPaneApplicationWindow(id, requestID: requestID)
+        case .showWindows:
+            request.showingWindows = true
+            advancePaneApplicationRequest()
+        case .showApp:
+            guard let application = request.application else { return }
+            let instances = paneApplicationLauncher.runningInstances(of: application)
+            guard instances.count == 1, let instance = instances.first,
+                  let running = NSRunningApplication(processIdentifier: instance.processIdentifier),
+                  running.bundleIdentifier == application.id, running.launchDate == instance.launchDate else { return }
+            running.activate()
+        case .chooseAnotherApp:
+            tabbedOverlays[request.displayID]?.showPaneApplicationPicker(request.paneID)
+        }
+    }
+
+    private static func focusPhaseName(_ phase: PaneApplicationRequest.Phase) -> String {
+        switch phase {
+        case .choosing: "choosing"
+        case .waiting: "waiting"
+        case .placing: "placing"
+        case .fallback: "fallback"
+        }
+    }
+
+    /// Both chooser kinds use the same listen-only shared left-mouse feed.
+    func receiveTabbedChooserMouseEvent(_ event: GlobalGestureEvent) {
+        paneApplicationPopover?.presenter.handleMouseEvent(event)
+        // Dismissal may update the dictionary through owner callbacks.
+        for overlay in Array(tabbedOverlays.values) { overlay.handleChooserMouseEvent(event) }
+    }
+
+    /// A click on an arrived window places it: mouse-down on that window, mouse-up within the drag
+    /// threshold, and then that window is the focused window. A drag of the new window is not a click.
+    func receivePaneApplicationMouseEvent(_ event: GlobalGestureEvent, feed: String = "injected") {
+        if event.kind == .leftMouseDown, event.button == 0 {
+            let timestamp = Double(event.timestamp) / 1_000_000_000
+            if paneApplicationRequest != nil || !completedRequestFocus.isEmpty {
+                ApplicationRequestIntent.log.debug("mouse-down feed=\(feed, privacy: .public) request=\(self.paneApplicationRequest != nil) phase=\(self.paneApplicationRequest.map { Self.focusPhaseName($0.phase) } ?? "none", privacy: .public) helper=\(self.paneApplicationRequest?.focusIntent != nil) observation=\(!self.completedRequestFocus.isEmpty)")
+            }
+            expireCompletedRequestFocus()
+            if !completedRequestFocus.isEmpty {
+                let now = paneApplicationUptime()
+                if timestamp <= now, now - timestamp <= 1,
+                   let window = applicationRequestWindowAtPoint?(event.position)
+                       ?? (try? system.window(at: event.position)),
+                   window.frame.contains(event.position) {
+                    applicationRequestIntent.userChose(window.bundleIdentifier, processIdentifier: window.processIdentifier,
+                                                       click: event.timestamp)
+                } else {
+                    ApplicationRequestIntent.log.debug("mouse-down observation choice=skip reason=timestamp-or-hit")
+                }
+            }
+            if let request = paneApplicationRequest, request.phase != .choosing,
+               let started = request.openingStartedAt {
+                let now = paneApplicationUptime()
+                let reason: String?
+                if timestamp < started || timestamp > now || now - timestamp > 1 { reason = "timestamp" }
+                else if let window = request.windowAtPoint?(event.position) {
+                    if !window.frame.contains(event.position) { reason = "outside-window" }
+                    else if !paneApplicationOwnerIsCurrent(request) { reason = "owner-changed" }
+                    else if let focus = request.focusIntent {
+                        ApplicationRequestIntent.log.debug("mouse-down hit app=\(window.bundleIdentifier ?? "none", privacy: .private) pid=\(window.processIdentifier)")
+                        focus.userChose(window.bundleIdentifier, processIdentifier: window.processIdentifier, click: event.timestamp)
+                        reason = nil
+                    } else { reason = "no-helper" }
+                } else { reason = "hit-miss" }
+                if let reason {
+                    // Age from the click to now and from request start to the click separate a late or
+                    // early click from a hit-test or owner failure.
+                    ApplicationRequestIntent.log.debug("mouse-down choice=skip reason=\(reason, privacy: .public) age=\(now - timestamp) sinceStart=\(timestamp - started)")
+                }
+            }
+        }
+        guard event.button == 0, let request = paneApplicationRequest, request.fallbackReason == .arrived,
+              case .fallback = request.phase else { return }
+        switch event.kind {
+        case .leftMouseDown:
+            request.clickCandidate = nil
+            let now = paneApplicationUptime()
+            let timestamp = Double(event.timestamp) / 1_000_000_000
+            guard timestamp > 0, now >= timestamp, now - timestamp <= 1,
+                  paneApplicationOwnerIsCurrent(request),
+                  let window = request.windowAtPoint?(event.position), request.arrivals.contains(window.id),
+                  paneApplicationWindows(request, from: [window]).contains(where: { $0.id == window.id }),
+                  window.frame.contains(event.position) else { return }
+            request.clickCandidate = PaneApplicationClick(windowID: window.id, processIdentifier: window.processIdentifier,
+                                                          downTime: timestamp, downPosition: event.position)
+        case .leftMouseDragged:
+            if let click = request.clickCandidate, !click.released, click.moved(to: event.position) {
+                request.clickCandidate = nil
+            }
+        case .leftMouseUp:
+            guard var click = request.clickCandidate, !click.released else { return }
+            guard !click.moved(to: event.position) else { request.clickCandidate = nil; return }
+            click.released = true
+            request.clickCandidate = click
+            // A window that was already focused sends no focus event when it is clicked, so read the
+            // focused window once, shortly after the mouse-up.
+            let delay = paneApplicationClickConfirmDelay
+            let clock = paneApplicationClock
+            paneApplicationClickTask?.cancel()
+            paneApplicationClickTask = Task { @MainActor [weak self, weak request] in
+                try? await clock.sleep(for: delay)
+                guard !Task.isCancelled, let self, let request, request.clickCandidate == click else { return }
+                self.confirmPaneApplicationClick(request)
+            }
+        }
+    }
+
+    /// A focus change to another window means the click did not land on the new window: drop it.
+    private func receivePaneApplicationFocus(_ event: WindowSystemEvent) {
+        guard let request = paneApplicationRequest, let click = request.clickCandidate else { return }
+        if event.processIdentifier != click.processIdentifier || (event.windowID != nil && event.windowID != click.windowID) {
+            request.clickCandidate = nil
+        }
+    }
+
+    /// Places the clicked arrival only if it is now the focused window. Any other result drops the click:
+    /// the user clicks the window again or uses Use here.
+    private func confirmPaneApplicationClick(_ request: PaneApplicationRequest) {
+        guard paneApplicationRequest?.id == request.id, case .fallback = request.phase,
+              request.fallbackReason == .arrived, let click = request.clickCandidate, click.released else { return }
+        request.clickCandidate = nil
+        guard let window = try? system.focusedWindow(), window.id == click.windowID,
+              window.processIdentifier == click.processIdentifier else { return }
+        useExistingPaneApplicationWindow(click.windowID, requestID: request.id)
+    }
+
+    private func placePaneApplicationWindow(_ id: WindowID, request: PaneApplicationRequest,
+                                            observedWindows: [WindowSnapshot]? = nil) {
+        guard paneApplicationOwnerIsCurrent(request), !isTabbedBusy(on: request.displayID),
+              let visible = observedWindows ?? (try? observeVisibleWindows()),
+              let window = paneApplicationWindows(request, from: visible).first(where: { $0.id == id }),
+              let applicationID = request.application?.id,
+              let session = sessionStore.session(for: request.displayID), var state = session.tabbedState,
+              let display = system.displays().first(where: { $0.id == request.displayID }) else { return }
+        if !request.automaticPlacement {
+            // A pane UI choice places the window; it does not choose its app for focus.
+            // Keep intent only during this transaction so a newer choice can be restored once.
+            if request.focusIntent == nil {
+                request.focusIntent = makeApplicationRequestFocus()
+                request.focusIntent?.requestStarted(target: applicationID)
+            }
+            request.focusIntent?.requested.insert(applicationID)
+        }
+        // Existing windows are revalidated from the current desktop immediately before the transaction.
+        if !state.windowIDs.contains(id), !state.floatingWindowIDs.contains(id) {
+            var layout = state.layout
+            layout.setFloating(true, windowID: id)
+            state.synchronize(with: layout)
+        }
+        let windows = ignoringOversizedSeeds(bentoEligible((system.nativeDesktopObservation()?.windowsOnCurrentSpaces(visible) ?? visible)
+            .filter { $0.displayID == request.displayID && $0.isEligible && !$0.isFloating }), in: display.visibleFrame)
+        if request.automaticPlacement {
+            // Concurrent ordinary arrivals keep the pane that was active before
+            // this request selects its destination. Plan them in the same write.
+            state.reconcile(windowIDs: windows.filter { !reservesPaneApplicationWindow($0) }.map(\.id),
+                removed: [], fittingIn: display.visibleFrame, windows: windows)
+        }
+        let undoSource = state
+        state.move(id, to: request.paneID)
+        request.phase = .placing(id)
+        syncPaneApplicationPolling()
+        applyTabbedState(state, session: session, display: display, windows: windows, focus: window.id,
+            rememberUndo: true, gestureBaseline: undoSource, floatingUndoSourceID: id, expectedSpaceID: request.spaceID,
+            startsImmediately: request.automaticPlacement,
+            allowingRequestRaise: {
+                request.automaticPlacement
+                    ? request.focusIntent?.allowsRaising == true
+                    : request.focusIntent?.frontmost() == applicationID
+            },
+            validating: { [weak self] in
+                guard let self, self.paneApplicationOwnerIsCurrent(request),
+                      let current = try? self.system.windowSnapshots(ids: [id]),
+                      self.paneApplicationWindows(request, from: current).contains(where: { $0.id == id }),
+                      self.paneApplicationOwnerIsCurrent(request) else { return false }
+                if let memberships = self.system.nativeDesktopObservation()?.windowMembership[id], !memberships.isEmpty {
+                    guard let space = request.spaceID, memberships == [space] else { return false }
+                }
+                return true
+            })
+    }
 }

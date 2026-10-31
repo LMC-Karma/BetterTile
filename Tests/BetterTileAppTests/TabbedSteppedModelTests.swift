@@ -579,15 +579,16 @@ func switchingTabsBesideTwoSteppedTerminalsSettles(upperOver: Double, lowerOver:
     system.sizeGrids[terminal] = (BTSize(width: 0, height: 7.3), BTSize(width: 0, height: slot.size.height + 3.3))
     system.eventHandler?(WindowSystemEvent(kind: .created, windowID: terminal, processIdentifier: 399))
     try #require(await waitFor(timeout: .seconds(3)) { model.activeTabbedState?.panes[0].selected == terminal })
-    try await Task.sleep(for: .milliseconds(600))
+    try await waitForIdle(model, system)
     var failures = 0
     for step in 0..<3 {
         let branch = try #require(model.activeTabbedState?.dividers(in: system.availableDisplays[0].visibleFrame).first?.branchID)
         model.performTabbed(.adjustDivider(branch, by: step % 2 == 0 ? 0.03 : -0.05))
-        try await Task.sleep(for: .milliseconds(1200))
+        try await waitForIdle(model, system)
         if model.statusMessage != nil { failures += 1; model.statusMessage = nil }
         let area = try #require(content(0, model, system))
-        #expect((frame("terminal", system)?.size.height ?? .infinity) <= area.size.height + 2)
+        #expect((frame("terminal", system)?.size.height ?? .infinity) <= area.size.height + 2,
+                "frame=\(String(describing: frame("terminal", system))), area=\(area), pending=\(model.hasPendingTabbedPlacement), requests=\(system.requestedFrames[terminal] ?? [])")
     }
     #expect(failures == 0)
 }

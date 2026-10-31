@@ -47,6 +47,12 @@ public struct BentoLayoutMetrics: Hashable, Sendable {
         return BTRect(x: frame.minX, y: frame.minY + inset, width: frame.size.width, height: frame.size.height - inset)
     }
 
+    /// Window request and reference area. Snap content edges after the reserve,
+    /// so even a fractional reserve cannot make origin and size round separately.
+    public func windowFrame(forPane frame: BTRect) -> BTRect {
+        contentFrame(forPane: frame).snappedToWholePoints()
+    }
+
     /// Window minimums expressed as pane minimums: the reserve is added to
     /// each window's minimum height.
     public func paneConstraints(
@@ -612,9 +618,9 @@ public struct BentoLayoutState: Hashable, Sendable {
             .sorted { $0.windowID < $1.windowID }
     }
 
-    /// Unsnapped window areas. Tabbed requests and reference geometry use this projection.
+    /// Whole-point window areas. Tabbed requests and reference geometry use this projection.
     public func contentFrames(in bounds: BTRect) -> [WindowID: BTRect] {
-        paneFrames(in: bounds).mapValues { metrics.contentFrame(forPane: $0) }
+        paneFrames(in: bounds).mapValues { metrics.windowFrame(forPane: $0) }
     }
 
     /// Full pane frames of occupied leaves, including any content reserve.

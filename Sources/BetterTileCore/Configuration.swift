@@ -127,6 +127,7 @@ public struct BetterTileConfiguration: Codable, Hashable, Sendable {
     /// When a tab that needs more room grows its pane, switching to a tab
     /// that fits returns the panes to the sizes the user set.
     public var tabbedRestoresPaneSizes = true
+    public var tabbedStripPresentation: TabbedStripPresentation = .alwaysVisible
     /// Keeps the Dock's strip out of the work area even while the Dock hides,
     /// so layouts stay put when it slides in and out.
     public var leavesSpaceForDock = false
@@ -247,7 +248,7 @@ public struct BetterTileConfiguration: Codable, Hashable, Sendable {
         case enhancedUserInterfacePolicy
         case applicationRules, keyboardShortcutsEnabled
         case shortcuts, layoutWheel, menuBarActions
-        case tabbedRestoresPaneSizes
+        case tabbedRestoresPaneSizes, tabbedStripPresentation
         case leavesSpaceForDock
         case layoutMode, bentoEnabled, bentoStates
     }
@@ -259,6 +260,7 @@ public struct BetterTileConfiguration: Codable, Hashable, Sendable {
 
         schemaVersion = Self.currentSchemaVersion
         defaultTabbedPreset = try container.decodeIfPresent(TabbedPreset.self, forKey: .defaultTabbedPreset) ?? .single
+        tabbedStripPresentation = try container.decodeIfPresent(TabbedStripPresentation.self, forKey: .tabbedStripPresentation) ?? .alwaysVisible
         tabbedRestoresPaneSizes = try container.decodeIfPresent(Bool.self, forKey: .tabbedRestoresPaneSizes) ?? true
         leavesSpaceForDock = try container.decodeIfPresent(Bool.self, forKey: .leavesSpaceForDock) ?? false
         setupCompletionVersion = max(
@@ -399,6 +401,7 @@ public struct BetterTileConfiguration: Codable, Hashable, Sendable {
         try container.encode(defaultLayoutMode, forKey: .defaultLayoutMode)
         try container.encode(defaultTabbedPreset, forKey: .defaultTabbedPreset)
         try container.encode(tabbedRestoresPaneSizes, forKey: .tabbedRestoresPaneSizes)
+        try container.encode(tabbedStripPresentation, forKey: .tabbedStripPresentation)
         try container.encode(leavesSpaceForDock, forKey: .leavesSpaceForDock)
         try container.encodeIfPresent(singleWindowPlacement, forKey: .singleWindowPlacement)
         try container.encode(resizeFeedbackMode, forKey: .resizeFeedbackMode)
@@ -470,7 +473,7 @@ public struct BetterTileConfiguration: Codable, Hashable, Sendable {
         .init(action: .nextDisplay, shortcut: .init(keyCode: 124, modifiers: [.control, .option, .command], keyLabel: "→")),
         .init(action: .previousDisplay, shortcut: .init(keyCode: 123, modifiers: [.control, .option, .command], keyLabel: "←")),
     ] + WindowAction.allCases.filter { action in
-        ![.leftHalf, .rightHalf, .topHalf, .bottomHalf, .maximize, .restore, .nextDisplay, .previousDisplay].contains(action)
+        !action.isTabCommand && action != .showTabBar && ![.leftHalf, .rightHalf, .topHalf, .bottomHalf, .maximize, .restore, .nextDisplay, .previousDisplay].contains(action)
     }.map { ShortcutBinding(action: $0, shortcut: nil) }
 
     public func validated() throws -> BetterTileConfiguration {

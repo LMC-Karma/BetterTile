@@ -13,6 +13,11 @@ import Testing
 @Suite(.appTestApplication, .serialized, .settingsUI) @MainActor
 struct ResourceLifecycleTests {
 
+
+
+
+
+
     @Test func settingsPickerReleasesControllersAndContentAfter100Presentations() async {
         _ = NSApplication.shared
         let parent = OffscreenTestWindow(contentRect: NSRect(x: 12000, y: 0, width: 980, height: 700),
@@ -38,4 +43,23 @@ struct ResourceLifecycleTests {
         #expect(parent.childWindows?.isEmpty != false)
         #expect(parent.contentView?.subviews.isEmpty == true)
     }
+
+    @Test func menuPanelReleasesControllersAfter100Presentations() async {
+        _ = NSApplication.shared
+        var controllers: [WeakResource<MenuPanelController<Text>>] = []
+        for _ in 0..<100 {
+            autoreleasepool {
+                let controller = MenuPanelController(rootView: Text("Resource lifecycle"), appearance: .init(),
+                    presentWindow: { _ in }, reduceMotion: { true }, animate: { _, finish in finish() })
+                controllers.append(WeakResource(controller))
+                controller.show(relativeTo: NSRect(x: 12500, y: 800, width: 24, height: 24),
+                                visibleFrame: NSRect(x: 12000, y: 0, width: 1200, height: 800))
+                controller.dismiss()
+            }
+        }
+        await Task.yield()
+        #expect(controllers.allSatisfy { $0.value == nil })
+    }
 }
+
+/// Records presentation without ordering a window on the user's displays.

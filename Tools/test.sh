@@ -20,10 +20,10 @@ if [[ ${1:-} == --expected-runs ]]; then
     [[ "$expected" =~ ^[1-9][0-9]*$ ]] || { echo "Expected a positive run count." >&2; exit 2; }
     shift 2
 fi
-# Testability belongs to this lane only. Keep Release product behaviour.
+# Testability and hooks belong to this lane only. Keep Release product behaviour.
 if [[ ${1:-} == --release ]]; then
     shift
-    set -- -c release -Xswiftc -enable-testing "$@"
+    set -- -c release -Xswiftc -enable-testing -Xswiftc -DBETTERTILE_TEST_HOOKS "$@"
 fi
 # Keep pipefail: a helper failure, build failure, or tee failure must fail this command.
 swift test "$@" 2>&1 | tee "$log"

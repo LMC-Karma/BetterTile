@@ -47,7 +47,7 @@ cmp "$work/complete" "$work/output"
 printf '%s\n' test > "$work/expected-arguments"
 cmp "$work/expected-arguments" "$work/arguments"
 "$tools/test.sh" "$work/output" --release --filter Example > /dev/null
-printf '%s\n' test -c release -Xswiftc -enable-testing --filter Example > "$work/expected-arguments"
+printf '%s\n' test -c release -Xswiftc -enable-testing -Xswiftc -DBETTERTILE_TEST_HOOKS --filter Example > "$work/expected-arguments"
 cmp "$work/expected-arguments" "$work/arguments"
 cmp "$work/complete" "$work/output"
 TEST_COMPLETION_FIXTURE="$work/single" "$tools/test.sh" "$work/output" --expected-runs 1 --release --filter Example > /dev/null

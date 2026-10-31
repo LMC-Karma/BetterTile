@@ -65,11 +65,11 @@ configuration-save delays, and coordinator retry waits. Arrival dates project
 elapsed monotonic time from one initial wall-clock date.
 `ResultPillController` also accepts an injected clock for dismissal.
 
-Application responsiveness holds use an uptime callback, defaulting to process
-system uptime. Tests replace these
+Application responsiveness holds and pane-application deadlines use separate
+uptime callbacks, defaulting to process system uptime. Tests replace these
 callbacks together with the clock so hold expiry and recovery deadlines agree.
 The 10-second watchdog remains a native run-loop timer. DragSnap pointer and
-chooser delays retain separate UI timing seams.
+chooser delays and the pane-application picker retain separate UI timing seams.
 Clock injection does not change the layer dependencies.
 
 ## Coordinate model
@@ -82,11 +82,12 @@ clamping. Half points round toward positive infinity on both sides of zero, so
 whole-point gaps remain exact on negative-origin displays too. Origin and size
 are not rounded separately.
 
-Tabbed requests retain fractional content frames below the tab strip. Its
-stepped-size correction, overflow checks, and resize classification use the
-same unsnapped `contentFrames(in:)` projection. It passes these expected frames
-to the shared divider fitter; the fitter defaults to Adaptive's snapped
-requests for Adaptive callers. Logical pane frames remain separate from both.
+Tabbed snaps the content edges after the tab-strip reserve to whole points.
+Requests, stepped-size correction, resize classification, and overflow checks
+use the same `windowFrame(forPane:)` projection, exposed by `contentFrames(in:)`.
+Tabbed passes these expected frames to the shared divider fitter. The fitter
+matches projected window edges to projected boundaries; its tolerance stays
+unchanged. Logical pane frames and ratios remain precise.
 
 ## Snap Zones
 
@@ -343,6 +344,13 @@ their existing `NSEvent` monitors as one unit so one physical event has one
 owner. Those monitors read each event's own location, so a stalled
 main actor cannot move a release point.
 
+A press on a BetterTile AppKit window stays with that window through release.
+Before either native-window gesture consumer receives the press, the app checks
+public AppKit window hit testing at its recorded position. Click-through drawing
+is skipped. This prevents a revealed Auto-hide strip from starting a native
+window drag or linked resize on the selected window underneath it. Chooser and
+application-request observations still receive the shared events.
+
 Layout Wheel keyboard activation uses paired local and global AppKit monitors,
 so it works whether BetterTile or another app receives the event. Modifier
 monitors follow feature enablement. Key and pointer monitors exist only during
@@ -363,6 +371,11 @@ until release, cancellation, or overlay hiding. Both forward only the key code.
 Escape cancels synchronously on the main actor, including when a managed app
 retains keyboard focus. The global monitor only observes the event; the local
 monitor consumes Escape and passes other keys through.
+
+Auto-hide bars also observe Escape while revealed. Their local monitors yield
+when a Tabbed chooser is key. The chooser's responder chain cancels composition,
+clears a focused search, then closes on an empty search. Escape outside text
+editing closes the chooser immediately.
 
 All window mutations pass through the main-actor coordinator. Multi-window operations preflight every participant, apply in deterministic order, and roll back already-applied frames when a later Accessibility write fails. A committed layout writes each application on its own thread: shrinking windows first, in every application at once, then growing windows. Within one application the writes keep the coordinator's order. Display transfers and application
 recovery explicitly request serial per-write validation when their desktop owner
@@ -852,6 +865,60 @@ change a Bento operation made to the tree; writing it also writes the tree.
   boundary resolver expects it between stacked windows. Tabbed also sets
   `vacantMinimumSize` so empty panes stay large enough to receive a tab. With
   both at zero, Bento behaves as before.
+- **Tab bar presentation** lives in Settings → Window Layout → Tabbed.
+  `TabbedStripPresentation` persists Always visible (the default), Compact,
+  or Auto-hide. Missing configuration fields retain Always visible. Their
+  reserves are 34, 24, and 6 points. `TabbedLayoutState` carries the reserve in
+  its Bento metrics, including empty-pane minimums. Fitting, snap plans,
+  previews, stepped-size correction, and settlement use those metrics. A
+  setting change re-fits the layout; an unchanged setting writes no frames.
+  Compact draws every app icon and only the selected title. Tooltips,
+  accessibility labels, and the pane menu retain full titles.
+- Auto-hide reserves its 6-point band once. Revealing a 34-point strip changes
+  only the panel frame and overlays the selected window. It does not mutate
+  an application window. Both states span the pane's full width. The collapsed
+  band draws a three-point line with the strip's regular glass at reduced
+  opacity. Dark appearance adds a 15-percent neutral tint beneath the glass line.
+  The active pane's line is slightly brighter, without accent color.
+  Revealed tabs use the Always visible height, titles, and controls. A 160 ms
+  clipping animation expands the strip without scaling its content; Reduce
+  Motion disables it. Content fades in over the final 60 percent. Lower-pane
+  bands start inside their pane, after the gap.
+  Local and global pointer-only monitors receive every mouse move and drag
+  while Auto-hide is active, not only near a strip. Each sample reads the
+  pointer location and acts only inside the six-point hidden band, the full
+  revealed strip, or a pane that shows a request status. The controller caches
+  pane frames and these areas until the layout state, the bounds, or the request
+  pane changes. A sample outside every area returns before per-pane work unless
+  a hover must end, and `ignoresMouseEvents` is written only when it changes.
+  Passing through the band cancels dwell before the pointer reaches the
+  traffic-light controls or menu bar. The monitors stop on hide, Space
+  suspension, mode change, and teardown. The seven-point side lanes give
+  divider handles and resize corners input priority without insetting the glass.
+  Divider gestures suppress pending reveal. `TabbedBarVisibility` receives
+  monotonic time and owns the 80 ms dwell, 300 ms leave delay, and drag, menu,
+  selection, keyboard, gallery, and application-picker holds. Pointer samples
+  are coalesced once per display refresh, so the dwell starts at the first
+  display refresh after the pointer enters the band. The controller schedules
+  its next deadline and cancels it on hide.
+  While a selection hold exists, a 50 ms button-state check releases a lost mouse-up
+  before the normal leave delay. Dismissal and teardown clear that tracking.
+  Floating fallback panels recheck the latest obscuring frames when their
+  chrome changes, including reveal and collapse.
+  Escape dismisses revealed bars. Auto-hide removes no curtain cutouts in
+  either state, so hidden tabs cannot show through a collapsed band.
+- **Show Tab Bar** is an unassigned global action in the Tabs shortcut group
+  and an application menu command. It reveals the active pane and makes its
+  existing nonactivating panel key, without activating BetterTile. Only this
+  command enables that panel's `canBecomeKey`; pointer clicks retain the
+  existing focus model. Arrows move a separate focus marker and scroll it
+  into view. Return selects that tab; Escape returns to the selected app.
+  Both use the existing selection intent and WindowCoordinator focus path.
+  Losing key focus releases the keyboard hold. Ending keyboard navigation
+  orders a key panel out so AppKit releases focus, then restores its validated
+  stacking anchor or floating occlusion policy. It never calls `resignKey()`
+  directly. Reveal must pass the occlusion check before the panel becomes key.
+  No event tap or alternate Accessibility mutation path is added.
 - Only selected tabs count toward minimum sizes. Hidden tabs are placed at
   their pane's window frame, stacked behind the selected tab, as best effort
   (`WindowCoordinator.applyTabbed(required:)`): a hidden tab that refuses the
@@ -892,7 +959,7 @@ change a Bento operation made to the tree; writing it also writes the tree.
     tabs writes nothing. Without a known step, it is asked for the largest
     known length within one step of its area. With more room than that, it is
     asked for the midpoint of the known lengths around the area; a step is at
-    most 24 points, so it settles between them and shows a new length. Example: two Terminals in Two Rows on a 968-point
+    most 24 points, so it settles between them and shows a new length. Example: two Terminals in 2 Rows on a 968-point
     work area have 894 points of window area. 439 + 454 fits with one point
     to spare, so the divider moves 7 points: one Terminal fills its pane and
     the other leaves a one-point gap.
@@ -928,14 +995,15 @@ change a Bento operation made to the tree; writing it also writes the tree.
   identities hide the curtain. Unverified ordering keeps a curtain already
   shown for up to four refreshes, then hides it. It never guesses from a
   frame or parks a window. Native frosted glass conceals inactive window
-  detail. Rounded cutouts exclude occupied tab strips, including during
-  resizing. The curtain keeps its rectangular input surface; the strips above
+  detail. Rounded cutouts exclude Always visible and Compact occupied strips,
+  including during resizing. The curtain keeps its rectangular input surface; the strips above
   it own tab interaction. Disabling glass, Reduce Transparency, and Increase
   Contrast use an opaque surface.
   A click selects the selected tab in that pane, or activates an empty pane;
   it does not reach an inactive tab. Curtains have no accessibility navigation.
-  They hide with the overlay on mode exit, Space changes, fullscreen, display
-  removal, and shutdown.
+  They hide with the overlay on mode exit, fullscreen, display removal, and
+  shutdown. Exact native Space sessions retain their curtains on Space changes;
+  display-scoped fallback curtains hide until the new desktop settles.
 - With the same identity, tab strips and empty panes are normal-level panels
   ordered directly above the selected window, or above the active pane's
   selected window for an empty pane. Any window in front of the selected tab,
@@ -1045,7 +1113,7 @@ change a Bento operation made to the tree; writing it also writes the tree.
   again once, 1 s after its placement settles or fails, with fresh
   snapshots; an Undo that brings floats back does not start that check.
   When a committed placement changes the pane frames or the set of selected
-  tabs, for example after Change Layout, a removed or added pane, a divider or
+  tabs, for example after applying a preset, a removed or added pane, a divider or
   pane-size change, a new work area, or a smaller tab selected or a large one
   closed, every automatic float that was already floating is checked again.
   The comparison is per session and starts again on each entry to Tabbed. A
@@ -1064,8 +1132,12 @@ change a Bento operation made to the tree; writing it also writes the tree.
   larger than the work area below the strip, so the write shows the
   window's real minimum. A
   hidden tab larger than its pane, for example after its pane shrank, is
-  moved back inside the work area, where the curtain covers it. Entry to Tabbed is stored before its placement, so
-  a failed entry placement does not repeat the entry on later sweeps. Each adoption, return, and float writes a debug line
+  moved back inside the work area, where the curtain covers it. Entry captures
+  its frame baseline before placement, but shows strips and the curtain only
+  after placement succeeds. A rejected entry restores the previous mode and
+  layout, or Native for a desktop that started in Tabbed, and reports failure.
+  A degraded outcome still suspends automatic writes. Later sweeps
+  do not retry a rejected mode switch. Each adoption, return, and float writes a debug line
   in the `Tabbed` log category with the window's frame, its resizability and
   minimum with their sources, and the result for each pane it tried.
   Entering Tabbed from Bento adopts the tree, so every pane stays where it was.
@@ -1080,7 +1152,294 @@ change a Bento operation made to the tree; writing it also writes the tree.
   over is removed, so Bento shows no empty slot. Leaving for Native restores
   the pre-Tabbed frames and keeps the tab groups for the next Tabbed visit.
 
+## Tabbed panels on native Spaces
+
+An exact native Space session owns its `TabbedOverlayController` and panels.
+`BetterTileModel.spacePanelOverlays` retains those controllers. The display map
+selects only the current session's controller for input. A background sweep can
+observe a new Space before its notification arrives; it detaches and suspends
+the outgoing controller without hiding that desktop's retained surfaces. Panels omit
+`.moveToActiveSpace` before their first ordering on the owning desktop. AppKit
+keeps them on that desktop, so a warmed strip can appear during the Space slide.
+No API assigns an application window or panel to another Space. Sessions without
+exact native identity keep the display-scoped hide-and-refresh behavior.
+Ownership is checked again after focus, stacking, and window-number reads,
+immediately before ordering. A changed Space or observation capability defers
+presentation until a current refresh.
+
+A Space change cancels interactions, the pane application picker, Layout Gallery,
+keyboard holds, and visibility timers. Retained surfaces stay ordered on their
+own desktops. Auto-hide bars collapse without ordering a panel. Pointer clicks
+never request key focus; the explicit Show Tab Bar command keeps its existing
+keyboard behavior. Intents and pane application requests validate their session
+and current native Space. Picker dismissal also checks the display and session,
+so an inactive overlay cannot cancel another desktop's request.
+
+Confirmed destruction and minimization update retained session membership before
+Space stabilization or gesture buffering. Application termination already emits
+confirmed destruction for each known window through the Accessibility adapter.
+Every retained controller that contains the identity updates its cached tab
+content and empty-pane frame without ordering panels, reading foreign windows,
+or writing application frames.
+A removed selected tab hides the curtain until stacking can be verified on
+return. Minimization preserves the entry restoration frame. Destruction removes
+it. The normal post-arrival membership stabilization and placement remain the
+safety net for unobserved changes and replacement selected tabs. Reconciliation
+compares selections with the last successful placement, so immediate lifecycle
+bookkeeping cannot bypass replacement fitting.
+
+Ended sessions, removed Spaces, disconnected displays, and leaving Tabbed release
+their controllers. Observation loss discards exact panel ownership and rebuilds
+display-scoped chrome for the current overlap-matched session. Its historical
+Space ID does not confer native presentation ownership. Native observation
+recovery replaces fallback panels with an exact controller; panels from the old
+ownership are never reused. Callbacks require the current controller as well as
+the current session and observation capability. Placement and pane application
+requests capture current capability and reject a change during preflight or
+completion. Permission loss hides every retained surface; shutdown hides and
+releases all controllers.
+Stacking and divider coverage exclude panels of inactive sessions too.
+
+Panels use `.transient`, which AppKit documents as hiding in Mission Control.
+Exact Space strips, empty panes, and divider controls use AppKit's default
+animation behavior; curtains and fallback panels use `.none`.
+`.stationary` would keep them visible; `.managed` would include them in the
+overview. `.auxiliary` governs Stage Manager and fullscreen, rather than Mission
+Control entry, and is not added. The relevant public API contracts are
+[transient](https://developer.apple.com/documentation/appkit/nswindow/collectionbehavior-swift.struct/transient),
+[stationary](https://developer.apple.com/documentation/appkit/nswindow/collectionbehavior-swift.struct/stationary),
+[managed](https://developer.apple.com/documentation/appkit/nswindow/collectionbehavior-swift.struct/managed),
+[auxiliary](https://developer.apple.com/documentation/appkit/nswindow/collectionbehavior-swift.struct/auxiliary),
+and [animation behavior](https://developer.apple.com/documentation/appkit/nswindow/animationbehavior-swift.property).
+Mission Control entry fades retained strips over about 100 ms, starting as
+windows shrink. macOS gives no earlier public signal, so this is a known
+limitation. Native fullscreen creates no Tabbed chrome. No new private API, permission, configuration field,
+dependency, persistence, or diagnostic log is introduced.
+
 ## Overlay appearance
+
+### Pane application picker
+
+Empty panes and populated tab bars expose **Add App**. The overlay emits an
+owner-bound callback to the app model. `PaneApplicationPicker` wraps the shared
+`ApplicationPicker`; it adds no catalog or persisted setting. The shared
+picker lists Recent, Running, and All Apps, and records each choice in the
+local Recent list described in [SECURITY.md](../SECURITY.md). A nonactivating
+bar's **Show Tab Bar** keyboard path also accepts `+`. Native buttons and
+existing-window choices have accessibility labels. One presentation holds
+Auto-hide open through application selection, creation, fallback and placement.
+The picker closes after an app is chosen. The request then appears in its
+pane and keeps Auto-hide open until it ends. Dismissing the picker cancels
+only application selection. No synthetic tab enters the layout. The shared
+picker's optional window provider expands current-desktop window rows inline;
+callers without the provider keep the application-only picker. The pane request
+builds its window map once on opening and updates it from normal window and
+application events. Row rendering only looks up that map. It reads no model,
+Accessibility, running-instance, or Space state.
+
+The app model captures the pane, display, session, Space, work area and Space
+generation. A stopped app launches through `NSWorkspace`; a running app asks
+`WindowCoordinator.requestNewApplicationWindow` to invoke an actually exposed
+public menu operation. Exact **New Window** and recognized complete localized
+window titles take priority. Bare ⌘N qualifies only from the File menu (by
+position) and only with an allow-listed complete window or generic document
+title; otherwise reopen, then **Use a window from this desktop**. The small
+localized title table is disclosed in SECURITY.md. Unknown titles use reopen. There is no consent UI, answer store,
+or unanswered-question reservation.
+The obsolete defaults key is ignored. Several instances use the active or
+frontmost instance automatically. Missing menu commands use
+`NSWorkspace.openApplication` at the running process's validated bundle URL
+to reopen the existing app. Reopen always requests background operation and
+makes no preliminary process-activation call. An app can still activate itself
+or create no window; the arrival timeout and explicit window fallback remain.
+Menu discovery reads only menu attributes on a detached background task. Its
+read budget checks the deadline before every AX call and sets that element's
+messaging timeout to the lesser of 50 ms and the remaining 500 ms budget.
+Traversal reads at most 32 top-level entries and 128 direct items per menu;
+child-array IPC payloads add only one overflow sentinel to those limits. No
+per-item destination or window inventory validation runs. An already found command survives deadline expiry.
+The coordinator's main-actor request path revalidates the destination and process
+after discovery and before the bounded AXPress. Re-reading command metadata also
+runs in the background, with a fresh budget. Pane destination validation
+refreshes native desktop observation with cached windows, without an AX window
+inventory. Placement still validates a full snapshot. Tests use fake AX trees
+and delayed readers. Unsupported menu operations try reopening automatically. If no window arrives
+within the request timeout, the pane offers current-desktop window choices. Launch and menu requests can create no window. They
+cannot be undone by frame rollback. See [SECURITY.md](../SECURITY.md) for the
+exact operation and retained-data scope.
+
+Before ordinary Tabbed arrival routing, the model reserves new windows of the
+chosen app as deliberate floats. They receive no measurement or frame writes.
+The request waits up to 10 seconds for a running app, or 30 seconds for a cold
+launch, for a new eligible window ID of the requested process on the current
+display and desktop. Cold launches show **Still opening…** after 10 seconds.
+Request-local creation order (including unresolved creation tokens), then
+first-observed order, selects the earliest eligible arrival independently of
+window ID spelling or inventory order. A running process also needs exact
+creation evidence received after the request: the callback's window ID or a
+creation token resolved by the existing targeted read. Request-owned tokens
+are also resolved when a full inventory bypasses the optimized event path.
+The request keeps creation evidence separate from explicit-choice arrivals and
+re-evaluates eligibility until its deadline, including after an early
+unconfirmed observation. The automatic-arrival helper itself checks creation
+evidence, order membership, PID, bundle ID, baseline, display, desktop,
+eligibility and resizability. Restoration and baseline IDs cannot qualify. A new process's first eligible window can qualify without
+a callback. Dialogs, sheets, fixed-size and multi-Space windows cannot auto-place.
+The request places a qualifying window in the same event pass that first reads
+it, before ordinary Tabbed reconciliation can place the previous selections.
+It uses the final fitted pane frame and the existing transaction and readback;
+it does not run a minimum-size probe or wait for the request's 200 ms poll.
+Fake-system coverage verifies one frame write for a window that accepts that
+frame. No click-wait state is shown for it. The coordinator brings it forward only while the request's focus intent is
+current. Workspace activation observations and a final frontmost-app check
+suppress raising after the user changes apps. The coordinator checks the dynamic
+predicate after writing frames. Reopen disables workspace activation and makes
+no preliminary activation call. One MainActor-owned `ApplicationRequestIntent`
+records focus intent across all in-flight pane requests.
+Each request registers its targets and expected launch, menu and reopen
+activations. A failure clears that operation's expectation. Cancellation
+unregisters the request. Successful placement transfers a qualifying focus
+helper to the bounded observation window below. An opening timeout also
+unregisters it.
+An unconfirmed arrival keeps its helper only until the automatic-placement
+deadline, even if **Use here** remains available until the separate click
+deadline. An expected activation from any live
+request does not become another request's user choice.
+
+The main-queue workspace observer delivers each activation to this record once,
+before a queued placement continuation. A genuine app activation, a fresh
+hit-tested click on any window (including a target), or an activation after newer
+keyboard input records the latest user choice. Clicks must fall within the
+request lifetime and be no more than one second old. Both the shared event tap
+and the AppKit mouse-down fallback forward these choices. Without the tap, the
+fallback also forwards left-mouse drag and mouse-up events to a pending request
+through monitors of its own, with snapping on or off, so a click on an
+unconfirmed arrival can complete. Chooser dismissal still receives only
+mouse-down. `WindowHitTesting`,
+`ApplicationActivating`, and `ApplicationWindowRequesting` are required by the
+app's window-system interface. The coordinator also requires activation and
+new-window requests and calls them directly. A missing capability fails to
+compile instead of silently disabling click observation, restoration, or the
+New Window command. Observation stays
+active while any request is pending, including with snapping and linked resizing
+off. Cancellation
+cannot record a late choice.
+
+Automatic pane placement checks focus when membership commits. If a genuine newer choice still
+qualifies, a completed request observes target activation for two seconds after
+placement or the request's terminal state, whichever is later. One expiry task
+releases that helper; shutdown releases it early. Each target
+activation rechecks the latest shared choice and can restore it once. Restoration
+requires a requested app in front, a different latest user choice, and an
+unchanged public keyboard-event count. That counter reads no keys or text.
+Newer input conservatively suppresses restoration, including typing in Source.
+The record consumes the choice's one restoration attempt before activation.
+A choice keeps the process that made it: the hit-tested window's process or the
+activated process. Restoration goes through the coordinator, which sets the
+public Accessibility frontmost attribute on that process, as `raiseWindow` does.
+BetterTile is not the active app then, so a public `NSRunningApplication`
+activation request is only the fallback; macOS can decline it. Without a known
+process, only a single running copy qualifies. Its resulting activation is
+expected, not another user choice. No other request can restore again for that
+choice. There is no activation loop or retry. The `request-focus` unified-log
+category records request, phase, choice, activation, placement, restore
+decisions and the activation result without titles or app content.
+
+One coordinator frame write is a transaction, not an atomic WindowServer frame
+change. The public AX adapter writes size, position, then a final size to correct
+application clamping. Its settlement loop reads frames without rewriting them.
+An application may animate or change its frame independently. A WindowServer
+geometry sample alone cannot identify which AX calls occurred. Opening feedback is published synchronously before the task
+performs any AX inventory. A waiting/placing request rejects duplicate choices;
+a successfully dispatched command is never followed by reopen. A retry
+publishes Opening synchronously even if reconciliation is busy, then dispatches
+once after the placement releases the display. A second retry during Opening
+cannot queue another dispatch. Add App and Open App queue one picker behind a
+busy placement; tab-drag enablement does not disable application selection.
+The queued picker revalidates its display, desktop and pane owner. A focus
+observation in another pane changes selection without cancelling the captured
+request destination.
+An unconfirmed arrival or eligible existing window keeps the explicit **Use here**
+path. The previous hit-tested click fallback remains for unconfirmed arrivals.
+Fallbacks and late arrivals keep their original frames until explicitly chosen.
+**Use here** in BetterTile's pane UI chooses placement, not an app switch. Its
+transaction raises the chosen window only if the target app is frontmost when
+the coordinator finishes its frame writes. A later app choice prevents that
+raise. Explicit placement uses the same shared, one-shot focus restoration
+boundary at successful completion.
+
+The selected candidate moves through the ordinary fitted `applyTabbedState`
+transaction. It fills an empty pane or joins an occupied one as selected.
+Membership and one Undo step commit only with successful placement. Failed
+placements retain the prior membership. Incomplete rollback suspends the owning
+session through the existing degraded path. Preflight and delayed writes retain
+the captured request check, including current display and native membership of
+the chosen window. A separate floating Undo source retains its original frame
+without granting the cross-display exemptions used only for window drags.
+
+Cancellation, a newer manual destination or gesture, pane removal, mode/Space/
+work-area changes, permission loss, owner teardown and shutdown discard the
+request. Cancelled or expired creation keeps a 30-second guard without a
+destination. On Tabbed desktops its late arrivals stay floating; another
+creation for that app waits for the guard to expire or the user chooses an
+existing window. The pane's explicit **Try Again** action can repeat the request;
+The earlier guard remains; only eligible creations of the new request may auto-place. Offering
+choices also retains this guard, even after an explicit selection, because the request may still produce another window.
+After the guard expires, new unseen arrivals follow ordinary policy.
+The 200 ms timer runs only while waiting, placing, or offering the bounded
+arrived-window click fallback. Choosing and other fallbacks retain no polling
+task. Window and application events update their choices. Pane, session, mode,
+Space, work-area, permission and shutdown events invalidate their owner.
+A placement completion also resumes an explicit choice queued behind it.
+Full inventories run during the bounded arrival wait. Fallback lists use current
+window observations and stay live when the user brings the app forward with **Show App**. New windows
+of that app stay outside the layout while the request offers choices. No new
+background restoration trigger is added.
+
+Tabbed's empty pane card and pane menu open the same native Layout Gallery
+panel. Its scope is the whole display. Miniatures use the preset geometry;
+hover and keyboard focus draw the candidate panes with the existing placement
+wireframes. Previewing and cancelling do not change the session or write window
+frames. Apply emits one preset intent through the model and WindowCoordinator.
+The Core preset policy keeps tab groups by default. Distribute windows flattens
+the panes' tabs in pane order, fills each new pane once, then appends remaining
+tabs round-robin. Windows the user floated stay outside the panes; automatic
+floats can return through the usual recovery. A successful change
+uses the existing Undo Layout Change history. Local split and remove actions
+remain separate. A state or work-area change dismisses the gallery.
+
+The pane picker and Layout Gallery share `TabbedChooserPresenter`. It owns an
+independent borderless `.nonactivatingPanel` at `.modalPanel`, above normal
+curtains and floating pane panels. It has a rounded 12-point overlay container.
+It never attaches as a pane's child, so pane refreshes cannot reset its level.
+It uses `.transient` and `.ignoresCycle` collection behavior and does not hide
+on deactivation. Showing and closing do not activate BetterTile or hand focus
+back to an earlier app explicitly. Any inside click makes the panel key without
+activating BetterTile, so Escape works after a shape or button click as well as
+search-field interaction. Ordering out the nonactivating panel lets AppKit
+return keyboard focus to the previous key window.
+Its frame is calculated from the anchor control in AppKit screen coordinates,
+then clamped to the full pane on each axis where it fits. A smaller pane falls
+back to the owning display's visible frame on that axis. AppKit has no popover
+placement step that can reposition this final frame.
+
+The app forwards the existing shared left-mouse event stream to both chooser
+owners before processing arrival clicks or gestures. Outside mouse-down closes
+the panel; inside mouse-down, drag and mouse-up do not. A queued event older
+than the presentation is ignored. The existing DragSnap NSEvent left-mouse-down
+global fallback supplies other-app left clicks when the shared tap is unavailable.
+Global AppKit monitors exclude BetterTile's own events, so the presenter also
+installs a temporary local left/right mouse-down monitor while shown. It checks
+the event's own screen position synchronously before control dispatch, returns
+the event unchanged, and therefore cannot dismiss a chooser opened by that
+dispatch. A temporary global right-mouse-down monitor supplies other-app right
+clicks. Both use the same frame and opening-time checks and are removed on
+dismissal or presenter destruction. Opening a chooser keeps the existing left
+observation paths enabled even with snapping off.
+Escape is handled by the key panel, including when its search editor has focus.
+Choosing an item, owner removal, work-area or display change, Space change and
+Tabbed exit close the panel through the owner's existing cancellation paths.
+Gallery cancellation clears its wireframe preview without a layout mutation.
 
 `OverlayAppearance` stores the shared Liquid Glass preference and frosting
 strength. Settings presents its inverse as **Glass transparency**, from
@@ -1099,11 +1458,6 @@ and an additional 14-percent frost floor even at Clear. Its plate ranges from
 14 to 36 percent, without an outline around the work area. It uses the same
 opaque fallback when glass is disabled or either display option is enabled.
 
-The menu bar popover uses the system's native glass. `GlassBacking` adds only
-the shared frosting or accessibility fallback over it; Clear removes this
-additional layer. The Layout Wheel uses the same backing over one native glass
-surface. Its hub does not add a second glass material.
-
 Popups use regular glass with the Glass transparency setting's 0-to-22-percent
 plate, a lit rim, and the 12/8/6-point radius family in `PopupGlass`. The plate
 is `max(floor, sliderPlate)`. The shared Light floor is
@@ -1111,9 +1465,10 @@ is `max(floor, sliderPlate)`. The shared Light floor is
 Light compiles at 0.20. Dark popups use a 0.35 minimum plate so text stays readable over bright windows.
 The popup's effective app appearance selects the floor,
 including when BetterTile and macOS use opposite appearances. These floors do
-not apply to Tabbed bars or panes. The Appearance caption
+not apply to Tabbed bars or panes outside a request panel. The Appearance caption
 explains that popups and the menu bar panel keep a light frost for readable text.
-Add Rule uses this surface. Popup controls live inside the native
+This covers the Tabbed "+" chooser, the Layout Gallery, and a pane while it
+shows a request panel. Popup controls live inside the native
 `NSGlassEffectView.contentView`, so AppKit can adapt their foreground to the
 backdrop. The frost plate and rim stay behind the controls and pass through
 input. Popup content has no full-surface background. Text uses semantic label
@@ -1124,7 +1479,9 @@ in Dark: the lowest passing one-percent steps on the semantic field surface.
 The opaque fallback moves the same content host above its plate, so controls
 remain visible and reachable without replacing their state.
 
-The shared application
+The menu panel's custom mode buttons decline automatic `NSButton` vibrancy,
+so their opaque shaded-accent fill stays equal to a primary `OverlayButton`.
+Unselected ink keeps the semantic primary label colour. The shared application
 picker draws an opaque semantic text-field background inside its search capsule,
 so entered text and placeholders remain readable independently of the glass backdrop.
 The field, editor and caret use the full normal label colour, resolved to RGB in
@@ -1133,7 +1490,10 @@ The field declines vibrancy to keep that surface and ink together. Its magnifier
 uses primary ink within the native search cell's hit rectangle. Native selection,
 clear-button drawing and editing actions are retained. Add Rule uses a secondary
 `OverlayButton` for Cancel, retaining
-its native Escape equivalent and the panel's search-first Escape routing.
+its native Escape equivalent and the panel's search-first Escape routing. The pane
+chooser also sends Escape through its text editor first: cancel composition,
+clear a non-empty query, then dismiss an empty search. Escape on non-text controls
+still dismisses the chooser directly.
 The Cancel and native confirm wrappers return their natural widths and a fixed
 24-point height from `sizeThatFits`, independently of parent proposals. Call sites
 retain `fixedSize()` in `OverlayButtonRow` to measure their full one-line widths.
@@ -1152,6 +1512,75 @@ and remove the blocker and monitor. Ordinary dismissal restores the parent's
 previous responder without bringing a hidden parent onscreen. No configuration
 migration, placement policy or new permission is involved.
 
+The menu bar panel is a transparent, key-capable, borderless `NSPanel` with
+`PopupGlassHost` as its only material. Its glass, plate and hosted text use
+BetterTile's app appearance. The panel keeps its 332-point width, uses a
+12-point corner radius and the window shadow, and has no popover arrow. A
+status-item click toggles it. The status button uses the public push-on/push-off
+type, with `state = .on` while the panel is open and `.off` on every dismissal.
+A guarded callback reapplies that state after mouse-up tracking. Programmatic
+close and context-menu completion also restore the current panel state.
+Visible highlighting depends on the native status bar; no custom pill or
+pressed image is drawn. Both outside-click monitors exclude the status
+button's screen bounds. Global mouse-down routing runs synchronously before
+the status button's mouse-up toggle, so a non-key panel closes only once.
+The existing outside-click monitors and Escape close it. Escape
+passes through while Settings or Setup is the key window. Opening scales the
+SwiftUI content from the status item's position on its top edge over 260 ms.
+The glass host stays stationary while the window fades, so the material keeps
+its appearance. Closing reverses toward that anchor over 180 ms. Reduce Motion
+uses only a 120 ms window fade. The window frame and hit regions stay fixed.
+Closing disables mouse and keyboard input. It clears the first responder and
+the status highlight immediately. Reopening restores the saved responder. A generation
+check keeps an interrupted close from hiding a reopened panel. Commands and Settings use
+the same close path. A mode change keeps the menu open and key: Tabbed
+placement still orders its windows, but defers application focus while the menu
+is shown. Successful placements retain their latest focus target, including
+window arrivals. When the panel is dismissed, before its fade, the model
+focuses that target if it remains a selected tab on the same desktop. macOS
+reports a Space switch only when its animation ends, about half a second after
+the switch key, so a focus at the end of the fade could activate a window on the
+desktop the user is leaving. When native observation is available, BetterTile
+drops deferred focus if macOS reports no Space for the window or cannot confirm
+its exclusive membership of the captured desktop.
+Only status-item toggles and Escape can replay deferred focus while BetterTile
+remains active. Commands, Settings, outside clicks, programmatic closes and app
+deactivation discard deferred focus. A placement decides the deferral once per
+request, and a size retry keeps it. A placement that commits after the dismissal
+waits 0.7 seconds for the Space to settle, then checks the desktop, the
+dismissal and BetterTile's activity again before it focuses. One dismissal
+focuses at most once. A Space change, reopening the panel, another app's
+activation and any later user command discard a pending replay or wait. User
+commands include shortcuts, menu commands, tab-strip and pane-button choices,
+opening or committing the Layout Wheel, window and tab drags, and
+divider or linked-resize gestures. The panel sits 4 points
+below the menu bar, with an 8-point side and bottom inset. It resizes with its
+content while keeping its top edge fixed.
+Outside the selected mode, menu-panel text uses semantic primary label ink, including captions,
+shortcuts and the enabled Settings and Quit buttons. Size and weight carry the
+hierarchy. Feedback and permission messages use primary text with a coloured
+symbol. Dark cards use the semantic quaternary fill; Light keeps its existing
+card fill. Repair Layout retains its stock accent appearance.
+
+The menu mode picker alone uses a drawn 284-by-24-point track with three equal
+segments, a semantic fill one step above the card, and radius 6. Native buttons
+own focus, mouse and keyboard activation. The glyph canvas is unchanged and
+the title gap is 4 points. Unselected ink is the primary label colour. The
+selected fill is inset 2 points inside the track with radius 4. It uses
+`PopupGlass.accentShadeColor` with white ink; pointer feedback uses the overlay
+buttons' black 8-percent hover and 16-percent press. Arrows move focus without
+changing the mode; Space or Return selects. The picker is one Tab stop under
+Full Keyboard Access. Each segment has a label and selected value.
+
+The menu panel uses the same shared floor as every other popup. Debug builds
+accept `-BetterTilePopupDarkPlateFloor <value>` from process launch arguments
+only, clamped to 0.20 through 0.60. Missing, invalid or non-finite values keep
+the compiled Dark floor. Saved defaults are never read, Light is unaffected,
+and Release ignores the argument. For example, `-BetterTilePopupDarkPlateFloor
+0.40` tests a 40-percent minimum plate on all Dark popups. There is no separate
+panel floor or panel-only override. All opaque fallbacks still use alpha one.
+
+The Settings menu editor retains its frosting preview through `GlassBacking`.
 
 Divider handles use public Core Animation layers and a retained Core Image
 `CIGlassLozenge` filter on each colored track. The handle is clear at rest.
@@ -1185,7 +1614,7 @@ sample forwards geometry, limit, stretch, and appearance changes to the overlay.
 Ending the gesture restores the handle frame and drawing before hiding the
 overlay and retracting. Settings uses the same lens views.
 The preference also covers tab strips, Tabbed drop targets, resize ghosts,
-the Layout Wheel, the menu bar popover, and result feedback. Snap and Bento
+the Layout Wheel, the menu bar panel, and result feedback. Snap and Bento
 placement/swap previews retain their light outlines, tint, and pulse.
 
 Tab dragging changes a provisional display order, without mutating the layout.

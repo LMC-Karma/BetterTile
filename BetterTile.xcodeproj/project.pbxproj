@@ -35,6 +35,7 @@
 		B0A1C2D3E4F5061728394A01 /* RecentApplications.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0A1C2D3E4F5061728394A02 /* RecentApplications.swift */; };
 		100000000000000000000022 /* ApplicationRuleSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000022 /* ApplicationRuleSettings.swift */; };
 		B3A100000000000000000001 /* SettingsPickerPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A100000000000000000002 /* SettingsPickerPanel.swift */; };
+		A781BC3E2AA94961B461D101 /* PaneApplicationPicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = A781BC3E2AA94961B461D102 /* PaneApplicationPicker.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -68,6 +69,7 @@
 		B0A1C2D3E4F5061728394A02 /* RecentApplications.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecentApplications.swift; sourceTree = "<group>"; };
 		200000000000000000000022 /* ApplicationRuleSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ApplicationRuleSettings.swift; sourceTree = "<group>"; };
 		B3A100000000000000000002 /* SettingsPickerPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsPickerPanel.swift; sourceTree = "<group>"; };
+		A781BC3E2AA94961B461D102 /* PaneApplicationPicker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PaneApplicationPicker.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -118,6 +120,7 @@
 				5A0A0000000000000000F006 /* LaunchAtLogin.swift */,
 				200000000000000000000022 /* ApplicationRuleSettings.swift */,
 				B3A100000000000000000002 /* SettingsPickerPanel.swift */,
+				A781BC3E2AA94961B461D102 /* PaneApplicationPicker.swift */,
 				200000000000000000000021 /* ApplicationPicker.swift */,
 				B0A1C2D3E4F5061728394A02 /* RecentApplications.swift */,
 				200000000000000000000020 /* ApplicationCatalog.swift */,
@@ -240,6 +243,7 @@
 				100000000000000000000020 /* ApplicationCatalog.swift in Sources */,
 				10000000000000000000000A /* LayoutWheelSettings.swift in Sources */,
 				100000000000000000000007 /* SetupAssistantView.swift in Sources */,
+				A781BC3E2AA94961B461D101 /* PaneApplicationPicker.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
