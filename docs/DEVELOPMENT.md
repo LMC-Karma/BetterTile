@@ -12,7 +12,10 @@ is [SECURITY.md](../SECURITY.md).
 
 - **Apple Silicon Mac**
 - **macOS 26** or later
-- **Xcode 26 / Swift 6.3** or later
+- **Xcode 26 / Swift 6.3** or later, with its **Metal Toolchain** component.
+  `BetterTileMacOS` precompiles a Metal shader. If a build fails with
+  "missing Metal Toolchain", run `xcodebuild -downloadComponent MetalToolchain`
+  once (about 840 MB).
 - A **free Apple ID** (no paid Apple Developer Program needed — see signing below)
 
 ---
@@ -161,12 +164,16 @@ must not be distributed. The release script still builds and validates
 CI first runs `changes`, which decides whether the pull request can affect a
 build. Then these jobs run in parallel:
 
-- `guards`: the test timing and quarantine guard and its self-test, on Ubuntu.
+- `guards`: the timing and quarantine guard, its self-test, the Metal setup self-test,
+  and the release test-completion self-test, on Ubuntu.
 - `unit-tests`: the Core, MacOS and App test targets.
 - `release-package`: the release tool tests, including the completion guard,
   and `swift build -c release`.
 - `app-debug`: the Debug app build.
 - `app-release`: the Release app build.
+
+Every macOS job sets up Metal before its build or test. `release-package` runs
+its shell tests first, then sets up Metal immediately before the release build.
 
 The required `test` check passes only when `changes` succeeds and all five jobs
 succeed. For a documentation-only pull request, it passes when `changes`

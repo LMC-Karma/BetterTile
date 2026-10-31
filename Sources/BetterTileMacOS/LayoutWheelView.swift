@@ -43,12 +43,31 @@ public struct LayoutWheelMetrics: Sendable {
     }
 
     public static let standard = LayoutWheelMetrics(
-        hubRadius: 23,
+        hubRadius: 32,
         innerRingOuterRadius: 68,
         outerRingInnerRadius: 76,
         outerRingOuterRadius: 110,
         oneLevelInnerRingOuterRadius: 84
     )!
+
+    public static let grouped = LayoutWheelMetrics(
+        hubRadius: 32, innerRingOuterRadius: 88, outerRingInnerRadius: 94, outerRingOuterRadius: 154
+    )!
+
+    public var fanGeometry: LayoutWheelFanGeometry {
+        let scale = outerRingOuterRadius / 154
+        return LayoutWheelFanGeometry(wheel: geometry, innerRadius: outerRingOuterRadius + 10 * scale,
+                                      outerRadius: outerRingOuterRadius + 76 * scale)
+    }
+
+    public func fanGeometry(for configuration: LayoutWheelConfiguration) -> LayoutWheelFanGeometry {
+        let scale = outerRingOuterRadius / 154
+        let radius = outerRadius(for: configuration.groupRing, levelCount: configuration.effectiveLevelCount)
+        return LayoutWheelFanGeometry(wheel: geometry(for: configuration.effectiveLevelCount),
+            innerRadius: radius + 10 * scale, outerRadius: radius + 76 * scale, configuration: configuration)
+    }
+
+    public var groupedPresentationDiameter: Double { fanGeometry.outerRadius * 2 + Self.presentationPadding * 2 }
 
     /// The drawn size. One Level omits the outer ring instead of leaving a gap.
     public func diameter(for levelCount: LayoutWheelLevelCount) -> Double {
@@ -124,16 +143,20 @@ public struct LayoutWheelMetrics: Sendable {
     }
 }
 
-/// What one sector shows: a concise label, an SF Symbol, and its state.
+/// What one sector shows: a concise label, an SF Symbol or layout and mode icon, and its state.
 public struct LayoutWheelSlot: Equatable, Sendable {
     public var label: String
     public var symbolName: String
+    /// The layout or mode icon to draw instead of `symbolName`.
+    public var glyph: LayoutGlyph?
+    var windowAction: WindowAction?
     public var isEmpty: Bool
     public var isAvailable: Bool
 
-    public init(label: String, symbolName: String, isEmpty: Bool, isAvailable: Bool) {
+    public init(label: String, symbolName: String, glyph: LayoutGlyph? = nil, isEmpty: Bool, isAvailable: Bool) {
         self.label = label
         self.symbolName = symbolName
+        self.glyph = glyph
         self.isEmpty = isEmpty
         self.isAvailable = isAvailable
     }
@@ -161,8 +184,15 @@ public struct LayoutWheelSlot: Equatable, Sendable {
                 isEmpty: false,
                 isAvailable: isAvailable
             )
+            windowAction = action
         case .customZone:
             self = .empty
+        case let .setMode(mode):
+            self.init(label: mode.title, symbolName: "slider.horizontal.3", glyph: .mode(mode),
+                      isEmpty: false, isAvailable: isAvailable)
+        case let .chooseLayout(preset):
+            self.init(label: preset.title, symbolName: "rectangle.split.2x2", glyph: .layout(preset),
+                      isEmpty: false, isAvailable: isAvailable)
         case .repairBento:
             self.init(
                 label: "Repair Layout",
@@ -305,7 +335,13 @@ public struct LayoutWheelView: View {
     private let selection: LayoutWheelSelection?
     private let unavailableCommands: Set<LayoutWheelCommand>
     private let metrics: LayoutWheelMetrics
+    private let fan: LayoutWheelFanState
+    private let layoutAvailable: Bool
+    private let currentMode: LayoutMode?
+    private let reservesFanSpace: Bool
     private let onSelect: ((LayoutWheelSelection) -> Void)?
+
+    var retainedRenderer: LayoutWheelGlassRenderer?
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
@@ -318,6 +354,10 @@ public struct LayoutWheelView: View {
         selection: LayoutWheelSelection? = nil,
         unavailableCommands: Set<LayoutWheelCommand> = [],
         metrics: LayoutWheelMetrics = .standard,
+        fan: LayoutWheelFanState = .init(),
+        layoutAvailable: Bool = true,
+        currentMode: LayoutMode? = nil,
+        reservesFanSpace: Bool = true,
         onSelect: ((LayoutWheelSelection) -> Void)? = nil
     ) {
         self.configuration = configuration
@@ -325,235 +365,73 @@ public struct LayoutWheelView: View {
         self.selection = selection
         self.unavailableCommands = unavailableCommands
         self.metrics = metrics
+        self.fan = fan
+        self.layoutAvailable = layoutAvailable
+        self.currentMode = currentMode
+        self.reservesFanSpace = reservesFanSpace
         self.onSelect = onSelect
     }
 
     private var effectiveMetrics: LayoutWheelMetrics {
-        metrics.scaled(by: configuration.scale)
+        (configuration.style == .grouped ? .grouped : metrics).scaled(by: configuration.scale)
     }
 
     private var diameter: Double {
-        effectiveMetrics.diameter(for: configuration.levelCount)
+        effectiveMetrics.diameter(for: configuration.effectiveLevelCount)
     }
 
     private var presentationDiameter: Double {
-        effectiveMetrics.presentationDiameter(for: configuration.levelCount)
+        configuration.style == .grouped && reservesFanSpace
+            ? effectiveMetrics.groupedPresentationDiameter
+            : effectiveMetrics.presentationDiameter(for: configuration.effectiveLevelCount)
     }
 
-    private var rings: [LayoutWheelRing] { configuration.activeRings }
-
-    private var isHighContrast: Bool { contrast == .increased }
+    private var sceneInput: LayoutWheelSceneInput {
+        .init(configuration: configuration, appearance: overlayAppearance, selection: selection,
+              unavailableCommands: unavailableCommands, fan: fan, layoutAvailable: layoutAvailable,
+              currentMode: currentMode, reservesFanSpace: reservesFanSpace, customMetrics: metrics)
+    }
 
     public var body: some View {
-        wheel
-        .frame(width: presentationDiameter, height: presentationDiameter)
-        .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: selection)
-    }
-
-    private var wheel: some View {
         ZStack {
-            backdrop
-            ForEach(rings, id: \.self) { ring in
-                ForEach(LayoutWheelSector.allCases, id: \.self) { sector in
-                    sectorView(LayoutWheelSelection(ring: ring, sector: sector))
+            LayoutWheelNativeSurface(input: sceneInput, reduceMotion: reduceMotion,
+                reduceTransparency: reduceTransparency, increasedContrast: contrast == .increased,
+                retainedRenderer: retainedRenderer)
+                .allowsHitTesting(false).accessibilityHidden(true)
+            ZStack {
+                ForEach(configuration.activeRings, id: \.self) { ring in
+                    ForEach(LayoutWheelSector.allCases, id: \.self) { sector in
+                        sectorControl(.init(ring: ring, sector: sector))
+                    }
                 }
+                Circle().fill(.clear)
+                    .frame(width: effectiveMetrics.geometry.hubRadius * 2,
+                           height: effectiveMetrics.geometry.hubRadius * 2)
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("Cancel")
+                    .accessibilityAddTraits(selection == nil ? [.isSelected] : [])
             }
-            hub
+            .frame(width: diameter, height: diameter)
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel("Layout Wheel")
         }
-        .frame(width: diameter, height: diameter)
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel("Layout Wheel")
+        .frame(width: presentationDiameter, height: presentationDiameter)
     }
 
-    @ViewBuilder
-    private var backdrop: some View {
-        if reduceTransparency || isHighContrast || !overlayAppearance.useLiquidGlass {
-            Circle().fill(Color(nsColor: .windowBackgroundColor))
-        } else {
-            Circle().fill(.clear).glassEffect(.regular, in: .circle)
-                    .overlay(GlassBacking(overlayAppearance).clipShape(Circle()))
-        }
-    }
-
-    // MARK: - Sectors
-
-    private func slot(for selection: LayoutWheelSelection) -> LayoutWheelSlot {
-        let command = configuration.command(at: selection)
-        let isAvailable = command.map { !unavailableCommands.contains($0) } ?? false
-        return LayoutWheelSlot(
-            command: command,
-            isAvailable: isAvailable
-        )
-    }
-
-    private func shape(for selection: LayoutWheelSelection) -> LayoutWheelSectorShape {
-        LayoutWheelSectorShape(
-            innerRadius: visualInnerRadius(for: selection.ring),
-            outerRadius: visualOuterRadius(for: selection.ring),
-            centerAngle: selection.sector.drawnCenterAngle
-        )
-    }
-
-    /// The wheel keeps its logical radii for selection, while the outer ring
-    /// is drawn inward to make the visible inter-ring gap 5pt.
-    private func visualInnerRadius(for ring: LayoutWheelRing) -> Double {
-        switch ring {
-        case .inner: effectiveMetrics.innerRadius(for: ring)
-        case .outer:
-            min(
-                effectiveMetrics.geometry.outerRingInnerRadius,
-                effectiveMetrics.geometry.innerRingOuterRadius + 5
-            )
-        }
-    }
-
-    private func visualOuterRadius(for ring: LayoutWheelRing) -> Double {
-        effectiveMetrics.outerRadius(for: ring, levelCount: configuration.levelCount)
-    }
-
-    private func hitShape(for selection: LayoutWheelSelection) -> LayoutWheelSectorShape {
-        LayoutWheelSectorShape(
+    /// Existing Settings controls stay over stable, unanimated hit shapes.
+    private func sectorControl(_ selection: LayoutWheelSelection) -> some View {
+        let slot = sceneInput.slot(.sector(selection))
+        let shape = LayoutWheelSectorShape(
             innerRadius: effectiveMetrics.innerRadius(for: selection.ring),
-            outerRadius: effectiveMetrics.outerRadius(for: selection.ring, levelCount: configuration.levelCount),
-            centerAngle: selection.sector.drawnCenterAngle,
-            visualGap: 0,
-            cornerRadius: 0
-        )
-    }
-
-    @ViewBuilder
-    private func sectorView(_ selection: LayoutWheelSelection) -> some View {
-        let slot = slot(for: selection)
-        let shape = shape(for: selection)
-        let hitShape = hitShape(for: selection)
-        let isSelected = self.selection == selection
-        let isFocused = focusedSelection == selection
-
-        ZStack {
-            shape.fill(fill(slot: slot, isSelected: isSelected))
-            shape.stroke(
-                stroke(slot: slot, isSelected: isSelected, isFocused: isFocused),
-                style: strokeStyle(slot: slot, isSelected: isSelected, isFocused: isFocused)
-            )
-            sectorIcon(slot, selection: selection, isSelected: isSelected)
-        }
-        .scaleEffect(isSelected && !reduceMotion ? LayoutWheelMetrics.selectedScale : 1)
-        .shadow(
-            color: isSelected ? .black.opacity(reduceMotion ? 0.12 : 0.24) : .clear,
-            radius: isSelected ? 7 : 0,
-            y: isSelected ? 3 : 0
-        )
-        .zIndex(isSelected ? 1 : 0)
-        .contentShape(hitShape)
-        .modifier(SectorControl(
-            selection: selection,
-            isEditable: onSelect != nil,
-            focus: $focusedSelection,
-            action: onSelect
-        ))
-        .accessibilityLabel(
-            slot.accessibilityLabel(for: selection, levelCount: configuration.levelCount)
-        )
-        .accessibilityAddTraits(isSelected ? [.isSelected] : [])
-    }
-
-    private func sectorIcon(
-        _ slot: LayoutWheelSlot,
-        selection: LayoutWheelSelection,
-        isSelected: Bool
-    ) -> some View {
-        let radius = effectiveMetrics.iconRadius(
-            for: selection.ring,
-            levelCount: configuration.levelCount
-        )
-        let angle = selection.sector.drawnCenterAngle.radians
-        let center = diameter / 2
-        let iconSize: CGFloat = selection.ring == .outer ? 35 : 31
-        let iconPointSize: CGFloat = selection.ring == .outer ? 18 : 16
-
-        return LayoutWheelIcon(
-            slot: slot,
-            tint: labelColor(slot: slot, isSelected: isSelected),
-            fontSize: iconPointSize
-        )
-        .frame(width: iconSize, height: iconSize)
-        .position(x: center + cos(angle) * radius, y: center + sin(angle) * radius)
-    }
-
-    // MARK: - State styling
-
-    /// Selected fills, unavailable and Empty stay unfilled. Stroke weight and
-    /// dash pattern carry the same distinction without relying on colour.
-    private func fill(slot: LayoutWheelSlot, isSelected: Bool) -> some ShapeStyle {
-        guard isSelected, slot.isAvailable else {
-            return AnyShapeStyle(Color.primary.opacity(isHighContrast ? 0.10 : 0.06))
-        }
-        return AnyShapeStyle(Color.accentColor.opacity(isHighContrast ? 1 : 0.85))
-    }
-
-    private func stroke(
-        slot: LayoutWheelSlot,
-        isSelected: Bool,
-        isFocused: Bool
-    ) -> Color {
-        if isSelected || isFocused { return .accentColor }
-        if slot.isEmpty || !slot.isAvailable {
-            return .secondary.opacity(isHighContrast ? 0.7 : 0.45)
-        }
-        return .primary.opacity(isHighContrast ? 0.45 : 0.18)
-    }
-
-    private func strokeStyle(
-        slot: LayoutWheelSlot,
-        isSelected: Bool,
-        isFocused: Bool
-    ) -> StrokeStyle {
-        guard isSelected || isFocused else {
-            return StrokeStyle(lineWidth: 1)
-        }
-        if slot.isEmpty {
-            return StrokeStyle(lineWidth: 3, dash: [1.5, 4])
-        }
-        if !slot.isAvailable {
-            return StrokeStyle(lineWidth: 3, dash: [5, 4])
-        }
-        return StrokeStyle(lineWidth: 3)
-    }
-
-    private func labelColor(slot: LayoutWheelSlot, isSelected: Bool) -> Color {
-        if isSelected, slot.isAvailable {
-            return .white
-        }
-        if slot.isEmpty || !slot.isAvailable {
-            return .secondary
-        }
-        return .primary
-    }
-
-    // MARK: - Hub
-
-    private var hub: some View {
-        ZStack {
-            if reduceTransparency || isHighContrast || !overlayAppearance.useLiquidGlass {
-                Circle().fill(Color(nsColor: .controlBackgroundColor))
-            } else {
-                Circle().fill(.primary.opacity(selection == nil ? 0.08 : 0.04))
-            }
-            Circle().stroke(
-                selection == nil ? Color.accentColor : .primary.opacity(0.2),
-                lineWidth: selection == nil ? 3 : 1
-            )
-            Image(systemName: "xmark")
-                .font(.system(size: 15, weight: .semibold))
-            .foregroundStyle(selection == nil ? Color.accentColor : .secondary)
-        }
-        .frame(
-            width: effectiveMetrics.geometry.hubRadius * 2,
-            height: effectiveMetrics.geometry.hubRadius * 2
-        )
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Cancel")
-        .accessibilityAddTraits(selection == nil ? [.isSelected] : [])
+            outerRadius: effectiveMetrics.outerRadius(for: selection.ring, levelCount: configuration.effectiveLevelCount),
+            centerAngle: selection.sector.drawnCenterAngle, visualGap: 0, cornerRadius: 0)
+        return shape.fill(.clear)
+            .overlay(shape.stroke(focusedSelection == selection ? Color.accentColor : .clear, lineWidth: 3))
+            .contentShape(shape)
+            .modifier(SectorControl(selection: selection, isEditable: onSelect != nil,
+                focus: $focusedSelection, action: onSelect))
+            .accessibilityLabel(slot.accessibilityLabel(for: selection, levelCount: configuration.effectiveLevelCount))
+            .accessibilityAddTraits(self.selection == selection ? [.isSelected] : [])
     }
 }
 
@@ -578,46 +456,40 @@ private struct SectorControl: ViewModifier {
 
 /// Uses the native symbol for ordinary actions, and a compact custom diagram
 /// where the symbol alone does not communicate the selected partition clearly.
-private struct LayoutWheelIcon: View {
+struct LayoutWheelIcon: View {
     let slot: LayoutWheelSlot
     let tint: Color
     let fontSize: CGFloat
     var compact = false
+    var weight: LayoutGlyphWeight = .semibold
 
-    private var descriptor: LayoutWheelGlyphDescriptor? {
-        switch slot.symbolName {
-        case "rectangle.leadingthird.inset.filled":
-            return .partition(columns: 3, selected: [0])
-        case "rectangle.center.inset.filled":
-            return .partition(columns: 3, selected: [1])
-        case "rectangle.trailingthird.inset.filled":
-            return .partition(columns: 3, selected: [2])
-        case "rectangle.lefthalf.inset.filled":
-            return .partition(columns: 3, selected: [0, 1])
-        case "rectangle.righthalf.inset.filled":
-            return .partition(columns: 3, selected: [1, 2])
-        case "square.grid.3x2.fill":
-            let name = slot.label.lowercased()
-            var selected = name.contains("bottom") ? 3 : 0
-            if name.contains("center") { selected += 1 }
-            if name.contains("right") { selected += 2 }
-            return .grid(columns: 3, rows: 2, selected: [selected])
-        default:
-            return nil
-        }
+    var partitionGlyph: WindowActionPartitionGlyph? {
+        slot.windowAction.flatMap { WindowActionPartitionGlyph.actions[$0] }
     }
 
     @ViewBuilder
     var body: some View {
-        if let descriptor {
-            LayoutWheelGlyph(descriptor: descriptor, tint: tint, compact: compact)
+        if let glyph = slot.glyph {
+            LayoutGlyphView(glyph, size: CGFloat(LayoutGlyph.canvasSize(besideSymbolSize: Double(fontSize))),
+                            weight: .semibold)
+                .foregroundStyle(tint)
+        } else if let partitionGlyph {
+            let image = partitionGlyph.templateImage(pointSize: fontSize, weight: weight)
+            // Paint through the template's alpha mask. Direct NSImage tinting
+            // converts semantic and translucent ink differently in Dark mode.
+            Rectangle().fill(.foreground)
+                .foregroundStyle(tint)
+                .frame(width: image.size.width, height: image.size.height)
+                .mask(Image(nsImage: image).renderingMode(.template).foregroundStyle(.white))
+        } else if slot.symbolName == "rectangle.split.3x2" {
+            LayoutWheelGlyph(descriptor: .grid(columns: 3, rows: 2, selected: []), tint: tint, compact: compact)
                 .scaleEffect(compact ? 1 : 0.86)
         } else if slot.symbolName == "inset.filled.center.rectangle",
                   NSImage(systemSymbolName: slot.symbolName, accessibilityDescription: nil) == nil {
             LayoutWheelGlyph(descriptor: .inset, tint: tint)
         } else {
             Image(systemName: slot.symbolName)
-                .font(.system(size: fontSize, weight: .semibold))
+                .font(.system(size: fontSize, weight: weight == .regular ? .regular : .semibold))
                 .symbolRenderingMode(.monochrome)
                 .foregroundStyle(tint)
         }
@@ -631,11 +503,14 @@ public struct LayoutWheelActionGlyph: View {
     private let action: WindowAction
     private let tint: Color
     private let fontSize: CGFloat
+    private let weight: LayoutGlyphWeight
 
-    public init(action: WindowAction, tint: Color = .primary, fontSize: CGFloat = 12) {
+    public init(action: WindowAction, tint: Color = .primary, fontSize: CGFloat = 12,
+                weight: LayoutGlyphWeight = .semibold) {
         self.action = action
         self.tint = tint
         self.fontSize = fontSize
+        self.weight = weight
     }
 
     public var body: some View {
@@ -643,13 +518,13 @@ public struct LayoutWheelActionGlyph: View {
             slot: LayoutWheelSlot(command: .windowAction(action)),
             tint: tint,
             fontSize: fontSize,
-            compact: true
+            compact: true,
+            weight: weight
         )
     }
 }
 
 private enum LayoutWheelGlyphDescriptor: Equatable {
-    case partition(columns: Int, selected: Set<Int>)
     case grid(columns: Int, rows: Int, selected: Set<Int>)
     case inset
 }
@@ -670,33 +545,6 @@ private struct LayoutWheelGlyph: View {
             )
 
             switch descriptor {
-            case let .partition(columns, selected):
-                let content = LayoutWheelGlyphLayout.contentRect(in: outer)
-                let cells = LayoutWheelGlyphLayout.gridRects(
-                    columns: columns,
-                    rows: 1,
-                    in: content,
-                    gapScale: scale
-                )
-                for (index, cell) in cells.enumerated() {
-                    if selected.contains(index) { continue }
-                    context.stroke(
-                        Path(roundedRect: cell, cornerRadius: 1.8 * scale),
-                        with: .color(tint.opacity(0.95)),
-                        lineWidth: scale
-                    )
-                }
-                if let first = selected.min(),
-                   let last = selected.max(),
-                   selected == Set(first ... last),
-                   cells.indices.contains(first),
-                   cells.indices.contains(last) {
-                    let selectedRect = cells[first].union(cells[last])
-                    context.fill(
-                        Path(roundedRect: selectedRect, cornerRadius: 2.5 * scale),
-                        with: .color(tint)
-                    )
-                }
             case let .grid(columns, rows, selected):
                 let content = LayoutWheelGlyphLayout.contentRect(in: outer)
                 let cells = LayoutWheelGlyphLayout.gridRects(
@@ -780,10 +628,11 @@ struct LayoutWheelSectorShape: Shape {
     var centerAngle: Angle
     var visualGap = Self.defaultVisualGap
     var cornerRadius = Self.defaultCornerRadius
+    var width = Self.sectorWidth
 
     func path(in rect: CGRect) -> Path {
         let center = CGPoint(x: rect.midX, y: rect.midY)
-        let half = Self.sectorWidth.radians / 2
+        let half = width.radians / 2
         let centerRadians = centerAngle.radians
         let outerStart = centerRadians - half + visualGap / (2 * max(outerRadius, 1))
         let outerEnd = centerRadians + half - visualGap / (2 * max(outerRadius, 1))

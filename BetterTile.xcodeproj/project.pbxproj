@@ -36,6 +36,11 @@
 		100000000000000000000022 /* ApplicationRuleSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000022 /* ApplicationRuleSettings.swift */; };
 		B3A100000000000000000001 /* SettingsPickerPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A100000000000000000002 /* SettingsPickerPanel.swift */; };
 		A781BC3E2AA94961B461D101 /* PaneApplicationPicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = A781BC3E2AA94961B461D102 /* PaneApplicationPicker.swift */; };
+		BB7100000000000000000001 /* LayoutWheelEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB7200000000000000000001 /* LayoutWheelEditor.swift */; };
+		BB7100000000000000000002 /* LayoutWheelSettingsPreview.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB7200000000000000000002 /* LayoutWheelSettingsPreview.swift */; };
+		C02410240000000000000000 /* LayoutWheelAppearanceControls.swift in Sources */ = {isa = PBXBuildFile; fileRef = C02410240000000000000010 /* LayoutWheelAppearanceControls.swift */; };
+		C02410240000000000000001 /* LayoutWheelFineTuningSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = C02410240000000000000011 /* LayoutWheelFineTuningSheet.swift */; };
+		C02410240000000000000002 /* LayoutWheelFeelSlider.swift in Sources */ = {isa = PBXBuildFile; fileRef = C02410240000000000000012 /* LayoutWheelFeelSlider.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -70,6 +75,11 @@
 		200000000000000000000022 /* ApplicationRuleSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ApplicationRuleSettings.swift; sourceTree = "<group>"; };
 		B3A100000000000000000002 /* SettingsPickerPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsPickerPanel.swift; sourceTree = "<group>"; };
 		A781BC3E2AA94961B461D102 /* PaneApplicationPicker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PaneApplicationPicker.swift; sourceTree = "<group>"; };
+		BB7200000000000000000001 /* LayoutWheelEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LayoutWheelEditor.swift; sourceTree = "<group>"; };
+		BB7200000000000000000002 /* LayoutWheelSettingsPreview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LayoutWheelSettingsPreview.swift; sourceTree = "<group>"; };
+		C02410240000000000000010 /* LayoutWheelAppearanceControls.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LayoutWheelAppearanceControls.swift; sourceTree = "<group>"; };
+		C02410240000000000000011 /* LayoutWheelFineTuningSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LayoutWheelFineTuningSheet.swift; sourceTree = "<group>"; };
+		C02410240000000000000012 /* LayoutWheelFeelSlider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LayoutWheelFeelSlider.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -125,6 +135,11 @@
 				B0A1C2D3E4F5061728394A02 /* RecentApplications.swift */,
 				200000000000000000000020 /* ApplicationCatalog.swift */,
 				20000000000000000000000C /* LayoutWheelSettings.swift */,
+				C02410240000000000000012 /* LayoutWheelFeelSlider.swift */,
+				C02410240000000000000011 /* LayoutWheelFineTuningSheet.swift */,
+				C02410240000000000000010 /* LayoutWheelAppearanceControls.swift */,
+				BB7200000000000000000002 /* LayoutWheelSettingsPreview.swift */,
+				BB7200000000000000000001 /* LayoutWheelEditor.swift */,
 				20000000000000000000000A /* SetupAssistantView.swift */,
 				200000000000000000000007 /* Info.plist */,
 			);
@@ -244,6 +259,11 @@
 				10000000000000000000000A /* LayoutWheelSettings.swift in Sources */,
 				100000000000000000000007 /* SetupAssistantView.swift in Sources */,
 				A781BC3E2AA94961B461D101 /* PaneApplicationPicker.swift in Sources */,
+				BB7100000000000000000001 /* LayoutWheelEditor.swift in Sources */,
+				BB7100000000000000000002 /* LayoutWheelSettingsPreview.swift in Sources */,
+				C02410240000000000000000 /* LayoutWheelAppearanceControls.swift in Sources */,
+				C02410240000000000000001 /* LayoutWheelFineTuningSheet.swift in Sources */,
+				C02410240000000000000002 /* LayoutWheelFeelSlider.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

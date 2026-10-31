@@ -45,9 +45,7 @@ import Testing
     #expect(SettingsDestination.windowLayout.matchesSearch("Default mode"))
     #expect(SettingsDestination.windowLayout.matchesSearch("mode"))
     #expect(SettingsDestination.menuBar.matchesSearch("reorder"))
-    #expect(SettingsDestination.layoutWheel.matchesSearch("wheel"))
-    #expect(SettingsDestination.layoutWheel.icon == .wheel)
-    #expect(SettingsDestination.windowManagementDestinations.contains(.layoutWheel))
+    #expect(SettingsDestination.layoutWheel.matchesSearch("middle click"))
     #expect(SettingsDestination.applicationRules.matchesSearch("exclude"))
     #expect(SettingsDestination.allCases.allSatisfy { $0.matchesSearch(" \n") })
     #expect(SettingsDestination.allCases.allSatisfy { !$0.matchesSearch("unmatched-setting-query") })
@@ -62,6 +60,9 @@ import Testing
     }
     for term in ["Activation area", "width", "size", "reach", "extension", "BetterTile Drag Snapping"] {
         #expect(SettingsDestination.snapZones.matchesSearch(term))
+    }
+    for term in ["Repair Layout", "Next Tab", "Move Tab"] {
+        #expect(SettingsDestination.layoutWheel.matchesSearch(term))
     }
     #expect(SettingsDestination.applicationRules.matchesSearch("Adaptive"))
 }
@@ -83,7 +84,13 @@ import Testing
         "Drag snapping", "Zones", "Activation area", "Window top",
         "Double-click the top of a window to maximize or restore", "Edge", "Reach", "Custom",
     ]),
-    (.layoutWheel, ["Layout Wheel", "Rings", "Sectors", "Trigger", "Middle Click", "Wheel size"]),
+    (.layoutWheel, [
+        "Layout Wheel", "Open the wheel", "Keyboard modifiers", "Modifier keys", "Hold delay", "Mouse trigger",
+        "Middle click", "Option + Middle click", "Content", "Custom", "Grouped", "Levels", "One Level", "Two Levels",
+        "Edit wheel", "Visible fans", "All fans", "One fan", "Swap Inner and Outer Rings", "Reset Layout Wheel",
+        "Group contents", "Wheel appearance", "Style", "Appearance", "Size", "Fine-Tuning", "Look", "Motion", "Feel",
+        "Sub-menus", "Reset appearance",
+    ]),
     (.applicationRules, ["Enabled", "Participation", "Matching live windows"]),
 ])
 func everyVisibleRowLabelFindsItsPage(destination: SettingsDestination, labels: [String]) {
@@ -101,6 +108,7 @@ func everyVisibleRowLabelFindsItsPage(destination: SettingsDestination, labels: 
         #expect(!SettingsDestination.general.matchesSearch(term))
         #expect(!SettingsDestination.windowLayout.matchesSearch(term))
     }
+    #expect(SettingsDestination.layoutWheel.matchesSearch("shortcut"))
     #expect(SettingsDestination(rawValue: "Window Layout") == .windowLayout)
     #expect(SettingsDestination(rawValue: "Shortcuts") == .shortcuts)
 }

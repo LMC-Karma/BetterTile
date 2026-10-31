@@ -56,6 +56,8 @@ private final class FakeMiddleClickMonitor: LayoutWheelMiddleClickMonitoring {
     var eventHandler: ((LayoutWheelMiddleClickEvent) -> Void)?
     var failureHandler: ((String?) -> Void)?
     var isRunning = false
+    var trigger = LayoutWheelTriggers.Mouse.middleClick
+    var acceptsNewGesture = true
     var canStart = true
     var stopCount = 0
 
@@ -119,7 +121,7 @@ private final class MiddleClickPresenter: LayoutWheelPresenting {
         removeMonitor: { _ in },
         middleClickMonitor: monitor
     )
-    controller.captureHandler = { middleTarget }
+    controller.captureHandler = { _ in middleTarget }
     controller.previewHandler = { _, _ in .ready(placements: []) }
     var commits: [(LayoutWheelCommand, LayoutWheelTarget)] = []
     controller.commitHandler = { commits.append(($0, $1)) }
@@ -150,7 +152,7 @@ private final class MiddleClickPresenter: LayoutWheelPresenting {
         removeMonitor: { _ in },
         middleClickMonitor: monitor
     )
-    controller.captureHandler = { middleTarget }
+    controller.captureHandler = { _ in middleTarget }
     controller.previewHandler = { _, _ in .ready(placements: []) }
     var commits = 0
     controller.commitHandler = { _, _ in commits += 1 }
@@ -197,6 +199,7 @@ private final class MiddleClickWorkerLog: @unchecked Sendable {
 }
 
 private final class FakeMiddleClickWorker: LayoutWheelMiddleClickTapWorking {
+    var acceptsNewGesture = true
     let log: MiddleClickWorkerLog
     init(log: MiddleClickWorkerLog) { self.log = log }
     func start() -> Bool {
@@ -213,7 +216,7 @@ private final class FakeMiddleClickWorker: LayoutWheelMiddleClickTapWorking {
         disabled: true,
         cooldown: 30,
         now: { 0 },
-        makeWorker: { _ in FakeMiddleClickWorker(log: log) }
+        makeWorker: { _, _ in FakeMiddleClickWorker(log: log) }
     )
     var failure: String?
     monitor.failureHandler = { failure = $0 }
@@ -230,7 +233,7 @@ private final class FakeMiddleClickWorker: LayoutWheelMiddleClickTapWorking {
         disabled: false,
         cooldown: 30,
         now: { 0 },
-        makeWorker: { handler in
+        makeWorker: { _, handler in
             log.handlers.append(handler)
             return FakeMiddleClickWorker(log: log)
         }
@@ -246,4 +249,127 @@ private final class FakeMiddleClickWorker: LayoutWheelMiddleClickTapWorking {
 
     #expect(!monitor.isRunning)
     #expect(log.stops == 1)
+}
+
+@MainActor private final class GroupedMiddleClickClock { var time: TimeInterval = 100 }
+
+@Test(.macOSTestApplication, arguments: [LayoutWheelSector.top, .bottomRight]) @MainActor
+func groupedMiddleClickStationaryReleaseDoesNotAcquireRevealedOption(_ sector: LayoutWheelSector) {
+    var configuration = BetterTileConfiguration()
+    configuration.layoutWheel.style = .grouped
+    configuration.layoutWheel.middleClickTriggerEnabled = true
+    let monitor = FakeMiddleClickMonitor()
+    let presenter = MiddleClickPresenter()
+    let clock = GroupedMiddleClickClock()
+    let controller = LayoutWheelController(configuration: configuration, presenter: presenter,
+        now: { clock.time }, addGlobalMonitor: { _, _ in NSObject() },
+        addLocalMonitor: { _, _ in NSObject() }, removeMonitor: { _ in }, middleClickMonitor: monitor)
+    controller.captureHandler = { _ in middleTarget }
+    controller.previewHandler = { _, _ in .ready(placements: []) }
+    var commits: [LayoutWheelCommand] = []
+    controller.commitHandler = { command, _ in commits.append(command) }
+    controller.start()
+    defer { controller.stop() }
+    monitor.emit(.down, at: middleAnchor)
+    let angle = Double(sector.rawValue) * .pi / 4
+    let resting = BTPoint(x: middleAnchor.x + sin(angle) * 197, y: middleAnchor.y - cos(angle) * 197)
+    monitor.emit(.dragged, at: resting)
+    clock.time = 100.2
+    controller.handleFanDeadline()
+    #expect(presenter.presentation?.fan.openSector == sector)
+    #expect(presenter.presentation?.fan.optionIndex == nil)
+    monitor.emit(.up, at: resting)
+    monitor.emit(.up, at: resting)
+    #expect(commits == LayoutWheelGroup.at(sector).quickAction.map { [$0] } ?? [])
+    #expect(!controller.isOpen)
+}
+
+@Test(.macOSTestApplication) @MainActor func changingMousePredicateRetiresQueuedEventsAndPreservesTheKeyboardGate() async {
+    let log = MiddleClickWorkerLog()
+    log.canStart = true
+    var selected: [LayoutWheelTriggers.Mouse] = []
+    var workers: [FakeMiddleClickWorker] = []
+    let monitor = LayoutWheelMiddleClickMonitor(disabled: false, cooldown: 0, now: { 0 },
+        makeWorker: { trigger, handler in
+            selected.append(trigger)
+            log.handlers.append(handler)
+            let worker = FakeMiddleClickWorker(log: log)
+            workers.append(worker)
+            return worker
+        })
+    monitor.trigger = .optionMiddleClick
+    monitor.acceptsNewGesture = false
+    var received = 0
+    monitor.eventHandler = { _ in received += 1 }
+    #expect(monitor.start())
+    #expect(selected == [.optionMiddleClick])
+    #expect(!workers[0].acceptsNewGesture)
+    monitor.acceptsNewGesture = true
+    #expect(workers[0].acceptsNewGesture)
+    monitor.trigger = .middleClick
+    #expect(!monitor.isRunning)
+    #expect(monitor.start())
+    #expect(selected == [.optionMiddleClick, .middleClick])
+    let event = LayoutWheelMiddleClickEvent(kind: .down, position: middleAnchor, button: 2,
+                                          modifiers: [], timestamp: 1)
+    log.handlers[0](.event(event))
+    log.handlers[1](.event(event))
+    await withCheckedContinuation { continuation in DispatchQueue.main.async { continuation.resume() } }
+    #expect(received == 1)
+    log.handlers[1](.failed)
+    log.handlers[1](.event(event))
+    await withCheckedContinuation { continuation in DispatchQueue.main.async { continuation.resume() } }
+    #expect(!monitor.isRunning)
+    #expect(received == 1)
+    monitor.stop()
+}
+
+private final class MiddleClickRecoveryLog: @unchecked Sendable {
+    var failures = 0
+    var recoveries = 0
+}
+
+@Test(.macOSTestApplication, arguments: [CGEventType.tapDisabledByTimeout, .tapDisabledByUserInput], [false, true])
+func disabledMiddleTapRecoversOnlyOutsideAnOwnedGesture(type: CGEventType, ownsGesture: Bool) throws {
+    let log = MiddleClickRecoveryLog()
+    let worker = LayoutWheelMiddleClickTapWorker(reenableTap: { _ in
+        log.recoveries += 1
+        return true
+    }, handler: { if case .failed = $0 { log.failures += 1 } })
+    let event = try #require(CGEvent(mouseEventSource: nil, mouseType: .otherMouseDown,
+                                             mouseCursorPosition: .zero, mouseButton: .center))
+    event.setIntegerValueField(.mouseEventButtonNumber, value: 2)
+    event.flags = []
+    if ownsGesture { #expect(worker.handle(type: .otherMouseDown, event: event)) }
+    #expect(!worker.handle(type: type, event: event))
+    #expect(log.recoveries == (ownsGesture ? 0 : 1))
+    #expect(log.failures == (ownsGesture ? 1 : 0))
+}
+
+@Test(.macOSTestApplication) func failedMiddleTapReenableReportsFailure() throws {
+    let log = MiddleClickRecoveryLog()
+    let worker = LayoutWheelMiddleClickTapWorker(reenableTap: { _ in
+        log.recoveries += 1
+        return false
+    }, handler: { if case .failed = $0 { log.failures += 1 } })
+    #expect(!worker.handle(type: .tapDisabledByTimeout, event: try #require(CGEvent(source: nil))))
+    #expect(log.recoveries == 1)
+    #expect(log.failures == 1)
+}
+
+@Test(.macOSTestApplication) func middleTapRecoversAfterTheOwnedButtonWasReleased() throws {
+    let log = MiddleClickRecoveryLog()
+    let worker = LayoutWheelMiddleClickTapWorker(reenableTap: { _ in
+        log.recoveries += 1
+        return true
+    }, handler: { if case .failed = $0 { log.failures += 1 } })
+    let event = try #require(CGEvent(mouseEventSource: nil, mouseType: .otherMouseDown,
+                                             mouseCursorPosition: .zero, mouseButton: .center))
+    event.setIntegerValueField(.mouseEventButtonNumber, value: 2)
+    event.flags = []
+    #expect(worker.handle(type: .otherMouseDown, event: event))
+    #expect(worker.handle(type: .otherMouseUp, event: event))
+    #expect(!worker.handle(type: .tapDisabledByTimeout, event: event))
+    #expect(log.recoveries == 1)
+    #expect(log.failures == 0)
 }

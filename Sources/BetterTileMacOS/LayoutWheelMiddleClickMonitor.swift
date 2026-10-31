@@ -30,8 +30,15 @@ struct LayoutWheelMiddleClickEvent: Equatable, Sendable {
         self.timestamp = timestamp
     }
 
-    static func reserves(button: Int64, modifiers: ShortcutModifiers) -> Bool {
-        button == 2 && modifiers.isEmpty
+    static func reserves(button: Int64, modifiers: ShortcutModifiers,
+                         trigger: LayoutWheelTriggers.Mouse = .middleClick,
+                         hasFunctionModifier: Bool = false) -> Bool {
+        guard button == 2, !hasFunctionModifier else { return false }
+        switch trigger {
+        case .off: return false
+        case .middleClick: return modifiers.isEmpty
+        case .optionMiddleClick: return modifiers == .option
+        }
     }
 }
 
@@ -40,18 +47,25 @@ struct LayoutWheelMiddleClickEvent: Equatable, Sendable {
 /// the drag or release to the source application.
 struct LayoutWheelMiddleClickReservation {
     private(set) var ownsGesture = false
+    var trigger: LayoutWheelTriggers.Mouse = .middleClick
 
     mutating func shouldReserve(
         kind: LayoutWheelMiddleClickEventKind,
         button: Int64,
-        modifiers: ShortcutModifiers
+        modifiers: ShortcutModifiers,
+        acceptsNewGesture: Bool = true,
+        hasFunctionModifier: Bool = false
     ) -> Bool {
         guard button == 2 else { return false }
         switch kind {
         case .down:
+            if ownsGesture { return true }
+            guard acceptsNewGesture else { return false }
             ownsGesture = LayoutWheelMiddleClickEvent.reserves(
                 button: button,
-                modifiers: modifiers
+                modifiers: modifiers,
+                trigger: trigger,
+                hasFunctionModifier: hasFunctionModifier
             )
             return ownsGesture
         case .dragged:
@@ -74,11 +88,14 @@ protocol LayoutWheelMiddleClickMonitoring: AnyObject {
     var eventHandler: ((LayoutWheelMiddleClickEvent) -> Void)? { get set }
     var failureHandler: ((String?) -> Void)? { get set }
     var isRunning: Bool { get }
+    var trigger: LayoutWheelTriggers.Mouse { get set }
+    var acceptsNewGesture: Bool { get set }
     @discardableResult func start() -> Bool
     func stop()
 }
 
 protocol LayoutWheelMiddleClickTapWorking: AnyObject {
+    var acceptsNewGesture: Bool { get set }
     func start() -> Bool
     func stop()
 }
@@ -90,6 +107,12 @@ final class LayoutWheelMiddleClickMonitor: LayoutWheelMiddleClickMonitoring {
     var eventHandler: ((LayoutWheelMiddleClickEvent) -> Void)?
     var failureHandler: ((String?) -> Void)?
     private(set) var isRunning = false
+    var trigger = LayoutWheelTriggers.Mouse.middleClick {
+        didSet { if trigger != oldValue { stop() } }
+    }
+    var acceptsNewGesture = true {
+        didSet { worker?.acceptsNewGesture = acceptsNewGesture }
+    }
 
     private static let log = Logger(
         subsystem: "com.lmckarma.BetterTile",
@@ -98,6 +121,7 @@ final class LayoutWheelMiddleClickMonitor: LayoutWheelMiddleClickMonitoring {
     private let disabled: Bool
     private let now: () -> TimeInterval
     private let makeWorker: (
+        LayoutWheelTriggers.Mouse,
         @escaping @Sendable (LayoutWheelMiddleClickTapMessage) -> Void
     ) -> LayoutWheelMiddleClickTapWorking
     private var worker: LayoutWheelMiddleClickTapWorking?
@@ -113,8 +137,9 @@ final class LayoutWheelMiddleClickMonitor: LayoutWheelMiddleClickMonitoring {
         cooldown: TimeInterval,
         now: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
         makeWorker: @escaping (
+            LayoutWheelTriggers.Mouse,
             @escaping @Sendable (LayoutWheelMiddleClickTapMessage) -> Void
-        ) -> LayoutWheelMiddleClickTapWorking = { LayoutWheelMiddleClickTapWorker(handler: $0) }
+        ) -> LayoutWheelMiddleClickTapWorking = { LayoutWheelMiddleClickTapWorker(trigger: $0, handler: $1) }
     ) {
         self.disabled = disabled
         self.now = now
@@ -132,11 +157,12 @@ final class LayoutWheelMiddleClickMonitor: LayoutWheelMiddleClickMonitoring {
         let time = now()
         guard retryGate.allowsStart(at: time) else { return false }
         let generation = generationGate.begin()
-        let worker = makeWorker { [weak self] message in
+        let worker = makeWorker(trigger) { [weak self] message in
             DispatchQueue.main.async { [weak self] in
                 self?.receive(message, generation: generation)
             }
         }
+        worker.acceptsNewGesture = acceptsNewGesture
         guard worker.start() else {
             generationGate.end()
             retryGate.recordFailure(at: time)
@@ -193,10 +219,24 @@ final class LayoutWheelMiddleClickTapWorker: LayoutWheelMiddleClickTapWorking, @
     private var runLoop: CFRunLoop?
     private var tap: CFMachPort?
     private var isStopping = false
-    private var reservation = LayoutWheelMiddleClickReservation()
+    private let reenableTap: (CFMachPort?) -> Bool
+    private var reservation: LayoutWheelMiddleClickReservation
+    private var acceptsNewGestureStorage = true
+    var acceptsNewGesture: Bool {
+        get { lock.withLock { acceptsNewGestureStorage } }
+        set { lock.withLock { acceptsNewGestureStorage = newValue } }
+    }
 
-    init(handler: @escaping @Sendable (LayoutWheelMiddleClickTapMessage) -> Void) {
+    init(trigger: LayoutWheelTriggers.Mouse = .middleClick,
+         reenableTap: @escaping (CFMachPort?) -> Bool = { tap in
+             guard let tap else { return false }
+             CGEvent.tapEnable(tap: tap, enable: true)
+             return CGEvent.tapIsEnabled(tap: tap)
+         },
+         handler: @escaping @Sendable (LayoutWheelMiddleClickTapMessage) -> Void) {
         self.handler = handler
+        self.reenableTap = reenableTap
+        reservation = LayoutWheelMiddleClickReservation(trigger: trigger)
     }
 
     func start() -> Bool {
@@ -215,12 +255,6 @@ final class LayoutWheelMiddleClickTapWorker: LayoutWheelMiddleClickTapWorking, @
             return self.runLoop
         }
         if let runLoop { CFRunLoopStop(runLoop) }
-    }
-
-    private func recoverTap() -> Bool {
-        guard let tap = lock.withLock({ self.tap }) else { return false }
-        CGEvent.tapEnable(tap: tap, enable: true)
-        return CGEvent.tapIsEnabled(tap: tap)
     }
 
     private func fail() {
@@ -273,30 +307,39 @@ final class LayoutWheelMiddleClickTapWorker: LayoutWheelMiddleClickTapWorking, @
         let worker = Unmanaged<LayoutWheelMiddleClickTapWorker>
             .fromOpaque(userInfo)
             .takeUnretainedValue()
+        return worker.handle(type: type, event: event) ? nil : Unmanaged.passUnretained(event)
+    }
+
+    /// Called on the tap's run loop; tests inject tap recovery without a live tap.
+    func handle(type: CGEventType, event: CGEvent) -> Bool {
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
-            if !worker.recoverTap() { worker.fail() }
-            return Unmanaged.passUnretained(event)
+            // A lost release is unsafe only while the tap owns a gesture.
+            // Otherwise restore the existing tap without interrupting availability.
+            if reservation.ownsGesture || !reenableTap(lock.withLock { tap }) { fail() }
+            return false
         }
         guard let kind = LayoutWheelMiddleClickEventKind(type) else {
-            return Unmanaged.passUnretained(event)
+            return false
         }
         let button = event.getIntegerValueField(.mouseEventButtonNumber)
         let modifiers = ShortcutModifiers(event.flags)
-        guard worker.reservation.shouldReserve(
+        guard self.reservation.shouldReserve(
             kind: kind,
             button: button,
-            modifiers: modifiers
+            modifiers: modifiers,
+            acceptsNewGesture: self.acceptsNewGesture,
+            hasFunctionModifier: event.flags.contains(.maskSecondaryFn)
         ) else {
-            return Unmanaged.passUnretained(event)
+            return false
         }
-        worker.handler(.event(LayoutWheelMiddleClickEvent(
+        self.handler(.event(LayoutWheelMiddleClickEvent(
             kind: kind,
             position: GlobalGestureEvent.position(cgEventLocation: event.location),
             button: button,
             modifiers: modifiers,
             timestamp: GestureEventClock.nanoseconds(cgEventTimestamp: event.timestamp)
         )))
-        return nil
+        return true
     }
 }
 

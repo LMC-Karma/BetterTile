@@ -163,7 +163,7 @@ struct SetupAssistantView: View {
                     + "eligible windows. It observes global left-button ordering for snapping "
                     + "and linked resizing. Layout Wheel observes its configured modifiers and, "
                     + "only during a gesture, limited keys and pointer movement. Its optional "
-                    + "Middle Click trigger reserves unmodified middle-click system-wide while "
+                    + "Middle Click trigger reserves the chosen plain or Option–middle click system-wide while "
                     + "enabled. BetterTile does not request Screen Recording or Input Monitoring."
             )
             .font(.body)

@@ -583,14 +583,6 @@ func bentoDisplayTransferReportsRejectedMinimumCorrectionOnlyForCurrentOwners(su
     let growing = peers[0], neighbour = peers[1]
     try #require(growing.frame.maxX == neighbour.frame.minX)
     let initialWrites = system.frameWriteCounts
-    if superseded != "none" {
-        let displayID = superseded == "source" ? source.id : destination.id
-        system.focusedID = system.windows.first { $0.displayID == displayID }?.id
-        let replacementTarget = try #require(model.captureLayoutWheelTarget())
-        // Supersede the owner before delayed settlement dispatches a correction.
-        model.setActiveMode(.manual)
-        #expect(model.activeMode(for: replacementTarget.displayID) == .manual)
-    }
     let index = try #require(system.windows.firstIndex { $0.id == growing.id })
     // Settlement discovers a minimum that overlaps the neighbour by 100 points.
     system.windows[index].frame.size.width += 100
@@ -600,6 +592,13 @@ func bentoDisplayTransferReportsRejectedMinimumCorrectionOnlyForCurrentOwners(su
     let overlappingBaseline = system.windows.map(\.frame)
     let rejectedWrite = initialWrites[neighbour.id, default: 0] + 1
     system.failedFrameWriteNumbers[neighbour.id] = [rejectedWrite]
+    if superseded != "none" {
+        let displayID = superseded == "source" ? source.id : destination.id
+        system.focusedID = system.windows.first { $0.displayID == displayID }?.id
+        let replacementTarget = try #require(model.captureLayoutWheelTarget())
+        // Supersede the owner before delayed settlement dispatches a correction.
+        model.performLayoutWheel(.setMode(.manual), for: replacementTarget)
+    }
     var correctionAttempted = false
     system.onFrameWrite = { id, _ in
         guard id == neighbour.id, system.frameWriteCounts[id] == rejectedWrite else { return }

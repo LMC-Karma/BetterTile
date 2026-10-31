@@ -11,6 +11,8 @@ private final class FakePresenter: LayoutWheelPresenting {
     var closeCount = 0
     var shownPlacements: [[Placement]] = []
     var hideCount = 0
+    var acknowledgments: [LayoutWheelAcknowledgment] = []
+    var onEnd: (() -> Void)?
 
     var isOpen: Bool { openCount > closeCount }
     var selection: LayoutWheelSelection? { presentations.last?.selection }
@@ -27,6 +29,47 @@ private final class FakePresenter: LayoutWheelPresenting {
     func showPlacements(_ placements: [Placement]) { shownPlacements.append(placements) }
     func hidePlacements() { hideCount += 1 }
     func close() { closeCount += 1 }
+    func end(_ acknowledgment: LayoutWheelAcknowledgment) {
+        acknowledgments.append(acknowledgment)
+        close()
+        onEnd?()
+    }
+}
+
+@Test(.macOSTestApplication) @MainActor func wheelTerminationDetachesInputBeforeAcknowledgmentAndDispatchesOnce() {
+    for acknowledgment in LayoutWheelAcknowledgment.allCases {
+        let harness = Harness()
+        defer { harness.controller.stop() }
+        harness.activate()
+        harness.move(BTPoint(x: anchor.x, y: anchor.y - innerSelectionOffset))
+        let updates = harness.presenter.presentations.count
+        harness.presenter.onEnd = {
+            #expect(!harness.controller.isOpen)
+            #expect(harness.box.commits.isEmpty)
+            harness.controller.release()
+            harness.controller.cancel()
+            harness.move(BTPoint(x: anchor.x + innerSelectionOffset, y: anchor.y))
+            harness.controller.handleKey(.nextSector)
+        }
+        if acknowledgment == .commit { harness.release() }
+        else { harness.controller.cancel() }
+        #expect(harness.presenter.acknowledgments == [acknowledgment])
+        #expect(harness.presenter.presentations.count == updates)
+        #expect(harness.box.commits.count == (acknowledgment == .commit ? 1 : 0))
+        #expect(harness.box.endedCount == 1)
+        harness.controller.release()
+        #expect(harness.presenter.acknowledgments.count == 1)
+    }
+}
+
+@Test(.macOSTestApplication) @MainActor func wheelReleaseWithoutCommandAcknowledgesCancellation() {
+    let harness = Harness(configuration: .init(layoutWheel: .init(style: .grouped, levelCount: .two)))
+    defer { harness.controller.stop() }
+    harness.activate()
+    harness.move(BTPoint(x: anchor.x - 124, y: anchor.y))
+    harness.release()
+    #expect(harness.box.commits.isEmpty)
+    #expect(harness.presenter.acknowledgments == [.cancel])
 }
 
 private let target = LayoutWheelTarget(
@@ -55,23 +98,24 @@ private struct Harness {
         capture: LayoutWheelTarget? = target,
         pointer: BTPoint = anchor
     ) {
+        let box = Box()
+        box.pointer = pointer
         controller = LayoutWheelController(
             configuration: configuration,
             presenter: presenter,
-            pointerProvider: { pointer },
+            pointerProvider: { box.pointer },
             addGlobalMonitor: { _, _ in NSObject() },
             addLocalMonitor: { _, _ in NSObject() },
             removeMonitor: { _ in }
         )
         controller.previewHandler = { _, _ in .ready(placements: []) }
         controller.start()
-        let box = Box()
-        controller.captureHandler = {
+        controller.captureHandler = { _ in
             box.captureCount += 1
             return capture
         }
         controller.commitHandler = { command, target in
-            box.commits.append((command, target.windowID))
+            if let windowID = target.windowID { box.commits.append((command, windowID)) }
         }
         controller.unavailableHandler = { reason, target in
             box.unavailable.append((reason, target))
@@ -81,6 +125,7 @@ private struct Harness {
     }
 
     final class Box {
+        var pointer = anchor
         var commits: [(LayoutWheelCommand, WindowID)] = []
         var unavailable: [(String, LayoutWheelTarget)] = []
         var captureCount = 0
@@ -88,6 +133,11 @@ private struct Harness {
     }
 
     let box: Box
+
+    func move(_ position: BTPoint) {
+        box.pointer = position
+        controller.handlePointer(position)
+    }
 
     /// Holds the trigger past the activation deadline.
     func activate(generation: Int = 1) {
@@ -120,18 +170,18 @@ private struct Harness {
     harness.activate()
     let before = harness.presenter.presentations.count
     let point = BTPoint(x: anchor.x, y: anchor.y - innerSelectionOffset)
-    harness.controller.handlePointer(point)
+    harness.move(point)
     #expect(harness.presenter.presentations.count - before == 1)
     let previews = harness.presenter.shownPlacements.count
     let after = harness.presenter.presentations.count
-    for _ in 0..<100 { harness.controller.handlePointer(point) }
+    for _ in 0..<100 { harness.move(point) }
     #expect(harness.presenter.presentations.count == after)
     #expect(harness.presenter.shownPlacements.count == previews)
-    harness.controller.handlePointer(anchor)
+    harness.move(anchor)
     #expect(harness.presenter.selection == nil)
 }
 
-@Test @MainActor func wheelPresenterReusesItsHostingViewBetweenSessions() throws {
+@Test(.macOSTestApplication) @MainActor func wheelPresenterRemovesGlassBetweenSessions() throws {
     let harness = Harness()
     defer { harness.controller.stop() }
     harness.activate()
@@ -145,9 +195,16 @@ private struct Harness {
     let presenter = LayoutWheelPanelPresenter()
     presenter.open(presentation)
     let original = try #require(presenter.hosting)
+    let renderer = try #require(presenter.scene?.renderer)
+    presentation.selection = .init(ring: .inner, sector: .left)
+    presenter.update(presentation)
+    #expect(presenter.scene?.renderer === renderer)
+    #expect(renderer.input?.configuration == presentation.configuration)
     presenter.close()
+    #expect(!renderer.isClockRunning && renderer.hosting == nil)
     presenter.open(presentation)
     #expect(presenter.hosting === original)
+    #expect(presenter.hosting != nil)
     presenter.close()
 }
 
@@ -166,8 +223,38 @@ private struct Harness {
 
     let geometry = LayoutWheelMetrics.standard.scaled(by: 1.2).geometry(for: .two)
     let midpoint = (geometry.hubRadius + geometry.innerRingOuterRadius) / 2
-    harness.controller.handlePointer(BTPoint(x: anchor.x, y: anchor.y - midpoint))
+    harness.move(BTPoint(x: anchor.x, y: anchor.y - midpoint))
     #expect(harness.presenter.selection == LayoutWheelSelection(ring: .inner, sector: .top))
+}
+
+@Test(.macOSTestApplication) @MainActor func wheelPresenterReopenDuringExitRejectsTheOldHide() throws {
+    let harness = Harness()
+    defer { harness.controller.stop() }
+    harness.activate()
+    var presentation = try #require(harness.presenter.presentations.last)
+    presentation.selection = .init(ring: .inner, sector: .left)
+    presentation.placement = LayoutWheelPlacement.clamped(anchor: BTPoint(x: -5000, y: -5000), diameter: 300,
+        visibleFrame: BTRect(x: -6000, y: -6000, width: 2000, height: 2000))
+    let clock = WheelTestClock()
+    let renderer = LayoutWheelGlassRenderer(clock: clock)
+    let presenter = LayoutWheelPanelPresenter(renderer: renderer)
+    defer { presenter.close() }
+    presenter.open(presentation)
+    renderer.configure(.init(presentation), reduceMotion: false)
+    presenter.end(.cancel)
+    let stale = try #require(clock.callback)
+    clock.frame()
+    presenter.open(presentation)
+    renderer.configure(.init(presentation), reduceMotion: false)
+    stale(100)
+    #expect(presenter.isVisible)
+    #expect(renderer.exitPresentation == nil)
+    presenter.end(.commit)
+    presenter.end(.cancel) // A duplicate end must not replace its hide guard.
+    clock.settle()
+    #expect(!presenter.isVisible)
+    #expect(renderer.exitPresentation?.acknowledgment == .commit)
+    #expect(!clock.isRunning)
 }
 
 @Test(.macOSTestApplication) @MainActor func anOpenGestureOwnsShortcutKeysUntilItEnds() {
@@ -225,7 +312,7 @@ private struct Harness {
 @Test(.macOSTestApplication) @MainActor func aSecondWheelNeedsTheTriggerReleasedFirst() {
     let harness = Harness()
     harness.activate()
-    harness.controller.handlePointer(BTPoint(x: anchor.x, y: anchor.y - innerSelectionOffset))
+    harness.move(BTPoint(x: anchor.x, y: anchor.y - innerSelectionOffset))
     harness.release()
     #expect(harness.presenter.openCount == 1)
 
@@ -254,7 +341,7 @@ private struct Harness {
     let harness = Harness()
     harness.activate()
 
-    harness.controller.handlePointer(BTPoint(x: anchor.x + 4, y: anchor.y - 3))
+    harness.move(BTPoint(x: anchor.x + 4, y: anchor.y - 3))
     #expect(harness.presenter.selection == nil)
 
     harness.release()
@@ -281,7 +368,7 @@ private struct Harness {
         harness.activate()
         let placement = try #require(harness.presenter.presentations.last?.placement)
         #expect(harness.presenter.selection == nil)
-        harness.controller.handlePointer(BTPoint(x: point.x + 3, y: point.y + 4))
+        harness.move(BTPoint(x: point.x + 3, y: point.y + 4))
         #expect(harness.presenter.selection == nil)
         let visibleRadius = metrics.diameter(for: levels) / 2 * LayoutWheelMetrics.selectedScale
         #expect(placement.center.x - visibleRadius >= display.minX)
@@ -292,14 +379,14 @@ private struct Harness {
             let radius = (metrics.innerRadius(for: ring) + metrics.outerRadius(for: ring, levelCount: levels)) / 2
             for sector in LayoutWheelSector.allCases {
                 let angle = Double(sector.rawValue) * .pi / 4
-                harness.controller.handlePointer(BTPoint(
+                harness.move(BTPoint(
                     x: placement.center.x + sin(angle) * radius,
                     y: placement.center.y - cos(angle) * radius
                 ))
                 #expect(harness.presenter.selection == LayoutWheelSelection(ring: ring, sector: sector))
             }
         }
-        harness.controller.handlePointer(placement.center)
+        harness.move(placement.center)
         #expect(harness.presenter.selection == nil)
         harness.release()
         #expect(harness.box.commits.isEmpty)
@@ -311,7 +398,7 @@ private struct Harness {
     let harness = Harness(pointer: point)
     defer { harness.controller.stop() }
     harness.activate()
-    harness.controller.handlePointer(BTPoint(x: point.x + 3, y: point.y + 4))
+    harness.move(BTPoint(x: point.x + 3, y: point.y + 4))
     harness.release()
     #expect(harness.box.commits.isEmpty)
 }
@@ -321,7 +408,7 @@ private struct Harness {
     harness.activate()
 
     // Straight up from the anchor, inside the inner ring.
-    harness.controller.handlePointer(BTPoint(x: anchor.x, y: anchor.y - innerSelectionOffset))
+    harness.move(BTPoint(x: anchor.x, y: anchor.y - innerSelectionOffset))
     #expect(harness.presenter.selection == LayoutWheelSelection(ring: .inner, sector: .top))
 
     harness.release()
@@ -338,7 +425,7 @@ private struct Harness {
     let geometry = LayoutWheelMetrics.standard.geometry
     let deadBand = (geometry.innerRingOuterRadius + geometry.outerRingInnerRadius) / 2
 
-    harness.controller.handlePointer(BTPoint(x: anchor.x, y: anchor.y - deadBand))
+    harness.move(BTPoint(x: anchor.x, y: anchor.y - deadBand))
     #expect(harness.presenter.selection == nil)
 
     harness.release()
@@ -351,7 +438,7 @@ private struct Harness {
     let harness = Harness(configuration: configuration)
     harness.activate()
 
-    harness.controller.handlePointer(BTPoint(x: anchor.x, y: anchor.y - innerSelectionOffset))
+    harness.move(BTPoint(x: anchor.x, y: anchor.y - innerSelectionOffset))
     #expect(harness.presenter.selection == LayoutWheelSelection(ring: .inner, sector: .top))
 
     harness.release()
@@ -364,7 +451,7 @@ private struct Harness {
 @Test(.macOSTestApplication) @MainActor func duplicateReleaseAndDeactivationCommitExactlyOnce() {
     let harness = Harness()
     harness.activate()
-    harness.controller.handlePointer(BTPoint(x: anchor.x, y: anchor.y - innerSelectionOffset))
+    harness.move(BTPoint(x: anchor.x, y: anchor.y - innerSelectionOffset))
 
     harness.release()
     harness.release()
@@ -379,7 +466,7 @@ private struct Harness {
 @Test(.macOSTestApplication) @MainActor func focusedWindowChangeCancelsWithoutCommitting() {
     let harness = Harness()
     harness.activate()
-    harness.controller.handlePointer(BTPoint(x: anchor.x, y: anchor.y - innerSelectionOffset))
+    harness.move(BTPoint(x: anchor.x, y: anchor.y - innerSelectionOffset))
 
     harness.controller.handleFocusedWindowChanged()
 
@@ -392,7 +479,7 @@ private struct Harness {
 @Test(.macOSTestApplication) @MainActor func escapeCancelsWithoutCommitting() {
     let harness = Harness()
     harness.activate()
-    harness.controller.handlePointer(BTPoint(x: anchor.x, y: anchor.y - innerSelectionOffset))
+    harness.move(BTPoint(x: anchor.x, y: anchor.y - innerSelectionOffset))
 
     harness.controller.handleKey(.escape)
 
@@ -410,12 +497,12 @@ private struct Harness {
 @Test(.macOSTestApplication) @MainActor func losingTheCapturedWindowCancelsAndNeverRetargets() {
     let harness = Harness()
     harness.activate()
-    harness.controller.handlePointer(BTPoint(x: anchor.x, y: anchor.y - innerSelectionOffset))
+    harness.move(BTPoint(x: anchor.x, y: anchor.y - innerSelectionOffset))
 
     harness.controller.handleTargetLost(windowID: WindowID(rawValue: "other-window"))
     #expect(harness.controller.isOpen)
 
-    harness.controller.handleTargetLost(windowID: target.windowID)
+    harness.controller.handleTargetLost(windowID: WindowID(rawValue: "wheel-window"))
     #expect(!harness.controller.isOpen)
 
     harness.release()
@@ -425,7 +512,7 @@ private struct Harness {
 @Test(.macOSTestApplication) @MainActor func changingTheTriggerMidGestureCancels() {
     let harness = Harness()
     harness.activate()
-    harness.controller.handlePointer(BTPoint(x: anchor.x, y: anchor.y - innerSelectionOffset))
+    harness.move(BTPoint(x: anchor.x, y: anchor.y - innerSelectionOffset))
 
     var configuration = BetterTileConfiguration()
     configuration.layoutWheel.keyboardModifiers = [.control, .shift]
@@ -449,13 +536,18 @@ private struct Harness {
 }
 
 /// A combination that only contains the trigger opens the wheel. A larger one
-/// belongs to whatever shortcut the user actually pressed.
+/// belongs to whatever shortcut the user actually pressed, so releasing its
+/// extra key first does not open the wheel either; a fresh press does.
 @Test(.macOSTestApplication) @MainActor func extraModifiersDoNotOpenTheWheel() {
     let harness = Harness()
 
     harness.controller.handleModifiers([.control, .option, .shift, .command])
     #expect(!harness.controller.isPendingActivation)
 
+    harness.controller.handleModifiers(trigger)
+    #expect(!harness.controller.isPendingActivation)
+
+    harness.controller.handleModifiers([])
     harness.controller.handleModifiers(trigger)
     #expect(harness.controller.isPendingActivation)
 }
@@ -533,8 +625,8 @@ private struct Harness {
     let harness = Harness()
     harness.controller.previewHandler = { command, _ in
         command == .repairBento
-            ? .unavailable(reason: "Repair Bento needs Bento mode.")
-            : .ready(placements: [Placement(windowID: target.windowID, frame: BTRect(x: 0, y: 0, width: 10, height: 10))])
+            ? .unavailable(reason: "Repair Layout is available only on an Adaptive desktop.")
+            : .ready(placements: [Placement(windowID: WindowID(rawValue: "wheel-window"), frame: BTRect(x: 0, y: 0, width: 10, height: 10))])
     }
     harness.activate()
 
@@ -542,7 +634,7 @@ private struct Harness {
     harness.controller.handleKey(.switchRing)
     let shownBeforeRepairBento = harness.presenter.shownPlacements.count
 
-    // Top left of the outer ring is Repair Bento by default.
+    // Top left of the outer ring is Repair Layout by default.
     harness.controller.handleKey(.previousSector)
     #expect(harness.presenter.selection == LayoutWheelSelection(ring: .outer, sector: .topLeft))
     #expect(harness.presenter.presentations.last?.unavailableCommands == [.repairBento])
@@ -551,8 +643,33 @@ private struct Harness {
 
     harness.controller.handleKey(.commit)
     #expect(harness.box.commits.isEmpty)
-    #expect(harness.box.unavailable.first?.0 == "Repair Bento needs Bento mode.")
+    #expect(harness.box.unavailable.first?.0 == "Repair Layout is available only on an Adaptive desktop.")
     #expect(harness.box.unavailable.first?.1 == target)
+}
+
+/// Hover publishes the command's name and availability. Only release reports
+/// the reason, and a repeated release cannot report or dispatch it again.
+@Test(.macOSTestApplication) @MainActor func unavailableReasonAppearsOnlyOnceOnRelease() throws {
+    let harness = Harness()
+    defer { harness.controller.stop() }
+    let reason = "Repair Layout is available only on an Adaptive desktop."
+    harness.controller.previewHandler = { command, _ in
+        command == .repairBento ? .unavailable(reason: reason) : .ready(placements: [])
+    }
+    harness.activate()
+    harness.move(BTPoint(x: anchor.x - 70, y: anchor.y - 70))
+    let presentation = try #require(harness.presenter.presentations.last)
+    let input = LayoutWheelSceneInput(presentation)
+    #expect(input.centreContent?.name == "Repair Layout")
+    #expect(input.centreContent?.available == false)
+    #expect(harness.box.unavailable.isEmpty && harness.box.commits.isEmpty)
+    for _ in 0..<20 { harness.move(BTPoint(x: anchor.x - 70, y: anchor.y - 70)) }
+    #expect(harness.box.unavailable.isEmpty)
+    harness.release()
+    #expect(harness.box.unavailable.count == 1 && harness.box.unavailable.first?.0 == reason)
+    #expect(harness.box.commits.isEmpty)
+    harness.release()
+    #expect(harness.box.unavailable.count == 1 && harness.box.commits.isEmpty)
 }
 
 @Test(.macOSTestApplication) @MainActor func aModifierMonitorRegistrationFailureIsReportedInline() {
@@ -575,12 +692,13 @@ private struct Harness {
 
 /// Global AppKit monitors omit events delivered to BetterTile itself. The
 /// matching local monitor keeps the trigger working while Settings is active.
-@Test(.macOSTestApplication) @MainActor func aLocalModifierEventOpensTheWheelAndWheelKeysAreConsumed() async {
-    var localFlagsHandler: (@MainActor (UInt16, ShortcutModifiers) -> Bool)?
-    var localKeyHandler: (@MainActor (UInt16, ShortcutModifiers) -> Bool)?
+@Test(.macOSTestApplication, arguments: [LayoutWheelStyle.custom, .grouped]) @MainActor
+func aLocalModifierEventOpensTheWheelAndWheelKeysAreConsumed(style: LayoutWheelStyle) async {
+    var localFlagsHandler: (@MainActor (LayoutWheelInput) -> Bool)?
+    var localKeyHandler: (@MainActor (LayoutWheelInput) -> Bool)?
     let presenter = FakePresenter()
     let controller = LayoutWheelController(
-        configuration: BetterTileConfiguration(),
+        configuration: BetterTileConfiguration(layoutWheel: .init(style: style)),
         presenter: presenter,
         pointerProvider: { anchor },
         addGlobalMonitor: { _, _ in NSObject() },
@@ -591,31 +709,31 @@ private struct Harness {
         },
         removeMonitor: { _ in }
     )
-    controller.captureHandler = { target }
+    controller.captureHandler = { _ in target }
     controller.previewHandler = { _, _ in .ready(placements: []) }
     controller.start()
 
-    #expect(localFlagsHandler?(56, trigger) == false)
+    #expect(localFlagsHandler?(.init(keyCode: 56, modifiers: trigger)) == false)
     await Task.yield()
     controller.handleActivationDeadline(generation: 1)
 
     #expect(controller.isOpen)
     #expect(presenter.openCount == 1)
 
-    #expect(localKeyHandler?(124, []) == true)
+    #expect(localKeyHandler?(.init(keyCode: 124)) == true)
     #expect(controller.isOpen)
     #expect(presenter.selection == LayoutWheelSelection(ring: .inner, sector: .top))
 
-    #expect(localKeyHandler?(0, []) == false)
+    #expect(localKeyHandler?(.init()) == false)
 }
 
 @Test(.macOSTestApplication) @MainActor func availableCommandsShowTheirPlacements() {
     let harness = Harness()
-    let placement = Placement(windowID: target.windowID, frame: BTRect(x: 0, y: 0, width: 800, height: 500))
+    let placement = Placement(windowID: WindowID(rawValue: "wheel-window"), frame: BTRect(x: 0, y: 0, width: 800, height: 500))
     harness.controller.previewHandler = { _, _ in .ready(placements: [placement]) }
     harness.activate()
 
-    harness.controller.handlePointer(BTPoint(x: anchor.x, y: anchor.y - innerSelectionOffset))
+    harness.move(BTPoint(x: anchor.x, y: anchor.y - innerSelectionOffset))
 
     #expect(harness.presenter.shownPlacements.last == [placement])
 }
@@ -649,7 +767,7 @@ private struct Harness {
         },
         removeMonitor: { _ in removed += 1 }
     )
-    controller.captureHandler = { target }
+    controller.captureHandler = { _ in target }
     controller.previewHandler = { _, _ in .ready(placements: []) }
     controller.start()
     controller.handleModifiers(trigger)
@@ -694,7 +812,7 @@ private struct Harness {
         },
         removeMonitor: { _ in }
     )
-    controller?.captureHandler = { target }
+    controller?.captureHandler = { _ in target }
     controller?.previewHandler = { _, _ in .ready(placements: []) }
     controller?.start()
     controller?.handleModifiers(trigger)
@@ -756,5 +874,99 @@ func queuedWheelModifiersCannotStartAfterMonitorRetirement(retirement: String) a
         flags?(event)
         for _ in 0..<20 { await Task.yield() }
         #expect(controller.isPendingActivation)
+    }
+}
+
+@MainActor private final class GroupedWheelTestClock {
+    var time = 100.0
+}
+
+@Test(.macOSTestApplication, arguments: LayoutWheelLevelCount.allCases) @MainActor
+func groupedWheelControllerRestOpensFanAndCommitsOnceWithInjectedClock(levels: LayoutWheelLevelCount) throws {
+    let presenter = FakePresenter()
+    let clock = GroupedWheelTestClock()
+    var commits: [LayoutWheelCommand] = []
+    let controller = LayoutWheelController(
+        configuration: .init(layoutWheel: .init(style: .grouped, levelCount: levels)), presenter: presenter,
+        now: { clock.time }, pointerProvider: { anchor },
+        addGlobalMonitor: { _, _ in NSObject() }, addLocalMonitor: { _, _ in NSObject() }, removeMonitor: { _ in })
+    controller.captureHandler = { _ in target }
+    controller.previewHandler = { _, _ in .ready(placements: []) }
+    controller.commitHandler = { command, _ in commits.append(command) }
+    controller.start()
+    defer { controller.stop() }
+    controller.handleModifiers(trigger)
+    controller.handleActivationDeadline(generation: 1)
+    controller.handlePointer(BTPoint(x: anchor.x, y: anchor.y - (levels == .one ? 68 : 124)))
+    clock.time = 100.199
+    controller.handleFanDeadline()
+    #expect(presenter.presentations.last?.fan.openSector == nil)
+    clock.time = 100.2
+    controller.handleFanDeadline()
+    #expect(presenter.presentations.last?.fan.openSector == .top)
+    let offset = LayoutWheelMetrics.grouped.fanGeometry(for: .init(style: .grouped, levelCount: levels)).point(sector: .top, option: 1)
+    controller.handlePointer(BTPoint(x: anchor.x + offset.x, y: anchor.y + offset.y))
+    controller.release()
+    controller.release()
+    #expect(commits == [.windowAction(.center)])
+    #expect(!controller.isOpen)
+}
+
+@Test(.macOSTestApplication) @MainActor func groupedWheelKeyboardAndHubCancelAndChooseLayoutIsDisabled() {
+    let harness = Harness(configuration: .init(layoutWheel: .init(style: .grouped, levelCount: .two)))
+    defer { harness.controller.stop() }
+    harness.activate()
+    let selectionPoint = BTPoint(x: anchor.x - 90, y: anchor.y + 90)
+    harness.move(selectionPoint)
+    #expect(harness.presenter.presentations.last?.layoutAvailable == false)
+    #expect(harness.presenter.presentations.last?.selection?.sector == .bottomLeft)
+    harness.move(anchor)
+    harness.release()
+    #expect(harness.box.commits.isEmpty)
+}
+
+@Test(.macOSTestApplication) @MainActor func groupedWheelBeyondOpenFanStillUsesReleaseDirection() {
+    let harness = Harness(configuration: .init(layoutWheel: .init(style: .grouped, levelCount: .two)))
+    defer { harness.controller.stop() }
+    harness.activate()
+    harness.controller.handleKey(.nextSector)
+    harness.controller.handleKey(.outerRing)
+    harness.controller.handleKey(.outerRing)
+    #expect(harness.presenter.presentations.last?.fan.openSector == .top)
+    harness.move(BTPoint(x: anchor.x, y: anchor.y + 1000))
+    harness.release()
+    #expect(harness.box.commits.map(\.0) == [.windowAction(.restore)])
+}
+
+@Test(.macOSTestApplication, arguments: [0.8, 1.0, 1.3]) @MainActor
+func groupedWheelReservesFanBoundsWithoutMovingItsCenter(scale: Double) throws {
+    for point in [BTPoint(x: 1, y: 1), BTPoint(x: 1599, y: 999)] {
+        let harness = Harness(configuration: .init(layoutWheel: .init(style: .grouped, scale: scale)), pointer: point)
+        defer { harness.controller.stop() }
+        harness.activate()
+        let placement = try #require(harness.presenter.presentations.last?.placement)
+        let radius = LayoutWheelMetrics.grouped.scaled(by: scale).fanGeometry.outerRadius
+        #expect(placement.center.x - radius >= target.visibleFrame.minX)
+        #expect(placement.center.y - radius >= target.visibleFrame.minY)
+        #expect(placement.center.x + radius <= target.visibleFrame.maxX)
+        #expect(placement.center.y + radius <= target.visibleFrame.maxY)
+        harness.controller.handleKey(.nextSector)
+        harness.controller.handleKey(.outerRing)
+        harness.controller.handleKey(.outerRing)
+        #expect(harness.presenter.presentations.last?.fan.openSector == .top)
+        #expect(harness.presenter.presentations.last?.placement == placement)
+    }
+}
+
+@Test(.macOSTestApplication) @MainActor func wheelPresentationCarriesTheDesktopModeForTheModeParent() throws {
+    for mode in LayoutMode.availableModes {
+        let harness = Harness(capture: LayoutWheelTarget(
+            windowID: WindowID(rawValue: "wheel-window"), displayID: DisplayID(rawValue: "wheel-display"),
+            visibleFrame: BTRect(x: 0, y: 0, width: 1600, height: 1000), layoutMode: mode))
+        defer { harness.controller.stop() }
+        harness.activate()
+        let presentation = try #require(harness.presenter.presentations.last)
+        #expect(presentation.currentMode == mode)
+        #expect(LayoutWheelGroup.at(.bottomRight).glyph(currentMode: presentation.currentMode) == .mode(mode))
     }
 }

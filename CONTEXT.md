@@ -7,8 +7,11 @@ and `ghost`.
 
 ## Layout Wheel
 
-BetterTile's pointer-centered chooser for window actions and Repair Layout. It
-presents one or two concentric levels around a cancel hub.
+BetterTile's pointer-centered chooser for window actions, Repair Layout, desktop
+Mode and Choose Layout. Window actions use a captured window; desktop commands
+can target a display without a focused window. Custom style presents one or two
+concentric levels around a cancel hub. Grouped style presents command groups
+with child fans and supports a quick flick directly to a child.
 
 _Avoid_: Snap Wheel, radial menu, Layout Dial
 

@@ -67,6 +67,34 @@ struct LayoutGlyphViewTests {
         #expect(coverage > 2 * 1.5 && coverage < 2 * 2.0, "Two edges of about 1.625 pixels, got \(coverage)")
     }
 
+    @Test func slotsSelectTheModeAndLayoutIcons() {
+        for mode in LayoutMode.allCases {
+            #expect(LayoutWheelSlot(command: .setMode(mode)).glyph == .mode(mode))
+        }
+        for preset in TabbedPreset.allCases {
+            #expect(LayoutWheelSlot(command: .chooseLayout(preset)).glyph == .layout(preset))
+        }
+        // Every other command keeps its SF Symbol.
+        #expect(LayoutWheelSlot(command: .windowAction(.leftHalf)).glyph == nil)
+        #expect(LayoutWheelSlot(command: .repairBento).glyph == nil)
+        #expect(LayoutWheelSlot(command: nil).glyph == nil)
+        #expect(LayoutWheelSlot(command: .customZone(UUID())).glyph == nil)
+    }
+
+    @Test func groupParentsFollowTheChosenIcons() {
+        let mode = LayoutWheelGroup.at(.bottomRight)
+        let layout = LayoutWheelGroup.at(.bottomLeft)
+        for current in LayoutMode.availableModes {
+            let slot = LayoutWheelSlot(label: mode.title, symbolName: mode.symbolName,
+                                       glyph: mode.glyph(currentMode: current), isEmpty: false, isAvailable: true)
+            #expect(slot.glyph == .mode(current))
+        }
+        #expect(layout.glyph(currentMode: .manual) == .layouts)
+        for sector in LayoutWheelSector.allCases where sector != .bottomLeft && sector != .bottomRight {
+            #expect(LayoutWheelGroup.at(sector).glyph(currentMode: .tabbed) == nil)
+        }
+    }
+
     @Test func modePickerShowsAnImageAndATitleInEverySegment() {
         var selected = LayoutMode.bento
         let binding = Binding(get: { selected }, set: { selected = $0 })

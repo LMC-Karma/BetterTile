@@ -71,4 +71,46 @@ import Testing
         }
     }
 
+    @Test func wheelRingsFansAndCompactPickersResolveTheSameTable() {
+        for action in WindowAction.allCases {
+            let slot = LayoutWheelSlot(command: .windowAction(action))
+            #expect(slot.windowAction == action)
+            let expected = WindowActionPartitionGlyph.actions[action]
+            #expect(LayoutWheelIcon(slot: slot, tint: .black, fontSize: 16).partitionGlyph == expected)
+            #expect(LayoutWheelIcon(slot: slot, tint: .white, fontSize: 16, compact: true).partitionGlyph == expected)
+        }
+        // A translated title cannot change the selected sixth.
+        var slot = LayoutWheelSlot(command: .windowAction(.bottomRightSixth))
+        slot.label = "Localized action"
+        #expect(LayoutWheelIcon(slot: slot, tint: .black, fontSize: 16).partitionGlyph
+                == WindowActionPartitionGlyph.actions[.bottomRightSixth])
+    }
+
+    @Test func templateRenderingKeepsTopAndBottomInTheRightRows() throws {
+        for (action, glyph) in WindowActionPartitionGlyph.actions where glyph.rows == 2 {
+            let size: CGFloat = 24, scale: CGFloat = 2
+            let canvas = WindowActionPartitionGlyph.canvasSize(pointSize: size, weight: .regular)
+            let drawing = glyph.drawing(pointSize: size, weight: .regular, displayScale: scale)
+            let renderer = ImageRenderer(content: LayoutWheelActionGlyph(action: action, tint: .black, fontSize: size, weight: .regular)
+                .frame(width: canvas.width, height: canvas.height))
+            renderer.scale = scale
+            let bitmap = NSBitmapImageRep(cgImage: try #require(renderer.cgImage))
+            for (index, cell) in drawing.cells.enumerated() {
+                let alpha = try #require(bitmap.colorAt(x: Int(cell.midX * scale), y: Int(cell.midY * scale))).alphaComponent
+                let target = index == glyph.row * 3 + glyph.firstColumn
+                #expect(target ? alpha > 0.99 : alpha < 0.01, "\(action), cell \(index), alpha \(alpha)")
+            }
+        }
+    }
+
+    @Test func regularHalvesAndQuartersKeepNativeRendering() throws {
+        for action in WindowActionGlyphBaselineTests.actions {
+            let actual = ImageRenderer(content: LayoutWheelActionGlyph(action: action, tint: .black, fontSize: 16, weight: .regular)
+                .frame(width: 48, height: 48))
+            let expected = ImageRenderer(content: Image(systemName: action.layoutWheelSymbolName)
+                .font(.system(size: 16, weight: .regular)).symbolRenderingMode(.monochrome).foregroundStyle(.black)
+                .frame(width: 48, height: 48))
+            #expect(try #require(actual.cgImage?.dataProvider?.data) as Data == expected.cgImage?.dataProvider?.data as Data?)
+        }
+    }
 }

@@ -80,6 +80,8 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Test the test timing guard
         run: Tools/tests/check-test-timing-test.sh
+      - name: Test Metal Toolchain setup
+        run: Tools/tests/setup-metal-test.sh
       - name: Check test timing and quarantine rules
         run: Tools/ci/check-test-timing.sh
 
@@ -90,6 +92,8 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Set up Metal Toolchain
+        uses: ./.github/actions/setup-metal
       - name: Swift version
         run: swift --version
       - name: Test
@@ -125,6 +129,8 @@ jobs:
         run: Tools/tests/release-source-test.sh
       - name: Test release bundled licenses
         run: Tools/tests/release-bundle-test.sh
+      - name: Set up Metal Toolchain
+        uses: ./.github/actions/setup-metal
       - name: Build release
         run: swift build -c release
 
@@ -135,6 +141,8 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Set up Metal Toolchain
+        uses: ./.github/actions/setup-metal
       - name: Build application bundle
         run: xcodebuild -project BetterTile.xcodeproj -scheme BetterTile -configuration Debug CODE_SIGNING_ALLOWED=NO build
 
@@ -145,6 +153,8 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Set up Metal Toolchain
+        uses: ./.github/actions/setup-metal
       # Release is what ships. It resolves BETTERTILE_ENABLE_AUTOMATIC_CHECKS
       # differently from Debug, so a Debug-only build cannot catch a broken
       # release configuration.

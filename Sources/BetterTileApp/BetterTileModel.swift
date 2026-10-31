@@ -524,7 +524,7 @@ final class BetterTileModel {
         shortcuts.setHandler { [weak self] action in
             // The wheel and this shortcut share held modifiers. Running the
             // shortcut means the user was never opening a wheel.
-            self?.layoutWheel.cancel()
+            self?.layoutWheel.cancel(reason: .shortcut)
             self?.perform(action)
         }
         titleBarDoubleClick.isTabbedMember = { [weak self] id in self?.isTabbedMember(id) == true }
@@ -624,7 +624,7 @@ final class BetterTileModel {
         linkedResize.layoutChangedHandler = { [weak self] _, _ in
             self?.refreshDividerBoundaries()
         }
-        layoutWheel.captureHandler = { [weak self] in self?.captureLayoutWheelTarget() }
+        layoutWheel.captureHandler = { [weak self] pointer in self?.captureLayoutWheelTarget(pointer: pointer) }
         layoutWheel.previewHandler = { [weak self] command, target in
             guard let self else { return .unavailable(reason: "BetterTile is not available.") }
             return previewLayoutWheel(command, for: target)
@@ -884,7 +884,7 @@ final class BetterTileModel {
             return .ready(placements: proposal.plan.placements)
         case let .ready(.tabbed(plan, _, _)):
             return .ready(placements: plan.placements)
-        case .ready(.repairBento), .ready(.tabCommand):
+        case .ready(.repairBento), .ready(.tabCommand), .ready(.desktop):
             return .ready(placements: [])
         case let .unavailable(reason, _):
             return .unavailable(reason: reason)
@@ -918,7 +918,8 @@ final class BetterTileModel {
            BentoDropPlanner.partitionActions.contains(action),
            (sessionStore.session(for: target.displayID)?.excludedFocusWindowIDs.isEmpty == false
                 || restoringSession?.excludedFocusWindowIDs.isEmpty == false),
-           let window = (try? system.windowSnapshots(ids: [target.windowID]))?.first {
+           let windowID = target.windowID,
+           let window = (try? system.windowSnapshots(ids: [windowID]))?.first {
             if endBentoFocusForPartition(action, window: window, target: target, restoringSession: restoringSession) {
                 return
             }
@@ -928,12 +929,19 @@ final class BetterTileModel {
         case let .unavailable(reason, displayID):
             statusMessage = reason
             presentActionResult(succeeded: false, error: reason, displayID: displayID)
+        case let .ready(.desktop(command)):
+            switch command {
+            case let .setMode(mode): setMode(mode, on: target.displayID, focusedWindowID: target.windowID)
+            case let .chooseLayout(preset): handleTabbed(.preset(preset, grouping: .keepTabGroups), on: target.displayID)
+            default: break
+            }
         case let .ready(.repairBento(displayID, focusedWindowID)):
             repairBento(displayID: displayID, focusedWindowID: focusedWindowID)
         case let .ready(.tabCommand(action, displayID)):
             performTabbedCommand(action, windowID: target.windowID, displayID: displayID)
         case let .ready(.tabbed(_, action, displayID)):
-            performTabbedSnap(action, windowID: target.windowID, displayID: displayID, expectedSpaceID: target.nativeSpaceID)
+            guard let windowID = target.windowID else { return }
+            performTabbedSnap(action, windowID: windowID, displayID: displayID, expectedSpaceID: target.nativeSpaceID)
         case let .ready(.action(plan)):
             if let window = (try? system.windowSnapshots(ids: [plan.windowID]))?.first,
                let succeeded = performBentoFocusMode(plan.resolvedAction, window: window) {
@@ -965,34 +973,42 @@ final class BetterTileModel {
         }
     }
 
+    /// Capture once. Grouped also offers desktop commands without a window:
+    /// it targets the display under `pointer`, a top-left point from the
+    /// wheel controller, else the active display.
     func layoutWheelDidOpen() {
         invalidateMenuPanelFocusReplay()
         shortcuts.suspend()
     }
 
-    func captureLayoutWheelTarget() -> LayoutWheelTarget? {
+    func captureLayoutWheelTarget(pointer: BTPoint? = nil) -> LayoutWheelTarget? {
         guard !isShutDown, hasAccessibilityPermission else { return nil }
         do {
-            guard let window = try system.focusedWindow(),
-                  window.isEligible, !tabbedExiting.contains(window.displayID),
-                  !waitsForSpaceStabilization(window),
-                  rule(for: window).allowsDirectPlacement,
-                  let display = system.displays().first(where: { $0.id == window.displayID })
-            else { return nil }
-            return LayoutWheelTarget(
-                windowID: window.id,
-                displayID: window.displayID,
-                visibleFrame: display.visibleFrame,
-                desktopSessionID: sessionStore.session(for: display.id)?.id,
-                nativeSpaceID: sessionStore.session(for: display.id)?.nativeSpaceID
-                    ?? system.refreshNativeDesktopObservation()?.currentSpace(on: display.id),
-                layoutMode: sessionStore.session(for: display.id)?.mode
-            )
+            let focused = try system.focusedWindow()
+            if let window = focused, window.isEligible, !tabbedExiting.contains(window.displayID),
+               !waitsForSpaceStabilization(window), rule(for: window).allowsDirectPlacement,
+               let display = system.displays().first(where: { $0.id == window.displayID }) {
+                return layoutWheelTarget(windowID: window.id, display: display)
+            }
+            guard configuration.layoutWheel.style == .grouped, !isStabilizingSpace else { return nil }
+            let displays = system.displays()
+            guard let display = displays.first(where: { display in pointer.map { display.frame.contains($0) } ?? false })
+                ?? displays.first(where: { $0.id == activeDisplayID }) ?? displays.first,
+                  !tabbedExiting.contains(display.id) else { return nil }
+            sessionStore.ensure(displayID: display.id, defaultMode: configuration.defaultLayoutMode)
+            return layoutWheelTarget(windowID: nil, display: display)
         } catch {
             return nil
         }
     }
 
+    private func layoutWheelTarget(windowID: WindowID?, display: DisplaySnapshot) -> LayoutWheelTarget {
+        LayoutWheelTarget(windowID: windowID, displayID: display.id, visibleFrame: display.visibleFrame,
+            desktopSessionID: sessionStore.session(for: display.id)?.id,
+            nativeSpaceID: sessionStore.session(for: display.id)?.nativeSpaceID
+                ?? system.refreshNativeDesktopObservation()?.currentSpace(on: display.id),
+            layoutMode: sessionStore.session(for: display.id)?.mode ?? configuration.defaultLayoutMode)
+    }
 
     private func planLayoutWheel(
         _ command: LayoutWheelCommand,
@@ -1009,44 +1025,51 @@ final class BetterTileModel {
             )
         }
 
-        let window: WindowSnapshot
-        do {
-            guard let captured = try system.windowSnapshots(ids: [target.windowID]).first,
-                  captured.isEligible,
-                  captured.displayID == target.displayID
-            else {
-                return .unavailable(
-                    reason: "The captured window or display is no longer available.",
-                    displayID: target.displayID
-                )
+        var capturedWindow: WindowSnapshot?
+        if let windowID = target.windowID {
+            do {
+                guard let window = try system.windowSnapshots(ids: [windowID]).first,
+                      window.isEligible, window.displayID == target.displayID else {
+                    return .unavailable(reason: "The captured window or display is no longer available.", displayID: target.displayID)
+                }
+                guard !waitsForSpaceStabilization(window) else {
+                    return .unavailable(reason: Self.tabbedSpaceSwitchPending, displayID: target.displayID)
+                }
+                guard rule(for: window).allowsDirectPlacement else {
+                    return .unavailable(reason: "BetterTile is set to ignore this app.", displayID: target.displayID)
+                }
+                capturedWindow = window
+            } catch {
+                return .unavailable(reason: error.localizedDescription, displayID: target.displayID)
             }
-            window = captured
-        } catch {
-            return .unavailable(reason: error.localizedDescription, displayID: target.displayID)
-        }
-        guard !waitsForSpaceStabilization(window) else {
-            return .unavailable(reason: Self.tabbedSpaceSwitchPending, displayID: target.displayID)
         }
         guard system.displays().contains(where: { $0.id == target.displayID && $0.visibleFrame == target.visibleFrame }),
               target.desktopSessionID == nil || sessionStore.session(for: target.displayID)?.id == target.desktopSessionID,
-              target.layoutMode == nil || sessionStore.session(for: target.displayID)?.mode == target.layoutMode,
+              target.layoutMode == nil || (sessionStore.session(for: target.displayID)?.mode ?? configuration.defaultLayoutMode) == target.layoutMode,
               target.nativeSpaceID == nil || (system.refreshNativeDesktopObservation()?.currentSpace(on: target.displayID)
-                ?? sessionStore.session(for: target.displayID)?.nativeSpaceID) == target.nativeSpaceID
+                ?? sessionStore.session(for: target.displayID)?.nativeSpaceID) == target.nativeSpaceID,
+              target.windowID != nil || !isStabilizingSpace
         else {
-            return .unavailable(
-                reason: "The captured window's display is no longer available.",
-                displayID: window.displayID
-            )
+            return .unavailable(reason: "The captured desktop is no longer available.", displayID: target.displayID)
+        }
+        switch command {
+        case .setMode where isStabilizingSpace, .chooseLayout where isStabilizingSpace:
+            return .unavailable(reason: Self.tabbedSpaceSwitchPending, displayID: target.displayID)
+        case .setMode: return .ready(.desktop(command))
+        case .chooseLayout:
+            guard activeMode(for: target.displayID) == .tabbed else {
+                return .unavailable(reason: "Choose Layout needs a Tabbed desktop.", displayID: target.displayID)
+            }
+            return .ready(.desktop(command))
+        default: break
+        }
+        guard let window = capturedWindow, let windowID = target.windowID else {
+            return .unavailable(reason: "No eligible focused window.", displayID: target.displayID)
         }
         let sourceRule = rule(for: window)
-        guard sourceRule.allowsDirectPlacement else {
-            return .unavailable(
-                reason: "BetterTile is set to ignore this app.",
-                displayID: window.displayID
-            )
-        }
-
         switch command {
+        case .setMode, .chooseLayout:
+            return .ready(.desktop(command))
         case let .windowAction(action):
             if action.isTabCommand {
                 guard activeMode(for: window.displayID) == .tabbed else {
@@ -1061,16 +1084,16 @@ final class BetterTileModel {
                 guard BentoDropPlanner.partitionActions.contains(action) else {
                     return .unavailable(reason: tabbedSnapUnavailableReason(action), displayID: window.displayID)
                 }
-                guard let context = tabbedSnapContext(windowID: target.windowID, displayID: target.displayID),
-                      let plan = TabbedSnapPlanner.plan(sourceWindowID: target.windowID, action: action, scope: .pane,
+                guard let context = tabbedSnapContext(windowID: windowID, displayID: target.displayID),
+                      let plan = TabbedSnapPlanner.plan(sourceWindowID: windowID, action: action, scope: .pane,
                           state: context.state, windows: context.windows, in: context.display.visibleFrame)
                 else { return .unavailable(reason: Self.tabbedSnapFailure, displayID: target.displayID) }
                 return .ready(.tabbed(plan, action, target.displayID))
             }
             let actionPlan: WindowActionPlan
             let planned = cyclesShortcut
-                ? coordinator.plan(action, for: target.windowID)
-                : coordinator.planExact(action, for: target.windowID)
+                ? coordinator.plan(action, for: windowID)
+                : coordinator.planExact(action, for: windowID)
             switch planned {
             case let .ready(plan): actionPlan = plan
             case .unavailable:
@@ -1089,7 +1112,7 @@ final class BetterTileModel {
             guard usesBento else { return .ready(.action(actionPlan)) }
             guard let proposal = layoutWheelBentoProposal(
                 intent: .snap(action: actionPlan.resolvedAction, frame: actionPlan.targetFrame),
-                sourceWindowID: target.windowID,
+                sourceWindowID: windowID,
                 displayID: actionPlan.displayID
             ) else {
                 return .unavailable(
@@ -1114,7 +1137,7 @@ final class BetterTileModel {
             }
             return .ready(.repairBento(
                 displayID: window.displayID,
-                focusedWindowID: target.windowID
+                focusedWindowID: windowID
             ))
         }
     }
@@ -2526,7 +2549,7 @@ final class BetterTileModel {
             tabbedTasks.values.forEach { $0.cancel() }
             allTabbedOverlays.forEach { $0.hide() }
             dragSnap.cancel()
-            layoutWheel.cancel()
+            layoutWheel.cancel(reason: .permissionUnavailable)
         }
         applicationRecoveryPendingWindows.removeAll()
         applicationRecoveryFrameEventPIDs.removeAll()
@@ -2672,7 +2695,7 @@ final class BetterTileModel {
         if hasAccessibilityPermission, !isShortcutCaptureActive {
             layoutWheel.resume()
         } else {
-            layoutWheel.suspend()
+            layoutWheel.suspend(reason: isShortcutCaptureActive ? .shortcutRecording : .permissionUnavailable)
         }
     }
 
@@ -2950,7 +2973,7 @@ final class BetterTileModel {
         guard !isShutDown else { return }
         if waking {
             dragSnap.cancel()
-            layoutWheel.cancel()
+            layoutWheel.cancel(reason: .waking)
         }
         #if DEBUG
         tracePendingArrivals("arrival_dropped", reason: "application_topology_refresh")
@@ -2965,7 +2988,7 @@ final class BetterTileModel {
     /// Coalesces Core Graphics and AppKit display notifications into the same
     /// refresh. AppKit remains the fallback when callback registration fails.
     func scheduleDisplayRefresh() {
-        layoutWheel.cancel()
+        layoutWheel.cancel(reason: .displayChanged)
         displayRefreshDebouncer.schedule { [weak self] in
             guard let self else { return }
             self.dragSnap.cancel()
@@ -2996,7 +3019,7 @@ final class BetterTileModel {
             else { overlay.hide() }
         }
         dragSnap.cancel()
-        layoutWheel.cancel()
+        layoutWheel.cancel(reason: .spaceChanged)
         dividerResize.hideAndCancel()
         windowEventTask?.cancel()
         windowEventTask = nil
@@ -3120,7 +3143,7 @@ final class BetterTileModel {
     }
 
     func handleApplicationActivation() {
-        layoutWheel.cancel()
+        layoutWheel.cancel(reason: .applicationActivated)
         refreshFocusedDisplayWithoutLayout()
         handleTabbedFocus()
     }
@@ -5697,6 +5720,7 @@ private enum LayoutWheelPlanOutcome {
 }
 
 private enum LayoutWheelModelPlan {
+    case desktop(LayoutWheelCommand)
     case action(WindowActionPlan)
     case bento(BentoCommandProposal)
     case tabbed(TabbedSnapPlan, WindowAction, DisplayID)
