@@ -1243,7 +1243,8 @@ func bentoReleaseWithASuppressionModifierRestores(modified: Bool) {
 /// display has no permanent menu bar, so the strip reaches the top edge. The
 /// strip wins over a snap area except in the screen-edge bands, where the top
 /// edge, its corners, and the side edges still snap.
-@Test(.macOSTestApplication) @MainActor func tabStripHoverShowsAnInsertionAndCommitsATabDrop() throws {
+@Test(.macOSTestApplication, arguments: [5.0, 20, 40]) @MainActor
+func tabStripHoverShowsAnInsertionAndCommitsATabDrop(edgeWidth: Double) throws {
     _ = NSApplication.shared
     let system = FakeWindowSystem()
     system.availableDisplays[0].frame.origin.x = 12000
@@ -1252,7 +1253,7 @@ func bentoReleaseWithASuppressionModifierRestores(modified: Bool) {
     system.addSecondWindow()
     let source = system.windows[0].id, other = system.windows[1].id
     let controller = DragSnapController(coordinator: WindowCoordinator(system: system),
-                                        configuration: BetterTileConfiguration(),
+                                        configuration: BetterTileConfiguration(snapEdgeActivationDistance: edgeWidth),
                                         displayTicks: ResizeDisplayLink(automatic: false))
     defer { controller.cancel() }
     controller.activeModeProvider = { _ in .tabbed }
@@ -1261,7 +1262,8 @@ func bentoReleaseWithASuppressionModifierRestores(modified: Bool) {
     controller.bentoStateProvider = { _ in layout }
     controller.bentoDragBeganHandler = { _, _, _ in true }
     let paneID = UUID()
-    // A strip across the display: y 0-34, with edges at 12250 and 12500.
+    let stripInteriorY = edgeWidth + 1
+    // A strip across the display, with edges at 12250 and 12500.
     // Below y 500 the left side is an empty pane.
     let emptyPaneID = UUID()
     controller.tabbedDropZoneProvider = { _, point, id in
@@ -1270,7 +1272,7 @@ func bentoReleaseWithASuppressionModifierRestores(modified: Bool) {
             return TabbedDropZone(paneID: emptyPaneID, index: nil,
                                   paneFrame: BTRect(x: 12000, y: 500, width: 500, height: 300), indicator: nil)
         }
-        guard point.y < 34 else { return nil }
+        guard point.y < max(34, edgeWidth + 24) else { return nil }
         let index = point.x < 12250 ? 0 : 1
         return TabbedDropZone(paneID: paneID, index: index,
                               paneFrame: BTRect(x: 12000, y: 10, width: 500, height: 790),
@@ -1292,9 +1294,9 @@ func bentoReleaseWithASuppressionModifierRestores(modified: Bool) {
 
     send(controller, .leftMouseDown, x: 12300, y: 220)
     system.windows[0].frame.origin.x += 3
-    send(controller, .leftMouseDragged, x: 12100, y: 20)
+    send(controller, .leftMouseDragged, x: 12100, y: stripInteriorY)
     #expect(committedOutcome(controller.dropTarget.map { $0.layoutEnd }) == .tab(paneID: paneID, index: 0))
-    send(controller, .leftMouseDragged, x: 12300, y: 20)
+    send(controller, .leftMouseDragged, x: 12300, y: stripInteriorY)
     controller.displayTick()
     #expect(committedOutcome(controller.dropTarget.map { $0.layoutEnd }) == .tab(paneID: paneID, index: 1))
     let indicator = try #require(indicators().first)
@@ -1305,13 +1307,14 @@ func bentoReleaseWithASuppressionModifierRestores(modified: Bool) {
 
     // Inside the strip but away from the edge bands, the strip wins over the
     // top-left corner's snap area.
-    send(controller, .leftMouseDragged, x: 12030, y: 20)
+    send(controller, .leftMouseDragged, x: 12000 + edgeWidth + 1, y: stripInteriorY)
     controller.displayTick()
     #expect(committedOutcome(controller.dropTarget.map { $0.layoutEnd }) == .tab(paneID: paneID, index: 0))
     // In the edge bands over the strip, the top edge and the top corners
     // still snap; at strip height, a side edge is in its top corner.
-    for (x, y, action) in [(12700.0, 2.0, WindowAction.almostMaximize), (12002, 20, .topLeftQuarter),
-                           (12998, 20, .topRightQuarter)] {
+    for (x, y, action) in [(12700.0, edgeWidth, WindowAction.almostMaximize),
+                           (12000 + edgeWidth, stripInteriorY, .topLeftQuarter),
+                           (13000 - edgeWidth, stripInteriorY, .topRightQuarter)] {
         send(controller, .leftMouseDragged, x: x, y: y)
         controller.displayTick()
         guard case .snap(action: action, frame: _)? = committedOutcome(controller.dropTarget.map { $0.layoutEnd }) else {
@@ -1320,9 +1323,9 @@ func bentoReleaseWithASuppressionModifierRestores(modified: Bool) {
         #expect(indicators().isEmpty)
     }
 
-    send(controller, .leftMouseDragged, x: 12300, y: 20)
+    send(controller, .leftMouseDragged, x: 12300, y: stripInteriorY)
     controller.displayTick()
-    send(controller, .leftMouseUp, x: 12300, y: 20)
+    send(controller, .leftMouseUp, x: 12300, y: stripInteriorY)
     #expect(committedOutcome(dropped) == .tab(paneID: paneID, index: 1))
     #expect(indicators().isEmpty)
 }
@@ -1387,4 +1390,34 @@ func bentoReleaseWithASuppressionModifierRestores(modified: Bool) {
     #expect(label(.tab(paneID: pane, index: 0)) == "Add as tab")
     #expect(label(.swap(targetWindowID: a)) == "Add as tab")
     #expect(label(.snap(action: .leftHalf, frame: BTRect(x: 0, y: 0, width: 1, height: 1))) == nil)
+}
+
+@Test(.macOSTestApplication) @MainActor func snapActivationChangesReachNativeDragsLiveAndKeepSuppression() throws {
+    let system = FakeWindowSystem()
+    let controller = DragSnapController(coordinator: WindowCoordinator(system: system),
+        configuration: BetterTileConfiguration(), displayTicks: ResizeDisplayLink(automatic: false))
+    defer { controller.cancel() }
+    controller.setUsesSharedGestureEvents(true)
+    send(controller, .leftMouseDown, x: 300, y: 220)
+    system.windows[0].frame.origin.x += 3
+    send(controller, .leftMouseDragged, x: 20)
+    controller.displayTick()
+    #expect(controller.dropTarget == nil)
+    controller.configuration.snapEdgeActivationDistance = 40
+    send(controller, .leftMouseDragged, x: 20)
+    controller.displayTick()
+    #expect(controller.dropTarget?.drop == .snap(SnapTarget(action: .leftHalf,
+        frame: BTRect(x: 0, y: 0, width: 500, height: 800))))
+    send(controller, .leftMouseDragged, x: 150, y: 150)
+    controller.displayTick()
+    #expect(controller.dropTarget == nil)
+    controller.configuration.snapCornerActivationSize = 160
+    send(controller, .leftMouseDragged, x: 150, y: 150)
+    controller.displayTick()
+    #expect(controller.dropTarget?.drop == .snap(SnapTarget(action: .topLeftQuarter,
+        frame: BTRect(x: 0, y: 0, width: 500, height: 400))))
+    send(controller, .leftMouseDragged, x: 150, y: 150, modifiers: .option)
+    controller.displayTick()
+    #expect(controller.dropTarget == nil)
+    send(controller, .leftMouseUp, x: 150, y: 150, modifiers: .option)
 }

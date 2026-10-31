@@ -21,7 +21,7 @@ adjust the Ice rim colors; Icon Composer retains the native glass and shadow
 effects. `appIconVariantsPreserveSourceGeometry` checks the outlines, canvas,
 composition, and matching Debug copies.
 
-Settings → General → Appearance has three buttons: Classic, Ice Blue, and Dark.
+Settings → General → Startup has three buttons: Classic, Ice Blue, and Dark.
 Each button contains its centered preview and name. A border and checkmark show
 the selected choice. Tab moves between choices; Space or Return selects one.
 Dark is the default. The local `BetterTileAppIcon` preference saves
@@ -44,8 +44,11 @@ An explicit or saved icon choice updates Finder. A fresh install leaves any
 custom icon set outside BetterTile alone. Launch reapplies a saved choice,
 including after an update replaces the app. Finder updates require a writable
 app bundle. A failed write keeps the saved choice and Dock behavior; Settings
-shows an error after a failed selection. BetterTile never requests elevated
-access or edits the app's signed `Contents` directory.
+shows an error after a failed selection. Reset to Default in Startup selects
+Dark and removes the custom Finder icon when an icon choice is saved, and shows
+the same error if that write fails. Without a saved choice, Reset leaves the
+Finder icon alone. BetterTile never requests elevated access or edits the app's
+signed `Contents` directory.
 
 ### Finder metadata and signature checks
 

@@ -49,5 +49,8 @@ if RELEASE_TEST_EXIT=7 run_validation > "$scratch/failed-output" 2>&1; then
     echo 'Release accepted a failing test command.' >&2; exit 1
 fi
 [[ ! -e "$RELEASE_TEST_BUILT" ]]
-
+if BT_SNAPSHOT_DIR="$scratch/snapshots" run_validation > "$scratch/snapshot-output" 2>&1; then
+    echo 'Release accepted snapshot export during suite validation.' >&2; exit 1
+fi
+[[ ! -e "$RELEASE_TEST_BUILT" ]]
 echo 'release test completion checks passed'

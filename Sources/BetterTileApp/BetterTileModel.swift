@@ -72,6 +72,10 @@ final class BetterTileModel {
     private(set) var lastActionFeedback: ResultPillFeedback?
     private(set) var activeDisplayID: DisplayID?
     private(set) var layoutWheelMonitoringFailure: String?
+    var requestedSettingsDestination: SettingsDestination?
+    var openSettings: () -> Void = {}
+    /// Shows or hides the BetterTile status items. The app delegate owns them.
+    var setMenuBarIconVisible: (Bool) -> Void = { _ in }
 
     private let system: any BetterTileWindowSystem
     #if DEBUG
@@ -274,6 +278,12 @@ final class BetterTileModel {
     private var bentoDragEventBuffer = WindowEventBuffer()
     private var paneGapBeforeRelayout: Double?
     private var paneGapForLayout: Double { paneGapBeforeRelayout ?? configuration.bentoInnerGap }
+    private(set) var paneGapRelayoutTask: Task<Void, Never>?
+    private var paneGapRelayoutPending = false
+    private var paneGapEditChanged = false
+    private var isEditingPaneGap = false
+    /// Keep ordinary event sweeps on the last published gap until the coalesced pass.
+    var paneGapRelayoutSleep: (Duration) async throws -> Void = { try await BetterTileClock.live.sleep(for: $0) }
     private var configurationSaveTask: Task<Void, Never>?
     private var configurationNeedsSave = false
     private var isShortcutCaptureActive = false
@@ -301,6 +311,7 @@ final class BetterTileModel {
             let elapsed = arrivalOrigin.duration(to: clock.now).components
             return arrivalDate.addingTimeInterval(Double(elapsed.seconds) + Double(elapsed.attoseconds) / 1e18)
         }
+        paneGapRelayoutSleep = { try await clock.sleep(for: $0) }
         self.presentsTabbedChrome = presentsTabbedChrome ?? startRuntime
         let loaded: BetterTileConfiguration
         do {
@@ -2319,6 +2330,8 @@ final class BetterTileModel {
     func requestAccessibilityPermission() {
         guard !refreshPermission() else { return }
         _ = system.requestAccessibilityPermission(prompt: true)
+        // macOS shows its prompt only once; General then offers Accessibility settings instead.
+        updateConfiguration { $0.accessibilityPromptRequested = true }
         isWaitingForAccessibilityPermission = true
         statusMessage = "Enable BetterTile in System Settings › Privacy & Security › Accessibility. Access will be detected automatically."
         startPermissionPolling()
@@ -2350,21 +2363,75 @@ final class BetterTileModel {
             configuration = validated
             applyRuntimeConfiguration(changes)
             scheduleConfigurationSave()
-            if gapChanged {
-                for displayID in sessionStore.sessions.keys {
-                    sessionStore.update(displayID) {
-                        $0.bentoState.metrics = BentoLayoutMetrics(paneGap: configuration.bentoInnerGap)
-                    }
-                }
-                refreshActiveWindows(force: true)
-            }
             statusMessage = nil
+            if gapChanged {
+                if paneGapBeforeRelayout == nil { paneGapBeforeRelayout = previous.bentoInnerGap }
+                paneGapEditChanged = true
+                paneGapRelayoutPending = true
+                schedulePaneGapRelayout()
+            }
         } catch {
             statusMessage = error.localizedDescription
         }
     }
 
+    func paneGapEditingChanged(_ editing: Bool) {
+        guard !isShutDown else { return }
+        isEditingPaneGap = editing
+        if editing {
+            paneGapEditChanged = false
+        } else if paneGapEditChanged {
+            paneGapEditChanged = false
+            paneGapRelayoutPending = true
+            paneGapRelayoutTask?.cancel()
+            paneGapRelayoutTask = nil
+            if !applyPendingPaneGap() { schedulePaneGapRelayout() }
+        }
+    }
 
+    private func schedulePaneGapRelayout() {
+        guard paneGapRelayoutTask == nil, !isShutDown else { return }
+        let sleep = paneGapRelayoutSleep
+        paneGapRelayoutTask = Task { @MainActor [weak self] in
+            do { try await sleep(.milliseconds(75)) } catch { return }
+            guard let self, !Task.isCancelled, !self.isShutDown else { return }
+            self.paneGapRelayoutTask = nil
+            if !self.applyPendingPaneGap() { self.schedulePaneGapRelayout() }
+        }
+    }
+
+    private var canRelayoutPaneGap: Bool {
+        !isShutDown && (isEditingPaneGap || !primaryButtonIsPressed())
+            && !isStabilizingSpace && activeBentoDrag == nil && !dragSnap.isGestureActive
+            && !dividerResize.isDragging && !linkedResize.isResizing
+            && tabbedTasks.isEmpty && settlementTasks.isEmpty
+            && windowEventTask == nil && pendingWindowEvents.isEmpty
+    }
+
+    /// One latest value, with no queued placements behind a gesture or a slow app.
+    private func applyPendingPaneGap() -> Bool {
+        guard paneGapRelayoutPending else { return true }
+        guard canRelayoutPaneGap else { return false }
+        paneGapBeforeRelayout = nil
+        refreshActiveWindows(force: true, relayoutPaneGap: true)
+        // An unsuccessful inventory or placement retains the request. Ordinary
+        // refreshes retry it; do not poll an unavailable application every 75 ms.
+        return true
+    }
+
+    private func completePendingPaneGapIfApplied() {
+        guard paneGapRelayoutPending, paneGapBeforeRelayout == nil,
+              tabbedTasks.isEmpty else { return }
+        let gap = configuration.bentoInnerGap
+        guard sessionStore.sessions.values.allSatisfy({ session in
+            switch session.mode {
+            case .manual, .linked, .tabbed: return true
+            case .bento:
+                return !session.automaticWritesSuspended && session.bentoState.metrics.paneGap == gap
+            }
+        }) else { return }
+        paneGapRelayoutPending = false
+    }
     func assign(shortcut: KeyboardShortcut?, to action: WindowAction) {
         updateConfiguration { configuration in
             if let index = configuration.shortcuts.firstIndex(where: { $0.action == action }) {
@@ -2398,6 +2465,9 @@ final class BetterTileModel {
     func shutdown() {
         cancelPendingFocusRestore(on: nil)
         guard !isShutDown else { return }
+        paneGapRelayoutTask?.cancel()
+        paneGapRelayoutTask = nil
+        paneGapRelayoutPending = false
         absenceConfirmationTask?.cancel()
         arrivalSweepTask?.cancel()
         tabbedCurtainRecheckTask?.cancel()
@@ -2526,6 +2596,9 @@ final class BetterTileModel {
         }
         if changes.contains(.activationPolicy) {
             applyDockPolicy()
+        }
+        if changes.contains(.menuBarIcon) {
+            setMenuBarIconVisible(configuration.showMenuBarIcon)
         }
         if !changes.isDisjoint(with: [.divider, .bentoGeometry, .linkedResize]) {
             refreshDividerBoundaries()
@@ -2794,7 +2867,8 @@ final class BetterTileModel {
             return
         }
         let signature = windowSignature(windows)
-        if signature != lastVisibleSignature
+        if (paneGapRelayoutPending && paneGapBeforeRelayout == nil && canRelayoutPaneGap)
+            || signature != lastVisibleSignature
             || windows.contains(where: { applicationRecoveryPendingWindows[$0.id] == $0.processIdentifier }) {
             refreshActiveWindows(force: false, windows: windows)
             return
@@ -4183,14 +4257,9 @@ final class BetterTileModel {
         )
     }
 
-    /// Resolves an application bundle the user browsed to, so a rule can be set
-    /// for something that is not currently running.
-    func candidate(atApplicationURL url: URL) -> ApplicationRuleCandidate? {
-        guard let bundleIdentifier = Bundle(url: url)?.bundleIdentifier else { return nil }
-        return ApplicationRuleCandidate(
-            bundleIdentifier: bundleIdentifier,
-            name: FileManager.default.displayName(atPath: url.path)
-        )
+    func matchingRuleWindows(for bundleIdentifier: String) -> [WindowSnapshot] {
+        guard hasAccessibilityPermission else { return [] }
+        return observedRuleWindows.filter { $0.bundleIdentifier == bundleIdentifier }
     }
 
     static func applicationIcon(for bundleIdentifier: String) -> NSImage? {
@@ -4201,14 +4270,37 @@ final class BetterTileModel {
     func setRule(_ rule: ApplicationRule, for bundleIdentifier: String) {
         updateConfiguration { $0.applicationRules.set(rule, for: bundleIdentifier) }
         statusMessage = rule == .manageNormally
-            ? "\(Self.applicationName(for: bundleIdentifier)) is managed normally again."
-            : "\(Self.applicationName(for: bundleIdentifier)): \(rule.title)."
+            ? "\(Self.ruleApplicationName(for: bundleIdentifier)) is managed normally again."
+            : "\(Self.ruleApplicationName(for: bundleIdentifier)): \(rule.title)."
     }
 
     func clearRule(for bundleIdentifier: String) {
         updateConfiguration { $0.applicationRules.clear(bundleIdentifier) }
     }
 
+    func setRuleEnabled(_ isEnabled: Bool, for bundleIdentifier: String) {
+        guard let rule = configuration.applicationRules.configuredRule(for: bundleIdentifier) else { return }
+        updateConfiguration { $0.applicationRules.setEnabled(isEnabled, for: bundleIdentifier) }
+        statusMessage = isEnabled
+            ? "\(Self.ruleApplicationName(for: bundleIdentifier)): \(rule.title)."
+            : "\(Self.ruleApplicationName(for: bundleIdentifier)) is managed normally while its rule is off."
+    }
+    func moveRule(from bundleIdentifier: String, to replacement: String) {
+        let rules = configuration.applicationRules
+        guard let rule = rules.configuredRule(for: bundleIdentifier), !replacement.isEmpty,
+              replacement == bundleIdentifier || rules.configuredRule(for: replacement) == nil else { return }
+        let isEnabled = rules.isEnabled(for: bundleIdentifier)
+        updateConfiguration {
+            $0.applicationRules.clear(bundleIdentifier)
+            $0.applicationRules.set(rule, for: replacement)
+            $0.applicationRules.setEnabled(isEnabled, for: replacement)
+        }
+    }
+    private static func ruleApplicationName(for bundleIdentifier: String) -> String {
+        let name = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleIdentifier)
+            .map { ApplicationCatalog.displayName(for: $0, metadata: nil) }
+        return ApplicationRuleAppName.displayName(bundleIdentifier: bundleIdentifier, knownName: name)
+    }
     static func applicationName(for bundleIdentifier: String) -> String {
         if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleIdentifier) {
             return FileManager.default.displayName(atPath: url.path)
@@ -4610,9 +4702,13 @@ final class BetterTileModel {
         windows suppliedWindows: [WindowSnapshot]? = nil,
         revalidatesSuppliedWindows: Bool = false,
         desktopTransition: Bool = false,
-        recoveryFrameResults: [WindowID: RecoveryFrameResult]? = nil
+        recoveryFrameResults: [WindowID: RecoveryFrameResult]? = nil,
+        relayoutPaneGap: Bool = false
     ) {
         guard !isShutDown else { return }
+        let isPaneGapOnlyRefresh = relayoutPaneGap
+        let relayoutPaneGap = relayoutPaneGap
+            || (paneGapRelayoutPending && paneGapBeforeRelayout == nil && canRelayoutPaneGap)
         guard !isStabilizingSpace || desktopTransition else { return }
         guard activeBentoDrag == nil else {
             pendingWindowEvents.recordTopologyChange()
@@ -4726,6 +4822,9 @@ final class BetterTileModel {
         )
 
         for display in displays {
+            if isPaneGapOnlyRefresh {
+                guard sessionStore.session(for: display.id)?.mode == .bento else { continue }
+            }
             // A shared layout cannot admit arrivals over an unresolved native snap.
             if unresolvedRecoveryDisplays.contains(display.id),
                sessionStore.session(for: display.id)?.mode == .bento,
@@ -4852,6 +4951,7 @@ final class BetterTileModel {
                     wasCreated: activation.wasCreated,
                     previousWindowIDs: activation.previousWindowIDs,
                     isDesktopTransition: desktopTransition,
+                    requestsRelayout: relayoutPaneGap,
                     confirmedGone: consumedDestroyedWindowIDs,
                     confirmedMinimized: consumedMinimizedWindowIDs,
                     knownSpaceWindowIDs: (nativeObservation?.exclusiveWindowIDs(on: display.id) ?? [])
@@ -4975,6 +5075,7 @@ final class BetterTileModel {
         }
         system.updateManagedWindowIDs(Set(eligible.map(\.id)).union(sessionStore.sessions.values.flatMap { $0.tabbedState?.windowIDs ?? [] }))
         refreshDividerBoundaries(windows: eligible)
+        if relayoutPaneGap, sweepCommitted { completePendingPaneGapIfApplied() }
     }
 
     private func scheduleAuthoritativePlacementSettlement(

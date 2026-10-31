@@ -114,7 +114,13 @@ public struct BetterTileConfiguration: Codable, Hashable, Sendable {
     public var setupCompletionVersion: Int
     public var macOSTilingRecommendationAcknowledged: Bool
     public var stageManagerRecommendationAcknowledged: Bool
+    /// BetterTile asked macOS for Accessibility access once. macOS shows its prompt only once, so later
+    /// requests send the user to System Settings instead.
+    public var accessibilityPromptRequested: Bool
     public var showDockIcon: Bool
+    /// The BetterTile status items in the menu bar. With this and the Dock icon off,
+    /// reopening the app (Finder, Spotlight, `open`) shows Settings.
+    public var showMenuBarIcon: Bool
     public var snappingEnabled: Bool
     public var linkedResizeEnabled: Bool
     public var defaultTabbedPreset: TabbedPreset = .single
@@ -139,6 +145,9 @@ public struct BetterTileConfiguration: Codable, Hashable, Sendable {
     public var snapSuppressionModifiers: ShortcutModifiers
     public var adjacencyTolerance: Double
     public var snapAreaBindings: [SnapAreaBinding]
+    public var snapEdgeActivationDistance: Double
+    /// Extension beyond the edge band on each axis, not the total corner reach.
+    public var snapCornerActivationSize: Double
     public var doubleClickTitleBarToMaximize: Bool
     public var enhancedUserInterfacePolicy: EnhancedUserInterfacePolicy
     public var applicationRules: ApplicationRuleSet
@@ -156,7 +165,9 @@ public struct BetterTileConfiguration: Codable, Hashable, Sendable {
         setupCompletionVersion: Int = 0,
         macOSTilingRecommendationAcknowledged: Bool = false,
         stageManagerRecommendationAcknowledged: Bool = false,
+        accessibilityPromptRequested: Bool = false,
         showDockIcon: Bool = false,
+        showMenuBarIcon: Bool = true,
         snappingEnabled: Bool = true,
         linkedResizeEnabled: Bool = true,
         defaultLayoutMode: LayoutMode = .manual,
@@ -172,6 +183,8 @@ public struct BetterTileConfiguration: Codable, Hashable, Sendable {
         snapSuppressionModifiers: ShortcutModifiers = .option,
         adjacencyTolerance: Double = 6,
         snapAreaBindings: [SnapAreaBinding] = BetterTileConfiguration.defaultSnapAreaBindings,
+        snapEdgeActivationDistance: Double = SnapZoneDetector.defaultEdgeActivationDistance,
+        snapCornerActivationSize: Double = SnapZoneDetector.defaultCornerActivationSize,
         doubleClickTitleBarToMaximize: Bool = true,
         enhancedUserInterfacePolicy: EnhancedUserInterfacePolicy = .disableAndRestore,
         applicationRules: ApplicationRuleSet = ApplicationRuleSet(),
@@ -184,7 +197,9 @@ public struct BetterTileConfiguration: Codable, Hashable, Sendable {
         self.setupCompletionVersion = max(0, setupCompletionVersion)
         self.macOSTilingRecommendationAcknowledged = macOSTilingRecommendationAcknowledged
         self.stageManagerRecommendationAcknowledged = stageManagerRecommendationAcknowledged
+        self.accessibilityPromptRequested = accessibilityPromptRequested
         self.showDockIcon = showDockIcon
+        self.showMenuBarIcon = showMenuBarIcon
         self.snappingEnabled = snappingEnabled
         self.linkedResizeEnabled = linkedResizeEnabled
         self.defaultLayoutMode = defaultLayoutMode
@@ -200,6 +215,8 @@ public struct BetterTileConfiguration: Codable, Hashable, Sendable {
         self.snapSuppressionModifiers = snapSuppressionModifiers
         self.adjacencyTolerance = adjacencyTolerance
         self.snapAreaBindings = snapAreaBindings
+        self.snapEdgeActivationDistance = snapEdgeActivationDistance
+        self.snapCornerActivationSize = snapCornerActivationSize
         self.doubleClickTitleBarToMaximize = doubleClickTitleBarToMaximize
         self.enhancedUserInterfacePolicy = enhancedUserInterfacePolicy
         self.applicationRules = applicationRules
@@ -216,8 +233,8 @@ public struct BetterTileConfiguration: Codable, Hashable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case schemaVersion, setupCompletionVersion
-        case macOSTilingRecommendationAcknowledged, stageManagerRecommendationAcknowledged
-        case showDockIcon, snappingEnabled, linkedResizeEnabled
+        case macOSTilingRecommendationAcknowledged, stageManagerRecommendationAcknowledged, accessibilityPromptRequested
+        case showDockIcon, showMenuBarIcon, snappingEnabled, linkedResizeEnabled
         case defaultTabbedPreset
         case defaultLayoutMode, resizeFeedbackMode, dividerVisibility, dividerThickness, bentoInnerGap, bentoSwapHoverDelay
         case bentoNewWindowSide, bentoBalancesNewWindows
@@ -226,6 +243,7 @@ public struct BetterTileConfiguration: Codable, Hashable, Sendable {
         case singleWindowInitialPlacement
         case dockReservationMode
         case snapSuppressionModifiers, adjacencyTolerance, snapAreaBindings, doubleClickTitleBarToMaximize
+        case snapEdgeActivationDistance, snapCornerActivationSize
         case enhancedUserInterfacePolicy
         case applicationRules, keyboardShortcutsEnabled
         case shortcuts, layoutWheel, menuBarActions
@@ -255,7 +273,10 @@ public struct BetterTileConfiguration: Codable, Hashable, Sendable {
             Bool.self,
             forKey: .stageManagerRecommendationAcknowledged
         ) ?? false
+        accessibilityPromptRequested = try container.decodeIfPresent(Bool.self, forKey: .accessibilityPromptRequested) ?? false
         showDockIcon = try container.decodeIfPresent(Bool.self, forKey: .showDockIcon) ?? false
+        // Configurations saved before this setting existed keep the menu bar icon.
+        showMenuBarIcon = try container.decodeIfPresent(Bool.self, forKey: .showMenuBarIcon) ?? true
         snappingEnabled = try container.decodeIfPresent(Bool.self, forKey: .snappingEnabled) ?? true
         // Keep pre-existing installs off when their saved configuration
         // predates this key; only a configuration created from scratch defaults on.
@@ -313,6 +334,10 @@ public struct BetterTileConfiguration: Codable, Hashable, Sendable {
         snapSuppressionModifiers = try container.decodeIfPresent(ShortcutModifiers.self, forKey: .snapSuppressionModifiers) ?? .option
         adjacencyTolerance = try container.decodeIfPresent(Double.self, forKey: .adjacencyTolerance) ?? 6
         snapAreaBindings = try container.decodeIfPresent([SnapAreaBinding].self, forKey: .snapAreaBindings) ?? Self.defaultSnapAreaBindings
+        snapEdgeActivationDistance = try container.decodeIfPresent(Double.self, forKey: .snapEdgeActivationDistance)
+            ?? SnapZoneDetector.defaultEdgeActivationDistance
+        snapCornerActivationSize = try container.decodeIfPresent(Double.self, forKey: .snapCornerActivationSize)
+            ?? SnapZoneDetector.defaultCornerActivationSize
         doubleClickTitleBarToMaximize = try container.decodeIfPresent(Bool.self, forKey: .doubleClickTitleBarToMaximize) ?? true
         enhancedUserInterfacePolicy = try container.decodeIfPresent(
             EnhancedUserInterfacePolicy.self,
@@ -366,7 +391,9 @@ public struct BetterTileConfiguration: Codable, Hashable, Sendable {
             stageManagerRecommendationAcknowledged,
             forKey: .stageManagerRecommendationAcknowledged
         )
+        try container.encode(accessibilityPromptRequested, forKey: .accessibilityPromptRequested)
         try container.encode(showDockIcon, forKey: .showDockIcon)
+        try container.encode(showMenuBarIcon, forKey: .showMenuBarIcon)
         try container.encode(snappingEnabled, forKey: .snappingEnabled)
         try container.encode(linkedResizeEnabled, forKey: .linkedResizeEnabled)
         try container.encode(defaultLayoutMode, forKey: .defaultLayoutMode)
@@ -385,6 +412,8 @@ public struct BetterTileConfiguration: Codable, Hashable, Sendable {
         try container.encode(snapSuppressionModifiers, forKey: .snapSuppressionModifiers)
         try container.encode(adjacencyTolerance, forKey: .adjacencyTolerance)
         try container.encode(snapAreaBindings, forKey: .snapAreaBindings)
+        try container.encode(snapEdgeActivationDistance, forKey: .snapEdgeActivationDistance)
+        try container.encode(snapCornerActivationSize, forKey: .snapCornerActivationSize)
         try container.encode(doubleClickTitleBarToMaximize, forKey: .doubleClickTitleBarToMaximize)
         try container.encode(enhancedUserInterfacePolicy, forKey: .enhancedUserInterfacePolicy)
         try container.encode(applicationRules, forKey: .applicationRules)
@@ -451,6 +480,12 @@ public struct BetterTileConfiguration: Codable, Hashable, Sendable {
         guard overlayAppearance.strength.isFinite, (0...1).contains(overlayAppearance.strength) else { throw ConfigurationError.invalidGlassStrength }
         guard bentoInnerGap.isFinite, (0...12).contains(bentoInnerGap) else { throw ConfigurationError.invalidBentoInnerGap }
         guard bentoSwapHoverDelay.isFinite, (0...1).contains(bentoSwapHoverDelay) else { throw ConfigurationError.invalidBentoSwapHoverDelay }
+        guard snapEdgeActivationDistance.isFinite,
+              SnapZoneDetector.edgeActivationRange.contains(snapEdgeActivationDistance)
+        else { throw ConfigurationError.invalidSnapEdgeActivationDistance }
+        guard snapCornerActivationSize.isFinite,
+              SnapZoneDetector.cornerActivationRange.contains(snapCornerActivationSize)
+        else { throw ConfigurationError.invalidSnapCornerActivationSize }
         guard ShortcutValidator.conflicts(in: shortcuts).isEmpty else { throw ConfigurationError.shortcutConflict }
         guard Set(snapAreaBindings.map(\.area)).count == SnapArea.allCases.count,
               snapAreaBindings.count == SnapArea.allCases.count,
@@ -486,10 +521,11 @@ public struct ConfigurationChangeSet: OptionSet, Hashable, Sendable {
     public static let layoutWheel = Self(rawValue: 1 << 9)
     public static let overlayAppearance = Self(rawValue: 1 << 10)
     public static let workArea = Self(rawValue: 1 << 11)
+    public static let menuBarIcon = Self(rawValue: 1 << 12)
     public static let all: Self = [
         .shortcuts, .snapping, .linkedResize, .divider,
         .bentoGeometry, .activationPolicy, .titleBar, .accessibilityWrites,
-        .applicationRules, .layoutWheel, .overlayAppearance, .workArea,
+        .applicationRules, .layoutWheel, .overlayAppearance, .workArea, .menuBarIcon,
     ]
 
     public static func between(
@@ -509,7 +545,9 @@ public struct ConfigurationChangeSet: OptionSet, Hashable, Sendable {
         }
         if old.snappingEnabled != new.snappingEnabled
             || old.snapSuppressionModifiers != new.snapSuppressionModifiers
-            || old.snapAreaBindings != new.snapAreaBindings {
+            || old.snapAreaBindings != new.snapAreaBindings
+            || old.snapEdgeActivationDistance != new.snapEdgeActivationDistance
+            || old.snapCornerActivationSize != new.snapCornerActivationSize {
             changes.insert(.snapping)
         }
         if old.linkedResizeEnabled != new.linkedResizeEnabled
@@ -537,6 +575,9 @@ public struct ConfigurationChangeSet: OptionSet, Hashable, Sendable {
         if old.showDockIcon != new.showDockIcon {
             changes.insert(.activationPolicy)
         }
+        if old.showMenuBarIcon != new.showMenuBarIcon {
+            changes.insert(.menuBarIcon)
+        }
         if old.doubleClickTitleBarToMaximize != new.doubleClickTitleBarToMaximize {
             changes.insert(.titleBar)
         }
@@ -558,6 +599,8 @@ public enum ConfigurationError: Error, LocalizedError, Equatable {
     case invalidBentoInnerGap
     case invalidBentoSwapHoverDelay
     case invalidSnapAreaBindings
+    case invalidSnapEdgeActivationDistance
+    case invalidSnapCornerActivationSize
     case shortcutConflict
     case invalidFile
 
@@ -570,6 +613,8 @@ public enum ConfigurationError: Error, LocalizedError, Equatable {
         case .invalidBentoInnerGap: "Adaptive inner gap must be between 0 and 12 points."
         case .invalidBentoSwapHoverDelay: "Adaptive swap delay must be between 0 and 1 second."
         case .invalidSnapAreaBindings: "Snap areas must contain one valid action or Disabled setting for every screen edge and corner."
+        case .invalidSnapEdgeActivationDistance: "Snap edge width must be between 1 and 40 points."
+        case .invalidSnapCornerActivationSize: "Snap corner extension must be between 16 and 160 points."
         case .shortcutConflict: "Two actions use the same keyboard shortcut."
         case .invalidFile: "The selected file is not a BetterTile configuration."
         }

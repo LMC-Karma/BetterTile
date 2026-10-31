@@ -188,6 +188,32 @@ off switch.
 
 ## Permissions and dependencies
 
+The application picker reads names and bundle identifiers from running apps and
+from application bundles in `/Applications`, `/System/Applications`, and
+`~/Applications`, including Utilities. The installed list leaves out
+background-only and agent apps and apps inside another app or a helper folder.
+The installed-app catalog is cached in memory for five minutes. Browse uses the
+system application-file picker and can still choose any app. These operations
+request no new permission and send no data. Per-App Rules shows window titles
+from the model's existing observations; it makes no additional Accessibility
+reads and does not persist those titles or the app catalog.
+
+The picker's **Recent** section stores the bundle identifiers of the last eight
+apps chosen in any BetterTile app picker, newest first. It stores no app name,
+path, window title, or time. The list is kept in BetterTile's own `UserDefaults`
+under `recentApplicationBundleIdentifiers` (Debug and Release are separate), is
+never uploaded, exported, or logged, and stays until a later choice pushes an
+entry out. To clear it, quit BetterTile and run
+`defaults delete com.lmckarma.BetterTile recentApplicationBundleIdentifiers`
+(`com.lmckarma.BetterTile.debug` for Debug).
+
+**Launch at login** in General registers the BetterTile app itself as a login
+item with the public `SMAppService.mainApp` API, only when the user turns the
+switch on, and unregisters it when the switch is turned off. It adds no helper,
+daemon, agent, privileged component or permission. macOS stores the state and
+may ask the user to allow it in System Settings › General › Login Items; the
+switch then offers that pane. BetterTile's configuration does not store it.
+
 Accessibility is the only macOS permission BetterTile requests. A new
 permission or privileged component requires an explicit design review,
 least-privilege justification, repository documentation, and an in-product
@@ -289,9 +315,11 @@ The App icon picker saves a local `BetterTileAppIcon` preference and changes
 BetterTile's Dock and Finder icons through public AppKit APIs. A Finder
 override writes generated icon data and Finder metadata at the running app
 bundle's root. It requires a writable app and never requests elevation. A
-failed write is reported in Settings when the user selects an icon; the saved
-choice remains available for the Dock and for the next launch. A fresh install
-does not replace a custom icon the user set outside BetterTile.
+failed write is reported in Settings when the user selects an icon, or resets
+Startup to its default while an icon choice is saved; the saved choice remains
+available for the Dock and for the next launch. A fresh install, and a reset
+without a saved choice, do not replace a custom icon the user set outside
+BetterTile.
 
 This operation does not change the executable, Info.plist, signed resources,
 or signing identity, and does not re-sign the app. Ordinary signature

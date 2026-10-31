@@ -33,7 +33,7 @@ private func temporaryConfigurationStore() throws -> ConfigurationStore {
     #expect(try Data(contentsOf: store.fileURL) == original)
     model.flushConfiguration()
     #expect(try Data(contentsOf: store.fileURL) == original)
-    model.updateConfiguration { $0.menuBarActions = [.rightHalf] }
+    model.updateConfiguration { $0.showMenuBarIcon.toggle() }
     model.shutdown()
     #expect(try Data(contentsOf: store.fileURL) == original)
 }

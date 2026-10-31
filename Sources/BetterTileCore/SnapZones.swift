@@ -54,11 +54,71 @@ public struct SnapTarget: Equatable, Sendable {
     }
 }
 
+/// Activation values derived from the existing edge and corner-extension settings.
+public struct SnapZoneActivation: Equatable, Sendable {
+    public var edge: Double
+    public var cornerExtension: Double
+    public var reach: Double { edge + cornerExtension }
+    public var reachRange: ClosedRange<Double> {
+        (edge + SnapZoneDetector.cornerActivationRange.lowerBound)...(edge + SnapZoneDetector.cornerActivationRange.upperBound)
+    }
+
+    public init(edge: Double, cornerExtension: Double) {
+        self.edge = edge
+        self.cornerExtension = cornerExtension
+    }
+
+    public func settingReach(_ reach: Double) -> Self {
+        let clamped = min(max(reach, reachRange.lowerBound), reachRange.upperBound)
+        return Self(edge: edge, cornerExtension: clamped - edge)
+    }
+
+    /// Preserve total reach where possible, then clamp it to the new edge's range.
+    public func settingEdge(_ edge: Double) -> Self {
+        let clamped = min(max(edge, SnapZoneDetector.edgeActivationRange.lowerBound), SnapZoneDetector.edgeActivationRange.upperBound)
+        return Self(edge: clamped, cornerExtension: cornerExtension).settingReach(reach)
+    }
+}
+
+public enum SnapZonePreset: String, CaseIterable, Identifiable, Sendable {
+    case narrow, standard, wide
+
+    public var id: Self { self }
+    public var title: String {
+        switch self {
+        case .narrow: "Narrow"
+        case .standard: "Standard"
+        case .wide: "Wide"
+        }
+    }
+
+    public var activation: SnapZoneActivation {
+        switch self {
+        case .narrow: .init(edge: 3, cornerExtension: 45)
+        case .standard: .init(edge: 5, cornerExtension: 64)
+        case .wide: .init(edge: 12, cornerExtension: 108)
+        }
+    }
+
+    /// Nil represents Custom. Match exact stored values without rounding.
+    public static func matching(_ activation: SnapZoneActivation) -> Self? {
+        allCases.first { $0.activation == activation }
+    }
+}
+
 public struct SnapZoneDetector: Sendable {
+    public static let defaultEdgeActivationDistance: Double = 5
+    public static let defaultCornerActivationSize: Double = 64
+    public static let edgeActivationRange: ClosedRange<Double> = 1...40
+    public static let cornerActivationRange: ClosedRange<Double> = 16...160
+
     public var edgeActivationDistance: Double
     public var cornerActivationSize: Double
 
-    public init(edgeActivationDistance: Double = 5, cornerActivationSize: Double = 64) {
+    public init(
+        edgeActivationDistance: Double = Self.defaultEdgeActivationDistance,
+        cornerActivationSize: Double = Self.defaultCornerActivationSize
+    ) {
         self.edgeActivationDistance = edgeActivationDistance
         self.cornerActivationSize = cornerActivationSize
     }
@@ -80,6 +140,14 @@ public struct SnapZoneDetector: Sendable {
             return SnapTarget(action: action, frame: frame)
         }
         return nil
+    }
+
+    public func isInEdgeBand(at point: BTPoint, in bounds: BTRect) -> Bool {
+        guard bounds.contains(point) else { return false }
+        return point.x <= bounds.minX + edgeActivationDistance
+            || point.x >= bounds.maxX - edgeActivationDistance
+            || point.y <= bounds.minY + edgeActivationDistance
+            || point.y >= bounds.maxY - edgeActivationDistance
     }
 
     public func area(at point: BTPoint, in bounds: BTRect) -> SnapArea? {

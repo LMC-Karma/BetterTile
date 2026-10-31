@@ -3659,3 +3659,63 @@ private func repairKeepsBottomEdgesInsideTheWorkArea(count: Int, options: (Doubl
     #expect(maxRight <= 3770)
     #expect(model.statusMessage == nil)
 }
+
+@Test(.appTestApplication, arguments: [260.0, 400, 480])
+func snapActivationDiagramShowsMinimumBandsAndScaledCornerReach(width: Double) {
+    let size = CGSize(width: width, height: width / 1.6)
+    let screen = CGRect(origin: .zero, size: size)
+    for area in SnapArea.allCases {
+        let band = SnapZonePreviewGeometry.activationBand(for: area, in: size, edgeWidth: 1, cornerExtension: 16)
+        #expect(screen.contains(band))
+        #expect(min(band.width, band.height) >= 4)
+    }
+    let scale = width / SnapZonePreviewGeometry.display.frame.size.width
+    let edge = SnapZonePreviewGeometry.activationBand(for: .top, in: size, edgeWidth: 40, cornerExtension: 160)
+    let corner = SnapZonePreviewGeometry.activationBand(for: .topLeft, in: size, edgeWidth: 40, cornerExtension: 160)
+    #expect(abs(edge.height - 40 * scale) < 0.001)
+    #expect(abs(corner.width - 200 * scale) < 0.001)
+    #expect(corner.height == corner.width)
+    #expect(edge.minX == corner.maxX)
+    #expect(edge.maxX == size.width - corner.width)
+}
+
+/// The diagram draws each corner at least as thick as the edge band beside it, including at
+/// the smallest Custom values, where the scaled corner reach is below the 4-point edge minimum.
+@Test(.appTestApplication, arguments: [260.0, 400, 480])
+func snapActivationDiagramCornersAreNeverThinnerThanItsEdges(width: Double) {
+    let size = CGSize(width: width, height: width / 1.6)
+    for (edgeWidth, cornerExtension) in [(1.0, 16.0), (3, 45), (5, 64), (12, 108), (40, 160)] {
+        let drawn = SnapActivationBands.diagram(width: width, edgeWidth: edgeWidth, cornerExtension: cornerExtension,
+                                                selectedArea: nil)
+        let corner = drawn.band(for: .topLeft, in: size)
+        let top = drawn.band(for: .top, in: size)
+        let left = drawn.band(for: .left, in: size)
+        #expect(top.height >= 4 && left.width >= 4)
+        #expect(corner.width >= top.height && corner.height >= left.width,
+                "edge \(edgeWidth), extension \(cornerExtension)")
+        #expect(top.minX == corner.maxX && left.minY == corner.maxY)
+    }
+}
+
+@Test(.appTestApplication) @MainActor func snapActivationEditsPersistIndependentlyWithoutWindowWrites() throws {
+    let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let store = ConfigurationStore(fileURL: directory.appending(path: "configuration.json"))
+    let system = FakeAppWindowSystem()
+    let model = makeOffscreenModel(store: store, system: system, startRuntime: false)
+    defer { model.shutdown() }
+    let assignments = model.configuration.snapAreaBindings
+    model.updateConfiguration { $0.snapEdgeActivationDistance = 40 }
+    #expect(model.configuration.snapCornerActivationSize == 64)
+    model.updateConfiguration { $0.snapCornerActivationSize = 160 }
+    #expect(model.configuration.snapEdgeActivationDistance == 40)
+    model.flushConfiguration()
+    #expect(try store.load().snapCornerActivationSize == 160)
+    #expect(try store.load().snapEdgeActivationDistance == 40)
+    model.updateConfiguration { $0.snapEdgeActivationDistance = SnapZoneDetector.defaultEdgeActivationDistance }
+    #expect(model.configuration.snapCornerActivationSize == 160)
+    model.updateConfiguration { $0.snapCornerActivationSize = SnapZoneDetector.defaultCornerActivationSize }
+    #expect(model.configuration.snapEdgeActivationDistance == 5)
+    #expect(model.configuration.snapAreaBindings == assignments)
+    #expect(system.frameWriteCounts.isEmpty)
+}

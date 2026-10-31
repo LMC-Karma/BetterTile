@@ -7,9 +7,16 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		A2F000000000000000000001 /* ShortcutsSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2F000000000000000000002 /* ShortcutsSettings.swift */; };
 		100000000000000000000001 /* BetterTileApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000001 /* BetterTileApp.swift */; };
 		100000000000000000000002 /* BetterTileModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000002 /* BetterTileModel.swift */; };
-		100000000000000000000003 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000003 /* SettingsView.swift */; };
+		100000000000000000000003 /* SettingsShell.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000003 /* SettingsShell.swift */; };
+		5A0A0000000000000000B001 /* SettingsStyle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A0A0000000000000000F001 /* SettingsStyle.swift */; };
+		5A0A0000000000000000B002 /* GeneralSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A0A0000000000000000F002 /* GeneralSettings.swift */; };
+		5A0A0000000000000000B003 /* WindowLayoutSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A0A0000000000000000F003 /* WindowLayoutSettings.swift */; };
+		5A0A0000000000000000B004 /* MenuBarSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A0A0000000000000000F004 /* MenuBarSettings.swift */; };
+		5A0A0000000000000000B005 /* SnapZoneSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A0A0000000000000000F005 /* SnapZoneSettings.swift */; };
+		5A0A0000000000000000B006 /* LaunchAtLogin.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A0A0000000000000000F006 /* LaunchAtLogin.swift */; };
 		10000000000000000000000A /* LayoutWheelSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000000C /* LayoutWheelSettings.swift */; };
 		100000000000000000000007 /* SetupAssistantView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000000A /* SetupAssistantView.swift */; };
 		100000000000000000000004 /* BetterTileCore in Frameworks */ = {isa = PBXBuildFile; productRef = 700000000000000000000001 /* BetterTileCore */; };
@@ -23,12 +30,24 @@
 		100000000000000000000013 /* AppIconDarkDebug.icon in Resources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000013 /* AppIconDarkDebug.icon */; };
 		100000000000000000000014 /* LICENSE in Resources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000014 /* LICENSE */; };
 		100000000000000000000015 /* THIRD_PARTY_NOTICES.md in Resources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000015 /* THIRD_PARTY_NOTICES.md */; };
+		100000000000000000000020 /* ApplicationCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000020 /* ApplicationCatalog.swift */; };
+		100000000000000000000021 /* ApplicationPicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000021 /* ApplicationPicker.swift */; };
+		B0A1C2D3E4F5061728394A01 /* RecentApplications.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0A1C2D3E4F5061728394A02 /* RecentApplications.swift */; };
+		100000000000000000000022 /* ApplicationRuleSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000022 /* ApplicationRuleSettings.swift */; };
+		B3A100000000000000000001 /* SettingsPickerPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A100000000000000000002 /* SettingsPickerPanel.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		A2F000000000000000000002 /* ShortcutsSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShortcutsSettings.swift; sourceTree = "<group>"; };
 		200000000000000000000001 /* BetterTileApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BetterTileApp.swift; sourceTree = "<group>"; };
 		200000000000000000000002 /* BetterTileModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BetterTileModel.swift; sourceTree = "<group>"; };
-		200000000000000000000003 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		200000000000000000000003 /* SettingsShell.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsShell.swift; sourceTree = "<group>"; };
+		5A0A0000000000000000F001 /* SettingsStyle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsStyle.swift; sourceTree = "<group>"; };
+		5A0A0000000000000000F002 /* GeneralSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GeneralSettings.swift; sourceTree = "<group>"; };
+		5A0A0000000000000000F003 /* WindowLayoutSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowLayoutSettings.swift; sourceTree = "<group>"; };
+		5A0A0000000000000000F004 /* MenuBarSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarSettings.swift; sourceTree = "<group>"; };
+		5A0A0000000000000000F005 /* SnapZoneSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SnapZoneSettings.swift; sourceTree = "<group>"; };
+		5A0A0000000000000000F006 /* LaunchAtLogin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaunchAtLogin.swift; sourceTree = "<group>"; };
 		20000000000000000000000C /* LayoutWheelSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LayoutWheelSettings.swift; sourceTree = "<group>"; };
 		200000000000000000000004 /* BetterTile.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = BetterTile.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		200000000000000000000005 /* Package.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Package.swift; sourceTree = "<group>"; };
@@ -44,6 +63,11 @@
 		200000000000000000000013 /* AppIconDarkDebug.icon */ = {isa = PBXFileReference; lastKnownFileType = folder.iconcomposer.icon; path = Resources/AppIconDarkDebug.icon; sourceTree = "<group>"; };
 		200000000000000000000014 /* LICENSE */ = {isa = PBXFileReference; lastKnownFileType = text; path = LICENSE; sourceTree = "<group>"; };
 		200000000000000000000015 /* THIRD_PARTY_NOTICES.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = THIRD_PARTY_NOTICES.md; sourceTree = "<group>"; };
+		200000000000000000000020 /* ApplicationCatalog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ApplicationCatalog.swift; sourceTree = "<group>"; };
+		200000000000000000000021 /* ApplicationPicker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ApplicationPicker.swift; sourceTree = "<group>"; };
+		B0A1C2D3E4F5061728394A02 /* RecentApplications.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecentApplications.swift; sourceTree = "<group>"; };
+		200000000000000000000022 /* ApplicationRuleSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ApplicationRuleSettings.swift; sourceTree = "<group>"; };
+		B3A100000000000000000002 /* SettingsPickerPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsPickerPanel.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -84,7 +108,19 @@
 			children = (
 				200000000000000000000001 /* BetterTileApp.swift */,
 				200000000000000000000002 /* BetterTileModel.swift */,
-				200000000000000000000003 /* SettingsView.swift */,
+				200000000000000000000003 /* SettingsShell.swift */,
+				5A0A0000000000000000F001 /* SettingsStyle.swift */,
+				5A0A0000000000000000F002 /* GeneralSettings.swift */,
+				5A0A0000000000000000F003 /* WindowLayoutSettings.swift */,
+				A2F000000000000000000002 /* ShortcutsSettings.swift */,
+				5A0A0000000000000000F004 /* MenuBarSettings.swift */,
+				5A0A0000000000000000F005 /* SnapZoneSettings.swift */,
+				5A0A0000000000000000F006 /* LaunchAtLogin.swift */,
+				200000000000000000000022 /* ApplicationRuleSettings.swift */,
+				B3A100000000000000000002 /* SettingsPickerPanel.swift */,
+				200000000000000000000021 /* ApplicationPicker.swift */,
+				B0A1C2D3E4F5061728394A02 /* RecentApplications.swift */,
+				200000000000000000000020 /* ApplicationCatalog.swift */,
 				20000000000000000000000C /* LayoutWheelSettings.swift */,
 				20000000000000000000000A /* SetupAssistantView.swift */,
 				200000000000000000000007 /* Info.plist */,
@@ -189,7 +225,19 @@
 			files = (
 				100000000000000000000001 /* BetterTileApp.swift in Sources */,
 				100000000000000000000002 /* BetterTileModel.swift in Sources */,
-				100000000000000000000003 /* SettingsView.swift in Sources */,
+				100000000000000000000003 /* SettingsShell.swift in Sources */,
+				5A0A0000000000000000B001 /* SettingsStyle.swift in Sources */,
+				5A0A0000000000000000B002 /* GeneralSettings.swift in Sources */,
+				5A0A0000000000000000B003 /* WindowLayoutSettings.swift in Sources */,
+				A2F000000000000000000001 /* ShortcutsSettings.swift in Sources */,
+				5A0A0000000000000000B004 /* MenuBarSettings.swift in Sources */,
+				5A0A0000000000000000B005 /* SnapZoneSettings.swift in Sources */,
+				5A0A0000000000000000B006 /* LaunchAtLogin.swift in Sources */,
+				100000000000000000000022 /* ApplicationRuleSettings.swift in Sources */,
+				B3A100000000000000000001 /* SettingsPickerPanel.swift in Sources */,
+				100000000000000000000021 /* ApplicationPicker.swift in Sources */,
+				B0A1C2D3E4F5061728394A01 /* RecentApplications.swift in Sources */,
+				100000000000000000000020 /* ApplicationCatalog.swift in Sources */,
 				10000000000000000000000A /* LayoutWheelSettings.swift in Sources */,
 				100000000000000000000007 /* SetupAssistantView.swift in Sources */,
 			);

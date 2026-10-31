@@ -24,6 +24,20 @@ private let notes = "com.apple.Notes"
     #expect(!ApplicationRule.ignoreEverywhere.allowsBentoParticipation)
 }
 
+/// The model keeps an excluded app out of Tabbed panes as well as Adaptive
+/// layouts, so the text the user reads must name both modes. Direct actions
+/// work on the app's floating windows; a window already in a Tabbed pane is
+/// refused until it floats (TabbedSnapModelTests checks both cases).
+@Test func excludeTitleAndExplanationNameEveryModeItKeepsTheAppOutOf() {
+    let rule = ApplicationRule.excludeFromBento
+    #expect(rule.title == "Exclude from Adaptive and Tabbed")
+    #expect(rule.rawValue == "excludeFromBento", "The stored value must not change with the title")
+    #expect(rule.explanation.contains("Adaptive"))
+    #expect(rule.explanation.contains("Tabbed"))
+    #expect(rule.explanation.contains("floating windows"))
+    #expect(rule.explanation.contains("If a window already belongs to a Tabbed pane, float it first."))
+}
+
 /// Only decisions are stored. Setting an application back to the default
 /// removes it rather than recording the default against it.
 @Test func settingAnApplicationBackToTheDefaultForgetsIt() {
@@ -106,6 +120,87 @@ private let notes = "com.apple.Notes"
     [{"bundleIdentifier":"com.apple.Safari","rule":"manageNormally"}]
     """.utf8)
     #expect(try JSONDecoder().decode(ApplicationRuleSet.self, from: json).isEmpty)
+}
+
+// MARK: - Enabled switch
+
+@Test func newRulesStartEnabledAndApply() {
+    var rules = ApplicationRuleSet()
+    rules.set(.ignoreEverywhere, for: safari)
+    #expect(rules.isEnabled(for: safari))
+    #expect(rules.rule(for: safari) == .ignoreEverywhere)
+    #expect(rules.entries.map(\.isEnabled) == [true])
+    #expect(ApplicationRuleSet([safari: .excludeFromBento]).isEnabled(for: safari))
+}
+
+@Test func aDisabledRuleIsKeptButTheAppIsManagedNormally() {
+    var rules = ApplicationRuleSet()
+    rules.set(.ignoreEverywhere, for: safari)
+    rules.setEnabled(false, for: safari)
+    #expect(rules.rule(for: safari) == .manageNormally)
+    #expect(rules.configuredRule(for: safari) == .ignoreEverywhere)
+    #expect(!rules.isEnabled(for: safari))
+    #expect(rules.ruledBundleIdentifiers == [safari])
+    #expect(!rules.isEmpty)
+    rules.setEnabled(true, for: safari)
+    #expect(rules.rule(for: safari) == .ignoreEverywhere)
+}
+
+@Test func changingTheParticipationKeepsTheEnabledState() {
+    var rules = ApplicationRuleSet()
+    rules.set(.ignoreEverywhere, for: safari)
+    rules.setEnabled(false, for: safari)
+    rules.set(.excludeFromBento, for: safari)
+    #expect(rules.configuredRule(for: safari) == .excludeFromBento)
+    #expect(!rules.isEnabled(for: safari))
+    // Manage Normally still removes the rule, disabled or not.
+    rules.set(.manageNormally, for: safari)
+    #expect(rules.isEmpty)
+    #expect(rules.configuredRule(for: safari) == nil)
+}
+
+@Test func enablingAnAppWithoutARuleChangesNothing() {
+    var rules = ApplicationRuleSet()
+    rules.setEnabled(false, for: safari)
+    #expect(rules.isEmpty)
+    #expect(rules.isEnabled(for: safari))
+    #expect(rules.rule(for: safari) == .manageNormally)
+}
+
+@Test func rulesSavedBeforeTheEnabledSwitchLoadEnabled() throws {
+    let json = Data("""
+    [{"bundleIdentifier":"com.apple.Safari","rule":"ignoreEverywhere"},{"bundleIdentifier":"com.figma.Desktop","rule":"excludeFromBento"}]
+    """.utf8)
+    let decoded = try JSONDecoder().decode(ApplicationRuleSet.self, from: json)
+    #expect(decoded.entries.map(\.isEnabled) == [true, true])
+    #expect(decoded.rule(for: safari) == .ignoreEverywhere)
+    // Enabled rules encode exactly as before, so the file does not change.
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = .sortedKeys
+    #expect(String(decoding: try encoder.encode(decoded), as: UTF8.self) == """
+    [{"bundleIdentifier":"com.apple.Safari","rule":"ignoreEverywhere"},{"bundleIdentifier":"com.figma.Desktop","rule":"excludeFromBento"}]
+    """)
+}
+
+@Test func aDisabledRuleSurvivesARoundTrip() throws {
+    var rules = ApplicationRuleSet()
+    rules.set(.excludeFromBento, for: figma)
+    rules.set(.ignoreEverywhere, for: safari)
+    rules.setEnabled(false, for: safari)
+    let data = try JSONEncoder().encode(rules)
+    #expect(String(decoding: data, as: UTF8.self).contains(#""isEnabled":false"#))
+    let decoded = try JSONDecoder().decode(ApplicationRuleSet.self, from: data)
+    #expect(decoded == rules)
+    #expect(!decoded.isEnabled(for: safari))
+    #expect(decoded.isEnabled(for: figma))
+}
+
+@Test func turningARuleOffIsARuntimeChange() {
+    var on = BetterTileConfiguration()
+    on.applicationRules.set(.ignoreEverywhere, for: safari)
+    var off = on
+    off.applicationRules.setEnabled(false, for: safari)
+    #expect(ConfigurationChangeSet.between(on, off) == [.applicationRules])
 }
 
 // MARK: - Picking an application to rule

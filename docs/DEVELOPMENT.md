@@ -290,13 +290,13 @@ native focus lane.
 
 ### Native focus tests
 
-The opt-in native focus lane contains 2 macOS test functions that inspect key
+The opt-in native focus lane contains 6 macOS test functions that inspect key
 state or exercised an observed activation path. App tests stay in the default
 run unless they require a real key window while the process is inactive, or have
 test-specific activation evidence. A negative key-state assertion alone does not
 justify excluding an App test from the default run.
 
-The 3 App exceptions require real key status while the process is inactive.
+The 9 App exceptions require real key status while the process is inactive.
 Every other App test stays in the default run.
 
 Gated suites use `.enabled(if: NativeFocusTestLane.isEnabled)` and the recursive
@@ -338,7 +338,7 @@ product run: a lane activation can remain active when following default tests ru
 Their strict activity guard will fail, and the process can keep the user's keyboard
 focus. The filtered commands keep these two kinds of checks in separate processes.
 
-`NativeLaneMembershipTests` pins the exact 2 macOS and 3 App function names by
+`NativeLaneMembershipTests` pins the exact 6 macOS and 9 App function names by
 reading the gated suite declarations, including tests inside nested suites. Review
 any membership change and update the documented lane list together with the pin.
 
@@ -356,6 +356,26 @@ Never stop the main run loop in tests. Test bodies and fixtures must not call
 `performNativeClick` under `.settingsUI` or `.macOSUI`; only the shared loop
 support may stop a loop that it owns. Stopping the outer loop can make SwiftPM's
 helper exit 0 before the test run finishes.
+
+### Export snapshots separately
+
+Never set `BT_SNAPSHOT_DIR` for a full product or suite run. Exporting every UI
+snapshot adds main-actor work and can invalidate elapsed-time tests. `Tools/test.sh`
+refuses a set `BT_SNAPSHOT_DIR` (even empty) before it builds or runs tests. Unset that
+variable for suite validation. On a shared machine, use the prescribed full-suite
+lock helper as usual.
+
+Export captures in a separate focused command that selects only the intended
+snapshot suite, for example:
+
+```sh
+mkdir -p /tmp/bettertile-snapshots
+BT_SNAPSHOT_DIR=/tmp/bettertile-snapshots \
+  swift test --filter ApplicationPickerSnapshotTests
+```
+
+Keep private captures outside tracked files.
+Do not use a broad filter such as `BetterTileAppTests` for capture export.
 
 ### Testing timers without real time
 

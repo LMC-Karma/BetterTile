@@ -240,6 +240,47 @@ private struct PreviewGrip: NSViewRepresentable {
     }
 }
 
+/// BetterTile's divider grip, drawn by the renderer that the Window Layout preview and the live overlay use.
+public struct DividerGrip: View {
+    /// Width of a vertical grip, or height of a horizontal one. The glass lens needs this much room.
+    public static let crossExtent = 24.0
+
+    public var axis: SplitAxis
+    /// Length of the divider the grip sits on.
+    public var length: Double
+    public var thickness: Double
+    public var active: Bool
+    public var overlayAppearance: OverlayAppearance
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    public init(axis: SplitAxis, length: Double, thickness: Double, active: Bool, overlayAppearance: OverlayAppearance = .init()) {
+        self.axis = axis
+        self.length = length
+        self.thickness = thickness
+        self.active = active
+        self.overlayAppearance = overlayAppearance
+    }
+
+    public var body: some View {
+        let vertical = axis == .vertical
+        let span = 8...max(16, length - 8)
+        let resting = DividerHandleGeometry.straightLength(span: span, active: false)
+        let stretched = DividerHandleGeometry.straightLength(span: span, active: true)
+        let room = max(0, length / 2 - 8)
+        PreviewGrip(
+            mode: vertical ? .vertical(restingLength: resting, activeLength: stretched)
+                : .horizontal(restingLength: resting, activeLength: stretched),
+            thickness: thickness,
+            trackRoom: vertical ? [.up: room, .down: room] : [.left: room, .right: room],
+            active: active, reduceMotion: reduceMotion, overlayAppearance: overlayAppearance
+        )
+        .frame(width: vertical ? Self.crossExtent : length, height: vertical ? length : Self.crossExtent)
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+}
+
 @MainActor
 final class DividerLensPreviewView: NSView {
     let handleView: DividerHandleView
