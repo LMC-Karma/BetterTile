@@ -2,7 +2,7 @@ import Testing
 @testable import BetterTileCore
 @testable import BetterTileMacOS
 
-@Test(arguments: [WindowSystemEvent.Kind.moved, .resized, .minimized, .restored, .created, .destroyed, .focused])
+@Test(.macOSTestApplication, arguments: [WindowSystemEvent.Kind.moved, .resized, .minimized, .restored, .created, .destroyed, .focused])
 func unknownObservationNeverManufacturesAWindowIdentity(kind: WindowSystemEvent.Kind) throws {
     let application = ApplicationLaunchInstance(processIdentifier: 42, generation: 1)
     let registry = WindowIdentityRegistry()
@@ -20,7 +20,7 @@ func unknownObservationNeverManufacturesAWindowIdentity(kind: WindowSystemEvent.
     #expect(registry.records.isEmpty)
 }
 
-@Test func capturedObservationCannotOutliveWindowOrObserverInstallation() throws {
+@Test(.macOSTestApplication) func capturedObservationCannotOutliveWindowOrObserverInstallation() throws {
     let application = ApplicationLaunchInstance(processIdentifier: 42, generation: 1)
     var registry = WindowIdentityRegistry()
     let id = registry.resolve(application: application, accessibilityHash: 100, exactWindowID: 700)

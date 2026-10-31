@@ -7,7 +7,7 @@ import Testing
 
 /// A missing symbol renders as a blank sector at runtime and never fails a
 /// build, so the whole mapping is resolved against the installed SF Symbols.
-@Test func everyWheelSymbolResolvesOnThisSystem() {
+@Test(.macOSTestApplication) func everyWheelSymbolResolvesOnThisSystem() {
     var names = WindowAction.allCases.map(\.layoutWheelSymbolName)
     names.append(LayoutWheelSlot.empty.symbolName)
     names.append(LayoutWheelSlot(command: .repairBento).symbolName)
@@ -23,7 +23,7 @@ import Testing
     }
 }
 
-@Test func slotsDeriveLabelsFromCommands() {
+@Test(.macOSTestApplication) func slotsDeriveLabelsFromCommands() {
     let action = LayoutWheelSlot(command: .windowAction(.topRightQuarter))
     #expect(action.label == "Top Right Quarter")
     #expect(!action.isEmpty)
@@ -34,7 +34,7 @@ import Testing
     #expect(!repair.isAvailable)
 }
 
-@Test func approvedSpecialActionSymbolsStayConsistent() {
+@Test(.macOSTestApplication) func approvedSpecialActionSymbolsStayConsistent() {
     #expect(WindowAction.almostMaximize.layoutWheelSymbolName == "inset.filled.center.rectangle")
     #expect(LayoutWheelSlot(command: .repairBento).symbolName
         == "arrow.triangle.2.circlepath")
@@ -42,7 +42,7 @@ import Testing
 
 /// Settings normalization already clears deleted zones, but the renderer can be
 /// handed state mid-edit, so a stale identifier has to read as Empty too.
-@Test func legacyCustomZoneAndNoAssignmentBothRenderAsEmpty() {
+@Test(.macOSTestApplication) func legacyCustomZoneAndNoAssignmentBothRenderAsEmpty() {
     let deleted = LayoutWheelSlot(command: .customZone(UUID()))
     let unassigned = LayoutWheelSlot(command: nil)
 
@@ -52,7 +52,7 @@ import Testing
     #expect(!deleted.isAvailable)
 }
 
-@Test func accessibilityLabelsCarryPositionCommandAndAvailability() {
+@Test(.macOSTestApplication) func accessibilityLabelsCarryPositionCommandAndAvailability() {
     let slot = LayoutWheelSlot(command: .windowAction(.leftHalf))
     let outerLeft = LayoutWheelSelection(ring: .outer, sector: .left)
 
@@ -80,7 +80,7 @@ import Testing
 
 /// Drawing and hit testing must not drift apart. Every drawn band midpoint has
 /// to hit test to the ring it is drawn in, and the gaps must stay unselectable.
-@Test func drawnBandsAgreeWithHitTesting() {
+@Test(.macOSTestApplication) func drawnBandsAgreeWithHitTesting() {
     let metrics = LayoutWheelMetrics.standard
     let geometry = metrics.geometry
 
@@ -103,7 +103,7 @@ import Testing
 
 /// The drawn centre angles have to name the same sectors the pure geometry
 /// picks, or a pointer would select a neighbour of the sector under it.
-@Test func drawnCenterAnglesMatchGeometrySectors() {
+@Test(.macOSTestApplication) func drawnCenterAnglesMatchGeometrySectors() {
     let metrics = LayoutWheelMetrics.standard
     let radius = (metrics.geometry.hubRadius + metrics.geometry.innerRingOuterRadius) / 2
 
@@ -116,7 +116,7 @@ import Testing
 
 /// One Level draws only the inner ring, so the panel and the Settings host must
 /// not reserve the two-level size.
-@Test func oneLevelDrawsTheInnerRingOnly() {
+@Test(.macOSTestApplication) func oneLevelDrawsTheInnerRingOnly() {
     let metrics = LayoutWheelMetrics.standard
 
     #expect(metrics.diameter(for: .one) == metrics.oneLevelInnerRingOuterRadius * 2)
@@ -126,7 +126,7 @@ import Testing
     #expect(metrics.presentationDiameter(for: .two) > metrics.diameter(for: .two))
 }
 
-@Test func metricsRejectOverlappingRadii() {
+@Test(.macOSTestApplication) func metricsRejectOverlappingRadii() {
     #expect(LayoutWheelMetrics(
         hubRadius: 36,
         innerRingOuterRadius: 104,
@@ -144,7 +144,7 @@ import Testing
 /// Step 4 requires one renderer for two very different hosts. Measuring it in a
 /// hosting view proves it lays out at its drawn size in both, and that neither
 /// level clips inside the 820 x 560 minimum Settings window.
-@Test @MainActor func theRendererFitsSettingsAndATransparentPanel() {
+@Test(.macOSTestApplication) @MainActor func theRendererFitsSettingsAndATransparentPanel() {
     for levelCount in LayoutWheelLevelCount.allCases {
         let view = LayoutWheelView(
             configuration: LayoutWheelConfiguration(levelCount: levelCount),
@@ -178,7 +178,7 @@ import Testing
     }
 }
 
-@Test func scaledMetricsKeepDrawingAndHitTestingTogether() {
+@Test(.macOSTestApplication) func scaledMetricsKeepDrawingAndHitTestingTogether() {
     let metrics = LayoutWheelMetrics.standard.scaled(by: 1.2)
 
     #expect(abs(metrics.diameter(for: .two) - 264) < 0.01)
@@ -186,7 +186,7 @@ import Testing
     #expect(abs(metrics.geometry(for: .one).innerRingOuterRadius - 100.8) < 0.01)
 }
 
-@Test func referenceGlyphGeometryIsCenteredAndLandscape() {
+@Test(.macOSTestApplication) func referenceGlyphGeometryIsCenteredAndLandscape() {
     let outer = LayoutWheelGlyphLayout.outerRect(in: CGSize(width: 35, height: 35))
     #expect(abs(outer.midX - 17.5) < 0.01)
     #expect(abs(outer.midY - 17.5) < 0.01)
@@ -216,7 +216,7 @@ import Testing
 
 /// Icons stay centred in their bands so the compact wheel keeps a clear visual
 /// hierarchy without labels.
-@Test func iconCentersStayInsideEveryRing() {
+@Test(.macOSTestApplication) func iconCentersStayInsideEveryRing() {
     let metrics = LayoutWheelMetrics.standard
 
     for ring in LayoutWheelRing.allCases {
@@ -228,7 +228,7 @@ import Testing
 
 /// Render the actual compact glyphs. Geometry-only checks miss blank Canvas
 /// output and partitions whose strokes consume the selected cell at menu size.
-@Test @MainActor func compactActionGlyphsRemainVisibleAndDistinct() throws {
+@Test(.macOSTestApplication) @MainActor func compactActionGlyphsRemainVisibleAndDistinct() throws {
     for scale: CGFloat in [1, 2] {
         var sixthImages = Set<Data>()
         for action in WindowAction.allCases {

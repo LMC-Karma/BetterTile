@@ -3,7 +3,7 @@ import Testing
 @testable import BetterTileCore
 @testable import BetterTileMacOS
 
-@Test func stageManagerThumbnailFramesAreRejected() {
+@Test(.macOSTestApplication) func stageManagerThumbnailFramesAreRejected() {
     let full = BTRect(x: 100, y: 100, width: 800, height: 600)
     let decorated = BTRect(x: 100, y: 99, width: 800, height: 601)
     let thumbnail = BTRect(x: 20, y: 100, width: 160, height: 120)
@@ -11,7 +11,7 @@ import Testing
     #expect(!OnscreenWindowMatcher.matches(accessibilityFrame: full, windowServerFrame: thumbnail))
 }
 
-@Test func windowSystemNeverManagesItsOwnApplicationWindows() {
+@Test(.macOSTestApplication) func windowSystemNeverManagesItsOwnApplicationWindows() {
     #expect(!AccessibilityWindowSystem.shouldManageApplication(
         processIdentifier: 42,
         ownProcessIdentifier: 42,
@@ -30,7 +30,7 @@ import Testing
 
 /// A failed read of a title-bar button, or of its enabled state, is not
 /// evidence for a popup verdict; only an absent attribute is.
-@Test func popupButtonReadsMapFailuresToUnreadable() {
+@Test(.macOSTestApplication) func popupButtonReadsMapFailuresToUnreadable() {
     typealias System = AccessibilityWindowSystem
     #expect(System.buttonState(reference: .attributeUnsupported, enabled: nil) == .missing)
     #expect(System.buttonState(reference: .noValue, enabled: nil) == .missing)
@@ -44,7 +44,7 @@ import Testing
 /// A process that quits takes its applications' seeds with it: those of the
 /// windows it had and the one its launch record names. Another application's
 /// seed and every window's own measurement stay.
-@Test func aQuitProcessDropsItsApplicationsSeedsOnly() {
+@Test(.macOSTestApplication) func aQuitProcessDropsItsApplicationsSeedsOnly() {
     var learner = WindowMinimumSizeLearner()
     let mail = WindowID(rawValue: "mail"), notes = WindowID(rawValue: "notes")
     func measure(_ id: WindowID, _ application: String) {
@@ -78,7 +78,7 @@ import Testing
 
 /// A process registered without a name learns it from its own windows, so
 /// its seed can be dropped when it quits; a named or older record does not.
-@Test func aLaunchRecordLearnsItsBundleIdentifierOnlyFromItsOwnLaunch() {
+@Test(.macOSTestApplication) func aLaunchRecordLearnsItsBundleIdentifierOnlyFromItsOwnLaunch() {
     let current = ApplicationLaunchInstance(processIdentifier: 42, generation: 2)
     let earlier = ApplicationLaunchInstance(processIdentifier: 42, generation: 1)
     #expect(AccessibilityWindowSystem.recordLearnsBundleIdentifier(
@@ -97,7 +97,7 @@ import Testing
 /// `cannotComplete` says nothing about its window. The window keeps its
 /// previous answer, or counts as movable and resizable when it never
 /// answered, instead of being read as fixed-size and dropped from Tabbed.
-@Test func anUnansweredSettableQuestionKeepsThePreviousVerdict() {
+@Test(.macOSTestApplication) func anUnansweredSettableQuestionKeepsThePreviousVerdict() {
     #expect(AccessibilityWindowSystem.settabilityVerdict(answer: true, previous: false) == (true, .reported))
     #expect(AccessibilityWindowSystem.settabilityVerdict(answer: false, previous: true) == (false, .reported))
     #expect(AccessibilityWindowSystem.settabilityVerdict(answer: nil, previous: false) == (false, .previous))
@@ -105,7 +105,7 @@ import Testing
     #expect(AccessibilityWindowSystem.settabilityVerdict(answer: nil, previous: nil) == (true, .assumed))
 }
 
-@Test func movabilityNeedsAnAnswerBeforeAWindowCountsAsUnmovable() {
+@Test(.macOSTestApplication) func movabilityNeedsAnAnswerBeforeAWindowCountsAsUnmovable() {
     #expect(AccessibilityWindowSystem.movability(position: true, size: nil) == true)
     #expect(AccessibilityWindowSystem.movability(position: false, size: true) == true)
     #expect(AccessibilityWindowSystem.movability(position: false, size: false) == false)
@@ -115,7 +115,7 @@ import Testing
 
 /// Only a successful read that names the window confirms focus. An
 /// application without a focused window, or a failed read, proves nothing.
-@Test func applicationFocusRequiresAPositiveRead() {
+@Test(.macOSTestApplication) func applicationFocusRequiresAPositiveRead() {
     func focus(_ result: AXError, role: String? = "AXWindow", subrole: String? = "AXStandardWindow",
                matches: Bool = false) -> ApplicationFocusMatch {
         AccessibilityWindowSystem.applicationFocus(readResult: result, focusedRole: role,
@@ -137,7 +137,7 @@ import Testing
 /// two ticks. Each readback lies between an older readback and the newest
 /// request, but above the previous request, so it is no clamp. A real clamp
 /// below the previous request is still measured at once.
-@Test func liveTickReadbacksThatLagBehindTheirRequestsAreNotLearned() {
+@Test(.macOSTestApplication) func liveTickReadbacksThatLagBehindTheirRequestsAreNotLearned() {
     var learner = WindowMinimumSizeLearner()
     var requested: [WindowID: BTSize] = [:]
     let id = WindowID(rawValue: "chrome")

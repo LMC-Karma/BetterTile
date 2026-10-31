@@ -6,7 +6,7 @@ import Testing
 
 /// Leave space for Dock changes the work area, so Bento tiles into the
 /// smaller area at once and gets the space back when it is turned off.
-@Test @MainActor func leaveSpaceForDockRetilesBentoBothWays() async throws {
+@Test(.appTestApplication) @MainActor func leaveSpaceForDockRetilesBentoBothWays() async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
     system.windows[0].frame = BTRect(x: 0, y: 0, width: 500, height: 800)

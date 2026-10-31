@@ -14,13 +14,13 @@ private func committedOutcome(_ end: LayoutDragEnd?) -> BentoDragOutcome? {
     return nil
 }
 
-@Test @MainActor func nsEventMouseDownRequiresTheButtonToStillBePressed() {
+@Test(.macOSTestApplication) @MainActor func nsEventMouseDownRequiresTheButtonToStillBePressed() {
     #expect(!DragSnapController.acceptsMouseDown(from: .nsEvent, pressedMouseButtons: 0))
     #expect(DragSnapController.acceptsMouseDown(from: .nsEvent, pressedMouseButtons: 1))
     #expect(DragSnapController.acceptsMouseDown(from: .eventTap, pressedMouseButtons: 0))
 }
 
-@Test @MainActor func bentoDragAdmissionHonorsApplicationRules() {
+@Test(.macOSTestApplication) @MainActor func bentoDragAdmissionHonorsApplicationRules() {
     let system = FakeWindowSystem()
     let window = system.windows[0]
     let controller = DragSnapController(
@@ -47,7 +47,7 @@ private func committedOutcome(_ end: LayoutDragEnd?) -> BentoDragOutcome? {
     #expect(!controller.allowsBentoDrag(for: floatingWindow))
 }
 
-@Test @MainActor func sharedGestureSourceIgnoresMouseUpWithoutAnActiveDrag() {
+@Test(.macOSTestApplication) @MainActor func sharedGestureSourceIgnoresMouseUpWithoutAnActiveDrag() {
     let system = FakeWindowSystem()
     let controller = DragSnapController(
         coordinator: WindowCoordinator(system: system),
@@ -68,7 +68,7 @@ private func committedOutcome(_ end: LayoutDragEnd?) -> BentoDragOutcome? {
     #expect(endedCount == 0)
 }
 
-@Test @MainActor func sharedGestureSequenceAppliesSnapPlacement() {
+@Test(.macOSTestApplication) @MainActor func sharedGestureSequenceAppliesSnapPlacement() {
     let system = FakeWindowSystem()
     let controller = DragSnapController(
         coordinator: WindowCoordinator(system: system),
@@ -103,7 +103,7 @@ private func committedOutcome(_ end: LayoutDragEnd?) -> BentoDragOutcome? {
     #expect(system.windows[0].frame == BTRect(x: 0, y: 0, width: 500, height: 800))
 }
 
-@Test @MainActor func singleWindowBentoDesktopWithoutATreeStillDragSnaps() {
+@Test(.macOSTestApplication) @MainActor func singleWindowBentoDesktopWithoutATreeStillDragSnaps() {
     let system = FakeWindowSystem()
     let controller = DragSnapController(
         coordinator: WindowCoordinator(system: system),
@@ -138,7 +138,7 @@ private func committedOutcome(_ end: LayoutDragEnd?) -> BentoDragOutcome? {
 
 /// The overlay is the only decision. The release position cannot choose a
 /// new target, but a suppression modifier held at release still cancels.
-@Test(arguments: [1.0, 500.0, 999.0], [false, true])
+@Test(.macOSTestApplication, arguments: [1.0, 500.0, 999.0], [false, true])
 @MainActor func snapReleaseCommitsTheShownDropUnlessSuppressed(x: Double, suppressed: Bool) {
     let system = FakeWindowSystem()
     let controller = DragSnapController(coordinator: WindowCoordinator(system: system), configuration: BetterTileConfiguration())
@@ -159,7 +159,7 @@ private func committedOutcome(_ end: LayoutDragEnd?) -> BentoDragOutcome? {
     }
 }
 
-@Test @MainActor func centerSnapPreservesTheDraggedWindowsSize() {
+@Test(.macOSTestApplication) @MainActor func centerSnapPreservesTheDraggedWindowsSize() {
     let system = FakeWindowSystem()
     var configuration = BetterTileConfiguration()
     configuration.snapAreaBindings = [SnapAreaBinding(area: .left, action: .center)]
@@ -172,7 +172,7 @@ private func committedOutcome(_ end: LayoutDragEnd?) -> BentoDragOutcome? {
     #expect(system.windows[0].frame == BTRect(x: 200, y: 200, width: 600, height: 400))
 }
 
-@Test @MainActor func cancellingSharedGesturePreventsSnapPlacement() {
+@Test(.macOSTestApplication) @MainActor func cancellingSharedGesturePreventsSnapPlacement() {
     let system = FakeWindowSystem()
     let controller = DragSnapController(
         coordinator: WindowCoordinator(system: system),
@@ -208,7 +208,7 @@ private func committedOutcome(_ end: LayoutDragEnd?) -> BentoDragOutcome? {
     #expect(system.windows[0].frame == BTRect(x: 203, y: 200, width: 600, height: 400))
 }
 
-@Test @MainActor func failedTapHandsActiveSnapToNSEventWithoutDuplicatePlacement() {
+@Test(.macOSTestApplication) @MainActor func failedTapHandsActiveSnapToNSEventWithoutDuplicatePlacement() {
     let system = FakeWindowSystem()
     let controller = DragSnapController(
         coordinator: WindowCoordinator(system: system),
@@ -239,7 +239,7 @@ private func committedOutcome(_ end: LayoutDragEnd?) -> BentoDragOutcome? {
     #expect(system.frameWriteCounts[WindowID(rawValue: "focused")] == 1)
 }
 
-@Test func bentoSwapSupportsTallerUnifiedToolbarsWithoutEnteringWindowContent() {
+@Test(.macOSTestApplication) func bentoSwapSupportsTallerUnifiedToolbarsWithoutEnteringWindowContent() {
     let frame = BTRect(x: 100, y: 100, width: 500, height: 400)
     #expect(BentoSwapDragRegion.isTitleBarStart(BTPoint(x: 200, y: 112), in: frame))
     #expect(BentoSwapDragRegion.isTitleBarStart(BTPoint(x: 200, y: 170), in: frame))
@@ -248,7 +248,7 @@ private func committedOutcome(_ end: LayoutDragEnd?) -> BentoDragOutcome? {
     #expect(!BentoSwapDragRegion.isTitleBarStart(BTPoint(x: 596, y: 112), in: frame))
 }
 
-@Test func bentoDragResolvesTheWindowUnderThePointerWhenFocusIsStale() throws {
+@Test(.macOSTestApplication) func bentoDragResolvesTheWindowUnderThePointerWhenFocusIsStale() throws {
     let displayID = DisplayID(rawValue: "main")
     let staleFocus = WindowSnapshot(
         id: WindowID(rawValue: "stale"),
@@ -271,7 +271,7 @@ private func committedOutcome(_ end: LayoutDragEnd?) -> BentoDragOutcome? {
     #expect(resolved.id == dragged.id)
 }
 
-@Test func bentoDragPrefersTheFocusedWindowWhenTitleBarsOverlap() throws {
+@Test(.macOSTestApplication) func bentoDragPrefersTheFocusedWindowWhenTitleBarsOverlap() throws {
     let displayID = DisplayID(rawValue: "main")
     let focused = WindowSnapshot(
         id: WindowID(rawValue: "focused"),
@@ -294,7 +294,7 @@ private func committedOutcome(_ end: LayoutDragEnd?) -> BentoDragOutcome? {
     #expect(resolved.id == focused.id)
 }
 
-@Test func windowDragGateRequiresTheOriginalCandidateToActuallyMove() {
+@Test(.macOSTestApplication) func windowDragGateRequiresTheOriginalCandidateToActuallyMove() {
     let displayID = DisplayID(rawValue: "main")
     let original = WindowSnapshot(
         id: WindowID(rawValue: "dragged"),
@@ -329,7 +329,7 @@ private func committedOutcome(_ end: LayoutDragEnd?) -> BentoDragOutcome? {
     #expect(gate.activate(with: nil) == original.id)
 }
 
-@Test @MainActor func eventTapHandoffWaitsForTheActiveNSEventDrag() {
+@Test(.macOSTestApplication) @MainActor func eventTapHandoffWaitsForTheActiveNSEventDrag() {
     let system = FakeWindowSystem()
     let controller = DragSnapController(
         coordinator: WindowCoordinator(system: system),
@@ -381,7 +381,7 @@ private func committedOutcome(_ end: LayoutDragEnd?) -> BentoDragOutcome? {
     #expect(system.frameWriteCounts[windowID] == 2)
 }
 
-@Test @MainActor func stoppingDuringADeferredHandoffDoesNotEnableTheEventTap() {
+@Test(.macOSTestApplication) @MainActor func stoppingDuringADeferredHandoffDoesNotEnableTheEventTap() {
     let system = FakeWindowSystem()
     let controller = DragSnapController(
         coordinator: WindowCoordinator(system: system),
@@ -415,7 +415,7 @@ private func committedOutcome(_ end: LayoutDragEnd?) -> BentoDragOutcome? {
     #expect(system.windows[0].frame == BTRect(x: 203, y: 200, width: 600, height: 400))
 }
 
-@Test @MainActor func dragSnapEvaluatesOnlyTheNewestSampleEachDisplayFrameAndFlushesRelease() {
+@Test(.macOSTestApplication) @MainActor func dragSnapEvaluatesOnlyTheNewestSampleEachDisplayFrameAndFlushesRelease() {
     let system = FakeWindowSystem()
     let controller = DragSnapController(
         coordinator: WindowCoordinator(system: system),
@@ -445,7 +445,7 @@ private func committedOutcome(_ end: LayoutDragEnd?) -> BentoDragOutcome? {
     #expect(!controller.hasPendingDragSample)
 }
 
-@Test @MainActor func exposedDragStartsDisplayTicksBeforeConsumingQueuedSamples() {
+@Test(.macOSTestApplication) @MainActor func exposedDragStartsDisplayTicksBeforeConsumingQueuedSamples() {
     let system = FakeWindowSystem()
     let ticks = ResizeDisplayLink(automatic: false)
     let controller = DragSnapController(
@@ -474,7 +474,7 @@ private func committedOutcome(_ end: LayoutDragEnd?) -> BentoDragOutcome? {
     #expect(!controller.hasPendingDragSample)
 }
 
-@Test @MainActor func dragPacingFollowsTheDisplayUnderThePointer() {
+@Test(.macOSTestApplication) @MainActor func dragPacingFollowsTheDisplayUnderThePointer() {
     let system = FakeWindowSystem()
     let secondaryID = DisplayID(rawValue: "secondary")
     system.availableDisplays.append(DisplaySnapshot(
@@ -511,7 +511,7 @@ private func committedOutcome(_ end: LayoutDragEnd?) -> BentoDragOutcome? {
     #expect(controller.pacingDisplayID == nil)
 }
 
-@Test(arguments: ["restart", "configuration", "replacement"]) @MainActor
+@Test(.macOSTestApplication, arguments: ["restart", "configuration", "replacement"]) @MainActor
 func queuedDragEscapeCannotCancelAReplacementGesture(retirement: String) async throws {
     let system = FakeWindowSystem()
     let controller = DragSnapController(coordinator: WindowCoordinator(system: system),
@@ -550,7 +550,7 @@ func queuedDragEscapeCannotCancelAReplacementGesture(retirement: String) async t
     #expect(!controller.isGestureActive)
 }
 
-@Test @MainActor func retiredFallbackReleaseCannotEndANewDragAfterEventTapHandoff() async throws {
+@Test(.macOSTestApplication) @MainActor func retiredFallbackReleaseCannotEndANewDragAfterEventTapHandoff() async throws {
     let system = FakeWindowSystem()
     let controller = DragSnapController(coordinator: WindowCoordinator(system: system),
                                         configuration: BetterTileConfiguration(), displayTicks: ResizeDisplayLink(automatic: false))
@@ -582,7 +582,7 @@ func queuedDragEscapeCannotCancelAReplacementGesture(retirement: String) async t
     #expect(!controller.isGestureActive)
 }
 
-@Test(arguments: [false, true]) @MainActor
+@Test(.macOSTestApplication, arguments: [false, true]) @MainActor
 func tabbedSnapGestureUsesMouseDownFrameAndPlansItsFixedZonePreview(available: Bool) async throws {
     let system = FakeWindowSystem()
     system.addSecondWindow()
@@ -642,7 +642,7 @@ func tabbedSnapGestureUsesMouseDownFrameAndPlansItsFixedZonePreview(available: B
     }
 }
 
-@Test @MainActor func tabbedSnapRepeatedTicksRetainPreviewPanelsAndClearTransitions() async throws {
+@Test(.macOSTestApplication) @MainActor func tabbedSnapRepeatedTicksRetainPreviewPanelsAndClearTransitions() async throws {
     for (competingCenter, acceptsCenter) in [(false, false), (true, false), (true, true)] {
         try await checkSnapPreviewRetention(competingCenter: competingCenter, acceptsCenter: acceptsCenter)
     }
@@ -782,7 +782,7 @@ func tabbedSnapGestureUsesMouseDownFrameAndPlansItsFixedZonePreview(available: B
     #expect(system.frameWriteCounts.isEmpty)
 }
 
-@Test(arguments: ["member", "member-no-zone", "becomes-member", "float"]) @MainActor
+@Test(.macOSTestApplication, arguments: ["member", "member-no-zone", "becomes-member", "float"]) @MainActor
 func excludedTabbedMembersNeverUseRawNativeSnapping(membership: String) {
     let system = FakeWindowSystem()
     var configuration = BetterTileConfiguration()
@@ -828,7 +828,7 @@ func excludedTabbedMembersNeverUseRawNativeSnapping(membership: String) {
 /// started a drag at release. The drag tore the tab from its group, and the
 /// release placed the group again, activating the window and closing the
 /// popup the click opened. A click without drag samples starts no drag.
-@Test @MainActor func aClickWithoutDragSamplesStartsNoTabbedDrag() {
+@Test(.macOSTestApplication) @MainActor func aClickWithoutDragSamplesStartsNoTabbedDrag() {
     let system = FakeWindowSystem()
     let controller = DragSnapController(coordinator: WindowCoordinator(system: system), configuration: BetterTileConfiguration())
     controller.activeModeProvider = { _ in .tabbed }
@@ -853,7 +853,7 @@ func excludedTabbedMembersNeverUseRawNativeSnapping(membership: String) {
 
 /// Drag samples suppressed by the snap modifiers still make a drag. When
 /// the modifiers are released before the button, the release snaps.
-@Test @MainActor func aReleaseAfterSuppressedDragSamplesStillSnaps() {
+@Test(.macOSTestApplication) @MainActor func aReleaseAfterSuppressedDragSamplesStillSnaps() {
     let system = FakeWindowSystem()
     let controller = DragSnapController(coordinator: WindowCoordinator(system: system), configuration: BetterTileConfiguration())
     controller.setUsesSharedGestureEvents(true)
@@ -893,7 +893,7 @@ func excludedTabbedMembersNeverUseRawNativeSnapping(membership: String) {
 /// The window's center has crossed to B while the pointer shows A's right
 /// half. The drop is A's right half, wherever the button comes up, and the
 /// coordinator checks it on A, not on the display of the window's center.
-@Test(arguments: [998.0, 1001.0, 1000.0]) @MainActor
+@Test(.macOSTestApplication, arguments: [998.0, 1001.0, 1000.0]) @MainActor
 func dropAtASharedEdgeCommitsTheSnapAreaUnderThePointer(releaseX: Double) throws {
     let (system, first, second) = sideBySideDisplays()
     let controller = DragSnapController(coordinator: WindowCoordinator(system: system),
@@ -916,7 +916,7 @@ func dropAtASharedEdgeCommitsTheSnapAreaUnderThePointer(releaseX: Double) throws
     #expect(results.first?.0 == first && results.first?.1 == true)
 }
 
-@Test @MainActor func pointerOnASharedEdgeBelongsToExactlyOneDisplay() throws {
+@Test(.macOSTestApplication) @MainActor func pointerOnASharedEdgeBelongsToExactlyOneDisplay() throws {
     let (system, first, second) = sideBySideDisplays()
     let displays = system.availableDisplays
     #expect(PointerDisplay.display(at: BTPoint(x: 1000, y: 400), in: displays)?.id == second)
@@ -936,7 +936,7 @@ func dropAtASharedEdgeCommitsTheSnapAreaUnderThePointer(releaseX: Double) throws
     #expect(PointerDisplay.display(at: BTPoint(x: 500, y: 799.5), in: stacked)?.id == first)
 }
 
-@Test @MainActor func dropAtAStackedEdgeCommitsTheUpperDisplaysBottomHalf() throws {
+@Test(.macOSTestApplication) @MainActor func dropAtAStackedEdgeCommitsTheUpperDisplaysBottomHalf() throws {
     let system = FakeWindowSystem()
     let first = system.availableDisplays[0].id
     let lower = DisplayID(rawValue: "lower")
@@ -961,7 +961,7 @@ func dropAtASharedEdgeCommitsTheSnapAreaUnderThePointer(releaseX: Double) throws
 
 /// A flick shows no drop before the button comes up, so the release point is
 /// evaluated once. A drag that showed a drop and then left it drops nothing.
-@Test(arguments: [false, true]) @MainActor
+@Test(.macOSTestApplication, arguments: [false, true]) @MainActor
 func releaseEvaluatesThePointOnlyWhenNoDropWasShown(showedEarlier: Bool) {
     let system = FakeWindowSystem()
     let controller = DragSnapController(coordinator: WindowCoordinator(system: system),
@@ -991,7 +991,7 @@ func releaseEvaluatesThePointOnlyWhenNoDropWasShown(showedEarlier: Bool) {
 /// than the half grows the frame from the snapped edge, on the drop's
 /// display. Release writes that frame, even if the minimum it reads again is
 /// larger, instead of failing after a valid overlay.
-@Test @MainActor func minimumSizeIsPartOfTheShownDrop() throws {
+@Test(.macOSTestApplication) @MainActor func minimumSizeIsPartOfTheShownDrop() throws {
     let (system, first, second) = sideBySideDisplays()
     system.windows[0].constraints.minimumSize = BTSize(width: 700, height: 80)
     let controller = DragSnapController(coordinator: WindowCoordinator(system: system),
@@ -1038,7 +1038,7 @@ func releaseEvaluatesThePointOnlyWhenNoDropWasShown(showedEarlier: Bool) {
 /// the pointer showed on A. The snap area at the screen edge wins over the
 /// edge of the pane under it. The overlay shows the Bento plan for the snap,
 /// with its gaps, and release commits that plan.
-@Test @MainActor func bentoDragAtASharedEdgeCommitsTheShownSnapPlan() throws {
+@Test(.macOSTestApplication) @MainActor func bentoDragAtASharedEdgeCommitsTheShownSnapPlan() throws {
     let (system, first, second) = sideBySideDisplays()
     system.addSecondWindow()
     let source = system.windows[0].id
@@ -1065,7 +1065,7 @@ func releaseEvaluatesThePointOnlyWhenNoDropWasShown(showedEarlier: Bool) {
 
 /// A Bento snap whose plan cannot be made shows invalid feedback. Release
 /// over it commits nothing and reports the reason.
-@Test @MainActor func bentoSnapWithoutAPlanIsInvalidFeedback() {
+@Test(.macOSTestApplication) @MainActor func bentoSnapWithoutAPlanIsInvalidFeedback() {
     let system = FakeWindowSystem()
     system.addSecondWindow()
     let (controller, dropped) = bentoController(system) { _ in .invalid(reason: "Peers cannot fit.") }
@@ -1080,7 +1080,7 @@ func releaseEvaluatesThePointOnlyWhenNoDropWasShown(showedEarlier: Bool) {
 
 /// An armed Bento cue is the drop. Release commits its plan without running
 /// the hover timer again. An invalid cue is not a drop.
-@Test(arguments: [true, false]) @MainActor
+@Test(.macOSTestApplication, arguments: [true, false]) @MainActor
 func bentoReleaseCommitsTheArmedCue(valid: Bool) async throws {
     let system = FakeWindowSystem()
     system.addSecondWindow()
@@ -1110,7 +1110,7 @@ func bentoReleaseCommitsTheArmedCue(valid: Bool) async throws {
     }
 }
 
-@Test(arguments: [false, true]) @MainActor
+@Test(.macOSTestApplication, arguments: [false, true]) @MainActor
 func bentoReleaseWithASuppressionModifierRestores(modified: Bool) {
     let system = FakeWindowSystem()
     system.addSecondWindow()
@@ -1133,7 +1133,7 @@ func bentoReleaseWithASuppressionModifierRestores(modified: Bool) {
 
 /// A minimum larger than the snap area's display cannot be held. The overlay
 /// shows invalid feedback instead of a drop, and release writes nothing.
-@Test @MainActor func minimumSizeLargerThanTheDisplayIsInvalidFeedback() {
+@Test(.macOSTestApplication) @MainActor func minimumSizeLargerThanTheDisplayIsInvalidFeedback() {
     let system = FakeWindowSystem()
     system.windows[0].constraints.minimumSize = BTSize(width: 1200, height: 80)
     let controller = DragSnapController(coordinator: WindowCoordinator(system: system),
@@ -1156,7 +1156,7 @@ func bentoReleaseWithASuppressionModifierRestores(modified: Bool) {
 
 /// A click (no drag samples) on a Tabbed tab whose group has hidden tabs,
 /// pressed inside a snap area, is still a click: no drag, no drop, no write.
-@Test @MainActor func aClickInsideASnapAreaStartsNoTabbedDrag() {
+@Test(.macOSTestApplication) @MainActor func aClickInsideASnapAreaStartsNoTabbedDrag() {
     let system = FakeWindowSystem()
     system.addSecondWindow()
     // The tab is pressed in its title bar at the display's left edge snap area.
@@ -1188,7 +1188,7 @@ func bentoReleaseWithASuppressionModifierRestores(modified: Bool) {
 /// display whose current Space does not hold it. Its own Space is still
 /// current on the display it came from, so the snapshot keeps it there, and
 /// the drop shown on that display applies.
-@Test @MainActor func dropAppliesWhenTheCenterCrossedIntoAnotherDisplaysSpace() throws {
+@Test(.macOSTestApplication) @MainActor func dropAppliesWhenTheCenterCrossedIntoAnotherDisplaysSpace() throws {
     let (system, first, second) = sideBySideDisplays()
     let ownSpace = NativeSpaceID(rawValue: 638), otherSpace = NativeSpaceID(rawValue: 635)
     system.nativeObservation = NativeDesktopObservation(
@@ -1222,7 +1222,7 @@ func bentoReleaseWithASuppressionModifierRestores(modified: Bool) {
 /// display has no permanent menu bar, so the strip reaches the top edge. The
 /// strip wins over a snap area except in the screen-edge bands, where the top
 /// edge, its corners, and the side edges still snap.
-@Test @MainActor func tabStripHoverShowsAnInsertionAndCommitsATabDrop() throws {
+@Test(.macOSTestApplication) @MainActor func tabStripHoverShowsAnInsertionAndCommitsATabDrop() throws {
     _ = NSApplication.shared
     let system = FakeWindowSystem()
     system.availableDisplays[0].frame.origin.x = 12000
@@ -1308,7 +1308,7 @@ func bentoReleaseWithASuppressionModifierRestores(modified: Bool) {
 
 /// An empty pane is a drop target without an insertion line. A snap area
 /// over it wins, as over a pane center.
-@Test @MainActor func emptyPaneHoverCommitsATabDropUnlessASnapAreaWins() throws {
+@Test(.macOSTestApplication) @MainActor func emptyPaneHoverCommitsATabDropUnlessASnapAreaWins() throws {
     _ = NSApplication.shared
     let system = FakeWindowSystem()
     system.availableDisplays[0].frame.origin.x = 12000
@@ -1354,7 +1354,7 @@ func bentoReleaseWithASuppressionModifierRestores(modified: Bool) {
 }
 
 /// A tab drop's cue says "Add as tab"; other drops keep their own badge.
-@Test @MainActor func tabDropCueSaysAddAsTab() {
+@Test(.macOSTestApplication) @MainActor func tabDropCueSaysAddAsTab() {
     let a = WindowID(rawValue: "a")
     var state = TabbedLayoutState()
     state.reconcile(windowIDs: [a], removed: [], focused: a)

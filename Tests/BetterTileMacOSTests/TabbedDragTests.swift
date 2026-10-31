@@ -15,7 +15,7 @@ import Testing
     }
 }
 
-@Test @MainActor func unchangedTabbedRefreshRetainsPanelFramesAndContentViews() throws {
+@Test(.macOSTestApplication) @MainActor func unchangedTabbedRefreshRetainsPanelFramesAndContentViews() throws {
     var orders = 0
     let f = try TabDragFixture(orderPanel: { _, _, _ in orders += 1 })
     defer { f.overlay.hide() }
@@ -113,7 +113,7 @@ import Testing
 /// of a wide neighbour moves it once and keeps that order while the pointer
 /// barely moves. Correcting the preview's drop edge by the committed index
 /// put the tab back on the next sample, so the preview flipped on every move.
-@Test @MainActor func reorderingPastAWideTabKeepsOnePreviewOrder() throws {
+@Test(.macOSTestApplication) @MainActor func reorderingPastAWideTabKeepsOnePreviewOrder() throws {
     let f = try TabDragFixture(titles: ["A", "A much longer document title for this tab", "B"])
     defer { f.overlay.hide() }
     let committed = f.view.pane.tabs
@@ -131,7 +131,7 @@ import Testing
     try f.release(x: x)
 }
 
-@Test(arguments: [false, true]) @MainActor
+@Test(.macOSTestApplication, arguments: [false, true]) @MainActor
 func pendingTabDropAcceptsClicksByTheDisplayedWindowIdentity(crossPane: Bool) throws {
     let f = try TabDragFixture()
     defer { f.overlay.hide() }
@@ -161,7 +161,7 @@ func pendingTabDropAcceptsClicksByTheDisplayedWindowIdentity(crossPane: Bool) th
     #expect(!f.overlay.isInteracting)
 }
 
-@Test(arguments: [false, true], [false, true]) @MainActor
+@Test(.macOSTestApplication, arguments: [false, true], [false, true]) @MainActor
 func pendingTabClickValidatesItsIdentityAgainAfterPlacementFinishes(crossPane: Bool, success: Bool) throws {
     let f = try TabDragFixture()
     defer { f.overlay.hide() }
@@ -192,7 +192,7 @@ func pendingTabClickValidatesItsIdentityAgainAfterPlacementFinishes(crossPane: B
     #expect(selections == (success ? [pressedID] : []))
 }
 
-@Test(arguments: [false, true], [false, true]) @MainActor
+@Test(.macOSTestApplication, arguments: [false, true], [false, true]) @MainActor
 func pendingTabDropPreservesExactClickReleaseAndBlocksAnotherDrag(crossPane: Bool, success: Bool) throws {
     let f = try TabDragFixture()
     defer { f.overlay.hide() }
@@ -256,7 +256,7 @@ func pendingTabDropPreservesExactClickReleaseAndBlocksAnotherDrag(crossPane: Boo
     #expect(selections == [expected])
 }
 
-@Test @MainActor func tabDragConsumesOnlyTheLatestPointPerTickAndReleasesExactly() throws {
+@Test(.macOSTestApplication) @MainActor func tabDragConsumesOnlyTheLatestPointPerTickAndReleasesExactly() throws {
     let f = try TabDragFixture()
     defer { f.overlay.hide() }
     var moves: [(UUID, Int?)] = []
@@ -284,7 +284,7 @@ func pendingTabDropPreservesExactClickReleaseAndBlocksAnotherDrag(crossPane: Boo
     #expect(moves.count == 1)
 }
 
-@Test @MainActor func unchangedTabDragDoesNotRedrawTabsOrResetTheHighlightFrame() throws {
+@Test(.macOSTestApplication) @MainActor func unchangedTabDragDoesNotRedrawTabsOrResetTheHighlightFrame() throws {
     let f = try TabDragFixture()
     defer { f.overlay.hide() }
     try f.start()
@@ -308,7 +308,7 @@ func pendingTabDropPreservesExactClickReleaseAndBlocksAnotherDrag(crossPane: Boo
     #expect(highlight.isVisible)
 }
 
-@Test(arguments: [false, true]) @MainActor
+@Test(.macOSTestApplication, arguments: [false, true]) @MainActor
 func endingTabDragDiscardsQueuedSamplesAndCannotReviveThePreview(hide: Bool) throws {
     let f = try TabDragFixture()
     defer { f.overlay.hide() }
@@ -334,7 +334,7 @@ func endingTabDragDiscardsQueuedSamplesAndCannotReviveThePreview(hide: Bool) thr
     #expect(f.view.content.previewOrder == [f.ids[1], f.ids[0], f.ids[2]])
 }
 
-@Test(arguments: [false, true]) @MainActor
+@Test(.macOSTestApplication, arguments: [false, true]) @MainActor
 func tabDragDefersAccessibilityUntilDropCompletes(success: Bool) throws {
     let f = try TabDragFixture()
     defer { f.overlay.hide() }
@@ -359,7 +359,7 @@ func tabDragDefersAccessibilityUntilDropCompletes(success: Bool) throws {
     #expect(f.view.pane.tabs == (success ? [f.ids[1], f.ids[2], f.ids[0]] : f.ids))
 }
 
-@Test @MainActor func tabDragTickScrollsAHeldEdgeAndCancellationRestoresTheStrip() throws {
+@Test(.macOSTestApplication) @MainActor func tabDragTickScrollsAHeldEdgeAndCancellationRestoresTheStrip() throws {
     let f = try TabDragFixture(count: 16)
     defer { f.overlay.hide() }
     let original = f.view.strip.visibleRange
@@ -375,7 +375,7 @@ func tabDragDefersAccessibilityUntilDropCompletes(success: Bool) throws {
 
 /// Native materials require the compositor. Host the already-laid-out
 /// production views together so glass samples only this synthetic backdrop.
-@Test(.enabled(if: ProcessInfo.processInfo.environment["BETTERTILE_NATIVE_GLASS_PREVIEW_DIR"] != nil,
+@Test(.macOSTestApplication, .enabled(if: ProcessInfo.processInfo.environment["BETTERTILE_NATIVE_GLASS_PREVIEW_DIR"] != nil,
                "Requires an explicit native glass preview output directory."))
 @MainActor func nativeTabDragPreviews() async throws {
     _ = NSApplication.shared
@@ -406,7 +406,7 @@ func tabDragDefersAccessibilityUntilDropCompletes(success: Bool) throws {
     for (mode, appearanceName) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
         let appearance = try #require(NSAppearance(named: appearanceName))
         backdrop.appearance = appearance
-        backdrop.orderFrontRegardless()
+        backdrop.orderFrontForTesting()
         for (name, point) in [
             ("reorder", BTPoint(x: bounds.minX + 420, y: bounds.minY + 17)),
             ("empty-strip", BTPoint(x: bounds.minX + 850, y: bounds.minY + 17)),
@@ -427,7 +427,7 @@ func tabDragDefersAccessibilityUntilDropCompletes(success: Bool) throws {
                 let view = try #require(panel.contentView)
                 let rect = panel.frame.offsetBy(dx: -frame.minX, dy: -frame.minY)
                 panel.contentView = nil
-                panel.orderOut(nil)
+                panel.orderOutForTesting()
                 view.frame = rect
                 root.addSubview(view)
                 views.append(view)
@@ -454,7 +454,7 @@ func tabDragDefersAccessibilityUntilDropCompletes(success: Bool) throws {
 
 /// AppKit lost the mouse-up of a fast drag. The next display tick sees the
 /// released button and drops the tab where its preview showed it, once.
-@Test @MainActor func tabDragFinishesOnceWhenItsMouseUpIsLost() throws {
+@Test(.macOSTestApplication) @MainActor func tabDragFinishesOnceWhenItsMouseUpIsLost() throws {
     let f = try TabDragFixture()
     defer { f.overlay.hide() }
     var intents: [TabbedUIIntent] = []
@@ -480,7 +480,7 @@ func tabDragDefersAccessibilityUntilDropCompletes(success: Bool) throws {
 
 /// A lost mouse-up drops the tab where the pointer really is. The last
 /// preview sample can be stale when the pointer moved after it.
-@Test @MainActor func aTabWhoseMouseUpWasLostDropsAtTheRealPointer() throws {
+@Test(.macOSTestApplication) @MainActor func aTabWhoseMouseUpWasLostDropsAtTheRealPointer() throws {
     let f = try TabDragFixture()
     defer { f.overlay.hide() }
     var intents: [TabbedUIIntent] = []
@@ -504,7 +504,7 @@ func tabDragDefersAccessibilityUntilDropCompletes(success: Bool) throws {
 
 /// A new press arrives before any tick noticed the lost mouse-up. The old
 /// drag is cancelled; it never completes into the new gesture's target.
-@Test @MainActor func newPressCancelsATabDragWhoseMouseUpWasLost() throws {
+@Test(.macOSTestApplication) @MainActor func newPressCancelsATabDragWhoseMouseUpWasLost() throws {
     let f = try TabDragFixture()
     defer { f.overlay.hide() }
     var intents: [TabbedUIIntent] = []
@@ -520,7 +520,7 @@ func tabDragDefersAccessibilityUntilDropCompletes(success: Bool) throws {
 /// A drag that crossed the threshold while a selection blocked tab drags
 /// starts at release once drags are allowed again, even without further
 /// pointer movement, and drops the tab where the pointer is.
-@Test @MainActor func aBlockedTabDragStillDropsAtRelease() throws {
+@Test(.macOSTestApplication) @MainActor func aBlockedTabDragStillDropsAtRelease() throws {
     let f = try TabDragFixture()
     defer { f.overlay.hide() }
     var intents: [TabbedUIIntent] = []
@@ -545,7 +545,7 @@ func tabDragDefersAccessibilityUntilDropCompletes(success: Bool) throws {
 
 /// The release can also come before the selection settles. The drop is
 /// still sent; the model queues it behind the selection.
-@Test @MainActor func aTabDragReleasedWhileASelectionSettlesStillDrops() throws {
+@Test(.macOSTestApplication) @MainActor func aTabDragReleasedWhileASelectionSettlesStillDrops() throws {
     let f = try TabDragFixture()
     defer { f.overlay.hide() }
     var intents: [TabbedUIIntent] = []
@@ -568,7 +568,7 @@ func tabDragDefersAccessibilityUntilDropCompletes(success: Bool) throws {
 
 /// A placement that already blocked tab drags before the press is not the
 /// press's own selection, so the release does not drop against its old panes.
-@Test @MainActor func aTabDragBlockedByAnotherPlacementIsNotDroppedAtRelease() throws {
+@Test(.macOSTestApplication) @MainActor func aTabDragBlockedByAnotherPlacementIsNotDroppedAtRelease() throws {
     let f = try TabDragFixture()
     defer { f.overlay.hide() }
     var intents: [TabbedUIIntent] = []
@@ -584,7 +584,7 @@ func tabDragDefersAccessibilityUntilDropCompletes(success: Bool) throws {
 
 /// An action queued behind the press's selection may change the panes, so
 /// the release no longer drops the blocked drag.
-@Test @MainActor func aTabDragIsNotDroppedAtReleaseAfterAnotherActionQueues() throws {
+@Test(.macOSTestApplication) @MainActor func aTabDragIsNotDroppedAtReleaseAfterAnotherActionQueues() throws {
     let f = try TabDragFixture()
     defer { f.overlay.hide() }
     var intents: [TabbedUIIntent] = []
@@ -603,7 +603,7 @@ func tabDragDefersAccessibilityUntilDropCompletes(success: Bool) throws {
 
 /// A pressed tab draws as selected at once. When its selection is rejected
 /// and the placement ends, the strip shows the tab that stayed selected.
-@Test @MainActor func aRejectedPressDropsItsHighlightWhenThePlacementEnds() throws {
+@Test(.macOSTestApplication) @MainActor func aRejectedPressDropsItsHighlightWhenThePlacementEnds() throws {
     let f = try TabDragFixture()
     defer { f.overlay.hide() }
     f.overlay.onIntent = { [weak overlay = f.overlay] intent in
@@ -649,7 +649,7 @@ extension TabDragFixture {
 
 /// A press that selected a background tab started the drag, so the drop
 /// names the tab the pane showed before the press.
-@Test(arguments: TabDragDestination.allCases) @MainActor
+@Test(.macOSTestApplication, arguments: TabDragDestination.allCases) @MainActor
 func aDragFromAPressSelectedTabCarriesThePreviousSelection(destination: TabDragDestination) throws {
     let f = try TabDragFixture()
     defer { f.overlay.hide() }
@@ -673,7 +673,7 @@ func aDragFromAPressSelectedTabCarriesThePreviousSelection(destination: TabDragD
 
 /// A tab that was already selected before the press keeps today's drop: the
 /// pane promotes its next tab, so the intent names no previous selection.
-@Test(arguments: TabDragDestination.allCases) @MainActor
+@Test(.macOSTestApplication, arguments: TabDragDestination.allCases) @MainActor
 func aDragFromTheSelectedTabCarriesNoPreviousSelection(destination: TabDragDestination) throws {
     let f = try TabDragFixture()
     defer { f.overlay.hide() }
@@ -693,7 +693,7 @@ func aDragFromTheSelectedTabCarriesNoPreviousSelection(destination: TabDragDesti
 
 /// The press of a tab whose earlier click has not settled sees that tab
 /// drawn as selected already, so its drag names no previous selection.
-@Test @MainActor func aDragFromATabStillSettlingAnEarlierClickCarriesNoPreviousSelection() throws {
+@Test(.macOSTestApplication) @MainActor func aDragFromATabStillSettlingAnEarlierClickCarriesNoPreviousSelection() throws {
     let f = try TabDragFixture()
     defer { f.overlay.hide() }
     var intents: [TabbedUIIntent] = []
@@ -716,7 +716,7 @@ func aDragFromTheSelectedTabCarriesNoPreviousSelection(destination: TabDragDesti
 /// A drag blocked while its press's selection placed still names the
 /// previous selection, whether it starts at release or its release comes
 /// before that selection settles.
-@Test(arguments: [false, true]) @MainActor
+@Test(.macOSTestApplication, arguments: [false, true]) @MainActor
 func aBlockedDragFromAPressSelectedTabCarriesThePreviousSelection(settlesBeforeRelease: Bool) throws {
     let f = try TabDragFixture()
     defer { f.overlay.hide() }

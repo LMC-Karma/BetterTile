@@ -7,7 +7,7 @@ import Testing
 /// Balancing can ask an existing window for less than a minimum its app
 /// never reported. The refusal is learned and the layout solved again: the
 /// result stays contained and never ends as a failure.
-@Test(arguments: [false, true]) @MainActor
+@Test(.appTestApplication, arguments: [false, true]) @MainActor
 func balancedPlacementContainsAnUnreportedApplicationMinimum(balances: Bool) async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
@@ -60,7 +60,7 @@ func balancedPlacementContainsAnUnreportedApplicationMinimum(balances: Bool) asy
 
 /// Balancing is a Bento setting. A new window on a Tabbed desktop joins a
 /// pane as a tab and no pane changes size.
-@Test @MainActor func tabbedPanesKeepTheirSizesWhenBalancingIsOn() async throws {
+@Test(.appTestApplication) @MainActor func tabbedPanesKeepTheirSizesWhenBalancingIsOn() async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
     system.windows.append(WindowSnapshot(

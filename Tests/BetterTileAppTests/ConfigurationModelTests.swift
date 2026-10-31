@@ -9,14 +9,14 @@ private func temporaryConfigurationStore() throws -> ConfigurationStore {
     return ConfigurationStore(fileURL: directory.appending(path: "configuration.json"))
 }
 
-@Test @MainActor func futureConfigurationSurvivesSessionChangesAndEverySavePath() async throws {
+@Test(.appTestApplication) @MainActor func futureConfigurationSurvivesSessionChangesAndEverySavePath() async throws {
     let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: directory) }
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     let store = ConfigurationStore(fileURL: directory.appending(path: "configuration.json"))
     let original = Data("{\n  \"schemaVersion\": 999, \"futurePreference\": \"keep-me\"\n}\n".utf8)
     try original.write(to: store.fileURL)
-    let model = BetterTileModel(store: store, system: FakeAppWindowSystem(), startRuntime: false)
+    let model = makeOffscreenModel(store: store, system: FakeAppWindowSystem(), startRuntime: false)
     defer { model.shutdown() }
     #expect(model.configurationLoadError as? ConfigurationError == .unsupportedFutureVersion(999))
     let explanation = try #require(model.configurationSaveBlockedReason)
@@ -33,12 +33,12 @@ private func temporaryConfigurationStore() throws -> ConfigurationStore {
     #expect(try Data(contentsOf: store.fileURL) == original)
     model.flushConfiguration()
     #expect(try Data(contentsOf: store.fileURL) == original)
-    model.updateConfiguration { $0.showDockIcon.toggle() }
+    model.updateConfiguration { $0.menuBarActions = [.rightHalf] }
     model.shutdown()
     #expect(try Data(contentsOf: store.fileURL) == original)
 }
 
-@Test(arguments: [
+@Test(.appTestApplication, arguments: [
     ("{\n  broken JSON\n}", ConfigurationError.invalidFile),
     (#"{"schemaVersion":12,"dividerThickness":1}"#, ConfigurationError.invalidDividerThickness),
 ])
@@ -47,7 +47,7 @@ private func temporaryConfigurationStore() throws -> ConfigurationStore {
     defer { try? FileManager.default.removeItem(at: store.fileURL.deletingLastPathComponent()) }
     let original = Data(json.utf8)
     try original.write(to: store.fileURL)
-    let model = BetterTileModel(store: store, system: FakeAppWindowSystem(), startRuntime: false)
+    let model = makeOffscreenModel(store: store, system: FakeAppWindowSystem(), startRuntime: false)
     defer { model.shutdown() }
     #expect(model.configurationLoadError as? ConfigurationError == failure)
 
@@ -58,7 +58,7 @@ private func temporaryConfigurationStore() throws -> ConfigurationStore {
     #expect(try Data(contentsOf: store.fileURL) == original)
 }
 
-@Test(arguments: [true, false])
+@Test(.appTestApplication, arguments: [true, false])
 @MainActor func inaccessibleConfigurationRemainsProtectedAfterAccessReturns(denyLookup: Bool) throws {
     let store = try temporaryConfigurationStore()
     let directory = store.fileURL.deletingLastPathComponent()
@@ -70,7 +70,7 @@ private func temporaryConfigurationStore() throws -> ConfigurationStore {
     let original = Data(#"{"schemaVersion":12,"showDockIcon":true}"#.utf8)
     try original.write(to: store.fileURL)
     try FileManager.default.setAttributes([.posixPermissions: 0], ofItemAtPath: protectedURL.path)
-    let model = BetterTileModel(store: store, system: FakeAppWindowSystem(), startRuntime: false)
+    let model = makeOffscreenModel(store: store, system: FakeAppWindowSystem(), startRuntime: false)
     defer { model.shutdown() }
     let failure = try #require(model.configurationLoadError) as NSError
     #expect(failure.domain == NSCocoaErrorDomain)
@@ -83,11 +83,11 @@ private func temporaryConfigurationStore() throws -> ConfigurationStore {
     #expect(try Data(contentsOf: store.fileURL) == original)
 }
 
-@Test @MainActor func restoringValidConfigurationRequiresRelaunchToSaveAgain() throws {
+@Test(.appTestApplication) @MainActor func restoringValidConfigurationRequiresRelaunchToSaveAgain() throws {
     let store = try temporaryConfigurationStore()
     defer { try? FileManager.default.removeItem(at: store.fileURL.deletingLastPathComponent()) }
     try Data("invalid".utf8).write(to: store.fileURL)
-    let model = BetterTileModel(store: store, system: FakeAppWindowSystem(), startRuntime: false)
+    let model = makeOffscreenModel(store: store, system: FakeAppWindowSystem(), startRuntime: false)
     defer { model.shutdown() }
     let repaired = Data(#"{"schemaVersion":12,"showDockIcon":true}"#.utf8)
     try repaired.write(to: store.fileURL)
@@ -98,7 +98,7 @@ private func temporaryConfigurationStore() throws -> ConfigurationStore {
     #expect(try Data(contentsOf: store.fileURL) == repaired)
     #expect(model.configurationSaveBlockedReason != nil)
 
-    let relaunched = BetterTileModel(store: store, system: FakeAppWindowSystem(), startRuntime: false)
+    let relaunched = makeOffscreenModel(store: store, system: FakeAppWindowSystem(), startRuntime: false)
     defer { relaunched.shutdown() }
     #expect(relaunched.configurationLoadError == nil)
     #expect(relaunched.configurationSaveBlockedReason == nil)
@@ -108,14 +108,14 @@ private func temporaryConfigurationStore() throws -> ConfigurationStore {
     #expect(try store.load().menuBarActions == [.leftHalf])
 }
 
-@Test @MainActor func configurationDirectoryAndItsContentsArePreservedAfterReadFailure() throws {
+@Test(.appTestApplication) @MainActor func configurationDirectoryAndItsContentsArePreservedAfterReadFailure() throws {
     let store = try temporaryConfigurationStore()
     defer { try? FileManager.default.removeItem(at: store.fileURL.deletingLastPathComponent()) }
     try FileManager.default.createDirectory(at: store.fileURL, withIntermediateDirectories: false)
     let child = store.fileURL.appending(path: "keep-me")
     let original = Data("original contents".utf8)
     try original.write(to: child)
-    let model = BetterTileModel(store: store, system: FakeAppWindowSystem(), startRuntime: false)
+    let model = makeOffscreenModel(store: store, system: FakeAppWindowSystem(), startRuntime: false)
     defer { model.shutdown() }
     #expect(model.configurationLoadError != nil)
     model.updateConfiguration { $0.menuBarActions = [.rightHalf] }
@@ -124,12 +124,12 @@ private func temporaryConfigurationStore() throws -> ConfigurationStore {
     #expect(try Data(contentsOf: child) == original)
 }
 
-@Test @MainActor func danglingConfigurationSymlinkIsNotTreatedAsMissing() throws {
+@Test(.appTestApplication) @MainActor func danglingConfigurationSymlinkIsNotTreatedAsMissing() throws {
     let store = try temporaryConfigurationStore()
     defer { try? FileManager.default.removeItem(at: store.fileURL.deletingLastPathComponent()) }
     let destination = store.fileURL.deletingLastPathComponent().appending(path: "missing.json")
     try FileManager.default.createSymbolicLink(at: store.fileURL, withDestinationURL: destination)
-    let model = BetterTileModel(store: store, system: FakeAppWindowSystem(), startRuntime: false)
+    let model = makeOffscreenModel(store: store, system: FakeAppWindowSystem(), startRuntime: false)
     defer { model.shutdown() }
     #expect(model.configurationLoadError != nil)
     model.updateConfiguration { $0.menuBarActions = [.rightHalf] }
@@ -139,12 +139,12 @@ private func temporaryConfigurationStore() throws -> ConfigurationStore {
     #expect(!FileManager.default.fileExists(atPath: destination.path))
 }
 
-@Test(arguments: [7, 12])
+@Test(.appTestApplication, arguments: [7, 12])
 @MainActor func supportedConfigurationStillLoadsAndSaves(schemaVersion: Int) throws {
     let store = try temporaryConfigurationStore()
     defer { try? FileManager.default.removeItem(at: store.fileURL.deletingLastPathComponent()) }
     try Data("{\"schemaVersion\":\(schemaVersion),\"showDockIcon\":true}".utf8).write(to: store.fileURL)
-    let model = BetterTileModel(store: store, system: FakeAppWindowSystem(), startRuntime: false)
+    let model = makeOffscreenModel(store: store, system: FakeAppWindowSystem(), startRuntime: false)
     defer { model.shutdown() }
     #expect(model.configurationSaveBlockedReason == nil)
     #expect(model.configuration.showDockIcon)
@@ -153,14 +153,14 @@ private func temporaryConfigurationStore() throws -> ConfigurationStore {
     #expect(try store.load().menuBarActions == [.rightHalf])
 }
 
-@Test @MainActor func ordinarySaveFailureRemainsRetryable() throws {
+@Test(.appTestApplication) @MainActor func ordinarySaveFailureRemainsRetryable() throws {
     let store = try temporaryConfigurationStore()
     let directory = store.fileURL.deletingLastPathComponent()
     defer {
         try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
         try? FileManager.default.removeItem(at: directory)
     }
-    let model = BetterTileModel(store: store, system: FakeAppWindowSystem(), startRuntime: false)
+    let model = makeOffscreenModel(store: store, system: FakeAppWindowSystem(), startRuntime: false)
     defer { model.shutdown() }
     try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: directory.path)
     model.updateConfiguration { $0.menuBarActions = [.rightHalf] }
@@ -172,11 +172,11 @@ private func temporaryConfigurationStore() throws -> ConfigurationStore {
     #expect(try store.load().menuBarActions == [.rightHalf])
 }
 
-@Test @MainActor func missingConfigurationAllowsDelayedSaving() async throws {
+@Test(.appTestApplication) @MainActor func missingConfigurationAllowsDelayedSaving() async throws {
     let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: directory) }
     let store = ConfigurationStore(fileURL: directory.appending(path: "nested/configuration.json"))
-    let model = BetterTileModel(store: store, system: FakeAppWindowSystem(), startRuntime: false)
+    let model = makeOffscreenModel(store: store, system: FakeAppWindowSystem(), startRuntime: false)
     defer { model.shutdown() }
     #expect(model.configurationLoadError == nil)
     #expect(model.configurationSaveBlockedReason == nil)

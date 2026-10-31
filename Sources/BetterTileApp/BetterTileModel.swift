@@ -81,6 +81,7 @@ final class BetterTileModel {
     private let sharedGestureEvents: SharedGestureEventMonitor
     let dividerResize: DividerOverlayController
     private var resultPill: ResultPillController?
+    var resultPillFactory: () -> ResultPillController = { ResultPillController() }
     private var sessionStore = LayoutSessionStore()
     private var tabbedOverlays: [DisplayID: TabbedOverlayController] = [:]
     private var tabbedTasks: [DisplayID: Task<Void, Never>] = [:]
@@ -198,6 +199,7 @@ final class BetterTileModel {
     private var actionVerificationTask: Task<Void, Never>?
     private var pendingRestoredWindowDeadlines: [WindowID: Date] = [:]
     private(set) var windowEventTask: Task<Void, Never>?
+    var windowEventSleep: (Duration) async throws -> Void = { try await BetterTileClock.live.sleep(for: $0) }
     private var windowEventRetryBackoff = WindowEventRetryBackoff()
     private(set) var settlementTasks: [DisplayID: Task<Void, Never>] = [:]
     private var settlementTaskGenerations: [DisplayID: UInt64] = [:]
@@ -214,13 +216,19 @@ final class BetterTileModel {
     private var isShortcutCaptureActive = false
     private var isShutDown = false
 
+    let clock: BetterTileClock
+
     init(
         store: ConfigurationStore = .defaultStore(),
         system suppliedSystem: (any BetterTileWindowSystem)? = nil,
         startRuntime: Bool = true,
-        presentsTabbedChrome: Bool? = nil
+        presentsTabbedChrome: Bool? = nil,
+        gestureEvents: SharedGestureEventMonitor? = nil,
+        clock: BetterTileClock = .live
     ) {
         self.store = store
+        self.clock = clock
+        windowEventSleep = { try await clock.sleep(for: $0) }
         self.presentsTabbedChrome = presentsTabbedChrome ?? startRuntime
         let loaded: BetterTileConfiguration
         do {
@@ -245,7 +253,7 @@ final class BetterTileModel {
         titleBarDoubleClick.applicationRules = loaded.applicationRules
         linkedResize = LinkedResizeController(coordinator: coordinator, configuration: loaded)
         layoutWheel = LayoutWheelController(configuration: loaded)
-        sharedGestureEvents = SharedGestureEventMonitor()
+        sharedGestureEvents = gestureEvents ?? SharedGestureEventMonitor()
         dividerResize = DividerOverlayController(coordinator: coordinator, configuration: loaded)
         layoutWheel.suspend()
 
@@ -2529,10 +2537,12 @@ final class BetterTileModel {
         guard !isGestureActive, !isStabilizingSpace,
               !pendingWindowEvents.isEmpty || pendingBentoFocusCheck else { return }
         windowEventTask?.cancel()
+        let sleep = windowEventSleep
         windowEventTask = Task { @MainActor [weak self] in
-            try? await Task.sleep(for: delay)
-            guard !Task.isCancelled else { return }
-            self?.processPendingWindowEvents()
+            if delay > .zero { try? await sleep(delay) }
+            guard let self, !Task.isCancelled else { return }
+            self.windowEventTask = nil
+            self.processPendingWindowEvents()
         }
     }
 
@@ -2908,7 +2918,7 @@ final class BetterTileModel {
         cancelPendingFocusRestore(on: display.id)
         focusRestoreGeneration &+= 1
         let generation = focusRestoreGeneration
-        let task = Task { @MainActor [weak self] in
+        let task = Task { @MainActor [clock, weak self] in
             defer {
                 if let self, self.focusRestores[display.id]?.generation == generation {
                     self.focusRestores.removeValue(forKey: display.id)
@@ -2991,7 +3001,7 @@ final class BetterTileModel {
                     }
                     return
                 }
-                try? await Task.sleep(for: .milliseconds(50))
+                try? await clock.sleep(for: .milliseconds(50))
             }
         }
         focusRestores[display.id] = FocusRestore(task: task, session: session, generation: generation)
@@ -4033,7 +4043,7 @@ final class BetterTileModel {
                 ?? displays.first(where: \.isMain)
                 ?? displays.first
         else { return }
-        let controller = resultPill ?? ResultPillController()
+        let controller = resultPill ?? resultPillFactory()
         resultPill = controller
         controller.overlayAppearance = configuration.overlayAppearance
         controller.show(feedback, on: display)

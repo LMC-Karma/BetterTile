@@ -3,7 +3,7 @@ import Testing
 @testable import BetterTileCore
 @testable import BetterTileMacOS
 
-@Test @MainActor func titleBarDoubleClickAdmissionHonorsApplicationRules() {
+@Test(.macOSTestApplication) @MainActor func titleBarDoubleClickAdmissionHonorsApplicationRules() {
     let system = FakeWindowSystem()
     let window = system.windows[0]
     let controller = TitleBarDoubleClickController(
@@ -22,7 +22,7 @@ import Testing
     #expect(!controller.allowsDoubleClickPlacement(for: window))
 }
 
-@Test(arguments: ["stop", "restart", "configuration"]) @MainActor
+@Test(.macOSTestApplication, arguments: ["stop", "restart", "configuration"]) @MainActor
 func queuedDoubleClickCannotWriteAfterMonitorRetirement(retirement: String) async throws {
     let system = FakeWindowSystem()
     let original = system.windows[0].frame

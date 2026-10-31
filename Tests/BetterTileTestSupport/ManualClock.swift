@@ -34,6 +34,18 @@ public final class ManualClock: Clock, Sendable {
     public let minimumResolution: Duration = .nanoseconds(1)
     public var now: Instant { state.withLock { $0.now } }
     public var pendingSleepCount: Int { state.withLock { $0.sleepingCount } }
+    /// Earliest registered policy wait, excluding reservations and cancelled waits.
+    public var nextSleepDeadline: Instant? {
+        state.withLock { state in
+            state.sleepers.values.filter { $0.continuation != nil && !$0.cancelled }.map(\.deadline).min()
+        }
+    }
+    /// Whether an announced wait has reached continuation registration.
+    public func hasSleeper(until deadline: Instant) -> Bool {
+        state.withLock { state in
+            state.sleepers.values.contains { $0.deadline == deadline && $0.continuation != nil && !$0.cancelled }
+        }
+    }
     public var clock: BetterTileClock { BetterTileClock(self) }
 
     public init() {}
@@ -106,6 +118,18 @@ public final class ManualClock: Clock, Sendable {
                 else { state.registrationWaiters.append((count, continuation)) }
             }
         }
+    }
+
+    /// Bounds executor registration without advancing virtual policy time.
+    /// Returns false when the expected operation exits or never reaches its sleep.
+    public func waitForSleepers(count: Int, timeout: Duration) async -> Bool {
+        let executorClock = ContinuousClock() // real-time: bounds executor sleep registration while virtual policy time stays fixed
+        let deadline = executorClock.now.advanced(by: timeout)
+        while pendingSleepCount < count {
+            if Task.isCancelled || executorClock.now >= deadline { return false }
+            try? await executorClock.sleep(for: .milliseconds(1)) // real-time: yields to AppKit and executor registration without advancing virtual policy time
+        }
+        return true
     }
 
     /// Join known work after advancing past its deadlines. Explicit task

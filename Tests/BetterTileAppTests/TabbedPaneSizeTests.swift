@@ -50,7 +50,7 @@ import Testing
     return state.frames(in: system.mainDisplay.visibleFrame)[state.panes[0].id]?.size.width ?? 0
 }
 
-@Test(arguments: [true, false]) @MainActor
+@Test(.appTestApplication, arguments: [true, false]) @MainActor
 func aLargerHiddenTabGrowsItsPaneAndTheSmallerTabRestoresIt(restores: Bool) async throws {
     let system = FakeAppWindowSystem()
     let (model, large, _) = try await narrowLeftPaneWithAHiddenTab(system, restores: restores)
@@ -83,7 +83,7 @@ func aLargerHiddenTabGrowsItsPaneAndTheSmallerTabRestoresIt(restores: Bool) asyn
     #expect(leftPaneWidth(model, system) < 700)
 }
 
-@Test @MainActor func aUserResizeWhileTheLargerTabShowsBecomesThePaneSize() async throws {
+@Test(.appTestApplication) @MainActor func aUserResizeWhileTheLargerTabShowsBecomesThePaneSize() async throws {
     let system = FakeAppWindowSystem()
     let (model, large, _) = try await narrowLeftPaneWithAHiddenTab(system, restores: true)
     defer { model.shutdown() }
@@ -105,7 +105,7 @@ func aLargerHiddenTabGrowsItsPaneAndTheSmallerTabRestoresIt(restores: Bool) asyn
     #expect(abs(leftPaneWidth(model, system) - chosen) < 1)
 }
 
-@Test @MainActor func aHiddenTabIsMeasuredBeforeItComesForward() async throws {
+@Test(.appTestApplication) @MainActor func aHiddenTabIsMeasuredBeforeItComesForward() async throws {
     let system = FakeAppWindowSystem()
     let (model, large, _) = try await narrowLeftPaneWithAHiddenTab(system, restores: true)
     defer { model.shutdown() }
@@ -117,7 +117,7 @@ func aLargerHiddenTabGrowsItsPaneAndTheSmallerTabRestoresIt(restores: Bool) asyn
 
 /// The pill names windows by title, so two windows of one application,
 /// here Finder, are told apart rather than both called "Finder".
-@Test(arguments: [nil, "com.apple.finder"]) @MainActor
+@Test(.appTestApplication, arguments: [nil, "com.apple.finder"]) @MainActor
 func aTabThatCannotFitNamesTheWindowInItsWay(bundleIdentifier: String?) async throws {
     let system = FakeAppWindowSystem()
     let (model, large, peer) = try await narrowLeftPaneWithAHiddenTab(system, restores: true,
@@ -134,7 +134,7 @@ func aTabThatCannotFitNamesTheWindowInItsWay(bundleIdentifier: String?) async th
     #expect(model.activeTabbedState == before)
 }
 
-@Test @MainActor func aTabLargerThanTheDisplaySaysSo() async throws {
+@Test(.appTestApplication) @MainActor func aTabLargerThanTheDisplaySaysSo() async throws {
     let system = FakeAppWindowSystem()
     let (model, large, _) = try await narrowLeftPaneWithAHiddenTab(system, restores: true)
     defer { model.shutdown() }
@@ -146,7 +146,7 @@ func aTabThatCannotFitNamesTheWindowInItsWay(bundleIdentifier: String?) async th
 
 /// A probe that leaves the hidden tab at its probe size is undone at once,
 /// even when the selection then does not fit and writes no frames.
-@Test @MainActor func aHiddenTabLeftAtItsProbeSizeIsPutBack() async throws {
+@Test(.appTestApplication) @MainActor func aHiddenTabLeftAtItsProbeSizeIsPutBack() async throws {
     let system = FakeAppWindowSystem()
     let (model, large, _) = try await narrowLeftPaneWithAHiddenTab(system, restores: true)
     defer { model.shutdown() }
@@ -164,7 +164,7 @@ func aTabThatCannotFitNamesTheWindowInItsWay(bundleIdentifier: String?) async th
 
 /// A long application name is shortened so the detail stays within the
 /// pill's two lines and still says what is in the way.
-@Test @MainActor func aLongNameInTheWayIsShortenedToFitThePill() async throws {
+@Test(.appTestApplication) @MainActor func aLongNameInTheWayIsShortenedToFitThePill() async throws {
     let system = FakeAppWindowSystem()
     let (model, large, _) = try await narrowLeftPaneWithAHiddenTab(system, restores: true)
     defer { model.shutdown() }
@@ -181,7 +181,7 @@ func aTabThatCannotFitNamesTheWindowInItsWay(bundleIdentifier: String?) async th
 
 /// A long window title is shortened in the pill's one-line title, so the
 /// words that say what happened still show.
-@Test @MainActor func aLongTitleKeepsThePillTitleReadable() async throws {
+@Test(.appTestApplication) @MainActor func aLongTitleKeepsThePillTitleReadable() async throws {
     let system = FakeAppWindowSystem()
     let (model, large, _) = try await narrowLeftPaneWithAHiddenTab(system, restores: true)
     defer { model.shutdown() }
@@ -198,7 +198,7 @@ func aTabThatCannotFitNamesTheWindowInItsWay(bundleIdentifier: String?) async th
 
 /// A pane that grew for a larger tab returns to the size the user set when
 /// that tab leaves it, not only when another tab of the pane is clicked.
-@Test(arguments: [false, true]) @MainActor
+@Test(.appTestApplication, arguments: [false, true]) @MainActor
 func aPaneReturnsToItsSizeWhenTheLargerTabLeaves(floats: Bool) async throws {
     let system = FakeAppWindowSystem()
     let (model, large, _) = try await narrowLeftPaneWithAHiddenTab(system, restores: true)

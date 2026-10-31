@@ -28,7 +28,7 @@ import Testing
     return (system, model)
 }
 
-@Test @MainActor func queuedTabbedMoveSurvivesALaterSelection() async throws {
+@Test(.appTestApplication) @MainActor func queuedTabbedMoveSurvivesALaterSelection() async throws {
     let (system, model) = try await sequenceFixture()
     defer { model.shutdown() }
     let a = system.windows[0].id, b = system.windows[1].id, c = system.windows[2].id
@@ -43,7 +43,7 @@ import Testing
     #expect(model.activeTabbedState?.panes[0].tabs == [b])
 }
 
-@Test @MainActor func rapidTabbedMoveBackRetainsBothStructuralUndoSteps() async throws {
+@Test(.appTestApplication) @MainActor func rapidTabbedMoveBackRetainsBothStructuralUndoSteps() async throws {
     let (system, model) = try await sequenceFixture()
     defer { model.shutdown() }
     let before = try #require(model.activeTabbedState)
@@ -68,7 +68,7 @@ import Testing
     #expect(await waitFor(timeout: .seconds(2)) { model.activeTabbedState?.panes.map(\.tabs) == before.panes.map(\.tabs) })
 }
 
-@Test @MainActor func queuedPaneActivationRetainsADeferredTopologyRefresh() async throws {
+@Test(.appTestApplication) @MainActor func queuedPaneActivationRetainsADeferredTopologyRefresh() async throws {
     let (system, model) = try await sequenceFixture()
     defer { model.shutdown() }
     let b = system.windows[1].id
@@ -84,7 +84,7 @@ import Testing
     #expect(model.activeTabbedState?.pane(containing: opened.id)?.id == right)
 }
 
-@Test(arguments: [false, true]) @MainActor
+@Test(.appTestApplication, arguments: [false, true]) @MainActor
 func failedNativeCenterDropRestoresMembershipAndDoesNotRecordUndo(inactiveSource: Bool) async throws {
     let (system, model) = try await sequenceFixture()
     defer { model.shutdown() }
@@ -106,7 +106,7 @@ func failedNativeCenterDropRestoresMembershipAndDoesNotRecordUndo(inactiveSource
     #expect(await waitFor(timeout: .seconds(2)) { model.activeTabbedState?.activeWindowID == b })
 }
 
-@Test @MainActor func nativeCenterDropSupersedesAnInFlightStripMoveThenRemainsUsable() async throws {
+@Test(.appTestApplication) @MainActor func nativeCenterDropSupersedesAnInFlightStripMoveThenRemainsUsable() async throws {
     let (system, model) = try await sequenceFixture()
     defer { model.shutdown() }
     let before = try #require(model.activeTabbedState)
@@ -132,7 +132,7 @@ func failedNativeCenterDropRestoresMembershipAndDoesNotRecordUndo(inactiveSource
     #expect(await waitFor(timeout: .seconds(2)) { model.activeTabbedState?.pane(containing: d)?.id == before.panes[0].id })
 }
 
-@Test @MainActor func slowFocusSelectionBurstKeepsTheLatestChoiceInEachPane() async throws {
+@Test(.appTestApplication) @MainActor func slowFocusSelectionBurstKeepsTheLatestChoiceInEachPane() async throws {
     let (system, model) = try await sequenceFixture()
     defer { model.shutdown() }
     let a = system.windows[0].id, b = system.windows[1].id
@@ -158,7 +158,7 @@ func failedNativeCenterDropRestoresMembershipAndDoesNotRecordUndo(inactiveSource
     #expect(Array(system.focusRequests.dropFirst(requests)) == [b, c, a])
 }
 
-@Test @MainActor func selectionCoalescingUsesMembershipAfterThePendingMove() async throws {
+@Test(.appTestApplication) @MainActor func selectionCoalescingUsesMembershipAfterThePendingMove() async throws {
     let (system, model) = try await sequenceFixture()
     defer { model.shutdown() }
     let a = system.windows[0].id, b = system.windows[1].id
@@ -179,7 +179,7 @@ func failedNativeCenterDropRestoresMembershipAndDoesNotRecordUndo(inactiveSource
     #expect(Array(system.focusRequests.dropFirst(requests)) == [a, b, a])
 }
 
-@Test(arguments: [false, true]) @MainActor
+@Test(.appTestApplication, arguments: [false, true]) @MainActor
 func queuedMoveToARemovedPaneDoesNotStealFocus(split: Bool) async throws {
     let (system, model) = try await sequenceFixture()
     defer { model.shutdown() }
@@ -195,7 +195,7 @@ func queuedMoveToARemovedPaneDoesNotStealFocus(split: Bool) async throws {
     #expect(model.activeTabbedState?.windowIDs.count == 4)
 }
 
-@Test @MainActor func queuedClosedWindowDoesNotBlockTheNextSelection() async throws {
+@Test(.appTestApplication) @MainActor func queuedClosedWindowDoesNotBlockTheNextSelection() async throws {
     let (system, model) = try await sequenceFixture()
     defer { model.shutdown() }
     let a = system.windows[0].id, b = system.windows[1].id, c = system.windows[2].id
@@ -210,7 +210,7 @@ func queuedMoveToARemovedPaneDoesNotStealFocus(split: Bool) async throws {
     #expect(model.activeTabbedState?.windowIDs.count == 3)
 }
 
-@Test @MainActor func nativeCancelledInactiveTabRestoresItsIndexSelectionAndUndo() async throws {
+@Test(.appTestApplication) @MainActor func nativeCancelledInactiveTabRestoresItsIndexSelectionAndUndo() async throws {
     let (system, model) = try await sequenceFixture()
     defer { model.shutdown() }
     let before = try #require(model.activeTabbedState)
@@ -221,7 +221,7 @@ func queuedMoveToARemovedPaneDoesNotStealFocus(split: Bool) async throws {
     #expect(await waitFor(timeout: .seconds(2)) { model.activeTabbedState?.pane(containing: d)?.id == before.panes[0].id })
 }
 
-@Test @MainActor func loneTabNativeRestoreDrainsSelectionAcceptedDuringTheGesture() async throws {
+@Test(.appTestApplication) @MainActor func loneTabNativeRestoreDrainsSelectionAcceptedDuringTheGesture() async throws {
     let (system, model) = try await sequenceFixture()
     defer { model.shutdown() }
     let a = system.windows[0].id, b = system.windows[1].id, c = system.windows[2].id
@@ -238,7 +238,7 @@ func queuedMoveToARemovedPaneDoesNotStealFocus(split: Bool) async throws {
     #expect(await waitFor(timeout: .seconds(2)) { model.activeTabbedState?.pane(containing: b)?.id == before.panes[0].id })
 }
 
-@Test @MainActor func loneTabNativeRestoreDrainsACapturedSnapAcceptedDuringTheGesture() async throws {
+@Test(.appTestApplication) @MainActor func loneTabNativeRestoreDrainsACapturedSnapAcceptedDuringTheGesture() async throws {
     let (system, model) = try await sequenceFixture()
     defer { model.shutdown() }
     let a = system.windows[0].id, b = system.windows[1].id, c = system.windows[2].id
@@ -260,7 +260,7 @@ func queuedMoveToARemovedPaneDoesNotStealFocus(split: Bool) async throws {
     #expect(await waitFor(timeout: .seconds(2)) { model.activeTabbedState?.activeWindowID == c })
 }
 
-@Test(arguments: [false, true], [false, true]) @MainActor
+@Test(.appTestApplication, arguments: [false, true], [false, true]) @MainActor
 func mixedNativeAndStripMoveReturnSequencesRemainUsable(nativeFirst: Bool, sharedApplication: Bool) async throws {
     let (system, model) = try await sequenceFixture(sharedApplication: sharedApplication)
     defer { model.shutdown() }
@@ -319,7 +319,7 @@ enum TabStripDrop: CaseIterable, Sendable { case otherPane, split, float }
 /// A tab drag's press selected the background tab `b`, and its drop took
 /// `b` out of the pane. The pane shows `a` again, not `sequence-4`, the tab
 /// to the right of `b`. A queued drop waits behind the press's selection.
-@Test(arguments: TabStripDrop.allCases, [false, true]) @MainActor
+@Test(.appTestApplication, arguments: TabStripDrop.allCases, [false, true]) @MainActor
 func aTabDraggedOutAfterItsPressSelectedItShowsThePreviousTabAgain(drop: TabStripDrop, queued: Bool) async throws {
     let (system, model) = try await threeTabSequenceFixture()
     defer { model.shutdown() }
@@ -355,7 +355,7 @@ func aTabDraggedOutAfterItsPressSelectedItShowsThePreviousTabAgain(drop: TabStri
 
 /// Undo of the drop restores the state from before it, which the press's
 /// selection already changed: `b` is back in the left pane and selected.
-@Test @MainActor func undoingADragOutRestoresThePressSelectedTab() async throws {
+@Test(.appTestApplication) @MainActor func undoingADragOutRestoresThePressSelectedTab() async throws {
     let (system, model) = try await threeTabSequenceFixture()
     defer { model.shutdown() }
     let a = system.windows[0].id, b = system.windows[1].id

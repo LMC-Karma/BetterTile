@@ -93,11 +93,12 @@ jobs:
       - name: Swift version
         run: swift --version
       - name: Test
+        env: { BETTERTILE_LOCAL_WINDOW_TESTS: "1" }
         shell: bash
         run: |
           # Separate processes keep AppKit rendering tests from delaying app-model tasks.
           for target in BetterTileCoreTests BetterTileMacOSTests BetterTileAppTests; do
-            swift test --parallel --filter "$target"
+            Tools/test.sh "$RUNNER_TEMP/$target.log" --expected-runs 1 --parallel --filter "$target"
           done
 
   release-package:
@@ -107,6 +108,8 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Test test-run completion guard
+        run: Tools/tests/test-completion-test.sh
       # Guards the `rm -rf` in the release tool's exit trap.
       - name: Test release workspace cleanup
         run: Tools/tests/release-workspace-test.sh

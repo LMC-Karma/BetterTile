@@ -4,7 +4,7 @@ import CoreImage
 import Testing
 @testable import BetterTileMacOS
 
-@Test(arguments: Array(2...12))
+@Test(.macOSTestApplication, arguments: Array(2...12))
 @MainActor func lensKnobMatchesEveryWidthSetting(thickness: Int) throws {
     let t = Double(thickness)
     for progress in [0.0, 0.5, 1] {
@@ -21,7 +21,7 @@ import Testing
     }
 }
 
-@Test(arguments: [false, true], [NSAppearance.Name.aqua, .darkAqua,
+@Test(.macOSTestApplication, arguments: [false, true], [NSAppearance.Name.aqua, .darkAqua,
                                .accessibilityHighContrastAqua, .accessibilityHighContrastDarkAqua])
 @MainActor func lensLimitUsesOrangeAtRestAndWhileActive(active: Bool, appearance: NSAppearance.Name) throws {
     let view = DividerHandleView(frame: CGRect(x: 0, y: 0, width: 30, height: 168),
@@ -44,7 +44,7 @@ import Testing
     #expect(view.lensTint.usingColorSpace(.deviceRGB) == accent)
 }
 
-@Test(arguments: [false, true], [(false, false), (true, false), (false, true)])
+@Test(.macOSTestApplication, arguments: [false, true], [(false, false), (true, false), (false, true)])
 @MainActor func lensFallbacksHideAllDecoration(glass: Bool, options: (Bool, Bool)) throws {
     _ = NSApplication.shared
     let panel = DividerHandlePanel(frame: CGRect(x: -10_000, y: -10_000, width: 30, height: 168),
@@ -68,7 +68,7 @@ import Testing
 
 /// Glass off used to fill the handle with the label color at full opacity,
 /// which is solid white in dark mode.
-@Test(arguments: [NSAppearance.Name.aqua, .darkAqua])
+@Test(.macOSTestApplication, arguments: [NSAppearance.Name.aqua, .darkAqua])
 @MainActor func glassOffHandleIsTranslucentFrost(appearance: NSAppearance.Name) throws {
     _ = NSApplication.shared
     let panel = DividerHandlePanel(frame: CGRect(x: -10_000, y: -10_000, width: 30, height: 168),
@@ -108,7 +108,7 @@ import Testing
     #expect(view.knobRects.first?.width == 8)
 }
 
-@Test @MainActor func settingsPreviewFrostBlursItsOwnWindow() throws {
+@Test(.macOSTestApplication) @MainActor func settingsPreviewFrostBlursItsOwnWindow() throws {
     _ = NSApplication.shared
     let window = NSWindow(contentRect: CGRect(x: -10_000, y: -10_000, width: 180, height: 180),
                           styleMask: [.titled], backing: .buffered, defer: false)
@@ -123,7 +123,7 @@ import Testing
     #expect(preview.handleView.frostBlendingMode == .withinWindow)
 }
 
-@Test @MainActor func accessibilityChangesRefreshAVisibleLens() async throws {
+@Test(.macOSTestApplication, .macOSUI) @MainActor func accessibilityChangesRefreshAVisibleLens() async throws {
     _ = NSApplication.shared
     let panel = DividerHandlePanel(frame: CGRect(x: -10_000, y: -10_000, width: 30, height: 168),
                                    mode: .vertical(restingLength: 56, activeLength: 168), thickness: 10)
@@ -132,7 +132,7 @@ import Testing
     let decoration = try #require(panel.decorationWindow.contentView as? DividerLensDecorationView)
     var options = (false, false)
     view.displayOptions = { options }
-    panel.orderFrontRegardless()
+    panel.orderFrontForTesting()
     for next in [(true, false), (false, true), (false, false)] {
         options = next
         NSWorkspace.shared.notificationCenter.post(name: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification,
@@ -144,7 +144,7 @@ import Testing
     }
 }
 
-@Test @MainActor func lensJunctionClosesTheConcaveCornerWithAFillet() throws {
+@Test(.macOSTestApplication) @MainActor func lensJunctionClosesTheConcaveCornerWithAFillet() throws {
     let view = DividerHandleView(frame: CGRect(x: 0, y: 0, width: 92, height: 92),
                                  mode: .junction(center: CGPoint(x: 46, y: 46),
                                                  resting: [.left: 12, .right: 12, .up: 12, .down: 12],
@@ -162,7 +162,7 @@ import Testing
     #expect(shape.contains(CGPoint(x: 46, y: 46)))
 }
 
-@Test(arguments: [SplitAxis.vertical, .horizontal])
+@Test(.macOSTestApplication, arguments: [SplitAxis.vertical, .horizontal])
 @MainActor func lensTrackClipsAsymmetricallyToTheUsableSpan(axis: SplitAxis) throws {
     let bounds = CGRect(x: 0, y: 0, width: 200, height: 200)
     let mode: DividerHandleMode = axis == .vertical
@@ -181,7 +181,7 @@ import Testing
     }
 }
 
-@Test @MainActor func lensJunctionTracksRespectEachIndependentArmRoom() throws {
+@Test(.macOSTestApplication) @MainActor func lensJunctionTracksRespectEachIndependentArmRoom() throws {
     let geometry = DividerLensGeometry(
         bounds: CGRect(x: 0, y: 0, width: 200, height: 200),
         mode: .junction(center: CGPoint(x: 100, y: 100),
@@ -193,7 +193,7 @@ import Testing
                                   CGRect(x: 98.53, y: 25, width: 2.94, height: 110)])
 }
 
-@Test(arguments: [SplitAxis.vertical, .horizontal], [0.0, 1.0])
+@Test(.macOSTestApplication, arguments: [SplitAxis.vertical, .horizontal], [0.0, 1.0])
 @MainActor func shortestDividerTrackKeepsItsAxisAndSpan(axis: SplitAxis, progress: Double) throws {
     // The resolver accepts a 24 pt span. Its 8 pt end margins leave 8 pt
     // for the handle, shorter than even the resting lens thickness.
@@ -210,7 +210,7 @@ import Testing
         : CGRect(x: 0, y: 13.53, width: 8, height: 2.94)))
 }
 
-@Test @MainActor func junctionWithoutHorizontalRoomDoesNotDuplicateItsVerticalTrack() {
+@Test(.macOSTestApplication) @MainActor func junctionWithoutHorizontalRoomDoesNotDuplicateItsVerticalTrack() {
     let geometry = DividerLensGeometry(
         bounds: CGRect(x: 0, y: 0, width: 20, height: 92),
         mode: .junction(center: CGPoint(x: 10, y: 46),
@@ -221,7 +221,7 @@ import Testing
     #expect(geometry.trackRects[1] == CGRect(x: 8.53, y: 0, width: 2.94, height: 92))
 }
 
-@Test @MainActor func squareHorizontalLensKeepsItsTrackDirection() {
+@Test(.macOSTestApplication) @MainActor func squareHorizontalLensKeepsItsTrackDirection() {
     let geometry = DividerLensGeometry(bounds: CGRect(x: 0, y: 0, width: 16, height: 30),
                                        mode: .horizontal(restingLength: 16, activeLength: 16), thickness: 10,
                                        progress: 0, trackRoom: [.left: 8, .right: 8])
@@ -229,7 +229,7 @@ import Testing
     #expect(geometry.trackRects == [CGRect(x: 0, y: 13.53, width: 16, height: 2.94)])
 }
 
-@Test(arguments: [DividerPreviewShape.up, .down, .left, .right])
+@Test(.macOSTestApplication, arguments: [DividerPreviewShape.up, .down, .left, .right])
 @MainActor func settingsJunctionTrackStopsAtItsMissingArm(shape: DividerPreviewShape) throws {
     let sample = shape.sample(in: BTRect(x: 0, y: 0, width: 240, height: 180),
                               position: CGPoint(x: 0.5, y: 0.5), paneGap: 10)
@@ -256,7 +256,7 @@ import Testing
     }
 }
 
-@Test(arguments: [0.0, 0.25, 0.5, 0.75, 1.0])
+@Test(.macOSTestApplication, arguments: [0.0, 0.25, 0.5, 0.75, 1.0])
 @MainActor func lensGeometryFollowsEasedProgressWithoutExtraAnimation(progress: Double) throws {
     let geometry = DividerLensGeometry(bounds: CGRect(x: 0, y: 0, width: 30, height: 168),
                                        mode: .vertical(restingLength: 56, activeLength: 168),
@@ -284,7 +284,7 @@ import Testing
 
 }
 
-@Test(arguments: [SplitAxis.vertical, .horizontal])
+@Test(.macOSTestApplication, .macOSUI, arguments: [SplitAxis.vertical, .horizontal])
 @MainActor func lensDecorationPanelFollowsItsHandleFrameAndVisibility(axis: SplitAxis) throws {
     _ = NSApplication.shared
     let mode: DividerHandleMode = axis == .vertical
@@ -309,21 +309,21 @@ import Testing
     let moved = frame.offsetBy(dx: 45, dy: -25)
     panel.setFrame(moved, display: true)
     #expect(decoration.frame == moved.insetBy(dx: -dx, dy: -dy))
-    panel.orderFrontRegardless()
+    panel.orderFrontForTesting()
     #expect(panel.isVisible)
     #expect(decoration.isVisible)
     let ordered = try #require(NSWindow.windowNumbers(options: [])).map(\.intValue)
     let handleIndex = try #require(ordered.firstIndex(of: panel.windowNumber))
     let decorationIndex = try #require(ordered.firstIndex(of: decoration.windowNumber))
     #expect(handleIndex < decorationIndex)
-    panel.orderOut(nil)
+    panel.orderOutForTesting()
     #expect(!panel.isVisible)
     #expect(!decoration.isVisible)
-    panel.orderFrontRegardless()
+    panel.orderFrontForTesting()
     #expect(decoration.isVisible)
 }
 
-@Test @MainActor func lensJunctionDecorationHasRoomOnEverySide() {
+@Test(.macOSTestApplication) @MainActor func lensJunctionDecorationHasRoomOnEverySide() {
     _ = NSApplication.shared
     let frame = CGRect(x: 100, y: 100, width: 92, height: 92)
     let arms: [DividerHandleArm: Double] = [.left: 36, .right: 36, .up: 36, .down: 36]
@@ -334,7 +334,7 @@ import Testing
     #expect(!DividerOverlayController.ownWindowCoversHandle(frame, windows: [panel.decorationWindow], excluding: []))
 }
 
-@Test @MainActor func changingDividerModeMovesDecorationOnlyWithTheFinalFrame() throws {
+@Test(.macOSTestApplication) @MainActor func changingDividerModeMovesDecorationOnlyWithTheFinalFrame() throws {
     _ = NSApplication.shared
     let panel = DividerHandlePanel(frame: CGRect(x: 100, y: 100, width: 30, height: 56),
                                    mode: .vertical(restingLength: 56, activeLength: 168), thickness: 10)
@@ -367,7 +367,7 @@ import Testing
     override var backingScaleFactor: CGFloat { 2 }
 }
 
-@Test @MainActor func lensLayersUseRetinaScaleAndRemainReusable() throws {
+@Test(.macOSTestApplication) @MainActor func lensLayersUseRetinaScaleAndRemainReusable() throws {
     _ = NSApplication.shared
     let panel = RetinaLensTestPanel(contentRect: CGRect(x: -10_000, y: -10_000, width: 30, height: 168),
                                     styleMask: .borderless, backing: .buffered, defer: false)
@@ -401,7 +401,7 @@ import Testing
 
 /// Captures only this test's own opaque window. The full row preserves track
 /// reach and panel margins; the second row enlarges the real views for inspection.
-@Test(.enabled(if: ProcessInfo.processInfo.environment["BETTERTILE_NATIVE_GLASS_PREVIEW_DIR"] != nil,
+@Test(.macOSTestApplication, .enabled(if: ProcessInfo.processInfo.environment["BETTERTILE_NATIVE_GLASS_PREVIEW_DIR"] != nil,
                "Requires an explicit native glass preview output directory."))
 @MainActor func nativeDividerLensPreviews() async throws {
     _ = NSApplication.shared
@@ -445,7 +445,7 @@ import Testing
             root.addSubview(label)
         }
         root.layoutSubtreeIfNeeded()
-        panel.orderFrontRegardless()
+        panel.orderFrontForTesting()
         try await Task.sleep(for: .milliseconds(300))
         let output = URL(fileURLWithPath: directory).appendingPathComponent("divider-lens-\(name)-2x.png")
         if FileManager.default.fileExists(atPath: output.path) { try FileManager.default.removeItem(at: output) }
@@ -547,7 +547,7 @@ import Testing
     }
 }
 
-@Test(arguments: [0.0, 0.5, 0.75, 1.0], [false, true])
+@Test(.macOSTestApplication, arguments: [0.0, 0.5, 0.75, 1.0], [false, true])
 @MainActor func lensFrostControlsOnlyBodyAndOptionalBlur(strength: Double, dark: Bool) throws {
     let view = DividerHandleView(frame: CGRect(x: 0, y: 0, width: 30, height: 168),
                                  mode: .vertical(restingLength: 56, activeLength: 168), thickness: 10)
@@ -566,7 +566,7 @@ import Testing
     }
 }
 
-@Test(arguments: ["CIGlassLozenge", "CIGaussianBlur", "all"])
+@Test(.macOSTestApplication, arguments: ["CIGlassLozenge", "CIGaussianBlur", "all"])
 @MainActor func missingLensFilterUsesFrostedHandle(missing: String) throws {
     let layers = DividerLensLayers { name in
         missing == "all" || name == missing ? nil : CIFilter(name: name)
@@ -591,7 +591,7 @@ import Testing
     }
 }
 
-@Test(arguments: [false, true])
+@Test(.macOSTestApplication, arguments: [false, true])
 @MainActor func lensFiltersFollowEndCapsAndRetainInstances(junction: Bool) throws {
     let mode: DividerHandleMode = junction
         ? .junction(center: CGPoint(x: 43, y: 43), resting: [.left: 12, .right: 12, .up: 12, .down: 12],
@@ -623,7 +623,7 @@ import Testing
     }
 }
 
-@Test @MainActor func repeatedLensUpdatesReuseGeometryAndSkipLayerChanges() {
+@Test(.macOSTestApplication) @MainActor func repeatedLensUpdatesReuseGeometryAndSkipLayerChanges() {
     let mode = DividerHandleMode.vertical(restingLength: 56, activeLength: 168)
     let view = DividerHandleView(frame: CGRect(x: 0, y: 0, width: 30, height: 168), mode: mode, thickness: 10)
     view.displayOptions = { (false, false) }
@@ -647,7 +647,7 @@ import Testing
 }
 
 /// Width and frost sweeps use the production views on a synthetic backdrop.
-@Test(.enabled(if: ProcessInfo.processInfo.environment["BETTERTILE_NATIVE_GLASS_PREVIEW_DIR"] != nil,
+@Test(.macOSTestApplication, .enabled(if: ProcessInfo.processInfo.environment["BETTERTILE_NATIVE_GLASS_PREVIEW_DIR"] != nil,
                "Requires an explicit native glass preview output directory."))
 @MainActor func nativeDividerLensSettingsPreviews() async throws {
     _ = NSApplication.shared
@@ -688,7 +688,7 @@ import Testing
             root.addSubview(label)
         }
         root.layoutSubtreeIfNeeded()
-        panel.orderFrontRegardless()
+        panel.orderFrontForTesting()
         try await Task.sleep(for: .milliseconds(300))
         let output = URL(fileURLWithPath: directory).appendingPathComponent("divider-lens-settings-\(name)-2x.png")
         if FileManager.default.fileExists(atPath: output.path) { try FileManager.default.removeItem(at: output) }
@@ -704,7 +704,7 @@ import Testing
     }
 }
 
-@Test @MainActor func movingAlongAnAmpleSeamDoesNotUpdateLensLayers() {
+@Test(.macOSTestApplication) @MainActor func movingAlongAnAmpleSeamDoesNotUpdateLensLayers() {
     let mode = DividerHandleMode.junction(center: CGPoint(x: 43, y: 43),
                                           resting: [.left: 12, .right: 12, .up: 12, .down: 12],
                                           active: [.left: 36, .right: 36, .up: 36, .down: 36])

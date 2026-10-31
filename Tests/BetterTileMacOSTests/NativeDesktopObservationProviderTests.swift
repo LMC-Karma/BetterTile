@@ -7,14 +7,14 @@ private let nativeMainDisplay = DisplayID(rawValue: "1")
 private let nativeSecondDisplay = DisplayID(rawValue: "2")
 
 @MainActor
-@Test func disabledNativeDesktopProviderNeverLoadsSkyLight() {
+@Test(.macOSTestApplication) func disabledNativeDesktopProviderNeverLoadsSkyLight() {
     let provider = NativeDesktopObservationProvider(disabled: true)
 
     #expect(!provider.isAvailable)
     #expect(provider.observation(displays: [], exactWindowIDs: [:]) == nil)
 }
 
-@Test func nativeDesktopParserAcceptsCompleteValidatedTopology() throws {
+@Test(.macOSTestApplication) func nativeDesktopParserAcceptsCompleteValidatedTopology() throws {
     let observation = try #require(NativeDesktopObservationParser.topology(
         from: [
             managedDisplay("Main", current: 11, spaces: [(11, 0), (12, 4)]),
@@ -31,7 +31,7 @@ private let nativeSecondDisplay = DisplayID(rawValue: "2")
     #expect(observation.fullscreenSpaceIDs == [NativeSpaceID(rawValue: 12)])
 }
 
-@Test func nativeDesktopParserRejectsIncompleteDisplayCoverage() {
+@Test(.macOSTestApplication) func nativeDesktopParserRejectsIncompleteDisplayCoverage() {
     let observation = NativeDesktopObservationParser.topology(
         from: [managedDisplay("SECOND", current: 11, spaces: [(11, 0)])],
         expectedDisplayIDs: [nativeMainDisplay, nativeSecondDisplay],
@@ -41,7 +41,7 @@ private let nativeSecondDisplay = DisplayID(rawValue: "2")
     #expect(observation == nil)
 }
 
-@Test func nativeDesktopParserExpandsOneGlobalMainSpaceAcrossDisplays() throws {
+@Test(.macOSTestApplication) func nativeDesktopParserExpandsOneGlobalMainSpaceAcrossDisplays() throws {
     let observation = try #require(NativeDesktopObservationParser.topology(
         from: [managedDisplay("Main", current: 11, spaces: [(11, 0)])],
         expectedDisplayIDs: [nativeMainDisplay, nativeSecondDisplay],
@@ -54,7 +54,7 @@ private let nativeSecondDisplay = DisplayID(rawValue: "2")
     ])
 }
 
-@Test func nativeDesktopParserRejectsCurrentSpaceOutsideKnownSpaces() {
+@Test(.macOSTestApplication) func nativeDesktopParserRejectsCurrentSpaceOutsideKnownSpaces() {
     let observation = NativeDesktopObservationParser.topology(
         from: [managedDisplay("Main", current: 99, spaces: [(11, 0)])],
         expectedDisplayIDs: [nativeMainDisplay],
@@ -64,7 +64,7 @@ private let nativeSecondDisplay = DisplayID(rawValue: "2")
     #expect(observation == nil)
 }
 
-@Test func nativeDesktopParserRejectsMalformedExpectedContainers() {
+@Test(.macOSTestApplication) func nativeDesktopParserRejectsMalformedExpectedContainers() {
     let observation = NativeDesktopObservationParser.topology(
         from: [[
             "Display Identifier": "Main",
@@ -78,7 +78,7 @@ private let nativeSecondDisplay = DisplayID(rawValue: "2")
     #expect(observation == nil)
 }
 
-@Test func nativeMembershipAcceptsStickyAndEmptyMemberships() {
+@Test(.macOSTestApplication) func nativeMembershipAcceptsStickyAndEmptyMemberships() {
     let known: Set<NativeSpaceID> = [NativeSpaceID(rawValue: 11), NativeSpaceID(rawValue: 12)]
 
     #expect(NativeDesktopObservationParser.membership(
@@ -91,7 +91,7 @@ private let nativeSecondDisplay = DisplayID(rawValue: "2")
     ) == [])
 }
 
-@Test func nativeMembershipRejectsUnknownOrMalformedSpaceIDs() {
+@Test(.macOSTestApplication) func nativeMembershipRejectsUnknownOrMalformedSpaceIDs() {
     let known: Set<NativeSpaceID> = [NativeSpaceID(rawValue: 11)]
 
     #expect(NativeDesktopObservationParser.membership(

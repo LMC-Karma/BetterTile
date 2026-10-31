@@ -6,7 +6,7 @@ import Testing
 
 /// Opt in to WindowServer captures of this test's own opaque synthetic window.
 /// Off-screen bitmap caching cannot verify the native glass compositor.
-@Test(.enabled(if: ProcessInfo.processInfo.environment["BETTERTILE_NATIVE_GLASS_PREVIEW_DIR"] != nil,
+@Test(.macOSTestApplication, .enabled(if: ProcessInfo.processInfo.environment["BETTERTILE_NATIVE_GLASS_PREVIEW_DIR"] != nil,
                "Requires an explicit native glass preview output directory."))
 @MainActor func nativeGlassCompositorPreviews() async throws {
     _ = NSApplication.shared
@@ -61,7 +61,7 @@ import Testing
             wheel.frame = NSRect(x: 630, y: 400, width: 260, height: 210)
             root.addSubview(wheel)
             root.layoutSubtreeIfNeeded()
-            panel.orderFrontRegardless()
+            panel.orderFrontForTesting()
             try await Task.sleep(for: .milliseconds(250))
             let capture = Process()
             capture.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
@@ -74,7 +74,7 @@ import Testing
     }
 }
 
-@Test @MainActor func sharedGlassKeepsNativeMaterialVisibleAcrossTheSlider() {
+@Test(.macOSTestApplication) @MainActor func sharedGlassKeepsNativeMaterialVisibleAcrossTheSlider() {
     let view = OverlayGlassView()
     view.displayOptions = { (false, false) }
     for strength in [0.0, 0.34, 0.35, 0.5, 1.0] {
@@ -84,7 +84,7 @@ import Testing
     }
 }
 
-@Test(arguments: [false, true], [(false, false), (true, false), (false, true)]) @MainActor
+@Test(.macOSTestApplication, arguments: [false, true], [(false, false), (true, false), (false, true)]) @MainActor
 func sharedGlassHonorsToggleAndAccessibility(enabled: Bool, options: (Bool, Bool)) {
     let view = OverlayGlassView(frame: NSRect(x: 0, y: 0, width: 200, height: 80))
     view.displayOptions = { options }
@@ -94,7 +94,7 @@ func sharedGlassHonorsToggleAndAccessibility(enabled: Bool, options: (Bool, Bool
     #expect(view.hitTest(NSPoint(x: 10, y: 10)) == nil)
 }
 
-@Test @MainActor func glassStrengthKeepsEmptyPanesLight() {
+@Test(.macOSTestApplication) @MainActor func glassStrengthKeepsEmptyPanesLight() {
     let ordinary = OverlayGlassView()
     let empty = OverlayGlassView()
     empty.isLight = true
@@ -109,7 +109,7 @@ func sharedGlassHonorsToggleAndAccessibility(enabled: Bool, options: (Bool, Bool
     }
 }
 
-@Test(arguments: [false, true]) @MainActor
+@Test(.macOSTestApplication, arguments: [false, true]) @MainActor
 func curtainGlassHasHigherFrostFloorAndNoWorkAreaOutline(light: Bool) throws {
     let ordinary = OverlayGlassView()
     let curtain = OverlayGlassView()
@@ -126,7 +126,7 @@ func curtainGlassHasHigherFrostFloorAndNoWorkAreaOutline(light: Bool) throws {
     }
 }
 
-@Test @MainActor func glassDividerKeepsHitOwnershipAndAddsFourPoints() throws {
+@Test(.macOSTestApplication) @MainActor func glassDividerKeepsHitOwnershipAndAddsFourPoints() throws {
     let view = DividerHandleView(frame: NSRect(x: 0, y: 0, width: 40, height: 100),
                                  mode: .vertical(restingLength: 50, activeLength: 80), thickness: 2)
     view.displayOptions = { (false, false) }
@@ -139,7 +139,7 @@ func curtainGlassHasHigherFrostFloorAndNoWorkAreaOutline(light: Bool) throws {
     #expect(view.limit.width)
 }
 
-@Test(arguments: [false, true]) @MainActor
+@Test(.macOSTestApplication, arguments: [false, true]) @MainActor
 func glassDividerLaysOutStraightAndJunctionCapsules(active: Bool) throws {
     let cases: [(DividerHandleMode, [NSRect])] = [
         (.vertical(restingLength: 60, activeLength: 100),
@@ -182,7 +182,7 @@ func glassDividerLaysOutStraightAndJunctionCapsules(active: Bool) throws {
     #expect(thick.knobRects.allSatisfy { thick.bounds.contains($0) })
 }
 
-@Test(.enabled(if: ProcessInfo.processInfo.environment["BETTERTILE_TAB_PREVIEW_DIR"] != nil,
+@Test(.macOSTestApplication, .enabled(if: ProcessInfo.processInfo.environment["BETTERTILE_TAB_PREVIEW_DIR"] != nil,
                "Requires an explicit glass preview output directory."))
 @MainActor func sharedGlassAppearancePreviews() throws {
     let directory = try #require(ProcessInfo.processInfo.environment["BETTERTILE_TAB_PREVIEW_DIR"])

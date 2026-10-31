@@ -4,7 +4,7 @@ import BetterTileMacOS
 import Testing
 @testable import BetterTileApp
 
-@Test @MainActor func requestedTabbedSnapSwapsThePaneWithTheExactOccupant() async throws {
+@Test(.appTestApplication) @MainActor func requestedTabbedSnapSwapsThePaneWithTheExactOccupant() async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
     let model = makeModel(system: system)
@@ -33,7 +33,7 @@ import Testing
     #expect(await waitFor { model.activeTabbedState == before })
 }
 
-@Test(arguments: ["wheel", "drag"]) @MainActor
+@Test(.appTestApplication, arguments: ["wheel", "drag"]) @MainActor
 func requestedTabbedSnapPreservesExistingOccupiedPane(entry: String) async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
@@ -113,7 +113,7 @@ private func snapFixture(preset: TabbedPreset = .columns) async throws -> (FakeA
     return (system, model)
 }
 
-@Test @MainActor func tabbedSnapWheelCapturesAMemberAndKeepsThatWindowAfterFocusChanges() async throws {
+@Test(.appTestApplication) @MainActor func tabbedSnapWheelCapturesAMemberAndKeepsThatWindowAfterFocusChanges() async throws {
     let (system, model) = try await snapFixture()
     defer { model.shutdown() }
     let before = try #require(model.activeTabbedState)
@@ -142,7 +142,7 @@ private func snapFixture(preset: TabbedPreset = .columns) async throws -> (FakeA
     #expect(after.activeWindowID == target.windowID)
 }
 
-@Test(arguments: [WindowAction.maximize, .restore, .center, .centerResize, .almostMaximize,
+@Test(.appTestApplication, arguments: [WindowAction.maximize, .restore, .center, .centerResize, .almostMaximize,
                   .nextDisplay, .previousDisplay, .moveLeft, .growWidth])
 @MainActor func tabbedSnapUnsupportedMemberActionsNeverMoveRawFrames(action: WindowAction) async throws {
     let (system, model) = try await snapFixture()
@@ -170,7 +170,7 @@ private func snapFixture(preset: TabbedPreset = .columns) async throws -> (FakeA
     #expect(system.frameWriteCounts == writes)
 }
 
-@Test(arguments: ["keyboard", "wheel"], [WindowAction.center, .maximize])
+@Test(.appTestApplication, arguments: ["keyboard", "wheel"], [WindowAction.center, .maximize])
 @MainActor func tabbedSnapUserFloatsKeepFreeWindowActions(entry: String, action: WindowAction) async throws {
     let (system, model) = try await snapFixture()
     defer { model.shutdown() }
@@ -186,7 +186,7 @@ private func snapFixture(preset: TabbedPreset = .columns) async throws -> (FakeA
     #expect(model.activeTabbedState == before)
 }
 
-@Test(arguments: [false, true], [false, true])
+@Test(.appTestApplication, arguments: [false, true], [false, true])
 @MainActor func tabbedSnapRefusesReportedAndLearnedMinimaWithoutChangingExactTarget(learned: Bool, height: Bool) async throws {
     let (system, model) = try await snapFixture(preset: .single)
     defer { model.shutdown() }
@@ -211,7 +211,7 @@ private func snapFixture(preset: TabbedPreset = .columns) async throws -> (FakeA
     #expect(model.activeTabbedState == before) // No failed step was recorded.
 }
 
-@Test(arguments: ["ignored", "raise"])
+@Test(.appTestApplication, arguments: ["ignored", "raise"])
 @MainActor func tabbedSnapFailureRestoresMembershipFramesAndDoesNotAddUndo(failure: String) async throws {
     let (system, model) = try await snapFixture()
     defer { model.shutdown() }
@@ -228,7 +228,7 @@ private func snapFixture(preset: TabbedPreset = .columns) async throws -> (FakeA
     #expect(await waitFor { model.activeTabbedState?.panes[1].tabs.isEmpty == true })
 }
 
-@Test @MainActor func tabbedSnapSamePaneDoesNotAddAnUndoStep() async throws {
+@Test(.appTestApplication) @MainActor func tabbedSnapSamePaneDoesNotAddAnUndoStep() async throws {
     let (_, model) = try await snapFixture()
     defer { model.shutdown() }
     let before = try #require(model.activeTabbedState)
@@ -240,7 +240,7 @@ private func snapFixture(preset: TabbedPreset = .columns) async throws -> (FakeA
 
 /// One Pane needs an empty pane for the remainder. Four Panes reflows its
 /// other panes into the remainder without adding one.
-@Test(arguments: [TabbedPreset.single, .grid])
+@Test(.appTestApplication, arguments: [TabbedPreset.single, .grid])
 @MainActor func tabbedSnapMovesThePaneAndUndoesOnce(preset: TabbedPreset) async throws {
     let (system, model) = try await snapFixture(preset: preset)
     defer { model.shutdown() }
@@ -259,7 +259,7 @@ private func snapFixture(preset: TabbedPreset = .columns) async throws -> (FakeA
     #expect(await waitFor { model.activeTabbedState == before })
 }
 
-@Test(arguments: [false, true])
+@Test(.appTestApplication, arguments: [false, true])
 @MainActor func tabbedSnapFloatUndoRestoresItsActualPreActionFrame(native: Bool) async throws {
     let (system, model) = try await snapFixture()
     defer { model.shutdown() }
@@ -282,7 +282,7 @@ private func snapFixture(preset: TabbedPreset = .columns) async throws -> (FakeA
     #expect(system.windows[0].frame == frame)
 }
 
-@Test @MainActor func tabbedSnapQueuedIntentKeepsCapturedSourceAndReplans() async throws {
+@Test(.appTestApplication) @MainActor func tabbedSnapQueuedIntentKeepsCapturedSourceAndReplans() async throws {
     let (system, model) = try await snapFixture(preset: .single)
     defer { model.shutdown() }
     let id = system.windows[0].id, target = try #require(model.captureLayoutWheelTarget())
@@ -298,7 +298,7 @@ private func snapFixture(preset: TabbedPreset = .columns) async throws -> (FakeA
     #expect(model.activeTabbedState?.activeWindowID == id)
 }
 
-@Test(arguments: ["work-area", "session", "mode", "closed", "shutdown"])
+@Test(.appTestApplication, arguments: ["work-area", "session", "mode", "closed", "shutdown"])
 @MainActor func tabbedSnapStaleWheelTargetsNeverWrite(change: String) async throws {
     let (system, model) = try await snapFixture()
     defer { model.shutdown() }
@@ -319,7 +319,7 @@ private func snapFixture(preset: TabbedPreset = .columns) async throws -> (FakeA
     #expect(system.windows.map(\.frame) == frames)
 }
 
-@Test(arguments: ["success", "minimum", "unsupported", "raise"])
+@Test(.appTestApplication, arguments: ["success", "minimum", "unsupported", "raise"])
 @MainActor func tabbedSnapNativeUsesVerifiedFramesAndOriginalMembership(outcome: String) async throws {
     let (system, model) = try await snapFixture()
     defer { model.shutdown() }
@@ -339,7 +339,7 @@ private func snapFixture(preset: TabbedPreset = .columns) async throws -> (FakeA
     #expect(system.windows.map(\.frame) == frames)
 }
 
-@Test @MainActor func tabbedSnapNativeObservationFailureStillRestoresItsCheckpoint() async throws {
+@Test(.appTestApplication) @MainActor func tabbedSnapNativeObservationFailureStillRestoresItsCheckpoint() async throws {
     let (system, model) = try await snapFixture()
     defer { model.shutdown() }
     let before = try #require(model.activeTabbedState), frames = system.windows.map(\.frame), id = system.windows[0].id
@@ -352,7 +352,7 @@ private func snapFixture(preset: TabbedPreset = .columns) async throws -> (FakeA
     #expect(system.windows.map(\.frame) == frames)
 }
 
-@Test @MainActor func tabbedSnapNativeDepartureNeverRestoresOnTheNewSpace() async throws {
+@Test(.appTestApplication) @MainActor func tabbedSnapNativeDepartureNeverRestoresOnTheNewSpace() async throws {
     let (system, model) = try await snapFixture()
     defer { model.shutdown() }
     let display = system.mainDisplay.id, id = system.windows[0].id
@@ -372,7 +372,7 @@ private func snapFixture(preset: TabbedPreset = .columns) async throws -> (FakeA
     #expect(system.windows.map(\.frame) == frames)
 }
 
-@Test(arguments: ["floating-frame", "stacking"])
+@Test(.appTestApplication, arguments: ["floating-frame", "stacking"])
 @MainActor func tabbedSnapRejectedGestureSuspendsWhenCheckpointRecoveryFails(failure: String) async throws {
     let (system, model) = try await snapFixture()
     defer { model.shutdown() }
@@ -409,7 +409,7 @@ private func snapFixture(preset: TabbedPreset = .columns) async throws -> (FakeA
     #expect(system.frameWriteCounts == writes) // Degraded recovery stopped ambient writes.
 }
 
-@Test @MainActor func tabbedSnapLastFloatingWindowCanUseNativeSnapIntoVacantPanes() async throws {
+@Test(.appTestApplication) @MainActor func tabbedSnapLastFloatingWindowCanUseNativeSnapIntoVacantPanes() async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
     let subject = makeModel(system: system)
@@ -427,7 +427,7 @@ private func snapFixture(preset: TabbedPreset = .columns) async throws -> (FakeA
     #expect(await waitFor { subject.activeTabbedState?.paneID(containing: id) == right })
 }
 
-@Test @MainActor func tabbedSnapSpaceChangeDuringReleaseDoesNotAdoptTheNewSpaceForRollback() async throws {
+@Test(.appTestApplication) @MainActor func tabbedSnapSpaceChangeDuringReleaseDoesNotAdoptTheNewSpaceForRollback() async throws {
     let (system, model) = try await snapFixture()
     defer { model.shutdown() }
     let display = system.mainDisplay.id, id = system.windows[0].id
@@ -448,7 +448,7 @@ private func snapFixture(preset: TabbedPreset = .columns) async throws -> (FakeA
     #expect(system.windows.map(\.frame) == frames)
 }
 
-@Test @MainActor func tabbedSnapKeyboardCyclesWhileWheelPreviewsRemainExact() async throws {
+@Test(.appTestApplication) @MainActor func tabbedSnapKeyboardCyclesWhileWheelPreviewsRemainExact() async throws {
     let (system, model) = try await snapFixture()
     defer { model.shutdown() }
     // A loaded runner can take longer than the 2-second cycle between presses.
@@ -467,7 +467,7 @@ private func snapFixture(preset: TabbedPreset = .columns) async throws -> (FakeA
     }
 }
 
-@Test(arguments: ["sticky", "excluded", "ignored"])
+@Test(.appTestApplication, arguments: ["sticky", "excluded", "ignored"])
 @MainActor func tabbedSnapDoesNotEnrollSystemFloatsOrExcludedApps(rule: String) async throws {
     let (system, model) = try await snapFixture()
     defer { model.shutdown() }
@@ -484,7 +484,7 @@ private func snapFixture(preset: TabbedPreset = .columns) async throws -> (FakeA
     #expect(system.windows[0].frame == (rule == "ignored" ? frame : BTRect(x: 500, y: 0, width: 500, height: 800)))
 }
 
-@Test @MainActor func tabbedSnapRuleChangeProtectsAFloatingSourceAndDiscardsItsQueue() async throws {
+@Test(.appTestApplication) @MainActor func tabbedSnapRuleChangeProtectsAFloatingSourceAndDiscardsItsQueue() async throws {
     let (system, model) = try await snapFixture()
     defer { model.shutdown() }
     let id = system.windows[0].id, bundle = try #require(system.windows[0].bundleIdentifier)
@@ -506,7 +506,7 @@ private func snapFixture(preset: TabbedPreset = .columns) async throws -> (FakeA
     #expect(model.activeTabbedState?.panes.count == 2) // A stale queued Left Third was discarded.
 }
 
-@Test(arguments: [WindowAction.rightHalf, .maximize, .restore, .center], [false, true]) @MainActor
+@Test(.appTestApplication, arguments: [WindowAction.rightHalf, .maximize, .restore, .center], [false, true]) @MainActor
 func tabbedSnapExcludedMembersReceiveParticipationGuidance(action: WindowAction, ignored: Bool) async throws {
     let (system, model) = try await snapFixture()
     defer { model.shutdown() }
@@ -529,7 +529,7 @@ func tabbedSnapExcludedMembersReceiveParticipationGuidance(action: WindowAction,
     }
 }
 
-@Test(arguments: [WindowAction.rightHalf, .maximize, .restore, .center], [false, true]) @MainActor
+@Test(.appTestApplication, arguments: [WindowAction.rightHalf, .maximize, .restore, .center], [false, true]) @MainActor
 func tabbedSnapExcludedNonmembersRetainOrdinaryActions(action: WindowAction, floated: Bool) async throws {
     for wheel in [false, true] {
         _ = NSApplication.shared
@@ -562,7 +562,7 @@ func tabbedSnapExcludedNonmembersRetainOrdinaryActions(action: WindowAction, flo
     }
 }
 
-@Test(arguments: [LayoutMode.manual, .bento, .tabbed], [false, true]) @MainActor
+@Test(.appTestApplication, arguments: [LayoutMode.manual, .bento, .tabbed], [false, true]) @MainActor
 func spaceStabilizationDelaysOnlyTabbedWindowActions(mode: LayoutMode, wheel: Bool) async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
@@ -624,7 +624,7 @@ func spaceStabilizationDelaysOnlyTabbedWindowActions(mode: LayoutMode, wheel: Bo
     #expect(system.frameWriteCounts == shutdownWrites)
 }
 
-@Test @MainActor func tabbedSnapWaitsForThePreviousNativeDropsTabPlacement() async throws {
+@Test(.appTestApplication) @MainActor func tabbedSnapWaitsForThePreviousNativeDropsTabPlacement() async throws {
     let (system, model) = try await snapFixture()
     defer { model.shutdown() }
     let id = system.windows[0].id, right = system.windows[2].id, display = system.mainDisplay.id
@@ -643,7 +643,7 @@ func spaceStabilizationDelaysOnlyTabbedWindowActions(mode: LayoutMode, wheel: Bo
     #expect(model.activeTabbedState?.panes.count == 4)
 }
 
-@Test @MainActor func tabbedSnapHeldGestureSupersedesPendingPlacementAndQueuedWork() async throws {
+@Test(.appTestApplication) @MainActor func tabbedSnapHeldGestureSupersedesPendingPlacementAndQueuedWork() async throws {
     let (system, model) = try await snapFixture()
     defer { model.shutdown() }
     let before = try #require(model.activeTabbedState), id = system.windows[0].id, display = system.mainDisplay.id
@@ -669,7 +669,7 @@ func spaceStabilizationDelaysOnlyTabbedWindowActions(mode: LayoutMode, wheel: Bo
 /// The dragged window's center can cross to the neighbouring display while
 /// the pointer shows a Tabbed drop. The drop still lands on the Tabbed
 /// display, and no participant check degrades it.
-@Test(arguments: ["snap", "center"]) @MainActor
+@Test(.appTestApplication, arguments: ["snap", "center"]) @MainActor
 func tabbedDropAfterTheSourceCenterCrossedIsNotDegraded(entry: String) async throws {
     let (system, model) = try await snapFixture()
     defer { model.shutdown() }
@@ -702,7 +702,7 @@ func tabbedDropAfterTheSourceCenterCrossedIsNotDegraded(entry: String) async thr
 /// A Tabbed center drop is fitted when the overlay shows it. Release commits
 /// those panes. A tab the pane cannot show is invalid feedback that names the
 /// window, and release returns it to its slot.
-@Test(arguments: [true, false]) @MainActor
+@Test(.appTestApplication, arguments: [true, false]) @MainActor
 func tabbedCenterDropIsFittedByItsPreview(fits: Bool) async throws {
     let (system, model) = try await snapFixture()
     defer { model.shutdown() }
@@ -742,7 +742,7 @@ func tabbedCenterDropIsFittedByItsPreview(fits: Bool) async throws {
 
 /// A Tabbed snap commits with the constraints its overlay planned with. A
 /// larger minimum read at release does not change or reject it.
-@Test @MainActor func tabbedSnapIsNotVetoedByAMinimumReadAtRelease() async throws {
+@Test(.appTestApplication) @MainActor func tabbedSnapIsNotVetoedByAMinimumReadAtRelease() async throws {
     let (system, model) = try await snapFixture()
     defer { model.shutdown() }
     let source = system.windows[0].id, main = system.mainDisplay.id
@@ -764,7 +764,7 @@ func tabbedCenterDropIsFittedByItsPreview(fits: Bool) async throws {
 
 /// A floating Tabbed window's snap must hold its minimum size, or the
 /// overlay shows invalid feedback.
-@Test @MainActor func floatingTabbedSnapChecksTheMinimumSize() async throws {
+@Test(.appTestApplication) @MainActor func floatingTabbedSnapChecksTheMinimumSize() async throws {
     let (system, model) = try await snapFixture()
     defer { model.shutdown() }
     let id = system.windows[0].id, main = system.mainDisplay.id
@@ -782,7 +782,7 @@ func tabbedCenterDropIsFittedByItsPreview(fits: Bool) async throws {
 
 /// A Tabbed drop whose layout changed during the drag writes nothing of its
 /// plan. The dragged window takes its frame in the current arrangement.
-@Test @MainActor func aStaleTabbedPlanPutsTheDraggedWindowInTheCurrentLayout() async throws {
+@Test(.appTestApplication) @MainActor func aStaleTabbedPlanPutsTheDraggedWindowInTheCurrentLayout() async throws {
     let (system, model) = try await snapFixture()
     defer { model.shutdown() }
     let source = system.windows[0].id, main = system.mainDisplay.id, bounds = system.mainDisplay.visibleFrame
@@ -814,7 +814,7 @@ func tabbedCenterDropIsFittedByItsPreview(fits: Bool) async throws {
 
 /// Release over invalid feedback for a Tabbed tab restores the verified
 /// checkpoint and the original group, and reports the reason.
-@Test @MainActor func aFailedTabbedDropRestoresTheCheckpoint() async throws {
+@Test(.appTestApplication) @MainActor func aFailedTabbedDropRestoresTheCheckpoint() async throws {
     let (system, model) = try await snapFixture()
     defer { model.shutdown() }
     let source = system.windows[0].id, main = system.mainDisplay.id
@@ -829,7 +829,7 @@ func tabbedCenterDropIsFittedByItsPreview(fits: Bool) async throws {
 
 /// A Tabbed center drop onto a window outside every pane is invalid; it is
 /// never planned as a Bento swap instead.
-@Test @MainActor func aTabbedCenterDropOutsideAPaneIsInvalid() async throws {
+@Test(.appTestApplication) @MainActor func aTabbedCenterDropOutsideAPaneIsInvalid() async throws {
     let (system, model) = try await snapFixture()
     defer { model.shutdown() }
     let source = system.windows[0].id, main = system.mainDisplay.id
@@ -851,7 +851,7 @@ func tabbedCenterDropIsFittedByItsPreview(fits: Bool) async throws {
 
 /// A floating window dropped on a pane's center becomes its selected tab.
 /// Undo floats it again where it was before the drag.
-@Test @MainActor func aFloatingWindowDroppedOnAPaneCenterBecomesItsSelectedTab() async throws {
+@Test(.appTestApplication) @MainActor func aFloatingWindowDroppedOnAPaneCenterBecomesItsSelectedTab() async throws {
     let (system, model) = try await snapFixture()
     defer { model.shutdown() }
     let source = system.windows[0].id, right = system.windows[2].id, main = system.mainDisplay.id
@@ -876,7 +876,7 @@ func tabbedCenterDropIsFittedByItsPreview(fits: Bool) async throws {
 /// A floating window the pane cannot show does not join it as a hidden tab.
 /// The overlay shows invalid feedback that names the window and the axis,
 /// and release leaves it floating where it was dropped, with no write.
-@Test(arguments: [true, false]) @MainActor
+@Test(.appTestApplication, arguments: [true, false]) @MainActor
 func aFloatingWindowTooLargeForThePaneIsInvalid(tooWide: Bool) async throws {
     let (system, model) = try await snapFixture()
     defer { model.shutdown() }
@@ -909,7 +909,7 @@ func aFloatingWindowTooLargeForThePaneIsInvalid(tooWide: Bool) async throws {
 
 /// A tab strip drop inserts the window at the strip's index, whether it
 /// floated or was a tab of another pane.
-@Test(arguments: [0, 1, 2], [false, true]) @MainActor
+@Test(.appTestApplication, arguments: [0, 1, 2], [false, true]) @MainActor
 func aTabStripDropInsertsTheWindowAtItsIndex(index: Int, floating: Bool) async throws {
     let (system, model) = try await snapFixture()
     defer { model.shutdown() }
@@ -932,7 +932,7 @@ func aTabStripDropInsertsTheWindowAtItsIndex(index: Int, floating: Bool) async t
 }
 
 /// An empty pane is a drop target: the window becomes its tab.
-@Test @MainActor func aWindowDroppedOnAnEmptyPaneBecomesItsTab() async throws {
+@Test(.appTestApplication) @MainActor func aWindowDroppedOnAnEmptyPaneBecomesItsTab() async throws {
     let (system, model) = try await snapFixture()
     defer { model.shutdown() }
     let right = system.windows[2].id, source = system.windows[0].id, main = system.mainDisplay.id
@@ -951,7 +951,7 @@ func aTabStripDropInsertsTheWindowAtItsIndex(index: Int, floating: Bool) async t
 /// A floating window released where the overlay showed no committable drop,
 /// nothing or invalid feedback, stays floating where the user dropped it. No
 /// write returns it to where the drag started.
-@Test(arguments: [false, true]) @MainActor
+@Test(.appTestApplication, arguments: [false, true]) @MainActor
 func aFloatingWindowReleasedWithoutADropStaysWhereItWasDropped(invalid: Bool) async throws {
     let (system, model) = try await snapFixture()
     defer { model.shutdown() }
@@ -971,7 +971,7 @@ func aFloatingWindowReleasedWithoutADropStaysWhereItWasDropped(invalid: Bool) as
 
 /// A committed tab drop whose placement fails leaves a floating window where
 /// it was dropped, not where the drag started, and reports the failure.
-@Test @MainActor func aFailedTabDropLeavesAFloatingWindowWhereItWasDropped() async throws {
+@Test(.appTestApplication) @MainActor func aFailedTabDropLeavesAFloatingWindowWhereItWasDropped() async throws {
     let (system, model) = try await snapFixture()
     defer { model.shutdown() }
     let source = system.windows[0].id, right = system.windows[2].id, main = system.mainDisplay.id
@@ -998,7 +998,7 @@ func aFloatingWindowReleasedWithoutADropStaysWhereItWasDropped(invalid: Bool) as
 /// A window that resizes in steps, such as Terminal, can settle a row taller
 /// than its pane. A tab drop then fits the panes again with that size, as any
 /// Tabbed placement does, into an empty pane and through a tab strip.
-@Test(arguments: [false, true]) @MainActor
+@Test(.appTestApplication, arguments: [false, true]) @MainActor
 func aSteppedFloatingWindowJoinsAPaneByDrop(throughStrip: Bool) async throws {
     let (system, model) = try await snapFixture(preset: .rows)
     defer { model.shutdown() }
@@ -1031,7 +1031,7 @@ func aSteppedFloatingWindowJoinsAPaneByDrop(throughStrip: Bool) async throws {
 /// A snap drag commits exactly the snap its overlay showed. When the window
 /// refuses that size, the drop fails; it is not planned again with the size
 /// the window revealed.
-@Test @MainActor func aRefusedSnapDragIsNotPlannedAgain() async throws {
+@Test(.appTestApplication) @MainActor func aRefusedSnapDragIsNotPlannedAgain() async throws {
     let (system, model) = try await snapFixture()
     defer { model.shutdown() }
     let source = system.windows[0].id, main = system.mainDisplay.id

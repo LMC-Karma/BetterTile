@@ -3,7 +3,7 @@ import Testing
 @testable import BetterTileCore
 @testable import BetterTileMacOS
 
-@Test @MainActor func linkedResizeAdmissionHonorsApplicationRules() {
+@Test(.macOSTestApplication) @MainActor func linkedResizeAdmissionHonorsApplicationRules() {
     let system = FakeWindowSystem()
     let window = system.windows[0]
     var configuration = BetterTileConfiguration()
@@ -25,7 +25,7 @@ import Testing
     #expect(!controller.allowsLinkedResize(for: window))
 }
 
-@Test @MainActor func linkedResizeDoesNotMoveAnIgnoredNeighbor() {
+@Test(.macOSTestApplication) @MainActor func linkedResizeDoesNotMoveAnIgnoredNeighbor() {
     let system = FakeWindowSystem()
     system.addSecondWindow()
     system.windows[0].frame = BTRect(x: 0, y: 0, width: 500, height: 800)
@@ -57,7 +57,7 @@ import Testing
     #expect(system.frameWriteCounts[neighbor.id] == nil)
 }
 
-@Test @MainActor func sharedGestureBurstStartsLinkedResizeBeforeMouseUp() async {
+@Test(.macOSTestApplication) @MainActor func sharedGestureBurstStartsLinkedResizeBeforeMouseUp() async {
     let system = FakeWindowSystem()
     system.windows = [
         WindowSnapshot(
@@ -104,7 +104,7 @@ import Testing
     #expect(system.windows[1].frame.minX > 500)
 }
 
-@Test @MainActor func linkedResizeAppliesTheLatestObservedFrameOnDisplayTickAndFlushesRelease() async {
+@Test(.macOSTestApplication) @MainActor func linkedResizeAppliesTheLatestObservedFrameOnDisplayTickAndFlushesRelease() async {
     let system = FakeWindowSystem()
     let focused = WindowID(rawValue: "focused")
     let second = WindowID(rawValue: "second")
@@ -170,7 +170,7 @@ import Testing
     #expect(system.windows[1].frame == BTRect(x: 650, y: 0, width: 350, height: 800))
 }
 
-@Test @MainActor func failedTapHandsActiveLinkedResizeToNSEvent() async {
+@Test(.macOSTestApplication) @MainActor func failedTapHandsActiveLinkedResizeToNSEvent() async {
     let system = FakeWindowSystem()
     system.windows = [
         WindowSnapshot(
@@ -216,7 +216,7 @@ import Testing
     #expect(system.windows[1].frame.minX == 510)
 }
 
-@Test @MainActor func deferredStartDoesNotReplaceAnActiveLinkedResizeBaseline() async {
+@Test(.macOSTestApplication) @MainActor func deferredStartDoesNotReplaceAnActiveLinkedResizeBaseline() async {
     let system = FakeWindowSystem()
     system.windows = [
         WindowSnapshot(
@@ -265,7 +265,7 @@ import Testing
     #expect(system.windows[1].frame.minX == 517)
 }
 
-@Test @MainActor func eventTapHandoffWaitsForTheActiveNSEventLinkedResize() async {
+@Test(.macOSTestApplication) @MainActor func eventTapHandoffWaitsForTheActiveNSEventLinkedResize() async {
     let system = FakeWindowSystem()
     system.windows = [
         WindowSnapshot(
@@ -340,7 +340,7 @@ import Testing
 
 /// A display tick usually consumes the last drag sample before release. The
 /// release must still validate and apply the source window's final frame.
-@Test @MainActor func linkedResizeReleaseAppliesTheFinalFrameAfterATickConsumedTheLastSample() {
+@Test(.macOSTestApplication) @MainActor func linkedResizeReleaseAppliesTheFinalFrameAfterATickConsumedTheLastSample() {
     let system = FakeWindowSystem()
     let focused = WindowID(rawValue: "focused")
     let second = WindowID(rawValue: "second")
@@ -382,7 +382,7 @@ import Testing
 
 /// An application can accept a frame write and ignore it. Release at the same
 /// position must resend the final frame instead of trusting the last request.
-@Test @MainActor func linkedResizeReleaseResendsAFrameThatAnApplicationIgnored() {
+@Test(.macOSTestApplication) @MainActor func linkedResizeReleaseResendsAFrameThatAnApplicationIgnored() {
     let system = FakeWindowSystem()
     let focused = WindowID(rawValue: "focused")
     let second = WindowID(rawValue: "second")
@@ -419,7 +419,7 @@ import Testing
     #expect(system.windows[1].frame == BTRect(x: 600, y: 0, width: 400, height: 800))
 }
 
-@Test @MainActor func linkedResizeReportsGestureStartOnlyWhenAWindowResizes() {
+@Test(.macOSTestApplication) @MainActor func linkedResizeReportsGestureStartOnlyWhenAWindowResizes() {
     let system = FakeWindowSystem()
     system.addSecondWindow()
     system.windows[0].frame = BTRect(x: 0, y: 0, width: 500, height: 800)
@@ -459,7 +459,7 @@ import Testing
     #expect(system.windows[1].frame.minX == 600)
 }
 
-@Test(arguments: ["stop", "restart", "configuration", "handoff"]) @MainActor
+@Test(.macOSTestApplication, arguments: ["stop", "restart", "configuration", "handoff"]) @MainActor
 func queuedLinkedResizePressCannotStartAfterMonitorRetirement(retirement: String) async throws {
     let system = FakeWindowSystem()
     var configuration = BetterTileConfiguration()
@@ -503,7 +503,7 @@ func queuedLinkedResizePressCannotStartAfterMonitorRetirement(retirement: String
     }
 }
 
-@Test(arguments: [false, true]) @MainActor
+@Test(.macOSTestApplication, arguments: [false, true]) @MainActor
 func degradedLinkedResizeRestoresPeersOrReportsTerminalFailure(recoveryFails: Bool) {
     let system = FakeWindowSystem()
     system.addSecondWindow()

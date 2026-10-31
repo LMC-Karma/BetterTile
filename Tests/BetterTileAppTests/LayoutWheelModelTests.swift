@@ -1,4 +1,5 @@
 import BetterTileCore
+import BetterTileTestSupport
 @testable import BetterTileMacOS
 import Foundation
 import AppKit
@@ -8,6 +9,12 @@ import Testing
 
 @MainActor
 final class FakeAppWindowSystem: BetterTileWindowSystem, TabbedWindowSystem, MinimumSizeProbing {
+    let manualClock: ManualClock?
+    /// Use registered deadlines even for short boundary waits.
+    var drivesPolicyDeadlines = false
+    var windowEventSleepDeadlines: [Task<Void, Never>: ContinuousClock.Instant] = [:]
+    var isAwaitingWindowEventSleepRegistration: (() -> Bool)?
+    let clock: BetterTileClock
     let mainDisplay = DisplaySnapshot(
         id: DisplayID(rawValue: "main"),
         frame: BTRect(x: 0, y: 0, width: 1000, height: 800),
@@ -59,7 +66,10 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, TabbedWindowSystem, Min
     var windows: [WindowSnapshot]
     var eventHandler: (@MainActor (WindowSystemEvent) -> Void)?
 
-    init() {
+    init(manualClock: ManualClock? = nil) {
+        self.manualClock = manualClock
+        clock = manualClock?.clock ?? .live
+        TestWindowAudit.start()
         availableDisplays = [mainDisplay]
         windows = [WindowSnapshot(
             id: WindowID(rawValue: "focused"),
@@ -217,8 +227,8 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, TabbedWindowSystem, Min
         }
         guard !ignoredFrameWriteWindowIDs.contains(windowID) else { return }
         if let delay = frameApplicationDelays[windowID] {
-            Task { @MainActor [weak self] in
-                try? await Task.sleep(for: delay)
+            Task { @MainActor [clock, weak self] in
+                try? await clock.sleep(for: delay)
                 self?.applyFrame(frame, at: index)
             }
             return
@@ -379,11 +389,14 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, TabbedWindowSystem, Min
 }
 
 @MainActor
-func makeModel(system: FakeAppWindowSystem) -> BetterTileModel {
+func makeModel(system: FakeAppWindowSystem, gestureEvents: SharedGestureEventMonitor? = nil) -> BetterTileModel {
+    // Fake-window tests must not receive the user's real pointer gestures.
+    UserDefaults.standard.register(defaults: ["disableSharedGestureEvents": true])
     let store = ConfigurationStore(
         fileURL: URL(filePath: "/private/tmp/BetterTileAppTests-\(UUID().uuidString)/configuration.json")
     )
-    let model = BetterTileModel(store: store, system: system, startRuntime: false)
+    let model = makeOffscreenModel(store: store, system: system, startRuntime: false, gestureEvents: gestureEvents)
+    system.installWindowEventClock(in: model)
     // Fake-window tests own button state; physical input must not defer work.
     model.primaryButtonIsPressed = { false }
     return model
@@ -392,7 +405,7 @@ func makeModel(system: FakeAppWindowSystem) -> BetterTileModel {
 /// A window can arrive with a Space switch, for example dragged there in
 /// Mission Control. The switch sweep keeps the stored layout; a follow-up
 /// sweep tiles the new window once the switch settles.
-@Test @MainActor func aWindowThatArrivesWithASpaceSwitchIsTiled() async throws {
+@Test(.appTestApplication) @MainActor func aWindowThatArrivesWithASpaceSwitchIsTiled() async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
     let firstSpace = NativeSpaceID(rawValue: 1)
@@ -433,7 +446,7 @@ func makeModel(system: FakeAppWindowSystem) -> BetterTileModel {
     })
 }
 
-@Test(arguments: [0, 4]) @MainActor
+@Test(.appTestApplication, arguments: [0, 4]) @MainActor
 func returningToBentoSpaceWithPartialVisibilityDoesNotMoveItsWindows(extraIncompleteSweeps: Int) async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
@@ -494,7 +507,7 @@ func returningToBentoSpaceWithPartialVisibilityDoesNotMoveItsWindows(extraIncomp
     #expect(system.frameWriteCounts == writes)
 }
 
-@Test(arguments: [false, true]) @MainActor
+@Test(.appTestApplication, arguments: [false, true]) @MainActor
 func bentoPlacementContainsAnUnreportedApplicationMinimum(automaticArrival: Bool) async {
     let system = FakeAppWindowSystem()
     let model = makeModel(system: system)
@@ -526,7 +539,7 @@ func bentoPlacementContainsAnUnreportedApplicationMinimum(automaticArrival: Bool
     #expect(system.frameWriteCounts[peerID, default: 0] <= 2)
 }
 
-@Test @MainActor func bentoRepairWaitsForADelayedAppWithoutLearningItsOldSize() async {
+@Test(.appTestApplication) @MainActor func bentoRepairWaitsForADelayedAppWithoutLearningItsOldSize() async {
     let system = FakeAppWindowSystem()
     let peerID = WindowID(rawValue: "peer")
     system.windows.append(WindowSnapshot(
@@ -546,7 +559,7 @@ func bentoPlacementContainsAnUnreportedApplicationMinimum(automaticArrival: Bool
     #expect(system.frameWriteCounts[peerID, default: 0] <= 2)
 }
 
-@Test(arguments: [true, false]) @MainActor
+@Test(.appTestApplication, arguments: [true, false]) @MainActor
 func snappedBentoLayoutDoesNotResizeAgainAfterItLands(cachedSnapshotsAvailable: Bool) async {
     let system = FakeAppWindowSystem()
     system.cachedSnapshotsAvailable = cachedSnapshotsAvailable
@@ -571,7 +584,7 @@ func snappedBentoLayoutDoesNotResizeAgainAfterItLands(cachedSnapshotsAvailable: 
     }
 }
 
-@Test(arguments: [false, true], [false, true]) @MainActor
+@Test(.appTestApplication, arguments: [false, true], [false, true]) @MainActor
 func settledWorkAreaChangeDoesNotReapplyOnLaterSweeps(learnMinimum: Bool, delayed: Bool) async throws {
     let system = FakeAppWindowSystem()
     let peerID = WindowID(rawValue: "peer")
@@ -628,7 +641,7 @@ func settledWorkAreaChangeDoesNotReapplyOnLaterSweeps(learnMinimum: Bool, delaye
     #expect(system.windows.map(\.frame) == settledFrames)
 }
 
-@Test @MainActor func failedWorkAreaSettlementCanRetryOnALaterSweep() async throws {
+@Test(.appTestApplication) @MainActor func failedWorkAreaSettlementCanRetryOnALaterSweep() async throws {
     let system = FakeAppWindowSystem()
     let peerID = WindowID(rawValue: "peer")
     system.windows.append(WindowSnapshot(
@@ -687,28 +700,29 @@ private func target(for system: FakeAppWindowSystem) -> LayoutWheelTarget {
 /// being waited for needs its turn after such a block too.
 func waitFor(
     timeout: Duration = .seconds(10),
+    clock: BetterTileClock = .live,
     _ condition: () -> Bool
 ) async -> Bool {
     let step = Duration.milliseconds(20)
     for _ in 0..<Int((timeout / step).rounded(.up)) {
         if condition() { return true }
-        try? await Task.sleep(for: step)
+        try? await clock.sleep(for: step)
     }
     return condition()
 }
 
-@Test @MainActor func waitForRetainsPollingStepsWhenMainActorIsBlocked() async {
+@Test(.appTestApplication) @MainActor func waitForRetainsPollingStepsWhenMainActorIsBlocked() async throws {
     var polls = 0
     let reached = await waitFor(timeout: .milliseconds(40)) {
         polls += 1
-        if polls == 1 { Thread.sleep(forTimeInterval: 0.1) }
+        if polls == 1 { Thread.sleep(forTimeInterval: 0.1) } // real-time: stalls the main actor to prove the helper counts polling steps
         return polls == 3
     }
     #expect(reached)
     #expect(polls == 3)
 }
 
-@Test @MainActor func waitForStopsAfterItsPollingBudgetWhenStateNeverArrives() async {
+@Test(.appTestApplication) @MainActor func waitForStopsAfterItsPollingBudgetWhenStateNeverArrives() async {
     var polls = 0
     let reached = await waitFor(timeout: .milliseconds(40)) {
         polls += 1
@@ -718,7 +732,7 @@ func waitFor(
     #expect(polls == 3)
 }
 
-@Test @MainActor func manualLayoutWheelPreviewIsPureAndMatchesCommit() {
+@Test(.appTestApplication) @MainActor func manualLayoutWheelPreviewIsPureAndMatchesCommit() {
     let system = FakeAppWindowSystem()
     let model = makeModel(system: system)
     defer { model.shutdown() }
@@ -739,7 +753,7 @@ func waitFor(
     #expect(system.windows[0].frame == placements[0].frame)
 }
 
-@Test @MainActor func movingTheCapturedWindowToAnotherDisplayCancelsTheCommand() {
+@Test(.appTestApplication) @MainActor func movingTheCapturedWindowToAnotherDisplayCancelsTheCommand() {
     let system = FakeAppWindowSystem()
     let model = makeModel(system: system)
     defer { model.shutdown() }
@@ -763,7 +777,7 @@ func waitFor(
     #expect(reason.contains("window or display"))
 }
 
-@Test @MainActor func ignoredApplicationFailsBeforeLayoutWheelMutation() {
+@Test(.appTestApplication) @MainActor func ignoredApplicationFailsBeforeLayoutWheelMutation() {
     let system = FakeAppWindowSystem()
     let model = makeModel(system: system)
     defer { model.shutdown() }
@@ -785,7 +799,7 @@ func waitFor(
     #expect(system.windows[0].frame == baseline)
 }
 
-@Test @MainActor func bentoLayoutWheelPreviewDoesNotCommitItsProposal() {
+@Test(.appTestApplication) @MainActor func bentoLayoutWheelPreviewDoesNotCommitItsProposal() {
     let system = FakeAppWindowSystem()
     let model = makeModel(system: system)
     defer { model.shutdown() }
@@ -809,7 +823,7 @@ func waitFor(
     })?.frame)
 }
 
-@Test @MainActor func bentoLayoutWheelFocusActionMatchesKeyboardPolicy() throws {
+@Test(.appTestApplication) @MainActor func bentoLayoutWheelFocusActionMatchesKeyboardPolicy() throws {
     let system = FakeAppWindowSystem()
     let peer = WindowSnapshot(
         id: WindowID(rawValue: "peer"),
@@ -843,7 +857,7 @@ func waitFor(
 
 /// Keyboard Maximize on a Bento desktop enters Focus mode at once, and a
 /// later sweep does not repeat it. Restore ends it and returns the layout.
-@Test @MainActor func bentoMaximizeEntersFocusModeAndRestoreReturnsTheLayout() async throws {
+@Test(.appTestApplication) @MainActor func bentoMaximizeEntersFocusModeAndRestoreReturnsTheLayout() async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
     let peer = WindowID(rawValue: "peer")
@@ -876,10 +890,10 @@ func waitFor(
     #expect(await waitFor { system.windows.map(\.frame) == tiled })
 }
 
-@Test(arguments: [false, true]) @MainActor
+@Test(.appTestApplication, .timeLimit(.minutes(1)), arguments: [false, true]) @MainActor
 func restoringAFocusModePeerFromTheDockWaitsForTheOtherPeers(rejectLayout: Bool) async throws {
     _ = NSApplication.shared
-    let system = FakeAppWindowSystem()
+    let system = makeManualWindowSystem(drivingPolicyDeadlines: true)
     for name in ["dock-peer", "slow-peer"] {
         system.windows.append(WindowSnapshot(id: WindowID(rawValue: name), processIdentifier: 43,
             bundleIdentifier: "com.example.Peer", frame: BTRect(x: 0, y: 0, width: 200, height: 300),
@@ -889,11 +903,11 @@ func restoringAFocusModePeerFromTheDockWaitsForTheOtherPeers(rejectLayout: Bool)
     let model = makeModel(system: system)
     defer { model.shutdown() }
     model.setActiveMode(.bento)
-    try #require(await waitFor { system.frameWriteCounts.count == system.windows.count })
-    try await Task.sleep(for: .milliseconds(350))
+    try #require(await system.waitFor { system.frameWriteCounts.count == system.windows.count })
+    await drainFocusPartition(model, system: system)
     system.focusedID = system.windows[0].id
     model.perform(.leftTwoThirds)
-    try await Task.sleep(for: .milliseconds(350))
+    await drainFocusPartition(model, system: system)
     try #require(system.windows[0].frame.size.width > 600)
     let tiled = system.windows.map(\.frame)
     let focusedID = system.windows[0].id
@@ -902,12 +916,12 @@ func restoringAFocusModePeerFromTheDockWaitsForTheOtherPeers(rejectLayout: Bool)
     system.focusedID = focusedID
     model.perform(.maximize)
     try #require(system.windows.dropFirst().allSatisfy { $0.isMinimized })
-    try await Task.sleep(for: .milliseconds(350))
+    await drainFocusPartition(model, system: system)
     system.slowRestoreIDs = [slowPeer]
     system.focusedID = dockPeer
     try system.setMinimized(false, for: dockPeer)
-    try #require(await waitFor { system.restoreRequests.contains(slowPeer) })
-    try await Task.sleep(for: .milliseconds(200))
+    try await observePendingFocusPartition(system, peer: slowPeer)
+    try #require(system.restoreRequests.contains(slowPeer))
     #expect(system.windows[2].isMinimized)
     #expect(system.windows[0].frame == system.mainDisplay.visibleFrame)
     if rejectLayout {
@@ -917,18 +931,18 @@ func restoringAFocusModePeerFromTheDockWaitsForTheOtherPeers(rejectLayout: Bool)
     try system.setMinimized(false, for: slowPeer)
 
     if rejectLayout {
-        try #require(await waitFor { model.statusMessage?.contains("Use Repair") == true })
+        try #require(await system.waitFor { model.statusMessage?.contains("Use Repair") == true })
         #expect(system.windows[0].frame == system.mainDisplay.visibleFrame)
         let writes = system.frameWriteCounts
-        try await Task.sleep(for: .milliseconds(350))
+        await drainFocusPartition(model, system: system)
         #expect(system.frameWriteCounts == writes)
     } else {
-        #expect(await waitFor { system.windows.map(\.frame) == tiled })
+        #expect(await system.waitFor { system.windows.map(\.frame) == tiled })
         #expect(system.windows.allSatisfy { !$0.isMinimized })
         system.focusedID = focusedID
         model.perform(.maximize)
         model.perform(.restore)
-        #expect(await waitFor { system.windows.map(\.frame) == tiled })
+        #expect(await system.waitFor { system.windows.map(\.frame) == tiled })
     }
 }
 
@@ -936,7 +950,7 @@ func restoringAFocusModePeerFromTheDockWaitsForTheOtherPeers(rejectLayout: Bool)
 /// after the restored layout is verified, never while a peer is still
 /// returning. A peer seen back on screen counts even when its restored
 /// notification arrives late.
-@Test(arguments: [true, false]) @MainActor
+@Test(.appTestApplication, arguments: [true, false]) @MainActor
 func repairDuringFocusModeReportsOnlyAfterThePeersReturn(restoredEventArrives: Bool) async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
@@ -978,7 +992,7 @@ func repairDuringFocusModeReportsOnlyAfterThePeersReturn(restoredEventArrives: B
 /// Each display waits for its own Focus mode peers. Entering Focus mode on
 /// another display while the first display's peers are still returning
 /// must not cancel the first display's pending command.
-@Test @MainActor func focusModeOnAnotherDisplayDoesNotCancelAPendingPartition() async throws {
+@Test(.appTestApplication) @MainActor func focusModeOnAnotherDisplayDoesNotCancelAPendingPartition() async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
     let second = DisplaySnapshot(id: DisplayID(rawValue: "second"),
@@ -1028,7 +1042,7 @@ func repairDuringFocusModeReportsOnlyAfterThePeersReturn(restoredEventArrives: B
 
 /// A covered peer can close while Focus mode keeps it minimized. Ending
 /// Focus mode then lays out the remaining windows without its pane.
-@Test @MainActor func endingFocusModeAfterAPeerClosedFillsTheDisplay() async throws {
+@Test(.appTestApplication) @MainActor func endingFocusModeAfterAPeerClosedFillsTheDisplay() async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
     for name in ["kept-peer", "closed-peer"] {
@@ -1070,7 +1084,7 @@ func repairDuringFocusModeReportsOnlyAfterThePeersReturn(restoredEventArrives: B
 /// Closing the Focus mode window leaves its peers minimized. Restoring one
 /// from the Dock must lay the peers out without the closed window's pane,
 /// not leave its area empty until a later sweep notices the window is gone.
-@Test @MainActor func restoringAPeerAfterClosingTheFocusModeWindowFillsTheDisplay() async throws {
+@Test(.appTestApplication) @MainActor func restoringAPeerAfterClosingTheFocusModeWindowFillsTheDisplay() async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
     for name in ["dock-peer", "other-peer"] {
@@ -1113,7 +1127,7 @@ func repairDuringFocusModeReportsOnlyAfterThePeersReturn(restoredEventArrives: B
 
 /// A Focus mode peer that fails to restore stays minimized. The others
 /// return and fill the display; it rejoins its place in the grid later.
-@Test(arguments: [false, true]) @MainActor
+@Test(.appTestApplication, arguments: [false, true]) @MainActor
 func aFocusModeRestoreReturnsAvailablePeersAfterARestoreFailure(fromDock: Bool) async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
@@ -1168,7 +1182,7 @@ func aFocusModeRestoreReturnsAvailablePeersAfterARestoreFailure(fromDock: Bool) 
 
 /// A Layout Wheel half during Focus mode brings the covered windows back,
 /// like the keyboard shortcut, instead of leaving them minimized.
-@Test(arguments: [false, true]) @MainActor
+@Test(.appTestApplication, arguments: [false, true]) @MainActor
 func aLayoutWheelHalfEndsFocusModeAndReturnsThePeers(focusChangesAfterCapture: Bool) async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
@@ -1194,11 +1208,12 @@ func aLayoutWheelHalfEndsFocusModeAndReturnsThePeers(focusChangesAfterCapture: B
 }
 
 @MainActor
-private func makeFocusPartitionContext(peerCount: Int = 1) async throws -> (
+private func makeFocusPartitionContext(
+    peerCount: Int = 1, system: FakeAppWindowSystem = FakeAppWindowSystem()
+) async throws -> (
     system: FakeAppWindowSystem, model: BetterTileModel, target: LayoutWheelTarget
 ) {
     _ = NSApplication.shared
-    let system = FakeAppWindowSystem()
     for index in 1...peerCount {
         system.windows.append(WindowSnapshot(id: WindowID(rawValue: "peer-\(index)"), processIdentifier: 43,
             bundleIdentifier: "com.example.Peer", frame: BTRect(x: 0, y: 0, width: 200, height: 300),
@@ -1212,27 +1227,44 @@ private func makeFocusPartitionContext(peerCount: Int = 1) async throws -> (
     )
     system.emitsMinimizationEvents = true
     system.emitsFrameEvents = true
+    system.drivesPolicyDeadlines = system.manualClock != nil
     let model = makeModel(system: system)
     model.configuration.bentoInnerGap = 0
     model.setActiveMode(.bento)
-    try #require(await waitFor { system.frameWriteCounts.count == system.windows.count })
-    try #require(await waitFor { model.settlementTasks.isEmpty })
-    await model.windowEventTask?.value
+    try #require(await system.waitFor { system.frameWriteCounts.count == system.windows.count })
+    try #require(await system.waitFor { model.settlementTasks.isEmpty })
+    await system.joinWindowEvent(on: model)
     system.focusedID = system.windows[0].id
     model.perform(.maximize)
     try #require(system.windows.dropFirst().allSatisfy { $0.isMinimized })
     let sweeps = system.completeSweepCount
-    try #require(await waitFor { system.completeSweepCount > sweeps })
-    await model.windowEventTask?.value
-    try #require(await waitFor { model.settlementTasks.isEmpty })
+    try #require(await system.waitFor { system.completeSweepCount > sweeps })
+    await system.joinWindowEvent(on: model)
+    try #require(await system.waitFor { model.settlementTasks.isEmpty })
     system.requestedFrames = [:]
     return (system, model, try #require(model.captureLayoutWheelTarget()))
 }
 
-@Test(arguments: [false, true], [false, true]) @MainActor
+/// Observe a genuine pending restore without spending its policy deadline on executor scheduling.
+@MainActor private func observePendingFocusPartition(_ system: FakeAppWindowSystem, peer: WindowID) async throws {
+    let clock = try #require(system.manualClock)
+    var observed = false
+    system.onVisibleWindowSweep = { _ in observed = system.windows.first { $0.id == peer }?.isMinimized == true }
+    defer { system.onVisibleWindowSweep = nil }
+    try #require(await waitFor { observed && clock.pendingSleepCount > 0 }) // real-time: observes executor registration while the fixture's policy clock stays frozen
+}
+
+@MainActor private func drainFocusPartition(_ model: BetterTileModel, system: FakeAppWindowSystem) async {
+    await system.advance(by: .milliseconds(350))
+    await system.joinWindowEvent(on: model)
+    for task in Array(model.settlementTasks.values) { await system.joinSettlement(task, on: model) }
+    #expect(model.windowEventTask == nil && model.settlementTasks.isEmpty)
+}
+
+@Test(.appTestApplication, .timeLimit(.minutes(1)), arguments: [false, true], [false, true]) @MainActor
 func aFocusPartitionWaitsForSlowPeers(fromWheel: Bool, focusChangesWhileWaiting: Bool) async throws {
-    let (system, model, captured) = try await makeFocusPartitionContext()
-    defer { model.shutdown() }
+    let (system, model, captured) = try await makeFocusPartitionContext(system: makeManualWindowSystem())
+    defer { system.onVisibleWindowSweep = nil; model.shutdown() }
     let peer = system.windows[1].id
     let feedback = model.lastActionFeedback
     system.slowRestoreIDs = [peer]
@@ -1240,7 +1272,7 @@ func aFocusPartitionWaitsForSlowPeers(fromWheel: Bool, focusChangesWhileWaiting:
     else { model.perform(.leftHalf) }
     if focusChangesWhileWaiting { system.focusedID = peer }
     system.eventHandler?(WindowSystemEvent(kind: .created, windowID: peer, processIdentifier: 43))
-    try await Task.sleep(for: .milliseconds(200))
+    try await observePendingFocusPartition(system, peer: peer)
     #expect(system.requestedFrames.isEmpty)
     #expect(system.windows[0].frame == system.mainDisplay.visibleFrame)
     #expect(model.lastActionFeedback == feedback)
@@ -1248,43 +1280,50 @@ func aFocusPartitionWaitsForSlowPeers(fromWheel: Bool, focusChangesWhileWaiting:
     try system.setMinimized(false, for: peer)
     let left = BTRect(x: 0, y: 0, width: 500, height: 800)
     let right = BTRect(x: 500, y: 0, width: 500, height: 800)
-    try #require(await waitFor { system.windows.map(\.frame) == [left, right] },
+    try #require(await system.waitFor { system.windows.map(\.frame) == [left, right] },
         "Frames: \(system.windows.map(\.frame)); requests: \(system.requestedFrames); status: \(model.statusMessage ?? "none")")
     #expect(model.statusMessage == nil)
     #expect(model.lastActionFeedback?.kind == .success)
-    try await Task.sleep(for: .milliseconds(350))
+    await drainFocusPartition(model, system: system)
     #expect(system.requestedFrames[captured.windowID] == [left])
     #expect(system.requestedFrames[peer] == nil || system.requestedFrames[peer] == [right])
 }
 
-@Test(arguments: [false, true], [false, true]) @MainActor
+@Test(.appTestApplication, .timeLimit(.minutes(1)), arguments: [false, true], [false, true]) @MainActor
 func aFocusPartitionReturnsAvailablePeersAfterARestoreFailure(fromWheel: Bool, slowPeer: Bool) async throws {
-    let (system, model, captured) = try await makeFocusPartitionContext(peerCount: 2)
-    defer { model.shutdown() }
+    let (system, model, captured) = try await makeFocusPartitionContext(peerCount: 2, system: makeManualWindowSystem())
+    defer { system.onVisibleWindowSweep = nil; model.shutdown() }
+    let clock = try #require(system.manualClock)
     let failedPeer = system.windows[2].id
     let feedback = model.lastActionFeedback
     if slowPeer { system.slowRestoreIDs = [failedPeer] }
     else { system.failedRestoreWindowIDs = [failedPeer] }
     if fromWheel { model.performLayoutWheel(.windowAction(.leftHalf), for: captured) }
     else { model.perform(.leftHalf) }
-    try await Task.sleep(for: .milliseconds(200))
+    try await observePendingFocusPartition(system, peer: failedPeer)
     #expect(system.requestedFrames.isEmpty)
     #expect(model.lastActionFeedback == feedback)
     let left = BTRect(x: 0, y: 0, width: 500, height: 800)
     let right = BTRect(x: 500, y: 0, width: 500, height: 800)
-    try #require(await waitFor(timeout: .seconds(3)) { Array(system.windows.prefix(2).map(\.frame)) == [left, right] },
+    try #require(await waitFor {
+        // The restore deadline still uses Date. Poll completion in real time
+        // while advancing only the fixture's retry clock.
+        clock.advance(by: .milliseconds(50))
+        return Array(system.windows.prefix(2).map(\.frame)) == [left, right]
+    },
         "Frames: \(system.windows.map(\.frame)); requests: \(system.requestedFrames); status: \(model.statusMessage ?? "none")")
     #expect(system.windows[2].isMinimized)
     #expect(system.restoreRequests.filter { $0 == failedPeer }.count == 1)
     #expect(model.lastActionFeedback?.kind == .success)
-    try await Task.sleep(for: .milliseconds(350))
-    #expect(system.requestedFrames[captured.windowID] == [left])
+    // Drain the frame/minimization events and settlement after the partition.
+    await drainFocusPartition(model, system: system)
+    #expect(system.requestedFrames[try #require(captured.windowID)] == [left])
     #expect(system.requestedFrames[system.windows[1].id] == [right])
 }
 
-@Test(arguments: [false, true]) @MainActor
+@Test(.appTestApplication, .timeLimit(.minutes(1)), arguments: [false, true]) @MainActor
 func aNewerFocusPartitionSupersedesThePendingPartitionAndRepair(fromWheel: Bool) async throws {
-    let (system, model, captured) = try await makeFocusPartitionContext()
+    let (system, model, captured) = try await makeFocusPartitionContext(system: makeManualWindowSystem())
     defer { model.shutdown() }
     let peer = system.windows[1].id
     system.slowRestoreIDs = [peer]
@@ -1299,20 +1338,20 @@ func aNewerFocusPartitionSupersedesThePendingPartitionAndRepair(fromWheel: Bool)
         system.focusedID = peer
         model.performLayoutWheel(.windowAction(.rightHalf), for: captured)
     } else { model.perform(.rightHalf) }
-    try await Task.sleep(for: .milliseconds(200))
+    try await observePendingFocusPartition(system, peer: peer)
     #expect(system.requestedFrames.isEmpty)
     system.slowRestoreIDs = []
     try system.setMinimized(false, for: peer)
     let right = BTRect(x: 500, y: 0, width: 500, height: 800)
     let left = BTRect(x: 0, y: 0, width: 500, height: 800)
-    try #require(await waitFor { system.windows.map(\.frame) == [right, left] })
+    try #require(await system.waitFor { system.windows.map(\.frame) == [right, left] })
     #expect(model.lastActionFeedback?.kind == .success)
-    try await Task.sleep(for: .milliseconds(350))
+    await drainFocusPartition(model, system: system)
     #expect(system.requestedFrames[captured.windowID] == [right])
     #expect(system.requestedFrames[peer] == nil || system.requestedFrames[peer] == [left])
 }
 
-@Test(arguments: [false, true], ["maximize", "mode", "shutdown", "gesture"]) @MainActor
+@Test(.appTestApplication, arguments: [false, true], ["maximize", "mode", "shutdown", "gesture"]) @MainActor
 func aFocusPartitionWaitIsCancelledByNewerWork(fromWheel: Bool, interruption: String) async throws {
     let (system, model, captured) = try await makeFocusPartitionContext()
     defer { model.shutdown() }
@@ -1337,7 +1376,7 @@ func aFocusPartitionWaitIsCancelledByNewerWork(fromWheel: Bool, interruption: St
     #expect(model.lastActionFeedback == feedback)
 }
 
-@Test(arguments: [false, true], ["rule", "space", "target", "display", "session"]) @MainActor
+@Test(.appTestApplication, arguments: [false, true], ["rule", "space", "target", "display", "session"]) @MainActor
 func aDeferredFocusPartitionRevalidatesItsCapturedContext(fromWheel: Bool, change: String) async throws {
     let (system, model, captured) = try await makeFocusPartitionContext()
     defer { model.shutdown() }
@@ -1368,9 +1407,9 @@ func aDeferredFocusPartitionRevalidatesItsCapturedContext(fromWheel: Bool, chang
     #expect(system.requestedFrames.isEmpty)
 }
 
-@Test(arguments: [false, true]) @MainActor
+@Test(.appTestApplication, .timeLimit(.minutes(1)), arguments: [false, true]) @MainActor
 func repairQueuedBehindAFocusPartitionRunsAfterItsPlacement(fromWheel: Bool) async throws {
-    let (system, model, captured) = try await makeFocusPartitionContext()
+    let (system, model, captured) = try await makeFocusPartitionContext(system: makeManualWindowSystem())
     defer { model.shutdown() }
     let peer = system.windows[1].id
     let feedback = model.lastActionFeedback
@@ -1384,21 +1423,21 @@ func repairQueuedBehindAFocusPartitionRunsAfterItsPlacement(fromWheel: Bool) asy
         model.tileCurrentDisplay()
         system.focusedWindowReadFails = true
     }
-    try await Task.sleep(for: .milliseconds(200))
+    try await observePendingFocusPartition(system, peer: peer)
     #expect(system.requestedFrames.isEmpty)
     #expect(model.lastActionFeedback == feedback)
     system.slowRestoreIDs = []
     system.windows[1].isMinimized = false
     let left = BTRect(x: 0, y: 0, width: 500, height: 800)
     let right = BTRect(x: 500, y: 0, width: 500, height: 800)
-    try #require(await waitFor { model.lastActionFeedback?.kind == .failure })
+    try #require(await system.waitFor { model.lastActionFeedback?.kind == .failure })
     #expect(system.windows.map(\.frame) == [left, right])
     #expect(system.requestedFrames[captured.windowID] == [left])
     #expect(system.requestedFrames[peer] == nil || system.requestedFrames[peer] == [right])
     #expect(model.statusMessage?.contains(fromWheel ? "captured window" : "Simulated focused-window failure") == true)
 }
 
-@Test @MainActor func aDeferredFocusPartitionKeepsKeyboardShortcutCycling() async throws {
+@Test(.appTestApplication) @MainActor func aDeferredFocusPartitionKeepsKeyboardShortcutCycling() async throws {
     let (system, model, captured) = try await makeFocusPartitionContext()
     defer { model.shutdown() }
     let peer = system.windows[1].id
@@ -1415,7 +1454,7 @@ func repairQueuedBehindAFocusPartitionRunsAfterItsPlacement(fromWheel: Bool) asy
     #expect(model.lastActionFeedback?.kind == .success)
 }
 
-@Test(arguments: [false, true]) @MainActor
+@Test(.appTestApplication, arguments: [false, true]) @MainActor
 func aFocusPartitionReportsPlacementFailureAfterThePeersReturn(fromWheel: Bool) async throws {
     let (system, model, captured) = try await makeFocusPartitionContext()
     defer { model.shutdown() }
@@ -1434,7 +1473,7 @@ func aFocusPartitionReportsPlacementFailureAfterThePeersReturn(fromWheel: Bool) 
 
 /// Restore waits for the peers to come back before it lays the desktop out.
 /// A newer action during that wait wins: Maximize again stays maximized.
-@Test @MainActor func aNewerActionCancelsAPendingFocusModeRestore() async throws {
+@Test(.appTestApplication) @MainActor func aNewerActionCancelsAPendingFocusModeRestore() async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
     let peer = WindowID(rawValue: "peer")
@@ -1456,7 +1495,7 @@ func aFocusPartitionReportsPlacementFailureAfterThePeersReturn(fromWheel: Bool) 
 
 /// Repair while Focus mode is ending waits for the covered windows to come
 /// back, so it never lays the desktop out without them.
-@Test @MainActor func repairWhileFocusModeEndsWaitsForTheReturningPeers() async throws {
+@Test(.appTestApplication) @MainActor func repairWhileFocusModeEndsWaitsForTheReturningPeers() async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
     let peer = WindowID(rawValue: "peer")
@@ -1485,7 +1524,7 @@ func aFocusPartitionReportsPlacementFailureAfterThePeersReturn(fromWheel: Bool) 
 
 /// Repair Bento from the Layout Wheel waits for a Focus mode restore the
 /// same way, instead of cancelling it.
-@Test @MainActor func layoutWheelRepairWaitsForAFocusModeRestore() async throws {
+@Test(.appTestApplication) @MainActor func layoutWheelRepairWaitsForAFocusModeRestore() async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
     let peer = WindowID(rawValue: "peer")
@@ -1510,7 +1549,7 @@ func aFocusPartitionReportsPlacementFailureAfterThePeersReturn(fromWheel: Bool) 
 
 /// A probe that cannot restore a new window's size puts the window back at
 /// its own frame at once; a window that floats gets no other write.
-@Test @MainActor func aFailedProbeRestorePutsTheArrivalBack() async throws {
+@Test(.appTestApplication) @MainActor func aFailedProbeRestorePutsTheArrivalBack() async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
     system.measuresOnWrite = true
@@ -1529,7 +1568,7 @@ func aFocusPartitionReportsPlacementFailureAfterThePeersReturn(fromWheel: Bool) 
     #expect(system.requestedFrames[arrival]?.first == original)
 }
 
-@Test @MainActor func repairBentoRequiresBentoAndRunsWhenAvailable() {
+@Test(.appTestApplication) @MainActor func repairBentoRequiresBentoAndRunsWhenAvailable() {
     let system = FakeAppWindowSystem()
     let model = makeModel(system: system)
     defer { model.shutdown() }
@@ -1569,7 +1608,7 @@ func aFocusPartitionReportsPlacementFailureAfterThePeersReturn(fromWheel: Bool) 
     #expect(WindowActionGroup.flattenedActions.count == 34)
 }
 
-@Test func menuActionOrderingCommitsOneValidatedInsertion() {
+@Test(.appTestApplication) func menuActionOrderingCommitsOneValidatedInsertion() {
     let actions: [WindowAction] = [.leftHalf, .rightHalf, .topHalf, .bottomHalf]
     #expect(
         MenuActionOrder.moving(.leftHalf, toInsertionIndex: 3, in: actions)
@@ -1585,7 +1624,7 @@ func aFocusPartitionReportsPlacementFailureAfterThePeersReturn(fromWheel: Bool) 
     #expect(MenuActionOrder.moving(.leftHalf, toInsertionIndex: 99, in: actions) == nil)
 }
 
-@Test func menuActionKeyboardMovesRespectRowsAndBounds() {
+@Test(.appTestApplication) func menuActionKeyboardMovesRespectRowsAndBounds() {
     let actions: [WindowAction] = [.leftHalf, .rightHalf, .topHalf, .bottomHalf]
     #expect(MenuActionOrder.moving(.leftHalf, by: -1, in: actions) == nil)
     #expect(MenuActionOrder.moving(.bottomHalf, by: 1, in: actions) == nil)
@@ -1599,7 +1638,7 @@ func aFocusPartitionReportsPlacementFailureAfterThePeersReturn(fromWheel: Bool) 
     )
 }
 
-@Test func menuPanelHeightTracksItsContentAndCapsToTheDisplay() {
+@Test(.appTestApplication) func menuPanelHeightTracksItsContentAndCapsToTheDisplay() {
     let empty = MenuPanelMetrics.viewportHeight(actionCount: 0, editing: false, availableHeight: 700, chromeHeight: 280)
     let one = MenuPanelMetrics.viewportHeight(actionCount: 1, editing: false, availableHeight: 700, chromeHeight: 280)
     let three = MenuPanelMetrics.viewportHeight(actionCount: 3, editing: false, availableHeight: 700, chromeHeight: 280)
@@ -1622,7 +1661,7 @@ func aFocusPartitionReportsPlacementFailureAfterThePeersReturn(fromWheel: Bool) 
     )
 }
 
-@Test func menuDragPreviewsAnOrderWithoutChangingTheSavedOrder() {
+@Test(.appTestApplication) func menuDragPreviewsAnOrderWithoutChangingTheSavedOrder() {
     let original: [WindowAction] = [.leftHalf, .rightHalf, .topHalf, .bottomHalf]
     var drag = MenuActionDrag(source: .leftHalf, actions: original)
     #expect(drag.move(to: 4)?.to == 3)
@@ -1634,7 +1673,7 @@ func aFocusPartitionReportsPlacementFailureAfterThePeersReturn(fromWheel: Bool) 
     #expect(drag.move(to: -1) == nil)
 }
 
-@Test @MainActor func menuScrollHostOwnsItsGutterAndRetainsItsDocument() throws {
+@Test(.appTestApplication) @MainActor func menuScrollHostOwnsItsGutterAndRetainsItsDocument() throws {
     let scroll = MenuPanelScrollHost(content: Color.clear.frame(height: 600))
     scroll.frame = CGRect(x: 0, y: 0, width: 328, height: 200)
     scroll.layoutSubtreeIfNeeded()
@@ -1649,7 +1688,7 @@ func aFocusPartitionReportsPlacementFailureAfterThePeersReturn(fromWheel: Bool) 
     #expect(document.frame.height == 700)
 }
 
-@Test(arguments: [260.0, 400.0, 619.0, 620.0, 900.0])
+@Test(.appTestApplication, arguments: [260.0, 400.0, 619.0, 620.0, 900.0])
 func snapZoneLayoutKeepsTheScreenInsideAvailableSpace(width: Double) {
     let layout = SnapZoneLayout(width: width)
     #expect(layout.monitorWidth <= width)
@@ -1658,7 +1697,7 @@ func snapZoneLayoutKeepsTheScreenInsideAvailableSpace(width: Double) {
     if layout.isWide { #expect(layout.monitorWidth + 280 <= width) }
 }
 
-@Test func snapZoneMarkersStayOnTheirTriggerEdgesAndSeparateFromPlacement() {
+@Test(.appTestApplication) func snapZoneMarkersStayOnTheirTriggerEdgesAndSeparateFromPlacement() {
     let size = CGSize(width: 360, height: 225)
     let screen = CGRect(origin: .zero, size: size)
     for area in SnapArea.allCases {
@@ -1676,7 +1715,7 @@ func snapZoneLayoutKeepsTheScreenInsideAvailableSpace(width: Double) {
     #expect(SnapZonePreviewGeometry.marker(for: .bottom, in: size).maxY == size.height)
 }
 
-@Test func snapZonePreviewKeepsCenterDistinctFromCenterResize() throws {
+@Test(.appTestApplication) func snapZonePreviewKeepsCenterDistinctFromCenterResize() throws {
     let centered = try #require(SnapZonePreviewGeometry.placement(for: .center))
     let resized = try #require(SnapZonePreviewGeometry.placement(for: .centerResize))
     #expect(centered.x == 0.3)
@@ -1690,12 +1729,12 @@ func snapZoneLayoutKeepsTheScreenInsideAvailableSpace(width: Double) {
     #expect(SnapZonePreviewGeometry.placement(for: nil) == nil)
 }
 
-@Test @MainActor func menuOnlyConfigurationPersistsWithoutWindowWritesOrWheelChanges() throws {
+@Test(.appTestApplication) @MainActor func menuOnlyConfigurationPersistsWithoutWindowWritesOrWheelChanges() throws {
     let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: directory) }
     let store = ConfigurationStore(fileURL: directory.appending(path: "configuration.json"))
     let system = FakeAppWindowSystem()
-    let model = BetterTileModel(store: store, system: system, startRuntime: false)
+    let model = makeOffscreenModel(store: store, system: system, startRuntime: false)
     defer { model.shutdown() }
     let wheel = model.configuration.layoutWheel
 
@@ -1707,7 +1746,7 @@ func snapZoneLayoutKeepsTheScreenInsideAvailableSpace(width: Double) {
     #expect(try store.load().menuBarActions == [.rightHalf, .leftHalf])
 }
 
-@Test @MainActor func menuCollectionLaysOutEveryTileAtItsAssignedSize() throws {
+@Test(.appTestApplication) @MainActor func menuCollectionLaysOutEveryTileAtItsAssignedSize() throws {
     _ = NSApplication.shared
     let actions = WindowAction.menuBarDefaultOrder
     let host = NSHostingView(rootView:
@@ -1715,7 +1754,7 @@ func snapZoneLayoutKeepsTheScreenInsideAvailableSpace(width: Double) {
     .frame(width: 328, height: 328)
         .clipShape(RoundedRectangle(cornerRadius: 12))
         .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(.separator)))
-    let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 328, height: 328),
+    let window = OffscreenTestWindow(contentRect: CGRect(x: 0, y: 0, width: 328, height: 328),
                           styleMask: [.borderless], backing: .buffered, defer: false)
     window.contentView = host
     host.layoutSubtreeIfNeeded()
@@ -1743,7 +1782,7 @@ func snapZoneLayoutKeepsTheScreenInsideAvailableSpace(width: Double) {
     }
 }
 
-@Test @MainActor func menuKeyboardReorderingRetainsSelectionAfterConfigurationRefresh() throws {
+@Test(.appTestApplication) @MainActor func menuKeyboardReorderingRetainsSelectionAfterConfigurationRefresh() throws {
     _ = NSApplication.shared
     var actions: [WindowAction] = [.leftHalf, .rightHalf, .topHalf, .bottomHalf]
     var commits = 0
@@ -1754,7 +1793,7 @@ func snapZoneLayoutKeepsTheScreenInsideAvailableSpace(width: Double) {
         }).frame(width: 328, height: 160)
     }
     let host = NSHostingView(rootView: content())
-    let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 328, height: 160),
+    let window = OffscreenTestWindow(contentRect: CGRect(x: 0, y: 0, width: 328, height: 160),
                           styleMask: [.borderless], backing: .buffered, defer: false)
     window.contentView = host
     host.layoutSubtreeIfNeeded()
@@ -1773,7 +1812,7 @@ func snapZoneLayoutKeepsTheScreenInsideAvailableSpace(width: Double) {
     #expect(actions == [.rightHalf, .topHalf, .leftHalf, .bottomHalf])
 }
 
-@Test(arguments: [false, true]) @MainActor
+@Test(.appTestApplication, arguments: [false, true]) @MainActor
 func shutdownRemovesApplicationNotificationObservers(queuedBeforeShutdown: Bool) async {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
@@ -1790,14 +1829,14 @@ func shutdownRemovesApplicationNotificationObservers(queuedBeforeShutdown: Bool)
     model.shutdown()
 }
 
-@Test @MainActor func menuConfigurationRefreshCancelsActiveDrag() async throws {
+@Test(.appTestApplication) @MainActor func menuConfigurationRefreshCancelsActiveDrag() async throws {
     _ = NSApplication.shared
     let actions = WindowAction.menuBarDefaultOrder
     let content = MenuActionCollection(actions: actions, shortcuts: [], commit: { _, _ in
         Issue.record("An external configuration refresh must not commit the drag")
     })
     let host = NSHostingView(rootView: content.frame(width: 328, height: 200))
-    let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 328, height: 200),
+    let window = OffscreenTestWindow(contentRect: CGRect(x: 0, y: 0, width: 328, height: 200),
                           styleMask: [.borderless], backing: .buffered, defer: false)
     window.contentView = host
     host.layoutSubtreeIfNeeded()
@@ -1828,7 +1867,7 @@ func shutdownRemovesApplicationNotificationObservers(queuedBeforeShutdown: Bool)
     #expect(coordinator.displayed == updated.actions)
 }
 
-@Test(arguments: [false, true]) @MainActor
+@Test(.appTestApplication, arguments: [false, true]) @MainActor
 func shutdownIgnoresPendingWindowEvents(deliveredAfterShutdown: Bool) async throws {
     let system = FakeAppWindowSystem()
     let model = makeModel(system: system)
@@ -1843,13 +1882,13 @@ func shutdownIgnoresPendingWindowEvents(deliveredAfterShutdown: Bool) async thro
     #expect(system.frameWriteCounts.isEmpty)
 }
 
-@Test @MainActor func menuCollectionScrollsToOffscreenTiles() throws {
+@Test(.appTestApplication) @MainActor func menuCollectionScrollsToOffscreenTiles() throws {
     _ = NSApplication.shared
     let actions = WindowAction.menuBarDefaultOrder
     let host = NSHostingView(rootView:
         MenuActionCollection(actions: actions, shortcuts: [], commit: { _, _ in })
     .frame(width: 328, height: 200))
-    let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 328, height: 200),
+    let window = OffscreenTestWindow(contentRect: CGRect(x: 0, y: 0, width: 328, height: 200),
                           styleMask: [.borderless], backing: .buffered, defer: false)
     window.contentView = host
     host.layoutSubtreeIfNeeded()
@@ -1895,13 +1934,13 @@ func shutdownIgnoresPendingWindowEvents(deliveredAfterShutdown: Bool) async thro
                                 using block: (NSDraggingItem, Int, UnsafeMutablePointer<ObjCBool>) -> Void) {}
 }
 
-@Test @MainActor func menuAdjacentDragSwapsOnEnteringItsNeighborAndKeepsTheAcceptedOrder() async throws {
+@Test(.appTestApplication) @MainActor func menuAdjacentDragSwapsOnEnteringItsNeighborAndKeepsTheAcceptedOrder() async throws {
     _ = NSApplication.shared
     var saved: [WindowAction] = [.leftHalf, .rightHalf, .topHalf, .bottomHalf]
     let host = NSHostingView(rootView: MenuActionCollection(actions: saved, shortcuts: [], commit: { order, _ in
         saved = order
     }).frame(width: 328, height: 200))
-    let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 328, height: 200),
+    let window = OffscreenTestWindow(contentRect: CGRect(x: 0, y: 0, width: 328, height: 200),
                           styleMask: [.borderless], backing: .buffered, defer: false)
     window.contentView = host
     host.layoutSubtreeIfNeeded()
@@ -1955,14 +1994,14 @@ func shutdownIgnoresPendingWindowEvents(deliveredAfterShutdown: Bool) async thro
     #expect(coordinator.displayed == saved)
 }
 
-@Test @MainActor func menuDragAutoscrollUsesTheEdgeVisibleInsideSettings() throws {
+@Test(.appTestApplication) @MainActor func menuDragAutoscrollUsesTheEdgeVisibleInsideSettings() throws {
     _ = NSApplication.shared
     let host = NSHostingView(rootView: MenuActionCollection(actions: WindowAction.menuBarDefaultOrder,
         shortcuts: [], commit: { _, _ in }).frame(width: 328, height: 400))
     host.frame = CGRect(x: 0, y: 0, width: 328, height: 400)
     let outer = NSScrollView(frame: CGRect(x: 0, y: 0, width: 328, height: 200))
     outer.documentView = host
-    let window = NSWindow(contentRect: outer.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+    let window = OffscreenTestWindow(contentRect: outer.frame, styleMask: [.borderless], backing: .buffered, defer: false)
     window.contentView = outer
     outer.layoutSubtreeIfNeeded()
     func find(in view: NSView) -> NSCollectionView? {
@@ -2007,14 +2046,14 @@ func shutdownIgnoresPendingWindowEvents(deliveredAfterShutdown: Bool) async thro
     #expect(view.dragDisplayLink == nil)
 }
 
-@Test @MainActor func menuDragScrollsTheSettingsPageOutsideTheTileColumn() throws {
+@Test(.appTestApplication) @MainActor func menuDragScrollsTheSettingsPageOutsideTheTileColumn() throws {
     _ = NSApplication.shared
     let host = NSHostingView(rootView: MenuActionCollection(actions: WindowAction.menuBarDefaultOrder,
         shortcuts: [], commit: { _, _ in }).frame(width: 328, height: 400).frame(width: 600, height: 800))
     host.frame = CGRect(x: 0, y: 0, width: 600, height: 800)
     let outer = NSScrollView(frame: CGRect(x: 0, y: 0, width: 600, height: 300))
     outer.documentView = host
-    let window = NSWindow(contentRect: outer.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+    let window = OffscreenTestWindow(contentRect: outer.frame, styleMask: [.borderless], backing: .buffered, defer: false)
     window.contentView = outer
     outer.layoutSubtreeIfNeeded()
     func find(in view: NSView) -> MenuReorderCollectionView? {
@@ -2044,13 +2083,13 @@ private final class MenuTestDraggingSession: NSDraggingSession {
     override var draggingLocation: NSPoint { point }
 }
 
-@Test @MainActor func menuSourceDragScrollsBeyondBothEdgesAndStopsOnCancellation() throws {
+@Test(.appTestApplication) @MainActor func menuSourceDragScrollsBeyondBothEdgesAndStopsOnCancellation() throws {
     _ = NSApplication.shared
     let actions = WindowAction.menuBarDefaultOrder
     var commits = 0
     let host = NSHostingView(rootView: MenuActionCollection(actions: actions,
         shortcuts: [], commit: { _, _ in commits += 1 }).frame(width: 328, height: 200))
-    let window = NSWindow(contentRect: CGRect(x: 300, y: 250, width: 328, height: 200),
+    let window = OffscreenTestWindow(contentRect: CGRect(x: 300, y: 250, width: 328, height: 200),
                           styleMask: [.borderless], backing: .buffered, defer: false)
     window.contentView = host
     host.layoutSubtreeIfNeeded()
@@ -2083,7 +2122,7 @@ private final class MenuTestDraggingSession: NSDraggingSession {
     #expect(commits == 0)
 }
 
-@Test @MainActor func newWindowSideAppliesToFutureWindowsOnASingleWindowDesktop() async throws {
+@Test(.appTestApplication) @MainActor func newWindowSideAppliesToFutureWindowsOnASingleWindowDesktop() async throws {
     let system = FakeAppWindowSystem()
     let model = makeModel(system: system)
     defer { model.shutdown() }
@@ -2114,7 +2153,7 @@ private final class MenuTestDraggingSession: NSDraggingSession {
     #expect(system.windows.map(\.frame) == settled)
 }
 
-@Test(arguments: [false, true], [false, true]) @MainActor
+@Test(.appTestApplication, arguments: [false, true], [false, true]) @MainActor
 func minimizedRightHalfReturnsToItsOriginalSide(nativeMembership: Bool, staleMinimizeSnapshot: Bool) async throws {
     let system = FakeAppWindowSystem()
     system.windows.append(WindowSnapshot(
@@ -2169,7 +2208,7 @@ func minimizedRightHalfReturnsToItsOriginalSide(nativeMembership: Bool, staleMin
 /// A new window of an application with a measured minimum starts from that
 /// measurement: its first snapshot is seeded, and BetterTile never asks it
 /// for a size the application already refused once.
-@Test @MainActor func newWindowOfAMeasuredApplicationStartsFromItsMeasurement() async throws {
+@Test(.appTestApplication) @MainActor func newWindowOfAMeasuredApplicationStartsFromItsMeasurement() async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
     system.measuresOnWrite = true
@@ -2200,7 +2239,7 @@ func minimizedRightHalfReturnsToItsOriginalSide(nativeMembership: Bool, staleMin
 /// A window that appears on a Bento desktop is measured before its first
 /// placement, so even the first window of an application never receives a
 /// size it refuses. Entering Bento measures nothing.
-@Test @MainActor func arrivingWindowIsMeasuredBeforeItsFirstPlacement() async throws {
+@Test(.appTestApplication) @MainActor func arrivingWindowIsMeasuredBeforeItsFirstPlacement() async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
     system.measuresOnWrite = true
@@ -2224,7 +2263,7 @@ func minimizedRightHalfReturnsToItsOriginalSide(nativeMembership: Bool, staleMin
 /// Repair learns a minimum from its own write and must not report success
 /// while that window overlaps a neighbour: it plans again with the measured
 /// minimum, and only then reports.
-@Test @MainActor func repairVerifiesItsLayoutAndReplansAroundMeasuredMinimums() async throws {
+@Test(.appTestApplication) @MainActor func repairVerifiesItsLayoutAndReplansAroundMeasuredMinimums() async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
     system.measuresOnWrite = true
@@ -2257,7 +2296,7 @@ private let longPillTitles = [
 
 /// Repair names the windows that overlap. Long titles are shortened so the
 /// reason still fits the result pill.
-@Test(arguments: longPillTitles)
+@Test(.appTestApplication, arguments: longPillTitles)
 func repairOverlapMessageFitsTheResultPillWithLongTitles(title: String) {
     let message = BetterTileModel.overlapMessage([title, title])
     #expect(message.hasSuffix("cannot fit beside each other at their minimum sizes."))
@@ -2268,7 +2307,7 @@ func repairOverlapMessageFitsTheResultPillWithLongTitles(title: String) {
 }
 
 /// Repair reports success only after it read every placed window back.
-@Test @MainActor func repairDoesNotReportSuccessWithoutReadingEveryWindowBack() {
+@Test(.appTestApplication) @MainActor func repairDoesNotReportSuccessWithoutReadingEveryWindowBack() {
     let system = FakeAppWindowSystem()
     system.windows.append(WindowSnapshot(id: WindowID(rawValue: "second"), processIdentifier: 43,
         frame: BTRect(x: 800, y: 200, width: 400, height: 400), displayID: system.mainDisplay.id))
@@ -2287,7 +2326,7 @@ func repairOverlapMessageFitsTheResultPillWithLongTitles(title: String) {
 /// The seventh window on a Bento desktop floats where it opened. BetterTile
 /// says so at once and names the window, instead of leaving it over the
 /// tiles without a word.
-@Test @MainActor func seventhBentoWindowIsAnnouncedWhenItFloats() async throws {
+@Test(.appTestApplication) @MainActor func seventhBentoWindowIsAnnouncedWhenItFloats() async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
     system.availableDisplays = [DisplaySnapshot(id: system.mainDisplay.id,
@@ -2312,7 +2351,7 @@ func repairOverlapMessageFitsTheResultPillWithLongTitles(title: String) {
 
 /// A long window title is shortened so the overflow instruction still fits
 /// the result pill.
-@Test(arguments: longPillTitles) @MainActor
+@Test(.appTestApplication, arguments: longPillTitles) @MainActor
 func seventhBentoWindowAnnouncementKeepsItsInstructionWithALongTitle(title: String) async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
@@ -2343,7 +2382,7 @@ func seventhBentoWindowAnnouncementKeepsItsInstructionWithALongTitle(title: Stri
 /// A closed document window that its application keeps alive off screen
 /// sends no destroyed event. Its pane must still close within a second,
 /// not wait for the watchdog's sweeps.
-@Test(arguments: [false, true]) @MainActor
+@Test(.appTestApplication, arguments: [false, true]) @MainActor
 func silentlyClosedWindowLeavesItsPaneWithinASecond(nilFocusID: Bool) async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
@@ -2368,7 +2407,7 @@ func silentlyClosedWindowLeavesItsPaneWithinASecond(nilFocusID: Bool) async thro
 
 /// A focus change to an unrelated application right after a silent close
 /// must not erase the pending check: the closed pane still leaves promptly.
-@Test(arguments: [false, true]) @MainActor
+@Test(.appTestApplication, arguments: [false, true]) @MainActor
 func unrelatedFocusAfterASilentCloseKeepsThePendingCheck(nilFocusID: Bool) async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
@@ -2398,7 +2437,7 @@ func unrelatedFocusAfterASilentCloseKeepsThePendingCheck(nilFocusID: Bool) async
 /// Closing a document on one display can move focus to the same
 /// application's window on another display. The focus check covers every
 /// Bento layout, so the closed pane still leaves.
-@Test @MainActor func silentlyClosedWindowOnAnotherDisplayLeavesItsPane() async throws {
+@Test(.appTestApplication) @MainActor func silentlyClosedWindowOnAnotherDisplayLeavesItsPane() async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
     let second = DisplaySnapshot(id: DisplayID(rawValue: "second"),
@@ -2430,7 +2469,7 @@ func unrelatedFocusAfterASilentCloseKeepsThePendingCheck(nilFocusID: Bool) async
     #expect(reflowed, "\(system.windows.map(\.frame)), sweeps \(system.completeSweepCount)")
 }
 
-@Test(arguments: [false, true]) @MainActor
+@Test(.appTestApplication, arguments: [false, true]) @MainActor
 func repeatedBentoFocusChecksPeersWithoutSweepingOrWriting(nilFocusID: Bool) async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
@@ -2459,7 +2498,7 @@ func repeatedBentoFocusChecksPeersWithoutSweepingOrWriting(nilFocusID: Bool) asy
     #expect(system.frameWriteCounts == writes)
 }
 
-@Test(arguments: [false, true]) @MainActor
+@Test(.appTestApplication, arguments: [false, true]) @MainActor
 func offscreenReadableBentoPeerFallsBackWithoutPrematureRemoval(nativeMembership: Bool) async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
@@ -2495,7 +2534,7 @@ func offscreenReadableBentoPeerFallsBackWithoutPrematureRemoval(nativeMembership
     #expect(system.frameWriteCounts == writes)
 }
 
-@Test(arguments: ["missingCache", "readFailure", "incomplete", "ineligible"]) @MainActor
+@Test(.appTestApplication, arguments: ["missingCache", "readFailure", "incomplete", "ineligible"]) @MainActor
 func uncertainBentoFocusVisibilityPreservesFullSweepRetry(failure: String) async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
@@ -2529,7 +2568,7 @@ func uncertainBentoFocusVisibilityPreservesFullSweepRetry(failure: String) async
     #expect(system.frameWriteCounts == writes)
 }
 
-@Test(arguments: ["wrongPID", "unmanaged", "manual", "unreadable"]) @MainActor
+@Test(.appTestApplication, arguments: ["wrongPID", "unmanaged", "manual", "unreadable"]) @MainActor
 func unrelatedBentoFocusDoesNotReadPeers(focus: String) async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
@@ -2551,7 +2590,7 @@ func unrelatedBentoFocusDoesNotReadPeers(focus: String) async throws {
     #expect(system.frameWriteCounts == writes)
 }
 
-@Test @MainActor func bentoFocusCheckExcludesFocusCoveredPeers() async throws {
+@Test(.appTestApplication) @MainActor func bentoFocusCheckExcludesFocusCoveredPeers() async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
     let peer = WindowID(rawValue: "peer")
@@ -2577,7 +2616,7 @@ func unrelatedBentoFocusDoesNotReadPeers(focus: String) async throws {
     #expect(system.windows[1].isMinimized)
 }
 
-@Test(arguments: ["gesture", "space"]) @MainActor
+@Test(.appTestApplication, arguments: ["gesture", "space"]) @MainActor
 func bentoFocusCheckWaitsForDesktopInteraction(interaction: String) async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
@@ -2610,7 +2649,7 @@ func bentoFocusCheckWaitsForDesktopInteraction(interaction: String) async throws
 /// A neighbour whose minimum is not yet measured clamps during a new
 /// window's placement. The correction lands in the same pass, so the first
 /// observable layout already has no overlap; it is not a later second jump.
-@Test @MainActor func measuredClampIsCorrectedInTheSamePlacement() async throws {
+@Test(.appTestApplication) @MainActor func measuredClampIsCorrectedInTheSamePlacement() async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
     system.measuresOnWrite = true
@@ -2643,7 +2682,7 @@ func bentoFocusCheckWaitsForDesktopInteraction(interaction: String) async throws
 /// A clamp correction that fails, and whose rollback fails too, leaves the
 /// windows in a mixed state. The placement reports that instead of success,
 /// so automatic writes stop until the user repairs the layout.
-@Test @MainActor func failedClampCorrectionWithAFailedRollbackIsNotASuccess() async throws {
+@Test(.appTestApplication) @MainActor func failedClampCorrectionWithAFailedRollbackIsNotASuccess() async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
     system.measuresOnWrite = true
@@ -2680,7 +2719,7 @@ func bentoFocusCheckWaitsForDesktopInteraction(interaction: String) async throws
 /// first placement. The placement still counts as committed, so no Repair is
 /// requested and automatic writes continue: settlement corrects the clamp
 /// later.
-@Test @MainActor func failedClampCorrectionWithACleanRollbackKeepsTheFirstPlacement() async throws {
+@Test(.appTestApplication) @MainActor func failedClampCorrectionWithACleanRollbackKeepsTheFirstPlacement() async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
     system.measuresOnWrite = true
@@ -2721,7 +2760,7 @@ func bentoFocusCheckWaitsForDesktopInteraction(interaction: String) async throws
 
 /// A clamp correction can move a window that the first write left alone.
 /// Undo must still return that window to its frame from before the action.
-@Test @MainActor func undoRestoresAWindowThatOnlyTheClampCorrectionMoved() async throws {
+@Test(.appTestApplication) @MainActor func undoRestoresAWindowThatOnlyTheClampCorrectionMoved() async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
     system.measuresOnWrite = true
@@ -2759,7 +2798,7 @@ func bentoFocusCheckWaitsForDesktopInteraction(interaction: String) async throws
 /// A clamp correction widens a neighbour beyond the frame first planned for
 /// it. Settlement compares that neighbour with the frame finally written, so
 /// its accepted width is not learned as a minimum.
-@Test @MainActor func settlementAfterAClampCorrectionLearnsNoFalseMinimum() async throws {
+@Test(.appTestApplication) @MainActor func settlementAfterAClampCorrectionLearnsNoFalseMinimum() async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
     system.measuresOnWrite = true
@@ -2787,7 +2826,7 @@ func bentoFocusCheckWaitsForDesktopInteraction(interaction: String) async throws
 /// The re-solve after a drop can fail with a failed rollback too. The drop
 /// then reports the mixed layout and asks for Repair; it does not restore
 /// the drag over it, and automatic writes stop.
-@Test @MainActor func aDegradedDropCorrectionAsksForRepairAndStopsWrites() async throws {
+@Test(.appTestApplication) @MainActor func aDegradedDropCorrectionAsksForRepairAndStopsWrites() async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
     system.measuresOnWrite = true
@@ -2834,7 +2873,7 @@ func bentoFocusCheckWaitsForDesktopInteraction(interaction: String) async throws
 /// A swap can put a window into a pane smaller than a minimum it never
 /// reported. The drop's own write measures the refusal, and the layout is
 /// solved again before the drop returns, so no overlap waits for settlement.
-@Test @MainActor func dragSwapSolvesAgainWhenTheMovedWindowRefusesItsPane() async throws {
+@Test(.appTestApplication) @MainActor func dragSwapSolvesAgainWhenTheMovedWindowRefusesItsPane() async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
     system.measuresOnWrite = true
@@ -2869,7 +2908,7 @@ func bentoFocusCheckWaitsForDesktopInteraction(interaction: String) async throws
 /// A fixed-size window, such as Calculator, floats instead of joining Bento.
 /// Otherwise every placement asks it for a frame it refuses, and Bento
 /// retries a rejected layout forever.
-@Test @MainActor func fixedSizeWindowFloatsInsteadOfBlockingBento() async throws {
+@Test(.appTestApplication) @MainActor func fixedSizeWindowFloatsInsteadOfBlockingBento() async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
     let fixed = WindowID(rawValue: "calculator")
@@ -2890,7 +2929,7 @@ func bentoFocusCheckWaitsForDesktopInteraction(interaction: String) async throws
 
 /// The drop's correction can move a window the swap left alone. Undo
 /// returns that window to its frame from before the drag.
-@Test @MainActor func undoAfterADropCorrectionRestoresAWindowOnlyTheCorrectionMoved() async throws {
+@Test(.appTestApplication) @MainActor func undoAfterADropCorrectionRestoresAWindowOnlyTheCorrectionMoved() async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
     system.measuresOnWrite = true
@@ -2928,7 +2967,7 @@ func bentoFocusCheckWaitsForDesktopInteraction(interaction: String) async throws
 /// minimize out of date. B leaves a 2x2 grid, the user rearranges the other
 /// three, and C is minimized and restored. C must return to the user's
 /// arrangement, not to the larger grid remembered when B left.
-@Test(arguments: ["swap", "shortcut", "divider", "edgeResize"]) @MainActor
+@Test(.appTestApplication, arguments: ["swap", "shortcut", "divider", "edgeResize"]) @MainActor
 func restoringAWindowKeepsAUserChangeMadeAfterAnEarlierMinimize(change: String) async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
@@ -3014,7 +3053,7 @@ func restoringAWindowKeepsAUserChangeMadeAfterAnEarlierMinimize(change: String) 
 
 /// A shortcut that cannot read the front window says why, so a hung front
 /// application is named instead of reported as having no window.
-@Test @MainActor func aShortcutNamesWhyItCouldNotReadTheFrontWindow() async throws {
+@Test(.appTestApplication) @MainActor func aShortcutNamesWhyItCouldNotReadTheFrontWindow() async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
     let model = makeModel(system: system)
@@ -3031,7 +3070,7 @@ func restoringAWindowKeepsAUserChangeMadeAfterAnEarlierMinimize(change: String) 
 
 /// The ungated enhanced-accessibility restore can wait out a hung
 /// application, so only shutdown makes it.
-@Test @MainActor func shutdownMakesTheLastEnhancedAccessibilityRestore() {
+@Test(.appTestApplication) @MainActor func shutdownMakesTheLastEnhancedAccessibilityRestore() {
     let system = FakeAppWindowSystem()
     let model = makeModel(system: system)
     #expect(system.quitRestoreCount == 0)
@@ -3043,7 +3082,7 @@ func restoringAWindowKeepsAUserChangeMadeAfterAnEarlierMinimize(change: String) 
 /// the pointer stays on the Bento display. A drop lands on the Bento display,
 /// a restore returns the window there, and a restore that fails leaves the
 /// window away from its pane, so it is reported and asks for Repair.
-@Test(arguments: ["swap", "restore", "restore-fails"]) @MainActor
+@Test(.appTestApplication, arguments: ["swap", "restore", "restore-fails"]) @MainActor
 func bentoDropLandsOnItsDisplayAfterTheSourceCenterCrossed(entry: String) async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
@@ -3097,7 +3136,7 @@ func bentoDropLandsOnItsDisplayAfterTheSourceCenterCrossed(entry: String) async 
 /// Release commits the plan the overlay showed. A plan prepared by another
 /// drag is not this drop: it fails with a reason and the window returns,
 /// instead of a different arrangement being chosen.
-@Test(arguments: [false, true]) @MainActor
+@Test(.appTestApplication, arguments: [false, true]) @MainActor
 func bentoReleaseCommitsOnlyThePlanItsOverlayShowed(stale: Bool) async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
@@ -3172,7 +3211,7 @@ func bentoReleaseCommitsOnlyThePlanItsOverlayShowed(stale: Bool) async throws {
 /// written, and the pill says the layout changed.
 /// A release over nothing after the change also puts the window in its
 /// current slot, without a pill.
-@Test(arguments: ["commit", "restore"]) @MainActor
+@Test(.appTestApplication, arguments: ["commit", "restore"]) @MainActor
 func aStaleBentoPlanWritesNothingButTheDraggedWindowsReturn(end: String) async throws {
     let (system, model, tall, short) = try await tiledBentoTrio()
     defer { model.shutdown() }
@@ -3209,7 +3248,7 @@ func aStaleBentoPlanWritesNothingButTheDraggedWindowsReturn(end: String) async t
 
 /// A Bento drop commits with the minimum sizes its overlay planned with. A
 /// larger minimum read at release cannot veto it.
-@Test @MainActor func aBentoDropIsNotVetoedByAMinimumReadAtRelease() async throws {
+@Test(.appTestApplication) @MainActor func aBentoDropIsNotVetoedByAMinimumReadAtRelease() async throws {
     let (system, model, tall, short) = try await tiledBentoTrio()
     defer { model.shutdown() }
     let main = system.mainDisplay.id
@@ -3230,7 +3269,7 @@ func aStaleBentoPlanWritesNothingButTheDraggedWindowsReturn(end: String) async t
 /// A floating window in a Bento desktop that is released or cancelled
 /// without a drop stays floating where it is. Only a drop the overlay showed
 /// adds it to the layout.
-@Test @MainActor func aFloatingBentoWindowReleasedWithoutADropStaysWhereItIs() async throws {
+@Test(.appTestApplication) @MainActor func aFloatingBentoWindowReleasedWithoutADropStaysWhereItIs() async throws {
     let (system, model, _, _) = try await tiledBentoTrio()
     defer { model.shutdown() }
     let main = system.mainDisplay.id
@@ -3249,7 +3288,7 @@ func aStaleBentoPlanWritesNothingButTheDraggedWindowsReturn(end: String) async t
 
 /// Release over invalid feedback for a tiled Bento window applies nothing:
 /// the window returns to its slot and the reason is reported.
-@Test @MainActor func aFailedBentoDropReturnsATiledWindowToItsSlot() async throws {
+@Test(.appTestApplication) @MainActor func aFailedBentoDropReturnsATiledWindowToItsSlot() async throws {
     let (system, model, tall, _) = try await tiledBentoTrio()
     defer { model.shutdown() }
     let main = system.mainDisplay.id
@@ -3265,7 +3304,7 @@ func aStaleBentoPlanWritesNothingButTheDraggedWindowsReturn(end: String) async t
 
 /// A Focus mode drop lands on the display the overlay showed it on, even
 /// when the dragged window's center crossed to the other display.
-@Test @MainActor func aFocusDropLandsOnItsDisplayAfterTheSourceCenterCrossed() async throws {
+@Test(.appTestApplication) @MainActor func aFocusDropLandsOnItsDisplayAfterTheSourceCenterCrossed() async throws {
     let (system, model, tall, short) = try await tiledBentoTrio()
     defer { model.shutdown() }
     let main = system.mainDisplay.id, second = DisplayID(rawValue: "second")
@@ -3293,7 +3332,7 @@ func aStaleBentoPlanWritesNothingButTheDraggedWindowsReturn(end: String) async t
 /// requested can still hold a pending clamp, so the confirmed minimum reaches
 /// its correction. A known minimum, an accepted size, or the passed delay
 /// end the wait.
-@Test func settlementWaitsForAPendingClampOnlyUntilTheDelay() {
+@Test(.appTestApplication) func settlementWaitsForAPendingClampOnlyUntilTheDelay() {
     let id = WindowID(rawValue: "kept")
     let requested = [id: BTRect(x: 0, y: 0, width: 400, height: 800)]
     var window = WindowSnapshot(id: id, processIdentifier: 1, frame: BTRect(x: 0, y: 0, width: 600, height: 800),
@@ -3315,7 +3354,7 @@ func aStaleBentoPlanWritesNothingButTheDraggedWindowsReturn(end: String) async t
 /// shrink. The readback cannot prove that, so settlement waits for the
 /// confirmation delay; the confirmed minimum then solves the layout without
 /// an overlap.
-@Test @MainActor func bentoSettlementCorrectsAWindowAlreadyAtItsMinimum() async throws {
+@Test(.appTestApplication) @MainActor func bentoSettlementCorrectsAWindowAlreadyAtItsMinimum() async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
     system.measuresOnWrite = true
@@ -3338,7 +3377,7 @@ func aStaleBentoPlanWritesNothingButTheDraggedWindowsReturn(end: String) async t
     #expect(system.windows.first { $0.id == kept }?.frame.size.width == 600)
 }
 
-@Test @MainActor func confirmedCloseRetiresRestoreBeforeSpaceStabilizationGuard() throws {
+@Test(.appTestApplication) @MainActor func confirmedCloseRetiresRestoreBeforeSpaceStabilizationGuard() throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
     let model = makeModel(system: system)
@@ -3360,7 +3399,7 @@ func aStaleBentoPlanWritesNothingButTheDraggedWindowsReturn(end: String) async t
     #expect(system.windows[0].frame == replacement.frame)
 }
 
-@Test(arguments: ["minimized", "offscreen", "unreadable"]) @MainActor
+@Test(.appTestApplication, arguments: ["minimized", "offscreen", "unreadable"]) @MainActor
 func temporaryWindowAbsenceKeepsRestoreDuringSpaceStabilization(reason: String) throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()

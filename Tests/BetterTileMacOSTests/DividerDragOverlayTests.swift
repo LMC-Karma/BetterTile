@@ -60,7 +60,7 @@ private struct GhostGestureFixture {
     func tick(dx: Double, dy: Double = 0) { controller.drag(to: point(dx: dx, dy: dy)); ticks.fire() }
 }
 
-@Test(arguments: [false, true]) @MainActor
+@Test(.macOSTestApplication, .macOSUI, arguments: [false, true]) @MainActor
 func ghostOverlayKeepsOneWindowAndStationaryInputForEveryTick(junction: Bool) throws {
     let fixture = try GhostGestureFixture(junction: junction)
     defer { fixture.controller.hideAndCancel() }
@@ -114,7 +114,7 @@ func ghostOverlayKeepsOneWindowAndStationaryInputForEveryTick(junction: Bool) th
 
 private enum GhostEnd: CaseIterable { case release, cancel, hide, participantLost, failedCommit }
 
-@Test(arguments: GhostEnd.allCases) @MainActor
+@Test(.macOSTestApplication, .macOSUI, arguments: GhostEnd.allCases) @MainActor
 private func ghostOverlayCleansUpEveryGestureExit(ending: GhostEnd) throws {
     let fixture = try GhostGestureFixture()
     let controller = fixture.controller
@@ -146,7 +146,7 @@ private func ghostOverlayCleansUpEveryGestureExit(ending: GhostEnd) throws {
 /// Live Resize draws the moving knob in the overlay, without previews, and
 /// keeps the input window still. Moving the window that owns the drag made
 /// active Chromium browsers stall their own resizes.
-@Test @MainActor func liveDividerDrawsInTheOverlayAndKeepsItsInputWindowStill() throws {
+@Test(.macOSTestApplication, .macOSUI) @MainActor func liveDividerDrawsInTheOverlayAndKeepsItsInputWindowStill() throws {
     let fixture = try GhostGestureFixture(live: true)
     defer { fixture.controller.hideAndCancel() }
     let handle = try #require(fixture.controller.visibleHandleView)
@@ -159,7 +159,7 @@ private func ghostOverlayCleansUpEveryGestureExit(ending: GhostEnd) throws {
     #expect(!fixture.system.frameWriteCounts.isEmpty)
 }
 
-@Test @MainActor func ghostOverlaySettingsAndLimitsShareTheDrawingSample() throws {
+@Test(.macOSTestApplication, .macOSUI) @MainActor func ghostOverlaySettingsAndLimitsShareTheDrawingSample() throws {
     let fixture = try GhostGestureFixture(junction: true)
     defer { fixture.controller.hideAndCancel() }
     let controller = fixture.controller
@@ -189,7 +189,7 @@ private func ghostOverlayCleansUpEveryGestureExit(ending: GhostEnd) throws {
     #expect(overlay.drawing?.surface == .glass)
 }
 
-@Test @MainActor func ghostOverlayReceivesStretchWithoutMovingAnyWindow() async throws {
+@Test(.macOSTestApplication, .macOSUI) @MainActor func ghostOverlayReceivesStretchWithoutMovingAnyWindow() async throws {
     let fixture = try GhostGestureFixture()
     defer { fixture.controller.hideAndCancel() }
     let handle = try #require(fixture.controller.visibleHandleView)
@@ -213,7 +213,7 @@ private func ghostOverlayCleansUpEveryGestureExit(ending: GhostEnd) throws {
     [root] + (root.sublayers ?? []).flatMap(dragLensLayerTree)
 }
 
-@Test @MainActor func ghostOverlayReusesItsPanelWithoutStaleDrawingOrLimits() throws {
+@Test(.macOSTestApplication, .macOSUI) @MainActor func ghostOverlayReusesItsPanelWithoutStaleDrawingOrLimits() throws {
     let fixture = try GhostGestureFixture(junction: true)
     defer { fixture.controller.hideAndCancel() }
     let controller = fixture.controller
@@ -241,7 +241,7 @@ private func ghostOverlayCleansUpEveryGestureExit(ending: GhostEnd) throws {
     #expect(overlay.drawing?.frame == handle.drawingFrame)
 }
 
-@Test @MainActor func ghostOverlayUsesFrostWhenItsOwnFilterIsUnavailable() throws {
+@Test(.macOSTestApplication, .macOSUI) @MainActor func ghostOverlayUsesFrostWhenItsOwnFilterIsUnavailable() throws {
     let fixture = try GhostGestureFixture()
     defer { fixture.controller.hideAndCancel() }
     let handle = try #require(fixture.controller.visibleHandleView)
@@ -257,7 +257,7 @@ private func ghostOverlayCleansUpEveryGestureExit(ending: GhostEnd) throws {
 
 /// Uses the production overlay with an opaque, synthetic canvas behind its
 /// views. Captures only the test's own window; no foreign app content is read.
-@Test(.enabled(if: ProcessInfo.processInfo.environment["BETTERTILE_NATIVE_DIVIDER_DRAG_DIR"] != nil,
+@Test(.macOSTestApplication, .enabled(if: ProcessInfo.processInfo.environment["BETTERTILE_NATIVE_DIVIDER_DRAG_DIR"] != nil,
                "Requires an explicit native divider drag preview output directory."))
 @MainActor func nativeDividerDragOverlayPreviews() async throws {
     let directory = try #require(ProcessInfo.processInfo.environment["BETTERTILE_NATIVE_DIVIDER_DRAG_DIR"])
@@ -297,7 +297,7 @@ private func ghostOverlayCleansUpEveryGestureExit(ending: GhostEnd) throws {
     }
 }
 
-@Test @MainActor func ghostOverlayDrawsAFrostedKnobWhenGlassIsOff() throws {
+@Test(.macOSTestApplication, .macOSUI) @MainActor func ghostOverlayDrawsAFrostedKnobWhenGlassIsOff() throws {
     let fixture = try GhostGestureFixture()
     defer { fixture.controller.hideAndCancel() }
     let handle = try #require(fixture.controller.visibleHandleView)
@@ -319,7 +319,7 @@ private func ghostOverlayCleansUpEveryGestureExit(ending: GhostEnd) throws {
 /// An application that applies a committed frame late keeps the Ghost
 /// previews over its window until it lands, so the old frame never shows
 /// after the preview is gone. The handle takes its knob back at once.
-@Test @MainActor func ghostPreviewsStayUntilASlowWindowLands() async throws {
+@Test(.macOSTestApplication, .macOSUI) @MainActor func ghostPreviewsStayUntilASlowWindowLands() async throws {
     let fixture = try GhostGestureFixture()
     let controller = fixture.controller
     let handle = try #require(controller.visibleHandleView)
@@ -341,7 +341,7 @@ private func ghostOverlayCleansUpEveryGestureExit(ending: GhostEnd) throws {
 
 /// Cancelling the divider during a landing hold, for example on a mode
 /// change, ends the hold's poll with the overlay.
-@Test @MainActor func hideAndCancelEndsALandingHold() async throws {
+@Test(.macOSTestApplication, .macOSUI) @MainActor func hideAndCancelEndsALandingHold() async throws {
     let fixture = try GhostGestureFixture()
     let controller = fixture.controller
     fixture.tick(dx: 50)
@@ -358,7 +358,7 @@ private func ghostOverlayCleansUpEveryGestureExit(ending: GhostEnd) throws {
 
 /// A window that grows a little still shows its old frame until it draws.
 /// That old frame is near the target, but it is not a landing.
-@Test @MainActor func ghostPreviewsWaitForAWindowStillDrawingItsOldFrame() async throws {
+@Test(.macOSTestApplication, .macOSUI) @MainActor func ghostPreviewsWaitForAWindowStillDrawingItsOldFrame() async throws {
     let fixture = try GhostGestureFixture()
     let controller = fixture.controller
     let left = fixture.system.windows[0]
@@ -378,7 +378,7 @@ private func ghostOverlayCleansUpEveryGestureExit(ending: GhostEnd) throws {
 
 /// A drag that starts while the previous release still fades gets its own
 /// presentation; the old fade does not hide the new previews.
-@Test @MainActor func aDragDuringTheLandingFadeKeepsItsPreviews() async throws {
+@Test(.macOSTestApplication, .macOSUI) @MainActor func aDragDuringTheLandingFadeKeepsItsPreviews() async throws {
     let fixture = try GhostGestureFixture()
     let controller = fixture.controller
     fixture.tick(dx: 50)
@@ -398,7 +398,7 @@ private func ghostOverlayCleansUpEveryGestureExit(ending: GhostEnd) throws {
 
 /// A window that cannot be read during the hold has not landed, so its
 /// preview is not removed before the window draws.
-@Test @MainActor func anUnreadableWindowHasNotLanded() throws {
+@Test(.macOSTestApplication, .macOSUI) @MainActor func anUnreadableWindowHasNotLanded() throws {
     let fixture = try GhostGestureFixture()
     defer { fixture.controller.hideAndCancel() }
     let targets = Dictionary(uniqueKeysWithValues: fixture.system.windows.map { ($0.id, $0.frame) })
@@ -414,7 +414,7 @@ private func ghostOverlayCleansUpEveryGestureExit(ending: GhostEnd) throws {
 
 /// While previews wait for the windows to land, hovering a divider moves the
 /// real handle, not only its drawing, so a click lands on the handle.
-@Test @MainActor func hoverDuringTheLandingHoldMovesTheRealHandle() throws {
+@Test(.macOSTestApplication, .macOSUI) @MainActor func hoverDuringTheLandingHoldMovesTheRealHandle() throws {
     let fixture = try GhostGestureFixture()
     let controller = fixture.controller
     defer { controller.hideAndCancel() }
@@ -432,7 +432,7 @@ private func ghostOverlayCleansUpEveryGestureExit(ending: GhostEnd) throws {
 /// After a release the handle retracts for a moment. A pointer that comes
 /// back to the divider meanwhile takes the handle back at once, so a quick
 /// second drag grabs the divider, not the application's window edge.
-@Test @MainActor func aQuickSecondDragTakesTheRetractingHandleBack() throws {
+@Test(.macOSTestApplication, .macOSUI) @MainActor func aQuickSecondDragTakesTheRetractingHandleBack() throws {
     let fixture = try GhostGestureFixture()
     let controller = fixture.controller
     defer { controller.hideAndCancel() }
@@ -450,7 +450,7 @@ private func ghostOverlayCleansUpEveryGestureExit(ending: GhostEnd) throws {
 /// A release can cancel its own gesture, here because a participant closed.
 /// The handle then retracts once. A second clear would end the retraction at
 /// once and hide the handle before its quick re-grab window ends.
-@Test(arguments: [false, true]) @MainActor
+@Test(.macOSTestApplication, .macOSUI, arguments: [false, true]) @MainActor
 func aReleaseThatCancelsItsGestureRetractsTheHandleOnce(live: Bool) throws {
     let fixture = try GhostGestureFixture(live: live)
     let controller = fixture.controller
@@ -473,7 +473,7 @@ func aReleaseThatCancelsItsGestureRetractsTheHandleOnce(live: Bool) throws {
 /// A Live drag asks a window to shrink below a minimum it never reported, so
 /// the growing neighbour is held. With the pointer still, the display ticks
 /// stop solving and redrawing once a tick has nothing to write.
-@Test @MainActor func aHeldLiveWindowStopsIdleDisplayTicks() throws {
+@Test(.macOSTestApplication, .macOSUI) @MainActor func aHeldLiveWindowStopsIdleDisplayTicks() throws {
     let fixture = try GhostGestureFixture(live: true)
     let controller = fixture.controller
     defer { controller.hideAndCancel() }

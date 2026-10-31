@@ -4,7 +4,7 @@ import Testing
 @testable import BetterTileApp
 
 /// Uses only a disposable app bundle. No installed app or live window is changed.
-@Test(.enabled(if: ProcessInfo.processInfo.environment["BETTERTILE_TEST_FINDER_ICON"] == "1"))
+@Test(.appTestApplication, .enabled(if: ProcessInfo.processInfo.environment["BETTERTILE_TEST_FINDER_ICON"] == "1"))
 @MainActor func finderIconChangesPreserveSignedContentsAndRestoreThePrimaryIcon() throws {
     let fileManager = FileManager.default
     let root = fileManager.temporaryDirectory.appendingPathComponent("BetterTile-Icon-\(UUID().uuidString)")

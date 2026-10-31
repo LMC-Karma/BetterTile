@@ -1,0 +1,1 @@
+../BetterTileMacOSTests/NativeApplicationActivationTrace.swift

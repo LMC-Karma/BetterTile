@@ -100,8 +100,8 @@ private func report(_ line: String) throws {
     state.reconcile(windowIDs: ids, removed: [], focused: ids[0])
     let anchor = NSPanel(contentRect: screen.visibleFrame, styleMask: [.borderless, .nonactivatingPanel],
                          backing: .buffered, defer: false)
-    anchor.orderFrontRegardless()
-    defer { anchor.orderOut(nil) }
+    anchor.orderFrontForTesting()
+    defer { anchor.orderOutForTesting() }
     let numbers = Dictionary(uniqueKeysWithValues: state.selectedWindowIDs.map { ($0, anchor.windowNumber) })
     let overlay = TabbedOverlayController(orderPanel: { panel, mode, number in panel.order(mode, relativeTo: number) })
     defer { overlay.hide() }
@@ -130,8 +130,8 @@ private func report(_ line: String) throws {
     state.reconcile(windowIDs: ids, removed: [], focused: ids[0])
     let anchor = NSPanel(contentRect: screen.visibleFrame, styleMask: [.borderless, .nonactivatingPanel],
                          backing: .buffered, defer: false)
-    anchor.orderFrontRegardless()
-    defer { anchor.orderOut(nil) }
+    anchor.orderFrontForTesting()
+    defer { anchor.orderOutForTesting() }
     let numbers = Dictionary(uniqueKeysWithValues: state.selectedWindowIDs.map { ($0, anchor.windowNumber) })
     let ticks = ResizeDisplayLink(automatic: false)
     var strips: [NSPanel] = []
@@ -195,8 +195,8 @@ private func report(_ line: String) throws {
     state.reconcile(windowIDs: ids, removed: [], focused: ids[0])
     let anchor = NSPanel(contentRect: screen.visibleFrame, styleMask: [.borderless, .nonactivatingPanel],
                          backing: .buffered, defer: false)
-    anchor.orderFrontRegardless()
-    defer { anchor.orderOut(nil) }
+    anchor.orderFrontForTesting()
+    defer { anchor.orderOutForTesting() }
     let overlay = TabbedOverlayController(orderPanel: { panel, mode, number in panel.order(mode, relativeTo: number) })
     defer { overlay.hide() }
     func refresh() {
@@ -221,7 +221,7 @@ private func report(_ line: String) throws {
     return Array(samples.dropFirst(20))
 }
 
-@Test(.enabled(if: ProcessInfo.processInfo.environment["BETTERTILE_PERF_BENCH"] != nil
+@Test(.macOSTestApplication, .enabled(if: ProcessInfo.processInfo.environment["BETTERTILE_PERF_BENCH"] != nil
                && ProcessInfo.processInfo.environment["CI"] == nil,
                "Requires an explicit local interaction benchmark run."))
 @MainActor func interactionBenchmark() throws {
