@@ -607,12 +607,15 @@ public struct BentoLayoutFitter: Sendable {
         currentFrames: [WindowID: BTRect],
         changedWindowIDs: Set<WindowID>,
         in bounds: BTRect,
-        constraints: [WindowID: WindowConstraints] = [:]
+        constraints: [WindowID: WindowConstraints] = [:],
+        expectedFrames: [WindowID: BTRect]? = nil
     ) -> BentoResizeResult? {
         guard state.root != nil, !changedWindowIDs.isEmpty else { return nil }
         var next = state
         var allApplied: [UUID: Double] = [:]
-        let originalFrames = Dictionary(uniqueKeysWithValues: state.placements(in: bounds).map { ($0.windowID, $0.frame) })
+        // Adaptive defaults to its snapped requests. Tabbed supplies its unsnapped areas.
+        let originalFrames = expectedFrames
+            ?? Dictionary(uniqueKeysWithValues: state.placements(in: bounds).map { ($0.windowID, $0.frame) })
 
         // Parents first. Orthogonal descendants remain valid when an ancestor
         // changes; their own parent geometry is recalculated before fitting.

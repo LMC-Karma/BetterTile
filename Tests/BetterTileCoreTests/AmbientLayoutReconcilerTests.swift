@@ -166,7 +166,8 @@ private let ambientThird = ambientWindow(
     let solo = ambientWindow("solo", frame: BTRect(x: 100, y: 100, width: 500, height: 400))
     let peer = ambientWindow("peer", frame: BTRect(x: 600, y: 0, width: 600, height: 800))
     let reconciler = ambientReconciler(singleWindowPlacement: .maximize)
-    let initial = LayoutSession(displayID: ambientDisplayID, mode: .manual, windowIDs: [solo.id])
+    // Only Adaptive places a lone window, so the latch runs there.
+    let initial = LayoutSession(displayID: ambientDisplayID, mode: .bento, windowIDs: [solo.id])
 
     let first = reconciler.transition(
         session: initial,
@@ -198,7 +199,8 @@ private let ambientThird = ambientWindow(
     soloAgain.windowIDs = [solo.id]
     let final = reconciler.transition(
         session: soloAgain,
-        observation: ambientObservation(windows: [solo], previousWindowIDs: [solo.id, peer.id])
+        observation: ambientObservation(windows: [solo], previousWindowIDs: [solo.id, peer.id],
+                                        confirmedGone: [peer.id])
     )
     guard case .placeSingleWindow = final else {
         Issue.record("Returning to one window must fire the rearmed latch")
@@ -210,7 +212,7 @@ private let ambientThird = ambientWindow(
     let solo = ambientWindow("solo", frame: ambientBounds)
     let session = LayoutSession(
         displayID: ambientDisplayID,
-        mode: .manual,
+        mode: .bento,
         windowIDs: [solo.id],
         automaticWritesSuspended: true
     )
@@ -511,20 +513,44 @@ func aTemporarilyMissingBentoPeerDoesNotMaximizeTheRemainingWindow(knownMember: 
     }
 }
 
-@Test func nativeAndLinkedModesRetainSingleWindowPlacement() throws {
+/// "When a desktop has one window" applies only in Adaptive. Manual, and the legacy Linked mode it
+/// stands for, leave a lone window where it is and keep the latch armed for a later switch.
+/// Tabbed sessions are reconciled elsewhere and fill their panes.
+@Test func manualAndLinkedModesLeaveALoneWindowAlone() throws {
     let window = ambientWindow("solo", frame: BTRect(x: 100, y: 100, width: 500, height: 400))
     let reconciler = ambientReconciler(singleWindowPlacement: .maximize)
 
     for mode in [LayoutMode.manual, .linked] {
+        for wasCreated in [true, false] {
+            let session = LayoutSession(displayID: ambientDisplayID, mode: mode, windowIDs: [window.id])
+            let transition = reconciler.transition(
+                session: session,
+                observation: ambientObservation(windows: [window], wasCreated: wasCreated, previousWindowIDs: [])
+            )
+            guard case let .observe(observed) = transition else {
+                Issue.record("\(mode) mode placed a lone window (wasCreated: \(wasCreated))")
+                continue
+            }
+            #expect(!observed.hasAppliedSingleWindowPlacement, "\(mode) must not spend the latch")
+        }
+    }
+}
+
+@Test func adaptiveSessionsPlaceALoneWindow() throws {
+    let window = ambientWindow("solo", frame: BTRect(x: 100, y: 100, width: 500, height: 400))
+    let reconciler = ambientReconciler(singleWindowPlacement: .maximize)
+
+    for mode in [LayoutMode.bento] {
         let session = LayoutSession(displayID: ambientDisplayID, mode: mode, windowIDs: [window.id])
         let transition = reconciler.transition(
             session: session,
-            observation: ambientObservation(windows: [window])
+            observation: ambientObservation(windows: [window], wasCreated: true, previousWindowIDs: [])
         )
-        guard case .placeSingleWindow = transition else {
-            Issue.record("\(mode) mode lost the shared single-window policy")
+        guard case let .placeSingleWindow(_, placement) = transition else {
+            Issue.record("\(mode) mode lost the single-window placement")
             continue
         }
+        #expect(placement.frame == ambientBounds)
     }
 }
 

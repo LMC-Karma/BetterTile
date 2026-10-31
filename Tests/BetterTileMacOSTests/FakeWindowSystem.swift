@@ -111,9 +111,24 @@ final class FakeWindowSystem: WindowSystem, TargetedWindowSystem, WindowEventSou
     /// Windows that a minimum-size probe leaves at the wrong size.
     var unrestoredProbeWindowIDs: Set<WindowID> = []
     private(set) var probedWindowIDs: [Set<WindowID>] = []
-    func probeMinimumSizes(for ids: Set<WindowID>) -> Set<WindowID> {
+    var beforeProbeMeasurement: ((WindowID) -> Void)?
+    var afterProbeMeasurement: ((WindowID) -> Void)?
+    private(set) var measurementWrites: [WindowID] = []
+    private(set) var measurementRestores: [WindowID] = []
+    func probeMinimumSizes(for ids: Set<WindowID>, validating isCurrent: () -> Bool) -> MinimumSizeProbeOutcome {
+        var outcome = MinimumSizeProbeOutcome()
         probedWindowIDs.append(ids)
-        return unrestoredProbeWindowIDs.intersection(ids)
+        for id in ids.sorted() {
+            beforeProbeMeasurement?(id)
+            guard isCurrent() else { outcome.wasInterrupted = true; break }
+            outcome.startedWindowIDs.insert(id)
+            measurementWrites.append(id)
+            afterProbeMeasurement?(id)
+            measurementRestores.append(id)
+        }
+        outcome.unrestoredWindowIDs = unrestoredProbeWindowIDs.intersection(outcome.startedWindowIDs)
+        if !outcome.wasInterrupted, !isCurrent() { outcome.wasInterrupted = true }
+        return outcome
     }
     private var pendingFrames: [WindowID: (frame: BTRect, readsRemaining: Int)] = [:]
 
@@ -216,6 +231,20 @@ final class FakeWindowSystem: WindowSystem, TargetedWindowSystem, WindowEventSou
     var attemptsWholeBatch = true
     /// Fails the batch while preparing this window, before any write.
     var unpreparedBatchWindowID: WindowID?
+    private(set) var preparedFrameWriteIDs: [Set<WindowID>] = []
+    func preflightFrameWrites(_ ids: Set<WindowID>) throws {
+        preparedFrameWriteIDs.append(ids)
+        if let unpreparedBatchWindowID, ids.contains(unpreparedBatchWindowID) {
+            throw WindowSystemError.windowNotFound(unpreparedBatchWindowID)
+        }
+        for id in ids {
+            guard let window = windows.first(where: { $0.id == id }), window.isEligible,
+                  window.constraints.isMovable, !isApplicationUnresponsive(for: id) else {
+                throw WindowSystemError.unsupportedWindow(id)
+            }
+        }
+    }
+
     func setFrames(_ writes: [Placement], knownCurrentFrames: [WindowID: BTRect]) -> FrameBatchResult {
         if let unpreparedBatchWindowID, writes.contains(where: { $0.windowID == unpreparedBatchWindowID }) {
             return FrameBatchResult(attempted: [], failure: (unpreparedBatchWindowID, WindowSystemError.windowNotFound(unpreparedBatchWindowID)))

@@ -18,7 +18,6 @@ extension FakeAppWindowSystem {
     func installWindowEventClock(in model: BetterTileModel) {
         guard let manual = manualClock else { return }
         model.windowEventSleep = { [weak model, weak self] duration in
-            try Task.checkCancellation()
             let task = model?.windowEventTask
             let deadline = manual.now.advanced(by: duration)
             if let task { self?.windowEventSleepDeadlines[task] = deadline }

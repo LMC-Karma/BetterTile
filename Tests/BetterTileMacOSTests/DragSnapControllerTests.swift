@@ -1,5 +1,6 @@
 import AppKit
 import Testing
+import BetterTileTestSupport
 @testable import BetterTileCore
 @testable import BetterTileMacOS
 
@@ -1093,12 +1094,32 @@ func bentoReleaseCommitsTheArmedCue(valid: Bool) async throws {
     defer { controller.cancel() }
     send(controller, .leftMouseDown, x: 300, y: 220)
     system.windows[0].frame.origin.x += 30
-    // The top edge of the peer's pane, away from any snap area.
-    send(controller, .leftMouseDragged, x: 750, y: 40)
-    #expect(controller.dropTarget == nil)
-    // A busy test runner can delay the cue's arming task.
-    let deadline = ContinuousClock.now.advanced(by: .seconds(10))
-    while controller.dropTarget == nil, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(10)) }
+    // Wait for the state transition itself. A bounded wait prevents a missing
+    // callback from hanging the test process.
+    let armed = await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
+        var resumed = false
+        var timeoutTask: Task<Void, Never>?
+        @MainActor func finish(_ succeeded: Bool) {
+            guard !resumed else { return }
+            resumed = true
+            controller.dropTargetDidChange = nil
+            timeoutTask?.cancel()
+            continuation.resume(returning: succeeded)
+        }
+        controller.dropTargetDidChange = { target in
+            guard target != nil else { return }
+            finish(true)
+        }
+        timeoutTask = Task { @MainActor in
+            do { try await Task.sleep(for: .seconds(10)) } catch { return }
+            finish(false)
+        }
+        // The top edge of the peer's pane, away from any snap area.
+        send(controller, .leftMouseDragged, x: 750, y: 40)
+        #expect(controller.dropTarget == nil)
+    }
+    try #require(armed, "The Bento cue did not arm before the test deadline")
+    #expect(controller.dropTarget != nil)
     let insert = BentoDragOutcome.insert(targetWindowID: peer, edge: .top)
     // The button comes up over the pane's center; the armed cue still wins.
     send(controller, .leftMouseUp, x: 750, y: 400)

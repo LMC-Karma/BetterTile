@@ -270,6 +270,11 @@ machine, pass `--release` through the prescribed full-suite lock helper.
 The log must contain all three complete passing product summaries. Filters
 still require the matching `--expected-runs N` before `--release`.
 
+Keep Debug identity, diagnostics,
+calibration and updater differences under `DEBUG`. Tests of those differences
+must exercise their Release counterparts where available. Arrival-trace tests
+cover Debug-only diagnostics and retain their existing Debug condition.
+
 Optimized tests must wait for the state they assert. A fixed number of
 `Task.yield()` calls does not establish that another task completed.
 

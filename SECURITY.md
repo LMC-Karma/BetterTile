@@ -42,6 +42,24 @@ Other implementation choices may evolve when the user benefit justifies them.
 Changes are evaluated against security, privacy, transparency,
 maintainability, and user benefit rather than a blanket technology ban.
 
+## Debug arrival diagnostics
+
+Debug builds can record local window-arrival timing when the maintainer enables
+`BetterTileArrivalTrace` in the app's UserDefaults before launch. The default is
+off. Release builds contain no arrival trace. The trace helps separate app
+startup, unreadable windows, scheduling, minimum-size probes, and placement.
+It adds no Accessibility reads, permissions, dependencies, or networking.
+
+The JSONL file is `~/Library/Logs/BetterTile/arrival-trace.jsonl`. Records contain
+monotonic timestamps, a random trace-run ID, process-local window IDs, PIDs,
+opaque AX element hashes, logical-point frames, layout modes, and phase outcomes.
+They contain no window titles, document paths, or app names. New files use owner
+read/write permissions. Encoding and writes run on a serial utility queue.
+The file is appended across runs and remains until the tester removes it.
+There is no upload, rotation, or automatic purge. Enable it only for bounded
+local trials; inspect the file before sharing it. Fake-system tests cover the
+disabled path and phase ordering. Live capture and timing remain manual checks.
+
 ## Private window observations
 
 [Design issue #32](https://github.com/LMC-Karma/BetterTile/issues/32) approves

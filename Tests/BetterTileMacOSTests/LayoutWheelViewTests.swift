@@ -30,7 +30,7 @@ import Testing
     #expect(action.isAvailable)
 
     let repair = LayoutWheelSlot(command: .repairBento, isAvailable: false)
-    #expect(repair.label == "Repair Bento")
+    #expect(repair.label == "Repair Layout")
     #expect(!repair.isAvailable)
 }
 
@@ -71,7 +71,7 @@ import Testing
 
     let unavailable = LayoutWheelSlot(command: .repairBento, isAvailable: false)
     #expect(unavailable.accessibilityLabel(for: outerLeft, levelCount: .two)
-        == "Left, outer ring, Repair Bento, unavailable")
+        == "Left, outer ring, Repair Layout, unavailable")
 
     // Empty is already spoken as Empty; "unavailable" would only repeat it.
     #expect(LayoutWheelSlot.empty.accessibilityLabel(for: outerLeft, levelCount: .two)

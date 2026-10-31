@@ -226,23 +226,25 @@ final class ResizeDisplayLink: NSObject {
     private let automatic: Bool
     private var link: CADisplayLink?
     private var tickHandler: (() -> Void)?
+    private weak var sampledScreen: NSScreen?
 
     init(automatic: Bool = true) {
         self.automatic = automatic
     }
 
+    @discardableResult
     func start(
         on view: NSView? = nil,
         screen: NSScreen? = nil,
         maximumFramesPerSecond: Int? = nil,
         tick: @escaping () -> Void
-    ) {
+    ) -> Bool {
         stop()
         tickHandler = tick
-        guard automatic else { return }
+        guard automatic else { return true }
         let displayLink = view?.displayLink(target: self, selector: #selector(handleTick(_:)))
             ?? screen?.displayLink(target: self, selector: #selector(handleTick(_:)))
-        guard let displayLink else { return }
+        guard let displayLink else { stop(); return false }
         link = displayLink
         if let maximumFramesPerSecond {
             let displayMaximum = (view?.window?.screen ?? screen)?.maximumFramesPerSecond ?? maximumFramesPerSecond
@@ -255,6 +257,28 @@ final class ResizeDisplayLink: NSObject {
         }
         displayLink.add(to: .main, forMode: .common)
         displayLink.add(to: .main, forMode: .eventTracking)
+        return true
+    }
+
+    @discardableResult
+    func requestFrame(screen: NSScreen?, tick: @escaping () -> Void) -> Bool {
+        if !automatic {
+            tickHandler = tick
+            return true
+        }
+        if let link, sampledScreen === screen {
+            tickHandler = tick
+            link.isPaused = false
+            return true
+        }
+        let ready = start(screen: screen, tick: tick)
+        sampledScreen = screen
+        return ready
+    }
+
+    func pause() {
+        link?.isPaused = true
+        tickHandler = nil
     }
 
     func fire() {
@@ -264,6 +288,7 @@ final class ResizeDisplayLink: NSObject {
     func stop() {
         link?.invalidate()
         link = nil
+        sampledScreen = nil
         tickHandler = nil
     }
 
@@ -296,6 +321,7 @@ public final class DividerOverlayController {
     var mouseLocation: () -> CGPoint = { NSEvent.mouseLocation }
 
     private func refreshConfiguration(from oldValue: BetterTileConfiguration) {
+        rebuildHoverBounds()
         handlePanel?.overlayAppearance = configuration.overlayAppearance
         dragOverlay.overlayAppearance = configuration.overlayAppearance
         let previousWidth = DividerHandleGeometry.renderedThickness(
@@ -313,6 +339,9 @@ public final class DividerOverlayController {
     public var layoutChangedHandler: ((DisplayID, [WindowID: BTRect]) -> Void)?
     /// Tabbed panels are layout chrome, not floating windows that hide a grip.
     public var nonOccludingWindowNumbersProvider: (() -> Set<Int>)?
+    /// BetterTile's own windows that can hide a grip. Only the active application's windows can.
+    /// Tests replace it, because one test process shares `NSApp.windows` across concurrent tests.
+    public var ownWindowsProvider: () -> [NSWindow] = { NSApp.isActive ? NSApp.windows : [] }
     public var bentoStateProvider: ((DisplayID) -> BentoLayoutState?)?
     public var bentoStateChangedHandler: ((DisplayID, BentoLayoutState, [WindowID: BTRect], [WindowID: BTRect]) -> Void)?
     /// Runs with the tree of each accepted Bento drag sample, and with the
@@ -335,7 +364,12 @@ public final class DividerOverlayController {
 
     private let coordinator: WindowCoordinator
     private let displayTicks: ResizeDisplayLink
+    private let hoverTicks: ResizeDisplayLink
+    private lazy var hoverSamples = DisplayRefreshSample<CGPoint>(ticks: hoverTicks) { [weak self] in
+        self?.updateHover(at: $0)
+    }
     private var boundaries: [BoundaryDescriptor] = []
+    private(set) var hoverBounds: BTRect?
     /// The boundaries the handle can grab, for hover and tests.
     public var currentBoundaries: [BoundaryDescriptor] { boundaries }
     private var obscuringFrames: [BTRect] = []
@@ -409,6 +443,7 @@ public final class DividerOverlayController {
         coordinator: WindowCoordinator,
         configuration: BetterTileConfiguration,
         displayTicks: ResizeDisplayLink,
+        hoverTicks: ResizeDisplayLink = ResizeDisplayLink(),
         addGlobalKeyMonitor: @escaping (@escaping @MainActor (UInt16) -> Void) -> Any? = { handler in
             NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { event in
                 let keyCode = event.keyCode
@@ -422,19 +457,25 @@ public final class DividerOverlayController {
                 return consumed ? nil : event
             }
         },
-        removeKeyMonitor: @escaping (Any) -> Void = { NSEvent.removeMonitor($0) }
+        removeKeyMonitor: @escaping (Any) -> Void = { NSEvent.removeMonitor($0) },
+        workspaceNotifications: NotificationCenter = NSWorkspace.shared.notificationCenter,
+        activationObservationReady: @escaping @MainActor () -> Void = {}
     ) {
         self.coordinator = coordinator
         self.configuration = configuration
         self.displayTicks = displayTicks
+        self.hoverTicks = hoverTicks
         self.addGlobalKeyMonitor = addGlobalKeyMonitor
         self.addLocalKeyMonitor = addLocalKeyMonitor
         self.removeKeyMonitor = removeKeyMonitor
         observeOwnWindows()
         activationObservationTask = Task { @MainActor [weak self] in
-            for await _ in NSWorkspace.shared.notificationCenter.notifications(
+            let notifications = workspaceNotifications.notifications(
                 named: NSWorkspace.didActivateApplicationNotification
-            ) {
+            )
+            // Creating the sequence registers its observer before the readiness signal.
+            activationObservationReady()
+            for await _ in notifications {
                 guard let self, !Task.isCancelled else { return }
                 self.coverCache = nil
                 if self.handlePanel?.isVisible == true, !self.isDragging {
@@ -472,6 +513,7 @@ public final class DividerOverlayController {
         // Commit callbacks can refresh while the final gesture is still active.
         // Retain those edges for hover after shrink, without moving the grip.
         self.boundaries = boundaries.filter { !$0.isLocked && $0.spanEnd - $0.spanStart >= 24 }
+        rebuildHoverBounds()
         self.obscuringFrames = obscuringFrames
         self.managedWindowIDs = managedWindowIDs
         coverCache = nil
@@ -492,6 +534,7 @@ public final class DividerOverlayController {
         isRetracting = false
         handlePanel?.setActive(false, animated: false)
         boundaries = []
+        hoverBounds = nil
         obscuringFrames = []
         managedWindowIDs = [:]
         coverCache = nil
@@ -500,6 +543,31 @@ public final class DividerOverlayController {
         handlePanel?.orderOut(nil)
     }
 
+    private func rebuildHoverBounds() {
+        guard !boundaries.isEmpty else { hoverBounds = nil; return }
+        var minX = Double.infinity, minY = Double.infinity
+        var maxX = -Double.infinity, maxY = -Double.infinity
+        for boundary in boundaries {
+            let vertical = boundary.axis == .vertical
+            minX = min(minX, vertical ? boundary.coordinate : boundary.spanStart)
+            maxX = max(maxX, vertical ? boundary.coordinate : boundary.spanEnd)
+            minY = min(minY, vertical ? boundary.spanStart : boundary.coordinate)
+            maxY = max(maxY, vertical ? boundary.spanEnd : boundary.coordinate)
+        }
+        // Include junction acquisition corners, gap bridges and tolerance.
+        let padding = max(16, configuration.dividerThickness * 1.5)
+            + max(0, configuration.adjacencyTolerance) + max(0, configuration.bentoInnerGap)
+        hoverBounds = BTRect(x: minX-padding, y: minY-padding,
+                             width: maxX-minX+2*padding, height: maxY-minY+2*padding)
+    }
+
+    func queueHover(at point: CGPoint) {
+        guard !boundaries.isEmpty, !isDragging else { return }
+        hoverSamples.submit(point)
+    }
+
+    func flushHover() { hoverSamples.flush() }
+
     func updateHover(at appKitPoint: CGPoint) {
         guard !isDragging else { return }
         // The handle retracts for a moment after a release. A pointer that
@@ -507,7 +575,7 @@ public final class DividerOverlayController {
         // quick second drag reaches the application's own window edge.
         if isRetracting {
             let point = topLeftPoint(appKitPoint)
-            guard DividerInteractionResolver.resolve(
+            guard hoverBounds?.contains(point) == true, DividerInteractionResolver.resolve(
                 at: point, in: boundaries, hitWidth: max(18, configuration.dividerThickness * 3),
                 adjacencyTolerance: configuration.adjacencyTolerance, paneGap: configuration.bentoInnerGap
             ) != nil else { return }
@@ -520,7 +588,7 @@ public final class DividerOverlayController {
         }
         let point = topLeftPoint(appKitPoint)
         let hitWidth = max(18, configuration.dividerThickness * 3)
-        guard let interaction = DividerInteractionResolver.resolve(
+        guard hoverBounds?.contains(point) == true, let interaction = DividerInteractionResolver.resolve(
             at: point,
             in: boundaries,
             hitWidth: hitWidth,
@@ -652,8 +720,8 @@ public final class DividerOverlayController {
             panel.onDrag = { [weak self] point in self?.drag(to: point) }
             panel.onEnd = { [weak self] in self?.end(at: NSEvent.mouseLocation) }
             panel.onExit = { [weak self] in
-                guard self?.isDragging == false else { return }
-                self?.updateHover(at: NSEvent.mouseLocation)
+                guard let self, !self.isDragging else { return }
+                self.queueHover(at: self.mouseLocation())
             }
             handlePanel = panel
         }
@@ -666,7 +734,8 @@ public final class DividerOverlayController {
         panel.ignoresMouseEvents = false
     }
 
-    private func beginHoveredGesture() {
+    func beginHoveredGesture() {
+        flushHover()
         guard let interaction = hoveredInteraction else { return }
         beginGesture(interaction: interaction, at: currentMousePoint())
     }
@@ -823,7 +892,9 @@ public final class DividerOverlayController {
         }
     }
 
-    private var landingTask: Task<Void, Never>?
+    private(set) var landingTask: Task<Void, Never>?
+    /// Monotonic seconds for the landing hold. Tests can keep its deadline still.
+    var landingUptime: () -> Double = { CACurrentMediaTime() }
 
     private func holdPreviewsUntilWindowsLand(_ placements: [Placement]) {
         let targets = Dictionary(placements.map { ($0.windowID, $0.frame) }, uniquingKeysWith: { _, last in last })
@@ -838,13 +909,13 @@ public final class DividerOverlayController {
         handlePanel?.restoreDrawingFrame()
         dragOverlay.releaseKnob()
         CATransaction.commit()
-        let deadline = CACurrentMediaTime() + 0.25
+        let deadline = landingUptime() + 0.25
         landingTask?.cancel()
         landingTask = Task { @MainActor [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(for: .milliseconds(33))
                 guard let self, !Task.isCancelled else { return }
-                if self.windowsHaveLanded(targets, baseline: baseline) || CACurrentMediaTime() >= deadline {
+                if self.windowsHaveLanded(targets, baseline: baseline) || self.landingUptime() >= deadline {
                     self.finishLanding(fade: true)
                     return
                 }
@@ -936,7 +1007,12 @@ public final class DividerOverlayController {
                 constraints: constraints
             ) else { return }
             let affected = Set(transaction.baselineFrames.keys)
-            placements = result.placements.filter { affected.contains($0.windowID) }
+            // Tabbed's reserved strip identifies its fractional projection here.
+            // Adaptive continues to request whole-point pane edges.
+            let frames = baselineBentoState.metrics.contentTopInset > 0
+                ? result.state.contentFrames(in: displayBounds).map { Placement(windowID: $0.key, frame: $0.value) }
+                : result.placements
+            placements = frames.filter { affected.contains($0.windowID) }
             let updatedBoundaries = result.state.boundaries(
                 in: displayBounds,
                 displayID: interaction.displayID
@@ -1469,6 +1545,7 @@ public final class DividerOverlayController {
 
     private func syncHoverMonitoring() {
         if boundaries.isEmpty {
+            hoverSamples.cancel()
             if let globalMouseMonitor { NSEvent.removeMonitor(globalMouseMonitor) }
             if let localMouseMonitor { NSEvent.removeMonitor(localMouseMonitor) }
             globalMouseMonitor = nil
@@ -1476,15 +1553,21 @@ public final class DividerOverlayController {
             return
         }
         if globalMouseMonitor == nil {
-            globalMouseMonitor = NSEvent.addGlobalMonitorForEvents(matching: .mouseMoved) {
-                [weak self] _ in
-                Task { @MainActor in self?.updateHover(at: NSEvent.mouseLocation) }
+            globalMouseMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.mouseMoved, .leftMouseDown]) {
+                [weak self] event in
+                MainActor.assumeIsolated {
+                    self?.queueHover(at: NSEvent.mouseLocation)
+                    if event.type == .leftMouseDown { self?.flushHover() }
+                }
             }
         }
         if localMouseMonitor == nil {
-            localMouseMonitor = NSEvent.addLocalMonitorForEvents(matching: .mouseMoved) {
+            localMouseMonitor = NSEvent.addLocalMonitorForEvents(matching: [.mouseMoved, .leftMouseDown]) {
                 [weak self] event in
-                Task { @MainActor in self?.updateHover(at: NSEvent.mouseLocation) }
+                MainActor.assumeIsolated {
+                    self?.queueHover(at: NSEvent.mouseLocation)
+                    if event.type == .leftMouseDown { self?.flushHover() }
+                }
                 return event
             }
         }
@@ -1652,7 +1735,7 @@ public final class DividerOverlayController {
         }
     }
 
-    private func currentMousePoint() -> BTPoint { topLeftPoint(NSEvent.mouseLocation) }
+    private func currentMousePoint() -> BTPoint { topLeftPoint(mouseLocation()) }
 
     private func topLeftPoint(_ point: CGPoint) -> BTPoint {
         guard let mainFrame = NSScreen.screens.first?.frame else { return BTPoint(x: point.x, y: point.y) }
@@ -1663,9 +1746,8 @@ public final class DividerOverlayController {
         if useFallback && DividerHandleOcclusion.isCovered(topLeftFrame, by: obscuringFrames) {
             return true
         }
-        guard NSApp.isActive else { return false }
         return Self.ownWindowCoversHandle(
-            appKitFrame, windows: NSApp.windows,
+            appKitFrame, windows: ownWindowsProvider(),
             excluding: (nonOccludingWindowNumbersProvider?() ?? [])
                 .union(handlePanel.map { [$0.windowNumber] } ?? [])
         )

@@ -1,5 +1,9 @@
 import Foundation
 
+/// Appended when automatic placement stops. The result pill ignores it, so
+/// the reason before it still decides which pill appears.
+public let repairLayoutRecoverySuffix = " Use Repair Layout to rebuild the layout."
+
 public struct WindowID: RawRepresentable, Codable, Hashable, Sendable, Comparable, CustomStringConvertible {
     public let rawValue: String
     public init(rawValue: String) { self.rawValue = rawValue }
@@ -173,9 +177,9 @@ public enum LayoutMode: String, Codable, CaseIterable, Sendable {
 
     public var title: String {
         switch self {
-        case .manual: "Native"
+        case .manual: "Manual"
         case .linked: "Linked"
-        case .bento: "Bento"
+        case .bento: "Adaptive"
         case .tabbed: "Tabbed"
         }
     }
@@ -230,6 +234,9 @@ public protocol WindowSystem: AnyObject {
     /// True while the window's application is held as unresponsive: calls
     /// to it fail at once instead of waiting, and its window has not closed.
     func isApplicationUnresponsive(for windowID: WindowID) -> Bool
+    /// Preflight every participant before serial owner-guarded dispatch starts.
+    /// Native adapters also check current permission, identity and movability.
+    func preflightFrameWrites(_ windowIDs: Set<WindowID>) throws
     /// Writes final frames for several windows. Implementations may write
     /// different applications concurrently, so a layout lands at once
     /// instead of one application after another. Returns the windows that
@@ -239,6 +246,12 @@ public protocol WindowSystem: AnyObject {
 }
 
 public extension WindowSystem {
+    func preflightFrameWrites(_ windowIDs: Set<WindowID>) throws {
+        for id in windowIDs.sorted() where isApplicationUnresponsive(for: id) {
+            throw WindowSystemError.operationFailed("A window's application is not responding.")
+        }
+    }
+
     func withFrameWriteBatch(_ updates: () throws -> Void) rethrows { try updates() }
     func withSteppedSizes(_ updates: () throws -> Void) rethrows { try updates() }
     func beginContinuousWrites() {}
@@ -291,12 +304,38 @@ public struct WindowSystemEvent: Hashable, Sendable {
     public var kind: Kind
     public var windowID: WindowID?
     public var processIdentifier: Int32
+    /// Names the element a creation callback delivered, for one targeted read
+    /// by `CreatedWindowReading`. Nil when the adapter keeps no element.
+    public var creationToken: UInt64?
 
-    public init(kind: Kind, windowID: WindowID?, processIdentifier: Int32) {
+    public init(kind: Kind, windowID: WindowID?, processIdentifier: Int32, creationToken: UInt64? = nil) {
         self.kind = kind
         self.windowID = windowID
         self.processIdentifier = processIdentifier
+        self.creationToken = creationToken
     }
+}
+
+/// The result of reading one window from its creation callback.
+public enum CreatedWindowRead: Sendable, Equatable {
+    /// A window on a current Space. Its snapshot says whether it floats or is
+    /// ineligible; a floating window needs no further reads.
+    case window(WindowSnapshot)
+    /// The element is valid but not readable as a window yet. Read it again.
+    case notReady
+    /// The window is gone, or is not on a current Space, or the adapter cannot
+    /// read it. Only a complete inventory can decide.
+    case unavailable
+}
+
+/// Optional capability: read the one window a creation callback named, without
+/// a complete desktop inventory.
+@MainActor
+public protocol CreatedWindowReading: AnyObject {
+    func readCreatedWindow(token: UInt64) -> CreatedWindowRead
+    /// The last complete inventory with the given windows added, or nil when
+    /// any window opened, closed, or minimized since it was read.
+    func cachedVisibleWindows(adding windows: [WindowSnapshot]) -> [WindowSnapshot]?
 }
 
 /// Optional event capability implemented by real and deterministic fake window

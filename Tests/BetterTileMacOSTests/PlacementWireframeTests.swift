@@ -62,7 +62,7 @@ func unchangedWireframesPreserveTheirInFlightPresentation(initialReduceMotion: B
     }
     override func orderFrontRegardless() {
         frontOrders += 1
-        super.orderFrontRegardless()
+        withoutTestWindowAnimations(self) { super.orderFrontRegardless() }
     }
     override var alphaValue: CGFloat { didSet { alphaWrites += 1 } }
 }

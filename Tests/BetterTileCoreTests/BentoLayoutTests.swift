@@ -202,3 +202,41 @@ private let bentoBounds = BTRect(x: 0, y: 0, width: 1200, height: 800)
     #expect(root.axis == .vertical)
     #expect(root.children == [.leaf(a), .leaf(b)])
 }
+
+@Test(arguments: [
+    BTRect(x: 1210, y: 30, width: 2560, height: 1410),
+    BTRect(x: -1210, y: -30, width: 2560, height: 1410),
+    BTRect(x: -1280, y: -705, width: 2560, height: 1410),
+])
+func defaultGapFourWindowPlanPlacesEveryEdgeOnAWholePoint(bounds: BTRect) throws {
+    let windows: [WindowSnapshot] = (0..<4).map { index in
+        let x = bounds.minX + Double(index % 2) * 1280
+        let y = bounds.minY + Double(index / 2) * 705
+        return WindowSnapshot(id: WindowID(rawValue: "whole-point-\(index)"), processIdentifier: Int32(index + 1),
+            frame: BTRect(x: x, y: y, width: 1280, height: 705), displayID: DisplayID(rawValue: "whole-point"))
+    }
+    let result = BentoPlanner().plan(
+        state: BentoRuntimeState(layout: BentoLayoutState(metrics: .init(paneGap: 1))),
+        observation: BentoObservation(bounds: bounds, windows: windows, focusedWindowID: windows[0].id), intent: .retile)
+    let frames = result.placements.map(\.frame)
+    try #require(frames.count == 4)
+    for frame in frames {
+        for edge in [frame.minX, frame.minY, frame.maxX, frame.maxY] { #expect(edge == edge.rounded()) }
+        #expect(frame.minX >= bounds.minX && frame.minY >= bounds.minY)
+    }
+    #expect(frames.map(\.maxY).max() == bounds.maxY)
+    #expect(frames.map(\.maxX).max() == bounds.maxX)
+    let columns = Array(Set(frames.map(\.minX))).sorted()
+    let rows = Array(Set(frames.map(\.minY))).sorted()
+    try #require(columns.count == 2 && rows.count == 2)
+    let firstColumnEnd = try #require(frames.first { $0.minX == columns[0] }?.maxX)
+    let firstRowEnd = try #require(frames.first { $0.minY == rows[0] }?.maxY)
+    #expect(columns[1] - firstColumnEnd == 1)
+    #expect(rows[1] - firstRowEnd == 1)
+    #expect(Set(frames) == Set([
+        BTRect(x: bounds.minX, y: bounds.minY, width: 1280, height: 705),
+        BTRect(x: bounds.minX + 1281, y: bounds.minY, width: 1279, height: 705),
+        BTRect(x: bounds.minX, y: bounds.minY + 706, width: 1280, height: 704),
+        BTRect(x: bounds.minX + 1281, y: bounds.minY + 706, width: 1279, height: 704),
+    ]))
+}

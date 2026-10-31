@@ -90,9 +90,12 @@ import Testing
 ) -> BetterTileModel {
     NativeApplicationBootstrap.recordWindowAccess("create a model with native window fixtures")
     let fakeSystem = system as? FakeAppWindowSystem
+    let modelUptime: (@MainActor () -> TimeInterval)?
+    if let fakeSystem { modelUptime = { fakeSystem.applicationHoldUptime() } }
+    else { modelUptime = nil }
     let model = BetterTileModel(store: store, system: system, startRuntime: startRuntime,
                                presentsTabbedChrome: presentsTabbedChrome, gestureEvents: gestureEvents,
-                               clock: fakeSystem?.clock ?? .live)
+                               clock: fakeSystem?.clock ?? .live, uptime: modelUptime)
     model.resultPillFactory = { ResultPillController(panel: OffscreenTestWindows.panel()) }
     model.dividerResize.panelFrameTransform = OffscreenTestWindows.frame
     return model

@@ -263,6 +263,22 @@ struct WindowServerIndex {
     }
 }
 
+/// Decides whether every cached peer is still on screen before a targeted read adds a window.
+enum CachedPeerVisibility {
+    /// - Parameter windowServer: Reads the WindowServer records for the exact window IDs; not called without peers.
+    static func allOnScreen(
+        peers: [WindowSnapshot],
+        exactWindowIDs: [WindowID: CGWindowID],
+        windowServer: (Set<CGWindowID>) -> WindowServerIndex?
+    ) -> Bool {
+        guard !peers.isEmpty else { return true }
+        guard exactWindowIDs.count == peers.count,
+              let index = windowServer(Set(exactWindowIDs.values))
+        else { return false }
+        return peers.allSatisfy { index.contains($0, exactWindowID: exactWindowIDs[$0.id]) }
+    }
+}
+
 struct WindowSnapshotCache {
     private(set) var snapshots: [WindowID: WindowSnapshot]?
 
@@ -367,6 +383,9 @@ struct WindowObservationLifetime {
               installation.application == application else { return nil }
         let windowID = kind == .focused ? nil : identities.windowID(
             application: application, accessibilityHash: accessibilityHash)
+        // An unknown frame event cannot be delivered later either. Keep all
+        // known windows, including Manual and floating windows outside a layout.
+        if (kind == .moved || kind == .resized), windowID == nil { return nil }
         return CapturedWindowObservation(
             event: WindowSystemEvent(kind: kind, windowID: windowID,
                                      processIdentifier: application.processIdentifier),

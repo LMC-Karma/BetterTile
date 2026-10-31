@@ -6,6 +6,9 @@ import Testing
 @MainActor private final class SeamFixture {
     let system = FakeWindowSystem()
     let ticks = ResizeDisplayLink(automatic: false)
+    /// Activation notifications for this controller only, so real app activations cannot reach it.
+    let activations = NotificationCenter()
+    let activationReadiness: AsyncStream<Void>
     let controller: DividerOverlayController
     let bounds = BTRect(x: -20_000, y: -20_000, width: 1000, height: 800)
     let state: BentoLayoutState
@@ -30,7 +33,14 @@ import Testing
         var config = BetterTileConfiguration()
         config.resizeFeedbackMode = .ghost
         boundaries = state.boundaries(in: bounds, displayID: display)
-        controller = DividerOverlayController(coordinator: WindowCoordinator(system: system), configuration: config, displayTicks: ticks)
+        let readiness = AsyncStream<Void>.makeStream()
+        activationReadiness = readiness.stream
+        controller = DividerOverlayController(coordinator: WindowCoordinator(system: system), configuration: config,
+                                              displayTicks: ticks, workspaceNotifications: activations,
+                                              activationObservationReady: {
+                                                  readiness.continuation.yield(())
+                                                  readiness.continuation.finish()
+                                              })
         controller.bentoStateProvider = { [state] _ in state }
         controller.stackProvider = { [system] in system.onScreenStack(labeling: $0) }
         controller.coverageTime = { [weak self] in self?.time ?? 0 }
@@ -140,20 +150,44 @@ func exposedSeamHoverDoesNotOrderHandleOverCover(axis: SplitAxis) throws {
     #expect(!fixture.visible)
 }
 
+/// Cancelling an AsyncStream iterator ends its wait, so the deadline also drains
+/// the losing task. A missing notification must fail the test instead of hanging
+/// every suite in this test process.
+private func receivedSeamSignal(_ stream: AsyncStream<Void>, timeout: Duration = .seconds(60)) async -> Bool {
+    await withTaskGroup(of: Bool.self) { group in
+        group.addTask {
+            var iterator = stream.makeAsyncIterator()
+            return await iterator.next() != nil
+        }
+        group.addTask {
+            try? await Task.sleep(for: timeout) // real-time: bounds delivery of the native divider-overlay notification
+            return false
+        }
+        let received = await group.next() ?? false
+        group.cancelAll()
+        return received
+    }
+}
+
 @Test(.macOSTestApplication, .macOSUI) @MainActor func exposedSeamActivationInvalidatesVisibleHandle() async throws {
     let fixture = try SeamFixture()
     defer { fixture.controller.hideAndCancel() }
-    fixture.controller.mouseLocation = { fixture.appKit(fixture.point(500, 200)) }
-    // Start the async notification observer before posting an activation.
-    await Task.yield()
+    try #require(await receivedSeamSignal(fixture.activationReadiness), "Activation observation did not become ready")
+    let handled = AsyncStream<Void>.makeStream()
+    fixture.controller.mouseLocation = {
+        handled.continuation.yield(())
+        handled.continuation.finish()
+        return fixture.appKit(fixture.point(500, 200))
+    }
+    defer { fixture.controller.mouseLocation = { NSEvent.mouseLocation } }
     fixture.hover(500, 200)
     #expect(fixture.visible)
     fixture.setCovers([fixture.rect(450, 100, 100, 400)])
-    NSWorkspace.shared.notificationCenter.post(name: NSWorkspace.didActivateApplicationNotification, object: nil)
-    for _ in 0..<20 where fixture.visible { await Task.yield() }
+    fixture.activations.post(name: NSWorkspace.didActivateApplicationNotification, object: nil)
+    try #require(await receivedSeamSignal(handled.stream),
+                 "Activation did not refresh hover: visible=\(fixture.visible), stack reads=\(fixture.system.onScreenStackReads)")
     #expect(!fixture.visible)
     #expect(fixture.system.onScreenStackReads == 2)
-    fixture.controller.mouseLocation = { NSEvent.mouseLocation }
 }
 
 @Test(.macOSTestApplication, .macOSUI) @MainActor func exposedSeamDragReadsOnceAndRecomputesMovingSeamWithoutHiding() throws {

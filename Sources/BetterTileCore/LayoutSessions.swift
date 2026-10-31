@@ -366,6 +366,14 @@ public struct LayoutSessionStore: Sendable {
         storedSessions[displayID].map { Array($0.values) } ?? []
     }
 
+    /// Incomplete rollback belongs to its original session, even after selection changes.
+    public mutating func suspendAutomaticWrites(sessionID: DesktopSessionID, on displayID: DisplayID) {
+        guard var session = storedSessions[displayID]?[sessionID], !session.automaticWritesSuspended else { return }
+        session.automaticWritesSuspended = true
+        session.advanceRevision()
+        storedSessions[displayID]?[sessionID] = session
+    }
+
     public mutating func update(_ displayID: DisplayID, _ update: (inout LayoutSession) -> Void) {
         guard let id = activeSessionIDs[displayID], var session = storedSessions[displayID]?[id] else { return }
         let original = session

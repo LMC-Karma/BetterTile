@@ -56,7 +56,7 @@ public struct BentoObservation: Sendable {
 
 /// Shown when a window cannot become a pane because the layout is full. It
 /// stays visible and usable rather than being hidden to protect the layout.
-public let bentoOverflowMessage = "Bento manages up to six panes. This window will remain floating."
+public let bentoOverflowMessage = "Adaptive manages up to six panes. This window will remain floating."
 
 public enum BentoPlannerIntent: Sendable {
     case activate
@@ -269,7 +269,7 @@ public struct BentoPlanner: Sendable {
             for windowID in overflow { next.layout.setFloating(true, windowID: windowID) }
             return solved(next, observation: observation, pill: .overflow(bentoOverflowMessage))
         }
-        return solved(next, observation: observation, pill: .success("Bento arranged"))
+        return solved(next, observation: observation, pill: .success("Adaptive arranged"))
     }
 
     private func retile(
@@ -299,7 +299,7 @@ public struct BentoPlanner: Sendable {
             adopted.floatingWindowIDs = state.layout.floatingWindowIDs.subtracting(managed)
             var next = state
             next.layout = canonicalized(adopted)
-            let result = solved(next, observation: observation, pill: .success("Bento panes repaired"))
+            let result = solved(next, observation: observation, pill: .success("Adaptive panes repaired"))
             if result.writesFrames { candidates.append(result) }
         }
         if state.layout.metrics.paneGap > 0,
@@ -319,7 +319,7 @@ public struct BentoPlanner: Sendable {
         if Set(state.layout.root?.windowIDs ?? []) == Set(managed) {
             var stored = state
             stored.layout = canonicalized(stored.layout)
-            let result = solved(stored, observation: observation, pill: .adapted("Stored Bento layout repaired"))
+            let result = solved(stored, observation: observation, pill: .adapted("Stored Adaptive layout repaired"))
             if result.writesFrames {
                 if !hasDistinctWindowPositions(frames) { return result }
                 candidates.append(result)
@@ -343,7 +343,7 @@ public struct BentoPlanner: Sendable {
                 let result = solved(
                     automatic,
                     observation: observation,
-                    pill: .success("Bento panes retiled")
+                    pill: .success("Adaptive panes retiled")
                 )
                 if result.writesFrames { candidates.append(result) }
             }
@@ -437,7 +437,7 @@ public struct BentoPlanner: Sendable {
         observation: BentoObservation
     ) -> BentoPlannerResult {
         guard observation.windows[windowID]?.isEligible == true else {
-            return failure(state, "Window is not eligible for Bento")
+            return failure(state, "Window is not eligible for Adaptive")
         }
         var next = state
         let treeIDs = Set(next.layout.root?.windowIDs ?? [])

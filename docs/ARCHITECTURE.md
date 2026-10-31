@@ -1,5 +1,7 @@
 # Architecture
 
+Product text uses **Adaptive** instead of Bento, **Manual** instead of Native, **Resize Preview** instead of Ghost Preview, and **Repair Layout** instead of Repair Bento or Repair Tabbed.
+
 BetterTile separates deterministic placement policy from macOS side effects.
 
 ## Layers
@@ -56,13 +58,35 @@ the session. Restoring a valid file and relaunching resumes normal saving.
 
 `BetterTileClock` in Core wraps Swift's `Clock` protocol with `Duration` and
 monotonic `ContinuousClock.Instant` values. Its live default uses
-`ContinuousClock`. Display-refresh debouncing accepts this clock; its delay
-and cancellation behavior stay the same. Other timer paths have not yet
-migrated. Clock injection does not change the layer dependencies.
+`ContinuousClock`. `BetterTileModel` passes its injected clock to
+`WindowCoordinator` and display-refresh debouncing. It drives recovery,
+window-event scheduling, Space stabilization, settlement, arrival confirmation,
+configuration-save delays, and coordinator retry waits. Arrival dates project
+elapsed monotonic time from one initial wall-clock date.
+`ResultPillController` also accepts an injected clock for dismissal.
+
+Application responsiveness holds use an uptime callback, defaulting to process
+system uptime. Tests replace these
+callbacks together with the clock so hold expiry and recovery deadlines agree.
+The 10-second watchdog remains a native run-loop timer. DragSnap pointer and
+chooser delays retain separate UI timing seams.
+Clock injection does not change the layer dependencies.
 
 ## Coordinate model
 
 Core geometry uses logical points with a top-left origin. Display visible frames and Accessibility window frames are converted at the macOS boundary. Core code never sees AppKit's bottom-left global screen coordinate system. With Leave space for Dock on, or with a Dock that never hides, the macOS boundary also removes the Dock's strip from its display's visible frame. macOS already reserves that strip for a Dock that never hides, but AppKit can report a secondary display's visible frame late after the Dock moves there or changes edge. The strip is the Dock's Accessibility list thickness plus 6 points, which matches what macOS reserves for a Dock that never hides, within a point. The list keeps its size while the Dock is hidden, so the work area stays the same as the Dock slides in and out. A Dock not shown since it started, as after login, reports no size; until it is shown, the thickness last measured on its edge stands in on the main display.
+
+Pane ratios and logical pane geometry retain their precision. Adaptive window placements
+snap pane edges to whole logical points before the content reserve and work-area
+clamping. Half points round toward positive infinity on both sides of zero, so
+whole-point gaps remain exact on negative-origin displays too. Origin and size
+are not rounded separately.
+
+Tabbed requests retain fractional content frames below the tab strip. Its
+stepped-size correction, overflow checks, and resize classification use the
+same unsnapped `contentFrames(in:)` projection. It passes these expected frames
+to the shared divider fitter; the fitter defaults to Adaptive's snapped
+requests for Adaptive callers. Logical pane frames remain separate from both.
 
 ## Window drag drops
 
@@ -166,7 +190,8 @@ stops automatic writes until Repair, as for a degraded mutation.
 
 ## Space boundary
 
-BetterTile operates on eligible on-screen windows exposed by its macOS integration layer. It refreshes the current window set immediately when apps, Spaces, or displays change. A validated native desktop observation selects one process-local runtime layout session for each display and Space pair. Missing or malformed native observations retain the public-API window-overlap matcher. Empty window membership remains unknown, windows reported on several Spaces float, and native fullscreen Spaces expose neither automatic layout writes nor dividers. With separate Spaces per display, a window's center can lie on a display whose current Space does not hold it, for example while the window is dragged across a shared edge. A window whose one Space is current on another display stays visible and is reported on that Space's display; only a window whose Space is current on no display is left out. BetterTile never attempts to move windows across Spaces.
+BetterTile operates on eligible on-screen windows exposed by its macOS integration layer. It refreshes the current window set immediately when apps, Spaces, or displays change. A validated native desktop observation selects one process-local runtime layout session for each display and Space pair. Missing or malformed native observations retain the public-API window-overlap matcher. Empty window membership remains unknown, windows reported on several Spaces float, and native fullscreen Spaces expose neither automatic layout writes nor dividers. With separate Spaces per display, a window's center can lie on a display whose current Space does not hold it, for example while the window is dragged across a shared edge. A window whose one Space is current on another display stays visible and is reported on that Space's display; only a window whose Space is current on no display is left out. BetterTile never assigns a window to a hidden Space. An explicit display transfer
+uses the destination display's current desktop.
 
 ## Popup and fixed-size windows
 
@@ -231,6 +256,42 @@ It keeps a temporarily missing pane in its desktop's tree. Confirmed destruction
 and minimization still remove the pane, and a window observed on another display
 is no longer protected on the old display.
 
+Creation events on managed desktops queue the next main-actor pass without the
+120 ms frame-event debounce. A creation callback also hands over its window's
+Accessibility element. The adapter keeps it under an opaque token
+(`WindowSystemEvent.creationToken`), and the pass reads that one window through
+`CreatedWindowReading`: its attributes, its WindowServer record, and its Space
+membership from the existing read-only native observation. No new private call
+or permission is involved. A floating verdict this early can be wrong, because
+a standard window may still be building its subrole and buttons. The adapter
+keeps the element and judges again on the next read, and the model reads it
+again every 120 ms until the readiness deadline. A utility panel or dialog
+therefore costs a few single reads and at most one complete inventory, and never
+a write. A window on the current Space joins the last complete inventory, which
+any other window event invalidates. One WindowServer on-screen check covers
+every window in that list. If a cached window failed it (hidden with Cmd-H,
+moved to another Space, or closed without an event), the model takes a complete
+inventory instead. The model then places the window from the list and the
+stored layout state. With private APIs disabled, the window has no exact ID, the
+targeted read answers "unavailable", and the complete inventory path runs. Placement keeps
+every existing check: the minimum-size probe, rules, the Space and session
+checks of the coordinator, and rollback. Tabbed starts its placement in the same
+turn and reuses the focus that the pass read. One complete inventory then
+validates the result after the ordinary delay; if it disagrees, the usual
+reconciliation corrects the layout.
+
+An element that is valid but not readable yet is read again after 8 ms, within
+the original 500 ms readiness deadline, and never through a complete inventory.
+An invalid element, a window not on the current Space, a callback without an
+element, repeated callbacks for several windows, pending frame events or
+recovery, a missing inventory, and the deadline all hand the arrival to the
+complete inventory. A repeated callback for one element keeps its token and
+adopts the window once. Failed inventories retain the normal exponential
+backoff; held applications use recovery instead. Gestures and Space
+stabilization still defer discovery. Frame classification reuses its inventory
+for arrival reconciliation only when it attempted no mutation. A mutation
+attempt requires a new inventory before reconciliation.
+
 Some applications close a document window without a destruction event; focus
 only moves to another window. When focus lands in a Bento layout, the model
 marks a check for the next event pass. It resolves the focused window when the
@@ -271,7 +332,25 @@ Escape cancels synchronously on the main actor, including when a managed app
 retains keyboard focus. The global monitor only observes the event; the local
 monitor consumes Escape and passes other keys through.
 
-All window mutations pass through the main-actor coordinator. Multi-window operations preflight every participant, apply in deterministic order, and roll back already-applied frames when a later Accessibility write fails. A committed layout writes each application on its own thread: shrinking windows first, in every application at once, then growing windows. Within one application the writes keep the coordinator's order. Rollback reads every attempted window before it restores one. Ghost resize transactions do not mutate real windows before commit; live transactions can restore their original baseline on cancellation. A Ghost release whose post-commit correction fails or is cancelled also restores the baseline. AX move/resize events are debounced, while events matching a recent coordinator generation and expected frame are suppressed to prevent feedback loops.
+All window mutations pass through the main-actor coordinator. Multi-window operations preflight every participant, apply in deterministic order, and roll back already-applied frames when a later Accessibility write fails. A committed layout writes each application on its own thread: shrinking windows first, in every application at once, then growing windows. Within one application the writes keep the coordinator's order. Display transfers and application
+recovery explicitly request serial per-write validation when their desktop owner
+can change during a batch. They still preflight all participants before the first
+write. Ordinary Adaptive and Tabbed commits keep per-application concurrent
+batches. Rollback revalidates its desktop owner before each restoration write.
+Rollback reads every attempted window before it restores one. Ghost resize transactions do not mutate real windows before commit; live transactions can restore their original baseline on cancellation. A Ghost release whose post-commit correction fails or is cancelled also restores the baseline. AX move/resize events are debounced, while events matching a recent coordinator generation and expected frame are suppressed to prevent feedback loops.
+
+Next Display and Previous Display plan the affected Adaptive layouts before any
+window moves. The destination neighbours receive their frames first. The moved
+window receives its frame next. Once its origin reaches the requested position,
+the source windows close the gap. These passes share one rollback transaction.
+A size readback can lag or settle in cell steps, so authoritative settlement
+handles size and overlap differences. Both desktop sessions commit together. Settlement retains both owners. Only a
+successful commit from those settlement tasks advances an expected revision;
+a user action, desktop change or unrelated revision still invalidates the transfer.
+If rollback is incomplete, automatic Adaptive writes stop on both desktops.
+A Manual source can insert into an Adaptive destination. An Adaptive source also closes
+its gap when the destination is Manual. Tabbed transfers keep their existing
+path. The Layout Wheel previews the destination placement from the same plan.
 
 Continuous resize gestures keep only the newest pointer or observed-window
 sample and consume it on an AppKit display-link tick. Live Accessibility batches
@@ -511,6 +590,104 @@ treats a failed read as an unreadable application and keeps its windows, so
 its panes stay in the layout. A frame-write sequence stops at the first
 refused call.
 
+After reconciliation omits a held application, the app model schedules a fresh
+sweep 0.1 s after its hold deadline. One main-actor task covers all held
+applications. Each application gets at most three automatic recovery attempts,
+with at least 1 s and then 2 s between attempts, and always after the latest
+hold expires. Recovery sweeps admit only due applications whose retry budget
+remains. Each actual inventory probe consumes one attempt, including probes in
+follow-up sweeps during the same recovery pass. A completed sweep that reads
+the application clears its retry budget. After exhaustion, the ordinary watchdog remains the fallback. A process
+that quits needs no recovery sweep.
+
+Recovery retains no layout proposal. A Space switch cancels the pending wake-up,
+and its generation is checked again before recovery. The new desktop's sweep
+can schedule its own check. Recovery observes current windows and session state,
+so a newer mode change or manual action keeps its result. The normal session
+revision check still precedes placement. Recovery also refreshes the native
+Space observation and checks its generation immediately before committing a
+Adaptive proposal, after minimum-size reads. Recovery minimum-size probes, Adaptive
+placements, Focus drops, and measured-clamp corrections validate the Space
+generation and session identity/revision after coordinator preflight snapshots,
+before mutation dispatch. A delayed recovery settlement keeps that generation
+for its correction and any authoritative placement retries. Topology, watchdog,
+and direct refresh passes capture recovery's generation before observations
+whenever an application hold or unreconciled returning window is pending,
+including recovery without a frame callback. A visible-window read that releases
+a hold records the returning window identities in the model. An activation read
+queues the existing debounced topology pass, even though the hold's timer has
+ended. A failed or stale sweep keeps those identities. A successful current
+reconciliation retires only the windows it observed on that desktop; a Space
+transition alone does not retire them. Tabbed retires them after its placement
+commits. Destruction, including process termination, and shutdown discard them.
+This evidence contains no frames or placement plan.
+Tabbed rechecks its desktop after hidden-tab preflight reads
+too. Stale work requests reconciliation.
+An incomplete placement rollback or probe restoration remains degraded after a
+generation change or cancellation. It reports Repair Layout and suspends automatic
+writes on the session that owned the transaction. The store marks that session's
+current value suspended without selecting it, replacing its layout or observed
+frames, or mutating any window. Feedback identifies Repair Layout on another desktop
+when that session is inactive. Only a failed transaction with a complete rollback
+can become stale.
+Active gestures defer reconciliation through the existing topology-event
+buffer. Recovery uses that same buffer, so pending native snaps are handled
+before arrivals are reconciled. A recognised snap supersedes an older
+settlement only when that display has an observed retained or pending recovery
+window. Absent evidence still guards stale dispatch without changing ordinary
+settlement ownership. A returning snapped window joins the session before its partition
+is applied, so the next sweep preserves that partition. Frame events from held
+applications survive normal event acknowledgment until a sweep can read them.
+The first sweep that reads them classifies their current frames before arrival
+reconciliation, including ordinary topology sweeps and the watchdog. That pass
+keeps recovery's Space checks even when the recovery timer did not start it.
+Direct application launch, termination, and wake refreshes use that classifier
+before probing or placing arrivals. The event pass supplies its results to its
+trailing reconciliation, which does not classify the same batch again.
+Retaining them schedules no extra sweeps during the hold. Window destruction or
+process exit retires their retained evidence. Space stabilization can clear the
+ordinary event buffer; the first readable sweep still includes retained recovery
+frame identities in snap classification. Hold release alone does not retire an
+absent window's event. Known native membership, unknown membership, and the
+public fallback use the adapter's existing identity lifetime: confirmed closure,
+process exit, or an identity-cache reset ends it. Recovery adds no identity
+expiry or size cap. A current event pass consumes observed frame identities only
+after successful classification; an attempted mutation is not success. Rejected,
+stale, degraded, and deferred results keep each observed identity. An unresolved
+Adaptive display defers arrival reconciliation while other displays continue.
+Its destruction and minimization evidence also waits for reconciliation.
+Confirmed peer removals reduce into a provisional recovery transaction after
+settlement ownership is checked. Snaps, divider fitting, and layout restoration
+share that reduced tree, which commits only with the frame transaction.
+Recovery selects current session bookkeeping before classification can defer a
+display. Native observation selects the exact session. If no exact session exists,
+a visible overlap anchor can bind the current inferred session to that native
+identity, preserving its mode, layout, and suspension. Space stabilization defers
+new exact-session creation while an inferred owner has a pending application hold,
+reconciliation, or retained frame event. Stable membership then binds an eligible
+visible overlap even while the recovery window remains held or off-screen, or
+selects a distinct unmatched desktop. Established exact sessions still select
+immediately. Retained frame evidence also captures the recovery generation when
+a completed adapter read has already released the hold. Public fallback uses the
+existing overlap matcher without reusing an unmatched active session. A display
+without an overlap anchor keeps its evidence and waits. The operation records only
+whether that session matched the public observation. Its preflight and delayed
+settlement checks require the same observation capability; a capability change
+rejects dispatch. Such a stale result waits for a later existing reconciliation,
+while session revision conflicts keep their usual reconciliation request. Consuming
+the first-observation marker before classification keeps initialization from
+replacing an adopted native snap. No frame or retry plan is retained.
+Degraded sessions retain their suspension and Repair Layout feedback. A later existing
+reconciliation reads the current frame and tries again; recovery adds no retry
+task or retained plan. Only readable retained identities enter targeted event
+reads. Absent identities remain retained without adding sweeps to unrelated
+callbacks. A stale desktop or generation also keeps them. Transition-only
+membership and observed frames do not count as Adaptive tree or floating adoption.
+Stabilization queues returning evidence before ordinary arrival reconciliation.
+Held frame callbacks retain their exact identity before gesture buffering.
+Exact destruction clears both recovery maps before either buffering guard;
+identity-cache reset and shutdown clear both maps too.
+
 Writes that put a user's window back stay ungated: the probe's size restore
 and the position restore. The enhanced-accessibility restore is gated. If the
 application is held or does not answer, the restore waits. BetterTile tries
@@ -560,6 +737,23 @@ confirmed. Settlement compares against the corrected frames. A failed correction
 with a successful rollback keeps the first placement. If the correction and
 its rollback both fail, the outcome is degraded and automatic writes stop
 until a new transaction or Repair.
+
+Authoritative settlement for Repair Layout and display reflows accepts up to
+2 logical points of difference in each frame component (x, y, width, height).
+A direct AX-write reproduction requested a 665.5-point height at the work-area
+bottom edge and read back 664 points, a stable 1.5-point shortfall. AppKit screen
+constraints or origin rounding may explain this shortfall; neither cause is
+established. The tolerance matches minimum-size learning and ordinary Tabbed
+frame acceptance.
+
+Before accepting the layout, both the model's scheduling gate and authoritative
+settlement check the actual frames with `BentoLayoutVerifier`. Its existing
+2-point overlap allowance still applies. Combined component differences that
+exceed that allowance report settlement failure. Accepted differences need no
+extra settlement pass. Larger component differences retry only the mismatching
+windows, at most twice, before reporting failure. The tolerance does not change
+planner geometry, stepped-size acceptance, rollback verification, or display
+ownership and reachability checks.
 
 The **New window side** preference applies only to new Bento insertions.
 Automatic retains the existing insertion policy. An explicit side favors a

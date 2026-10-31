@@ -840,7 +840,7 @@ public struct TabbedLayoutState: Hashable, Sendable {
         in bounds: BTRect,
         tolerance: Double
     ) -> Self? {
-        let expected = Dictionary(uniqueKeysWithValues: layout.placements(in: bounds).map { ($0.windowID, $0.frame) })
+        let expected = layout.contentFrames(in: bounds)
         var classifications: [WindowID: ExternalWindowChange] = [:]
         for id in changed.intersection(selectedWindowIDs) {
             guard let expectedFrame = expected[id], let observed = frames[id] else { continue }
@@ -850,7 +850,8 @@ public struct TabbedLayoutState: Hashable, Sendable {
         }
         guard case let .fitDividers(ids) = ExternalChangeRouter.route(classifications),
               let fitted = BentoLayoutFitter(tolerance: tolerance).fit(
-                  state: layout, currentFrames: frames, changedWindowIDs: ids, in: bounds, constraints: constraints
+                  state: layout, currentFrames: frames, changedWindowIDs: ids, in: bounds,
+                  constraints: constraints, expectedFrames: expected
               )
         else { return nil }
         var result = self
@@ -951,7 +952,7 @@ public struct TabbedLayoutState: Hashable, Sendable {
         let fixedFrames = logicalFrames(in: bounds).filter { fixedPaneIDs.contains($0.key) }
         let constraints = Self.fittingConstraints(windows)
         let resizable = Set(windows.filter(\.constraints.isResizable).map(\.id))
-        let slots = Dictionary(uniqueKeysWithValues: layout.placements(in: bounds).map { ($0.windowID, $0.frame) })
+        let slots = layout.contentFrames(in: bounds)
         func extent(_ size: BTSize, _ axis: SplitAxis) -> Double { axis == .vertical ? size.width : size.height }
         // Per axis, how far each stepped window settled from its area.
         var deltas: [WindowID: [SplitAxis: Double]] = [:]
@@ -972,7 +973,7 @@ public struct TabbedLayoutState: Hashable, Sendable {
         for id in deltas.keys.sorted(by: { $0.rawValue < $1.rawValue }) {
             for axis in [SplitAxis.vertical, .horizontal] {
                 guard let delta = deltas[id]?[axis] else { continue }
-                let current = Dictionary(uniqueKeysWithValues: result.layout.placements(in: bounds).map { ($0.windowID, $0.frame) })
+                let current = result.layout.contentFrames(in: bounds)
                 guard let slot = current[id] else { continue }
                 let grow = axis == .vertical ? BTSize(width: delta, height: 0) : BTSize(width: 0, height: delta)
                 let size = BTSize(width: slot.size.width + grow.width, height: slot.size.height + grow.height)
@@ -986,12 +987,12 @@ public struct TabbedLayoutState: Hashable, Sendable {
                     frames[id] = target
                     guard let fitted = BentoLayoutFitter(tolerance: 1).fit(
                         state: result.layout, currentFrames: frames, changedWindowIDs: [id],
-                        in: bounds, constraints: constraints) else { continue }
+                        in: bounds, constraints: constraints, expectedFrames: current) else { continue }
                     var candidate = result
                     candidate.groups.synchronize(with: fitted.state)
                     let logical = candidate.logicalFrames(in: bounds)
                     guard fixedFrames.allSatisfy({ logical[$0.key]?.approximatelyEquals($0.value, tolerance: 0.001) == true }) else { continue }
-                    let placed = Dictionary(uniqueKeysWithValues: fitted.state.placements(in: bounds).map { ($0.windowID, $0.frame) })
+                    let placed = fitted.state.contentFrames(in: bounds)
                     guard placed[id]?.approximatelyEquals(target, tolerance: 0.5) == true,
                           Set(deltas.keys).union(pinned).allSatisfy({ other in
                               other == id || current[other].map { placed[other]?.approximatelyEquals($0, tolerance: 0.5) == true } != false })

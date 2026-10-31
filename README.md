@@ -13,7 +13,7 @@
 
 <p align="center">
   A free, native macOS window manager.<br>
-  Snap windows into place, resize neighbours together, and let Bento adapt as your work grows.
+  Snap windows into place, resize neighbours together, and let Adaptive layouts make room as your work grows.
 </p>
 
 <p align="center">
@@ -39,7 +39,7 @@
 
 <p align="center">
   <a href="https://lmc-karma.github.io/BetterTile/#overview">
-    <img src="https://lmc-karma.github.io/BetterTile/assets/media/overview.jpg" alt="Watch the full BetterTile tour: snapping, linked resizing, Bento, Tabbed, and the Layout Wheel" width="800" height="450">
+    <img src="https://lmc-karma.github.io/BetterTile/assets/media/overview.jpg" alt="Watch the full BetterTile tour: snapping, linked resizing, Adaptive, Tabbed, and the Layout Wheel" width="800" height="450">
   </a>
   <br>
   <a href="https://lmc-karma.github.io/BetterTile/#overview"><strong>Watch the full tour · 25 seconds</strong></a>
@@ -57,7 +57,7 @@
 
 <p align="center">
   Drag the shared boundary between adjacent windows. Both windows resize together.<br>
-  Choose a <strong>live</strong> resize or a <strong>ghost</strong> preview that applies when you release.
+  Choose <strong>Live Resize</strong> or a <strong>Resize Preview</strong> that applies when you release.
 </p>
 
 <p align="center">
@@ -66,16 +66,16 @@
   </a>
 </p>
 
-<h3 align="center" id="bento-tiling-that-adapts">Bento tiling that adapts</h3>
+<h3 align="center" id="adaptive-tiling">Adaptive tiling</h3>
 
 <p align="center">
-  Open a window. Bento makes room in the layout while keeping movement and resizing to a minimum.<br>
+  Open a window. Adaptive makes room in the layout while keeping movement and resizing to a minimum.<br>
   Swap windows, adjust the layout, or float a window out when it needs its own space.
 </p>
 
 <p align="center">
   <a href="https://lmc-karma.github.io/BetterTile/#bento">
-    <img src="https://github.com/user-attachments/assets/3fe57264-071c-4e88-af05-c57aa665a299" alt="Bento demonstration: the layout adjusts as new windows open" width="800" height="450">
+    <img src="https://github.com/user-attachments/assets/3fe57264-071c-4e88-af05-c57aa665a299" alt="Adaptive demonstration: the layout adjusts as new windows open" width="800" height="450">
   </a>
 </p>
 
@@ -226,7 +226,7 @@ private observations, fallback behavior, and vulnerability reporting.
 
 - [Development setup](docs/DEVELOPMENT.md) — build, sign, run, and test on your Mac.
 - [Contributing](CONTRIBUTING.md) — branch, test, and pull-request workflow.
-- [Architecture](docs/ARCHITECTURE.md) — layers, coordinates, window mutations, and Bento.
+- [Architecture](docs/ARCHITECTURE.md) — layers, coordinates, window mutations, and Adaptive.
 - [Domain glossary](CONTEXT.md) — shared BetterTile terms.
 - [Beta releases](docs/RELEASING.md) — version, validate, sign, and publish an update.
 - [Security and privacy](SECURITY.md) — permissions, networking, and reporting policy.
