@@ -133,6 +133,10 @@ public final class WindowCoordinator {
 
     private let clock: BetterTileClock
     public let system: any WindowSystem & ApplicationActivating & ApplicationWindowRequesting
+    /// Sizes that windows kept when a failed batch asked for less, read before the rollback hides them.
+    /// Saved Layouts uses them to name the window that refused its pane.
+    public private(set) var refusedSizes: [WindowID: BTSize] = [:]
+    public func resetRefusedSizes() { refusedSizes = [:] }
     public var actionEngine: StandardActionEngine
 
     /// Marks an apply whose rollback also failed, so callers can distinguish a
@@ -1118,6 +1122,7 @@ public final class WindowCoordinator {
             }
             return
         }
+        refusedSizes = [:] // Each batch reports only its own refusals.
         try system.withFrameWriteBatch {
             var attempted: [WindowID] = []
             var failedWindowID: WindowID?
@@ -1215,6 +1220,13 @@ public final class WindowCoordinator {
                 // Several applications can fail in one batch. A window that
                 // did not reach its frame expects no event for it.
                 let requested = Dictionary(placements.map { ($0.windowID, $0.frame) }, uniquingKeysWith: { _, last in last })
+                for (id, actual) in actualFrames {
+                    // A window whose own write failed was not resized, so it kept nothing.
+                    guard let asked = requested[id], id != failedWindowID, attempted.contains(id) else { continue }
+                    if actual.size.width > asked.size.width + 2 || actual.size.height > asked.size.height + 2 {
+                        refusedSizes[id] = actual.size
+                    }
+                }
                 for id in attempted where actualFrames[id].map({ frame in
                     requested[id].map { !frame.approximatelyEquals($0, tolerance: 2) } ?? false
                 }) == true {

@@ -72,6 +72,8 @@ The 10-second watchdog remains a native run-loop timer. DragSnap pointer and
 chooser delays and the pane-application picker retain separate UI timing seams.
 Clock injection does not change the layer dependencies.
 
+Saved Layout preview throttling also accepts this clock.
+
 ## Coordinate model
 
 Core geometry uses logical points with a top-left origin. Display visible frames and Accessibility window frames are converted at the macOS boundary. Core code never sees AppKit's bottom-left global screen coordinate system. With Leave space for Dock on, or with a Dock that never hides, the macOS boundary also removes the Dock's strip from its display's visible frame. macOS already reserves that strip for a Dock that never hides, but AppKit can report a secondary display's visible frame late after the Dock moves there or changes edge. The strip is the Dock's Accessibility list thickness plus 6 points, which matches what macOS reserves for a Dock that never hides, within a point. The list keeps its size while the Dock is hidden, so the work area stays the same as the Dock slides in and out. A Dock not shown since it started, as after login, reports no size; until it is shown, the thickness last measured on its edge stands in on the main display.
@@ -412,7 +414,7 @@ when a Tabbed chooser is key. The chooser's responder chain cancels composition,
 clears a focused search, then closes on an empty search. Escape outside text
 editing closes the chooser immediately.
 
-All window mutations pass through the main-actor coordinator. Multi-window operations preflight every participant, apply in deterministic order, and roll back already-applied frames when a later Accessibility write fails. A committed layout writes each application on its own thread: shrinking windows first, in every application at once, then growing windows. Within one application the writes keep the coordinator's order. Display transfers and application
+All window mutations pass through the main-actor coordinator. Multi-window operations preflight every participant, apply in deterministic order, and roll back already-applied frames when a later Accessibility write fails. A committed layout writes each application on its own thread: shrinking windows first, in every application at once, then growing windows. Within one application the writes keep the coordinator's order. Saved Layout Apply, display transfers and application
 recovery explicitly request serial per-write validation when their desktop owner
 can change during a batch. They still preflight all participants before the first
 write. Ordinary Adaptive and Tabbed commits keep per-application concurrent
@@ -1537,8 +1539,8 @@ The participation editor's Suggested tag uses an opaque `accentShadeColor`
 capsule with white text, following the same contrast palette as primary overlay
 buttons. It has no separate hover or press colour variant.
 
-Settings presents Add Rule in a transparent,
-key-capable child `NSPanel` using `PopupGlassHost`. This replaces its
+Settings presents Add Rule and Add Floating Window in a transparent,
+key-capable child `NSPanel` using `PopupGlassHost`. This replaces only their
 opaque system-sheet presentation. A dimmed input blocker and a temporary local
 event monitor block the owning Settings window while the picker is open. Other
 windows and Browse sheets keep their normal input. The panel follows the parent
@@ -1587,7 +1589,7 @@ dismissal and BetterTile's activity again before it focuses. One dismissal
 focuses at most once. A Space change, reopening the panel, another app's
 activation and any later user command discard a pending replay or wait. User
 commands include shortcuts, menu commands, tab-strip and pane-button choices,
-opening or committing the Layout Wheel, window and tab drags, and
+Saved Layouts, opening or committing the Layout Wheel, window and tab drags, and
 divider or linked-resize gestures. The panel sits 4 points
 below the menu bar, with an 8-point side and bottom inset. It resizes with its
 content while keeping its top edge fixed.
@@ -2037,6 +2039,135 @@ command. A separate preview view uses the current renderer and Core fan policy.
 It owns temporary selection and dwell state and has no window-mutation callback.
 Appearance resets assign defaults directly, including a migrated legacy size;
 they do not depend on equality with a legacy continuous scale.
+
+## Saved Layouts
+
+`SavedLayoutDocument` in Core describes one desktop on one display. Its
+versioned JSON stores app bundle IDs, slot IDs, relative rectangles, split
+ratios, Tabbed membership and selection, and deliberate floats. It stores no
+window titles, document paths, runtime window IDs, or native desktop identity.
+It is separate from application configuration and does not change its schema.
+
+`SavedLayoutValidator` serves both canvas editor changes and file imports.
+It reports plain-English errors with JSON paths. `SavedLayoutDraft` retains the
+submitted bytes and replaces its last-known-good document only after successful
+validation. Unsupported versions are rejected before the body is decoded.
+These types perform no disk I/O and cannot overwrite an invalid source file.
+
+`SavedLayoutCapture` converts runtime input into a document. The planner assigns
+eligible open windows using ordered app and App Group preferences, then fills
+free panes and handles extras according to the mode. It returns a plan without
+mutating windows. The app layer owns the local files, editor and group store.
+Only Apply and Undo mutate windows through the coordinator. Capture and Update
+read the current desktop. See [SAVED_LAYOUTS.md](SAVED_LAYOUTS.md) for the
+format and assignment policy.
+
+### Display sets
+
+- **Core.** `DisplayFingerprint` (UUID, vendor, model, serial, built-in flag,
+  name, frame) and `DisplaySetMatcher` are pure. The matcher returns `.exact`,
+  `.uncertain` (serial-less same-model displays paired by left-to-right order), or
+  `.none`, plus the stored-to-live index pairs.
+- **MacOS.** `DisplayFingerprintReader` reads identity from public CoreGraphics
+  and AppKit calls (`CGDisplayCreateUUIDFromDisplayID`, vendor, model, serial,
+  built-in, mirror state, bounds, `NSScreen.localizedName`). It skips a display
+  that mirrors another. It never touches a window.
+
+`SavedLayoutPositions` owns optional `Saved Layout Positions.cache` in the library
+folder. Its non-JSON extension keeps the library listing from showing this cache.
+It contains only normalized post-commit frames keyed by file name and slot ID;
+The cache is separate from layout files and configuration schema 12. Reads are bounded to 256 KiB and validate
+version, paths, slots and geometry. Missing or invalid hints fall back to saved
+rectangles without blocking Apply. Coordinated writes prune missing files and
+evict older library entries to remain within 256 layouts and the byte bound.
+Delete removes an entry; Update retains only unchanged slot-ID/app pairs. Export does not copy the cache. File-owned candidate contexts prevent a delayed choice from writing
+another file's hints. The run's Undo checkpoint retains previous hints in memory;
+a successful Undo restores them only if its recorded hints are still current.
+Neither rollback nor failed Undo records a frame as successfully placed.
+
+Saved Layouts preview inventory revisions follow window creation, destruction,
+minimization, restoration and focus, application topology changes, and completed
+desktop stabilization and display reconfiguration. Reconciliation compares each
+eligible window's display and cached Space membership. Move/resize bursts that
+only change frames on the same display and desktop do not invalidate the preview.
+A changed display or desktop does invalidate it. The page coalesces inventory
+bursts; Apply always reads a fresh inventory.
+
+### Saved Layouts Apply and Undo
+
+Apply plans against eligible open windows on the target display's current
+desktop. A user-started Apply may reuse an unreserved preference-matching window
+from another visible display when it is outside that display's Adaptive and
+Tabbed panes. Apply does not open
+apps or request windows. The coordinator revalidates participants and owns window
+mutations. Escape cancels through the final input checkpoint, including input
+queued during frame writes. Once final validation and session commit begin,
+a later Escape does not cancel that Apply. Synchronous AX batches can occupy
+the main actor, so Apply waits for an AppKit input turn before final validation
+and session commit. At the next before-waiting phase, a one-shot main-run-loop
+observer dispatches pending application events in queue order through AppKit's
+normal monitors and responders. The batch is capped at 256 events; a one-second
+injected-clock deadline bounds the wait. Other queued commands can also run;
+final validation checks coordinator mutation generations as well as the desktop
+owner before committing the proposed session.
+Cancellation or a failed input checkpoint restores the baseline through the
+existing owner-guarded recovery path. Changed ownership still stops restoration.
+The key monitors are installed before App Group loading and inventory, and stay
+installed through this checkpoint. Undo restores the previous session and frames
+when safe. A followed
+layout keeps its pane preferences in the runtime session and gives matching new
+windows priority for empty panes. Following is not persisted.
+
+### Saved Layouts outside Settings
+
+`SavedLayoutActionStore` owns optional, bounded `Layout Actions.json` beside the
+Saved Layouts folder, keyed by library filename. `SavedLayoutActions` uses public
+Dispatch directory sources and one recursive FSEvents stream while its runtime
+catalog is active, including with Settings closed. The watch set contains at most
+two directory sources and one stream, independent of library size. Individual
+layout files hold no watch descriptors. The stream covers in-place JSON edits,
+including files whose modification dates are preserved; directory roots cover
+renames, additions, removals and folder recreation. While the configured parent
+is missing, only the surviving directory roots are watched. Creating an
+intermediate parent reattaches observation closer to the library. The stream
+starts at current events and filters unrelated sibling paths. Dropped events or
+root changes force a coalesced rescan and stream reattachment.
+File events reset a 150 ms trailing wait on the injected clock. Changed files
+that do not decode are retried every 50 ms, up to 500 ms after the last event,
+before publishing the catalog. A continuous event stream forces a check within
+one second of its first event, including incomplete writes; the next event then
+starts a new burst. Stop clears that burst deadline. An idle catalog has no
+queued wait. Duplicate notifications with unchanged metadata do not decode the
+library again. File identity and change timestamps detect replacements and
+same-size in-place edits even when modification dates are kept. Attribute-only
+changes can also trigger a decode. An ancestor event
+only scans the library if the library, parent or actions-file identity changed.
+A failed event stream leaves directory additions/removals observed and reports
+partial coverage. Reload retries the stream or a failed directory watch. No
+periodic timer or fallback poll runs. Stop, shutdown, destruction and root
+replacement release the corresponding sources, descriptors and stream context.
+A missing library folder keeps its local action settings until a readable
+directory confirms removed files.
+
+The model validates shortcut conflicts against all window actions, the wheel
+trigger and other layouts before either Settings page can commit a conflicting
+edit. The one Carbon monitor uses named IDs after the
+fixed window-action IDs; retired named IDs are not reused. Failed registrations
+are reported, and externally introduced conflicts disable both actions.
+
+Panel, wheel and shortcut dispatch resolve the file again and call the existing
+`SavedLayoutApplier.start` with an explicit display. The model's action resolver
+can require session provenance: only managed focus observation and explicit
+BetterTile actions record it through `rememberUserActionDisplay`. Reconciliation
+and initialization never grant it; disconnect clears it. Settings uses its
+existing picker rule. Its Apply session can adopt an outside run and retain Undo. All new target reads happen on events or clicks.
+
+The wheel's catalog is transient `LayoutWheelConfiguration` state excluded from
+encoding. It changes Choose Layout's child contents, retaining eight groups and
+the existing geometry/renderer/shaders. Category hover changes navigation state;
+category release commits nothing. More release opens a native chooser through a
+separate navigation callback. Hover checks cached library data and captured target/session provenance, without
+an Accessibility read; release resolves focus again and enters the existing applier.
 
 ## Security
 

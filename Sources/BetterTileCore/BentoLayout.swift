@@ -234,6 +234,31 @@ public struct BentoLayoutState: Hashable, Sendable {
         root = root.flatMap { removing(windowID, from: $0) }
     }
 
+    /// Leaves the leaf's region empty. Repeated proposals produce the same UUID.
+    @discardableResult
+    public mutating func vacate(_ windowID: WindowID) -> UUID? {
+        guard let root, root.windowIDs.contains(windowID) else { return nil }
+        let existing = Set(Self.vacancyIDs(in: root))
+        let seed = "followed-vacancy:" + windowID.rawValue
+        var id = stableUUID(seed)
+        var collision = 0
+        while existing.contains(id) {
+            collision += 1
+            id = stableUUID(seed + ":\(collision)")
+        }
+        func replace(_ node: BentoNode) -> BentoNode {
+            switch node {
+            case let .leaf(occupant): return occupant == windowID ? .vacant(id) : node
+            case .vacant: return node
+            case var .partition(partition):
+                partition.children = partition.children.map(replace)
+                return .partition(partition)
+            }
+        }
+        self.root = replace(root)
+        return id
+    }
+
     /// Puts a window into one empty slot. Returns false when the slot does
     /// not exist or the window is already in the tree.
     @discardableResult

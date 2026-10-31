@@ -119,7 +119,7 @@ import Testing
 
     enum SearchCancel: CaseIterable { case markedText, markedTextAfterQuery, query, empty, cancelButton }
 
-    @Test(arguments: [true], SearchCancel.allCases)
+    @Test(arguments: [false, true], SearchCancel.allCases)
     func escapeReachesSearchBeforePanel(addRule: Bool, state: SearchCancel) async throws {
         let parent = panelParent(), model = makeModel(system: FakeAppWindowSystem())
         let application = ApplicationChoice(bundleIdentifier: "test.alpha", name: "Alpha", url: URL(filePath: "/nonexistent/Alpha.app"))
@@ -133,8 +133,13 @@ import Testing
             return picker
         }
         let content: AnyView
-        content = AnyView(AddApplicationRuleSheet(makePicker: makePicker, model: model,
-            onDismiss: { controller.dismiss() }, onAdd: { _ in Issue.record("Escape added a rule") }))
+        if addRule {
+            content = AnyView(AddApplicationRuleSheet(makePicker: makePicker, model: model,
+                onDismiss: { controller.dismiss() }, onAdd: { _ in Issue.record("Escape added a rule") }))
+        } else {
+            content = AnyView(SavedLayoutApplicationSheet(makePicker: makePicker, title: "Add Floating Window",
+                onChoose: { _ in Issue.record("Escape chose an application") }, onCancel: { controller.dismiss() }))
+        }
         let host = NSHostingView(rootView: content)
         controller = SettingsPickerController(content: host, size: NSSize(width: 430, height: 520), appearance: .init()) { dismissals += 1 }
         controller.present(over: parent)
@@ -259,6 +264,59 @@ import Testing
 
 
 
+    @Test func floatingPickerKeepsSearchClearIMEAndReturnInTheRealPanel() async throws {
+        let parent = panelParent()
+        let application = ApplicationChoice(bundleIdentifier: "test.alpha", name: "Alpha", url: URL(filePath: "/nonexistent/Alpha.app"))
+        var readiness: ApplicationPickerReadiness?, chosen: ApplicationChoice?, dismissals = 0
+        var controller: SettingsPickerController!
+        let host = NSHostingView(rootView: SavedLayoutApplicationSheet(makePicker: { exclusions, choose in
+            var picker = ApplicationPicker(exclusions: exclusions, installedApplications: { [application] },
+                runningApplications: { [] }, recentApplications: RecentApplications(defaults: MemoryDefaults()),
+                resolveApplication: { _ in nil }, onChoose: choose)
+            picker.onPresentationChange = { readiness = $0 }
+            return picker
+        }, title: "Add Floating Window", onChoose: { chosen = $0; controller.dismiss() }, onCancel: { controller.dismiss() }))
+        controller = SettingsPickerController(content: host, size: NSSize(width: 430, height: 480), appearance: .init()) { dismissals += 1 }
+        controller.present(over: parent)
+        defer { controller.dismiss(); parent.close() }
+        try await panelReady(host) { readiness?.isLoading == false && !panelViews(host, NSSearchField.self).isEmpty }
+        let field = try #require(panelViews(host, NSSearchField.self).first)
+        for option in [(true, false), (false, true), (false, false)] {
+            controller.glass.backing.displayOptions = { option }
+            controller.glass.backing.refreshAppearance()
+            try await panelReady(host) { field.bounds.height == 28 }
+            #expect(field.currentEditor() != nil)
+        }
+        let editor = try #require(field.currentEditor() as? NSTextView)
+        #expect(controller.panel.firstResponder === editor)
+        editor.setMarkedText("あ", selectedRange: NSRange(location: 1, length: 0), replacementRange: NSRange(location: NSNotFound, length: 0))
+        try withNativeEventLoop { controller.panel.sendEvent(try panelKey(controller.panel, "\r", code: 36)) }
+        #expect(chosen == nil && controller.parent === parent)
+        editor.unmarkText()
+        editor.selectAll(nil); editor.insertText("Al", replacementRange: editor.selectedRange())
+        try await panelReady(host) { readiness?.highlight == "Results:test.alpha" && field.stringValue == "Al" }
+        let cell = try #require(field.cell as? NSSearchFieldCell)
+        let cancel = try #require(cell.cancelButtonCell), target = try #require(cancel.target)
+        #expect(NSApp.sendAction(cancel.action!, to: target, from: field))
+        try await panelReady(host) { field.stringValue.isEmpty }
+        #expect(controller.panel.firstResponder === editor)
+        // Edge and corner targets through the native glass hierarchy, including the field editor.
+        let root = controller.glass
+        let fieldParent = try #require(field.superview)
+        let visible = field.bounds.intersection(field.convert(fieldParent.bounds, from: fieldParent))
+        for point in [NSPoint(x: visible.minX + 1, y: visible.minY + 1), NSPoint(x: visible.maxX - 1, y: visible.minY + 1),
+                      NSPoint(x: visible.minX + 1, y: visible.maxY - 1), NSPoint(x: visible.maxX - 1, y: visible.maxY - 1)] {
+            let hit = root.hitTest(root.convert(field.convert(point, to: root), to: root.superview))
+            #expect(hit === field || hit === editor || hit?.isDescendant(of: field) == true,
+                    "hit \(String(describing: hit)), field \(field.frame), root \(root.frame), point \(point)")
+        }
+        editor.insertText("Alpha", replacementRange: editor.selectedRange())
+        try await panelReady(host) { readiness?.highlight == "Results:test.alpha" }
+        try withNativeEventLoop { controller.panel.sendEvent(try panelKey(controller.panel, "\r", code: 36)) }
+        try await panelReady(host) { chosen != nil && controller.parent == nil }
+        #expect(chosen?.id == application.id && dismissals == 1)
+        #expect(!parent.isVisible && !controller.panel.isVisible)
+    }
 
     @Test func addRuleKeepsBothStepsAndDefaultConfirmation() async throws {
         let parent = panelParent(), model = makeModel(system: FakeAppWindowSystem())
@@ -310,7 +368,7 @@ import Testing
     /// A real Escape dismisses from inside the key event, before SwiftUI's binding turns false. Any
     /// update of the owning page in that gap must not present the picker again. Live, closing the
     /// panel refocuses Settings, which updates the page at this moment.
-    @Test(arguments: [true])
+    @Test(arguments: [false, true])
     func pageUpdateAfterEscapeDismissDoesNotRepresentThePicker(addRule: Bool) async throws {
         let parent = panelParent()
         let state = PanelBindingState()
@@ -389,7 +447,7 @@ import Testing
     // Add only reviewed real-key or activation cases; keep all other tests in default suites and update NativeLaneMembership.
     @Suite(.enabled(if: NativeFocusTestLane.isEnabled, "Requires an unattended Mac; set BETTERTILE_NATIVE_FOCUS_TESTS=1"), .nativeFocus)
     @MainActor struct NativeFocus {
-        @Test(arguments: [true])
+        @Test(arguments: [false, true])
         func liveSecondEscapeClosesAfterClearingQuery(addRule: Bool) async throws {
             let harness = LivePanelHarness(addRule: addRule)
             defer { harness.close() }
@@ -459,7 +517,7 @@ import Testing
             #expect(dismissals == 1)
         }
 
-        @Test(arguments: [true])
+        @Test(arguments: [false, true])
         func liveReopenedPanelAcceptsTypedKeys(addRule: Bool) async throws {
             let harness = LivePanelHarness(addRule: addRule)
             defer { harness.close() }
@@ -537,7 +595,25 @@ import Testing
             #expect(harness.controller.parent == nil)
         }
 
-
+        @Test func livePlaceholderRefreshesWithEffectiveAppearance() async throws {
+            let harness = LivePanelHarness(addRule: false)
+            defer { harness.close() }
+            try await harness.open()
+            let field = try #require(panelViews(harness.host, NSSearchField.self).first)
+            for dark in [true, false, true] {
+                harness.controller.panel.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+                harness.host.layoutSubtreeIfNeeded()
+                let attributed = try #require(field.placeholderAttributedString)
+                let color = try #require(attributed.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor)
+                var actual: NSColor!, expected: NSColor!
+                field.effectiveAppearance.performAsCurrentDrawingAppearance {
+                    actual = color.usingColorSpace(.sRGB)
+                    expected = PickerText.searchPlaceholderColor(in: harness.controller.panel.effectiveAppearance)
+                }
+                #expect(actual == expected, "placeholder failed to refresh for \(dark ? "Dark" : "Light")")
+                #expect(actual.redComponent == (dark ? 1 : 0))
+            }
+        }
     }
 }
 
@@ -549,13 +625,17 @@ import Testing
 
 private struct PanelBindingPage: View {
     @Bindable var state: PanelBindingState
-    var addRule = true
+    var addRule = false
     var model: BetterTileModel?
     var body: some View {
         // The page reads `tick`, so changing it updates the page and its panel anchor.
         Color.clear.overlay { Text("\(state.tick)").opacity(0) }
             .settingsPickerPanel(isPresented: $state.presented, size: NSSize(width: 430, height: 480), appearance: .init()) { dismiss in
-                AddApplicationRuleSheet(model: model ?? makeModel(system: FakeAppWindowSystem()), onDismiss: dismiss) { _ in }
+                if addRule {
+                    AddApplicationRuleSheet(model: model ?? makeModel(system: FakeAppWindowSystem()), onDismiss: dismiss) { _ in }
+                } else {
+                    SavedLayoutApplicationSheet(title: "Add Floating Window", onChoose: { _ in dismiss() }, onCancel: dismiss)
+                }
             }
     }
 }
@@ -591,8 +671,13 @@ private struct PanelBindingPage: View {
         }
         let dismiss = { [weak self] in self?.controller.dismiss() }
         let content: AnyView
-        content = AnyView(AddApplicationRuleSheet(makePicker: makePicker, model: model,
-            onDismiss: { dismiss() }, onAdd: { [weak self] in self?.selected = $0 }))
+        if addRule {
+            content = AnyView(AddApplicationRuleSheet(makePicker: makePicker, model: model,
+                onDismiss: { dismiss() }, onAdd: { [weak self] in self?.selected = $0 }))
+        } else {
+            content = AnyView(SavedLayoutApplicationSheet(makePicker: makePicker, title: "Add Floating Window",
+                onChoose: { [weak self] in self?.selected = $0.id; dismiss() }, onCancel: { dismiss() }))
+        }
         if !reusingContent { host = NSHostingView(rootView: content) }
         let panel = OffscreenPickerPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         controller = SettingsPickerController(content: host, size: NSSize(width: 430, height: 520), appearance: .init(), panel: panel) { [weak self] in
@@ -642,7 +727,6 @@ private struct PanelBindingPage: View {
         return handled
     }
 }
-
 
 @MainActor private final class OffscreenPaneChooserPanel: TabbedChooserPanel {
     override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect { frameRect }

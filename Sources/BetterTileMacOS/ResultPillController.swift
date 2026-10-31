@@ -2,9 +2,26 @@ import AppKit
 import BetterTileCore
 import os
 
+/// A button on a Result pill. The pill hides after the button runs.
+public struct ResultPillAction: Equatable, Sendable {
+    public let title: String
+    public let accessibilityLabel: String
+    public let handler: @MainActor @Sendable () -> Void
+
+    public init(title: String, accessibilityLabel: String, handler: @escaping @MainActor @Sendable () -> Void) {
+        self.title = title; self.accessibilityLabel = accessibilityLabel; self.handler = handler
+    }
+
+    public static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.title == rhs.title && lhs.accessibilityLabel == rhs.accessibilityLabel
+    }
+}
+
 public struct ResultPillFeedback: Equatable, Sendable {
     public enum Kind: Equatable, Sendable {
         case success
+        /// Finished, with something the user should read.
+        case warning
         case failure
     }
 
@@ -15,13 +32,24 @@ public struct ResultPillFeedback: Equatable, Sendable {
     public let detail: String?
     public let symbolName: String
     public let dismissDelay: TimeInterval
+    /// Buttons under the text. A pill with buttons accepts the pointer and stays while it is over it.
+    public let actions: [ResultPillAction]
 
-    init(kind: Kind, message: String, detail: String? = nil, symbolName: String, dismissDelay: TimeInterval) {
+    init(kind: Kind, message: String, detail: String? = nil, symbolName: String, dismissDelay: TimeInterval,
+         actions: [ResultPillAction] = []) {
         self.kind = kind
         self.message = message
         self.detail = detail
         self.symbolName = symbolName
         self.dismissDelay = dismissDelay
+        self.actions = actions
+    }
+
+    /// The outcome of a Saved Layout Apply or Undo, with Undo and Details buttons when given.
+    public static func layoutResult(title: String, detail: String?, kind: Kind, actions: [ResultPillAction]) -> Self {
+        Self(kind: kind, message: title, detail: detail,
+             symbolName: kind == .success ? "checkmark" : kind == .warning ? "exclamationmark" : "xmark",
+             dismissDelay: actions.isEmpty ? 3 : 8, actions: actions)
     }
 
     public static func success(_ message: String = "Layout applied") -> Self {
@@ -86,6 +114,9 @@ public struct ResultPillFeedback: Equatable, Sendable {
 public enum ResultPillLayout {
     static let maximumDetailWidth: Double = 520
     static let minimumDetailWidth: Double = 240
+    /// The height of the button row, with its spacing.
+    static let actionRowHeight: Double = 30
+    static let minimumActionWidth: Double = 300
     /// Horizontal space beside the detail label: insets, icon, and spacing.
     static let detailChrome: Double = 55
     /// The label draws its text 2 pt inside each side.
@@ -164,8 +195,8 @@ public enum ResultPillLayout {
     }
 
     public static func frame(for feedback: ResultPillFeedback, on display: DisplaySnapshot) -> BTRect {
-        let width: Double
-        let height: Double
+        var width: Double
+        var height: Double
         if let detail = feedback.detail {
             let spare = detailChrome + labelTextInset + measurementMargin
             // The pill is wide enough for its one-line title as well.
@@ -179,6 +210,7 @@ public enum ResultPillLayout {
             width = min(240, max(172, estimatedWidth))
             height = 40
         }
+        if !feedback.actions.isEmpty { width = max(width, minimumActionWidth); height += actionRowHeight }
         return BTRect(
             x: display.visibleFrame.midX - width / 2,
             y: display.visibleFrame.minY + 24,
@@ -204,8 +236,12 @@ public final class ResultPillController {
     private let icon = NSImageView()
     private let label = NSTextField(labelWithString: "")
     private let detailLabel = NSTextField(labelWithString: "")
+    private let actionRow = NSStackView()
+    private let hover = HoverTracker()
+    private var actionHandlers: [ObjectIdentifier: ResultPillAction] = [:]
     private var dismissalTask: Task<Void, Never>?
     private var presentationID = UUID()
+    private var hoveredPresentation: UUID?
 
     public convenience init() {
         self.init(panel: NSPanel(
@@ -226,6 +262,16 @@ public final class ResultPillController {
         panel.ignoresMouseEvents = true
         panel.collectionBehavior = [.moveToActiveSpace, .transient, .ignoresCycle, .fullScreenAuxiliary]
         panel.contentView = makeContentView()
+        hover.onEnter = { [weak self] in
+            guard let self else { return }
+            self.hoveredPresentation = self.presentationID
+            self.dismissalTask?.cancel()
+        }
+        // An exit from a pill that was replaced or hidden must not time out the newer one.
+        hover.onExit = { [weak self] in
+            guard let self, self.hoveredPresentation == self.presentationID else { return }
+            self.scheduleDismissal(after: 1.5)
+        }
     }
 
     public func show(_ feedback: ResultPillFeedback, on display: DisplaySnapshot) {
@@ -242,7 +288,8 @@ public final class ResultPillController {
             systemSymbolName: "\(feedback.symbolName).circle.fill",
             accessibilityDescription: feedback.message
         )
-        icon.contentTintColor = feedback.kind == .success ? .systemGreen : .systemRed
+        icon.contentTintColor = feedback.kind == .success ? .systemGreen : feedback.kind == .warning ? .systemOrange : .systemRed
+        showActions(feedback.actions)
 
         let frame = ResultPillLayout.frame(for: feedback, on: display)
         detailLabel.preferredMaxLayoutWidth = max(0, frame.size.width - ResultPillLayout.detailChrome)
@@ -260,8 +307,36 @@ public final class ResultPillController {
             }
         }
 
+        scheduleDismissal(after: feedback.dismissDelay)
+    }
+
+    private func showActions(_ actions: [ResultPillAction]) {
+        actionRow.arrangedSubviews.forEach { actionRow.removeArrangedSubview($0); $0.removeFromSuperview() }
+        actionHandlers = [:]
+        actionRow.isHidden = actions.isEmpty
+        // Without buttons the pill ignores the pointer, as before.
+        panel.ignoresMouseEvents = actions.isEmpty
+        for action in actions {
+            let button = ResultPillButton(title: action.title, target: self, action: #selector(performAction(_:)))
+            button.controlSize = .small
+            button.bezelStyle = .rounded
+            button.setAccessibilityLabel(action.accessibilityLabel)
+            actionHandlers[ObjectIdentifier(button)] = action
+            actionRow.addArrangedSubview(button)
+        }
+    }
+
+    @objc private func performAction(_ sender: NSButton) {
+        let action = actionHandlers[ObjectIdentifier(sender)]
+        hide()
+        action?.handler()
+    }
+
+    /// An action pill stays while the pointer is over it; `HoverTracker` restarts the delay on exit.
+    private func scheduleDismissal(after delay: TimeInterval) {
+        dismissalTask?.cancel()
         dismissalTask = Task { @MainActor [clock, weak self] in
-            try? await clock.sleep(for: .seconds(feedback.dismissDelay))
+            try? await clock.sleep(for: .seconds(delay))
             guard let self, !Task.isCancelled else { return }
             if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
                 self.panel.orderOut(nil)
@@ -308,7 +383,7 @@ public final class ResultPillController {
     }
 
     private func makeContentView() -> NSView {
-        let effect = OverlayGlassView()
+        let effect = ResultPillContentView()
         effect.cornerRadius = 20
         effect.overlayAppearance = overlayAppearance
 
@@ -324,7 +399,10 @@ public final class ResultPillController {
         stack.edgeInsets = NSEdgeInsets(top: 8, left: 13, bottom: 8, right: 15)
         Self.configureDetailLabel(detailLabel)
         detailLabel.isHidden = true
-        let text = NSStackView(views: [label, detailLabel])
+        actionRow.orientation = .horizontal
+        actionRow.spacing = 8
+        actionRow.isHidden = true
+        let text = NSStackView(views: [label, detailLabel, actionRow])
         text.orientation = .vertical
         text.alignment = .leading
         text.spacing = 1
@@ -340,6 +418,34 @@ public final class ResultPillController {
             icon.widthAnchor.constraint(equalToConstant: 19),
             icon.heightAnchor.constraint(equalToConstant: 19),
         ])
+        effect.buttonRow = actionRow
+        effect.addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+                                              owner: hover, userInfo: nil))
         return effect
     }
+}
+
+/// `OverlayGlassView` returns nil from `hitTest` so overlays never take clicks. The pill must let
+/// its buttons through, or a pointer click never reaches them.
+final class ResultPillContentView: OverlayGlassView {
+    weak var buttonRow: NSView?
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        guard let buttonRow, !buttonRow.isHidden, let container = buttonRow.superview else { return nil }
+        // `hitTest` takes a point in the receiver's superview, so convert into the row's container.
+        let hit = buttonRow.hitTest(container.convert(point, from: superview))
+        return hit is NSButton ? hit : nil
+    }
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+}
+
+/// The pill's panel is never key, so the first click must act, not just activate.
+final class ResultPillButton: NSButton {
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+}
+
+private final class HoverTracker: NSResponder {
+    var onEnter: (() -> Void)?
+    var onExit: (() -> Void)?
+    override func mouseEntered(with event: NSEvent) { onEnter?() }
+    override func mouseExited(with event: NSEvent) { onExit?() }
 }

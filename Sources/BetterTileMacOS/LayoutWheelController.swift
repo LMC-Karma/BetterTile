@@ -120,6 +120,13 @@ public final class LayoutWheelController {
 
     /// Returns the window and display to act on, or nil when nothing is
     /// eligible. Called once, when the hold succeeds.
+    public var savedLayouts: [LayoutWheelSavedLayout] = [] {
+        didSet { if savedLayouts != oldValue { cancel(reason: .configurationChanged) } }
+    }
+    /// Navigation is dispatched separately: releasing a category or More never applies a layout.
+    public var savedLayoutNavigationHandler: ((LayoutWheelCommand, LayoutWheelTarget) -> Void)?
+    private var browsingSavedLayouts = false
+    private var savedNavigationOrigin: BTPoint?
     /// Receives the top-left point the wheel opens at: the pointer when the
     /// hold ends, or the middle-click position.
     public var captureHandler: ((_ pointer: BTPoint) -> LayoutWheelTarget?)?
@@ -352,7 +359,12 @@ public final class LayoutWheelController {
         syncMonitoring()
     }
 
-    private var wheel: LayoutWheelConfiguration { configuration.layoutWheel }
+    private var wheel: LayoutWheelConfiguration {
+        var wheel = configuration.layoutWheel
+        wheel.savedLayouts = savedLayouts
+        wheel.browsingSavedLayouts = browsingSavedLayouts
+        return wheel
+    }
     private var cachedLiquidContent: LayoutWheelLiquidContent?
 
     private var effectiveMetrics: LayoutWheelMetrics {
@@ -952,7 +964,22 @@ public final class LayoutWheelController {
             let previous = session.fan
             let vector = BTPoint(x: position.x - session.placement.center.x, y: position.y - session.placement.center.y)
             session.pointerVector = vector
+            let hubRadius = presenter.usesLiquidGeometry ? liquidContent.wheelGeometry.hubRadius
+                : effectiveMetrics.geometry.hubRadius
+            if browsingSavedLayouts, hypot(vector.x, vector.y) <= hubRadius {
+                browsingSavedLayouts = false; savedNavigationOrigin = nil; session.fan.cancel()
+            }
+            if let origin = savedNavigationOrigin,
+               hypot(vector.x - origin.x, vector.y - origin.y) <= 5 {
+                phase = .open(session); return
+            }
+            savedNavigationOrigin = nil
             updateFan(&session.fan, vector: vector, layoutAvailable: session.target.layoutMode == .tabbed)
+            if session.fan.command == .savedLayouts {
+                browsingSavedLayouts = true
+                savedNavigationOrigin = vector
+                session.fan.openCatalog(configuration: wheel)
+            }
             session.selection = session.fan.selection
             phase = .open(session)
             if previous.deadline != session.fan.deadline { scheduleFanDeadline() }
@@ -1017,6 +1044,12 @@ public final class LayoutWheelController {
             if session.trigger != .middleClick { release() }
         default:
             if wheel.style == .grouped {
+                if key == .outerRing, session.fan.command == .savedLayouts {
+                    browsingSavedLayouts = true
+                    session.fan.openCatalog(configuration: wheel)
+                    session.pointerVector = nil
+                    phase = .open(session); refreshPreview(); return
+                }
                 fanTask?.cancel()
                 session.pointerVector = nil
                 session.fan.handleKey(key, layoutAvailable: session.target.layoutMode == .tabbed, configuration: wheel)
@@ -1120,8 +1153,13 @@ public final class LayoutWheelController {
             + "samples=\(session.pointerSamples) lastSampleAge=\(String(format: "%.0f", sampleAge)) ms "
             + "sinceOpen=\(String(format: "%.0f", (now() - session.openedAt) * 1000)) ms")
         finish(command == nil ? .cancel : .commit)
+        browsingSavedLayouts = false; savedNavigationOrigin = nil
         guard let command
         else { return }
+        if command == .savedLayouts || command == .moreSavedLayouts || command == .moreLayoutChoices {
+            savedLayoutNavigationHandler?(command, session.target)
+            return
+        }
         if let reason = session.unavailableReasons[command] {
             unavailableHandler?(reason, session.target)
         } else {
@@ -1170,6 +1208,7 @@ public final class LayoutWheelController {
             endedWithKeyboard = false
         }
         phase = .idle
+        browsingSavedLayouts = false; savedNavigationOrigin = nil
         activationTask?.cancel()
         activationTask = nil
         if endedWithKeyboard {

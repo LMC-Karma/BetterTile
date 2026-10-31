@@ -682,3 +682,39 @@ func aTemporarilyMissingBentoPeerDoesNotMaximizeTheRemainingWindow(knownMember: 
     }
     #expect(restored.allSatisfy { $0.frame.maxY == ambientBounds.maxY })
 }
+
+@Test func savedLayoutFlowAmbientSweepKeepsSavedGapUntilExplicitRelayout() {
+    let windows = [ambientLeft, ambientRight]
+    var state = horizontalPaneState(windows)
+    state.metrics.paneGap = 8
+    var session = LayoutSession(displayID: ambientDisplayID, mode: .bento, bentoState: state,
+        windowIDs: Set(windows.map(\.id)), bentoInsertionOrder: windows.map(\.id),
+        hasAppliedSingleWindowPlacement: true)
+    session.savedLayoutPaneGap = 8
+    var observation = ambientObservation(windows: windows)
+    let ordinary = ambientReconciler().transition(session: session, observation: observation)
+    #expect(ordinary.session.bentoState.metrics.paneGap == 8)
+    observation.requestsRelayout = true
+    let explicit = ambientReconciler().transition(session: session, observation: observation)
+    #expect(explicit.session.bentoState.metrics.paneGap == 0)
+    #expect(explicit.session.savedLayoutPaneGap == nil)
+    session.prepareForRepair()
+    #expect(session.savedLayoutPaneGap == nil)
+    observation.requestsRelayout = false
+    let ordinarySession = ambientReconciler().transition(session: session, observation: observation)
+    #expect(ordinarySession.session.bentoState.metrics.paneGap == 0)
+}
+
+@Test func savedLayoutInitializationUsesSavedGap() {
+    let windows = [ambientLeft, ambientRight]
+    var session = LayoutSession(displayID: ambientDisplayID, mode: .bento,
+        windowIDs: [ambientLeft.id], hasAppliedSingleWindowPlacement: true)
+    session.savedLayoutPaneGap = 8
+    var observation = ambientObservation(windows: windows)
+    observation.previousWindowIDs = [ambientLeft.id]
+    let transition = ambientReconciler().transition(session: session, observation: observation)
+    #expect(transition.session.bentoState.metrics.paneGap == 8)
+    #expect(transition.session.paneGap(configured: 0) == 8)
+    session.savedLayoutPaneGap = nil
+    #expect(session.paneGap(configured: 4) == 4)
+}

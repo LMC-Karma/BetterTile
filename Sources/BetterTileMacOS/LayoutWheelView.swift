@@ -193,6 +193,12 @@ public struct LayoutWheelSlot: Equatable, Sendable {
         case let .chooseLayout(preset):
             self.init(label: preset.title, symbolName: "rectangle.split.2x2", glyph: .layout(preset),
                       isEmpty: false, isAvailable: isAvailable)
+        case .savedLayouts:
+            self.init(label: "Saved Layouts", symbolName: "rectangle.stack", isEmpty: false, isAvailable: isAvailable)
+        case let .savedLayout(_, name):
+            self.init(label: name, symbolName: "rectangle.split.2x2", isEmpty: false, isAvailable: isAvailable)
+        case .moreSavedLayouts, .moreLayoutChoices:
+            self.init(label: "More…", symbolName: "ellipsis", isEmpty: false, isAvailable: isAvailable)
         case .repairBento:
             self.init(
                 label: "Repair Layout",

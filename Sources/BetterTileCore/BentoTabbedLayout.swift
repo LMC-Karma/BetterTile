@@ -504,12 +504,13 @@ public struct TabbedLayoutState: Hashable, Sendable {
         windowIDs observed: [WindowID],
         removed: Set<WindowID>,
         fittingIn bounds: BTRect,
-        windows: [WindowSnapshot]
+        windows: [WindowSnapshot],
+        followed: FollowedLayout? = nil
     ) -> [TabbedAdoption] {
         for id in removed { removeClosedWindow(id) }
         let known = windowIDs.union(floatingWindowIDs)
         return Array(Set(observed).subtracting(known)).sorted().map {
-            adopt($0, fittingIn: bounds, windows: windows)
+            adopt($0, fittingIn: bounds, windows: windows, followed: followed)
         }
     }
 
@@ -529,13 +530,14 @@ public struct TabbedLayoutState: Hashable, Sendable {
         fittingIn bounds: BTRect,
         windows: [WindowSnapshot],
         selecting: Bool = false,
-        keeping focused: WindowID? = nil
+        keeping focused: WindowID? = nil,
+        followed: FollowedLayout? = nil
     ) -> [TabbedAdoption] {
         let present = Set(windows.map(\.id))
         return ids.intersection(automaticallyFloatingWindowIDs).intersection(present).sorted().map { id in
             groups.forgetFloating(id)
             automaticFloats.remove(id)
-            return adopt(id, fittingIn: bounds, windows: windows, selecting: selecting, keeping: focused)
+            return adopt(id, fittingIn: bounds, windows: windows, selecting: selecting, keeping: focused, followed: followed)
         }
     }
 
@@ -553,7 +555,7 @@ public struct TabbedLayoutState: Hashable, Sendable {
 
     private mutating func adopt(
         _ id: WindowID, fittingIn bounds: BTRect, windows: [WindowSnapshot], selecting: Bool = false,
-        keeping focused: WindowID? = nil
+        keeping focused: WindowID? = nil, followed: FollowedLayout? = nil
     ) -> TabbedAdoption {
         let window = windows.first { $0.id == id }
         func showsFocus(_ paneID: UUID) -> Bool {
@@ -572,7 +574,17 @@ public struct TabbedLayoutState: Hashable, Sendable {
             }
             return (nil, .doesNotFit)
         }
-
+        if let paneID = followed?.preferredPane(for: window?.bundleIdentifier, in: self) {
+            var preferred = self
+            if preferred.groups.add(id, to: paneID) {
+                let (shown, result) = attempt(preferred)
+                trials.append(trial(paneID, result))
+                if let shown {
+                    self = shown
+                    return TabbedAdoption(windowID: id, outcome: .selected(paneID), trials: trials)
+                }
+            }
+        }
         // The active pane is the user's choice for new windows: keep it when
         // the window fits there as is, or after boundaries adapt.
         var active = self

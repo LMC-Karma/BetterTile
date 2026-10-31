@@ -162,7 +162,33 @@ import Testing
         }
     }
 
-
+    @Test func savedLayoutShapeMenuRowsUseTemplateIcons() throws {
+        // A SwiftUI Menu opens only on a click, so this renders the rows with the same label and image.
+        struct Rows: View {
+            var body: some View {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(TabbedPreset.allCases, id: \.self) { preset in
+                        Label {
+                            Text(preset.title)
+                        } icon: {
+                            LayoutGlyph.layout(preset).templateSwiftUIImage(canvasSize: CGFloat(LayoutGlyph.canvasSize(besideSymbolSize: 14)))
+                        }
+                    }
+                }
+                .padding(14)
+            }
+        }
+        for preset in TabbedPreset.allCases {
+            let image = LayoutGlyph.layout(preset).templateImage(canvasSize: CGFloat(LayoutGlyph.canvasSize(besideSymbolSize: 14)))
+            #expect(image.isTemplate)
+            #expect(abs(image.size.width - 17.71) < 0.001)
+        }
+        for dark in Self.themes {
+            let host = try SettingsSnapshotHost(Rows(), dark: dark, width: 180, height: 200)
+            defer { host.close() }
+            try write(host.render(), "glyph-shape-menu-rows", dark: dark)
+        }
+    }
 }
 
 private extension NSView {
@@ -174,7 +200,74 @@ private extension NSView {
 }
 
 @MainActor @Suite(.appTestApplication, .serialized, .settingsUI) struct LayoutGlyphRenderingTests {
+    @Test func shapeMenuItemsCarryTemplateImages() throws {
+        _ = NSApplication.shared
+        var chosen: [TabbedPreset] = []
+        let items = SavedLayoutSettings.shapeMenuItems { chosen.append($0) }
+        let anchor = AnchoredMenu()
+        let menu = anchor.makeMenu(items)
+        defer { withExtendedLifetime(anchor) {} }
+        #expect(menu.items.count == TabbedPreset.allCases.count)
+        for (item, preset) in zip(menu.items, TabbedPreset.allCases) {
+            let image = try #require(item.image, "\(item.title) has no image")
+            #expect(image.isTemplate)
+            #expect(abs(image.size.width - 17.71) < 0.001)
+            #expect(item.isEnabled)
+            #expect(image === LayoutGlyph.layout(preset).templateImage(canvasSize: CGFloat(LayoutGlyph.canvasSize(besideSymbolSize: 14))))
+        }
+        #expect(menu.items.map(\.title) == ["Single Pane", "2 Columns", "2 Rows", "Main + 2", "2×2 Grid"])
+        let focus = menu.items[3]
+        #expect(NSApp.sendAction(try #require(focus.action), to: focus.target, from: focus))
+        #expect(chosen == [.focus])
+    }
 
+    /// A page that owns its anchor in `@State` and whose menu closures capture the page, as Saved Layouts does.
+    private final class Weak<T: AnyObject> { weak var value: T? }
+    private final class PageBox { var open: (() -> Void)?; var sealed = false }
+
+    private struct Page: View {
+        let editor: SavedLayoutEditor
+        let box: PageBox
+        let weakAnchor: Weak<AnchoredMenu>
+        @State private var anchor = AnchoredMenu { _, _, _ in }
+
+        var body: some View {
+            weakAnchor.value = anchor
+            if !box.sealed { box.open = { open() } }
+            return Color.clear.frame(width: 40, height: 20).background { AnchoredMenuView(anchor: anchor) }
+        }
+
+        func open() {
+            // The same call the page's button makes. The closure captures this view, and the view owns the anchor.
+            anchor.show(SavedLayoutSettings.shapeMenuItems(current: "2 Columns") { _ in _ = editor })
+        }
+    }
+
+    @Test(arguments: [false, true]) func showingTheShapeMenuDoesNotKeepThePageAlive(show: Bool) throws {
+        _ = NSApplication.shared
+        let weakAnchor = Weak<AnchoredMenu>()
+        weak var weakEditor: SavedLayoutEditor?
+        try autoreleasepool {
+            let editor = SavedLayoutEditor(files: .init(directory: FileManager.default.temporaryDirectory))
+            weakEditor = editor
+            let box = PageBox()
+            let host = try SettingsSnapshotHost(Page(editor: editor, box: box, weakAnchor: weakAnchor), dark: false, width: 80, height: 40, fitHeight: false)
+            host.settle()
+            let open = try #require(box.open)
+            if show {
+                open()
+                open() // Showing twice must not stack closures either.
+            }
+            box.sealed = true
+            box.open = nil
+            host.window.contentView = nil
+            host.close()
+        }
+        // SwiftUI releases its view graph on the next run loop turns.
+        turnNativeRunLoop(20, each: 0.02) { weakAnchor.value != nil || weakEditor != nil }
+        #expect(weakAnchor.value == nil, "The anchor outlived its page")
+        #expect(weakEditor == nil, "The page state outlived its page")
+    }
 
     /// Renders a Window mode choice in a column of the given width, with room on both sides. Badges that
     /// clip or overflow would leave ink in that room.

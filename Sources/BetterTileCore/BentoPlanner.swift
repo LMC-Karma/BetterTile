@@ -140,7 +140,8 @@ public struct BentoPlanner: Sendable {
     public func plan(
         state: BentoRuntimeState,
         observation: BentoObservation,
-        intent: BentoPlannerIntent
+        intent: BentoPlannerIntent,
+        followed: FollowedLayout? = nil
     ) -> BentoPlannerResult {
         switch intent {
         case .activate:
@@ -148,11 +149,24 @@ public struct BentoPlanner: Sendable {
         case .retile:
             return retile(state: state, observation: observation)
         case let .insert(windowID):
+            if let preferred = followedInsertion(windowID, state: state, observation: observation, followed: followed) {
+                return preferred
+            }
             let result = insert(windowID, state: state, observation: observation)
             return balancesNewWindows ? balanced(result, inserting: windowID, observation: observation) : result
         case let .remove(windowID, minimized):
             return remove(windowID, minimized: minimized, state: state, observation: observation)
         case let .restore(windowID):
+            if followed != nil {
+                // A snapshot can resurrect departed occupants. Following restores
+                // through the same vacancy-first policy as a new arrival.
+                var result = plan(state: state, observation: observation, intent: .insert(windowID), followed: followed)
+                if result.state.layout.root?.windowIDs.contains(windowID) == true {
+                    result.state.reinsertionAnchors.removeValue(forKey: windowID)
+                }
+                result.restoreWindowIDs.insert(windowID)
+                return result
+            }
             return restore(windowID, state: state, observation: observation)
         }
     }
@@ -429,6 +443,22 @@ public struct BentoPlanner: Sendable {
         return frames.values.dropFirst().contains {
             abs($0.midX - first.midX) > 6 || abs($0.midY - first.midY) > 6
         }
+    }
+
+    private func followedInsertion(
+        _ windowID: WindowID, state: BentoRuntimeState, observation: BentoObservation,
+        followed: FollowedLayout?
+    ) -> BentoPlannerResult? {
+        guard let window = observation.windows[windowID], window.isEligible,
+              (state.layout.root?.windowIDs.count ?? 0) < maximumManagedWindows,
+              let vacancy = followed?.preferredVacancy(for: windowID, bundleID: window.bundleIdentifier, in: state.layout)
+        else { return nil }
+        var next = state
+        guard next.layout.fillVacancy(vacancy, with: windowID),
+              let fitted = BentoConstraintSolver().solve(state: next.layout, in: observation.bounds, constraints: observation.constraints)
+        else { return nil }
+        next.layout = fitted
+        return BentoPlannerResult(state: next, placements: fitted.placements(in: observation.bounds), pill: .success("Pane added"))
     }
 
     private func insert(

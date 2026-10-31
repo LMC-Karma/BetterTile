@@ -47,7 +47,7 @@ public struct LayoutWheelGroupContents: Codable, Hashable, Sendable {
 private extension Optional where Wrapped == LayoutWheelCommand {
     var withoutCustomZone: Self {
         switch self {
-        case .customZone: return nil
+        case .customZone, .savedLayouts, .savedLayout, .moreSavedLayouts, .moreLayoutChoices: return nil
         default: break
         }
         return self

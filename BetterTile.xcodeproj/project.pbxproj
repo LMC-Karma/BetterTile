@@ -7,7 +7,31 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		B3A000000000000000000021 /* SavedLayoutPreferences.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A000000000000000000022 /* SavedLayoutPreferences.swift */; };
+		B3A000000000000000000011 /* SavedLayoutTransfer.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A000000000000000000012 /* SavedLayoutTransfer.swift */; };
+		B3B000000000000000000001 /* AppGroupsSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3B000000000000000000002 /* AppGroupsSection.swift */; };
+		B2A000000000000000000021 /* AppGroupResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2A000000000000000000022 /* AppGroupResolver.swift */; };
+		B2A000000000000000000011 /* AppGroupsStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2A000000000000000000012 /* AppGroupsStore.swift */; };
+		C62610000000000000000003 /* SavedLayoutAnywhereViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = C62610000000000000000004 /* SavedLayoutAnywhereViews.swift */; };
+		C62610000000000000000001 /* SavedLayoutActions.swift in Sources */ = {isa = PBXBuildFile; fileRef = C62610000000000000000002 /* SavedLayoutActions.swift */; };
+		F52900000000000000000001 /* SavedLayoutFileWatcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = F52900000000000000000002 /* SavedLayoutFileWatcher.swift */; };
+		E7B9BA700000000000000003 /* SavedLayoutPositions.swift in Sources */ = {isa = PBXBuildFile; fileRef = E7B9BA700000000000000004 /* SavedLayoutPositions.swift */; };
+		E7B9BA700000000000000001 /* SavedLayoutPagePlan.swift in Sources */ = {isa = PBXBuildFile; fileRef = E7B9BA700000000000000002 /* SavedLayoutPagePlan.swift */; };
 		A2F000000000000000000001 /* ShortcutsSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2F000000000000000000002 /* ShortcutsSettings.swift */; };
+		B10000000000000000000001 /* SavedLayoutNewLayoutSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000001 /* SavedLayoutNewLayoutSheet.swift */; };
+		C02410240000000000000002 /* LayoutWheelFeelSlider.swift in Sources */ = {isa = PBXBuildFile; fileRef = C02410240000000000000012 /* LayoutWheelFeelSlider.swift */; };
+		C02410240000000000000001 /* LayoutWheelFineTuningSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = C02410240000000000000011 /* LayoutWheelFineTuningSheet.swift */; };
+		C02410240000000000000000 /* LayoutWheelAppearanceControls.swift in Sources */ = {isa = PBXBuildFile; fileRef = C02410240000000000000010 /* LayoutWheelAppearanceControls.swift */; };
+        A10000000000000000000101 /* SavedLayoutPagePreview.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000101 /* SavedLayoutPagePreview.swift */; };
+		B2A100000000000000000031 /* SavedLayoutApplyQuickCapture.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2A100000000000000000032 /* SavedLayoutApplyQuickCapture.swift */; };
+		B2A100000000000000000021 /* SavedLayoutWindowChoiceList.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2A100000000000000000022 /* SavedLayoutWindowChoiceList.swift */; };
+		B2A100000000000000000011 /* SavedLayoutApplySession.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2A100000000000000000012 /* SavedLayoutApplySession.swift */; };
+		1000000000000000000000027 /* SavedLayoutApplyViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2000000000000000000000027 /* SavedLayoutApplyViews.swift */; };
+		1000000000000000000000026 /* SavedLayoutApplier.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2000000000000000000000026 /* SavedLayoutApplier.swift */; };
+		100000000000000000000025 /* SavedLayoutSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000025 /* SavedLayoutSettings.swift */; };
+		100000000000000000000024 /* SavedLayoutEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000024 /* SavedLayoutEditor.swift */; };
+		1000000000000000000000F1 /* SavedLayoutCanvasView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2000000000000000000000F1 /* SavedLayoutCanvasView.swift */; };
+		100000000000000000000023 /* SavedLayoutFiles.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000023 /* SavedLayoutFiles.swift */; };
 		100000000000000000000001 /* BetterTileApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000001 /* BetterTileApp.swift */; };
 		100000000000000000000002 /* BetterTileModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000002 /* BetterTileModel.swift */; };
 		100000000000000000000003 /* SettingsShell.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000003 /* SettingsShell.swift */; };
@@ -38,13 +62,34 @@
 		A781BC3E2AA94961B461D101 /* PaneApplicationPicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = A781BC3E2AA94961B461D102 /* PaneApplicationPicker.swift */; };
 		BB7100000000000000000001 /* LayoutWheelEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB7200000000000000000001 /* LayoutWheelEditor.swift */; };
 		BB7100000000000000000002 /* LayoutWheelSettingsPreview.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB7200000000000000000002 /* LayoutWheelSettingsPreview.swift */; };
-		C02410240000000000000000 /* LayoutWheelAppearanceControls.swift in Sources */ = {isa = PBXBuildFile; fileRef = C02410240000000000000010 /* LayoutWheelAppearanceControls.swift */; };
-		C02410240000000000000001 /* LayoutWheelFineTuningSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = C02410240000000000000011 /* LayoutWheelFineTuningSheet.swift */; };
-		C02410240000000000000002 /* LayoutWheelFeelSlider.swift in Sources */ = {isa = PBXBuildFile; fileRef = C02410240000000000000012 /* LayoutWheelFeelSlider.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		B3A000000000000000000022 /* SavedLayoutPreferences.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SavedLayoutPreferences.swift; sourceTree = "<group>"; };
+		B3A000000000000000000012 /* SavedLayoutTransfer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SavedLayoutTransfer.swift; sourceTree = "<group>"; };
+		B3B000000000000000000002 /* AppGroupsSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppGroupsSection.swift; sourceTree = "<group>"; };
+		B2A000000000000000000022 /* AppGroupResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppGroupResolver.swift; sourceTree = "<group>"; };
+		B2A000000000000000000012 /* AppGroupsStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppGroupsStore.swift; sourceTree = "<group>"; };
+		C62610000000000000000004 /* SavedLayoutAnywhereViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SavedLayoutAnywhereViews.swift; sourceTree = "<group>"; };
+		C62610000000000000000002 /* SavedLayoutActions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SavedLayoutActions.swift; sourceTree = "<group>"; };
+		F52900000000000000000002 /* SavedLayoutFileWatcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SavedLayoutFileWatcher.swift; sourceTree = "<group>"; };
+		E7B9BA700000000000000004 /* SavedLayoutPositions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SavedLayoutPositions.swift; sourceTree = "<group>"; };
+		E7B9BA700000000000000002 /* SavedLayoutPagePlan.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SavedLayoutPagePlan.swift; sourceTree = "<group>"; };
 		A2F000000000000000000002 /* ShortcutsSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShortcutsSettings.swift; sourceTree = "<group>"; };
+		B20000000000000000000001 /* SavedLayoutNewLayoutSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SavedLayoutNewLayoutSheet.swift; sourceTree = "<group>"; };
+		C02410240000000000000012 /* LayoutWheelFeelSlider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LayoutWheelFeelSlider.swift; sourceTree = "<group>"; };
+		C02410240000000000000011 /* LayoutWheelFineTuningSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LayoutWheelFineTuningSheet.swift; sourceTree = "<group>"; };
+		C02410240000000000000010 /* LayoutWheelAppearanceControls.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LayoutWheelAppearanceControls.swift; sourceTree = "<group>"; };
+        A20000000000000000000101 /* SavedLayoutPagePreview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SavedLayoutPagePreview.swift; sourceTree = "<group>"; };
+		B2A100000000000000000032 /* SavedLayoutApplyQuickCapture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SavedLayoutApplyQuickCapture.swift; sourceTree = "<group>"; };
+		B2A100000000000000000022 /* SavedLayoutWindowChoiceList.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SavedLayoutWindowChoiceList.swift; sourceTree = "<group>"; };
+		B2A100000000000000000012 /* SavedLayoutApplySession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SavedLayoutApplySession.swift; sourceTree = "<group>"; };
+		2000000000000000000000027 /* SavedLayoutApplyViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SavedLayoutApplyViews.swift; sourceTree = "<group>"; };
+		2000000000000000000000026 /* SavedLayoutApplier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SavedLayoutApplier.swift; sourceTree = "<group>"; };
+		200000000000000000000025 /* SavedLayoutSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SavedLayoutSettings.swift; sourceTree = "<group>"; };
+		200000000000000000000024 /* SavedLayoutEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SavedLayoutEditor.swift; sourceTree = "<group>"; };
+		2000000000000000000000F1 /* SavedLayoutCanvasView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SavedLayoutCanvasView.swift; sourceTree = "<group>"; };
+		200000000000000000000023 /* SavedLayoutFiles.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SavedLayoutFiles.swift; sourceTree = "<group>"; };
 		200000000000000000000001 /* BetterTileApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BetterTileApp.swift; sourceTree = "<group>"; };
 		200000000000000000000002 /* BetterTileModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BetterTileModel.swift; sourceTree = "<group>"; };
 		200000000000000000000003 /* SettingsShell.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsShell.swift; sourceTree = "<group>"; };
@@ -77,9 +122,6 @@
 		A781BC3E2AA94961B461D102 /* PaneApplicationPicker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PaneApplicationPicker.swift; sourceTree = "<group>"; };
 		BB7200000000000000000001 /* LayoutWheelEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LayoutWheelEditor.swift; sourceTree = "<group>"; };
 		BB7200000000000000000002 /* LayoutWheelSettingsPreview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LayoutWheelSettingsPreview.swift; sourceTree = "<group>"; };
-		C02410240000000000000010 /* LayoutWheelAppearanceControls.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LayoutWheelAppearanceControls.swift; sourceTree = "<group>"; };
-		C02410240000000000000011 /* LayoutWheelFineTuningSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LayoutWheelFineTuningSheet.swift; sourceTree = "<group>"; };
-		C02410240000000000000012 /* LayoutWheelFeelSlider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LayoutWheelFeelSlider.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -128,18 +170,39 @@
 				5A0A0000000000000000F004 /* MenuBarSettings.swift */,
 				5A0A0000000000000000F005 /* SnapZoneSettings.swift */,
 				5A0A0000000000000000F006 /* LaunchAtLogin.swift */,
+				B3B000000000000000000002 /* AppGroupsSection.swift */,
+				B2A000000000000000000012 /* AppGroupsStore.swift */,
+				B2A000000000000000000022 /* AppGroupResolver.swift */,
+				2000000000000000000000026 /* SavedLayoutApplier.swift */,
+				2000000000000000000000027 /* SavedLayoutApplyViews.swift */,
+				200000000000000000000025 /* SavedLayoutSettings.swift */,
+				B20000000000000000000001 /* SavedLayoutNewLayoutSheet.swift */,
+				B3A000000000000000000012 /* SavedLayoutTransfer.swift */,
+				B3A000000000000000000022 /* SavedLayoutPreferences.swift */,
+				A20000000000000000000101 /* SavedLayoutPagePreview.swift */,
+				C62610000000000000000002 /* SavedLayoutActions.swift */,
+				F52900000000000000000002 /* SavedLayoutFileWatcher.swift */,
+				C62610000000000000000004 /* SavedLayoutAnywhereViews.swift */,
+				E7B9BA700000000000000004 /* SavedLayoutPositions.swift */,
+				E7B9BA700000000000000002 /* SavedLayoutPagePlan.swift */,
+				200000000000000000000024 /* SavedLayoutEditor.swift */,
+				2000000000000000000000F1 /* SavedLayoutCanvasView.swift */,
+				200000000000000000000023 /* SavedLayoutFiles.swift */,
 				200000000000000000000022 /* ApplicationRuleSettings.swift */,
 				B3A100000000000000000002 /* SettingsPickerPanel.swift */,
-				A781BC3E2AA94961B461D102 /* PaneApplicationPicker.swift */,
 				200000000000000000000021 /* ApplicationPicker.swift */,
 				B0A1C2D3E4F5061728394A02 /* RecentApplications.swift */,
+				B2A100000000000000000032 /* SavedLayoutApplyQuickCapture.swift */,
+				B2A100000000000000000022 /* SavedLayoutWindowChoiceList.swift */,
+				B2A100000000000000000012 /* SavedLayoutApplySession.swift */,
+				A781BC3E2AA94961B461D102 /* PaneApplicationPicker.swift */,
 				200000000000000000000020 /* ApplicationCatalog.swift */,
+				BB7200000000000000000001 /* LayoutWheelEditor.swift */,
+				BB7200000000000000000002 /* LayoutWheelSettingsPreview.swift */,
 				20000000000000000000000C /* LayoutWheelSettings.swift */,
 				C02410240000000000000012 /* LayoutWheelFeelSlider.swift */,
 				C02410240000000000000011 /* LayoutWheelFineTuningSheet.swift */,
 				C02410240000000000000010 /* LayoutWheelAppearanceControls.swift */,
-				BB7200000000000000000002 /* LayoutWheelSettingsPreview.swift */,
-				BB7200000000000000000001 /* LayoutWheelEditor.swift */,
 				20000000000000000000000A /* SetupAssistantView.swift */,
 				200000000000000000000007 /* Info.plist */,
 			);
@@ -251,19 +314,40 @@
 				5A0A0000000000000000B004 /* MenuBarSettings.swift in Sources */,
 				5A0A0000000000000000B005 /* SnapZoneSettings.swift in Sources */,
 				5A0A0000000000000000B006 /* LaunchAtLogin.swift in Sources */,
+				B3B000000000000000000001 /* AppGroupsSection.swift in Sources */,
+				B2A000000000000000000011 /* AppGroupsStore.swift in Sources */,
+				B2A000000000000000000021 /* AppGroupResolver.swift in Sources */,
+				1000000000000000000000026 /* SavedLayoutApplier.swift in Sources */,
+				1000000000000000000000027 /* SavedLayoutApplyViews.swift in Sources */,
+				100000000000000000000025 /* SavedLayoutSettings.swift in Sources */,
+				B10000000000000000000001 /* SavedLayoutNewLayoutSheet.swift in Sources */,
+				B3A000000000000000000011 /* SavedLayoutTransfer.swift in Sources */,
+				B3A000000000000000000021 /* SavedLayoutPreferences.swift in Sources */,
+				A10000000000000000000101 /* SavedLayoutPagePreview.swift in Sources */,
+				C62610000000000000000001 /* SavedLayoutActions.swift in Sources */,
+				F52900000000000000000001 /* SavedLayoutFileWatcher.swift in Sources */,
+				C62610000000000000000003 /* SavedLayoutAnywhereViews.swift in Sources */,
+				E7B9BA700000000000000003 /* SavedLayoutPositions.swift in Sources */,
+				E7B9BA700000000000000001 /* SavedLayoutPagePlan.swift in Sources */,
+				100000000000000000000024 /* SavedLayoutEditor.swift in Sources */,
+				1000000000000000000000F1 /* SavedLayoutCanvasView.swift in Sources */,
+				100000000000000000000023 /* SavedLayoutFiles.swift in Sources */,
 				100000000000000000000022 /* ApplicationRuleSettings.swift in Sources */,
 				B3A100000000000000000001 /* SettingsPickerPanel.swift in Sources */,
 				100000000000000000000021 /* ApplicationPicker.swift in Sources */,
 				B0A1C2D3E4F5061728394A01 /* RecentApplications.swift in Sources */,
-				100000000000000000000020 /* ApplicationCatalog.swift in Sources */,
-				10000000000000000000000A /* LayoutWheelSettings.swift in Sources */,
-				100000000000000000000007 /* SetupAssistantView.swift in Sources */,
+				B2A100000000000000000031 /* SavedLayoutApplyQuickCapture.swift in Sources */,
+				B2A100000000000000000021 /* SavedLayoutWindowChoiceList.swift in Sources */,
+				B2A100000000000000000011 /* SavedLayoutApplySession.swift in Sources */,
 				A781BC3E2AA94961B461D101 /* PaneApplicationPicker.swift in Sources */,
+				100000000000000000000020 /* ApplicationCatalog.swift in Sources */,
 				BB7100000000000000000001 /* LayoutWheelEditor.swift in Sources */,
 				BB7100000000000000000002 /* LayoutWheelSettingsPreview.swift in Sources */,
-				C02410240000000000000000 /* LayoutWheelAppearanceControls.swift in Sources */,
-				C02410240000000000000001 /* LayoutWheelFineTuningSheet.swift in Sources */,
+				10000000000000000000000A /* LayoutWheelSettings.swift in Sources */,
 				C02410240000000000000002 /* LayoutWheelFeelSlider.swift in Sources */,
+				C02410240000000000000001 /* LayoutWheelFineTuningSheet.swift in Sources */,
+				C02410240000000000000000 /* LayoutWheelAppearanceControls.swift in Sources */,
+				100000000000000000000007 /* SetupAssistantView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

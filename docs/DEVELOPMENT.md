@@ -310,8 +310,12 @@ run unless they require a real key window while the process is inactive, or have
 test-specific activation evidence. A negative key-state assertion alone does not
 justify excluding an App test from the default run.
 
-The 12 App exceptions require real key status while the process is inactive.
-Every other App test stays in the default run.
+The 13 App exceptions require real key status: the ordering regression, the
+already-ordered host check, the strip ordering/key-status check, two chooser Escape
+tests, seven Settings picker tests, and the Add Rule badge test. Six Settings tests
+and the badge test call `LivePanelHarness.open`, which requires a real key panel
+before native keyboard dispatch. The remaining exceptions assert positive real
+key status directly. No App exception is based on a measured activation episode.
 
 Gated suites use `.enabled(if: NativeFocusTestLane.isEnabled)` and the recursive
 `.nativeFocus` marker. Every other test stays in the default run, whose activity
@@ -352,7 +356,7 @@ product run: a lane activation can remain active when following default tests ru
 Their strict activity guard will fail, and the process can keep the user's keyboard
 focus. The filtered commands keep these two kinds of checks in separate processes.
 
-`NativeLaneMembershipTests` pins the exact 18 macOS and 12 App function names by
+`NativeLaneMembershipTests` pins the exact 18 macOS and 13 App function names by
 reading the gated suite declarations, including tests inside nested suites. Review
 any membership change and update the documented lane list together with the pin.
 
@@ -385,7 +389,7 @@ snapshot suite, for example:
 ```sh
 mkdir -p /tmp/bettertile-snapshots
 BT_SNAPSHOT_DIR=/tmp/bettertile-snapshots \
-  swift test --filter ApplicationPickerSnapshotTests
+  swift test --filter SavedLayoutPagePlanOutcomeSnapshotTests
 ```
 
 Keep private captures outside tracked files.

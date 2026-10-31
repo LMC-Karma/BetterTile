@@ -53,8 +53,6 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, CreatedWindowReading, T
         newWindowRequests.append((processIdentifier, bundleIdentifier))
         return newWindowRequestResult
     }
-    var requestedApplicationReads: [Int32] = []
-
     var permission = true
     var ignoredFrameWriteWindowIDs: Set<WindowID> = []
     var enforcedMinimumWidths: [WindowID: Double] = [:]
@@ -907,9 +905,44 @@ func waitFor(
     return condition()
 }
 
+@Test(.appTestApplication) @MainActor func waitForRetainsPollingStepsWhenMainActorIsBlocked() async throws {
+    var polls = 0
+    let reached = await waitFor(timeout: .milliseconds(40)) {
+        polls += 1
+        if polls == 1 { Thread.sleep(forTimeInterval: 0.1) } // real-time: stalls the main actor to prove the helper counts polling steps
+        return polls == 3
+    }
+    #expect(reached)
+    #expect(polls == 3)
+    var observations = 0
+    try await waitForSavedLayoutState("a state after a main-actor stall", timeout: .milliseconds(40)) {
+        observations += 1
+        if observations == 1 { Thread.sleep(forTimeInterval: 0.1) } // real-time: stalls the main actor to prove the helper counts polling steps
+        return observations == 3
+    }
+    #expect(observations == 3)
+}
 
-
-
+@Test(.appTestApplication) @MainActor func waitForStopsAfterItsPollingBudgetWhenStateNeverArrives() async {
+    var polls = 0
+    let reached = await waitFor(timeout: .milliseconds(40)) {
+        polls += 1
+        return false
+    }
+    #expect(!reached)
+    #expect(polls == 3)
+    var observations = 0
+    do {
+        try await waitForSavedLayoutState("a state that never arrives", timeout: .milliseconds(40)) {
+            observations += 1
+            return false
+        }
+        Issue.record("An unmet state must fail loudly")
+    } catch let error as SavedLayoutStateWaitError {
+        #expect(error.message == "Exhausted observation opportunities: a state that never arrives")
+    } catch { Issue.record(error) }
+    #expect(observations == 3)
+}
 
 @Test(.appTestApplication) @MainActor func manualLayoutWheelPreviewIsPureAndMatchesCommit() {
     let system = FakeAppWindowSystem()

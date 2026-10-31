@@ -377,10 +377,13 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         return nil
     }
 
+    /// Windows seen by an earlier sweep, kept in memory only. Saved Layouts uses them to say that an
+    /// app's window is on another desktop. Nothing here is persisted or used to move a window.
     private var knownWindowSnapshots: [WindowID: WindowSnapshot] = [:]
     public func knownWindows() -> [WindowSnapshot] {
         knownWindowSnapshots.values.filter { identities.records[$0.id] != nil }
     }
+
     public func visibleWindows() throws -> [WindowSnapshot] {
         var recoveryPIDs: Set<Int32>?
         return try visibleWindows(recoveryPIDs: &recoveryPIDs)

@@ -143,6 +143,14 @@ public struct LayoutWheelFanState: Equatable, Sendable {
 
     public init() {}
 
+    /// Switching a catalog keeps its parent open without selecting a child at the old pointer.
+    public mutating func openCatalog(configuration: LayoutWheelConfiguration) {
+        self.configuration = configuration
+        phase = .open(.bottomLeft)
+        selection = .init(ring: configuration.groupRing, sector: .bottomLeft)
+        optionIndex = nil; restOrigin = nil; revealOrigin = nil
+    }
+
     public var openSector: LayoutWheelSector? {
         if case let .open(sector) = phase { return sector }
         return nil

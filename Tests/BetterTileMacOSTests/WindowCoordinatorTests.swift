@@ -2087,3 +2087,32 @@ func unavailableSurvivorStillReceivesCancellationAndRetainsRestore(rejectRestore
     #expect(system.frameWriteCounts[id] == 1)
     #expect(!coordinator.retainedState(for: id).hasGeneration)
 }
+
+/// Saved Layouts names the window that kept a larger size. The coordinator's rollback restores the frame,
+/// so it must record the refused size before it rolls back.
+@Test(.macOSTestApplication) @MainActor func aFailedBatchRecordsTheSizeAWindowKeptBeforeTheRollback() {
+    let system = FakeWindowSystem()
+    let first = system.windows[0]
+    var second = first
+    second.id = WindowID(rawValue: "second")
+    second.frame = BTRect(x: 500, y: 0, width: 500, height: 900)
+    system.windows.append(second)
+    system.enforcedMinimumHeights[second.id] = 900
+    system.failedFrameWriteNumbers[first.id] = [1]
+    let coordinator = WindowCoordinator(system: system)
+    let outcome = coordinator.applyPlacements([
+        Placement(windowID: second.id, frame: BTRect(x: 500, y: 0, width: 500, height: 484)),
+        Placement(windowID: first.id, frame: BTRect(x: 0, y: 0, width: 500, height: 484)),
+    ], recordHistory: false)
+    #expect(!outcome.isApplied)
+    #expect(coordinator.refusedSizes[second.id]?.height == 900)
+    #expect(coordinator.refusedSizes[first.id] == nil)
+    // The next batch starts clean, so refusals never outlive the batch that made them.
+    system.failedFrameWriteNumbers = [:]
+    system.windows[1].frame = BTRect(x: 500, y: 0, width: 500, height: 900)
+    #expect(coordinator.applyPlacements([Placement(windowID: first.id, frame: BTRect(x: 0, y: 0, width: 500, height: 484))],
+                                        recordHistory: false).isApplied)
+    #expect(coordinator.refusedSizes.isEmpty)
+    coordinator.resetRefusedSizes()
+    #expect(coordinator.refusedSizes.isEmpty)
+}

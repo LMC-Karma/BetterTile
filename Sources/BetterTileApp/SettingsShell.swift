@@ -15,9 +15,10 @@ enum SettingsDestination: String, CaseIterable, Identifiable {
     case menuBar = "Menu Bar"
     case layoutWheel = "Layout Wheel"
     case applicationRules = "Per-App Rules"
+    case savedLayouts = "Saved Layouts"
 
     static let windowManagementDestinations: [Self] = [
-        .windowLayout, .shortcuts, .snapZones, .menuBar, .layoutWheel,
+        .windowLayout, .savedLayouts, .shortcuts, .snapZones, .menuBar, .layoutWheel,
     ]
 
     var id: Self { self }
@@ -26,6 +27,7 @@ enum SettingsDestination: String, CaseIterable, Identifiable {
         switch self {
         case .general: .symbol("gearshape")
         case .windowLayout: .layoutGlyph(.layouts)
+        case .savedLayouts: .symbol("rectangle.stack")
         case .shortcuts: .symbol("keyboard")
         case .snapZones: .symbol("rectangle.split.3x3")
         case .menuBar: .symbol("menubar.rectangle")
@@ -39,6 +41,7 @@ enum SettingsDestination: String, CaseIterable, Identifiable {
         switch self {
         case .general, .shortcuts: SettingsColor.gray
         case .windowLayout: SettingsColor.blue
+        case .savedLayouts: SettingsColor.indigo
         case .snapZones: SettingsColor.teal
         case .menuBar: SettingsColor.orange
         case .layoutWheel: SettingsColor.purple
@@ -96,6 +99,8 @@ enum SettingsDestination: String, CaseIterable, Identifiable {
                 + "size small medium large fine-tuning fine tuning look motion feel sub-menus sub menus submenus "
                 + "highlight color names action tint translucency opaque transparent opening closing pointer lean "
                 + "arrangement keep sub-menu open play opening play closing reset to style defaults reset appearance"
+        case .savedLayouts:
+            "saved layout canvas desktop display app slot geometry pane group tab import export json file reload rename delete"
         case .applicationRules:
             "app application rule exclude ignore bento adaptive manage per-app exception skip leave alone "
                 + "enabled participation matching live windows"
@@ -116,6 +121,7 @@ enum SettingsDestination: String, CaseIterable, Identifiable {
         case .menuBar: "Choose the window actions in your menu, then drag them into order."
         case .layoutWheel: "A radial menu for placing the focused window."
         case .applicationRules: "Choose apps BetterTile leaves alone, in whole or in part."
+        case .savedLayouts: "Arrange apps once, then apply them to this desktop in one click."
         }
     }
 }
@@ -146,6 +152,7 @@ struct SettingsView: View {
     let openSetup: () -> Void
     @State var selection: SettingsDestination = .general
     @State var search = ""
+    @State var savedLayoutEditor = SavedLayoutEditor()
     @FocusState private var searchFocused: Bool
 
     var body: some View {
@@ -221,10 +228,12 @@ struct SettingsView: View {
             Group {
                 if SettingsDestination.allCases.contains(where: matchesSearch) {
                     VStack(alignment: .leading, spacing: 0) {
+                        if selection != .savedLayouts {
                             SettingsPageHeader(destination: selection)
                                 .padding(.horizontal, 24)
                                 .padding(.top, 24)
                                 .padding(.bottom, 16)
+                        }
                         detail
                             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                     }
@@ -342,6 +351,8 @@ struct SettingsView: View {
             LayoutWheelSettings(model: model)
         case .applicationRules:
             ApplicationRuleSettings(model: model)
+        case .savedLayouts:
+            SavedLayoutSettings(editor: savedLayoutEditor, model: model)
         }
     }
 }

@@ -1127,6 +1127,7 @@ struct MenuPanelContent<Actions: View, Notice: View>: View {
 
             controls
 
+            if !isEditing { SavedLayoutPanelSection(model: model, openSettings: openSettings) }
 
             HStack {
                 Text("Window actions")
@@ -1181,6 +1182,7 @@ struct MenuPanelContent<Actions: View, Notice: View>: View {
         .padding(MenuPanelMetrics.padding)
         .frame(width: MenuPanelMetrics.width)
         .fixedSize(horizontal: false, vertical: true)
+        .onAppear { if !isEditing { model.savedLayoutActions.checkForChanges(); model.refreshSavedLayoutActionTarget() } }
         .onGeometryChange(for: CGFloat.self) { [actionHeight] proxy in
             proxy.size.height - actionHeight
         } action: { height in
@@ -1491,7 +1493,7 @@ struct MenuPanelAnimation {
     }
 }
 
-/// Draw only the menu's dense mode track.
+/// Draw only the menu's dense mode track. Saved Layouts retains the native picker.
 struct MenuPanelModePicker: NSViewRepresentable {
     @Binding var selection: LayoutMode
     var isInteractive = true

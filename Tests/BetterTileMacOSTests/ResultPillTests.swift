@@ -223,3 +223,157 @@ func resultPillDetailShortensTitlesToKeepItsSentence(title: String) {
     }
     #expect(detail == "予算 and 📊 Report cannot fit beside each other at their minimum sizes.")
 }
+
+@Test(.macOSTestApplication) func resultPillExplainsInactiveTabbedCommands() {
+    let reason = "Tab commands work on Tabbed desktops."
+    let feedback = ResultPillFeedback.failure(reason)
+    #expect(feedback.message == "Tabbed not active")
+    #expect(feedback.detail == reason)
+}
+
+// MARK: - Result pill buttons
+
+@MainActor
+private func layoutPillDisplay() -> DisplaySnapshot {
+    DisplaySnapshot(id: DisplayID(rawValue: "pill"), frame: BTRect(x: 0, y: 0, width: 1920, height: 1080),
+                    visibleFrame: BTRect(x: 0, y: 0, width: 1920, height: 1050))
+}
+
+@MainActor private final class PillLog { var entries: [String] = [] }
+
+private func pillActions() -> [ResultPillAction] {
+    [ResultPillAction(title: "Undo", accessibilityLabel: "Undo the last Saved Layout") {},
+     ResultPillAction(title: "Details", accessibilityLabel: "Show Saved Layout details in Settings") {}]
+}
+
+@Test(.macOSTestApplication) func layoutResultPillUsesItsOutcomeSymbolAndStaysLongerWithButtons() {
+    let success = ResultPillFeedback.layoutResult(title: "Desk applied", detail: "3 placed", kind: .success, actions: pillActions())
+    let warning = ResultPillFeedback.layoutResult(title: "Desk applied with 1 issue", detail: "2 placed · 1 skipped",
+                                                   kind: .warning, actions: pillActions())
+    let failure = ResultPillFeedback.layoutResult(title: "Not applied", detail: "Why", kind: .failure, actions: [])
+    #expect(success.symbolName == "checkmark")
+    #expect(warning.symbolName == "exclamationmark")
+    #expect(failure.symbolName == "xmark")
+    #expect(success.dismissDelay >= 8)
+    #expect(failure.dismissDelay == 3)
+    #expect(success.actions.map(\.title) == ["Undo", "Details"])
+}
+
+@MainActor @Test(.macOSTestApplication) func pillWithButtonsIsTallerAndWideEnoughForThem() {
+    let display = layoutPillDisplay()
+    let plain = ResultPillFeedback.layoutResult(title: "Desk applied", detail: "3 placed", kind: .success, actions: [])
+    let buttons = ResultPillFeedback.layoutResult(title: "Desk applied", detail: "3 placed", kind: .success, actions: pillActions())
+    let plainFrame = ResultPillLayout.frame(for: plain, on: display)
+    let buttonFrame = ResultPillLayout.frame(for: buttons, on: display)
+    #expect(buttonFrame.size.height == plainFrame.size.height + ResultPillLayout.actionRowHeight)
+    #expect(buttonFrame.size.width >= ResultPillLayout.minimumActionWidth)
+    #expect(buttonFrame.midX == display.visibleFrame.midX)
+    #expect(buttonFrame.maxY <= display.visibleFrame.maxY)
+}
+
+@MainActor @Test(.macOSTestApplication) func pillAcceptsThePointerOnlyWhileItHasButtons() {
+    let panel = ResultPillTestPanel()
+    let controller = ResultPillController(panel: panel)
+    defer { controller.hide() }
+    let display = layoutPillDisplay()
+    controller.show(.success(), on: display)
+    #expect(panel.ignoresMouseEvents)
+    controller.show(.layoutResult(title: "Desk applied", detail: "3 placed", kind: .success, actions: pillActions()), on: display)
+    #expect(!panel.ignoresMouseEvents)
+    controller.show(.failure("No eligible focused window."), on: display)
+    #expect(panel.ignoresMouseEvents)
+}
+
+@MainActor @Test(.macOSTestApplication, .macOSUI) func pressingAPillButtonRunsItsActionAndHidesThePill() throws {
+    let panel = ResultPillTestPanel()
+    let controller = ResultPillController(panel: panel)
+    defer { controller.hide() }
+    let log = PillLog()
+    let actions = [ResultPillAction(title: "Undo", accessibilityLabel: "Undo") { log.entries.append("undo") },
+                   ResultPillAction(title: "Details", accessibilityLabel: "Details") { log.entries.append("details") }]
+    controller.show(.layoutResult(title: "Desk applied", detail: "3 placed", kind: .success, actions: actions),
+                    on: layoutPillDisplay())
+    func buttons(in view: NSView) -> [NSButton] {
+        (view as? NSButton).map { [$0] } ?? view.subviews.flatMap(buttons)
+    }
+    let found = buttons(in: try #require(panel.contentView))
+    #expect(found.map(\.title) == ["Undo", "Details"])
+    #expect(found.map { $0.accessibilityLabel() } == ["Undo", "Details"])
+    try performNativeClick(found[1])
+    #expect(log.entries == ["details"])
+    #expect(!panel.isPresented)
+}
+
+@MainActor @Test(.macOSTestApplication) func pillButtonsAreRemovedWhenTheNextPillHasNone() throws {
+    let panel = ResultPillTestPanel()
+    let controller = ResultPillController(panel: panel)
+    defer { controller.hide() }
+    let display = layoutPillDisplay()
+    controller.show(.layoutResult(title: "Desk applied", detail: "3 placed", kind: .success, actions: pillActions()), on: display)
+    controller.show(.success(), on: display)
+    func buttons(in view: NSView) -> [NSButton] {
+        (view as? NSButton).map { [$0] } ?? view.subviews.flatMap(buttons)
+    }
+    #expect(buttons(in: try #require(panel.contentView)).isEmpty)
+}
+
+@MainActor @Test(.macOSTestApplication) func aHoverExitFromAReplacedPillDoesNotHideTheNewerOne() async throws {
+    let clock = ManualClock()
+    let panel = ResultPillTestPanel()
+    let controller = ResultPillController(panel: panel, clock: clock.clock)
+    defer { controller.hide() }
+    let display = layoutPillDisplay()
+    controller.show(.layoutResult(title: "First", detail: "1 placed", kind: .success, actions: pillActions()), on: display)
+    let tracker = try #require(panel.contentView?.trackingAreas.first?.owner as? NSResponder)
+    let event = try #require(NSEvent.enterExitEvent(with: .mouseEntered, location: .zero, modifierFlags: [],
+        timestamp: 0, windowNumber: 0, context: nil, eventNumber: 0, trackingNumber: 0, userData: nil))
+    tracker.mouseEntered(with: event)
+    controller.show(.layoutResult(title: "Second", detail: "2 placed", kind: .success, actions: pillActions()), on: display)
+    tracker.mouseExited(with: event)
+    await clock.waitForSleepers(count: 1)
+    clock.advance(by: .seconds(2.2))
+    #expect(clock.pendingSleepCount == 1, "The replacement pill keeps its own longer dismissal deadline")
+    #expect(panel.isPresented)
+}
+
+@MainActor @Test(.macOSTestApplication) func aPointerHitOnAPillButtonReachesTheButton() throws {
+    let panel = ResultPillTestPanel()
+    let controller = ResultPillController(panel: panel)
+    defer { controller.hide() }
+    controller.show(.layoutResult(title: "Desk applied", detail: "3 placed", kind: .success, actions: pillActions()),
+                    on: layoutPillDisplay())
+    let content = try #require(panel.contentView as? ResultPillContentView)
+    content.layoutSubtreeIfNeeded()
+    func buttons(in view: NSView) -> [NSButton] {
+        (view as? NSButton).map { [$0] } ?? view.subviews.flatMap(buttons)
+    }
+    let found = buttons(in: content)
+    #expect(found.count == 2)
+    #expect(!panel.ignoresMouseEvents)
+    #expect(content.acceptsFirstMouse(for: nil))
+    for button in found {
+        #expect(button.acceptsFirstMouse(for: nil))
+        let center = button.convert(NSPoint(x: button.bounds.midX, y: button.bounds.midY), to: content)
+        #expect(content.hitTest(content.convert(center, to: content.superview)) === button)
+    }
+    // Outside the buttons, and on a pill without buttons, the pill still lets clicks through.
+    #expect(content.hitTest(NSPoint(x: -5, y: -5)) == nil)
+    controller.show(.success(), on: layoutPillDisplay())
+    #expect(content.hitTest(NSPoint(x: 5, y: 5)) == nil)
+}
+
+/// The hit test must not depend on the button row sitting at the origin of its container.
+@MainActor @Test(.macOSTestApplication) func aPillButtonHitWorksWhenTheButtonRowIsOffsetInItsContainer() throws {
+    let panel = ResultPillTestPanel()
+    let controller = ResultPillController(panel: panel)
+    defer { controller.hide() }
+    controller.show(.layoutResult(title: "Desk applied", detail: "3 placed", kind: .success, actions: pillActions()),
+                    on: layoutPillDisplay())
+    let content = try #require(panel.contentView as? ResultPillContentView)
+    content.layoutSubtreeIfNeeded()
+    let row = try #require(content.buttonRow)
+    row.setFrameOrigin(NSPoint(x: row.frame.minX + 37, y: row.frame.minY + 11))
+    let button = try #require(row.subviews.first as? NSButton)
+    let center = button.convert(NSPoint(x: button.bounds.midX, y: button.bounds.midY), to: content)
+    #expect(content.hitTest(content.convert(center, to: content.superview)) === button)
+}

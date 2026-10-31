@@ -6,6 +6,16 @@ private let betterTileHotKeySignature: OSType = 0x4254_5343 // 'BTSC'
 @MainActor
 public final class GlobalShortcutMonitor {
     private var bindings: [ShortcutBinding] = []
+    private var namedBindings: [String: KeyboardShortcut] = [:]
+    private var namedIDs: [UInt32: String] = [:]
+    private var nextNamedID = UInt32(WindowAction.allCases.count + 1)
+    var registerHotKey: (UInt32, UInt32, EventHotKeyID, inout EventHotKeyRef?) -> OSStatus = { code, flags, id, ref in
+        RegisterEventHotKey(code, flags, id, GetEventDispatcherTarget(), 0, &ref)
+    }
+    var unregisterHotKey: (EventHotKeyRef) -> Void = { UnregisterEventHotKey($0) }
+    public var namedHandler: (String) -> Void = { _ in }
+    public private(set) var failedNamedBindings: Set<String> = []
+    public var namedRegistrationChanged: (Set<String>) -> Void = { _ in }
     private var hotKeyRefs: [UInt32: EventHotKeyRef] = [:]
     private var eventHandler: EventHandlerRef?
     /// Transient: set while the user is recording a replacement shortcut.
@@ -27,11 +37,20 @@ public final class GlobalShortcutMonitor {
         self.handler = handler
     }
 
+    // Carbon retains the handler with an unretained pointer to this monitor.
+    // Retire it before that address can be reused by another monitor.
+    isolated deinit { stop() }
+
     public func setHandler(_ handler: @escaping (WindowAction) -> Void) {
         self.handler = handler
     }
 
-    public func update(bindings: [ShortcutBinding]) {
+    public func update(bindings: [ShortcutBinding], named: [String: KeyboardShortcut] = [:]) {
+        namedIDs = namedIDs.filter { _, file in
+            guard let old = namedBindings[file], let new = named[file] else { return false }
+            return old.keyCode == new.keyCode && old.modifiers == new.modifiers
+        }
+        namedBindings = named
         self.bindings = bindings
         guard canRegister else { return }
         registerHotKeys()
@@ -66,20 +85,30 @@ public final class GlobalShortcutMonitor {
 
     private func registerHotKeys() {
         unregisterHotKeys()
-        guard installEventHandlerIfNeeded() else { return }
-
+        failedNamedBindings = []
+        defer { namedRegistrationChanged(failedNamedBindings) }
+        guard installEventHandlerIfNeeded() else {
+            failedNamedBindings = Set(namedBindings.keys)
+            return
+        }
+        for file in namedBindings.keys.sorted() {
+            let id: UInt32
+            if let existing = namedIDs.first(where: { $0.value == file })?.key { id = existing }
+            else { id = nextNamedID; nextNamedID += 1 }
+            namedIDs[id] = file
+            var ref: EventHotKeyRef?
+            let key = namedBindings[file]!
+            let status = registerHotKey(key.keyCode, key.modifiers.carbonFlags,
+                EventHotKeyID(signature: betterTileHotKeySignature, id: id), &ref)
+            if status == noErr, let ref { hotKeyRefs[id] = ref }
+            else { failedNamedBindings.insert(file) }
+        }
         for (index, action) in WindowAction.allCases.enumerated() {
             guard let shortcut = bindings.first(where: { $0.action == action })?.shortcut else { continue }
             let id = UInt32(index + 1)
             var ref: EventHotKeyRef?
-            let status = RegisterEventHotKey(
-                shortcut.keyCode,
-                shortcut.modifiers.carbonFlags,
-                EventHotKeyID(signature: betterTileHotKeySignature, id: id),
-                GetEventDispatcherTarget(),
-                0,
-                &ref
-            )
+            let status = registerHotKey(shortcut.keyCode, shortcut.modifiers.carbonFlags,
+                EventHotKeyID(signature: betterTileHotKeySignature, id: id), &ref)
             if status == noErr, let ref {
                 hotKeyRefs[id] = ref
             }
@@ -109,14 +138,15 @@ public final class GlobalShortcutMonitor {
 
     private func unregisterHotKeys() {
         for ref in hotKeyRefs.values {
-            UnregisterEventHotKey(ref)
+            unregisterHotKey(ref)
         }
         hotKeyRefs.removeAll()
     }
 
-    fileprivate func handleHotKey(id: UInt32) {
-        guard hotKeyRefs[id] != nil, let action = Self.action(forHotKeyID: id) else { return }
-        handler(action)
+    func handleHotKey(id: UInt32) {
+        guard hotKeyRefs[id] != nil else { return }
+        if let file = namedIDs[id] { namedHandler(file) }
+        else if let action = Self.action(forHotKeyID: id) { handler(action) }
     }
 }
 

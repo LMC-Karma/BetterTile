@@ -42,7 +42,11 @@ final class FakeWindowSystem: ApplicationActivating, ApplicationWindowRequesting
     private var pendingFocusWindowID: WindowID?
     var closedWindowRequests: [WindowID] = []
     func windowNumbers(for windows: [WindowSnapshot]) -> [WindowID: Int] { [:] }
-    func stackingOrder(for windows: [WindowSnapshot], excluding windowNumbers: Set<Int>) -> [TabbedStackEntry]? { nil }
+    var stack: [TabbedStackEntry]?
+    var suppliesStackingOrder = true
+    func stackingOrder(for windows: [WindowSnapshot], excluding windowNumbers: Set<Int>) -> [TabbedStackEntry]? {
+        suppliesStackingOrder ? (stack ?? windows.map { .init(windowID: $0.id, frame: $0.frame) }) : nil
+    }
     var frontmostProcessIdentifier: Int32? { nil }
     func applicationFocus(of window: WindowSnapshot) -> ApplicationFocusMatch { .confirmed }
     func isTransientPopup(_ window: WindowSnapshot) -> Bool { false }
