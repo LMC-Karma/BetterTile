@@ -66,3 +66,39 @@ validate_appcast_release() {
     fi
     return 0
 }
+
+# Sparkle 2.9.5 infers this from the executable. Fail closed if generation or
+# reuse of an existing item ever loses the requirement for this exact build.
+validate_arm64_appcast() {
+    local appcast="$1" build="$2" count
+    [[ "$build" =~ ^[1-9][0-9]*$ ]] || return 1
+    local ns="(namespace-uri()='http://www.andymatuschak.org/xml-namespaces/sparkle' or namespace-uri()='https://sparkle-project.org/xml-namespaces/sparkle')"
+    local item="/rss/channel/item[*[local-name()='version' and $ns and text()='$build'] or enclosure/@*[local-name()='version' and $ns and .='$build']]"
+    count="$(xmllint --nonet --xpath "count($item)" "$appcast")" || return 1
+    [[ "$count" == 1 ]] || {
+        echo "Appcast must contain exactly one item for build $build." >&2
+        return 1
+    }
+    local requirement="$item/*[(local-name()='hardwareRequirements' and namespace-uri()='http://www.andymatuschak.org/xml-namespaces/sparkle') or name()='sparkle:hardwareRequirements']"
+    count="$(xmllint --nonet --xpath "count($requirement)" "$appcast")" || return 1
+    local hardware
+    hardware="$(xmllint --nonet --xpath "normalize-space($requirement)" "$appcast")" || return 1
+    [[ "$count" == 1 && "$hardware" == arm64 ]] || {
+        echo "Appcast build $build must require arm64 hardware." >&2
+        return 1
+    }
+}
+
+# Validate published ordering in both modes. Dry runs sign with a disposable
+# key, so their generated feed must not merge production entries.
+prepare_appcast_input() {
+    local feed_url="$1" version="$2" build="$3" dry_run="$4"
+    local existing_path="$5" input_path="$6"
+    fetch_existing_appcast "$feed_url" "$existing_path" || return 1
+    if [[ -f "$existing_path" ]]; then
+        validate_appcast_release "$existing_path" "$version" "$build" || return 1
+        if [[ "$dry_run" == false ]]; then
+            cp "$existing_path" "$input_path" || return 1
+        fi
+    fi
+}

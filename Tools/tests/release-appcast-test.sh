@@ -64,7 +64,7 @@ else
 fi
 
 current_format="$scratch/current-format.xml"
-printf '%s\n' '<rss xmlns:sparkle="https://sparkle-project.org/xml-namespaces/sparkle"><channel><item><sparkle:version>6</sparkle:version><sparkle:shortVersionString>0.4.1</sparkle:shortVersionString></item></channel></rss>' > "$current_format"
+printf '%s\n' '<rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle"><channel><item><sparkle:version>6</sparkle:version><sparkle:shortVersionString>0.4.1</sparkle:shortVersionString></item></channel></rss>' > "$current_format"
 
 echo "appcast parsing reads Sparkle child elements"
 if [[ "$(appcast_builds "$current_format")" == "6" ]] \
@@ -142,6 +142,103 @@ if validate_appcast_release "$legacy_format" 0.4.1 6; then
     pass "validates ordering against a legacy feed"
 else
     fail "validates ordering against a legacy feed"
+fi
+
+echo "arm64 releases require a hardware filter on their own item"
+write_hardware_fixture() {
+    cat > "$scratch/hardware.xml" <<EOF
+<rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle"><channel>
+<item><sparkle:version>14</sparkle:version><sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements></item>
+<item><enclosure sparkle:version="15"/>$1</item>
+</channel></rss>
+EOF
+}
+# Keep build 15 in the recognized namespace while isolating requirement lookup.
+write_hardware_fixture '<sparkle:hardwareRequirements xmlns:sparkle="https://sparkle-project.org/xml-namespaces/sparkle">arm64</sparkle:hardwareRequirements>'
+if validate_arm64_appcast "$scratch/hardware.xml" 15; then
+    pass "accepts the Sparkle prefix compatibility format on a recognized build"
+else
+    fail "accepts the Sparkle prefix compatibility format on a recognized build"
+fi
+write_hardware_fixture '<other:hardwareRequirements xmlns:other="https://example.invalid/sparkle">arm64</other:hardwareRequirements>'
+if validate_arm64_appcast "$scratch/hardware.xml" 15 2>/dev/null; then
+    fail "rejects an unrelated hardware tag on a recognized build"
+else
+    pass "rejects an unrelated hardware tag on a recognized build"
+fi
+# Literal-prefix compatibility is intentional and independent of URI lookup.
+write_hardware_fixture '<sparkle:hardwareRequirements xmlns:sparkle="https://example.invalid/sparkle">arm64</sparkle:hardwareRequirements>'
+if validate_arm64_appcast "$scratch/hardware.xml" 15; then
+    pass "keeps literal-prefix compatibility separate from namespace validation"
+else
+    fail "keeps literal-prefix compatibility separate from namespace validation"
+fi
+write_hardware_fixture '<sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>'
+sed 's#http://www.andymatuschak.org/xml-namespaces/sparkle#https://example.invalid/sparkle#g' "$scratch/hardware.xml" > "$scratch/namespaced.xml"
+if validate_arm64_appcast "$scratch/namespaced.xml" 15 2>/dev/null; then
+    fail "rejects a build in an unrelated namespace"
+else
+    pass "rejects a build in an unrelated namespace"
+fi
+# Sparkle ignores an alternate prefix in the newer URI for this requirement.
+# Keep the build itself in the recognized namespace so it cannot mask the error.
+write_hardware_fixture '<sp:hardwareRequirements xmlns:sp="https://sparkle-project.org/xml-namespaces/sparkle">arm64</sp:hardwareRequirements>'
+if validate_arm64_appcast "$scratch/hardware.xml" 15 2>/dev/null; then
+    fail "rejects a hardware filter Sparkle does not recognize"
+else
+    pass "rejects a hardware filter Sparkle does not recognize"
+fi
+write_hardware_fixture '<sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>'
+if validate_arm64_appcast "$scratch/hardware.xml" 15; then
+    pass "accepts arm64 on the requested build"
+else
+    fail "accepts arm64 on the requested build"
+fi
+for requirement in '' '<sparkle:hardwareRequirements>x86_64</sparkle:hardwareRequirements>' '<hardwareRequirements>arm64</hardwareRequirements>' '<sparkle:hardwareRequirements>x86_64</sparkle:hardwareRequirements><sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>'; do
+    write_hardware_fixture "$requirement"
+    if validate_arm64_appcast "$scratch/hardware.xml" 15 2>/dev/null; then
+        fail "rejects missing, wrong or unnamespaced hardware requirement"
+    else
+        pass "rejects missing, wrong or unnamespaced hardware requirement"
+    fi
+done
+write_hardware_fixture '<sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>'
+if validate_arm64_appcast "$scratch/hardware.xml" 16 2>/dev/null; then
+    fail "rejects a missing build"
+else
+    pass "rejects a missing build"
+fi
+printf 'invalid XML' > "$scratch/hardware.xml"
+if validate_arm64_appcast "$scratch/hardware.xml" 15 2>/dev/null; then
+    fail "rejects malformed XML"
+else
+    pass "rejects malformed XML"
+fi
+
+echo "dry runs validate published ordering without merging production items"
+curl_status=200
+curl_exit=0
+curl_body='<rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle"><channel><item><sparkle:version>15</sparkle:version><sparkle:shortVersionString>0.5.2</sparkle:shortVersionString></item></channel></rss>'
+curl_output="$scratch/prior.xml"
+if prepare_appcast_input https://example.invalid/feed 0.5.3 15 true "$curl_output" "$scratch/input.xml" 2>/dev/null; then
+    fail "dry run rejects an already published build"
+else
+    pass "dry run rejects an already published build"
+fi
+if prepare_appcast_input https://example.invalid/feed 0.5.2 16 true "$curl_output" "$scratch/input.xml" 2>/dev/null; then
+    fail "dry run rejects an already published display version"
+else
+    pass "dry run rejects an already published display version"
+fi
+if prepare_appcast_input https://example.invalid/feed 0.5.3 16 true "$curl_output" "$scratch/input.xml" && [[ ! -e "$scratch/input.xml" ]]; then
+    pass "dry run checks the feed without merging its items"
+else
+    fail "dry run checks the feed without merging its items"
+fi
+if prepare_appcast_input https://example.invalid/feed 0.5.3 16 false "$curl_output" "$scratch/input.xml" && cmp -s "$curl_output" "$scratch/input.xml"; then
+    pass "publication retains compatible prior feed items"
+else
+    fail "publication retains compatible prior feed items"
 fi
 
 if [[ "$failures" -eq 0 ]]; then

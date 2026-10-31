@@ -104,7 +104,7 @@ export CLANG_MODULE_CACHE_PATH="$work_dir/module-cache/clang"
 export SWIFTPM_MODULECACHE_OVERRIDE="$work_dir/module-cache/swift"
 mkdir -p "$CLANG_MODULE_CACHE_PATH" "$SWIFTPM_MODULECACHE_OVERRIDE"
 
-for command in git swift xcodebuild hdiutil shasum ditto curl; do
+for command in git swift xcodebuild hdiutil shasum ditto curl lipo dwarfdump xmllint; do
     command -v "$command" >/dev/null || {
         echo "Required command not found: $command" >&2
         exit 1
@@ -159,22 +159,30 @@ generate_appcast="$repo_root/.build/artifacts/sparkle/Sparkle/bin/generate_appca
     exit 1
 }
 
-# set -e would otherwise end the script without a reason when generate_keys
-# fails. Its own message is shown; a missing key also says where to release.
-public_key="$("$generate_keys" -p 2>"$work_dir/generate_keys.err")" || {
-    key_error="$(cat "$work_dir/generate_keys.err") $public_key"
-    echo "Sparkle's generate_keys could not read the signing key: $key_error" >&2
-    if [[ "$key_error" == *"No existing signing key found"* ]]; then
-        echo "This Mac's login Keychain has no Sparkle signing key. Release from the" >&2
-        echo "Mac that holds it, or import it with generate_keys -f first." >&2
-    fi
-    exit 1
-}
 expected_public_key="$(/usr/libexec/PlistBuddy -c 'Print :SUPublicEDKey' Sources/BetterTileApp/Info.plist)"
-[[ "$public_key" == "$expected_public_key" ]] || {
-    echo "The configured release signing key does not match Info.plist." >&2
-    exit 1
-}
+appcast_signing_args=()
+if [[ "$dry_run" == true ]]; then
+    # Never access the release Keychain during validation. This disposable seed
+    # and its public key are used only by the temporary dry-run application.
+    public_key="$(swift "$script_dir/lib/release-dry-run-key.swift" "$work_dir/dry-run-key")"
+    appcast_signing_args=(--ed-key-file "$work_dir/dry-run-key")
+else
+    # set -e would otherwise end the script without a reason when generate_keys
+    # fails. Its own message is shown; a missing key also says where to release.
+    public_key="$("$generate_keys" -p 2>"$work_dir/generate_keys.err")" || {
+        key_error="$(cat "$work_dir/generate_keys.err") $public_key"
+        echo "Sparkle's generate_keys could not read the signing key: $key_error" >&2
+        if [[ "$key_error" == *"No existing signing key found"* ]]; then
+            echo "This Mac's login Keychain has no Sparkle signing key. Release from the" >&2
+            echo "Mac that holds it, or import it with generate_keys -f first." >&2
+        fi
+        exit 1
+    }
+    [[ "$public_key" == "$expected_public_key" ]] || {
+        echo "The configured release signing key does not match Info.plist." >&2
+        exit 1
+    }
+fi
 
 # Every xcodebuild invocation here, including -showBuildSettings, is given an
 # explicit derived data path inside the workspace. Xcode's shared DerivedData
@@ -195,13 +203,11 @@ project_build="$(awk -F ' = ' '/^[[:space:]]*CURRENT_PROJECT_VERSION = / { print
 
 mkdir -p "$archive_dir"
 
-fetch_existing_appcast "$feed_url" "$archive_dir/appcast.xml"
-if [[ -f "$archive_dir/appcast.xml" ]]; then
-    validate_appcast_release "$archive_dir/appcast.xml" "$version" "$project_build"
-fi
+prepare_appcast_input "$feed_url" "$version" "$project_build" "$dry_run" \
+    "$published_appcast_path" "$archive_dir/appcast.xml"
 
 echo "Running tests and builds..."
-swift test
+"$script_dir/test.sh" "$work_dir/tests.log"
 swift build
 xcodebuild -project BetterTile.xcodeproj -scheme BetterTile \
     -configuration Debug CODE_SIGNING_ALLOWED=NO \
@@ -212,6 +218,7 @@ xcodebuild -project BetterTile.xcodeproj -scheme BetterTile \
 
 app_path="$derived_data/Build/Products/Release/BetterTile.app"
 info_path="$app_path/Contents/Info.plist"
+dsym_path="$derived_data/Build/Products/Release/BetterTile.app.dSYM"
 [[ -d "$app_path" && -f "$info_path" ]] || {
     echo "Release application bundle was not produced." >&2
     exit 1
@@ -220,6 +227,25 @@ info_path="$app_path/Contents/Info.plist"
     echo "Release bundle does not contain Sparkle.framework." >&2
     exit 1
 }
+
+[[ "$(lipo -archs "$app_path/Contents/MacOS/BetterTile")" == arm64 ]] || {
+    echo "Release executable must contain only arm64." >&2
+    exit 1
+}
+[[ -d "$dsym_path" ]] || {
+    echo "Release dSYM was not produced." >&2
+    exit 1
+}
+binary_uuid="$(dwarfdump --uuid "$app_path/Contents/MacOS/BetterTile" | awk '{print $2, $3}')"
+dsym_uuid="$(dwarfdump --uuid "$dsym_path" | awk '{print $2, $3}')"
+[[ -n "$binary_uuid" && "$binary_uuid" == "$dsym_uuid" ]] || {
+    echo "Release executable and dSYM UUIDs do not match." >&2
+    exit 1
+}
+if [[ "$dry_run" == true ]]; then
+    /usr/libexec/PlistBuddy -c "Set :SUPublicEDKey $public_key" "$info_path"
+    expected_public_key="$public_key"
+fi
 
 otool -l "$app_path/Contents/MacOS/BetterTile" | awk '
     $1 == "cmd" && $2 == "LC_RPATH" { in_rpath = 1; next }
@@ -256,6 +282,11 @@ for nested in \
 done
 codesign --force --sign "$signing_identity" "$app_path"
 codesign --verify --deep --strict "$app_path"
+# Validate the final signed executable, after Xcode's strip step and signing.
+[[ "$(dwarfdump --uuid "$app_path/Contents/MacOS/BetterTile" | awk '{print $2, $3}')" == "$dsym_uuid" ]] || {
+    echo "Signed executable no longer matches the dSYM UUID." >&2
+    exit 1
+}
 [[ "$(codesign -dvv "$app_path" 2>&1 | sed -n 's/^Identifier=//p')" == "com.lmckarma.BetterTile" ]] || {
     echo "Signed bundle identifier does not match the Accessibility grant identity." >&2
     exit 1
@@ -317,7 +348,7 @@ rmdir "$mount_dir"
 )
 cp "$work_dir/$dmg_name" "$archive_dir/$dmg_name"
 cp "$notes_path" "$archive_dir/$notes_name"
-"$generate_appcast" --download-url-prefix "$release_url_prefix" \
+"$generate_appcast" ${appcast_signing_args[@]+"${appcast_signing_args[@]}"} --download-url-prefix "$release_url_prefix" \
     --embed-release-notes --maximum-deltas 0 --maximum-versions 0 \
     --versions "$project_build" "$archive_dir"
 cp "$archive_dir/appcast.xml" "$appcast_path"
@@ -325,12 +356,14 @@ grep -q "sparkle:edSignature=" "$appcast_path"
 grep -q "$release_url_prefix$dmg_name" "$appcast_path"
 appcast_contains_build "$appcast_path" "$project_build"
 appcast_contains_version "$appcast_path" "$version"
+validate_arm64_appcast "$appcast_path" "$project_build"
 
 # Retain only the finished, inspectable artifacts. DerivedData and the disk
 # image staging tree stay in the temporary directory and are discarded.
 mkdir -p "$artifact_dir"
 cp "$work_dir/$dmg_name" "$work_dir/$checksum_name" "$appcast_path" "$artifact_dir/"
 cp "$notes_path" "$artifact_dir/$notes_name"
+ditto "$dsym_path" "$artifact_dir/BetterTile.app.dSYM"
 
 echo "Validated beta artifacts: $artifact_dir"
 if [[ "$dry_run" == true ]]; then

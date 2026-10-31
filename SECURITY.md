@@ -306,6 +306,15 @@ script's internal build step are validation builds only and are never
 distributed. The distributed signature is applied solely by
 `Tools/release-beta.sh`; see [docs/RELEASING.md](docs/RELEASING.md).
 
+Release builds contain only arm64 code for BetterTile and require macOS 26.0
+or later. Sparkle's appcast hardware requirement keeps Intel installations on
+the last compatible universal release. Sparkle's embedded helpers remain
+universal. The release executable is stripped before signing. Its matching
+dSYM stays beside the local release artifacts, outside the app and DMG; it
+contains full symbols and source paths and is not uploaded by the script.
+Dry runs use a disposable EdDSA key file and a temporary app public key,
+without reading the release signing key or changing tracked key material.
+
 Release signing credentials and their recovery details stay outside this
 repository and CI. Publishing requires an authorized release environment and is
 never automatic.

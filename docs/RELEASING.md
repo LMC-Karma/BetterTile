@@ -25,6 +25,42 @@ labels do not determine update order. The release script rejects a build that
 is less than or equal to any published build, even with a different label.
 See [Sparkle's internal build number documentation](https://sparkle-project.org/documentation/publishing/#internal-build-numbers).
 
+## Supported Macs and debug symbols
+
+Release builds support Apple silicon (arm64) only. Intel Macs are no longer
+supported. Sparkle 2.9.5 generates
+`<sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>` from the
+app's executable. The release script rejects an appcast that lacks this element
+on the new build. Intel users stay on the last compatible universal build;
+Sparkle filters out the Apple silicon release. Retain that universal item and
+its download in the production feed. The minimum system version remains macOS 26.0. Debug build settings
+are unchanged.
+
+The Release build produces a stripped executable and `BetterTile.app.dSYM`.
+The script uses `xcodebuild build` with Release deployment postprocessing;
+archive/export is not needed. Xcode generates the dSYM before stripping.
+The script checks that the arm64 executable and dSYM UUIDs match, then retains
+`BetterTile.app.dSYM` beside the DMG in the versioned artifact directory.
+The dSYM is not inside the app or DMG and is not uploaded by the script.
+Keep it privately with the exact release artifacts and source commit for crash
+analysis. The dSYM contains full symbols and absolute source paths. Never
+upload it to GitHub or attach it to a release; the script retains it locally
+only.
+
+Check the UUID in a crash report's Binary Images section against both files:
+
+```sh
+dwarfdump --uuid BetterTile.app/Contents/MacOS/BetterTile
+dwarfdump --uuid BetterTile.app.dSYM
+```
+
+For an arm64 crash address, supply the image load address from that section:
+
+```sh
+atos -arch arm64 -o BetterTile.app.dSYM/Contents/Resources/DWARF/BetterTile \
+  -l <image-load-address> <crash-address>
+```
+
 ## Three signing contexts
 
 These are separate and easy to confuse:
@@ -102,9 +138,16 @@ shortcut, disk image, mount point, and appcast working files — in a unique
 directory. Stripping extended attributes afterwards races whatever reapplies
 them, so these release artifacts never acquire them in the first place.
 
-The validation-only `swift package resolve`, `swift test`, and `swift build`
+The validation-only `swift package resolve`, `Tools/test.sh`, and `swift build`
 commands continue to use the checkout's normal `.build`; their outputs are not
-copied into the application or DMG.
+copied into the application or DMG. `Tools/test.sh` runs `swift test`, checks
+complete passing products, and records `tests.log` in the private release workspace.
+
+Appcast hardware validation requires an arm64 requirement on the requested build.
+It accepts the legacy Sparkle namespace and the literal `sparkle:` prefix
+compatibility form. Build identification still requires a recognized Sparkle
+namespace; the literal `sparkle:` prefix is accepted on the requirement element
+regardless of its namespace.
 
 Only the finished, inspectable artifacts are copied back into
 `.build/beta-release/v<version>-beta/`:
@@ -113,6 +156,7 @@ Only the finished, inspectable artifacts are copied back into
 - `BetterTile-<version>-beta.dmg.sha256`
 - `BetterTile-<version>-beta.md` (the release notes as published)
 - `appcast.xml`
+- `BetterTile.app.dSYM` (local symbols; not a published asset)
 
 DerivedData and the staging tree are intentionally not retained.
 
@@ -147,7 +191,15 @@ Tools/release-beta.sh --dry-run 0.1.0 path/to/notes.md
 A dry run may run from a feature branch. It runs the tests and builds, ad-hoc
 signs and verifies the Release app, validates its Info.plist, creates and mounts
 the DMG, re-verifies the signature through the mounted image, generates an EdDSA
-signature for the DMG, and records it in the appcast. The finished artifacts are
+signature for the DMG, and records it in the appcast. Dry runs create a fresh
+disposable EdDSA key without accessing the release Keychain. They substitute
+its public key only in the temporary built app before code signing, and pass
+the private seed explicitly to Sparkle. The temporary key is deleted on exit.
+Dry-run artifacts cannot update production installations. Dry runs fetch the
+public appcast read-only and reject already published versions or build
+numbers. They keep that feed separate from their generated test appcast so
+production entries are not signed with the disposable key. Never publish their
+appcast or DMG. The finished artifacts are
 copied to `.build/beta-release/v<version>-beta/` for inspection; the temporary
 working directory is removed.
 

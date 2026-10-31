@@ -33,7 +33,7 @@
 </p>
 
 <p align="center">
-  Requires macOS 26 or later and Accessibility permission.<br>
+  Requires an Apple silicon Mac, macOS 26 or later, and Accessibility permission.<br>
   The public beta is self-signed and not notarized. Read the <a href="#install">installation steps</a> before first launch.
 </p>
 
@@ -131,7 +131,7 @@
 
 ## What you need
 
-- macOS 26 or later.
+- An Apple silicon Mac with macOS 26 or later. Intel Macs are not supported by current releases.
 - Accessibility permission. This is the only macOS permission BetterTile requests.
 - To build from source: Xcode 26 / Swift 6.3 or later. See [Development setup](docs/DEVELOPMENT.md).
 
