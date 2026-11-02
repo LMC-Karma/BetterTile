@@ -1,4 +1,5 @@
 import AppKit
+import BetterTileTestSupport
 import Foundation
 import Testing
 @testable import BetterTileCore
@@ -840,20 +841,22 @@ func aLocalModifierEventOpensTheWheelAndWheelKeysAreConsumed(style: LayoutWheelS
 @Test(.macOSTestApplication, arguments: ["stop", "restart", "configuration", "suspension"]) @MainActor
 func queuedWheelModifiersCannotStartAfterMonitorRetirement(retirement: String) async throws {
     var flags: ((NSEvent) -> Void)?
+    var handledEvents = 0
+    let clock = ManualClock()
+    let origin = clock.now
     let controller = LayoutWheelController(
         configuration: BetterTileConfiguration(), presenter: FakePresenter(),
-        // Hold the pending phase while this test checks queued monitor events.
-        activationDelay: .seconds(60), pointerProvider: { anchor },
+        // Freeze the pending phase even when the executor is busy.
+        activationDelay: .seconds(60),
+        activationWait: { try await clock.sleep(for: $0) },
+        now: { origin.duration(to: clock.now) / .seconds(1) },
+        pointerProvider: { anchor },
         addGlobalMonitor: { mask, handler in
             if mask.contains(.flagsChanged) { flags = handler }
             return NSObject()
         }, addLocalMonitor: { _, _ in NSObject() }, removeMonitor: { _ in }
     )
-    // Each global event queues a main-actor task. Join that task instead of counting turns,
-    // which a busy main actor can outlast.
-    let (handled, markHandled) = AsyncStream<Void>.makeStream()
-    var handledEvents = handled.makeAsyncIterator()
-    controller.globalInputHandledForTesting = { markHandled.yield() }
+    controller.globalInputHandledForTesting = { handledEvents += 1 }
     controller.start()
     defer { controller.stop() }
     let event = try #require(NSEvent.keyEvent(with: .flagsChanged, location: .zero, modifierFlags: [.control, .option, .shift], timestamp: 1,
@@ -871,13 +874,19 @@ func queuedWheelModifiersCannotStartAfterMonitorRetirement(retirement: String) a
         controller.stop()
         if retirement == "restart" { controller.start() }
     }
-    await handledEvents.next()
+    // Observe the retired callback's completion, including its generation guard.
+    try #require(await waitUntil(timeout: .seconds(1)) { handledEvents == 1 },
+                 "The retired modifier callback did not finish after \(retirement).")
     #expect(!controller.isPendingActivation)
     #expect(!controller.isOpen)
     if retirement != "stop" {
         #expect(flags != nil)
         flags?(event)
-        await handledEvents.next()
+        try #require(await waitUntil(timeout: .seconds(1)) { handledEvents == 2 },
+                     "The replacement modifier callback did not finish after \(retirement).")
+        try #require(await waitUntil(timeout: .seconds(1)) { clock.nextSleepDeadline != nil },
+                     "The replacement activation did not register its deadline after \(retirement).")
+        #expect(clock.nextSleepDeadline == origin.advanced(by: .seconds(60)))
         #expect(controller.isPendingActivation)
     }
 }
