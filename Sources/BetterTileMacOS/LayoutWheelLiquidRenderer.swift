@@ -157,6 +157,19 @@ struct LayoutWheelLiquidStyle: Equatable {
         return LayoutWheelLiquidPipeline(device: device, queue: queue, state: state, spriteState: spriteState)
     }
 
+    /// The longest a synchronous offscreen render waits for the GPU or for a free buffer slot. A real or virtual
+    /// GPU finishes these renders in milliseconds; a stalled one must not hold the main thread.
+    nonisolated static let gpuWaitLimit = DispatchTimeInterval.seconds(5)
+
+    /// Commits `commands` and waits until the GPU completes it, for at most `gpuWaitLimit`.
+    /// Returns false when it did not complete in time or failed. Nothing here waits without a bound.
+    nonisolated static func commitAndWait(_ commands: any MTLCommandBuffer) -> Bool {
+        let done = DispatchSemaphore(value: 0)
+        commands.addCompletedHandler { _ in done.signal() }
+        commands.commit()
+        return done.wait(timeout: .now() + gpuWaitLimit) == .success && commands.status == .completed
+    }
+
     /// The package resource bundle with `default.metallib`, found where
     /// SwiftPM's own accessor looks. Unlike `Bundle.module`, a missing bundle
     /// returns nil instead of stopping the app, so the native wheel remains.
@@ -282,15 +295,19 @@ struct LayoutWheelLiquidStyle: Equatable {
                                                                   width: width, height: height, mipmapped: false)
         descriptor.usage = [.renderTarget]
         descriptor.storageMode = .shared
-        inFlight.wait()
-        defer { inFlight.signal() }
+        guard inFlight.wait(timeout: .now() + LayoutWheelLiquidPipeline.gpuWaitLimit) == .success else { return nil }
         guard let texture = pipeline.device.makeTexture(descriptor: descriptor),
               let commands = pipeline.queue.makeCommandBuffer(),
               encode(model, style: style, frame: .init(center: CGPoint(x: size.width / 2, y: size.height / 2),
                                                         pointsPerPixel: 1 / scale),
-                     sprites: sprites, into: texture, commands: commands) else { return nil }
-        commands.commit()
-        commands.waitUntilCompleted()
+                     sprites: sprites, into: texture, commands: commands) else {
+            inFlight.signal()
+            return nil
+        }
+        // The slot stays taken until the GPU is done with it, even when this wait gives up.
+        let semaphore = inFlight
+        commands.addCompletedHandler { _ in semaphore.signal() }
+        guard LayoutWheelLiquidPipeline.commitAndWait(commands) else { return nil }
         var bytes = [UInt8](repeating: 0, count: width * height * 4)
         texture.getBytes(&bytes, bytesPerRow: width * 4, from: MTLRegionMake2D(0, 0, width, height), mipmapLevel: 0)
         guard let provider = CGDataProvider(data: Data(bytes) as CFData) else { return nil }

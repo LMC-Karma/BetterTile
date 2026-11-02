@@ -450,7 +450,7 @@ private func randomCase(_ rng: inout SplitMix64) -> FuzzCase {
 }
 
 @Suite(.macOSTestApplication) struct LayoutWheelFuzzTests {
-    @Test(arguments: [false, true]) @MainActor func layoutWheelGestureFuzzKeepsSelectionInvariants(liquid: Bool) {
+    @Test(arguments: [false, true]) @MainActor func layoutWheelGestureFuzzKeepsSelectionInvariants(liquid: Bool) async {
         let environment = ProcessInfo.processInfo.environment
         let seed = environment["LAYOUT_WHEEL_FUZZ_SEED"].flatMap(UInt64.init) ?? 0x5EED_2026_1021
         let cases = environment["LAYOUT_WHEEL_FUZZ_CASES"].flatMap(Int.init) ?? 1500
@@ -463,6 +463,9 @@ private func randomCase(_ rng: inout SplitMix64) -> FuzzCase {
                 failures.append("case \(index) seed \(seed): \(outcome.violations)\n\(shrink(fuzz))")
                 if failures.count >= 3 { break }
             }
+            // 1500 cases take seconds of main-thread work, more on a shared CI runner. Let queued
+            // main-actor work run between cases, so this suite cannot starve other tests' deadlines.
+            await Task.yield()
         }
         #expect(failures.isEmpty, "\(failures.joined(separator: "\n\n"))")
     }

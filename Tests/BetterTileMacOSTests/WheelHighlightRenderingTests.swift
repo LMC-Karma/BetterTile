@@ -165,8 +165,21 @@ import Testing
         }
     }
 
-    @Test func mistAndClearProfileContrast() throws {
+    @Test(arguments: [1, 2]) func mistAndClearProfileContrast(ambientScale: Int) throws {
         guard LayoutWheelLiquidPresenter.prepare() else { return }
+        // Neither a 1x generic RGB context nor a 2x wide-gamut context may choose
+        // the snapshot's raster. Both must measure the same 2x sRGB fixture.
+        let ambientSpace = try #require(ambientScale == 1 ? NSColorSpace.genericRGB.cgColorSpace
+            : CGColorSpace(name: CGColorSpace.displayP3))
+        let ambient = try #require(CGContext(data: nil, width: 32 * ambientScale, height: 32 * ambientScale,
+                                            bitsPerComponent: 8, bytesPerRow: 0, space: ambientSpace,
+                                            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        ambient.scaleBy(x: CGFloat(ambientScale), y: CGFloat(ambientScale))
+        #expect(ambient.colorSpace != CGColorSpace(name: CGColorSpace.sRGB))
+        #expect(ambient.ctm.a == CGFloat(ambientScale) && ambient.ctm.d == CGFloat(ambientScale))
+        NSGraphicsContext.saveGraphicsState()
+        defer { NSGraphicsContext.restoreGraphicsState() }
+        NSGraphicsContext.current = NSGraphicsContext(cgContext: ambient, flipped: false)
         var rows: [[String: Any]] = []
         // Dark Clear must keep the recorded glow profile in the fixture. Light Clear must darken the ring.
         // Mist and Clear stay distinct.
@@ -183,6 +196,18 @@ import Testing
                             wheel.appearance.liquid.translucency = .init(light: translucency, dark: translucency)
                             let focused = try #require(LayoutWheelStyleSnapshots.render(configuration: wheel, dark: dark, opaque: opaque))
                             let neutral = try #require(LayoutWheelStyleSnapshots.render(configuration: wheel, dark: dark, state: .init(), opaque: opaque))
+                            // Measure the fixture's profile in a fixed 2x sRGB RGBA8 raster.
+                            // A display-dependent raster changes colour conversion and the point
+                            // area covered by each 5x5 patch.
+                            for snapshot in [focused, neutral] {
+                                let raster = try #require(snapshot.cgImage(forProposedRect: nil, context: nil, hints: nil))
+                                #expect(raster.width == Int(ceil(snapshot.size.width * 2)))
+                                #expect(raster.height == Int(ceil(snapshot.size.height * 2)))
+                                #expect(raster.colorSpace == CGColorSpace(name: CGColorSpace.sRGB))
+                                #expect(raster.bitsPerComponent == 8 && raster.bitsPerPixel == 32)
+                                #expect(raster.alphaInfo == .premultipliedLast)
+                                #expect(raster.bitmapInfo.intersection(.byteOrderMask) == .byteOrderDefault)
+                            }
                             let image = try composite(focused, white: background), base = try composite(neutral, white: background)
                             let radius = try #require(LayoutWheelLiquidDefaults.content(configuration: wheel).layout.iconRadii.last)
                             let rawImage = try bitmap(focused), rawBase = try bitmap(neutral)

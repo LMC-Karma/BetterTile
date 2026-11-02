@@ -1244,7 +1244,7 @@ func bentoReleaseWithASuppressionModifierRestores(modified: Bool) {
 /// strip wins over a snap area except in the screen-edge bands, where the top
 /// edge, its corners, and the side edges still snap.
 @Test(.macOSTestApplication, arguments: [5.0, 20, 40]) @MainActor
-func tabStripHoverShowsAnInsertionAndCommitsATabDrop(edgeWidth: Double) throws {
+func tabStripHoverShowsAnInsertionAndCommitsATabDrop(edgeWidth: Double) async throws {
     _ = NSApplication.shared
     let system = FakeWindowSystem()
     system.availableDisplays[0].frame.origin.x = 12000
@@ -1321,6 +1321,9 @@ func tabStripHoverShowsAnInsertionAndCommitsATabDrop(edgeWidth: Double) throws {
             Issue.record("\(action) must still snap at the screen edge"); return
         }
         #expect(indicators().isEmpty)
+        // Snap previews animate synchronously. Yield between edge targets, after hiding the insertion line,
+        // so other tests can run without observing this test's insertion panel.
+        await Task.yield()
     }
 
     send(controller, .leftMouseDragged, x: 12300, y: stripInteriorY)

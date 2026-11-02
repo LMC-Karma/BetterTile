@@ -17,8 +17,7 @@ import Testing
     /// handlers have run and released what they captured.
     private func drainGPU() {
         guard let queue = LayoutWheelLiquidPipeline.current?.queue, let buffer = queue.makeCommandBuffer() else { return }
-        buffer.commit()
-        buffer.waitUntilCompleted()
+        #expect(LayoutWheelLiquidPipeline.commitAndWait(buffer), "The GPU did not finish within its wait limit")
         // Commit the implicit layer transaction, as the end of a run-loop turn would.
         CATransaction.flush()
         RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.05))
