@@ -3,6 +3,7 @@ import BetterTileCore
 import SwiftUI
 import Testing
 @testable import BetterTileApp
+@testable import BetterTileMacOS
 
 @MainActor @Suite(.appTestApplication, .serialized) struct WindowLayoutSettingsSnapshotTests {
     private enum State: String, CaseIterable {
@@ -95,6 +96,7 @@ import Testing
                 func end(of track: CGRect) -> CGPoint { host.view.convert(CGPoint(x: track.maxX - 2, y: track.midY), to: nil) }
                 let picture = CGRect(x: gapTrack.minX - 8 - 64, y: gapTrack.midY - 20, width: 64, height: 40)
                 let preview = try #require(previewViews(host.view).max { $0.bounds.width < $1.bounds.width })
+                let lens = try #require(preview as? DividerLensPreviewView)
                 let previewFrame = preview.convert(preview.bounds, to: host.view)
                 let grip = CGRect(x: previewFrame.midX - 30, y: previewFrame.midY - 30, width: 60, height: 60)
                 // A click is handled within a few layout passes. These waits suspend between polls and never turn the
@@ -112,13 +114,35 @@ import Testing
                 #expect(afterPicture != beforePicture)
                 host.settle()
                 let beforeGlass = try png(host, in: grip)
-                try performNativeMouseClick(at: point(on: glassTrack, at: 0.9), in: host.window)
-                try await waitForSettingsUI("the clicked glass transparency and its preview", in: host.view, timeout: clickBudget) {
-                    model.configuration.overlayAppearance.transparency > 0.8 && (try? png(host, in: grip)) != beforeGlass
+                // The same click as the pane gap's: just inside the track's end, so the slider clamps to its maximum.
+                try performNativeMouseClick(at: end(of: glassTrack), in: host.window)
+                func glassState() -> String {
+                    "transparency=\(model.configuration.overlayAppearance.transparency) "
+                        + "preview=\(lens.handleView.overlayAppearance.transparency) glass=\(lens.handleView.showsGlass) "
+                        + "frost=\(lens.handleView.showsFrost) opaque=\(lens.handleView.showsSolid)"
                 }
+                do {
+                    try await waitForSettingsUI("the clicked glass transparency", in: host.view, timeout: clickBudget) {
+                        model.configuration.overlayAppearance.transparency > 0.8
+                    }
+                    try await waitForSettingsUI("the glass preview to take the transparency", in: host.view, timeout: clickBudget) {
+                        lens.handleView.overlayAppearance == model.configuration.overlayAppearance
+                    }
+                    // Only the glass surface draws the transparency. Frost and the opaque grip, chosen by Liquid Glass
+                    // availability or the host's Reduce Transparency and Increase Contrast, correctly ignore it.
+                    if lens.handleView.showsGlass {
+                        try await waitForSettingsUI("the glass preview's picture", in: host.view, timeout: clickBudget) {
+                            (try? png(host, in: grip)) != beforeGlass
+                        }
+                    }
+                } catch {
+                    print("LIVE_SLIDER dark=\(dark) width=\(width) \(glassState())")
+                    throw error
+                }
+                print("LIVE_SLIDER dark=\(dark) width=\(width) \(glassState())")
                 #expect(model.configuration.overlayAppearance.transparency > 0.8)
                 let afterGlass = try png(host, in: grip)
-                #expect(afterGlass != beforeGlass)
+                #expect(afterGlass != beforeGlass || !lens.handleView.showsGlass, Comment(rawValue: glassState()))
                 host.settle()
                 let after = try png(host)
                 if let directory {
