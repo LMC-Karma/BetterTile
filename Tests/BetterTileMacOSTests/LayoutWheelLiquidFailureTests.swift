@@ -89,7 +89,7 @@ import Testing
 
     private final class Counter { var value = 0 }
 
-    @Test func failedCatalogRebuildClosesTheOpenWheel() throws {
+    @Test(.liquidPipeline) func failedCatalogRebuildClosesTheOpenWheel() throws {
         let parent = LayoutWheelLiquidDefaults.content(configuration: catalogConfiguration())
         let catalog = LayoutWheelLiquidDefaults.content(configuration: catalogConfiguration(browsing: true))
         let (presenter, lost) = try openWheel(parent)
@@ -113,7 +113,7 @@ import Testing
         #expect(!presenter.isOpen)
     }
 
-    @Test func failedAppearanceRebuildClosesTheOpenWheel() throws {
+    @Test(.liquidPipeline) func failedAppearanceRebuildClosesTheOpenWheel() throws {
         let (presenter, lost) = try openWheel(LayoutWheelLiquidDefaults.content(configuration: catalogConfiguration()))
         defer { presenter.close() }
         presenter.makeAtlas = { _, _, _ in nil }
@@ -123,7 +123,7 @@ import Testing
         #expect(!presenter.isOpen && !presenter.isVisible)
     }
 
-    @Test func availabilityChangeNeedsNoNewAtlas() throws {
+    @Test(.liquidPipeline) func availabilityChangeNeedsNoNewAtlas() throws {
         let configuration = catalogConfiguration()
         let (presenter, lost) = try openWheel(LayoutWheelLiquidDefaults.content(configuration: configuration))
         defer { presenter.close() }
@@ -194,7 +194,7 @@ import Testing
         #expect(presenter.atlasForTesting?.entries[.ringName(0, 0)] != nil)
     }
 
-    @Test func openWheelWithoutCaptionsStaysOpenWhenNoneAreDrawn() throws {
+    @Test(.liquidPipeline) func openWheelWithoutCaptionsStaysOpenWhenNoneAreDrawn() throws {
         let configuration = catalogConfiguration()
         let parent = LayoutWheelLiquidDefaults.content(configuration: configuration)
         let catalog = LayoutWheelLiquidDefaults.content(configuration: catalogConfiguration(browsing: true))
@@ -211,7 +211,7 @@ import Testing
         #expect(lost.value == 0 && presenter.isOpen)
     }
 
-    @Test func failedDestinationDensityRebuildKeepsTheOldAtlasUsable() throws {
+    @Test(.liquidPipeline) func failedDestinationDensityRebuildKeepsTheOldAtlasUsable() throws {
         let configuration = catalogConfiguration()
         let (presenter, lost) = try openWheel(LayoutWheelLiquidDefaults.content(configuration: configuration))
         defer { presenter.close() }
@@ -251,7 +251,7 @@ import Testing
 
     // MARK: The controller ends the gesture
 
-    @Test func lostWheelEndsTheGestureWithoutACommand() throws {
+    @Test(.liquidPipeline) func lostWheelEndsTheGestureWithoutACommand() throws {
         try #require(MTLCreateSystemDefaultDevice() != nil)
         let renderer = LayoutWheelLiquidPresenter(clock: WheelTestClock())
         renderer.dark = true
