@@ -350,17 +350,21 @@ struct DisplaySetPicture: View {
                 ForEach(displays.indices, id: \.self) { index in
                     let frame = displays[index].frame
                     let isTarget = index == target
+                    // Typed parts keep this expression within Swift 6.3's type-check limit.
+                    let detail: String = isTarget ? "This layout · \(layoutName)" : others[index] ?? ""
+                    let width: CGFloat = CGFloat(frame.size.width) * scale
+                    let height: CGFloat = CGFloat(frame.size.height) * scale
+                    let x: CGFloat = inset.width + (CGFloat(frame.origin.x) - box.minX) * scale
+                    let top: CGFloat = inset.height + (CGFloat(frame.origin.y) - box.minY) * scale
+                    let y: CGFloat = max(0, min(proxy.size.height - max(80, height), top))
                     Button { selectTarget?(index) } label: {
                         DisplaySetTile(name: names[index], caption: caption(index), isTarget: isTarget, connected: connected,
-                                       detail: index == target ? "This layout · \(layoutName)" : others[index] ?? "",
-                                       width: frame.size.width * scale, height: frame.size.height * scale)
+                                       detail: detail, width: width, height: height)
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel("Choose \(names[index]) for \(layoutName)")
                     .opacity(connected ? 1 : 0.7)
-                    .offset(x: inset.width + (frame.origin.x - box.minX) * scale,
-                            y: max(0, min(proxy.size.height - max(80, frame.size.height * scale),
-                                          inset.height + (frame.origin.y - box.minY) * scale)))
+                    .offset(x: x, y: y)
                 }
             }
         }
