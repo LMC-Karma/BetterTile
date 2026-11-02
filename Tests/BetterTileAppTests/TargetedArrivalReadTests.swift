@@ -132,23 +132,18 @@ struct TargetedArrivalReadTests {
     func anElementThatStaysUnreadableFallsBackAtTheDeadline(mode: LayoutMode) async throws {
         let (system, model) = try await fixture(mode)
         defer { model.shutdown() }
-        let clock = WindowArrivalTestClock(model)
         let id = addArrival(system)
         system.notReadyReads[token] = 10_000
-        // Each retry wait stays the fixture's registered deadline on its manual clock, so waitFor drives the
-        // 500 ms read budget in virtual time. A wait that returned at once left waitFor only real-time
-        // polling, which a loaded runner could exhaust before the reads reached the deadline.
-        let registeredSleep = model.windowEventSleep
-        model.windowEventSleep = { delay in
-            try await registeredSleep(delay)
-            clock.elapsed += Double(delay.components.seconds) + Double(delay.components.attoseconds) / 1e18
-        }
         let sweeps = system.completeSweepCount
         var sweepsBeforeFirstWrite: Int?
         system.onFrameWrite = { windowID, _ in
             if windowID == id, sweepsBeforeFirstWrite == nil { sweepsBeforeFirstWrite = system.completeSweepCount - sweeps }
         }
         create(system)
+        // Arrival age and event retries share the fixture's registered policy deadlines.
+        try #require(await system.waitFor { system.createdReadCount > 40 })
+        #expect(sweepsBeforeFirstWrite == nil)
+        #expect(system.completeSweepCount == sweeps, "No complete inventory runs before the arrival deadline")
         try #require(await system.waitFor { sweepsBeforeFirstWrite != nil })
         #expect(sweepsBeforeFirstWrite == 1, "Only the deadline hands the arrival to a complete inventory")
         #expect(system.createdReadCount > 40 && system.createdReadCount < 80)
