@@ -70,7 +70,7 @@ struct RepeatedRecoveryLifecycleTests {
             }
             #expect(recovered, "Cycle \(cycle) must place the current returning identity after single-window Repair")
             try #require(await waitFor { model.settlementTasks.isEmpty })
-            let session = try #require(session(model, display: display.id))
+            let session = try #require(self.session(model, display: display.id))
             #expect(session.mode == .bento)
             #expect(!session.automaticWritesSuspended)
             #expect(session.bentoState.root?.windowIDs.contains(returning.id) == true)
