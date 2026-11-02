@@ -121,7 +121,9 @@ import Testing
         }
     }
 
-    @Test(arguments: CentreState.allCases, [0.8, 1.0, 1.2])
+    // Counts ink in a capture of real native glass, which the macOS 26 runner cannot capture. On CI,
+    // centreInkIsContentOfTheGlassCarryingView still checks that the centre ink is content of the glass.
+    @Test(.liveDesktop, arguments: CentreState.allCases, [0.8, 1.0, 1.2])
     func nativeGlassRetainsCentreInk(state: CentreState, scale: Double) throws {
         var input = LayoutWheelSceneInput(configuration: .init(levelCount: .two, scale: scale))
         switch state {
