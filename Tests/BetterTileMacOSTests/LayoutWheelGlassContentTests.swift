@@ -172,10 +172,23 @@ import Testing
             }
             return count
         }
+        /// The brightest pixel, so a failure shows how far the ink missed.
+        func brightest(in rect: CGRect) -> String {
+            var best = (alpha: 0.0, red: 0.0)
+            for y in Int(center + rect.minY * 2)..<Int(center + rect.maxY * 2) {
+                for x in Int(center + rect.minX * 2)..<Int(center + rect.maxX * 2) {
+                    if let color = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.sRGB),
+                       color.alphaComponent * color.redComponent > best.alpha * best.red {
+                        best = (color.alphaComponent, color.redComponent)
+                    }
+                }
+            }
+            return "brightest pixel alpha \(best.alpha), red \(best.red)"
+        }
         // No stand-in: exercise the actual glass modifier and container. The
         // central crop excludes ring icons and the well outline.
-        #expect(ink(in: CGRect(x: -24 * scale, y: -14 * scale, width: 48 * scale, height: 28 * scale),
-                    threshold: unavailable ? 0.5 : 0.8) > 20)
+        let centreCrop = CGRect(x: -24 * scale, y: -14 * scale, width: 48 * scale, height: 28 * scale)
+        #expect(ink(in: centreCrop, threshold: unavailable ? 0.5 : 0.8) > 20, "\(brightest(in: centreCrop))")
         if unavailable {
             #expect(ink(in: CGRect(x: -6 * scale, y: -31 * scale, width: 12 * scale, height: 11 * scale),
                         threshold: 0.7) > 5)
