@@ -278,12 +278,14 @@ private func stressCount(_ variable: String, default fallback: Int) -> Int {
 // The default is a short lifecycle sweep. Restore the full exploration with:
 // BT_STRESS_SEEDS=40 BT_STRESS_STEPS=400 swift test --filter tabbedOverlayRandomLifecycle
 @Test(.macOSTestApplication, arguments: (1...stressCount("BT_STRESS_SEEDS", default: 6)).map { UInt64($0) }) @MainActor
-func tabbedOverlayRandomLifecycleKeepsSurfacesConsistent(seed: UInt64) {
+func tabbedOverlayRandomLifecycleKeepsSurfacesConsistent(seed: UInt64) async {
     let stress = TabbedOverlayStress(seed: seed)
     stress.refresh()
     for _ in 0..<stressCount("BT_STRESS_STEPS", default: 100) {
         stress.step()
         stress.check()
+        // Keep each transition and its checks together, then let queued main-actor work run.
+        await Task.yield()
     }
     stress.overlay.hide()
     stress.visible = false
