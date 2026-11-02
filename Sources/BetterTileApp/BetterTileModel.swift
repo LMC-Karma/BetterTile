@@ -8920,6 +8920,9 @@ extension BetterTileModel {
         let ids = Set(placements.map(\.windowID)).union(plan.assignments.values)
         let participants = Dictionary(uniqueKeysWithValues: snapshot.windows.filter { ids.contains($0.id) }.map { ($0.id, $0) })
         var validatedParticipants: [WindowSnapshot] = []
+        // Closures nested in `recover` read this through a main-actor closure. Swift 6.3
+        // wrongly treats a direct capture of the variable there as task-isolated.
+        let currentValidatedParticipants = { @MainActor in validatedParticipants }
         let readParticipants = { @MainActor in
             try self.system.cachedVisibleWindows(refreshing: ids) ?? self.observeVisibleWindows()
         }
@@ -8983,7 +8986,7 @@ extension BetterTileModel {
             let canRestore = {
                 guard ownerIsCurrent(), self.activeBentoDrag == nil, !self.dragSnap.isGestureActive,
                       !self.dividerResize.isDragging, stillOwnsMutations else { return false }
-                let current = validatedParticipants
+                let current = currentValidatedParticipants()
                 // A physical move does not allocate a coordinator generation. Keep that newer frame.
                 return ids.allSatisfy { id in
                     guard let frame = current.first(where: { $0.id == id })?.frame else { return false }
