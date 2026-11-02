@@ -935,7 +935,7 @@ public struct LayoutWheelLiquidState: Equatable, Sendable {
         guard let texture = pipeline.device.makeTexture(descriptor: descriptor),
               render(drawable: OffscreenWheelDrawable(texture: texture)),
               let fence = pipeline.queue.makeCommandBuffer() else { return nil }
-        fence.commit(); fence.waitUntilCompleted()
+        guard LayoutWheelLiquidPipeline.commitAndWait(fence) else { return nil }
         var bytes = [UInt8](repeating: 0, count: width * height * 4)
         texture.getBytes(&bytes, bytesPerRow: width * 4, from: MTLRegionMake2D(0, 0, width, height), mipmapLevel: 0)
         guard let provider = CGDataProvider(data: Data(bytes) as CFData) else { return nil }

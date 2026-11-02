@@ -119,8 +119,8 @@ import Observation
             frame: .init(center: .init(x: points.width / 2, y: points.height / 2), pointsPerPixel: 0.5),
             sprites: .init(atlas: atlas, instances: instances, viewSize: points), drawable: drawable),
               let fence = pipeline.queue.makeCommandBuffer() else { return nil }
-        fence.commit(); fence.waitUntilCompleted()
-        guard fence.status == .completed else { return nil }
+        // Settings draws these on the main thread. A stalled GPU gives no thumbnail, never a hang.
+        guard LayoutWheelLiquidPipeline.commitAndWait(fence) else { return nil }
         var bytes = [UInt8](repeating: 0, count: pixels * pixels * 4)
         texture.getBytes(&bytes, bytesPerRow: pixels * 4,
                          from: .init(origin: .init(x: 0, y: 0, z: 0), size: .init(width: pixels, height: pixels, depth: 1)), mipmapLevel: 0)
