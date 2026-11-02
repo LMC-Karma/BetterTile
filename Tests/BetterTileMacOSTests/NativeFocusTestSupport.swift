@@ -24,6 +24,18 @@ extension Trait where Self == NativeFocusTrait {
     static var nativeFocus: Self { Self() }
 }
 
+/// Skips a test on CI when its result depends on a live desktop session that a hosted runner does not provide:
+/// pixels of rendered native glass, GPU-dependent golden images, Vision text recognition, synthetic input into native
+/// controls, or real key-window and activation state. GitHub Actions sets `CI`; local and pre-PR full runs keep the test.
+/// Use it only for such an environmental limit, never for a timing, ordering or wrong-result failure. Each tagged suite
+/// names the model or colour-maths test that still covers its logic on CI.
+extension Trait where Self == ConditionTrait {
+    static var liveDesktop: Self {
+        .enabled(if: ProcessInfo.processInfo.environment["CI"] == nil,
+                 "Needs a live desktop session (rendered native glass, GPU, Vision, real input or key state); skipped when CI is set")
+    }
+}
+
 /// An episode starts at an actual active sample, not at a delayed notification.
 struct NativeActivationEpisodes: Sendable {
     struct Episode: Sendable {
