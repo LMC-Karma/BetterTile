@@ -15,7 +15,7 @@ struct SettingsUITrait: TestTrait, SuiteTrait, TestScoping {
     }
 
     func provideScope(for test: Test, testCase: Test.Case?, performing function: @Sendable () async throws -> Void) async throws {
-        let ownership = try await SettingsUILease.shared.acquire()
+        let ownership = try await SettingsUILease.shared.acquire(holder: test.name)
         let traceToken = await NativeApplicationActivationTrace.enter(test: test.name, scope: "UI lease")
         do {
             try await NativeApplicationBootstrap.start(keepsApplicationRunning: true)
@@ -81,6 +81,31 @@ private enum SettingsUILease {
         return passes == 2
     }
     #expect(passes == 2)
+}
+
+/// A control that tracks a press in its own event loop until the button is released, as a switch can.
+private final class PressTrackingControl: NSControl {
+    private(set) var presses = 0
+    private(set) var tookRelease = false
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+    override func mouseDown(with event: NSEvent) {
+        presses += 1
+        let limit = Date(timeIntervalSinceNow: 2) // real-time: bounds this probe's tracking loop, so a missing release fails instead of hanging
+        tookRelease = window?.nextEvent(matching: .leftMouseUp, until: limit, inMode: .eventTracking, dequeue: true) != nil
+    }
+}
+
+@Test(.appTestApplication, .settingsUI) @MainActor func nativeMouseClickReleasesAControlThatTracksThePress() throws {
+    let window = OffscreenTestWindow(contentRect: NSRect(x: 12000, y: 0, width: 80, height: 40),
+                                     styleMask: [.borderless], backing: .buffered, defer: false)
+    window.isReleasedWhenClosed = false
+    defer { window.close() }
+    let control = PressTrackingControl(frame: NSRect(x: 0, y: 0, width: 80, height: 40))
+    window.contentView = control
+    window.orderFront(nil) // Offscreen at x = 12000, like the Settings hosts these clicks serve.
+    try performNativeMouseClick(at: CGPoint(x: 40, y: 20), in: window)
+    #expect(control.presses == 1)
+    #expect(control.tookRelease, "The press-tracking loop takes the queued release instead of waiting for a real one")
 }
 
 // Records which Swift Testing scope acquired the UI resource, not elapsed time.
