@@ -162,8 +162,15 @@ struct LayoutWheelLiquidStyle: Equatable {
     /// returns nil instead of stopping the app, so the native wheel remains.
     private static var shaderBundle: Bundle? {
         let name = "BetterTile_BetterTileMacOS.bundle"
-        let places = [Bundle.main.resourceURL, Bundle(for: LayoutWheelLiquidPipeline.self).resourceURL,
+        var places = [Bundle.main.resourceURL, Bundle(for: LayoutWheelLiquidPipeline.self).resourceURL,
                       Bundle.main.bundleURL]
+        #if BETTERTILE_TEST_HOOKS
+        // SwiftPM's native build system does not compile Metal. Tools/test.sh
+        // compiles the shader and names its folder here.
+        if let folder = ProcessInfo.processInfo.environment["BETTERTILE_TEST_SHADER_DIRECTORY"] {
+            places.append(URL(fileURLWithPath: folder, isDirectory: true))
+        }
+        #endif
         return places.lazy.compactMap { $0.flatMap { Bundle(url: $0.appendingPathComponent(name)) } }.first
     }
 
