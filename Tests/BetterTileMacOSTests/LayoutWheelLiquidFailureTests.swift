@@ -12,7 +12,7 @@ import Testing
 @MainActor @Suite(.macOSTestApplication, .serialized) struct LayoutWheelLiquidFailureTests {
     private let content = LayoutWheelLiquidContent(configuration: .init(style: .grouped), levelCount: .two)
 
-    @Test func failedEncodingKeepsTheSharedBufferSlot() throws {
+    @Test(.liquidPipeline) func failedEncodingKeepsTheSharedBufferSlot() throws {
         try #require(MTLCreateSystemDefaultDevice() != nil)
         let pipeline = try #require(LayoutWheelLiquidPipeline.prepare())
         let encoder = try #require(LayoutWheelLiquidEncoder(pipeline: pipeline))
@@ -86,7 +86,7 @@ import Testing
 
 
 
-    @Test func failedModeGlyphRebuildClosesTheOpenWheel() throws {
+    @Test(.liquidPipeline) func failedModeGlyphRebuildClosesTheOpenWheel() throws {
         let configuration = LayoutWheelConfiguration(style: .grouped, levelCount: .two)
         let (presenter, lost) = try openWheel(LayoutWheelLiquidDefaults.content(configuration: configuration, currentMode: .bento))
         defer { presenter.close() }
@@ -130,7 +130,7 @@ import Testing
         #expect(presenter.atlasForTesting == nil)
     }
 
-    @Test(arguments: [LayoutWheelLiquidPresenter.Names.centre, .hidden])
+    @Test(.liquidPipeline, arguments: [LayoutWheelLiquidPresenter.Names.centre, .hidden])
     func missingCaptionsDoNotBlockAWheelThatDrawsNone(names: LayoutWheelLiquidPresenter.Names) throws {
         try #require(MTLCreateSystemDefaultDevice() != nil)
         let presenter = LayoutWheelLiquidPresenter(clock: WheelTestClock())
@@ -143,7 +143,7 @@ import Testing
         #expect(presenter.atlasForTesting?.entries[.ring(0, 0)] != nil)
     }
 
-    @Test func switchingToUnderIconNamesNeverReusesAnAtlasWithoutThem() throws {
+    @Test(.liquidPipeline) func switchingToUnderIconNamesNeverReusesAnAtlasWithoutThem() throws {
         try #require(MTLCreateSystemDefaultDevice() != nil)
         let presenter = LayoutWheelLiquidPresenter(clock: WheelTestClock())
         presenter.dark = true
@@ -173,7 +173,7 @@ import Testing
         #expect(!adapter.usesLiquidGeometry)
     }
 
-    @Test func openWheelCannotCommitAnIncompleteReplacement() throws {
+    @Test(.liquidPipeline) func openWheelCannotCommitAnIncompleteReplacement() throws {
         let configuration = LayoutWheelConfiguration(style: .grouped, levelCount: .two)
         let (presenter, lost) = try openWheel(LayoutWheelLiquidDefaults.content(configuration: configuration, currentMode: .bento))
         defer { presenter.close() }
@@ -185,7 +185,7 @@ import Testing
 
     // MARK: The controller ends the gesture
 
-    @Test(.timeLimit(.minutes(1))) func embeddedPreviewFallsBackWhenItsOpenRendererIsLost() async throws {
+    @Test(.liquidPipeline, .timeLimit(.minutes(1))) func embeddedPreviewFallsBackWhenItsOpenRendererIsLost() async throws {
         try #require(MTLCreateSystemDefaultDevice() != nil)
         let coordinator = LayoutWheelLiquidPreview.Coordinator()
         let host = NSView()
@@ -220,7 +220,7 @@ import Testing
         #expect(!coordinator.renderer.isOpen && coordinator.fallback != nil)
     }
 
-    @Test func groupedAvailabilityChangeNeedsNoNewAtlas() throws {
+    @Test(.liquidPipeline) func groupedAvailabilityChangeNeedsNoNewAtlas() throws {
         let configuration = LayoutWheelConfiguration(style: .grouped, levelCount: .two)
         let (presenter, lost) = try openWheel(LayoutWheelLiquidDefaults.content(configuration: configuration))
         defer { presenter.close() }
@@ -231,7 +231,7 @@ import Testing
         #expect(lost.value == 0 && presenter.isOpen)
     }
 
-    @Test func groupedDensityRebuildFailureKeepsTheOldAtlasUsable() throws {
+    @Test(.liquidPipeline) func groupedDensityRebuildFailureKeepsTheOldAtlasUsable() throws {
         let configuration = LayoutWheelConfiguration(style: .grouped, levelCount: .two)
         let (presenter, lost) = try openWheel(LayoutWheelLiquidDefaults.content(configuration: configuration))
         defer { presenter.close() }
@@ -250,7 +250,7 @@ import Testing
         #expect(presenter.atlasForTesting === old)
     }
 
-    @Test func lostGroupedWheelEndsTheGestureWithoutACommand() throws {
+    @Test(.liquidPipeline) func lostGroupedWheelEndsTheGestureWithoutACommand() throws {
         try #require(MTLCreateSystemDefaultDevice() != nil)
         let renderer = LayoutWheelLiquidPresenter(clock: WheelTestClock())
         renderer.dark = true

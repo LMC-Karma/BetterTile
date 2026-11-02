@@ -25,6 +25,10 @@ if [[ ${1:-} == --release ]]; then
     shift
     set -- -c release -Xswiftc -enable-testing -Xswiftc -DBETTERTILE_TEST_HOOKS "$@"
 fi
+# Swift 6.3's default native build system skips LayoutWheelLiquid.metal, so the
+# Layout Wheel liquid renderer has no shader library. Swift Build compiles it,
+# and it is already the default from Swift 6.4.
+set -- --build-system swiftbuild "$@"
 # Keep pipefail: a helper failure, build failure, or tee failure must fail this command.
 swift test "$@" 2>&1 | tee "$log"
 "$script_dir/check-test-log.sh" "$log" "$expected"

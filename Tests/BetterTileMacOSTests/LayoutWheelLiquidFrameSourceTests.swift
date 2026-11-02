@@ -61,7 +61,7 @@ extension LayoutWheelLiquidPresenter {
         source.stop()
     }
 
-    @Test func presenterStopsTheMetalSourceAtRestAndOnClose() throws {
+    @Test(.liquidPipeline) func presenterStopsTheMetalSourceAtRestAndOnClose() throws {
         let source = LayoutWheelLiquidDisplayLink()
         let presenter = LayoutWheelLiquidPresenter(frameSource: source)
         presenter.panelForTesting.animationBehavior = .none

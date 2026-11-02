@@ -30,7 +30,7 @@ import Testing
         return presenter
     }
 
-    @Test func openingWaitsForAReadyDrawable() throws {
+    @Test(.liquidPipeline) func openingWaitsForAReadyDrawable() throws {
         try #require(MTLCreateSystemDefaultDevice() != nil)
         let clock = WheelTestClock()
         let presenter = makePresenter(clock)
@@ -45,7 +45,7 @@ import Testing
         #expect(presenter.renderedFrameCount == closed)
     }
 
-    @Test func centreNameWaitsForTheBodyFrame() throws {
+    @Test(.liquidPipeline) func centreNameWaitsForTheBodyFrame() throws {
         try #require(MTLCreateSystemDefaultDevice() != nil)
         let clock = WheelTestClock()
         let presenter = makePresenter(clock)
@@ -59,7 +59,7 @@ import Testing
         presenter.close()
     }
 
-    @Test func pipelineIsBuiltOnceForEveryOpen() throws {
+    @Test(.liquidPipeline) func pipelineIsBuiltOnceForEveryOpen() throws {
         try #require(MTLCreateSystemDefaultDevice() != nil, "This Mac has no Metal device.")
         #expect(LayoutWheelLiquidPresenter.prepare())
         let builds = LayoutWheelLiquidPipeline.buildCount
@@ -74,7 +74,7 @@ import Testing
         #expect(LayoutWheelLiquidPipeline.buildCount == builds)
     }
 
-    @Test func clockRunsOnlyWhileTheModelMoves() throws {
+    @Test(.liquidPipeline) func clockRunsOnlyWhileTheModelMoves() throws {
         try #require(MTLCreateSystemDefaultDevice() != nil)
         let clock = WheelTestClock()
         let presenter = makePresenter(clock)
@@ -103,7 +103,7 @@ import Testing
         presenter.close()
     }
 
-    @Test func closingFreesTheDrawablesAndStopsEverything() throws {
+    @Test(.liquidPipeline) func closingFreesTheDrawablesAndStopsEverything() throws {
         try #require(MTLCreateSystemDefaultDevice() != nil)
         for ending in [LayoutWheelLiquid.Ending.commit, .cancel] {
             let clock = WheelTestClock()
@@ -133,7 +133,7 @@ import Testing
         }
     }
 
-    @Test func preparingDuringTheHoldShowsNothingAndOpenReusesIt() throws {
+    @Test(.liquidPipeline) func preparingDuringTheHoldShowsNothingAndOpenReusesIt() throws {
         try #require(MTLCreateSystemDefaultDevice() != nil)
         let clock = WheelTestClock()
         let presenter = makePresenter(clock)
@@ -155,7 +155,7 @@ import Testing
         #expect(presenter.holdsDrawables && !presenter.isVisible)
     }
 
-    @Test func openingWithTheCapturedTargetReusesTheHoldPreparation() throws {
+    @Test(.liquidPipeline) func openingWithTheCapturedTargetReusesTheHoldPreparation() throws {
         try #require(MTLCreateSystemDefaultDevice() != nil)
         let clock = WheelTestClock()
         let presenter = makePresenter(clock)
@@ -181,7 +181,7 @@ import Testing
         presenter.close()
     }
 
-    @Test func reduceMotionClosesWithAShortFade() throws {
+    @Test(.liquidPipeline) func reduceMotionClosesWithAShortFade() throws {
         try #require(MTLCreateSystemDefaultDevice() != nil)
         let clock = WheelTestClock()
         let presenter = makePresenter(clock)
@@ -196,7 +196,7 @@ import Testing
         #expect(!presenter.holdsDrawables)
     }
 
-    @Test func offscreenFrameDrawsTheBodyAndLeavesTheCornersClear() throws {
+    @Test(.liquidPipeline) func offscreenFrameDrawsTheBodyAndLeavesTheCornersClear() throws {
         try #require(MTLCreateSystemDefaultDevice() != nil)
         let pipeline = try #require(LayoutWheelLiquidPipeline.prepare())
         let encoder = try #require(LayoutWheelLiquidEncoder(pipeline: pipeline))

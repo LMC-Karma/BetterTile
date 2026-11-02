@@ -7,7 +7,7 @@ import Testing
     private let layout = LayoutWheelLiquidLayout(outerRadius: 120, stepRadius: 72, wellRadius: 32,
                                                 iconRadii: [50, 93], dropletRadius: 20)
 
-    @Test func approvedLightInkAndStyleTintReachTheSpriteFragment() throws {
+    @Test(.liquidPipeline) func approvedLightInkAndStyleTintReachTheSpriteFragment() throws {
         let pipeline = try #require(LayoutWheelLiquidPipeline.prepare())
         let encoder = try #require(LayoutWheelLiquidEncoder(pipeline: pipeline))
         let context = try #require(CGContext(data: nil, width: 4, height: 4, bitsPerComponent: 8,
@@ -44,7 +44,7 @@ import Testing
         }
     }
 
-    @Test func fakeClockCrossfadesMainAndBubbleTintAndDimsOnlyOtherMainIcons() throws {
+    @Test(.liquidPipeline) func fakeClockCrossfadesMainAndBubbleTintAndDimsOnlyOtherMainIcons() throws {
         let clock = WheelTestClock()
         let presenter = LayoutWheelLiquidPresenter(clock: clock)
         presenter.reduceMotion = false; presenter.dark = true
@@ -83,7 +83,7 @@ import Testing
         #expect(try #require(presenter.currentModel).submenuDimming < 1e-8)
     }
 
-    @Test func renderedGlowHasAnOuterPeakSoftInteriorAndBoundedDividerSpill() throws {
+    @Test(.liquidPipeline) func renderedGlowHasAnOuterPeakSoftInteriorAndBoundedDividerSpill() throws {
         let pipeline = try #require(LayoutWheelLiquidPipeline.prepare())
         let encoder = try #require(LayoutWheelLiquidEncoder(pipeline: pipeline))
         var model = LayoutWheelLiquid(layout: layout, reduceMotion: true)
@@ -142,7 +142,7 @@ import Testing
             #expect(samples[3] < 0.01)
         }
     }
-    @Test func settledBubbleGapHasNoSmoothUnionBridge() throws {
+    @Test(.liquidPipeline) func settledBubbleGapHasNoSmoothUnionBridge() throws {
         let pipeline = try #require(LayoutWheelLiquidPipeline.prepare())
         let encoder = try #require(LayoutWheelLiquidEncoder(pipeline: pipeline))
         var model = LayoutWheelLiquid(layout: layout)

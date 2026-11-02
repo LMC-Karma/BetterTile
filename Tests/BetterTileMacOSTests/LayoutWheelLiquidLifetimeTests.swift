@@ -42,7 +42,7 @@ import Testing
         while clock.isRunning, frames < 60 { clock.frame(hz: 30); frames += 1 }
     }
 
-    @Test func presenterLayerPanelAndClosuresAreReleased() throws {
+    @Test(.liquidPipeline) func presenterLayerPanelAndClosuresAreReleased() throws {
         try #require(MTLCreateSystemDefaultDevice() != nil)
         weak var weakPresenter: LayoutWheelLiquidPresenter?
         weak var weakLayer: CAMetalLayer?
@@ -69,7 +69,7 @@ import Testing
         #expect(weakSentinel == nil)
     }
 
-    @Test func releasingAnOpenWheelStopsItsDisplayLink() throws {
+    @Test(.liquidPipeline) func releasingAnOpenWheelStopsItsDisplayLink() throws {
         try #require(MTLCreateSystemDefaultDevice() != nil)
         weak var weakPresenter: LayoutWheelLiquidPresenter?
         weak var weakSource: LayoutWheelLiquidDisplayLink?

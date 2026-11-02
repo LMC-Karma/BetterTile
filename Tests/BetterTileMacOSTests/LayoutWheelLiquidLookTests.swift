@@ -16,7 +16,7 @@ import Testing
         return model
     }
 
-    @Test func namesUnderIconsAddOneNamePerIcon() throws {
+    @Test(.liquidPipeline) func namesUnderIconsAddOneNamePerIcon() throws {
         try #require(MTLCreateSystemDefaultDevice() != nil)
         let presenter = LayoutWheelLiquidPresenter(clock: WheelTestClock())
         // Only a wheel that draws under-icon names builds their captions.

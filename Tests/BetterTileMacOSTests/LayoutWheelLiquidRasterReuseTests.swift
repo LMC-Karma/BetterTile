@@ -17,7 +17,7 @@ import Testing
         return data
     }
 
-    @Test(arguments: [LayoutWheelStyle.custom, .grouped], [LayoutWheelLevelCount.one, .two])
+    @Test(.liquidPipeline, arguments: [LayoutWheelStyle.custom, .grouped], [LayoutWheelLevelCount.one, .two])
     func availabilityChangesKeepTheSameRasterAtlas(style: LayoutWheelStyle, levels: LayoutWheelLevelCount) throws {
         try #require(MTLCreateSystemDefaultDevice() != nil)
         let configuration = LayoutWheelConfiguration(style: style, levelCount: levels)
@@ -60,7 +60,7 @@ import Testing
         #expect(pixels(secondRebuild) == rebuiltPixels)
         #expect(sprites(secondRebuild) == retainedSprites)
     }
-    @Test func aimingTintsSpritesWithoutBuildingOrUploadingAnAtlas() throws {
+    @Test(.liquidPipeline) func aimingTintsSpritesWithoutBuildingOrUploadingAnAtlas() throws {
         try #require(MTLCreateSystemDefaultDevice() != nil)
         let clock = WheelTestClock()
         let renderer = LayoutWheelLiquidPresenter(clock: clock)
