@@ -92,14 +92,7 @@ import Testing
         let toggle = try #require(switches(host.view).first)
         let frame = toggle.convert(toggle.bounds, to: host.view)
         for enabled in [false, true] {
-            for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
-                let event = try #require(NSEvent.mouseEvent(with: type,
-                    location: host.view.convert(CGPoint(x: frame.midX, y: frame.midY), to: nil),
-                    modifierFlags: [], timestamp: 0,
-                    windowNumber: host.window.windowNumber, context: nil, eventNumber: 1,
-                    clickCount: 1, pressure: type == .leftMouseDown ? 1 : 0))
-                try withNativeEventLoop { host.window.sendEvent(event) }
-            }
+            try performNativeMouseClick(at: host.view.convert(CGPoint(x: frame.midX, y: frame.midY), to: nil), in: host.window)
             try await waitForSettingsUI("switch value \(enabled)", in: host.view) {
                 model.configuration.keyboardShortcutsEnabled == enabled
             }

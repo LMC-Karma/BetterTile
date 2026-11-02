@@ -22,7 +22,7 @@ struct LiquidPipelineTrait: TestTrait, TestScoping {
         if let failure {
             Issue.record("""
                 The Layout Wheel liquid pipeline is unavailable: \(failure). \
-                SwiftPM must compile LayoutWheelLiquid.metal; Tools/test.sh selects the Swift Build backend for that.
+                Run the tests with Tools/test.sh, which compiles LayoutWheelLiquid.metal for SwiftPM's native build system.
                 """)
             return
         }
