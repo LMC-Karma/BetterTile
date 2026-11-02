@@ -119,8 +119,8 @@ import Observation
             frame: .init(center: .init(x: points.width / 2, y: points.height / 2), pointsPerPixel: 0.5),
             sprites: .init(atlas: atlas, instances: instances, viewSize: points), drawable: drawable),
               let fence = pipeline.queue.makeCommandBuffer() else { return nil }
-        fence.commit(); fence.waitUntilCompleted()
-        guard fence.status == .completed else { return nil }
+        // Settings draws these on the main thread. A stalled GPU gives no thumbnail, never a hang.
+        guard LayoutWheelLiquidPipeline.commitAndWait(fence) else { return nil }
         var bytes = [UInt8](repeating: 0, count: pixels * pixels * 4)
         texture.getBytes(&bytes, bytesPerRow: pixels * 4,
                          from: .init(origin: .init(x: 0, y: 0, z: 0), size: .init(width: pixels, height: pixels, depth: 1)), mipmapLevel: 0)
@@ -129,16 +129,22 @@ import Observation
                 bytesPerRow: pixels * 4, space: CGColorSpace(name: CGColorSpace.sRGB)!,
                 bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue),
                 provider: provider, decode: nil, shouldInterpolate: true, intent: .defaultIntent) else { return nil }
-        let result = NSImage(size: points)
-        result.lockFocus()
-        NSImage(cgImage: image, size: points).draw(in: .init(origin: .zero, size: points))
+        // Compose in sRGB at the render's own pixel size. NSImage.lockFocus would use the main
+        // display's scale and colour profile, so the same render would give other pixels on
+        // another Mac.
+        guard let composer = CGContext(data: nil, width: pixels, height: pixels, bitsPerComponent: 8, bytesPerRow: 0,
+                                       space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                       bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+        composer.interpolationQuality = .high
+        composer.scaleBy(x: CGFloat(pixels) / points.width, y: CGFloat(pixels) / points.height)
+        composer.draw(image, in: .init(origin: .zero, size: points))
         if let label {
             let width = CGFloat(label.width) / 2, height = CGFloat(label.height) / 2
-            NSImage(cgImage: label, size: .init(width: width, height: height))
-                .draw(in: .init(x: (points.width - width) / 2, y: (points.height - height) / 2, width: width, height: height))
+            composer.draw(label, in: .init(x: (points.width - width) / 2, y: (points.height - height) / 2,
+                                           width: width, height: height))
         }
-        result.unlockFocus()
-        return result
+        guard let composed = composer.makeImage() else { return nil }
+        return NSImage(cgImage: composed, size: points)
     }
 }
 

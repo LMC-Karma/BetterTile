@@ -126,7 +126,12 @@ import Testing
             // marker is a run loop block.
             CFRunLoopPerformBlock(CFRunLoopGetMain(), CFRunLoopMode.defaultMode.rawValue) { done = true }
             CFRunLoopWakeUp(CFRunLoopGetMain())
-            while !done { RunLoop.current.run(mode: .default, before: Date(timeIntervalSinceNow: 0.001)) }
+            // Never pump without a bound: give up after 5 s.
+            let limit = start + 5
+            while !done, CACurrentMediaTime() < limit { // real-time: bounds this opt-in timing probe's run-loop pump
+                RunLoop.current.run(mode: .default, before: Date(timeIntervalSinceNow: 0.001))
+            }
+            #expect(done, "The main run loop did not reach the queued marker within 5 s")
             CATransaction.flush()
             return (CACurrentMediaTime() - start) * 1000
         }

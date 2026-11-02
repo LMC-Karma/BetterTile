@@ -124,10 +124,10 @@ import Testing
         let toggle = try #require(rowSwitch())
         let frame = host.view.convert(toggle.bounds, from: toggle)
         let top = host.view.isFlipped ? frame.minY : host.view.bounds.height - frame.maxY
-        // The page resolves app names in a task after its first drawing; until then the row reads
-        // "App not installed". Read the row again, a bounded number of times, until it names the app.
+        // The page looks up app names in a task after its first drawing; until then the row shows the bundle
+        // identifier. Read the row again, a bounded number of times, until it shows the looked-up name.
         var text = ""
-        for attempt in 0 ..< 10 where !text.contains("TextEdit") {
+        for attempt in 0 ..< 10 where !text.contains("TextEdit") || text.contains("com.apple") {
             if attempt > 0 { host.settle() }
             let bitmap = try host.render()
             let scale = Double(bitmap.pixelsWide) / host.view.bounds.width

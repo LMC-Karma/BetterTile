@@ -16,7 +16,33 @@ enum ApplicationRuleWarning {
     }
 }
 
+/// What the page knows about a rule's app. Until the lookup for a rule finishes, the page knows only its bundle
+/// identifier: it must show neither "App not installed" nor the missing-app warning for an app that may be installed.
+enum ApplicationRuleAppState: Equatable {
+    case noIdentifier
+    case lookingUp
+    case installed
+    case missing
+
+    init(bundleIdentifier: String, lookedUp: Bool, installed: Bool) {
+        if bundleIdentifier.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { self = .noIdentifier }
+        else if installed { self = .installed }
+        else if !lookedUp { self = .lookingUp }
+        else { self = .missing }
+    }
+}
+
 enum ApplicationRuleAppName {
+    /// The row and detail title: the app's name once known, its bundle identifier while it is being looked up.
+    static func displayName(bundleIdentifier: String, knownName: String?, state: ApplicationRuleAppState) -> String {
+        if let knownName, !knownName.isEmpty { return knownName }
+        switch state {
+        case .noIdentifier: return "No app identifier"
+        case .lookingUp, .installed: return bundleIdentifier
+        case .missing: return "App not installed"
+        }
+    }
+
     static func displayName(bundleIdentifier: String, knownName: String? = nil) -> String {
         if let knownName, !knownName.isEmpty { return knownName }
         return bundleIdentifier.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -70,6 +96,8 @@ struct ApplicationRuleSettings: View {
     @State private var sheet: ApplicationRuleSheetPurpose?
     @State private var applications: [String: ApplicationChoice] = [:]
     @State private var knownNames: [String: String] = [:]
+    /// Rules whose app lookup has finished. A rule outside this set shows a neutral row.
+    @State private var lookedUp: Set<String> = []
 
     private typealias Entry = (bundleIdentifier: String, rule: ApplicationRule, isEnabled: Bool)
 
@@ -77,8 +105,12 @@ struct ApplicationRuleSettings: View {
         model.configuration.applicationRules.entries
     }
 
+    private func appState(for id: String) -> ApplicationRuleAppState {
+        ApplicationRuleAppState(bundleIdentifier: id, lookedUp: lookedUp.contains(id), installed: applications[id] != nil)
+    }
+
     private func name(for id: String) -> String {
-        ApplicationRuleAppName.displayName(bundleIdentifier: id, knownName: knownNames[id])
+        ApplicationRuleAppName.displayName(bundleIdentifier: id, knownName: knownNames[id], state: appState(for: id))
     }
 
     private var filteredEntries: [Entry] {
@@ -137,6 +169,7 @@ struct ApplicationRuleSettings: View {
             }
             applications = resolved
             knownNames.merge(resolved.mapValues(\.name)) { _, new in new }
+            lookedUp.formUnion(entries.map(\.bundleIdentifier))
         }
         .onChange(of: filteredEntries.map(\.bundleIdentifier), initial: true) {
             if !filteredEntries.contains(where: { $0.bundleIdentifier == list.selection }) {
@@ -279,7 +312,7 @@ struct ApplicationRuleSettings: View {
         if id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             Label("No app identifier", systemImage: "exclamationmark.triangle.fill")
                 .foregroundStyle(SettingsColor.red)
-        } else if applications[id] == nil {
+        } else if appState(for: id) == .missing {
             Label("Not installed", systemImage: "exclamationmark.triangle.fill")
                 .foregroundStyle(SettingsColor.orange)
         } else {
@@ -313,14 +346,14 @@ struct ApplicationRuleSettings: View {
     private func ruleDetail(_ entry: Entry) -> some View {
         let id = entry.bundleIdentifier
         let isInvalid = id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        let isInstalled = applications[id] != nil
+        let isMissing = appState(for: id) == .missing
         return VStack(alignment: .leading, spacing: SettingsSpacing.s5) {
             if isInvalid {
                 NoticeBanner(.problem, title: "This rule has no app identifier",
                              message: "BetterTile cannot match any window. Choose an app to repair the rule, or remove it.",
                              action: .init(title: "Choose App…") { sheet = .replace(id) })
                     .help(id)
-            } else if !isInstalled {
+            } else if isMissing {
                 NoticeBanner(.warning, title: ApplicationRuleAppName.missingAppNotice(knownName: knownNames[id]),
                              message: "The rule is kept. It applies again when you install the app, or you can choose another app.",
                              action: .init(title: "Choose App…") { sheet = .replace(id) })

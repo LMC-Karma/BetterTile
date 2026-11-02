@@ -22,6 +22,23 @@ import Testing
     #expect(ApplicationRuleAppName.missingAppNotice(knownName: nil) == "App not installed")
 }
 
+/// The page looks up each rule's app after its first drawing. Before that lookup finishes, a rule is neither
+/// "App not installed" nor warned about: its row shows the bundle identifier. After it, the real state shows.
+@Test(.appTestApplication) func appRuleStateShowsNoMissingAppBeforeItsLookupFinishes() {
+    let id = "com.apple.TextEdit"
+    let before = ApplicationRuleAppState(bundleIdentifier: id, lookedUp: false, installed: false)
+    #expect(before == .lookingUp)
+    #expect(ApplicationRuleAppName.displayName(bundleIdentifier: id, knownName: nil, state: before) == id)
+    let missing = ApplicationRuleAppState(bundleIdentifier: id, lookedUp: true, installed: false)
+    #expect(missing == .missing)
+    #expect(ApplicationRuleAppName.displayName(bundleIdentifier: id, knownName: nil, state: missing) == "App not installed")
+    let installed = ApplicationRuleAppState(bundleIdentifier: id, lookedUp: true, installed: true)
+    #expect(installed == .installed)
+    #expect(ApplicationRuleAppName.displayName(bundleIdentifier: id, knownName: "TextEdit", state: installed) == "TextEdit")
+    #expect(ApplicationRuleAppState(bundleIdentifier: " \t ", lookedUp: false, installed: false) == .noIdentifier)
+    #expect(ApplicationRuleAppName.displayName(bundleIdentifier: " \t ", knownName: nil, state: .noIdentifier) == "No app identifier")
+}
+
 @Test(.appTestApplication) @MainActor func appRuleAddChangeAndRemovePersistWithoutAccessibility() throws {
     let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: directory) }

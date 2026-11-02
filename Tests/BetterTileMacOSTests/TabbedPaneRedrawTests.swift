@@ -57,18 +57,26 @@ import Testing
 }
 
 @Test(.macOSTestApplication, arguments: TabbedStripPresentation.allCases, [(false, false), (false, true), (true, false), (true, true)]) @MainActor
-func tabbedPaneRedrawUnchangedBodyMoves(presentation: TabbedStripPresentation, configuration: (Bool, Bool)) throws {
+func tabbedPaneRedrawUnchangedBodyMoves(presentation: TabbedStripPresentation, configuration: (Bool, Bool)) async throws {
     let (empty, glass) = configuration
     let fixture = PaneRedrawFixture(empty: empty, presentation: presentation, glass: glass)
     defer { fixture.window.close() }
     let content = fixture.content
     #expect(content.drawCount > 0)
-    let initial = content.drawCount
-    let tabs = content.tabDrawCounts
-    for i in 0..<100 { try fixture.move(NSPoint(x: 100 + i, y: 200)) }
-    print("PANE-REDRAW body moves=100 empty=\(empty) glass=\(glass) presentation=\(presentation) pane=\(content.drawCount - initial)")
-    #expect(content.drawCount == initial)
-    #expect(content.tabDrawCounts == tabs)
+    var bodyDraws = 0
+    for i in 0..<100 {
+        // Other AppKit work can invalidate the layers while this test yields. Flush it before measuring
+        // each move, and keep the move and its redraw checks in the same main-actor turn.
+        fixture.flush()
+        let initial = content.drawCount
+        let tabs = content.tabDrawCounts
+        try fixture.move(NSPoint(x: 100 + i, y: 200))
+        bodyDraws += content.drawCount - initial
+        #expect(content.drawCount == initial)
+        #expect(content.tabDrawCounts == tabs)
+        await Task.yield()
+    }
+    print("PANE-REDRAW body moves=100 empty=\(empty) glass=\(glass) presentation=\(presentation) pane=\(bodyDraws)")
 }
 
 @Test(.macOSTestApplication, .enabled(if: ProcessInfo.processInfo.environment["BETTERTILE_PANE_REDRAW_BENCH"] == "1")) @MainActor
