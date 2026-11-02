@@ -185,14 +185,7 @@ import Testing
         // The first switch belongs to the first group, ahead of the zone diagram.
         #expect(frame.midY < 100)
         for expected in [false, true] {
-            for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
-                let event = try #require(NSEvent.mouseEvent(with: type,
-                    location: host.view.convert(CGPoint(x: frame.midX, y: frame.midY), to: nil),
-                    modifierFlags: [], timestamp: 0,
-                    windowNumber: host.window.windowNumber, context: nil, eventNumber: 1,
-                    clickCount: 1, pressure: type == .leftMouseDown ? 1 : 0))
-                try withNativeEventLoop { host.window.sendEvent(event) }
-            }
+            try performNativeMouseClick(at: host.view.convert(CGPoint(x: frame.midX, y: frame.midY), to: nil), in: host.window)
             try await waitForSettingsUI("Drag snapping \(expected ? "on" : "off")", in: host.view) {
                 model.configuration.snappingEnabled == expected
             }

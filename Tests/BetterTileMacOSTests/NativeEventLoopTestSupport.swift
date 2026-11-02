@@ -257,6 +257,29 @@ func performNativeClick(_ button: NSButton, sourceLocation: SourceLocation = #_s
     try withNativeEventLoop({ button.performClick(nil) }, sourceLocation: sourceLocation)
 }
 
+/// Clicks `point`, in `window`'s base coordinates, with a mouse-down and a mouse-up sent to `window`.
+/// The mouse-up is queued before the mouse-down is sent. A control that tracks the press in its own event
+/// loop then takes the release from the queue. Without it, that loop waits for a real button release that a
+/// test never makes, and holds the main thread and the UI lease. If the control did not take it, the queued
+/// mouse-up is sent after the mouse-down, as an ordinary click.
+@MainActor
+func performNativeMouseClick(at point: CGPoint, in window: NSWindow,
+                             sourceLocation: SourceLocation = #_sourceLocation) throws {
+    func event(_ type: NSEvent.EventType) throws -> NSEvent {
+        try #require(NSEvent.mouseEvent(with: type, location: point, modifierFlags: [], timestamp: 0,
+            windowNumber: window.windowNumber, context: nil, eventNumber: 1, clickCount: 1,
+            pressure: type == .leftMouseDown ? 1 : 0), sourceLocation: sourceLocation)
+    }
+    let down = try event(.leftMouseDown), up = try event(.leftMouseUp)
+    try withNativeEventLoop({
+        NSApp.postEvent(up, atStart: false)
+        window.sendEvent(down)
+        if let release = NSApp.nextEvent(matching: .leftMouseUp, until: .distantPast, inMode: .default, dequeue: true) {
+            window.sendEvent(release)
+        }
+    }, sourceLocation: sourceLocation)
+}
+
 // Offscreen fixtures do not need WindowServer ordering animations. Preserve the
 // configured behavior so tests can still inspect the product's animation policy.
 @MainActor
