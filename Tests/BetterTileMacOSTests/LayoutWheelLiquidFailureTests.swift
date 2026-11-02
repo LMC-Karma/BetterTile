@@ -371,7 +371,10 @@ import Testing
         try #require(MTLCreateSystemDefaultDevice() != nil)
         let renderer = LayoutWheelLiquidPresenter(clock: WheelTestClock())
         renderer.dark = true
+        // The default appearance follows the host. Pin it to Dark, so the switch to Light below is a change.
+        renderer.systemDarkProvider = { true }
         let adapter = LayoutWheelLiquidAdapter(renderer: renderer)
+        adapter.systemDarkProvider = { true }
         let configuration = LayoutWheelConfiguration(style: .grouped, levelCount: .two)
         let content = LayoutWheelLiquidDefaults.content(configuration: configuration)
         let target = LayoutWheelTarget(windowID: .init(rawValue: "fixture"), displayID: .init(rawValue: "display"),

@@ -16,7 +16,7 @@ public actor AsyncTestLease {
     }
     private var owner: UUID?
     private var waiters: [Waiter] = []
-    private let report = HoldReport()
+    private let identity = UUID()
     public var waitingCount: Int { waiters.count }
     public var isHeld: Bool { owner != nil }
 
@@ -24,9 +24,9 @@ public actor AsyncTestLease {
 
     /// - Parameters:
     ///   - holder: The test that will hold the lease, named in the hold report.
-    ///   - holdReport: While one holder keeps the lease this long, the lease writes its name to standard error,
-    ///     and again after each further interval. A test that never returns then names itself in the log,
-    ///     even when the job is cancelled before any test reports. Nil turns the report off.
+    ///   - holdReport: While one holder keeps the lease this long, `TestWatchdog` writes its name to standard
+    ///     error from its own thread, and again after each further interval. A test that never returns then
+    ///     names itself in the log, even when every test task is stalled. Nil turns the report off.
     public func acquire(holder: String = "a test", clock: BetterTileClock = .live, queueLimit: Duration = .seconds(600),
                         holdReport: Duration? = .seconds(180)) async throws -> UUID {
         try Task.checkCancellation()
@@ -42,7 +42,7 @@ public actor AsyncTestLease {
                 if Task.isCancelled { continuation.resume(throwing: CancellationError()) }
                 else {
                     waiters.append(Waiter(id: id, holder: holder, holdReport: holdReport, continuation: continuation))
-                    report.setWaiting(waiters.count)
+                    TestWatchdog.waitingChanged(identity, waiting: waiters.count)
                 }
             }
             do { try Task.checkCancellation() }
@@ -57,7 +57,7 @@ public actor AsyncTestLease {
         guard owner == token else { return false }
         if waiters.isEmpty {
             owner = nil
-            report.update(owner: nil, holder: "", waiting: 0)
+            TestWatchdog.holderChanged(identity, holder: nil, waiting: 0, interval: nil)
         } else {
             let next = waiters.removeFirst()
             grant(next.id, to: next.holder, holdReport: next.holdReport)
@@ -68,45 +68,13 @@ public actor AsyncTestLease {
 
     private func grant(_ id: UUID, to holder: String, holdReport: Duration?) {
         owner = id
-        report.update(owner: id, holder: holder, waiting: waiters.count)
-        if let holdReport { report.schedule(id, after: holdReport) }
+        let interval = holdReport.map { Double($0.components.seconds) + Double($0.components.attoseconds) / 1e18 }
+        TestWatchdog.holderChanged(identity, holder: holder, waiting: waiters.count, interval: interval)
     }
 
     private func removeWaiter(_ id: UUID, error: any Error) {
         guard let index = waiters.firstIndex(where: { $0.id == id }) else { return }
         waiters.remove(at: index).continuation.resume(throwing: error)
-        report.setWaiting(waiters.count)
-    }
-}
-
-/// The lease's current holder, readable without the actor. The report runs on a dispatch timer, so it still
-/// appears when the main actor and every test task are stalled.
-private final class HoldReport: @unchecked Sendable {
-    private let lock = NSLock()
-    private var owner: UUID?
-    private var holder = ""
-    private var waiting = 0
-
-    func update(owner: UUID?, holder: String, waiting: Int) {
-        lock.withLock { (self.owner, self.holder, self.waiting) = (owner, holder, waiting) }
-    }
-
-    func setWaiting(_ count: Int) {
-        lock.withLock { waiting = count }
-    }
-
-    func schedule(_ id: UUID, after interval: Duration, held: Duration = .zero) {
-        let seconds = Double(interval.components.seconds) + Double(interval.components.attoseconds) / 1e18
-        DispatchQueue.global().asyncAfter(deadline: .now() + seconds) { [self] in // real-time: names a lease holder that never returns, independent of the stalled test clocks
-            let total = held + interval
-            let line: String? = lock.withLock {
-                guard owner == id else { return nil }
-                return "Test lease: \(holder) has held the shared UI resource for \(total.components.seconds) s; "
-                    + "\(waiting) test(s) waiting.\n"
-            }
-            guard let line else { return }
-            FileHandle.standardError.write(Data(line.utf8))
-            schedule(id, after: interval, held: total)
-        }
+        TestWatchdog.waitingChanged(identity, waiting: waiters.count)
     }
 }

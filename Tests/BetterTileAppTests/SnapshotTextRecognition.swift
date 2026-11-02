@@ -3,9 +3,18 @@ import CoreGraphics
 import CoreML
 import Vision
 
-enum SnapshotRecognitionError: Error {
+enum SnapshotRecognitionError: Error, CustomStringConvertible {
     case timedOut
     case cpuUnavailable
+
+    var description: String {
+        switch self {
+        case .timedOut:
+            "Text recognition did not finish before its deadline. The test stopped waiting; a stuck Vision call is "
+                + "left on its own dispatch thread and holds no test thread, main-actor work or UI resource."
+        case .cpuUnavailable: "Vision offers no CPU device for a text-recognition stage."
+        }
+    }
 }
 
 func snapshotTextRequest(languageCorrection: Bool = true) throws -> VNRecognizeTextRequest {
@@ -26,7 +35,6 @@ func snapshotTextRequest(languageCorrection: Bool = true) throws -> VNRecognizeT
 
 private actor RecognitionResult<Value: Sendable> {
     private var continuation: CheckedContinuation<Value, any Error>?
-    private var recognitionTask: Task<Void, Never>?
     private var deadline: Task<Void, Never>?
     private var finished = false
 
@@ -35,9 +43,13 @@ private actor RecognitionResult<Value: Sendable> {
         guard !finished else { continuation.resume(throwing: CancellationError()); return }
         self.continuation = continuation
         let limit = clock.now.advanced(by: timeout)
-        recognitionTask = Task.detached {
+        // Vision's call blocks its thread until recognition ends, and on a stuck system it never ends. On a
+        // cooperative-pool thread it would hold a thread every other test, deadline and test-runner task needs: a few
+        // stuck calls on a 3-core runner freeze the whole process. A GCD dispatch thread keeps the call outside the pool, and
+        // the deadline resumes the caller without ever waiting for it.
+        DispatchQueue.global(qos: .userInitiated).async {
             let result = Result { try operation() }
-            await self.finish(result)
+            Task { await self.finish(result) }
         }
         deadline = Task.detached {
             do {
@@ -50,9 +62,7 @@ private actor RecognitionResult<Value: Sendable> {
     func finish(_ result: Result<Value, any Error>) {
         guard !finished else { return }
         finished = true
-        recognitionTask?.cancel()
         deadline?.cancel()
-        recognitionTask = nil
         deadline = nil
         continuation?.resume(with: result)
         continuation = nil

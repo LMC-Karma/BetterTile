@@ -209,7 +209,13 @@ import Testing
                                         && ($0["translucency"] as? Double) == translucency && ($0["background"] as? Double) == background })
                                     let expected = try #require(row["pixels"] as? [Double])
                                     #expect(pixels.count == expected.count)
-                                    #expect(zip(pixels, expected).allSatisfy { abs($0 - $1) < 0.001 })
+                                    // The fixture is one GPU's 8-bit render, composited over opaque grey: C + grey(1 - A).
+                                    // Another GPU may round C and A each by one 8-bit step, which moves a composited
+                                    // channel by at most (1 + grey) steps, and so by at most two. A patch mean of such
+                                    // pixels moves no further.
+                                    let tolerance = 2.0 / 255
+                                    let largest = zip(pixels, expected).map { abs($0 - $1) }.max() ?? 0
+                                    #expect(largest <= tolerance, "largest difference \(largest * 255) 8-bit steps")
                                 } else {
                                     let minimum = try #require(deltas.min())
                                     #expect(minimum < -0.002)
