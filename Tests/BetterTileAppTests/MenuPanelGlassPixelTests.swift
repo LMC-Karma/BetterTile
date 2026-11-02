@@ -5,7 +5,9 @@ import Testing
 @testable import BetterTileApp
 @testable import BetterTileMacOS
 
-@MainActor @Suite(.appTestApplication, .serialized, .settingsUI) struct MenuPanelGlassPixelTests {
+// Reads pixels of real native glass, which the macOS 26 runner cannot capture. On CI the shade and contrast stay
+// covered by MenuPanelModePickerTests.selectedModeUsesShadedAccentWithContrastInEveryPointerState.
+@MainActor @Suite(.liveDesktop, .appTestApplication, .serialized, .settingsUI) struct MenuPanelGlassPixelTests {
     @Test(arguments: LayoutMode.availableModes)
     func selectedFillStaysOpaqueInNativeDarkGlassOverWhite(mode: LayoutMode) throws {
         _ = NSApplication.shared
