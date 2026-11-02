@@ -849,6 +849,11 @@ func queuedWheelModifiersCannotStartAfterMonitorRetirement(retirement: String) a
             return NSObject()
         }, addLocalMonitor: { _, _ in NSObject() }, removeMonitor: { _ in }
     )
+    // Each global event queues a main-actor task. Join that task instead of counting turns,
+    // which a busy main actor can outlast.
+    let (handled, markHandled) = AsyncStream<Void>.makeStream()
+    var handledEvents = handled.makeAsyncIterator()
+    controller.globalInputHandledForTesting = { markHandled.yield() }
     controller.start()
     defer { controller.stop() }
     let event = try #require(NSEvent.keyEvent(with: .flagsChanged, location: .zero, modifierFlags: [.control, .option, .shift], timestamp: 1,
@@ -866,13 +871,13 @@ func queuedWheelModifiersCannotStartAfterMonitorRetirement(retirement: String) a
         controller.stop()
         if retirement == "restart" { controller.start() }
     }
-    for _ in 0..<20 { await Task.yield() }
+    await handledEvents.next()
     #expect(!controller.isPendingActivation)
     #expect(!controller.isOpen)
     if retirement != "stop" {
         #expect(flags != nil)
         flags?(event)
-        for _ in 0..<20 { await Task.yield() }
+        await handledEvents.next()
         #expect(controller.isPendingActivation)
     }
 }
