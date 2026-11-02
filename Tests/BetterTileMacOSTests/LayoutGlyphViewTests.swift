@@ -92,33 +92,60 @@ struct LayoutGlyphViewTests {
         #expect(selected == .tabbed)
     }
 
-    /// Runs of columns that differ from the tray, as x positions in points, between `from` and `to`.
-    private func inkRuns(of view: NSView, scale: Int, from: Double, to: Double) throws -> [(Double, Double)] {
+    /// A control's ink, rendered at `scale` pixels per point: pixels that differ from the tray.
+    private struct Ink {
+        let bitmap: NSBitmapImageRep
+        let scale: Int
+        let reference: NSColor
+
+        func isInk(x: Int, y: Int) -> Bool {
+            guard let c = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.sRGB) else { return false }
+            return abs(c.redComponent - reference.redComponent) > 0.25
+        }
+
+        /// Runs of ink columns between `from` and `to`, as x positions in points.
+        func runs(from: Double, to: Double) -> [(Double, Double)] {
+            var runs: [(Double, Double)] = []
+            var start: Int?
+            let first = Int(from * Double(scale)), last = Int(to * Double(scale))
+            for x in first ... last {
+                let ink = ((bitmap.pixelsHigh / 4) ..< (bitmap.pixelsHigh * 3 / 4)).contains { isInk(x: x, y: $0) }
+                if ink, start == nil { start = x }
+                if !ink || x == last, let begin = start {
+                    runs.append((Double(begin) / Double(scale), Double(x) / Double(scale)))
+                    start = nil
+                }
+            }
+            return runs
+        }
+
+        /// The top and bottom of the ink in a run of columns, in points from the top.
+        func rows(of run: (Double, Double)) -> (top: Double, bottom: Double)? {
+            let columns = Int(run.0 * Double(scale)) ... Int(run.1 * Double(scale))
+            let inked = (0 ..< bitmap.pixelsHigh).filter { y in columns.contains { isInk(x: $0, y: y) } }
+            guard let top = inked.min(), let bottom = inked.max() else { return nil }
+            return (Double(top) / Double(scale), Double(bottom + 1) / Double(scale))
+        }
+    }
+
+    /// Renders `view` and takes the tray colour as the most common colour of its middle row between
+    /// `from` and `to`. Segment separators, the selected segment and text are all less common than the tray.
+    private func ink(of view: NSView, scale: Int, from: Double, to: Double) throws -> Ink {
         let bitmap = try #require(NSBitmapImageRep(
             bitmapDataPlanes: nil, pixelsWide: Int(view.bounds.width) * scale, pixelsHigh: Int(view.bounds.height) * scale,
             bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB,
             bytesPerRow: 0, bitsPerPixel: 0))
         bitmap.size = view.bounds.size
         view.appearance?.performAsCurrentDrawingAppearance { view.cacheDisplay(in: view.bounds, to: bitmap) }
-        // The tray colour in the middle of the control, between segments' content, is the reference.
         let midY = bitmap.pixelsHigh / 2
-        let reference = try #require(bitmap.colorAt(x: Int(from * Double(scale)) + 1, y: midY)?.usingColorSpace(.sRGB))
-        var runs: [(Double, Double)] = []
-        var start: Int?
-        let first = Int(from * Double(scale)), last = Int(to * Double(scale))
-        for x in first ... last {
-            var ink = false
-            for y in (bitmap.pixelsHigh / 4) ..< (bitmap.pixelsHigh * 3 / 4) {
-                guard let c = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.sRGB) else { continue }
-                if abs(c.redComponent - reference.redComponent) > 0.25 { ink = true; break }
-            }
-            if ink, start == nil { start = x }
-            if !ink || x == last, let begin = start {
-                runs.append((Double(begin) / Double(scale), Double(x) / Double(scale)))
-                start = nil
-            }
+        var counts: [Int: (count: Int, color: NSColor)] = [:]
+        for x in Int(from * Double(scale)) ... Int(to * Double(scale)) {
+            guard let c = bitmap.colorAt(x: x, y: midY)?.usingColorSpace(.sRGB) else { continue }
+            let key = Int(c.redComponent * 255) << 16 | Int(c.greenComponent * 255) << 8 | Int(c.blueComponent * 255)
+            counts[key] = ((counts[key]?.count ?? 0) + 1, c)
         }
-        return runs
+        let reference = try #require(counts.values.max { $0.count < $1.count }?.color)
+        return Ink(bitmap: bitmap, scale: scale, reference: reference)
     }
 
     private final class Backing: NSView {
@@ -148,23 +175,79 @@ struct LayoutGlyphViewTests {
         return 0
     }
 
-    /// Hosts the real `LayoutModePicker`, swaps each segment's icon for a solid probe of the same size, and
-    /// returns the gap from the probe to the first letter of each unselected title, less the letter's own
-    /// side bearing: the distance from icon to text origin.
-    private func originGaps(dark: Bool, selected: LayoutMode, width: LayoutModePicker.Width) throws -> [String: Double] {
+    /// Where a segment's title sits relative to its icon: the gap from the icon to the title's text origin
+    /// (ink gap less the first letter's side bearing), and the title's ink rows and the icon's rows.
+    private struct TitlePlacement {
+        var gap: Double
+        var title: (top: Double, bottom: Double)
+        var icon: (top: Double, bottom: Double)
+    }
+
+    /// A solid probe the size of a segment image, with the icon's canvas filled at its leading edge.
+    private func probe(size: NSSize) -> NSImage {
+        let canvas = LayoutModePicker.glyphSize
+        let probe = NSImage(size: size, flipped: true) { _ in
+            NSColor.black.setFill()
+            NSRect(x: 0, y: (size.height - canvas) / 2, width: canvas, height: canvas).fill()
+            return true
+        }
+        probe.isTemplate = true
+        return probe
+    }
+
+    /// Hosts `content` in a 304 x 44 window and returns the segmented control it shows.
+    private func host(_ content: NSView, dark: Bool) -> (container: NSView, window: NSWindow) {
+        let container = Backing(frame: NSRect(x: 0, y: 0, width: 304, height: 44))
+        container.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+        container.addSubview(content)
+        let window = NSWindow(contentRect: container.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+        window.appearance = container.appearance
+        window.contentView = container
+        return (container, window)
+    }
+
+    /// Finds each unselected segment's probe across the whole control and measures its title. No segment
+    /// geometry is assumed: segment widths, separators and the selected segment differ between macOS releases.
+    private func placements(in control: NSSegmentedControl, container: NSView,
+                            selected: LayoutMode) throws -> [String: TitlePlacement] {
+        container.layoutSubtreeIfNeeded()
+        let frame = control.convert(control.bounds, to: container)
+        let ink = try ink(of: container, scale: 4, from: frame.minX + 1, to: frame.maxX - 1)
+        let runs = ink.runs(from: frame.minX + 1, to: frame.maxX - 1)
+        let size = LayoutModePicker.glyphSize
+        let probes = runs.indices.filter { index in
+            guard abs((runs[index].1 - runs[index].0) - size) <= 1.2, let rows = ink.rows(of: runs[index]) else { return false }
+            return abs((rows.bottom - rows.top) - size) <= 1.2
+        }
+        // A selected segment far from the tray colour is one run, so its probe may not be found.
+        let modes = LayoutMode.availableModes
+        let shown = probes.count == modes.count ? modes : modes.filter { $0 != selected }
+        try #require(probes.count == shown.count, "The icon is found in every segment: \(probes.count) probes in \(runs)")
+        var placements: [String: TitlePlacement] = [:]
+        for (mode, index) in zip(shown, probes) where mode != selected {
+            guard runs.indices.contains(index + 1), let icon = ink.rows(of: runs[index]),
+                  let title = ink.rows(of: runs[index + 1]) else {
+                Issue.record("\(mode.title): no title after the icon")
+                continue
+            }
+            placements[mode.title] = TitlePlacement(
+                gap: runs[index + 1].0 - runs[index].1 - (try bearing(of: mode.title)), title: title, icon: icon)
+        }
+        return placements
+    }
+
+    /// Hosts the real `LayoutModePicker`, swaps each segment's image for a solid probe of the same size, and
+    /// measures where each unselected title sits.
+    private func pickerPlacements(dark: Bool, selected: LayoutMode, width: LayoutModePicker.Width) throws -> [String: TitlePlacement] {
         _ = NSApplication.shared
         var current = selected
         let picker = LayoutModePicker("Window mode", selection: Binding(get: { current }, set: { current = $0 }), width: width)
         let hosting = NSHostingView(rootView: Group {
             if width == .fillAvailable { picker.frame(width: 284) } else { picker.fixedSize() }
         }.padding(10))
-        let container = Backing(frame: NSRect(x: 0, y: 0, width: 304, height: 44))
-        container.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
-        hosting.frame = container.bounds
-        container.addSubview(hosting)
-        let window = NSWindow(contentRect: container.frame, styleMask: [.borderless], backing: .buffered, defer: false)
-        window.appearance = container.appearance
-        window.contentView = container
+        hosting.frame = NSRect(x: 0, y: 0, width: 304, height: 44)
+        let (container, window) = host(hosting, dark: dark)
+        defer { window.contentView = nil }
         for _ in 0 ..< 100 where hosting.firstDescendant(of: NSSegmentedControl.self) == nil {
             container.layoutSubtreeIfNeeded()
             RunLoop.main.run(until: Date().addingTimeInterval(0.02)) // real-time: SwiftUI creates the segmented control on a main run loop turn
@@ -172,49 +255,78 @@ struct LayoutGlyphViewTests {
         container.layoutSubtreeIfNeeded()
         let control = try #require(hosting.firstDescendant(of: NSSegmentedControl.self))
         #expect(control.segmentDistribution == (width == .fillAvailable ? .fillEqually : .fit))
-
-        let size = LayoutModePicker.glyphSize
-        let probe = NSImage(size: NSSize(width: size + LayoutModePicker.imageTrailingPadding(for: width), height: size), flipped: true) { _ in
-            NSColor.black.setFill()
-            NSRect(x: 0, y: 0, width: size, height: size).fill()
-            return true
-        }
-        probe.isTemplate = true
+        // The probe keeps the size of the image the picker set, so a wrong icon size or padding moves the title.
         for index in 0 ..< control.segmentCount {
-            #expect(control.image(forSegment: index)?.size == probe.size, "The wrapper's image is the size of the probe")
-            control.setImage(probe, forSegment: index)
+            let image = try #require(control.image(forSegment: index))
+            control.setImage(probe(size: image.size), forSegment: index)
         }
-        container.layoutSubtreeIfNeeded()
-
-        let controlFrame = control.convert(control.bounds, to: container)
-        var gaps: [String: Double] = [:]
-        for (index, mode) in LayoutMode.availableModes.enumerated() where mode != selected {
-            let segmentWidth = controlFrame.width / Double(control.segmentCount)
-            let from = controlFrame.minX + segmentWidth * Double(index)
-            let to = width == .fillAvailable ? from + segmentWidth - 2 : (control.width(forSegment: index) > 0 ? from + control.width(forSegment: index) - 2 : from + segmentWidth - 2)
-            let runs = try inkRuns(of: container, scale: 4, from: from + 2, to: to)
-            let probeIndex = try #require(runs.firstIndex { abs(($0.1 - $0.0) - size) <= 1.2 }, "\(mode.title): no probe in \(runs)")
-            guard runs.indices.contains(probeIndex + 1) else { Issue.record("\(mode.title): no title after the icon"); continue }
-            gaps[mode.title] = runs[probeIndex + 1].0 - runs[probeIndex].1 - (try bearing(of: mode.title))
-        }
-        return gaps
+        return try placements(in: control, container: container, selected: selected)
     }
 
-    /// The system lays each title out a little differently (the gap varies by about 1.5 pt between Manual,
-    /// Adaptive and Tabbed), so the check is the average gap, with a bound on each title. Both widths, Light and Dark.
-    @Test func modePickerKeepsFourPointsBetweenTheIconAndTheTitle() throws {
+    /// The same segments in a plain `NSSegmentedControl`: the designed image (the icon canvas and its padding)
+    /// and each title, laid out by the system alone. This is the spacing the system gives that image and title.
+    private func nativePlacements(dark: Bool, selected: LayoutMode, width: LayoutModePicker.Width) throws -> [String: TitlePlacement] {
+        _ = NSApplication.shared
+        let control = NSSegmentedControl()
+        control.segmentStyle = .automatic
+        control.trackingMode = .selectOne
+        control.segmentCount = LayoutMode.availableModes.count
+        let image = probe(size: NSSize(width: LayoutModePicker.glyphSize + LayoutModePicker.imageTrailingPadding,
+                                       height: LayoutModePicker.glyphSize))
+        for (index, mode) in LayoutMode.availableModes.enumerated() {
+            control.setLabel(mode.title, forSegment: index)
+            control.setImage(image, forSegment: index)
+            control.setImageScaling(.scaleNone, forSegment: index)
+        }
+        control.segmentDistribution = width == .fillAvailable ? .fillEqually : .fit
+        control.selectedSegment = try #require(LayoutMode.availableModes.firstIndex(of: selected))
+        let natural = control.fittingSize
+        let controlWidth = width == .fillAvailable ? 284 : natural.width
+        control.frame = NSRect(x: (304 - controlWidth) / 2, y: (44 - natural.height) / 2, width: controlWidth, height: natural.height)
+        let (container, window) = host(control, dark: dark)
+        defer { window.contentView = nil }
+        return try placements(in: control, container: container, selected: selected)
+    }
+
+    /// The title follows the icon on the line the system gives it, and the picker adds no space of its own:
+    /// the gap is positive and at most the gap a plain segmented control shows for the same image and title.
+    /// That system gap differs between macOS releases, so it is measured, not assumed. Each title rasterises a
+    /// little differently, so the bound applies to the average, with a wider bound on each title.
+    @Test func modePickerTitleFollowsTheIconWithNoMoreThanTheSystemSpacing() throws {
         for dark in [false, true] {
             for width in [LayoutModePicker.Width.fillAvailable, .fitContent] {
-                var sums: [String: [Double]] = [:]
+                var picker: [String: [TitlePlacement]] = [:]
+                var native: [String: [TitlePlacement]] = [:]
                 for selected in [LayoutMode.manual, .tabbed] {
-                    for (title, gap) in try originGaps(dark: dark, selected: selected, width: width) { sums[title, default: []].append(gap) }
+                    for (title, placement) in try pickerPlacements(dark: dark, selected: selected, width: width) {
+                        picker[title, default: []].append(placement)
+                    }
+                    for (title, placement) in try nativePlacements(dark: dark, selected: selected, width: width) {
+                        native[title, default: []].append(placement)
+                    }
                 }
-                #expect(Set(sums.keys) == ["Manual", "Adaptive", "Tabbed"])
-                let gaps = sums.mapValues { $0.reduce(0, +) / Double($0.count) }
-                let mean = gaps.values.reduce(0, +) / Double(max(1, gaps.count))
-                let label = "\(dark ? "dark" : "light") \(width): \(gaps)"
-                #expect(abs(mean - LayoutModePicker.glyphSpacing) <= 0.6, "Mean gap \(mean), \(label)")
-                for (title, gap) in gaps { #expect(abs(gap - LayoutModePicker.glyphSpacing) <= 1.6, "\(title) \(gap), \(label)") }
+                #expect(Set(picker.keys) == ["Manual", "Adaptive", "Tabbed"])
+                #expect(Set(native.keys) == ["Manual", "Adaptive", "Tabbed"])
+                func average(_ values: [Double]) -> Double { values.reduce(0, +) / Double(max(1, values.count)) }
+                let gaps = picker.mapValues { average($0.map(\.gap)) }
+                let systemGaps = native.mapValues { average($0.map(\.gap)) }
+                let label = "\(dark ? "dark" : "light") \(width): picker \(gaps), system \(systemGaps)"
+                #expect(average(Array(gaps.values)) <= average(Array(systemGaps.values)) + 0.6, "Mean gap, \(label)")
+                for (title, gap) in gaps {
+                    let system = try #require(systemGaps[title])
+                    #expect(gap > 0, "\(title) follows its icon, \(label)")
+                    #expect(gap <= system + 1.6, "\(title) \(gap) against the system's \(system), \(label)")
+                }
+                for (title, placements) in picker {
+                    let system = try #require(native[title]?.first)
+                    for placement in placements {
+                        // Same line as the icon, and the same baseline as the system's own label.
+                        let middle = (placement.title.top + placement.title.bottom) / 2
+                        #expect(middle > placement.icon.top && middle < placement.icon.bottom, "\(title) beside its icon, \(label)")
+                        #expect(abs(placement.title.top - system.title.top) <= 1, "\(title) top \(placement.title.top) against \(system.title.top), \(label)")
+                        #expect(abs(placement.title.bottom - system.title.bottom) <= 1, "\(title) bottom, \(label)")
+                    }
+                }
             }
         }
     }
