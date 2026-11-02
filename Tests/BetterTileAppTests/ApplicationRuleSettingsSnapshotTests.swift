@@ -124,13 +124,19 @@ import Testing
         let toggle = try #require(rowSwitch())
         let frame = host.view.convert(toggle.bounds, from: toggle)
         let top = host.view.isFlipped ? frame.minY : host.view.bounds.height - frame.maxY
-        let bitmap = try host.render()
-        let scale = Double(bitmap.pixelsWide) / host.view.bounds.width
-        // From the end of the sidebar to the switch, over the height of a two-line row.
-        let row = CGRect(x: 220 * scale, y: (top + frame.height / 2 - 30) * scale,
-                         width: (frame.minX - 220) * scale, height: 60 * scale)
-        let image = try #require(bitmap.cgImage?.cropping(to: row.integral))
-        let text = try await snapshotRecognizedLines(in: image).joined(separator: " ")
+        // The page resolves app names in a task after its first drawing; until then the row reads
+        // "App not installed". Read the row again, a bounded number of times, until it names the app.
+        var text = ""
+        for attempt in 0 ..< 10 where !text.contains("TextEdit") {
+            if attempt > 0 { host.settle() }
+            let bitmap = try host.render()
+            let scale = Double(bitmap.pixelsWide) / host.view.bounds.width
+            // From the end of the sidebar to the switch, over the height of a two-line row.
+            let row = CGRect(x: 220 * scale, y: (top + frame.height / 2 - 30) * scale,
+                             width: (frame.minX - 220) * scale, height: 60 * scale)
+            let image = try #require(bitmap.cgImage?.cropping(to: row.integral))
+            text = try await snapshotRecognizedLines(in: image).joined(separator: " ")
+        }
         #expect(text.contains("TextEdit"), "The crop must hold the rule row: \(text)")
         #expect(text.contains("Exclude from Adaptive"), "\(text)")
         #expect(text.contains("and Tabbed"), "The row must show the whole title: \(text)")

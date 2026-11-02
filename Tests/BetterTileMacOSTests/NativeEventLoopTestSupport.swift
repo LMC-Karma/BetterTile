@@ -280,6 +280,68 @@ func performNativeMouseClick(at point: CGPoint, in window: NSWindow,
     }, sourceLocation: sourceLocation)
 }
 
+@MainActor private final class NativeDragProgress {
+    let ready: () -> Bool
+    let release: NSEvent
+    let attempts: Int
+    var timer: Timer?
+    var turns = 0
+    var satisfied = false
+    var released = false
+    init(ready: @escaping () -> Bool, release: NSEvent, attempts: Int) {
+        self.ready = ready
+        self.release = release
+        self.attempts = attempts
+    }
+
+    func tick() {
+        turns += 1
+        if !satisfied { satisfied = ready() }
+        guard satisfied || turns >= attempts else { return }
+        timer?.invalidate()
+        timer = nil
+        if !released { released = true; NSApp.postEvent(release, atStart: false) }
+    }
+}
+
+/// Drags with a native press from `start` to `end`, in `window`'s base coordinates. `whileDragging` runs after
+/// the drag and before the release, every 50 ms, until it returns true or `attempts` turns pass; the result
+/// says whether it returned true. The drag and the release are queued around the press. A control that tracks
+/// the press in its own event loop takes them from the queue, and the check runs from a timer that also fires
+/// in that loop. A control that handles each event separately gets them sent one by one.
+@MainActor
+func performNativeDrag(from start: CGPoint, to end: CGPoint, in window: NSWindow, attempts: Int = 200,
+                       whileDragging ready: @escaping @MainActor () -> Bool,
+                       sourceLocation: SourceLocation = #_sourceLocation) throws -> Bool {
+    func event(_ type: NSEvent.EventType, at point: CGPoint) throws -> NSEvent {
+        try #require(NSEvent.mouseEvent(with: type, location: point, modifierFlags: [], timestamp: 0,
+            windowNumber: window.windowNumber, context: nil, eventNumber: 1, clickCount: 1,
+            pressure: type == .leftMouseUp ? 0 : 1), sourceLocation: sourceLocation)
+    }
+    let down = try event(.leftMouseDown, at: start)
+    let drag = try event(.leftMouseDragged, at: end), up = try event(.leftMouseUp, at: end)
+    let progress = NativeDragProgress(ready: ready, release: up, attempts: attempts)
+    return try withNativeEventLoop({
+        let check = Timer(timeInterval: 0.05, repeats: true) { _ in
+            MainActor.assumeIsolated { progress.tick() }
+        }
+        progress.timer = check
+        RunLoop.main.add(check, forMode: .common)
+        NSApp.postEvent(drag, atStart: false)
+        window.sendEvent(down)
+        if let queued = NSApp.nextEvent(matching: .leftMouseDragged, until: .distantPast, inMode: .default, dequeue: true) {
+            window.sendEvent(queued)
+        }
+        while progress.timer != nil {
+            RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.05)) // real-time: turns the loop for the bounded drag check timer
+        }
+        if let queued = NSApp.nextEvent(matching: .leftMouseUp, until: .distantPast, inMode: .default, dequeue: true) {
+            window.sendEvent(queued)
+        }
+        return progress.satisfied
+    }, sourceLocation: sourceLocation)
+}
+
 // Offscreen fixtures do not need WindowServer ordering animations. Preserve the
 // configured behavior so tests can still inspect the product's animation policy.
 @MainActor
