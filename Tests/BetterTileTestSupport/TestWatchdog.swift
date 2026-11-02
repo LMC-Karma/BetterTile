@@ -8,6 +8,9 @@ import Foundation
 /// - When no registered test has started or finished for two minutes, it names the running tests, oldest first,
 ///   and writes one `sample` of this process, so a frozen test run shows its blocked stacks.
 /// - A test that keeps an `AsyncTestLease` resource too long is named here as well.
+/// - It keeps one block queued on the main thread and one detached task on Swift's cooperative pool. When either
+///   waits `responsivenessLimit` seconds, it names the running tests and writes one `sample`, whose main-thread
+///   stack shows what holds the main actor. It reports again when the block or task finally runs.
 public enum TestWatchdog {
     private struct Running {
         var name: String
@@ -22,8 +25,21 @@ public enum TestWatchdog {
         var reports = 0
     }
 
+    /// A queue the watchdog checks for responsiveness.
+    private enum Lane: CaseIterable, Sendable {
+        case main, pool
+
+        var waiting: String {
+            self == .main ? "a block queued on the main thread has not run" : "a detached task has not started"
+        }
+        var answered: String { self == .main ? "the main thread ran its queued block" : "the detached task started" }
+    }
+
     private struct State {
         var running: [UUID: Running] = [:]
+        var pings: [Lane: TimeInterval] = [:]
+        var pingReports: [Lane: Int] = [:]
+        var responsivenessSamples = 0
         var holders: [UUID: Holder] = [:]
         var finished = 0
         var lastStarted: String?
@@ -38,6 +54,9 @@ public enum TestWatchdog {
 
     public static let heartbeatInterval: TimeInterval = 60
     public static let stallLimit: TimeInterval = 120
+    /// `BETTERTILE_TEST_STALL_PROBE_SECONDS` lowers this limit for a local search for main-thread holders.
+    public static let responsivenessLimit: TimeInterval =
+        ProcessInfo.processInfo.environment["BETTERTILE_TEST_STALL_PROBE_SECONDS"].flatMap(TimeInterval.init) ?? 10
 
     private static var now: TimeInterval { ProcessInfo.processInfo.systemUptime } // real-time: the watchdog measures wall-clock progress of the test process itself
 
@@ -87,10 +106,11 @@ public enum TestWatchdog {
     private static func watch() {
         var lastHeartbeat = now
         while true {
-            Thread.sleep(forTimeInterval: 5) // real-time: the watchdog's own polling interval, independent of every test clock
+            Thread.sleep(forTimeInterval: 1) // real-time: the watchdog's own polling interval, independent of every test clock
             let time = now
             var lines: [String] = []
             var takeSample = false
+            var pings: [Lane] = []
             lock.withLock {
                 for (resource, holder) in state.holders {
                     let held = time - holder.since
@@ -114,10 +134,34 @@ public enum TestWatchdog {
                         + "\(state.running.count) running, oldest first: \(running); last started \(state.lastStarted ?? "none").")
                     if !state.sampled { state.sampled = true; takeSample = true }
                 }
+                for lane in Lane.allCases {
+                    guard let since = state.pings[lane] else { state.pings[lane] = time; pings.append(lane); continue }
+                    let waited = time - since, reports = state.pingReports[lane, default: 0]
+                    guard waited >= responsivenessLimit * Double(reports + 1) else { continue }
+                    state.pingReports[lane] = reports + 1
+                    lines.append("Test watchdog: \(lane.waiting) for \(Int(waited)) s; "
+                        + "\(state.running.count) running, oldest first: \(running).")
+                    if reports == 0, state.responsivenessSamples < 2 { state.responsivenessSamples += 1; takeSample = true }
+                }
             }
             for line in lines { write(line + "\n") }
             if takeSample { writeSample() }
+            for lane in pings {
+                switch lane {
+                case .main: DispatchQueue.main.async { answered(.main) }
+                case .pool: Task.detached { answered(.pool) }
+                }
+            }
         }
+    }
+
+    private static func answered(_ lane: Lane) {
+        let line: String? = lock.withLock {
+            guard let since = state.pings.removeValue(forKey: lane) else { return nil }
+            let reports = state.pingReports.removeValue(forKey: lane) ?? 0
+            return reports > 0 ? "Test watchdog: \(lane.answered) after \(Int(now - since)) s.\n" : nil
+        }
+        if let line { write(line) }
     }
 
     private static func write(_ text: String) {
