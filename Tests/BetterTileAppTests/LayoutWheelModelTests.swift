@@ -3621,11 +3621,12 @@ private func repairKeepsBottomEdgesInsideTheWorkArea(count: Int, options: (Doubl
         frame: .init(x: 1210, y: 0, width: 2560, height: 1440),
         visibleFrame: .init(x: 1210, y: 30, width: 2560, height: 1410), isMain: true)
     system.availableDisplays = [display]
-    system.windows = (0..<count).map { i in
-        WindowSnapshot(id: .init(rawValue: "edge-\(i)"), processIdentifier: Int32(400 + i),
+    system.windows = (0..<count).map { (i: Int) -> WindowSnapshot in
+        let x: Double = 1210 + Double(i % 2) * 1280
+        let y: Double = 30 + Double(i / 2) * 470
+        return WindowSnapshot(id: .init(rawValue: "edge-\(i)"), processIdentifier: Int32(400 + i),
             bundleIdentifier: "com.example.Edge\(i)",
-            frame: .init(x: 1210 + Double(i % 2) * 1280, y: 30 + Double(i / 2) * 470,
-                         width: 1279, height: 469), displayID: display.id)
+            frame: .init(x: x, y: y, width: 1279, height: 469), displayID: display.id)
     }
     system.focusedID = system.windows[0].id
     if readback != .exact {
