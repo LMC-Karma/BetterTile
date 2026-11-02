@@ -792,7 +792,8 @@ func tabbedStripFitsNarrowAndCrowdedPanes(width: Double, count: Int) {
     var activated: UUID?
     overlay.onIntent = { intent in if case let .activate(id) = intent { activated = id } }
     overlay.refresh(state: state, bounds: bounds, windows: windows)
-    let paneView = try #require(NSApp.windows.compactMap(\.contentView).first { $0.accessibilityLabel() == "Pane 2, empty" })
+    let overlayWindows = NSApp.windows.filter { overlay.windowNumbers.contains($0.windowNumber) }
+    let paneView = try #require(overlayWindows.compactMap(\.contentView).first { $0.accessibilityLabel() == "Pane 2, empty" })
     let children = try #require(paneView.accessibilityChildren())
     let actions = children.compactMap { $0 as? NSAccessibilityElement }
     #expect(children.contains { ($0 as? NSButton)?.title == "Choose Layout" })
@@ -809,7 +810,7 @@ func tabbedStripFitsNarrowAndCrowdedPanes(width: Double, count: Int) {
         image.lockFocus()
         NSColor.darkGray.setFill()
         NSRect(x: 0, y: 0, width: 1200, height: 800).fill()
-        for window in NSApp.windows where window.frame.minX >= 12000 && window.frame.minX < 13200 {
+        for window in overlayWindows where window.frame.minX >= 12000 && window.frame.minX < 13200 {
             guard let view = window.contentView, let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { continue }
             view.cacheDisplay(in: view.bounds, to: bitmap)
             bitmap.draw(in: NSRect(x: window.frame.minX - 12000, y: window.frame.minY - (NSScreen.screens.first?.frame.maxY ?? 0) + 800,

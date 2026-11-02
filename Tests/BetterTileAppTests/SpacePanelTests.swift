@@ -36,7 +36,7 @@ import Testing
 }
 
 @MainActor private final class SpacePanelFixture {
-    let system = FakeAppWindowSystem()
+    let system: FakeAppWindowSystem
     let model: BetterTileModel
     let a = NativeSpaceID(rawValue: 11)
     let b = NativeSpaceID(rawValue: 22)
@@ -44,11 +44,13 @@ import Testing
     var panels: [FakeSpacePanel] { weakPanels.compactMap(\.value) }
     var overlays: [WeakSpacePanelOverlay] = []
 
-    init(exact: Bool = true) {
+    init(exact: Bool = true, usesManualClock: Bool = false) {
         _ = NSApplication.shared
+        system = usesManualClock ? makeManualWindowSystem(drivingPolicyDeadlines: true) : FakeAppWindowSystem()
         model = makeOffscreenModel(
             store: ConfigurationStore(fileURL: URL(filePath: "/tmp/BetterTileSpacePanelTests-\(UUID().uuidString)/configuration.json")),
             system: system, startRuntime: false, presentsTabbedChrome: true)
+        system.installWindowEventClock(in: model)
         model.primaryButtonIsPressed = { false }
         system.availableDisplays[0].frame.origin.x = 40000
         system.availableDisplays[0].visibleFrame.origin.x = 40000
@@ -71,7 +73,7 @@ import Testing
                 return panel
             }, addGlobalKeyMonitor: { _ in NSObject() }, addLocalKeyMonitor: { _ in NSObject() },
                removeMonitor: { _ in }, orderPanel: { panel, mode, anchor in panel.order(mode, relativeTo: anchor) },
-               primaryButtonIsPressed: { false })
+               primaryButtonIsPressed: { false }, timerClock: system.clock)
             overlays.append(WeakSpacePanelOverlay(overlay))
             return overlay
         }
@@ -79,7 +81,7 @@ import Testing
 
     func enter() async throws {
         model.setActiveMode(.tabbed)
-        try #require(await waitFor { self.model.presentedTabbedState(on: self.system.mainDisplay.id)?.windowIDs.count == 1
+        try #require(await system.waitFor { self.model.presentedTabbedState(on: self.system.mainDisplay.id)?.windowIDs.count == 1
             && !self.model.hasPendingTabbedPlacement })
     }
 
@@ -90,7 +92,7 @@ import Testing
     }
 
     func settle() async throws {
-        try #require(await waitFor { !self.model.isStabilizingSpace && !self.model.hasPendingTabbedPlacement })
+        try #require(await system.waitFor { !self.model.isStabilizingSpace && !self.model.hasPendingTabbedPlacement })
     }
 
     func close() {
@@ -284,7 +286,7 @@ func spacePanelOffSpaceLifecycleUpdatesBeforeArrival(kind: WindowSystemEvent.Kin
 }
 
 @Test(.appTestApplication) @MainActor func spacePanelCountIsBoundedAcrossSwitchesAndEndedSessions() async throws {
-    let f = SpacePanelFixture()
+    let f = SpacePanelFixture(usesManualClock: true)
     defer { f.close() }
     try await f.enter()
     let initialCount = f.panels.count
@@ -305,6 +307,8 @@ func spacePanelOffSpaceLifecycleUpdatesBeforeArrival(kind: WindowSystemEvent.Kin
         f.model.beginActiveSpaceStabilization()
         try await f.settle()
         #expect(f.overlays.compactMap(\.value).isEmpty)
+        // AppKit can release a panel after its controller, on a later native callback.
+        try #require(await f.system.waitFor { f.panels.isEmpty })
         #expect(f.panels.isEmpty)
         try await f.enter()
         #expect(f.overlays.compactMap(\.value).count == 1)
