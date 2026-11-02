@@ -285,7 +285,7 @@ import Testing
         return result
     }
 
-    @Test(arguments: cases) func overlayAndPreviewDrawTheSamePixels(item: Case) throws {
+    @Test(.liquidPipeline, arguments: cases) func overlayAndPreviewDrawTheSamePixels(item: Case) throws {
         try #require(MTLCreateSystemDefaultDevice() != nil)
         let wheel = wheel(item)
         let overlay = OverlayFlow(wheel: wheel, appearance: overlayAppearance(item))
@@ -303,7 +303,7 @@ import Testing
         #expect(comparison.labelsAgree, "\(item): the centre name differs")
     }
 
-    @Test func bothPathsReadTheSameConfigurationValues() throws {
+    @Test(.liquidPipeline) func bothPathsReadTheSameConfigurationValues() throws {
         try #require(MTLCreateSystemDefaultDevice() != nil)
         for item in Self.cases {
             let wheel = wheel(item)
@@ -330,12 +330,12 @@ import Testing
         return try compare(overlay.renderer, try #require(preview.renderer), "divergent")
     }
 
-    @Test func theComparisonIsCleanWithoutAMutation() throws {
+    @Test(.liquidPipeline) func theComparisonIsCleanWithoutAMutation() throws {
         try #require(MTLCreateSystemDefaultDevice() != nil)
         #expect(try divergent { _, _ in }.isClean)
     }
 
-    @Test func theComparisonNoticesAnOverlayThatBuildsDifferentContent() throws {
+    @Test(.liquidPipeline) func theComparisonNoticesAnOverlayThatBuildsDifferentContent() throws {
         try #require(MTLCreateSystemDefaultDevice() != nil)
         // The overlay's scene marks a command unavailable that the preview draws as available.
         let result = try divergent { overlay, _ in
@@ -344,7 +344,7 @@ import Testing
         #expect(!result.isClean && !result.contentEqual)
     }
 
-    @Test func theComparisonNoticesAnOverlayThatBuildsDifferentState() throws {
+    @Test(.liquidPipeline) func theComparisonNoticesAnOverlayThatBuildsDifferentState() throws {
         try #require(MTLCreateSystemDefaultDevice() != nil)
         let result = try divergent { overlay, _ in
             overlay.spy.mutate = { $0.selection = .init(ring: .outer, sector: .bottom) }
@@ -352,13 +352,13 @@ import Testing
         #expect(!result.isClean && (!result.stateEqual || result.differingPixels > 0))
     }
 
-    @Test func theComparisonNoticesAPreviewThatBuildsDifferentContent() throws {
+    @Test(.liquidPipeline) func theComparisonNoticesAPreviewThatBuildsDifferentContent() throws {
         try #require(MTLCreateSystemDefaultDevice() != nil)
         let result = try divergent { _, preview in preview.mode = .manual }
         #expect(!result.isClean)
     }
 
-    @Test func theComparisonNoticesAPreviewThatBuildsDifferentState() throws {
+    @Test(.liquidPipeline) func theComparisonNoticesAPreviewThatBuildsDifferentState() throws {
         try #require(MTLCreateSystemDefaultDevice() != nil)
         let result = try divergent { _, preview in
             preview.mutate = { _, selection, _ in selection = .init(ring: .outer, sector: .bottom) }
@@ -366,7 +366,7 @@ import Testing
         #expect(!result.isClean && (!result.stateEqual || result.differingPixels > 0))
     }
 
-    @Test func bothPathsAimTheSubmenuTheSameWay() throws {
+    @Test(.liquidPipeline) func bothPathsAimTheSubmenuTheSameWay() throws {
         try #require(MTLCreateSystemDefaultDevice() != nil)
         let wheel = LayoutWheelConfiguration(style: .grouped, levelCount: .two)
         let flow = OverlayFlow(wheel: wheel)
@@ -398,7 +398,7 @@ import Testing
         }
     }
 
-    @Test func aFailedPreparationDoesNotLeaveTheOverlayOnTheFallback() throws {
+    @Test(.liquidPipeline) func aFailedPreparationDoesNotLeaveTheOverlayOnTheFallback() throws {
         try #require(MTLCreateSystemDefaultDevice() != nil)
         var wheel = LayoutWheelConfiguration(style: .grouped, levelCount: .two)
         wheel.appearance.liquid.look.actionTint = true
@@ -424,7 +424,7 @@ import Testing
         #expect(comparison.isClean)
     }
 
-    @Test func aMiddleClickGestureAfterAFailedOneUsesTheLiquidRenderer() throws {
+    @Test(.liquidPipeline) func aMiddleClickGestureAfterAFailedOneUsesTheLiquidRenderer() throws {
         try #require(MTLCreateSystemDefaultDevice() != nil)
         var wheel = LayoutWheelConfiguration(style: .grouped, levelCount: .two)
         wheel.triggers.mouse = .middleClick
@@ -448,7 +448,7 @@ import Testing
         flow.middleUp()
     }
 
-    @Test func aCancelledHoldDoesNotLeaveItsFallbackForTheNextGesture() throws {
+    @Test(.liquidPipeline) func aCancelledHoldDoesNotLeaveItsFallbackForTheNextGesture() throws {
         try #require(MTLCreateSystemDefaultDevice() != nil)
         var wheel = LayoutWheelConfiguration(style: .grouped, levelCount: .two)
         wheel.triggers.mouse = .middleClick

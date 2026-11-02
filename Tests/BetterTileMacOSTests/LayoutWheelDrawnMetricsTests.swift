@@ -1,5 +1,6 @@
 import AppKit
 import Testing
+import SwiftUI
 @testable import BetterTileCore
 @testable import BetterTileMacOS
 
@@ -195,11 +196,34 @@ import Testing
             let shape = LayoutWheelBodyShape(innerRadius: drawn.wellRadius, outerRadius: drawn.outerRadius,
                                             wellOffset: .init(width: -lean.x, height: -lean.y))
             let path = shape.path(in: .init(x: lean.x, y: lean.y, width: 300, height: 300))
-            #expect(!path.contains(.init(x: 150, y: 150)))
-            #expect(!path.contains(.init(x: 181.9, y: 150)))
-            #expect(path.contains(.init(x: 182.1, y: 150)))
+            // Probe off the lines through the well centre. The hole's arc
+            // segments join on those lines. For the same path, macOS 26 and
+            // macOS 27 return different `contains` results on them.
+            func probe(_ radius: Double) -> CGPoint {
+                .init(x: 150 + cos(0.3) * radius, y: 150 + sin(0.3) * radius)
+            }
+            #expect(!path.contains(probe(1)), "\(sector)")
+            #expect(!path.contains(probe(31.9)), "\(sector)")
+            #expect(path.contains(probe(32.1)), "\(sector)")
+            // The wheel fills this shape. The filled pixels must leave the
+            // well open and cover the ring.
+            #expect(!filled(path, x: 150, y: 150), "\(sector)")
+            #expect(filled(path, x: 210, y: 150), "\(sector)")
             #expect(drawn.lean(angle: 0, strength: 1, reduceMotion: true) == .init(x: 0, y: 0))
             #expect(drawn.bulge(fanOpen: true, inner: false, strength: 1, reduceMotion: true) == 0)
         }
+    }
+
+    /// Fills `path` with the nonzero rule into a 300-point bitmap and reads one pixel.
+    private func filled(_ path: Path, x: Int, y: Int) -> Bool {
+        guard let context = CGContext(data: nil, width: 300, height: 300, bitsPerComponent: 8, bytesPerRow: 0,
+                                      space: CGColorSpaceCreateDeviceGray(),
+                                      bitmapInfo: CGImageAlphaInfo.none.rawValue) else { return false }
+        context.setFillColor(gray: 1, alpha: 1)
+        context.addPath(path.cgPath)
+        context.fillPath(using: .winding)
+        // Bitmap memory starts at the top row; user space starts at the bottom.
+        let offset = (299 - y) * context.bytesPerRow + x
+        return context.data.map { $0.load(fromByteOffset: offset, as: UInt8.self) > 127 } ?? false
     }
 }

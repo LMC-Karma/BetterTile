@@ -13,11 +13,18 @@ import Testing
         window.isReleasedWhenClosed = false
         window.contentView = view
         view.frame = NSRect(x: 0, y: 0, width: 60, height: 220)
-        for _ in 0..<3 { view.layoutSubtreeIfNeeded(); RunLoop.main.run(until: Date().addingTimeInterval(0.03)) } // real-time: advances hosted SwiftUI layout to create the native grip layers
         func find(_ v: NSView) -> DividerLensPreviewView? {
             (v as? DividerLensPreviewView) ?? v.subviews.lazy.compactMap(find).first
         }
-        let found = find(view)
+        var found: DividerLensPreviewView?
+        for _ in 0..<100 where found == nil {
+            view.layoutSubtreeIfNeeded()
+            found = find(view)
+            if found == nil { RunLoop.main.run(until: Date().addingTimeInterval(0.02)) } // real-time: SwiftUI creates the native grip view on a main run loop turn
+        }
+        // Reduce Transparency or Increase Contrast on the host selects the opaque grip, which shows neither glass
+        // nor frost. Fix both off so the Liquid Glass setting alone decides the surface.
+        found?.handleView.displayOptions = { (false, false) }
         // Keep the window alive until the caller is done with the view.
         objc_setAssociatedObject(found as Any, "window", window, .OBJC_ASSOCIATION_RETAIN)
         return found

@@ -200,7 +200,7 @@ import Testing
         #expect(!presenter.usesLiquidGeometry && attempts == 1)
     }
 
-    @Test(arguments: [true, false])
+    @Test(.liquidPipeline, arguments: [true, false])
     func systemGlassFallbackIsOpaqueForBothAppearanceOptions(reduceTransparency: Bool) throws {
         try #require(MTLCreateSystemDefaultDevice() != nil)
         let renderer = LayoutWheelLiquidPresenter(clock: WheelTestClock())
@@ -216,7 +216,7 @@ import Testing
         #expect(renderer.drawableSizeForTesting == CGSize(width: 1, height: 1))
     }
 
-    @Test func semanticChangesAtRestRebuildModeIconsAndUnavailableInk() throws {
+    @Test(.liquidPipeline) func semanticChangesAtRestRebuildModeIconsAndUnavailableInk() throws {
         try #require(MTLCreateSystemDefaultDevice() != nil)
         let clock = WheelTestClock()
         let renderer = LayoutWheelLiquidPresenter(clock: clock)
@@ -241,7 +241,7 @@ import Testing
         renderer.close()
     }
 
-    @Test func displayOptionsCanChangeDuringAnOpenGesture() throws {
+    @Test(.liquidPipeline) func displayOptionsCanChangeDuringAnOpenGesture() throws {
         try #require(MTLCreateSystemDefaultDevice() != nil)
         let clock = WheelTestClock()
         let renderer = LayoutWheelLiquidPresenter(clock: clock)
@@ -262,7 +262,7 @@ import Testing
         renderer.close()
     }
 
-    @Test func quickReopenReplacesTheClosingGesture() throws {
+    @Test(.liquidPipeline) func quickReopenReplacesTheClosingGesture() throws {
         try #require(MTLCreateSystemDefaultDevice() != nil)
         let clock = WheelTestClock()
         let renderer = LayoutWheelLiquidPresenter(clock: clock)
@@ -278,7 +278,7 @@ import Testing
         renderer.close()
     }
 
-    @Test func realMetalLinkCanReprepareRefreshAndReopenDuringClosing() throws {
+    @Test(.liquidPipeline) func realMetalLinkCanReprepareRefreshAndReopenDuringClosing() throws {
         try #require(MTLCreateSystemDefaultDevice() != nil)
         let renderer = LayoutWheelLiquidPresenter()
         renderer.panelForTesting.animationBehavior = .none
@@ -310,7 +310,7 @@ import Testing
         other.close()
     }
 
-    @Test func holdPreparationUsesTheLastCapturedTarget() throws {
+    @Test(.liquidPipeline) func holdPreparationUsesTheLastCapturedTarget() throws {
         try #require(MTLCreateSystemDefaultDevice() != nil)
         let renderer = LayoutWheelLiquidPresenter(clock: WheelTestClock())
         let adapter = LayoutWheelLiquidAdapter(renderer: renderer)
@@ -337,7 +337,7 @@ import Testing
         #expect(atlasRebuiltAtOpen == [true, false])
     }
 
-    @Test func adapterAndEmbeddedPreviewReleaseTheirRendererAndView() throws {
+    @Test(.liquidPipeline) func adapterAndEmbeddedPreviewReleaseTheirRendererAndView() throws {
         try #require(MTLCreateSystemDefaultDevice() != nil)
         weak var weakAdapter: LayoutWheelLiquidAdapter?
         weak var weakRenderer: LayoutWheelLiquidPresenter?

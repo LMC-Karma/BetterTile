@@ -7,7 +7,7 @@ import Testing
 @MainActor @Suite(.macOSTestApplication, .serialized) struct LayoutWheelLiquidResourceTests {
     private let configuration = LayoutWheelConfiguration(style: .grouped, levelCount: .two)
 
-    @Test func theDefaultDefersImagesUntilTheHold() throws {
+    @Test(.liquidPipeline) func theDefaultDefersImagesUntilTheHold() throws {
         try #require(MTLCreateSystemDefaultDevice() != nil)
         let adapter = LayoutWheelLiquidAdapter()
         adapter.prewarm(configuration: configuration, appearance: .init())
@@ -17,7 +17,7 @@ import Testing
         adapter.discardPreparation()
     }
 
-    @Test func closedResourcesStayReadyForTheNextHold() throws {
+    @Test(.liquidPipeline) func closedResourcesStayReadyForTheNextHold() throws {
         try #require(MTLCreateSystemDefaultDevice() != nil)
         let adapter = LayoutWheelLiquidAdapter()
         adapter.prewarm(configuration: configuration, appearance: .init())
@@ -31,7 +31,7 @@ import Testing
         adapter.discardPreparation()
     }
 
-    @Test func configurationChangesWaitForTheNextHold() throws {
+    @Test(.liquidPipeline) func configurationChangesWaitForTheNextHold() throws {
         try #require(MTLCreateSystemDefaultDevice() != nil)
         let adapter = LayoutWheelLiquidAdapter()
         adapter.prepareToOpen(configuration: configuration, appearance: .init())
@@ -47,7 +47,7 @@ import Testing
         adapter.discardPreparation()
     }
 
-    @Test(arguments: [true, false])
+    @Test(.liquidPipeline, arguments: [true, false])
     func disablingTheWheelOrItsTriggersDropsImages(disableWheel: Bool) throws {
         try #require(MTLCreateSystemDefaultDevice() != nil)
         let adapter = LayoutWheelLiquidAdapter()
