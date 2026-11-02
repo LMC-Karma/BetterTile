@@ -76,59 +76,85 @@ struct LayoutWheelLiquidStyle: Equatable {
     let spriteState: any MTLRenderPipelineState
     static let pixelFormat = MTLPixelFormat.bgra8Unorm
 
+    /// Why `prepare()` returned nil. The first failure is final for the process.
+    enum Failure: Error, Equatable, CustomStringConvertible {
+        case noDevice
+        case noCommandQueue
+        case shaderBundleMissing
+        case library(String)
+        case pipeline(String)
+
+        var description: String {
+            switch self {
+            case .noDevice: "no Metal device"
+            case .noCommandQueue: "the Metal device made no command queue"
+            case .shaderBundleMissing: "BetterTile_BetterTileMacOS.bundle with default.metallib is missing"
+            case let .library(error): "the shader library did not load: \(error)"
+            case let .pipeline(error): "a render pipeline state failed: \(error)"
+            }
+        }
+    }
+
     private(set) static var buildCount = 0
     private static var shared: LayoutWheelLiquidPipeline?
-    private static var failed = false
+    /// Set once when `prepare()` fails; nil while no attempt has failed.
+    private(set) static var failure: Failure?
 
     static var current: LayoutWheelLiquidPipeline? { shared }
 
     /// Returns the pipeline, building it on the first call. Nil when this Mac
     /// has no Metal device or the library is missing; the caller then keeps
-    /// the native wheel.
+    /// the native wheel. `failure` then names the step that failed.
     @discardableResult
     static func prepare() -> LayoutWheelLiquidPipeline? {
         if let shared { return shared }
-        guard !failed else { return nil }
+        guard failure == nil else { return nil }
         buildCount += 1
         do {
-            guard let device = MTLCreateSystemDefaultDevice(), let queue = device.makeCommandQueue() else {
-                failed = true
-                return nil
-            }
-            guard let bundle = shaderBundle else {
-                Logger(subsystem: "com.lmckarma.BetterTile", category: "LayoutWheel")
-                    .error("liquid wheel shader bundle missing")
-                failed = true
-                return nil
-            }
-            let library = try device.makeDefaultLibrary(bundle: bundle)
-            let descriptor = MTLRenderPipelineDescriptor()
-            descriptor.label = "Layout Wheel liquid body"
-            descriptor.vertexFunction = library.makeFunction(name: "liquidWheelVertex")
-            descriptor.fragmentFunction = library.makeFunction(name: "liquidWheelFragment")
-            descriptor.colorAttachments[0].pixelFormat = pixelFormat
-            let state = try device.makeRenderPipelineState(descriptor: descriptor)
-            let sprites = MTLRenderPipelineDescriptor()
-            sprites.label = "Layout Wheel icons"
-            sprites.vertexFunction = library.makeFunction(name: "liquidWheelSpriteVertex")
-            sprites.fragmentFunction = library.makeFunction(name: "liquidWheelSpriteFragment")
-            let attachment = sprites.colorAttachments[0]!
-            attachment.pixelFormat = pixelFormat
-            attachment.isBlendingEnabled = true
-            attachment.sourceRGBBlendFactor = .one
-            attachment.sourceAlphaBlendFactor = .one
-            attachment.destinationRGBBlendFactor = .oneMinusSourceAlpha
-            attachment.destinationAlphaBlendFactor = .oneMinusSourceAlpha
-            let spriteState = try device.makeRenderPipelineState(descriptor: sprites)
-            queue.label = "Layout Wheel"
-            shared = LayoutWheelLiquidPipeline(device: device, queue: queue, state: state, spriteState: spriteState)
+            shared = try build()
             return shared
         } catch {
+            failure = error
             Logger(subsystem: "com.lmckarma.BetterTile", category: "LayoutWheel")
-                .error("liquid wheel pipeline unavailable: \(error.localizedDescription, privacy: .public)")
-            failed = true
+                .error("liquid wheel pipeline unavailable: \(error.description, privacy: .public)")
             return nil
         }
+    }
+
+    private static func build() throws(Failure) -> LayoutWheelLiquidPipeline {
+        guard let device = MTLCreateSystemDefaultDevice() else { throw .noDevice }
+        guard let queue = device.makeCommandQueue() else { throw .noCommandQueue }
+        guard let bundle = shaderBundle else { throw .shaderBundleMissing }
+        let library: any MTLLibrary
+        do { library = try device.makeDefaultLibrary(bundle: bundle) } catch {
+            throw .library(error.localizedDescription)
+        }
+        let descriptor = MTLRenderPipelineDescriptor()
+        descriptor.label = "Layout Wheel liquid body"
+        descriptor.vertexFunction = library.makeFunction(name: "liquidWheelVertex")
+        descriptor.fragmentFunction = library.makeFunction(name: "liquidWheelFragment")
+        descriptor.colorAttachments[0].pixelFormat = pixelFormat
+        let sprites = MTLRenderPipelineDescriptor()
+        sprites.label = "Layout Wheel icons"
+        sprites.vertexFunction = library.makeFunction(name: "liquidWheelSpriteVertex")
+        sprites.fragmentFunction = library.makeFunction(name: "liquidWheelSpriteFragment")
+        let attachment = sprites.colorAttachments[0]!
+        attachment.pixelFormat = pixelFormat
+        attachment.isBlendingEnabled = true
+        attachment.sourceRGBBlendFactor = .one
+        attachment.sourceAlphaBlendFactor = .one
+        attachment.destinationRGBBlendFactor = .oneMinusSourceAlpha
+        attachment.destinationAlphaBlendFactor = .oneMinusSourceAlpha
+        let state: any MTLRenderPipelineState
+        let spriteState: any MTLRenderPipelineState
+        do {
+            state = try device.makeRenderPipelineState(descriptor: descriptor)
+            spriteState = try device.makeRenderPipelineState(descriptor: sprites)
+        } catch {
+            throw .pipeline(error.localizedDescription)
+        }
+        queue.label = "Layout Wheel"
+        return LayoutWheelLiquidPipeline(device: device, queue: queue, state: state, spriteState: spriteState)
     }
 
     /// The package resource bundle with `default.metallib`, found where

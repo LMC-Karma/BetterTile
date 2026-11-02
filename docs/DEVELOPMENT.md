@@ -180,6 +180,15 @@ succeed. For a documentation-only pull request, it passes when `changes`
 succeeds and all five jobs are skipped. A new CI job must be added to the
 `needs` list of `test`; `test` then checks its result automatically.
 
+> **Note:** The Layout Wheel liquid renderer needs SwiftPM to compile
+> `LayoutWheelLiquid.metal`. Swift 6.4 does this by default. Swift 6.3
+> (Xcode 26) defaults to its native build system, which skips Metal files, so
+> run `swift test --build-system swiftbuild` there. `Tools/test.sh` and CI
+> always pass that option. Tests that draw with the liquid renderer carry the
+> `.liquidPipeline` trait. Without the shader library or a usable Metal
+> device, each of them fails once and names the step that failed, for example
+> "BetterTile_BetterTileMacOS.bundle with default.metallib is missing".
+
 > **Note:** `swift test` needs the full Xcode toolchain. If you see
 > `no such module 'Testing'`, point the command line at Xcode:
 > `sudo xcode-select -s /Applications/Xcode.app/Contents/Developer`.

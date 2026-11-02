@@ -44,10 +44,10 @@ chmod +x "$work/bin/swift"
 export PATH="$work/bin:$PATH" TEST_COMPLETION_FIXTURE="$work/complete" TEST_COMPLETION_ARGUMENTS="$work/arguments"
 "$tools/test.sh" "$work/output" > /dev/null
 cmp "$work/complete" "$work/output"
-printf '%s\n' test > "$work/expected-arguments"
+printf '%s\n' test --build-system swiftbuild > "$work/expected-arguments"
 cmp "$work/expected-arguments" "$work/arguments"
 "$tools/test.sh" "$work/output" --release --filter Example > /dev/null
-printf '%s\n' test -c release -Xswiftc -enable-testing -Xswiftc -DBETTERTILE_TEST_HOOKS --filter Example > "$work/expected-arguments"
+printf '%s\n' test --build-system swiftbuild -c release -Xswiftc -enable-testing -Xswiftc -DBETTERTILE_TEST_HOOKS --filter Example > "$work/expected-arguments"
 cmp "$work/expected-arguments" "$work/arguments"
 cmp "$work/complete" "$work/output"
 TEST_COMPLETION_FIXTURE="$work/single" "$tools/test.sh" "$work/output" --expected-runs 1 --release --filter Example > /dev/null

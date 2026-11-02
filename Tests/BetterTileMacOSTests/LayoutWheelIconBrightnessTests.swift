@@ -69,7 +69,7 @@ import Testing
 
     // MARK: Liquid renderer
 
-    @Test(arguments: cases) func liquidIconsFollowTheBrightnessRules(item: Case) throws {
+    @Test(.liquidPipeline, arguments: cases) func liquidIconsFollowTheBrightnessRules(item: Case) throws {
         try #require(MTLCreateSystemDefaultDevice() != nil)
         let presenter = LayoutWheelLiquidPresenter(clock: WheelTestClock())
         presenter.dark = true
