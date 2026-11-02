@@ -97,11 +97,14 @@ import Testing
                 let preview = try #require(previewViews(host.view).max { $0.bounds.width < $1.bounds.width })
                 let previewFrame = preview.convert(preview.bounds, to: host.view)
                 let grip = CGRect(x: previewFrame.midX - 30, y: previewFrame.midY - 30, width: 60, height: 60)
+                // A click is handled within a few layout passes. These waits suspend between polls and never turn the
+                // main run loop, so other tests keep running; the short budget makes a missed click fail fast.
+                let clickBudget = Duration.seconds(5)
                 let before = try png(host)
                 let beforePicture = try png(host, in: picture)
                 // Check only the picture, excluding the label and readout. A stale picture must fail independently.
                 try performNativeMouseClick(at: end(of: gapTrack), in: host.window)
-                try await waitForSettingsUI("the clicked pane gap and its picture", in: host.view) {
+                try await waitForSettingsUI("the clicked pane gap and its picture", in: host.view, timeout: clickBudget) {
                     model.configuration.bentoInnerGap == 12 && (try? png(host, in: picture)) != beforePicture
                 }
                 #expect(model.configuration.bentoInnerGap == 12)
@@ -110,7 +113,7 @@ import Testing
                 host.settle()
                 let beforeGlass = try png(host, in: grip)
                 try performNativeMouseClick(at: point(on: glassTrack, at: 0.9), in: host.window)
-                try await waitForSettingsUI("the clicked glass transparency and its preview", in: host.view) {
+                try await waitForSettingsUI("the clicked glass transparency and its preview", in: host.view, timeout: clickBudget) {
                     model.configuration.overlayAppearance.transparency > 0.8 && (try? png(host, in: grip)) != beforeGlass
                 }
                 #expect(model.configuration.overlayAppearance.transparency > 0.8)
