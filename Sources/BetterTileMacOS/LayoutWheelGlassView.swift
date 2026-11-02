@@ -393,6 +393,10 @@ struct LayoutWheelWellShape: Shape {
     private(set) var cachedOutline: Path?
     private var cachedSize = CGSize.zero
 
+    init(tagSize: CGSize?) {
+        self.tagSize = tagSize
+    }
+
     func cached(in size: CGSize) -> Self {
         var copy = self
         copy.cachedOutline = path(in: CGRect(origin: .zero, size: size))

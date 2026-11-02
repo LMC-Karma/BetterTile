@@ -974,6 +974,10 @@ struct LayoutWheelLiquidImageCache {
     private(set) var bytes = 0
     var count: Int { entries.count }
 
+    init(limit: Int) {
+        self.limit = limit
+    }
+
     subscript(key: String) -> CGImage? {
         mutating get {
             guard var entry = entries[key] else { return nil }
