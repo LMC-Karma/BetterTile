@@ -165,7 +165,10 @@ import Testing
         }
     }
 
-    @Test(arguments: [1, 2]) func mistAndClearProfileContrast(ambientScale: Int) throws {
+    // Compares a rendered glow profile with an approved golden file at 2/255, and the hosted runner's GPU renders
+    // it differently. On CI, blurCurveKeepsTheApprovedDefaultLookBeforeItsClearEnd,
+    // retiredMaterialsDoNotOverrideAppearanceAndFullTranslucencyRemovesBlur and clearBrightensDarkGlass still cover it.
+    @Test(.liveDesktop, arguments: [1, 2]) func mistAndClearProfileContrast(ambientScale: Int) throws {
         guard LayoutWheelLiquidPresenter.prepare() else { return }
         // Neither a 1x generic RGB context nor a 2x wide-gamut context may choose
         // the snapshot's raster. Both must measure the same 2x sRGB fixture.

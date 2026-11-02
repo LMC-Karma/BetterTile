@@ -387,6 +387,34 @@ Never stop the main run loop in tests. Test bodies and fixtures must not call
 support may stop a loop that it owns. Stopping the outer loop can make SwiftPM's
 helper exit 0 before the test run finishes.
 
+### Live desktop tests
+
+Some tests need a live desktop session that GitHub's hosted macOS runner does not
+provide. The `.liveDesktop` trait skips them when the `CI` environment variable
+is set. GitHub Actions sets it for every step. Local runs and the pre-PR full run
+leave it unset, so these tests still run there. The maintainer also checks the
+Debug build by hand on a macOS 26 Mac.
+
+Tag a test only when its CI failure comes from the environment:
+
+- pixels of rendered native glass or Liquid Glass, and contrast measured on that
+  rendering;
+- golden comparisons whose result depends on the GPU or the display;
+- Vision text recognition;
+- synthetic mouse or keyboard input into native controls;
+- real key-window or activation state.
+
+Never use the trait for a timing or ordering flake, a wrong result, or a hang.
+Fix those, or quarantine them with `.disabled("quarantine: #<issue> …")` and no
+retries. Do not remove checks or raise time limits when you add the trait.
+
+A model-level or colour-maths test must still cover the logic of each tagged
+test on CI. Name that test in a comment at the tagged suite, and in the commit
+message. To see which tests CI runs, set `CI=1` for a local run.
+
+`.liveDesktop` is separate from the opt-in native focus lane. A native focus
+suite stays gated by `BETTERTILE_NATIVE_FOCUS_TESTS`, with or without `CI`.
+
 ### Export snapshots separately
 
 Never set `BT_SNAPSHOT_DIR` for a full product or suite run. Exporting every UI
