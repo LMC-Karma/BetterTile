@@ -83,49 +83,39 @@ import Testing
                 try await waitForSettingsUI("the live controls", in: host.view) { !previewViews(host.view).isEmpty }
                 host.settle()
                 // SwiftUI draws these sliders itself, with no AppKit view to measure, so the tracks come from the row
-                // layout. A drag ends past the track's end, where every slider clamps to its maximum, whatever the
-                // knob's inset on this system.
+                // layout. macOS 26 does not deliver a queued synthetic drag to a control that tracks the press, so the
+                // test clicks the track instead: the same native press moves the knob to the clicked point.
                 let trackX = width - 12 - 44 - 8 - 220
                 let gapTrack = CGRect(x: trackX, y: 40, width: 220, height: 20)
                 let glassTrack = CGRect(x: trackX, y: 131, width: 220, height: 20)
                 func point(on track: CGRect, at fraction: Double) -> CGPoint {
                     host.view.convert(CGPoint(x: track.minX + 8 + (track.width - 16) * fraction, y: track.midY), to: nil)
                 }
-                func beyond(_ track: CGRect) -> CGPoint { host.view.convert(CGPoint(x: track.maxX + 24, y: track.midY), to: nil) }
+                // Just inside the track's end, past the knob's last centre, every slider clamps to its maximum.
+                func end(of track: CGRect) -> CGPoint { host.view.convert(CGPoint(x: track.maxX - 2, y: track.midY), to: nil) }
                 let picture = CGRect(x: gapTrack.minX - 8 - 64, y: gapTrack.midY - 20, width: 64, height: 40)
                 let preview = try #require(previewViews(host.view).max { $0.bounds.width < $1.bounds.width })
                 let previewFrame = preview.convert(preview.bounds, to: host.view)
                 let grip = CGRect(x: previewFrame.midX - 30, y: previewFrame.midY - 30, width: 60, height: 60)
                 let before = try png(host)
                 let beforePicture = try png(host, in: picture)
-                // Check only the picture while the drag is still active, excluding
-                // the label and readout. A stale picture must fail independently.
-                var afterPicture: Data?
-                let gapDragged = try performNativeDrag(from: point(on: gapTrack, at: 1.0 / 3), to: beyond(gapTrack),
-                                                       in: host.window) {
-                    host.view.layoutSubtreeIfNeeded()
-                    guard model.configuration.bentoInnerGap == 12, let now = try? png(host, in: picture),
-                          now != beforePicture else { return false }
-                    afterPicture = now
-                    return true
+                // Check only the picture, excluding the label and readout. A stale picture must fail independently.
+                try performNativeMouseClick(at: end(of: gapTrack), in: host.window)
+                try await waitForSettingsUI("the clicked pane gap and its picture", in: host.view) {
+                    model.configuration.bentoInnerGap == 12 && (try? png(host, in: picture)) != beforePicture
                 }
-                #expect(gapDragged, "The dragged pane gap and its picture must update during the drag: gap \(model.configuration.bentoInnerGap), picture \(afterPicture == nil ? "unchanged" : "changed")")
                 #expect(model.configuration.bentoInnerGap == 12)
-                #expect(afterPicture != nil && afterPicture != beforePicture)
+                let afterPicture = try png(host, in: picture)
+                #expect(afterPicture != beforePicture)
                 host.settle()
                 let beforeGlass = try png(host, in: grip)
-                var afterGlass: Data?
-                let glassDragged = try performNativeDrag(from: point(on: glassTrack, at: 0.25), to: point(on: glassTrack, at: 0.9),
-                                                         in: host.window) {
-                    host.view.layoutSubtreeIfNeeded()
-                    guard model.configuration.overlayAppearance.transparency > 0.8, let now = try? png(host, in: grip),
-                          now != beforeGlass else { return false }
-                    afterGlass = now
-                    return true
+                try performNativeMouseClick(at: point(on: glassTrack, at: 0.9), in: host.window)
+                try await waitForSettingsUI("the clicked glass transparency and its preview", in: host.view) {
+                    model.configuration.overlayAppearance.transparency > 0.8 && (try? png(host, in: grip)) != beforeGlass
                 }
-                #expect(glassDragged, "The dragged glass transparency and its preview must update during the drag: \(model.configuration.overlayAppearance.transparency)")
                 #expect(model.configuration.overlayAppearance.transparency > 0.8)
-                #expect(afterGlass != nil && afterGlass != beforeGlass)
+                let afterGlass = try png(host, in: grip)
+                #expect(afterGlass != beforeGlass)
                 host.settle()
                 let after = try png(host)
                 if let directory {
@@ -135,21 +125,16 @@ import Testing
                     try before.write(to: folder.appendingPathComponent("window-layout-live-controls-before-" + suffix))
                     try after.write(to: folder.appendingPathComponent("window-layout-live-controls-after-" + suffix))
                     try beforePicture.write(to: folder.appendingPathComponent("pane-gap-picture-before-" + suffix))
-                    try afterPicture?.write(to: folder.appendingPathComponent("pane-gap-picture-after-" + suffix))
+                    try afterPicture.write(to: folder.appendingPathComponent("pane-gap-picture-after-" + suffix))
                     try beforeGlass.write(to: folder.appendingPathComponent("glass-preview-before-" + suffix))
-                    try afterGlass?.write(to: folder.appendingPathComponent("glass-preview-after-" + suffix))
+                    try afterGlass.write(to: folder.appendingPathComponent("glass-preview-after-" + suffix))
                 }
                 model.updateConfiguration { $0.overlayAppearance.useLiquidGlass = false }
                 host.settle()
                 let disabledValue = model.configuration.overlayAppearance.transparency
-                // A disabled slider ignores the drag: the value stays the same during it and after it.
-                var draggedValue: Double?
-                _ = try performNativeDrag(from: point(on: glassTrack, at: 1), to: point(on: glassTrack, at: 0),
-                                          in: host.window, attempts: 3) {
-                    draggedValue = model.configuration.overlayAppearance.transparency
-                    return false
-                }
-                #expect(draggedValue == disabledValue)
+                // A disabled slider ignores a click on its track.
+                try performNativeMouseClick(at: point(on: glassTrack, at: 0), in: host.window)
+                host.settle()
                 #expect(model.configuration.overlayAppearance.transparency == disabledValue)
             }
         }
