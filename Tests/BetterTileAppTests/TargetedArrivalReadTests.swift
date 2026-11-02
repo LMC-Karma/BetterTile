@@ -135,7 +135,12 @@ struct TargetedArrivalReadTests {
         let clock = WindowArrivalTestClock(model)
         let id = addArrival(system)
         system.notReadyReads[token] = 10_000
+        // Each retry wait stays the fixture's registered deadline on its manual clock, so waitFor drives the
+        // 500 ms read budget in virtual time. A wait that returned at once left waitFor only real-time
+        // polling, which a loaded runner could exhaust before the reads reached the deadline.
+        let registeredSleep = model.windowEventSleep
         model.windowEventSleep = { delay in
+            try await registeredSleep(delay)
             clock.elapsed += Double(delay.components.seconds) + Double(delay.components.attoseconds) / 1e18
         }
         let sweeps = system.completeSweepCount
