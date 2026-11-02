@@ -100,7 +100,12 @@ import Testing
         }
     }
 
-    @Test(arguments: [760.0, 920.0])
+    // Synthetic clicks into native controls (the segmented Appearance picker and buttons). On CI the choices stay
+    // covered by LayoutWheelStylePresetTests.appearanceSelectionKeepsBothRenderersAndOlderBuildsConsistent and
+    // modifiedIsDerivedAndResetKeepsIndependentPreferences, and by
+    // LayoutWheelAppearanceConfigurationTests.eachPresetRemembersItsStrengthAcrossSelectionAndSaving and
+    // resetAppearancePreservesAssignmentsStyleAndTriggers.
+    @Test(.liveDesktop, arguments: [760.0, 920.0])
     func appearanceControlsRespondToOffscreenPointerInput(width: Double) async throws {
         let model = makeModel(system: FakeAppWindowSystem())
         defer { model.shutdown() }
@@ -158,7 +163,10 @@ import Testing
         #expect(model.configuration.layoutWheel.triggers == original.triggers)
     }
 
-    @Test func sheetMotionSwitchAndFooterResetUseTheLiveBinding() async throws {
+    // Synthetic clicks into a native switch and button. On CI the motion setting and the style reset stay covered by
+    // LayoutWheelStylePresetTests.everyExtraSettingMarksModified…, which changes, saves and resets every extra setting,
+    // pointer lean included.
+    @Test(.liveDesktop) func sheetMotionSwitchAndFooterResetUseTheLiveBinding() async throws {
         let model = makeModel(system: FakeAppWindowSystem())
         defer { model.shutdown() }
         model.updateConfiguration { $0.layoutWheel.appearance.liquid.appearance = .dark }
@@ -191,7 +199,9 @@ import Testing
         #expect(model.configuration.layoutWheel == before)
     }
 
-    @Test(arguments: LayoutWheelFineTuningTab.allCases)
+    // A synthetic click into the native Play button. On CI the playback stays covered by
+    // LayoutWheelFineTuningWiringTests.sliderEditsDoNotReplayButPlayAndStyleChangesDo.
+    @Test(.liveDesktop, arguments: LayoutWheelFineTuningTab.allCases)
     func everyTabHasAPlayablePreviewWithoutChangingConfiguration(tab: LayoutWheelFineTuningTab) async throws {
         let model = makeModel(system: FakeAppWindowSystem())
         defer { model.shutdown() }
@@ -251,14 +261,11 @@ import Testing
         try click(CGPoint(x: frame.midX, y: frame.midY), host: host)
     }
 
+    /// A native control, such as the segmented Appearance picker or a switch, tracks the press in its own event loop.
+    /// Sent alone, the mouse-down left that loop waiting for a release the test never sent. `performNativeMouseClick`
+    /// queues the mouse-up before it sends the mouse-down, so the loop takes the release and returns.
     private func click(_ point: CGPoint, host: SettingsSnapshotHost) throws {
-        for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
-            let event = try #require(NSEvent.mouseEvent(with: type,
-                location: host.view.convert(point, to: nil), modifierFlags: [],
-                timestamp: 0, windowNumber: host.window.windowNumber,
-                context: nil, eventNumber: 1, clickCount: 1, pressure: type == .leftMouseDown ? 1 : 0))
-            try withNativeEventLoop { host.window.sendEvent(event) }
-        }
+        try performNativeMouseClick(at: host.view.convert(point, to: nil), in: host.window)
     }
 
     private func capture(_ host: SettingsSnapshotHost, name: String) throws {
