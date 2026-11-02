@@ -199,7 +199,7 @@ import Testing
 
     @Test func tagCapsuleClearsHoveredIconBoxesAndJoinsTheWell() throws {
         var tags = 0
-        var inkCache: [String: [CGPoint]] = [:]
+        var inkCache: [String: (pixels: [CGPoint], bounds: CGRect)] = [:]
         for style in [LayoutWheelStyle.custom, .grouped] {
             for levels in [LayoutWheelLevelCount.one, .two] {
                 for scale in scales {
@@ -211,7 +211,7 @@ import Testing
                                 // Font line boxes include leading. Check the actual
                                 // rendered ink against the leaned icon boxes.
                                 let key = label.lines.map { "\($0.text)|\($0.fontSize)|\($0.height)|\($0.secondary)" }.joined(separator: "\n")
-                                let ink: [CGPoint]
+                                let ink: (pixels: [CGPoint], bounds: CGRect)
                                 if let cached = inkCache[key] { ink = cached }
                                 else {
                                     let renderer = ImageRenderer(content: LayoutWheelLabelText(label: label)
@@ -219,16 +219,21 @@ import Testing
                                     renderer.scale = 4
                                     let raster = NSBitmapImageRep(cgImage: try #require(renderer.cgImage))
                                     var pixels: [CGPoint] = []
+                                    var bounds = CGRect.null
                                     for y in 0..<raster.pixelsHigh {
                                         for x in 0..<raster.pixelsWide where (raster.colorAt(x: x, y: y)?.alphaComponent ?? 0) > 0 {
-                                            pixels.append(CGPoint(x: (Double(x) + 0.5) / 4 - Double(raster.pixelsWide) / 8,
-                                                               y: (Double(y) + 0.5) / 4 - Double(raster.pixelsHigh) / 8))
+                                            let pixel = CGPoint(x: (Double(x) + 0.5) / 4 - Double(raster.pixelsWide) / 8,
+                                                                y: (Double(y) + 0.5) / 4 - Double(raster.pixelsHigh) / 8)
+                                            pixels.append(pixel)
+                                            // Enclose each sample strictly inside its 4x pixel footprint.
+                                            bounds = bounds.union(CGRect(x: pixel.x - 0.125, y: pixel.y - 0.125,
+                                                                         width: 0.25, height: 0.25))
                                         }
                                     }
-                                    inkCache[key] = pixels
-                                    ink = pixels
+                                    ink = (pixels, bounds)
+                                    inkCache[key] = ink
                                 }
-                                #expect(!ink.isEmpty)
+                                #expect(!ink.pixels.isEmpty)
                                 for direction in LayoutWheelSector.allCases {
                                     let angle = direction.drawnCenterAngle.radians
                                     let dx = cos(angle) * LayoutWheelDrawnMetrics.leanDistance * scale
@@ -236,7 +241,9 @@ import Testing
                                     for box in space.iconBoxes {
                                         let leaned = box.offsetBy(dx: dx, dy: dy)
                                         let clearance = leaned.insetBy(dx: -2 * scale - 0.125, dy: -2 * scale - 0.125)
-                                        #expect(!ink.contains { clearance.contains($0) },
+                                        let hit = ink.bounds.intersects(clearance)
+                                            && ink.pixels.contains { clearance.contains($0) }
+                                        #expect(!hit,
                                             "\(name), \(style), \(levels), \(scale), \(direction)")
                                     }
                                 }
