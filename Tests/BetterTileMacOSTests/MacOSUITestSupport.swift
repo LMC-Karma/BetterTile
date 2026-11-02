@@ -16,7 +16,7 @@ struct MacOSUITrait: TestTrait, SuiteTrait, TestScoping {
     }
 
     func provideScope(for test: Test, testCase: Test.Case?, performing function: @Sendable () async throws -> Void) async throws {
-        let ownership = try await MacOSUILease.shared.acquire()
+        let ownership = try await MacOSUILease.shared.acquire(holder: test.name)
         let traceToken = await NativeApplicationActivationTrace.enter(test: test.name, scope: "UI lease")
         do {
             try await NativeApplicationBootstrap.start(keepsApplicationRunning: false)
