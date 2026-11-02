@@ -237,8 +237,11 @@ func emptyPaneButtonsKeepTheirNaturalWidthAndStackWhenTooNarrow(width: Double) t
                 && abs(c.blueComponent - swatch.blueComponent) < 0.01 { matches += 1 }
         }
     }
-    // "Try Again" is about 78 x 24 points at 2x, less its rounded corners and title.
-    #expect(matches > 3000, "Try Again is drawn with the shaded accent fill in a window that is not key")
+    // "Try Again" is about 78 x 24 points, less its rounded corners and title. Count square points, not
+    // pixels: the capture uses the window's backing scale, 2 on a Retina display and 1 on a CI runner.
+    let scale = Double(rep.pixelsWide) / host.bounds.width
+    let area = Double(matches) / (scale * scale)
+    #expect(area > 750, "Try Again is drawn with the shaded accent fill in a window that is not key (\(area) pt², scale \(scale))")
 }
 
 // MARK: Links
