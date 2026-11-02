@@ -68,7 +68,7 @@ import Testing
         }
         try await waitForSettingsUI("Shortcuts switch", in: host.view) { switches(host.view).count == 1 }
         let toggle = try #require(switches(host.view).first)
-        let frame = toggle.convert(toggle.bounds, to: host.view)
+        let frame = try await waitForStableFrame(of: toggle, in: host, "the keyboard shortcuts switch")
         for enabled in [false, true] {
             try performNativeMouseClick(at: host.view.convert(CGPoint(x: frame.midX, y: frame.midY), to: nil), in: host.window)
             try await waitForSettingsUI("switch value \(enabled)", in: host.view) {
