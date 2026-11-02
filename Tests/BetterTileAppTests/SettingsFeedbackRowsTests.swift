@@ -5,7 +5,7 @@ import Testing
 @testable import BetterTileApp
 
 @Suite(.appTestApplication, .settingsUI) @MainActor struct SettingsFeedbackRowsTests {
-    @Test func twoLineRuleListRowsAre44Points() throws {
+    @Test func twoLineRuleListRowsAre44Points() async throws {
         let model = makeModel(system: FakeAppWindowSystem())
         defer { model.shutdown() }
         for index in 0..<6 {
@@ -18,6 +18,11 @@ import Testing
             (view as? NSTableView).map { [$0] } ?? view.subviews.flatMap { tables(in: $0) }
         }
         let table = try #require(tables(in: host.view).first { $0.numberOfRows == 6 })
+        // The page looks up each rule's app after its first drawing. Until then a row is neutral and its summary is
+        // the rule title, which can wrap. Measure the rows in their looked-up state.
+        try await waitForSettingsUI("the looked-up rule rows", in: host.view) {
+            (0..<table.numberOfRows).allSatisfy { table.rect(ofRow: $0).height == 44 }
+        }
         for row in 0..<table.numberOfRows {
             #expect(table.rect(ofRow: row).height == 44)
         }
