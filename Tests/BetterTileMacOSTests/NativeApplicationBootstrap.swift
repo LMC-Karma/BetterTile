@@ -1,4 +1,5 @@
 import AppKit
+import BetterTileTestSupport
 import Testing
 
 private enum NativeApplicationContext {
@@ -75,6 +76,9 @@ struct NativeApplicationTrait: TestTrait, SuiteTrait, TestScoping {
     func provideScope(for test: Test, testCase: Test.Case?,
                       performing function: @Sendable () async throws -> Void) async throws {
         if testCase == nil {
+            // A frozen run still names its running tests: the watchdog reports from its own thread.
+            let progress = TestWatchdog.testStarted(test.name)
+            defer { TestWatchdog.testFinished(progress) }
             // Startup can wait on the process's shared native host. Do it before case timers start.
             try await NativeApplicationBootstrap.start(keepsApplicationRunning: keepsApplicationRunning)
             try await NativeApplicationContext.$entered.withValue(true) { try await function() }
