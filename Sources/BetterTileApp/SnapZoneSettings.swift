@@ -141,7 +141,7 @@ struct ZoneSettings: View {
             if selectedPreset == nil {
                 VStack(spacing: 0) {
                     StepperRow("Edge width", caption: "How close to a display edge the pointer must be. 1 to 40 pt.",
-                               value: Binding(get: { activation.edge }, set: changeEdge),
+                               value: Binding(get: { activation.edge }, set: { changeEdge($0) }),
                                in: SnapZoneDetector.edgeActivationRange, unit: "pt")
                     Divider().padding(.horizontal, SettingsSpacing.s3)
                     StepperRow("Corner reach", caption: reachCaption,
