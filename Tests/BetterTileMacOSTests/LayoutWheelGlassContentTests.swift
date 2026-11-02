@@ -162,12 +162,15 @@ import Testing
         let bitmap = NSBitmapImageRep(cgImage: try #require(image.cgImage))
         let center = Double(bitmap.pixelsWide) / 2
         let unavailable = state == .unavailable || state == .unavailableTag
+        // Ink as it shows over a black backdrop: red times alpha. The offscreen image of native glass
+        // is translucent where the renderer draws no glass, which happens on some hosts; the label
+        // must still stand out from the plate.
         func ink(in rect: CGRect, threshold: Double) -> Int {
             var count = 0
             for y in Int(center + rect.minY * 2)..<Int(center + rect.maxY * 2) {
                 for x in Int(center + rect.minX * 2)..<Int(center + rect.maxX * 2) {
                     if let color = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.sRGB),
-                       color.alphaComponent > 0.8 && color.redComponent > threshold { count += 1 }
+                       color.redComponent * color.alphaComponent > threshold { count += 1 }
                 }
             }
             return count

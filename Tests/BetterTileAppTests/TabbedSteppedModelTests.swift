@@ -584,6 +584,8 @@ func switchingTabsBesideTwoSteppedTerminalsSettles(upperOver: Double, lowerOver:
     for step in 0..<3 {
         let branch = try #require(model.activeTabbedState?.dividers(in: system.availableDisplays[0].visibleFrame).first?.branchID)
         model.performTabbed(.adjustDivider(branch, by: step % 2 == 0 ? 0.03 : -0.05))
+        // Measure after the placement and the window have settled, not after a fixed time: on a busy runner the
+        // terminal can still have its previous height 1.2 s after the divider moved.
         try await waitForIdle(model, system)
         if model.statusMessage != nil { failures += 1; model.statusMessage = nil }
         let area = try #require(content(0, model, system))

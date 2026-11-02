@@ -213,8 +213,11 @@ import Testing
         }
         let button = try #require(panelViews(host, NSButton.self).first)
         #expect(button.title == (confirm ? "Add Rule" : "Cancel"))
-        #expect(button.frame.height == 24, "Wrapper in \(height)-point container: \(button.frame)")
-        #expect(abs(button.frame.width - button.intrinsicContentSize.width) <= 1)
+        // SwiftUI lays out the button's alignment rectangle. Its frame adds the bezel's shadow margins, which
+        // depend on the SDK the app links: none with SDK 27, 5–7 points with SDK 26.
+        let box = button.alignmentRect(forFrame: button.frame)
+        #expect(box.height == 24, "Wrapper in \(height)-point container: \(box), frame \(button.frame)")
+        #expect(abs(box.width - button.intrinsicContentSize.width) <= 1)
         #expect(button.keyEquivalent == (confirm ? "\r" : "\u{1b}"))
         print("POPUP_WRAPPER confirm=\(confirm) container=\(height) frame=\(button.frame)")
         #expect(!window.isVisible && !window.isKeyWindow, Comment(rawValue: keyWindowDiagnostics(window)))
