@@ -110,11 +110,15 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Test test-run completion guard
         run: Tools/tests/test-completion-test.sh
+      - name: Test release test-run completion guard
+        run: Tools/tests/release-test-completion-test.sh
       # Guards the `rm -rf` in the release tool's exit trap.
       - name: Test release workspace cleanup
         run: Tools/tests/release-workspace-test.sh
       - name: Test release appcast handling
         run: Tools/tests/release-appcast-test.sh
+      - name: Test release dry-run key
+        run: Tools/tests/release-dry-run-key-test.sh
       - name: Test release signing policy
         run: Tools/tests/release-signing-policy-test.sh
       - name: Test release source target

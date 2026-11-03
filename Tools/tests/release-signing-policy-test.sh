@@ -64,7 +64,7 @@ echo "release tools explain a failed Sparkle key lookup"
 # Run the exact key lookup from the release tool with a generate_keys that
 # fails, first as Sparkle's does when the login Keychain has no key, then
 # for another reason.
-key_lookup="$(awk '/^public_key="\$\("\$generate_keys" -p 2>/ { found = 1 } found { print } found && /^}$/ { exit }' "$release_script")"
+key_lookup="$(awk '/^[[:space:]]*public_key="\$\("\$generate_keys" -p 2>/ { found = 1 } found { print } found && /^[[:space:]]*}$/ { exit }' "$release_script")"
 # run_key_lookup MESSAGE STREAM : stub generate_keys fails, printing MESSAGE
 # to stdout or stderr; sets key_status and key_output.
 run_key_lookup() {
