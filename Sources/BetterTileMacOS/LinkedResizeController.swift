@@ -18,6 +18,7 @@ public final class LinkedResizeController {
     /// Runs when a drag first resizes a window, not on every click. The
     /// gesture then re-reads its windows' minimums.
     public var gestureWillBeginHandler: (() -> Void)?
+    public var isResizing: Bool { hasStartedResizing }
     private var hasStartedResizing = false
     public var isEnabledForDisplay: ((DisplayID) -> Bool)?
 

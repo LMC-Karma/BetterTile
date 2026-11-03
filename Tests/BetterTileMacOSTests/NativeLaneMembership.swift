@@ -7,11 +7,21 @@ enum NativeLaneMembership {
         "BetterTileMacOSTests": [
             "nativeClicksCompleteAfterRunLoopStall",
             "nativeClicksPreservePendingMainActorWork",
+            "overlayButtonLooksTheSameInAKeyAndABackgroundWindow",
+            "overlayButtonStyleLooksTheSameInAKeyAndABackgroundWindow",
+            "overlayButtonTakesKeyboardFocusOnlyWithFullKeyboardAccess",
+            "spacePressesAFocusedOverlayButton",
         ],
         "BetterTileAppTests": [
-            "nativeApplicationHostStaysInactiveWithAnAlreadyOrderedPanel",
+            "addRuleCancelUsesSecondaryOverlayButtonAtTwentyFourPointsInBothSteps",
+            "addRuleStepTwoCancelKeyDismissesExactlyOnce",
             "keyWindowSetupSurvivesDeactivationDuringOrdering",
+            "liveReopenedPanelAcceptsTypedKeys",
+            "liveReturnConfirmsRuleThroughTheResponderChain",
+            "liveSecondEscapeClosesAfterClearingQuery",
+            "nativeApplicationHostStaysInactiveWithAnAlreadyOrderedPanel",
             "offscreenTestWindowsKeepRealOrderingAndKeyStatus",
+            "suggestedBadgeInRealStepTwoKeepsOpaqueShadeAndWhiteText",
         ],
     ]
 

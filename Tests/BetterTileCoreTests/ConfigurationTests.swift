@@ -2,6 +2,13 @@ import Foundation
 import Testing
 @testable import BetterTileCore
 
+@Test func layoutModeDisplayNamesKeepTheirPersistedRawValues() {
+    #expect(LayoutMode.manual.title == "Manual")
+    #expect(LayoutMode.manual.rawValue == "manual")
+    #expect(LayoutMode.bento.title == "Adaptive")
+    #expect(LayoutMode.bento.rawValue == "bento")
+}
+
 @Test func glassTransparencyPreservesSavedFrostingDirection() throws {
     var appearance = try JSONDecoder().decode(OverlayAppearance.self, from: Data(#"{"useLiquidGlass":true,"strength":0.8}"#.utf8))
     #expect(abs(appearance.transparency - 0.2) < 0.0001)
@@ -174,6 +181,8 @@ func invalidGlassStrengthIsRejected(strength: Double) {
         ([.snapping], { $0.snapSuppressionModifiers = .command }),
         ([.linkedResize, .divider, .bentoGeometry], { $0.adjacencyTolerance = 8 }),
         ([.snapping], { $0.snapAreaBindings[0].action = nil }),
+        ([.snapping], { $0.snapEdgeActivationDistance = 40 }),
+        ([.snapping], { $0.snapCornerActivationSize = 160 }),
         ([.titleBar], { $0.doubleClickTitleBarToMaximize.toggle() }),
         ([.shortcuts], { $0.shortcuts[0].shortcut = nil }),
         ([.shortcuts], { $0.keyboardShortcutsEnabled = false }),
@@ -185,6 +194,8 @@ func invalidGlassStrengthIsRejected(strength: Double) {
         ([], { $0.macOSTilingRecommendationAcknowledged = true }),
         ([], { $0.stageManagerRecommendationAcknowledged = true }),
         ([.layoutWheel], { $0.layoutWheel.levelCount = .two }),
+        ([.menuBarIcon], { $0.showMenuBarIcon.toggle() }),
+        ([], { $0.accessibilityPromptRequested = true }),
     ]
 
     for (expected, mutation) in mutations {
@@ -477,6 +488,30 @@ func invalidGlassStrengthIsRejected(strength: Double) {
     #expect(ConfigurationChangeSet.between(missing, changed) == [.workArea])
 }
 
+@Test func menuBarIconIsOnForEarlierConfigurationsAndRoundTrips() throws {
+    #expect(BetterTileConfiguration().showMenuBarIcon)
+    // A schema 12 file written before the setting existed keeps the icon.
+    let missing = try ConfigurationStore.decode(Data(#"{"schemaVersion":12,"showDockIcon":false}"#.utf8))
+    #expect(missing.showMenuBarIcon)
+    // Older schemas migrate with the icon on as well.
+    let older = try ConfigurationStore.decode(JSONSerialization.data(withJSONObject: ["schemaVersion": 7]))
+    #expect(older.showMenuBarIcon)
+    var hidden = missing
+    hidden.showMenuBarIcon = false
+    let decoded = try ConfigurationStore.decode(JSONEncoder().encode(hidden))
+    #expect(!decoded.showMenuBarIcon)
+    #expect(decoded == hidden)
+    #expect(ConfigurationChangeSet.between(missing, hidden) == [.menuBarIcon])
+}
+
+@Test func accessibilityPromptRequestIsOffForEarlierConfigurationsAndRoundTrips() throws {
+    let missing = try ConfigurationStore.decode(Data(#"{"schemaVersion":12}"#.utf8))
+    #expect(!missing.accessibilityPromptRequested)
+    var requested = missing
+    requested.accessibilityPromptRequested = true
+    #expect(try ConfigurationStore.decode(JSONEncoder().encode(requested)).accessibilityPromptRequested)
+}
+
 @Test func schemaSixAddsGapAndKeepsExistingResizeFeedbackChoice() throws {
     let existing = try ConfigurationStore.decode(JSONSerialization.data(withJSONObject: [
         "schemaVersion": 5,
@@ -615,4 +650,53 @@ func invalidGlassStrengthIsRejected(strength: Double) {
     #expect(try ConfigurationStore.decode(JSONEncoder().encode(changed)).bentoBalancesNewWindows)
     // Read at insertion time; changing it must not restart gestures or reflow.
     #expect(ConfigurationChangeSet.between(legacy, changed).isEmpty)
+}
+
+@Test func snapActivationSettingsRoundTripIndependently() throws {
+    let original = BetterTileConfiguration()
+    for (edge, corner) in [(40.0, 64.0), (5, 160), (1, 16)] {
+        var configuration = original
+        configuration.snapEdgeActivationDistance = edge
+        configuration.snapCornerActivationSize = corner
+        let decoded = try ConfigurationStore.decode(JSONEncoder().encode(configuration))
+        #expect(decoded == configuration)
+        #expect(decoded.snapAreaBindings == original.snapAreaBindings)
+        #expect(ConfigurationChangeSet.between(original, decoded) == [.snapping])
+    }
+}
+
+@Test(arguments: [1, 7, 12])
+func oldConfigurationKeepsTheOriginalSnapActivationArea(version: Int) throws {
+    let decoded = try ConfigurationStore.decode(JSONSerialization.data(withJSONObject: ["schemaVersion": version]))
+    #expect(decoded.snapEdgeActivationDistance == 5)
+    #expect(decoded.snapCornerActivationSize == 64)
+    let detector = SnapZoneDetector(edgeActivationDistance: decoded.snapEdgeActivationDistance,
+                                    cornerActivationSize: decoded.snapCornerActivationSize)
+    #expect(detector.edgeActivationDistance == SnapZoneDetector().edgeActivationDistance)
+    #expect(detector.cornerActivationSize == SnapZoneDetector().cornerActivationSize)
+}
+
+@Test(arguments: [-1.0, 0, 41, Double.infinity, Double.nan])
+func invalidSnapEdgeWidthIsRejected(value: Double) {
+    var configuration = BetterTileConfiguration()
+    configuration.snapEdgeActivationDistance = value
+    #expect(throws: ConfigurationError.invalidSnapEdgeActivationDistance) { try configuration.validated() }
+}
+
+@Test(arguments: [0.0, 15, 161, Double.infinity, Double.nan])
+func invalidSnapCornerExtensionIsRejected(value: Double) {
+    var configuration = BetterTileConfiguration()
+    configuration.snapCornerActivationSize = value
+    #expect(throws: ConfigurationError.invalidSnapCornerActivationSize) { try configuration.validated() }
+}
+
+@Test func invalidSnapActivationFileDoesNotSilentlyResetPreferences() throws {
+    for (key, value) in [("snapEdgeActivationDistance", 41), ("snapCornerActivationSize", 15)] {
+        #expect(throws: (any Error).self) {
+            try ConfigurationStore.decode(JSONSerialization.data(withJSONObject: [key: value, "showDockIcon": true, "schemaVersion": 12]))
+        }
+    }
+    #expect(throws: ConfigurationError.invalidFile) {
+        try ConfigurationStore.decode(Data(#"{"schemaVersion":12,"snapEdgeActivationDistance":"wide"}"#.utf8))
+    }
 }

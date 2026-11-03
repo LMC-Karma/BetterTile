@@ -4,7 +4,6 @@ Tests/BetterTileAppTests/ConfigurationModelTests.swift	Task.sleep	1
 Tests/BetterTileAppTests/DockSpaceModelTests.swift	Task.sleep	2
 Tests/BetterTileAppTests/LayoutWheelModelTests.swift	Task.sleep	77
 Tests/BetterTileAppTests/LayoutWheelModelTests.swift	systemUptime	1
-Tests/BetterTileAppTests/SettingsPreviewTests.swift	Task.sleep	1
 Tests/BetterTileAppTests/TabbedArrivalModelTests.swift	Task.sleep	53
 Tests/BetterTileAppTests/TabbedModelTests.swift	Task.sleep	50
 Tests/BetterTileAppTests/TabbedPaneSizeTests.swift	Task.sleep	7

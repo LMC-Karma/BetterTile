@@ -97,9 +97,31 @@ jobs:
         shell: bash
         run: |
           # Separate processes keep AppKit rendering tests from delaying app-model tasks.
+          failed=0
           for target in BetterTileCoreTests BetterTileMacOSTests BetterTileAppTests; do
-            Tools/test.sh "$RUNNER_TEMP/$target.log" --expected-runs 1 --parallel --filter "$target"
+            case "$target" in
+              BetterTileCoreTests)
+                unset SWT_EXPERIMENTAL_MAXIMUM_PARALLELIZATION_WIDTH
+                ;;
+              BetterTileMacOSTests)
+                # Bound native fixture contention while keeping rendering work parallel.
+                export SWT_EXPERIMENTAL_MAXIMUM_PARALLELIZATION_WIDTH=8
+                ;;
+              BetterTileAppTests)
+                # Bound window-fixture polling so event tasks can register their waits.
+                # A wider cap preserves throughput while settings UI leases serialize snapshots.
+                export SWT_EXPERIMENTAL_MAXIMUM_PARALLELIZATION_WIDTH=32
+                ;;
+            esac
+            if Tools/test.sh "$RUNNER_TEMP/$target.log" --expected-runs 1 --parallel --filter "$target"; then
+              target_status=0
+            else
+              target_status=$?
+              failed=1
+            fi
+            printf '%s: exit %s\n' "$target" "$target_status"
           done
+          exit "$failed"
 
   release-package:
     needs: changes

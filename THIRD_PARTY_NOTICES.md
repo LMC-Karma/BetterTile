@@ -158,9 +158,13 @@ POSSIBILITY OF SUCH DAMAGE.
 
 BetterTile contains portions adapted from Vorssaint's SwiftUI settings and
 menu-panel presentation code: the settings sidebar and its search field, and the
-menu panel's cards and footer buttons in `Sources/BetterTileApp/SettingsView.swift`
-and `Sources/BetterTileApp/BetterTileApp.swift`. Those files carry Vorssaint's
-copyright notice. BetterTile modified the adapted code.
+menu panel's cards and footer buttons. The settings window sources
+`Sources/BetterTileApp/SettingsShell.swift`, `GeneralSettings.swift`,
+`WindowLayoutSettings.swift`, `ShortcutsSettings.swift`,
+`SnapZoneSettings.swift` and `MenuBarSettings.swift` hold the adapted settings
+code, and `Sources/BetterTileApp/BetterTileApp.swift` holds the adapted menu
+panel code. Those files carry Vorssaint's copyright notice. BetterTile modified
+the adapted code.
 
 Vorssaint's demand-based service ownership and teardown patterns informed
 BetterTile's runtime lifecycle, and its `LiquidGlassMixerSlider` and

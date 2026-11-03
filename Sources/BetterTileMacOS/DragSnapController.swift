@@ -499,7 +499,11 @@ public final class DragSnapController {
             clearTargets()
             return
         }
-        let snapTarget = bentoDragDisplayID == nil ? nil : SnapZoneDetector().target(
+        let detector = SnapZoneDetector(
+            edgeActivationDistance: configuration.snapEdgeActivationDistance,
+            cornerActivationSize: configuration.snapCornerActivationSize
+        )
+        let snapTarget = bentoDragDisplayID == nil ? nil : detector.target(
                at: point,
                display: display,
                snapAreas: configuration.snapAreaBindings,
@@ -510,11 +514,10 @@ public final class DragSnapController {
         // the top strips reach the top edge, which must still snap. Farther
         // inside, a strip wins over a corner area. An empty pane wins only
         // outside a snap area, like a pane center.
-        let edgeBand = SnapZoneDetector().edgeActivationDistance
-        let insideEdgeBands = display.frame.insetBy(dx: edgeBand, dy: edgeBand).contains(point)
+        let inEdgeBand = detector.isInEdgeBand(at: point, in: display.frame)
         if let draggedWindowID, bentoDragDisplayID != nil, activeModeProvider?(display.id) == .tabbed,
            let zone = tabbedDropZoneProvider?(display.id, point, draggedWindowID),
-           snapTarget == nil || (zone.indicator != nil && insideEdgeBands) {
+           snapTarget == nil || (zone.indicator != nil && !inEdgeBand) {
             showTabbedDropZone(zone, sourceWindowID: draggedWindowID, displayID: display.id, mainScreenFrame: mainFrame)
             return
         }
@@ -630,7 +633,7 @@ public final class DragSnapController {
         bentoHoverPreviewTask = nil
         presentedBentoCandidate = nil
         bentoHover.clear()
-        let target = snapTarget ?? SnapZoneDetector().target(
+        let target = snapTarget ?? detector.target(
                 at: point,
                 display: display,
                 snapAreas: configuration.snapAreaBindings,

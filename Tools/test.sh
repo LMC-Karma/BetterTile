@@ -6,6 +6,12 @@ if [[ $# -lt 1 ]]; then
     echo "Usage: $0 LOG [--expected-runs N] [--release] [swift test arguments...]" >&2
     exit 2
 fi
+# Exporting every UI snapshot blocks the main actor long enough to invalidate
+# timing tests. Capture separately with a filter selecting snapshot suites only.
+if [[ ${BT_SNAPSHOT_DIR+x} ]]; then
+    echo "Snapshot export is separate from suite validation. Unset BT_SNAPSHOT_DIR and retry; use swift test --filter '<SnapshotTests suite>' for captures." >&2
+    exit 2
+fi
 log="$1"
 shift
 expected=3

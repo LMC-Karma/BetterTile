@@ -88,6 +88,38 @@ same unsnapped `contentFrames(in:)` projection. It passes these expected frames
 to the shared divider fitter; the fitter defaults to Adaptive's snapped
 requests for Adaptive callers. Logical pane frames remain separate from both.
 
+## Snap Zones
+
+Snap Zones settings keeps zone selection directly below the diagram, followed
+by Activation area. Activation area offers picture choices: Narrow (3-point
+edge, 48-point corner reach), Standard (5 and 69, the default), Wide (12 and
+120), and Custom. Custom shows two steppers: Edge, from 1 to 40 points, and
+Reach, the total corner reach on each axis from the display edge. Reach stays
+between edge + 16 and edge + 160 points. When an edge change pushes reach out
+of that range, reach moves with it and the caption says so. Values apply live
+across displays. Reset to Default restores Standard; assignment defaults have
+their own Reset to Default.
+
+Configuration stores `snapEdgeActivationDistance` and
+`snapCornerActivationSize` (the corner extension, so reach = edge + extension)
+independently. The presets are derived values in `SnapZonePreset`; nothing new
+is stored. Stored values that match no preset exactly show as Custom. Missing
+values decode to the original 5-point edge width and 64-point corner
+extension, for a 69-point corner reach. The diagram draws the bands at display
+scale, clipped by its stage, and highlights the selected zone. An edge band is
+at least 4 points thick so that it stays visible, and a corner is never thinner
+than its edge band. At this minimum, Narrow, Standard, and Wide edges can look
+the same; their corners still differ. The picture-choice thumbnails exaggerate
+the bands, for comparison. The diagram does not draw an overlay on a real
+display.
+
+`SnapZoneDetector` tests corners before edges against full display bounds.
+Placement uses the work area, which excludes the menu bar and reserved Dock
+space. The same configured edge width determines where snapping wins over a
+Tabbed tab strip. Outside that band, the strip wins over a corner area.
+Pointer display ownership at shared edges stays unchanged. These settings do
+not change macOS desktop-switch dwell handling.
+
 ## Window drag drops
 
 A window drag has one decision: the drop that its overlay shows.
@@ -1072,6 +1104,55 @@ the shared frosting or accessibility fallback over it; Clear removes this
 additional layer. The Layout Wheel uses the same backing over one native glass
 surface. Its hub does not add a second glass material.
 
+Popups use regular glass with the Glass transparency setting's 0-to-22-percent
+plate, a lit rim, and the 12/8/6-point radius family in `PopupGlass`. The plate
+is `max(floor, sliderPlate)`. The shared Light floor is
+`PopupGlass.minimumPlateOpacity`; Dark uses `PopupGlass.minimumDarkPlateOpacity`.
+Light compiles at 0.20. Dark popups use a 0.35 minimum plate so text stays readable over bright windows.
+The popup's effective app appearance selects the floor,
+including when BetterTile and macOS use opposite appearances. These floors do
+not apply to Tabbed bars or panes. The Appearance caption
+explains that popups and the menu bar panel keep a light frost for readable text.
+Add Rule uses this surface. Popup controls live inside the native
+`NSGlassEffectView.contentView`, so AppKit can adapt their foreground to the
+backdrop. The frost plate and rim stay behind the controls and pass through
+input. Popup content has no full-surface background. Text uses semantic label
+colours; size and weight carry hierarchy. Opaque search fields resolve the normal
+label colour in the popup window's app appearance, rather than its glass's vibrant
+appearance. Their placeholders use 0.64 of that label's opacity in Light and 0.54
+in Dark: the lowest passing one-percent steps on the semantic field surface.
+The opaque fallback moves the same content host above its plate, so controls
+remain visible and reachable without replacing their state.
+
+The shared application
+picker draws an opaque semantic text-field background inside its search capsule,
+so entered text and placeholders remain readable independently of the glass backdrop.
+The field, editor and caret use the full normal label colour, resolved to RGB in
+the popup window's app appearance so glass does not dim the typed text.
+The field declines vibrancy to keep that surface and ink together. Its magnifier
+uses primary ink within the native search cell's hit rectangle. Native selection,
+clear-button drawing and editing actions are retained. Add Rule uses a secondary
+`OverlayButton` for Cancel, retaining
+its native Escape equivalent and the panel's search-first Escape routing.
+The Cancel and native confirm wrappers return their natural widths and a fixed
+24-point height from `sizeThatFits`, independently of parent proposals. Call sites
+retain `fixedSize()` in `OverlayButtonRow` to measure their full one-line widths.
+The row uses `ViewThatFits` to stack actions when horizontal space is limited.
+The participation editor's Suggested tag uses an opaque `accentShadeColor`
+capsule with white text, following the same contrast palette as primary overlay
+buttons. It has no separate hover or press colour variant.
+
+Settings presents Add Rule in a transparent,
+key-capable child `NSPanel` using `PopupGlassHost`. This replaces its
+opaque system-sheet presentation. A dimmed input blocker and a temporary local
+event monitor block the owning Settings window while the picker is open. Other
+windows and Browse sheets keep their normal input. The panel follows the parent
+frame. Completion, Cancel, Escape, parent closure and Space changes detach it
+and remove the blocker and monitor. Ordinary dismissal restores the parent's
+previous responder without bringing a hidden parent onscreen. No configuration
+migration, placement policy or new permission is involved.
+
+
 Divider handles use public Core Animation layers and a retained Core Image
 `CIGlassLozenge` filter on each colored track. The handle is clear at rest.
 Grabbing fades in the track and stretches only the length over 0.18 seconds;
@@ -1139,6 +1220,20 @@ Release drains those commands even when no new placement is needed.
 The linked-resize engine detects and merges shared boundary segments within a configurable tolerance. Linked and Bento boundaries share the same overlay interaction model, but Bento resizing stays tree-aware instead of applying flat per-window deltas. The requested operation clamps against recursive subtree minimum sizes and visible bounds.
 
 ## Configuration
+
+Pane gap changes publish to Settings immediately. Window placement consumes the
+latest value once per 75 ms interval, with one final pass when the slider is
+released. Pending changes share one task and retain the previous runtime gap
+until that pass. Window drags, divider drags, linked resizing, Space
+stabilization, and pending layout placements defer the pass. It reflows only
+active Adaptive displays through their normal constraint, coordinator,
+and rollback paths. Reconciliation changes the session metrics; changing them
+before reconciliation would hide the geometry change from Adaptive. A failed
+inventory or placement retains the request until the active Adaptive sessions
+commit the new gap. Later refreshes, including watchdog inventories, retry it
+without starting a 75 ms inventory polling loop. Tabbed keeps its own preset
+spacing and strip reserve. Shutdown cancels the timer and clears the pending
+request.
 
 Settings use a versioned Codable envelope. Version-1 display-keyed Bento states are discarded during migration because their Accessibility IDs cannot survive relaunch; all other supported preferences migrate. Runtime display sessions are not persisted. Writes use Foundation's atomic file replacement.
 

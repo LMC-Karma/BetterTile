@@ -9,6 +9,17 @@ import os
 import Sparkle
 import SwiftUI
 
+/// App windows follow normal application stacking. The Accessibility adapter
+/// excludes our process independently of window level or desktop mode.
+@MainActor
+enum ApplicationWindowPresentation {
+    static func configure(_ window: NSWindow) {
+        window.level = .normal
+        window.hidesOnDeactivate = false
+        window.collectionBehavior.insert([.moveToActiveSpace, .fullScreenAuxiliary])
+    }
+}
+
 private enum BetterTileVariant {
     static var displayName: String {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String ?? "BetterTile"
@@ -263,7 +274,7 @@ enum BetterTileApplication {
 }
 
 @MainActor
-private final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSWindowDelegate {
+final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSWindowDelegate {
     private static let signposter = OSSignposter(
         subsystem: "com.lmckarma.BetterTile",
         category: "ApplicationUI"
@@ -293,6 +304,8 @@ private final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSPo
     private var globalDismissMonitor: Any?
     private var localDismissMonitor: Any?
 
+
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         guard !isRunningFromReadOnlyVolume else {
             showMoveToApplicationsAlertAndQuit()
@@ -300,6 +313,7 @@ private final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSPo
         }
         guard quitRunningSiblingIfNeeded() else { return }
         modelStarted = true
+        model.openSettings = { [weak self] in self?.showSettings() }
         _ = model
         WindowActionGroup.assertComplete()
         AppAppearance.apply()
@@ -310,6 +324,8 @@ private final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSPo
         renderUpdateIndicator()
 #endif
         configurePopover()
+        model.setMenuBarIconVisible = { [weak self] in self?.setStatusItemsVisible($0) }
+        setStatusItemsVisible(model.configuration.showMenuBarIcon)
 #if !DEBUG
         // Start the release updater only after the status item exists: its
         // delegate callbacks drive the update-available indicator.
@@ -457,13 +473,13 @@ private final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSPo
         guard let repairButton = repairStatusItem.button else { return }
         let repairImage = NSImage(
             systemSymbolName: "arrow.triangle.2.circlepath",
-            accessibilityDescription: "Repair Current Layout"
+            accessibilityDescription: "Repair Layout"
         )?.withSymbolConfiguration(.init(pointSize: 12, weight: .semibold))
         repairImage?.isTemplate = true
         repairButton.image = repairImage
         repairButton.target = self
         repairButton.action = #selector(repairCurrentLayout)
-        repairButton.toolTip = "Repair Current Layout"
+        repairButton.toolTip = "Repair Layout"
     }
 
     private static func statusImage(availableUpdate: AvailableUpdate?) -> NSImage? {
@@ -496,6 +512,13 @@ private final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSPo
         } else {
             showPopover()
         }
+    }
+
+    /// Show menu bar icon off hides both status items. Settings stays reachable by reopening the app.
+    private func setStatusItemsVisible(_ visible: Bool) {
+        if !visible { closePopover() }
+        statusItem?.isVisible = visible
+        repairStatusItem?.isVisible = visible
     }
 
     private func showPopover() {
@@ -689,13 +712,13 @@ private final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSPo
             let host = NSHostingController(rootView: settingsView)
             let window = NSWindow(contentViewController: host)
             window.title = "\(BetterTileVariant.displayName) Settings"
-            window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
-            window.contentMinSize = NSSize(width: 980, height: 640)
-            window.setContentSize(NSSize(width: 1060, height: 760))
-            window.level = .floating
+            window.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
+            // Full-size content includes the 52 pt title bar, so these keep
+            // the usable page area at 980 × 640 minimum and 1060 × 760 initially.
+            window.contentMinSize = NSSize(width: 980, height: 692)
+            window.setContentSize(NSSize(width: 1060, height: 812))
             window.isReleasedWhenClosed = false
-            window.hidesOnDeactivate = false
-            window.collectionBehavior.insert([.moveToActiveSpace, .fullScreenAuxiliary])
+            ApplicationWindowPresentation.configure(window)
             window.setFrameAutosaveName("BetterTileSettingsWindow")
             window.delegate = self
             settingsWindow = window
@@ -741,8 +764,7 @@ private final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSPo
             window.contentMinSize = NSSize(width: 680, height: 540)
             window.setContentSize(NSSize(width: 720, height: 580))
             window.isReleasedWhenClosed = false
-            window.hidesOnDeactivate = false
-            window.collectionBehavior.insert(.moveToActiveSpace)
+            ApplicationWindowPresentation.configure(window)
             window.setFrameAutosaveName("BetterTileSetupWindow")
             window.delegate = self
             setupWindow = window
@@ -768,6 +790,7 @@ private final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSPo
             setupWindow = nil
         }
     }
+
 
     @objc private func repairCurrentLayout() {
         closePopover()
@@ -834,10 +857,9 @@ private final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSPo
 
     /// Sparkle calls this before it shows the update window, and again with
     /// `willShowUpdate` false for a gentle scheduled reminder that only marks
-    /// the menu bar. The update window uses the normal window level while
-    /// Settings floats above it, so Settings has to close first or the update
-    /// opens behind a window the user cannot see past. Closing it here rather
-    /// than when the check starts keeps Settings open when no update is found.
+    /// the menu bar. Close Settings before presenting the update window to
+    /// keep one window in front for the update decision. Leave Settings open
+    /// when no update is found.
     func standardUserDriverWillHandleShowingUpdate(
         _ willShowUpdate: Bool,
         forUpdate update: SUAppcastItem,

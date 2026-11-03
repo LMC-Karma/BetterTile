@@ -119,3 +119,77 @@ private let testDisplay = DisplaySnapshot(
     bindings[topIndex].action = nil
     #expect(SnapZoneDetector().target(at: BTPoint(x: 600, y: 2), display: testDisplay, snapAreas: bindings) == nil)
 }
+
+@Test(arguments: [1.0, 5, 40], [16.0, 64, 160])
+func snapActivationBandsKeepExactBoundariesAndCornerPriority(edgeWidth: Double, cornerExtension: Double) {
+    let detector = SnapZoneDetector(edgeActivationDistance: edgeWidth, cornerActivationSize: cornerExtension)
+    let bounds = BTRect(x: -1200, y: 200, width: 1200, height: 800)
+    let reach = edgeWidth + cornerExtension
+    for (x, y, dx, dy, area) in [
+        (bounds.minX, bounds.minY, 1.0, 1.0, SnapArea.topLeft),
+        (bounds.maxX, bounds.minY, -1.0, 1.0, SnapArea.topRight),
+        (bounds.minX, bounds.maxY, 1.0, -1.0, SnapArea.bottomLeft),
+        (bounds.maxX, bounds.maxY, -1.0, -1.0, SnapArea.bottomRight),
+    ] {
+        #expect(detector.area(at: BTPoint(x: x + dx * reach, y: y + dy * reach), in: bounds) == area)
+        #expect(detector.area(at: BTPoint(x: x + dx * (reach + 1), y: y + dy * reach), in: bounds) == nil)
+        #expect(detector.area(at: BTPoint(x: x + dx * reach, y: y + dy * (reach + 1)), in: bounds) == nil)
+        #expect(detector.area(at: BTPoint(x: x + dx * edgeWidth, y: y + dy * reach), in: bounds) == area)
+        #expect(detector.area(at: BTPoint(x: x + dx * reach, y: y + dy * edgeWidth), in: bounds) == area)
+    }
+    for (point, outside, area) in [
+        (BTPoint(x: bounds.minX + edgeWidth, y: bounds.midY), BTPoint(x: bounds.minX + edgeWidth + 1, y: bounds.midY), SnapArea.left),
+        (BTPoint(x: bounds.maxX - edgeWidth, y: bounds.midY), BTPoint(x: bounds.maxX - edgeWidth - 1, y: bounds.midY), SnapArea.right),
+        (BTPoint(x: bounds.midX, y: bounds.minY + edgeWidth), BTPoint(x: bounds.midX, y: bounds.minY + edgeWidth + 1), SnapArea.top),
+        (BTPoint(x: bounds.midX, y: bounds.maxY - edgeWidth), BTPoint(x: bounds.midX, y: bounds.maxY - edgeWidth - 1), SnapArea.bottom),
+    ] {
+        #expect(detector.area(at: point, in: bounds) == area)
+        #expect(detector.isInEdgeBand(at: point, in: bounds))
+        #expect(detector.area(at: outside, in: bounds) == nil)
+        #expect(!detector.isInEdgeBand(at: outside, in: bounds))
+    }
+    #expect(!detector.isInEdgeBand(at: BTPoint(x: bounds.minX - 1, y: bounds.midY), in: bounds))
+}
+
+@Test func wideSnapBandsUseFullDisplayBoundsAndPlaceInsideMenuBarAndDockInsets() {
+    let display = DisplaySnapshot(
+        id: testDisplay.id,
+        frame: testDisplay.frame,
+        visibleFrame: BTRect(x: 60, y: 24, width: 1080, height: 816)
+    )
+    let detector = SnapZoneDetector(edgeActivationDistance: 40, cornerActivationSize: 160)
+    let bindings = SnapArea.allCases.map { SnapAreaBinding(area: $0, action: .maximize) }
+    for point in [BTPoint(x: 600, y: 30), BTPoint(x: 600, y: 870),
+                  BTPoint(x: 30, y: 450), BTPoint(x: 1170, y: 450)] {
+        #expect(detector.target(at: point, display: display, snapAreas: bindings)?.frame == display.visibleFrame)
+        #expect(SnapZoneDetector().target(at: point, display: display, snapAreas: bindings) == nil)
+    }
+    // The work-area edge is not an additional activation band.
+    #expect(detector.target(at: BTPoint(x: 600, y: 840), display: display, snapAreas: bindings) == nil)
+    #expect(detector.target(at: BTPoint(x: 60, y: 450), display: display, snapAreas: bindings) == nil)
+}
+
+@Test(arguments: [false, true])
+func wideSnapBandsFollowThePointerAcrossSharedDisplayEdges(stacked: Bool) throws {
+    let first = DisplaySnapshot(id: .init(rawValue: "first"),
+        frame: BTRect(x: -1000, y: 0, width: 1000, height: 800),
+        visibleFrame: BTRect(x: -1000, y: 24, width: 1000, height: 776))
+    let second = DisplaySnapshot(id: .init(rawValue: "second"),
+        frame: first.frame.offsetBy(dx: stacked ? 0 : 1000, dy: stacked ? 800 : 0),
+        visibleFrame: first.visibleFrame.offsetBy(dx: stacked ? 0 : 1000, dy: stacked ? 800 : 0))
+    let detector = SnapZoneDetector(edgeActivationDistance: 40, cornerActivationSize: 160)
+    let bindings = SnapArea.allCases.map { SnapAreaBinding(area: $0, action: $0 == .bottom ? .bottomHalf : .maximize) }
+    for (distance, expectedDisplay, expectedArea) in [
+        (-40.0, first, stacked ? SnapArea.bottom : .right),
+        (0, second, stacked ? .top : .left),
+        (40, second, stacked ? .top : .left),
+    ] {
+        let point = stacked ? BTPoint(x: -500, y: 800 + distance) : BTPoint(x: distance, y: 400)
+        let display = try #require(PointerDisplay.display(at: point, in: [first, second]))
+        #expect(display.id == expectedDisplay.id)
+        #expect(detector.area(at: point, in: display.frame) == expectedArea)
+        #expect(detector.target(at: point, display: display, snapAreas: bindings) != nil)
+    }
+    let point = stacked ? BTPoint(x: -500, y: 799) : BTPoint(x: -1, y: 400)
+    #expect(detector.target(at: point, display: second, snapAreas: bindings) == nil)
+}

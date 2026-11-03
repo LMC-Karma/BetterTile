@@ -36,7 +36,8 @@ let package = Package(
         // Test-only support. Only test targets may depend on it.
         .target(name: "BetterTileTestSupport", dependencies: ["BetterTileCore"], path: "Tests/BetterTileTestSupport"),
         .testTarget(name: "BetterTileCoreTests", dependencies: ["BetterTileCore", "BetterTileTestSupport"]),
-        .testTarget(name: "BetterTileMacOSTests", dependencies: ["BetterTileMacOS", "BetterTileCore", "BetterTileTestSupport"]),
+        .testTarget(name: "BetterTileMacOSTests", dependencies: ["BetterTileMacOS", "BetterTileCore", "BetterTileTestSupport"],
+                    resources: [.copy("Fixtures/ActionGlyphs")]),
         .testTarget(name: "BetterTileAppTests", dependencies: ["BetterTileApp", "BetterTileTestSupport"]),
     ],
     swiftLanguageModes: [.v6]

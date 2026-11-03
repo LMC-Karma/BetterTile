@@ -8,6 +8,8 @@ public struct AmbientLayoutObservation: Sendable {
     public var windows: [WindowSnapshot]
     public var wasCreated: Bool
     public var previousWindowIDs: Set<WindowID>
+    /// Reapply the current tree after a geometry setting finishes editing.
+    public var requestsRelayout: Bool
     public var isDesktopTransition: Bool
     public var confirmedGone: Set<WindowID>
     public var confirmedMinimized: Set<WindowID>
@@ -21,6 +23,7 @@ public struct AmbientLayoutObservation: Sendable {
         wasCreated: Bool,
         previousWindowIDs: Set<WindowID>,
         isDesktopTransition: Bool,
+        requestsRelayout: Bool = false,
         confirmedGone: Set<WindowID> = [],
         confirmedMinimized: Set<WindowID> = [],
         knownSpaceWindowIDs: Set<WindowID> = []
@@ -29,6 +32,7 @@ public struct AmbientLayoutObservation: Sendable {
         self.windows = windows
         self.wasCreated = wasCreated
         self.previousWindowIDs = previousWindowIDs
+        self.requestsRelayout = requestsRelayout
         self.isDesktopTransition = isDesktopTransition
         self.confirmedGone = confirmedGone
         self.confirmedMinimized = confirmedMinimized
@@ -123,7 +127,7 @@ public struct AmbientLayoutReconciler: Sendable {
                 if case let .update(updated, _, _) = transition {
                     session = updated
                 }
-                shouldApply = workAreaChanged
+                shouldApply = workAreaChanged || observation.requestsRelayout
             } else {
                 shouldApply = initializeBentoSession(
                     &session,

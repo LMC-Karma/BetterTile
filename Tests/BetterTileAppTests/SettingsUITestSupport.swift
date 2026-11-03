@@ -15,7 +15,7 @@ struct SettingsUITrait: TestTrait, SuiteTrait, TestScoping {
     }
 
     func provideScope(for test: Test, testCase: Test.Case?, performing function: @Sendable () async throws -> Void) async throws {
-        let ownership = try await SettingsUILease.shared.acquire()
+        let ownership = try await SettingsUILease.shared.acquire(holder: test.name)
         let traceToken = await NativeApplicationActivationTrace.enter(test: test.name, scope: "UI lease")
         do {
             try await NativeApplicationBootstrap.start(keepsApplicationRunning: true)
@@ -60,6 +60,20 @@ private enum SettingsUILease {
     try #require(settled, Comment(rawValue: "Exhausted layout opportunities waiting for \(description)"))
 }
 
+/// Settles `host`, then waits until `view`'s frame in the hosting view is the same over two layout passes, and
+/// returns it. A click aimed before the page's last layout can land where the control used to be.
+@MainActor func waitForStableFrame(of view: NSView, in host: SettingsSnapshotHost, _ description: String) async throws -> CGRect {
+    host.settle()
+    var previous: CGRect?
+    var frame = CGRect.null
+    try await waitForSettingsUI("a stable frame for \(description)", in: host.view) {
+        frame = view.convert(view.bounds, to: host.view)
+        defer { previous = frame }
+        return !frame.isEmpty && frame == previous
+    }
+    return frame
+}
+
 /// Turns the main run loop for a fixed time, for SwiftUI and AppKit work that has no observable completion,
 /// such as layout and drawing before a snapshot or the release of a view graph. This is still a fixed-time
 /// wait, not a readiness check: use `waitForSettingsUI` when a condition exists.
@@ -81,6 +95,31 @@ private enum SettingsUILease {
         return passes == 2
     }
     #expect(passes == 2)
+}
+
+/// A control that tracks a press in its own event loop until the button is released, as a switch can.
+private final class PressTrackingControl: NSControl {
+    private(set) var presses = 0
+    private(set) var tookRelease = false
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+    override func mouseDown(with event: NSEvent) {
+        presses += 1
+        let limit = Date(timeIntervalSinceNow: 2) // real-time: bounds this probe's tracking loop, so a missing release fails instead of hanging
+        tookRelease = window?.nextEvent(matching: .leftMouseUp, until: limit, inMode: .eventTracking, dequeue: true) != nil
+    }
+}
+
+@Test(.appTestApplication, .settingsUI) @MainActor func nativeMouseClickReleasesAControlThatTracksThePress() throws {
+    let window = OffscreenTestWindow(contentRect: NSRect(x: 12000, y: 0, width: 80, height: 40),
+                                     styleMask: [.borderless], backing: .buffered, defer: false)
+    window.isReleasedWhenClosed = false
+    defer { window.close() }
+    let control = PressTrackingControl(frame: NSRect(x: 0, y: 0, width: 80, height: 40))
+    window.contentView = control
+    window.orderFront(nil) // Offscreen at x = 12000, like the Settings hosts these clicks serve.
+    try performNativeMouseClick(at: CGPoint(x: 40, y: 20), in: window)
+    #expect(control.presses == 1)
+    #expect(control.tookRelease, "The press-tracking loop takes the queued release instead of waiting for a real one")
 }
 
 // Records which Swift Testing scope acquired the UI resource, not elapsed time.
