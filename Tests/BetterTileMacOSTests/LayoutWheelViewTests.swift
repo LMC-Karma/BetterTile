@@ -203,9 +203,8 @@ import Testing
     #expect(abs(sixths[0].union(sixths[2]).midX - outer.midX) < 0.01)
 }
 
-/// The Settings inspector builds its menu from these groups. An action left out
-/// of every group could never be assigned to a sector, and nothing else would
-/// report it, so the grouping has to stay exhaustive and free of duplicates.
+/// The wheel offers every placement action once. Show Tab Bar is a global
+/// presentation command, available from shortcuts and the application menu.
 @Test(.macOSTestApplication) func everyWindowPlacementActionStaysAssignableFromExactlyOneGroup() {
     let grouped = LayoutWheelActionGroup.groupedActions
     let placementActions = WindowAction.allCases.filter { $0 != .showTabBar }
@@ -253,4 +252,14 @@ import Testing
         }
         #expect(sixthImages.count == 6, "Each sixth must identify a different selected cell")
     }
+}
+
+@Test(.macOSTestApplication) func wheelV2OnlyChangesTheHubHitRadius() {
+    let custom = LayoutWheelMetrics.standard
+    let grouped = LayoutWheelMetrics.grouped
+    #expect(custom.geometry.hubRadius == 32 && grouped.geometry.hubRadius == 32)
+    #expect(custom.geometry.innerRingOuterRadius == 68 && custom.geometry.outerRingInnerRadius == 76)
+    #expect(custom.outerRingOuterRadius == 110 && custom.oneLevelInnerRingOuterRadius == 84)
+    #expect(grouped.geometry.innerRingOuterRadius == 88 && grouped.geometry.outerRingInnerRadius == 94)
+    #expect(grouped.outerRingOuterRadius == 154)
 }

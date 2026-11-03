@@ -292,6 +292,44 @@ import Testing
         #expect(try store.load() == before)
     }
 
+    @Test func configurationBeforeEnabledSwitchPreservesExistingFields() throws {
+        let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = ConfigurationStore(fileURL: directory.appending(path: "configuration.json"))
+        // Captured using ConfigurationStore.save at schema version 12, before rules had an Enabled
+        // switch, with empty shortcuts and two app rules. Keep this literal independent of today's encoder.
+        let original = Data(#"{"accessibilityPromptRequested":false,"adjacencyTolerance":6,"applicationRules":[{"bundleIdentifier":"test.ignored","rule":"ignoreEverywhere"},{"bundleIdentifier":"test.missing","rule":"excludeFromBento"}],"bentoBalancesNewWindows":false,"bentoInnerGap":1,"bentoNewWindowSide":"automatic","bentoSwapHoverDelay":0.12,"defaultLayoutMode":"manual","defaultTabbedPreset":"single","dividerThickness":8,"dividerVisibility":"hoverAndDrag","doubleClickTitleBarToMaximize":true,"enhancedUserInterfacePolicy":"disableAndRestore","keyboardShortcutsEnabled":true,"layoutWheel":{"innerSlots":[{"windowAction":{"_0":"topHalf"}},{"windowAction":{"_0":"topRightQuarter"}},{"windowAction":{"_0":"rightHalf"}},{"windowAction":{"_0":"bottomRightQuarter"}},{"windowAction":{"_0":"bottomHalf"}},{"windowAction":{"_0":"bottomLeftQuarter"}},{"windowAction":{"_0":"leftHalf"}},{"windowAction":{"_0":"topLeftQuarter"}}],"isEnabled":true,"keyboardModifiers":14,"keyboardTriggerEnabled":true,"levelCount":1,"middleClickTriggerEnabled":false,"outerSlots":[{"windowAction":{"_0":"maximize"}},{"windowAction":{"_0":"almostMaximize"}},{"windowAction":{"_0":"nextDisplay"}},{"windowAction":{"_0":"centerResize"}},{"windowAction":{"_0":"restore"}},{"windowAction":{"_0":"center"}},{"windowAction":{"_0":"previousDisplay"}},{"repairBento":{}}],"scale":1},"leavesSpaceForDock":false,"linkedResizeEnabled":true,"macOSTilingRecommendationAcknowledged":false,"menuBarActions":["leftHalf","rightHalf","topHalf","bottomHalf","leftThird","centerThird","rightThird","leftTwoThirds","rightTwoThirds","topLeftQuarter","topRightQuarter","bottomLeftQuarter","bottomRightQuarter","topLeftSixth","topCenterSixth","topRightSixth","bottomLeftSixth","bottomCenterSixth","bottomRightSixth","maximize","almostMaximize","center","centerResize","moveLeft","moveRight","moveUp","moveDown","growWidth","shrinkWidth","growHeight","shrinkHeight","previousDisplay","nextDisplay","restore","showTabBar"],"overlayAppearance":{"strength":0.5,"useLiquidGlass":true},"resizeFeedbackMode":"ghost","schemaVersion":12,"setupCompletionVersion":0,"shortcuts":[],"showDockIcon":false,"showMenuBarIcon":true,"singleWindowPlacement":"maximize","snapAreaBindings":[{"action":"topLeftQuarter","area":"topLeft"},{"action":"almostMaximize","area":"top"},{"action":"topRightQuarter","area":"topRight"},{"action":"leftHalf","area":"left"},{"action":"rightHalf","area":"right"},{"action":"bottomLeftQuarter","area":"bottomLeft"},{"area":"bottom"},{"action":"bottomRightQuarter","area":"bottomRight"}],"snapCornerActivationSize":64,"snapEdgeActivationDistance":5,"snapSuppressionModifiers":2,"snappingEnabled":true,"stageManagerRecommendationAcknowledged":false,"tabbedRestoresPaneSizes":true,"tabbedStripPresentation":"alwaysVisible"}"#.utf8)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try original.write(to: store.fileURL)
+        let model = makeOffscreenModel(store: store, system: FakeAppWindowSystem(), startRuntime: false)
+        defer { model.shutdown() }
+        #expect(model.configurationLoadError == nil)
+        #expect(model.configuration.layoutWheel.style == .custom)
+        #expect(model.configuration.applicationRules.entries.allSatisfy { $0.isEnabled })
+        #expect(model.configuration.applicationRules.entries.map(\.bundleIdentifier) == ["test.ignored", "test.missing"])
+        #expect(model.configuration.applicationRules.configuredRule(for: "test.ignored") == .ignoreEverywhere)
+        #expect(model.configuration.applicationRules.configuredRule(for: "test.missing") == .excludeFromBento)
+        let loaded = model.configuration
+        // Make the model dirty through its injected visibility callback, then restore
+        // the preference. The Dock preference changes the real app activation policy.
+        model.updateConfiguration { $0.showMenuBarIcon.toggle() }
+        model.updateConfiguration { $0.showMenuBarIcon.toggle() }
+        #expect(model.configuration == loaded)
+        // Recreating the file proves flushConfiguration really writes instead of doing nothing.
+        try FileManager.default.removeItem(at: store.fileURL)
+        model.flushConfiguration()
+        // Additive wheel fields may be written without changing the schema or any
+        // field understood by the older build, including its enabled app rules.
+        var saved = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: store.fileURL)) as? [String: Any])
+        var wheel = try #require(saved["layoutWheel"] as? [String: Any])
+        for field in ["appearance", "groupOverrides", "groupedInnerSlots", "triggers"] {
+            #expect(wheel.removeValue(forKey: field) != nil)
+        }
+        saved["layoutWheel"] = wheel
+        let expected = try #require(JSONSerialization.jsonObject(with: original) as? NSDictionary)
+        #expect(NSDictionary(dictionary: saved) == expected)
+        #expect(try store.load() == loaded)
+    }
 }
 
 /// Setting a table's style reloads its rows. A representable can attach during SwiftUI layout.

@@ -3,7 +3,7 @@ import Testing
 @testable import BetterTileCore
 
 private let wheelGeometry = LayoutWheelGeometry(
-    hubRadius: 30,
+    hubRadius: 32,
     innerRingOuterRadius: 78,
     outerRingInnerRadius: 86
 )!
@@ -64,9 +64,9 @@ private func wheelVector(angle: Double, radius: Double = 60) -> BTPoint {
 }
 
 @Test func wheelTwoLevelRadiiHaveExplicitOwnership() {
-    #expect(wheelGeometry.selection(for: BTPoint(x: 0, y: -30), levelCount: .two) == nil)
+    #expect(wheelGeometry.selection(for: BTPoint(x: 0, y: -32), levelCount: .two) == nil)
     #expect(
-        wheelGeometry.selection(for: BTPoint(x: 0, y: -30.001), levelCount: .two)?.ring == .inner
+        wheelGeometry.selection(for: BTPoint(x: 0, y: -32.001), levelCount: .two)?.ring == .inner
     )
     #expect(
         wheelGeometry.selection(for: BTPoint(x: 0, y: -78), levelCount: .two)?.ring == .inner

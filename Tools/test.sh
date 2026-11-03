@@ -25,6 +25,13 @@ if [[ ${1:-} == --release ]]; then
     shift
     set -- -c release -Xswiftc -enable-testing -Xswiftc -DBETTERTILE_TEST_HOOKS "$@"
 fi
+# Swift 6.3's default native build system skips LayoutWheelLiquid.metal. Compile
+# it here for the Layout Wheel liquid tests; Swift Build (the Swift 6.4 default)
+# also embeds its own copy in each test bundle.
+shader_dir="$(mktemp -d)"
+trap 'rm -r "$shader_dir"' EXIT
+"$script_dir/build-test-shader.sh" "$shader_dir"
+export BETTERTILE_TEST_SHADER_DIRECTORY="$shader_dir"
 # Keep pipefail: a helper failure, build failure, or tee failure must fail this command.
 swift test "$@" 2>&1 | tee "$log"
 "$script_dir/check-test-log.sh" "$log" "$expected"

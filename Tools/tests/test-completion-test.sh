@@ -37,15 +37,30 @@ mkdir "$work/bin"
 cat > "$work/bin/swift" <<'STUB'
 #!/bin/bash
 printf '%s\n' "$@" > "$TEST_COMPLETION_ARGUMENTS"
+# The runner compiles the shader before the tests and names its folder.
+printf '%s\n' "${BETTERTILE_TEST_SHADER_DIRECTORY:-}" > "$TEST_COMPLETION_SHADER"
+[[ -f "$BETTERTILE_TEST_SHADER_DIRECTORY/BetterTile_BetterTileMacOS.bundle/Contents/Resources/default.metallib" ]] ||
+    { echo 'No compiled shader before swift test.' >&2; exit 1; }
 cat "$TEST_COMPLETION_FIXTURE"
 exit "${TEST_COMPLETION_EXIT:-0}"
 STUB
-chmod +x "$work/bin/swift"
+# Stands in for the Metal compiler: writes the file named after -o.
+cat > "$work/bin/xcrun" <<'STUB'
+#!/bin/bash
+while [[ $# -gt 0 ]]; do
+    if [[ $1 == -o ]]; then : > "$2"; fi
+    shift
+done
+STUB
+chmod +x "$work/bin/swift" "$work/bin/xcrun"
 export PATH="$work/bin:$PATH" TEST_COMPLETION_FIXTURE="$work/complete" TEST_COMPLETION_ARGUMENTS="$work/arguments"
+export TEST_COMPLETION_SHADER="$work/shader"
 "$tools/test.sh" "$work/output" > /dev/null
 cmp "$work/complete" "$work/output"
 printf '%s\n' test > "$work/expected-arguments"
 cmp "$work/expected-arguments" "$work/arguments"
+shader_dir="$(cat "$work/shader")"
+[[ -n "$shader_dir" && ! -e "$shader_dir" ]] || { echo 'Runner left its shader folder behind.' >&2; exit 1; }
 "$tools/test.sh" "$work/output" --release --filter Example > /dev/null
 printf '%s\n' test -c release -Xswiftc -enable-testing -Xswiftc -DBETTERTILE_TEST_HOOKS --filter Example > "$work/expected-arguments"
 cmp "$work/expected-arguments" "$work/arguments"

@@ -219,7 +219,7 @@ private struct InsideGroupProbe: View {
     }
 
     enum Page: String, CaseIterable {
-        case general, windowLayout, snapZones, menuBar, applicationRules
+        case general, windowLayout, snapZones, menuBar, layoutWheel, applicationRules
     }
 
     @Test(.enabled(if: snapshotDirectory != nil, "Writes page PNGs only when BT_SNAPSHOT_DIR is set."))
@@ -264,6 +264,7 @@ private struct InsideGroupProbe: View {
         case .windowLayout: AnyView(WindowLayoutSettings(model: model))
         case .snapZones: AnyView(ZoneSettings(model: model))
         case .menuBar: AnyView(MenuBarSettings(model: model))
+        case .layoutWheel: AnyView(LayoutWheelSettings(model: model))
         case .applicationRules: AnyView(ApplicationRuleSettings(model: model))
         }
     }

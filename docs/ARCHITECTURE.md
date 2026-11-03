@@ -359,12 +359,47 @@ wheel is open, its local monitor consumes recognized wheel-navigation keys so
 they do not also activate BetterTile's focused Settings controls; other local
 keys pass through. The optional Middle Click trigger has a separate suppressing
 session event tap. It exists only while that preference is enabled, receives
-only other-button down, drag, and up events, and consumes only unmodified
-physical button 2. Tap failure disables that runtime path without disabling
+only other-button down, drag, and up events, and consumes physical button 2
+only with the chosen down-time predicate: unmodified or Option alone. Its
+reservation lasts through button-up even when modifiers change. Keyboard holds
+block new mouse reservations, and a reserved mouse button blocks keyboard holds
+even after its wheel is cancelled. Only mouse-up commits a mouse gesture.
+Tap failure disables that runtime path without disabling
 keyboard activation. Both tap implementations copy scalar position, button,
 modifier, timestamp, and event-kind values only.
 Divider-local events, hover, Escape, and title-bar double-click handling keep
 their AppKit paths.
+
+Layout Wheel stores a `LayoutWheelStyle` beside its existing Custom assignments.
+A missing style decodes as Custom; encoding Custom omits that key. Grouped
+keeps eight fixed names and positions, with editable quick-flick commands and
+zero through six ordered children per group. Grouped One Level puts the groups
+in its only ring. Files from before the editor migrate Grouped to Two Levels,
+because their stored level count controlled Custom only. Unknown commands in
+Grouped inner slots become Empty without shifting the remaining assignments.
+Two Levels adds independent Grouped inner assignments.
+Neither style overwrites the other style's assignments. `LayoutWheelFanState` accepts monotonic time
+and top-left pointer vectors. It owns rest deadlines, fan attachment, and
+selection hysteresis independently of SwiftUI motion. A fan revealed under a
+resting pointer keeps the sector's main action until movement exceeds 5 pt from
+the reveal point. Directional fans use compass positions and stay
+attached through gaps between their options. The controller schedules
+one cancellable task for a pending 200 ms rest; it runs no display link.
+Grouped resamples the pointer when keyboard modifiers are released, so queued
+movement cannot leave a completed flick in the hub. Deliberate keyboard
+selection stays selected until pointer movement resumes.
+Fan space is reserved when opening, so expansion does not move the wheel.
+Reduce Motion removes presentation animation without changing hit geometry.
+
+A Grouped wheel can capture a display without a focused eligible window. Such
+a target permits desktop Mode and Choose Layout commands only. Both window and
+display targets retain display geometry, desktop session, native Space, and mode
+for revalidation before commit. Mode uses the menu bar's model function with the
+captured display and optional window. Adaptive entry and Tabbed exit repair that
+display without looking up focus again; an empty display needs no window writes.
+Choose Layout uses the Layout Gallery's preset intent with tab groups retained.
+Neither adds a window-mutation path. Window actions keep their existing
+coordinator plans and require the captured eligible window.
 
 Divider and Tabbed tab-drag gestures install local and global AppKit key monitors
 until release, cancellation, or overlay hiding. Both forward only the key code.
@@ -1582,6 +1617,176 @@ panel floor or panel-only override. All opaque fallbacks still use alpha one.
 
 The Settings menu editor retains its frosting preview through `GlassBacking`.
 
+The non-Metal Layout Wheel fallback hosts `LayoutWheelGlassView` in its
+nonactivating AppKit panel. One native SwiftUI regular-glass annulus covers both rings. The well
+is a separate fixed-centre circle. A long centre label extends that same glass
+shape with a capsule; both share the well plate and stay fixed at the centre. The raised inner step, edge light, recess
+shade and faint separators are drawn decoration. They add depth without
+sampling the screen or changing input regions. Native glass never flips its
+foreground, and measuring the backdrop would need Screen Recording. So the
+wheel follows the popup recipe: untinted regular glass under a
+`windowBackgroundColor` plate of 0.20 + 0.20 x strength (0.26 at the 30 percent
+default). The ring floor is capped at 0.20. The well has its own plate floor of
+0.47, above the cap. The centre well uses a darker plate so Cancel and the
+hovered names stay readable over bright windows. Ink is white at 94
+percent in Dark and black at 86 percent in Light, with no halo or shadow. The
+panel takes the system appearance from the global `AppleInterfaceStyle`
+preference, not BetterTile's Settings override. Strength stays at 30 percent
+until the wheel surface settings arrive. The global glass switch, Reduce
+Transparency and Increase Contrast select opaque shapes. The renderer reads
+those options through an injectable provider so tests can drive them.
+
+`LayoutWheelDrawnMetrics` supplies scaled icon frames, optical arrow shifts,
+separator segments and lens bounds. Only the hub radius changes, to 32 points
+at Medium for both styles. All other hit radii, Core selection, fan dwell,
+hysteresis and dispatch stay unchanged. The Settings fan editor keeps these metrics and its stable sector controls.
+Its rehearsal preview embeds the liquid renderer described below.
+
+`LayoutWheelCentreLabel` measures the real system fonts before drawing. It
+tries the full name in the well on one, two, then three balanced lines at
+base size. It next tries one or two compact lines, then the tag, then a
+permitted Custom short name. Three compact lines are not used. Every fit
+reserves the fixed unavailable mark, regardless of availability. Tag text
+also keeps clear of the drawn lens outlines, while its plate clears the icon
+boxes. Grouped parents show their name and main action; children show
+only their own name. The view draws those exact measured lines. Unavailable
+commands keep the same layout with dimmed text and a slash mark. Their full
+reason stays in the existing release handler. The centre content reads only
+the Core selection and fan state; it owns no dwell or redraw timer. The centre
+ink is content of the view carrying the native glass effect, so the container
+captures it above the glass. `LayoutWheelLabelPresentation` caches first-ring
+ink boxes and the joined outline when semantic input changes. Display-link
+frames reuse that immutable preparation. When a
+name uses the tag, the existing cosmetic spring eases ring lean to zero so
+icons keep clear of the fixed tag. Other names restore the shared lean amount
+in `LayoutWheelDrawnMetrics.leanDistance`.
+
+`LayoutWheelGlassRenderer` drives the existing cosmetic springs with a public
+AppKit display link only while they move. It stops at rest and removes the
+hosting tree when closed. Terminal presentation freezes semantic input.
+Commit applies one parent opacity after glass, ink and decoration compose.
+Cancel replaces native glass with opaque shapes before shrinking the whole
+presentation. Reduce Motion snaps presentation channels and exits immediately.
+The renderer owns no command callback, window observation or mutation path.
+
+`LayoutWheelController` selects the liquid presenter at launch through
+`LayoutWheelPresenting`. Only the Metal pipeline prepares at launch and on
+configuration changes while closed. Icons, names, the atlas and hidden panel
+prepare when the trigger hold starts, within the existing 220 ms hold. An open
+wheel refreshes changed drawing content and appearance in place. Every cancelled hold releases its drawables. Opening uses the
+captured pointer and the content's full fan extent when clamping to the display.
+Missing Metal or shaders, allocation failure during preparation, and open failure
+log a fallback to `LayoutWheelPanelPresenter`. A late fallback resets placement
+to the panel's geometry before input resumes. Placement previews still use
+`PlacementWireframeController`; neither renderer mutates windows.
+
+`LayoutWheelFanState` owns one configured selection state, command resolution,
+rest deadline, keyboard navigation and terminal reset. Liquid pointer geometry
+uses a locked sub-menu: after a 200 ms rest, a group opens as a tight fan or as a
+cluster grown from its chevron (`LayoutWheelSubmenuLayout`). The group stays open
+inside its sector plus 10 degrees. An aimed child changes only when another is
+within reach and 6 points nearer. The default keeps the aim beyond the rim; the
+bounded policy includes every edited child's angular extent and rearms only on
+return to the ring. One Level uses the configured inner group ring. Two Levels
+uses independent grouped inner slots. The fallback retains its original fan
+attachment geometry in the same state type; it shares rest/open, sector
+stickiness, command, keyboard and reset logic. `LayoutWheelSubmenuState` is only
+an SPI compatibility alias for the prototype harness.
+
+`LayoutWheelLiquid` in Core is deterministic presentation, driven by supplied
+time: closed-form springs, an outline stored as 32 Fourier harmonics with a
+capillary-wave spectrum, area-preserving bulge and pointer-stretch targets, fan
+droplets with attach/detach hysteresis, and separate open, commit and cancel
+motions. Reduce Motion keeps the outline circular and uses short fades.
+Reduce Transparency, Increase Contrast and the global glass switch's off state
+use opaque body/well fills without blur, including changes during a gesture.
+`isAtRest` is a fixed point, so the clock can stop. The model never selects.
+Fan necks, attachment impulses and the shader's smooth union use
+`LayoutWheelLiquidDroplet.openingConnectionWindow`: full for 220 ms, easing to
+zero by 500 ms. Settled bubbles add no rim
+pull or bridge. The aimed slice keeps its independent bulge. These presentation
+channels never change hit geometry.
+`LayoutWheelLiquidContent` reads the panel's semantic slot resolver for command,
+icon and availability parity, including edited groups and current desktop mode.
+The controller and adapter cache content independently of pointer samples.
+
+`LayoutWheelLiquidDefaults` maps the saved liquid appearance, tuning and
+sub-menu settings into the presenter and content. Prewarm keeps effective dark
+appearance and Names in its cache key. Tuning-only changes can reuse the atlas;
+a Light/Dark or system-theme change prepares matching ink before the next open.
+The global glass switch still selects the opaque fallback.
+`LayoutWheelLiquidPreview` embeds the same renderer in Settings without showing
+a panel or accepting a window-mutation callback.
+The overlay gesture and the Settings preview are one path. Both write the saved
+configuration into the renderer with `LayoutWheelLiquidDefaults.apply`, build
+content and state with `LayoutWheelLiquidScene`, and aim submenus with
+`LayoutWheelLiquidDefaults.updateFan`. Content is built once and cached; state is
+built for every pointer sample, so a sample stays cheap. Offscreen parity tests
+drive both paths as the app drives them (the real controller and adapter against the
+preview hosted by SwiftUI), draw them in the same states and compare the pixels,
+the content and the state.
+
+When the liquid renderer fails, the panel fallback serves that gesture only. A
+failed preparation or open does not stay with the session: the start of every
+later gesture, whether a keyboard hold or a mouse button, tries the liquid
+renderer again, and a hold that ends before the wheel opens takes its fallback
+with it. One failure is different. When the Metal device or the shader library is
+missing at launch, the pipeline marks itself failed for the process, and the panel
+wheel serves the whole session. Neither the device nor the library can change
+while the app runs, and a retry would cost a failed pipeline build on every hold.
+
+What still differs is real:
+
+- The window and its backdrop. The overlay blurs the live desktop in a click-through panel,
+  and its blur takes the wheel's Appearance. The preview sits in the Settings window over an
+  illustrated desktop, and its blur material takes the Settings window's appearance.
+- The target's availability. The overlay dims commands that cannot run, such as every window
+  action when no eligible window is focused. The preview draws every command available.
+- Choose Layout on a desktop that is not Tabbed. The overlay keeps that group's submenu closed,
+  because it passes the target's availability to `updateFan`; the preview always opens it.
+- The real pointer and placement, and the preview's scaling to fit its area.
+
+A group without a quick flick takes the Action tint colour of the first command assigned to it, so
+reordering an edited group's children can change its highlight.
+The liquid Grouped wheel uses
+the Custom radii plus 10 pt of chevron room. `LayoutWheelLiquidPresenter` draws it in a
+click-through panel. At the back, one system blur view is masked by the drawn
+outline and droplets; the 128-point mask sits 1 pt inside the edge, is
+rebuilt only when a point moves by more than 0.4 pt, and shrinks instead of
+turning translucent while the wheel fades. Where the shape passes the mask,
+the shader adds the blur material's tone. One Metal pass draws the body and,
+from a packed icon texture, every icon, so icons and liquid move on the same
+frame; only the centre name is a layer. A sprite mask tints aimed main icons,
+chevrons and bubble icons in the shader, with a 120 ms model-time cross-fade.
+Aim changes never rebuild or upload the atlas. Other main icons dim to 50%
+while a sub-menu is open. Mist and Clear keep black ink in Light; Ice and Ember
+still tint. All styles tint in Dark (white over white is visually unchanged
+for Mist and Clear). `CAMetalDisplayLink` supplies ready
+drawables on the main run loop. It replaces drawable acquisition in the
+main-thread frame path. Model advance, encoding, the blur mask and the centre
+label use the same callback. The Metal layer presents with that Core Animation
+transaction after its command buffer is scheduled. Opening requests the first
+callback; it does not draw synchronously. The blur and centre label stay hidden
+until a body frame is accepted. Time inside `open` therefore does not measure
+open-to-first-visible-frame latency. Measure that interval from the open request
+to visible content in a timestamped compositor frame, separately from the time
+waiting for command-buffer scheduling. The encoder skips a frame
+instead of waiting if all three data buffers are in flight. SwiftUI icon
+renders are copied into owned bitmap pixels before caching, so cached images
+do not retain the render backend. One icon renderer is reused within each
+atlas preparation and released when preparation finishes. The icon and text
+caches each retain at most 512 KiB of bitmap pixels and 128 images. They evict
+the least recently used image. One packed atlas is retained. The shader is precompiled into the
+package's `default.metallib`, the pipeline is built once, and
+`prepareToOpen` does the remaining setup during the trigger's hold. Its first
+GPU submission warms both pipelines into a one-pixel target without acquiring
+a drawable. The display link runs only while the model moves. Stopping invalidates it, clears
+its callback and rejects callbacks from an earlier run. Closing releases the
+link and shrinks the drawables to one pixel. Each frame and each mask rebuild
+is an `os_signpost` interval (category `LiquidWheel`). Tuning, time scale and
+frame observers
+are `@_spi(LiquidWheelPrototype)` for the local prototype harness only.
+
 Divider handles use public Core Animation layers and a retained Core Image
 `CIGlassLozenge` filter on each colored track. The handle is clear at rest.
 Grabbing fades in the track and stretches only the length over 0.18 seconds;
@@ -1665,6 +1870,173 @@ spacing and strip reserve. Shutdown cancels the timer and clears the pending
 request.
 
 Settings use a versioned Codable envelope. Version-1 display-keyed Bento states are discarded during migration because their Accessibility IDs cannot survive relaunch; all other supported preferences migrate. Runtime display sessions are not persisted. Writes use Foundation's atomic file replacement.
+
+Schema 12 configurations gain a nested `layoutWheel.appearance` value with
+`surfacePreset`, `surfaceStrengths`, and `size`. This additive change needs no
+schema bump: missing fields migrate by presence. Reset Layout Wheel restores the complete wheel configuration. Appearance-only
+reset is described below; it preserves the legacy compatibility snapshot.
+`groupOverrides` and `groupedInnerSlots` sit beside appearance. Missing group
+overrides use the fixed Core definitions. Explicit Empty children stay in order;
+an unknown child command is dropped individually on decode. Normalization caps
+each group at six children and removes legacy Custom Zone commands. Fan geometry,
+selection, rendering, and Settings all read the same resolved group contents.
+
+`appearance.liquid` adds Style (Ice, Ember, Mist, Clear), independent
+System/Light/Dark appearance, Look, Motion, Feel and Sub-menus without changing
+schema 12. The stable style IDs are `ice`, `warm`, `frosted` (Mist) and `mono` (Clear).
+Styles are defined by their highlights: blue, warm gold, soft white, and colorless
+glass brightening. Mist supplies white to the shared tinted Gaussian cloud;
+pale clouds use extra coverage and a neutral Light shade to stay visible on
+white. Clear adds a faint neutral contour only when the shader's effective dark
+flag is false; Dark retains its screen brighten. The contour also stays in the
+opaque Light fallback. Ice, Mist and Clear share the standard non-highlight baseline;
+Ember retains its bouncier feel.
+
+The additive `liquid.styleRevision` is 2; the configuration schema remains 12.
+A missing marker, an integer below 2, or a wrong marker type resets the selected
+style's tuning once. Revisions **2 and higher** retain edits, including files
+from a future build. This applies to all four presets, including Ice and Ember.
+The reset restores these fields to the selected preset's defaults:
+
+- Look: `highlightColour`, `names`, `actionTint`, and the retired `material`
+  compatibility field (automatic). Glow policy is derived from the highlight;
+  there is no separate saved glow field.
+- Translucency: `light` and `dark`.
+- Motion: `opening`, `closing`, `pointerLean`, and `leanAmount`.
+- Feel: `tension`, `ringing`, `bulge`, `stretch`, `splash`, `magnetDamping`, and
+  `dropletResponse`.
+- Sub-menus: `arrangement` and `keepOpen`.
+
+The selected preset, Appearance, Size, assignments, triggers, legacy
+`surfacePreset`, and all three `surfaceStrengths` remain unchanged. Current
+saves write revision 2, so later edits survive reload. A pre-marker build saving
+again can cause one more reset; the next current save is stable.
+
+A style-revision bump is an explicit tuning-reset migration, not a configuration
+schema bump. The next preset-baseline change must deliberately advance both the
+written marker and the reset threshold together (for example, to 3), state which
+older tuning resets, and test the reset and subsequent edit/save cycle. Do not
+reset merely because a file has a higher revision than this build understands.
+
+The retired Material field remains decodable and encoded, is excluded from
+Modified, and is ignored by presentation. A reset writes its automatic default.
+Blur follows Appearance. Its approved opacity curve is unchanged through
+translucency 0.85, then ramps to no blur at 1.0.
+Missing liquid settings start fresh on the complete Ice baseline. Legacy Liquid
+Glass maps to System, Light to Light and Dark to Dark. Old strengths do not seed
+translucency or physics. Missing nested objects and fields use the selected
+style's baseline. Unknown enum strings use their documented default. A malformed
+liquid object falls back to Ice while preserving the legacy appearance snapshot.
+The legacy appearance fields keep their strict type checks.
+
+Core stores physical Feel values. Values clamp to their physical ranges on
+mutation and decode; NaN uses the selected style's baseline and infinities clamp
+to the range ends. Numeric normalization rounds to nine decimal places so a
+slider round trip cannot mark an untouched preset Modified. Modified compares
+all active extra settings with the complete selected preset; it excludes
+Appearance, Size and the retired Material field. Selecting a Style or Reset to style defaults replaces every extra
+setting while preserving Appearance, Size, assignments and triggers. Reset
+appearance restores Ice, System and Medium only.
+
+An explicit Appearance choice also writes the legacy `surfacePreset`: System
+maps to Liquid Glass, Light to Light and Dark to Dark. Reset appearance selects
+System for both renderers. All three `surfaceStrengths` remain unchanged. This
+keeps the panel fallback aligned with the chosen Appearance.
+Size edits still use `appearance.size`. A file without `liquid`, such as one
+saved by an older build, starts on Ice and maps Appearance from the retained
+legacy preset. Tests decode the legacy projection with frozen pre-change
+decoders; they check the projection, not that an older build loads the file.
+
+The App presents Fine-Tuning as a native sheet with Look, Motion, Feel and
+Sub-menus tabs. Only the App maps the inverse Wobble length, Snap bounce and
+Sub-menu speed sliders. `LayoutWheelLiquidDefaults` maps every saved setting to
+the product renderer and embedded preview. System translucency follows the
+same system-dark preference as the presenter. Ice blue is a shared fixed color;
+only System accent uses the system accent. Highlight raw value `none` uses
+an achromatic screen blend that preserves glass alpha. The approved selection cloud has a flat angular plateau with soft edges across
+the slice dividers and a long inward fade whose peak is at the outer rim. It
+slightly lights the glass beneath the accent. Travel still widens and reduces
+its intensity. Clear retains its neutral contour in Light.
+
+The preview replays on style changes and Play. Ordinary edits update the look
+and semantic content in place. Feel changes apply on Play or the next open;
+the sheet says "Play to feel the change." Size changes reopen with Reduce Motion
+for a settled resize. Preparation and late-open failures both install the panel
+fallback and switch pointer selection to its matching metrics. Neither preview
+can dispatch a window action. Closing Settings stops the embedded renderer.
+
+Style pictures use the existing Metal shader, icon images and sprite layout on
+an owned offscreen texture. Settings caches at most eight images, keyed by style
+and theme, and clears them on size changes or window close. No panel, display
+link, retained drawable pool or DEBUG-only API is used. If rendering fails, the
+approximation remains, with the same style description. Legacy Strength is encoded for compatibility but
+is not read by either wheel; the panel fallback uses 0.30.
+
+The surface is independent of the content style, Settings appearance, and shared
+`OverlayAppearance`. Liquid Glass defaults to strength 0.30; Light and Dark each
+default to 0.55. Switching presets retains all three strengths. Construction,
+decoding, and writes clamp finite strengths to 0...1 and round to 5-percent
+steps, with midpoint ties rounding up. Nonfinite values and missing strengths
+use the preset's default. Unknown surface names select Liquid Glass; unknown
+size names select Medium. Unknown names and strength keys are dropped on the
+next save. Older builds are not guaranteed to load a file saved by this
+build. For example, older decoders reject a Custom slot assigned a Mode or
+Choose Layout command. The legacy fields that remain encoded serve the panel
+fallback; they are not a downgrade guarantee. Invalid JSON types still fail
+loading, so the existing save protection applies.
+
+`LayoutWheelSize` stores Small, Medium, or Large, with scales 0.8, 1.0, and 1.2.
+A missing appearance uses default surfaces and strengths. A missing size
+migrates from the nearest legacy scale, with midpoint ties going to the larger
+size. The compatibility `scale` remains encoded at its original value so the
+panel fallback and its Settings preview do not change on migration. The liquid
+wheel draws, places and hit-tests at the selected size's exact scale. It backs
+`appearance.size` in memory, keeping both values consistent without two stored
+sizes. An explicit conflicting size wins on decode. A legacy scale that maps
+to a known explicit size is retained, including on later saves. An unknown size
+always selects Medium's exact scale.
+
+New Settings UI must write `layoutWheel.appearance.size`, never a continuous
+scale. A size write sets the compatibility scale to the preset's exact value.
+When the panel fallback also reads the size, remove the compatibility property, its continuous
+backing value, and its 0.8...1.3 normalization; store size directly and retain
+legacy scale decoding for older files. If an old-renderer compatibility key is
+still needed on save, encode `size.scale` for that key.
+
+The liquid renderer reads `layoutWheel.appearance.size.scale` and
+`layoutWheel.appearance.liquid`. The panel fallback reads the compatibility scale and the selected preset's
+strength. Light and Dark select fixed ink and plate appearances; Liquid Glass
+follows the system appearance in the runtime panel. Its injectable
+system display options continue to select opaque fallbacks for Reduce
+Transparency and Increase Contrast, as does the shared glass-off switch.
+These overrides never rewrite the saved preset or strengths.
+
+`layoutWheel.triggers` groups keyboard enablement, keyboard kind, ordinary
+modifier chord, and the mutually exclusive mouse choice. Missing nested triggers
+migrate the old fields. An unknown keyboard kind disables keyboard activation.
+Ordinary chords still require at least two modifiers.
+Right Control is a distinct kind, never a single-modifier chord. Encoding keeps
+valid legacy fields: Right Control projects to keyboard disabled, and Option +
+Middle click projects to mouse disabled. An older build that loads the file
+therefore cannot reserve a broader gesture. Reset triggers assigns one default value. The macOS controller
+retains a scalar input snapshot with virtual key code, aggregate modifiers and raw
+side bits. Right Control has a distinct session trigger. It requires a fresh right
+key-down, the right-side bit, no left Control or other ordinary modifier, and a
+matching current snapshot at the hold deadline. Ambiguous identity or a missed
+release cancels. It remains hidden in Settings until real keyboard and Jump
+validation. All keyboard monitoring restarts require a neutral state before a
+new hold when current state is available. A left or right mouse-down cancels a
+pending or open Right Control hold through observation-only AppKit monitors. A disabled idle middle-click tap is re-enabled;
+continuity loss during a reserved gesture ends its reservation and discards
+callbacks from the retired generation.
+
+Layout Wheel Settings uses expanded editing geometry with one fan by default,
+an All fans switch, and a command inspector beside the wheel. The inspector can
+assign Empty, reorder, add, remove, and reset children without dispatching a
+command. A separate preview view uses the current renderer and Core fan policy.
+It owns temporary selection and dwell state and has no window-mutation callback.
+Appearance resets assign defaults directly, including a migrated legacy size;
+they do not depend on equality with a legacy continuous scale.
 
 ## Security
 

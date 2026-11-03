@@ -328,4 +328,22 @@ struct LayoutGlyphTests {
         #expect(abs(LayoutGlyph.canvasSize(besideSymbolSize: 14) - 17.71) < 1e-9)
     }
 
+    @Test func onlyModeAndChooseLayoutParentsUseTheNewIcons() {
+        for sector in LayoutWheelSector.allCases {
+            let group = LayoutWheelGroup.at(sector)
+            switch sector {
+            case .bottomLeft:
+                #expect(group.title == "Choose Layout")
+                #expect(group.glyph(currentMode: .tabbed) == .layouts)
+                #expect(group.glyph(currentMode: nil) == .layouts)
+            case .bottomRight:
+                #expect(group.title == "Mode")
+                for mode in LayoutMode.availableModes { #expect(group.glyph(currentMode: mode) == .mode(mode)) }
+                #expect(group.glyph(currentMode: nil) == nil)
+            default:
+                #expect(group.glyph(currentMode: .bento) == nil, "\(group.title) keeps its SF Symbol")
+                #expect(!group.symbolName.isEmpty)
+            }
+        }
+    }
 }

@@ -1,5 +1,9 @@
 import Foundation
 
+public enum LayoutWheelStyle: String, Codable, CaseIterable, Sendable {
+    case custom, grouped
+}
+
 public enum LayoutWheelLevelCount: Int, Codable, CaseIterable, Sendable {
     case one = 1
     case two = 2
@@ -38,6 +42,8 @@ public enum LayoutWheelCommand: Codable, Hashable, Sendable {
     /// Decoded only for compatibility with older Layout Wheel configurations.
     case customZone(UUID)
     case repairBento
+    case setMode(LayoutMode)
+    case chooseLayout(TabbedPreset)
 }
 
 public struct LayoutWheelConfiguration: Codable, Hashable, Sendable {
@@ -49,19 +55,43 @@ public struct LayoutWheelConfiguration: Codable, Hashable, Sendable {
         .control, .option, .shift, .command,
     ]
 
+    public var style: LayoutWheelStyle
     public var isEnabled: Bool
     public var levelCount: LayoutWheelLevelCount
     /// A nil slot is the user-facing Empty assignment.
     public var innerSlots: [LayoutWheelCommand?]
     /// Retained while One Level hides the outer ring.
     public var outerSlots: [LayoutWheelCommand?]
-    public var keyboardTriggerEnabled: Bool
-    public var keyboardModifiers: ShortcutModifiers
-    public var middleClickTriggerEnabled: Bool
-    /// Overall wheel size, shared by the Settings preview and runtime wheel.
-    public var scale: Double
+    public var groupOverrides: [Int: LayoutWheelGroupContents]
+    public var groupedInnerSlots: [LayoutWheelCommand?]
+    public var triggers: LayoutWheelTriggers
 
+    // Compatibility projections never broaden a new trigger in an older build.
+    public var keyboardTriggerEnabled: Bool {
+        get { triggers.keyboardEnabled && triggers.keyboard == .modifiers }
+        set { triggers.keyboardEnabled = newValue }
+    }
+    public var keyboardModifiers: ShortcutModifiers {
+        get { triggers.normalized().modifiers }
+        set { triggers.modifiers = newValue }
+    }
+    public var middleClickTriggerEnabled: Bool {
+        get { triggers.mouse == .middleClick }
+        set { triggers.mouse = newValue ? .middleClick : .off }
+    }
+    public var appearance: LayoutWheelAppearance
+
+    /// Kept only for the current renderer and its Settings preview.
+    /// New UI writes `appearance.size`, never scale. Remove this property and
+    /// continuous-scale normalization when the new renderer uses `size.scale`.
+    public var scale: Double {
+        get { appearance.compatibilityScale }
+        set { appearance.compatibilityScale = newValue }
+    }
+
+    /// An explicit appearance owns size; supplying it ignores `scale`.
     public init(
+        style: LayoutWheelStyle = .custom,
         isEnabled: Bool = true,
         levelCount: LayoutWheelLevelCount = .one,
         innerSlots: [LayoutWheelCommand?] = Self.defaultInnerSlots,
@@ -69,28 +99,52 @@ public struct LayoutWheelConfiguration: Codable, Hashable, Sendable {
         keyboardTriggerEnabled: Bool = true,
         keyboardModifiers: ShortcutModifiers = [.control, .option, .shift],
         middleClickTriggerEnabled: Bool = false,
-        scale: Double = Self.defaultScale
+        scale: Double = Self.defaultScale,
+        appearance: LayoutWheelAppearance? = nil,
+        groupOverrides: [Int: LayoutWheelGroupContents] = [:],
+        groupedInnerSlots: [LayoutWheelCommand?] = Self.defaultInnerSlots,
+        triggers: LayoutWheelTriggers? = nil
     ) {
+        self.style = style
         self.isEnabled = isEnabled
         self.levelCount = levelCount
         self.innerSlots = innerSlots
         self.outerSlots = outerSlots
-        self.keyboardTriggerEnabled = keyboardTriggerEnabled
-        self.keyboardModifiers = keyboardModifiers
-        self.middleClickTriggerEnabled = middleClickTriggerEnabled
-        self.scale = scale
+        self.groupOverrides = groupOverrides
+        self.groupedInnerSlots = groupedInnerSlots
+        self.triggers = triggers ?? .init(keyboardEnabled: keyboardTriggerEnabled,
+            modifiers: keyboardModifiers, mouse: middleClickTriggerEnabled ? .middleClick : .off)
+        self.appearance = appearance ?? .init()
+        if appearance == nil { self.scale = scale }
     }
 
     private enum CodingKeys: String, CodingKey {
+        case style, appearance, groupOverrides, groupedInnerSlots, triggers
         case isEnabled, levelCount, innerSlots, outerSlots
         case keyboardTriggerEnabled, keyboardModifiers, middleClickTriggerEnabled, scale
     }
 
     public init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        let legacyScale = try container.decodeIfPresent(Double.self, forKey: .scale) ?? Self.defaultScale
+        let style = try container.decodeIfPresent(LayoutWheelStyle.self, forKey: .style) ?? .custom
+        let legacyGrouped = style == .grouped && !container.contains(.groupedInnerSlots)
+            && !container.contains(.groupOverrides) && !container.contains(.triggers)
+        let storedLevels = try container.decodeIfPresent(LayoutWheelLevelCount.self, forKey: .levelCount) ?? .one
+        var groupedInnerSlots = Self.defaultInnerSlots
+        if container.contains(.groupedInnerSlots), try !container.decodeNil(forKey: .groupedInnerSlots) {
+            var slots = try container.nestedUnkeyedContainer(forKey: .groupedInnerSlots)
+            groupedInnerSlots = []
+            while !slots.isAtEnd {
+                // Keep each position; a command from a newer build becomes Empty.
+                let slot = try slots.superDecoder()
+                groupedInnerSlots.append(try? LayoutWheelCommand(from: slot))
+            }
+        }
         self.init(
+            style: style,
             isEnabled: try container.decodeIfPresent(Bool.self, forKey: .isEnabled) ?? true,
-            levelCount: try container.decodeIfPresent(LayoutWheelLevelCount.self, forKey: .levelCount) ?? .one,
+            levelCount: legacyGrouped ? .two : storedLevels,
             innerSlots: try container.decodeIfPresent([LayoutWheelCommand?].self, forKey: .innerSlots)
                 ?? Self.defaultInnerSlots,
             outerSlots: try container.decodeIfPresent([LayoutWheelCommand?].self, forKey: .outerSlots)
@@ -107,8 +161,46 @@ public struct LayoutWheelConfiguration: Codable, Hashable, Sendable {
                 Bool.self,
                 forKey: .middleClickTriggerEnabled
             ) ?? false,
-            scale: try container.decodeIfPresent(Double.self, forKey: .scale) ?? Self.defaultScale
+            scale: legacyScale,
+            groupOverrides: try container.decodeIfPresent([Int: LayoutWheelGroupContents].self, forKey: .groupOverrides) ?? [:],
+            groupedInnerSlots: groupedInnerSlots,
+            triggers: try container.decodeIfPresent(LayoutWheelTriggers.self, forKey: .triggers)
         )
+        if container.contains(.appearance), try !container.decodeNil(forKey: .appearance) {
+            appearance = try LayoutWheelAppearance(
+                from: container.superDecoder(forKey: .appearance), legacyScale: legacyScale
+            )
+        }
+    }
+
+    // Custom remains implicit for compatibility with pre-style configurations.
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        if style != .custom { try container.encode(style, forKey: .style) }
+        try container.encode(isEnabled, forKey: .isEnabled)
+        try container.encode(levelCount, forKey: .levelCount)
+        try container.encode(innerSlots, forKey: .innerSlots)
+        try container.encode(outerSlots, forKey: .outerSlots)
+        try container.encode(keyboardTriggerEnabled, forKey: .keyboardTriggerEnabled)
+        try container.encode(keyboardModifiers, forKey: .keyboardModifiers)
+        try container.encode(middleClickTriggerEnabled, forKey: .middleClickTriggerEnabled)
+        try container.encode(scale, forKey: .scale)
+        try container.encode(appearance, forKey: .appearance)
+        try container.encode(groupOverrides, forKey: .groupOverrides)
+        try container.encode(groupedInnerSlots, forKey: .groupedInnerSlots)
+        try container.encode(triggers.normalized(), forKey: .triggers)
+    }
+
+    public var effectiveLevelCount: LayoutWheelLevelCount { levelCount }
+
+    public var groupRing: LayoutWheelRing { levelCount == .one ? .inner : .outer }
+
+    public func group(at sector: LayoutWheelSector) -> LayoutWheelGroupContents {
+        (groupOverrides[sector.rawValue] ?? .defaults(at: sector)).normalized()
+    }
+
+    public mutating func setGroup(_ contents: LayoutWheelGroupContents, at sector: LayoutWheelSector) {
+        groupOverrides[sector.rawValue] = contents.normalized()
     }
 
     public static let defaultInnerSlots: [LayoutWheelCommand?] = [
@@ -146,11 +238,13 @@ public struct LayoutWheelConfiguration: Codable, Hashable, Sendable {
             result.outerSlots = Self.defaultOuterSlots
         }
 
-        let supportedModifiers = result.keyboardModifiers
-            .intersection(Self.supportedKeyboardModifiers)
-        result.keyboardModifiers = supportedModifiers.rawValue.nonzeroBitCount >= 2
-            ? supportedModifiers
-            : [.control, .option, .shift]
+        result.triggers = result.triggers.normalized()
+        if result.groupedInnerSlots.count != Self.slotCount {
+            result.groupedInnerSlots = Self.defaultInnerSlots
+        }
+        result.groupedInnerSlots = result.groupedInnerSlots.removingCustomZoneAssignments()
+        result.groupOverrides = result.groupOverrides.filter { LayoutWheelSector(rawValue: $0.key) != nil }
+            .mapValues { $0.normalized() }
 
         result.scale = result.scale.isFinite
             ? min(max(result.scale, Self.minimumScale), Self.maximumScale)
@@ -168,7 +262,10 @@ public struct LayoutWheelConfiguration: Codable, Hashable, Sendable {
 private extension Array where Element == LayoutWheelCommand? {
     func removingCustomZoneAssignments() -> Self {
         map { command in
-            if case .customZone = command { return nil }
+            switch command {
+            case .customZone: return nil
+            default: break
+            }
             return command
         }
     }
@@ -256,13 +353,18 @@ public extension LayoutWheelConfiguration {
     /// accessor keeps the renderer, the runtime gesture, and Settings agreeing
     /// about a slot list that hand-edited configuration could leave short.
     func command(at selection: LayoutWheelSelection) -> LayoutWheelCommand? {
+        if style == .grouped {
+            if selection.ring == groupRing { return group(at: selection.sector).quickAction }
+            return groupedInnerSlots.indices.contains(selection.sector.rawValue)
+                ? groupedInnerSlots[selection.sector.rawValue] : nil
+        }
         let slots = selection.ring == .inner ? innerSlots : outerSlots
         guard slots.indices.contains(selection.sector.rawValue) else { return nil }
         return slots[selection.sector.rawValue]
     }
 
     var activeRings: [LayoutWheelRing] {
-        levelCount == .one ? [.inner] : [.inner, .outer]
+        effectiveLevelCount == .one ? [.inner] : [.inner, .outer]
     }
 }
 

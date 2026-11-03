@@ -86,7 +86,16 @@ enum SettingsDestination: String, CaseIterable, Identifiable {
         case .layoutWheel:
             "wheel layout radial pie ring sector hub gesture middle click mouse button "
                 + "control option shift command modifier trigger shortcut hold activation "
-                + "one level two levels rings sectors wheel size repair layout bento empty cancel"
+                + "one level two levels repair layout repair bento empty cancel tab next tab previous tab move tab pane "
+                + "keyboard modifiers style rings sectors wheel size custom grouped reset sector assignments "
+                + "appearance liquid glass strength light dark quick flick child children all fans one fan "
+                + "ice ember mist clear fade zoom bounce ripple frosted smoked smoke calm fan child "
+                + "open the wheel modifier keys hold delay mouse trigger option + middle click option middle click "
+                + "right control edit wheel visible fans all fans one fan click an icon to assign swap inner and outer rings "
+                + "reset layout wheel reset slot group contents add child remove child content levels wheel appearance "
+                + "size small medium large fine-tuning fine tuning look motion feel sub-menus sub menus submenus "
+                + "highlight color names action tint translucency opaque transparent opening closing pointer lean "
+                + "arrangement keep sub-menu open play opening play closing reset to style defaults reset appearance"
         case .applicationRules:
             "app application rule exclude ignore bento adaptive manage per-app exception skip leave alone "
                 + "enabled participation matching live windows"
@@ -105,13 +114,11 @@ enum SettingsDestination: String, CaseIterable, Identifiable {
         case .shortcuts: "Set keyboard shortcuts for window actions."
         case .snapZones: "Drag a window to a screen edge or corner to place it."
         case .menuBar: "Choose the window actions in your menu, then drag them into order."
-        case .layoutWheel: "Put window actions around the pointer for quick access."
+        case .layoutWheel: "A radial menu for placing the focused window."
         case .applicationRules: "Choose apps BetterTile leaves alone, in whole or in part."
         }
     }
 }
-
-
 
 struct UpdateVersionBadge: View {
     let version: String

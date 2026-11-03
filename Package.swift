@@ -45,7 +45,7 @@ let package = Package(
         .target(name: "BetterTileTestSupport", dependencies: ["BetterTileCore"], path: "Tests/BetterTileTestSupport"),
         .testTarget(name: "BetterTileCoreTests", dependencies: ["BetterTileCore", "BetterTileTestSupport"]),
         .testTarget(name: "BetterTileMacOSTests", dependencies: ["BetterTileMacOS", "BetterTileCore", "BetterTileTestSupport"],
-                    resources: [.copy("Fixtures/ActionGlyphs")],
+                    resources: [.copy("Fixtures/ActionGlyphs"), .copy("Fixtures/WheelStyleApprovedDark.json")],
                     swiftSettings: testHookSettings),
         .testTarget(name: "BetterTileAppTests", dependencies: ["BetterTileApp", "BetterTileTestSupport"]),
     ],

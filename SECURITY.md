@@ -418,13 +418,28 @@ and global AppKit monitors for modifier changes. The pair keeps the trigger
 available whether BetterTile or another app receives the event. Matching key
 monitors exist only from the start of the activation hold through the end of
 that gesture. Matching pointer monitors exist only while the keyboard-triggered
-wheel is open. Global monitors and the local modifier and pointer monitors are
-observation-only. While the wheel is open, the local key monitor consumes only
+wheel is open. A Right Control hold also installs local and global left/right
+mouse-down monitors while pending or open. They use only the event kind and
+cancel the hold so Control-click cannot apply a wheel command. They pass clicks
+through and retain no events. Global monitors and the local modifier and pointer
+monitors are observation-only. While the wheel is open, the local key monitor consumes only
 Escape, Return, Tab, and arrow keys after the wheel handles them, so they do not
 also activate BetterTile's own focused Settings controls. Other local keys pass
 through, and no event delivered to another application is changed. The monitors
 retain no system events and forward only the modifier set, key code, or pointer
 position needed by the gesture state machine.
+
+Layout Wheel activation diagnostics use the local unified log's `LayoutWheel`
+category at debug level. Each hold records a process-local counter, scheduling
+and deadline milestones, elapsed milliseconds, and one open, cancellation, or
+skip outcome with a fixed reason. An open adds the wheel style, its size scale,
+and whether a focused window was captured. An ignored trigger adds whether the
+trigger is enabled, armed and idle. A release adds the number of pointer samples
+received. These values distinguish delayed notifications and monitor failures
+from a missed deadline. They contain no key codes, modifier values, pointer
+positions or distances, selected commands, app or window identities, titles, or
+event content. They add no
+input monitoring, permission, file, upload, or persisted configuration.
 
 Tabbed mode installs local and global AppKit key monitors while a tab drag or
 pane divider resize is in progress. They are removed when the gesture ends,
@@ -454,12 +469,19 @@ Layout Wheel also has an independent, disabled-by-default Middle Click trigger.
 The user benefit is one-handed wheel activation. While the option is enabled,
 BetterTile creates a dedicated public session `CGEventTap` for
 `otherMouseDown`, `otherMouseDragged`, and `otherMouseUp`. It suppresses only
-unmodified physical button 2. It passes modified middle-clicks and every other
-mouse button unchanged. The tap forwards only scalar position, button,
+physical button 2 with the selected modifier predicate: no ordinary modifiers
+for Middle click, or Option alone for Option + Middle click. The latter keeps
+plain middle-click available to other apps. Every other button and modifier
+combination passes through. The choice is opt-in and mutually exclusive. The
+tap captures ownership at button-down and reserves drag/up even if Option is
+released during the gesture. Keyboard activation blocks new mouse reservations;
+a reserved mouse gesture blocks keyboard activation through its button-up. The tap forwards only scalar position, button,
 modifier, timestamp, and event-kind values. It does not retain the system
 event.
 
-If the middle-click tap cannot start or recover, BetterTile tears it down,
+A disabled middle-click tap is re-enabled when no mouse gesture is reserved.
+If recovery fails, the tap cannot start, or input continuity is lost during a
+reserved gesture, BetterTile tears it down,
 cancels any gesture it owns, and reports the failure in Layout Wheel Settings.
 Keyboard activation remains available. The saved Middle Click preference is
 preserved so BetterTile can retry after a later lifecycle or configuration
@@ -476,6 +498,26 @@ with
 
 BetterTile does not call the API that requests Input Monitoring for either tap.
 Both taps have the signed-build validation recorded below.
+
+The maintainer approved the expanded trigger scope: Option + Middle click changes the middle-click tap's suppression predicate, and
+Right Control retains the virtual key code and raw side-specific flags.
+It uses the public
+`IOKit/hidsystem/IOLLEvent.h` masks and AppKit flags-changed events. Ambiguous
+side identity cancels; it never falls back to either Control key. Right Control
+remains hidden behind a validation flag until the actual keyboard and Jump
+Desktop client have been checked. No additional event tap, permission, raw HID
+access, network operation, or dependency is introduced.
+
+The Option + Middle click extension has fake-system tests for the down-time
+predicate, ownership through modifier changes, competing triggers, and failure
+cancellation. On macOS 27.0.1, a signed Debug build applied Top Half in five
+Option + Middle click trials and five Control + Option + Command trials with
+a foreground fixture on the test display. Plain middle-click reached the fixture.
+Mouse-first and keyboard-first ownership checks also passed. These trials used
+synthetic system events; they do not validate physical Right Control identity or
+Jump Desktop delivery. The approved scope covers Option + Middle click and
+Right Control; physical keyboard and Jump Desktop validation remain required
+before exposing Right Control without its validation flag.
 
 Each tap has its own maintainer design and least-privilege review. The
 left-button gesture tap is recorded in
@@ -502,6 +544,22 @@ provenance, compatible licensing, and attribution.
 Sparkle is the sole current runtime dependency. It verifies BetterTile update
 archives with an EdDSA signature. Its private signing key remains outside the
 repository and GitHub Actions.
+
+## Build-time Metal Toolchain
+
+The Layout Wheel compiles its shader with Apple's Metal Toolchain, an Xcode
+component. CI checks the selected Xcode first and installs it (download or
+cached import) only when it is missing. It uses
+`xcodebuild -downloadComponent MetalToolchain` and a SHA-pinned `actions/cache`
+dependency. Exported components are keyed by Xcode version, runner OS and
+architecture. Cache entries are branch-scoped. Only Apple's developer
+tool downloads and GitHub Actions cache storage are used. No user data or
+release signing credentials are involved. This is a build dependency under
+Xcode's license, not an additional runtime package or app permission.
+
+The setup fails if download or import fails. Shell regression tests cover cache
+misses, reuse, invalid exports and command failures; Debug and Release builds
+check shader compilation. Removing the CI cache only causes a fresh download.
 
 ## App icon customization
 
@@ -546,6 +604,10 @@ script's internal build step are validation builds only and are never
 distributed. The distributed signature is applied solely by
 `Tools/release-beta.sh`; see [docs/RELEASING.md](docs/RELEASING.md).
 
+Release signing credentials and their recovery details stay outside this
+repository and CI. Publishing requires an authorized release environment and is
+never automatic.
+
 Release builds contain only arm64 code for BetterTile and require macOS 26.0
 or later. Sparkle's appcast hardware requirement keeps Intel installations on
 the last compatible universal release. Sparkle's embedded helpers remain
@@ -554,10 +616,6 @@ dSYM stays beside the local release artifacts, outside the app and DMG; it
 contains full symbols and source paths and is not uploaded by the script.
 Dry runs use a disposable EdDSA key file and a temporary app public key,
 without reading the release signing key or changing tracked key material.
-
-Release signing credentials and their recovery details stay outside this
-repository and CI. Publishing requires an authorized release environment and is
-never automatic.
 
 ## Change disclosure
 

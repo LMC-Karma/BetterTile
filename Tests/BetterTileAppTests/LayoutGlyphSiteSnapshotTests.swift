@@ -69,9 +69,48 @@ import Testing
         }
     }
 
+    private func groupedWheel(mode: LayoutMode?, sector: LayoutWheelSector?) -> LayoutWheelView {
+        var fan = LayoutWheelFanState()
+        var selection: LayoutWheelSelection?
+        if let sector {
+            let geometry = LayoutWheelMetrics.grouped.fanGeometry
+            let angle = Double(sector.rawValue) * .pi / 4
+            let parent = BTPoint(x: sin(angle) * 124, y: -cos(angle) * 124)
+            fan.update(vector: parent, at: 0, geometry: geometry)
+            fan.update(vector: parent, at: 0.2, geometry: geometry)
+            fan.update(vector: geometry.point(sector: sector, option: 1), at: 0.3, geometry: geometry)
+            selection = fan.selection
+        }
+        return LayoutWheelView(configuration: .init(style: .grouped), overlayAppearance: .init(useLiquidGlass: false),
+                               selection: selection, fan: fan, currentMode: mode)
+    }
 
-
-
+    @Test func groupedWheelParentsAndFans() throws {
+        for dark in Self.themes {
+            var bitmaps: [String: NSBitmapImageRep] = [:]
+            for mode in LayoutMode.availableModes {
+                let host = try SettingsSnapshotHost(groupedWheel(mode: mode, sector: nil), dark: dark, width: 560, height: 540)
+                defer { host.close() }
+                bitmaps[mode.rawValue] = try host.render()
+                try write(bitmaps[mode.rawValue]!, "glyph-wheel-\(mode.rawValue)", dark: dark)
+            }
+            // The Mode parent follows the current mode.
+            let png = { (key: String) in bitmaps[key]!.representation(using: .png, properties: [:])! }
+            #expect(png("manual") != png("bento"))
+            #expect(png("bento") != png("tabbed-v1"))
+            #expect(png("manual") != png("tabbed-v1"))
+            for (name, sector) in [("choose-layout-fan", LayoutWheelSector.bottomLeft), ("mode-fan", .bottomRight)] {
+                let host = try SettingsSnapshotHost(groupedWheel(mode: .bento, sector: sector), dark: dark, width: 560, height: 540)
+                defer { host.close() }
+                try write(host.render(), "glyph-wheel-\(name)", dark: dark)
+            }
+            // Unknown mode keeps the old Mode symbol, which differs from every mode icon.
+            let unknown = try SettingsSnapshotHost(groupedWheel(mode: nil, sector: nil), dark: dark, width: 560, height: 540)
+            defer { unknown.close() }
+            let unknownPNG = try #require(unknown.render().representation(using: .png, properties: [:]))
+            for mode in LayoutMode.availableModes { #expect(unknownPNG != png(mode.rawValue)) }
+        }
+    }
 
     @Test func defaultModeCardsShowTheModeIcon() throws {
         for dark in Self.themes {
