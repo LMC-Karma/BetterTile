@@ -72,7 +72,14 @@ The 10-second watchdog remains a native run-loop timer. DragSnap pointer and
 chooser delays and the pane-application picker retain separate UI timing seams.
 Clock injection does not change the layer dependencies.
 
-Saved Layout preview throttling also accepts this clock.
+Saved Layout preview throttling and display-trigger settling and lock waits
+also accept this clock.
+
+Display-trigger elapsed time uses the same continuous clock as its waits and
+includes system sleep. A settle wait that spans sleep can reach its limit when
+execution resumes. The trigger reducer cancels and restarts waits on sleep and
+wake events. Sleep during a settle wait remains a native manual check; fake-clock
+tests cover cancellation and the settle limit.
 
 ## Coordinate model
 
@@ -414,7 +421,7 @@ when a Tabbed chooser is key. The chooser's responder chain cancels composition,
 clears a focused search, then closes on an empty search. Escape outside text
 editing closes the chooser immediately.
 
-All window mutations pass through the main-actor coordinator. Multi-window operations preflight every participant, apply in deterministic order, and roll back already-applied frames when a later Accessibility write fails. A committed layout writes each application on its own thread: shrinking windows first, in every application at once, then growing windows. Within one application the writes keep the coordinator's order. Saved Layout Apply, display transfers and application
+All window mutations pass through the main-actor coordinator. Multi-window operations preflight every participant, apply in deterministic order, and roll back already-applied frames when a later Accessibility write fails. A committed layout writes each application on its own thread: shrinking windows first, in every application at once, then growing windows. Within one application the writes keep the coordinator's order. Saved Layout Apply (including Automatic Apply), display transfers and application
 recovery explicitly request serial per-write validation when their desktop owner
 can change during a batch. They still preflight all participants before the first
 write. Ordinary Adaptive and Tabbed commits keep per-application concurrent
@@ -1607,7 +1614,8 @@ selected fill is inset 2 points inside the track with radius 4. It uses
 `PopupGlass.accentShadeColor` with white ink; pointer feedback uses the overlay
 buttons' black 8-percent hover and 16-percent press. Arrows move focus without
 changing the mode; Space or Return selects. The picker is one Tab stop under
-Full Keyboard Access. Each segment has a label and selected value.
+Full Keyboard Access. Each segment has a label and selected value. Saved
+Layouts retains its native `LayoutModePicker`.
 
 The menu panel uses the same shared floor as every other popup. Debug builds
 accept `-BetterTilePopupDarkPlateFloor <value>` from process launch arguments
@@ -2062,16 +2070,69 @@ Only Apply and Undo mutate windows through the coordinator. Capture and Update
 read the current desktop. See [SAVED_LAYOUTS.md](SAVED_LAYOUTS.md) for the
 format and assignment policy.
 
-### Display sets
+### Display sets and display triggers
+
+A display trigger binds a Saved Layout file to one display in an exact display
+set.
 
 - **Core.** `DisplayFingerprint` (UUID, vendor, model, serial, built-in flag,
   name, frame) and `DisplaySetMatcher` are pure. The matcher returns `.exact`,
   `.uncertain` (serial-less same-model displays paired by left-to-right order), or
-  `.none`, plus the stored-to-live index pairs.
+  `.none`, plus the stored-to-live index pairs. `DisplayTriggerDocument`
+  encodes and decodes `Display Triggers.json`, checks bounds, and keeps unknown
+  keys. It does no disk I/O.
 - **MacOS.** `DisplayFingerprintReader` reads identity from public CoreGraphics
   and AppKit calls (`CGDisplayCreateUUIDFromDisplayID`, vendor, model, serial,
   built-in, mirror state, bounds, `NSScreen.localizedName`). It skips a display
   that mirrors another. It never touches a window.
+- **App.** `DisplayTriggerStore` owns the file next to the Saved Layouts folder:
+  a bounded read, a coordinated atomic write, and a byte comparison against the
+  last read before every write. An unreadable file is reported and kept, and
+  saving stays blocked. `DisplayTriggerCard` in Saved Layouts settings binds the
+  open layout, stores the two switches, and starts Apply on the target display
+  through the page's `SavedLayoutApplySession`. It reuses the Saved Layouts Apply
+  path unchanged.
+
+The card refreshes on `NSApplication.didChangeScreenParametersNotification`.
+`BetterTileModel.displayTriggerStore` is the one store that Settings and the
+automatic Apply share. The Saved Layouts page reads the file again each time it
+appears.
+
+### Automatic Apply
+
+- **Core.** `DisplayTriggerReducer` is pure: events (`displaysChanged`, `wake`,
+  `locked`, `unlocked`, `lockExpired`, `settled`, `interactionEnded`, `userInput`,
+  `applyFinished`) in, actions (`settle`, `apply`, `cancel`, `suspendApply`) out.
+  A lock cancels a started Apply while keeping an unused pending attempt for
+  fresh settling after unlock. It remembers the last known display set
+  (the sorted UUIDs), so the same set again starts no wait, a repeated change
+  restarts one wait, and an attempt is used up when it is handed out. Only
+  exact matches of enabled bindings become fires; uncertain matches become
+  offers. `DisplaySettleDetector` is the pure quiet-window check.
+- **App.** `DisplayTriggerRuntime` owns the waiting. The model calls it after the
+  existing `DisplayRefreshDebouncer` and from the wake notifications. There is
+  no repeating timer or poll outside pending work. During settling it reads
+  window frames every 150 ms; an interaction hold checks again every 250 ms.
+  While a wait or an Apply is pending (and only then) it
+  holds a temporary AppKit mouse-down and key-down monitor that reads the event
+  kind and nothing else. It calls the applier, so every window write still goes through
+  `WindowCoordinator` and the same transaction and Undo as a manual Apply. The
+  applier keeps one Undo step for each display. The runtime tracks this user's
+  session activity separately from the lock wait, so another session's app
+  activation or an expired wait cannot release an inactive session. Session
+  availability travels with an automatic transaction through forward-write and
+  recovery validation. A hold cancels the owned Apply task and applier operation;
+  the completed result remains available without a pill while the session is held.
+  The applier retains at most one deferred changed result per display. Session
+  return, lock release and Apply completion can drain it once the session is
+  available, including when return precedes the runtime's completion callback.
+  Repeated notifications do not replay it. No changed frames means no deferred
+  pill; stopping clears deferred results. Incomplete recovery retains Repair
+  Layout guidance, and Undo is offered only while that run's checkpoint is valid.
+- **Pills.** An automatic Apply shows one `ResultPillController` for each display.
+  The runtime keeps the newest result for each layout file for the Last run row.
+  An automatic Apply with nothing to place shows no pill.
+
 
 `SavedLayoutPositions` owns optional `Saved Layout Positions.cache` in the library
 folder. Its non-JSON extension keeps the library listing from showing this cache.
@@ -2098,7 +2159,7 @@ bursts; Apply always reads a fresh inventory.
 Apply plans against eligible open windows on the target display's current
 desktop. A user-started Apply may reuse an unreserved preference-matching window
 from another visible display when it is outside that display's Adaptive and
-Tabbed panes. Apply does not open
+Tabbed panes. Automatic Apply stays on the target display. Apply does not open
 apps or request windows. The coordinator revalidates participants and owns window
 mutations. Escape cancels through the final input checkpoint, including input
 queued during frame writes. Once final validation and session commit begin,
@@ -2121,7 +2182,7 @@ windows priority for empty panes. Following is not persisted.
 ### Saved Layouts outside Settings
 
 `SavedLayoutActionStore` owns optional, bounded `Layout Actions.json` beside the
-Saved Layouts folder, keyed by library filename. `SavedLayoutActions` uses public
+display triggers, keyed by library filename. `SavedLayoutActions` uses public
 Dispatch directory sources and one recursive FSEvents stream while its runtime
 catalog is active, including with Settings closed. The watch set contains at most
 two directory sources and one stream, independent of library size. Individual

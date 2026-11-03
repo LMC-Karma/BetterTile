@@ -40,6 +40,37 @@ import Testing
 
     /// The scaled MacBook tile used to be 74 × 48 pt. Its two-line name crossed the top border.
     /// The reference has 8 pt insets and room for two name lines and two status lines at 11 pt.
+    @Test(arguments: [false, true], [false, true])
+    func displayNameRendersFullyInsideTile(dark: Bool, target: Bool) throws {
+        let name = target ? "Studio Display – Left" : "MacBook Pro"
+        let width: CGFloat = target ? 112 : 74
+        let actual = DisplaySetTile(name: name, caption: "Connected", isTarget: target, connected: true,
+                                    detail: "", width: width, height: 48)
+        let expected = VStack(alignment: .leading, spacing: 4) {
+            Spacer(minLength: 0)
+            Text(name).font(.system(size: 11, weight: .semibold)).lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+            Text("Connected").font(.system(size: 11)).foregroundStyle(target ? Color.accentColor : .secondary)
+                .lineLimit(2).fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(8).frame(width: width, height: 80, alignment: .bottomLeading)
+        .background(target ? Color.accentColor.opacity(0.14) : Color(nsColor: .quaternarySystemFill), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous)
+            .strokeBorder(target ? Color.accentColor : Color(nsColor: .separatorColor), lineWidth: 1.5))
+        try compare(actual, expected, dark: dark, name: "display-name-inset-\(target ? "target" : "secondary")")
+    }
+
+    @Test(arguments: [false, true])
+    func lastRunRendersCaptionAndStatusPill(dark: Bool) throws {
+        let run = SavedLayoutRun(layoutName: "Work", offersUndo: false, date: .distantPast,
+                                 displayID: .init(rawValue: "1"), result: .init(placed: 2))
+        let actual = DisplayTriggerLastRun(run: run, applier: nil).statusPill
+        let expected = Text(run.status.rawValue)
+            .font(.system(size: 11, weight: .medium)).foregroundStyle(SettingsColor.green)
+            .padding(.horizontal, 7).padding(.vertical, 1)
+            .background(SettingsColor.green.opacity(0.16), in: Capsule()).fixedSize()
+        try compare(actual, expected, dark: dark, name: "last-run-pill")
+    }
 
     private func compare(_ actualView: some View, _ expectedView: some View, dark: Bool, name: String) throws {
         let actual = try SettingsSnapshotHost(actualView, dark: dark, width: 240, height: 160, fitHeight: false)

@@ -352,7 +352,7 @@ struct SettingsView: View {
         case .applicationRules:
             ApplicationRuleSettings(model: model)
         case .savedLayouts:
-            SavedLayoutSettings(editor: savedLayoutEditor, model: model)
+            SavedLayoutSettings(editor: savedLayoutEditor, model: model, displayTriggers: model.displayTriggerStore)
         }
     }
 }

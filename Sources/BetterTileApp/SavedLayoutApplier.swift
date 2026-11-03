@@ -9,11 +9,13 @@ import OSLog
 
 enum SavedLayoutCommitRefusal {
     case beforeWrite(String)
+    case bindingChanged
     case mutationChanged
 
     var message: String {
         switch self {
         case let .beforeWrite(reason): reason
+        case .bindingChanged: "The display binding changed. Automatic Apply stopped."
         case .mutationChanged: "A window changed while applying. Use Repair Layout or try again."
         }
     }
@@ -106,7 +108,7 @@ private struct SavedLayoutChoiceRefusal: LocalizedError {
         displayID = owner ?? selectionID
     }
 
-    /// An explicit display bypasses the manual pick without changing it. Each click revalidates live identities.
+    /// Binding targets bypass the manual pick without changing it. Each click revalidates live identities.
     func prepareApply(current: () -> DisplayID?, displays: [DisplaySnapshot], explicit: DisplayID? = nil,
                       live: [LiveDisplay]? = nil) -> DisplayID? {
         updateLive(live, displays: displays)
@@ -182,6 +184,8 @@ struct SavedLayoutApplySnapshot {
     var followingIntent: SavedLayoutFollowingIntent = .end
     /// One front-to-back public stack read for this inventory. Unknown ranks remain Int.max.
     var stackingOrder: [TabbedStackEntry]? = nil
+    /// A transient session hold forbids forward and recovery writes alike.
+    var sessionIsAvailable: @MainActor () -> Bool = { true }
 
     var frontRanks: [WindowID: Int] {
         var ranks: [WindowID: Int] = [:]
@@ -246,6 +250,8 @@ struct SavedLayoutFeedback {
     /// True only when this run made an Undo checkpoint. A rolled-back or empty Apply never offers the
     /// Undo of an earlier Apply.
     var offersUndo = false
+    /// True for an Apply that BetterTile started when displays connected. Its pill appears on its own display.
+    var automatic = false
 }
 
 struct SavedLayoutRun {
@@ -257,13 +263,15 @@ struct SavedLayoutRun {
     var date: Date
     var displayID: DisplayID
     var result: SavedLayoutApplyResult
+    /// Set when the run never started: the displays were uncertain, or input cancelled the wait.
+    var declared: Status?
     var planPresentation: SavedLayoutPlanPresentation? = nil
     var needsSaveForFollowing = false
     /// Non-nil only for refused choice admission. Successful Applies consume their choices.
     var retryChoices: [String: WindowID]? = nil
 
     var presentation: SavedLayoutResultPresentation {
-        var value = result.presentation(layout: layoutName)
+        var value = result.presentation(layout: layoutName, declared: declared)
         if let planPresentation {
             value.title = planPresentation.alreadyArranged ? SavedLayoutApplyPolicy.settledRepeat(layout: layoutName, arrangedSummary: planPresentation.summary).title : planPresentation.title
             value.summary = planPresentation.summary
@@ -429,7 +437,11 @@ private struct SavedLayoutUndoStructure: Equatable {
     private var positionUndos: [UUID: PositionUndo] = [:]
     private var operation = 0
     private var runCheckpoint = false
+    private var silentRun = false
+    /// At most one completed result per display waits for this user's session to return.
+    private var deferredAutomaticRuns: [DisplayID: SavedLayoutRun] = [:]
     private var rememberedAssignments: [SavedLayoutDesktop: (SavedLayoutDocument, [String: WindowID], URL?)] = [:]
+    private var lastRunAutomatic = false
     var refusedSizes: [WindowID: BTSize] = [:]
     /// A model refusal before any mutation keeps the preceding Undo checkpoint.
     var precommitRefusal: SavedLayoutCommitRefusal?
@@ -577,7 +589,7 @@ private struct SavedLayoutUndoStructure: Equatable {
         task?.cancel()
         message = Self.cancelled
     }
-    func stop() { cancel(); removeMonitors() }
+    func stop() { cancel(); removeMonitors(); discardDeferredAutomaticResults() }
 
     private func installMonitors() {
         guard observesKeyboard else { return }
@@ -703,13 +715,13 @@ private struct SavedLayoutUndoStructure: Equatable {
     private func existingPlan(_ document: SavedLayoutDocument, in state: SavedLayoutApplySnapshot,
                               on desktop: SavedLayoutDesktop, workArea: BTRect,
                               explicit: [String: WindowID] = [:], excluding: Set<WindowID> = [],
-                              preferredFrames: [String: NormalizedRect] = [:],
+                              automatic: Bool = false, preferredFrames: [String: NormalizedRect] = [:],
                               layoutURL: URL? = nil, requiringExplicitChoices: Bool = false) throws -> ExistingPlan {
         let groups = appGroupsStore?.document ?? AppGroupsDocument()
         let resolved = appGroupsStore?.resolvedBundleIDs ?? [:]
         let started = uptime()
         defer { record(.plan, since: started) }
-        var choices = explicit.filter { slot, _ in document.slots.contains { $0.id == slot } }
+        var choices = (automatic ? [:] : explicit).filter { slot, _ in document.slots.contains { $0.id == slot } }
         let local = eligible(state, on: desktop, excluding: excluding)
         let foreignChoices = choices.filter { _, id in !local.contains { $0.id == id } }
         choices = choices.filter { _, id in local.contains { $0.id == id } }
@@ -728,7 +740,7 @@ private struct SavedLayoutUndoStructure: Equatable {
                     matchingFrame: .init(frame: window.frame, in: display.visibleFrame), frontRank: state.frontRanks[window.id] ?? .max)
             }
         }
-        if requiringExplicitChoices {
+        if requiringExplicitChoices, !automatic {
             let foreignIDs = foreignChoices.isEmpty ? Set<WindowID>() : Set(foreignWindows(matching: []).map(\.id))
             let admitted = explicit.filter { slot, id in
                 document.slots.contains { $0.id == slot } && (local.contains { $0.id == id } || foreignIDs.contains(id))
@@ -771,7 +783,7 @@ private struct SavedLayoutUndoStructure: Equatable {
         }
         var transfers: [WindowID: SavedLayoutRequestedTransfer] = [:]
         var foreign: [SavedLayoutEligibleWindow] = []
-        if !result.emptySlots.isEmpty || !foreignChoices.isEmpty {
+        if !automatic, !result.emptySlots.isEmpty || !foreignChoices.isEmpty {
             let bundles = Set(document.slots.filter { result.emptySlots.contains($0.id) }.flatMap { expandedPreferences($0) })
             foreign = foreignWindows(matching: bundles)
             let admittedForeignChoices = foreignChoices.filter { _, id in foreign.contains { $0.id == id } }
@@ -910,13 +922,15 @@ private struct SavedLayoutUndoStructure: Equatable {
 
     @discardableResult
     func apply(_ document: SavedLayoutDocument, displayID: DisplayID? = nil, choices: [String: WindowID] = [:],
-               excluding: Set<WindowID> = [],
-               positions: SavedLayoutPositionContext? = nil, layoutFileID: String? = nil) async -> SavedLayoutApplyResult {
+               excluding: Set<WindowID> = [], automatic: Bool = false,
+               positions: SavedLayoutPositionContext? = nil, layoutFileID: String? = nil,
+               sessionIsAvailable: @escaping @MainActor () -> Bool = { true },
+               validating: @escaping @MainActor () -> Bool = { true }) async -> SavedLayoutApplyResult {
         let handoff = handingOffStart
         handingOffStart = false
         guard (!isStarting && !startPending) || handoff else { message = Self.applyingBusy; return .init() }
         guard let token = begin() else { return .init() }
-        positionContext = positions
+        positionContext = automatic ? nil : positions
         self.layoutFileID = layoutFileID ?? positions?.file
         timingRun = token
         let started = uptime()
@@ -924,23 +938,31 @@ private struct SavedLayoutUndoStructure: Equatable {
         lastPlan = nil
         defer { record(.total, since: started); end() }
         runCheckpoint = false
+        silentRun = false
         refusedSizes = [:]
         precommitRefusal = nil
         followingIssue = nil
         do {
             await prepareAppGroups()
             guard token == operation, !Task.isCancelled else { throw CancellationError() }
+            guard sessionIsAvailable() else { throw CancellationError() }
+            guard validating() else { throw SavedLayoutFileError(message: SavedLayoutCommitRefusal.bindingChanged.message) }
             let target = try desktop(on: displayID, in: try inventory())
             lastDocument = document; lastDesktop = target
             slotStatuses = Dictionary(uniqueKeysWithValues: document.slots.map { ($0.id, .waiting) })
             var result = try await performPlan(document, on: target, token: token, explicitChoices: choices,
-                                               excluding: excluding)
-            // Escape during the commit rolls everything back, so planning reports a generic failure.
-            // The user stopped it; say so.
-            if token != operation, result.placed == 0 {
-                result.issues = [.init(.stopped, Self.cancelled)]
+                                               excluding: excluding, automatic: automatic,
+                                               sessionIsAvailable: sessionIsAvailable, validating: validating)
+            // Cancellation or a session hold invalidates commit validation.
+            // If nothing committed, report stopped rather than a generic placement failure.
+            if token != operation || !sessionIsAvailable(), result.placed == 0 {
+                let recovery = runCheckpoint ? " Some windows could not be restored. Use Undo or Repair Layout." : ""
+                result.issues = [.init(.stopped, Self.cancelled + recovery)]
             }
-            publish(result, document: document, displayID: target.displayID)
+            let sessionHeld = !sessionIsAvailable()
+            if sessionHeld { silentRun = true }
+            publish(result, document: document, displayID: target.displayID, automatic: automatic,
+                    deferAutomaticFeedback: automatic && sessionHeld)
             return lastRun?.result ?? result
         } catch {
             // Escape bumps `operation`, which also fails the desktop check. Say what the user did.
@@ -952,8 +974,11 @@ private struct SavedLayoutUndoStructure: Equatable {
             result.issues.append(issue)
             let target = displayID ?? SavedLayoutTarget.resolve(current: currentDisplayID(),
                 displays: (try? snapshot())?.displays ?? []) ?? .init(rawValue: "")
-            publish(result, document: document, displayID: target,
-                retryChoices: (reason as? SavedLayoutChoiceRefusal)?.retryChoices)
+            let sessionHeld = !sessionIsAvailable()
+            if sessionHeld { silentRun = true }
+            publish(result, document: document, displayID: target, automatic: automatic,
+                retryChoices: (reason as? SavedLayoutChoiceRefusal)?.retryChoices,
+                deferAutomaticFeedback: automatic && sessionHeld)
             return lastRun?.result ?? result
         }
     }
@@ -986,7 +1011,9 @@ private struct SavedLayoutUndoStructure: Equatable {
 
     /// Gather, plan, revalidate, then submit at most one coordinator transaction.
     private func performPlan(_ document: SavedLayoutDocument, on desktop: SavedLayoutDesktop, token: Int,
-                             explicitChoices: [String: WindowID], excluding: Set<WindowID>) async throws -> SavedLayoutApplyResult {
+                             explicitChoices: [String: WindowID], excluding: Set<WindowID>,
+                             automatic: Bool, sessionIsAvailable: @escaping @MainActor () -> Bool,
+                             validating: @escaping @MainActor () -> Bool) async throws -> SavedLayoutApplyResult {
         let state = try inventory()
         guard current(token, desktop: desktop), let display = state.displays.first(where: { $0.id == desktop.displayID }) else {
             throw SavedLayoutFileError(message: Self.desktopNotReady)
@@ -994,18 +1021,24 @@ private struct SavedLayoutUndoStructure: Equatable {
         guard !state.suspendedDisplays.contains(desktop.displayID) else { throw SavedLayoutFileError(message: Self.needsRepair) }
         ownedDisplayID = desktop.displayID
         let prepared = try existingPlan(document, in: state, on: desktop, workArea: display.visibleFrame,
-            explicit: explicitChoices, excluding: excluding,
+            explicit: explicitChoices, excluding: excluding, automatic: automatic,
             preferredFrames: positionContext.map { $0.store.frames(for: $0.file) } ?? [:], layoutURL: positionContext?.layoutURL,
             requiringExplicitChoices: true)
         let plan = prepared.plan
         lastPlan = plan
         var transaction = state
+        transaction.sessionIsAvailable = sessionIsAvailable
         transaction.requestedTransfers = prepared.transfers
         if document.keepForNewWindows, hasFollowedPane(document), let layoutFileID {
             transaction.followingIntent = .start(layoutFileID: layoutFileID, document: document,
                                                 expandedPreferences: expandedPreferences(document))
         } else { transaction.followingIntent = .end }
         let isCurrent = { @MainActor [weak self] in
+            guard sessionIsAvailable() else { return false }
+            guard validating() else {
+                self?.precommitRefusal = .bindingChanged
+                return false
+            }
             return self?.current(token, desktop: desktop, generation: state.generation) == true
         }
         _ = try validateDestination(token, desktop: desktop, generation: state.generation)
@@ -1019,6 +1052,11 @@ private struct SavedLayoutUndoStructure: Equatable {
                 let name = state.windows.first(where: { $0.bundleIdentifier == bundle }).map(windowApplicationName) ?? applicationName(bundle)
                 result.issues.append(.init(.stillMoving, "\(name) was still moving. Try again when it is ready.", slotID: slot.id))
             }
+        }
+        silentRun = automatic && plan.isEmpty
+        if SavedLayoutApplyPolicy.leavesAutomaticLayoutAlone(automatic: automatic, plan: plan) {
+            silentRun = true
+            return result
         }
         guard await commitProgress(plan, desktop: desktop, state: transaction, isCurrent: isCurrent, result: &result) else { return result }
         rememberedAssignments[desktop] = (document, plan.assignments, positionContext?.layoutURL)
@@ -1096,6 +1134,9 @@ private struct SavedLayoutUndoStructure: Equatable {
                         result.issues.append(.init(.other, reason.message))
                         return false
                     }
+                    let detail = rolledBack ? " Nothing was moved." : " Use Undo to restore the previous layout."
+                    result.issues.append(.init(.other, reason.message + detail))
+                    return false
                 }
                 let note = rolledBack ? " Nothing was moved."
                     : " Some windows could not be restored. Use Undo or Repair Layout."
@@ -1179,7 +1220,8 @@ private struct SavedLayoutUndoStructure: Equatable {
     }
 
     private func publish(_ value: SavedLayoutApplyResult, document: SavedLayoutDocument, displayID: DisplayID,
-                         retryChoices: [String: WindowID]? = nil) {
+                         automatic: Bool = false, retryChoices: [String: WindowID]? = nil,
+                         deferAutomaticFeedback: Bool = false) {
         var result = value
         result.recordSlots(document.slots.map(\.id))
         for (id, outcome) in result.slots {
@@ -1194,22 +1236,41 @@ private struct SavedLayoutUndoStructure: Equatable {
             offersUndo: completedPlanPresentation?.alreadyArranged == true ? repeatPolicy.offersUndo : runCheckpoint,
             date: Date(), displayID: displayID, result: result, planPresentation: completedPlanPresentation,
             needsSaveForFollowing: layoutFileID == nil && document.keepForNewWindows, retryChoices: retryChoices)
-        publishCurrentRun()
+        lastRunAutomatic = automatic
+        deferredAutomaticRuns[displayID] = deferAutomaticFeedback && lastRun?.offersUndo == true ? lastRun : nil
+        if silentRun { planRevision &+= 1; message = lastRun?.presentation.message }
+        else { publishCurrentRun() }
     }
 
     /// Refresh every surface from the one result projection, preserving run identity and Undo.
     private func publishCurrentRun() {
         planRevision &+= 1
         guard let run = lastRun else { return }
+        message = run.presentation.message
+        presentResult(run, automatic: lastRunAutomatic)
+    }
+
+    /// Replay only completed, changed runs, without applying again or replacing Last run.
+    func presentDeferredAutomaticResults(whileAvailable sessionIsAvailable: () -> Bool) {
+        for display in deferredAutomaticRuns.keys.sorted(by: { $0.rawValue < $1.rawValue }) {
+            guard sessionIsAvailable() else { return }
+            guard var run = deferredAutomaticRuns.removeValue(forKey: display) else { continue }
+            run.offersUndo = run.offersUndo && canUndo(run)
+            presentResult(run, automatic: true)
+        }
+    }
+
+    func discardDeferredAutomaticResults() { deferredAutomaticRuns.removeAll() }
+
+    private func presentResult(_ run: SavedLayoutRun, automatic: Bool) {
         let presentation = run.presentation
-        message = presentation.message
         var detail = presentation.pillDetail
         if !presentation.summary.isEmpty, presentation.title.contains(presentation.summary), detail.hasPrefix(presentation.summary) {
             detail = String(detail.dropFirst(presentation.summary.count)).trimmingCharacters(in: .whitespacesAndNewlines)
         }
         feedback(.init(title: presentation.title, detail: (run.planPresentation?.alreadyArranged == true && !run.needsSaveForFollowing) || detail.isEmpty ? nil : detail,
                        kind: Self.pillKind(presentation.severity), displayID: run.displayID, isApply: true,
-                       offersUndo: run.offersUndo))
+                       offersUndo: run.offersUndo, automatic: automatic))
     }
 
     /// Apply describes recovery in plain words; JSON paths belong in the file editor.

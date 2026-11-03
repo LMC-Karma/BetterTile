@@ -21,7 +21,8 @@ tab order and floating windows. It does not save window titles, documents,
 display or desktop identities, or window identities. **Update from Current
 Desktop** updates the selected layout's shape and sizes. It matches new panes
 to the nearest old panes, using each old pane once, and keeps their preferences.
-An unmatched pane gets its current app as its preference. The name stays with the layout. If Update changes an Adaptive layout to another
+An unmatched pane gets its current app as its preference. The name and display
+binding stay with the layout. If Update changes an Adaptive layout to another
 mode, **Add extra windows as panes** is turned off.
 
 Use **Edit in Text Editor**, **Reveal in Finder**, or **Reload** to work with
@@ -189,7 +190,7 @@ A user-started Apply first uses windows on the target display. A window on
 another visible display can be reused only when it matches a preference, is
 unreserved, belongs to that display's current desktop, and is not in an
 Adaptive or Tabbed pane there. The source and destination are revalidated.
-The result pill offers **Details**
+Automatic Apply uses only the target display. The result pill offers **Details**
 and, when there is a change to undo, **Undo**. Undo restores the previous session
 and frames while the touched desktops remain visible and their sessions have
 not changed. A mode or preset change, Repair Layout, or a change to pane
@@ -223,3 +224,50 @@ or preset, splitting or merging, dragging a window out to float, Undo, edge
 transfer, or minimizing a window ends it. The menu bar panel shows **Following
 <layout>** and **Stop**. Following is held in memory and does not persist across
 relaunch.
+
+## Display bindings and Automatic Apply
+
+A layout can bind to one display in an exact display set. **Use Current
+Displays** creates the binding; **Apply when these displays connect**
+enables Automatic Apply. **Also after wake** includes wake with the same set.
+Bindings are local in `Display Triggers.json` and are not exported with layouts.
+Deleting a layout keeps its binding unless **Also remove this layout’s display
+binding** is selected. A missing layout is skipped silently on connect and shown
+as **Layout missing** with **Remove** in Settings. Restoring the file lets the
+binding apply on a later connection. An existing but unreadable file still
+reports a failure.
+A disabled binding looks like this:
+
+```jsonc
+{
+  "version": 1,
+  "triggers": [{
+    "layoutFile": "6F1C…-UUID.json",
+    "enabled": false,
+    "alsoAfterWake": false,
+    "displays": [
+      { "uuid": "37D8…", "vendor": 1552, "model": 41010, "serial": 0,
+        "builtIn": false, "name": "Studio Display",
+        "frame": { "x": 0, "y": 0, "width": 2560, "height": 1440 } }
+    ],
+    "target": 0
+  }]
+}
+```
+
+A missing or extra display is a different set. If identical displays cannot be
+told apart with confidence, BetterTile offers Apply instead of applying itself.
+
+Automatic Apply waits for the display and windows to settle. A drag or held
+mouse button postpones it; user input can stop it. It runs once per connection,
+and does not run merely because BetterTile starts. It uses the same preferences
+and window assignment, restricted to the target display's current desktop. If
+there is nothing to place or the layout is already arranged, it leaves the
+display alone and shows no result pill.
+A fullscreen, unavailable, or unsettled target can prevent Apply. The binding
+card records the last result in memory. Automatic Apply also stops if its binding
+is disabled, its match is no longer exact, or its target changes during the run.
+If windows have already moved, Undo remains available.
+No result pill appears while the screen is locked or your user session is
+inactive. If windows were left changed, the result appears once when you return.
+If previous frames could not be restored, it explains Undo or Repair Layout.

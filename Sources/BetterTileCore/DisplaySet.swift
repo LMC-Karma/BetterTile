@@ -4,7 +4,7 @@
 import Foundation
 
 /// What BetterTile remembers about one display. `name` and `frame` are for the picture in Settings only.
-/// Resolution, scale, and arrangement are not identity, so a resolution change keeps the display identity.
+/// Resolution, scale, and arrangement are not identity, so a resolution change keeps a binding.
 public struct DisplayFingerprint: Hashable, Sendable {
     public var uuid: String
     public var vendor: UInt32
@@ -72,7 +72,7 @@ public struct DisplaySetMatch: Equatable, Sendable {
 public enum DisplaySetMatcher {
     /// - A display matches by UUID, or by vendor, model, and a nonzero serial.
     /// - Displays that report no serial, or share one serial (and share a model), are told apart by left-to-right position.
-    ///   That is a guess, so the result is `.uncertain`.
+    ///   That is a guess, so the result is `.uncertain` and must not apply on its own.
     public static func match(stored: [DisplayFingerprint], live: [DisplayFingerprint]) -> DisplaySetMatch {
         guard !stored.isEmpty, stored.count == live.count else { return .none }
         var pairs: [Int: Int] = [:]

@@ -16,6 +16,8 @@ struct SavedLayoutSettings: View {
     @Bindable var editor: SavedLayoutEditor
     /// Nil only in previews and tests that edit layouts without a running model.
     var model: BetterTileModel? = nil
+    /// Nil in tests that do not bind displays. The display set card is then hidden.
+    var displayTriggers: DisplayTriggerStore? = nil
     /// Where the palette finds apps. Tests pass fixed lists.
     var paletteSource = SavedLayoutPaletteSource()
     var canvasInteraction = CanvasInteractionSource()
@@ -29,6 +31,7 @@ struct SavedLayoutSettings: View {
     @State var pagePlan = SavedLayoutPagePlan()
     var target: SavedLayoutTarget { model?.savedLayoutTarget ?? fallbackTarget }
     var readTargetDisplays: @MainActor () -> [LiveDisplay] = { DisplayFingerprintReader.current() }
+    @AppStorage("savedLayoutsBindingsExpanded") private var bindingsExpanded = true
     @State private var nameAction: NameAction?
     @State private var proposedName = ""
     var suppliedCreation: SavedLayoutCreation? = nil
@@ -45,6 +48,7 @@ struct SavedLayoutSettings: View {
     private var preferenceAppIDs: [String] {
         editor.document?.slots.flatMap { $0.prefer.compactMap { preference -> String? in if case let .app(id) = preference { id } else { nil } } } ?? []
     }
+    @State var removeBindingOnDelete = false
     @State private var showKeyboard = false
     @State private var shapeMenuAnchor = AnchoredMenu()
     @FocusState private var nameFocused: Bool
@@ -118,7 +122,8 @@ struct SavedLayoutSettings: View {
         pageContents
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Saved layout editor")
-        .onAppear { refreshTarget() }
+        // Read the bindings again each time the page opens, so a fixed or replaced file is noticed without relaunch.
+        .onAppear { displayTriggers?.load(); refreshTarget() }
         .onChange(of: model?.activeDisplayID) { refreshTarget() }
         .onChange(of: retainedDisplayID) { refreshTarget() }
         .onChange(of: target.selectionID) { refreshPagePlan() }
@@ -218,7 +223,15 @@ struct SavedLayoutSettings: View {
                             if !creation.isDraft, let file = editor.url?.lastPathComponent, let model {
                                 SavedLayoutAnywhereSettings(model: model, file: file)
                             }
-
+                            if !creation.isDraft, let displayTriggers {
+                                DisclosureGroup("Display binding & automatic apply", isExpanded: $bindingsExpanded) {
+                                    DisplayTriggerCard(editor: editor, store: displayTriggers, model: model, onApply: { display in
+                                        if let document = editor.document { apply(document, on: display) }
+                                    })
+                                    .padding(.top, 12)
+                                }
+                                .font(SettingsFont.body.weight(.semibold))
+                            }
                         }
                     }
                     if let section = groupsIntegration.section {
@@ -343,6 +356,9 @@ struct SavedLayoutSettings: View {
                         HStack(spacing: 6) {
                             Text(cardSummary(document, unsaved: url == nil || (selected && editor.isDirty), problem: url.flatMap { editor.entryProblems[$0] }))
                                 .font(SettingsFont.caption).foregroundStyle(.secondary).lineLimit(document == nil ? 3 : 1)
+                            if hasAutomaticApply(url) {
+                                Label("Auto", systemImage: "bolt.fill").font(SettingsFont.caption).foregroundStyle(Color.accentColor)
+                            }
                         }
                     }
                     Spacer(minLength: 0)
@@ -369,6 +385,10 @@ struct SavedLayoutSettings: View {
     }
 
     var isEditing: Bool { editing || creation.isDraft }
+    func hasAutomaticApply(_ url: URL?) -> Bool {
+        guard let url else { return false }
+        return displayTriggers?.trigger(for: url.lastPathComponent)?.enabled == true
+    }
 
     private func cardSummary(_ document: SavedLayoutDocument?, unsaved: Bool, problem: String? = nil) -> String {
         guard let document else { return problem ?? "Unreadable file" }
@@ -420,7 +440,7 @@ struct SavedLayoutSettings: View {
                 session?.refuseTarget(reason)
                 return
             }
-            // Keep the applier's inline error for a selected display that disappeared.
+            // Keep the applier's inline error for an explicit binding that disappeared.
             session?.apply(document: document, displayID: explicit ?? targetOverride?.displayID)
             return
         }
@@ -805,7 +825,7 @@ struct SavedLayoutSettings: View {
         if let rejected = editor.rejectedURL { Button("Reload Rejected File") { request(.reload(rejected)) } }
         Button("Reload Library List", action: reloadLibrary)
         Divider()
-        Button("Delete…", role: .destructive) { deleteConfirmation = true }
+        Button("Delete…", role: .destructive) { removeBindingOnDelete = false; deleteConfirmation = true }
             .disabled(editor.url == nil || editor.hasInvalidSource || isApplying)
     }
 
@@ -1093,18 +1113,22 @@ struct SavedLayoutSettings: View {
         VStack(alignment: .leading, spacing: 16) {
             Text("Delete this saved layout?").font(SettingsFont.headline)
             Text("Only this library file will be deleted. Exported and imported originals will be kept.")
-
+            if let file = editor.url?.lastPathComponent, displayTriggers?.trigger(for: file) != nil {
+                Toggle("Also remove this layout’s display binding", isOn: $removeBindingOnDelete).toggleStyle(.checkbox)
+            }
             HStack {
                 Spacer()
                 Button("Cancel") { deleteConfirmation = false }.keyboardShortcut(.cancelAction)
-                Button("Delete Library File", role: .destructive) { deleteSelectedLayout() }
+                Button("Delete Library File", role: .destructive) { deleteSelectedLayout(removeBinding: removeBindingOnDelete) }
             }
         }.font(SettingsFont.body).padding(24).frame(width: 430)
     }
-    func deleteSelectedLayout() {
-        guard !isApplying, editor.url != nil, editor.delete() else { return }
+    func deleteSelectedLayout(removeBinding: Bool = false) {
+        guard !isApplying, let file = editor.url?.lastPathComponent, editor.delete() else { return }
         session?.reset(); creation.finish(); editing = false; deleteConfirmation = false
-
+        if removeBinding, let displayTriggers, !displayTriggers.remove(file) {
+            editor.reportFailure("The layout was deleted, but its display binding was kept. " + (displayTriggers.message ?? "Reload display bindings and retry."))
+        }
         refreshTarget()
     }
 
@@ -1114,7 +1138,8 @@ struct SavedLayoutSettings: View {
                 Text("Apply and Save Current Layout work on the current desktop and need Accessibility access. Editing and export work without Accessibility access.")
                 Text("Window matching remembers each saved layout’s last placed positions in a separate local cache. It contains no window identities and is not exported. Delete a layout to remove its matching hints.")
                 Text("Saved locally: layout name, app bundle IDs, slot and group IDs, geometry, tab order and selection, and deliberate floats. No window titles, document paths, or native desktop identities are saved.")
-                Text("Files stay until you delete them. Import opens a draft and keeps the original. Export writes only to the destination you choose. Apply runs only when you choose it, and only on the current desktop.")
+                Text("Files stay until you delete them. Import opens a draft and keeps the original. Export writes only to the destination you choose. Apply runs when you choose it or through Automatic Apply from a display binding you enable, and only on the current desktop.")
+                Text("Display bindings are saved separately in Display Triggers.json on this Mac: each bound display’s UUID, vendor, model, serial number, and name. They are never exported or sent anywhere. Remove a binding to delete it.")
                 Text(editor.url?.path ?? "Unsaved draft — save before quitting BetterTile.")
                     .textSelection(.enabled)
             }.font(SettingsFont.caption).foregroundStyle(.secondary)

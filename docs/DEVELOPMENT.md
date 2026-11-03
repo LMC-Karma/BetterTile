@@ -498,6 +498,14 @@ virtual time at the requested checkpoint while observing task completion.
 before any replacement retry. These helpers do not spend the rest of their
 budget on unrelated policy timers.
 
+Runtime fixtures must also observe the state they are waiting for. An automatic
+Saved Layout attempt held for unlock intentionally stays non-idle. Join its
+scheduled forward tasks and observe the registered hold; do not spin a fixed
+number of executor turns waiting for idle. Direct user actions with no runtime
+task handle need an explicit outcome predicate. Advancing a ManualClock wakes
+continuations; use a bounded registration handshake before asserting that a
+resumed operation has reached its next wait.
+
 The app fake's `drive` and `join` helpers record a test failure and return nil
 when their virtual-time budget expires. `drive` cancels its operation task;
 `join` also cancels the input task it was waiting for. Neither awaits an

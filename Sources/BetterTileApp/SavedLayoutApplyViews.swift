@@ -15,9 +15,10 @@ import SwiftUI
     return "Display \(index)"
 }
 
-/// Shared policy for settled repeats.
+/// Shared policy for settled repeats and Automatic Apply.
 enum SavedLayoutApplyPolicy {
     static func settledRepeat(layout: String, arrangedSummary: String) -> (title: String, offersUndo: Bool) { (layout + " · already arranged", false) }
+    static func leavesAutomaticLayoutAlone(automatic: Bool, plan: SavedLayoutApplyPlan) -> Bool { automatic && plan.assignments.isEmpty }
 }
 
 /// Display-only explanation of the committed plan. No window titles or persisted runtime IDs.

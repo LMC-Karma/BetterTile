@@ -61,6 +61,24 @@ import Testing
         #expect(f.editor.document?.slots.map(\.prefer) == [[.app("org.example.Beta")]])
     }
 
+    @Test func updateKeepsURLNameAndBinding() throws {
+        let f = F(); defer { f.close() }
+        addWindows(f); let url = try save(f)
+        let triggers = DisplayTriggerStore.standard(files: f.editor.files)
+        #expect(triggers.bind(.init(layoutFile: url.lastPathComponent, enabled: true, displays: [F.a.fingerprint], target: 0)))
+        let before = try Data(contentsOf: triggers.url)
+        f.refresh(); f.page.pickDisplay(F.b.id)
+        f.page.request(.updateFromDesktop)
+        f.page.confirmUpdate()
+        #expect(f.editor.url == url)
+        #expect(f.editor.document?.name == "My layout")
+        #expect(f.editor.document?.slots.map(\.prefer) == [[.app("com.apple.Safari")]])
+        #expect(f.editor.entries == [url])
+        #expect(!f.editor.isDirty)
+        #expect(try Data(contentsOf: triggers.url) == before)
+        #expect(f.system.frameWriteCounts.isEmpty)
+    }
+
     @Test func updatePreservesDraftAndDiskOnExternalChange() throws {
         let f = F(); defer { f.close() }
         addWindows(f); let url = try save(f); f.refresh()
@@ -153,6 +171,41 @@ import Testing
         #expect(try Data(contentsOf: exported) == bytes)
     }
 
+    @Test func autoBadgeRequiresEnabledTriggerAndDeleteRemovesOnlyChosenBinding() throws {
+        let f = F(); defer { f.close() }
+        let first = try save(f)
+        #expect(f.editor.save(as: "Second")); let second = try #require(f.editor.url)
+        let store = DisplayTriggerStore.standard(files: f.editor.files)
+        #expect(store.bind(.init(layoutFile: first.lastPathComponent, enabled: true, displays: [F.a.fingerprint], target: 0)))
+        #expect(store.bind(.init(layoutFile: second.lastPathComponent, displays: [F.b.fingerprint], target: 0)))
+        let page = SavedLayoutSettings(editor: f.editor, model: f.model, displayTriggers: store)
+        #expect(page.hasAutomaticApply(first)); #expect(!page.hasAutomaticApply(second))
+        #expect(!page.removeBindingOnDelete)
+        #expect(f.editor.load(first)); page.deleteSelectedLayout(removeBinding: true)
+        #expect(store.trigger(for: first.lastPathComponent) == nil)
+        #expect(store.trigger(for: second.lastPathComponent) != nil)
+        #expect(f.editor.url == second)
+    }
+
+    @Test func deleteKeepsBindingByDefaultAndReportsExternalTriggerConflict() throws {
+        let f = F(); defer { f.close() }
+        let first = try save(f)
+        let store = DisplayTriggerStore.standard(files: f.editor.files)
+        #expect(store.bind(.init(layoutFile: first.lastPathComponent, displays: [F.a.fingerprint], target: 0)))
+        let page = SavedLayoutSettings(editor: f.editor, model: f.model, displayTriggers: store)
+        page.deleteSelectedLayout()
+        #expect(store.trigger(for: first.lastPathComponent) != nil)
+        f.editor.newLayout()
+        let second = try save(f)
+        #expect(store.bind(.init(layoutFile: second.lastPathComponent, displays: [F.b.fingerprint], target: 0)))
+        var outside = store.document; outside.remove(layoutFile: first.lastPathComponent)
+        let bytes = try outside.encoded(); try bytes.write(to: store.url)
+        page.deleteSelectedLayout(removeBinding: true)
+        #expect(try Data(contentsOf: store.url) == bytes)
+        #expect(f.editor.message?.contains("binding was kept") == true)
+        #expect(f.editor.message?.contains("changed outside") == true)
+    }
+
     @Test func cardUpdateAlsoChecksTheLastLibraryReadAndProtectsDirtyDrafts() throws {
         let f = F(); defer { f.close() }
         addWindows(f); let first = try save(f)
@@ -174,6 +227,36 @@ import Testing
         #expect(try Data(contentsOf: first) == bytes)
     }
 
+    private struct Version1TriggerDocument: Decodable {
+        let version: Int
+        let triggers: [DisplayTrigger]
+    }
+    @Test func newlyWrittenFilesUseVersion2AndConfigurationSchema12() throws {
+        let f = F(); defer { f.close() }
+        addWindows(f); let url = try save(f); f.refresh(); f.page.pickDisplay(F.b.id)
+        f.page.request(.updateFromDesktop)
+        f.page.confirmUpdate()
+        let bytes = try Data(contentsOf: url)
+        let old = try SavedLayoutValidator.decode(bytes)
+        #expect(old.version == 2 && old.name == "My layout")
+        #expect(old.slots.map(\.prefer) == [[.app("com.apple.Safari")]])
+        var object = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(old)) as? [String: Any])
+        #expect(Set(object.keys).isSubset(of: ["version", "name", "mode", "layout", "slots", "groups", "windows", "floats", "paneGap", "extraWindows", "keepForNewWindows"]))
+        object["futureOptional"] = true
+        let future = try JSONSerialization.data(withJSONObject: object)
+        #expect(try JSONDecoder().decode(SavedLayoutDocument.self, from: future).name == old.name)
+        // The file validator rejects unknown fields. The current format writes none.
+        #expect(throws: SavedLayoutValidationError.self) { try SavedLayoutValidator.decode(future) }
+        #expect(BetterTileConfiguration.currentSchemaVersion == 12)
+        let store = DisplayTriggerStore.standard(files: f.editor.files)
+        #expect(store.bind(.init(layoutFile: url.lastPathComponent, displays: [F.b.fingerprint], target: 0)))
+        let stored = try Data(contentsOf: store.url)
+        #expect(try DisplayTriggerDocument.decode(stored).trigger(for: url.lastPathComponent) != nil)
+        #expect(try JSONDecoder().decode(Version1TriggerDocument.self, from: stored).triggers.first?.layoutFile == url.lastPathComponent)
+        let triggerObject = try #require(JSONSerialization.jsonObject(with: stored) as? [String: Any])
+        #expect(Set(triggerObject.keys) == ["version", "triggers"])
+    }
+
     @Test func deleteCanSelectAnUnreadableNextCardWithoutRetainingTheDeletedDraft() throws {
         let f = F(); defer { f.close() }
         _ = try save(f)
@@ -188,6 +271,7 @@ import Testing
     }
 
 }
+
 
 extension SavedLayoutPageActionTests {
     @Test(arguments: [false, true]) func failedCardUpdateKeepsCompleteEditorState(writeFailure: Bool) throws {
