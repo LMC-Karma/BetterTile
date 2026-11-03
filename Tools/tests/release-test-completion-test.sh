@@ -22,7 +22,16 @@ cat > "$scratch/bin/xcodebuild" <<'STUB'
 #!/bin/bash
 touch "$RELEASE_TEST_BUILT"
 STUB
-chmod +x "$scratch/bin/swift" "$scratch/bin/xcodebuild"
+# The test runner precompiles Metal. Stub it here too, so this shell test
+# exercises completion checks without requiring macOS or a real compiler.
+cat > "$scratch/bin/xcrun" <<'STUB'
+#!/bin/bash
+while [[ $# -gt 0 ]]; do
+    if [[ $1 == -o ]]; then : > "$2"; fi
+    shift
+done
+STUB
+chmod +x "$scratch/bin/swift" "$scratch/bin/xcodebuild" "$scratch/bin/xcrun"
 export PATH="$scratch/bin:$PATH" RELEASE_TEST_BUILT="$scratch/built"
 export RELEASE_TEST_FIXTURE="$scratch/fixture"
 # Select the actual entrypoint block so a raw swift test regression is caught.

@@ -578,9 +578,9 @@ check shader compilation. Removing the CI cache only causes a fresh download.
 CI reuses SwiftPM's `.build` directory to reduce repeated dependency downloads
 and compilation in `unit-tests` (Debug). On the same runner type, a warm cache
 cut that job's build from 556.7 s to 439.7 s in one cold and one warm run.
-`release-package` does not cache its Release build: a warm cache saved only
+`app` does not cache its SwiftPM Release build: a warm cache saved only
 6 s there, which does not justify the storage and the save step. Xcode
-application jobs do not cache DerivedData; its benefit has not been measured.
+application builds do not cache DerivedData; its benefit has not been measured.
 The existing Metal Toolchain cache remains available to all macOS jobs.
 
 The cache uses GitHub's MIT-licensed `actions/cache/restore` and
@@ -591,8 +591,9 @@ trusted saves, cache isolation, and removal without build-command changes.
 Pin updates require review; this change does not independently audit the
 action's implementation or security history.
 
-Pull requests restore caches but never save them. Only pushes to `main` and
-manual workflow dispatches save; dispatch requires repository write access.
+Pull requests restore caches but never save them. Only pushes to `main`,
+scheduled runs on `main`, and manual workflow dispatches save. Dispatch requires
+repository write access.
 The Metal cache follows the same save rule. Cache access uses GitHub Actions'
 cache service and runner credentials with `contents: read`; it adds no token
 or repository write permission. Cached files contain dependency checkouts and
@@ -609,6 +610,47 @@ Cache misses run the existing commands from a clean build directory. Removing
 the cache restores the previous build behavior. Local workflow checks cover
 YAML syntax and the unchanged test timing rules; hosted cache behavior and
 build-time measurements are maintainer checks with `workflow_dispatch` runs.
+
+## CI runner recovery
+
+`.github/workflows/rerun-unacquired.yml` uses `workflow_run` for completed CI
+runs. It recovers GitHub runner-capacity failures without retrying tests that
+ran. Only failed runs at attempt 1 or 2 qualify, so there are at most two
+automatic reruns. GitHub's failed-jobs rerun also repeats dependent jobs such as
+the required `test` aggregate.
+
+The workflow has only `actions: write` (list jobs and rerun failed jobs) and
+`checks: read` (read runner-acquisition annotations). All unspecified token
+permissions are disabled. These permissions belong only to this Ubuntu
+workflow; CI retains `contents: read`. Authentication uses the ephemeral
+`GITHUB_TOKEN`, with no added secret, checkout, artifact download, cache access,
+third-party action, or execution of PR code. It reads job metadata and check
+annotations through GitHub's API and sends only the run ID for a rerun. No app
+user data or release credentials are involved.
+
+The decision checks jobs from the event's exact attempt. Excluding `test`,
+every failed or cancelled job must have an empty steps array, or only unstarted
+step placeholders and an annotation containing `not acquired by Runner`.
+Missing step data blocks recovery. Any step with execution evidence blocks
+recovery even if a runner annotation is also present. This preserves the
+no-retry rule for flaky tests. If only the aggregate failed, no rerun occurs.
+Before posting, it checks that the same failed attempt is still completed.
+Payload values enter through environment variables, with numeric ID and attempt
+validation. API paths stay within the repository; payload URLs are never fetched
+and annotations are parsed as data, never executed.
+
+Review this privileged trigger and its filters when changing it. Local checks
+replay the decision against recorded capacity failures and real test failures,
+and exercise refusal paths with fixtures. Token permissions, event delivery
+and the rerun POST remain post-merge checks; local verification never posts a
+rerun. Remove or disable `rerun-unacquired.yml` to stop recovery and remove its
+write permission. Normal CI checks continue without automatic recovery.
+
+The Ubuntu `guards` job installs `libxml2-utils` from Ubuntu's package archive
+for the portable appcast test's `xmllint` command. It is a CI-only system tool
+under libxml2's MIT license, with no shipped dependency or added token permission.
+The test uses fixture XML and a stubbed network command. Remove the install step
+and move the appcast test back to macOS to remove this build-time dependency.
 
 ## Saved Layout files
 

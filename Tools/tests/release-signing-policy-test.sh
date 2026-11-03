@@ -4,7 +4,7 @@ set -euo pipefail
 
 script_dir="$(cd "$(dirname "$0")" && pwd)"
 release_script="$script_dir/../release-beta.sh"
-scratch="$(mktemp -d /private/tmp/release-signing-policy-test.XXXXXXXX)"
+scratch="$(mktemp -d "${TMPDIR:-/tmp}/release-signing-policy-test.XXXXXXXX")"
 trap 'rm -rf "$scratch"' EXIT
 
 notes="$scratch/notes.md"
@@ -69,8 +69,8 @@ key_lookup="$(awk '/^[[:space:]]*public_key="\$\("\$generate_keys" -p 2>/ { foun
 # to stdout or stderr; sets key_status and key_output.
 run_key_lookup() {
     local stub key_work
-    stub="$(mktemp /private/tmp/bettertile-generate-keys.XXXXXX)"
-    key_work="$(mktemp -d /private/tmp/bettertile-key-test.XXXXXX)"
+    stub="$(mktemp "${TMPDIR:-/tmp}/bettertile-generate-keys.XXXXXX")"
+    key_work="$(mktemp -d "${TMPDIR:-/tmp}/bettertile-key-test.XXXXXX")"
     if [[ "$2" == stderr ]]; then
         printf '#!/bin/bash\necho "%s" >&2\nexit 1\n' "$1" > "$stub"
     else
