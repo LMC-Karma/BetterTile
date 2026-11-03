@@ -1,4 +1,5 @@
 import AppKit
+import BetterTileCore
 import Testing
 import BetterTileTestSupport
 
@@ -47,18 +48,38 @@ private enum SettingsUILease {
     static let shared = AsyncTestLease()
 }
 
-/// Drive layout until the observed UI condition holds. Count layout opportunities, not elapsed time:
-/// another main-actor test can stall this task without giving SwiftUI a chance to update.
+/// Drive layout until the observed UI condition holds. The budget counts layout opportunities, one per 20 ms step:
+/// another main-actor test can stall this task without giving SwiftUI a chance to update. Each poll lays out and
+/// draws `view`, though, and on a loaded machine a poll can take far longer than its step. The wait therefore also
+/// ends once `timeout` has passed in wall time and it has had at least `minimumSettingsUIPolls` opportunities, so a
+/// condition that never holds cannot keep the main actor busy, and the tests queued behind it, for many times its
+/// timeout.
 @MainActor func waitForSettingsUI(_ description: String, in view: NSView,
                                  timeout: Duration = .seconds(30),
                                  until ready: () -> Bool) async throws {
-    let settled = await waitFor(timeout: timeout) {
+    func poll() -> Bool {
         view.layoutSubtreeIfNeeded()
         view.displayIfNeeded()
         return ready()
     }
+    let step = Duration.milliseconds(20)
+    let wall = ContinuousClock() // real-time: bounds the wall time of a wait whose polls can be slow on a loaded machine
+    let deadline = wall.now.advanced(by: timeout)
+    var settled = false
+    var polls = 0
+    for _ in 0..<Int((timeout / step).rounded(.up)) {
+        polls += 1
+        if poll() { settled = true; break }
+        if polls >= minimumSettingsUIPolls, wall.now >= deadline { break }
+        try? await BetterTileClock.live.sleep(for: step)
+    }
+    if !settled { settled = poll() }
     try #require(settled, Comment(rawValue: "Exhausted layout opportunities waiting for \(description)"))
 }
+
+/// Opportunities a Settings UI wait always gets, even after its wall-clock deadline: a main-actor stall in another
+/// test must not use up a short wait before SwiftUI has had a chance to update.
+let minimumSettingsUIPolls = 5
 
 /// Settles `host`, then waits until `view`'s frame in the hosting view is the same over two layout passes, and
 /// returns it. A click aimed before the page's last layout can land where the control used to be.
@@ -95,6 +116,21 @@ private enum SettingsUILease {
         return passes == 2
     }
     #expect(passes == 2)
+}
+
+@Test(.appTestApplication, .settingsUI) @MainActor func settingsUIWaitEndsAtItsWallClockDeadlineWhenPollsAreSlow() async throws {
+    let view = NSView(frame: NSRect(x: 0, y: 0, width: 20, height: 20))
+    var polls = 0
+    // Ten 20 ms opportunities, but each poll takes 50 ms and the condition never holds.
+    await withKnownIssue("The condition never holds, so the wait reports that it exhausted its opportunities") {
+        try await waitForSettingsUI("a condition that never holds", in: view, timeout: .milliseconds(200)) {
+            polls += 1
+            Thread.sleep(forTimeInterval: 0.05) // real-time: makes each poll slower than its step, as on a loaded machine
+            return false
+        }
+    }
+    // Counting opportunities alone would use all ten. The wall-clock deadline ends the wait after the minimum.
+    #expect(polls >= minimumSettingsUIPolls && polls < 10, "polls: \(polls)")
 }
 
 /// A control that tracks a press in its own event loop until the button is released, as a switch can.
