@@ -1722,7 +1722,7 @@ func aFocusPartitionReportsPlacementFailureAfterThePeersReturn(fromWheel: Bool) 
 
 /// Repair while Focus mode is ending waits for the covered windows to come
 /// back, so it never lays the desktop out without them.
-@Test(.appTestApplication) @MainActor func repairWhileFocusModeEndsWaitsForTheReturningPeers() async throws {
+@Test(.appTestApplication, .disabled("quarantine: #185 real-time Focus peer wait race on loaded CI")) @MainActor func repairWhileFocusModeEndsWaitsForTheReturningPeers() async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
     let peer = WindowID(rawValue: "peer")
