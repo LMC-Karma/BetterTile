@@ -849,7 +849,7 @@ public struct LayoutWheelLiquidState: Equatable, Sendable {
             }
         case .repairBento: return .systemRed
         case .setMode: return .systemPink
-        case .chooseLayout: return .systemBrown
+        case .chooseLayout, .savedLayouts, .savedLayout, .moreSavedLayouts, .moreLayoutChoices: return .systemBrown
         case .customZone: return nil
         }
     }

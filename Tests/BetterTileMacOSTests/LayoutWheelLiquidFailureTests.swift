@@ -67,7 +67,12 @@ import Testing
 
     // MARK: An open wheel whose atlas cannot be rebuilt
 
-
+    private func catalogConfiguration(browsing: Bool = false) -> LayoutWheelConfiguration {
+        var configuration = LayoutWheelConfiguration(style: .grouped, levelCount: .two)
+        configuration.savedLayouts = [.init(file: "a.json", name: "Alpha"), .init(file: "b.json", name: "Beta")]
+        configuration.browsingSavedLayouts = browsing
+        return configuration
+    }
 
     /// An open wheel with a complete atlas, and a counter of how often it was lost.
     private func openWheel(_ content: LayoutWheelLiquidContent) throws
@@ -84,7 +89,19 @@ import Testing
 
     private final class Counter { var value = 0 }
 
-
+    @Test(.liquidPipeline) func failedCatalogRebuildClosesTheOpenWheel() throws {
+        let parent = LayoutWheelLiquidDefaults.content(configuration: catalogConfiguration())
+        let catalog = LayoutWheelLiquidDefaults.content(configuration: catalogConfiguration(browsing: true))
+        let (presenter, lost) = try openWheel(parent)
+        defer { presenter.close() }
+        presenter.makeAtlas = { _, _, _ in nil }
+        // The old atlas keys name positions, not commands. Its icons would
+        // stand for Saved Layouts the user did not choose.
+        presenter.update(catalog, state: .init())
+        #expect(lost.value == 1)
+        #expect(!presenter.isOpen && !presenter.isVisible)
+        #expect(presenter.atlasForTesting == nil)
+    }
 
     @Test(.liquidPipeline) func failedModeGlyphRebuildClosesTheOpenWheel() throws {
         let configuration = LayoutWheelConfiguration(style: .grouped, levelCount: .two)
@@ -96,9 +113,26 @@ import Testing
         #expect(!presenter.isOpen)
     }
 
+    @Test(.liquidPipeline) func failedAppearanceRebuildClosesTheOpenWheel() throws {
+        let (presenter, lost) = try openWheel(LayoutWheelLiquidDefaults.content(configuration: catalogConfiguration()))
+        defer { presenter.close() }
+        presenter.makeAtlas = { _, _, _ in nil }
+        presenter.dark = false
+        presenter.refreshAppearance()
+        #expect(lost.value == 1)
+        #expect(!presenter.isOpen && !presenter.isVisible)
+    }
 
-
-
+    @Test(.liquidPipeline) func availabilityChangeNeedsNoNewAtlas() throws {
+        let configuration = catalogConfiguration()
+        let (presenter, lost) = try openWheel(LayoutWheelLiquidDefaults.content(configuration: configuration))
+        defer { presenter.close() }
+        presenter.makeAtlas = { _, _, _ in nil }
+        // Availability changes only alpha, so the same icons stay correct.
+        presenter.update(LayoutWheelLiquidDefaults.content(configuration: configuration,
+                                                           unavailableCommands: [.windowAction(.leftHalf)]), state: .init())
+        #expect(lost.value == 0 && presenter.isOpen)
+    }
 
     // MARK: A single icon that cannot be drawn
 
@@ -160,9 +194,41 @@ import Testing
         #expect(presenter.atlasForTesting?.entries[.ringName(0, 0)] != nil)
     }
 
+    @Test(.liquidPipeline) func openWheelWithoutCaptionsStaysOpenWhenNoneAreDrawn() throws {
+        let configuration = catalogConfiguration()
+        let parent = LayoutWheelLiquidDefaults.content(configuration: configuration)
+        let catalog = LayoutWheelLiquidDefaults.content(configuration: catalogConfiguration(browsing: true))
+        try #require(MTLCreateSystemDefaultDevice() != nil)
+        let presenter = LayoutWheelLiquidPresenter(clock: WheelTestClock())
+        presenter.dark = true
+        presenter.names = .centre
+        presenter.imageFailure = isCaption
+        let lost = Counter()
+        presenter.onOpenWheelLost = { lost.value += 1 }
+        defer { presenter.close() }
+        #expect(presenter.open(parent, center: .init(x: -20_000, y: -20_000)))
+        presenter.update(catalog, state: .init())
+        #expect(lost.value == 0 && presenter.isOpen)
+    }
 
-
-
+    @Test(.liquidPipeline) func failedDestinationDensityRebuildKeepsTheOldAtlasUsable() throws {
+        let configuration = catalogConfiguration()
+        let (presenter, lost) = try openWheel(LayoutWheelLiquidDefaults.content(configuration: configuration))
+        defer { presenter.close() }
+        presenter.close()
+        // The wheel opens on a display with another density, and the rebuild fails.
+        let content = LayoutWheelLiquidDefaults.content(configuration: configuration)
+        let old = try #require(presenter.atlasForTesting)
+        presenter.destinationScaleForTesting = (presenter.metalLayerForTesting?.contentsScale ?? 2) + 1
+        presenter.makeAtlas = { _, _, _ in nil }
+        #expect(presenter.open(content, center: .init(x: -20_000, y: -20_000)))
+        #expect(presenter.atlasForTesting === old)
+        // Availability changes only alpha. The old icons still stand for every command.
+        presenter.update(LayoutWheelLiquidDefaults.content(configuration: configuration,
+                                                           unavailableCommands: [.windowAction(.leftHalf)]), state: .init())
+        #expect(lost.value == 0 && presenter.isOpen)
+        #expect(presenter.atlasForTesting === old)
+    }
 
     @Test func oneMissingIconUsesThePanelFallback() throws {
         try #require(MTLCreateSystemDefaultDevice() != nil)
@@ -184,6 +250,57 @@ import Testing
     }
 
     // MARK: The controller ends the gesture
+
+    @Test(.liquidPipeline) func lostWheelEndsTheGestureWithoutACommand() throws {
+        try #require(MTLCreateSystemDefaultDevice() != nil)
+        let renderer = LayoutWheelLiquidPresenter(clock: WheelTestClock())
+        renderer.dark = true
+        let adapter = LayoutWheelLiquidAdapter(renderer: renderer)
+        let configuration = catalogConfiguration()
+        let content = LayoutWheelLiquidDefaults.content(configuration: configuration)
+        let target = LayoutWheelTarget(windowID: .init(rawValue: "fixture"), displayID: .init(rawValue: "display"),
+                                      visibleFrame: .init(x: -30_000, y: -30_000, width: 1600, height: 1000))
+        var pointer = BTPoint(x: -29_200, y: -29_500)
+        var time = 0.0
+        let controller = LayoutWheelController(
+            configuration: .init(layoutWheel: .init(style: .grouped, levelCount: .two)), presenter: adapter,
+            now: { time }, pointerProvider: { pointer }, addGlobalMonitor: { _, _ in NSObject() },
+            addLocalMonitor: { _, _ in NSObject() }, removeMonitor: { _ in })
+        controller.savedLayouts = configuration.savedLayouts
+        controller.captureHandler = { _ in target }
+        controller.previewHandler = { _, _ in .ready(placements: []) }
+        var commits: [LayoutWheelCommand] = []
+        controller.commitHandler = { command, _ in commits.append(command) }
+        controller.start()
+        defer { controller.stop() }
+        controller.handleModifiers([.control, .option, .shift])
+        controller.handleActivationDeadline(generation: 1)
+        #expect(renderer.isOpen)
+        // The visible frame leaves room, so the wheel opens centred on the pointer.
+        let center = pointer
+        let sector = LayoutWheelSector.bottomLeft
+        let layout = try #require(content.submenuLayout)
+        let angle = content.layout.slotAngle(sector.rawValue)
+        let radius = content.layout.iconRadii.last!
+        func move(_ vector: BTPoint) {
+            pointer = .init(x: center.x + vector.x, y: center.y + vector.y)
+            controller.handlePointer(pointer)
+        }
+        move(.init(x: cos(angle) * radius, y: sin(angle) * radius))
+        time += 0.21
+        controller.handleFanDeadline()
+        var attempts = 0
+        renderer.makeAtlas = { _, _, _ in attempts += 1; return nil }
+        let count = configuration.group(at: sector).options.count
+        // The last option is the Saved Layouts entry; entering it swaps the children.
+        move(layout.positions(sector: sector, count: count)[count - 1])
+        #expect(attempts == 1)
+        #expect(!controller.isOpen && !renderer.isOpen)
+        controller.handleModifiers([])
+        #expect(commits.isEmpty)
+    }
+
+    // MARK: The embedded Settings preview
 
     @Test(.liquidPipeline, .timeLimit(.minutes(1))) func embeddedPreviewFallsBackWhenItsOpenRendererIsLost() async throws {
         try #require(MTLCreateSystemDefaultDevice() != nil)
@@ -292,7 +409,7 @@ import Testing
         controller.handleFanDeadline()
         var attempts = 0
         renderer.makeAtlas = { _, _, _ in attempts += 1; return nil }
-        // An appearance change needs a new atlas for the plain Grouped configuration.
+        // An appearance change needs a new atlas even without a Saved Layout catalog.
         renderer.dark = false
         renderer.refreshAppearance()
         #expect(attempts == 1)
@@ -300,4 +417,5 @@ import Testing
         controller.handleModifiers([])
         #expect(commits.isEmpty)
     }
+
 }

@@ -11,12 +11,12 @@ import Testing
         var csv = "tile,theme,scale,dx,dy\n"
         let destinations: [SettingsDestination] = [.general] + SettingsDestination.windowManagementDestinations + [.applicationRules]
         let legacy: [SettingsDestination: String] = [
-            .general: "gearshape", .windowLayout: "rectangle.3.group",
+            .general: "gearshape", .windowLayout: "rectangle.3.group", .savedLayouts: "rectangle.stack",
             .shortcuts: "keyboard", .snapZones: "rectangle.split.3x3", .menuBar: "line.3.horizontal",
             .layoutWheel: "circle.hexagonpath", .applicationRules: "app.badge.checkmark",
         ]
         let colors: [SettingsDestination: NSColor] = [.general: .systemGray, .windowLayout: baseline ? .controlAccentColor : .systemBlue,
-             .shortcuts: .systemGray, .snapZones: .systemTeal,
+            .savedLayouts: .systemIndigo, .shortcuts: .systemGray, .snapZones: .systemTeal,
             .menuBar: .systemOrange, .layoutWheel: .systemPurple, .applicationRules: .systemGreen]
         for dark in [false, true] {
             for scale in [1.0, 2.0] {

@@ -32,7 +32,8 @@ import Testing
     }
 
     @Test func everyGroupParentTakesItsOwnKindsColour() throws {
-        let configuration = LayoutWheelConfiguration(style: .grouped, levelCount: .two)
+        var configuration = LayoutWheelConfiguration(style: .grouped, levelCount: .two)
+        configuration.savedLayouts = [.init(file: "a.json", name: "Alpha")]
         let content = LayoutWheelLiquidContent(configuration: configuration, levelCount: .two)
         for sector in LayoutWheelSector.allCases {
             let group = configuration.group(at: sector)
@@ -45,16 +46,29 @@ import Testing
     }
 
     @Test func everyGroupChildTakesItsOwnKindsColour() throws {
-        let configuration = LayoutWheelConfiguration(style: .grouped, levelCount: .two)
-        let content = LayoutWheelLiquidContent(configuration: configuration, levelCount: .two)
-        for sector in LayoutWheelSector.allCases {
-            for (index, command) in configuration.group(at: sector).options.enumerated() {
-                let state = LayoutWheelLiquidState(selection: .init(ring: configuration.groupRing, sector: sector),
-                                                   openSector: sector, aimedOption: index)
-                let colour = try #require(tint(content, state), "\(sector) child \(index)")
-                #expect(colour == LayoutWheelLiquidPresenter.actionTint(command))
+        var configuration = LayoutWheelConfiguration(style: .grouped, levelCount: .two)
+        configuration.savedLayouts = [.init(file: "a.json", name: "Alpha"), .init(file: "b.json", name: "Beta")]
+        for browsing in [false, true] {
+            configuration.browsingSavedLayouts = browsing
+            let content = LayoutWheelLiquidContent(configuration: configuration, levelCount: .two)
+            for sector in LayoutWheelSector.allCases {
+                for (index, command) in configuration.group(at: sector).options.enumerated() {
+                    let state = LayoutWheelLiquidState(selection: .init(ring: configuration.groupRing, sector: sector),
+                                                       openSector: sector, aimedOption: index)
+                    let colour = try #require(tint(content, state), "\(sector) child \(index)")
+                    #expect(colour == LayoutWheelLiquidPresenter.actionTint(command))
+                }
             }
         }
+    }
+
+    @Test func theCatalogParentTakesTheSavedLayoutColour() throws {
+        var configuration = LayoutWheelConfiguration(style: .grouped, levelCount: .two)
+        configuration.savedLayouts = [.init(file: "a.json", name: "Alpha")]
+        configuration.browsingSavedLayouts = true
+        let content = LayoutWheelLiquidContent(configuration: configuration, levelCount: .two)
+        let state = LayoutWheelLiquidState(selection: .init(ring: configuration.groupRing, sector: .bottomLeft))
+        #expect(tint(content, state) == LayoutWheelLiquidPresenter.actionTint(.savedLayouts))
     }
 
     @Test func theOwnerOfAnOpenSubmenuTakesItsKindEvenWithoutASelection() throws {

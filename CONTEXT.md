@@ -184,4 +184,58 @@ the drag. Escape returns them to their frames from before the drag.
 A short message capsule that reports the outcome of a user action on its
 display, such as "Pane added" or "Couldn’t apply layout". A failure pill can
 add a second line that gives the reason. The pill dismisses itself after a
-moment.
+moment. A Saved Layout result pill offers **Details** and, when available, **Undo**.
+It stays while the pointer is over it.
+
+## Saved Layout
+
+A local file that describes a shape and ordered pane preferences for one
+current desktop of one display. It stores app bundle IDs, App Group references,
+relative geometry, mode and related layout settings, not window or desktop
+identities, titles or documents.
+
+## App Group
+
+A named, ordered list of apps shared by Saved Layouts. An App Group is flat and
+can be used as an item in a pane preference. Always include “App” in its name
+to distinguish it from a Layout Wheel group or a Tabbed tab group.
+
+## Pane preference
+
+An ordered list of apps and App Groups that a Saved Layout prefers for a pane.
+An empty list accepts any eligible window. Preferences do not require an app to
+be open.
+
+## Followed layout
+
+An applied Saved Layout whose preferences guide new windows into matching empty
+panes until following ends or the user selects **Stop**. It exists only in the
+current session.
+
+## Display set
+
+The exact group of connected displays, identified by each display's identity
+(UUID, or vendor, model, and serial number), not by resolution or position. A
+set with an extra or a missing display is a different set.
+
+## Apply
+
+The operation that arranges eligible open windows using a Saved Layout on one
+display's current desktop. It never launches an app or requests a window.
+User-started Apply can reuse a preference-matching window from another visible
+display when it is unreserved and belongs to no pane there. Apply never takes a window from another desktop.
+Escape cancels through the final input checkpoint before session commit,
+including input queued during frame writes. Once final validation and session
+commit begin, a later Escape does not cancel that Apply. Cancellation restores
+the original frames while the desktop owner remains valid.
+Undo restores the previous session and frames while the touched desktops remain
+visible and their session structures have not changed. Mode, preset, Repair
+Layout, and pane membership changes expire Undo. A repeat that reports “already
+arranged” and changes nothing keeps the original Undo checkpoint. A later Apply
+that writes frames or changes a session replaces its previous checkpoint.
+
+Saved Layouts can also Apply from the menu bar panel, grouped Layout Wheel or a
+Mac-local per-layout shortcut. These use the focused managed window's screen,
+else a display remembered from real focus or a user action in this app session.
+They refuse when no such target exists. Settings keeps its independent On:
+picker. The routes share Apply and Undo.

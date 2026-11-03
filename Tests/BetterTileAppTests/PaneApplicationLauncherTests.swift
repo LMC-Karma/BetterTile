@@ -2780,7 +2780,39 @@ func paneLauncherFallbackCompletesArrivedWindowClick(snapping: Bool, gesture: St
     #expect(stamp <= after + 0.001, "The tap clock is ahead of the model clock: \(stamp) > \(after)")
 }
 
+@Test(.appTestApplication, arguments: [false, true], [false, true]) @MainActor
+func paneRequestArrivalSurvivesOtherSavedLayoutApplies(previousApply: Bool, cancelled: Bool) async throws {
+    let (system, model, launcher, right) = try await paneLauncherFixture(native: true)
+    defer { model.shutdown() }
+    try await waitForWindowEventsToDrain(model)
+    _ = PaneApplicationTestClock(model)
+    let applier = try #require(model.savedLayoutApplier)
+    applier.observesKeyboard = false
+    applier.feedback = { _ in }
+    applier.application = { _ in paneTestApp }
 
+
+    let document = SavedLayoutDocument(name: "Other owner", mode: .tabbed, layout: .group("g"),
+        slots: [.init(id: "slot", bundleID: paneTestApp.id)],
+        groups: [.init(id: "g", slots: ["slot"], selected: "slot")])
+    if previousApply { _ = await applier.apply(document) }
+    let pane = model.activeTabbedState?.panes.first?.id ?? right
+    system.newWindowRequestResult = .requested
+    launcher.instances[paneTestApp.id] = [.init(processIdentifier: 701, launchDate: nil)]
+    let request = try #require(model.beginPaneApplicationPicker(paneID: pane, on: system.mainDisplay.id))
+    model.choosePaneApplication(paneTestApp, requestID: request.id)
+    await waitForPaneMenuRequest(model)
+    if cancelled { model.cancelPaneApplicationRequest() }
+    let window = WindowSnapshot(id: .init(rawValue: "reserved-for-plus"), processIdentifier: 701,
+        bundleIdentifier: paneTestApp.id, frame: .init(x: 80, y: 150, width: 320, height: 240), displayID: system.mainDisplay.id)
+    system.windows.append(window)
+    let space = system.desktopObservation!.currentSpace(on: system.mainDisplay.id)!
+    system.desktopObservation?.windowMembership[window.id] = [space]
+    _ = await applier.apply(document)
+    #expect(system.windows.first { $0.id == window.id }?.frame == window.frame)
+    // Saved Layout Apply may fill the slot from another eligible app. The reserved arrival stays untouched.
+    #expect(system.frameWriteCounts[window.id, default: 0] == 0)
+}
 
 @Test(.appTestApplication, .timeLimit(.minutes(5))) @MainActor
 func paneLauncherPollingUsesInjectedClock() async throws {

@@ -84,7 +84,7 @@ import Testing
         var oneX: [String: [(Double, Double)]] = [:]
         let baseline = ProcessInfo.processInfo.environment["BT_TILE_BASELINE"] == "1"
         let legacySymbols: [SettingsDestination: String] = [
-            .general: "gearshape", .windowLayout: "rectangle.3.group",
+            .general: "gearshape", .windowLayout: "rectangle.3.group", .savedLayouts: "rectangle.stack",
             .shortcuts: "keyboard", .snapZones: "rectangle.split.3x3", .menuBar: "line.3.horizontal",
             .layoutWheel: "circle.hexagonpath", .applicationRules: "app.badge.checkmark",
         ]
@@ -152,7 +152,7 @@ import Testing
 @Test(.appTestApplication) func sidebarTilesUseFixedSystemColorsAndApprovedArtwork() {
     let expected: [SettingsDestination: Color] = [
         .general: SettingsColor.gray, .windowLayout: SettingsColor.blue,
-        .shortcuts: SettingsColor.gray,
+        .savedLayouts: SettingsColor.indigo, .shortcuts: SettingsColor.gray,
         .snapZones: SettingsColor.teal, .menuBar: SettingsColor.orange,
         .layoutWheel: SettingsColor.purple, .applicationRules: SettingsColor.green,
     ]
@@ -179,9 +179,9 @@ struct LegacySidebarTile: View {
     }
 }
 
-@Test(.appTestApplication) func shortcutsFollowsWindowLayoutInTheSidebar() throws {
+@Test(.appTestApplication) func shortcutsFollowsSavedLayoutsInTheSidebar() throws {
     let pages = SettingsDestination.windowManagementDestinations
     let shortcuts = try #require(pages.firstIndex(of: .shortcuts))
-    #expect(pages[shortcuts - 1] == .windowLayout)
+    #expect(pages[shortcuts - 1] == .savedLayouts)
     #expect(pages[shortcuts + 1] == .snapZones)
 }

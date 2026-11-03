@@ -91,6 +91,7 @@ public struct AmbientLayoutReconciler: Sendable {
         observation: AmbientLayoutObservation
     ) -> AmbientLayoutTransition {
         var session = original
+        if observation.requestsRelayout { session.savedLayoutPaneGap = nil }
         let before = session.bentoState
         let frames = Dictionary(uniqueKeysWithValues: observation.windows.map { ($0.id, $0.frame) })
         let workAreaChanged = [session.lastWorkArea, session.pendingWorkArea].contains { area in
@@ -117,7 +118,8 @@ public struct AmbientLayoutReconciler: Sendable {
                         windows: observation.windows,
                         focusedWindowID: session.focusedWindowID
                     ),
-                    paneGap: paneGap,
+                    // A Saved Layout owns its gap until the user changes the geometry setting.
+                    paneGap: session.paneGap(configured: paneGap),
                     confirmedGone: observation.confirmedGone,
                     minimized: observation.confirmedMinimized,
                     knownSpaceWindowIDs: observation.knownSpaceWindowIDs,
@@ -157,6 +159,7 @@ public struct AmbientLayoutReconciler: Sendable {
             eligibleWindowCount: eligibleWindowCount
         )
         let singlePlacement: Placement? = if becameSingleWindow,
+           session.followed == nil,
            !session.automaticWritesSuspended,
            let window = observation.windows.first,
            let singleWindowPlacement,
@@ -171,7 +174,7 @@ public struct AmbientLayoutReconciler: Sendable {
         }
         let settleWorkArea = session.mode == .bento
             && session.isBentoInitialized
-            && observation.windows.count > 1
+            && (observation.windows.count > 1 || (session.followed != nil && !observation.windows.isEmpty))
             && shouldApply
             && workAreaChanged
             ? observation.display.visibleFrame
@@ -189,7 +192,7 @@ public struct AmbientLayoutReconciler: Sendable {
         }
         if session.mode == .bento,
            session.isBentoInitialized,
-           observation.windows.count > 1,
+           observation.windows.count > 1 || (session.followed != nil && !observation.windows.isEmpty),
            shouldApply {
             let placements = BentoLayoutEngine(state: session.bentoState).placements(
                 for: observation.windows,
@@ -212,7 +215,7 @@ public struct AmbientLayoutReconciler: Sendable {
         previousWindowIDs: Set<WindowID>
     ) -> Bool {
         guard windows.count > 1 else { return false }
-        let metrics = BentoLayoutMetrics(paneGap: paneGap)
+        let metrics = BentoLayoutMetrics(paneGap: session.paneGap(configured: paneGap))
         // Initialization must return a complete runtime session. Deferring
         // this metadata to the next sweep breaks the fixed point and makes
         // planner-created overflow indistinguishable from a user's float.
@@ -227,7 +230,7 @@ public struct AmbientLayoutReconciler: Sendable {
             let transition = BentoSessionReducer().reconcile(
                 session: session,
                 observation: BentoObservation(bounds: display.visibleFrame, windows: windows),
-                paneGap: paneGap,
+                paneGap: session.paneGap(configured: paneGap),
                 newWindowSide: newWindowSide,
                 balancesNewWindows: balancesNewWindows
             )

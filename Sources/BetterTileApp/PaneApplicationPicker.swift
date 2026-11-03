@@ -567,3 +567,117 @@ struct PaneApplicationPicker: View {
 @MainActor private final class PanePickerHostingView: NSHostingView<PaneApplicationPicker> {
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 }
+
+/// Saved Layouts only. Selecting rows appends preferences and keeps the picker open.
+/// The Tabbed '+' entry above continues to use PaneApplicationPicker unchanged.
+struct PanePreferenceApplicationPicker: View {
+    var groups: AppGroupsDocument
+    var selected: [AppPreference]
+    var installedApplications: @MainActor () async -> [ApplicationChoice]
+    var runningApplications: () -> [ApplicationChoice]
+    var recentApplications: RecentApplications = .shared
+    var onAdd: (AppPreference) -> Void
+    var onDone: () -> Void
+    @State private var search = ""
+    @State private var installed: [ApplicationChoice] = []
+    @State private var running: [ApplicationChoice] = []
+    @State private var recent: [ApplicationChoice] = []
+    @State private var highlight: String?
+    @FocusState private var searchFocused: Bool
+
+    private var sections: [ApplicationPickerModel.Section] {
+        Self.appSections(installed: installed, running: running, recent: recent, selected: selected, search: search)
+    }
+    static func appSections(installed: [ApplicationChoice], running: [ApplicationChoice], recent: [ApplicationChoice],
+                            selected: [AppPreference], search: String) -> [ApplicationPickerModel.Section] {
+        let excluded = Set(selected.compactMap { preference -> String? in
+            if case let .app(id) = preference { return id }; return nil
+        })
+        return ApplicationPickerModel.sections(installed: installed, running: running, recent: recent,
+            excluding: excluded, search: search)
+    }
+    private var visibleGroups: [AppGroup] {
+        groups.groups.filter { group in
+            (search.isEmpty || group.name.localizedStandardContains(search)) && !selected.contains(.group(group.name))
+        }
+    }
+    private var choices: [(id: String, preference: AppPreference)] {
+        visibleGroups.map { ("group:" + $0.name, .group($0.name)) }
+            + sections.flatMap(\.rows).map { ($0.id, .app($0.application.id)) }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            TextField("Search groups and apps", text: $search).textFieldStyle(.roundedBorder).focused($searchFocused)
+                .onKeyPress(.downArrow) { move(1); return .handled }
+                .onKeyPress(.upArrow) { move(-1); return .handled }
+                .onSubmit { chooseHighlighted() }
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 4) {
+                        if !visibleGroups.isEmpty {
+                            Text("App Groups").font(SettingsFont.caption).foregroundStyle(.secondary)
+                            ForEach(visibleGroups, id: \.name) { group in
+                                row(id: "group:" + group.name, preference: .group(group.name),
+                                    presentation: .init(.group(group.name), applications: [:], groups: groups))
+                            }
+                            Divider().padding(.vertical, 4)
+                        }
+                        ForEach(sections) { section in
+                            Text(section.kind.rawValue).font(SettingsFont.caption).foregroundStyle(.secondary)
+                            ForEach(section.rows) { item in
+                                row(id: item.id, preference: .app(item.application.id),
+                                    presentation: .init(.app(item.application.id), applications: [item.application.id: item.application], groups: groups),
+                                    caption: item.caption)
+                            }
+                        }
+                        if choices.isEmpty { Text("No matching preferences").foregroundStyle(.secondary).padding(.vertical, 16) }
+                    }
+                }
+                .onChange(of: highlight) { if let highlight { proxy.scrollTo(highlight, anchor: .center) } }
+            }
+            HStack {
+                Text("Choose preferences in order.").font(SettingsFont.caption).foregroundStyle(.secondary)
+                Spacer()
+                Button("Done", action: onDone)
+            }
+        }
+        .padding(12).frame(width: 320, height: 420).font(SettingsFont.body)
+        .onChange(of: choices.map(\.id)) { _, ids in if !ids.contains(highlight ?? "no-selection") { highlight = ids.first } }
+        .task {
+            running = runningApplications()
+            recent = ApplicationPickerModel.recentChoices(recentApplications.bundleIdentifiers, known: running, lookup: { _ in nil })
+            installed = await installedApplications()
+            recent = ApplicationPickerModel.recentChoices(recentApplications.bundleIdentifiers, known: running + installed, lookup: { _ in nil })
+            highlight = choices.first?.id; searchFocused = true
+        }
+    }
+    private func move(_ offset: Int) {
+        let ids = choices.map(\.id)
+        guard !ids.isEmpty else { return }
+        let current = highlight.flatMap { ids.firstIndex(of: $0) } ?? (offset > 0 ? -1 : ids.count)
+        highlight = ids[min(ids.count - 1, max(0, current + offset))]
+    }
+    private func chooseHighlighted() {
+        if let choice = choices.first(where: { $0.id == highlight }) { add(choice.preference) }
+    }
+    private func add(_ preference: AppPreference) {
+        if case let .app(id) = preference { recentApplications.record(id) }
+        onAdd(preference)
+    }
+    private func row(id: String, preference: AppPreference, presentation: SavedLayoutPreferencePresentation, caption: String? = nil) -> some View {
+        Button { add(preference) } label: {
+            HStack(spacing: 8) {
+                SavedLayoutPreferenceIcon(presentation: presentation)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(presentation.title).lineLimit(1)
+                    if let caption { Text(caption).font(SettingsFont.caption).foregroundStyle(.secondary).lineLimit(1) }
+                }
+                Spacer()
+            }
+            .padding(.horizontal, 6).frame(minHeight: 36).contentShape(Rectangle())
+            .background(highlight == id ? Color.accentColor.opacity(0.15) : .clear,
+                in: RoundedRectangle.settings(SettingsRadius.control))
+        }.buttonStyle(.plain).id(id)
+    }
+}

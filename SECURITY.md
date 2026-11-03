@@ -60,6 +60,18 @@ There is no upload, rotation, or automatic purge. Enable it only for bounded
 local trials; inspect the file before sharing it. Fake-system tests cover the
 disabled path and phase ordering. Live capture and timing remain manual checks.
 
+Debug builds also emit `SavedLayoutTiming` debug messages to the local unified
+log. They contain an operation counter, ordinal slot number, fixed phase name,
+and elapsed milliseconds. They contain no app, layout, document, window, process,
+or desktop identity. They add no reads or uploads. Release builds do not emit
+these messages. Timing phases are total, inventory, plan and commit. Fixed
+failure phase codes identify request validity, coordinator final ownership,
+model post-placement and final validation, session commit, and settlement.
+Settlement codes distinguish interruption, supersession, read failure,
+ownership, overlap, unsettled frames, and retry failure or degradation.
+Failure messages contain no system error text and use zero elapsed milliseconds.
+Regression tests use the same callback with a fake clock.
+
 ## Private window observations
 
 [Design issue #32](https://github.com/LMC-Karma/BetterTile/issues/32) approves
@@ -560,6 +572,179 @@ Xcode's license, not an additional runtime package or app permission.
 The setup fails if download or import fails. Shell regression tests cover cache
 misses, reuse, invalid exports and command failures; Debug and Release builds
 check shader compilation. Removing the CI cache only causes a fresh download.
+
+## Saved Layout files
+
+Only layout format version 2 is accepted. An unsupported layout remains in the
+library as an unreadable entry with a reason. Reading, Import and Apply refuse it without rewriting, renaming or deleting the file.
+
+`App Groups.json` is a local file beside the Saved Layouts folder. It stores
+group names, app display names and bundle IDs only. BetterTile never sends it
+anywhere. Layout exports may embed the App Groups they use in an export-only
+`appGroups` member. This adds no permission,
+network use or dependency.
+
+The Saved Layouts editor lets users prepare and exchange a layout without
+capturing or controlling live windows. This is the user benefit for storing
+app assignments. The editor stores local declarative files;
+it adds no executable configuration, network endpoint, runtime dependency,
+permission, private API, or application launch.
+
+A library file stores a versioned `SavedLayoutDocument`: layout name, mode
+(`manual`, `bento`, or `tabbed-v1`), pane gap, slot IDs, app bundle IDs and
+App Group names in ordered `prefer` lists, `extraWindows`, `keepForNewWindows`,
+relative rectangles, split axes and ratios, Tabbed tab groups, selected slot,
+and deliberate floats. BetterTile writes header comments on save. Application
+names, installation URLs, native display or Space IDs, process IDs, window IDs,
+window titles, document paths, and AX handles are not copied into library files.
+The shared application picker supplies bundle IDs. Resolved app names and
+installation URLs are used for presentation only and stay in memory.
+
+Library files live in `~/Library/Application Support/BetterTile/Saved Layouts/`.
+Debug uses the separate `BetterTile Debug/Saved Layouts/` directory. Files
+remain until the user deletes them. There is no telemetry, upload, retention
+service, or automatic purge. Import reads the file the user selects and keeps
+it unchanged; Save As creates a library copy. Export writes JSON only to a
+user-selected destination through a native save panel. Exported files remain
+at that destination until the user removes them. They can disclose the user's
+chosen layout name and desired apps if the user shares them. Applying a Saved Layout arranges eligible open windows without opening apps.
+
+Reviewable rationale: keep storage in the app layer and reuse the Core
+validator for every editor/import/export boundary. This avoids a second
+configuration schema and keeps OS identities out of persistence. Generated
+file names separate names from paths. Existing files are atomically replaced
+only after a byte comparison under native file coordination. External edits
+block save/delete; invalid input and write failures retain the source file
+and last valid draft. This protects normal coordinated external editing;
+the editor does not watch files. The app-owned action catalog observes changes
+with public file-system sources, as described below. The library uses regular
+files, rejects symlink input, and enforces a 1 MiB input limit before decoding.
+The most recent rejected input within that limit remains in memory until
+another invalid read replaces it or the editor session ends; oversized or unreadable input stays on disk without an unbounded read.
+No recovery copies or source paths are persisted elsewhere.
+
+During a Saved Layouts canvas drag, BetterTile installs a temporary local
+`keyDown` monitor. It runs only during the drag, reads only the key code to
+detect Escape, and consumes Escape. BetterTile removes it when the drag ends.
+It retains nothing and adds no permission. During the drag BetterTile also reads
+the system-wide time since the last key-down using
+`CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: .keyDown)`.
+It reads no key identity and does not retain the timing value.
+
+
+Automated editor tests cover app-assignment payload minimization, validation,
+geometry and state transitions, byte conflicts, invalid reload/import,
+read/write/export failure preservation, and library ownership. Offscreen native
+Settings tests use isolated temporary storage and no live Accessibility.
+[Saved Layouts](docs/SAVED_LAYOUTS.md) documents the UI and exact schema.
+
+### Saved Layouts Apply, Undo, and Save Current Layout
+
+Apply arranges eligible open windows on one display's current desktop. It never
+launches an app or requests a window. User-started Apply can reuse a window
+matching a preference from another visible display when it is unreserved and
+belongs to no Adaptive or Tabbed pane there. Exact current-desktop membership
+and both displays are revalidated.
+No Apply takes a window from another desktop. Ignore rules exclude windows.
+Apply refuses a target that is fullscreen, uses Stage Manager, is settling, or
+waits for Repair Layout.
+
+Window writes go through `WindowCoordinator` and revalidate participants.
+Owner-guarded batches revalidate before each window's frame write and each
+rollback write, including required and hidden Tabbed windows. If ownership
+changes after a partial write, restoration stops and the result requires
+Repair Layout on the affected desktop. Unguarded batches retain concurrent
+application writes.
+Escape cancels through the final input checkpoint before session commit,
+including input queued during frame writes. Once final validation and session
+commit begin, a later Escape does not cancel that Apply. Cancellation restores
+the pre-Apply frames while the same desktop owner remains valid. At the
+checkpoint, other queued input also runs through AppKit's normal dispatch.
+Apply revalidates the desktop owner and coordinator mutation generations before
+committing the session. This uses no additional event tap, permission or
+keyboard history.
+Undo restores the previous session and frames only while the touched desktops
+remain visible and their mode, preset and pane membership have not changed.
+A transferred window's source desktop is included in this check. A repeat Apply
+that writes no frame and changes no session keeps the original Undo checkpoint.
+Save Current Layout and Update
+from Current Desktop read eligible windows and save relative geometry and app
+preferences, without titles, document paths, display, desktop or window identity.
+Following a layout is in memory only.
+
+During Apply, local and global AppKit key-down monitors detect Escape. They read
+only the key code, retain nothing, and are removed when Apply ends. The **Choose
+Window** list displays live window titles. Those titles stay in memory and are
+never saved, exported, or logged. Snapshots from `knownWindows()` used to report
+windows on another desktop also stay in memory only.
+
+### Saved Layout position hints
+
+User-started Apply optionally stores `Saved Layout Positions.cache` in the
+Saved Layouts support folder (separate Debug directory as above). It holds
+normalized verified post-commit frames, keyed only by library file name and
+slot ID. It holds no native window ID, PID, window title, document content or
+additional bundle data. It does not monitor later user adjustments. This local
+cache improves repeated same-app window matching after relaunch. It is not
+uploaded, exported or added to configuration schema 12 or layout files.
+
+Reads reject symlinks, nonregular files, invalid paths, versions and rectangles,
+and are bounded to 256 KiB. Invalid or oversized caches are ignored and preserved;
+cache failures never block Apply. Coordinated atomic writes prune missing layouts
+and evict older library entries to remain within 256 layouts and the byte bound.
+Delete removes that layout's hints. Update retains only unchanged slot-ID/app
+pairs. Undo conditionally restores prior hints only after a successful restore,
+and cannot overwrite a newer write. Failed and rolled-back placements save nothing.
+Removing this optional cache resets the hints. Preview reads the same eligible
+plan as Apply without starting requests, creating reservations or writing windows.
+
+### Saved Layout actions on this Mac
+
+`Layout Actions.json` sits outside the Saved Layouts folder. It is optional and keyed by the library file name. Each entry
+holds one keyboard shortcut (virtual key code, modifiers and its key label) and
+two booleans: show in the menu bar panel and show in the Layout Wheel. It holds
+no window titles, IDs, PIDs, frames, app bundle data, display identity or history.
+The benefit is Apply without opening Settings. Nothing is uploaded or included
+in a layout import/export, and configuration schema 12 is unchanged. Older
+builds ignore the separate file.
+
+Reads reject links, nonregular files, unsupported versions, more than 1,024
+entries and files over 256 KiB, with a bounded read. Invalid data is ignored and
+kept; writing remains blocked until it loads successfully. Coordinated writes
+compare the last-read bytes before atomically replacing the file. A layout's
+entry is removed when a readable library confirms its file was deleted or
+renamed. A missing folder retains the settings until it can be listed again;
+absent layouts cannot register actions. Renaming the layout's displayed name or
+updating the same file retains its settings.
+
+While the runtime action catalog is active, public Dispatch file-system sources
+watch at most two directory roots: the library and its surviving parent. One
+public FSEvents stream observes file changes below the configured parent once
+that parent exists. The roots and stream count do not grow with the library.
+No layout file descriptor is kept open. In-place edits, atomic replacements and
+folder recreation trigger coalesced metadata checks, including with Settings
+closed. Dropped events and root changes force a rescan and reattach the stream.
+
+The stream starts at current events; it does not request filesystem event history.
+Unrelated sibling paths are discarded after filtering and are not logged or
+saved; their contents are not read. File identity and modification/change
+timestamps remain in memory. Missing parents are followed with directory sources
+rather than a recursive stream over unrelated Application Support folders.
+There is no repeating timer. Stop, shutdown and destruction cancel pending work,
+release the stream and its callback context, and close directory descriptors.
+If the stream cannot start, directory additions/removals remain observed and
+Reload retries full file observation. Existing bounded reads and file validation
+still apply. This uses only local metadata and declarative layout data; it adds
+no permission, third-party dependency, networking, persisted user data or AX
+inventory.
+The existing Carbon hot-key monitor registers local layout shortcuts alongside
+window-action shortcuts. Recording suspends dispatch. Conflicts with BetterTile
+bindings and known system combinations are refused; Carbon registration failure
+is shown inline. Public APIs do not expose every user-defined system/other-app
+shortcut, so Settings explains that limit. Input is not recorded or uploaded.
+The target-display provenance is in memory for this session only: a managed
+focus observation or a BetterTile action can remember a display; reconciliation,
+launch initialization and display refresh cannot. Disconnect clears it.
 
 ## App icon customization
 

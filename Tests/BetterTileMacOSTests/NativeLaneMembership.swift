@@ -29,6 +29,7 @@ enum NativeLaneMembership {
             "addRuleStepTwoCancelKeyDismissesExactlyOnce",
             "galleryEscapeClosesOnlyGalleryThenHidesAutoHideBars",
             "keyWindowSetupSurvivesDeactivationDuringOrdering",
+            "livePlaceholderRefreshesWithEffectiveAppearance",
             "liveReopenedPanelAcceptsTypedKeys",
             "liveReturnConfirmsRuleThroughTheResponderChain",
             "liveSecondEscapeClosesAfterClearingQuery",

@@ -18,10 +18,11 @@ import Testing
         case panePickerWindows = "pane-picker-windows", panePickerScrolled = "pane-picker-scrolled"
         case layoutGallery = "layout-gallery"
         case statusOpening = "status-opening", statusTimedOut = "status-timed-out", statusClick = "status-click"
-        case emptyPane = "empty-pane", ruleSheet = "rule-sheet"
+        case emptyPane = "empty-pane", ruleSheet = "rule-sheet", floatSheet = "float-sheet"
+        case savedLayoutsPalette = "saved-layouts-palette"
         var testDescription: String { rawValue }
         /// Settings pages are opaque; popup content above glass must stay clear.
-        var isOverMaterial: Bool { true }
+        var isOverMaterial: Bool { self != .savedLayoutsPalette }
     }
 
     enum Mode: String, CaseIterable, CustomTestStringConvertible {
@@ -118,7 +119,7 @@ import Testing
             return NSRect(x: rect.minX, y: scene.root.isFlipped ? rect.minY : scene.root.bounds.height - rect.maxY,
                           width: rect.width, height: rect.height)
         }
-        if [.panePicker, .panePickerSearch, .panePickerWindows, .panePickerScrolled, .ruleSheet].contains(variant.surface) {
+        if [.panePicker, .panePickerSearch, .panePickerWindows, .panePickerScrolled, .ruleSheet, .floatSheet].contains(variant.surface) {
             #expect(GlassPixels(content).inkedRowShare >= 0.2, "\(variant.name): capture lost picker content")
         }
         if variant.surface.isOverMaterial {
@@ -133,7 +134,19 @@ import Testing
             let text = try #require(GlassPixels.resolved(Color(nsColor: .textBackgroundColor), over: .windowBackgroundColor, in: appearance))
             let page = try #require(GlassPixels.resolved(.clear, over: .windowBackgroundColor, in: appearance))
             if !GlassPixels.close(text, card), !GlassPixels.close(text, page) {
-                #expect(GlassPixels.rows(content, matching: text).isEmpty, "\(variant.name): text background rows")
+                // The canvas panes above the palette are filled with the text background on purpose, so they read
+                // as windows. Only the palette must not paint it: leave out the rows the canvas stage covers.
+                let scale = Double(content.pixelsHigh) / scene.root.bounds.height
+                let stageRows = panelViews(scene.root, SavedLayoutStageAnchorView.self).map { anchor in
+                    let rect = anchor.convert(anchor.bounds, to: scene.root)
+                    let top = scene.root.isFlipped ? rect.minY : scene.root.bounds.height - rect.maxY
+                    return Int((top * scale).rounded(.down))..<Int(((top + rect.height) * scale).rounded(.up))
+                }
+                #expect(stageRows.count == 1, "\(variant.name): \(stageRows.count) canvas stages")
+                let paletteTextRows = GlassPixels.rows(content, matching: text).filter { row in
+                    !stageRows.contains { $0.contains(row) }
+                }
+                #expect(paletteTextRows.isEmpty, "\(variant.name): \(paletteTextRows.count) text background rows outside the canvas stage, first at \(paletteTextRows.first ?? -1) px")
             }
         }
         if variant.mode == .reduceTransparency, scene.hasGlass {
@@ -386,14 +399,16 @@ import Testing
             return try await pane(.awaitingClick(windows), tabs: true)
         case .emptyPane:
             return try await pane(nil, tabs: false)
-        case .ruleSheet:
+        case .ruleSheet, .floatSheet:
             let model = makeModel(system: FakeAppWindowSystem())
             let makePicker: (Set<String>, @escaping (ApplicationChoice) -> Void) -> ApplicationPicker = { exclusions, choose in
                 ApplicationPicker(exclusions: exclusions, installedApplications: { installed }, runningApplications: { [mail] },
                                   recentApplications: recent, resolveApplication: { _ in nil }, onChoose: choose)
             }
-            let host = swiftUI(AddApplicationRuleSheet(makePicker: makePicker, model: model, onAdd: { _ in }))
-            let size = NSSize(width: 420, height: 520)
+            let host = surface == .ruleSheet
+                ? swiftUI(AddApplicationRuleSheet(makePicker: makePicker, model: model, onAdd: { _ in }))
+                : swiftUI(SavedLayoutApplicationSheet(makePicker: makePicker, title: "Add Floating Window", onChoose: { _ in }, onCancel: {}))
+            let size = surface == .ruleSheet ? NSSize(width: 420, height: 520) : NSSize(width: 430, height: 480)
             let parent = hosted(NSView(), size: NSSize(width: 980, height: 700))
             let controller = SettingsPickerController(content: host, size: size, appearance: .init(), onDismiss: {})
             controller.present(over: parent)
@@ -406,6 +421,23 @@ import Testing
             try await ready(root, showing: "Search apps", rowsDrawn: 0.2, in: host) { root.bounds.size == size }
             return GlassPopupScene(root: root, window: parent, keepAlive: [controller], surfaceInset: 12,
                                    reduceTransparency: reduceTransparency, onClose: { model.shutdown() })
+        case .savedLayoutsPalette:
+            let editor = SavedLayoutEditor(files: SavedLayoutFiles(directory: FileManager.default.temporaryDirectory
+                .appending(path: "GlassPopupPalette-" + UUID().uuidString)))
+            editor.newLayout()
+            let document = try #require(editor.displayDocument)
+            let host = swiftUI(SavedLayoutCanvasView(editor: editor, document: document, overlayAppearance: .init(),
+                                                     paletteSource: .init(installed: { installed }, running: { [mail, notes] }, recent: recent))
+                .padding(16).frame(width: 760).fixedSize(horizontal: false, vertical: true)
+                .background(Color(nsColor: .windowBackgroundColor)))
+            let window = hosted(host, size: NSSize(width: 760, height: 900))
+            try await ready(host, rowsDrawn: 0.2)
+            let fitted = host.fittingSize
+            window.setContentSize(NSSize(width: 760, height: max(300, fitted.height)))
+            host.frame = NSRect(origin: .zero, size: window.contentLayoutRect.size)
+            try await ready(host, rowsDrawn: 0.2) { host.frame.height == max(300, fitted.height) }
+            return GlassPopupScene(root: host, window: window, keepAlive: [editor], surfaceInset: 0,
+                                   reduceTransparency: reduceTransparency, pageBackground: .windowBackgroundColor)
         }
     }
 

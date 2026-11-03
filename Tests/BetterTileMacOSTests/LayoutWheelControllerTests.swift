@@ -984,3 +984,44 @@ func groupedWheelReservesFanBoundsWithoutMovingItsCenter(scale: Double) throws {
         #expect(LayoutWheelGroup.at(.bottomRight).glyph(currentMode: presentation.currentMode) == .mode(mode))
     }
 }
+
+@Test(.macOSTestApplication) @MainActor func savedWheelCategoryAndMoreReleaseNeverCommitAPlacement() {
+    func navigate(_ harness: Harness) {
+        for _ in 0..<6 { harness.controller.handleKey(.nextSector) } // Top through Choose Layout.
+        harness.controller.handleKey(.outerRing)
+        for _ in 0..<6 { harness.controller.handleKey(.nextSector) } // Five presets, then Saved Layouts.
+    }
+    for more in [false, true] {
+        let harness = Harness(configuration: .init(layoutWheel: .init(style: .grouped, levelCount: .one)))
+        defer { harness.controller.stop() }
+        harness.controller.savedLayouts = (0..<9).map { .init(file: "\($0).json", name: "Layout \($0)") }
+        var navigation: [LayoutWheelCommand] = []
+        harness.controller.savedLayoutNavigationHandler = { command, _ in navigation.append(command) }
+        harness.activate(); navigate(harness)
+        if more {
+            harness.controller.handleKey(.outerRing) // Enter the category without releasing.
+            for _ in 0..<6 { harness.controller.handleKey(.nextSector) }
+        }
+        harness.release()
+        #expect(harness.box.commits.isEmpty)
+        #expect(navigation == [more ? .moreSavedLayouts : .savedLayouts])
+    }
+}
+
+@Test(.macOSTestApplication) @MainActor func savedWheelCustomizedOverflowReleaseOnlyNavigates() {
+    var wheel = LayoutWheelConfiguration(style: .grouped)
+    wheel.setGroup(.init(quickAction: nil,
+        options: [.maximize, .center, .leftHalf, .rightHalf, .topHalf, .bottomHalf].map { .windowAction($0) }), at: .bottomLeft)
+    let harness = Harness(configuration: .init(layoutWheel: wheel))
+    defer { harness.controller.stop() }
+    harness.controller.savedLayouts = [.init(file: "one.json", name: "One")]
+    var navigation: [LayoutWheelCommand] = []
+    harness.controller.savedLayoutNavigationHandler = { command, _ in navigation.append(command) }
+    harness.activate()
+    for _ in 0..<6 { harness.controller.handleKey(.nextSector) }
+    harness.controller.handleKey(.outerRing)
+    for _ in 0..<5 { harness.controller.handleKey(.nextSector) }
+    harness.release()
+    #expect(harness.box.commits.isEmpty)
+    #expect(navigation == [.moreLayoutChoices])
+}

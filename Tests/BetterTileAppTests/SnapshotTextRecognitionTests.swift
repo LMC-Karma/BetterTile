@@ -42,19 +42,19 @@ import Testing
             catch { outcome = "unexpected error: \(error)" }
         }
         defer { release.signal(); task.cancel() }
-        try #require(await waitFor(timeout: .seconds(2)) {
+        try await waitForSavedLayoutState("Native work and its deadline must start", timeout: .seconds(2)) {
             state.withLock { $0.started } && clock.pendingSleepCount == 1
-        }, "Native work and its deadline must start")
+        }
         if cancel { task.cancel() } else { clock.advance(by: .seconds(1)) }
-        try #require(await waitFor(timeout: .seconds(2)) {
+        try await waitForSavedLayoutState("The caller must finish while native work remains blocked", timeout: .seconds(2)) {
             outcome != nil && clock.pendingSleepCount == 0
-        }, "The caller must finish while native work remains blocked")
+        }
         #expect(outcome == (cancel ? "cancelled" : "timed out"))
         #expect(!state.withLock { $0.finished })
         release.signal()
-        try #require(await waitFor(timeout: .seconds(2)) {
+        try await waitForSavedLayoutState("Late native work must release its resources", timeout: .seconds(2)) {
             state.withLock { $0.finished }
-        }, "Late native work must release its resources")
+        }
         #expect(outcome == (cancel ? "cancelled" : "timed out"))
     }
 }

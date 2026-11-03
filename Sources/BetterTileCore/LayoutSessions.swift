@@ -31,6 +31,7 @@ public struct LayoutSession: Hashable, Sendable {
     public var displayID: DisplayID
     public var nativeSpaceID: NativeSpaceID?
     public var mode: LayoutMode
+    public var followed: FollowedLayout? = nil
     /// Tab membership saved beside the Bento tree. See `tabbedState`.
     private var storedTabbedState: TabbedLayoutState?
     /// Tabbed runs on this session's Bento tree. Reading follows any change a
@@ -49,6 +50,9 @@ public struct LayoutSession: Hashable, Sendable {
     public var tabbedHasEntryBaseline = false
     public var tabbedBaselineFrames: [WindowID: BTRect] = [:]
     public var bentoState: BentoLayoutState
+    /// A Saved Layout keeps its gap until an explicit gap change or Repair Layout.
+    public var savedLayoutPaneGap: Double? = nil
+    public func paneGap(configured: Double) -> Double { savedLayoutPaneGap ?? configured }
     public var windowIDs: Set<WindowID>
     public var focusedWindowID: WindowID?
     public var bentoInsertionOrder: [WindowID]
@@ -126,6 +130,8 @@ public struct LayoutSession: Hashable, Sendable {
     /// visible membership instead of carrying exclusions and reinsertion
     /// guesses forward into the canonical planner.
     public mutating func prepareForRepair() {
+        endFollowing()
+        savedLayoutPaneGap = nil
         resumeAutomaticWrites()
         excludedFocusWindowIDs.removeAll()
         automaticallyFloatingWindowIDs.removeAll()
@@ -158,7 +164,17 @@ public struct LayoutSession: Hashable, Sendable {
         })
     }
 
+    public mutating func endFollowing() {
+        followed = nil
+    }
+
+    /// All store writes that can change structure pass through this check.
+    public mutating func reconcileFollowing() {
+        followed = followed?.reconciled(with: self)
+    }
+
     mutating func advanceRevision() {
+        reconcileFollowing()
         revision &+= 1
     }
 
@@ -423,6 +439,7 @@ public struct LayoutSessionStore: Sendable {
                         || (closed && session.tabbedBaselineFrames[windowID] != nil)
                 else { continue }
                 session.tabbedState?.removeClosedWindow(windowID)
+                if !closed { session.endFollowing() }
                 if closed { session.tabbedBaselineFrames.removeValue(forKey: windowID) }
                 session.windowIDs.remove(windowID)
                 session.advanceRevision()

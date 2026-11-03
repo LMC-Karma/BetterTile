@@ -44,6 +44,11 @@ public enum LayoutWheelCommand: Codable, Hashable, Sendable {
     case repairBento
     case setMode(LayoutMode)
     case chooseLayout(TabbedPreset)
+    // Generated only in the runtime catalog. These never enter saved assignments.
+    case savedLayouts
+    case savedLayout(file: String, name: String)
+    case moreSavedLayouts
+    case moreLayoutChoices
 }
 
 public struct LayoutWheelConfiguration: Codable, Hashable, Sendable {
@@ -55,6 +60,9 @@ public struct LayoutWheelConfiguration: Codable, Hashable, Sendable {
         .control, .option, .shift, .command,
     ]
 
+    /// Session-only catalog: excluded from CodingKeys and from layout/configuration exports.
+    public var savedLayouts: [LayoutWheelSavedLayout] = []
+    public var browsingSavedLayouts = false
     public var style: LayoutWheelStyle
     public var isEnabled: Bool
     public var levelCount: LayoutWheelLevelCount
@@ -196,7 +204,19 @@ public struct LayoutWheelConfiguration: Codable, Hashable, Sendable {
     public var groupRing: LayoutWheelRing { levelCount == .one ? .inner : .outer }
 
     public func group(at sector: LayoutWheelSector) -> LayoutWheelGroupContents {
-        (groupOverrides[sector.rawValue] ?? .defaults(at: sector)).normalized()
+        var group = (groupOverrides[sector.rawValue] ?? .defaults(at: sector)).normalized()
+        guard sector == .bottomLeft, !savedLayouts.isEmpty else { return group }
+        if browsingSavedLayouts {
+            let limit = savedLayouts.count > 6 ? 5 : 6
+            group.quickAction = nil
+            group.options = savedLayouts.prefix(limit).map { .savedLayout(file: $0.file, name: $0.name) }
+            if savedLayouts.count > 6 { group.options.append(.moreSavedLayouts) }
+        } else {
+            // Six customized children remain reachable in the overflow chooser; none is lost.
+            if group.options.count == 6 { group.options = Array(group.options.prefix(4)) + [.moreLayoutChoices] }
+            group.options.append(.savedLayouts)
+        }
+        return group
     }
 
     public mutating func setGroup(_ contents: LayoutWheelGroupContents, at sector: LayoutWheelSector) {
@@ -263,7 +283,7 @@ private extension Array where Element == LayoutWheelCommand? {
     func removingCustomZoneAssignments() -> Self {
         map { command in
             switch command {
-            case .customZone: return nil
+            case .customZone, .savedLayouts, .savedLayout, .moreSavedLayouts, .moreLayoutChoices: return nil
             default: break
             }
             return command
@@ -502,4 +522,11 @@ public enum LayoutWheelKeyboard {
             return LayoutWheelSelection(ring: .inner, sector: current.sector)
         }
     }
+}
+
+/// File identity and display name only, supplied by the app's local library.
+public struct LayoutWheelSavedLayout: Hashable, Sendable {
+    public var file: String
+    public var name: String
+    public init(file: String, name: String) { self.file = file; self.name = name }
 }

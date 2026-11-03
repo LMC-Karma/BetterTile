@@ -241,6 +241,7 @@ private struct PreviewGrip: NSViewRepresentable {
 }
 
 /// BetterTile's divider grip, drawn by the renderer that the Window Layout preview and the live overlay use.
+/// For views outside the overlay, such as the Saved Layouts canvas. It ignores input; the caller owns the gesture.
 public struct DividerGrip: View {
     /// Width of a vertical grip, or height of a horizontal one. The glass lens needs this much room.
     public static let crossExtent = 24.0

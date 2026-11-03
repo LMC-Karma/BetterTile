@@ -433,9 +433,9 @@ import Testing
     }
 
     /// User commands that bypass `perform` and `performTabbed` also end the late focus wait: a tab-strip
-    /// intent, the pane's add-application button, opening the
+    /// intent, the pane's add-application button, a Saved Layout (shortcut, chooser or wheel), opening the
     /// Layout Wheel, a window or tab drag, and a divider or linked-resize gesture.
-    @Test(arguments: ["tabStrip", "addApplication", "layoutWheelOpened", "bentoDrag", "windowGesture"])
+    @Test(arguments: ["tabStrip", "addApplication", "savedLayout", "layoutWheelOpened", "bentoDrag", "windowGesture"])
     func userCommandsCancelTheLateFocusWait(action: String) async throws {
         let system = FakeAppWindowSystem()
         // The tab strip exists only with Tabbed chrome. The offscreen factories keep it off the user's screens.
@@ -478,6 +478,7 @@ import Testing
         case "addApplication":
             let pane = try #require(model.activeTabbedState?.panes.first?.id)
             overlay.onAddApplication?(pane, NSView(), .zero)
+        case "savedLayout": _ = model.applySavedLayoutAction("missing.json")
         case "layoutWheelOpened": model.layoutWheelDidOpen()
         case "bentoDrag":
             if model.beginBentoDrag(displayID: system.mainDisplay.id, sourceID: target) {
