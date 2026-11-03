@@ -576,11 +576,12 @@ check shader compilation. Removing the CI cache only causes a fresh download.
 ## CI build cache
 
 CI reuses SwiftPM's `.build` directory to reduce repeated dependency downloads
-and compilation in `unit-tests` (Debug) and `release-package` (Release).
-Xcode application jobs do not cache DerivedData; its benefit has not been
-measured. The existing Metal Toolchain cache remains available to all macOS
-jobs. Build-time savings remain subject to measurements on the same runner
-configuration and workload.
+and compilation in `unit-tests` (Debug). On the same runner type, a warm cache
+cut that job's build from 556.7 s to 439.7 s in one cold and one warm run.
+`release-package` does not cache its Release build: a warm cache saved only
+6 s there, which does not justify the storage and the save step. Xcode
+application jobs do not cache DerivedData; its benefit has not been measured.
+The existing Metal Toolchain cache remains available to all macOS jobs.
 
 The cache uses GitHub's MIT-licensed `actions/cache/restore` and
 `actions/cache/save`, pinned to `0057852bfaa89a56745cba8c7296529d2fc39830`
@@ -600,14 +601,14 @@ are not secret storage and can be read by pull requests under GitHub's cache
 access rules. Nothing is added to the shipped app.
 
 SwiftPM keys include runner OS and architecture, the full `xcodebuild -version`
-fingerprint, job, configuration, `Package.resolved`, `Package.swift`, and source
+fingerprint, job, configuration (Debug), `Package.resolved`, `Package.swift`, and source
 commit. Fallbacks omit only the source commit, so changed dependencies or
 toolchains cannot restore old build products. Every build and test command
 still runs, including on exact cache hits; SwiftPM checks changed sources.
 Cache misses run the existing commands from a clean build directory. Removing
 the cache restores the previous build behavior. Local workflow checks cover
 YAML syntax and the unchanged test timing rules; hosted cache behavior and
-build-time measurements remain maintainer checks.
+build-time measurements are maintainer checks with `workflow_dispatch` runs.
 
 ## Saved Layout files
 
