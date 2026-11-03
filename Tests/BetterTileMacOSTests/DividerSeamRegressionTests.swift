@@ -72,7 +72,7 @@ import Testing
     var visible: Bool { controller.visibleHandleView?.window?.isVisible == true }
 }
 
-@Test @MainActor func exposedSeamKeepsActiveHandleAboveFloatingWindow() throws {
+@Test(.macOSTestApplication, .macOSUI) @MainActor func exposedSeamKeepsActiveHandleAboveFloatingWindow() throws {
     let fixture = try SeamFixture()
     defer { fixture.controller.hideAndCancel() }
     let floating = fixture.rect(380, 300, 300, 200)
@@ -90,7 +90,7 @@ import Testing
     #expect(fixture.system.frameWriteCounts.isEmpty)
 }
 
-@Test(arguments: [SplitAxis.vertical, .horizontal]) @MainActor
+@Test(.macOSTestApplication, .macOSUI, arguments: [SplitAxis.vertical, .horizontal]) @MainActor
 func exposedSeamHoverDoesNotOrderHandleOverCover(axis: SplitAxis) throws {
     let fixture = try SeamFixture(axis: axis)
     defer { fixture.controller.hideAndCancel() }
@@ -103,7 +103,7 @@ func exposedSeamHoverDoesNotOrderHandleOverCover(axis: SplitAxis) throws {
     #expect(fixture.system.onScreenStackLabels == Set(fixture.system.windows.map(\.id)))
 }
 
-@Test @MainActor func exposedSeamJunctionArmsAndTrackStopBeforeCover() throws {
+@Test(.macOSTestApplication, .macOSUI) @MainActor func exposedSeamJunctionArmsAndTrackStopBeforeCover() throws {
     let fixture = try SeamFixture(junction: true)
     defer { fixture.controller.hideAndCancel() }
     let cover = fixture.rect(490, 100, 200, 275)
@@ -122,7 +122,7 @@ func exposedSeamHoverDoesNotOrderHandleOverCover(axis: SplitAxis) throws {
     #expect(!fixture.visible)
 }
 
-@Test @MainActor func exposedSeamCacheExpiresAndRefreshInvalidatesIt() throws {
+@Test(.macOSTestApplication, .macOSUI) @MainActor func exposedSeamCacheExpiresAndRefreshInvalidatesIt() throws {
     let fixture = try SeamFixture()
     defer { fixture.controller.hideAndCancel() }
     for sample in 0..<20 {
@@ -140,7 +140,7 @@ func exposedSeamHoverDoesNotOrderHandleOverCover(axis: SplitAxis) throws {
     #expect(!fixture.visible)
 }
 
-@Test @MainActor func exposedSeamActivationInvalidatesVisibleHandle() async throws {
+@Test(.macOSTestApplication, .macOSUI) @MainActor func exposedSeamActivationInvalidatesVisibleHandle() async throws {
     let fixture = try SeamFixture()
     defer { fixture.controller.hideAndCancel() }
     fixture.controller.mouseLocation = { fixture.appKit(fixture.point(500, 200)) }
@@ -156,7 +156,7 @@ func exposedSeamHoverDoesNotOrderHandleOverCover(axis: SplitAxis) throws {
     fixture.controller.mouseLocation = { NSEvent.mouseLocation }
 }
 
-@Test @MainActor func exposedSeamDragReadsOnceAndRecomputesMovingSeamWithoutHiding() throws {
+@Test(.macOSTestApplication, .macOSUI) @MainActor func exposedSeamDragReadsOnceAndRecomputesMovingSeamWithoutHiding() throws {
     let fixture = try SeamFixture()
     defer { fixture.controller.hideAndCancel() }
     let cover = fixture.rect(540, 300, 200, 200)
@@ -183,7 +183,7 @@ func exposedSeamHoverDoesNotOrderHandleOverCover(axis: SplitAxis) throws {
     #expect(fixture.system.frameWriteCounts.isEmpty)
 }
 
-@Test @MainActor func exposedSeamDragRetainsMinimumKnobWhenNoRoomRemains() throws {
+@Test(.macOSTestApplication, .macOSUI) @MainActor func exposedSeamDragRetainsMinimumKnobWhenNoRoomRemains() throws {
     let fixture = try SeamFixture()
     defer { fixture.controller.hideAndCancel() }
     fixture.setCovers([fixture.rect(540, 0, 300, 390), fixture.rect(540, 400, 300, 400)])
@@ -197,7 +197,7 @@ func exposedSeamHoverDoesNotOrderHandleOverCover(axis: SplitAxis) throws {
     #expect(fixture.system.onScreenStackReads == 1)
 }
 
-@Test(arguments: [false, true]) @MainActor func exposedSeamNilStackKeepsLegacyCoverage(noProvider: Bool) throws {
+@Test(.macOSTestApplication, .macOSUI, arguments: [false, true]) @MainActor func exposedSeamNilStackKeepsLegacyCoverage(noProvider: Bool) throws {
     let fixture = try SeamFixture()
     defer { fixture.controller.hideAndCancel() }
     if noProvider { fixture.controller.stackProvider = nil } else { fixture.system.onScreenStackEntries = nil }
@@ -208,7 +208,7 @@ func exposedSeamHoverDoesNotOrderHandleOverCover(axis: SplitAxis) throws {
     #expect(fixture.visible)
 }
 
-@Test @MainActor func exposedSeamJunctionInputFrameAvoidsDiagonalCover() throws {
+@Test(.macOSTestApplication, .macOSUI) @MainActor func exposedSeamJunctionInputFrameAvoidsDiagonalCover() throws {
     let fixture = try SeamFixture(junction: true)
     defer { fixture.controller.hideAndCancel() }
     let cover = fixture.rect(520, 420, 100, 100)
@@ -226,7 +226,7 @@ func exposedSeamHoverDoesNotOrderHandleOverCover(axis: SplitAxis) throws {
 
 /// Captured from a live desktop: the Dock keeps a display-sized window at
 /// layer 20, above the handle's floating level, in front of every app window.
-@Test @MainActor func displaySizedDockWindowDoesNotHideHandles() throws {
+@Test(.macOSTestApplication, .macOSUI) @MainActor func displaySizedDockWindowDoesNotHideHandles() throws {
     let fixture = try SeamFixture()
     defer { fixture.controller.hideAndCancel() }
     fixture.system.onScreenStackEntries = [

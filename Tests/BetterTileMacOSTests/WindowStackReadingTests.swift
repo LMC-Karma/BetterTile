@@ -3,7 +3,7 @@ import BetterTileCore
 import Testing
 @testable import BetterTileMacOS
 
-@Test func seamStackParserReadsOnlyGeometryAndExactIdentity() throws {
+@Test(.macOSTestApplication) func seamStackParserReadsOnlyGeometryAndExactIdentity() throws {
     var identities = WindowIdentityRegistry()
     let id = identities.resolve(application: ApplicationLaunchInstance(processIdentifier: 42, generation: 1),
                                 accessibilityHash: 5, exactWindowID: 123)
@@ -32,7 +32,7 @@ import Testing
     #expect(SeamStackRecord.parse(value: { mismatch[$0] }, identities: identities, labeling: [id]) == nil)
 }
 
-@Test(arguments: [false, true], [false, true]) @MainActor
+@Test(.macOSTestApplication, arguments: [false, true], [false, true]) @MainActor
 func seamUnavailableExactIdentitiesRetainLegacyHoverCoverage(partialIdentity: Bool, covered: Bool) throws {
     _ = NSApplication.shared
     var identities = WindowIdentityRegistry()
@@ -71,7 +71,7 @@ func seamUnavailableExactIdentitiesRetainLegacyHoverCoverage(partialIdentity: Bo
     #expect((controller.visibleHandleView?.window?.isVisible == true) == !covered)
 }
 
-@Test func seamIncompleteStackUsesFallbackInsteadOfUnlabelledLayoutWindows() throws {
+@Test(.macOSTestApplication) func seamIncompleteStackUsesFallbackInsteadOfUnlabelledLayoutWindows() throws {
     var identities = WindowIdentityRegistry()
     let owner = ApplicationLaunchInstance(processIdentifier: 42, generation: 1)
     let first = identities.resolve(application: owner, accessibilityHash: 1, exactWindowID: 101)

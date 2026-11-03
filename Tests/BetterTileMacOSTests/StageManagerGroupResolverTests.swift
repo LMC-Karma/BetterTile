@@ -5,14 +5,14 @@ import Testing
 @testable import BetterTileMacOS
 
 @MainActor
-@Test func disabledStageManagerResolverCannotObserveGroups() {
+@Test(.macOSTestApplication) func disabledStageManagerResolverCannotObserveGroups() {
     let resolver = StageManagerGroupResolver(disabled: true)
 
     #expect(!resolver.isEnabled)
     #expect(resolver.observation(at: BTPoint(x: 10, y: 10)) == nil)
 }
 
-@Test func stageManagerPathRejectsAbsentOrChangedHierarchy() {
+@Test(.macOSTestApplication) func stageManagerPathRejectsAbsentOrChangedHierarchy() {
     #expect(StageManagerGroupResolver.rolePathIsValid([
         kAXGroupRole, kAXListRole, kAXButtonRole,
     ]))
@@ -22,7 +22,7 @@ import Testing
     ]))
 }
 
-@Test func stageManagerWindowIDsRejectMalformedAttributeValues() {
+@Test(.macOSTestApplication) func stageManagerWindowIDsRejectMalformedAttributeValues() {
     #expect(StageManagerGroupResolver.windowIDs(from: nil) == nil)
     #expect(StageManagerGroupResolver.windowIDs(from: []) == nil)
     #expect(StageManagerGroupResolver.windowIDs(from: [NSNumber(value: true)]) == nil)
@@ -35,7 +35,7 @@ import Testing
     ) == [10, 20])
 }
 
-@Test func stageManagerSelectsOnlyTheFrontmostValidRealMember() {
+@Test(.macOSTestApplication) func stageManagerSelectsOnlyTheFrontmostValidRealMember() {
     let managerPID: pid_t = 100
     let records = [
         stageRecord(id: 10, pid: managerPID),
@@ -56,7 +56,7 @@ import Testing
     #expect(selected != 20, "a peer must remain untouched when another member is frontmost")
 }
 
-@Test func stageManagerRejectsUnknownOwnersAndMissingWindowServerOrder() {
+@Test(.macOSTestApplication) func stageManagerRejectsUnknownOwnersAndMissingWindowServerOrder() {
     let record = stageRecord(id: 20, pid: 200)
 
     #expect(StageManagerGroupResolver.frontmostValidWindowID(
@@ -76,7 +76,7 @@ import Testing
 }
 
 @MainActor
-@Test func windowExposureRetryResolvesWithinTheExistingBound() async {
+@Test(.macOSTestApplication) func windowExposureRetryResolvesWithinTheExistingBound() async {
     var attempts = 0
     let resolved = await WindowExposureRetry.run(delay: .zero) {
         attempts += 1
@@ -88,7 +88,7 @@ import Testing
 }
 
 @MainActor
-@Test func windowExposureRetryStopsAfterTwentyAttempts() async {
+@Test(.macOSTestApplication) func windowExposureRetryStopsAfterTwentyAttempts() async {
     var attempts = 0
     let resolved = await WindowExposureRetry.run(delay: .zero) {
         attempts += 1

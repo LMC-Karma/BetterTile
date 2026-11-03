@@ -4,7 +4,7 @@ import SwiftUI
 @testable import BetterTileCore
 @testable import BetterTileMacOS
 
-@Test func dividerHandleIsSuppressedWhenAFloatingWindowCoversIt() {
+@Test(.macOSTestApplication) func dividerHandleIsSuppressedWhenAFloatingWindowCoversIt() {
     let handle = BTRect(x: 490, y: 300, width: 20, height: 56)
     let settings = BTRect(x: 300, y: 180, width: 700, height: 520)
     let besideHandle = BTRect(x: 520, y: 300, width: 200, height: 200)
@@ -31,13 +31,13 @@ import SwiftUI
     ) == [settings])
 }
 
-@Test func dividerGripUsesThreefoldStraightGrowthAndShortSpanCap() {
+@Test(.macOSTestApplication) func dividerGripUsesThreefoldStraightGrowthAndShortSpanCap() {
     #expect(DividerHandleGeometry.straightLength(span: 0...200, active: false) == 56)
     #expect(DividerHandleGeometry.straightLength(span: 0...200, active: true) == 168)
     #expect(DividerHandleGeometry.straightLength(span: 0...90, active: true) == 90)
 }
 
-@Test(arguments: [2.0, 6.0, 12.0])
+@Test(.macOSTestApplication, arguments: [2.0, 6.0, 12.0])
 func junctionGripKeepsACompactTargetAndCapsEachExistingArm(thickness: Double) {
     let center = BTPoint(x: 100, y: 100)
     let boundaries = [
@@ -83,7 +83,7 @@ func junctionGripKeepsACompactTargetAndCapsEachExistingArm(thickness: Double) {
     #expect(active.maxY <= 150)
 }
 
-@Test func junctionAcquisitionIncludesSquareCornersAndAnEmptyTQuadrant() throws {
+@Test(.macOSTestApplication) func junctionAcquisitionIncludesSquareCornersAndAnEmptyTQuadrant() throws {
     let verticalID = UUID()
     let horizontalID = UUID()
     let boundaries = [
@@ -116,7 +116,7 @@ func junctionGripKeepsACompactTargetAndCapsEachExistingArm(thickness: Double) {
     #expect(Set(arms.keys) == [.up, .down, .left])
 }
 
-@Test func junctionWinsInsideItsTargetAndStraightBoundaryWinsOutside() throws {
+@Test(.macOSTestApplication) func junctionWinsInsideItsTargetAndStraightBoundaryWinsOutside() throws {
     let boundaries = [
         boundary("vertical", axis: .vertical, coordinate: 100, start: 40, end: 160),
         boundary("horizontal", axis: .horizontal, coordinate: 100, start: 40, end: 160),
@@ -134,7 +134,7 @@ func junctionGripKeepsACompactTargetAndCapsEachExistingArm(thickness: Double) {
     #expect(straight.kind == .vertical)
 }
 
-@Test func fourWayJunctionRetainsEveryMeetingBentoBranch() throws {
+@Test(.macOSTestApplication) func fourWayJunctionRetainsEveryMeetingBentoBranch() throws {
     let boundaries = [
         boundary("v-top", axis: .vertical, coordinate: 100, start: 0, end: 100),
         boundary("v-bottom", axis: .vertical, coordinate: 100, start: 100, end: 200),
@@ -154,7 +154,7 @@ func junctionGripKeepsACompactTargetAndCapsEachExistingArm(thickness: Double) {
     #expect(Set(arms.keys) == Set(DividerHandleArm.allCases))
 }
 
-@Test func lockedOtherDisplayAndNearbyNonintersectionsCannotCreateAJunction() throws {
+@Test(.macOSTestApplication) func lockedOtherDisplayAndNearbyNonintersectionsCannotCreateAJunction() throws {
     let vertical = boundary("vertical", axis: .vertical, coordinate: 100, start: 40, end: 160)
     let locked = boundary(
         "locked", axis: .horizontal, coordinate: 100, start: 40, end: 160, isLocked: true
@@ -178,7 +178,7 @@ func junctionGripKeepsACompactTargetAndCapsEachExistingArm(thickness: Double) {
     }
 }
 
-@Test func overlappingJunctionTargetsUseDistanceThenAStableCenterTieBreak() throws {
+@Test(.macOSTestApplication) func overlappingJunctionTargetsUseDistanceThenAStableCenterTieBreak() throws {
     let boundaries = [
         boundary("v100", axis: .vertical, coordinate: 100, start: 40, end: 160),
         boundary("h100", axis: .horizontal, coordinate: 100, start: 40, end: 160),
@@ -196,7 +196,7 @@ func junctionGripKeepsACompactTargetAndCapsEachExistingArm(thickness: Double) {
 }
 
 
-@Test(arguments: [0.0, 1.0, 6.0, 12.0], [false, true])
+@Test(.macOSTestApplication, arguments: [0.0, 1.0, 6.0, 12.0], [false, true])
 func actualBentoPaneGapsStillAcquireJunctions(gap: Double, fourWay: Bool) throws {
     let ids = ["a", "b", "c", "d"].map { WindowID(rawValue: $0) }
     let state = BentoLayoutState(root: .partition(BentoPartition(
@@ -231,7 +231,7 @@ func actualBentoPaneGapsStillAcquireJunctions(gap: Double, fourWay: Bool) throws
     #expect(Set(arms.keys) == (fourWay ? Set(DividerHandleArm.allCases) : [.up, .down, .left]))
 }
 
-@Test @MainActor func dragUpdatesDoNotCompleteTheGripAnimationEarly() async throws {
+@Test(.macOSTestApplication) @MainActor func dragUpdatesDoNotCompleteTheGripAnimationEarly() async throws {
     let grip = DividerHandleView(
         frame: CGRect(x: 0, y: 0, width: 20, height: 168),
         mode: .vertical(restingLength: 56, activeLength: 168), thickness: 6
@@ -251,7 +251,7 @@ func actualBentoPaneGapsStillAcquireJunctions(gap: Double, fourWay: Bool) throws
     #expect(grip.stretchProgress == 0)
 }
 
-@Test @MainActor func reducedMotionCompletesGripTransitionsImmediately() {
+@Test(.macOSTestApplication) @MainActor func reducedMotionCompletesGripTransitionsImmediately() {
     let grip = DividerHandleView(
         frame: CGRect(x: 0, y: 0, width: 20, height: 168),
         mode: .vertical(restingLength: 56, activeLength: 168), thickness: 6
@@ -266,7 +266,7 @@ func actualBentoPaneGapsStillAcquireJunctions(gap: Double, fourWay: Bool) throws
     #expect(completions == 2)
 }
 
-@Test(arguments: [2.0, 6.0, 12.0], [false, true]) @MainActor
+@Test(.macOSTestApplication, arguments: [2.0, 6.0, 12.0], [false, true]) @MainActor
 func junctionPanelContainsRenderedCapsules(thickness: Double, glass: Bool) throws {
     let center = BTPoint(x: 100, y: 100)
     let mainFrame = CGRect(x: 0, y: 0, width: 1000, height: 800)
@@ -322,7 +322,7 @@ func junctionPanelContainsRenderedCapsules(thickness: Double, glass: Bool) throw
     }
 }
 
-@Test @MainActor func changingGlassDuringJunctionDragRefreshesChromeWithoutWindowWrites() throws {
+@Test(.macOSTestApplication) @MainActor func changingGlassDuringJunctionDragRefreshesChromeWithoutWindowWrites() throws {
     _ = NSApplication.shared
     let system = FakeWindowSystem()
     let display = DisplayID(rawValue: "main")
@@ -389,7 +389,7 @@ func junctionPanelContainsRenderedCapsules(thickness: Double, glass: Bool) throw
 
 }
 
-@Test func junctionGrabOffsetIsPreservedAndEachBranchMovesOnce() {
+@Test(.macOSTestApplication) func junctionGrabOffsetIsPreservedAndEachBranchMovesOnce() {
     let v = boundary("v", axis: .vertical, coordinate: 100, start: 0, end: 200)
     let h = boundary("h", axis: .horizontal, coordinate: 100, start: 0, end: 200)
     let interaction = DividerInteraction(boundaries: [v, v, h], kind: .vertical)
@@ -399,7 +399,7 @@ func junctionPanelContainsRenderedCapsules(thickness: Double, glass: Bool) throw
     #expect(coordinates[h.branchID!] == 120)
 }
 
-@Test func paneGapCannotJoinUnrelatedOrDistantBranches() {
+@Test(.macOSTestApplication) func paneGapCannotJoinUnrelatedOrDistantBranches() {
     let v = boundary("v", axis: .vertical, coordinate: 100, start: 0, end: 200)
     var h = boundary("h", axis: .horizontal, coordinate: 100, start: 0, end: 94)
     let point = BTPoint(x: 100, y: 100)
@@ -409,7 +409,7 @@ func junctionPanelContainsRenderedCapsules(thickness: Double, glass: Bool) throw
     #expect(DividerInteractionResolver.resolve(at: point, in: [v, h], hitWidth: 18, adjacencyTolerance: 6, paneGap: 12)?.kind == .vertical)
 }
 
-@Test(arguments: DividerPreviewShape.allCases, [0.0, 12.0])
+@Test(.macOSTestApplication, arguments: DividerPreviewShape.allCases, [0.0, 12.0])
 func previewShapesRetainTheirArmsAndFollowAcceptedGeometry(shape: DividerPreviewShape, gap: Double) {
     let sample = shape.sample(in: BTRect(x: 0, y: 0, width: 600, height: 250), position: CGPoint(x: 0.35, y: 0.65), paneGap: gap)
     #expect(sample.placements.count == (shape == .plus ? 4 : (shape == .vertical || shape == .horizontal ? 2 : 3)))
@@ -429,7 +429,7 @@ func previewShapesRetainTheirArmsAndFollowAcceptedGeometry(shape: DividerPreview
     #expect(Set(arms.keys) == expected)
 }
 
-@Test @MainActor func nativeResizePreviewFitsAndRenders() throws {
+@Test(.macOSTestApplication) @MainActor func nativeResizePreviewFitsAndRenders() throws {
     let view = NSHostingView(rootView: DividerResizePreview(thickness: 6, feedback: .ghost, paneGap: 6).padding(16))
     view.frame = CGRect(x: 0, y: 0, width: 680, height: 390)
     let window = NSWindow(contentRect: view.frame, styleMask: [.borderless], backing: .buffered, defer: false)
@@ -449,7 +449,7 @@ enum DividerTestEnding: CaseIterable {
     case commit, rapidCommit, cancel, participantLoss, stationaryParticipantLoss, failedAcquisition
 }
 
-@Test(arguments: [ResizeFeedbackMode.ghost, .live], DividerTestEnding.allCases)
+@Test(.macOSTestApplication, .macOSUI, arguments: [ResizeFeedbackMode.ghost, .live], DividerTestEnding.allCases)
 @MainActor func dividerGestureCommitsOrRollsBackWithTheFakeWindowSystem(feedback: ResizeFeedbackMode, ending: DividerTestEnding) async throws {
     _ = NSApplication.shared
     let system = FakeWindowSystem()
@@ -523,7 +523,7 @@ enum DividerTestEnding: CaseIterable {
     #expect(!controller.isDragging)
 }
 
-@Test @MainActor func liveDividerAppliesOnlyTheLatestSampleOnEachDisplayTickAndFlushesRelease() throws {
+@Test(.macOSTestApplication) @MainActor func liveDividerAppliesOnlyTheLatestSampleOnEachDisplayTickAndFlushesRelease() throws {
     _ = NSApplication.shared
     let system = FakeWindowSystem()
     let bounds = BTRect(x: -10_000, y: -10_000, width: 800, height: 600)
@@ -598,7 +598,7 @@ enum DividerTestEnding: CaseIterable {
     #expect(system.windows.first(where: { $0.id == right })?.frame.minX == bounds.midX + 140)
 }
 
-@Test(arguments: [ResizeFeedbackMode.ghost, .live], [true, false]) @MainActor
+@Test(.macOSTestApplication, arguments: [ResizeFeedbackMode.ghost, .live], [true, false]) @MainActor
 func dividerEscapeCancelsBeforeReleaseFromEitherKeyMonitor(feedback: ResizeFeedbackMode, useLocalMonitor: Bool) throws {
     _ = NSApplication.shared
     let system = FakeWindowSystem()
@@ -696,7 +696,7 @@ private func boundary(
 
 enum DividerLimitCase: CaseIterable { case straight, junction, linked }
 
-@Test(arguments: [ResizeFeedbackMode.ghost, .live], DividerLimitCase.allCases)
+@Test(.macOSTestApplication, arguments: [ResizeFeedbackMode.ghost, .live], DividerLimitCase.allCases)
 @MainActor func dividerTurnsOrangeWhenANeighborIsAlreadyAtItsMinimum(feedback: ResizeFeedbackMode, shape: DividerLimitCase) throws {
     _ = NSApplication.shared
     let system = FakeWindowSystem()
@@ -759,7 +759,7 @@ enum DividerLimitCase: CaseIterable { case straight, junction, linked }
     #expect(controller.limitedGhostWindowIDs.isEmpty)
 }
 
-@Test @MainActor func limitedDividerCursorShowsOnlyTheOpenDirection() {
+@Test(.macOSTestApplication) @MainActor func limitedDividerCursorShowsOnlyTheOpenDirection() {
     let grip = DividerHandleView(
         frame: CGRect(x: 0, y: 0, width: 20, height: 168),
         mode: .vertical(restingLength: 56, activeLength: 168), thickness: 6
@@ -771,7 +771,7 @@ enum DividerLimitCase: CaseIterable { case straight, junction, linked }
     #expect(grip.cursor == .columnResize)
 }
 
-@Test @MainActor func liveDragLearnsAnUnreportedMinimumOnlyForThatGesture() throws {
+@Test(.macOSTestApplication) @MainActor func liveDragLearnsAnUnreportedMinimumOnlyForThatGesture() throws {
     _ = NSApplication.shared
     let system = FakeWindowSystem()
     let bounds = BTRect(x: -10_000, y: -10_000, width: 800, height: 600)
@@ -832,7 +832,7 @@ enum DividerLimitCase: CaseIterable { case straight, junction, linked }
 /// A ghost preview cannot show a minimum the application never reported.
 /// The release commit measures the refusal and solves the layout again, so
 /// the windows do not overlap.
-@Test @MainActor func ghostReleaseSolvesAgainWhenAWindowRefusesItsSize() throws {
+@Test(.macOSTestApplication) @MainActor func ghostReleaseSolvesAgainWhenAWindowRefusesItsSize() throws {
     _ = NSApplication.shared
     let system = FakeWindowSystem()
     system.roundsSizesAndReportsReadback = true
@@ -873,7 +873,7 @@ enum DividerLimitCase: CaseIterable { case straight, junction, linked }
 /// The release commit measures a refusal, but the corrective solve cannot
 /// read the windows. The release fails as a whole: every window returns to
 /// its baseline instead of keeping the uncorrected first commit.
-@Test @MainActor func ghostReleaseUndoesTheCommitWhenItsCorrectionIsCancelled() throws {
+@Test(.macOSTestApplication) @MainActor func ghostReleaseUndoesTheCommitWhenItsCorrectionIsCancelled() throws {
     _ = NSApplication.shared
     let system = FakeWindowSystem()
     system.roundsSizesAndReportsReadback = true
@@ -935,7 +935,7 @@ enum DividerLimitCase: CaseIterable { case straight, junction, linked }
     #expect(system.windows.first { $0.id == left }?.frame == earlier)
 }
 
-@Test @MainActor func ghostReleaseDoesNotLearnAMinimumFromAnUnchangedWindow() throws {
+@Test(.macOSTestApplication) @MainActor func ghostReleaseDoesNotLearnAMinimumFromAnUnchangedWindow() throws {
     _ = NSApplication.shared
     let system = FakeWindowSystem()
     system.roundsSizesAndReportsReadback = true
@@ -974,7 +974,7 @@ enum DividerLimitCase: CaseIterable { case straight, junction, linked }
 /// has passed, the window still holds its size, and the release is solved
 /// again once with that minimum. Both windows end inside the display, they
 /// do not overlap, and Restore has exactly one step.
-@Test @MainActor func ghostReleaseCorrectsAWindowThatGrewOnlyAfterTheDelay() async throws {
+@Test(.macOSTestApplication) @MainActor func ghostReleaseCorrectsAWindowThatGrewOnlyAfterTheDelay() async throws {
     _ = NSApplication.shared
     let system = FakeWindowSystem()
     system.roundsSizesAndReportsReadback = true
@@ -1071,7 +1071,7 @@ enum DividerLimitCase: CaseIterable { case straight, junction, linked }
 /// A window the user moves, or resizes from a corner that keeps its origin,
 /// within the delay is not a refusal: the delayed check ends without
 /// changing it back.
-@Test(arguments: [false, true]) @MainActor
+@Test(.macOSTestApplication, arguments: [false, true]) @MainActor
 func ghostReleaseCheckLeavesAWindowTheUserMoved(resized: Bool) async throws {
     let (system, _, controller, _) = try grownGhostRelease(minimumWidth: 500)
     defer { controller.hideAndCancel() }
@@ -1086,7 +1086,7 @@ func ghostReleaseCheckLeavesAWindowTheUserMoved(resized: Bool) async throws {
 
 /// Another write to a released window supersedes the delayed check, which
 /// then changes nothing.
-@Test @MainActor func ghostReleaseCheckGivesUpAfterAnotherWrite() async throws {
+@Test(.macOSTestApplication) @MainActor func ghostReleaseCheckGivesUpAfterAnotherWrite() async throws {
     let (system, coordinator, controller, baseline) = try grownGhostRelease(minimumWidth: 500)
     defer { controller.hideAndCancel() }
     let left = WindowID(rawValue: "left"), right = WindowID(rawValue: "right")
@@ -1109,7 +1109,7 @@ func ghostReleaseCheckLeavesAWindowTheUserMoved(resized: Bool) async throws {
 /// that grew while the gesture ran, and still holds that size 0.25 s after
 /// the release, is solved for once: both windows end inside the display
 /// without overlap, and Restore has exactly one step.
-@Test @MainActor func liveReleaseCorrectsAWindowThatGrewAfterTheDelay() async throws {
+@Test(.macOSTestApplication) @MainActor func liveReleaseCorrectsAWindowThatGrewAfterTheDelay() async throws {
     _ = NSApplication.shared
     let system = FakeWindowSystem()
     system.roundsSizesAndReportsReadback = true
@@ -1163,7 +1163,7 @@ func ghostReleaseCheckLeavesAWindowTheUserMoved(resized: Bool) async throws {
 
 /// A refusal that no contained layout fits returns the windows to their
 /// frames from before the gesture, and the release leaves no Restore step.
-@Test @MainActor func ghostReleaseRollbackRemovesItsRestoreStep() async throws {
+@Test(.macOSTestApplication) @MainActor func ghostReleaseRollbackRemovesItsRestoreStep() async throws {
     let (system, coordinator, controller, baseline) = try grownGhostRelease(minimumWidth: 700)
     defer { controller.hideAndCancel() }
     let left = WindowID(rawValue: "left")
@@ -1179,7 +1179,7 @@ func ghostReleaseCheckLeavesAWindowTheUserMoved(resized: Bool) async throws {
 /// The application took a 350 pt width on the first tick and then applies
 /// further widths late. Two readbacks of the same 350 pt are a kept size,
 /// not a refusal, until the size has held for the confirmation delay.
-@Test @MainActor func liveDragDoesNotLearnASizeAppliedLate() async throws {
+@Test(.macOSTestApplication) @MainActor func liveDragDoesNotLearnASizeAppliedLate() async throws {
     _ = NSApplication.shared
     let system = FakeWindowSystem()
     let bounds = BTRect(x: -10_000, y: -10_000, width: 800, height: 600)
@@ -1228,7 +1228,7 @@ func ghostReleaseCheckLeavesAWindowTheUserMoved(resized: Bool) async throws {
 /// At 120 Hz a 60 Hz application can report one lagging length on two
 /// ticks in a row. A shrink that stopped short is a refusal only when a
 /// tick at least `provenRefusalFloor` later still holds it.
-@Test @MainActor func liveDragNeedsTimeBetweenTwoHeldTicks() throws {
+@Test(.macOSTestApplication) @MainActor func liveDragNeedsTimeBetweenTwoHeldTicks() throws {
     _ = NSApplication.shared
     let system = FakeWindowSystem()
     let bounds = BTRect(x: -10_000, y: -10_000, width: 800, height: 600)
@@ -1267,7 +1267,7 @@ func ghostReleaseCheckLeavesAWindowTheUserMoved(resized: Bool) async throws {
     #expect(controller.dragLimit.width)
 }
 
-@Test @MainActor func ignoredLiveResizesDoNotBecomeMinimumSizes() throws {
+@Test(.macOSTestApplication) @MainActor func ignoredLiveResizesDoNotBecomeMinimumSizes() throws {
     _ = NSApplication.shared
     let system = FakeWindowSystem()
     let bounds = BTRect(x: -10_000, y: -10_000, width: 800, height: 600)
@@ -1313,7 +1313,7 @@ func ghostReleaseCheckLeavesAWindowTheUserMoved(resized: Bool) async throws {
 
 }
 
-@Test(arguments: [SplitAxis.vertical, .horizontal])
+@Test(.macOSTestApplication, arguments: [SplitAxis.vertical, .horizontal])
 @MainActor func liveJunctionRefusalLimitsOnlyTheHeldAxis(axis: SplitAxis) throws {
     _ = NSApplication.shared
     let system = FakeWindowSystem()
@@ -1367,7 +1367,7 @@ func ghostReleaseCheckLeavesAWindowTheUserMoved(resized: Bool) async throws {
 
 /// A tick that only completes a trailing write does not write the
 /// refusing window again, so its earlier readback is not a second refusal.
-@Test @MainActor func aTrailingTickIsNotASecondRefusal() throws {
+@Test(.macOSTestApplication) @MainActor func aTrailingTickIsNotASecondRefusal() throws {
     _ = NSApplication.shared
     let system = FakeWindowSystem()
     let bounds = BTRect(x: -10_000, y: -10_000, width: 800, height: 600)
@@ -1406,7 +1406,7 @@ func ghostReleaseCheckLeavesAWindowTheUserMoved(resized: Bool) async throws {
     #expect(controller.dragLimit.width)
 }
 
-@Test(arguments: [false, true])
+@Test(.macOSTestApplication, arguments: [false, true])
 @MainActor func liveRefusalRequiresConsecutiveShrinkingTicks(missingReading: Bool) throws {
     _ = NSApplication.shared
     let system = FakeWindowSystem()
@@ -1455,7 +1455,7 @@ func ghostReleaseCheckLeavesAWindowTheUserMoved(resized: Bool) async throws {
     #expect(controller.dragLimit.width)
 }
 
-@Test @MainActor func junctionCursorFollowsTheJunctionShape() {
+@Test(.macOSTestApplication) @MainActor func junctionCursorFollowsTheJunctionShape() {
     func cursor(_ arms: [DividerHandleArm]) -> NSCursor {
         let lengths = Dictionary(uniqueKeysWithValues: arms.map { ($0, 12.0) })
         return DividerHandleView(
@@ -1470,7 +1470,7 @@ func ghostReleaseCheckLeavesAWindowTheUserMoved(resized: Bool) async throws {
     #expect(cursor([.up, .left]) == .frameResize(position: .bottomRight, directions: .all))
 }
 
-@Test(arguments: [ResizeFeedbackMode.ghost, .live], [(false, false), (false, true), (true, false), (true, true)]) @MainActor
+@Test(.macOSTestApplication, arguments: [ResizeFeedbackMode.ghost, .live], [(false, false), (false, true), (true, false), (true, true)]) @MainActor
 func bentoDividerReportsLiveTreesAndRestoresTheStartWithoutACommit(feedback: ResizeFeedbackMode, scenario: (commit: Bool, displaced: Bool)) throws {
     let (commit, displaced) = scenario
     _ = NSApplication.shared
@@ -1535,7 +1535,7 @@ func bentoDividerReportsLiveTreesAndRestoresTheStartWithoutACommit(feedback: Res
 }
 
 @MainActor
-@Test func tabbedChromeDoesNotOccludeDividerButSettingsDoes() {
+@Test(.macOSTestApplication) func tabbedChromeDoesNotOccludeDividerButSettingsDoes() {
     let frame = CGRect(x: 490, y: 300, width: 20, height: 56)
     let chrome = VisibleDividerTestWindow(contentRect: frame, styleMask: .borderless, backing: .buffered, defer: true)
     let settings = VisibleDividerTestWindow(contentRect: frame, styleMask: .borderless, backing: .buffered, defer: true)
@@ -1554,7 +1554,7 @@ private final class VisibleDividerTestWindow: NSWindow {
     override var isVisible: Bool { true }
 }
 
-@Test(arguments: [false, true]) @MainActor
+@Test(.macOSTestApplication, arguments: [false, true]) @MainActor
 func liveDividerReleaseRecomputesANewlyLearnedMinimum(height: Bool) throws {
     _ = NSApplication.shared
     let system = FakeWindowSystem()
@@ -1596,7 +1596,7 @@ func liveDividerReleaseRecomputesANewlyLearnedMinimum(height: Bool) throws {
 
 /// A divider commit keeps a fixed-size window at its size, centred in its
 /// new pane; resizable windows still fill theirs.
-@Test @MainActor func dividerPlacementsKeepFixedSizeWindowsCentred() {
+@Test(.macOSTestApplication) @MainActor func dividerPlacementsKeepFixedSizeWindowsCentred() {
     let display = DisplayID(rawValue: "main")
     let fixed = WindowSnapshot(id: WindowID(rawValue: "calculator"), processIdentifier: 1,
                                frame: BTRect(x: 0, y: 0, width: 230, height: 408), displayID: display,
@@ -1612,7 +1612,7 @@ func liveDividerReleaseRecomputesANewlyLearnedMinimum(height: Bool) throws {
 
 /// A divider cannot shrink a pane below the fixed-size window in it, so the
 /// window never covers the neighbour that grew.
-@Test @MainActor func dividerStopsAtAFixedSizeWindow() throws {
+@Test(.macOSTestApplication) @MainActor func dividerStopsAtAFixedSizeWindow() throws {
     _ = NSApplication.shared
     let system = FakeWindowSystem()
     let bounds = BTRect(x: -10_000, y: -10_000, width: 800, height: 600)
@@ -1649,7 +1649,7 @@ func liveDividerReleaseRecomputesANewlyLearnedMinimum(height: Bool) throws {
 /// A live drag beside an application that stops answering keeps going: the
 /// held application's ticks write nothing and roll nothing back, and once it
 /// answers again the drag moves every window.
-@Test(arguments: [false, true]) @MainActor
+@Test(.macOSTestApplication, arguments: [false, true]) @MainActor
 func aLiveDragContinuesAfterAnApplicationStopsAnsweringForAWhile(midWrite: Bool) throws {
     _ = NSApplication.shared
     let system = FakeWindowSystem()

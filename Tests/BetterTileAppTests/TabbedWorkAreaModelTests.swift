@@ -10,7 +10,7 @@ import Testing
 /// width that is still too wide. That kept width is no application minimum,
 /// and the work area that settles during that placement is not another
 /// desktop: Tabbed must fit the windows to it.
-@Test @MainActor func tabbedFitsAWorkAreaThatSettlesDuringAPlacement() async throws {
+@Test(.appTestApplication) @MainActor func tabbedFitsAWorkAreaThatSettlesDuringAPlacement() async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
     system.measuresOnWrite = true
@@ -45,7 +45,7 @@ import Testing
 
 /// The width AppKit kept for a window too wide for its screen is no minimum.
 /// Learned as one, it would make every later pane too small for the window.
-@Test @MainActor func aWidthAppKitKeptIsNoTabbedMinimum() async throws {
+@Test(.appTestApplication) @MainActor func aWidthAppKitKeptIsNoTabbedMinimum() async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
     system.measuresOnWrite = true

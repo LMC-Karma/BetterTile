@@ -9,7 +9,7 @@ private let main = BTRect(x: 0, y: 0, width: 2560, height: 1440)
 /// Frames measured on macOS 26 with 52-point icons. The same display reserves
 /// 78 points when the Dock never hides, so the auto-hidden Dock must too,
 /// whether it is shown or hidden at the moment of the read.
-@Test func shownAndHiddenDockReserveWhatAPermanentDockReserves() throws {
+@Test(.macOSTestApplication) func shownAndHiddenDockReserveWhatAPermanentDockReserves() throws {
     let shown = try #require(DockFootprint(
         dockList: BTRect(x: 671, y: 1358, width: 1218, height: 72), edge: .bottom, displays: [(mainID, main)]
     ))
@@ -26,7 +26,7 @@ private let main = BTRect(x: 0, y: 0, width: 2560, height: 1440)
     #expect(shown.workArea(fullFrame: main, appKitVisibleFrame: permanentDockVisible) == permanentDockVisible)
 }
 
-@Test func dockListBelongsToTheDisplayWhoseEdgeItSitsOn() {
+@Test(.macOSTestApplication) func dockListBelongsToTheDisplayWhoseEdgeItSitsOn() {
     let rightID = DisplayID(rawValue: "right")
     let below = DisplayID(rawValue: "below")
     let displays: [(id: DisplayID, frame: BTRect)] = [
@@ -56,11 +56,11 @@ private let main = BTRect(x: 0, y: 0, width: 2560, height: 1440)
 }
 
 /// A restarting Dock reports an empty list. That is no reading at all.
-@Test func emptyDockListHasNoFootprint() {
+@Test(.macOSTestApplication) func emptyDockListHasNoFootprint() {
     #expect(DockFootprint(dockList: BTRect(x: 0, y: 0, width: 0, height: 0), edge: .bottom, displays: [(mainID, main)]) == nil)
 }
 
-@Test func footprintsReserveBottomAndSideWorkAreas() {
+@Test(.macOSTestApplication) func footprintsReserveBottomAndSideWorkAreas() {
     let full = BTRect(x: 0, y: 0, width: 1200, height: 800)
     let appKitVisible = BTRect(x: 0, y: 24, width: 1200, height: 776)
     #expect(DockFootprint(displayID: mainID, edge: .bottom, thickness: 80).workArea(
@@ -77,7 +77,7 @@ private let main = BTRect(x: 0, y: 0, width: 2560, height: 1440)
 /// After login the Dock reports no list until it is first shown. The
 /// thickness measured on that edge in an earlier launch stands in on the
 /// main display, and a restarting Dock keeps the last reading.
-@Test @MainActor func unshownDockUsesTheThicknessLastMeasuredOnItsEdge() {
+@Test(.macOSTestApplication) @MainActor func unshownDockUsesTheThicknessLastMeasuredOnItsEdge() {
     let defaults = MemoryDefaults()
     let other = DisplayID(rawValue: "other")
     let displays: [(id: DisplayID, frame: BTRect)] = [(mainID, main), (other, BTRect(x: 2560, y: 0, width: 1920, height: 1080))]
@@ -100,7 +100,7 @@ private let main = BTRect(x: 0, y: 0, width: 2560, height: 1440)
 /// With the setting off, a Dock that hides is not read at all. A Dock that
 /// never hides still keeps its strip: macOS reserves it too, but AppKit can
 /// report a secondary display's work area late after the Dock moves there.
-@Test @MainActor func settingOffKeepsOnlyADockThatNeverHides() {
+@Test(.macOSTestApplication) @MainActor func settingOffKeepsOnlyADockThatNeverHides() {
     var autohides = true
     var listReads = 0
     let reader = DockSpaceReader(

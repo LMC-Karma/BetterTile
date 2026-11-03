@@ -19,7 +19,7 @@ private func populatedWindowMetadata(_ ids: [WindowID]) -> WindowMetadata {
     return metadata
 }
 
-@Test(arguments: [false, true]) func obsoleteWindowMetadataReleasesEveryRetainedValue(reset: Bool) {
+@Test(.macOSTestApplication, arguments: [false, true]) func obsoleteWindowMetadataReleasesEveryRetainedValue(reset: Bool) {
     let closed = WindowID(rawValue: "closed"), survivor = WindowID(rawValue: "survivor")
     var metadata = populatedWindowMetadata([closed, survivor])
     if reset { metadata.removeAll() } else { metadata.remove(closed) }

@@ -3,7 +3,7 @@ import BetterTileCore
 import Testing
 @testable import BetterTileMacOS
 
-@Test @MainActor func curtainExcludesOnlyOccupiedStripsAndUpdatesDuringResize() throws {
+@Test(.macOSTestApplication) @MainActor func curtainExcludesOnlyOccupiedStripsAndUpdatesDuringResize() throws {
     _ = NSApplication.shared
     let id = WindowID(rawValue: "cutout-window")
     var state = TabbedLayoutState(preset: .columns)
@@ -34,7 +34,7 @@ import Testing
     #expect(view.hitTest(NSPoint(x: strip.midX, y: 17)) === view)
 }
 
-@Test(arguments: [false, true], ["release", "failure", "escape", "hide", "remove", "placement"])
+@Test(.macOSTestApplication, arguments: [false, true], ["release", "failure", "escape", "hide", "remove", "placement"])
 @MainActor func tabReorderingMovesBeforeReleaseAndRestoresOnInterruption(reduceMotion: Bool, ending: String) throws {
     _ = NSApplication.shared
     let ids = (0..<3).map { WindowID(rawValue: "reactive-\($0)") }
@@ -111,7 +111,7 @@ import Testing
     #expect(view.content.subviews.flatMap(\.subviews).allSatisfy { $0.layer?.animation(forKey: "tabPosition") == nil })
 }
 
-@Test @MainActor func tabbedCurtainCoversContentBelowItsSelectedWindow() throws {
+@Test(.macOSTestApplication) @MainActor func tabbedCurtainCoversContentBelowItsSelectedWindow() throws {
     _ = NSApplication.shared
     let id = WindowID(rawValue: "curtain-selected")
     var state = TabbedLayoutState(preset: .columns)
@@ -137,7 +137,7 @@ import Testing
     #expect(frame == BTRect(x: 12000, y: 100, width: 1000, height: 800))
 }
 
-@Test @MainActor func tabbedChromeJoinsTheNormalStackAboveSelectedWindows() throws {
+@Test(.macOSTestApplication) @MainActor func tabbedChromeJoinsTheNormalStackAboveSelectedWindows() throws {
     _ = NSApplication.shared
     let id = WindowID(rawValue: "anchored-selected")
     var state = TabbedLayoutState(preset: .columns)
@@ -166,7 +166,7 @@ import Testing
     #expect(strips.allSatisfy { $0.level == .floating && $0.isVisible })
 }
 
-@Test @MainActor func clickingATabbedCurtainSelectsItsPanesSelectedWindow() throws {
+@Test(.macOSTestApplication) @MainActor func clickingATabbedCurtainSelectsItsPanesSelectedWindow() throws {
     _ = NSApplication.shared
     let first = WindowID(rawValue: "click-first"), second = WindowID(rawValue: "click-second")
     var state = TabbedLayoutState()
@@ -189,7 +189,7 @@ import Testing
     #expect(selected == [first])
 }
 
-@Test @MainActor func tabbedCurtainFollowsResizeAndSelectionAndHidesWithoutAnExactWindow() throws {
+@Test(.macOSTestApplication) @MainActor func tabbedCurtainFollowsResizeAndSelectionAndHidesWithoutAnExactWindow() throws {
     _ = NSApplication.shared
     let bounds = BTRect(x: 12000, y: 0, width: 1000, height: 800)
     let first = WindowID(rawValue: "curtain-first"), second = WindowID(rawValue: "curtain-second")
@@ -201,8 +201,8 @@ import Testing
         NSPanel(contentRect: CoordinateConverter.toAppKit(bounds, mainScreenFrame: NSScreen.screens.first!.frame),
                 styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
     }
-    defer { targets.forEach { $0.orderOut(nil) } }
-    targets.forEach { $0.orderFrontRegardless() }
+    defer { targets.forEach { $0.orderOutForTesting() } }
+    targets.forEach { $0.orderFrontForTesting() }
     let numbers = [first: targets[0].windowNumber, second: targets[1].windowNumber]
     var ordered: [(NSPanel, Int)] = []
     let overlay = TabbedOverlayController(orderPanel: { panel, mode, number in
@@ -242,7 +242,7 @@ import Testing
     #expect(!final.isVisible)
 }
 
-@Test(arguments: [false, true], [(false, false), (true, false), (false, true)]) @MainActor
+@Test(.macOSTestApplication, arguments: [false, true], [(false, false), (true, false), (false, true)]) @MainActor
 func tabbedCurtainUsesNativeGlassAndSolidAccessibilityFallback(enabled: Bool, options: (Bool, Bool)) {
     _ = NSApplication.shared
     let view = TabbedCurtainView(frame: NSRect(x: 0, y: 0, width: 400, height: 300))
@@ -257,7 +257,7 @@ func tabbedCurtainUsesNativeGlassAndSolidAccessibilityFallback(enabled: Bool, op
     #expect(view.surface.hitTest(NSPoint(x: 200, y: 100)) == nil)
 }
 
-@Test @MainActor func visibleTabbedCurtainFollowsTheSharedGlassSliderWithoutReordering() throws {
+@Test(.macOSTestApplication) @MainActor func visibleTabbedCurtainFollowsTheSharedGlassSliderWithoutReordering() throws {
     _ = NSApplication.shared
     let id = WindowID(rawValue: "curtain-slider-window")
     var state = TabbedLayoutState(preset: .columns)
@@ -294,7 +294,7 @@ func tabbedCurtainUsesNativeGlassAndSolidAccessibilityFallback(enabled: Bool, op
     #expect(view.surface.showsGlass)
 }
 
-@Test @MainActor func tabbedCurtainFrostFollowsLightAndDarkAppearance() throws {
+@Test(.macOSTestApplication) @MainActor func tabbedCurtainFrostFollowsLightAndDarkAppearance() throws {
     _ = NSApplication.shared
     let view = TabbedCurtainView(frame: NSRect(x: 0, y: 0, width: 400, height: 300))
     view.displayOptions = { (false, false) }
@@ -316,7 +316,7 @@ func tabbedCurtainUsesNativeGlassAndSolidAccessibilityFallback(enabled: Bool, op
     #expect(colors[0] != colors[1])
 }
 
-@Test @MainActor func selectingVisibleTabKeepsCrowdedStripPositions() throws {
+@Test(.macOSTestApplication) @MainActor func selectingVisibleTabKeepsCrowdedStripPositions() throws {
     _ = NSApplication.shared
     let overlay = TabbedOverlayController()
     defer { overlay.hide() }
@@ -337,7 +337,7 @@ func tabbedCurtainUsesNativeGlassAndSolidAccessibilityFallback(enabled: Bool, op
     #expect(view.strip.visibleRange.contains(0))
 }
 
-@Test(arguments: [false, true]) @MainActor
+@Test(.macOSTestApplication, arguments: [false, true]) @MainActor
 func tabbedDragUsesReleaseDestination(cancel: Bool) throws {
     _ = NSApplication.shared
     let bounds = BTRect(x: 12000, y: 0, width: 1000, height: 800)
@@ -378,7 +378,7 @@ func tabbedDragUsesReleaseDestination(cancel: Bool) throws {
     #expect(!overlay.isInteracting)
 }
 
-@Test @MainActor func draggingCanScrollPastTheSelectedTabAndCancelBackToIt() {
+@Test(.macOSTestApplication) @MainActor func draggingCanScrollPastTheSelectedTabAndCancelBackToIt() {
     let view = TabbedPaneContentView(frame: NSRect(x: 0, y: 0, width: 330, height: 34))
     let ids = (0..<9).map { WindowID(rawValue: "scroll-\($0)") }
     var pane = TabbedPane()
@@ -395,7 +395,7 @@ func tabbedDragUsesReleaseDestination(cancel: Bool) throws {
     #expect(view.strip.visibleRange == 0..<2)
 }
 
-@Test(arguments: [120.0, 240, 330, 1024], [0, 1, 9])
+@Test(.macOSTestApplication, arguments: [120.0, 240, 330, 1024], [0, 1, 9])
 func tabbedStripFitsNarrowAndCrowdedPanes(width: Double, count: Int) {
     let strip = TabbedStripLayout(width: width, count: count, selectedIndex: count > 0 ? count - 1 : nil)
     if count > 0 { #expect(strip.visibleRange.contains(count - 1)) }
@@ -411,7 +411,7 @@ func tabbedStripFitsNarrowAndCrowdedPanes(width: Double, count: Int) {
     #expect(strip.insertion(at: width + 20).index == strip.visibleRange.upperBound)
 }
 
-@Test @MainActor func tabbedPaneMenuListsEveryTabAndReflectsUndoAvailability() throws {
+@Test(.macOSTestApplication) @MainActor func tabbedPaneMenuListsEveryTabAndReflectsUndoAvailability() throws {
     _ = NSApplication.shared
     let overlay = TabbedOverlayController()
     defer { overlay.hide() }
@@ -446,7 +446,7 @@ func tabbedStripFitsNarrowAndCrowdedPanes(width: Double, count: Int) {
     #expect(overlay.menu(pane: pane, windowID: pane.selected).item(withTitle: "Move to Pane") == nil)
 }
 
-@Test @MainActor func tabbedGlobalEscapeCancelsDragWithoutReleaseCommit() throws {
+@Test(.macOSTestApplication) @MainActor func tabbedGlobalEscapeCancelsDragWithoutReleaseCommit() throws {
     _ = NSApplication.shared
     let bounds = BTRect(x: 12000, y: 0, width: 1000, height: 800)
     var state = TabbedLayoutState(preset: .columns)
@@ -491,7 +491,7 @@ func tabbedStripFitsNarrowAndCrowdedPanes(width: Double, count: Int) {
     #expect(removedMonitors == 2)
 }
 
-@Test(.enabled(if: ProcessInfo.processInfo.environment["BETTERTILE_TAB_PREVIEW_DIR"] != nil,
+@Test(.macOSTestApplication, .enabled(if: ProcessInfo.processInfo.environment["BETTERTILE_TAB_PREVIEW_DIR"] != nil,
                "Requires an explicit Tabbed preview output directory."))
 @MainActor func tabbedChromePreview() throws {
     // Render only our own views. No app launch, desktop capture, or input posting.
@@ -531,7 +531,7 @@ func tabbedStripFitsNarrowAndCrowdedPanes(width: Double, count: Int) {
     }
 }
 
-@Test(.enabled(if: ProcessInfo.processInfo.environment["BETTERTILE_TAB_PREVIEW_DIR"] != nil,
+@Test(.macOSTestApplication, .enabled(if: ProcessInfo.processInfo.environment["BETTERTILE_TAB_PREVIEW_DIR"] != nil,
                "Requires an explicit Tabbed preview output directory."))
 @MainActor func tabbedFloatTargetPreview() throws {
     let directory = try #require(ProcessInfo.processInfo.environment["BETTERTILE_TAB_PREVIEW_DIR"])
@@ -595,7 +595,7 @@ func tabbedStripFitsNarrowAndCrowdedPanes(width: Double, count: Int) {
     }
 }
 
-@Test @MainActor func tabbedCrowdedStripKeepsSelectedTabAccessibleInsidePane() throws {
+@Test(.macOSTestApplication) @MainActor func tabbedCrowdedStripKeepsSelectedTabAccessibleInsidePane() throws {
     _ = NSApplication.shared
     let panel = NSPanel(contentRect: NSRect(x: 12000, y: 0, width: 330, height: 34),
                         styleMask: [.borderless], backing: .buffered, defer: false)
@@ -612,7 +612,7 @@ func tabbedStripFitsNarrowAndCrowdedPanes(width: Double, count: Int) {
     #expect(actions.dropLast().allSatisfy { !$0.accessibilityFrame().intersects(menu.accessibilityFrame()) })
 }
 
-@Test @MainActor func tabbedCloseWaitsForReleaseAndCanBeCancelled() throws {
+@Test(.macOSTestApplication) @MainActor func tabbedCloseWaitsForReleaseAndCanBeCancelled() throws {
     _ = NSApplication.shared
     let panel = NSPanel(contentRect: NSRect(x: 12000, y: 0, width: 330, height: 34),
                         styleMask: [.borderless], backing: .buffered, defer: false)
@@ -644,7 +644,7 @@ func tabbedStripFitsNarrowAndCrowdedPanes(width: Double, count: Int) {
     #expect(closed == [id])
 }
 
-@Test @MainActor func tabbedTabSelectsOnPressLikeNativeTabBars() throws {
+@Test(.macOSTestApplication) @MainActor func tabbedTabSelectsOnPressLikeNativeTabBars() throws {
     _ = NSApplication.shared
     let panel = NSPanel(contentRect: NSRect(x: 12000, y: 0, width: 330, height: 34),
                         styleMask: [.borderless], backing: .buffered, defer: false)
@@ -657,7 +657,7 @@ func tabbedStripFitsNarrowAndCrowdedPanes(width: Double, count: Int) {
     view.pane.selected = second
     view.titles = ["First", "Second"]
     panel.contentView = view
-    defer { panel.orderOut(nil) }
+    defer { panel.orderOutForTesting() }
 
     func event(_ type: NSEvent.EventType, at point: NSPoint) throws -> NSEvent {
         try #require(NSEvent.mouseEvent(with: type, location: point, modifierFlags: [], timestamp: 0,
@@ -697,7 +697,7 @@ func tabbedStripFitsNarrowAndCrowdedPanes(width: Double, count: Int) {
     #expect(closes.isEmpty)
 }
 
-@Test @MainActor func tabbedDragAtPaneLimitDoesNotOfferSplitButKeepsCenterMove() throws {
+@Test(.macOSTestApplication) @MainActor func tabbedDragAtPaneLimitDoesNotOfferSplitButKeepsCenterMove() throws {
     _ = NSApplication.shared
     let bounds = BTRect(x: 12000, y: 0, width: 2400, height: 1800)
     let id = WindowID(rawValue: "pane-limit-drag")
@@ -774,7 +774,7 @@ func tabbedStripFitsNarrowAndCrowdedPanes(width: Double, count: Int) {
     #expect(index == nil)
 }
 
-@Test @MainActor func tabbedEmptyPaneHasAccessibleDestinationAndLayoutActions() throws {
+@Test(.macOSTestApplication) @MainActor func tabbedEmptyPaneHasAccessibleDestinationAndLayoutActions() throws {
     _ = NSApplication.shared
     var state = TabbedLayoutState(preset: .focus)
     let a = WindowID(rawValue: "preview-a"), b = WindowID(rawValue: "preview-b")
@@ -817,7 +817,7 @@ func tabbedStripFitsNarrowAndCrowdedPanes(width: Double, count: Int) {
     }
 }
 
-@Test func tabStripKeepsItsVisibleRangeWhenSelectingAVisibleTab() {
+@Test(.macOSTestApplication) func tabStripKeepsItsVisibleRangeWhenSelectingAVisibleTab() {
     let first = TabbedStripLayout(width: 500, count: 9, selectedIndex: 6)
     let visible = first.visibleRange
     #expect(visible.contains(6))
@@ -831,7 +831,7 @@ func tabbedStripFitsNarrowAndCrowdedPanes(width: Double, count: Int) {
     #expect(after.visibleRange.upperBound == visible.upperBound + 1)
 }
 
-@Test(arguments: [180.0, 420.0, 900.0])
+@Test(.macOSTestApplication, arguments: [180.0, 420.0, 900.0])
 func tabStripInsertionPointsMatchRenderedTabEdges(width: Double) {
     let strip = TabbedStripLayout(width: width, count: 12, selectedIndex: 5, startIndex: 3)
     for index in strip.visibleRange {
@@ -846,7 +846,7 @@ func tabStripInsertionPointsMatchRenderedTabEdges(width: Double) {
     }
 }
 
-@Test func tabStripStaysValidWhenNarrowerThanOneTab() {
+@Test(.macOSTestApplication) func tabStripStaysValidWhenNarrowerThanOneTab() {
     let strip = TabbedStripLayout(width: 60, count: 4, selectedIndex: 2)
     #expect(strip.visibleRange.count == 1)
     #expect(strip.visibleRange.contains(2))
@@ -855,7 +855,7 @@ func tabStripInsertionPointsMatchRenderedTabEdges(width: Double) {
     #expect(strip.insertion(at: 40).index >= strip.visibleRange.lowerBound)
 }
 
-@Test @MainActor func tabbedDividersStayAdjustableWithVoiceOver() throws {
+@Test(.macOSTestApplication) @MainActor func tabbedDividersStayAdjustableWithVoiceOver() throws {
     _ = NSApplication.shared
     let bounds = BTRect(x: 12000, y: 0, width: 1000, height: 800)
     var state = TabbedLayoutState(preset: .columns)
@@ -874,7 +874,7 @@ func tabStripInsertionPointsMatchRenderedTabEdges(width: Double) {
     #expect(adjustments == [0.05, -0.05])
 }
 
-@Test @MainActor func tabStripFollowsLiveAccessibilityDisplayChanges() {
+@Test(.macOSTestApplication) @MainActor func tabStripFollowsLiveAccessibilityDisplayChanges() {
     _ = NSApplication.shared
     let view = TabbedPaneView(frame: NSRect(x: 0, y: 0, width: 300, height: 34))
     var reduceTransparency = false
@@ -897,7 +897,7 @@ func tabStripInsertionPointsMatchRenderedTabEdges(width: Double) {
     #expect(view.showsGlass)
 }
 
-@Test @MainActor func realClicksHitTheStripContentAboveTheGlass() throws {
+@Test(.macOSTestApplication) @MainActor func realClicksHitTheStripContentAboveTheGlass() throws {
     // Clicks are hit-tested, not forwarded: nothing may sit above the strip.
     _ = NSApplication.shared
     let panel = NSPanel(contentRect: NSRect(x: 12000, y: 0, width: 330, height: 34),
@@ -910,7 +910,7 @@ func tabStripInsertionPointsMatchRenderedTabEdges(width: Double) {
     }
 }
 
-@Test @MainActor func tabStripsFollowALiveDividerResize() throws {
+@Test(.macOSTestApplication) @MainActor func tabStripsFollowALiveDividerResize() throws {
     _ = NSApplication.shared
     let bounds = BTRect(x: 12000, y: 0, width: 1000, height: 800)
     var state = TabbedLayoutState(preset: .columns)
@@ -937,7 +937,7 @@ func tabStripInsertionPointsMatchRenderedTabEdges(width: Double) {
     #expect(abs(after[1].minX - (before[1].minX + 100)) < 0.5)
 }
 
-@Test @MainActor func sharedCurtainRequiresAnExplicitValidatedSelectedAnchor() {
+@Test(.macOSTestApplication) @MainActor func sharedCurtainRequiresAnExplicitValidatedSelectedAnchor() {
     _ = NSApplication.shared
     let first = WindowID(rawValue: "shared-first"), second = WindowID(rawValue: "shared-second")
     var state = TabbedLayoutState(preset: .columns)
@@ -963,7 +963,7 @@ func tabStripInsertionPointsMatchRenderedTabEdges(width: Double) {
 /// Right after an application activates, the window order can read back stale
 /// for a moment. With the same selection the curtain stays in place instead
 /// of exposing every hidden tab, and the caller is asked to verify again.
-@Test @MainActor func curtainStaysWhileTheOrderIsBrieflyUnreadable() throws {
+@Test(.macOSTestApplication) @MainActor func curtainStaysWhileTheOrderIsBrieflyUnreadable() throws {
     _ = NSApplication.shared
     let bounds = BTRect(x: 14000, y: 0, width: 1000, height: 800)
     let first = WindowID(rawValue: "stay-first"), second = WindowID(rawValue: "stay-second")
@@ -973,8 +973,8 @@ func tabStripInsertionPointsMatchRenderedTabEdges(width: Double) {
         NSPanel(contentRect: CoordinateConverter.toAppKit(bounds, mainScreenFrame: NSScreen.screens.first!.frame),
                 styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
     }
-    defer { targets.forEach { $0.orderOut(nil) } }
-    targets.forEach { $0.orderFrontRegardless() }
+    defer { targets.forEach { $0.orderOutForTesting() } }
+    targets.forEach { $0.orderFrontForTesting() }
     let numbers = [first: targets[0].windowNumber, second: targets[1].windowNumber]
     var curtain: NSPanel?
     let overlay = TabbedOverlayController(orderPanel: { panel, mode, number in
@@ -1004,7 +1004,7 @@ func tabStripInsertionPointsMatchRenderedTabEdges(width: Double) {
 /// An order that stays unreadable can mean a floating window failed to
 /// rise above the selected tabs. The curtain gives way after a few checks
 /// instead of covering that window indefinitely.
-@Test @MainActor func curtainGivesWayWhenTheOrderStaysUnreadable() throws {
+@Test(.macOSTestApplication) @MainActor func curtainGivesWayWhenTheOrderStaysUnreadable() throws {
     _ = NSApplication.shared
     let bounds = BTRect(x: 15000, y: 0, width: 1000, height: 800)
     let first = WindowID(rawValue: "hold-first"), second = WindowID(rawValue: "hold-second")
@@ -1014,8 +1014,8 @@ func tabStripInsertionPointsMatchRenderedTabEdges(width: Double) {
         NSPanel(contentRect: CoordinateConverter.toAppKit(bounds, mainScreenFrame: NSScreen.screens.first!.frame),
                 styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
     }
-    defer { targets.forEach { $0.orderOut(nil) } }
-    targets.forEach { $0.orderFrontRegardless() }
+    defer { targets.forEach { $0.orderOutForTesting() } }
+    targets.forEach { $0.orderFrontForTesting() }
     let numbers = [first: targets[0].windowNumber, second: targets[1].windowNumber]
     var curtain: NSPanel?
     let overlay = TabbedOverlayController(orderPanel: { panel, mode, number in
@@ -1047,7 +1047,7 @@ func tabStripInsertionPointsMatchRenderedTabEdges(width: Double) {
 
 /// Tabs fit their titles and pack from the leading edge, so a short title
 /// does not leave a wide empty tab.
-@Test func contentFittedTabsKeepTheirOwnWidthsWhenTheyFit() {
+@Test(.macOSTestApplication) func contentFittedTabsKeepTheirOwnWidthsWhenTheyFit() {
     let strip = TabbedStripLayout(width: 1000, count: 3, selectedIndex: 0, preferredWidths: [100, 180, 140])
     #expect(strip.visibleRange == 0..<3 && strip.hiddenCount == 0)
     #expect(strip.tabFrame(0).width == 100 && strip.tabFrame(1).width == 180 && strip.tabFrame(2).width == 140)
@@ -1060,7 +1060,7 @@ func tabStripInsertionPointsMatchRenderedTabEdges(width: Double) {
 
 /// When tabs do not fit, they compress toward the minimum before any tab is
 /// hidden, and they still fill exactly the available space.
-@Test func contentFittedTabsCompressBeforeHiding() {
+@Test(.macOSTestApplication) func contentFittedTabsCompressBeforeHiding() {
     let width = 500.0
     let strip = TabbedStripLayout(width: width, count: 4, selectedIndex: 3, preferredWidths: [200, 200, 120, 160])
     let available = strip.menuFrame.minX - 32
@@ -1086,7 +1086,7 @@ func tabStripInsertionPointsMatchRenderedTabEdges(width: Double) {
 /// A dragged real window joins a pane through its tab strip, at the drawn
 /// tab edge nearest the pointer, or anywhere in an empty pane. A pane's
 /// content is not a strip target.
-@Test @MainActor func tabDropZoneFindsTheStripIndexAndEmptyPanes() throws {
+@Test(.macOSTestApplication) @MainActor func tabDropZoneFindsTheStripIndexAndEmptyPanes() throws {
     _ = NSApplication.shared
     let a = WindowID(rawValue: "zone-a"), b = WindowID(rawValue: "zone-b"), x = WindowID(rawValue: "zone-x")
     var state = TabbedLayoutState(preset: .columns)

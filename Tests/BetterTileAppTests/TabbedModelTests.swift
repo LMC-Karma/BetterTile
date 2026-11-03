@@ -29,7 +29,7 @@ private func stackEntry(_ window: WindowSnapshot) -> TabbedStackEntry {
     TabbedStackEntry(windowID: window.id, frame: window.frame)
 }
 
-@Test(arguments: [false, true]) @MainActor
+@Test(.appTestApplication, arguments: [false, true]) @MainActor
 func activationWithBetterTileInFrontNeverSelectsOrActivatesATab(staleFocusIsHidden: Bool) async throws {
     let system = FakeAppWindowSystem()
     let model = try await makeTwoTabbedColumns(system)
@@ -47,7 +47,7 @@ func activationWithBetterTileInFrontNeverSelectsOrActivatesATab(staleFocusIsHidd
     #expect(model.activeTabbedState == state)
 }
 
-@Test(arguments: [false, true]) @MainActor
+@Test(.appTestApplication, arguments: [false, true]) @MainActor
 func activationRaisesSelectionsAboveAllInactiveTabs(failOrdering: Bool) async throws {
     let system = FakeAppWindowSystem()
     let model = try await makeTwoTabbedColumns(system)
@@ -122,7 +122,7 @@ func activationRaisesSelectionsAboveAllInactiveTabs(failOrdering: Bool) async th
 /// browser, which took focus from the bubble. While a window that is not a
 /// tab has focus, Tabbed raises, focuses, selects, and moves nothing of its
 /// application. The repair runs once focus returns to the tab.
-@Test(arguments: ["bubble-behind-selected", "hidden-tab-exposed"], [false, true]) @MainActor
+@Test(.appTestApplication, arguments: ["bubble-behind-selected", "hidden-tab-exposed"], [false, true]) @MainActor
 func aFocusedPopupKeepsFocusUntilItsApplicationReturnsToATab(order: String, closesSilently: Bool) async throws {
     let system = FakeAppWindowSystem()
     let model = try await makeOnePaneWithHiddenTabs(system)
@@ -180,7 +180,7 @@ func aFocusedPopupKeepsFocusUntilItsApplicationReturnsToATab(order: String, clos
 /// A repair that waited for a popup does not block later repairs. Cmd-Tab
 /// away closes the popup; Cmd-Tab back brings the application's hidden tab
 /// in the other pane forward, and the repair puts it back at once.
-@Test @MainActor func anApplicationSwitchStillRepairsStackingAfterAPopupWaited() async throws {
+@Test(.appTestApplication) @MainActor func anApplicationSwitchStillRepairsStackingAfterAPopupWaited() async throws {
     let system = FakeAppWindowSystem()
     let model = try await makeTwoTabbedColumns(system)
     defer { model.shutdown() }
@@ -211,7 +211,7 @@ func aFocusedPopupKeepsFocusUntilItsApplicationReturnsToATab(order: String, clos
 /// `focusedWindow()` reports another window of the application when it
 /// cannot read the focused popup. That report must not select a tab or
 /// raise a window of the application.
-@Test(arguments: [false, true]) @MainActor
+@Test(.appTestApplication, arguments: [false, true]) @MainActor
 func aFocusReportedInPlaceOfAnUnreadablePopupSelectsNothing(unknownFocus: Bool) async throws {
     let system = FakeAppWindowSystem()
     let model = try await makeOnePaneWithHiddenTabs(system)
@@ -238,7 +238,7 @@ func aFocusReportedInPlaceOfAnUnreadablePopupSelectsNothing(unknownFocus: Bool) 
 
 /// Cmd-Tab to an application whose focused window is a standard window the
 /// user floated: that window is raised again last, so it keeps focus.
-@Test @MainActor func aFloatedStandardKeyWindowIsRaisedLastAfterActivation() async throws {
+@Test(.appTestApplication) @MainActor func aFloatedStandardKeyWindowIsRaisedLastAfterActivation() async throws {
     let system = FakeAppWindowSystem()
     let model = try await makeTwoTabbedColumns(system)
     defer { model.shutdown() }
@@ -292,7 +292,7 @@ func aFocusReportedInPlaceOfAnUnreadablePopupSelectsNothing(unknownFocus: Bool) 
 /// the raises caused started another round. Now the dialog keeps its place
 /// in front of the curtain, the key window keeps focus, and one round ends
 /// the repair.
-@Test(arguments: [true, false]) @MainActor
+@Test(.appTestApplication, arguments: [true, false]) @MainActor
 func aFrontApplicationDialogStaysAboveTheCurtainAfterActivation(dialogHasFocus: Bool) async throws {
     let system = FakeAppWindowSystem()
     let model = try await makeOnePaneWithHiddenTabs(system)
@@ -328,7 +328,7 @@ func aFrontApplicationDialogStaysAboveTheCurtainAfterActivation(dialogHasFocus: 
 
 /// Two floating windows of the front application keep their front-to-back
 /// order around the selected tab; the focused one is raised last.
-@Test @MainActor func frontApplicationFloatsKeepTheirOrderAfterActivation() async throws {
+@Test(.appTestApplication) @MainActor func frontApplicationFloatsKeepTheirOrderAfterActivation() async throws {
     let system = FakeAppWindowSystem()
     let model = try await makeOnePaneWithHiddenTabs(system)
     defer { model.shutdown() }
@@ -357,7 +357,7 @@ func aFrontApplicationDialogStaysAboveTheCurtainAfterActivation(dialogHasFocus: 
 /// was ignored, so the order never verified and every focus event repeated
 /// the raise. The dialog now keeps its place above the curtain. Cmd-Tab
 /// back, with Finder's focus on its tab or unreadable, starts no loop either.
-@Test(arguments: ["tab", "unknown"]) @MainActor
+@Test(.appTestApplication, arguments: ["tab", "unknown"]) @MainActor
 func aBackgroundDialogKeepsItsPlaceWithoutARaiseLoop(activationFocus: String) async throws {
     let system = FakeAppWindowSystem()
     let model = try await makeOnePaneWithHiddenTabs(system)
@@ -420,7 +420,7 @@ func aBackgroundDialogKeepsItsPlaceWithoutARaiseLoop(activationFocus: String) as
 /// another application's floating dialog. Raising the background dialog
 /// above the hidden tab is ignored by macOS, so that plan never verified and
 /// repeated until the curtain gave way. The dialog stays under the curtain.
-@Test @MainActor func aBackgroundFloatBehindAHiddenTabStartsNoRaiseLoop() async throws {
+@Test(.appTestApplication) @MainActor func aBackgroundFloatBehindAHiddenTabStartsNoRaiseLoop() async throws {
     let system = FakeAppWindowSystem()
     let model = try await makeOnePaneWithHiddenTabs(system)
     defer { model.shutdown() }
@@ -459,7 +459,7 @@ func aBackgroundDialogKeepsItsPlaceWithoutARaiseLoop(activationFocus: String) as
 /// With no readable frontmost application, a floating dialog behind a
 /// hidden tab is not taken for a background window: it is raised back above
 /// the curtain instead of being left under it.
-@Test @MainActor func anUnknownFrontApplicationLeavesNoFloatUnderTheCurtain() async throws {
+@Test(.appTestApplication) @MainActor func anUnknownFrontApplicationLeavesNoFloatUnderTheCurtain() async throws {
     let system = FakeAppWindowSystem()
     let model = try await makeOnePaneWithHiddenTabs(system)
     defer { model.shutdown() }
@@ -477,7 +477,7 @@ func aBackgroundDialogKeepsItsPlaceWithoutARaiseLoop(activationFocus: String) as
 /// An ineligible floating window has no validated window number, so it is
 /// never the curtain anchor. A kept window comes with the backmost selected
 /// tab as a fallback anchor.
-@Test @MainActor func curtainAnchorsSkipIneligibleFloatsAndFallBackToTheSelectedTab() async throws {
+@Test(.appTestApplication) @MainActor func curtainAnchorsSkipIneligibleFloatsAndFallBackToTheSelectedTab() async throws {
     let system = FakeAppWindowSystem()
     let model = try await makeOnePaneWithHiddenTabs(system)
     defer { model.shutdown() }
@@ -501,7 +501,7 @@ func aBackgroundDialogKeepsItsPlaceWithoutARaiseLoop(activationFocus: String) as
 /// A clean repair on one display must not forget a repair that waits on
 /// another. The watchdog still retries the waiting display after its popup
 /// closes without a notification, and then stops.
-@Test @MainActor func aDeferredRepairIsRememberedPerDisplay() async throws {
+@Test(.appTestApplication) @MainActor func aDeferredRepairIsRememberedPerDisplay() async throws {
     let system = FakeAppWindowSystem()
     let model = try await makeOnePaneWithHiddenTabs(system)
     defer { model.shutdown() }
@@ -540,7 +540,7 @@ func aBackgroundDialogKeepsItsPlaceWithoutARaiseLoop(activationFocus: String) as
 /// Live: after a click on Finder's bare desktop, Finder reports its desktop,
 /// a scroll area, as the focused window. No window focus needs protecting,
 /// so Finder's hidden tab that activation lifted goes back behind at once.
-@Test @MainActor func desktopFocusInTheFrontApplicationDoesNotDeferTheRepair() async throws {
+@Test(.appTestApplication) @MainActor func desktopFocusInTheFrontApplicationDoesNotDeferTheRepair() async throws {
     let system = FakeAppWindowSystem()
     let model = try await makeOnePaneWithHiddenTabs(system)
     defer { model.shutdown() }
@@ -562,7 +562,7 @@ func aBackgroundDialogKeepsItsPlaceWithoutARaiseLoop(activationFocus: String) as
 /// A drag that takes over a pending re-application and then restores the
 /// group without a placement hands the re-application back, so a hidden
 /// tab that drifted still returns to its pane.
-@Test @MainActor func aRestoreWithoutPlacementKeepsAPendingReapplication() async throws {
+@Test(.appTestApplication) @MainActor func aRestoreWithoutPlacementKeepsAPendingReapplication() async throws {
     let system = FakeAppWindowSystem()
     let model = try await makeOnePaneWithHiddenTabs(system)
     defer { model.shutdown() }
@@ -579,7 +579,7 @@ func aBackgroundDialogKeepsItsPlaceWithoutARaiseLoop(activationFocus: String) as
 /// A dialog or floating panel, such as the Font panel or a file dialog,
 /// gets focus back when it is raised last, so the repair still runs while
 /// it is open and hidden tabs do not stay exposed.
-@Test @MainActor func aFocusedDialogIsRaisedLastInsteadOfDeferringTheRepair() async throws {
+@Test(.appTestApplication) @MainActor func aFocusedDialogIsRaisedLastInsteadOfDeferringTheRepair() async throws {
     let system = FakeAppWindowSystem()
     let model = try await makeOnePaneWithHiddenTabs(system)
     defer { model.shutdown() }
@@ -605,7 +605,7 @@ func aBackgroundDialogKeepsItsPlaceWithoutARaiseLoop(activationFocus: String) as
 /// tore the tab from its group. Its release placed the group again and
 /// activated the window, which closed the bubble the click opened. A
 /// release that moved nothing restores the group without a placement.
-@Test(arguments: [false, true]) @MainActor
+@Test(.appTestApplication, arguments: [false, true]) @MainActor
 func aTabbedDragThatMovesNothingRestoresTheGroupWithoutAPlacement(popupFocused: Bool) async throws {
     let system = FakeAppWindowSystem()
     let model = try await makeOnePaneWithHiddenTabs(system)
@@ -628,7 +628,7 @@ func aTabbedDragThatMovesNothingRestoresTheGroupWithoutAPlacement(popupFocused: 
 /// application's bubble has focus, the placement orders and focuses none of
 /// that application's windows. When the tab already has focus, it is only
 /// ordered, not activated again.
-@Test(arguments: [false, true]) @MainActor
+@Test(.appTestApplication, arguments: [false, true]) @MainActor
 func aTabbedPlacementKeepsAPopupsFocusAndDoesNotRefocusTheFocusedTab(popupFocused: Bool) async throws {
     let system = FakeAppWindowSystem()
     let model = try await makeOnePaneWithHiddenTabs(system)
@@ -660,7 +660,7 @@ func aTabbedPlacementKeepsAPopupsFocusAndDoesNotRefocusTheFocusedTab(popupFocuse
 /// Review: a placement in one pane also orders the selected tab of every
 /// other pane. While another pane's application has a popup focused, the
 /// placement orders none of that application's windows.
-@Test @MainActor func aPlacementInOnePaneLeavesAnotherPanesPopupApplicationAlone() async throws {
+@Test(.appTestApplication) @MainActor func aPlacementInOnePaneLeavesAnotherPanesPopupApplicationAlone() async throws {
     let system = FakeAppWindowSystem()
     let model = try await makeTwoTabbedColumns(system)
     defer { model.shutdown() }
@@ -687,7 +687,7 @@ func aTabbedPlacementKeepsAPopupsFocusAndDoesNotRefocusTheFocusedTab(popupFocuse
     #expect(model.activeTabbedState == state)
 }
 
-@Test(arguments: [false, true]) @MainActor
+@Test(.appTestApplication, arguments: [false, true]) @MainActor
 func stackingRepairKeepsAWindowInFrontOrLeavesAnUnreadableOneAlone(readable: Bool) async throws {
     let system = FakeAppWindowSystem()
     let model = try await makeTwoTabbedColumns(system)
@@ -713,7 +713,7 @@ func stackingRepairKeepsAWindowInFrontOrLeavesAnUnreadableOneAlone(readable: Boo
     #expect(!raised.contains { $0.1 })
 }
 
-@Test(arguments: [false, true]) @MainActor
+@Test(.appTestApplication, arguments: [false, true]) @MainActor
 func activationRepairsHiddenTabsOnAnotherTabbedDisplay(focusedDisplayTabbed: Bool) async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
@@ -755,7 +755,7 @@ func activationRepairsHiddenTabsOnAnotherTabbedDisplay(focusedDisplayTabbed: Boo
     #expect(system.frameWriteCounts == writes)
 }
 
-@Test(arguments: [false, true]) @MainActor
+@Test(.appTestApplication, arguments: [false, true]) @MainActor
 func tabSelectionPreservesFloatingOrderWhenRepairingTheSharedCurtain(readableOrder: Bool) async throws {
     let system = FakeAppWindowSystem()
     let model = try await makeTwoTabbedColumns(system)
@@ -783,7 +783,7 @@ func tabSelectionPreservesFloatingOrderWhenRepairingTheSharedCurtain(readableOrd
     #expect(raised == expected)
 }
 
-@Test(arguments: [false, true]) @MainActor
+@Test(.appTestApplication, arguments: [false, true]) @MainActor
 func tabbedCurtainsResolveOnlySelectedWindowsAfterPlacementAndFocus(failSelection: Bool) async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
@@ -793,7 +793,7 @@ func tabbedCurtainsResolveOnlySelectedWindowsAfterPlacementAndFocus(failSelectio
     system.availableDisplays[0].visibleFrame.origin.x = 12000
     for index in system.windows.indices { system.windows[index].frame.origin.x += 12000 }
     let store = ConfigurationStore(fileURL: URL(filePath: "/private/tmp/BetterTileAppTests-\(UUID().uuidString)/configuration.json"))
-    let model = BetterTileModel(store: store, system: system, startRuntime: false, presentsTabbedChrome: true)
+    let model = makeOffscreenModel(store: store, system: system, startRuntime: false, presentsTabbedChrome: true)
     model.primaryButtonIsPressed = { false }
     defer { model.shutdown() }
     model.setActiveMode(.tabbed)
@@ -819,7 +819,7 @@ func tabbedCurtainsResolveOnlySelectedWindowsAfterPlacementAndFocus(failSelectio
     #expect(model.statusMessage == status) // Missing IDs add no error.
 }
 
-@Test(arguments: [false, true]) @MainActor
+@Test(.appTestApplication, arguments: [false, true]) @MainActor
 func tabSelectionDoesNotRearrangeOrRefitOtherWindows(sharedApplication: Bool) async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
@@ -862,7 +862,7 @@ func tabSelectionDoesNotRearrangeOrRefitOtherWindows(sharedApplication: Bool) as
     #expect(raisedOtherPane == sharedApplication)
 }
 
-@Test @MainActor func activatingEmptyTabbedPaneCancelsAnOlderFocusNotification() async throws {
+@Test(.appTestApplication) @MainActor func activatingEmptyTabbedPaneCancelsAnOlderFocusNotification() async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
     let model = makeModel(system: system)
@@ -877,7 +877,7 @@ func tabSelectionDoesNotRearrangeOrRefitOtherWindows(sharedApplication: Bool) as
     #expect(model.activeTabbedState?.activePaneID == emptyPane)
 }
 
-@Test @MainActor func failedTabbedFocusReadDoesNotLeaveARefreshPending() async throws {
+@Test(.appTestApplication) @MainActor func failedTabbedFocusReadDoesNotLeaveARefreshPending() async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
     let model = makeModel(system: system)
@@ -893,7 +893,7 @@ func tabSelectionDoesNotRearrangeOrRefitOtherWindows(sharedApplication: Bool) as
     #expect(!model.tabbedNeedsFocusRefresh)
 }
 
-@Test @MainActor func repairCurrentLayoutRestoresTabbedFramesAndPreservesGroups() async throws {
+@Test(.appTestApplication) @MainActor func repairCurrentLayoutRestoresTabbedFramesAndPreservesGroups() async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
     let model = makeModel(system: system)
@@ -910,7 +910,7 @@ func tabSelectionDoesNotRearrangeOrRefitOtherWindows(sharedApplication: Bool) as
     #expect(model.activeTabbedState == before)
 }
 
-@Test(arguments: [false, true], [600.0, 611.37]) @MainActor
+@Test(.appTestApplication, arguments: [false, true], [600.0, 611.37]) @MainActor
 func tabbedModelAdaptsReportedAndLearnedWidthsAndRetainsThemThroughUndo(learnWidth: Bool, minimumWidth: Double) async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
@@ -949,7 +949,7 @@ func tabbedModelAdaptsReportedAndLearnedWidthsAndRetainsThemThroughUndo(learnWid
     #expect(system.windows.map(\.frame) == frames)
 }
 
-@Test @MainActor func tabbedImpossibleWidthMovePreservesMembershipAndFrames() async throws {
+@Test(.appTestApplication) @MainActor func tabbedImpossibleWidthMovePreservesMembershipAndFrames() async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
     system.windows[0].constraints.minimumSize.width = 300
@@ -973,7 +973,7 @@ func tabbedModelAdaptsReportedAndLearnedWidthsAndRetainsThemThroughUndo(learnWid
     #expect(system.frameWriteCounts == writes)
 }
 
-@Test(arguments: [false, true]) @MainActor
+@Test(.appTestApplication, arguments: [false, true]) @MainActor
 func tabbedLearnedWidthFailureDoesNotCommitOrRetryDegradedRestoration(failRestore: Bool) async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
@@ -996,7 +996,7 @@ func tabbedLearnedWidthFailureDoesNotCommitOrRetryDegradedRestoration(failRestor
     if !failRestore { #expect(system.windows[0].frame == frame) }
 }
 
-@Test @MainActor func tabbedImpossibleHeightRefusalLearnsBothAxesAndPreservesFrames() async throws {
+@Test(.appTestApplication) @MainActor func tabbedImpossibleHeightRefusalLearnsBothAxesAndPreservesFrames() async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
     let id = system.windows[0].id
@@ -1019,7 +1019,7 @@ func tabbedLearnedWidthFailureDoesNotCommitOrRetryDegradedRestoration(failRestor
     #expect(system.windows[0].constraints.minimumSize.height == 780)
 }
 
-@Test @MainActor func tabbedFailedUndoCanBeRetried() async throws {
+@Test(.appTestApplication) @MainActor func tabbedFailedUndoCanBeRetried() async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
     let model = makeModel(system: system)
@@ -1041,7 +1041,7 @@ func tabbedLearnedWidthFailureDoesNotCommitOrRetryDegradedRestoration(failRestor
     #expect(await waitFor { model.activeTabbedState?.panes.count == 2 })
 }
 
-@Test @MainActor func tabbedModelSupportsEmptyPanePlacementAndNativeRestoration() async throws {
+@Test(.appTestApplication) @MainActor func tabbedModelSupportsEmptyPanePlacementAndNativeRestoration() async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
     let first = system.windows[0]
@@ -1075,7 +1075,7 @@ func tabbedLearnedWidthFailureDoesNotCommitOrRetryDegradedRestoration(failRestor
     #expect(model.activeTabbedState?.panes[1].tabs == [third.id])
 }
 
-@Test @MainActor func tabbedModelKeepsNativeSpaceSessionsSeparate() async throws {
+@Test(.appTestApplication) @MainActor func tabbedModelKeepsNativeSpaceSessionsSeparate() async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
     let display = system.mainDisplay.id
@@ -1099,7 +1099,7 @@ func tabbedLearnedWidthFailureDoesNotCommitOrRetryDegradedRestoration(failRestor
     try #require(await waitFor { model.activeLayoutMode == .tabbed && model.activeTabbedState?.panes[0].id == originalPane })
 }
 
-@Test @MainActor func tabbedModelFloatCanBeReattachedAndPresetUndoRestoresAssignments() async throws {
+@Test(.appTestApplication) @MainActor func tabbedModelFloatCanBeReattachedAndPresetUndoRestoresAssignments() async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
     let first = system.windows[0]
@@ -1124,7 +1124,7 @@ func tabbedLearnedWidthFailureDoesNotCommitOrRetryDegradedRestoration(failRestor
     #expect(model.activeTabbedState?.windowIDs.count == 2)
 }
 
-@Test(arguments: ["unchanged", "larger-minimum", "learned-minimum", "oversized-minimum", "oversized-baseline", "no-entry-baseline", "no-entry-larger-minimum"]) @MainActor
+@Test(.appTestApplication, arguments: ["unchanged", "larger-minimum", "learned-minimum", "oversized-minimum", "oversized-baseline", "no-entry-baseline", "no-entry-larger-minimum"]) @MainActor
 func floatingATabRestoresAReachableFrameRespectingCurrentMinimums(scenario: String) async throws {
     let system = FakeAppWindowSystem()
     if scenario == "oversized-baseline" {
@@ -1176,7 +1176,7 @@ func floatingATabRestoresAReachableFrameRespectingCurrentMinimums(scenario: Stri
     #expect(model.statusMessage == nil)
 }
 
-@Test(arguments: [false, true]) @MainActor
+@Test(.appTestApplication, arguments: [false, true]) @MainActor
 func rejectedFloatingRestorationRetainsTabbedMembershipAndFrames(ignored: Bool) async throws {
     let system = FakeAppWindowSystem()
     let id = system.windows[0].id
@@ -1200,7 +1200,7 @@ func rejectedFloatingRestorationRetainsTabbedMembershipAndFrames(ignored: Bool) 
     #expect(system.frameWriteCounts[id, default: 0] > writes)
 }
 
-@Test @MainActor func failedFloatingBatchRollsBackAndDoesNotAddUndo() async throws {
+@Test(.appTestApplication) @MainActor func failedFloatingBatchRollsBackAndDoesNotAddUndo() async throws {
     let system = FakeAppWindowSystem()
     addTabbedWindows(1, to: system)
     let first = system.windows[0].id, second = system.windows[1].id
@@ -1242,7 +1242,7 @@ func rejectedFloatingRestorationRetainsTabbedMembershipAndFrames(ignored: Bool) 
     #expect(model.activeTabbedState == initial)
 }
 
-@Test @MainActor func floatingRestorationLearnsAnUnreportedMinimumAndRetriesOnce() async throws {
+@Test(.appTestApplication) @MainActor func floatingRestorationLearnsAnUnreportedMinimumAndRetriesOnce() async throws {
     let system = FakeAppWindowSystem()
     let id = system.windows[0].id
     let model = makeModel(system: system)
@@ -1264,7 +1264,7 @@ func rejectedFloatingRestorationRetainsTabbedMembershipAndFrames(ignored: Bool) 
     #expect(model.statusMessage == nil)
 }
 
-@Test @MainActor func destroyedFloatingTabbedWindowIsRemovedFromStateAndUndo() async throws {
+@Test(.appTestApplication) @MainActor func destroyedFloatingTabbedWindowIsRemovedFromStateAndUndo() async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
     let first = system.windows[0]
@@ -1295,7 +1295,7 @@ func rejectedFloatingRestorationRetainsTabbedMembershipAndFrames(ignored: Bool) 
     #expect(model.activeTabbedState?.floatingWindowIDs.contains(first.id) == false)
 }
 
-@Test @MainActor func tabbedEmptyActivationDoesNotCaptureNewWindowAsPreexistingBaseline() async throws {
+@Test(.appTestApplication) @MainActor func tabbedEmptyActivationDoesNotCaptureNewWindowAsPreexistingBaseline() async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
     let window = system.windows[0]
@@ -1326,7 +1326,7 @@ func rejectedFloatingRestorationRetainsTabbedMembershipAndFrames(ignored: Bool) 
     return system.windows
 }
 
-@Test @MainActor func tabbedHalfScreenSplitIgnoresAHiddenTabsMinimum() async throws {
+@Test(.appTestApplication) @MainActor func tabbedHalfScreenSplitIgnoresAHiddenTabsMinimum() async throws {
     // Reported failure: a tab dragged to half the screen said the layout
     // could not apply because a hidden wide tab counted.
     _ = NSApplication.shared
@@ -1351,7 +1351,7 @@ func rejectedFloatingRestorationRetainsTabbedMembershipAndFrames(ignored: Bool) 
     #expect(frames[b]!.minX > 500)
 }
 
-@Test @MainActor func tabbedWindowDragsUseBentoAndCenterDropsAddATab() async throws {
+@Test(.appTestApplication) @MainActor func tabbedWindowDragsUseBentoAndCenterDropsAddATab() async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
     _ = tabbedWindows(system, ["a", "b", "c"])
@@ -1391,7 +1391,7 @@ func rejectedFloatingRestorationRetainsTabbedMembershipAndFrames(ignored: Bool) 
     _ = a; _ = c
 }
 
-@Test @MainActor func tabbedPointerDropsRecordUndo() async throws {
+@Test(.appTestApplication) @MainActor func tabbedPointerDropsRecordUndo() async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
     _ = tabbedWindows(system, ["a", "b", "c"])
@@ -1415,7 +1415,7 @@ func rejectedFloatingRestorationRetainsTabbedMembershipAndFrames(ignored: Bool) 
     #expect(await waitFor { model.activeTabbedState?.pane(containing: torn)?.id == before.panes[0].id })
 }
 
-@Test func leavingTabbedForBentoRestoresPlainBentoMetrics() {
+@Test(.appTestApplication) func leavingTabbedForBentoRestoresPlainBentoMetrics() {
     var state = TabbedLayoutState(preset: .columns)
     state.reconcile(windowIDs: [WindowID(rawValue: "a")], removed: [], focused: nil)
     let bento = state.unstacked(in: BTRect(x: 0, y: 0, width: 1000, height: 800))
@@ -1442,7 +1442,7 @@ func rejectedFloatingRestorationRetainsTabbedMembershipAndFrames(ignored: Bool) 
     system.windows.first { $0.id == id }?.frame
 }
 
-@Test(arguments: [false, true]) @MainActor
+@Test(.appTestApplication, arguments: [false, true]) @MainActor
 func tabbedOnePaneEdgeResizeSnapsBackAfterRelease(holdButton: Bool) async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
@@ -1476,7 +1476,7 @@ func tabbedOnePaneEdgeResizeSnapsBackAfterRelease(holdButton: Bool) async throws
     #expect(model.activeTabbedState?.frames(in: system.mainDisplay.visibleFrame) == state.frames(in: system.mainDisplay.visibleFrame))
 }
 
-@Test(arguments: [nil, 450.0] as [Double?]) @MainActor
+@Test(.appTestApplication, arguments: [nil, 450.0] as [Double?]) @MainActor
 func tabbedSharedEdgeResizeMovesThePaneItsHiddenTabsAndItsNeighbor(neighborMinimum: Double?) async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
@@ -1522,7 +1522,7 @@ func tabbedSharedEdgeResizeMovesThePaneItsHiddenTabsAndItsNeighbor(neighborMinim
     })
 }
 
-@Test(arguments: [false, true], [false, true]) @MainActor
+@Test(.appTestApplication, arguments: [false, true], [false, true]) @MainActor
 func tabSelectionRefitsForReportedMinimumInBothAxes(height: Bool, learned: Bool) async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
@@ -1547,7 +1547,7 @@ func tabSelectionRefitsForReportedMinimumInBothAxes(height: Bool, learned: Bool)
     #expect(model.statusMessage == nil)
 }
 
-@Test @MainActor func repairTabbedLearnsHeightAndRestoresDisplacedWindow() async throws {
+@Test(.appTestApplication) @MainActor func repairTabbedLearnsHeightAndRestoresDisplacedWindow() async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
     let model = makeModel(system: system)
@@ -1564,7 +1564,7 @@ func tabSelectionRefitsForReportedMinimumInBothAxes(height: Bool, learned: Bool)
     #expect(system.windows[0].constraints.minimumSize.height >= 450)
 }
 
-@Test(arguments: [false, true]) @MainActor
+@Test(.appTestApplication, arguments: [false, true]) @MainActor
 func impossibleTabSelectionPreservesSelectionAndFrames(height: Bool) async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
@@ -1588,7 +1588,7 @@ func impossibleTabSelectionPreservesSelectionAndFrames(height: Bool) async throw
     #expect(system.frameWriteCounts == writes)
 }
 
-@Test @MainActor
+@Test(.appTestApplication) @MainActor
 func activationRepairsAnInactiveTabAboveAnotherPanesSelection() async throws {
     let system = FakeAppWindowSystem()
     let model = try await makeTwoTabbedColumns(system)
@@ -1607,7 +1607,7 @@ func activationRepairsAnInactiveTabAboveAnotherPanesSelection() async throws {
     #expect(!system.raiseRequests.dropFirst(raises).contains { $0.1 })
 }
 
-@Test @MainActor
+@Test(.appTestApplication) @MainActor
 func sharedCurtainRepairKeepsAFloatingWindowInThePaneGapInFront() async throws {
     let system = FakeAppWindowSystem()
     let model = try await makeTwoTabbedColumns(system)
@@ -1628,7 +1628,7 @@ func sharedCurtainRepairKeepsAFloatingWindowInThePaneGapInFront() async throws {
     #expect(!system.raiseRequests.dropFirst(raises).contains { $0.1 })
 }
 
-@Test @MainActor
+@Test(.appTestApplication) @MainActor
 func sharedCurtainRequiresVerifiedOrderAfterAnIgnoredRaise() async throws {
     let system = FakeAppWindowSystem()
     let model = try await makeTwoTabbedColumns(system)
@@ -1640,7 +1640,7 @@ func sharedCurtainRequiresVerifiedOrderAfterAnIgnoredRaise() async throws {
         bounds: system.mainDisplay.visibleFrame) == nil)
 }
 
-@Test @MainActor
+@Test(.appTestApplication) @MainActor
 func tabbedDividerPresentationSurvivesDisplacedWindowsAndExcludesInactiveTabs() async throws {
     let system = FakeAppWindowSystem()
     let model = try await makeTwoTabbedColumns(system)
@@ -1664,7 +1664,7 @@ func tabbedDividerPresentationSurvivesDisplacedWindowsAndExcludesInactiveTabs() 
     #expect(presentation.managedWindowIDs[system.mainDisplay.id]?.contains(hidden) == true)
 }
 
-@Test(arguments: [false, true]) @MainActor
+@Test(.appTestApplication, arguments: [false, true]) @MainActor
 func tabbedDividerUsesVerifiedFloatingOrderAcrossApps(floatingInFront: Bool) async throws {
     let system = FakeAppWindowSystem()
     let model = try await makeTwoTabbedColumns(system)
@@ -1679,7 +1679,7 @@ func tabbedDividerUsesVerifiedFloatingOrderAcrossApps(floatingInFront: Bool) asy
     #expect(model.dividerPresentation(windows: system.windows).obscuringFrames.contains(floating.frame) == floatingInFront)
 }
 
-@Test(arguments: [false, true]) @MainActor
+@Test(.appTestApplication, arguments: [false, true]) @MainActor
 func tabbedGesturesRetainEvidenceForAnAlreadyClampedInactiveTab(height: Bool) async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
@@ -1704,7 +1704,7 @@ func tabbedGesturesRetainEvidenceForAnAlreadyClampedInactiveTab(height: Bool) as
     #expect(height ? system.windows[1].frame.size.height >= 450 : system.windows[1].frame.size.width >= 600)
 }
 
-@Test @MainActor
+@Test(.appTestApplication) @MainActor
 func observedSmallerInactiveTabNoLongerForcesItsPreviousMinimum() async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
@@ -1730,7 +1730,7 @@ func observedSmallerInactiveTabNoLongerForcesItsPreviousMinimum() async throws {
     #expect(model.statusMessage == nil)
 }
 
-@Test(arguments: [false, true]) @MainActor
+@Test(.appTestApplication, arguments: [false, true]) @MainActor
 func gestureOnAnotherDisplayPreservesAnInactiveTabbedMinimum(nativeVisit: Bool) async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
@@ -1771,7 +1771,7 @@ func gestureOnAnotherDisplayPreservesAnInactiveTabbedMinimum(nativeVisit: Bool) 
     #expect(model.statusMessage == nil)
 }
 
-@Test @MainActor func glassPreferenceDoesNotMoveOrRaiseTabbedWindows() async throws {
+@Test(.appTestApplication) @MainActor func glassPreferenceDoesNotMoveOrRaiseTabbedWindows() async throws {
     let system = FakeAppWindowSystem()
     let model = try await makeTwoTabbedColumns(system)
     defer { model.shutdown() }
@@ -1787,7 +1787,7 @@ func gestureOnAnotherDisplayPreservesAnInactiveTabbedMinimum(nativeVisit: Bool) 
     #expect(system.raiseRequests.count == raises)
 }
 
-@Test(arguments: [false, true]) @MainActor
+@Test(.appTestApplication, arguments: [false, true]) @MainActor
 func shutdownPreventsQueuedTabbedExitFromMutatingWindows(pendingPlacement: Bool) async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
@@ -1811,7 +1811,7 @@ func shutdownPreventsQueuedTabbedExitFromMutatingWindows(pendingPlacement: Bool)
     #expect(system.windows.map(\.frame) == frames)
 }
 
-@Test(arguments: ["unchanged", "larger-minimum", "oversized-minimum", "oversized-baseline"], [false, true]) @MainActor
+@Test(.appTestApplication, arguments: ["unchanged", "larger-minimum", "oversized-minimum", "oversized-baseline"], [false, true]) @MainActor
 func restoringTabbedBaselineRespectsCurrentMinimums(scenario: String, shuttingDown: Bool) async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
@@ -1848,7 +1848,7 @@ func restoringTabbedBaselineRespectsCurrentMinimums(scenario: String, shuttingDo
     #expect(model.statusMessage == nil)
 }
 
-@Test @MainActor func failedNativeExitRestorationRollsBackAndKeepsTabbed() async throws {
+@Test(.appTestApplication) @MainActor func failedNativeExitRestorationRollsBackAndKeepsTabbed() async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
     addTabbedWindows(1, to: system)
@@ -1874,7 +1874,7 @@ func restoringTabbedBaselineRespectsCurrentMinimums(scenario: String, shuttingDo
     #expect(system.frameWriteCounts[second] == writes[second, default: 0] + 1)
 }
 
-@Test @MainActor func shutdownRestoresEntryFramesAfterCancellingLiveDivider() async throws {
+@Test(.appTestApplication) @MainActor func shutdownRestoresEntryFramesAfterCancellingLiveDivider() async throws {
     let system = FakeAppWindowSystem()
     let baseline = system.windows[0].frame
     let model = try await makeTwoTabbedColumns(system)
@@ -1903,7 +1903,7 @@ func restoringTabbedBaselineRespectsCurrentMinimums(scenario: String, shuttingDo
     #expect(system.windows.allSatisfy { $0.frame == baseline })
 }
 
-@Test(arguments: [ResizeFeedbackMode.ghost, .live], [false, true]) @MainActor
+@Test(.appTestApplication, arguments: [ResizeFeedbackMode.ghost, .live], [false, true]) @MainActor
 func tabbedDividerRecoversAnUnreportedMinimumAtRelease(feedback: ResizeFeedbackMode, height: Bool) async throws {
     let system = FakeAppWindowSystem()
     let model = try await makeTwoTabbedColumns(system)
@@ -1950,7 +1950,7 @@ func tabbedDividerRecoversAnUnreportedMinimumAtRelease(feedback: ResizeFeedbackM
     #expect(model.statusMessage == nil)
 }
 
-@Test @MainActor func failedNativeTabbedResizeRestoresTheVerifiedLayout() async throws {
+@Test(.appTestApplication) @MainActor func failedNativeTabbedResizeRestoresTheVerifiedLayout() async throws {
     let system = FakeAppWindowSystem()
     let model = try await makeTwoTabbedColumns(system)
     defer { model.shutdown() }
@@ -1967,7 +1967,7 @@ func tabbedDividerRecoversAnUnreportedMinimumAtRelease(feedback: ResizeFeedbackM
     #expect(system.windows.map(\.frame) == baseline)
 }
 
-@Test @MainActor func impossibleNativeTabbedResizeStillRestoresItsCheckpoint() async throws {
+@Test(.appTestApplication) @MainActor func impossibleNativeTabbedResizeStillRestoresItsCheckpoint() async throws {
     let system = FakeAppWindowSystem()
     let model = try await makeTwoTabbedColumns(system)
     defer { model.shutdown() }
@@ -1992,7 +1992,7 @@ func tabbedDividerRecoversAnUnreportedMinimumAtRelease(feedback: ResizeFeedbackM
     }, "\(model.dividerResize.currentBoundaries.map { ($0.beforeWindowIDs, $0.afterWindowIDs) })")
 }
 
-@Test(arguments: [ResizeFeedbackMode.ghost, .live], [false, true]) @MainActor
+@Test(.appTestApplication, arguments: [ResizeFeedbackMode.ghost, .live], [false, true]) @MainActor
 func ignoredTabbedDividerWritesRestoreWithoutLearningOrRepeating(feedback: ResizeFeedbackMode, displaced: Bool) async throws {
     let system = FakeAppWindowSystem()
     let model = try await makeTwoTabbedColumns(system)
@@ -2031,7 +2031,7 @@ func ignoredTabbedDividerWritesRestoreWithoutLearningOrRepeating(feedback: Resiz
     #expect(system.frameWriteCounts == writes)
 }
 
-@Test @MainActor func refusedTabbedCheckpointRestoreSuspendsAutomaticCorrections() async throws {
+@Test(.appTestApplication) @MainActor func refusedTabbedCheckpointRestoreSuspendsAutomaticCorrections() async throws {
     let system = FakeAppWindowSystem()
     let model = try await makeTwoTabbedColumns(system)
     defer { model.shutdown() }
@@ -2054,7 +2054,7 @@ func ignoredTabbedDividerWritesRestoreWithoutLearningOrRepeating(feedback: Resiz
     #expect(system.frameWriteCounts == writes)
 }
 
-@Test @MainActor func delayedNativeTabbedCheckpointRestoreDoesNotReportDegraded() async throws {
+@Test(.appTestApplication) @MainActor func delayedNativeTabbedCheckpointRestoreDoesNotReportDegraded() async throws {
     let system = FakeAppWindowSystem()
     let model = try await makeTwoTabbedColumns(system)
     defer { model.shutdown() }
@@ -2073,7 +2073,7 @@ func ignoredTabbedDividerWritesRestoreWithoutLearningOrRepeating(feedback: Resiz
     #expect(model.statusMessage?.contains("could not fully restore") == false)
 }
 
-@Test(arguments: [false, true]) @MainActor
+@Test(.appTestApplication, arguments: [false, true]) @MainActor
 func delayedNativeTabbedCheckpointRestoreLocksTabDragsUntilCompletion(cancelRestore: Bool) async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
@@ -2082,7 +2082,7 @@ func delayedNativeTabbedCheckpointRestoreLocksTabDragsUntilCompletion(cancelRest
     system.availableDisplays[0].visibleFrame.origin.x = 12000
     for index in system.windows.indices { system.windows[index].frame.origin.x += 12000 }
     let store = ConfigurationStore(fileURL: URL(filePath: "/private/tmp/BetterTileAppTests-\(UUID().uuidString)/configuration.json"))
-    let model = BetterTileModel(store: store, system: system, startRuntime: false, presentsTabbedChrome: true)
+    let model = makeOffscreenModel(store: store, system: system, startRuntime: false, presentsTabbedChrome: true)
     model.primaryButtonIsPressed = { false }
     defer { model.shutdown() }
     _ = try await makeTwoTabbedColumns(system, model: model)
@@ -2113,7 +2113,7 @@ func delayedNativeTabbedCheckpointRestoreLocksTabDragsUntilCompletion(cancelRest
     #expect(!overlay.isDropPending)
 }
 
-@Test @MainActor func shutdownCancelsDelayedNativeCheckpointVerification() async throws {
+@Test(.appTestApplication) @MainActor func shutdownCancelsDelayedNativeCheckpointVerification() async throws {
     let system = FakeAppWindowSystem()
     let model = try await makeTwoTabbedColumns(system)
     defer { model.shutdown() }
@@ -2136,7 +2136,7 @@ func delayedNativeTabbedCheckpointRestoreLocksTabDragsUntilCompletion(cancelRest
     #expect(system.frameWriteCounts == shutdownWrites)
 }
 
-@Test @MainActor func dividerManagedMembersStayOnTheirDisplayIncludingInactiveTabs() async throws {
+@Test(.appTestApplication) @MainActor func dividerManagedMembersStayOnTheirDisplayIncludingInactiveTabs() async throws {
     let system = FakeAppWindowSystem()
     let model = try await makeTwoTabbedColumns(system)
     defer { model.shutdown() }
@@ -2163,7 +2163,7 @@ func delayedNativeTabbedCheckpointRestoreLocksTabDragsUntilCompletion(cancelRest
 /// tab activates the application, which exposes the other pane's hidden tab.
 /// The stacking repair raises the other pane's selected window; keyboard
 /// focus must still end on the clicked tab.
-@Test(arguments: [false, true]) @MainActor
+@Test(.appTestApplication, arguments: [false, true]) @MainActor
 func selectingASameApplicationTabKeepsFocusOnTheClickedTab(activationRestoresOldMain: Bool) async throws {
     let system = FakeAppWindowSystem()
     let model = try await makeTwoTabbedColumns(system)
@@ -2189,7 +2189,7 @@ func selectingASameApplicationTabKeepsFocusOnTheClickedTab(activationRestoresOld
 /// After the selected tab had focus, the user moves focus to the other
 /// pane's window of the same application. That is a choice, not a focus
 /// change to correct.
-@Test @MainActor
+@Test(.appTestApplication) @MainActor
 func aSameApplicationFocusChangeAfterTheSelectionIsKept() async throws {
     let system = FakeAppWindowSystem()
     let model = try await makeTwoTabbedColumns(system)
@@ -2215,7 +2215,7 @@ func aSameApplicationFocusChangeAfterTheSelectionIsKept() async throws {
 
 /// A selection raises its tab before the placement is prepared. When the
 /// placement is rejected, the old tab and the old focus come back.
-@Test @MainActor func aRejectedSelectionPutsBackTheEarlyRaise() async throws {
+@Test(.appTestApplication) @MainActor func aRejectedSelectionPutsBackTheEarlyRaise() async throws {
     let system = FakeAppWindowSystem()
     let model = try await makeTwoTabbedColumns(system)
     defer { model.shutdown() }
@@ -2241,7 +2241,7 @@ func aSameApplicationFocusChangeAfterTheSelectionIsKept() async throws {
 /// again at once, not after the highlight's timeout. The placement can
 /// reject the tab, or the model can stop before it because no window list
 /// can be read.
-@Test(arguments: [false, true]) @MainActor
+@Test(.appTestApplication, arguments: [false, true]) @MainActor
 func aPressRejectedBeforePlacementDropsItsHighlightAtOnce(unreadableWindows: Bool) async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
@@ -2250,7 +2250,7 @@ func aPressRejectedBeforePlacementDropsItsHighlightAtOnce(unreadableWindows: Boo
     system.availableDisplays[0].visibleFrame.origin.x = 12000
     for index in system.windows.indices { system.windows[index].frame.origin.x += 12000 }
     let store = ConfigurationStore(fileURL: URL(filePath: "/private/tmp/BetterTileAppTests-\(UUID().uuidString)/configuration.json"))
-    let model = BetterTileModel(store: store, system: system, startRuntime: false, presentsTabbedChrome: true)
+    let model = makeOffscreenModel(store: store, system: system, startRuntime: false, presentsTabbedChrome: true)
     model.primaryButtonIsPressed = { false }
     defer { model.shutdown() }
     _ = try await makeTwoTabbedColumns(system, model: model)
@@ -2285,7 +2285,7 @@ func aPressRejectedBeforePlacementDropsItsHighlightAtOnce(unreadableWindows: Boo
 
 /// A focus change the user made selects its tab without an early raise.
 /// When that selection is rejected, the window they chose stays in front.
-@Test @MainActor func aRejectedFocusSelectionKeepsTheChosenWindowInFront() async throws {
+@Test(.appTestApplication) @MainActor func aRejectedFocusSelectionKeepsTheChosenWindowInFront() async throws {
     let system = FakeAppWindowSystem()
     let model = try await makeTwoTabbedColumns(system)
     defer { model.shutdown() }
@@ -2307,7 +2307,7 @@ func aPressRejectedBeforePlacementDropsItsHighlightAtOnce(unreadableWindows: Boo
 
 /// The placement's own checks can also reject a selection before any
 /// write, here because the tab cannot be read. The early raise is undone.
-@Test @MainActor func aSelectionRejectedByThePlacementPutsBackTheEarlyRaise() async throws {
+@Test(.appTestApplication) @MainActor func aSelectionRejectedByThePlacementPutsBackTheEarlyRaise() async throws {
     let system = FakeAppWindowSystem()
     let model = try await makeTwoTabbedColumns(system)
     defer { model.shutdown() }
@@ -2328,7 +2328,7 @@ func aPressRejectedBeforePlacementDropsItsHighlightAtOnce(unreadableWindows: Boo
 /// A selection whose write fails is rolled back, and the rollback already
 /// returns focus to the previous tab. The early raise's undo does not
 /// activate it a second time.
-@Test @MainActor func aRolledBackSelectionReturnsFocusOnce() async throws {
+@Test(.appTestApplication) @MainActor func aRolledBackSelectionReturnsFocusOnce() async throws {
     let system = FakeAppWindowSystem()
     let model = try await makeTwoTabbedColumns(system)
     defer { model.shutdown() }
@@ -2352,7 +2352,7 @@ func aPressRejectedBeforePlacementDropsItsHighlightAtOnce(unreadableWindows: Boo
     #expect(activations.count == 1, "\(system.raiseRequests.dropFirst(raises).map { "\($0.0.rawValue):\($0.1)" })")
 }
 
-@Test @MainActor
+@Test(.appTestApplication) @MainActor
 func stackingRepairOfTheKeyApplicationRaisesTheKeyWindowLast() async throws {
     let system = FakeAppWindowSystem()
     let model = try await makeTwoTabbedColumns(system)
@@ -2375,7 +2375,7 @@ func stackingRepairOfTheKeyApplicationRaisesTheKeyWindowLast() async throws {
 
 /// Terminal settles on whole character cells, just short of its pane. The
 /// tab is selected, and its real frame is not read as a user resize.
-@Test(arguments: [false, true]) @MainActor
+@Test(.appTestApplication, arguments: [false, true]) @MainActor
 func steppedApplicationTabIsSelectedWithoutResizeLoops(emitsEvents: Bool) async throws {
     let system = FakeAppWindowSystem()
     let model = try await makeTwoTabbedColumns(system)
@@ -2398,7 +2398,7 @@ func steppedApplicationTabIsSelectedWithoutResizeLoops(emitsEvents: Bool) async 
 
 /// While the button is held on a selected tab's shared edge, the strips
 /// follow that edge live; the layout is committed only at release.
-@Test @MainActor func tabStripsFollowANativeEdgeResizeWhileTheButtonIsHeld() async throws {
+@Test(.appTestApplication) @MainActor func tabStripsFollowANativeEdgeResizeWhileTheButtonIsHeld() async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
     system.availableDisplays[0].frame.origin.x = 12000
@@ -2407,7 +2407,7 @@ func steppedApplicationTabIsSelectedWithoutResizeLoops(emitsEvents: Bool) async 
     addTabbedWindows(1, to: system)
     for index in system.windows.indices { system.windows[index].frame.origin.x = 12000 + 100 }
     let store = ConfigurationStore(fileURL: URL(filePath: "/private/tmp/BetterTileAppTests-\(UUID().uuidString)/configuration.json"))
-    let model = BetterTileModel(store: store, system: system, startRuntime: false, presentsTabbedChrome: true)
+    let model = makeOffscreenModel(store: store, system: system, startRuntime: false, presentsTabbedChrome: true)
     var held = false
     model.primaryButtonIsPressed = { held }
     defer { model.shutdown() }
@@ -2436,7 +2436,7 @@ func steppedApplicationTabIsSelectedWithoutResizeLoops(emitsEvents: Bool) async 
 /// A native edge resize that ends where it started changes no pane. The
 /// tab strips previewed the edge while the button was held, so they return
 /// to the committed panes at release.
-@Test @MainActor func tabStripsReturnWhenANativeEdgeResizeEndsUnchanged() async throws {
+@Test(.appTestApplication) @MainActor func tabStripsReturnWhenANativeEdgeResizeEndsUnchanged() async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
     system.availableDisplays[0].frame.origin.x = 12000
@@ -2445,7 +2445,7 @@ func steppedApplicationTabIsSelectedWithoutResizeLoops(emitsEvents: Bool) async 
     addTabbedWindows(1, to: system)
     for index in system.windows.indices { system.windows[index].frame.origin.x = 12000 + 100 }
     let store = ConfigurationStore(fileURL: URL(filePath: "/private/tmp/BetterTileAppTests-\(UUID().uuidString)/configuration.json"))
-    let model = BetterTileModel(store: store, system: system, startRuntime: false, presentsTabbedChrome: true)
+    let model = makeOffscreenModel(store: store, system: system, startRuntime: false, presentsTabbedChrome: true)
     var held = false
     model.primaryButtonIsPressed = { held }
     defer { model.shutdown() }
@@ -2496,7 +2496,7 @@ func steppedApplicationTabIsSelectedWithoutResizeLoops(emitsEvents: Bool) async 
 
 /// A fixed-size tab wider than its pane widens the pane when it is
 /// selected, like a resizable tab with a large minimum, instead of failing.
-@Test @MainActor func fixedSizeTabWiderThanItsPaneWidensThePane() async throws {
+@Test(.appTestApplication) @MainActor func fixedSizeTabWiderThanItsPaneWidensThePane() async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
     addTabbedWindows(2, to: system)
@@ -2527,7 +2527,7 @@ func steppedApplicationTabIsSelectedWithoutResizeLoops(emitsEvents: Bool) async 
 
 /// Leaving Tabbed for Bento gives every tab a pane except a fixed-size one,
 /// which floats. Its pane is not left empty.
-@Test @MainActor func leavingTabbedForBentoLeavesNoPaneForAFixedSizeTab() async throws {
+@Test(.appTestApplication) @MainActor func leavingTabbedForBentoLeavesNoPaneForAFixedSizeTab() async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
     addTabbedWindows(2, to: system)
@@ -2549,14 +2549,14 @@ func steppedApplicationTabIsSelectedWithoutResizeLoops(emitsEvents: Bool) async 
 
 /// A fixed-size tab can be selected at its own size. Before, any layout in
 /// which it was the selected tab failed and rolled back.
-@Test @MainActor func fixedSizeTabCanBeSelectedAtItsOwnSize() async throws {
+@Test(.appTestApplication) @MainActor func fixedSizeTabCanBeSelectedAtItsOwnSize() async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
     addTabbedWindows(2, to: system)
     system.windows[2].constraints.isResizable = false
     system.windows[2].frame.size = BTSize(width: 230, height: 408)
     let store = ConfigurationStore(fileURL: URL(filePath: "/private/tmp/BetterTileAppTests-\(UUID().uuidString)/configuration.json"))
-    let model = BetterTileModel(store: store, system: system, startRuntime: false)
+    let model = makeOffscreenModel(store: store, system: system, startRuntime: false)
     model.primaryButtonIsPressed = { false }
     defer { model.shutdown() }
     model.setActiveMode(.tabbed)
@@ -2572,7 +2572,7 @@ func steppedApplicationTabIsSelectedWithoutResizeLoops(emitsEvents: Bool) async 
 /// Window events from BetterTile's own writes are suppressed, so the
 /// finished placement refreshes the boundaries itself; otherwise the next
 /// drag at the new edge found nothing to grab.
-@Test @MainActor func tabbedDividerHandleFollowsTheEdgeAfterADrag() async throws {
+@Test(.appTestApplication) @MainActor func tabbedDividerHandleFollowsTheEdgeAfterADrag() async throws {
     let system = FakeAppWindowSystem()
     let model = try await makeTwoTabbedColumns(system)
     defer { model.shutdown() }
@@ -2598,7 +2598,7 @@ func steppedApplicationTabIsSelectedWithoutResizeLoops(emitsEvents: Bool) async 
 /// Selecting a tab changes which window a divider drag resizes, so the
 /// boundaries must name the newly selected tab; a stale boundary resized a
 /// hidden tab and left the visible one for a later pass.
-@Test @MainActor func tabbedDividerBoundariesNameTheSelectedTab() async throws {
+@Test(.appTestApplication) @MainActor func tabbedDividerBoundariesNameTheSelectedTab() async throws {
     let system = FakeAppWindowSystem()
     let model = try await makeTwoTabbedColumns(system)
     defer { model.shutdown() }
@@ -2620,7 +2620,7 @@ func steppedApplicationTabIsSelectedWithoutResizeLoops(emitsEvents: Bool) async 
 
 /// An empty Tabbed pane leaves no blank space in Bento: the window beside
 /// it takes the whole work area.
-@Test @MainActor func leavingTabbedForBentoFillsAnEmptyPane() async throws {
+@Test(.appTestApplication) @MainActor func leavingTabbedForBentoFillsAnEmptyPane() async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
     let model = makeModel(system: system)
@@ -2639,7 +2639,7 @@ func steppedApplicationTabIsSelectedWithoutResizeLoops(emitsEvents: Bool) async 
 /// report sees it, so the report learns nothing new. The fit retry still
 /// runs, because the window's constraints gained a larger minimum during the
 /// placement.
-@Test @MainActor func tabbedFitRetriesWhenASnapshotConfirmsTheMinimumFirst() async throws {
+@Test(.appTestApplication) @MainActor func tabbedFitRetriesWhenASnapshotConfirmsTheMinimumFirst() async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
     system.measuresOnWrite = true

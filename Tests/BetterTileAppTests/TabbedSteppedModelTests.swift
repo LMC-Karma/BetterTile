@@ -70,7 +70,7 @@ private func near(_ lhs: Double?, _ rhs: Double?, _ tolerance: Double = 0.6) -> 
 
 /// A new Terminal joins the top pane and rounds its height up 4 points. The
 /// pane grows by 4 and the pane below gives them up; nothing fails.
-@Test @MainActor func aNewSteppedWindowThatRoundsUpGrowsItsPane() async throws {
+@Test(.appTestApplication) @MainActor func aNewSteppedWindowThatRoundsUpGrowsItsPane() async throws {
     let system = FakeAppWindowSystem()
     let model = try await makeTabbed(system, .rows, ["upper", "lower"])
     defer { model.shutdown() }
@@ -97,7 +97,7 @@ private func near(_ lhs: Double?, _ rhs: Double?, _ tolerance: Double = 0.6) -> 
 }
 
 /// Rounding down shrinks the pane to match, and the neighbour grows.
-@Test @MainActor func aNewSteppedWindowThatRoundsDownShrinksItsPane() async throws {
+@Test(.appTestApplication) @MainActor func aNewSteppedWindowThatRoundsDownShrinksItsPane() async throws {
     let system = FakeAppWindowSystem()
     let model = try await makeTabbed(system, .rows, ["upper", "lower"])
     defer { model.shutdown() }
@@ -117,7 +117,7 @@ private func near(_ lhs: Double?, _ rhs: Double?, _ tolerance: Double = 0.6) -> 
 
 /// Both axes: in a 2×2 grid the Terminal's width and height both round up,
 /// and its pane follows each.
-@Test @MainActor func bothAxesSnap() async throws {
+@Test(.appTestApplication) @MainActor func bothAxesSnap() async throws {
     let system = FakeAppWindowSystem()
     let model = try await makeTabbed(system, .grid, ["a", "b", "c", "d"])
     defer { model.shutdown() }
@@ -145,7 +145,7 @@ private func near(_ lhs: Double?, _ rhs: Double?, _ tolerance: Double = 0.6) -> 
 /// The Terminal is asked for more than one step less. Whatever its row
 /// height and rounding, it lands inside its pane and keeps a gap; it may
 /// round up toward the pane, and that is accepted.
-@Test(arguments: [11.0, 14.0, 17.0, 20.0], [false, true]) @MainActor
+@Test(.appTestApplication, arguments: [11.0, 14.0, 17.0, 20.0], [false, true]) @MainActor
 func aNeighbourAtItsMinimumLeavesAGapInstead(step: Double, roundsUp: Bool) async throws {
     let system = FakeAppWindowSystem()
     let model = try await makeTabbed(system, .rows, ["upper", "lower"])
@@ -179,7 +179,7 @@ func aNeighbourAtItsMinimumLeavesAGapInstead(step: Double, roundsUp: Bool) async
 /// Two Terminals stacked: one rounds up, one rounds down. The divider
 /// between them stays, so neither chases the other; the placement takes one
 /// extra write and then stops.
-@Test @MainActor func twoSteppedWindowsStackedConvergeInOneRound() async throws {
+@Test(.appTestApplication) @MainActor func twoSteppedWindowsStackedConvergeInOneRound() async throws {
     let system = FakeAppWindowSystem()
     let model = try await makeTabbed(system, .rows, ["upper", "lower"])
     defer { model.shutdown() }
@@ -210,7 +210,7 @@ func aNeighbourAtItsMinimumLeavesAGapInstead(step: Double, roundsUp: Bool) async
 
 /// A Terminal dropped on the centre of the right column joins it. Its width
 /// rounds up; the right pane grows to the left and the left pane gives way.
-@Test @MainActor func aDroppedSteppedWindowGrowsItsPane() async throws {
+@Test(.appTestApplication) @MainActor func aDroppedSteppedWindowGrowsItsPane() async throws {
     let system = FakeAppWindowSystem()
     let model = try await makeTabbed(system, .columns, ["left", "right", "terminal"])
     defer { model.shutdown() }
@@ -233,7 +233,7 @@ func aNeighbourAtItsMinimumLeavesAGapInstead(step: Double, roundsUp: Bool) async
 
 /// Add Floating Window Here: a floating Terminal joins the lower pane and
 /// rounds its height down; the pane follows.
-@Test @MainActor func aSteppedWindowAddedFromThePaneMenuFitsItsPane() async throws {
+@Test(.appTestApplication) @MainActor func aSteppedWindowAddedFromThePaneMenuFitsItsPane() async throws {
     let system = FakeAppWindowSystem()
     let model = try await makeTabbed(system, .rows, ["upper", "lower", "terminal"])
     defer { model.shutdown() }
@@ -256,7 +256,7 @@ func aNeighbourAtItsMinimumLeavesAGapInstead(step: Double, roundsUp: Bool) async
 /// A pane keeps the edge it snapped to for its Terminal while another tab is
 /// selected, so selecting the Terminal again takes at most one write, not a
 /// refused one and a correction.
-@Test @MainActor func reselectingASteppedTabTakesOneWrite() async throws {
+@Test(.appTestApplication) @MainActor func reselectingASteppedTabTakesOneWrite() async throws {
     let system = FakeAppWindowSystem()
     let model = try await makeTabbed(system, .rows, ["upper", "lower"])
     defer { model.shutdown() }
@@ -290,7 +290,7 @@ func aNeighbourAtItsMinimumLeavesAGapInstead(step: Double, roundsUp: Bool) async
 /// learned as its minimum and its application's seed. Two Terminals then
 /// no longer fit stacked. A size within one step of a Tabbed request is the
 /// window's step, never a minimum, so the second Terminal can still move.
-@Test @MainActor func aSteppedSizeIsNotLearnedAsAMinimum() async throws {
+@Test(.appTestApplication) @MainActor func aSteppedSizeIsNotLearnedAsAMinimum() async throws {
     let system = FakeAppWindowSystem()
     let model = try await makeTabbed(system, .rows, ["upper", "lower"])
     defer { model.shutdown() }
@@ -337,7 +337,7 @@ func aNeighbourAtItsMinimumLeavesAGapInstead(step: Double, roundsUp: Bool) async
 /// would ask the lower Terminal for a size it rounds away from; the upper
 /// one takes a gap instead. With another application below that is not yet
 /// known to step, the first try finds out, and the retry keeps the divider.
-@Test(arguments: [true, false]) @MainActor
+@Test(.appTestApplication, arguments: [true, false]) @MainActor
 func aSteppedNeighbourThatLandedExactlyKeepsTheDivider(sameApplication: Bool) async throws {
     let system = FakeAppWindowSystem()
     let model = try await makeTabbed(system, .rows, ["upper", "lower"])
@@ -374,7 +374,7 @@ func aSteppedNeighbourThatLandedExactlyKeepsTheDivider(sameApplication: Bool) as
 /// less shows the window keeps its size, so its minimum is learned and the
 /// arrival is placed by the usual rules, here as a hidden tab of the pane
 /// that can show it, instead of failing the same way on every placement.
-@Test @MainActor func aRealMinimumJustAboveThePaneIsLearned() async throws {
+@Test(.appTestApplication) @MainActor func aRealMinimumJustAboveThePaneIsLearned() async throws {
     let system = FakeAppWindowSystem()
     let model = try await makeTabbed(system, .rows, ["upper", "lower"])
     defer { model.shutdown() }
@@ -407,7 +407,7 @@ func aSteppedNeighbourThatLandedExactlyKeepsTheDivider(sameApplication: Bool) as
 /// exactly, or both round up. The first selections learn the grids. After
 /// that, switching tabs in the upper pane writes no Terminal, fails nothing,
 /// and leaves no Terminal larger than its pane.
-@Test(arguments: [(3.0, 0.0), (5.0, 5.0)]) @MainActor
+@Test(.appTestApplication, arguments: [(3.0, 0.0), (5.0, 5.0)]) @MainActor
 func switchingTabsBesideTwoSteppedTerminalsSettles(upperOver: Double, lowerOver: Double) async throws {
     let system = FakeAppWindowSystem()
     let model = try await makeTabbed(system, .rows, ["t1", "t2", "other"])
@@ -456,7 +456,7 @@ func switchingTabsBesideTwoSteppedTerminalsSettles(upperOver: Double, lowerOver:
 /// heights are 4 + 15·k, rounded to the nearest row. Selecting T1 and then
 /// switching between Recents and T1 three times settles the divider so T2
 /// fills its pane at 454 and T1 takes 439, and then writes no Terminal again.
-@Test @MainActor func liveTwoTerminalsInTwoRowsSettleOnTheirGrids() async throws {
+@Test(.appTestApplication) @MainActor func liveTwoTerminalsInTwoRowsSettleOnTheirGrids() async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
     system.availableDisplays[0].frame = BTRect(x: 0, y: 0, width: 1920, height: 1080)
@@ -547,7 +547,7 @@ func switchingTabsBesideTwoSteppedTerminalsSettles(upperOver: Double, lowerOver:
 /// A font change gives Terminal another grid. Its next placement settles off
 /// the length it was asked for on its old grid, so its lengths start again
 /// from the new one, and the retry fits its pane to it without a failure.
-@Test @MainActor func aFontChangeStartsTheGridAgain() async throws {
+@Test(.appTestApplication) @MainActor func aFontChangeStartsTheGridAgain() async throws {
     let system = FakeAppWindowSystem()
     let model = try await makeTabbed(system, .rows, ["upper", "lower"])
     defer { model.shutdown() }
@@ -570,7 +570,7 @@ func switchingTabsBesideTwoSteppedTerminalsSettles(upperOver: Double, lowerOver:
 /// A window whose lengths share no step, such as one with fractional cells,
 /// gets no grid. It still snaps one placement at a time and never fails or
 /// overlaps its neighbour.
-@Test @MainActor func fractionalCellsGetNoGridAndNeverFail() async throws {
+@Test(.appTestApplication) @MainActor func fractionalCellsGetNoGridAndNeverFail() async throws {
     let system = FakeAppWindowSystem()
     let model = try await makeTabbed(system, .rows, ["upper", "lower"])
     defer { model.shutdown() }
@@ -595,7 +595,7 @@ func switchingTabsBesideTwoSteppedTerminalsSettles(upperOver: Double, lowerOver:
 /// A window that is not stepped but whose minimum is just above its pane
 /// snaps its pane once. A larger pane later takes its request exactly, which
 /// teaches no grid, so the divider stays where the user put it.
-@Test @MainActor func aMinimumNearThePaneTeachesNoGrid() async throws {
+@Test(.appTestApplication) @MainActor func aMinimumNearThePaneTeachesNoGrid() async throws {
     let system = FakeAppWindowSystem()
     let model = try await makeTabbed(system, .rows, ["upper", "lower"])
     defer { model.shutdown() }
@@ -626,7 +626,7 @@ func switchingTabsBesideTwoSteppedTerminalsSettles(upperOver: Double, lowerOver:
 
 /// Four Panes with Terminals in three of them, whose grids fit no layout
 /// exactly. Placements settle on one arrangement and then write nothing.
-@Test @MainActor func fourPanesWithThreeSteppedWindowsSettle() async throws {
+@Test(.appTestApplication) @MainActor func fourPanesWithThreeSteppedWindowsSettle() async throws {
     let system = FakeAppWindowSystem()
     let model = try await makeTabbed(system, .grid, ["a", "b", "c", "d"])
     defer { model.shutdown() }
@@ -665,7 +665,7 @@ func switchingTabsBesideTwoSteppedTerminalsSettles(upperOver: Double, lowerOver:
 /// A small divider drag beside a window held up by a minimum it never
 /// reported. That window settles at one length off its request, which is no
 /// grid, so the drag sticks and the window fills its new area.
-@Test(arguments: [10.0, 1.5]) @MainActor
+@Test(.appTestApplication, arguments: [10.0, 1.5]) @MainActor
 func aSmallDragBesideAMinimumHeldWindowSticks(minimumAbovePane: Double) async throws {
     let system = FakeAppWindowSystem()
     let model = try await makeTabbed(system, .rows, ["upper", "lower"])
@@ -696,7 +696,7 @@ func aSmallDragBesideAMinimumHeldWindowSticks(minimumAbovePane: Double) async th
 
 /// Review: leaving Tabbed forgets a learned grid, also for a stepped window
 /// that floats inside Tabbed at that moment.
-@Test @MainActor func leavingTabbedForgetsAFloatingSteppedWindowsGrid() async throws {
+@Test(.appTestApplication) @MainActor func leavingTabbedForgetsAFloatingSteppedWindowsGrid() async throws {
     let system = FakeAppWindowSystem()
     let model = try await makeTabbed(system, .rows, ["upper", "lower"])
     defer { model.shutdown() }
@@ -717,7 +717,7 @@ func aSmallDragBesideAMinimumHeldWindowSticks(minimumAbovePane: Double) async th
 
 /// Fixed commands move a whole pane; a native snap moves its selected window.
 /// A newly observed cell must not move the exact target, whichever pane steps.
-@Test(arguments: ["keyboard", "wheel", "native"], [(false, false), (false, true), (true, false), (true, true)]) @MainActor
+@Test(.appTestApplication, arguments: ["keyboard", "wheel", "native"], [(false, false), (false, true), (true, false), (true, true)]) @MainActor
 func aSteppedSnapKeepsItsExactLogicalRegion(entry: String, variant: (height: Bool, neighbour: Bool)) async throws {
     let (height, neighbour) = variant
     let system = FakeAppWindowSystem()
@@ -772,7 +772,7 @@ func aSteppedSnapKeepsItsExactLogicalRegion(entry: String, variant: (height: Boo
 
 /// Ordinary adaptive placement learns two distinct cells first. A later fixed
 /// snap uses that grid inside the requested region instead of fitting its edge.
-@Test(arguments: ["keyboard", "wheel", "native"]) @MainActor
+@Test(.appTestApplication, arguments: ["keyboard", "wheel", "native"]) @MainActor
 func aLearnedGridFitsInsideAnExactSnap(entry: String) async throws {
     let system = FakeAppWindowSystem()
     let model = try await makeTabbed(system, .columns, ["source", "peer"])
@@ -807,7 +807,7 @@ func aLearnedGridFitsInsideAnExactSnap(entry: String) async throws {
 
 /// A nearby minimum can look like one cell. Asking for less proves the
 /// refusal; it must reject the fixed snap and restore all original frames.
-@Test @MainActor func aMinimumHeldSnapRejectsAndRestoresBeforeALargerSnap() async throws {
+@Test(.appTestApplication) @MainActor func aMinimumHeldSnapRejectsAndRestoresBeforeALargerSnap() async throws {
     let system = FakeAppWindowSystem()
     let model = try await makeTabbed(system, .columns, ["source", "peer", "hidden"])
     defer { model.shutdown() }
@@ -835,7 +835,7 @@ func aLearnedGridFitsInsideAnExactSnap(entry: String) async throws {
 
 /// A failed corrective write and command retry restore the verified checkpoint
 /// without committing provisional pane membership or an Undo step.
-@Test(arguments: [false, true]) @MainActor
+@Test(.appTestApplication, arguments: [false, true]) @MainActor
 func aFailedSteppedSnapCorrectionRestoresItsCheckpoint(native: Bool) async throws {
     let system = FakeAppWindowSystem()
     let model = try await makeTabbed(system, .columns, ["source", "peer", "hidden"])
@@ -864,7 +864,7 @@ func aFailedSteppedSnapCorrectionRestoresItsCheckpoint(native: Bool) async throw
 
 /// A native gesture takes ownership while the smaller-cell write settles.
 /// The cancelled fixed snap cannot later commit over the gesture's recovery.
-@Test @MainActor func aNativeDragInterruptsASteppedSnapCorrection() async throws {
+@Test(.appTestApplication) @MainActor func aNativeDragInterruptsASteppedSnapCorrection() async throws {
     let system = FakeAppWindowSystem()
     let model = try await makeTabbed(system, .columns, ["source", "peer"])
     defer { model.shutdown() }
@@ -895,7 +895,7 @@ func aFailedSteppedSnapCorrectionRestoresItsCheckpoint(native: Bool) async throw
 
 /// A floating source gets a new destination pane. A retry may allocate that
 /// pane again; its new identity must retain the same exact snap region.
-@Test @MainActor func aFloatingSteppedSnapCanRetryIntoANewExactPane() async throws {
+@Test(.appTestApplication) @MainActor func aFloatingSteppedSnapCanRetryIntoANewExactPane() async throws {
     let system = FakeAppWindowSystem()
     let model = try await makeTabbed(system, .columns, ["source", "peer"])
     defer { model.shutdown() }
@@ -922,7 +922,7 @@ func aFailedSteppedSnapCorrectionRestoresItsCheckpoint(native: Bool) async throw
 
 /// One held length is not proof of a grid. If a new minimum also prevents
 /// checkpoint recovery, report degradation and stop automatic frame writes.
-@Test(arguments: [false, true]) @MainActor
+@Test(.appTestApplication, arguments: [false, true]) @MainActor
 func anImpossibleMinimumHeldSnapRollbackStopsAutomaticWrites(native: Bool) async throws {
     let system = FakeAppWindowSystem()
     let model = try await makeTabbed(system, .columns, ["source", "peer"])

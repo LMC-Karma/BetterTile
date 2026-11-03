@@ -3,7 +3,7 @@ import BetterTileCore
 import Testing
 @testable import BetterTileMacOS
 
-@Test(arguments: [SplitAxis.vertical, .horizontal], ["simultaneous", "staggered", "cascading", "late-mismatch", "failed-correction"]) @MainActor
+@Test(.macOSTestApplication, arguments: [SplitAxis.vertical, .horizontal], ["simultaneous", "staggered", "cascading", "late-mismatch", "failed-correction"]) @MainActor
 func liveJunctionReleaseSettlesBothNewlyLearnedMinima(rootAxis: SplitAxis, scenario: String) throws {
     _ = NSApplication.shared
     let system = FakeWindowSystem()

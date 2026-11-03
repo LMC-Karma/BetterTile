@@ -3,7 +3,7 @@ import Testing
 @testable import BetterTileCore
 @testable import BetterTileMacOS
 
-@Test(arguments: [false, true]) @MainActor
+@Test(.macOSTestApplication, arguments: [false, true]) @MainActor
 func unchangedWireframesPreserveTheirInFlightPresentation(initialReduceMotion: Bool) throws {
     var panels: [CountingWireframePanel] = []
     var reduceMotion = initialReduceMotion

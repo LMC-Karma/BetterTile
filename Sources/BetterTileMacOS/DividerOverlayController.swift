@@ -288,6 +288,10 @@ public final class DividerOverlayController {
     }
     public var stackProvider: ((Set<WindowID>) -> [SeamStackEntry]?)?
     public var ownProcess: Int32 = getpid()
+    /// Transforms presentation coordinates without changing layout or input geometry.
+    public var panelFrameTransform: (NSRect) -> NSRect = { $0 } {
+        didSet { dragOverlay.panelFrameTransform = panelFrameTransform }
+    }
     var coverageTime: () -> Double = { CACurrentMediaTime() }
     var mouseLocation: () -> CGPoint = { NSEvent.mouseLocation }
 
@@ -606,7 +610,7 @@ public final class DividerOverlayController {
             for: interaction, near: point, active: active,
             exposedSpan: coverage.exposedSpan, armRoom: coverage.armRoom
         )
-        let appKitFrame = CoordinateConverter.toAppKit(topLeftFrame, mainScreenFrame: mainFrame)
+        let appKitFrame = panelFrameTransform(CoordinateConverter.toAppKit(topLeftFrame, mainScreenFrame: mainFrame))
         guard active || !isCovered(topLeftFrame: topLeftFrame, appKitFrame: appKitFrame, useFallback: candidates == nil) else {
             hoveredInteraction = nil
             handlePanel?.orderOut(nil)

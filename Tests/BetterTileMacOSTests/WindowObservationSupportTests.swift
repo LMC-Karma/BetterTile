@@ -4,7 +4,7 @@ import Testing
 @testable import BetterTileCore
 @testable import BetterTileMacOS
 
-@Test func provisionalWindowIdentityBindsExactIDWithoutChangingCoreID() throws {
+@Test(.macOSTestApplication) func provisionalWindowIdentityBindsExactIDWithoutChangingCoreID() throws {
     var registry = WindowIdentityRegistry()
     let application = ApplicationLaunchInstance(processIdentifier: 42, generation: 1)
 
@@ -31,7 +31,7 @@ import Testing
     #expect(registry.windowID(application: application, accessibilityHash: 101) == provisional)
 }
 
-@Test func processAndCGWindowIDReuseCannotInheritOldIdentity() {
+@Test(.macOSTestApplication) func processAndCGWindowIDReuseCannotInheritOldIdentity() {
     var registry = WindowIdentityRegistry()
     let firstLaunch = ApplicationLaunchInstance(processIdentifier: 42, generation: 1)
     let secondLaunch = ApplicationLaunchInstance(processIdentifier: 42, generation: 2)
@@ -56,7 +56,7 @@ import Testing
     #expect(reused != first)
 }
 
-@Test(arguments: [false, true])
+@Test(.macOSTestApplication, arguments: [false, true])
 func offscreenWindowKeepsItsIdentityAcrossSweeps(exactIdentityAvailable: Bool) {
     var registry = WindowIdentityRegistry()
     let application = ApplicationLaunchInstance(processIdentifier: 42, generation: 1)
@@ -90,7 +90,7 @@ func offscreenWindowKeepsItsIdentityAcrossSweeps(exactIdentityAvailable: Bool) {
     #expect(registry.records.isEmpty)
 }
 
-@Test(arguments: [false, true])
+@Test(.macOSTestApplication, arguments: [false, true])
 func returningWindowIdentitiesPreserveBentoOrientationAndDragging(omittedByAccessibility: Bool) throws {
     var registry = WindowIdentityRegistry()
     let application = ApplicationLaunchInstance(processIdentifier: 42, generation: 1)
@@ -147,7 +147,7 @@ func returningWindowIdentitiesPreserveBentoOrientationAndDragging(omittedByAcces
     }
 }
 
-@Test func exactWindowServerJoinDoesNotAcceptOverlappingSameAppFallback() {
+@Test(.macOSTestApplication) func exactWindowServerJoinDoesNotAcceptOverlappingSameAppFallback() {
     let frame = BTRect(x: 100, y: 100, width: 600, height: 400)
     let displayID = DisplayID(rawValue: "main")
     let window = WindowSnapshot(
@@ -180,7 +180,7 @@ func returningWindowIdentitiesPreserveBentoOrientationAndDragging(omittedByAcces
     #expect(!index.containsIdentity(20, processIdentifier: 43))
 }
 
-@Test func targetedSnapshotCacheMergesOnlyCompleteRefreshes() throws {
+@Test(.macOSTestApplication) func targetedSnapshotCacheMergesOnlyCompleteRefreshes() throws {
     let displayID = DisplayID(rawValue: "main")
     let first = WindowSnapshot(
         id: WindowID(rawValue: "first"),
@@ -208,7 +208,7 @@ func returningWindowIdentitiesPreserveBentoOrientationAndDragging(omittedByAcces
     #expect(cache.snapshots == nil)
 }
 
-@Test func privateMinimumSizesAreValidatedAndMergedByGreatestDimension() {
+@Test(.macOSTestApplication) func privateMinimumSizesAreValidatedAndMergedByGreatestDimension() {
     let result = MinimumSizeHintValidator.merged(
         defaultSize: BTSize(width: 120, height: 80),
         hints: [
@@ -223,7 +223,7 @@ func returningWindowIdentitiesPreserveBentoOrientationAndDragging(omittedByAcces
     #expect(result == BTSize(width: 300, height: 240))
 }
 
-@Test func onlyClearDialogAndFloatingSubrolesFloatAutomatically() {
+@Test(.macOSTestApplication) func onlyClearDialogAndFloatingSubrolesFloatAutomatically() {
     #expect(WindowFloatingClassifier.isFloating(subrole: kAXDialogSubrole))
     #expect(WindowFloatingClassifier.isFloating(subrole: kAXSystemDialogSubrole))
     #expect(WindowFloatingClassifier.isFloating(subrole: kAXFloatingWindowSubrole))
@@ -232,11 +232,11 @@ func returningWindowIdentitiesPreserveBentoOrientationAndDragging(omittedByAcces
     #expect(!WindowFloatingClassifier.isFloating(subrole: nil))
 }
 
-@Test @MainActor func privateWindowIdentityKillSwitchMakesResolverUnavailable() {
+@Test(.macOSTestApplication) @MainActor func privateWindowIdentityKillSwitchMakesResolverUnavailable() {
     #expect(!ExactWindowIDResolver(disabled: true).isAvailable)
 }
 
-@Test func malformedRequiredBatchValueRequestsIndividualFallback() throws {
+@Test(.macOSTestApplication) func malformedRequiredBatchValueRequestsIndividualFallback() throws {
     var point = CGPoint(x: 100, y: 100)
     var size = CGSize(width: 600, height: 400)
     var minimum = CGSize(width: 300, height: 200)
@@ -265,7 +265,7 @@ func returningWindowIdentitiesPreserveBentoOrientationAndDragging(omittedByAcces
     #expect(AccessibilityWindowSystem.parsedBatchedSnapshotAttributes(malformed) == nil)
 }
 
-@Test(arguments: ["closed", "ax-present", "ws-present", "ax-read-failed", "ws-read-failed", "no-exact"])
+@Test(.macOSTestApplication, arguments: ["closed", "ax-present", "ws-present", "ax-read-failed", "ws-read-failed", "no-exact"])
 func retainedWindowClosureRequiresBothSuccessfulNativeSources(evidence: String) {
     var registry = WindowIdentityRegistry()
     let application = ApplicationLaunchInstance(processIdentifier: 42, generation: 1)
@@ -283,7 +283,7 @@ func retainedWindowClosureRequiresBothSuccessfulNativeSources(evidence: String) 
     #expect(registry.removeClosedWindowsAfterSweep(observedApplications: observations, windowServer: index).isEmpty)
 }
 
-@Test(arguments: ["invalid", "cannot-complete", "unsupported", "success", "missing-element", "ax-present", "unread-app"], [false, true])
+@Test(.macOSTestApplication, arguments: ["invalid", "cannot-complete", "unsupported", "success", "missing-element", "ax-present", "unread-app"], [false, true])
 func invalidAccessibilityElementConfirmsClosureOnlyAfterSuccessfulAbsentInventory(evidence: String, exact: Bool) {
     var registry = WindowIdentityRegistry()
     let application = ApplicationLaunchInstance(processIdentifier: 42, generation: 1)
@@ -314,7 +314,7 @@ func invalidAccessibilityElementConfirmsClosureOnlyAfterSuccessfulAbsentInventor
     #expect(registry.removeClosedWindowsAfterSweep(observedApplications: observations, windowServer: index).isEmpty)
 }
 
-@Test func terminatedLaunchReturnsEveryIdentityOnceAndKeepsOtherApplications() {
+@Test(.macOSTestApplication) func terminatedLaunchReturnsEveryIdentityOnceAndKeepsOtherApplications() {
     var registry = WindowIdentityRegistry()
     let terminated = ApplicationLaunchInstance(processIdentifier: 42, generation: 1)
     let other = ApplicationLaunchInstance(processIdentifier: 43, generation: 2)
@@ -334,7 +334,7 @@ func invalidAccessibilityElementConfirmsClosureOnlyAfterSuccessfulAbsentInventor
     #expect(registry.windowID(application: other, accessibilityHash: 100) == survivor)
 }
 
-@Test func windowServerQueryEncodesRawWindowIDsWithoutObjectBridging() {
+@Test(.macOSTestApplication) func windowServerQueryEncodesRawWindowIDsWithoutObjectBridging() {
     for ids in [Set<CGWindowID>(), Set<CGWindowID>([1, 700, .max])] {
         let array = makeWindowServerIDArray(ids)
         #expect(CFArrayGetCount(array) == ids.count)
@@ -346,7 +346,7 @@ func invalidAccessibilityElementConfirmsClosureOnlyAfterSuccessfulAbsentInventor
 
 /// Only a popup that closes without focus, such as a browser bubble, is
 /// transient. Standard windows, dialogs, and floating panels are not.
-@Test func transientPopupsAreThePopupsThatAreNotDialogsOrPanels() {
+@Test(.macOSTestApplication) func transientPopupsAreThePopupsThatAreNotDialogsOrPanels() {
     #expect(WindowFloatingClassifier.isTransientPopup(subrole: "AXUnknown"))
     #expect(!WindowFloatingClassifier.isTransientPopup(subrole: "AXStandardWindow"))
     #expect(!WindowFloatingClassifier.isTransientPopup(subrole: "AXDialog"))

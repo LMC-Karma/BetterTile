@@ -3,7 +3,7 @@ import Testing
 @testable import BetterTileCore
 @testable import BetterTileMacOS
 
-@Test @MainActor func tabbedCoordinatorCommitsTinyFixedSizeSelectionAlongsideResizableWindow() async throws {
+@Test(.macOSTestApplication) @MainActor func tabbedCoordinatorCommitsTinyFixedSizeSelectionAlongsideResizableWindow() async throws {
     let system = FakeWindowSystem()
     system.addSecondWindow()
     system.windows[1].frame = BTRect(x: 800, y: 600, width: 90, height: 70)
@@ -34,7 +34,7 @@ import Testing
     #expect(system.minimizeWriteCounts.isEmpty)
 }
 
-@Test @MainActor func tabbedCoordinatorOrdersSelectedWindowsAndDoesNotMinimize() async {
+@Test(.macOSTestApplication) @MainActor func tabbedCoordinatorOrdersSelectedWindowsAndDoesNotMinimize() async {
     let system = FakeWindowSystem()
     system.addSecondWindow()
     let first = system.windows[0].id, second = system.windows[1].id
@@ -50,7 +50,7 @@ import Testing
     #expect(system.minimizeWriteCounts.isEmpty)
 }
 
-@Test(arguments: [false, true]) @MainActor
+@Test(.macOSTestApplication, arguments: [false, true]) @MainActor
 func tabbedSelectionRaisesOnceUnlessOtherSelectionsNeedOrdering(orderOtherPane: Bool) async {
     let system = FakeWindowSystem()
     system.addSecondWindow()
@@ -67,7 +67,7 @@ func tabbedSelectionRaisesOnceUnlessOtherSelectionsNeedOrdering(orderOtherPane: 
     #expect(system.focusedWindowID == first)
 }
 
-@Test @MainActor func tabbedCoordinatorWaitsForSlowFocusWithoutRollingBack() async {
+@Test(.macOSTestApplication) @MainActor func tabbedCoordinatorWaitsForSlowFocusWithoutRollingBack() async {
     let system = FakeWindowSystem()
     system.addSecondWindow()
     let first = system.windows[0].id, second = system.windows[1].id
@@ -82,7 +82,7 @@ func tabbedSelectionRaisesOnceUnlessOtherSelectionsNeedOrdering(orderOtherPane: 
     #expect(system.focusedWindowID == second)
 }
 
-@Test @MainActor func tabbedCoordinatorKeepsAcceptedFramesWhenFocusNeverArrives() async {
+@Test(.macOSTestApplication) @MainActor func tabbedCoordinatorKeepsAcceptedFramesWhenFocusNeverArrives() async {
     let system = FakeWindowSystem()
     system.addSecondWindow()
     let first = system.windows[0].id, second = system.windows[1].id
@@ -99,7 +99,7 @@ func tabbedSelectionRaisesOnceUnlessOtherSelectionsNeedOrdering(orderOtherPane: 
     #expect(system.raisedWindows.last?.0 == second)
 }
 
-@Test @MainActor func tabbedCoordinatorRollsBackFrameAndFocusWhenRaiseFails() async {
+@Test(.macOSTestApplication) @MainActor func tabbedCoordinatorRollsBackFrameAndFocusWhenRaiseFails() async {
     let system = FakeWindowSystem()
     system.addSecondWindow()
     let original = system.windows
@@ -113,7 +113,7 @@ func tabbedSelectionRaisesOnceUnlessOtherSelectionsNeedOrdering(orderOtherPane: 
     #expect(system.windows == original)
 }
 
-@Test @MainActor func tabbedCoordinatorRejectsStaleDesktopWithoutWriting() async {
+@Test(.macOSTestApplication) @MainActor func tabbedCoordinatorRejectsStaleDesktopWithoutWriting() async {
     let system = FakeWindowSystem()
     let coordinator = WindowCoordinator(system: system)
     let result = await coordinator.applyTabbed(
@@ -124,7 +124,7 @@ func tabbedSelectionRaisesOnceUnlessOtherSelectionsNeedOrdering(orderOtherPane: 
     #expect(system.raisedWindows.isEmpty)
 }
 
-@Test @MainActor func tabbedCoordinatorReportsDegradedIfRestoreIsRejected() async {
+@Test(.macOSTestApplication) @MainActor func tabbedCoordinatorReportsDegradedIfRestoreIsRejected() async {
     let system = FakeWindowSystem()
     let id = system.windows[0].id
     system.failedFrameWriteNumbers[id] = [2]
@@ -135,7 +135,7 @@ func tabbedSelectionRaisesOnceUnlessOtherSelectionsNeedOrdering(orderOtherPane: 
     guard case .degraded = result else { Issue.record("Expected incomplete rollback"); return }
 }
 
-@Test @MainActor func tabbedCloseRequestsClosureWithoutRemovingAnUnconfirmedWindow() {
+@Test(.macOSTestApplication) @MainActor func tabbedCloseRequestsClosureWithoutRemovingAnUnconfirmedWindow() {
     let system = FakeWindowSystem()
     let id = system.windows[0].id
     #expect(WindowCoordinator(system: system).closeTabbedWindow(id).isApplied)
@@ -143,7 +143,7 @@ func tabbedSelectionRaisesOnceUnlessOtherSelectionsNeedOrdering(orderOtherPane: 
     #expect(system.windows.count == 1)
 }
 
-@Test @MainActor func hiddenTabsAreWrittenOnlyWhenMovedAndInTheSameBatch() async {
+@Test(.macOSTestApplication) @MainActor func hiddenTabsAreWrittenOnlyWhenMovedAndInTheSameBatch() async {
     let system = FakeWindowSystem()
     system.addSecondWindow()
     var third = system.windows[1]
@@ -164,7 +164,7 @@ func tabbedSelectionRaisesOnceUnlessOtherSelectionsNeedOrdering(orderOtherPane: 
     #expect(system.frameWriteBatches.contains { Set($0) == [shown, moved] })
 }
 
-@Test @MainActor func failedTabbedLayoutReturnsMovedHiddenTabs() async {
+@Test(.macOSTestApplication) @MainActor func failedTabbedLayoutReturnsMovedHiddenTabs() async {
     let system = FakeWindowSystem()
     system.addSecondWindow()
     let shown = system.windows[0].id, hidden = system.windows[1].id
@@ -178,7 +178,7 @@ func tabbedSelectionRaisesOnceUnlessOtherSelectionsNeedOrdering(orderOtherPane: 
     #expect(system.windows[1].frame == hiddenBefore)
 }
 
-@Test @MainActor func hiddenTabbedPartialResizeIsNotLearnedBeforeItSettles() async throws {
+@Test(.macOSTestApplication) @MainActor func hiddenTabbedPartialResizeIsNotLearnedBeforeItSettles() async throws {
     let system = FakeWindowSystem()
     system.addSecondWindow()
     let shown = system.windows[0].id, hidden = system.windows[1].id
@@ -226,7 +226,7 @@ func tabbedSelectionRaisesOnceUnlessOtherSelectionsNeedOrdering(orderOtherPane: 
 /// A size that arrives at 80 ms or 150 ms, before the confirmation delay, is
 /// no minimum: the window settles at its pane size, and neither the window
 /// nor its application learns anything.
-@Test(arguments: [80, 120]) @MainActor
+@Test(.macOSTestApplication, arguments: [80, 120]) @MainActor
 func tabbedPlacementDoesNotLearnASizeAppliedLate(milliseconds: Int) async throws {
     let system = FakeWindowSystem()
     let id = system.windows[0].id
@@ -248,7 +248,7 @@ func tabbedPlacementDoesNotLearnASizeAppliedLate(milliseconds: Int) async throws
 /// A size that arrives after the confirmation delay is indistinguishable
 /// from a refusal when the loop reports it. This is the documented limit of
 /// the time-based rule.
-@Test @MainActor func tabbedPlacementLearnsASizeAppliedAfterTheDelay() async throws {
+@Test(.macOSTestApplication) @MainActor func tabbedPlacementLearnsASizeAppliedAfterTheDelay() async throws {
     let system = FakeWindowSystem()
     let id = system.windows[0].id
     let target = BTRect(x: 0, y: 34, width: 400, height: 300)
@@ -268,7 +268,7 @@ func tabbedPlacementDoesNotLearnASizeAppliedLate(milliseconds: Int) async throws
 /// readback cannot tell that from a late size, so the loop waits for the
 /// confirmation delay before it reports the refusal, and the settled frame
 /// confirms it in time for the learned-minimum retry.
-@Test @MainActor func tabbedPlacementLearnsAWindowAtItsMinimumOnceItSettles() async throws {
+@Test(.macOSTestApplication) @MainActor func tabbedPlacementLearnsAWindowAtItsMinimumOnceItSettles() async throws {
     let system = FakeWindowSystem()
     let id = system.windows[0].id
     system.enforcedMinimumWidths[id] = 600
@@ -289,7 +289,7 @@ func tabbedPlacementDoesNotLearnASizeAppliedLate(milliseconds: Int) async throws
 /// A window at its real minimum width moves at once and takes its new
 /// height 100 ms later. The late height does not discard the kept width:
 /// the refusal is still learned for the retry.
-@Test @MainActor func tabbedPlacementLearnsAKeptWidthDespiteALateHeight() async throws {
+@Test(.macOSTestApplication) @MainActor func tabbedPlacementLearnsAKeptWidthDespiteALateHeight() async throws {
     let system = FakeWindowSystem()
     let id = system.windows[0].id
     system.windows[0].frame = BTRect(x: 200, y: 0, width: 600, height: 800)
@@ -306,7 +306,7 @@ func tabbedPlacementDoesNotLearnASizeAppliedLate(milliseconds: Int) async throws
     #expect(probe.learner.learnedSizes[id] == BTSize(width: 600, height: 0))
 }
 
-@Test @MainActor func tabbedResizeUsesActualFramesAsWriteHintsInsteadOfItsCheckpoint() async throws {
+@Test(.macOSTestApplication) @MainActor func tabbedResizeUsesActualFramesAsWriteHintsInsteadOfItsCheckpoint() async throws {
     let system = FakeWindowSystem()
     let id = system.windows[0].id
     let checkpoint = system.windows[0].frame
@@ -320,7 +320,7 @@ func tabbedPlacementDoesNotLearnASizeAppliedLate(milliseconds: Int) async throws
     #expect(system.recordedKnownCurrentFrames[id]?.first == actual)
 }
 
-@Test(arguments: ["stale", "unreadable", "minimized", "missing", "immovable", "display"])
+@Test(.macOSTestApplication, arguments: ["stale", "unreadable", "minimized", "missing", "immovable", "display"])
 @MainActor func tabbedCheckpointPreflightNeverWritesUnvalidatedParticipants(failure: String) async {
     let system = FakeWindowSystem()
     let id = system.windows[0].id
@@ -345,7 +345,7 @@ func tabbedPlacementDoesNotLearnASizeAppliedLate(milliseconds: Int) async throws
     #expect(system.raisedWindows.isEmpty)
 }
 
-@Test(arguments: [false, true]) @MainActor
+@Test(.macOSTestApplication, arguments: [false, true]) @MainActor
 func tabbedCheckpointVerificationStopsWhenItsDesktopOrTaskChanges(cancelled: Bool) async {
     let system = FakeWindowSystem()
     let id = system.windows[0].id
@@ -366,7 +366,7 @@ func tabbedCheckpointVerificationStopsWhenItsDesktopOrTaskChanges(cancelled: Boo
     #expect(system.raisedWindows.isEmpty)
 }
 
-@Test(arguments: [(10.0, true, true), (10.0, false, false), (40.0, true, false)]) @MainActor
+@Test(.macOSTestApplication, arguments: [(10.0, true, true), (10.0, false, false), (40.0, true, false)]) @MainActor
 func tabbedRollbackAcceptsOnlyAStepShortfallForASteppedWindow(shortfall: Double, stepped: Bool, restores: Bool) async {
     let system = FakeWindowSystem()
     let id = system.windows[0].id
@@ -380,7 +380,7 @@ func tabbedRollbackAcceptsOnlyAStepShortfallForASteppedWindow(shortfall: Double,
     #expect(system.windows[0].frame.size.width == checkpoint.size.width - shortfall)
 }
 
-@Test @MainActor func tabbedRequiredSelectionsCannotBeOmittedFromPlacement() async {
+@Test(.macOSTestApplication) @MainActor func tabbedRequiredSelectionsCannotBeOmittedFromPlacement() async {
     let system = FakeWindowSystem()
     system.addSecondWindow()
     let first = system.windows[0].id, second = system.windows[1].id
@@ -392,7 +392,7 @@ func tabbedRollbackAcceptsOnlyAStepShortfallForASteppedWindow(shortfall: Double,
     #expect(system.raisedWindows.isEmpty)
 }
 
-@Test @MainActor func tabbedSnapRollbackVerifiesTheFormerDestinationSelection() async {
+@Test(.macOSTestApplication) @MainActor func tabbedSnapRollbackVerifiesTheFormerDestinationSelection() async {
     let system = FakeWindowSystem()
     system.addSecondWindow()
     let oldSelection = system.windows[0].id, source = system.windows[1].id

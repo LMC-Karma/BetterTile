@@ -3,7 +3,7 @@ import Testing
 @testable import BetterTileCore
 @testable import BetterTileMacOS
 
-@Test @MainActor func coordinatorAppliesActionAndRestoreThroughFakeSystem() throws {
+@Test(.macOSTestApplication) @MainActor func coordinatorAppliesActionAndRestoreThroughFakeSystem() throws {
     let system = FakeWindowSystem()
     let original = system.windows[0].frame
     let coordinator = WindowCoordinator(system: system)
@@ -13,7 +13,7 @@ import Testing
     #expect(system.windows[0].frame == original)
 }
 
-@Test @MainActor func placementTransactionsUseTargetedWindowSnapshots() {
+@Test(.macOSTestApplication) @MainActor func placementTransactionsUseTargetedWindowSnapshots() {
     let system = FakeWindowSystem()
     let coordinator = WindowCoordinator(system: system)
     let placement = Placement(
@@ -25,7 +25,7 @@ import Testing
     #expect(system.targetedSnapshotRequests >= 2)
 }
 
-@Test @MainActor func tinyFixedSizeWindowMovesInAMultiWindowCommit() {
+@Test(.macOSTestApplication) @MainActor func tinyFixedSizeWindowMovesInAMultiWindowCommit() {
     let system = FakeWindowSystem()
     system.addSecondWindow()
     system.windows[1].frame = BTRect(x: 800, y: 600, width: 90, height: 70)
@@ -41,7 +41,7 @@ import Testing
     #expect(Set(system.frameWriteCounts.keys) == Set(placements.map(\.windowID)))
 }
 
-@Test(arguments: [
+@Test(.macOSTestApplication, arguments: [
     BTSize(width: 150, height: 70),
     BTSize(width: 90, height: 100),
     BTSize(width: 80, height: 70),
@@ -67,7 +67,7 @@ import Testing
     #expect(system.frameWriteBatches.isEmpty)
 }
 
-@Test(arguments: [BTSize(width: 90, height: 400), BTSize(width: 600, height: 70)], [false, true])
+@Test(.macOSTestApplication, arguments: [BTSize(width: 90, height: 400), BTSize(width: 600, height: 70)], [false, true])
 @MainActor func tinyResizableWindowMinimumRejectsTheWholeCommit(targetSize: BTSize, keepsSize: Bool) {
     let system = FakeWindowSystem()
     system.addSecondWindow()
@@ -91,7 +91,7 @@ import Testing
 
 /// A seed is another window's minimum, so it does not stop a write: the
 /// write shows this window's own. A learned or reported minimum still does.
-@Test(arguments: [MinimumSizeSource.seed, .learned, .hint])
+@Test(.macOSTestApplication, arguments: [MinimumSizeSource.seed, .learned, .hint])
 @MainActor func onlyAnUnprovenSeedLetsAWriteGoBelowTheMinimum(source: MinimumSizeSource) {
     let system = FakeWindowSystem()
     system.addSecondWindow()
@@ -111,7 +111,7 @@ import Testing
 
 /// Review: a seed that raises only the width of a reported minimum still
 /// leaves the reported height. A write below that height is refused.
-@Test @MainActor func aSeedKeepsTheWindowsOwnMinimumOnTheOtherAxis() {
+@Test(.macOSTestApplication) @MainActor func aSeedKeepsTheWindowsOwnMinimumOnTheOtherAxis() {
     let system = FakeWindowSystem()
     system.addSecondWindow()
     system.windows[1].constraints.minimumSize = BTSize(width: 600, height: 400)
@@ -127,7 +127,7 @@ import Testing
         == .applied)
 }
 
-@Test @MainActor func coordinatorCanPlanAnActionWithoutMovingTheWindow() throws {
+@Test(.macOSTestApplication) @MainActor func coordinatorCanPlanAnActionWithoutMovingTheWindow() throws {
     let system = FakeWindowSystem()
     let original = system.windows[0].frame
     let coordinator = WindowCoordinator(system: system)
@@ -141,7 +141,7 @@ import Testing
     #expect(system.windows[0].frame == plan.targetFrame)
 }
 
-@Test @MainActor func plannedHalfActionsPreserveShortcutCycling() throws {
+@Test(.macOSTestApplication) @MainActor func plannedHalfActionsPreserveShortcutCycling() throws {
     let system = FakeWindowSystem()
     let coordinator = WindowCoordinator(system: system)
     let first = try #require(coordinator.plan(.leftHalf).readyPlan)
@@ -154,7 +154,7 @@ import Testing
     #expect(system.windows[0].frame == second.targetFrame)
 }
 
-@Test @MainActor func exactPlansTargetTheCapturedWindowWithoutCycling() throws {
+@Test(.macOSTestApplication) @MainActor func exactPlansTargetTheCapturedWindowWithoutCycling() throws {
     let system = FakeWindowSystem()
     system.addSecondWindow()
     let capturedID = system.windows[0].id
@@ -172,7 +172,7 @@ import Testing
     #expect(firstKeyboardPlan.resolvedAction == .leftHalf)
 }
 
-@Test @MainActor func exactPreviewDoesNotRecordHistoryOrMoveTheWindow() throws {
+@Test(.macOSTestApplication) @MainActor func exactPreviewDoesNotRecordHistoryOrMoveTheWindow() throws {
     let system = FakeWindowSystem()
     let original = system.windows[0].frame
     let id = system.windows[0].id
@@ -183,7 +183,7 @@ import Testing
     #expect(coordinator.planExact(.restore, for: id).readyPlan == nil)
 }
 
-@Test @MainActor func exactPlanBecomesUnavailableWhenCapturedWindowDisappears() {
+@Test(.macOSTestApplication) @MainActor func exactPlanBecomesUnavailableWhenCapturedWindowDisappears() {
     let system = FakeWindowSystem()
     let id = system.windows[0].id
     let coordinator = WindowCoordinator(system: system)
@@ -195,7 +195,7 @@ import Testing
     }
 }
 
-@Test @MainActor func aFailedFocusedWindowReadPlansAsFailedWithItsReason() {
+@Test(.macOSTestApplication) @MainActor func aFailedFocusedWindowReadPlansAsFailedWithItsReason() {
     let system = FakeWindowSystem()
     system.focusedWindowReadFails = true
     let coordinator = WindowCoordinator(system: system)
@@ -207,7 +207,7 @@ import Testing
     #expect(reason == WindowSystemError.operationFailed("Simulated focused-window failure").localizedDescription)
 }
 
-@Test @MainActor func aMissingFocusedWindowPlansAsUnavailableNotFailed() {
+@Test(.macOSTestApplication) @MainActor func aMissingFocusedWindowPlansAsUnavailableNotFailed() {
     let system = FakeWindowSystem()
     system.windows.removeAll()
     let coordinator = WindowCoordinator(system: system)
@@ -218,7 +218,7 @@ import Testing
     }
 }
 
-@Test @MainActor func displayTransferWraps() {
+@Test(.macOSTestApplication) @MainActor func displayTransferWraps() {
     let system = FakeWindowSystem()
     system.availableDisplays.append(DisplaySnapshot(
         id: DisplayID(rawValue: "second"),
@@ -230,7 +230,7 @@ import Testing
     #expect(system.windows[0].frame.minX >= 1000)
 }
 
-@Test @MainActor func ghostPreviewDoesNotMutateFramesUntilCommit() throws {
+@Test(.macOSTestApplication) @MainActor func ghostPreviewDoesNotMutateFramesUntilCommit() throws {
     let system = FakeWindowSystem()
     system.addSecondWindow()
     let coordinator = WindowCoordinator(system: system)
@@ -246,7 +246,7 @@ import Testing
     #expect(system.windows.map(\.frame) == placements.map(\.frame))
 }
 
-@Test @MainActor func liveTransactionCanBeCancelledToItsBaseline() throws {
+@Test(.macOSTestApplication) @MainActor func liveTransactionCanBeCancelledToItsBaseline() throws {
     let system = FakeWindowSystem()
     system.addSecondWindow()
     let coordinator = WindowCoordinator(system: system)
@@ -262,7 +262,7 @@ import Testing
     #expect(system.windows.map(\.frame) == original)
 }
 
-@Test @MainActor func failedLiveCancellationRequiresRepair() throws {
+@Test(.macOSTestApplication) @MainActor func failedLiveCancellationRequiresRepair() throws {
     let system = FakeWindowSystem()
     system.addSecondWindow()
     let coordinator = WindowCoordinator(system: system)
@@ -278,7 +278,7 @@ import Testing
         == .degraded(reason: "The divider change failed and the previous layout could not be fully restored."))
 }
 
-@Test @MainActor func cancellationRecoversADegradedFirstLiveWrite() throws {
+@Test(.macOSTestApplication) @MainActor func cancellationRecoversADegradedFirstLiveWrite() throws {
     let system = FakeWindowSystem()
     system.addSecondWindow()
     let coordinator = WindowCoordinator(system: system)
@@ -304,7 +304,7 @@ import Testing
     #expect(system.windows.map(\.frame) == original)
 }
 
-@Test @MainActor func partialTransactionFailureRollsBackAppliedWindows() throws {
+@Test(.macOSTestApplication) @MainActor func partialTransactionFailureRollsBackAppliedWindows() throws {
     let system = FakeWindowSystem()
     system.addSecondWindow()
     let coordinator = WindowCoordinator(system: system)
@@ -320,7 +320,7 @@ import Testing
     #expect(system.windows.map(\.frame) == original)
 }
 
-@Test(arguments: [false, true]) @MainActor
+@Test(.macOSTestApplication, arguments: [false, true]) @MainActor
 func partiallyFailedFrameWriteRestoresTheFailingWindow(rollbackFails: Bool) throws {
     let system = FakeWindowSystem()
     system.addSecondWindow()
@@ -364,7 +364,7 @@ func partiallyFailedFrameWriteRestoresTheFailingWindow(rollbackFails: Bool) thro
     #expect(system.windows.map(\.frame) == original)
 }
 
-@Test @MainActor func authoritativeSettlementRetriesOnlyAcceptedButUnappliedFrames() async throws {
+@Test(.macOSTestApplication) @MainActor func authoritativeSettlementRetriesOnlyAcceptedButUnappliedFrames() async throws {
     let system = FakeWindowSystem()
     system.addSecondWindow()
     let coordinator = WindowCoordinator(system: system)
@@ -381,7 +381,7 @@ func partiallyFailedFrameWriteRestoresTheFailingWindow(rollbackFails: Bool) thro
     #expect(system.frameWriteCounts[system.windows[1].id] == 2)
 }
 
-@Test @MainActor func authoritativeSettlementStopsAfterItsRetryLimit() async throws {
+@Test(.macOSTestApplication) @MainActor func authoritativeSettlementStopsAfterItsRetryLimit() async throws {
     let system = FakeWindowSystem()
     system.addSecondWindow()
     let coordinator = WindowCoordinator(system: system)
@@ -397,7 +397,7 @@ func partiallyFailedFrameWriteRestoresTheFailingWindow(rollbackFails: Bool) thro
     #expect(system.frameWriteCounts[system.windows[1].id] == 3)
 }
 
-@Test @MainActor func aDegradedRetryDuringSettlementSurfacesTheMixedStateReason() async throws {
+@Test(.macOSTestApplication) @MainActor func aDegradedRetryDuringSettlementSurfacesTheMixedStateReason() async throws {
     let system = FakeWindowSystem()
     system.addSecondWindow()
     let coordinator = WindowCoordinator(system: system)
@@ -420,7 +420,7 @@ func partiallyFailedFrameWriteRestoresTheFailingWindow(rollbackFails: Bool) thro
     #expect(outcome == .degraded(reason: "A window update failed and the previous layout could not be fully restored."))
 }
 
-@Test @MainActor func aFullySuccessfulApplyClearsTheTransactionDegradedLatch() throws {
+@Test(.macOSTestApplication) @MainActor func aFullySuccessfulApplyClearsTheTransactionDegradedLatch() throws {
     let system = FakeWindowSystem()
     system.addSecondWindow()
     let coordinator = WindowCoordinator(system: system)
@@ -451,7 +451,7 @@ func partiallyFailedFrameWriteRestoresTheFailingWindow(rollbackFails: Bool) thro
     #expect(system.windows.map(\.frame) == placements.map(\.frame))
 }
 
-@Test @MainActor func focusDropRollsBackAnAlreadyPlacedSourceAndMinimizedWindowsAfterPartialFailure() throws {
+@Test(.macOSTestApplication) @MainActor func focusDropRollsBackAnAlreadyPlacedSourceAndMinimizedWindowsAfterPartialFailure() throws {
     let system = FakeWindowSystem()
     system.addSecondWindow()
     let third = WindowSnapshot(
@@ -476,7 +476,7 @@ func partiallyFailedFrameWriteRestoresTheFailingWindow(rollbackFails: Bool) thro
     #expect(system.windows.first(where: { $0.id == third.id })?.isMinimized == false)
 }
 
-@Test @MainActor func focusDropPeerRestoreUnminimizesEveryPeer() {
+@Test(.macOSTestApplication) @MainActor func focusDropPeerRestoreUnminimizesEveryPeer() {
     let system = FakeWindowSystem()
     system.addSecondWindow()
     let thirdID = WindowID(rawValue: "third")
@@ -495,7 +495,7 @@ func partiallyFailedFrameWriteRestoresTheFailingWindow(rollbackFails: Bool) thro
     #expect(system.windows[2].isMinimized == false)
 }
 
-@Test @MainActor func focusDropPeerRestoreContinuesPastAFailingPeer() {
+@Test(.macOSTestApplication) @MainActor func focusDropPeerRestoreContinuesPastAFailingPeer() {
     let system = FakeWindowSystem()
     system.addSecondWindow()
     let thirdID = WindowID(rawValue: "third")
@@ -521,7 +521,7 @@ func partiallyFailedFrameWriteRestoresTheFailingWindow(rollbackFails: Bool) thro
     #expect(system.windows[1].isMinimized == true)
 }
 
-@Test @MainActor func transactionHistoryIncludesOnlyWindowsWhoseFramesChanged() throws {
+@Test(.macOSTestApplication) @MainActor func transactionHistoryIncludesOnlyWindowsWhoseFramesChanged() throws {
     let system = FakeWindowSystem()
     system.addSecondWindow()
     let unchanged = WindowSnapshot(
@@ -549,7 +549,7 @@ func partiallyFailedFrameWriteRestoresTheFailingWindow(rollbackFails: Bool) thro
     #expect(system.windows.first(where: { $0.id == first.id })?.frame == first.frame)
 }
 
-@Test @MainActor func coordinatorFiltersOnlyItsOwnExpectedFrameEvent() throws {
+@Test(.macOSTestApplication) @MainActor func coordinatorFiltersOnlyItsOwnExpectedFrameEvent() throws {
     let system = FakeWindowSystem()
     let coordinator = WindowCoordinator(system: system)
     let id = system.windows[0].id
@@ -567,7 +567,7 @@ func partiallyFailedFrameWriteRestoresTheFailingWindow(rollbackFails: Bool) thro
     ))
 }
 
-@Test @MainActor func coordinatorOwnsDelayedEventsFromOverlappingGenerations() throws {
+@Test(.macOSTestApplication) @MainActor func coordinatorOwnsDelayedEventsFromOverlappingGenerations() throws {
     let system = FakeWindowSystem()
     let coordinator = WindowCoordinator(system: system)
     let id = system.windows[0].id
@@ -581,7 +581,7 @@ func partiallyFailedFrameWriteRestoresTheFailingWindow(rollbackFails: Bool) thro
     #expect(coordinator.matchesExpectedMutation(windowID: id, actualFrame: second))
 }
 
-@Test @MainActor func anObservedGenerationStillOwnsDelayedDuplicatesAfterANewerWrite() throws {
+@Test(.macOSTestApplication) @MainActor func anObservedGenerationStillOwnsDelayedDuplicatesAfterANewerWrite() throws {
     let system = FakeWindowSystem()
     let coordinator = WindowCoordinator(system: system)
     let id = system.windows[0].id
@@ -595,7 +595,7 @@ func partiallyFailedFrameWriteRestoresTheFailingWindow(rollbackFails: Bool) thro
     #expect(coordinator.matchesExpectedMutation(windowID: id, actualFrame: first))
 }
 
-@Test @MainActor func coordinatorOwnsACallbackBeyondTheOldHalfSecondDeadline() async throws {
+@Test(.macOSTestApplication) @MainActor func coordinatorOwnsACallbackBeyondTheOldHalfSecondDeadline() async throws {
     let system = FakeWindowSystem()
     let coordinator = WindowCoordinator(system: system)
     let id = system.windows[0].id
@@ -606,7 +606,7 @@ func partiallyFailedFrameWriteRestoresTheFailingWindow(rollbackFails: Bool) thro
     #expect(coordinator.matchesExpectedMutation(windowID: id, actualFrame: target))
 }
 
-@Test @MainActor func coordinatorOwnsEveryCallbackFromAFrameWrite() throws {
+@Test(.macOSTestApplication) @MainActor func coordinatorOwnsEveryCallbackFromAFrameWrite() throws {
     let system = FakeWindowSystem()
     let coordinator = WindowCoordinator(system: system)
     let id = system.windows[0].id
@@ -621,7 +621,7 @@ func partiallyFailedFrameWriteRestoresTheFailingWindow(rollbackFails: Bool) thro
     #expect(!coordinator.matchesExpectedMutation(windowID: id, actualFrame: target))
 }
 
-@Test @MainActor func rapidWritesDoNotDropAnOwnedGeneration() throws {
+@Test(.macOSTestApplication) @MainActor func rapidWritesDoNotDropAnOwnedGeneration() throws {
     let system = FakeWindowSystem()
     let coordinator = WindowCoordinator(system: system)
     let id = system.windows[0].id
@@ -636,7 +636,7 @@ func partiallyFailedFrameWriteRestoresTheFailingWindow(rollbackFails: Bool) thro
     #expect(coordinator.matchesExpectedMutation(windowID: id, actualFrame: targets[0]))
 }
 
-@Test @MainActor func finishingAnOlderGenerationPreservesNewerOwnership() throws {
+@Test(.macOSTestApplication) @MainActor func finishingAnOlderGenerationPreservesNewerOwnership() throws {
     let system = FakeWindowSystem()
     let coordinator = WindowCoordinator(system: system)
     let id = system.windows[0].id
@@ -652,7 +652,7 @@ func partiallyFailedFrameWriteRestoresTheFailingWindow(rollbackFails: Bool) thro
     #expect(coordinator.matchesExpectedMutation(windowID: id, actualFrame: second))
 }
 
-@Test @MainActor func terminalObservationFinishesOnlyGenerationsThroughTheObservedFrame() throws {
+@Test(.macOSTestApplication) @MainActor func terminalObservationFinishesOnlyGenerationsThroughTheObservedFrame() throws {
     let system = FakeWindowSystem()
     let coordinator = WindowCoordinator(system: system)
     let id = system.windows[0].id
@@ -669,7 +669,7 @@ func partiallyFailedFrameWriteRestoresTheFailingWindow(rollbackFails: Bool) thro
     #expect(coordinator.matchesExpectedMutation(windowID: id, actualFrame: second))
 }
 
-@Test @MainActor func terminalObservationBoundsAnUnsettledBurst() throws {
+@Test(.macOSTestApplication) @MainActor func terminalObservationBoundsAnUnsettledBurst() throws {
     let system = FakeWindowSystem()
     let coordinator = WindowCoordinator(system: system)
     let id = system.windows[0].id
@@ -686,7 +686,7 @@ func partiallyFailedFrameWriteRestoresTheFailingWindow(rollbackFails: Bool) thro
     #expect(!coordinator.matchesExpectedMutation(windowID: id, actualFrame: targets[19]))
 }
 
-@Test @MainActor func repeatedTerminalMismatchBoundsAnIgnoredWrite() throws {
+@Test(.macOSTestApplication) @MainActor func repeatedTerminalMismatchBoundsAnIgnoredWrite() throws {
     let system = FakeWindowSystem()
     let coordinator = WindowCoordinator(system: system)
     let id = system.windows[0].id
@@ -703,7 +703,7 @@ func partiallyFailedFrameWriteRestoresTheFailingWindow(rollbackFails: Bool) thro
     #expect(!coordinator.matchesExpectedMutation(windowID: id, actualFrame: target))
 }
 
-@Test @MainActor func olderFailedVerificationDoesNotRetireANewerGeneration() throws {
+@Test(.macOSTestApplication) @MainActor func olderFailedVerificationDoesNotRetireANewerGeneration() throws {
     let system = FakeWindowSystem()
     let coordinator = WindowCoordinator(system: system)
     let id = system.windows[0].id
@@ -722,7 +722,7 @@ func partiallyFailedFrameWriteRestoresTheFailingWindow(rollbackFails: Bool) thro
     #expect(coordinator.matchesExpectedMutation(windowID: id, actualFrame: second))
 }
 
-@Test @MainActor func failedFrameWriteDoesNotClaimAFutureEvent() throws {
+@Test(.macOSTestApplication) @MainActor func failedFrameWriteDoesNotClaimAFutureEvent() throws {
     let system = FakeWindowSystem()
     let coordinator = WindowCoordinator(system: system)
     let id = system.windows[0].id
@@ -733,7 +733,7 @@ func partiallyFailedFrameWriteRestoresTheFailingWindow(rollbackFails: Bool) thro
     #expect(!coordinator.matchesExpectedMutation(windowID: id, actualFrame: target))
 }
 
-@Test @MainActor func rollbackOwnsBothForwardAndRestoringEvents() throws {
+@Test(.macOSTestApplication) @MainActor func rollbackOwnsBothForwardAndRestoringEvents() throws {
     let system = FakeWindowSystem()
     system.addSecondWindow()
     let coordinator = WindowCoordinator(system: system)
@@ -755,7 +755,7 @@ func partiallyFailedFrameWriteRestoresTheFailingWindow(rollbackFails: Bool) thro
 
 // MARK: - Accessibility write hints
 
-@Test @MainActor func actionsTellTheSystemWhereTheWindowCurrentlyIs() throws {
+@Test(.macOSTestApplication) @MainActor func actionsTellTheSystemWhereTheWindowCurrentlyIs() throws {
     let system = FakeWindowSystem()
     let original = system.windows[0].frame
     let coordinator = WindowCoordinator(system: system)
@@ -765,7 +765,7 @@ func partiallyFailedFrameWriteRestoresTheFailingWindow(rollbackFails: Bool) thro
     #expect(system.recordedKnownCurrentFrames[id] == [original])
 }
 
-@Test @MainActor func aMoveActionLetsTheSystemSkipTheLeadingSizeWrite() throws {
+@Test(.macOSTestApplication) @MainActor func aMoveActionLetsTheSystemSkipTheLeadingSizeWrite() throws {
     let system = FakeWindowSystem()
     let coordinator = WindowCoordinator(system: system)
     let id = system.windows[0].id
@@ -779,7 +779,7 @@ func partiallyFailedFrameWriteRestoresTheFailingWindow(rollbackFails: Bool) thro
     #expect(plan.writeCount == 2)
 }
 
-@Test @MainActor func transactionsPassTheBaselineAsTheCurrentFrame() throws {
+@Test(.macOSTestApplication) @MainActor func transactionsPassTheBaselineAsTheCurrentFrame() throws {
     let system = FakeWindowSystem()
     system.addSecondWindow()
     let coordinator = WindowCoordinator(system: system)
@@ -795,7 +795,7 @@ func partiallyFailedFrameWriteRestoresTheFailingWindow(rollbackFails: Bool) thro
     }
 }
 
-@Test @MainActor func liveTransactionsPassTheLastAppliedFrameNotTheBaseline() throws {
+@Test(.macOSTestApplication) @MainActor func liveTransactionsPassTheLastAppliedFrameNotTheBaseline() throws {
     let system = FakeWindowSystem()
     let coordinator = WindowCoordinator(system: system)
     let id = system.windows[0].id
@@ -811,7 +811,7 @@ func partiallyFailedFrameWriteRestoresTheFailingWindow(rollbackFails: Bool) thro
     #expect(hints[1] == first)
 }
 
-@Test @MainActor func rollbackTellsTheSystemTheWindowIsAtTheFrameItJustWrote() throws {
+@Test(.macOSTestApplication) @MainActor func rollbackTellsTheSystemTheWindowIsAtTheFrameItJustWrote() throws {
     let system = FakeWindowSystem()
     system.addSecondWindow()
     let coordinator = WindowCoordinator(system: system)
@@ -830,7 +830,7 @@ func partiallyFailedFrameWriteRestoresTheFailingWindow(rollbackFails: Bool) thro
     #expect(hints[1] == placements[0].frame)
 }
 
-@Test @MainActor func rollbackFailureMarksTheApplyAsDegraded() {
+@Test(.macOSTestApplication) @MainActor func rollbackFailureMarksTheApplyAsDegraded() {
     let system = FakeWindowSystem()
     system.addSecondWindow()
     let coordinator = WindowCoordinator(system: system)
@@ -846,7 +846,7 @@ func partiallyFailedFrameWriteRestoresTheFailingWindow(rollbackFails: Bool) thro
         == .degraded(reason: "A window update failed and the previous layout could not be fully restored."))
 }
 
-@Test @MainActor func aDegradedApplyDoesNotPoisonALaterTransaction() throws {
+@Test(.macOSTestApplication) @MainActor func aDegradedApplyDoesNotPoisonALaterTransaction() throws {
     let system = FakeWindowSystem()
     system.addSecondWindow()
     let coordinator = WindowCoordinator(system: system)
@@ -874,7 +874,7 @@ func partiallyFailedFrameWriteRestoresTheFailingWindow(rollbackFails: Bool) thro
     #expect(coordinator.cancel(transaction: transaction).isApplied)
 }
 
-@Test @MainActor func focusDropRollbackFailureMarksTheApplyAsDegraded() {
+@Test(.macOSTestApplication) @MainActor func focusDropRollbackFailureMarksTheApplyAsDegraded() {
     let system = FakeWindowSystem()
     system.addSecondWindow()
     let thirdID = WindowID(rawValue: "third")
@@ -900,7 +900,7 @@ func partiallyFailedFrameWriteRestoresTheFailingWindow(rollbackFails: Bool) thro
     ) == .degraded(reason: "The focus drop failed and the previous layout could not be fully restored."))
 }
 
-@Test @MainActor func anUnappliedFocusDropDoesNotReportADegradedRollback() {
+@Test(.macOSTestApplication) @MainActor func anUnappliedFocusDropDoesNotReportADegradedRollback() {
     let system = FakeWindowSystem()
     let coordinator = WindowCoordinator(system: system)
     let source = system.windows[0]
@@ -921,7 +921,7 @@ func partiallyFailedFrameWriteRestoresTheFailingWindow(rollbackFails: Bool) thro
     #expect(system.frameWriteCounts[source.id] == 1)
 }
 
-@Test @MainActor func theConvenienceOverloadStillPerformsAFullWrite() throws {
+@Test(.macOSTestApplication) @MainActor func theConvenienceOverloadStillPerformsAFullWrite() throws {
     let system = FakeWindowSystem()
     let id = system.windows[0].id
     try system.setFrame(BTRect(x: 10, y: 10, width: 300, height: 300), for: id)
@@ -934,7 +934,7 @@ func partiallyFailedFrameWriteRestoresTheFailingWindow(rollbackFails: Bool) thro
 /// Chromium-based applications do - must not be reported as a failure. Read
 /// straight back, "ignored the write" and "has not applied it yet" are the same
 /// observation, so the action succeeds and verification waits.
-@Test @MainActor func aLateSettlingApplicationReachesItsTarget() async throws {
+@Test(.macOSTestApplication) @MainActor func aLateSettlingApplicationReachesItsTarget() async throws {
     let system = FakeWindowSystem()
     system.readsBeforeSettling = 2
     let coordinator = WindowCoordinator(system: system)
@@ -949,7 +949,7 @@ func partiallyFailedFrameWriteRestoresTheFailingWindow(rollbackFails: Bool) thro
 /// A window that never moves is still sitting at the action's source frame, and
 /// nothing else has touched it. That is the only case a delayed check may
 /// report.
-@Test @MainActor func anIgnoredWriteLeavesTheWindowAtItsSourceAndFails() async throws {
+@Test(.macOSTestApplication) @MainActor func anIgnoredWriteLeavesTheWindowAtItsSourceAndFails() async throws {
     let system = FakeWindowSystem()
     let coordinator = WindowCoordinator(system: system)
     let plan = try #require(coordinator.plan(.leftHalf).readyPlan)
@@ -965,7 +965,7 @@ func partiallyFailedFrameWriteRestoresTheFailingWindow(rollbackFails: Bool) thro
 /// Dragging the window somewhere else while verification is pending. The mouse
 /// never touches the coordinator, so the generation is unchanged and only the
 /// frame check can tell that the action has been superseded.
-@Test @MainActor func aWindowMovedByHandDuringVerificationReportsNothing() async throws {
+@Test(.macOSTestApplication) @MainActor func aWindowMovedByHandDuringVerificationReportsNothing() async throws {
     let system = FakeWindowSystem()
     let coordinator = WindowCoordinator(system: system)
     let plan = try #require(coordinator.plan(.leftHalf).readyPlan)
@@ -980,7 +980,7 @@ func partiallyFailedFrameWriteRestoresTheFailingWindow(rollbackFails: Bool) thro
     #expect(await coordinator.verifyPlacement(plan, since: generation, delay: .milliseconds(1)) == .superseded)
 }
 
-@Test @MainActor func aWindowResizedByHandDuringVerificationReportsNothing() async throws {
+@Test(.macOSTestApplication) @MainActor func aWindowResizedByHandDuringVerificationReportsNothing() async throws {
     let system = FakeWindowSystem()
     let coordinator = WindowCoordinator(system: system)
     let plan = try #require(coordinator.plan(.leftHalf).readyPlan)
@@ -1000,7 +1000,7 @@ func partiallyFailedFrameWriteRestoresTheFailingWindow(rollbackFails: Bool) thro
 
 /// A second BetterTile mutation moves the generation on, so the earlier action
 /// must not report even if the window happens to be back near where it started.
-@Test @MainActor func anotherBetterTileMutationSupersedesTheCheck() async throws {
+@Test(.macOSTestApplication) @MainActor func anotherBetterTileMutationSupersedesTheCheck() async throws {
     let system = FakeWindowSystem()
     let coordinator = WindowCoordinator(system: system)
     let plan = try #require(coordinator.plan(.leftHalf).readyPlan)
@@ -1020,7 +1020,7 @@ func partiallyFailedFrameWriteRestoresTheFailingWindow(rollbackFails: Bool) thro
 
 /// A read-back that cannot be completed must not turn an applied action into a
 /// reported failure.
-@Test @MainActor func anUnreadableWindowIsInconclusive() async throws {
+@Test(.macOSTestApplication) @MainActor func anUnreadableWindowIsInconclusive() async throws {
     let system = FakeWindowSystem()
     let coordinator = WindowCoordinator(system: system)
     let plan = try #require(coordinator.plan(.leftHalf).readyPlan)
@@ -1030,7 +1030,7 @@ func partiallyFailedFrameWriteRestoresTheFailingWindow(rollbackFails: Bool) thro
     #expect(await coordinator.verifyPlacement(plan, since: generation, delay: .milliseconds(1)) == .inconclusive)
 }
 
-@Test @MainActor func cancellingVerificationRetainsItsMutationOwnership() async throws {
+@Test(.macOSTestApplication) @MainActor func cancellingVerificationRetainsItsMutationOwnership() async throws {
     let system = FakeWindowSystem()
     let coordinator = WindowCoordinator(system: system)
     let plan = try #require(coordinator.plan(.leftHalf).readyPlan)
@@ -1045,7 +1045,7 @@ func partiallyFailedFrameWriteRestoresTheFailingWindow(rollbackFails: Bool) thro
     #expect(coordinator.matchesExpectedMutation(windowID: plan.windowID, actualFrame: plan.targetFrame))
 }
 
-@Test @MainActor func failedSettlementReadEndsOnlyItsOwnedGenerations() async throws {
+@Test(.macOSTestApplication) @MainActor func failedSettlementReadEndsOnlyItsOwnedGenerations() async throws {
     let system = FakeWindowSystem()
     let coordinator = WindowCoordinator(system: system)
     let id = system.windows[0].id
@@ -1060,7 +1060,7 @@ func partiallyFailedFrameWriteRestoresTheFailingWindow(rollbackFails: Bool) thro
 
 /// A Bento operation resolves a shortcut to a pane, which is deliberately not
 /// the standard action frame. The window did move, so nothing is reported.
-@Test @MainActor func aBentoPlacementAwayFromTheStandardFrameReportsNothing() async throws {
+@Test(.macOSTestApplication) @MainActor func aBentoPlacementAwayFromTheStandardFrameReportsNothing() async throws {
     let system = FakeWindowSystem()
     let coordinator = WindowCoordinator(system: system)
     let plan = try #require(coordinator.plan(.leftHalf).readyPlan)
@@ -1076,7 +1076,7 @@ func partiallyFailedFrameWriteRestoresTheFailingWindow(rollbackFails: Bool) thro
     #expect(await coordinator.verifyPlacement(plan, since: generation, delay: .milliseconds(1)) == .superseded)
 }
 
-@Test @MainActor func anActionIsStillASuccessWhenTheWindowKeepsItsOwnSize() throws {
+@Test(.macOSTestApplication) @MainActor func anActionIsStillASuccessWhenTheWindowKeepsItsOwnSize() throws {
     let system = FakeWindowSystem()
     system.clampWidth = 400
     let coordinator = WindowCoordinator(system: system)
@@ -1086,7 +1086,7 @@ func partiallyFailedFrameWriteRestoresTheFailingWindow(rollbackFails: Bool) thro
     #expect(system.windows[0].frame.minX == 0, "the position is still honoured")
 }
 
-@Test @MainActor func placementsOutsideTheDisplayAreRejected() throws {
+@Test(.macOSTestApplication) @MainActor func placementsOutsideTheDisplayAreRejected() throws {
     let system = FakeWindowSystem()
     let coordinator = WindowCoordinator(system: system)
     let offScreen = Placement(
@@ -1131,7 +1131,7 @@ private extension WindowCoordinator {
     }
 }
 
-@Test(arguments: [false, true]) @MainActor
+@Test(.macOSTestApplication, arguments: [false, true]) @MainActor
 func multiWindowFrameWritesShareOneBatchIncludingRollback(fail: Bool) {
     let system = FakeWindowSystem()
     system.addSecondWindow()
@@ -1144,7 +1144,7 @@ func multiWindowFrameWritesShareOneBatchIncludingRollback(fail: Bool) {
     #expect(system.frameWriteBatches == [fail ? [first, second, first] : [first, second]])
 }
 
-@Test @MainActor func validatedLiveApplyResendsFramesThatIntermediateTicksSkip() throws {
+@Test(.macOSTestApplication) @MainActor func validatedLiveApplyResendsFramesThatIntermediateTicksSkip() throws {
     let system = FakeWindowSystem()
     system.addSecondWindow()
     let ids = system.windows.map(\.id)
@@ -1165,7 +1165,7 @@ func multiWindowFrameWritesShareOneBatchIncludingRollback(fail: Bool) {
     #expect(system.windows.map(\.frame) == target.map(\.frame))
 }
 
-@Test @MainActor func liveGestureTicksUseIntermediateWritesAndReleaseUsesFullWrites() throws {
+@Test(.macOSTestApplication) @MainActor func liveGestureTicksUseIntermediateWritesAndReleaseUsesFullWrites() throws {
     let system = FakeWindowSystem()
     let id = system.windows[0].id
     let coordinator = WindowCoordinator(system: system)
@@ -1183,7 +1183,7 @@ func multiWindowFrameWritesShareOneBatchIncludingRollback(fail: Bool) {
     #expect(system.frameWriteCounts[id] == 2)
 }
 
-@Test(arguments: [false, true]) @MainActor
+@Test(.macOSTestApplication, arguments: [false, true]) @MainActor
 func restorePreviewPreservesHistoryUntilSuccessfulExecution(rollbackFails: Bool) throws {
     let system = FakeWindowSystem()
     let original = system.windows[0].frame
@@ -1213,7 +1213,7 @@ func restorePreviewPreservesHistoryUntilSuccessfulExecution(rollbackFails: Bool)
     #expect(coordinator.planExact(.restore, for: id).readyPlan == nil)
 }
 
-@Test(arguments: [false, true], [false, true]) @MainActor
+@Test(.macOSTestApplication, arguments: [false, true], [false, true]) @MainActor
 func singleWindowPartialFailureRestoresBaselineAndPreservesHistory(actionPlan: Bool, rollbackFails: Bool) throws {
     let system = FakeWindowSystem()
     let original = system.windows[0].frame
@@ -1233,7 +1233,7 @@ func singleWindowPartialFailureRestoresBaselineAndPreservesHistory(actionPlan: B
     #expect(coordinator.planExact(.restore, for: id).readyPlan == nil)
 }
 
-@Test @MainActor func degradedIntermediateRetryResendsEveryParticipantBeforeClearingFailure() throws {
+@Test(.macOSTestApplication) @MainActor func degradedIntermediateRetryResendsEveryParticipantBeforeClearingFailure() throws {
     let system = FakeWindowSystem()
     system.addSecondWindow()
     let coordinator = WindowCoordinator(system: system)
@@ -1253,7 +1253,7 @@ func singleWindowPartialFailureRestoresBaselineAndPreservesHistory(actionPlan: B
     #expect(!transaction.hasDegradedApply)
 }
 
-@Test @MainActor func staleRestorePlanCannotConsumeNewerHistory() throws {
+@Test(.macOSTestApplication) @MainActor func staleRestorePlanCannotConsumeNewerHistory() throws {
     let system = FakeWindowSystem()
     let coordinator = WindowCoordinator(system: system)
     let id = system.windows[0].id
@@ -1271,7 +1271,7 @@ func singleWindowPartialFailureRestoresBaselineAndPreservesHistory(actionPlan: B
 
 /// The probe is BetterTile's own write. A window that stays where it was,
 /// for example one that floats, must not read as moved by someone else.
-@Test @MainActor func minimumSizeProbeOwnsTheEventsItCauses() {
+@Test(.macOSTestApplication) @MainActor func minimumSizeProbeOwnsTheEventsItCauses() {
     let system = FakeWindowSystem()
     system.addSecondWindow()
     let coordinator = WindowCoordinator(system: system)
@@ -1286,7 +1286,7 @@ func singleWindowPartialFailureRestoresBaselineAndPreservesHistory(actionPlan: B
 
 /// The minimum-size probe changes a window's size, so it runs through the
 /// coordinator and reports a window it could not return to its size.
-@Test @MainActor func minimumSizeProbeReportsAWindowLeftAtTheWrongSize() {
+@Test(.macOSTestApplication) @MainActor func minimumSizeProbeReportsAWindowLeftAtTheWrongSize() {
     let system = FakeWindowSystem()
     let coordinator = WindowCoordinator(system: system)
     let id = system.windows[0].id
@@ -1311,7 +1311,7 @@ func singleWindowPartialFailureRestoresBaselineAndPreservesHistory(actionPlan: B
     return (system, WindowCoordinator(system: system))
 }
 
-@Test @MainActor func multiWindowWritesShrinkBeforeTheyGrow() throws {
+@Test(.macOSTestApplication) @MainActor func multiWindowWritesShrinkBeforeTheyGrow() throws {
     let (system, coordinator) = sharedEdgeFixture()
     var transaction = try #require(coordinator.beginTransaction(windowIDs: Set(system.windows.map(\.id))).startedTransaction)
     _ = coordinator.applyLive(transaction: &transaction, placements: [
@@ -1323,7 +1323,7 @@ func singleWindowPartialFailureRestoresBaselineAndPreservesHistory(actionPlan: B
 
 /// At a 2x2 junction only the window that would grow into a refusing
 /// neighbour waits. The other growing window keeps following the divider.
-@Test @MainActor func aRefusingWindowHoldsOnlyTheWindowThatWouldOverlapIt() throws {
+@Test(.macOSTestApplication) @MainActor func aRefusingWindowHoldsOnlyTheWindowThatWouldOverlapIt() throws {
     let system = FakeWindowSystem()
     system.windows[0].frame = BTRect(x: 0, y: 0, width: 500, height: 400)
     for (name, frame) in [("topRight", BTRect(x: 500, y: 0, width: 500, height: 400)),
@@ -1354,7 +1354,7 @@ func singleWindowPartialFailureRestoresBaselineAndPreservesHistory(actionPlan: B
 /// A live divider tick asks a window to shrink below a minimum it never
 /// reported. The window that would grow into it waits for that tick, so the
 /// two never overlap while the divider learns the minimum.
-@Test @MainActor func liveTickHoldsTheGrowingWindowWhenItsNeighbourRefuses() throws {
+@Test(.macOSTestApplication) @MainActor func liveTickHoldsTheGrowingWindowWhenItsNeighbourRefuses() throws {
     let (system, coordinator) = sharedEdgeFixture()
     system.enforcedMinimumWidths[system.windows[1].id] = 450
     var transaction = try #require(coordinator.beginTransaction(windowIDs: Set(system.windows.map(\.id))).startedTransaction)
@@ -1376,7 +1376,7 @@ func singleWindowPartialFailureRestoresBaselineAndPreservesHistory(actionPlan: B
 /// A held window waits for its neighbour. A tick without a new sample that
 /// writes nothing cannot release it, so it does not ask for another tick;
 /// a still pointer then stops the display ticks.
-@Test @MainActor func aHeldWindowDoesNotKeepIdleTicksAlive() throws {
+@Test(.macOSTestApplication) @MainActor func aHeldWindowDoesNotKeepIdleTicksAlive() throws {
     let (system, coordinator) = sharedEdgeFixture()
     system.enforcedMinimumWidths[system.windows[1].id] = 450
     var transaction = try #require(coordinator.beginTransaction(windowIDs: Set(system.windows.map(\.id))).startedTransaction)
@@ -1398,7 +1398,7 @@ func singleWindowPartialFailureRestoresBaselineAndPreservesHistory(actionPlan: B
 /// A held window still asks for another tick when the neighbour was
 /// written: that write can give up the space, and the next tick, without a
 /// new sample, then completes the growing window.
-@Test @MainActor func aHeldWindowCompletesAfterItsNeighbourGivesWay() throws {
+@Test(.macOSTestApplication) @MainActor func aHeldWindowCompletesAfterItsNeighbourGivesWay() throws {
     let (system, coordinator) = sharedEdgeFixture()
     let left = system.windows[0].id, right = system.windows[1].id
     system.enforcedMinimumWidths[right] = 450
@@ -1422,7 +1422,7 @@ func singleWindowPartialFailureRestoresBaselineAndPreservesHistory(actionPlan: B
 /// A live tick writes every application before it reports a failure, so
 /// a rejected tick can leave other windows at the new sample. Rollback
 /// shrinks those windows back before it regrows their neighbours.
-@Test @MainActor func rejectedLiveTickShrinksBackBeforeItRegrows() throws {
+@Test(.macOSTestApplication) @MainActor func rejectedLiveTickShrinksBackBeforeItRegrows() throws {
     let (system, coordinator) = sharedEdgeFixture()
     let left = system.windows[0].id, right = system.windows[1].id
     var transaction = try #require(coordinator.beginTransaction(windowIDs: [left, right]).startedTransaction)
@@ -1448,7 +1448,7 @@ func singleWindowPartialFailureRestoresBaselineAndPreservesHistory(actionPlan: B
 /// A corrective commit after a first commit compares each window with the
 /// frame it was given, not the frame from before the gesture. The window
 /// that must shrink back is written before its neighbour grows.
-@Test @MainActor func aCorrectiveCommitShrinksFromTheCommittedFrames() throws {
+@Test(.macOSTestApplication) @MainActor func aCorrectiveCommitShrinksFromTheCommittedFrames() throws {
     let (system, coordinator) = sharedEdgeFixture()
     let left = system.windows[0].id, right = system.windows[1].id
     var transaction = try #require(coordinator.beginTransaction(windowIDs: [left, right]).startedTransaction)
@@ -1467,7 +1467,7 @@ func singleWindowPartialFailureRestoresBaselineAndPreservesHistory(actionPlan: B
 /// A slow drag moves less than the write tolerance per tick. Each tick must
 /// compare with the frame the window reported, not with the last request,
 /// or the adapter would skip every size write and only move the window.
-@Test @MainActor func slowLiveTicksCompareWithTheMeasuredFrame() throws {
+@Test(.macOSTestApplication) @MainActor func slowLiveTicksCompareWithTheMeasuredFrame() throws {
     let (system, coordinator) = sharedEdgeFixture()
     system.roundsSizesAndReportsReadback = true
     let shrinking = system.windows[1].id
@@ -1489,7 +1489,7 @@ func singleWindowPartialFailureRestoresBaselineAndPreservesHistory(actionPlan: B
 
 /// Over a steady drag, the growing window takes each sample one tick after
 /// its shrinking neighbour, so the two never overlap.
-@Test @MainActor func liveTicksLetTheGrowingWindowTrailByOneSample() throws {
+@Test(.macOSTestApplication) @MainActor func liveTicksLetTheGrowingWindowTrailByOneSample() throws {
     let (system, coordinator) = sharedEdgeFixture()
     var transaction = try #require(coordinator.beginTransaction(windowIDs: Set(system.windows.map(\.id))).startedTransaction)
     var edges: [Double] = []
@@ -1514,7 +1514,7 @@ func singleWindowPartialFailureRestoresBaselineAndPreservesHistory(actionPlan: B
 
 /// A rejected tick that only completes a trailing window clears the
 /// trailing mark, so a still pointer does not retry it every display tick.
-@Test @MainActor func aRejectedTrailingTickDoesNotKeepRetrying() throws {
+@Test(.macOSTestApplication) @MainActor func aRejectedTrailingTickDoesNotKeepRetrying() throws {
     let (system, coordinator) = sharedEdgeFixture()
     var transaction = try #require(coordinator.beginTransaction(windowIDs: Set(system.windows.map(\.id))).startedTransaction)
     _ = coordinator.applyLive(transaction: &transaction, placements: [
@@ -1532,7 +1532,7 @@ func singleWindowPartialFailureRestoresBaselineAndPreservesHistory(actionPlan: B
 /// At a junction a window can shrink in width and grow in height in one
 /// tick. Its height trails one tick, like any growing window, so it never
 /// grows into the window below before that window has moved.
-@Test @MainActor func liveJunctionTickTrailsTheGrowingAxisOfAMixedWindow() throws {
+@Test(.macOSTestApplication) @MainActor func liveJunctionTickTrailsTheGrowingAxisOfAMixedWindow() throws {
     let system = FakeWindowSystem()
     system.windows[0].frame = BTRect(x: 0, y: 0, width: 500, height: 400)
     system.addSecondWindow()
@@ -1555,7 +1555,7 @@ func singleWindowPartialFailureRestoresBaselineAndPreservesHistory(actionPlan: B
 /// A concurrent batch can fail in more than one application. Rollback reads
 /// every attempted window, so each restoring write starts from that
 /// window's real frame, not from the frame it was asked to take.
-@Test @MainActor func batchRollbackStartsFromEveryWindowsRealFrame() throws {
+@Test(.macOSTestApplication) @MainActor func batchRollbackStartsFromEveryWindowsRealFrame() throws {
     let system = FakeWindowSystem()
     system.windows[0].frame = BTRect(x: 0, y: 0, width: 500, height: 800)
     system.addSecondWindow()
@@ -1582,7 +1582,7 @@ func singleWindowPartialFailureRestoresBaselineAndPreservesHistory(actionPlan: B
 
 /// A batch that fails while it is prepared writes nothing. Its rollback must
 /// not return a window from the live drag to the frame from before the drag.
-@Test @MainActor func batchThatFailsBeforeWritingMovesNoWindow() throws {
+@Test(.macOSTestApplication) @MainActor func batchThatFailsBeforeWritingMovesNoWindow() throws {
     let system = FakeWindowSystem()
     system.windows[0].frame = BTRect(x: 0, y: 0, width: 500, height: 800)
     system.addSecondWindow()
@@ -1606,7 +1606,7 @@ func singleWindowPartialFailureRestoresBaselineAndPreservesHistory(actionPlan: B
 /// A committed layout writes every application at once, but in two passes:
 /// windows that shrink, then windows that grow. A growing window never
 /// covers a neighbour from another application that has not made room.
-@Test func committedBatchesShrinkInOnePassBeforeTheyGrow() {
+@Test(.macOSTestApplication) func committedBatchesShrinkInOnePassBeforeTheyGrow() {
     let a = WindowID(rawValue: "a"), b = WindowID(rawValue: "b"), c = WindowID(rawValue: "c")
     let known = [
         a: BTRect(x: 0, y: 0, width: 500, height: 800),
@@ -1626,7 +1626,7 @@ func singleWindowPartialFailureRestoresBaselineAndPreservesHistory(actionPlan: B
 /// Several applications can fail in one concurrent batch. No window keeps
 /// an expectation for a frame it never reached, so a later real move to that
 /// frame is not mistaken for BetterTile's own write.
-@Test @MainActor func aFailedBatchExpectsNoFrameAWindowNeverReached() throws {
+@Test(.macOSTestApplication) @MainActor func aFailedBatchExpectsNoFrameAWindowNeverReached() throws {
     let system = FakeWindowSystem()
     system.windows[0].frame = BTRect(x: 0, y: 0, width: 500, height: 800)
     system.addSecondWindow()
@@ -1649,7 +1649,7 @@ func singleWindowPartialFailureRestoresBaselineAndPreservesHistory(actionPlan: B
 
 /// A committed batch writes shrinking windows first. When a shrink fails,
 /// the growing windows are not written over the window that kept its room.
-@Test @MainActor func aFailedShrinkStopsTheGrowingPass() throws {
+@Test(.macOSTestApplication) @MainActor func aFailedShrinkStopsTheGrowingPass() throws {
     let (system, coordinator) = sharedEdgeFixture()
     system.attemptsWholeBatch = true
     let left = system.windows[0].id, right = system.windows[1].id
@@ -1667,7 +1667,7 @@ func singleWindowPartialFailureRestoresBaselineAndPreservesHistory(actionPlan: B
 /// application is held as unresponsive, rolls nothing back. It is a
 /// transient failure: the gesture continues and the next tick writes every
 /// window.
-@Test @MainActor func aLiveTickThatWritesNothingFailsWithoutARollback() throws {
+@Test(.macOSTestApplication) @MainActor func aLiveTickThatWritesNothingFailsWithoutARollback() throws {
     let system = FakeWindowSystem()
     system.addSecondWindow()
     let coordinator = WindowCoordinator(system: system)
@@ -1695,7 +1695,7 @@ func singleWindowPartialFailureRestoresBaselineAndPreservesHistory(actionPlan: B
 /// An application that first stops answering during a live tick's write
 /// cannot take its rollback either. The tick fails without counting that
 /// as a failed rollback: the next tick or the release rewrites the window.
-@Test @MainActor func aWindowHeldMidTickIsSkippedByTheRollback() throws {
+@Test(.macOSTestApplication) @MainActor func aWindowHeldMidTickIsSkippedByTheRollback() throws {
     let system = FakeWindowSystem()
     system.addSecondWindow()
     let coordinator = WindowCoordinator(system: system)
@@ -1724,7 +1724,7 @@ func singleWindowPartialFailureRestoresBaselineAndPreservesHistory(actionPlan: B
 /// A drag drop is checked on the display the overlay showed it on. The
 /// dragged window's snapshot can name the neighbouring display, because its
 /// center crossed the shared edge during the gesture.
-@Test @MainActor func dragDropsValidateReachabilityOnTheDropDisplay() {
+@Test(.macOSTestApplication) @MainActor func dragDropsValidateReachabilityOnTheDropDisplay() {
     let system = FakeWindowSystem()
     let first = system.availableDisplays[0].id
     let second = DisplayID(rawValue: "second")
@@ -1763,7 +1763,7 @@ func singleWindowPartialFailureRestoresBaselineAndPreservesHistory(actionPlan: B
 /// The dragged window is checked against the minimum the overlay planned
 /// with, so a larger minimum read at release cannot veto the shown frame. A
 /// frame below the overlay's own minimum is still rejected.
-@Test(arguments: [700.0, 750.0]) @MainActor
+@Test(.macOSTestApplication, arguments: [700.0, 750.0]) @MainActor
 func dropMinimumSizeCheckUsesTheOverlaysMinimum(overlayMinimum: Double) {
     let system = FakeWindowSystem()
     system.windows[0].constraints.minimumSize = BTSize(width: 760, height: 80)
@@ -1786,7 +1786,7 @@ func dropMinimumSizeCheckUsesTheOverlaysMinimum(overlayMinimum: Double) {
 /// Only the dragged window is checked on the drop's display. A peer that an
 /// application moved to another display during the drag keeps its own
 /// display, so the drop is rejected instead of pulling the peer back.
-@Test @MainActor func dropDestinationAppliesOnlyToTheDraggedWindow() {
+@Test(.macOSTestApplication) @MainActor func dropDestinationAppliesOnlyToTheDraggedWindow() {
     let system = FakeWindowSystem()
     system.addSecondWindow()
     let first = system.availableDisplays[0].id
@@ -1819,7 +1819,7 @@ func dropMinimumSizeCheckUsesTheOverlaysMinimum(overlayMinimum: Double) {
 /// A window moved to a display with another backing scale can report its old
 /// size at the new origin straight after the write. That readback is no
 /// minimum, and a later read at the requested size drops it.
-@Test @MainActor func aMoveToAnotherDisplayThatReportsTheOldSizeIsNotLearned() async throws {
+@Test(.macOSTestApplication) @MainActor func aMoveToAnotherDisplayThatReportsTheOldSizeIsNotLearned() async throws {
     let system = FakeWindowSystem()
     let id = system.windows[0].id
     system.availableDisplays.append(DisplaySnapshot(
@@ -1851,7 +1851,7 @@ func dropMinimumSizeCheckUsesTheOverlaysMinimum(overlayMinimum: Double) {
     #expect(learner.applicationSizes.isEmpty)
 }
 
-@Test @MainActor func confirmedClosureRetiresOnlyItsWindowStateAndPreservesSurvivorRestore() {
+@Test(.macOSTestApplication) @MainActor func confirmedClosureRetiresOnlyItsWindowStateAndPreservesSurvivorRestore() {
     let system = FakeWindowSystem()
     system.addSecondWindow()
     let coordinator = WindowCoordinator(system: system)
@@ -1869,7 +1869,7 @@ func dropMinimumSizeCheckUsesTheOverlaysMinimum(overlayMinimum: Double) {
     #expect(system.windows[0].frame == survivor.frame)
 }
 
-@Test(arguments: [0, 1]) @MainActor
+@Test(.macOSTestApplication, arguments: [0, 1]) @MainActor
 func cancellationRestoresSurvivorWithoutRevivingClosedParticipant(closingIndex: Int) throws {
     let system = FakeWindowSystem()
     system.addSecondWindow()
@@ -1896,7 +1896,7 @@ func cancellationRestoresSurvivorWithoutRevivingClosedParticipant(closingIndex: 
 
 /// Production registry IDs are unique. Reusing a fake ID also must not let an
 /// old positive settlement token finish a later write's ownership.
-@Test @MainActor func retiredWindowTokensCannotFinishAReusedFakeIdentity() throws {
+@Test(.macOSTestApplication) @MainActor func retiredWindowTokensCannotFinishAReusedFakeIdentity() throws {
     let system = FakeWindowSystem()
     let coordinator = WindowCoordinator(system: system)
     let id = system.windows[0].id
@@ -1911,7 +1911,7 @@ func cancellationRestoresSurvivorWithoutRevivingClosedParticipant(closingIndex: 
     #expect(coordinator.retainedState(for: id).hasShortcutCycle)
 }
 
-@Test @MainActor func retiredWindowDoesNotReceiveAnAuthoritativeSettlementRetry() async {
+@Test(.macOSTestApplication) @MainActor func retiredWindowDoesNotReceiveAnAuthoritativeSettlementRetry() async {
     let system = FakeWindowSystem()
     let coordinator = WindowCoordinator(system: system)
     let id = system.windows[0].id
@@ -1932,7 +1932,7 @@ func cancellationRestoresSurvivorWithoutRevivingClosedParticipant(closingIndex: 
     #expect(!coordinator.retainedState(for: id).hasGeneration)
 }
 
-@Test @MainActor func repeatedConfirmedClosuresRetainOnlySurvivingWindowOwnership() {
+@Test(.macOSTestApplication) @MainActor func repeatedConfirmedClosuresRetainOnlySurvivingWindowOwnership() {
     let system = FakeWindowSystem()
     let survivor = system.windows[0]
     let coordinator = WindowCoordinator(system: system)
@@ -1963,7 +1963,7 @@ func cancellationRestoresSurvivorWithoutRevivingClosedParticipant(closingIndex: 
     #expect(system.windows[0].frame == survivor.frame)
 }
 
-@Test(arguments: [false, true]) @MainActor
+@Test(.macOSTestApplication, arguments: [false, true]) @MainActor
 func unavailableSurvivorStillReceivesCancellationAndRetainsRestore(rejectRestore: Bool) throws {
     let system = FakeWindowSystem()
     let coordinator = WindowCoordinator(system: system)
@@ -1987,7 +1987,7 @@ func unavailableSurvivorStillReceivesCancellationAndRetainsRestore(rejectRestore
     #expect(system.windows[0].frame == baseline.frame)
 }
 
-@Test @MainActor func cancellationOfEntirelyRetiredTransactionWritesNothing() throws {
+@Test(.macOSTestApplication) @MainActor func cancellationOfEntirelyRetiredTransactionWritesNothing() throws {
     let system = FakeWindowSystem()
     let coordinator = WindowCoordinator(system: system)
     let id = system.windows[0].id
@@ -2001,7 +2001,7 @@ func unavailableSurvivorStillReceivesCancellationAndRetainsRestore(rejectRestore
     #expect(system.frameWriteCounts == writes)
 }
 
-@Test @MainActor func cancellationDoesNotWriteUntouchedParticipants() throws {
+@Test(.macOSTestApplication) @MainActor func cancellationDoesNotWriteUntouchedParticipants() throws {
     let system = FakeWindowSystem()
     system.addSecondWindow()
     let baseline = system.windows
@@ -2018,7 +2018,7 @@ func unavailableSurvivorStillReceivesCancellationAndRetainsRestore(rejectRestore
     #expect(coordinator.mutationGeneration(for: baseline[1].id) == 0)
 }
 
-@Test @MainActor func retirementBeforeScheduledSettlementStartsCannotRetry() async {
+@Test(.macOSTestApplication) @MainActor func retirementBeforeScheduledSettlementStartsCannotRetry() async {
     let system = FakeWindowSystem()
     let coordinator = WindowCoordinator(system: system)
     let id = system.windows[0].id

@@ -3,7 +3,7 @@ import SwiftUI
 import Testing
 @testable import BetterTileApp
 
-@Test(.enabled(if: ProcessInfo.processInfo.environment["BETTERTILE_NATIVE_GLASS_PREVIEW_DIR"] != nil,
+@Test(.appTestApplication, .enabled(if: ProcessInfo.processInfo.environment["BETTERTILE_NATIVE_GLASS_PREVIEW_DIR"] != nil,
                "Requires an explicit native glass preview output directory."))
 @MainActor func menuGlassPopoverPreviews() async throws {
     let directory = try #require(ProcessInfo.processInfo.environment["BETTERTILE_NATIVE_GLASS_PREVIEW_DIR"])
@@ -23,7 +23,7 @@ import Testing
     gradient.endPoint = CGPoint(x: 1, y: 1)
     background.layer?.addSublayer(gradient)
     panel.contentView = background
-    panel.orderFrontRegardless()
+    panel.orderFrontForTesting()
     defer { panel.close() }
     let popover = NSPopover()
     popover.animates = false
@@ -51,7 +51,7 @@ import Testing
     }
 }
 
-@Test(.enabled(if: ProcessInfo.processInfo.environment["BETTERTILE_TAB_PREVIEW_DIR"] != nil,
+@Test(.appTestApplication, .enabled(if: ProcessInfo.processInfo.environment["BETTERTILE_TAB_PREVIEW_DIR"] != nil,
                "Requires an explicit settings preview output directory."))
 @MainActor func windowLayoutSettingsPreview() throws {
     let directory = try #require(ProcessInfo.processInfo.environment["BETTERTILE_TAB_PREVIEW_DIR"])
@@ -61,7 +61,7 @@ import Testing
     for (name, appearanceName) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
         let appearance = try #require(NSAppearance(named: appearanceName))
         let view = NSHostingView(rootView: WindowLayoutSettings(model: model))
-        let panel = NSPanel(contentRect: NSRect(x: 12000, y: 0, width: 750, height: 1300),
+        let panel = OffscreenTestPanel(contentRect: NSRect(x: 12000, y: 0, width: 750, height: 1300),
                             styleMask: [.borderless], backing: .buffered, defer: false)
         panel.isReleasedWhenClosed = false
         panel.appearance = appearance

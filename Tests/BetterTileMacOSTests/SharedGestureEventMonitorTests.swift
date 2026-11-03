@@ -5,7 +5,7 @@ import Foundation
 import Testing
 @testable import BetterTileMacOS
 
-@Test func gestureSourceGateAcceptsExactlyOneSource() {
+@Test(.macOSTestApplication) func gestureSourceGateAcceptsExactlyOneSource() {
     var gate = GestureEventSourceGate()
 
     #expect(gate.accepts(.nsEvent))
@@ -16,7 +16,7 @@ import Testing
     #expect(gate.accepts(.eventTap))
 }
 
-@Test func gestureSourceTransitionsDoNotDuplicateTheGestureSequence() {
+@Test(.macOSTestApplication) func gestureSourceTransitionsDoNotDuplicateTheGestureSequence() {
     var gate = GestureEventSourceGate()
     var delivered: [GlobalGestureEventKind] = []
 
@@ -35,7 +35,7 @@ import Testing
     #expect(delivered == [.leftMouseDown, .leftMouseDragged, .leftMouseUp])
 }
 
-@Test func restartedTapRejectsEventsQueuedByTheStoppedWorker() {
+@Test(.macOSTestApplication) func restartedTapRejectsEventsQueuedByTheStoppedWorker() {
     var gate = GestureEventGenerationGate()
     let stoppedGeneration = gate.begin()
     gate.end()
@@ -45,12 +45,12 @@ import Testing
     #expect(gate.accepts(activeGeneration))
 }
 
-@Test func gestureTapRecoveryResumesOnlyWhenReenableSucceeds() {
+@Test(.macOSTestApplication) func gestureTapRecoveryResumesOnlyWhenReenableSucceeds() {
     #expect(GestureEventTapRecovery.action(isEnabledAfterRecovery: true) == .resume)
     #expect(GestureEventTapRecovery.action(isEnabledAfterRecovery: false) == .fallBack)
 }
 
-@Test(arguments: [false, true]) @MainActor
+@Test(.macOSTestApplication, arguments: [false, true]) @MainActor
 func sharedGestureMonitorStopsAnInjectedWorkerWhetherStartSucceeds(canStart: Bool) {
     let log = GestureEventTapWorkerLog()
     log.canStart = canStart
@@ -64,7 +64,7 @@ func sharedGestureMonitorStopsAnInjectedWorkerWhetherStartSucceeds(canStart: Boo
     #expect(log.stops == stopsBefore + (canStart ? 1 : 0))
 }
 
-@Test func gestureSourceHandoffDefersOnlyTheSwitchToTheEventTap() {
+@Test(.macOSTestApplication) func gestureSourceHandoffDefersOnlyTheSwitchToTheEventTap() {
     var handoff = GestureEventSourceHandoff()
 
     // No active gesture: the switch to the event tap applies now.
@@ -110,7 +110,7 @@ func sharedGestureMonitorStopsAnInjectedWorkerWhetherStartSucceeds(canStart: Boo
     #expect(!resolved)
 }
 
-@Test func gestureTapRetryGateBoundsRepeatedFailures() {
+@Test(.macOSTestApplication) func gestureTapRetryGateBoundsRepeatedFailures() {
     var gate = GestureEventTapRetryGate(cooldown: 30)
 
     #expect(gate.allowsStart(at: 0))
@@ -124,7 +124,7 @@ func sharedGestureMonitorStopsAnInjectedWorkerWhetherStartSucceeds(canStart: Boo
     #expect(gate.allowsStart(at: 59))
 }
 
-@Test @MainActor func failedTapStartIsSuppressedForTheRetryCooldown() {
+@Test(.macOSTestApplication) @MainActor func failedTapStartIsSuppressedForTheRetryCooldown() {
     let log = GestureEventTapWorkerLog()
     let clock = GestureEventTapTestClock()
     let monitor = makeCooldownMonitor(log: log, clock: clock)
@@ -140,7 +140,7 @@ func sharedGestureMonitorStopsAnInjectedWorkerWhetherStartSucceeds(canStart: Boo
     #expect(!monitor.isUsingEventTap)
 }
 
-@Test @MainActor func tapStartIsRetriedAfterTheCooldownExpires() {
+@Test(.macOSTestApplication) @MainActor func tapStartIsRetriedAfterTheCooldownExpires() {
     let log = GestureEventTapWorkerLog()
     let clock = GestureEventTapTestClock()
     let monitor = makeCooldownMonitor(log: log, clock: clock)
@@ -152,7 +152,7 @@ func sharedGestureMonitorStopsAnInjectedWorkerWhetherStartSucceeds(canStart: Boo
     #expect(log.startAttempts == 2)
 }
 
-@Test @MainActor func successfulTapStartClearsTheRetryCooldown() {
+@Test(.macOSTestApplication) @MainActor func successfulTapStartClearsTheRetryCooldown() {
     let log = GestureEventTapWorkerLog()
     let clock = GestureEventTapTestClock()
     let monitor = makeCooldownMonitor(log: log, clock: clock)
@@ -169,7 +169,7 @@ func sharedGestureMonitorStopsAnInjectedWorkerWhetherStartSucceeds(canStart: Boo
     #expect(log.startAttempts == 3)
 }
 
-@Test @MainActor func failedTapRecoveryStartsTheRetryCooldown() async {
+@Test(.macOSTestApplication) @MainActor func failedTapRecoveryStartsTheRetryCooldown() async {
     let log = GestureEventTapWorkerLog()
     let clock = GestureEventTapTestClock()
     log.canStart = true
@@ -234,7 +234,7 @@ private final class FakeGestureEventTapWorker: GestureEventTapWorking {
     }
 }
 
-@Test func gestureLatencyMeasuresTheDeliveryIntervalWithTheCGEventClock() {
+@Test(.macOSTestApplication) func gestureLatencyMeasuresTheDeliveryIntervalWithTheCGEventClock() {
     let timestamp: CGEventTimestamp = 1_000
 
     #expect(GestureEventClock.nanoseconds(cgEventTimestamp: timestamp) == timestamp)
@@ -244,7 +244,7 @@ private final class FakeGestureEventTapWorker: GestureEventTapWorking {
     ) == 2_500)
 }
 
-@Test func gestureLatencyRejectsAnUnusableOrMismatchedClock() {
+@Test(.macOSTestApplication) func gestureLatencyRejectsAnUnusableOrMismatchedClock() {
     // A source that reports no time cannot be measured.
     #expect(GestureEventLatency.nanoseconds(
         eventTimestamp: 0,
@@ -259,7 +259,7 @@ private final class FakeGestureEventTapWorker: GestureEventTapWorking {
     ) == nil)
 }
 
-@Test func gestureLatencySignpostNamesStayStableForTraceQueries() {
+@Test(.macOSTestApplication) func gestureLatencySignpostNamesStayStableForTraceQueries() {
     // The measurement recipe in docs/BENTO_TESTING.md greps these names.
     #expect(GestureEventSource.eventTap.signpostName == "eventTap")
     #expect(GestureEventSource.nsEvent.signpostName == "nsEvent")
@@ -268,7 +268,7 @@ private final class FakeGestureEventTapWorker: GestureEventTapWorking {
     #expect(GlobalGestureEventKind.leftMouseUp.signpostName == "up")
 }
 
-@Test @MainActor func disabledSharedGestureEventsNeverStartTheTap() {
+@Test(.macOSTestApplication) @MainActor func disabledSharedGestureEventsNeverStartTheTap() {
     // The NSEvent monitors are the baseline for the latency gate. Selecting
     // them must not start a worker thread or consume the retry cooldown.
     let log = GestureEventTapWorkerLog()
@@ -287,7 +287,7 @@ private final class FakeGestureEventTapWorker: GestureEventTapWorking {
 /// The fallback reads the event's own location. `NSEvent.mouseLocation`
 /// would report where the pointer is once a stalled main actor runs the
 /// handler, which can move a release across a display edge.
-@Test @MainActor func fallbackEventsUseTheirOwnLocation() throws {
+@Test(.macOSTestApplication) @MainActor func fallbackEventsUseTheirOwnLocation() throws {
     let mainFrame = try #require(NSScreen.screens.first?.frame)
     let location = CGPoint(x: mainFrame.minX + 37, y: mainFrame.minY + 61)
     let event = try #require(NSEvent.mouseEvent(with: .leftMouseUp, location: location, modifierFlags: [],

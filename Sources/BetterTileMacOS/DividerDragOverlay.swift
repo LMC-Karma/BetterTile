@@ -23,6 +23,7 @@ struct DividerHandleDrawing: Equatable {
 /// window. The controller batches previews and knob in one disabled transaction.
 @MainActor
 final class DividerDragOverlay {
+    var panelFrameTransform: (NSRect) -> NSRect = { $0 }
     private(set) var panel: NSPanel?
     private let content: DividerDragOverlayView
     private var snapshots: [WindowID: WindowSnapshot] = [:]
@@ -64,7 +65,7 @@ final class DividerDragOverlay {
         panel?.alphaValue = 1
         content.knob.isHidden = false
         content.decoration.isHidden = false
-        let frame = CoordinateConverter.toAppKit(displayFrame, mainScreenFrame: mainFrame)
+        let frame = panelFrameTransform(CoordinateConverter.toAppKit(displayFrame, mainScreenFrame: mainFrame))
         let panel: NSPanel
         if let existing = self.panel {
             panel = existing
@@ -96,7 +97,7 @@ final class DividerDragOverlay {
         let ids = Set(placements.map(\.windowID))
         for id in previewViews.keys where !ids.contains(id) { previewViews.removeValue(forKey: id)?.removeFromSuperview() }
         for placement in placements {
-            let frame = CoordinateConverter.toAppKit(placement.frame, mainScreenFrame: mainFrame)
+            let frame = panelFrameTransform(CoordinateConverter.toAppKit(placement.frame, mainScreenFrame: mainFrame))
                 .offsetBy(dx: -panel.frame.minX, dy: -panel.frame.minY).insetBy(dx: 3, dy: 3)
             let view: GhostPreviewView
             if let existing = previewViews[placement.windowID] {

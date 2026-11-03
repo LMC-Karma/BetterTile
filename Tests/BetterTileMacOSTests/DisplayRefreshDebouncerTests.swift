@@ -3,7 +3,7 @@ import Testing
 @testable import BetterTileMacOS
 
 @MainActor
-@Test(.timeLimit(.minutes(1))) func displayRefreshDebouncerCoalescesCallbackAndAppKitNotifications() async throws {
+@Test(.macOSTestApplication, .timeLimit(.minutes(1))) func displayRefreshDebouncerCoalescesCallbackAndAppKitNotifications() async throws {
     let clock = ManualClock()
     let debouncer = DisplayRefreshDebouncer(delay: .milliseconds(20), clock: clock.clock)
     var refreshCount = 0
@@ -24,7 +24,7 @@ import Testing
 }
 
 @MainActor
-@Test(.timeLimit(.minutes(1))) func cancelledDisplayRefreshDoesNotRun() async throws {
+@Test(.macOSTestApplication, .timeLimit(.minutes(1))) func cancelledDisplayRefreshDoesNotRun() async throws {
     let clock = ManualClock()
     let debouncer = DisplayRefreshDebouncer(delay: .milliseconds(20), clock: clock.clock)
     var refreshCount = 0
@@ -40,7 +40,7 @@ import Testing
 }
 
 @MainActor
-@Test(.timeLimit(.minutes(1))) func rescheduledDisplayRefreshWaitsForTheNewDeadline() async throws {
+@Test(.macOSTestApplication, .timeLimit(.minutes(1))) func rescheduledDisplayRefreshWaitsForTheNewDeadline() async throws {
     let clock = ManualClock()
     let debouncer = DisplayRefreshDebouncer(delay: .milliseconds(20), clock: clock.clock)
     var refreshCount = 0

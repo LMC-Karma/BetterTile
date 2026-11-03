@@ -3,7 +3,7 @@ import Foundation
 import Testing
 @testable import BetterTileApp
 
-@Test func appIconChoiceRestoresAndFallsBackToDark() {
+@Test(.appTestApplication) func appIconChoiceRestoresAndFallsBackToDark() {
     let defaults = MemoryDefaults()
 
     #expect(AppIconStyle.selected(in: defaults) == .dark)
@@ -17,7 +17,7 @@ import Testing
     #expect(AppIconStyle.selected(in: defaults) == .classic)
 }
 
-@Test @MainActor func freshInstallPreservesAnExternalFinderIcon() {
+@Test(.appTestApplication) @MainActor func freshInstallPreservesAnExternalFinderIcon() {
     let defaults = MemoryDefaults()
     var dockChoices: [AppIconStyle] = []
     let result = AppIconStyle.apply(defaults: defaults, updateFinder: { _ in
@@ -29,7 +29,7 @@ import Testing
     #expect(defaults.string(forKey: AppIconStyle.defaultsKey) == nil)
 }
 
-@Test(arguments: ["classic", "ice", "dark", "unknown-future-icon"])
+@Test(.appTestApplication, arguments: ["classic", "ice", "dark", "unknown-future-icon"])
 @MainActor func launchReappliesASavedIconChoice(rawValue: String) {
     let defaults = MemoryDefaults()
     defaults.set(rawValue, forKey: AppIconStyle.defaultsKey)
@@ -48,7 +48,7 @@ import Testing
     #expect(defaults.string(forKey: AppIconStyle.defaultsKey) == rawValue)
 }
 
-@Test(arguments: AppIconStyle.allCases)
+@Test(.appTestApplication, arguments: AppIconStyle.allCases)
 @MainActor func explicitIconSelectionUpdatesFinderWithoutASavedChoice(style: AppIconStyle) {
     let defaults = MemoryDefaults()
     var finderChoices: [AppIconStyle] = []
@@ -62,7 +62,7 @@ import Testing
     #expect(dockChoices == [style])
 }
 
-@Test @MainActor func explicitIconSelectionOverridesASavedChoiceEvenWhenFinderFails() {
+@Test(.appTestApplication) @MainActor func explicitIconSelectionOverridesASavedChoiceEvenWhenFinderFails() {
     let defaults = MemoryDefaults()
     defaults.set("classic", forKey: AppIconStyle.defaultsKey)
     var finderChoices: [AppIconStyle] = []
@@ -77,7 +77,7 @@ import Testing
     #expect(defaults.string(forKey: AppIconStyle.defaultsKey) == "classic")
 }
 
-@Test @MainActor func defaultFinderIconRemovesTheCustomIcon() {
+@Test(.appTestApplication) @MainActor func defaultFinderIconRemovesTheCustomIcon() {
     let url = URL(fileURLWithPath: "/Applications/BetterTile.app")
     var restored = false
     #expect(AppIconStyle.dark.updateFinderIcon(at: url, loadImage: { _ in
@@ -90,7 +90,7 @@ import Testing
     #expect(restored)
 }
 
-@Test(arguments: [AppIconStyle.classic, .ice])
+@Test(.appTestApplication, arguments: [AppIconStyle.classic, .ice])
 @MainActor func alternateFinderIconUsesTheMatchingImage(style: AppIconStyle) {
     let url = URL(fileURLWithPath: "/Applications/BetterTile.app")
     let image = NSImage(size: NSSize(width: 128, height: 128))
@@ -106,7 +106,7 @@ import Testing
     #expect(updated)
 }
 
-@Test @MainActor func finderIconFailureDoesNotClearAnExistingIcon() {
+@Test(.appTestApplication) @MainActor func finderIconFailureDoesNotClearAnExistingIcon() {
     let url = URL(fileURLWithPath: "/Applications/BetterTile.app")
     #expect(!AppIconStyle.ice.updateFinderIcon(at: url, loadImage: { _ in nil }, setIcon: { _, _ in
         Issue.record("A missing alternate must not write Finder metadata")
@@ -118,7 +118,7 @@ import Testing
     #expect(!AppIconStyle.dark.updateFinderIcon(at: url, setIcon: { _, _ in false }))
 }
 
-@Test @MainActor func finderIconRequiresAnAppBundleURL() {
+@Test(.appTestApplication) @MainActor func finderIconRequiresAnAppBundleURL() {
     for url in [URL(fileURLWithPath: "/tmp/BetterTile"), URL(string: "https://example.com/BetterTile.app")!] {
         #expect(!AppIconStyle.dark.updateFinderIcon(at: url, setIcon: { _, _ in
             Issue.record("Only the local app bundle may receive Finder metadata")
@@ -127,7 +127,7 @@ import Testing
     }
 }
 
-@Test func appIconVariantsPreserveSourceGeometry() throws {
+@Test(.appTestApplication) func appIconVariantsPreserveSourceGeometry() throws {
     let resources = URL(fileURLWithPath: #filePath)
         .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
         .appendingPathComponent("Resources")
@@ -193,13 +193,4 @@ import Testing
             }
         }
     }
-}
-
-/// Keeps values in memory. A named suite leaves a preferences file behind:
-/// the preferences daemon writes it again after the test deletes it.
-private final class MemoryDefaults: UserDefaults, @unchecked Sendable {
-    private var values: [String: Any] = [:]
-    override func object(forKey key: String) -> Any? { values[key] }
-    override func string(forKey key: String) -> String? { values[key] as? String }
-    override func set(_ value: Any?, forKey key: String) { values[key] = value }
 }

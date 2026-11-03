@@ -5,6 +5,12 @@ import Testing
 @Suite(.timeLimit(.minutes(1)))
 @MainActor
 struct BetterTileClockTests {
+    @Test func missingSleepRegistrationReturnsWithinItsDeadline() async {
+        let manual = ManualClock()
+        #expect(await !manual.waitForSleepers(count: 1, timeout: .zero))
+        #expect(manual.pendingSleepCount == 0)
+    }
+
     @Test func advancingPastSeveralDeadlinesResumesThemInOrder() async {
         let manual = ManualClock()
         let clock = manual.clock
@@ -24,6 +30,29 @@ struct BetterTileClockTests {
         for task in tasks { await manual.drain(task) }
         #expect(manual.pendingSleepCount == 0)
         #expect(clock.now == start.advanced(by: .seconds(4)))
+    }
+
+    @Test func nextDeadlineTracksRegisteredAndCancelledSleepers() async throws {
+        let manual = ManualClock()
+        // Deadlines are relative to this clock, independently of its seeded origin.
+        let origin = manual.now
+        #expect(manual.nextSleepDeadline == nil)
+        let later = Task { try? await manual.sleep(until: origin.advanced(by: .seconds(3))) }
+        defer { later.cancel() }
+        try #require(await manual.waitForSleepers(count: 1, timeout: .seconds(45)))
+        let earlier = Task { try? await manual.sleep(until: origin.advanced(by: .seconds(1))) }
+        defer { earlier.cancel() }
+        try #require(await manual.waitForSleepers(count: 2, timeout: .seconds(45)))
+        #expect(manual.nextSleepDeadline == origin.advanced(by: .seconds(1)))
+        #expect(manual.hasSleeper(until: origin.advanced(by: .seconds(1))))
+        earlier.cancel()
+        await earlier.value
+        #expect(!manual.hasSleeper(until: origin.advanced(by: .seconds(1))))
+        #expect(manual.hasSleeper(until: origin.advanced(by: .seconds(3))))
+        #expect(manual.nextSleepDeadline == origin.advanced(by: .seconds(3)))
+        manual.advance(by: .seconds(3))
+        await later.value
+        #expect(manual.nextSleepDeadline == nil)
     }
 
     @Test func aSleeperDoesNotWakeBeforeItsDeadline() async {

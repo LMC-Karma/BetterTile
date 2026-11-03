@@ -16,7 +16,7 @@ private let middleInnerSelectionOffset =
     (LayoutWheelMetrics.standard.geometry.hubRadius
         + LayoutWheelMetrics.standard.geometry.innerRingOuterRadius) / 2
 
-@Test func onlyUnmodifiedPhysicalButtonTwoIsReserved() {
+@Test(.macOSTestApplication) func onlyUnmodifiedPhysicalButtonTwoIsReserved() {
     #expect(LayoutWheelMiddleClickEvent.reserves(button: 2, modifiers: []))
     #expect(!LayoutWheelMiddleClickEvent.reserves(button: 0, modifiers: []))
     #expect(!LayoutWheelMiddleClickEvent.reserves(button: 1, modifiers: []))
@@ -25,7 +25,7 @@ private let middleInnerSelectionOffset =
     #expect(!LayoutWheelMiddleClickEvent.reserves(button: 2, modifiers: [.control, .option]))
 }
 
-@Test func reservationOwnsTheWholeClickEvenIfModifiersChange() {
+@Test(.macOSTestApplication) func reservationOwnsTheWholeClickEvenIfModifiersChange() {
     var reservation = LayoutWheelMiddleClickReservation()
 
     let down = reservation.shouldReserve(kind: .down, button: 2, modifiers: [])
@@ -40,7 +40,7 @@ private let middleInnerSelectionOffset =
     #expect(!reservation.ownsGesture)
 }
 
-@Test func modifiedMiddleClickNeverBecomesReserved() {
+@Test(.macOSTestApplication) func modifiedMiddleClickNeverBecomesReserved() {
     var reservation = LayoutWheelMiddleClickReservation()
 
     let down = reservation.shouldReserve(kind: .down, button: 2, modifiers: [.shift])
@@ -106,7 +106,7 @@ private final class MiddleClickPresenter: LayoutWheelPresenting {
     func close() { closeCount += 1 }
 }
 
-@Test @MainActor func middleClickUsesPressMoveReleaseAndCommitsOnce() {
+@Test(.macOSTestApplication) @MainActor func middleClickUsesPressMoveReleaseAndCommitsOnce() {
     var configuration = BetterTileConfiguration()
     configuration.layoutWheel.middleClickTriggerEnabled = true
     let monitor = FakeMiddleClickMonitor()
@@ -138,7 +138,7 @@ private final class MiddleClickPresenter: LayoutWheelPresenting {
     #expect(presenter.closeCount == 1)
 }
 
-@Test @MainActor func middleClickFailureCancelsItsGestureButLeavesKeyboardAvailable() {
+@Test(.macOSTestApplication) @MainActor func middleClickFailureCancelsItsGestureButLeavesKeyboardAvailable() {
     var configuration = BetterTileConfiguration()
     configuration.layoutWheel.middleClickTriggerEnabled = true
     let monitor = FakeMiddleClickMonitor()
@@ -167,7 +167,7 @@ private final class MiddleClickPresenter: LayoutWheelPresenting {
     #expect(controller.isOpen)
 }
 
-@Test @MainActor func disablingMiddleClickStopsReservationAndRestoresOrdinaryClicks() {
+@Test(.macOSTestApplication) @MainActor func disablingMiddleClickStopsReservationAndRestoresOrdinaryClicks() {
     var configuration = BetterTileConfiguration()
     configuration.layoutWheel.middleClickTriggerEnabled = true
     let monitor = FakeMiddleClickMonitor()
@@ -206,7 +206,7 @@ private final class FakeMiddleClickWorker: LayoutWheelMiddleClickTapWorking {
     func stop() { log.stops += 1 }
 }
 
-@Test @MainActor func recoveryDefaultPreventsTheSuppressingTapFromStarting() {
+@Test(.macOSTestApplication) @MainActor func recoveryDefaultPreventsTheSuppressingTapFromStarting() {
     let log = MiddleClickWorkerLog()
     log.canStart = true
     let monitor = LayoutWheelMiddleClickMonitor(
@@ -223,7 +223,7 @@ private final class FakeMiddleClickWorker: LayoutWheelMiddleClickTapWorking {
     #expect(failure?.contains("recovery setting") == true)
 }
 
-@Test @MainActor func failedTapRecoveryLeavesNoRunningReservation() async {
+@Test(.macOSTestApplication) @MainActor func failedTapRecoveryLeavesNoRunningReservation() async {
     let log = MiddleClickWorkerLog()
     log.canStart = true
     let monitor = LayoutWheelMiddleClickMonitor(

@@ -100,7 +100,7 @@ private struct Harness {
 
 /// The hold has to elapse before anything opens, or every trigger chord
 /// shortcut would flash a wheel on its way past.
-@Test @MainActor func holdingTheTriggerOpensOnlyAfterTheDeadline() {
+@Test(.macOSTestApplication) @MainActor func holdingTheTriggerOpensOnlyAfterTheDeadline() {
     let harness = Harness()
 
     harness.controller.handleModifiers(trigger)
@@ -114,7 +114,7 @@ private struct Harness {
     #expect(harness.box.captureCount == 1)
 }
 
-@Test @MainActor func wheelSelectionRendersOnceAndRepeatedPointerSamplesDoNoWork() {
+@Test(.macOSTestApplication) @MainActor func wheelSelectionRendersOnceAndRepeatedPointerSamplesDoNoWork() {
     let harness = Harness()
     defer { harness.controller.stop() }
     harness.activate()
@@ -151,7 +151,7 @@ private struct Harness {
     presenter.close()
 }
 
-@Test @MainActor func wheelScaleChangesPlacementAndSelectionGeometryTogether() {
+@Test(.macOSTestApplication) @MainActor func wheelScaleChangesPlacementAndSelectionGeometryTogether() {
     var configuration = BetterTileConfiguration()
     configuration.layoutWheel.levelCount = .two
     configuration.layoutWheel.scale = 1.2
@@ -170,7 +170,7 @@ private struct Harness {
     #expect(harness.presenter.selection == LayoutWheelSelection(ring: .inner, sector: .top))
 }
 
-@Test @MainActor func anOpenGestureOwnsShortcutKeysUntilItEnds() {
+@Test(.macOSTestApplication) @MainActor func anOpenGestureOwnsShortcutKeysUntilItEnds() {
     let harness = Harness()
     var beganCount = 0
     var endedCount = 0
@@ -190,7 +190,7 @@ private struct Harness {
     #expect(endedCount == 1)
 }
 
-@Test @MainActor func releasingBeforeTheDeadlineNeverOpensTheWheel() {
+@Test(.macOSTestApplication) @MainActor func releasingBeforeTheDeadlineNeverOpensTheWheel() {
     let harness = Harness()
 
     harness.controller.handleModifiers(trigger)
@@ -204,7 +204,7 @@ private struct Harness {
 
 /// An ordinary key during the hold means the user ran a shortcut. The wheel has
 /// to stay away, and must not open when the modifiers are finally released.
-@Test @MainActor func anOrdinaryKeyDuringTheHoldCancelsActivationWithoutAFlash() {
+@Test(.macOSTestApplication) @MainActor func anOrdinaryKeyDuringTheHoldCancelsActivationWithoutAFlash() {
     let harness = Harness()
 
     harness.controller.handleModifiers(trigger)
@@ -222,7 +222,7 @@ private struct Harness {
 
 /// Releasing and pressing again is a new gesture; holding through the end of
 /// one gesture is not.
-@Test @MainActor func aSecondWheelNeedsTheTriggerReleasedFirst() {
+@Test(.macOSTestApplication) @MainActor func aSecondWheelNeedsTheTriggerReleasedFirst() {
     let harness = Harness()
     harness.activate()
     harness.controller.handlePointer(BTPoint(x: anchor.x, y: anchor.y - innerSelectionOffset))
@@ -238,7 +238,7 @@ private struct Harness {
     #expect(harness.presenter.openCount == 2)
 }
 
-@Test @MainActor func nothingEligibleLeavesTheWheelClosed() {
+@Test(.macOSTestApplication) @MainActor func nothingEligibleLeavesTheWheelClosed() {
     let harness = Harness(capture: nil)
 
     harness.activate()
@@ -250,7 +250,7 @@ private struct Harness {
 
 /// Pointer jitter inside the hub is the cancel affordance, so it must not
 /// select anything.
-@Test @MainActor func pointerJitterInsideTheHubSelectsNothing() {
+@Test(.macOSTestApplication) @MainActor func pointerJitterInsideTheHubSelectsNothing() {
     let harness = Harness()
     harness.activate()
 
@@ -262,7 +262,7 @@ private struct Harness {
     #expect(harness.presenter.closeCount == 1)
 }
 
-@Test(arguments: [LayoutWheelLevelCount.one, .two], [0.8, 1.0, 1.3])
+@Test(.macOSTestApplication, arguments: [LayoutWheelLevelCount.one, .two], [0.8, 1.0, 1.3])
 @MainActor func wheelNearAnEdgeSelectsTheSectorUnderThePointer(
     levels: LayoutWheelLevelCount, scale: Double
 ) throws {
@@ -306,7 +306,7 @@ private struct Harness {
     }
 }
 
-@Test @MainActor func wheelAtAnEdgeDoesNotCommitOnOpeningOrJitter() {
+@Test(.macOSTestApplication) @MainActor func wheelAtAnEdgeDoesNotCommitOnOpeningOrJitter() {
     let point = BTPoint(x: 5, y: 5)
     let harness = Harness(pointer: point)
     defer { harness.controller.stop() }
@@ -316,7 +316,7 @@ private struct Harness {
     #expect(harness.box.commits.isEmpty)
 }
 
-@Test @MainActor func pointerDirectionSelectsTheDrawnSectorAndCommitsOnRelease() {
+@Test(.macOSTestApplication) @MainActor func pointerDirectionSelectsTheDrawnSectorAndCommitsOnRelease() {
     let harness = Harness()
     harness.activate()
 
@@ -332,7 +332,7 @@ private struct Harness {
 }
 
 /// Releasing on the dead band between the rings cancels, exactly like the hub.
-@Test @MainActor func releasingInTheDeadBandCancels() {
+@Test(.macOSTestApplication) @MainActor func releasingInTheDeadBandCancels() {
     let harness = Harness()
     harness.activate()
     let geometry = LayoutWheelMetrics.standard.geometry
@@ -345,7 +345,7 @@ private struct Harness {
     #expect(harness.box.commits.isEmpty)
 }
 
-@Test @MainActor func releasingOnAnEmptySectorCancels() {
+@Test(.macOSTestApplication) @MainActor func releasingOnAnEmptySectorCancels() {
     var configuration = BetterTileConfiguration()
     configuration.layoutWheel.innerSlots[LayoutWheelSector.top.rawValue] = nil
     let harness = Harness(configuration: configuration)
@@ -361,7 +361,7 @@ private struct Harness {
 
 /// A release, a repeated release, and a deactivation can all arrive for one
 /// gesture. Only the first may act.
-@Test @MainActor func duplicateReleaseAndDeactivationCommitExactlyOnce() {
+@Test(.macOSTestApplication) @MainActor func duplicateReleaseAndDeactivationCommitExactlyOnce() {
     let harness = Harness()
     harness.activate()
     harness.controller.handlePointer(BTPoint(x: anchor.x, y: anchor.y - innerSelectionOffset))
@@ -376,7 +376,7 @@ private struct Harness {
     #expect(harness.box.endedCount == 1)
 }
 
-@Test @MainActor func focusedWindowChangeCancelsWithoutCommitting() {
+@Test(.macOSTestApplication) @MainActor func focusedWindowChangeCancelsWithoutCommitting() {
     let harness = Harness()
     harness.activate()
     harness.controller.handlePointer(BTPoint(x: anchor.x, y: anchor.y - innerSelectionOffset))
@@ -389,7 +389,7 @@ private struct Harness {
     #expect(harness.box.endedCount == 1)
 }
 
-@Test @MainActor func escapeCancelsWithoutCommitting() {
+@Test(.macOSTestApplication) @MainActor func escapeCancelsWithoutCommitting() {
     let harness = Harness()
     harness.activate()
     harness.controller.handlePointer(BTPoint(x: anchor.x, y: anchor.y - innerSelectionOffset))
@@ -407,7 +407,7 @@ private struct Harness {
 
 /// Losing the captured window ends the gesture. It must never fall through to
 /// whichever window is focused by the time the user releases.
-@Test @MainActor func losingTheCapturedWindowCancelsAndNeverRetargets() {
+@Test(.macOSTestApplication) @MainActor func losingTheCapturedWindowCancelsAndNeverRetargets() {
     let harness = Harness()
     harness.activate()
     harness.controller.handlePointer(BTPoint(x: anchor.x, y: anchor.y - innerSelectionOffset))
@@ -422,7 +422,7 @@ private struct Harness {
     #expect(harness.box.commits.isEmpty)
 }
 
-@Test @MainActor func changingTheTriggerMidGestureCancels() {
+@Test(.macOSTestApplication) @MainActor func changingTheTriggerMidGestureCancels() {
     let harness = Harness()
     harness.activate()
     harness.controller.handlePointer(BTPoint(x: anchor.x, y: anchor.y - innerSelectionOffset))
@@ -435,7 +435,7 @@ private struct Harness {
     #expect(harness.box.commits.isEmpty)
 }
 
-@Test @MainActor func disablingTheWheelMidGestureCancels() {
+@Test(.macOSTestApplication) @MainActor func disablingTheWheelMidGestureCancels() {
     let harness = Harness()
     harness.activate()
 
@@ -450,7 +450,7 @@ private struct Harness {
 
 /// A combination that only contains the trigger opens the wheel. A larger one
 /// belongs to whatever shortcut the user actually pressed.
-@Test @MainActor func extraModifiersDoNotOpenTheWheel() {
+@Test(.macOSTestApplication) @MainActor func extraModifiersDoNotOpenTheWheel() {
     let harness = Harness()
 
     harness.controller.handleModifiers([.control, .option, .shift, .command])
@@ -460,7 +460,7 @@ private struct Harness {
     #expect(harness.controller.isPendingActivation)
 }
 
-@Test @MainActor func keyboardMovesThroughRingsAndCommits() {
+@Test(.macOSTestApplication) @MainActor func keyboardMovesThroughRingsAndCommits() {
     let harness = Harness()
     harness.activate()
 
@@ -490,7 +490,7 @@ private struct Harness {
 /// key, and the app suspends the Carbon hot keys on that signal, so no shortcut
 /// is registered to compete. The key then selects a sector instead of ending
 /// the gesture.
-@Test @MainActor func anOpenWheelOwnsTheArrowKeysTheDefaultShortcutsAlsoBind() {
+@Test(.macOSTestApplication) @MainActor func anOpenWheelOwnsTheArrowKeysTheDefaultShortcutsAlsoBind() {
     let arrows: [UInt16: LayoutWheelKey] = [
         123: .previousSector, 124: .nextSector, 126: .outerRing, 125: .innerRing,
     ]
@@ -529,7 +529,7 @@ private struct Harness {
 
 /// An unavailable command marks its sector and shows no placement. Release
 /// emits the unavailable outcome so the app can report why without committing.
-@Test @MainActor func anUnavailableCommandPreviewsNothingButStillReports() {
+@Test(.macOSTestApplication) @MainActor func anUnavailableCommandPreviewsNothingButStillReports() {
     let harness = Harness()
     harness.controller.previewHandler = { command, _ in
         command == .repairBento
@@ -555,7 +555,7 @@ private struct Harness {
     #expect(harness.box.unavailable.first?.1 == target)
 }
 
-@Test @MainActor func aModifierMonitorRegistrationFailureIsReportedInline() {
+@Test(.macOSTestApplication) @MainActor func aModifierMonitorRegistrationFailureIsReportedInline() {
     let controller = LayoutWheelController(
         configuration: BetterTileConfiguration(),
         presenter: FakePresenter(),
@@ -575,7 +575,7 @@ private struct Harness {
 
 /// Global AppKit monitors omit events delivered to BetterTile itself. The
 /// matching local monitor keeps the trigger working while Settings is active.
-@Test @MainActor func aLocalModifierEventOpensTheWheelAndWheelKeysAreConsumed() async {
+@Test(.macOSTestApplication) @MainActor func aLocalModifierEventOpensTheWheelAndWheelKeysAreConsumed() async {
     var localFlagsHandler: (@MainActor (UInt16, ShortcutModifiers) -> Bool)?
     var localKeyHandler: (@MainActor (UInt16, ShortcutModifiers) -> Bool)?
     let presenter = FakePresenter()
@@ -609,7 +609,7 @@ private struct Harness {
     #expect(localKeyHandler?(0, []) == false)
 }
 
-@Test @MainActor func availableCommandsShowTheirPlacements() {
+@Test(.macOSTestApplication) @MainActor func availableCommandsShowTheirPlacements() {
     let harness = Harness()
     let placement = Placement(windowID: target.windowID, frame: BTRect(x: 0, y: 0, width: 800, height: 500))
     harness.controller.previewHandler = { _, _ in .ready(placements: [placement]) }
@@ -621,7 +621,7 @@ private struct Harness {
 }
 
 /// Stopping the controller has to leave nothing open behind it.
-@Test @MainActor func stoppingClosesAnOpenWheel() {
+@Test(.macOSTestApplication) @MainActor func stoppingClosesAnOpenWheel() {
     let harness = Harness()
     harness.activate()
 
@@ -631,7 +631,7 @@ private struct Harness {
     #expect(harness.presenter.closeCount == 1)
 }
 
-@Test @MainActor func suspendingRemovesEveryKeyboardMonitorAndResumeRestoresOnlyTheTrigger() {
+@Test(.macOSTestApplication) @MainActor func suspendingRemovesEveryKeyboardMonitorAndResumeRestoresOnlyTheTrigger() {
     var addedGlobalMasks: [NSEvent.EventTypeMask] = []
     var addedLocalMasks: [NSEvent.EventTypeMask] = []
     var removed = 0
@@ -678,7 +678,7 @@ private struct Harness {
 
 /// AppKit keeps monitor handlers until removal. They must not keep the
 /// controller alive while the keyboard-triggered wheel is open.
-@Test @MainActor func installedMonitorHandlersDoNotRetainTheController() {
+@Test(.macOSTestApplication) @MainActor func installedMonitorHandlersDoNotRetainTheController() {
     var retainedHandlers: [Any] = []
     var controller: LayoutWheelController? = LayoutWheelController(
         configuration: BetterTileConfiguration(),
@@ -707,7 +707,7 @@ private struct Harness {
     #expect(!retainedHandlers.isEmpty)
 }
 
-@Test @MainActor func glassPreferenceUpdatesAnOpenWheelWithoutCancellingItsGesture() throws {
+@Test(.macOSTestApplication) @MainActor func glassPreferenceUpdatesAnOpenWheelWithoutCancellingItsGesture() throws {
     let harness = Harness()
     defer { harness.controller.stop() }
     harness.activate()
@@ -719,7 +719,7 @@ private struct Harness {
     #expect(harness.box.endedCount == 0)
 }
 
-@Test(arguments: ["stop", "restart", "configuration", "suspension"]) @MainActor
+@Test(.macOSTestApplication, arguments: ["stop", "restart", "configuration", "suspension"]) @MainActor
 func queuedWheelModifiersCannotStartAfterMonitorRetirement(retirement: String) async throws {
     var flags: ((NSEvent) -> Void)?
     let controller = LayoutWheelController(

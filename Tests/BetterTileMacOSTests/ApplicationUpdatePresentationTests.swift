@@ -15,7 +15,7 @@ private func finalState(
     events.reduce(start) { UpdateIndicator.state(after: $1, from: $0) }
 }
 
-@Test func validUpdateTurnsTheIndicatorOn() {
+@Test(.macOSTestApplication) func validUpdateTurnsTheIndicatorOn() {
     #expect(UpdateIndicator.state(after: .foundValidUpdate(update042), from: .idle) == .updateAvailable(update042))
     #expect(
         UpdateIndicator.state(after: .foundValidUpdate(update043), from: .updateAvailable(update042))
@@ -23,23 +23,23 @@ private func finalState(
     )
 }
 
-@Test func deferringAnUpdateKeepsTheIndicatorOn() {
+@Test(.macOSTestApplication) func deferringAnUpdateKeepsTheIndicatorOn() {
     #expect(
         UpdateIndicator.state(after: .userDeferredUpdate, from: .updateAvailable(update042))
             == .updateAvailable(update042)
     )
 }
 
-@Test func skippingAVersionClearsTheIndicator() {
+@Test(.macOSTestApplication) func skippingAVersionClearsTheIndicator() {
     #expect(UpdateIndicator.state(after: .userSkippedUpdate, from: .updateAvailable(update042)) == .idle)
 }
 
-@Test func aConfirmedNoUpdateResultClearsTheIndicator() {
+@Test(.macOSTestApplication) func aConfirmedNoUpdateResultClearsTheIndicator() {
     #expect(UpdateIndicator.state(after: .confirmedNoUpdate, from: .updateAvailable(update042)) == .idle)
     #expect(UpdateIndicator.state(after: .confirmedNoUpdate, from: .idle) == .idle)
 }
 
-@Test(arguments: [
+@Test(.macOSTestApplication, arguments: [
     ([UpdateIndicatorEvent](), UpdateIndicatorState.idle),
     ([.foundValidUpdate(update042)], .updateAvailable(update042)),
     ([.foundValidUpdate(update042), .userBeganInstallingUpdate], .updateAvailable(update042)),
@@ -49,7 +49,7 @@ func aFailedCheckPreservesWhicheverStateWasAlreadyShown(scenario: ([UpdateIndica
     #expect(finalState(after: scenario.0 + [.checkFailed]) == scenario.1)
 }
 
-@Test func beginningAnInstallKeepsTheIndicatorUntilTheAppRelaunches() {
+@Test(.macOSTestApplication) func beginningAnInstallKeepsTheIndicatorUntilTheAppRelaunches() {
     // Sparkle's install choice only starts the download and install. A
     // successful install relaunches the app, where build reconciliation clears
     // it. This must not clear it early — otherwise a failed install leaves an
@@ -60,31 +60,31 @@ func aFailedCheckPreservesWhicheverStateWasAlreadyShown(scenario: ([UpdateIndica
     )
 }
 
-@Test func skippingAfterBeginningAnInstallStillClearsTheIndicator() {
+@Test(.macOSTestApplication) func skippingAfterBeginningAnInstallStillClearsTheIndicator() {
     #expect(finalState(after: [.foundValidUpdate(update042), .userBeganInstallingUpdate, .userSkippedUpdate]) == .idle)
 }
 
-@Test func aStoredFutureUpdateSurvivesRelaunch() {
+@Test(.macOSTestApplication) func aStoredFutureUpdateSurvivesRelaunch() {
     #expect(
         UpdateIndicator.restoredState(.updateAvailable(update042), runningBuildVersion: "6")
             == .updateAvailable(update042)
     )
 }
 
-@Test func anInstalledOrOlderStoredUpdateClearsOnRelaunch() {
+@Test(.macOSTestApplication) func anInstalledOrOlderStoredUpdateClearsOnRelaunch() {
     #expect(UpdateIndicator.restoredState(.updateAvailable(update042), runningBuildVersion: "7") == .idle)
     #expect(UpdateIndicator.restoredState(.updateAvailable(update042), runningBuildVersion: "8") == .idle)
     #expect(UpdateIndicator.restoredState(.updateAvailable(update042), runningBuildVersion: "unknown") == .idle)
 }
 
-@Test func updateStateSurvivesPersistenceRoundTrip() throws {
+@Test(.macOSTestApplication) func updateStateSurvivesPersistenceRoundTrip() throws {
     let state = UpdateIndicatorState.updateAvailable(update042)
     #expect(try JSONDecoder().decode(UpdateIndicatorState.self, from: JSONEncoder().encode(state)) == state)
 }
 
 // MARK: - Feedback link
 
-@Test(arguments: [
+@Test(.macOSTestApplication, arguments: [
     ("0.1.0", "2", "[Bug] BetterTile 0.1.0 (2): "),
     ("1.2 β?&=#", "2 +&=#", "[Bug] BetterTile 1.2 β?&=# (2 +&=#): "),
 ])
@@ -107,14 +107,14 @@ func feedbackURLContainsOnlyTheBugTemplateAndEscapedRunningVersion(scenario: (St
 
 // MARK: - Application volume
 
-@Test(arguments: [(true as Bool?, true), (false, false), (nil, false)])
+@Test(.macOSTestApplication, arguments: [(true as Bool?, true), (false, false), (nil, false)])
 func onlyAReadOnlyApplicationVolumeRequiresRelocation(scenario: (Bool?, Bool)) {
     #expect(ApplicationVolume.requiresRelocation(volumeIsReadOnly: scenario.0) == scenario.1)
 }
 
 // MARK: - Sibling application launch
 
-@Test func siblingLaunchContinuesWhenTheSiblingAlreadyTerminated() {
+@Test(.macOSTestApplication) func siblingLaunchContinuesWhenTheSiblingAlreadyTerminated() {
     #expect(SiblingApplicationLaunch.nextDecision(
         userChoseToQuitSibling: nil,
         terminationRequestAccepted: nil,
@@ -123,7 +123,7 @@ func onlyAReadOnlyApplicationVolumeRequiresRelocation(scenario: (Bool?, Bool)) {
     ) == .continueLaunching)
 }
 
-@Test func siblingLaunchAsksBeforeRequestingTermination() {
+@Test(.macOSTestApplication) func siblingLaunchAsksBeforeRequestingTermination() {
     #expect(SiblingApplicationLaunch.nextDecision(
         userChoseToQuitSibling: nil,
         terminationRequestAccepted: nil,
@@ -144,7 +144,7 @@ func onlyAReadOnlyApplicationVolumeRequiresRelocation(scenario: (Bool?, Bool)) {
     ) == .requestTermination)
 }
 
-@Test func siblingLaunchWaitsForAnAcceptedTerminationRequest() {
+@Test(.macOSTestApplication) func siblingLaunchWaitsForAnAcceptedTerminationRequest() {
     #expect(SiblingApplicationLaunch.nextDecision(
         userChoseToQuitSibling: true,
         terminationRequestAccepted: true,
@@ -159,7 +159,7 @@ func onlyAReadOnlyApplicationVolumeRequiresRelocation(scenario: (Bool?, Bool)) {
     ) == .continueLaunching)
 }
 
-@Test func siblingLaunchReportsRejectedOrTimedOutTermination() {
+@Test(.macOSTestApplication) func siblingLaunchReportsRejectedOrTimedOutTermination() {
     #expect(SiblingApplicationLaunch.nextDecision(
         userChoseToQuitSibling: true,
         terminationRequestAccepted: false,

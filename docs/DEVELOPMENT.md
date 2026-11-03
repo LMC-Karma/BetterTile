@@ -163,7 +163,8 @@ build. Then these jobs run in parallel:
 
 - `guards`: the test timing and quarantine guard and its self-test, on Ubuntu.
 - `unit-tests`: the Core, MacOS and App test targets.
-- `release-package`: the release tool tests and `swift build -c release`.
+- `release-package`: the release tool tests, including the completion guard,
+  and `swift build -c release`.
 - `app-debug`: the Debug app build.
 - `app-release`: the Release app build.
 
@@ -188,9 +189,168 @@ succeeds and all five jobs are skipped. A new CI job must be added to the
 >
 > `xcodebuild` is not affected by default because it writes to
 > `~/Library/Developer/Xcode/DerivedData`.
->
-> Check the command's exit status. Piping the output through `tail` hides a
-> failed build.
+
+Check the command’s exit status. Piping `xcodebuild` output through `tail`
+hides a failed build unless the shell preserves the pipeline’s failure status.
+
+### Verify complete test runs
+
+`Tools/test.sh LOG` runs `swift test`, preserves its exit status and requires three
+complete passing Swift Testing summaries, one for each test product. A helper
+can exit 0 before its tests finish when AppKit stops the async runner's main
+run loop. Exit 0 alone does not establish a pass. Read all three summaries and
+check for an unfinished `Test run started.` section. To check an existing full
+log, run `Tools/check-test-log.sh LOG`. For a filter that selects one product,
+use `Tools/test.sh LOG --expected-runs 1 --filter PATTERN`. A filter that selects
+several products needs `--expected-runs` set to that product count. Do not accept a
+missing summary or replace a failing full run with isolated passing tests.
+
+Native test products bootstrap an empty application before any test body runs.
+The shared `NativeApplicationTrait` applies at suite level where possible;
+global `@Test` functions need `.appTestApplication` or `.macOSTestApplication`.
+Swift Testing does not guarantee suite order. A shared startup task gates only
+bootstrap, so test bodies retain their normal parallel execution.
+
+The application starts with prohibited activation policy and no windows. Before
+each `NSApplication.run` entry, support requires accessory policy. App tests start
+their long-lived host at the outer run-loop boundary before fixtures can create
+or order a window. macOS tests first enter an empty owned loop, then retain a
+short owned event pump for each native interaction. An accessory application
+with an already ordered window can become active during a native application loop entry;
+starting the empty host first avoids that activation path.
+
+Test hosts must stay inactive and must never take focus from the user. Tests do
+not need a Dock icon or regular activation policy. After each test and UI lease,
+support checks process activity and policy, naming the test on failure. After
+recording an activity failure, it requests deactivation of this process once and
+logs the request. This does not confirm that inactivity or user focus was restored.
+The recorded failure remains. Passing checks never deactivate the process. Window
+fixture, ordering, launch, and loop helpers reject a missing bootstrap context.
+Native interactions also require `.settingsUI` or `.macOSUI`. Once the App host
+is running, `withNativeEventLoop` checks the lease and runs the operation directly.
+After bootstrap, the macOS pump uses `nextEvent`, `sendEvent` and `updateWindows`
+until the scheduled operation completes, with the existing ten-second ceiling.
+It does not re-enter `NSApplication.run` or call `NSApp.stop`. `NSApp.isRunning`
+is false inside the pump; the fixture ownership flag identifies the owned loop.
+Native tracking
+stays inside this owned pump instead of SwiftPM’s outer executor loop.
+The operation still runs in common run-loop modes; the App host’s outer-loop
+startup gate is unchanged.
+
+Offscreen fixtures that need real key status use `makeKeyAndOrderFrontForTesting`.
+The shared helper completes native ordering before making one key request.
+AppKit's combined `makeKeyAndOrderFront` call makes a window key before ordering
+finishes; a deactivation during ordering can clear that key state. The regression
+runs after the long-lived App host has started, injects deactivation during
+ordering, and requires a real key window without activating the test process.
+It does not depend on which suite runs first. macOS render fixtures use the same
+helper. Keep an ordered key fixture only for the step that needs it. The Space
+fixture orders and makes its panel key inside the admitted native operation,
+requires real key status at the press, then orders it out before the pump returns.
+This reduces exposure to external activation; it does not establish that the
+window server excludes every test window from fallback activation.
+Key-status assertions retain their original conditions and include
+process-local activation, ordering, occlusion, and loop diagnostics. Diagnostics
+record only whether this process is frontmost, without another app's identity.
+Set `BETTERTILE_TEST_APPLICATION_AUDIT` to a JSONL path for timestamped state checks.
+Set `BETTERTILE_TEST_ACTIVATION_TRACE` to a separate JSONL path for activation
+notifications, current test scopes, and owned-window state. Both are opt-in and
+process-local; neither activates another application.
+
+### Release test lane
+
+Run the default suites with Release optimization and the same completion guard:
+
+```sh
+Tools/test.sh /tmp/bettertile-release-tests.log --release
+```
+
+`--release` passes `-c release -Xswiftc -enable-testing` to SwiftPM. It does not define `DEBUG`. On a shared
+machine, pass `--release` through the prescribed full-suite lock helper.
+The log must contain all three complete passing product summaries. Filters
+still require the matching `--expected-runs N` before `--release`.
+
+Optimized tests must wait for the state they assert. A fixed number of
+`Task.yield()` calls does not establish that another task completed.
+
+This lane keeps the default suite's strict inactivity guard. The native focus
+lane remains separate and opt-in; do not enable it for a full Release run.
+Never distribute a Release app built with the lane's compiler flags.
+
+CI sets `BETTERTILE_LOCAL_WINDOW_TESTS=1` in its unit-test job. This disables
+only TestWindowAudit’s periodic display-intersection sampler. The synchronous
+offscreen-frame checks and the default inactivity guard still run. Unset it
+for the periodic sampler in local full-suite runs; the name does not select the
+native focus lane.
+
+### Native focus tests
+
+The opt-in native focus lane contains 2 macOS test functions that inspect key
+state or exercised an observed activation path. App tests stay in the default
+run unless they require a real key window while the process is inactive, or have
+test-specific activation evidence. A negative key-state assertion alone does not
+justify excluding an App test from the default run.
+
+The 3 App exceptions require real key status while the process is inactive.
+Every other App test stays in the default run.
+
+Gated suites use `.enabled(if: NativeFocusTestLane.isEnabled)` and the recursive
+`.nativeFocus` marker. Every other test stays in the default run, whose activity
+guard still fails if its process activates. App rendering, non-key-state and
+unordered-host tests remain enabled by default.
+
+Run native focus tests only while nobody is using the Mac, or on a spare machine.
+They may take keyboard focus. Activation is recorded in this lane without failing
+the support activity guard. Each run ends with an activation episode count, the
+tests at the first active sample and notification delivery, and observed durations.
+An episode still active at exit is marked explicitly. Notification delivery can
+lag actual activation, so its current test does not identify the cause.
+All test-body assertions still apply, including the ordering regression's inactive
+precondition; a failure of that precondition is a lane failure.
+
+Run only the filtered per-product lane commands, with attribution and the activity
+audit enabled:
+
+```sh
+BETTERTILE_NATIVE_FOCUS_TESTS=1 \
+BETTERTILE_TEST_ACTIVATION_TRACE=/tmp/bettertile-native-focus-macos.trace.jsonl \
+BETTERTILE_TEST_APPLICATION_AUDIT=/tmp/bettertile-native-focus-macos.audit.jsonl \
+Tools/test.sh /tmp/bettertile-native-focus-macos.log --expected-runs 1 \
+  --filter 'BetterTileMacOSTests.*NativeFocus'
+
+BETTERTILE_NATIVE_FOCUS_TESTS=1 \
+BETTERTILE_TEST_ACTIVATION_TRACE=/tmp/bettertile-native-focus-app.trace.jsonl \
+BETTERTILE_TEST_APPLICATION_AUDIT=/tmp/bettertile-native-focus-app.audit.jsonl \
+Tools/test.sh /tmp/bettertile-native-focus-app.log --expected-runs 1 \
+  --filter 'BetterTileAppTests.*NativeFocus'
+```
+
+Use fresh evidence paths for each run. Setting the flag does not permit activation
+in tests outside a `.nativeFocus` suite. Startup bootstrap still requires an empty,
+inactive accessory host. Only the native interaction and after-test support checks
+permit activation inside the enabled lane. Do not set the flag for an unfiltered
+product run: a lane activation can remain active when following default tests run.
+Their strict activity guard will fail, and the process can keep the user's keyboard
+focus. The filtered commands keep these two kinds of checks in separate processes.
+
+`NativeLaneMembershipTests` pins the exact 2 macOS and 3 App function names by
+reading the gated suite declarations, including tests inside nested suites. Review
+any membership change and update the documented lane list together with the pin.
+
+UI test leases are acquired in the outer function scope, before Swift Testing
+starts each case's time limit. `.settingsUI` and `.macOSUI` serialize a function's
+parameter cases while it owns the resource. Native application startup also
+runs before case timers; per-case activity checks remain in place. Keep body
+limits unchanged when adding a UI lease. Queueing has a separate ten-minute
+watchdog that reports test lease starvation, and cancellation removes a queued
+waiter without consuming the next ownership. The test-only `AsyncTestLease`
+accepts an injected clock for watchdog and cancellation checks.
+
+Never stop the main run loop in tests. Test bodies and fixtures must not call
+`NSApp.stop` or `CFRunLoopStop` themselves. Use `withNativeEventLoop` or
+`performNativeClick` under `.settingsUI` or `.macOSUI`; only the shared loop
+support may stop a loop that it owns. Stopping the outer loop can make SwiftPM's
+helper exit 0 before the test run finishes.
 
 ### Testing timers without real time
 
@@ -224,6 +384,43 @@ every relevant deadline, and drain it before asserting no action occurred.
 not only new ones. `waitForSleepers` and `drain` wait until the expected sleep
 or task happens. Give suites that use them a `.timeLimit`, so a missing sleep
 fails the test instead of stalling the run.
+
+For a failure-sensitive registration handshake, require
+`await manual.waitForSleepers(count: 1, timeout: .seconds(45))`. This overload
+returns false at its deadline or on cancellation. Its live monotonic deadline
+bounds executor progress; it does not advance virtual policy time or add a
+product delay. Native AppKit tests can block the main actor for several seconds,
+so this handshake allows 45 seconds within the suite's one-minute backstop.
+Keep the suite time limit as a backstop for joining known tasks.
+
+The app fake drives waits with a virtual budget above 200 ms by jumping to the
+next registered sleeper. At most 200 one-millisecond turns remain available for
+short boundary probes. Fixtures can also explicitly request deadline driving
+for shorter waits. A real executor handoff lets resumed operations register
+their next wait before the driver chooses another deadline. With no policy
+sleeper, virtual time stays frozen while a separate bounded executor watchdog
+observes completion. The fixture announces a queued event pass's sleep and
+waits for its clock continuation to register before choosing an unrelated
+deadline. A virtual budget is only a bound: when the earliest registered
+sleeper lies beyond it, the driver keeps time frozen while an in-budget sleep
+can still register. It does not invent a jump to the budget timestamp. The
+driver also observes work resumed exactly at its virtual budget deadline.
+
+Use `joinWindowEvent(on:)` to join one captured event pass. It observes the
+model's task-handle release before joining the task with virtual time frozen.
+This prevents a later backoff or recovery timer from running while completion
+of the captured pass is still being delivered. `advance(by:)` likewise stops
+virtual time at the requested checkpoint while observing task completion.
+`joinSettlement(_:on:)` uses the same contract for one captured sampling pass,
+before any replacement retry. These helpers do not spend the rest of their
+budget on unrelated policy timers.
+
+The app fake's `drive` and `join` helpers record a test failure and return nil
+when their virtual-time budget expires. `drive` cancels its operation task;
+`join` also cancels the input task it was waiting for. Neither awaits an
+unfinished task after timeout. Cancellation removes registered manual-clock
+sleepers. A noncooperative operation can outlive its helper, so test cleanup
+must still release any fixture resources it owns.
 
 ### Test timing and quarantine guard
 

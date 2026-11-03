@@ -3,7 +3,7 @@ import Testing
 @testable import BetterTileCore
 @testable import BetterTileMacOS
 
-@Test func carbonModifierFlagsMatchConfiguredShortcutModifiers() {
+@Test(.macOSTestApplication) func carbonModifierFlagsMatchConfiguredShortcutModifiers() {
     let allModifiers: ShortcutModifiers = [.control, .option, .shift, .command]
 
     #expect(ShortcutModifiers.control.carbonFlags == UInt32(controlKey))
@@ -14,7 +14,7 @@ import Testing
     )
 }
 
-@Test @MainActor func hotKeyIDsRoundTripEveryWindowAction() {
+@Test(.macOSTestApplication) @MainActor func hotKeyIDsRoundTripEveryWindowAction() {
     for (index, action) in WindowAction.allCases.enumerated() {
         #expect(GlobalShortcutMonitor.action(forHotKeyID: UInt32(index + 1)) == action)
     }
@@ -22,7 +22,7 @@ import Testing
     #expect(GlobalShortcutMonitor.action(forHotKeyID: UInt32(WindowAction.allCases.count + 1)) == nil)
 }
 
-@Test @MainActor func shortcutMasterSwitchStaysIndependentFromRecordingSuspension() {
+@Test(.macOSTestApplication) @MainActor func shortcutMasterSwitchStaysIndependentFromRecordingSuspension() {
     let monitor = GlobalShortcutMonitor { _ in }
     defer { monitor.stop() }
 

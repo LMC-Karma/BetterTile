@@ -22,7 +22,7 @@ private let rects: [(name: String, rect: CGRect)] = [
     ("zero height", CGRect(x: 5, y: 5, width: 100, height: 0)),
 ]
 
-@Test func appKitAndTopLeftConversionRoundTripsForEveryArrangement() {
+@Test(.macOSTestApplication) func appKitAndTopLeftConversionRoundTripsForEveryArrangement() {
     for main in mainScreenFrames {
         for candidate in rects {
             let topLeft = CoordinateConverter.toTopLeft(candidate.rect, mainScreenFrame: main.frame)
@@ -41,7 +41,7 @@ private let rects: [(name: String, rect: CGRect)] = [
     }
 }
 
-@Test(arguments: [
+@Test(.macOSTestApplication, arguments: [
     (CGRect(x: 0, y: 0, width: 400, height: 300), BTRect(x: 0, y: 780, width: 400, height: 300)),
     (CGRect(x: 0, y: 780, width: 400, height: 300), BTRect(x: 0, y: 0, width: 400, height: 300)),
     (CGRect(x: -500, y: 100, width: 200, height: 200), BTRect(x: -500, y: 780, width: 200, height: 200)),
@@ -51,7 +51,7 @@ func conversionPreservesHorizontalAndFlipsVerticalCoordinates(frames: (CGRect, B
     #expect(CoordinateConverter.toTopLeft(frames.0, mainScreenFrame: main) == frames.1)
 }
 
-@Test func aDisplayAboveTheMainScreenProducesNegativeTopLeftCoordinates() {
+@Test(.macOSTestApplication) func aDisplayAboveTheMainScreenProducesNegativeTopLeftCoordinates() {
     let main = CGRect(x: 0, y: 0, width: 1920, height: 1080)
     let above = CoordinateConverter.toTopLeft(
         CGRect(x: 0, y: 1080, width: 1920, height: 1080),
@@ -61,7 +61,7 @@ func conversionPreservesHorizontalAndFlipsVerticalCoordinates(frames: (CGRect, B
     #expect(above.maxY == 0)
 }
 
-@Test func pointConversionAgreesWithRectConversion() {
+@Test(.macOSTestApplication) func pointConversionAgreesWithRectConversion() {
     for main in mainScreenFrames {
         for candidate in rects {
             let rect = CoordinateConverter.toTopLeft(candidate.rect, mainScreenFrame: main.frame)
@@ -75,7 +75,7 @@ func conversionPreservesHorizontalAndFlipsVerticalCoordinates(frames: (CGRect, B
     }
 }
 
-@Test func globalEventPositionsUseThePrimaryDisplayOrigin() {
+@Test(.macOSTestApplication) func globalEventPositionsUseThePrimaryDisplayOrigin() {
     let primary = CGRect(x: 0, y: 0, width: 1920, height: 1080)
     let expected = BTPoint(x: 250, y: 300)
 

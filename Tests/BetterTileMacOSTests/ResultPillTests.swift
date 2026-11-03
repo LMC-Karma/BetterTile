@@ -3,7 +3,7 @@ import Testing
 @testable import BetterTileCore
 @testable import BetterTileMacOS
 
-@Test func resultPillUsesCompactSuccessAndFailureContent() {
+@Test(.macOSTestApplication) func resultPillUsesCompactSuccessAndFailureContent() {
     let success = ResultPillFeedback.success()
     let failure = ResultPillFeedback.failure("That Bento drop cannot satisfy the windows’ minimum sizes.")
 
@@ -20,7 +20,7 @@ import Testing
 /// Repairing a desktop whose single window is set to be left unchanged succeeds
 /// without moving anything, and the pill has to say so rather than claim a
 /// layout was applied.
-@Test func resultPillCarriesACustomSuccessMessage() {
+@Test(.macOSTestApplication) func resultPillCarriesACustomSuccessMessage() {
     let unchanged = ResultPillFeedback.success("Nothing to repair")
 
     #expect(unchanged.message == "Nothing to repair")
@@ -39,7 +39,7 @@ import Testing
     #expect(frame.maxX <= display.visibleFrame.maxX)
 }
 
-@Test func resultPillShortensKnownErrors() {
+@Test(.macOSTestApplication) func resultPillShortensKnownErrors() {
     #expect(ResultPillFeedback.failure("No eligible focused window.").message == "No eligible window")
     #expect(ResultPillFeedback.failure("Accessibility access was removed.").message == "Accessibility required")
     #expect(ResultPillFeedback.failure("The preview no longer matches the active window transaction.").message == "Window changed")
@@ -50,7 +50,7 @@ import Testing
     #expect(ResultPillFeedback.failure("Something unexpected happened.").message == "Couldn’t apply layout")
 }
 
-@Test func resultPillNamesTabbedFailures() {
+@Test(.macOSTestApplication) func resultPillNamesTabbedFailures() {
     #expect(ResultPillFeedback.failure("A window did not accept its Tabbed size. Choose a larger pane or try Repair Tabbed.").message == "Window refused this size")
     #expect(ResultPillFeedback.failure("Tabbed could not fully restore the previous arrangement. Use Repair Tabbed or switch to Native.").message == "Use Repair Tabbed")
     #expect(ResultPillFeedback.failure("The desktop changed before Tabbed could restore its windows.").message == "Use Repair Tabbed")
@@ -58,14 +58,14 @@ import Testing
     #expect(ResultPillFeedback.failure("That window is no longer available.").message == "Window changed")
 }
 
-@Test func resultPillPreservesTabbedActionGuidance() {
+@Test(.macOSTestApplication) func resultPillPreservesTabbedActionGuidance() {
     #expect(ResultPillFeedback.failure("Use Change Layout → One Pane to maximize the Tabbed layout.").message == "Choose One Pane")
     #expect(ResultPillFeedback.failure("Use Tabbed Undo to restore the previous pane arrangement.").message == "Use Tabbed Undo")
     #expect(ResultPillFeedback.failure("Tabbed supports fixed half, third, two-thirds, quarter, and sixth snaps. Float the window to use this action.").message == "Float this window first")
     #expect(ResultPillFeedback.failure("Unexpected AX error in a Tabbed window.").message == "Couldn’t apply layout")
 }
 
-@Test func resultPillIsCenteredBelowTheDisplayWorkAreaTop() {
+@Test(.macOSTestApplication) func resultPillIsCenteredBelowTheDisplayWorkAreaTop() {
     let display = DisplaySnapshot(
         id: DisplayID(rawValue: "secondary"),
         frame: BTRect(x: 1512, y: 0, width: 1728, height: 1117),
@@ -84,7 +84,7 @@ import Testing
     #expect(frame.maxY <= display.visibleFrame.maxY)
 }
 
-@Test func resultPillWidthGrowsForFailureButStaysCompact() {
+@Test(.macOSTestApplication) func resultPillWidthGrowsForFailureButStaysCompact() {
     let display = DisplaySnapshot(
         id: DisplayID(rawValue: "main"),
         frame: BTRect(x: 0, y: 0, width: 1440, height: 900),
@@ -99,7 +99,7 @@ import Testing
 }
 
 @MainActor
-@Test(arguments: [false, true])
+@Test(.macOSTestApplication, arguments: [false, true])
 func resultPillIgnoresPreviousDismissalCompletion(hideBetweenResults: Bool) {
     let panel = ResultPillTestPanel()
     let controller = ResultPillController(panel: panel)
@@ -132,7 +132,7 @@ private final class ResultPillTestPanel: NSPanel {
     override func orderOut(_ sender: Any?) { isPresented = false }
 }
 
-@Test func genericFailureTitlesCarryTheReasonAsDetail() {
+@Test(.macOSTestApplication) func genericFailureTitlesCarryTheReasonAsDetail() {
     let reason = "Brave and Preview cannot fit beside each other at their minimum sizes."
     let feedback = ResultPillFeedback.failure(reason)
     #expect(feedback.message == "Can’t fit this layout")
@@ -147,7 +147,7 @@ private final class ResultPillTestPanel: NSPanel {
 
 /// A detail wider than the widest pill wraps to a second line, so its end
 /// stays visible instead of being cut off.
-@Test func longFailureDetailWrapsToASecondLine() {
+@Test(.macOSTestApplication) func longFailureDetailWrapsToASecondLine() {
     let display = DisplaySnapshot(id: DisplayID(rawValue: "pill"), frame: BTRect(x: 0, y: 0, width: 1920, height: 1080),
                                   visibleFrame: BTRect(x: 0, y: 0, width: 1920, height: 1050))
     let short = ResultPillLayout.frame(for: .failure("That layout cannot fit."), on: display)
@@ -162,7 +162,7 @@ private final class ResultPillTestPanel: NSPanel {
 /// CJK characters and emoji are about twice as wide as Latin letters. The
 /// pill measures the rendered detail, so a short CJK detail that is wider
 /// than one line gets the two-line height.
-@Test func resultPillMeasuresWideCharactersForItsSize() {
+@Test(.macOSTestApplication) func resultPillMeasuresWideCharactersForItsSize() {
     let display = DisplaySnapshot(id: DisplayID(rawValue: "pill"), frame: BTRect(x: 0, y: 0, width: 1920, height: 1080),
                                   visibleFrame: BTRect(x: 0, y: 0, width: 1920, height: 1050))
     // 44 characters: a 6 pt-per-character estimate puts this on one line.
@@ -179,7 +179,7 @@ private final class ResultPillTestPanel: NSPanel {
 /// Titles absorb the shortening, so the sentence around them always stays
 /// visible within the detail's two lines on the widest pill.
 @MainActor
-@Test(arguments: [
+@Test(.macOSTestApplication, arguments: [
     "Quarterly planning notes and follow-up actions for the platform team – Google Docs – Brave",
     "四半期計画のメモとプラットフォームチームのフォローアップ項目一覧表と予算レビュー資料",
     "📊📈📉🗂️📁📂🗃️🗄️📋📌📍📎🖇️📏📐✂️🗒️🗓️📆📅📇🧾📑🔖🏷️💼📒📓📔📕📗📘📙📚",
@@ -208,7 +208,7 @@ func resultPillDetailShortensTitlesToKeepItsSentence(title: String) {
 }
 
 /// A detail that already fits keeps its titles whole.
-@Test func resultPillDetailKeepsShortTitlesWhole() {
+@Test(.macOSTestApplication) func resultPillDetailKeepsShortTitlesWhole() {
     let detail = ResultPillLayout.detail(naming: ["予算", "📊 Report"]) { titles in
         "\(titles.joined(separator: " and ")) cannot fit beside each other at their minimum sizes."
     }

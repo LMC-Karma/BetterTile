@@ -7,7 +7,7 @@ import Testing
 /// A window too wide for every pane, but not for the display, floats at its
 /// own size as an automatic float, moved fully onto the work area. The pill
 /// names the window by its title, though Peer belongs to the same app.
-@Test @MainActor func aNewWindowThatFitsNoPaneFloatsOnScreenAndSaysSo() async throws {
+@Test(.appTestApplication) @MainActor func aNewWindowThatFitsNoPaneFloatsOnScreenAndSaysSo() async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
     let peer = WindowID(rawValue: "peer")
@@ -51,7 +51,7 @@ import Testing
 /// adopted again with that minimum. No pane can show it beside the other
 /// pane, so it floats automatically, and the pill says so instead of
 /// reporting the refused size.
-@Test @MainActor func aNewWindowThatRefusesItsPaneIsAdoptedAgainAndFloats() async throws {
+@Test(.appTestApplication) @MainActor func aNewWindowThatRefusesItsPaneIsAdoptedAgainAndFloats() async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
     let peer = WindowID(rawValue: "peer")
@@ -99,7 +99,7 @@ import Testing
 }
 
 /// Two windows that float in the same sweep are both named in one pill.
-@Test @MainActor func windowsThatFloatTogetherAreAllNamed() async throws {
+@Test(.appTestApplication) @MainActor func windowsThatFloatTogetherAreAllNamed() async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
     let peer = WindowID(rawValue: "peer")
@@ -142,7 +142,7 @@ import Testing
 /// A new window is adopted again only once. When it still refuses its pane
 /// because nothing learned its minimum, the refusal is reported and
 /// BetterTile does not keep adopting it.
-@Test @MainActor func aNewWindowThatRefusesAgainIsReportedNotAdoptedForever() async throws {
+@Test(.appTestApplication) @MainActor func aNewWindowThatRefusesAgainIsReportedNotAdoptedForever() async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
     let peer = WindowID(rawValue: "peer")
@@ -178,7 +178,7 @@ import Testing
 }
 
 /// "X is floating" is said only after the placement that floats it lands.
-@Test @MainActor func aFloatThatCannotBePlacedIsNotAnnounced() async throws {
+@Test(.appTestApplication) @MainActor func aFloatThatCannotBePlacedIsNotAnnounced() async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
     let peer = WindowID(rawValue: "peer")
@@ -222,7 +222,7 @@ import Testing
 /// One window is too wide for a Bento quarter, so Bento floats a window on
 /// its own. Tabbed used to keep that float as if the user made it, and One
 /// Pane never offered it a pane. Every window fits One Pane and becomes a tab.
-@Test @MainActor func theLiveSequenceEndsWithEveryWindowAsATab() async throws {
+@Test(.appTestApplication) @MainActor func theLiveSequenceEndsWithEveryWindowAsATab() async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
     let area = system.mainDisplay.visibleFrame
@@ -296,7 +296,7 @@ private func addFalselyMeasuredWindow(_ name: String, pid: Int32, to system: Fak
 /// Repair Tabbed returns windows that floated on their own: it reads them
 /// again and adopts them. A window the user floated stays floating. The pill
 /// counts the returned windows.
-@Test @MainActor func repairTabbedReturnsAutomaticFloatsAndKeepsUserFloats() async throws {
+@Test(.appTestApplication) @MainActor func repairTabbedReturnsAutomaticFloatsAndKeepsUserFloats() async throws {
     let (system, model) = try await onePaneFixture()
     defer { model.shutdown() }
     model.tabbedAutomaticFloatRetryDelay = .seconds(60)
@@ -328,7 +328,7 @@ private func addFalselyMeasuredWindow(_ name: String, pid: Int32, to system: Fak
 /// An automatic float is checked again once, a moment after its placement
 /// settles, with a fresh snapshot. An application that was busy, or that
 /// applied its size late, then gets a pane without a repair.
-@Test @MainActor func anAutomaticFloatIsCheckedAgainOnce() async throws {
+@Test(.appTestApplication) @MainActor func anAutomaticFloatIsCheckedAgainOnce() async throws {
     let (system, model) = try await onePaneFixture()
     defer { model.shutdown() }
     model.tabbedAutomaticFloatRetryDelay = .seconds(1)
@@ -345,7 +345,7 @@ private func addFalselyMeasuredWindow(_ name: String, pid: Int32, to system: Fak
 /// Entering Tabbed again returns an automatic float that a pane can now
 /// show, but never in place of the focused window: it joins that window's
 /// pane as a hidden tab.
-@Test @MainActor func theEntryReturnKeepsTheFocusedWindowSelected() async throws {
+@Test(.appTestApplication) @MainActor func theEntryReturnKeepsTheFocusedWindowSelected() async throws {
     let (system, model) = try await onePaneFixture()
     defer { model.shutdown() }
     model.tabbedAutomaticFloatRetryDelay = .seconds(60)
@@ -369,7 +369,7 @@ private func addFalselyMeasuredWindow(_ name: String, pid: Int32, to system: Fak
 /// Repair Tabbed returns an automatic float that a pane can now show, but
 /// never in place of the focused window: it joins that window's pane as a
 /// hidden tab.
-@Test @MainActor func repairTabbedKeepsTheFocusedWindowSelected() async throws {
+@Test(.appTestApplication) @MainActor func repairTabbedKeepsTheFocusedWindowSelected() async throws {
     let (system, model) = try await onePaneFixture()
     defer { model.shutdown() }
     model.tabbedAutomaticFloatRetryDelay = .seconds(60)
@@ -390,7 +390,7 @@ private func addFalselyMeasuredWindow(_ name: String, pid: Int32, to system: Fak
 
 /// A window that still fits no pane at all is checked once, then left
 /// floating: the check does not repeat or move it again.
-@Test @MainActor func anAutomaticFloatThatStillCannotFitIsCheckedOnlyOnce() async throws {
+@Test(.appTestApplication) @MainActor func anAutomaticFloatThatStillCannotFitIsCheckedOnlyOnce() async throws {
     let (system, model) = try await onePaneFixture()
     defer { model.shutdown() }
     model.tabbedAutomaticFloatRetryDelay = .milliseconds(200)
@@ -409,7 +409,7 @@ private func addFalselyMeasuredWindow(_ name: String, pid: Int32, to system: Fak
 
 /// Bento floats a seventh window on its own. Entering Tabbed keeps it an
 /// automatic float rather than the user's, and offers it a pane at once.
-@Test @MainActor func enteringTabbedFromBentoGivesBentoFloatsAPane() async throws {
+@Test(.appTestApplication) @MainActor func enteringTabbedFromBentoGivesBentoFloatsAPane() async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
     let area = system.mainDisplay.visibleFrame
@@ -435,7 +435,7 @@ private func addFalselyMeasuredWindow(_ name: String, pid: Int32, to system: Fak
 /// Repair keeps a proven minimum. A window whose probe measured it taller
 /// than the work area below the strip stays floating, and Repair writes no
 /// frame to it, now or later.
-@Test @MainActor func repairKeepsAProvenMinimumAndDoesNotLoop() async throws {
+@Test(.appTestApplication) @MainActor func repairKeepsAProvenMinimumAndDoesNotLoop() async throws {
     let (system, model) = try await onePaneFixture()
     defer { model.shutdown() }
     model.tabbedAutomaticFloatRetryDelay = .milliseconds(100)
@@ -458,7 +458,7 @@ private func addFalselyMeasuredWindow(_ name: String, pid: Int32, to system: Fak
 /// Entering Tabbed is stored before its placement. When that placement
 /// fails, later sweeps do not run the entry again, so they do not return the
 /// same automatic floats and write their frames over and over.
-@Test @MainActor func aFailedEntryPlacementDoesNotRepeatTheEntry() async throws {
+@Test(.appTestApplication) @MainActor func aFailedEntryPlacementDoesNotRepeatTheEntry() async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
     let area = system.mainDisplay.visibleFrame
@@ -495,7 +495,7 @@ private func addFalselyMeasuredWindow(_ name: String, pid: Int32, to system: Fak
 /// the other pane can give the room. When the other windows have since grown
 /// and it cannot, the pill names the problem and the previous selection
 /// stays; nothing overlaps.
-@Test(arguments: [false, true]) @MainActor
+@Test(.appTestApplication, arguments: [false, true]) @MainActor
 func selectingALargeHiddenTabGrowsItsPaneOrKeepsTheSelection(impossible: Bool) async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
@@ -551,7 +551,7 @@ func selectingALargeHiddenTabGrowsItsPaneOrKeepsTheSelection(impossible: Bool) a
 /// A window whose only large minimum is its application's seed plans
 /// without that seed: it joins as the selected tab, and stays selectable,
 /// because the write shows its real minimum.
-@Test @MainActor func aWindowWithALargeSeedJoinsAndStaysSelectable() async throws {
+@Test(.appTestApplication) @MainActor func aWindowWithALargeSeedJoinsAndStaysSelectable() async throws {
     let (system, model) = try await onePaneFixture()
     defer { model.shutdown() }
     let first = try #require(system.windows.first?.id)
@@ -578,7 +578,7 @@ func selectingALargeHiddenTabGrowsItsPaneOrKeepsTheSelection(impossible: Bool) a
 
 /// Undo that brings an automatic float back does not start its later check,
 /// which would undo part of the Undo.
-@Test @MainActor func undoToAnAutomaticFloatDoesNotCheckItAgain() async throws {
+@Test(.appTestApplication) @MainActor func undoToAnAutomaticFloatDoesNotCheckItAgain() async throws {
     let (system, model) = try await onePaneFixture()
     defer { model.shutdown() }
     model.tabbedAutomaticFloatRetryDelay = .milliseconds(200)
@@ -601,7 +601,7 @@ func selectingALargeHiddenTabGrowsItsPaneOrKeepsTheSelection(impossible: Bool) a
 
 /// Leaving Tabbed for Bento hands Tabbed's automatic floats to Bento as its
 /// own, so Bento offers them a pane; Bento panes have no tab strip.
-@Test @MainActor func leavingForBentoHandsAutomaticFloatsToBento() async throws {
+@Test(.appTestApplication) @MainActor func leavingForBentoHandsAutomaticFloatsToBento() async throws {
     let (system, model) = try await onePaneFixture()
     defer { model.shutdown() }
     model.tabbedAutomaticFloatRetryDelay = .seconds(60)
@@ -626,7 +626,7 @@ func selectingALargeHiddenTabGrowsItsPaneOrKeepsTheSelection(impossible: Bool) a
 /// The later check waits while another placement owns the display, then
 /// runs. If the display stays busy, it gives up and the window stays an
 /// automatic float for Repair Tabbed.
-@Test(arguments: [false, true]) @MainActor
+@Test(.appTestApplication, arguments: [false, true]) @MainActor
 func theLaterCheckWaitsForABusyDisplayOrGivesUp(staysBusy: Bool) async throws {
     let (system, model) = try await onePaneFixture()
     defer { model.shutdown() }
@@ -661,7 +661,7 @@ func theLaterCheckWaitsForABusyDisplayOrGivesUp(staysBusy: Bool) async throws {
 }
 
 /// A later check that fails says nothing: the user did not ask for it.
-@Test @MainActor func aFailedLaterCheckIsSilent() async throws {
+@Test(.appTestApplication) @MainActor func aFailedLaterCheckIsSilent() async throws {
     let (system, model) = try await onePaneFixture()
     defer { model.shutdown() }
     model.tabbedAutomaticFloatRetryDelay = .milliseconds(300)
@@ -705,7 +705,7 @@ private func addWideWindow(_ name: String, pid: Int32, to system: FakeAppWindowS
 /// float joins behind it as a hidden tab and focus stays; when the float
 /// itself keeps focus, it becomes the selected tab. A window the user
 /// floated stays floating.
-@Test(arguments: [false, true]) @MainActor
+@Test(.appTestApplication, arguments: [false, true]) @MainActor
 func changingToOnePaneReturnsAnAutomaticFloatAndKeepsUserFloats(floatIsFocused: Bool) async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
@@ -753,7 +753,7 @@ func changingToOnePaneReturnsAnAutomaticFloatAndKeepsUserFloats(floatIsFocused: 
 
 /// Removing the empty pane beside an automatic float's only possible pane
 /// returns it as that pane's selected tab.
-@Test @MainActor func removingAPaneReturnsAnAutomaticFloat() async throws {
+@Test(.appTestApplication) @MainActor func removingAPaneReturnsAnAutomaticFloat() async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
     let model = makeModel(system: system)
@@ -778,7 +778,7 @@ func changingToOnePaneReturnsAnAutomaticFloatAndKeepsUserFloats(floatIsFocused: 
 
 /// A work area that grows, for example when the Dock hides, returns an
 /// automatic float that now fits.
-@Test @MainActor func aLargerWorkAreaReturnsAnAutomaticFloat() async throws {
+@Test(.appTestApplication) @MainActor func aLargerWorkAreaReturnsAnAutomaticFloat() async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
     system.availableDisplays[0].visibleFrame.size.width = 800
@@ -804,7 +804,7 @@ func changingToOnePaneReturnsAnAutomaticFloatAndKeepsUserFloats(floatIsFocused: 
 
 /// A layout change that still leaves no room keeps the automatic float and
 /// says nothing: the user did not ask for the check.
-@Test @MainActor func aLayoutChangeWithoutRoomKeepsTheFloatSilently() async throws {
+@Test(.appTestApplication) @MainActor func aLayoutChangeWithoutRoomKeepsTheFloatSilently() async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
     let model = makeModel(system: system)
@@ -832,7 +832,7 @@ func changingToOnePaneReturnsAnAutomaticFloatAndKeepsUserFloats(floatIsFocused: 
 
 /// Showing a smaller tab beside the pane an automatic float needs makes
 /// room, so the float returns to that pane without a repair.
-@Test @MainActor func selectingASmallerTabNextDoorReturnsAnAutomaticFloat() async throws {
+@Test(.appTestApplication) @MainActor func selectingASmallerTabNextDoorReturnsAnAutomaticFloat() async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
     system.windows[0].constraints.minimumSize = BTSize(width: 400, height: 80)
@@ -878,7 +878,7 @@ func changingToOnePaneReturnsAnAutomaticFloatAndKeepsUserFloats(floatIsFocused: 
 /// Review: the later check and Repair Tabbed return a window to a pane
 /// other than the active one as its selected tab, as the layout-change check
 /// does. Hidden behind that pane's tab, the window was lost from view.
-@Test(arguments: ["later check", "repair"]) @MainActor
+@Test(.appTestApplication, arguments: ["later check", "repair"]) @MainActor
 func aFloatReturnedToAnotherPaneIsShown(path: String) async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
