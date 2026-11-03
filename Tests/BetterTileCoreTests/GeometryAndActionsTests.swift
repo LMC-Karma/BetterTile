@@ -59,7 +59,7 @@ private let testDisplay = DisplaySnapshot(
         .growHeight: BTRect(x: 100, y: 100, width: 500, height: 440),
         .shrinkHeight: BTRect(x: 100, y: 100, width: 500, height: 360),
     ]
-    let actions = WindowAction.allCases.filter { !$0.isDisplayTransfer && !$0.isRestore }
+    let actions = WindowAction.allCases.filter { !$0.isDisplayTransfer && !$0.isRestore && !$0.isTabCommand && $0 != .showTabBar }
     #expect(Set(expected.keys) == Set(actions))
     for action in actions {
         let target = try #require(StandardActionEngine().targetFrame(for: action, window: window, display: testDisplay))

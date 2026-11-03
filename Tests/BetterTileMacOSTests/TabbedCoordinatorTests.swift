@@ -407,3 +407,35 @@ func tabbedRollbackAcceptsOnlyAStepShortfallForASteppedWindow(shortfall: Double,
     #expect(system.windows[0].frame != baseline[0].frame)
     #expect(system.windows[1].frame == baseline[1].frame)
 }
+
+@Test(.macOSTestApplication, arguments: [false, true])
+@MainActor func tabbedPlacementRejectsDesktopChangeDuringHiddenTabPreflight(hasCheckpoint: Bool) async {
+    let system = FakeWindowSystem()
+    system.addSecondWindow()
+    let shown = system.windows[0].id, hidden = system.windows[1].id
+    let frames = system.windows.map(\.frame)
+    let coordinator = WindowCoordinator(system: system)
+    var current = true
+    var readHidden = false
+    system.targetedSnapshotHandler = { ids in
+        guard ids == [hidden] else { return }
+        readHidden = true
+        current = false
+    }
+    let frame = BTRect(x: 0, y: 34, width: 600, height: 600)
+    let outcome = await coordinator.applyTabbed(
+        placements: [Placement(windowID: shown, frame: frame), Placement(windowID: hidden, frame: frame)],
+        rollbackFrames: hasCheckpoint ? Dictionary(uniqueKeysWithValues: system.windows.map { ($0.id, $0.frame) }) : nil,
+        rollbackDisplayID: hasCheckpoint ? system.availableDisplays[0].id : nil,
+        required: [shown], selected: [shown], previousSelected: [], focus: shown, isCurrent: { current })
+    #expect(readHidden)
+    #expect(!outcome.isApplied)
+    if hasCheckpoint {
+        guard case .degraded = outcome else { Issue.record("A stale checkpoint cannot be restored on another desktop."); return }
+    } else {
+        guard case .failed = outcome else { Issue.record("No mutation started without a checkpoint."); return }
+    }
+    #expect(system.frameWriteCounts.isEmpty)
+    #expect(system.raisedWindows.isEmpty)
+    #expect(system.windows.map(\.frame) == frames)
+}

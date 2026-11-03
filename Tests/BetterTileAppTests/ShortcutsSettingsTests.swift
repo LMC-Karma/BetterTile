@@ -34,6 +34,28 @@ import Testing
         #expect(model.configuration == original)
     }
 
+    @Test func rendersAllNineGroupsAndFortyOneActions() throws {
+        let model = makeModel(system: FakeAppWindowSystem())
+        defer { model.shutdown() }
+        #expect(WindowActionGroup.allCases.count == 9)
+        #expect(WindowActionGroup.flattenedActions.count == 41)
+        #expect(Set(WindowActionGroup.flattenedActions) == Set(WindowAction.allCases))
+        let page = ShortcutsSettings(model: model)
+        #expect(page.filteredGroups.count == 9)
+        #expect(page.filteredGroups.flatMap(page.filteredActions).count == 41)
+        for group in WindowActionGroup.allCases {
+            #expect(page.isExpanded(group) == (group == .halves || group == .thirds))
+        }
+        let search = ShortcutsSettings(model: model, search: "left half")
+        #expect(search.filteredGroups.flatMap(search.filteredActions) == [.leftHalf])
+        #expect(search.isExpanded(.halves))
+        #expect(ShortcutsSettings(model: model, search: "no-such-action").filteredGroups.isEmpty)
+        let host = try SettingsSnapshotHost(ShortcutsSettings(model: model, expandedGroups: Set(WindowActionGroup.allCases)), dark: false,
+                                            width: 770, height: 2600, fitHeight: false)
+        defer { host.close() }
+        #expect(try host.render().pixelsWide >= 770)
+    }
+
     @Test func inlineKeyCaptureRecordsModifiersAndEscapeCancels() throws {
         let view = InlineKeyCaptureNSView()
         var captured: BetterTileCore.KeyboardShortcut?

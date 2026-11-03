@@ -455,9 +455,8 @@ private func addFalselyMeasuredWindow(_ name: String, pid: Int32, to system: Fak
     #expect(model.lastActionFeedback?.message.contains("returned") != true)
 }
 
-/// Entering Tabbed is stored before its placement. When that placement
-/// fails, later sweeps do not run the entry again, so they do not return the
-/// same automatic floats and write their frames over and over.
+/// Failed entry restores Bento. Background sweeps must not retry Tabbed or
+/// repeatedly write the automatic float that rejected its pane.
 @Test(.appTestApplication) @MainActor func aFailedEntryPlacementDoesNotRepeatTheEntry() async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
@@ -474,21 +473,30 @@ private func addFalselyMeasuredWindow(_ name: String, pid: Int32, to system: Fak
     try await Task.sleep(for: .milliseconds(300))
     // Six windows are tiled; Bento floats the seventh where it was.
     let overflow = try #require(system.windows.first { $0.frame == area }?.id)
+    let frames = system.windows.map(\.frame)
     // Every write to the focused Bento float fails, so the entry placement,
     // which selects it, fails.
     system.focusedID = overflow
     system.failedFrameWriteNumbers[overflow] = Set(1...200)
     model.setActiveMode(.tabbed)
-    try #require(await waitFor { (system.frameWriteCounts[overflow] ?? 0) > 0 })
-    try await Task.sleep(for: .milliseconds(500))
-    let writes = system.frameWriteCounts[overflow, default: 0]
-    for _ in 0..<3 {
-        model.setActiveMode(.tabbed) // Already Tabbed: only a forced sweep.
+    try #require(await waitFor { !model.hasPendingTabbedPlacement && model.activeLayoutMode == .bento })
+    #expect(system.frameWriteCounts[overflow, default: 0] > 0)
+    let unrelated = system.windows[1].id
+    let writes = system.frameWriteCounts
+    for index in 0..<3 {
+        if index.isMultiple(of: 2) { system.offscreenWindowIDs.insert(unrelated) }
+        else { system.offscreenWindowIDs.remove(unrelated) }
+        let updates = system.managedWindowUpdateCount
+        model.watchdog()
+        #expect(system.managedWindowUpdateCount > updates)
         try await Task.sleep(for: .milliseconds(300))
     }
 
-    #expect(system.frameWriteCounts[overflow, default: 0] == writes)
-    #expect(model.activeTabbedState?.automaticallyFloatingWindowIDs == [overflow])
+    #expect(system.frameWriteCounts == writes)
+    #expect(system.windows.map(\.frame) == frames)
+    #expect(model.activeLayoutMode == .bento)
+    #expect(model.activeTabbedState == nil)
+    #expect(model.lastActionFeedback?.kind == .failure)
 }
 
 /// Selecting a hidden tab that is larger than its pane grows the pane when
@@ -578,14 +586,16 @@ func selectingALargeHiddenTabGrowsItsPaneOrKeepsTheSelection(impossible: Bool) a
 
 /// Undo that brings an automatic float back does not start its later check,
 /// which would undo part of the Undo.
-@Test(.appTestApplication) @MainActor func undoToAnAutomaticFloatDoesNotCheckItAgain() async throws {
+@Test(.appTestApplication, arguments: [Duration.milliseconds(200), .seconds(2)])
+@MainActor func undoToAnAutomaticFloatDoesNotCheckItAgain(retryDelay: Duration) async throws {
     let (system, model) = try await onePaneFixture()
     defer { model.shutdown() }
-    model.tabbedAutomaticFloatRetryDelay = .milliseconds(200)
+    model.tabbedAutomaticFloatRetryDelay = retryDelay
     let tall = addFalselyMeasuredWindow("tall", pid: 930_601, to: system)
     try #require(await waitFor { model.activeTabbedState?.automaticallyFloatingWindowIDs == [tall] })
-    // Well past the later check, so it cannot return the window later.
-    try await Task.sleep(for: .milliseconds(1_500))
+    // Complete the initial check before testing whether Undo starts another.
+    // App-product load can delay the retry beyond a fixed sleep.
+    try #require(await waitFor(timeout: .seconds(20)) { model.tabbedAutomaticFloatChecksRun == 1 })
     let index = try #require(system.windows.firstIndex { $0.id == tall })
     system.windows[index].constraints = WindowConstraints()
     let pane = try #require(model.activeTabbedState?.panes[0].id)
@@ -597,6 +607,7 @@ func selectingALargeHiddenTabGrowsItsPaneOrKeepsTheSelection(impossible: Bool) a
     try #require(await waitFor { model.activeTabbedState?.automaticallyFloatingWindowIDs == [tall] })
     try await Task.sleep(for: .milliseconds(800))
     #expect(model.activeTabbedState?.automaticallyFloatingWindowIDs == [tall])
+    #expect(model.tabbedAutomaticFloatChecksRun == 1)
 }
 
 /// Leaving Tabbed for Bento hands Tabbed's automatic floats to Bento as its
@@ -701,7 +712,7 @@ private func addWideWindow(_ name: String, pid: Int32, to system: FakeAppWindowS
 }
 
 /// Changing the layout to One Pane makes room for an automatic float, so it
-/// returns without a repair. Change Layout focuses the pane's tab, so the
+/// returns without a repair. Applying a layout focuses the pane's tab, so the
 /// float joins behind it as a hidden tab and focus stays; when the float
 /// itself keeps focus, it becomes the selected tab. A window the user
 /// floated stays floating.

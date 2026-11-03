@@ -7,7 +7,7 @@ import Testing
 /// Native glass optics require WindowServer; this checks the field's own pixels over
 /// both extreme backdrops, without substituting an opaque offscreen glass fallback.
 @MainActor @Suite(.appTestApplication, .serialized, .settingsUI) struct PopupSearchContrastTests {
-    @Test(arguments: [GlassPopupSnapshotTests.Surface.ruleSheet],
+    @Test(arguments: [GlassPopupSnapshotTests.Surface.ruleSheet, .panePicker],
           [(false, false, false), (false, true, false), (true, false, false), (true, true, false),
            (false, false, true), (false, true, true), (true, false, true), (true, true, true)])
     func enteredSearchAndPlaceholderStayReadableInRealGlass(surface: GlassPopupSnapshotTests.Surface,
@@ -114,7 +114,40 @@ import Testing
         }
     }
 
-
+    @Test(arguments: [false, true], [false, true])
+    func searchPlaceholderOpacityIsTheLowestPassingPercent(dark: Bool, solid: Bool) async throws {
+        _ = NSApplication.shared
+        let previous = NSApp.appearance
+        let appearance = try #require(NSAppearance(named: dark ? .darkAqua : .aqua))
+        NSApp.appearance = appearance
+        defer { NSApp.appearance = previous }
+        let scene = try await GlassPopupScene.make(.panePicker, dark: dark, reduceTransparency: solid)
+        defer { scene.close() }
+        let field = try #require(panelViews(scene.root, NSSearchField.self).first)
+        let glass = try #require(panelViews(scene.root, OverlayGlassView.self).first)
+        let cell = try #require(field.cell as? ApplicationPickerSearchCell)
+        field.window?.makeFirstResponder(nil)
+        var label: NSColor!
+        appearance.performAsCurrentDrawingAppearance { label = NSColor.labelColor.usingColorSpace(.sRGB) }
+        let original = try #require(field.placeholderAttributedString)
+        let rect = cell.searchTextRect(forBounds: field.bounds)
+        let ink = NSRect(x: rect.minX + 2, y: field.bounds.midY - 5, width: 50, height: 10)
+        #expect(PickerText.lightSearchPlaceholderOpacity == 0.64)
+        #expect(PickerText.darkSearchPlaceholderOpacity == 0.54)
+        let chosen = dark ? PickerText.darkSearchPlaceholderOpacity : PickerText.lightSearchPlaceholderOpacity
+        for opacity in [chosen - 0.01, chosen] {
+            let placeholder = NSMutableAttributedString(attributedString: original)
+            placeholder.addAttribute(.foregroundColor, value: label.withAlphaComponent(label.alphaComponent * opacity),
+                                     range: NSRange(location: 0, length: placeholder.length))
+            field.placeholderAttributedString = placeholder
+            let pixels = try SearchFieldPixels(field, root: try #require(glass.popupContent), white: !dark)
+            let background = pixels.pixel(NSPoint(x: rect.maxX - 12, y: field.bounds.midY))
+            let contrast = pixels.peakContrast(in: ink, background: background)
+            if opacity == chosen { #expect(contrast >= 4.5) }
+            else { #expect(contrast < 4.5, "The next lower opacity already passes") }
+            print("PLACEHOLDER_CALIBRATION dark=\(dark) solid=\(solid) opacity=\(opacity) alpha=\(label.alphaComponent * opacity) contrast=\(contrast)")
+        }
+    }
 }
 
 @MainActor private struct SearchFieldPixels {

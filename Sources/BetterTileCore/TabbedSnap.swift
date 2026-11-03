@@ -155,7 +155,7 @@ public enum TabbedSnapPlanner {
             panes.map { pane in
                 guard let selected = pane.selected else { return vacancyFits(frame) }
                 guard let window = snapshots[selected], window.isEligible, window.constraints.isResizable else { return false }
-                let content = metrics.contentFrame(forPane: frame)
+                let content = metrics.windowFrame(forPane: frame)
                 let minimum = window.constraints.minimumSize
                 return minimum.width.isFinite && minimum.height.isFinite && minimum.width >= 0 && minimum.height >= 0
                     && content.size.width + 0.001 >= minimum.width && content.size.height + 0.001 >= minimum.height

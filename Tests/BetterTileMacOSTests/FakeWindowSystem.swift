@@ -6,7 +6,18 @@ import Testing
 /// BetterTileMacOS test suite. Failure knobs simulate rejected, ignored,
 /// numbered-failing, clamped, and late-settling Accessibility writes.
 @MainActor
-final class FakeWindowSystem: WindowSystem, TargetedWindowSystem, WindowEventSource, TabbedWindowSystem, WindowStackReading, MinimumSizeProbing {
+final class FakeWindowSystem: ApplicationActivating, ApplicationWindowRequesting, WindowSystem, TargetedWindowSystem, WindowEventSource, TabbedWindowSystem, WindowStackReading, MinimumSizeProbing {
+    func activateApplication(bundleIdentifier: String, processIdentifier: Int32?) -> ApplicationActivationResult {
+        .unavailable
+    }
+
+    func activateForWindowRequest(processIdentifier: Int32, bundleIdentifier: String) -> Bool { false }
+
+    func requestNewWindow(processIdentifier: Int32, bundleIdentifier: String,
+                          validating isCurrent: @escaping @MainActor () -> Bool) async -> ApplicationWindowRequestResult {
+        isCurrent() ? .unsupported : .failed("The destination changed.")
+    }
+
     var availableDisplays = [DisplaySnapshot(
         id: DisplayID(rawValue: "main"),
         frame: BTRect(x: 0, y: 0, width: 1000, height: 800),

@@ -416,6 +416,52 @@ import Testing
             #expect((harness.controller.panel as? OffscreenPickerPanel)?.cancelCommands == 1)
         }
 
+        @Test(arguments: [false, true])
+        func paneChooserEscapeClearsBeforeClosingWithRealKeys(marked: Bool) async throws {
+            _ = NSApplication.shared
+            let request = PaneApplicationRequest(paneID: UUID(), paneNumber: 1,
+                displayID: DisplayID(rawValue: "escape-test"), sessionID: DesktopSessionID(rawValue: UUID()),
+                spaceID: nil, generation: 0, workArea: BTRect(x: 12000, y: 0, width: 1200, height: 800))
+            let choice = ApplicationChoice(bundleIdentifier: "test.alpha", name: "Alpha", url: URL(filePath: "/nonexistent/Alpha.app"))
+            let host = NSHostingView(rootView: PaneApplicationPicker(request: request, installedApplications: { [choice] },
+                runningApplications: { [] }, recentApplications: RecentApplications(defaults: MemoryDefaults())))
+            let panel = OffscreenPaneChooserPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel],
+                                                  backing: .buffered, defer: false)
+            let presenter = TabbedChooserPresenter(content: host, size: NSSize(width: 320, height: 420), panel: panel)
+            var dismissals = 0
+            presenter.onDismiss = { dismissals += 1 }
+            defer { presenter.dismiss(); panel.close() }
+            presenter.present(anchorFrame: NSRect(x: 12500, y: 700, width: 24, height: 24), paneFrame: nil,
+                              screenFrame: NSRect(x: 12000, y: 0, width: 1200, height: 800))
+            try #require(!NSScreen.screens.contains { $0.frame.intersects(panel.frame) })
+            panel.makeKey()
+            try #require(panel.isKeyWindow, Comment(rawValue: keyWindowDiagnostics(panel)))
+            try await panelReady(host) { panelViews(host, NSSearchField.self).first?.currentEditor() != nil }
+            let field = try #require(panelViews(host, NSSearchField.self).first)
+            let editor = try #require(field.currentEditor() as? NSTextView)
+            // Exactly the same NSApplication dispatch and native event constructor as the Add Rule test.
+            func key(_ text: String, code: UInt16) throws { try withNativeEventLoop { NSApp.sendEvent(try panelKey(panel, text, code: code)) } }
+            try key("a", code: 0)
+            try await panelReady(host) { field.stringValue == "a" }
+            if marked {
+                editor.setMarkedText("あ", selectedRange: NSRange(location: 1, length: 0),
+                                     replacementRange: NSRange(location: NSNotFound, length: 0))
+                try #require(editor.hasMarkedText())
+                try key("\u{1b}", code: 53)
+                #expect(!editor.hasMarkedText())
+                #expect(field.stringValue == "a" && editor.string == "a")
+                try #require(presenter.isPresented && dismissals == 0, "Composition Escape dismissed the chooser")
+            }
+            try key("\u{1b}", code: 53)
+            #expect(field.stringValue.isEmpty && editor.string.isEmpty)
+            try #require(presenter.isPresented && dismissals == 0, "Search Escape dismissed instead of clearing")
+            #expect(panel.firstResponder === editor)
+            try key("\u{1b}", code: 53)
+            #expect(!presenter.isPresented && dismissals == 1)
+            presenter.dismiss()
+            #expect(dismissals == 1)
+        }
+
         @Test(arguments: [true])
         func liveReopenedPanelAcceptsTypedKeys(addRule: Bool) async throws {
             let harness = LivePanelHarness(addRule: addRule)
@@ -598,4 +644,9 @@ private struct PanelBindingPage: View {
         if selector == #selector(NSResponder.cancelOperation(_:)) { cancelResults.append(handled) }
         return handled
     }
+}
+
+
+@MainActor private final class OffscreenPaneChooserPanel: TabbedChooserPanel {
+    override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect { frameRect }
 }

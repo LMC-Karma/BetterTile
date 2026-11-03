@@ -12,6 +12,16 @@ public enum WindowAction: String, Codable, CaseIterable, Identifiable, Sendable 
     case moveLeft, moveRight, moveUp, moveDown
     case growWidth, shrinkWidth, growHeight, shrinkHeight
     case restore
+    case showTabBar
+    case nextTab, previousTab, moveTabLeft, moveTabRight
+    case moveTabToNextPane, moveTabToPreviousPane
+
+    public static let tabCommands: [WindowAction] = [
+        .nextTab, .previousTab, .moveTabLeft, .moveTabRight,
+        .moveTabToNextPane, .moveTabToPreviousPane,
+    ]
+
+    public var isTabCommand: Bool { Self.tabCommands.contains(self) }
 
     public var id: String { rawValue }
 
@@ -26,11 +36,13 @@ public enum WindowAction: String, Codable, CaseIterable, Identifiable, Sendable 
         .maximize, .almostMaximize, .center, .centerResize,
         .moveLeft, .moveRight, .moveUp, .moveDown,
         .growWidth, .shrinkWidth, .growHeight, .shrinkHeight,
-        .previousDisplay, .nextDisplay, .restore,
+        .previousDisplay, .nextDisplay, .restore, .showTabBar,
     ]
 
     public var title: String {
-        rawValue
+        if self == .moveTabToNextPane { return "Move Tab to Next Pane" }
+        if self == .moveTabToPreviousPane { return "Move Tab to Previous Pane" }
+        return rawValue
             .reduce(into: "") { result, character in
                 if character.isUppercase { result.append(" ") }
                 result.append(character)

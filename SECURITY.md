@@ -207,6 +207,173 @@ entry out. To clear it, quit BetterTile and run
 `defaults delete com.lmckarma.BetterTile recentApplicationBundleIdentifiers`
 (`com.lmckarma.BetterTile.debug` for Debug).
 
+The Tabbed pane **Add App** picker uses that same catalog. Choosing an app
+requests a new window first. A stopped app opens through public
+`NSWorkspace.openApplication(at:configuration:)`, without activation, a new
+process-instance flag, custom arguments, documents, URLs, or Apple events.
+Launching an app does not guarantee a window. For a running app, the
+coordinator first looks for an enabled **New Window** Accessibility menu item
+with the public `AXPress` action. Otherwise it looks for Command-N using
+`AXMenuItemCmdChar` (`N` or `n`) and `AXMenuItemCmdModifiers` equal to 0
+(Command alone). Shift, Option, Control, missing modifier values, and the
+NoCommand bit do not qualify. File is the first top-level menu after the
+application menu, identified by position rather than the File title. The app's
+localized name identifies its application menu even when Apple precedes it.
+Bare Command-N qualifies only in this positional File menu. If that anchor is
+unavailable, bare Command-N never qualifies. Complete window-title commands
+retain their unique-match fallback across top-level menus. Without a safe
+command, BetterTile uses reopen.
+Discovery reads at most 32 menu-bar entries and 128 direct items per menu,
+on a background task with a 0.5-second deadline. Before each read it sets the
+public AX messaging timeout to at most 50 ms, bounded by the remaining budget;
+it retains the existing hung-app gate. It opens no menu or submenu to discover lazy items. Disabled, ambiguous, missing,
+or failed commands use the reopen or existing-window fallback. The selected command is
+read and validated again before `AXPress`. No keyboard events are injected.
+
+Choosing an app automatically requests a window without a consent question.
+Exact **New Window** takes priority, then a recognized complete window title
+(English **New Finder Window** / **New Viewer Window**, and the existing small
+French, German, Spanish, Italian and Japanese **New Window** table), then a
+allow-listed command-only ⌘N. Its title must be exactly **New**, **New Document**,
+**New File**, or a recognized window title. The small generic-document table
+also accepts French **Nouveau / Nouveau document / Nouveau fichier**, German
+**Neu / Neues Dokument / Neue Datei**, Spanish **Nuevo / Nuevo documento /
+Nuevo archivo**, Italian **Nuovo / Nuovo documento / Nuovo file**, and Japanese
+**新規 / 新規書類 / 新規ファイル** in that system language. Every other title,
+including **New Recording**, **New Event**, **New Card**, **New Note**, and
+**New Message**, uses reopen, then **Use a window from this desktop** if no
+eligible new window arrives. TextEdit's New Document can show an Open panel,
+which is never auto-placed.
+
+BetterTile stores no command answer. If no safe
+menu command exists, BetterTile validates the selected process and bundle URL,
+asks macOS to reopen the existing app through `NSWorkspace.openApplication`
+at the running process's validated bundle URL, not a different installed or
+browsed copy. The pane request disables activation and makes no preliminary
+activation call. The request sends no custom arguments, documents, URLs or
+Apple events, and does not request a new process instance. One request
+dispatches at most one successful open operation: a dispatched command is never
+followed by reopen. Reopening can restore a window or switch desktops; placement
+cancels if the destination changes. A running app has 10 seconds to open a new eligible window; a cold launch has
+30 seconds. Without an arrival, it offers **Use a window**.
+
+Several instances use the active instance, then the frontmost instance in the
+public on-screen window list. Without either, BetterTile offers explicit window
+choices and reports **Several copies are running**. This reads process IDs and layers, never titles
+or pixels. The pane publishes **Opening…** before asynchronous window inventory
+or menu discovery. Automatic placement raises the new window only while the
+user's request focus intent remains current. One MainActor-owned in-memory
+record coordinates intent across all pending pane requests.
+It knows their targets and expected launch, menu and reopen activations. Those
+activations cannot become another request's user choice. Failed operations
+clear their expectation; completion and cancellation unregister the request.
+A genuine activation of another app suppresses raising, including if the user
+later returns to the source app. The coordinator checks this after frame writes.
+
+A fresh hit-tested mouse-down on any window, including a target, records the
+latest user choice even when that app is already frontmost. The shared
+listen-only event tap and its existing AppKit left-mouse-down fallback both
+forward these choices. Observation remains enabled while any request is pending,
+even with snapping and linked resizing off. The hit-tested window must contain
+the point. The event must be within the request lifetime and no more than one
+second old. Pointer
+points and event timestamps remain transient.
+
+After successful automatic pane placement, the shared record can restore the latest user app. The
+coordinator sets the public Accessibility frontmost attribute on the chosen
+process: the clicked window's process, or the process that activated. BetterTile
+is inactive at that moment, and since macOS 14 a public
+`NSRunningApplication.activate` request from an inactive app can be declined.
+That request is only the fallback when Accessibility refuses. Without a known
+process, only a single running copy of the app qualifies. A qualifying completed request keeps
+its in-memory helper for at most two seconds after placement or the terminal
+state, whichever is later. One expiry task releases it. A later target
+activation can trigger the same one-shot restore during that window.
+Restoration requires a requested target frontmost and a different latest user
+choice. Explicit target clicks and newer app choices take precedence across
+requests. Each genuine choice permits at most one restoration attempt across
+all requests. The attempt is consumed before activation, and its activation is
+expected rather than a new choice. A later target activation alone cannot
+authorize another attempt.
+
+The public keyboard-event counter (`CGEventSource.counterForEventType` with
+`.combinedSessionState` and `.keyDown`) distinguishes newer keyboard switches to
+a target and suppresses restoration after other newer keyboard input. Mouse
+clicks, activation notifications and modifier-only events do not increment it.
+Each recorded user choice takes a new baseline. BetterTile
+reads only the aggregate count, not key codes, characters, event payloads or
+text. Typing in Source can therefore conservatively leave a later self-activating
+target frontmost. No keyboard event tap or repeated activation is added.
+`request-focus` debug and info logs include the aggregate count, bundle IDs,
+process IDs, request phase, choice source, restore reason and activation
+result. They contain no window title, pointer point, key code, character or app
+content. No intent or input history is persisted by
+BetterTile. No permission, dependency, private API or network request is added.
+
+The pane picker and Layout Gallery use BetterTile-owned nonactivating panels.
+Showing or dismissing either panel does not activate BetterTile or restore a
+previous app. Clicking a search field can give its panel keyboard focus without
+activating BetterTile. The panels stay on their opening Space and close when
+their pane, display, Space or Tabbed mode ends. For outside-click dismissal,
+`SharedGestureEventMonitor` forwards the existing listen-only left mouse-down
+point. If that tap is unavailable, `DragSnapController` forwards its existing
+global NSEvent left-mouse-down monitor for other apps instead. Global AppKit
+monitors do not receive BetterTile's own events. While either chooser is open,
+its presenter also installs a local NSEvent left/right mouse-down monitor for
+BetterTile windows and a global right-mouse-down monitor for other apps. The
+local monitor observes synchronously before control dispatch and returns the
+event unchanged. Dismissal removes both temporary monitors. The existing left
+observation paths remain enabled even if snapping is off. Each path compares
+only the transient screen point and timestamp with the panel frame and opening
+time; inside clicks and delayed opener samples do not dismiss it. This adds no
+permission, private API, saved pointer history or networking. Escape closes a
+panel that has keyboard focus.
+
+One in-memory request holds the chosen app's name, bundle identifier and bundle
+URL; PID and launch date; destination display, pane, session, current Space and
+generation; existing and arriving window identities and their request-local
+arrival order; and a 10-second running-app or 30-second cold-launch deadline.
+The public launch and menu APIs return no causal window identity. The user-approved
+automatic policy accepts the first eligible new window ID in creation order
+(or first-observed order without creation evidence) from the requested
+process within the request deadline. Pane requests exclude every baseline
+identity, other displays and desktops, multi-Space windows, dialogs, sheets and
+fixed-size windows. For a running process, an exact creation callback or a resolved
+creation-element token must identify the new ID after the request starts. A
+restored pre-existing window cannot authorize automatic placement. After a new
+process launch, its first eligible window can be placed without a callback.
+Placement uses the existing coordinator transaction and brings the placed window
+forward. This correlation is bounded policy, not proof that AXPress caused the
+window; a concurrent new document of that same process can qualify.
+
+Choosing an app closes the picker and shows progress in its pane. Existing or
+unconfirmed windows retain explicit **Use here** / **Place window** choices.
+The existing listen-only gesture stream can also confirm an unverified arrival
+with hit-tested mouse-down, mouse-up within 4 points, and a focused-window read
+250 ms later. Focus alone does not authorize that fallback choice. Points and
+times stay only in memory. There is no new permission. With the shared tap off
+or unavailable, the AppKit fallback also adds listen-only left-mouse drag and
+mouse-up monitors while a request is pending, so that click can complete. The
+picker
+can expand current-desktop windows inline. Titles come from current observations
+and are never saved. **Show App** activates the validated process. While choices
+are offered, further arrivals remain reserved outside the layout.
+Choices revalidate eligibility, app, current display and current-desktop membership through preflight and delayed placement. Picker
+choices receive no cross-display drag exemption.
+
+Cancel, owner loss, timeout and failed requests discard the destination. A
+30-second in-memory guard retains the app identifier, PID/launch date when
+known, and baseline window identities. On Tabbed desktops, newly observed windows of that request
+stay floating, without measurement or frame writes, and another creation for
+the same app waits for that guard to expire. The pane's explicit **Try Again**
+action can repeat the request while retaining the earlier guard. Offering choices leaves this guard because the dispatched request may still
+create another window. Successful automatic or explicit placement retains the
+guard for further arrivals. After expiry, ordinary arrival
+policy resumes; already observed floats remain floating. These records, titles and choices are never saved or logged.
+Shutdown clears them. Cancelling does not quit the app or close its windows.
+Placement and frame/layout Undo use the existing coordinator transactions;
+Undo cannot reverse application launch or window creation.
+
 **Launch at login** in General registers the BetterTile app itself as a login
 item with the public `SMAppService.mainApp` API, only when the user turns the
 switch on, and unregisters it when the switch is turned off. It adds no helper,
@@ -226,6 +393,15 @@ insufficient, tap creation fails, or a disabled tap cannot be re-enabled, both
 gesture consumers return to their public `NSEvent` monitors automatically.
 The tap copies only scalar position, button, modifier, timestamp, and event-kind
 values to the main actor. It neither changes nor retains system events.
+
+The main actor uses public `NSWindow.windowNumber(at:belowWindowWithWindowNumber:)`
+hit testing at mouse-down to keep BetterTile's AppKit controls out of native
+window dragging and linked resizing. It compares the returned number only with
+BetterTile's own windows and skips its click-through drawing. No foreign title,
+geometry, or content is read. The number is discarded immediately; one Boolean
+retains input ownership through release. Chooser and application-request
+observations still receive those events. This adds no permission, private API,
+dependency, log, persisted identity, or network use.
 
 The tap can be turned off before launch, which returns both gesture consumers to
 their `NSEvent` monitors:
@@ -251,10 +427,28 @@ retain no system events and forward only the modifier set, key code, or pointer
 position needed by the gesture state machine.
 
 Tabbed mode installs local and global AppKit key monitors while a tab drag or
-pane divider resize is in progress. They are removed when the gesture ends, is cancelled, or the pane
-overlay hides. Both forward only the key code. Escape cancels the gesture; the
-global monitor only observes it, and the local monitor consumes Escape and
-passes other keys through. No other keys are acted on or retained.
+pane divider resize is in progress. They are removed when the gesture ends,
+is cancelled, or the pane overlay hides. Auto-hide tab bars also install a
+local and global key-monitor pair while any bar is revealed, so Escape can
+dismiss the bars while the selected app keeps focus. That pair is removed
+when all bars collapse, the presentation changes, or the overlay hides.
+Both pairs forward only the key code. Escape cancels the gesture or dismisses
+the bars; global monitors only observe it, and local monitors consume Escape
+and pass other keys through. No other keys are acted on or retained.
+The Auto-hide local monitor passes Escape through while a Tabbed chooser is
+key, so its field editor can cancel composition or clear search before closing.
+
+While a Tabbed desktop uses Auto-hide, its overlay also installs a local and a
+global AppKit pointer monitor for mouse-moved and left and right mouse-dragged
+events. The pair exists the whole time Auto-hide is active, not only while a bar
+is revealed, so it receives every pointer move in every app. Each display with an
+Auto-hide desktop has its own pair. For each event, the overlay reads only the
+current pointer location and compares it with the strip areas. It reads no other
+event content, and it does not change or consume the event. It retains no event
+and no pointer location; only the strip's revealed or hidden state remains. The
+pair is removed when the presentation leaves Auto-hide, when the desktop's Space
+becomes inactive, and when the overlay hides. The monitors add no permission and
+no prompt.
 
 Layout Wheel also has an independent, disabled-by-default Middle Click trigger.
 The user benefit is one-handed wheel activation. While the option is enabled,

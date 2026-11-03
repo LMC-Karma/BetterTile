@@ -404,16 +404,26 @@ public struct LayoutSessionStore: Sendable {
     /// Closure evidence updates retained Tabbed sessions without moving any
     /// inactive desktop's windows. Incomplete sweeps never use this operation.
     public mutating func removeClosedTabbedWindow(_ windowID: WindowID) {
+        removeUnavailableTabbedWindow(windowID, closed: true)
+    }
+
+    /// Minimization removes a tab even while its desktop is inactive. Keep its
+    /// entry frame so leaving Tabbed can still restore it after a later restore.
+    public mutating func removeMinimizedTabbedWindow(_ windowID: WindowID) {
+        removeUnavailableTabbedWindow(windowID, closed: false)
+    }
+
+    private mutating func removeUnavailableTabbedWindow(_ windowID: WindowID, closed: Bool) {
         for displayID in Array(storedSessions.keys) {
             for id in Array(storedSessions[displayID]?.keys ?? Dictionary<DesktopSessionID, LayoutSession>().keys) {
                 guard var session = storedSessions[displayID]?[id],
                       let state = session.tabbedState,
                       state.windowIDs.contains(windowID)
                         || state.floatingWindowIDs.contains(windowID)
-                        || session.tabbedBaselineFrames[windowID] != nil
+                        || (closed && session.tabbedBaselineFrames[windowID] != nil)
                 else { continue }
                 session.tabbedState?.removeClosedWindow(windowID)
-                session.tabbedBaselineFrames.removeValue(forKey: windowID)
+                if closed { session.tabbedBaselineFrames.removeValue(forKey: windowID) }
                 session.windowIDs.remove(windowID)
                 session.advanceRevision()
                 storedSessions[displayID]?[id] = session

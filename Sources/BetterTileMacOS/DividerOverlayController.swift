@@ -1007,12 +1007,7 @@ public final class DividerOverlayController {
                 constraints: constraints
             ) else { return }
             let affected = Set(transaction.baselineFrames.keys)
-            // Tabbed's reserved strip identifies its fractional projection here.
-            // Adaptive continues to request whole-point pane edges.
-            let frames = baselineBentoState.metrics.contentTopInset > 0
-                ? result.state.contentFrames(in: displayBounds).map { Placement(windowID: $0.key, frame: $0.value) }
-                : result.placements
-            placements = frames.filter { affected.contains($0.windowID) }
+            placements = result.placements.filter { affected.contains($0.windowID) }
             let updatedBoundaries = result.state.boundaries(
                 in: displayBounds,
                 displayID: interaction.displayID

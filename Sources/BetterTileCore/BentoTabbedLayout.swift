@@ -269,7 +269,7 @@ public struct BentoTabbedLayoutState: Hashable, Sendable {
     /// Window frames below the strip, from the layout's content reserve.
     /// Empty panes may have zero content height.
     public func contentFrames(in bounds: BTRect) -> [UUID: BTRect]? {
-        paneFrames(in: bounds)?.mapValues { layout.metrics.contentFrame(forPane: $0) }
+        paneFrames(in: bounds)?.mapValues { layout.metrics.windowFrame(forPane: $0) }
     }
 
     /// Fits selected minimum sizes using Bento's solver, which adds the strip
@@ -284,7 +284,7 @@ public struct BentoTabbedLayoutState: Hashable, Sendable {
             let minimum = value.minimumSize
             guard minimum.width.isFinite, minimum.height.isFinite,
                   minimum.width >= 0, minimum.height >= 0 else { return nil }
-            selectedConstraints[id] = value
+            selectedConstraints[id] = wholePointMinimumConstraints(value)
         }
         guard let solved = BentoConstraintSolver().solve(state: layout, in: bounds, constraints: selectedConstraints) else { return nil }
         var result = self
@@ -345,14 +345,26 @@ public struct TabbedLayoutState: Hashable, Sendable {
     /// An empty pane stays large enough to show its drop target.
     public static let emptyPaneMinimum = BTSize(width: 120, height: 80 + headerHeight)
 
-    private static func tabbedMetrics(_ metrics: BentoLayoutMetrics) -> BentoLayoutMetrics {
+    private static func tabbedMetrics(_ metrics: BentoLayoutMetrics, presentation: TabbedStripPresentation) -> BentoLayoutMetrics {
         var result = metrics
-        result.contentTopInset = headerHeight
-        result.vacantMinimumSize = emptyPaneMinimum
+        result.contentTopInset = presentation.reservedInset
+        result.vacantMinimumSize = BTSize(width: 120, height: 80 + presentation.reservedInset)
         return result
     }
 
     public var layout: BentoLayoutState { groups.layout }
+    public var presentation: TabbedStripPresentation {
+        TabbedStripPresentation.allCases.first { $0.reservedInset == layout.metrics.contentTopInset } ?? .alwaysVisible
+    }
+
+    public mutating func setPresentation(_ presentation: TabbedStripPresentation) {
+        guard self.presentation != presentation else { return }
+        var next = layout
+        next.metrics = Self.tabbedMetrics(next.metrics, presentation: presentation)
+        groups.synchronize(with: next)
+    }
+
+    public func windowArea(_ pane: BTRect) -> BTRect { layout.metrics.windowFrame(forPane: pane) }
     public var panes: [TabbedPane] {
         groups.panes.map { group in
             var pane = TabbedPane(id: group.id)
@@ -369,11 +381,11 @@ public struct TabbedLayoutState: Hashable, Sendable {
     public var hiddenWindowIDs: Set<WindowID> { groups.hiddenWindowIDs }
     public var activeWindowID: WindowID? { groups.panes.first { $0.id == activePaneID }?.selected }
 
-    public init(preset: TabbedPreset = .single) {
+    public init(preset: TabbedPreset = .single, presentation: TabbedStripPresentation = .alwaysVisible) {
         let ids = (0..<preset.paneCount).map { _ in UUID() }
         let layout = BentoLayoutState(root: Self.tree(preset, leaves: ids.map { BentoNode.vacant($0) }),
-                                      metrics: Self.tabbedMetrics(BentoLayoutMetrics(paneGap: Self.gap)))
-        groups = BentoTabbedLayoutState(adopting: layout, contentTopInset: Self.headerHeight)!
+                                      metrics: Self.tabbedMetrics(BentoLayoutMetrics(paneGap: Self.gap), presentation: presentation))
+        groups = BentoTabbedLayoutState(adopting: layout, contentTopInset: presentation.reservedInset)!
         activePaneID = groups.panes[0].id
         rememberPaneSizes()
     }
@@ -383,12 +395,12 @@ public struct TabbedLayoutState: Hashable, Sendable {
     /// - Parameter automaticallyFloating: The windows Bento floated on its
     ///   own, such as a seventh window or one that fit no pane. They stay
     ///   automatic floats, so Tabbed can return them to a pane.
-    public init?(adopting bento: BentoLayoutState, automaticallyFloating: Set<WindowID> = []) {
+    public init?(adopting bento: BentoLayoutState, automaticallyFloating: Set<WindowID> = [], presentation: TabbedStripPresentation = .alwaysVisible) {
         var bento = bento
-        bento.metrics = Self.tabbedMetrics(bento.metrics)
+        bento.metrics = Self.tabbedMetrics(bento.metrics, presentation: presentation)
         // The pane cap limits Tabbed's own splits; an existing Bento layout
         // keeps every pane, however many.
-        guard let groups = BentoTabbedLayoutState(adopting: bento, contentTopInset: Self.headerHeight) else { return nil }
+        guard let groups = BentoTabbedLayoutState(adopting: bento, contentTopInset: presentation.reservedInset) else { return nil }
         self.groups = groups
         activePaneID = groups.panes[0].id
         automaticFloats = automaticallyFloating.intersection(groups.layout.floatingWindowIDs)
@@ -400,7 +412,7 @@ public struct TabbedLayoutState: Hashable, Sendable {
     /// without being shown.
     public mutating func synchronize(with bento: BentoLayoutState) {
         var bento = bento
-        bento.metrics = Self.tabbedMetrics(bento.metrics)
+        bento.metrics = Self.tabbedMetrics(bento.metrics, presentation: presentation)
         let previousRoot = layout.root
         let orphans = groups.synchronize(with: bento)
         if groups.panes.isEmpty {
@@ -530,9 +542,9 @@ public struct TabbedLayoutState: Hashable, Sendable {
     /// Why a window that no pane can show floats, for the decision log. A
     /// fixed-size window, or a proven minimum, larger than the work area
     /// below the strip fits no pane of any layout.
-    public static func floatReason(for window: WindowSnapshot?, in bounds: BTRect) -> TabbedAdoption.FloatReason {
+    public static func floatReason(for window: WindowSnapshot?, in bounds: BTRect, presentation: TabbedStripPresentation = .alwaysVisible) -> TabbedAdoption.FloatReason {
         guard let window else { return .fitsNoPane }
-        let largest = contentFrame(bounds).size
+        let largest = contentFrame(bounds, presentation: presentation).size
         let required = window.constraints.isResizable ? window.constraints.minimumSize : window.frame.size
         guard required.width > largest.width + 0.001 || required.height > largest.height + 0.001 else { return .fitsNoPane }
         if !window.constraints.isResizable { return .fixedSizeLargerThanWorkArea }
@@ -550,7 +562,7 @@ public struct TabbedLayoutState: Hashable, Sendable {
         let current = frames(in: bounds)
         var trials: [TabbedAdoption.Trial] = []
         func trial(_ paneID: UUID, _ result: TabbedAdoption.TrialResult) -> TabbedAdoption.Trial {
-            .init(paneID: paneID, contentFrame: current[paneID].map(Self.contentFrame), result: result)
+            .init(paneID: paneID, contentFrame: current[paneID].map(windowArea), result: result)
         }
         func attempt(_ candidate: Self) -> (Self?, TabbedAdoption.TrialResult) {
             if (try? candidate.placements(in: bounds, windows: windows)) != nil { return (candidate, .fits) }
@@ -560,6 +572,7 @@ public struct TabbedLayoutState: Hashable, Sendable {
             }
             return (nil, .doesNotFit)
         }
+
         // The active pane is the user's choice for new windows: keep it when
         // the window fits there as is, or after boundaries adapt.
         var active = self
@@ -610,7 +623,7 @@ public struct TabbedLayoutState: Hashable, Sendable {
         // automatic float that a later layout change can return to a pane.
         groups.layout.floatingWindowIDs.insert(id)
         automaticFloats.insert(id)
-        return TabbedAdoption(windowID: id, outcome: .floated(Self.floatReason(for: window, in: bounds)), trials: trials)
+        return TabbedAdoption(windowID: id, outcome: .floated(Self.floatReason(for: window, in: bounds, presentation: presentation)), trials: trials)
     }
 
     /// The last tab of a pane leaves the pane empty, ready for another tab.
@@ -744,9 +757,11 @@ public struct TabbedLayoutState: Hashable, Sendable {
         synchronize(with: next)
     }
 
-    /// Replaces the pane arrangement with a preset. The first groups keep
-    /// their order; groups beyond the preset merge into the nearest pane.
-    public mutating func applyPreset(_ preset: TabbedPreset) {
+    /// Replaces the pane arrangement with a preset. By default, groups keep
+    /// their order and overflow groups merge into the nearest pane.
+    /// Distribution fills panes in tab order, then adds extra windows as tabs.
+    public mutating func applyPreset(_ preset: TabbedPreset, grouping: TabbedPresetGrouping = .keepTabGroups) {
+        let activeWindow = activeWindowID
         let unit = BTRect(x: 0, y: 0, width: 1000, height: 1000)
         let oldGroups = groups.panes
         let oldFrames = groups.paneFrames(in: unit) ?? [:]
@@ -757,7 +772,7 @@ public struct TabbedLayoutState: Hashable, Sendable {
         var paneIDs = (0..<preset.paneCount).map { _ in UUID() }
         var probe = layout
         probe.root = Self.tree(preset, leaves: paneIDs.map { BentoNode.vacant($0) })
-        if let probeState = BentoTabbedLayoutState(adopting: probe, contentTopInset: Self.headerHeight),
+        if let probeState = BentoTabbedLayoutState(adopting: probe, contentTopInset: presentation.reservedInset),
            let probeFrames = probeState.paneFrames(in: unit) {
             var free = Set(paneIDs.indices)
             var assigned: [Int: UUID] = [:]
@@ -779,7 +794,17 @@ public struct TabbedLayoutState: Hashable, Sendable {
         }
         var empty = layout
         empty.root = Self.tree(preset, leaves: paneIDs.map { BentoNode.vacant($0) })
-        guard var next = BentoTabbedLayoutState(adopting: empty, contentTopInset: Self.headerHeight) else { return }
+        guard var next = BentoTabbedLayoutState(adopting: empty, contentTopInset: presentation.reservedInset) else { return }
+        if grouping == .distributeWindows {
+            // Fill panes once in tab order, then append extra tabs round-robin.
+            for (index, id) in oldGroups.flatMap(\.tabs).enumerated() {
+                next.add(id, to: paneIDs[index % paneIDs.count], select: false)
+            }
+            groups = next
+            activePaneID = activeWindow.flatMap { next.pane(containing: $0)?.id } ?? paneIDs[0]
+            rememberPaneSizes()
+            return
+        }
         let newFrames = next.paneFrames(in: unit) ?? [:]
         func place(_ group: BentoTabbedPane, into paneID: UUID) {
             for id in group.tabs { next.add(id, to: paneID, select: id == group.selected) }
@@ -864,7 +889,11 @@ public struct TabbedLayoutState: Hashable, Sendable {
 
     /// The window area of a pane frame, below the strip.
     public static func contentFrame(_ pane: BTRect) -> BTRect {
-        BentoLayoutMetrics(contentTopInset: headerHeight).contentFrame(forPane: pane)
+        contentFrame(pane, presentation: .alwaysVisible)
+    }
+
+    public static func contentFrame(_ pane: BTRect, presentation: TabbedStripPresentation) -> BTRect {
+        BentoLayoutMetrics(contentTopInset: presentation.reservedInset).windowFrame(forPane: pane)
     }
 
     /// Every tab takes its pane's window area; hidden tabs stack behind the
@@ -883,7 +912,7 @@ public struct TabbedLayoutState: Hashable, Sendable {
         }
         for pane in groups.panes {
             guard let paneFrame = paneFrames[pane.id] else { continue }
-            let frame = Self.contentFrame(paneFrame)
+            let frame = windowArea(paneFrame)
             for id in pane.tabs {
                 guard let window = snapshots[id], window.isEligible else { continue }
                 guard window.constraints.isResizable else {
@@ -1064,7 +1093,7 @@ public struct TabbedLayoutState: Hashable, Sendable {
                     : abs(low - halfGap - divider.coordinate) <= 1 ? -1 : 0
                 let paneGrids = pane.tabs.compactMap { grids[$0]?[divider.axis] }
                 guard sign != 0, !paneGrids.isEmpty else { continue }
-                let content = Self.contentFrame(frame)
+                let content = windowArea(frame)
                 sides.append((paneGrids, vertical ? content.size.width : content.size.height, sign))
             }
             guard !sides.isEmpty else { continue }
@@ -1122,7 +1151,7 @@ public struct TabbedLayoutState: Hashable, Sendable {
                     width: max(value.minimumSize.width, window.frame.size.width),
                     height: max(value.minimumSize.height, window.frame.size.height))
             }
-            return (window.id, value)
+            return (window.id, wholePointMinimumConstraints(value))
         }, uniquingKeysWith: { first, _ in first })
     }
 
@@ -1140,6 +1169,18 @@ public struct TabbedLayoutState: Hashable, Sendable {
                                              split(.horizontal, [leaves[2], leaves[3]])])
         }
     }
+}
+
+/// A whole-point request must meet the original minimum, including its fractional part.
+/// Only planning copies change; measured window constraints retain their original values.
+private func wholePointMinimumConstraints(_ value: WindowConstraints) -> WindowConstraints {
+    let minimum = value.minimumSize
+    // Preserve invalid-input rejection: ceiling must not turn -0.1 into valid zero.
+    guard minimum.width.isFinite, minimum.height.isFinite,
+          minimum.width >= 0, minimum.height >= 0 else { return value }
+    var result = value
+    result.minimumSize = BTSize(width: minimum.width.rounded(.up), height: minimum.height.rounded(.up))
+    return result
 }
 
 /// How `TabbedLayoutState.reconcile` placed one new window, with each pane

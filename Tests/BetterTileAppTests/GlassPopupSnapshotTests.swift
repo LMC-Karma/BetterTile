@@ -14,7 +14,11 @@ import Testing
 /// With `BT_SNAPSHOT_DIR` set, each case also writes that composite as a PNG.
 @Suite(.appTestApplication, .serialized, .settingsUI) @MainActor struct GlassPopupSnapshotTests {
     enum Surface: String, CaseIterable, CustomTestStringConvertible {
-        case ruleSheet
+        case panePicker = "pane-picker", panePickerSearch = "pane-picker-search"
+        case panePickerWindows = "pane-picker-windows", panePickerScrolled = "pane-picker-scrolled"
+        case layoutGallery = "layout-gallery"
+        case statusOpening = "status-opening", statusTimedOut = "status-timed-out", statusClick = "status-click"
+        case emptyPane = "empty-pane", ruleSheet = "rule-sheet"
         var testDescription: String { rawValue }
         /// Settings pages are opaque; popup content above glass must stay clear.
         var isOverMaterial: Bool { true }
@@ -114,7 +118,7 @@ import Testing
             return NSRect(x: rect.minX, y: scene.root.isFlipped ? rect.minY : scene.root.bounds.height - rect.maxY,
                           width: rect.width, height: rect.height)
         }
-        if [GlassPopupSnapshotTests.Surface.ruleSheet].contains(variant.surface) {
+        if [.panePicker, .panePickerSearch, .panePickerWindows, .panePickerScrolled, .ruleSheet].contains(variant.surface) {
             #expect(GlassPixels(content).inkedRowShare >= 0.2, "\(variant.name): capture lost picker content")
         }
         if variant.surface.isOverMaterial {
@@ -187,6 +191,7 @@ import Testing
 
     func close() {
         (keepAlive.first { $0 is SettingsPickerController } as? SettingsPickerController)?.dismiss()
+        (keepAlive.first { $0 is TabbedChooserPresenter } as? TabbedChooserPresenter)?.panel.close()
         window?.contentView = nil
         window?.close()
         onClose()
@@ -249,6 +254,9 @@ import Testing
     static let calculator = app("com.apple.calculator", "Calculator", "/System/Applications/Calculator.app")
     static let preview = app("com.apple.Preview", "Preview", "/System/Applications/Preview.app")
     static let installed = [notes, mail, terminal, calendar, textEdit, calculator, preview]
+    static let many = installed + (1...40).map { app("fixture.app.\($0)", String(format: "Fixture App %02d", $0), "/nonexistent/Fixture \($0).app") }
+    static let windows = [PaneRequestWindow(id: WindowID(rawValue: "notes-1"), title: "Shopping — iCloud"),
+                          PaneRequestWindow(id: WindowID(rawValue: "notes-2"), title: "Release checklist")]
 
     static func make(_ surface: GlassPopupSnapshotTests.Surface, dark: Bool, reduceTransparency: Bool) async throws -> GlassPopupScene {
         _ = NSApplication.shared
@@ -261,6 +269,27 @@ import Testing
                 // Builds the accessibility tree that readiness reads. Lazy list rows stay out of it.
                 .environment(\.accessibilityEnabled, true)))
         }
+        func picker(_ choices: [ApplicationChoice], windows: Bool = false) -> NSHostingView<AnyView> {
+            let request = PaneApplicationRequest(paneID: UUID(), paneNumber: 2, displayID: DisplayID(rawValue: "fixture"),
+                                                 sessionID: DesktopSessionID(rawValue: UUID()), spaceID: nil, generation: 0,
+                                                 workArea: BTRect(x: 0, y: 0, width: 1000, height: 800))
+            if windows {
+                request.windows = { choice in
+                    choice.id == notes.id ? Self.windows.map { .init(id: $0.id.rawValue, title: $0.title) } : nil
+                }
+            }
+            return swiftUI(PaneApplicationPicker(request: request, installedApplications: { choices },
+                                                 runningApplications: { [mail, notes] }, recentApplications: recent))
+        }
+        func chooser(_ content: NSView, size: NSSize, expecting text: String?) async throws -> GlassPopupScene {
+            let presenter = TabbedChooserPresenter(content: content, size: size)
+            presenter.panel.appearance = appearance
+            let root = try #require(presenter.panel.contentView)
+            applyDisplayOptions(root, reduceTransparency: reduceTransparency)
+            try await ready(root, showing: text, rowsDrawn: 0.2, in: content)
+            return GlassPopupScene(root: root, window: nil, keepAlive: [presenter], surfaceInset: 12,
+                                   reduceTransparency: reduceTransparency)
+        }
         func hosted(_ view: NSView, size: NSSize) -> NSWindow {
             let window = OffscreenTestWindow(contentRect: NSRect(origin: NSPoint(x: 12000, y: 0), size: size),
                                   styleMask: [.borderless], backing: .buffered, defer: false)
@@ -271,8 +300,92 @@ import Testing
             applyDisplayOptions(view, reduceTransparency: reduceTransparency)
             return window
         }
-
+        func pane(_ status: PaneRequestStatus.Kind?, tabs: Bool) async throws -> GlassPopupScene {
+            let size = NSSize(width: 460, height: 560)
+            let view = TabbedPaneView(frame: NSRect(origin: .zero, size: size))
+            view.number = 2
+            view.displayOptions = { (reduceTransparency, false) }
+            if tabs {
+                var pane = TabbedPane()
+                pane.tabs = [WindowID(rawValue: "notes-1"), WindowID(rawValue: "notes-2")]
+                pane.selected = pane.tabs[0]
+                view.pane = pane
+                view.titles = windows.map(\.title)
+            }
+            if let status {
+                view.content.setRequestStatus(PaneRequestStatus(requestID: UUID(), paneID: view.pane.id, appName: "Notes",
+                                                                appIconURL: notes.url, kind: status))
+            }
+            let window = hosted(view, size: size)
+            // The pane shows popup glass exactly while a request panel is up. The panel's text is
+            // SwiftUI that the accessibility tree does not expose here, so drawn rows stand in for it.
+            // Opening now has a headline without the former explanatory message. Its compact
+            // content draws about 42 of 526 rows. The floor only separates a drawn headline from a blank
+            // panel, so keep it well below that: 0.05 needs 27 rows, a 15-row margin for font differences.
+            let minimumDrawnShare: Double = switch status {
+            case nil: 0
+            case .opening?: 0.05
+            default: 0.08
+            }
+            try await ready(view, rowsDrawn: minimumDrawnShare, in: view.content.requestStatusView ?? view.content) {
+                view.glass.isPopup == (status != nil) && (view.content.requestStatusView != nil) == (status != nil)
+            }
+            return GlassPopupScene(root: view, window: window, surfaceInset: tabs ? 7 : 16, reduceTransparency: reduceTransparency)
+        }
         switch surface {
+        case .panePicker:
+            let host = picker(installed)
+            return try await chooser(host, size: host.fittingSize, expecting: "Search apps")
+        case .panePickerSearch:
+            let host = picker(installed)
+            let scene = try await chooser(host, size: host.fittingSize, expecting: "Search apps")
+            let field = try #require(scene.descendants(host).compactMap { $0 as? NSSearchField }.first)
+            #expect(field.window?.makeFirstResponder(field) == true)
+            let editor = try #require(field.currentEditor() as? NSTextView)
+            editor.insertText("te", replacementRange: editor.selectedRange())
+            // A search highlights its first result, so the footer offers to open it.
+            try await ready(scene.root, showing: "Return: New window", rowsDrawn: 0.2, in: host) { field.stringValue == "te" }
+            return scene
+        case .panePickerWindows:
+            let host = picker(installed, windows: true)
+            let scene = try await chooser(host, size: host.fittingSize, expecting: "Search apps")
+            let field = try #require(scene.descendants(host).compactMap { $0 as? NSSearchField }.first)
+            let delegate = try #require(field.delegate)
+            // Recent: Notes, Terminal. Notes has windows on this desktop; → expands them inline, ↓ picks the first.
+            // The footer names each step: Notes offers its windows, then the window row offers itself.
+            for (selector, hint) in [(#selector(NSResponder.moveDown(_:)), "Return: Windows"),
+                                     (#selector(NSResponder.moveRight(_:)), nil),
+                                     (#selector(NSResponder.moveDown(_:)), "Return: Use this window")] {
+                _ = delegate.control?(field, textView: NSTextView(), doCommandBy: selector)
+                try await ready(scene.root, showing: hint, rowsDrawn: 0.2, in: host)
+            }
+            return scene
+        case .panePickerScrolled:
+            let host = picker(many)
+            let scene = try await chooser(host, size: host.fittingSize, expecting: "Search apps")
+            let scroll = try #require(scene.descendants(host).compactMap { $0 as? NSScrollView }.first)
+            // Running ends near 230 pt; this pins the All Apps header over its rows.
+            scroll.contentView.scroll(to: NSPoint(x: 0, y: 286))
+            scroll.reflectScrolledClipView(scroll.contentView)
+            try await ready(scene.root, rowsDrawn: 0.2, in: host) { scroll.contentView.bounds.minY == 286 }
+            return scene
+        case .layoutGallery:
+            let gallery = TabbedLayoutGallery(state: TabbedLayoutState(preset: .columns), onPreview: { _, _ in }, onApply: { _, _ in })
+            gallery.presenter.panel.appearance = appearance
+            gallery.content.choices[3].setHovering(true)
+            let root = try #require(gallery.presenter.panel.contentView)
+            applyDisplayOptions(root, reduceTransparency: reduceTransparency)
+            try await ready(root, showing: "Applies to the whole display")
+            return GlassPopupScene(root: root, window: nil, keepAlive: [gallery.presenter, gallery], surfaceInset: 12,
+                                   reduceTransparency: reduceTransparency)
+        case .statusOpening:
+            return try await pane(.opening(launching: true), tabs: false)
+        case .statusTimedOut:
+            return try await pane(.timedOut(showingWindows: true, windows: windows), tabs: false)
+        case .statusClick:
+            return try await pane(.awaitingClick(windows), tabs: true)
+        case .emptyPane:
+            return try await pane(nil, tabs: false)
         case .ruleSheet:
             let model = makeModel(system: FakeAppWindowSystem())
             let makePicker: (Set<String>, @escaping (ApplicationChoice) -> Void) -> ApplicationPicker = { exclusions, choose in

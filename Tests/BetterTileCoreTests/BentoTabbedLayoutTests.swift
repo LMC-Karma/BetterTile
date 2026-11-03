@@ -5,6 +5,47 @@ import Testing
 private let tabbedBounds = BTRect(x: 0, y: 0, width: 1000, height: 600)
 private func window(_ name: String) -> WindowID { WindowID(rawValue: name) }
 
+@Test(arguments: TabbedStripPresentation.allCases, [false, true])
+func tabbedRequestsAndReferencesShareWholePointContentEdges(
+    presentation: TabbedStripPresentation, negativeOrigin: Bool
+) throws {
+    let bounds = BTRect(x: negativeOrigin ? -1210 : 1210, y: negativeOrigin ? -34 : 34,
+                        width: 2560, height: 1406)
+    let a = window("a"), b = window("b")
+    let source = BentoLayoutState(root: .partition(BentoPartition(
+        axis: .horizontal, children: [.leaf(a), .leaf(b)])), metrics: BentoLayoutMetrics(paneGap: 1))
+    let state = try #require(TabbedLayoutState(adopting: source, presentation: presentation))
+    let windows = [a, b].map {
+        WindowSnapshot(id: $0, processIdentifier: 1, frame: bounds, displayID: DisplayID(rawValue: "fixture"))
+    }
+    let requested = try state.placements(in: bounds, windows: windows)
+    let references = state.layout.contentFrames(in: bounds)
+    #expect(requested.map(\.frame.maxY).max() == bounds.maxY)
+    for request in requested {
+        #expect(request.frame == request.frame.snappedToWholePoints())
+        #expect(references[request.windowID] == request.frame)
+        let pane = try #require(state.pane(containing: request.windowID))
+        let logical = try #require(state.frames(in: bounds)[pane.id])
+        #expect(state.windowArea(logical) == request.frame)
+    }
+    let groups = try #require(BentoTabbedLayoutState(adopting: state.layout,
+        contentTopInset: presentation.reservedInset))
+    let content = try #require(groups.contentFrames(in: bounds))
+    for pane in groups.panes {
+        #expect(content[pane.id] == references[try #require(pane.selected)])
+    }
+}
+
+@Test func fractionalTabbedReserveStillProducesAWholePointBottomEdge() throws {
+    let bounds = BTRect(x: 1210, y: 34, width: 2560, height: 1406)
+    let id = window("fixture")
+    let state = try #require(BentoTabbedLayoutState(
+        adopting: BentoLayoutState(root: .leaf(id)), contentTopInset: 0.5))
+    let frame = try #require(state.layout.contentFrames(in: bounds)[id])
+    #expect(frame == BTRect(x: 1210, y: 35, width: 2560, height: 1405))
+    #expect(frame.maxY == 1440)
+}
+
 @Test func tabbedAdoptsBentoTreeWithoutMovingBoundaries() throws {
     let a = window("a"), b = window("b"), c = window("c")
     let firstBoundary = UUID(), secondBoundary = UUID(), vacantID = UUID()

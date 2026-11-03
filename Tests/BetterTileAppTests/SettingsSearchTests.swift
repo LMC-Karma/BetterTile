@@ -57,7 +57,7 @@ import Testing
     for preset in TabbedPreset.allCases {
         #expect(SettingsDestination.windowLayout.matchesSearch(preset.title), "The visible preset title must find Window Layout: \(preset.title)")
     }
-    for term in ["Adaptive", "Manual", "Resize Preview"] {
+    for term in ["Adaptive", "Manual", "Resize Preview", "Compact", "Auto-hide"] {
         #expect(SettingsDestination.windowLayout.matchesSearch(term))
     }
     for term in ["Activation area", "width", "size", "reach", "extension", "BetterTile Drag Snapping"] {
@@ -75,7 +75,7 @@ import Testing
     ]),
     (.windowLayout, [
         "Window mode", "Default mode", "When a desktop has one window", "New window side", "Balance on new window",
-        "Swap delay", "Apply starting layout", "Restore pane size when switching tabs",
+        "Swap delay", "Apply starting layout", "Tab bar presentation", "Restore pane size when switching tabs",
         "Leave space for Dock", "Resize", "Resize adjacent windows together", "Window feedback", "Divider width",
         "Appearance", "Use Liquid Glass", "Glass transparency", "Pane gap", "Starting layout",
     ]),
@@ -94,7 +94,7 @@ func everyVisibleRowLabelFindsItsPage(destination: SettingsDestination, labels: 
 
 @Test(.appTestApplication) func shortcutSearchRoutesToTheNewPage() {
     for term in ["left half", "shortcut", "keyboard", "enable", "disable", "master toggle",
-                 "Reset All Shortcuts"] {
+                 "Show Tab Bar", "Next Tab", "Previous Tab", "Move Tab", "Reset All Shortcuts"] {
         #expect(SettingsDestination.shortcuts.matchesSearch(term))
     }
     for term in ["left half", "shortcut", "master toggle"] {

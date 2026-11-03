@@ -159,6 +159,35 @@ private func paneGapSystem() -> FakeAppWindowSystem {
             == writes[system.windows[0].id, default: 0] + 1)
 }
 
+@Test(.appTestApplication, .timeLimit(.minutes(5))) @MainActor func paneGapLeavesTabbedPaneFramesAndStripReserveUnchanged() async throws {
+    _ = NSApplication.shared
+    let system = paneGapSystem()
+    let model = makeModel(system: system)
+    let manual = ManualClock()
+    model.paneGapRelayoutSleep = { try await manual.sleep(for: $0) }
+    defer { model.shutdown() }
+    model.configuration.defaultTabbedPreset = .columns
+    model.setActiveMode(.tabbed)
+    try #require(await waitFor { model.activeTabbedState?.windowIDs.count == 2 && !model.hasPendingTabbedPlacement })
+    #expect(model.activeTabbedState?.layout.metrics.paneGap == TabbedLayoutState.gap)
+    let right = try #require(model.activeTabbedState?.panes[1].id)
+    model.performTabbed(.move(system.windows[1].id, pane: right, index: nil))
+    try #require(await waitFor { model.activeTabbedState?.panes[1].selected == system.windows[1].id && !model.hasPendingTabbedPlacement })
+    let frames = system.windows.map(\.frame)
+    let state = model.activeTabbedState
+    let writes = system.frameWriteCounts
+    model.paneGapEditingChanged(true)
+    model.updateConfiguration { $0.bentoInnerGap = 12 }
+    try await finishPaneGapInterval(model, clock: manual)
+    model.paneGapEditingChanged(false)
+    // Final release applies synchronously; there must be no interval left to advance.
+    #expect(model.paneGapRelayoutTask == nil)
+    #expect(system.windows.map(\.frame) == frames)
+    #expect(system.frameWriteCounts == writes)
+    #expect(model.activeTabbedState == state)
+    #expect(model.activeTabbedState?.layout.metrics.paneGap == TabbedLayoutState.gap)
+    #expect(system.windows.allSatisfy { $0.frame.minY == TabbedLayoutState.headerHeight })
+}
 
 @Test(.appTestApplication, .timeLimit(.minutes(5))) @MainActor func paneGapRespectsMinimumSizesAndRollsBackARejectedWrite() async throws {
     _ = NSApplication.shared

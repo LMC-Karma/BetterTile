@@ -119,8 +119,10 @@ private func tabbedSnapAllRegionsPreserveGroupsAndCoverWorkArea(example: SnapCas
     for placement in plan.placements {
         let pane = try #require(plan.state.paneID(containing: placement.windowID))
         let frame = try #require(plan.state.frames(in: snapBounds)[pane])
-        #expect(placement.frame.minY == frame.minY + 34)
-        #expect(placement.frame.size.height == frame.size.height - 34)
+        let content = BTRect(x: frame.minX, y: frame.minY + 34,
+            width: frame.size.width, height: frame.size.height - 34).snappedToWholePoints()
+        #expect(placement.frame.minY == content.minY)
+        #expect(placement.frame.size.height == content.size.height)
     }
     let again = try #require(TabbedSnapPlanner.plan(sourceWindowID: source, action: example.action, scope: .window, state: state,
                                                    windows: windows.reversed(), in: snapBounds))

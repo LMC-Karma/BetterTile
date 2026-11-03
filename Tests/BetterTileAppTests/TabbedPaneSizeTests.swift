@@ -222,3 +222,44 @@ func aPaneReturnsToItsSizeWhenTheLargerTabLeaves(floats: Bool) async throws {
     #expect(await waitFor { abs(leftPaneWidth(model, system) - narrow) < 1 })
     #expect(model.activeTabbedState?.panes[0].selected == small)
 }
+
+@Test(.appTestApplication) @MainActor func minimizingLargeTabRestoresPreferredPaneWidth() async throws {
+    let system = FakeAppWindowSystem()
+    let (model, large, _) = try await narrowLeftPaneWithAHiddenTab(system, restores: true)
+    defer { model.shutdown() }
+    model.primaryButtonIsPressed = { false }
+    let small = system.windows[0].id
+    let narrow = leftPaneWidth(model, system)
+    system.windows[1].constraints.minimumSize.width = 600
+    model.performTabbed(.select(large))
+    try #require(await waitFor { model.activeTabbedState?.panes[0].selected == large && !model.hasPendingTabbedPlacement })
+    try #require(leftPaneWidth(model, system) >= 600)
+    await model.tabbedFocusTask?.value
+    try await waitForWindowEventsToDrain(model)
+    system.windows[1].isMinimized = true
+    system.focusedID = small
+    system.eventHandler?(WindowSystemEvent(kind: .minimized, windowID: large, processIdentifier: 900_001))
+    try await waitForWindowEventsToDrain(model)
+    try #require(await waitFor { !model.hasPendingTabbedPlacement })
+    #expect(model.activeTabbedState?.panes[0].selected == small)
+    #expect(abs(leftPaneWidth(model, system) - narrow) < 1, "Minimizing the large tab must refit its replacement to the preferred pane width")
+}
+
+@Test(.appTestApplication) @MainActor func minimizingSmallTabFitsLargerReplacement() async throws {
+    let system = FakeAppWindowSystem()
+    let (model, large, _) = try await narrowLeftPaneWithAHiddenTab(system, restores: true)
+    defer { model.shutdown() }
+    model.primaryButtonIsPressed = { false }
+    let small = system.windows[0].id
+    system.windows[1].constraints.minimumSize.width = 600
+    system.windows[1].frame.size.width = 600
+    await model.tabbedFocusTask?.value
+    try await waitForWindowEventsToDrain(model)
+    system.windows[0].isMinimized = true
+    system.focusedID = large
+    system.eventHandler?(WindowSystemEvent(kind: .minimized, windowID: small, processIdentifier: 42))
+    try await waitForWindowEventsToDrain(model)
+    try #require(await waitFor { !model.hasPendingTabbedPlacement })
+    #expect(model.activeTabbedState?.panes[0].selected == large)
+    #expect(leftPaneWidth(model, system) >= 600, "A promoted hidden tab must grow the pane to its minimum")
+}

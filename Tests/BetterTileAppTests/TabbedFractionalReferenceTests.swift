@@ -3,7 +3,7 @@ import Testing
 @testable import BetterTileApp
 
 @Test(.appTestApplication, .timeLimit(.minutes(1))) @MainActor
-func oddWidthTabbedColumnsCorrectSteppedGrowthPastTheirFractionalArea() async throws {
+func oddWidthTabbedColumnsCorrectSteppedGrowthPastTheirWholePointArea() async throws {
     let system = makeManualWindowSystem()
     let left = system.windows[0].id, right = WindowID(rawValue: "right")
     system.availableDisplays[0].visibleFrame = BTRect(x: 0, y: 0, width: 999, height: 800)
@@ -19,11 +19,11 @@ func oddWidthTabbedColumnsCorrectSteppedGrowthPastTheirFractionalArea() async th
     model.setActiveMode(.tabbed)
     try #require(await system.waitFor { !model.hasPendingTabbedPlacement })
     #expect(model.activeTabbedState?.layout.metrics.paneGap == 0)
-    #expect(system.windows.first { $0.id == left }?.frame.size.width == 499.5)
-    #expect(system.windows.first { $0.id == right }?.frame.minX == 499.5)
+    #expect(system.windows.first { $0.id == left }?.frame.size.width == 500)
+    #expect(system.windows.first { $0.id == right }?.frame.minX == 500)
     system.requestedFrames = [:]
     // The left app rounds to character cells; the right rounds origin and size.
-    system.sizeGrids[left] = (step: BTSize(width: 14, height: 0), offset: BTSize(width: 502, height: 0))
+    system.sizeGrids[left] = (step: BTSize(width: 14, height: 0), offset: BTSize(width: 503, height: 0))
     system.frameReadbackTransform = { id, requested in
         guard id == right else { return requested }
         var actual = requested
@@ -40,8 +40,8 @@ func oddWidthTabbedColumnsCorrectSteppedGrowthPastTheirFractionalArea() async th
     let leftFrame = try #require(actual[left]), rightFrame = try #require(actual[right])
     #expect(model.statusMessage == nil)
     #expect(leftFrame.maxX - rightFrame.minX <= 2)
-    #expect(system.requestedFrames[left]?.first?.size.width == 499.5)
-    #expect(leftFrame.size.width == 502)
-    #expect(model.activeTabbedState?.layout.contentFrames(in: system.availableDisplays[0].visibleFrame)[left]?.size.width == 502)
-    #expect(rightFrame.minX == 502)
+    #expect(system.requestedFrames[left]?.first?.size.width == 500)
+    #expect(leftFrame.size.width == 503)
+    #expect(model.activeTabbedState?.layout.contentFrames(in: system.availableDisplays[0].visibleFrame)[left]?.size.width == 503)
+    #expect(rightFrame.minX == 503)
 }

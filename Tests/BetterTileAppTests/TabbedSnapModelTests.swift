@@ -137,7 +137,7 @@ private func snapFixture(preset: TabbedPreset = .columns) async throws -> (FakeA
         #expect(system.windows.first { $0.id == placement.windowID }?.frame == placement.frame)
     }
     let after = try #require(model.activeTabbedState)
-    #expect(after.panes.first { $0.id == before.panes[0].id }?.tabs == [target.windowID, system.windows[1].id])
+    #expect(after.panes.first { $0.id == before.panes[0].id }?.tabs == [try #require(target.windowID), system.windows[1].id])
     #expect(after.panes.first { $0.id == before.panes[1].id }?.tabs == [system.windows[2].id])
     #expect(after.activeWindowID == target.windowID)
 }
@@ -152,10 +152,10 @@ private func snapFixture(preset: TabbedPreset = .columns) async throws -> (FakeA
     let frames = system.windows.map(\.frame), writes = system.frameWriteCounts
     model.perform(action)
     #expect(model.statusMessage != nil)
-    if action == .maximize { #expect(model.statusMessage?.contains("One Pane") == true) }
+    if action == .maximize { #expect(model.statusMessage?.contains("Single Pane") == true) }
     if action == .restore { #expect(model.statusMessage?.contains("Tabbed Undo") == true) }
     let feedbackMessage = switch action {
-    case .maximize: "Choose One Pane"
+    case .maximize: "Choose Single Pane"
     case .restore: "Use Tabbed Undo"
     default: "Float this window first"
     }
@@ -238,7 +238,7 @@ private func snapFixture(preset: TabbedPreset = .columns) async throws -> (FakeA
     #expect(model.activeTabbedState?.panes.map(\.id) == before.panes.map(\.id))
 }
 
-/// One Pane needs an empty pane for the remainder. Four Panes reflows its
+/// Single Pane needs an empty pane for the remainder. Four Panes reflows its
 /// other panes into the remainder without adding one.
 @Test(.appTestApplication, arguments: [TabbedPreset.single, .grid])
 @MainActor func tabbedSnapMovesThePaneAndUndoesOnce(preset: TabbedPreset) async throws {

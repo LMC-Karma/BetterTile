@@ -589,7 +589,8 @@ func switchingTabsBesideTwoSteppedTerminalsSettles(upperOver: Double, lowerOver:
         try await waitForIdle(model, system)
         if model.statusMessage != nil { failures += 1; model.statusMessage = nil }
         let area = try #require(content(0, model, system))
-        #expect((frame("terminal", system)?.size.height ?? .infinity) <= area.size.height + 2)
+        #expect((frame("terminal", system)?.size.height ?? .infinity) <= area.size.height + 2,
+                "frame=\(String(describing: frame("terminal", system))), area=\(area), pending=\(model.hasPendingTabbedPlacement), requests=\(system.requestedFrames[terminal] ?? [])")
     }
     #expect(failures == 0)
 }

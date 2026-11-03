@@ -206,11 +206,12 @@ import Testing
 /// The Settings inspector builds its menu from these groups. An action left out
 /// of every group could never be assigned to a sector, and nothing else would
 /// report it, so the grouping has to stay exhaustive and free of duplicates.
-@Test func everyWindowActionStaysAssignableFromExactlyOneGroup() {
+@Test(.macOSTestApplication) func everyWindowPlacementActionStaysAssignableFromExactlyOneGroup() {
     let grouped = LayoutWheelActionGroup.groupedActions
+    let placementActions = WindowAction.allCases.filter { $0 != .showTabBar }
 
-    #expect(Set(grouped) == Set(WindowAction.allCases))
-    #expect(grouped.count == WindowAction.allCases.count)
+    #expect(Set(grouped) == Set(placementActions))
+    #expect(grouped.count == placementActions.count)
     #expect(!LayoutWheelActionGroup.all.contains { $0.actions.isEmpty })
 }
 

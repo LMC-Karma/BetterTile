@@ -70,6 +70,9 @@ import Testing
     }
 
 
+
+
+
     @Test func defaultModeCardsShowTheModeIcon() throws {
         for dark in Self.themes {
             for mode in LayoutMode.availableModes {
@@ -82,11 +85,58 @@ import Testing
         }
     }
 
+    @Test func menuBarPanelKeepsItsWidthAndDrawsGlyphsInTheModePicker() throws {
+        for dark in Self.themes {
+            for tabbedAvailable in [true, false] {
+                let system = FakeAppWindowSystem()
+                let model = makeModel(system: system)
+                defer { model.shutdown() }
+                model.hasAccessibilityPermission = true
+                let panel = MenuPanelContent(model: model, openSetup: {}, openSettings: {}, quit: {}) {
+                    LazyVGrid(columns: MenuPanelMetrics.columns, spacing: MenuPanelMetrics.gap) {
+                        ForEach(model.configuration.menuBarActions.prefix(6)) { action in
+                            MenuPanelActionButton(action: action, shortcut: nil) {}
+                        }
+                    }
+                } notice: { EmptyView() }
+                let host = try SettingsSnapshotHost(panel, dark: dark, width: MenuPanelMetrics.width, height: 900)
+                defer { host.close() }
+                // The panel width stays 332 pt.
+                #expect(host.view.fittingSize.width == MenuPanelMetrics.width)
+                let control = try #require(host.view.firstDescendant(of: MenuPanelModeControl.self))
+                #expect(control.buttons.count == LayoutMode.availableModes.count)
+                for (index, button) in control.buttons.enumerated() {
+                    #expect(button.mode == LayoutMode.availableModes[index])
+                    #expect(button.title == button.mode.title)
+                    let rects = button.contentRects()
+                    #expect(rects.glyph.size == NSSize(width: LayoutModePicker.glyphSize, height: LayoutModePicker.glyphSize))
+                    #expect(rects.title.minX - rects.glyph.maxX == 4)
+                }
+                // The control sits inside the 304 pt content width, on a line below the label.
+                let inContent = control.convert(control.bounds, to: host.view)
+                #expect(inContent.minX >= MenuPanelMetrics.padding)
+                #expect(inContent.maxX <= MenuPanelMetrics.width - MenuPanelMetrics.padding)
+                #expect(control.frame.width == 284 && control.frame.height == 24)
+                if tabbedAvailable { try write(host.render(), "glyph-menu-panel", dark: dark) }
+                break
+            }
+        }
+    }
 
 
 }
 
+private extension NSView {
+    func firstDescendant<T: NSView>(of type: T.Type) -> T? {
+        if let match = self as? T { return match }
+        for subview in subviews { if let match = subview.firstDescendant(of: type) { return match } }
+        return nil
+    }
+}
+
 @MainActor @Suite(.appTestApplication, .serialized, .settingsUI) struct LayoutGlyphRenderingTests {
+
+
     /// Renders a Window mode choice in a column of the given width, with room on both sides. Badges that
     /// clip or overflow would leave ink in that room.
     @Test(arguments: [96.0, 120, 160, 200, 230])

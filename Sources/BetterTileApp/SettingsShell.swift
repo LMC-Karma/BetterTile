@@ -60,21 +60,22 @@ enum SettingsDestination: String, CaseIterable, Identifiable {
                 + "bettertile updates keyboard"
         case .windowLayout:
             "default mode manual native bento adaptive tabbed tabs pane preset linked divider ghost resize preview "
-                + "appearance liquid glass transparency opaque transparent new window side automatic dock space "
-                + "pane gap balance thin standard wide balanced starting layout "
-                + "one pane two columns rows focus four panes show settings for window mode when a desktop has one window balance on "
+                + "appearance liquid glass transparency opaque transparent new window side automatic dock space hide auto-hide "
+                + "compact always visible tab bar presentation pane gap balance thin standard wide balanced starting layout "
+                + "single pane columns rows main grid show settings for window mode when a desktop has one window balance on "
                 + "new window apply starting layout restore pane size when switching tabs leave space for dock resize adjacent "
                 + "windows together window feedback divider width use liquid glass swap delay instant short long"
                 + " " + TabbedPreset.allCases.map(\.title).joined(separator: " ").lowercased()
         case .shortcuts:
             "shortcut shortcuts keyboard hotkey hotkeys keybinding keybindings keys binding record recording duplicate "
                 + "conflict modified reset reset all shortcuts search actions command control option shift halves thirds "
-                + "quarters sixths position size move resize displays restore left half right half top half bottom half "
+                + "quarters sixths position size move resize displays restore tabs left half right half top half bottom half "
                 + "left third center third right third left two thirds right two thirds top left quarter top right quarter "
                 + "bottom left quarter bottom right quarter top left sixth top center sixth top right sixth bottom left sixth "
                 + "bottom center sixth bottom right sixth maximize almost maximize center center resize move left move right "
                 + "move up move down grow width shrink width grow height shrink height previous display next display restore "
-                + "halves thirds quarters sixths position & size move resize displays & restore enable disable master "
+                + "show tab bar next tab previous tab move tab left move tab right move tab to next pane move tab to previous "
+                + "pane halves thirds quarters sixths position & size move resize displays & restore tabs enable disable master "
                 + "toggle bettertile keyboard shortcuts"
         case .snapZones:
             "drag snap edge corner activation area width size reach extension title bar double click maximize bettertile drag snapping "

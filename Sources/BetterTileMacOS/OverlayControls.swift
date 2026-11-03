@@ -4,8 +4,8 @@
 import AppKit
 import SwiftUI
 
-// Buttons and links for Settings popups. These surfaces may be non-key,
-// so emphasis never depends on key state:
+// Buttons and links for non-activating overlay windows (Tabbed panes, the request panel,
+// the chooser). These windows are rarely key, so emphasis never depends on key state:
 // stock macOS buttons would draw grey there. Settings and the Add panels keep stock buttons.
 
 extension PopupGlass {
@@ -176,7 +176,7 @@ public struct PopupLinkStyle: ButtonStyle {
     var fullKeyboardAccess: () -> Bool = { NSApp.isFullKeyboardAccessEnabled }
 
     /// Like a stock button, the button takes keyboard focus only when Full Keyboard Access is on.
-    /// Keyboard navigation can then reach it with Tab.
+    /// A key pane (Show Tab Bar) and the chooser can then reach it with Tab.
     public override var acceptsFirstResponder: Bool { isEnabled && fullKeyboardAccess() }
 
     public override func drawFocusRingMask() {

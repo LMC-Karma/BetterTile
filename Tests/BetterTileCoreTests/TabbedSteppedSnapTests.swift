@@ -23,7 +23,37 @@ private func slot(_ id: WindowID, _ state: TabbedLayoutState) throws -> BTRect {
     try #require(state.layout.contentFrames(in: bounds)[id])
 }
 
-@Test func oddWidthTabbedSteppedGrowthUsesTheFractionalRequestedArea() throws {
+@Test(arguments: [SplitAxis.vertical, .horizontal])
+func tabbedFractionalMinimumGetsAWholePointWindowThatStillFits(axis: SplitAxis) throws {
+    let area = BTRect(x: 0, y: 0, width: 1000, height: 1000)
+    var state = TabbedLayoutState(preset: axis == .vertical ? .columns : .rows)
+    state.reconcile(windowIDs: [top, bottom], removed: [], focused: nil)
+    state.move(bottom, to: state.panes[1].id)
+    var constrained = window(bottom)
+    constrained.constraints.minimumSize = axis == .vertical
+        ? BTSize(width: 611.37, height: 80) : BTSize(width: 120, height: 611.37)
+    let windows = [window(top), constrained]
+    let fitted = try state.fittingMinimumWidths(in: area, windows: windows)
+    let placements = try fitted.placements(in: area, windows: windows)
+    let frame = try #require(placements.first { $0.windowID == bottom }?.frame)
+    #expect(frame == frame.snappedToWholePoints())
+    #expect((axis == .vertical ? frame.size.width : frame.size.height) == 612)
+}
+
+@Test(arguments: [SplitAxis.vertical, .horizontal])
+func wholePointTabbedFittingStillRejectsNegativeFractionalMinimums(axis: SplitAxis) {
+    var state = TabbedLayoutState(preset: axis == .vertical ? .columns : .rows)
+    state.reconcile(windowIDs: [top, bottom], removed: [], focused: nil)
+    state.move(bottom, to: state.panes[1].id)
+    var invalid = window(bottom)
+    invalid.constraints.minimumSize = axis == .vertical
+        ? BTSize(width: -0.1, height: 80) : BTSize(width: 120, height: -0.1)
+    #expect(throws: TabbedLayoutError.panesTooSmall) {
+        try state.fittingMinimumWidths(in: bounds, windows: [window(top), invalid])
+    }
+}
+
+@Test func oddWidthTabbedSteppedGrowthUsesTheWholePointRequestedArea() throws {
     let area = BTRect(x: 0, y: 0, width: 999, height: 800)
     let state = try #require(TabbedLayoutState(adopting: BentoLayoutState(
         root: .partition(BentoPartition(axis: .vertical, children: [.leaf(top), .leaf(bottom)])),
@@ -31,16 +61,16 @@ private func slot(_ id: WindowID, _ state: TabbedLayoutState) throws -> BTRect {
     let windows = [window(top), window(bottom)]
     let requested = try state.placements(in: area, windows: windows)
     let first = try #require(requested.first { $0.windowID == top }?.frame)
-    #expect(first.size.width == 499.5)
+    #expect(first.size.width == 500)
     let snap = try #require(state.snappingToSteppedSizes(
-        [top: BTSize(width: 502, height: first.size.height)], in: area, windows: windows))
-    #expect(snap.snaps.map(\.delta) == [2.5])
-    #expect(snap.placements.first { $0.windowID == top }?.frame.size.width == 502)
-    #expect(snap.placements.first { $0.windowID == bottom }?.frame.minX == 502)
+        [top: BTSize(width: 503, height: first.size.height)], in: area, windows: windows))
+    #expect(snap.snaps.map(\.delta) == [3])
+    #expect(snap.placements.first { $0.windowID == top }?.frame.size.width == 503)
+    #expect(snap.placements.first { $0.windowID == bottom }?.frame.minX == 503)
 }
 
 @Test(arguments: [0.0, -999.0])
-func oddWidthTabbedResizeFitsFromUnsnappedContentEdges(origin: Double) throws {
+func oddWidthTabbedResizeFitsFromWholePointContentEdges(origin: Double) throws {
     let area = BTRect(x: origin, y: -100, width: 999, height: 800)
     let state = try #require(TabbedLayoutState(adopting: BentoLayoutState(
         root: .partition(BentoPartition(axis: .vertical, children: [.leaf(top), .leaf(bottom)])),

@@ -21,12 +21,257 @@ import Testing
     let left = system.windows[0].id
     model.performTabbed(.select(left))
     try #require(await waitFor { model.activeTabbedState?.activeWindowID == left })
-    try await Task.sleep(for: .milliseconds(400)) // Let focus refreshes settle.
+    await model.tabbedFocusTask?.value
     return model
 }
 
 private func stackEntry(_ window: WindowSnapshot) -> TabbedStackEntry {
     TabbedStackEntry(windowID: window.id, frame: window.frame)
+}
+
+/// Entry is one transaction: an unavailable selected window must leave the
+/// previous Bento layout intact, without strips over its unchanged title bars.
+/// A degraded outcome instead stops automatic writes and reports it.
+@Test(.appTestApplication, arguments: ["unreadable", "missing-from-sweep", "write-failure", "unreadable-after-write"]) @MainActor
+func failedTabbedEntryRestoresBentoWithoutShowingStrips(failure: String) async throws {
+    _ = NSApplication.shared
+    let system = FakeAppWindowSystem()
+    addTabbedWindows(4, to: system)
+    system.availableDisplays[0].frame.origin.x = 12000
+    system.availableDisplays[0].visibleFrame.origin.x = 12000
+    for index in system.windows.indices { system.windows[index].frame.origin.x += 12000 }
+    let initialFrames = system.windows.map(\.frame)
+    let store = ConfigurationStore(fileURL: URL(filePath: "/private/tmp/BetterTileAppTests-\(UUID().uuidString)/configuration.json"))
+    let model = makeOffscreenModel(store: store, system: system, startRuntime: false, presentsTabbedChrome: true)
+    model.primaryButtonIsPressed = { false }
+    defer { model.shutdown() }
+    model.setActiveMode(.bento)
+    try #require(await waitFor { zip(system.windows, initialFrames).allSatisfy { $0.frame != $1 } })
+    let frames = system.windows.map(\.frame)
+    let writes = system.frameWriteCounts
+    let unavailable = system.windows[3].id
+    switch failure {
+    case "unreadable": system.unreadableAfterWrites[unavailable] = 0
+    case "missing-from-sweep":
+        system.offscreenWindowIDs.insert(unavailable)
+        system.unreadableAfterWrites[unavailable] = 0
+    case "unreadable-after-write": system.unreadableAfterWrites[unavailable] = writes[unavailable, default: 0] + 1
+    default:
+        system.failedFrameWriteNumbers[unavailable] = [writes[unavailable, default: 0] + 1]
+    }
+
+    model.setActiveMode(.tabbed)
+    try #require(await waitFor { !model.hasPendingTabbedPlacement && model.statusMessage != nil })
+    #expect(model.activeLayoutMode == .bento)
+    #expect(model.presentedTabbedState(on: system.mainDisplay.id) == nil)
+    if failure == "unreadable-after-write" {
+        #expect(system.windows.map(\.frame) != frames)
+        #expect(model.lastActionFeedback?.detail?.contains("could not be fully restored") == true)
+    } else {
+        #expect(system.windows.map(\.frame) == frames)
+    }
+    #expect(model.lastActionFeedback?.kind == .failure)
+    if failure == "unreadable" || failure == "missing-from-sweep" { #expect(system.frameWriteCounts == writes) }
+
+    // Resuming the application must not expose strips or replay the failed
+    // entry on a later background sweep.
+    system.offscreenWindowIDs.remove(unavailable)
+    system.unreadableAfterWrites.removeValue(forKey: unavailable)
+    let after = system.frameWriteCounts
+    let restoredFrames = system.windows.map(\.frame)
+    let updates = system.managedWindowUpdateCount
+    system.offscreenWindowIDs.insert(system.windows[0].id)
+    model.watchdog()
+    #expect(system.managedWindowUpdateCount > updates)
+    try await Task.sleep(for: .milliseconds(300))
+    #expect(model.activeLayoutMode == .bento)
+    #expect(model.presentedTabbedState(on: system.mainDisplay.id) == nil)
+    #expect(system.windows.map(\.frame) == restoredFrames)
+    #expect(system.frameWriteCounts == after)
+
+    system.offscreenWindowIDs.remove(system.windows[0].id)
+    model.setActiveMode(.tabbed)
+    try #require(await waitFor { !model.hasPendingTabbedPlacement && model.activeLayoutMode == .tabbed })
+    let state = try #require(model.activeTabbedState)
+    for placement in try state.placements(in: system.availableDisplays[0].visibleFrame, windows: system.windows) {
+        #expect(system.windows.first { $0.id == placement.windowID }?.frame == placement.frame)
+    }
+    #expect(model.presentedTabbedState(on: system.mainDisplay.id) == state)
+    #expect(model.statusMessage == nil)
+}
+
+/// A sweep can see an arrival while entry still owns placement. Rejection
+/// must reconcile that arrival in the restored Bento layout.
+@Test(.appTestApplication) @MainActor func aWindowOpenedDuringFailedTabbedEntryIsPlacedInBento() async throws {
+    let system = FakeAppWindowSystem()
+    addTabbedWindows(1, to: system)
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    model.setActiveMode(.bento)
+    let blocked = system.windows[0].id
+    system.failedFrameWriteNumbers[blocked] = [system.frameWriteCounts[blocked, default: 0] + 1]
+    var arrival = system.windows[1]
+    arrival.id = WindowID(rawValue: "arrival-during-entry")
+    arrival.processIdentifier = 900_099
+    arrival.frame = BTRect(x: 100, y: 100, width: 300, height: 300)
+    var sweptDuringEntry = false
+    system.onBeforeFrameWrite = { id in
+        guard id == blocked else { return }
+        system.onBeforeFrameWrite = nil
+        #expect(model.hasPendingTabbedPlacement)
+        system.windows.append(arrival)
+        let updates = system.managedWindowUpdateCount
+        model.watchdog()
+        sweptDuringEntry = system.managedWindowUpdateCount > updates
+    }
+    model.setActiveMode(.tabbed)
+    try #require(await waitFor { !model.hasPendingTabbedPlacement && model.activeLayoutMode == .bento })
+    #expect(sweptDuringEntry)
+    #expect(await waitFor { system.windows.first { $0.id == arrival.id }?.frame != arrival.frame })
+    #expect(system.frameWriteCounts[arrival.id, default: 0] > 0)
+}
+
+/// If the forced entry sweep fails, an unchanged later sweep must still
+/// place the entry instead of leaving Tabbed without its chrome forever.
+@Test(.appTestApplication) @MainActor func aLaterSweepPlacesTabbedEntryAfterTheForcedSweepFails() async throws {
+    let system = FakeAppWindowSystem()
+    addTabbedWindows(1, to: system)
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    model.setActiveMode(.bento)
+    let frames = system.windows.map(\.frame)
+    system.failedVisibleWindowSweeps = [system.completeSweepCount + 2]
+    model.setActiveMode(.tabbed)
+    #expect(!model.hasPendingTabbedPlacement)
+    #expect(system.windows.map(\.frame) == frames)
+    // An unrelated floating window changes the watchdog signature without
+    // changing Tabbed's panes or work area.
+    var floating = system.windows[0]
+    floating.id = WindowID(rawValue: "unrelated-floating")
+    floating.isFloating = true
+    system.windows.append(floating)
+    let updates = system.managedWindowUpdateCount
+    model.watchdog()
+    #expect(system.managedWindowUpdateCount > updates)
+    try #require(await waitFor { !model.hasPendingTabbedPlacement && system.windows[0].frame != frames[0] })
+    #expect(model.activeLayoutMode == .tabbed)
+    let state = try #require(model.activeTabbedState)
+    for placement in try state.placements(in: system.mainDisplay.visibleFrame, windows: system.windows) {
+        #expect(system.windows.first { $0.id == placement.windowID }?.frame == placement.frame)
+    }
+}
+
+/// Entry can learn a resize grid before its corrective write fails. Leaving
+/// Tabbed through rejection must forget that grid too.
+@Test(.appTestApplication) @MainActor func rejectedTabbedEntryForgetsSteppedWindows() async throws {
+    let system = FakeAppWindowSystem()
+    let model = makeModel(system: system)
+    defer { system.onBeforeFrameWrite = nil; model.shutdown() }
+    model.setActiveMode(.manual)
+    let id = system.windows[0].id
+    var state = TabbedLayoutState(preset: .single)
+    state.reconcile(windowIDs: [id], removed: [], focused: id)
+    let request = try #require(state.placements(in: system.mainDisplay.visibleFrame, windows: system.windows).first)
+    system.sizeGrids[id] = (step: BTSize(width: 0, height: 14),
+                           offset: BTSize(width: 0, height: request.frame.size.height + 4))
+    var learnedGrid = false
+    system.onBeforeFrameWrite = { windowID in
+        guard windowID == id, model.tabbedSteppedWindows[id] != nil else { return }
+        learnedGrid = true
+        system.failedFrameWriteNumbers[id, default: []].insert(system.frameWriteCounts[id, default: 0] + 1)
+    }
+    model.setActiveMode(.tabbed)
+    try #require(await waitFor { !model.hasPendingTabbedPlacement && model.activeLayoutMode == .manual })
+    #expect(learnedGrid)
+    #expect(model.tabbedSteppedWindows[id] == nil)
+    #expect(model.lastActionFeedback?.detail == "The previous arrangement could not be fully restored. Choose a layout to continue.")
+}
+
+@Test(.appTestApplication, arguments: [false, true], [false, true]) @MainActor
+func failedTabbedEntryNamesTheUnavailableApplication(knownApplication: Bool, missingFromSweep: Bool) async throws {
+    let system = FakeAppWindowSystem()
+    addTabbedWindows(1, to: system)
+    system.windows[0].bundleIdentifier = knownApplication ? "com.apple.Preview" : nil
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    model.setActiveMode(.bento)
+    let id = system.windows[0].id
+    system.unresponsiveWindowIDs.insert(id)
+    if missingFromSweep { system.offscreenWindowIDs.insert(id) }
+    system.unreadableAfterWrites[id] = system.frameWriteCounts[id, default: 0]
+    model.setActiveMode(.tabbed)
+    try #require(await waitFor { !model.hasPendingTabbedPlacement && model.activeLayoutMode == .bento })
+    #expect(model.lastActionFeedback?.message == "Couldn’t enter Tabbed")
+    #expect(model.lastActionFeedback?.detail == (knownApplication && !missingFromSweep
+        ? "Preview is not responding." : "An application is not responding."))
+    #expect(model.lastActionFeedback?.kind == .failure)
+    #expect(model.lastActionFeedback?.dismissDelay == 3)
+}
+
+@Test(.appTestApplication) @MainActor func tabbedKeyboardSnapKeepsWindowChangedForAResponsiveUnmovableWindow() async throws {
+    let system = FakeAppWindowSystem()
+    addTabbedWindows(1, to: system)
+    system.windows[1].bundleIdentifier = "com.apple.Preview"
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    model.setActiveMode(.bento)
+    model.setActiveMode(.tabbed)
+    try #require(await waitFor { !model.hasPendingTabbedPlacement && model.activeTabbedState != nil })
+    let before = model.activeTabbedState
+    let frames = system.windows.map(\.frame)
+    let writes = system.frameWriteCounts
+    system.windows[1].constraints.isMovable = false
+
+    model.perform(.rightHalf)
+
+    try #require(await waitFor { model.statusMessage != nil })
+    #expect(model.statusMessage == "One or more selected tabs are no longer available.")
+    #expect(model.lastActionFeedback?.message == "Window changed")
+    #expect(model.activeTabbedState == before)
+    #expect(system.windows.map(\.frame) == frames)
+    #expect(system.frameWriteCounts == writes)
+}
+
+@Test(.appTestApplication) @MainActor func failedTabbedEntryDoesNotMislabelAResponsiveApplication() async throws {
+    let system = FakeAppWindowSystem()
+    addTabbedWindows(1, to: system)
+    system.windows[0].bundleIdentifier = "com.apple.Preview"
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    model.setActiveMode(.bento)
+    let id = system.windows[0].id
+    system.offscreenWindowIDs.insert(id)
+    system.unreadableAfterWrites[id] = system.frameWriteCounts[id, default: 0]
+    model.setActiveMode(.tabbed)
+    try #require(await waitFor { !model.hasPendingTabbedPlacement && model.activeLayoutMode == .bento })
+    #expect(model.lastActionFeedback?.message == "Couldn’t enter Tabbed")
+    #expect(model.lastActionFeedback?.detail == "One or more selected tabs are no longer available.")
+}
+
+@Test(.appTestApplication, arguments: ["unreadable", "write-failure"], [false, true]) @MainActor
+func failedTabbedEntryRestoresNative(failure: String, startsInTabbed: Bool) async throws {
+    let system = FakeAppWindowSystem()
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    if startsInTabbed {
+        model.configuration.defaultLayoutMode = .tabbed
+    } else {
+        model.setActiveMode(.manual)
+    }
+    let frames = system.windows.map(\.frame)
+    let id = system.windows[0].id
+    if failure == "unreadable" {
+        system.unreadableAfterWrites[id] = 0
+    } else {
+        system.failedFrameWriteNumbers[id] = [system.frameWriteCounts[id, default: 0] + 1]
+    }
+    if startsInTabbed { model.watchdog() } else { model.setActiveMode(.tabbed) }
+    try #require(await waitFor { !model.hasPendingTabbedPlacement && model.statusMessage != nil })
+    #expect(model.activeLayoutMode == .manual)
+    #expect(model.activeTabbedState == nil)
+    #expect(system.windows.map(\.frame) == frames)
+    #expect(model.lastActionFeedback?.message == "Couldn’t enter Tabbed")
+    #expect(model.lastActionFeedback?.kind == .failure)
 }
 
 @Test(.appTestApplication, arguments: [false, true]) @MainActor
@@ -936,8 +1181,8 @@ func tabbedModelAdaptsReportedAndLearnedWidthsAndRetainsThemThroughUndo(learnWid
     let right = try #require(model.activeTabbedState?.panes[1].id)
     model.performTabbed(.move(wide.id, pane: right, index: nil))
     try #require(await waitFor { model.activeTabbedState?.panes[1].tabs == [wide.id] })
-    #expect(abs(system.windows[0].frame.size.width - (994 - minimumWidth)) < 0.001)
-    #expect(abs(system.windows[1].frame.size.width - minimumWidth) < 0.001)
+    #expect(abs(system.windows[0].frame.size.width - (994 - minimumWidth.rounded(.up))) < 0.001)
+    #expect(abs(system.windows[1].frame.size.width - minimumWidth.rounded(.up)) < 0.001)
     let fitted = try #require(model.activeTabbedState)
     let frames = system.windows.map(\.frame)
     #expect(abs(fitted.frames(in: system.mainDisplay.visibleFrame)[right]!.size.width - system.windows[1].frame.size.width) < 0.001)
@@ -1890,6 +2135,8 @@ func restoringTabbedBaselineRespectsCurrentMinimums(scenario: String, shuttingDo
         hitWidth: 18, adjacencyTolerance: 6, paneGap: model.configuration.bentoInnerGap
     ))
     let screen = try #require(NSScreen.screens.first)
+    // Concurrent tests share NSApp.windows; another test's panel must not cover this grip.
+    model.dividerResize.ownWindowsProvider = { [] }
     model.dividerResize.beginGesture(interaction: interaction, at: start)
     try #require(model.dividerResize.isDragging)
     let paneFrames = system.windows.map(\.frame)
@@ -1929,6 +2176,8 @@ func tabbedDividerRecoversAnUnreportedMinimumAtRelease(feedback: ResizeFeedbackM
     ))
     let screen = try #require(NSScreen.screens.first)
     let release = CGPoint(x: start.x + (height ? 0 : 200), y: screen.frame.maxY - start.y - (height ? 200 : 0))
+    // Concurrent tests share NSApp.windows; another test's panel must not cover this grip.
+    model.dividerResize.ownWindowsProvider = { [] }
     model.dividerResize.beginGesture(interaction: interaction, at: start)
     try #require(model.dividerResize.isDragging)
     model.dividerResize.drag(to: release)
@@ -2014,6 +2263,8 @@ func ignoredTabbedDividerWritesRestoreWithoutLearningOrRepeating(feedback: Resiz
     ))
     let screen = try #require(NSScreen.screens.first)
     let release = CGPoint(x: start.x + 150, y: screen.frame.maxY - start.y)
+    // Concurrent tests share NSApp.windows; another test's panel must not cover this grip.
+    model.dividerResize.ownWindowsProvider = { [] }
     model.dividerResize.beginGesture(interaction: interaction, at: start)
     try #require(model.dividerResize.isDragging)
     model.dividerResize.drag(to: release)
@@ -2585,6 +2836,8 @@ func steppedApplicationTabIsSelectedWithoutResizeLoops(emitsEvents: Bool) async 
     let interaction = try #require(DividerInteractionResolver.resolve(
         at: start, in: presentation.boundaries, hitWidth: 18, adjacencyTolerance: 6, paneGap: model.configuration.bentoInnerGap))
     let screen = try #require(NSScreen.screens.first)
+    // Concurrent tests share NSApp.windows; another test's panel must not cover this grip.
+    model.dividerResize.ownWindowsProvider = { [] }
     model.dividerResize.beginGesture(interaction: interaction, at: start)
     model.dividerResize.drag(to: CGPoint(x: start.x - 100, y: screen.frame.maxY - start.y))
     model.dividerResize.displayTick()

@@ -265,11 +265,18 @@ Run the default suites with Release optimization and the same completion guard:
 Tools/test.sh /tmp/bettertile-release-tests.log --release
 ```
 
-`--release` passes `-c release -Xswiftc -enable-testing` to SwiftPM. It does not define `DEBUG`. On a shared
+`--release` passes `-c release -Xswiftc -enable-testing -Xswiftc
+-DBETTERTILE_TEST_HOOKS` to SwiftPM. It does not define `DEBUG`. On a shared
 machine, pass `--release` through the prescribed full-suite lock helper.
 The log must contain all three complete passing product summaries. Filters
 still require the matching `--expected-runs N` before `--release`.
 
+`BETTERTILE_TEST_HOOKS` exposes instrumentation read only by tests. Never use it
+for product behaviour. `Package.swift` enables it for Debug SwiftPM targets and
+Xcode's Debug package targets. The Xcode app target does not inherit that define,
+so App-module hooks are available in SwiftPM test builds, not in the Xcode app.
+The Release test lane enables the define only on the command line. A normal
+Release library or Release Xcode app has neither these hooks nor testability.
 Keep Debug identity, diagnostics,
 calibration and updater differences under `DEBUG`. Tests of those differences
 must exercise their Release counterparts where available. Arrival-trace tests
@@ -290,13 +297,13 @@ native focus lane.
 
 ### Native focus tests
 
-The opt-in native focus lane contains 6 macOS test functions that inspect key
+The opt-in native focus lane contains 18 macOS test functions that inspect key
 state or exercised an observed activation path. App tests stay in the default
 run unless they require a real key window while the process is inactive, or have
 test-specific activation evidence. A negative key-state assertion alone does not
 justify excluding an App test from the default run.
 
-The 9 App exceptions require real key status while the process is inactive.
+The 12 App exceptions require real key status while the process is inactive.
 Every other App test stays in the default run.
 
 Gated suites use `.enabled(if: NativeFocusTestLane.isEnabled)` and the recursive
@@ -338,7 +345,7 @@ product run: a lane activation can remain active when following default tests ru
 Their strict activity guard will fail, and the process can keep the user's keyboard
 focus. The filtered commands keep these two kinds of checks in separate processes.
 
-`NativeLaneMembershipTests` pins the exact 6 macOS and 9 App function names by
+`NativeLaneMembershipTests` pins the exact 18 macOS and 12 App function names by
 reading the gated suite declarations, including tests inside nested suites. Review
 any membership change and update the documented lane list together with the pin.
 
@@ -356,6 +363,34 @@ Never stop the main run loop in tests. Test bodies and fixtures must not call
 `performNativeClick` under `.settingsUI` or `.macOSUI`; only the shared loop
 support may stop a loop that it owns. Stopping the outer loop can make SwiftPM's
 helper exit 0 before the test run finishes.
+
+### Live desktop tests
+
+Some tests need a live desktop session that GitHub's hosted macOS runner does not
+provide. The `.liveDesktop` trait skips them when the `CI` environment variable
+is set. GitHub Actions sets it for every step. Local runs and the pre-PR full run
+leave it unset, so these tests still run there. The maintainer also checks the
+Debug build by hand on a macOS 26 Mac.
+
+Tag a test only when its CI failure comes from the environment:
+
+- pixels of rendered native glass or Liquid Glass, and contrast measured on that
+  rendering;
+- golden comparisons whose result depends on the GPU or the display;
+- Vision text recognition;
+- synthetic mouse or keyboard input into native controls;
+- real key-window or activation state.
+
+Never use the trait for a timing or ordering flake, a wrong result, or a hang.
+Fix those, or quarantine them with `.disabled("quarantine: #<issue> …")` and no
+retries. Do not remove checks or raise time limits when you add the trait.
+
+A model-level or colour-maths test must still cover the logic of each tagged
+test on CI. Name that test in a comment at the tagged suite, and in the commit
+message. To see which tests CI runs, set `CI=1` for a local run.
+
+`.liveDesktop` is separate from the opt-in native focus lane. A native focus
+suite stays gated by `BETTERTILE_NATIVE_FOCUS_TESTS`, with or without `CI`.
 
 ### Export snapshots separately
 

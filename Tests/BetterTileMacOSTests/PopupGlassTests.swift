@@ -134,10 +134,100 @@ func popupTextRolesAreStrongerThanTheSystemSecondaryRole(dark: Bool) throws {
     #expect(alphas.placeholder == 1 && alphas.placeholder > alphas.system)
 }
 
+@Test(.macOSTestApplication) @MainActor func choosersUseThePopupSurfaceAtThePanelRadius() throws {
+    _ = NSApplication.shared
+    let presenter = TabbedChooserPresenter(content: NSView(), size: NSSize(width: 320, height: 420))
+    defer { presenter.panel.close() }
+    let backing = try #require(presenter.panel.contentView?.subviews.compactMap { $0 as? OverlayGlassView }.first)
+    #expect(backing.isPopup)
+    #expect(backing.cornerRadius == PopupGlass.panelRadius)
+    #expect(presenter.panel.hasShadow)
+    #expect(!presenter.panel.isOpaque)
+}
 
+@Test(.macOSTestApplication) @MainActor func paneRequestPanelsUseThePopupSurfaceOnlyWhileShown() {
+    let view = TabbedPaneView(frame: NSRect(x: 0, y: 0, width: 460, height: 560))
+    view.displayOptions = { (false, false) }
+    view.refreshAppearance()
+    #expect(!view.glass.isPopup)
+    #expect(view.glass.glass.style == .clear) // The empty pane keeps its light glass.
+    view.content.setRequestStatus(PaneRequestStatus(requestID: UUID(), paneID: view.pane.id, appName: "Notes",
+                                                    kind: .opening(launching: true)))
+    #expect(view.glass.isPopup)
+    #expect(view.glass.glass.style == .regular)
+    view.content.setRequestStatus(nil)
+    #expect(!view.glass.isPopup)
+    #expect(view.glass.glass.style == .clear)
+}
 
+@Test(.macOSTestApplication) @MainActor func layoutGalleryLeavesItsBackgroundToThePopupSurface() throws {
+    _ = NSApplication.shared
+    let gallery = TabbedLayoutGalleryView(current: .columns)
+    let window = NSWindow(contentRect: NSRect(origin: NSPoint(x: 12000, y: 0), size: gallery.frame.size),
+                          styleMask: [.borderless], backing: .buffered, defer: false)
+    window.isReleasedWhenClosed = false
+    window.contentView = gallery
+    defer { window.close() }
+    gallery.layoutSubtreeIfNeeded()
+    let bitmap = try #require(gallery.bitmapImageRepForCachingDisplay(in: gallery.bounds))
+    gallery.cacheDisplay(in: gallery.bounds, to: bitmap)
+    // Between the title and the choices, and in the empty sixth grid cell.
+    for point in [NSPoint(x: 300, y: 20), NSPoint(x: 300, y: 200)] {
+        let x = Int(point.x / gallery.bounds.width * Double(bitmap.pixelsWide))
+        let y = Int(point.y / gallery.bounds.height * Double(bitmap.pixelsHigh))
+        #expect((bitmap.colorAt(x: x, y: y)?.alphaComponent ?? 1) == 0)
+    }
+}
 
+@Test(.macOSTestApplication) @MainActor func popupControlsBelongToNativeGlassContent() throws {
+    _ = NSApplication.shared
+    let button = NSButton(title: "Choose", target: nil, action: nil)
+    let presenter = TabbedChooserPresenter(content: button, size: NSSize(width: 320, height: 420))
+    defer { presenter.panel.close() }
+    let backing = try #require(presenter.panel.contentView?.subviews.compactMap { $0 as? OverlayGlassView }.first)
+    backing.displayOptions = { (false, false) }
+    backing.refreshAppearance()
+    #expect(backing.glass.contentView.map { button.isDescendant(of: $0) } == true)
 
+    let pane = TabbedPaneView(frame: NSRect(x: 0, y: 0, width: 460, height: 560))
+    pane.displayOptions = { (false, false) }
+    pane.content.setRequestStatus(PaneRequestStatus(requestID: UUID(), paneID: pane.pane.id, appName: "Notes",
+                                                   kind: .opening(launching: true)))
+    let status = try #require(pane.content.requestStatusView)
+    #expect(pane.glass.glass.contentView.map { status.isDescendant(of: $0) } == true)
+}
+
+@Test(.macOSTestApplication) @MainActor func popupRequestHostPreservesHitRoutingAndFallback() async throws {
+    let window = NSWindow(contentRect: NSRect(x: 12000, y: 0, width: 460, height: 560),
+                          styleMask: [.borderless], backing: .buffered, defer: false)
+    window.isReleasedWhenClosed = false
+    defer { window.close() }
+    let pane = TabbedPaneView(frame: NSRect(x: 0, y: 0, width: 460, height: 560))
+    pane.displayOptions = { (false, false) }
+    pane.content.setRequestStatus(PaneRequestStatus(requestID: UUID(), paneID: pane.pane.id, appName: "Notes",
+                                                   kind: .opening(launching: true)))
+    window.contentView = pane
+    let status = try #require(pane.content.requestStatusView)
+    // Count layout opportunities instead of elapsed time, so a stalled main actor cannot use up the budget.
+    for _ in 0 ..< 500 where status.subviews.isEmpty {
+        pane.layoutSubtreeIfNeeded()
+        status.displayIfNeeded()
+        try await Task.sleep(for: .milliseconds(10)) // real-time: the hosted SwiftUI status adds its views on a later main run loop turn
+    }
+    #expect(!status.subviews.isEmpty)
+    for options in [(false, false), (true, false), (false, true), (false, false)] {
+        pane.displayOptions = { options }
+        pane.refreshAppearance()
+        pane.layoutSubtreeIfNeeded()
+        #expect(status.frame == NSRect(x: 0, y: 34, width: 460, height: 526))
+        let hit = pane.content.hitTest(NSPoint(x: 230, y: 300))
+        #expect(hit === status || hit?.isDescendant(of: status) == true,
+                "Request content hit \(String(describing: hit)), direct \(String(describing: status.hitTest(NSPoint(x: 230, y: 300))))")
+        #expect(!status.isHiddenOrHasHiddenAncestor)
+    }
+    pane.content.setRequestStatus(nil)
+    #expect(status.superview == nil && pane.glass.popupContent == nil)
+}
 
 @Test(.macOSTestApplication, arguments: [false, true])
 func popupPlateUsesCompiledAppearanceFloorAtClearDefaultAndFrosted(dark: Bool) throws {

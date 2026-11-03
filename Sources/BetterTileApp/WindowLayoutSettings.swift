@@ -241,7 +241,7 @@ struct WindowLayoutSettings: View {
                         ForEach(TabbedPreset.allCases, id: \.self) { preset in
                             PictureChoice(preset.title, isSelected: model.configuration.defaultTabbedPreset == preset,
                                           action: { model.updateConfiguration { $0.defaultTabbedPreset = preset } }) {
-                                // Numbered pictures appear only here; the wheel and menus never number panes.
+                                // Numbered pictures appear only here; the wheel, menus and gallery never number panes.
                                 LayoutGlyphView(.layout(preset), size: 52, numbered: true)
                                     .foregroundStyle(model.configuration.defaultTabbedPreset == preset ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.secondary))
                             }
@@ -258,6 +258,14 @@ struct WindowLayoutSettings: View {
                         .buttonStyle(.borderedProminent)
                     }
                 }
+                SettingsRow("Tab bar presentation", caption: "Auto-hide reveals the bar after a short hover. Show Tab Bar gives it keyboard focus. Revealing it keeps windows in place.") {
+                    Picker("Tab bar presentation", selection: configurationBinding(\.tabbedStripPresentation)) {
+                        ForEach(TabbedStripPresentation.allCases, id: \.self) { presentation in
+                            Text(presentation.title).tag(presentation)
+                        }
+                    }
+                    .labelsHidden().fixedSize()
+                }
                 SettingsRow("Restore pane size when switching tabs", caption: "A tab can grow its pane. Switching to a smaller tab restores the size you set.") {
                     Toggle("Restore pane size when switching tabs", isOn: configurationBinding(\.tabbedRestoresPaneSizes))
                         .labelsHidden().toggleStyle(.switch)
@@ -266,10 +274,12 @@ struct WindowLayoutSettings: View {
                 GroupFooter(
                     help: "Select a tab to focus its window. Drag tabs between panes or onto an edge to split. Drag a divider to resize. Escape cancels the drag. Apply to This Desktop appears while Tabbed is active.",
                     isAtDefault: model.configuration.defaultTabbedPreset == defaults.defaultTabbedPreset
+                        && model.configuration.tabbedStripPresentation == defaults.tabbedStripPresentation
                         && model.configuration.tabbedRestoresPaneSizes == defaults.tabbedRestoresPaneSizes
                 ) {
                     model.updateConfiguration {
                         $0.defaultTabbedPreset = defaults.defaultTabbedPreset
+                        $0.tabbedStripPresentation = defaults.tabbedStripPresentation
                         $0.tabbedRestoresPaneSizes = defaults.tabbedRestoresPaneSizes
                     }
                 }

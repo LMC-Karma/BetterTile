@@ -613,7 +613,7 @@ public struct BentoLayoutFitter: Sendable {
         guard state.root != nil, !changedWindowIDs.isEmpty else { return nil }
         var next = state
         var allApplied: [UUID: Double] = [:]
-        // Adaptive defaults to its snapped requests. Tabbed supplies its unsnapped areas.
+        // Adaptive defaults to its requests. Tabbed supplies the same snapped areas it requests.
         let originalFrames = expectedFrames
             ?? Dictionary(uniqueKeysWithValues: state.placements(in: bounds).map { ($0.windowID, $0.frame) })
 
@@ -627,23 +627,28 @@ public struct BentoLayoutFitter: Sendable {
             let halfGap = state.metrics.paneGap / 2
             // A lower window starts below its pane's content reserve.
             let reserve = state.metrics.contentTopInset
+            // Match edges in the window projection, rather than comparing a
+            // whole-point request with a fractional logical boundary.
+            let beforeEdge = BTRect.snappedEdge(expectedCoordinate - halfGap)
+            let afterEdge = BTRect.snappedEdge(expectedCoordinate + halfGap
+                + (geometry.axis == .horizontal ? reserve : 0))
             var changedCandidates: [Double] = []
 
             for id in changedWindowIDs {
                 guard let expected = originalFrames[id], let actual = currentFrames[id] else { continue }
                 switch geometry.axis {
                 case .vertical:
-                    if geometry.before.windowIDs.contains(id), abs(expected.maxX + halfGap - expectedCoordinate) <= tolerance {
+                    if geometry.before.windowIDs.contains(id), abs(expected.maxX - beforeEdge) <= tolerance {
                         changedCandidates.append(actual.maxX + halfGap)
                     }
-                    if geometry.after.windowIDs.contains(id), abs(expected.minX - halfGap - expectedCoordinate) <= tolerance {
+                    if geometry.after.windowIDs.contains(id), abs(expected.minX - afterEdge) <= tolerance {
                         changedCandidates.append(actual.minX - halfGap)
                     }
                 case .horizontal:
-                    if geometry.before.windowIDs.contains(id), abs(expected.maxY + halfGap - expectedCoordinate) <= tolerance {
+                    if geometry.before.windowIDs.contains(id), abs(expected.maxY - beforeEdge) <= tolerance {
                         changedCandidates.append(actual.maxY + halfGap)
                     }
-                    if geometry.after.windowIDs.contains(id), abs(expected.minY - reserve - halfGap - expectedCoordinate) <= tolerance {
+                    if geometry.after.windowIDs.contains(id), abs(expected.minY - afterEdge) <= tolerance {
                         changedCandidates.append(actual.minY - reserve - halfGap)
                     }
                 }
