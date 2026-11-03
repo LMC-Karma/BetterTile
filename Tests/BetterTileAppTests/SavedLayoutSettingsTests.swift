@@ -22,6 +22,7 @@ import Testing
     let model: BetterTileModel
     let window: NSWindow
     let host: NSHostingView<AnyView>
+    weak var foundAnchor: SavedLayoutStageAnchorView?
 
     init(state: String = "populated", appearance: NSAppearance.Name = .aqua,
          badgeActivated: (() -> Void)? = nil, chooser: Bool = false, paletteDelay: Duration = .zero) throws {
@@ -117,22 +118,42 @@ import Testing
 
     func settle(ordered: Bool = false) async throws {
         var previousFrame: CGRect?
-        try await waitForSettingsUI("the current canvas revision and stable stage geometry", in: host) {
-            guard editor.document != nil else { return host.bounds.size == Self.size }
-            guard let anchor = stageAnchor(), let presentation = anchor.presentation,
-                  presentation.document == editor.displayDocument,
-                  presentation.selectedPane == editor.selectedPane,
-                  presentation.selectedRectangle == editor.selectedRectangle,
-                  presentation.applicationsResolved, paletteState.loaded,
-                  presentation.installedIDs == ["com.apple.Safari", "com.apple.Notes"],
-                  presentation.stageFrame.size == anchor.bounds.size else {
-                previousFrame = nil
-                return false
+        // The first condition that blocked the last poll, so a failed settle says what never arrived.
+        var blocked = "no poll ran"
+        func block(_ reason: String) -> Bool { blocked = reason; previousFrame = nil; return false }
+        do {
+            try await waitForSettingsUI("the current canvas revision and stable stage geometry", in: host) {
+                guard editor.document != nil else {
+                    blocked = "host size \(host.bounds.size)"
+                    return host.bounds.size == Self.size
+                }
+                guard let anchor = stageAnchor() else { return block("no stage anchor") }
+                guard let presentation = anchor.presentation else { return block("no stage presentation") }
+                guard presentation.document == editor.displayDocument else { return block("an older canvas document") }
+                guard presentation.selectedPane == editor.selectedPane,
+                      presentation.selectedRectangle == editor.selectedRectangle else {
+                    return block("selection \(String(describing: presentation.selectedPane)), "
+                        + "\(String(describing: presentation.selectedRectangle)) instead of "
+                        + "\(String(describing: editor.selectedPane)), \(String(describing: editor.selectedRectangle))")
+                }
+                guard presentation.applicationsResolved else { return block("page applications not resolved") }
+                guard paletteState.loaded else { return block("palette not loaded") }
+                guard presentation.installedIDs == ["com.apple.Safari", "com.apple.Notes"] else {
+                    return block("installed apps \(presentation.installedIDs)")
+                }
+                guard presentation.stageFrame.size == anchor.bounds.size else {
+                    return block("stage frame \(presentation.stageFrame.size) and anchor \(anchor.bounds.size) differ")
+                }
+                let frame = host.convert(anchor.bounds, from: anchor)
+                guard frame.width > 300, frame.height > 150 else { return block("stage \(frame.size) too small") }
+                defer { previousFrame = frame }
+                blocked = previousFrame == nil ? "first stable-geometry sample \(frame)"
+                    : "stage moved from \(previousFrame!) to \(frame)"
+                return previousFrame == frame
             }
-            let frame = host.convert(anchor.bounds, from: anchor)
-            guard frame.width > 300, frame.height > 150 else { return false }
-            defer { previousFrame = frame }
-            return previousFrame == frame
+        } catch {
+            Issue.record("The Saved Layouts page did not settle; the last poll was blocked by: \(blocked)")
+            throw error
         }
         #expect(window.isVisible == ordered)
         #expect(!window.isKeyWindow, Comment(rawValue: keyWindowDiagnostics(window)))
@@ -175,12 +196,16 @@ import Testing
 }
 
 extension SavedLayoutUIHarness {
+    /// Keeps the anchor found last while it is still in the page, so settling polls do not search the whole view
+    /// tree every time. A replaced anchor leaves the page, and the next call finds the new one.
     fileprivate func stageAnchor() -> SavedLayoutStageAnchorView? {
+        if let anchor = foundAnchor, anchor.isDescendant(of: host) { return anchor }
         func find(_ view: NSView) -> SavedLayoutStageAnchorView? {
             if let anchor = view as? SavedLayoutStageAnchorView { return anchor }
             return view.subviews.lazy.compactMap(find).first
         }
-        return find(host)
+        foundAnchor = find(host)
+        return foundAnchor
     }
 
     /// The canvas stage in host coordinates (top-left origin), read from the stage's AppKit anchor view.
