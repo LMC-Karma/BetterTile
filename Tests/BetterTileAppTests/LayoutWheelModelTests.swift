@@ -1162,10 +1162,10 @@ func restoringAFocusModePeerFromTheDockWaitsForTheOtherPeers(rejectLayout: Bool)
 /// after the restored layout is verified, never while a peer is still
 /// returning. A peer seen back on screen counts even when its restored
 /// notification arrives late.
-@Test(.appTestApplication, .disabled("quarantine: #185 real-time Focus peer wait race on loaded CI"), arguments: [true, false]) @MainActor
+@Test(.appTestApplication, arguments: [true, false]) @MainActor
 func repairDuringFocusModeReportsOnlyAfterThePeersReturn(restoredEventArrives: Bool) async throws {
     _ = NSApplication.shared
-    let system = FakeAppWindowSystem()
+    let system = makeManualWindowSystem(drivingPolicyDeadlines: true)
     let peer = WindowID(rawValue: "peer")
     system.windows.append(WindowSnapshot(id: peer, processIdentifier: 43, bundleIdentifier: "com.example.Peer",
         frame: BTRect(x: 0, y: 0, width: 200, height: 300), displayID: system.mainDisplay.id))
@@ -1173,13 +1173,13 @@ func repairDuringFocusModeReportsOnlyAfterThePeersReturn(restoredEventArrives: B
     let model = makeModel(system: system)
     defer { model.shutdown() }
     model.setActiveMode(.bento)
-    try #require(await waitFor { system.windows.allSatisfy { $0.frame.size.height == 800 } })
-    try await Task.sleep(for: .milliseconds(350))
+    try #require(await system.waitFor { system.windows.allSatisfy { $0.frame.size.height == 800 } })
+    await system.advance(by: .milliseconds(350))
     let tiled = system.windows.map(\.frame)
     system.focusedID = system.windows[0].id
     model.perform(.maximize)
     try #require(system.windows[1].isMinimized)
-    try await Task.sleep(for: .milliseconds(350))
+    await system.advance(by: .milliseconds(350))
     let focusFeedback = model.lastActionFeedback
 
     if !restoredEventArrives {
@@ -1190,12 +1190,12 @@ func repairDuringFocusModeReportsOnlyAfterThePeersReturn(restoredEventArrives: B
     system.slowRestoreIDs = [peer]
     model.tileCurrentDisplay()
     try #require(system.restoreRequests.contains(peer))
-    // Stay well inside the 1.5 s peer wait, even on a loaded runner.
-    try await Task.sleep(for: .milliseconds(100))
+    // Advance policy time inside the 1.5 s peer wait; executor load cannot expire it.
+    await system.advance(by: .milliseconds(100))
     #expect(model.lastActionFeedback == focusFeedback, "\(String(describing: model.lastActionFeedback))")
     system.slowRestoreIDs = []
     try system.setMinimized(false, for: peer)
-    #expect(await waitFor(timeout: .seconds(2)) {
+    #expect(await system.waitFor(timeout: .seconds(2)) {
         model.lastActionFeedback != focusFeedback && model.lastActionFeedback?.kind == .success
             && system.windows.map(\.frame) == tiled
     }, "\(String(describing: model.lastActionFeedback)) \(system.windows.map(\.frame))")
@@ -1722,16 +1722,16 @@ func aFocusPartitionReportsPlacementFailureAfterThePeersReturn(fromWheel: Bool) 
 
 /// Repair while Focus mode is ending waits for the covered windows to come
 /// back, so it never lays the desktop out without them.
-@Test(.appTestApplication, .disabled("quarantine: #185 real-time Focus peer wait race on loaded CI")) @MainActor func repairWhileFocusModeEndsWaitsForTheReturningPeers() async throws {
+@Test(.appTestApplication) @MainActor func repairWhileFocusModeEndsWaitsForTheReturningPeers() async throws {
     _ = NSApplication.shared
-    let system = FakeAppWindowSystem()
+    let system = makeManualWindowSystem(drivingPolicyDeadlines: true)
     let peer = WindowID(rawValue: "peer")
     system.windows.append(WindowSnapshot(id: peer, processIdentifier: 43, bundleIdentifier: "com.example.Peer",
         frame: BTRect(x: 0, y: 0, width: 200, height: 300), displayID: system.mainDisplay.id))
     let model = makeModel(system: system)
     defer { model.shutdown() }
     model.setActiveMode(.bento)
-    try #require(await waitFor { system.windows.allSatisfy { $0.frame.size.height == 800 } })
+    try #require(await system.waitFor { system.windows.allSatisfy { $0.frame.size.height == 800 } })
     let tiled = system.windows.map(\.frame)
     system.focusedID = system.windows[0].id
     model.perform(.maximize)
@@ -1740,27 +1740,27 @@ func aFocusPartitionReportsPlacementFailureAfterThePeersReturn(fromWheel: Bool) 
     model.perform(.restore)
     let restoring = model.lastActionFeedback
     model.tileCurrentDisplay()
-    try await Task.sleep(for: .milliseconds(300))
+    await system.advance(by: .milliseconds(300))
     // Repair has not reported a layout while the peer is still minimized.
     #expect(model.lastActionFeedback == restoring)
     system.slowRestoreIDs = []
     system.windows[1].isMinimized = false
-    #expect(await waitFor { system.windows.map(\.frame) == tiled })
-    #expect(await waitFor { model.lastActionFeedback != restoring })
+    #expect(await system.waitFor { system.windows.map(\.frame) == tiled })
+    #expect(await system.waitFor { model.lastActionFeedback != restoring })
 }
 
 /// Repair Bento from the Layout Wheel waits for a Focus mode restore the
 /// same way, instead of cancelling it.
-@Test(.appTestApplication, .disabled("quarantine: #185 real-time Focus peer wait race on loaded CI")) @MainActor func layoutWheelRepairWaitsForAFocusModeRestore() async throws {
+@Test(.appTestApplication) @MainActor func layoutWheelRepairWaitsForAFocusModeRestore() async throws {
     _ = NSApplication.shared
-    let system = FakeAppWindowSystem()
+    let system = makeManualWindowSystem(drivingPolicyDeadlines: true)
     let peer = WindowID(rawValue: "peer")
     system.windows.append(WindowSnapshot(id: peer, processIdentifier: 43, bundleIdentifier: "com.example.Peer",
         frame: BTRect(x: 0, y: 0, width: 200, height: 300), displayID: system.mainDisplay.id))
     let model = makeModel(system: system)
     defer { model.shutdown() }
     model.setActiveMode(.bento)
-    try #require(await waitFor { system.windows.allSatisfy { $0.frame.size.height == 800 } })
+    try #require(await system.waitFor { system.windows.allSatisfy { $0.frame.size.height == 800 } })
     let tiled = system.windows.map(\.frame)
     system.focusedID = system.windows[0].id
     model.perform(.maximize)
@@ -1768,10 +1768,10 @@ func aFocusPartitionReportsPlacementFailureAfterThePeersReturn(fromWheel: Bool) 
     system.slowRestoreIDs = [peer]
     model.perform(.restore)
     model.performLayoutWheel(.repairBento, for: target(for: system))
-    try await Task.sleep(for: .milliseconds(300))
+    await system.advance(by: .milliseconds(300))
     system.slowRestoreIDs = []
     system.windows[1].isMinimized = false
-    #expect(await waitFor { system.windows.map(\.frame) == tiled })
+    #expect(await system.waitFor { system.windows.map(\.frame) == tiled })
 }
 
 /// A probe that cannot restore a new window's size puts the window back at
