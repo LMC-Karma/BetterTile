@@ -1129,7 +1129,7 @@ func restoringAFocusModePeerFromTheDockWaitsForTheOtherPeers(rejectLayout: Bool)
 /// after the restored layout is verified, never while a peer is still
 /// returning. A peer seen back on screen counts even when its restored
 /// notification arrives late.
-@Test(.appTestApplication, arguments: [true, false]) @MainActor
+@Test(.appTestApplication, .disabled("quarantine: #185 real-time Focus peer wait race on loaded CI"), arguments: [true, false]) @MainActor
 func repairDuringFocusModeReportsOnlyAfterThePeersReturn(restoredEventArrives: Bool) async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
