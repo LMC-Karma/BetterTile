@@ -141,7 +141,11 @@ import Testing
                 guard presentation.installedIDs == ["com.apple.Safari", "com.apple.Notes"] else {
                     return block("installed apps \(presentation.installedIDs)")
                 }
-                guard presentation.stageFrame.size == anchor.bounds.size else {
+                // AppKit rounds the anchor view to whole backing pixels; SwiftUI keeps fractional geometry.
+                // At 1x a 299.375-point stage has a 299-point anchor, so allow up to one backing pixel.
+                let pixel = 1 / max(window.backingScaleFactor, 1)
+                guard abs(presentation.stageFrame.width - anchor.bounds.width) <= pixel,
+                      abs(presentation.stageFrame.height - anchor.bounds.height) <= pixel else {
                     return block("stage frame \(presentation.stageFrame.size) and anchor \(anchor.bounds.size) differ")
                 }
                 let frame = host.convert(anchor.bounds, from: anchor)
