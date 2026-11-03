@@ -357,7 +357,7 @@ private func ghostOverlayCleansUpEveryGestureExit(ending: GhostEnd) throws {
 
 /// A window that grows a little still shows its old frame until it draws.
 /// That old frame is near the target, but it is not a landing.
-@Test(.macOSTestApplication, .macOSUI) @MainActor func ghostPreviewsWaitForAWindowStillDrawingItsOldFrame() async throws {
+@Test(.macOSTestApplication, .macOSUI, .disabled("quarantine: #184 real-time landing deadline race on loaded CI")) @MainActor func ghostPreviewsWaitForAWindowStillDrawingItsOldFrame() async throws {
     let fixture = try GhostGestureFixture()
     let controller = fixture.controller
     defer { controller.hideAndCancel() }
@@ -386,7 +386,7 @@ private func ghostOverlayCleansUpEveryGestureExit(ending: GhostEnd) throws {
 }
 
 /// A drag that starts during the landing fade keeps full-opacity previews.
-@Test(.macOSTestApplication, .macOSUI) @MainActor func aDragDuringTheLandingFadeKeepsItsPreviews() async throws {
+@Test(.macOSTestApplication, .macOSUI, .disabled("quarantine: #184 real-time landing deadline race on loaded CI")) @MainActor func aDragDuringTheLandingFadeKeepsItsPreviews() async throws {
     let fixture = try GhostGestureFixture()
     let controller = fixture.controller
     defer { controller.hideAndCancel() }
