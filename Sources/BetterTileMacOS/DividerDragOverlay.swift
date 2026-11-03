@@ -26,6 +26,7 @@ final class DividerDragOverlay {
     var panelFrameTransform: (NSRect) -> NSRect = { $0 }
     private(set) var panel: NSPanel?
     private let content: DividerDragOverlayView
+    private let clock: BetterTileClock
     private var snapshots: [WindowID: WindowSnapshot] = [:]
     private(set) var previewViews: [WindowID: GhostPreviewView] = [:]
     private(set) var limitedWindowIDs: Set<WindowID> = []
@@ -47,7 +48,8 @@ final class DividerDragOverlay {
         }
     }
 
-    init(lensLayers: DividerLensLayers = DividerLensLayers()) {
+    init(lensLayers: DividerLensLayers = DividerLensLayers(), clock: BetterTileClock = .live) {
+        self.clock = clock
         content = DividerDragOverlayView(lensLayers: lensLayers)
     }
 
@@ -176,8 +178,9 @@ final class DividerDragOverlay {
         }
         // End after the fade on the main actor; animation completion
         // handlers are not guaranteed to run promptly.
+        let clock = clock
         fadeTask = Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .seconds(duration))
+            try? await clock.sleep(for: .seconds(duration))
             guard let self, self.presentationGeneration == generation else { return }
             self.end()
         }

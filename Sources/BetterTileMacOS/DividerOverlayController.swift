@@ -385,7 +385,8 @@ public final class DividerOverlayController {
     private var baselineInteraction: DividerInteraction?
     private(set) var isRetracting = false
     private var handlePanel: DividerHandlePanel?
-    let dragOverlay = DividerDragOverlay()
+    let dragOverlay: DividerDragOverlay
+    private let timerClock: BetterTileClock
     private var isUpdatingOverlayPresentation = false
     private(set) var overlayPresentationCount = 0
     private var globalMouseMonitor: Any?
@@ -435,8 +436,8 @@ public final class DividerOverlayController {
     /// row; 50 ms spans three of its frames.
     static let provenRefusalFloor = 0.05
 
-    public convenience init(coordinator: WindowCoordinator, configuration: BetterTileConfiguration) {
-        self.init(coordinator: coordinator, configuration: configuration, displayTicks: ResizeDisplayLink())
+    public convenience init(coordinator: WindowCoordinator, configuration: BetterTileConfiguration, clock: BetterTileClock = .live) {
+        self.init(coordinator: coordinator, configuration: configuration, displayTicks: ResizeDisplayLink(), timerClock: clock)
     }
 
     init(
@@ -444,6 +445,7 @@ public final class DividerOverlayController {
         configuration: BetterTileConfiguration,
         displayTicks: ResizeDisplayLink,
         hoverTicks: ResizeDisplayLink = ResizeDisplayLink(),
+        timerClock: BetterTileClock = .live,
         addGlobalKeyMonitor: @escaping (@escaping @MainActor (UInt16) -> Void) -> Any? = { handler in
             NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { event in
                 let keyCode = event.keyCode
@@ -462,6 +464,8 @@ public final class DividerOverlayController {
         activationObservationReady: @escaping @MainActor () -> Void = {}
     ) {
         self.coordinator = coordinator
+        self.timerClock = timerClock
+        dragOverlay = DividerDragOverlay(clock: timerClock)
         self.configuration = configuration
         self.displayTicks = displayTicks
         self.hoverTicks = hoverTicks
@@ -893,8 +897,6 @@ public final class DividerOverlayController {
     }
 
     private(set) var landingTask: Task<Void, Never>?
-    /// Monotonic seconds for the landing hold. Tests can keep its deadline still.
-    var landingUptime: () -> Double = { CACurrentMediaTime() }
 
     private func holdPreviewsUntilWindowsLand(_ placements: [Placement]) {
         let targets = Dictionary(placements.map { ($0.windowID, $0.frame) }, uniquingKeysWith: { _, last in last })
@@ -909,13 +911,14 @@ public final class DividerOverlayController {
         handlePanel?.restoreDrawingFrame()
         dragOverlay.releaseKnob()
         CATransaction.commit()
-        let deadline = landingUptime() + 0.25
+        let deadline = timerClock.now.advanced(by: .milliseconds(250))
+        let timerClock = timerClock
         landingTask?.cancel()
         landingTask = Task { @MainActor [weak self] in
             while !Task.isCancelled {
-                try? await Task.sleep(for: .milliseconds(33))
+                try? await timerClock.sleep(for: .milliseconds(33))
                 guard let self, !Task.isCancelled else { return }
-                if self.windowsHaveLanded(targets, baseline: baseline) || self.landingUptime() >= deadline {
+                if self.windowsHaveLanded(targets, baseline: baseline) || timerClock.now >= deadline {
                     self.finishLanding(fade: true)
                     return
                 }

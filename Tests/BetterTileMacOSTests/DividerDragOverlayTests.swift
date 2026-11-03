@@ -17,7 +17,7 @@ private struct GhostGestureFixture {
     let start: BTPoint
     let interaction: DividerInteraction
 
-    init(junction: Bool = false, live: Bool = false, onScreen: Bool = false) throws {
+    init(junction: Bool = false, live: Bool = false, onScreen: Bool = false, clock: BetterTileClock = .live) throws {
         _ = NSApplication.shared
         let screen = try #require(NSScreen.screens.first)
         mainFrame = screen.frame
@@ -38,7 +38,7 @@ private struct GhostGestureFixture {
         }
         var configuration = BetterTileConfiguration()
         configuration.resizeFeedbackMode = live ? .live : .ghost
-        controller = DividerOverlayController(coordinator: WindowCoordinator(system: system), configuration: configuration, displayTicks: ticks,
+        controller = DividerOverlayController(coordinator: WindowCoordinator(system: system), configuration: configuration, displayTicks: ticks, timerClock: clock,
             addGlobalKeyMonitor: { _ in NSObject() }, addLocalKeyMonitor: { _ in NSObject() }, removeKeyMonitor: { _ in })
         controller.nonOccludingWindowNumbersProvider = {
             Set(NSApp.windows.compactMap { $0 is DividerHandlePanel ? $0.windowNumber : nil })
@@ -357,51 +357,68 @@ private func ghostOverlayCleansUpEveryGestureExit(ending: GhostEnd) throws {
 
 /// A window that grows a little still shows its old frame until it draws.
 /// That old frame is near the target, but it is not a landing.
-@Test(.macOSTestApplication, .macOSUI, .disabled("quarantine: #184 real-time landing deadline race on loaded CI")) @MainActor func ghostPreviewsWaitForAWindowStillDrawingItsOldFrame() async throws {
-    let fixture = try GhostGestureFixture()
+@Test(.macOSTestApplication, .macOSUI) @MainActor func ghostPreviewsWaitForAWindowStillDrawingItsOldFrame() async throws {
+    let clock = ManualClock()
+    let fixture = try GhostGestureFixture(clock: clock.clock)
     let controller = fixture.controller
     defer { controller.hideAndCancel() }
-    var landingClockReads = 0
-    controller.landingUptime = { landingClockReads += 1; return 100 }
     let left = fixture.system.windows[0]
     fixture.tick(dx: 12)
     fixture.system.drawnFrameOverrides = [left.id: left.frame]
     controller.end(at: fixture.point(dx: 12))
     let target = try #require(fixture.system.windows.first { $0.id == left.id }?.frame)
     #expect(target.size.width > left.frame.size.width && target.size.width - left.frame.size.width <= 24)
-    let initialReads = landingClockReads
-    try #require(initialReads > 0, "The landing hold must use its injected clock")
-    // Observe a hold poll while the deadline stays still. Main-actor load must not expire it.
-    // A window that lands early skips the clock read, so stop as soon as the overlay fades.
-    try #require(await waitUntil(timeout: .seconds(20)) {
-        landingClockReads > initialReads || controller.dragOverlay.isFading
-    })
+    let firstPoll = clock.now.advanced(by: .milliseconds(33))
+    try #require(await clock.waitForSleepers(count: 1, timeout: .seconds(20)))
+    try #require(clock.hasSleeper(until: firstPoll), "The landing hold must use its injected clock")
+    // Advance the hold without advancing past its 250 ms deadline. Executor load cannot expire it.
+    clock.advance(by: .milliseconds(120))
+    try #require(await clock.waitForSleepers(count: 1, timeout: .seconds(20)))
     try #require(controller.dragOverlay.isVisible && !controller.dragOverlay.isFading,
                  "The previews left while the window still drew its old frame")
-    try #require(landingClockReads > initialReads, "The landing hold did not poll")
+    try #require(clock.hasSleeper(until: clock.now.advanced(by: .milliseconds(33))),
+                 "The landing hold did not poll")
     // Once WindowServer shows the new frame, the previews fade away.
     fixture.system.drawnFrameOverrides = [:]
-    try await waitForGhostOverlay { !controller.dragOverlay.isVisible }
+    let landing = try #require(controller.landingTask)
+    clock.advance(by: .milliseconds(33))
+    await landing.value
+    try #require(controller.dragOverlay.isFading)
+    let fade = try #require(controller.dragOverlay.fadeTask)
+    try #require(await clock.waitForSleepers(count: 1, timeout: .seconds(20)))
+    #expect(clock.hasSleeper(until: clock.now.advanced(by: .milliseconds(120))))
+    clock.advance(by: .milliseconds(120))
+    await fade.value
     #expect(!controller.dragOverlay.isVisible)
 }
 
 /// A drag that starts during the landing fade keeps full-opacity previews.
-@Test(.macOSTestApplication, .macOSUI, .disabled("quarantine: #184 real-time landing deadline race on loaded CI")) @MainActor func aDragDuringTheLandingFadeKeepsItsPreviews() async throws {
-    let fixture = try GhostGestureFixture()
+@Test(.macOSTestApplication, .macOSUI) @MainActor func aDragDuringTheLandingFadeKeepsItsPreviews() async throws {
+    let clock = ManualClock()
+    let fixture = try GhostGestureFixture(clock: clock.clock)
     let controller = fixture.controller
     defer { controller.hideAndCancel() }
     fixture.tick(dx: 50)
     // The window never draws its new frame, so the hold ends at its deadline.
     fixture.system.readsBeforeSettling = 1000
     controller.end(at: fixture.point(dx: 50))
-    try await waitForGhostOverlay { controller.dragOverlay.isFading }
+    let landing = try #require(controller.landingTask)
+    try #require(await clock.waitForSleepers(count: 1, timeout: .seconds(20)))
+    clock.advance(by: .milliseconds(249))
+    try #require(await clock.waitForSleepers(count: 1, timeout: .seconds(20)))
+    #expect(controller.dragOverlay.isVisible && !controller.dragOverlay.isFading)
+    clock.advance(by: .milliseconds(33))
+    await landing.value
     try #require(controller.dragOverlay.isFading)
     let oldFade = try #require(controller.dragOverlay.fadeTask)
+    try #require(await clock.waitForSleepers(count: 1, timeout: .seconds(20)))
+    #expect(clock.hasSleeper(until: clock.now.advanced(by: .milliseconds(120))))
     try fixture.begin()
     fixture.tick(dx: 30)
     #expect(controller.isDragging)
     #expect(controller.dragOverlay.isVisible && !controller.dragOverlay.isFading)
     #expect(controller.dragOverlay.panel?.alphaValue == 1)
+    clock.advance(by: .milliseconds(120))
     await oldFade.value
     #expect(controller.isDragging)
     #expect(controller.dragOverlay.isVisible)
