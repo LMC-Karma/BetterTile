@@ -24,7 +24,7 @@ private func window(_ name: String) -> WindowID { WindowID(rawValue: name) }
     #expect(state.layout.floatingWindowIDs == [window("floating")])
     let frames = try #require(state.paneFrames(in: tabbedBounds))
     #expect(frames.count == 4)
-    #expect(frames[state.panes[0].id] == source.placements(in: tabbedBounds).first { $0.windowID == a }?.frame)
+    #expect(frames[state.panes[0].id] == source.paneFrames(in: tabbedBounds)[a])
 }
 
 @Test func tabSelectionKeepsTreeAndPaneIdentity() throws {

@@ -2,6 +2,7 @@ import AppKit
 import BetterTileCore
 import CoreImage
 import Testing
+import BetterTileTestSupport
 @testable import BetterTileMacOS
 
 @MainActor
@@ -37,7 +38,11 @@ private struct GhostGestureFixture {
         }
         var configuration = BetterTileConfiguration()
         configuration.resizeFeedbackMode = live ? .live : .ghost
-        controller = DividerOverlayController(coordinator: WindowCoordinator(system: system), configuration: configuration, displayTicks: ticks)
+        controller = DividerOverlayController(coordinator: WindowCoordinator(system: system), configuration: configuration, displayTicks: ticks,
+            addGlobalKeyMonitor: { _ in NSObject() }, addLocalKeyMonitor: { _ in NSObject() }, removeKeyMonitor: { _ in })
+        controller.nonOccludingWindowNumbersProvider = {
+            Set(NSApp.windows.compactMap { $0 is DividerHandlePanel ? $0.windowNumber : nil })
+        }
         let state = state
         controller.bentoStateProvider = { _ in state }
         interaction = try #require(DividerInteractionResolver.resolve(
@@ -48,6 +53,7 @@ private struct GhostGestureFixture {
 
     func begin() throws {
         controller.beginGesture(interaction: interaction, at: start)
+        try #require(controller.isDragging, "The fixture gesture was rejected before admission")
         let handle = try #require(controller.visibleHandleView)
         handle.displayOptions = { (false, false) }
         handle.setActive(false, animated: false)
@@ -189,24 +195,20 @@ private func ghostOverlayCleansUpEveryGestureExit(ending: GhostEnd) throws {
     #expect(overlay.drawing?.surface == .glass)
 }
 
-@Test(.macOSTestApplication, .macOSUI) @MainActor func ghostOverlayReceivesStretchWithoutMovingAnyWindow() async throws {
+@Test(.macOSTestApplication, .macOSUI) @MainActor func ghostOverlayReceivesStretchWithoutMovingAnyWindow() throws {
     let fixture = try GhostGestureFixture()
     defer { fixture.controller.hideAndCancel() }
     let handle = try #require(fixture.controller.visibleHandleView)
     let overlay = fixture.controller.dragOverlay
     let initialFrame = handle.window?.frame
-    handle.reduceMotion = { false }
-    handle.setActive(false, animated: false)
-    handle.setActive(true, animated: true)
-    // Other main-actor tests can delay both this task and the animation.
-    // Bound polling opportunities, not time spent waiting for the actor.
-    for _ in 0..<200 {
-        if overlay.drawing?.progress == 1 { break }
-        try await Task.sleep(for: .milliseconds(10))
+    // Drive both stretch endpoints synchronously. No task suspends while the gesture owns its panels.
+    for active in [false, true, false, true] {
+        handle.setActive(active, animated: false)
+        #expect(overlay.drawing?.progress == (active ? 1 : 0))
         #expect(overlay.drawing?.progress == handle.stretchProgress)
         #expect(handle.window?.frame == initialFrame)
     }
-    #expect(overlay.drawing?.progress == 1 && overlay.knobRects[0].height == 166)
+    #expect(overlay.knobRects[0].height == 166)
 }
 
 @MainActor private func dragLensLayerTree(_ root: CALayer) -> [CALayer] {
@@ -277,7 +279,6 @@ private func ghostOverlayCleansUpEveryGestureExit(ending: GhostEnd) throws {
             for limited in [false, true] {
                 fixture.tick(dx: limited ? 10000 : 100, dy: junction ? (limited ? 10000 : 60) : 0)
                 panel.displayIfNeeded()
-                try await Task.sleep(for: .milliseconds(250))
                 let output = URL(fileURLWithPath: directory)
                     .appendingPathComponent("divider-drag-\(scene)-\(name)\(limited ? "-limit" : "").png")
                 if FileManager.default.fileExists(atPath: output.path) { try FileManager.default.removeItem(at: output) }
@@ -330,11 +331,8 @@ private func ghostOverlayCleansUpEveryGestureExit(ending: GhostEnd) throws {
     #expect(!controller.isDragging)
     #expect(controller.dragOverlay.isVisible)
     #expect(handle.drawsLens && handle.drawingSink == nil)
-    // Once the window reports its frame, the previews fade away. The hold
-    // itself ends within 250 ms. The margin counts 20 ms steps, not
-    // wall-clock time: a loaded test machine can block the main actor for
-    // seconds, and the hold needs its turn after such a block.
-    for _ in 0..<250 where controller.dragOverlay.isVisible { try await Task.sleep(for: .milliseconds(20)) }
+    // Wait for the observed exit, rather than sleeping past an assumed duration.
+    try await waitForGhostOverlay { !controller.dragOverlay.isVisible }
     #expect(!controller.dragOverlay.isVisible)
     #expect(controller.dragOverlay.previewViews.isEmpty)
 }
@@ -348,11 +346,12 @@ private func ghostOverlayCleansUpEveryGestureExit(ending: GhostEnd) throws {
     fixture.system.readsBeforeSettling = 1000
     controller.end(at: fixture.point(dx: 50))
     try #require(controller.dragOverlay.isVisible)
+    let landing = try #require(controller.landingTask)
     controller.hideAndCancel()
     #expect(!controller.dragOverlay.isVisible)
     var reads = 0
     fixture.system.targetedSnapshotHandler = { _ in reads += 1 }
-    try await Task.sleep(for: .milliseconds(200))
+    await landing.value
     #expect(reads == 0, "the landing poll kept reading windows")
 }
 
@@ -361,38 +360,52 @@ private func ghostOverlayCleansUpEveryGestureExit(ending: GhostEnd) throws {
 @Test(.macOSTestApplication, .macOSUI) @MainActor func ghostPreviewsWaitForAWindowStillDrawingItsOldFrame() async throws {
     let fixture = try GhostGestureFixture()
     let controller = fixture.controller
+    defer { controller.hideAndCancel() }
+    var landingClockReads = 0
+    controller.landingUptime = { landingClockReads += 1; return 100 }
     let left = fixture.system.windows[0]
     fixture.tick(dx: 12)
     fixture.system.drawnFrameOverrides = [left.id: left.frame]
     controller.end(at: fixture.point(dx: 12))
     let target = try #require(fixture.system.windows.first { $0.id == left.id }?.frame)
     #expect(target.size.width > left.frame.size.width && target.size.width - left.frame.size.width <= 24)
-    try await Task.sleep(for: .milliseconds(120))
-    #expect(controller.dragOverlay.isVisible)
-    #expect(!controller.dragOverlay.isFading)
+    let initialReads = landingClockReads
+    try #require(initialReads > 0, "The landing hold must use its injected clock")
+    // Observe a hold poll while the deadline stays still. Main-actor load must not expire it.
+    // A window that lands early skips the clock read, so stop as soon as the overlay fades.
+    try #require(await waitUntil(timeout: .seconds(20)) {
+        landingClockReads > initialReads || controller.dragOverlay.isFading
+    })
+    try #require(controller.dragOverlay.isVisible && !controller.dragOverlay.isFading,
+                 "The previews left while the window still drew its old frame")
+    try #require(landingClockReads > initialReads, "The landing hold did not poll")
     // Once WindowServer shows the new frame, the previews fade away.
     fixture.system.drawnFrameOverrides = [:]
-    for _ in 0..<250 where controller.dragOverlay.isVisible { try await Task.sleep(for: .milliseconds(20)) }
+    try await waitForGhostOverlay { !controller.dragOverlay.isVisible }
     #expect(!controller.dragOverlay.isVisible)
 }
 
-/// A drag that starts while the previous release still fades gets its own
-/// presentation; the old fade does not hide the new previews.
+/// A drag that starts during the landing fade keeps full-opacity previews.
 @Test(.macOSTestApplication, .macOSUI) @MainActor func aDragDuringTheLandingFadeKeepsItsPreviews() async throws {
     let fixture = try GhostGestureFixture()
     let controller = fixture.controller
+    defer { controller.hideAndCancel() }
     fixture.tick(dx: 50)
     // The window never draws its new frame, so the hold ends at its deadline.
     fixture.system.readsBeforeSettling = 1000
     controller.end(at: fixture.point(dx: 50))
-    for _ in 0..<1000 where !controller.dragOverlay.isFading { try await Task.sleep(for: .milliseconds(5)) }
+    try await waitForGhostOverlay { controller.dragOverlay.isFading }
     try #require(controller.dragOverlay.isFading)
+    let oldFade = try #require(controller.dragOverlay.fadeTask)
     try fixture.begin()
     fixture.tick(dx: 30)
+    #expect(controller.isDragging)
     #expect(controller.dragOverlay.isVisible && !controller.dragOverlay.isFading)
-    try await Task.sleep(for: .milliseconds(300))
+    #expect(controller.dragOverlay.panel?.alphaValue == 1)
+    await oldFade.value
     #expect(controller.isDragging)
     #expect(controller.dragOverlay.isVisible)
+    #expect(controller.dragOverlay.panel?.alphaValue == 1)
     #expect(!controller.dragOverlay.previewViews.isEmpty)
 }
 
@@ -491,4 +504,9 @@ func aReleaseThatCancelsItsGestureRetractsTheHandleOnce(live: Bool) throws {
     let left = try #require(fixture.system.windows.first { $0.id != right })
     let held = try #require(fixture.system.windows.first { $0.id == right })
     #expect(left.frame.maxX <= held.frame.minX + 0.5)
+}
+
+/// Yield to the production landing/fade tasks and bound failures without a settling sleep.
+@MainActor private func waitForGhostOverlay(_ ready: () -> Bool) async throws {
+    try #require(await waitUntil(timeout: .seconds(30), ready), "The overlay did not reach the expected state")
 }

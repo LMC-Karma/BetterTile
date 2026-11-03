@@ -127,6 +127,11 @@ public final class WindowCoordinator {
         var failedTerminalObservations = 0
     }
 
+    #if DEBUG
+    public var arrivalTrace = ArrivalTrace.shared
+    #endif
+
+    private let clock: BetterTileClock
     public let system: any WindowSystem
     public var actionEngine: StandardActionEngine
 
@@ -146,8 +151,9 @@ public final class WindowCoordinator {
     /// size. Tests on a loaded runner lengthen it.
     public var shortcutCycleInterval: TimeInterval = 2
 
-    public init(system: any WindowSystem, historyCapacity: Int = 10, actionEngine: StandardActionEngine = StandardActionEngine()) {
+    public init(system: any WindowSystem, historyCapacity: Int = 10, actionEngine: StandardActionEngine = StandardActionEngine(), clock: BetterTileClock = .live) {
         self.system = system
+        self.clock = clock
         self.history = FrameHistory(capacity: historyCapacity)
         self.actionEngine = actionEngine
     }
@@ -363,7 +369,7 @@ public final class WindowCoordinator {
         attempts: Int = 3
     ) async -> DelayedPlacementVerdict {
         for attempt in 1...max(1, attempts) {
-            try? await Task.sleep(for: delay)
+            try? await clock.sleep(for: delay)
             guard !Task.isCancelled else { return .superseded }
             let actual = (try? snapshots(ids: [plan.windowID]).first)??.frame
             let generationChanged = mutationGeneration(for: plan.windowID) != generation
@@ -404,17 +410,51 @@ public final class WindowCoordinator {
 
     /// - Parameter destination: The display a window drag dropped on. Drag
     ///   releases pass it; other callers validate on each window's display.
+    /// - Parameter displayDestinations: Explicit destinations for request-owned transfers.
+    ///   The caller validates identity and visible desktop membership before every write.
     public func applyPlacements(
         _ placements: [Placement],
         recordHistory: Bool = true,
-        destination: DropDestination? = nil
+        destination: DropDestination? = nil,
+        displayDestinations: [WindowID: DisplayID] = [:]
+    ) -> WindowMutationOutcome {
+        place(placements, recordHistory: recordHistory, destination: destination,
+              displayDestinations: displayDestinations, validation: nil)
+    }
+
+    /// A guarded batch validates before and after dispatch. Opt into serial
+    /// per-write validation when ownership can change inside a frame batch.
+    /// - Parameter canRestore: Optional desktop ownership for restoration after
+    ///   the forward request ends. Without it, rollback uses the forward guard.
+    public func applyPlacements(
+        _ placements: [Placement],
+        recordHistory: Bool = true,
+        destination: DropDestination? = nil,
+        displayDestinations: [WindowID: DisplayID] = [:],
+        rollbackValidating canRestore: (() -> Bool)? = nil,
+        revalidateBeforeEachWrite: Bool = false,
+        onFinalValidationFailure: (() -> Void)? = nil,
+        validating isCurrent: () -> Bool
+    ) -> WindowMutationOutcome {
+        withoutActuallyEscaping(isCurrent) { validation in
+            place(placements, recordHistory: recordHistory, destination: destination,
+                  displayDestinations: displayDestinations, validation: validation, rollbackValidation: canRestore, revalidateBeforeEachWrite: revalidateBeforeEachWrite, onFinalValidationFailure: onFinalValidationFailure)
+        }
+    }
+
+    private func place(
+        _ placements: [Placement], recordHistory: Bool, destination: DropDestination?,
+        displayDestinations: [WindowID: DisplayID], validation: (() -> Bool)?,
+        rollbackValidation: (() -> Bool)? = nil, revalidateBeforeEachWrite: Bool = false,
+        onFinalValidationFailure: (() -> Void)? = nil
     ) -> WindowMutationOutcome {
         switch beginTransaction(windowIDs: Set(placements.map(\.windowID))) {
         case let .failed(reason):
             return .failed(reason: reason)
         case var .started(transaction):
-            return commit(transaction: &transaction, placements: placements, recordHistory: recordHistory,
-                          destination: destination)
+            return commitFrames(transaction: &transaction, placements: placements, recordHistory: recordHistory,
+                                destination: destination, displayDestinations: displayDestinations,
+                                isDisplayTransfer: false, validation: validation, rollbackValidation: rollbackValidation, revalidateBeforeEachWrite: revalidateBeforeEachWrite, onFinalValidationFailure: onFinalValidationFailure)
         }
     }
 
@@ -428,14 +468,24 @@ public final class WindowCoordinator {
         recordHistoryFrames(frames)
     }
 
+    public enum SettlementFailure: String, Sendable {
+        case interrupted, superseded, windowRead, ownership, overlap, frames, retryFailed, retryDegraded
+    }
+
     /// Verifies a completed system-driven reflow and retries only windows
     /// whose Accessibility frames did not settle at the requested values.
+    /// Two points allow observed fractional-frame readback differences.
     public func settleAuthoritativePlacements(
         _ placements: [Placement],
         since ownedGenerations: [WindowID: UInt64]? = nil,
         maximumRetries: Int = 2,
         retryDelay: Duration = .milliseconds(100),
-        tolerance: Double = 1
+        tolerance: Double = 2,
+        floatingWindowIDs: Set<WindowID> = [],
+        revalidateBeforeEachWrite: Bool = false,
+        didRetry: ([WindowID: UInt64]) -> Void = { _ in },
+        onFailure: ((SettlementFailure) -> Void)? = nil,
+        validating isCurrent: () -> Bool = { true }
     ) async -> WindowMutationOutcome {
         let unsettled = "One or more windows did not settle at the requested frame."
         let retryLimit = max(0, maximumRetries)
@@ -445,14 +495,16 @@ public final class WindowCoordinator {
         })
         for attempt in 0...retryLimit {
             do {
-                try await Task.sleep(for: retryDelay)
+                try await clock.sleep(for: retryDelay)
             } catch {
                 finishExpectedMutations(upTo: terminalGenerations)
+                onFailure?(.interrupted)
                 return .failed(reason: "The settlement check was interrupted.")
             }
 
             guard terminalGenerations.allSatisfy({ mutationGeneration(for: $0.key) == $0.value }) else {
                 finishExpectedMutations(upTo: terminalGenerations)
+                onFailure?(.superseded)
                 return .failed(reason: "The settlement check was superseded.")
             }
             let actualFrames: [WindowID: BTRect]
@@ -462,31 +514,51 @@ public final class WindowCoordinator {
                 ).map { ($0.id, $0.frame) })
             } catch {
                 finishExpectedMutations(upTo: terminalGenerations)
+                onFailure?(.windowRead)
                 return .failed(reason: error.localizedDescription)
+            }
+            guard isCurrent() else {
+                finishExpectedMutations(upTo: terminalGenerations)
+                onFailure?(.ownership)
+                return .failed(reason: "The desktop changed before settlement.")
             }
             let pending = placements.filter {
                 actualFrames[$0.windowID]?.approximatelyEquals($0.frame, tolerance: tolerance) != true
             }
             if pending.isEmpty {
+                let tiledFrames = actualFrames.filter { !floatingWindowIDs.contains($0.key) }
+                #if DEBUG
+                if arrivalTrace.isEnabled, BentoLayoutVerifier.overlappingWindowIDs(tiledFrames).isEmpty {
+                    arrivalTrace.settled(frames: actualFrames)
+                }
+                #endif
                 finishExpectedMutations(upTo: terminalGenerations)
+                guard BentoLayoutVerifier.overlappingWindowIDs(tiledFrames).isEmpty else {
+                    onFailure?(.overlap)
+                    return .failed(reason: unsettled)
+                }
                 return .applied
             }
             guard attempt < retryLimit else {
                 finishExpectedMutations(upTo: terminalGenerations)
+                onFailure?(.frames)
                 return .failed(reason: unsettled)
             }
-            switch applyPlacements(pending, recordHistory: false) {
+            switch applyPlacements(pending, recordHistory: false, revalidateBeforeEachWrite: revalidateBeforeEachWrite, validating: isCurrent) {
             case .applied:
                 for placement in pending {
                     terminalGenerations[placement.windowID] = mutationGeneration(for: placement.windowID)
                 }
+                didRetry(terminalGenerations)
             case .failed:
                 finishExpectedMutations(upTo: terminalGenerations)
+                onFailure?(.retryFailed)
                 return .failed(reason: unsettled)
             case let .degraded(reason):
                 // The inner reason survives: windows were left in a mixed
                 // arrangement, which is worse news than "not yet settled".
                 finishExpectedMutations(upTo: terminalGenerations)
+                onFailure?(.retryDegraded)
                 return .degraded(reason: reason)
             }
         }
@@ -517,22 +589,58 @@ public final class WindowCoordinator {
         return .accepted
     }
 
+    /// - Parameter isDisplayTransfer: Prepare destination panes before arrival,
+    ///   then close the source gap, within the same rollback-capable mutation.
     public func commit(
         transaction: inout WindowFrameTransaction,
         placements: [Placement]? = nil,
         recordHistory: Bool = true,
-        destination: DropDestination? = nil
+        destination: DropDestination? = nil,
+        displayDestinations: [WindowID: DisplayID] = [:],
+        isDisplayTransfer: Bool = false
+    ) -> WindowMutationOutcome {
+        commitFrames(transaction: &transaction, placements: placements, recordHistory: recordHistory,
+                     destination: destination, displayDestinations: displayDestinations,
+                     isDisplayTransfer: isDisplayTransfer, validation: nil)
+    }
+
+    public func commit(
+        transaction: inout WindowFrameTransaction,
+        placements: [Placement]? = nil,
+        recordHistory: Bool = true,
+        destination: DropDestination? = nil,
+        displayDestinations: [WindowID: DisplayID] = [:],
+        isDisplayTransfer: Bool = false,
+        revalidateBeforeEachWrite: Bool = false,
+        validating isCurrent: () -> Bool
+    ) -> WindowMutationOutcome {
+        withoutActuallyEscaping(isCurrent) { validation in
+            commitFrames(transaction: &transaction, placements: placements, recordHistory: recordHistory,
+                         destination: destination, displayDestinations: displayDestinations,
+                         isDisplayTransfer: isDisplayTransfer, validation: validation, revalidateBeforeEachWrite: revalidateBeforeEachWrite)
+        }
+    }
+
+    private func commitFrames(
+        transaction: inout WindowFrameTransaction, placements: [Placement]?, recordHistory: Bool,
+        destination: DropDestination?, displayDestinations: [WindowID: DisplayID],
+        isDisplayTransfer: Bool, validation: (() -> Bool)?, rollbackValidation: (() -> Bool)? = nil,
+        revalidateBeforeEachWrite: Bool = false,
+        onFinalValidationFailure: (() -> Void)? = nil
     ) -> WindowMutationOutcome {
         lastPlacementBaselineFrames = transaction.baselineFrames
         if let placements, case let .failed(reason) = preview(transaction: &transaction, placements: placements) {
             return .failed(reason: reason)
         }
         do {
-            try validate(transaction.proposedPlacements, destination: destination)
+            try validate(transaction.proposedPlacements, destination: destination, displayDestinations: displayDestinations)
+            guard validation?() != false else { return .failed(reason: "The layout changed before placement.") }
             // A corrective commit starts from the frames an earlier commit
             // wrote, so shrink-before-grow compares against those.
             try applyAtomically(transaction.proposedPlacements, rollbackFrames: transaction.baselineFrames,
-                                currentFrames: transaction.lastAppliedFrames)
+                                currentFrames: transaction.lastAppliedFrames,
+                                transfer: isDisplayTransfer ? destination : nil, validating: validation,
+                                rollbackValidating: rollbackValidation, revalidateBeforeEachWrite: revalidateBeforeEachWrite, onFinalValidationFailure: onFinalValidationFailure)
             if recordHistory {
                 recordChangedHistoryFrames(
                     transaction.baselineFrames,
@@ -752,25 +860,35 @@ public final class WindowCoordinator {
         placement: Placement,
         minimizing windowIDs: Set<WindowID>,
         sourceBaselineFrame: BTRect,
-        destination: DropDestination? = nil
+        destination: DropDestination? = nil,
+        validating isCurrent: () -> Bool = { true }
     ) -> WindowMutationOutcome {
         var minimized: [WindowID] = []
+        var sourceWriteAttempted = false
         var sourceWriteCompleted = false
         do {
             try validate([placement], destination: destination)
+            try system.preflightFrameWrites(windowIDs)
+            guard isCurrent() else { return .failed(reason: "The layout changed before the focus drop.") }
+            sourceWriteAttempted = true
             try apply(placement.frame, to: placement.windowID, knownCurrentFrame: sourceBaselineFrame)
             sourceWriteCompleted = true
             for windowID in windowIDs.sorted() {
+                guard isCurrent() else { throw WindowSystemError.operationFailed("The desktop changed during the focus drop.") }
                 try system.setMinimized(true, for: windowID)
                 minimized.append(windowID)
             }
+            guard isCurrent() else { throw WindowSystemError.operationFailed("The desktop changed during the focus drop.") }
             if !sourceBaselineFrame.approximatelyEquals(placement.frame, tolerance: 0.01) {
                 history.record(sourceBaselineFrame, for: placement.windowID)
             }
             return .applied
         } catch {
+            guard sourceWriteAttempted else { return .failed(reason: error.localizedDescription) }
+            let degraded = WindowMutationOutcome.degraded(reason: "The focus drop failed and the previous layout could not be fully restored.")
             var rollbackFailed = false
             for windowID in minimized.reversed() {
+                guard isCurrent() else { return degraded }
                 do {
                     try system.setMinimized(false, for: windowID)
                 } catch {
@@ -786,6 +904,7 @@ public final class WindowCoordinator {
                 sourceNeedsRestore = !source.frame.approximatelyEquals(sourceBaselineFrame, tolerance: 0.01)
             }
             if sourceNeedsRestore {
+                guard isCurrent() else { return degraded }
                 do {
                     try apply(
                         sourceBaselineFrame,
@@ -805,23 +924,44 @@ public final class WindowCoordinator {
     /// Measures the minimum sizes of new windows before their first
     /// placement. The probe changes each window's size and restores it, so
     /// it is a window mutation like any other.
-    public func probeMinimumSizes(for windowIDs: Set<WindowID>) -> WindowMutationOutcome {
+    public func probeMinimumSizes(
+        for windowIDs: Set<WindowID>, validating isCurrent: () -> Bool = { true }
+    ) -> WindowMutationOutcome {
         guard !windowIDs.isEmpty, let probing = system as? any MinimumSizeProbing else { return .applied }
         // The probe is BetterTile's own write. Its frame events end at each
         // window's current frame and must not read as an external change.
+        let probeSnapshots = (try? snapshots(ids: windowIDs)) ?? []
+        guard isCurrent() else {
+            return .failed(reason: "The layout changed before minimum-size measurement.")
+        }
         var probeGenerations: [WindowID: UInt64] = [:]
-        for snapshot in (try? snapshots(ids: windowIDs)) ?? [] {
+        for snapshot in probeSnapshots {
             let generation = allocateGeneration(for: snapshot.id)
             probeGenerations[snapshot.id] = generation
             expect(snapshot.frame, for: snapshot.id, generation: generation)
         }
-        let unrestored = probing.probeMinimumSizes(for: windowIDs)
+        #if DEBUG
+        if arrivalTrace.isEnabled {
+            for window in probeSnapshots { arrivalTrace.record("minimum_probe_started", pid: window.processIdentifier, windowID: window.id) }
+        }
+        #endif
+        let outcome = probing.probeMinimumSizes(for: windowIDs, validating: isCurrent)
+        let unrestored = outcome.unrestoredWindowIDs
+        #if DEBUG
+        if arrivalTrace.isEnabled {
+            for window in probeSnapshots { arrivalTrace.record("minimum_probe_finished", pid: window.processIdentifier,
+                windowID: window.id, outcome: unrestored.contains(window.id) ? "restore_failed" : "restored") }
+        }
+        #endif
         // A window left at another size has not returned to that frame.
-        for id in unrestored {
+        for id in unrestored.union(Set(probeGenerations.keys).subtracting(outcome.startedWindowIDs)) {
             if let generation = probeGenerations[id] { cancelExpectedMutation(for: id, generation: generation) }
         }
-        return unrestored.isEmpty ? .applied
-            : .degraded(reason: "A new window did not return to its size after BetterTile measured it.")
+        guard unrestored.isEmpty else {
+            return .degraded(reason: "A new window did not return to its size after BetterTile measured it.")
+        }
+        return outcome.wasInterrupted
+            ? .failed(reason: "The desktop changed during minimum-size measurement.") : .applied
     }
 
     /// Restores every focus-drop peer in deterministic order, best-effort: a
@@ -853,6 +993,9 @@ public final class WindowCoordinator {
         guard generations[windowID] == generation else { return }
         expect(frame, for: windowID, generation: generation)
         do {
+            #if DEBUG
+            if arrivalTrace.isEnabled { arrivalTrace.willWrite(Placement(windowID: windowID, frame: frame)) }
+            #endif
             try system.setFrame(frame, knownCurrentFrame: knownCurrentFrame, for: windowID)
         } catch {
             cancelExpectedMutation(for: windowID, generation: generation)
@@ -868,13 +1011,17 @@ public final class WindowCoordinator {
     private func validate(
         _ placements: [Placement],
         sizeTolerance: Double = 0,
-        destination: DropDestination? = nil
+        destination: DropDestination? = nil,
+        displayDestinations: [WindowID: DisplayID] = [:]
     ) throws {
         let ids = Set(placements.map(\.windowID))
         let snapshots = Dictionary(uniqueKeysWithValues: try snapshots(ids: ids).map { ($0.id, $0) })
         let displays = Dictionary(uniqueKeysWithValues: system.displays().map { ($0.id, $0) })
         if let destination, displays[destination.displayID] == nil {
             throw WindowSystemError.operationFailed("The display of the drop is no longer available.")
+        }
+        guard displayDestinations.values.allSatisfy({ displays[$0] != nil }) else {
+            throw WindowSystemError.operationFailed("A placement display is no longer available.")
         }
         for placement in placements {
             guard let snapshot = snapshots[placement.windowID] else { throw WindowSystemError.windowNotFound(placement.windowID) }
@@ -900,7 +1047,8 @@ public final class WindowCoordinator {
             // A legal size is not enough: a stale display frame or a split
             // driven to an edge can produce a placement that leaves nothing on
             // screen to grab.
-            if let display = displays[isDropSource ? destination?.displayID ?? snapshot.displayID : snapshot.displayID],
+            if let display = displays[displayDestinations[placement.windowID]
+                ?? (isDropSource ? destination?.displayID ?? snapshot.displayID : snapshot.displayID)],
                !PlacementBounds.isReachable(placement.frame, in: display.visibleFrame) {
                 throw WindowSystemError.operationFailed(
                     "A window would have been placed off screen."
@@ -915,7 +1063,12 @@ public final class WindowCoordinator {
         _ placements: [Placement],
         rollbackFrames: [WindowID: BTRect],
         currentFrames: [WindowID: BTRect]? = nil,
-        intermediate: Bool = false
+        intermediate: Bool = false,
+        transfer: DropDestination? = nil,
+        validating isCurrent: (() -> Bool)? = nil,
+        rollbackValidating canRestore: (() -> Bool)? = nil,
+        revalidateBeforeEachWrite: Bool = false,
+        onFinalValidationFailure: (() -> Void)? = nil
     ) throws {
         guard !placements.isEmpty else { return }
         let known = currentFrames ?? rollbackFrames
@@ -967,6 +1120,7 @@ public final class WindowCoordinator {
         }
         try system.withFrameWriteBatch {
             var attempted: [WindowID] = []
+            var failedWindowID: WindowID?
             var generationsWritten: [WindowID: UInt64] = [:]
             do {
                 // Shrink before growing, so a growing window never covers a
@@ -990,26 +1144,70 @@ public final class WindowCoordinator {
                     generationsWritten[placement.windowID] = generation
                     expect(placement.frame, for: placement.windowID, generation: generation)
                 }
-                let result = system.setFrames(ordered, knownCurrentFrames: known)
-                attempted = result.attempted
-                if let failure = result.failure {
-                    for id in Set(ordered.map(\.windowID)).subtracting(attempted).union([failure.windowID]) {
-                        if let generation = generationsWritten[id] { cancelExpectedMutation(for: id, generation: generation) }
+                var passes = [ordered]
+                if let transfer, let display = system.displays().first(where: { $0.id == transfer.displayID }) {
+                    // Make room before crossing, then close the source gap.
+                    // A transfer can shrink too, so shrink-first alone cannot
+                    // order it safely against destination applications.
+                    let peers = ordered.filter { $0.windowID != transfer.sourceWindowID }
+                    passes = [
+                        peers.filter { PlacementBounds.isContained($0.frame, in: display.visibleFrame) },
+                        ordered.filter { $0.windowID == transfer.sourceWindowID },
+                        peers.filter { !PlacementBounds.isContained($0.frame, in: display.visibleFrame) }
+                    ]
+                }
+                // Only callers with changing ownership opt into serial dispatch.
+                // Preflight the entire batch before its first write, including
+                // responsiveness and current AX movability in the adapter.
+                if revalidateBeforeEachWrite {
+                    try system.preflightFrameWrites(Set(ordered.map(\.windowID)))
+                    passes = passes.flatMap { $0.map { [$0] } }
+                }
+                for pass in passes where !pass.isEmpty {
+                    guard isCurrent?() != false else {
+                        throw WindowSystemError.operationFailed("The desktop changed during placement.")
                     }
-                    // The failing window is read before rollback below. A
-                    // batch that failed before writing has nothing to undo.
-                    if attempted.contains(failure.windowID) {
-                        attempted.removeAll { $0 == failure.windowID }
-                        attempted.append(failure.windowID)
+                    #if DEBUG
+                    if arrivalTrace.isEnabled { for placement in pass { arrivalTrace.willWrite(placement) } }
+                    #endif
+                    let result = system.setFrames(pass, knownCurrentFrames: known)
+                    attempted.append(contentsOf: result.attempted)
+                    if let failure = result.failure {
+                        failedWindowID = failure.windowID
+                        if let generation = generationsWritten[failure.windowID] {
+                            cancelExpectedMutation(for: failure.windowID, generation: generation)
+                        }
+                        // Read the failing window before rolling back earlier passes.
+                        if attempted.contains(failure.windowID) {
+                            attempted.removeAll { $0 == failure.windowID }
+                            attempted.append(failure.windowID)
+                        }
+                        throw failure.error
                     }
-                    throw failure.error
+                    if let transfer, pass.first?.windowID == transfer.sourceWindowID,
+                       let target = pass.first?.frame {
+                        // Size readback can lag or settle in cell steps. Only
+                        // the origin must land before the source gives up room.
+                        let moved = try snapshots(ids: [transfer.sourceWindowID]).first
+                        guard let moved,
+                              abs(moved.frame.minX - target.minX) <= 2,
+                              abs(moved.frame.minY - target.minY) <= 2 else {
+                            throw WindowSystemError.operationFailed("The window did not move where it was asked to.")
+                        }
+                    }
+                }
+                guard isCurrent?() != false else {
+                    onFinalValidationFailure?()
+                    throw WindowSystemError.operationFailed("The desktop changed during placement.")
                 }
             } catch {
+                for id in Set(placements.map(\.windowID)).subtracting(attempted) {
+                    if let generation = generationsWritten[id] { cancelExpectedMutation(for: id, generation: generation) }
+                }
                 // A size write can succeed before a position write fails, and
                 // a concurrent batch can fail in several applications. Read
                 // every attempted window; an unread one gets the full
                 // restoring write sequence.
-                let failedID = attempted.last
                 let actualFrames = Dictionary(
                     ((try? snapshots(ids: Set(attempted))) ?? []).map { ($0.id, $0.frame) },
                     uniquingKeysWith: { first, _ in first }
@@ -1024,8 +1222,11 @@ public final class WindowCoordinator {
                 }
                 var rollbackFailures: [WindowID] = []
                 for id in attempted.reversed() {
+                    guard canRestore?() ?? isCurrent?() ?? true else {
+                        throw DegradedApplyError(message: "The desktop changed before the previous layout could be fully restored. Use Repair Layout.")
+                    }
                     guard let frame = rollbackFrames[id] else { continue }
-                    if id == failedID, actualFrames[id]?.approximatelyEquals(frame, tolerance: 0.01) == true { continue }
+                    if id == failedWindowID, actualFrames[id]?.approximatelyEquals(frame, tolerance: 0.01) == true { continue }
                     do {
                         try apply(frame, to: id, knownCurrentFrame: actualFrames[id])
                     } catch {
@@ -1057,10 +1258,16 @@ public final class WindowCoordinator {
     }
 
     private func snapshots(ids: Set<WindowID>) throws -> [WindowSnapshot] {
+        let snapshots: [WindowSnapshot]
         if let targeted = system as? any TargetedWindowSystem {
-            return try targeted.windowSnapshots(ids: ids)
+            snapshots = try targeted.windowSnapshots(ids: ids)
+        } else {
+            snapshots = try system.visibleWindows().filter { ids.contains($0.id) }
         }
-        return try system.visibleWindows().filter { ids.contains($0.id) }
+        #if DEBUG
+        arrivalTrace.observe(snapshots)
+        #endif
+        return snapshots
     }
 
     @discardableResult
@@ -1178,49 +1385,79 @@ extension WindowCoordinator {
     ///   crossed to another display. It is restored to this display anyway.
     /// - Parameter steppedWindowIDs: Windows known to resize in steps. Each
     ///   counts as restored within one step of its frame.
+    /// - Parameter ignoresRequestCancellation: A separate desktop-owner predicate
+    ///   authorizes restoring a cancelled request. Every write still checks it.
     public func restoreTabbedFrames(
         _ frames: [WindowID: BTRect], required: Set<WindowID>, on displayID: DisplayID,
-        exempting draggedWindowID: WindowID? = nil, steppedWindowIDs: Set<WindowID> = [],
+        exempting draggedWindowID: WindowID? = nil, displayDestinations: [WindowID: DisplayID] = [:],
+        steppedWindowIDs: Set<WindowID> = [],
+        onRollbackFailure: (@MainActor () -> Void)? = nil,
+        ignoresRequestCancellation: Bool = false,
         isCurrent: @MainActor () -> Bool
     ) async -> WindowMutationOutcome {
-        let degraded = WindowMutationOutcome.degraded(reason: "Tabbed could not fully restore the previous arrangement. Use Repair Tabbed or switch to Native.")
-        guard isCurrent(), !Task.isCancelled,
-              let display = system.displays().first(where: { $0.id == displayID }),
+        let degraded = WindowMutationOutcome.degraded(reason: "Tabbed could not fully restore the previous arrangement. Use Repair Layout or switch to Manual.")
+        guard isCurrent(), (ignoresRequestCancellation || !Task.isCancelled) else { return degraded }
+        let displays = Dictionary(uniqueKeysWithValues: system.displays().map { ($0.id, $0) })
+        guard let display = displays[displayID],
+              displayDestinations.values.allSatisfy({ displays[$0] != nil }),
               let snapshots = try? snapshots(ids: Set(frames.keys)) else { return degraded }
         // Size hints can change after a resize. Bypass only those hints;
         // never write an unreadable, ineligible, or relocated participant.
         // A fixed-size window can be restored when its saved frame keeps its size.
         let current = Dictionary(snapshots.filter { snapshot in
-            snapshot.isEligible && (snapshot.displayID == displayID || snapshot.id == draggedWindowID)
+            snapshot.isEligible && (snapshot.displayID == displayID || snapshot.id == draggedWindowID || displayDestinations[snapshot.id] != nil)
                 && (snapshot.constraints.isResizable || frames[snapshot.id].map {
                     abs($0.size.width - snapshot.frame.size.width) <= 1 && abs($0.size.height - snapshot.frame.size.height) <= 1
                 } == true)
-                && frames[snapshot.id].map { PlacementBounds.isReachable($0, in: display.visibleFrame) } == true
+                && frames[snapshot.id].map { frame in
+                    PlacementBounds.isReachable(frame,
+                        in: (displayDestinations[snapshot.id].flatMap { displays[$0] } ?? display).visibleFrame)
+                } == true
         }.map { ($0.id, $0.frame) }, uniquingKeysWith: { first, _ in first })
-        guard isCurrent(), !Task.isCancelled, !required.isEmpty,
+        guard isCurrent(), (ignoresRequestCancellation || !Task.isCancelled), !required.isEmpty,
               required.isSubset(of: Set(current.keys)) else { return degraded }
+        var failedWrite = false
+        var observedMismatch = false
+        func incompleteRestoration() -> WindowMutationOutcome {
+            // A mismatching sample can still settle. Cancellation hands it to
+            // newer work; only a rejected write proves failure at that point.
+            if failedWrite || (observedMismatch && (ignoresRequestCancellation || !Task.isCancelled)) {
+                onRollbackFailure?()
+            }
+            return degraded
+        }
         system.withFrameWriteBatch {
             for (id, frame) in frames.sorted(by: { $0.key < $1.key })
                 where current[id] != nil && current[id]?.approximatelyEquals(frame, tolerance: 1) != true {
-                guard isCurrent(), !Task.isCancelled else { break }
-                try? apply(frame, to: id, knownCurrentFrame: current[id])
+                guard isCurrent(), (ignoresRequestCancellation || !Task.isCancelled) else { break }
+                do { try apply(frame, to: id, knownCurrentFrame: current[id]) }
+                catch { failedWrite = true }
             }
         }
         for attempt in 0..<4 {
-            guard isCurrent(), !Task.isCancelled,
+            guard isCurrent(), (ignoresRequestCancellation || !Task.isCancelled),
                   let restored = try? self.snapshots(ids: required),
-                  isCurrent(), !Task.isCancelled else { return degraded }
+                  isCurrent(), (ignoresRequestCancellation || !Task.isCancelled) else { return incompleteRestoration() }
             if required.allSatisfy({ id in
                 guard let frame = frames[id] else { return false }
                 return restored.contains { $0.id == id && $0.isEligible
-                    && ($0.displayID == displayID || $0.id == draggedWindowID)
+                    && ($0.displayID == (displayDestinations[id] ?? displayID) || $0.id == draggedWindowID)
                     && Self.isRestored($0.frame, to: frame, stepped: steppedWindowIDs.contains(id)) }
             }) { return .applied }
+            observedMismatch = true
             guard attempt < 3 else { break }
-            do { try await Task.sleep(for: .milliseconds(50)) }
-            catch { return degraded }
+            do {
+                if ignoresRequestCancellation {
+                    // Desktop ownership authorizes rollback after the forward
+                    // task is cancelled. Its bounded wait must still advance.
+                    let clock = self.clock
+                    try await Task { try await clock.sleep(for: .milliseconds(50)) }.value
+                } else {
+                    try await clock.sleep(for: .milliseconds(50))
+                }
+            } catch { return incompleteRestoration() }
         }
-        return degraded
+        return incompleteRestoration()
     }
 
     /// A bounded frame/order transaction. Windows remain on-screen and are
@@ -1240,6 +1477,8 @@ extension WindowCoordinator {
     /// - Parameter destination: The display a window drag dropped on. Its
     ///   source window is a participant even when its center crossed to
     ///   another display during the gesture.
+    /// - Parameter onRollbackFailure: Reports incomplete recovery separately
+    ///   from cancellation that hands placement to newer work.
     public func applyTabbed(
         placements allPlacements: [Placement],
         rollbackFrames: [WindowID: BTRect]? = nil,
@@ -1249,13 +1488,19 @@ extension WindowCoordinator {
         selected: [WindowID],
         previousSelected: [WindowID],
         focus: WindowID?,
+        allowingRaise: @MainActor () -> Bool = { true },
         focusAlreadyRequested: Bool = false,
         focusCheckpoint: WindowID? = nil,
         destination: DropDestination? = nil,
+        displayDestinations: [WindowID: DisplayID] = [:],
         onSizeMismatch: (@MainActor (WindowID, BTRect, BTRect, BTRect) -> Void)? = nil,
         acceptsSteppedGrowth: Bool = false,
         onApplied: (@MainActor ([WindowID: BTRect]) -> Void)? = nil,
         steppedWindowIDs: Set<WindowID> = [],
+        onRollbackFailure: (@MainActor () -> Void)? = nil,
+        rollbackValidating canRestore: (@MainActor () -> Bool)? = nil,
+        revalidateBeforeEachWrite: Bool = false,
+        onFinalValidationFailure: (() -> Void)? = nil,
         isCurrent: @MainActor () -> Bool
     ) async -> WindowMutationOutcome {
         let placements = required.map { ids in allPlacements.filter { ids.contains($0.windowID) } } ?? allPlacements
@@ -1269,13 +1514,14 @@ extension WindowCoordinator {
         let currentFrames: [WindowID: BTRect]
         let participantDisplayID: DisplayID?
         var participantProcesses: [WindowID: Int32] = [:]
+        var baselineDisplays: [WindowID: DisplayID] = [:]
         // A selection that raised its tab early knows the focus before it.
         let oldFocus = focusCheckpoint ?? (try? system.focusedWindow()?.id)
         do {
             guard ids == Set(placements.map(\.windowID)) else {
                 throw WindowSystemError.operationFailed("One or more selected tabs are no longer available.")
             }
-            try validate(placements, sizeTolerance: 0.001, destination: destination)
+            try validate(placements, sizeTolerance: 0.001, destination: destination, displayDestinations: displayDestinations)
             let participants = try snapshots(ids: ids)
             let requestedSizes = Dictionary(uniqueKeysWithValues: placements.map { ($0.windowID, $0.frame.size) })
             guard isCurrent(), !Task.isCancelled,
@@ -1290,9 +1536,12 @@ extension WindowCoordinator {
                   }) else {
                 throw WindowSystemError.operationFailed("The Tabbed participants changed.")
             }
-            participantDisplayID = rollbackDisplayID ?? destination?.displayID ?? participants.first?.displayID
+            participantDisplayID = rollbackDisplayID ?? destination?.displayID
+                ?? participants.first(where: { displayDestinations[$0.id] == nil })?.displayID
+                ?? participants.first.map { displayDestinations[$0.id] ?? $0.displayID }
             participantProcesses = Dictionary(participants.map { ($0.id, $0.processIdentifier) }) { first, _ in first }
             currentFrames = Dictionary(uniqueKeysWithValues: participants.map { ($0.id, $0.frame) })
+            baselineDisplays = Dictionary(uniqueKeysWithValues: participants.filter { displayDestinations[$0.id] != nil }.map { ($0.id, $0.displayID) })
             // A resize has already changed real frames. Keep its verified
             // checkpoint for refusal evidence and rollback, not that partial
             // arrangement. Writes still compare against the current frames.
@@ -1301,7 +1550,7 @@ extension WindowCoordinator {
             if let rollbackFrames, let rollbackDisplayID {
                 let restored = await restoreTabbedFrames(rollbackFrames, required: ids.union(rollbackRequired ?? []), on: rollbackDisplayID,
                                                          exempting: destination?.sourceWindowID, steppedWindowIDs: steppedWindowIDs,
-                                                         isCurrent: isCurrent)
+                                                         onRollbackFailure: onRollbackFailure, isCurrent: isCurrent)
                 if case .degraded = restored { return restored }
             }
             return .failed(reason: error.localizedDescription)
@@ -1317,6 +1566,10 @@ extension WindowCoordinator {
         let changedBestEffort = bestEffort.filter { placement in
             bestEffortCurrent[placement.windowID].map { !$0.approximatelyEquals(placement.frame, tolerance: 0.5) } ?? false
         }
+        guard isCurrent(), !Task.isCancelled else {
+            return rollbackFrames == nil ? .failed(reason: "The desktop changed.")
+                : .degraded(reason: "The desktop changed before Tabbed could restore its windows.")
+        }
         var touched = false
         do {
             let changed = placements.filter { !(currentFrames[$0.windowID]?.approximatelyEquals($0.frame, tolerance: 0.5) ?? false) }
@@ -1324,18 +1577,34 @@ extension WindowCoordinator {
             // A window that resizes in steps settles within one step of its
             // request; that size is its step, not a minimum to learn.
             try system.withSteppedSizes { try system.withFrameWriteBatch {
-                try applyAtomically(changed, rollbackFrames: baseline, currentFrames: currentFrames)
+                try withoutActuallyEscaping(isCurrent) { validation in
+                    try applyAtomically(changed, rollbackFrames: baseline, currentFrames: currentFrames,
+                                        validating: { validation() && !Task.isCancelled }, rollbackValidating: canRestore,
+                                        revalidateBeforeEachWrite: revalidateBeforeEachWrite, onFinalValidationFailure: onFinalValidationFailure)
+                }
                 for placement in changedBestEffort {
+                    guard isCurrent(), !Task.isCancelled else {
+                        throw WindowSystemError.operationFailed("The desktop changed during Tabbed placement.")
+                    }
                     try? apply(placement.frame, to: placement.windowID, knownCurrentFrame: bestEffortCurrent[placement.windowID])
                 }
             } }
             // Focus is requested only when it can change something. A raise
             // of any window of the front application takes focus from its
             // popup, which then closes, so no pane raises a window of it.
+            guard isCurrent(), !Task.isCancelled else {
+                if canRestore?() == true {
+                    throw WindowSystemError.operationFailed("The Tabbed request ended before placement finished.")
+                }
+                return touched ? .degraded(reason: "The desktop changed during Tabbed placement. Return to that desktop and use Repair Layout.")
+                    : .failed(reason: "The desktop changed.")
+            }
             let popupProcess = popupHoldingProcess(in: tabSystem)
             let heldByPopup = { (id: WindowID) in popupProcess != nil && participantProcesses[id] == popupProcess }
-            let focus = focus.flatMap { heldByPopup($0) ? nil : $0 }
+            let permitsRaise = allowingRaise()
+            let focus = permitsRaise ? focus.flatMap { heldByPopup($0) ? nil : $0 } : nil
             if let focus {
+                guard isCurrent(), !Task.isCancelled else { throw WindowSystemError.operationFailed("The desktop changed.") }
                 touched = true
                 // A selection may already have requested focus when it was
                 // pressed. Ask again only for the window order, so a slow
@@ -1346,13 +1615,15 @@ extension WindowCoordinator {
                     && tabbedWindowHasFocus(focus, process: participantProcesses[focus], in: tabSystem)
                 try tabSystem.raiseWindow(focus, activate: !focusAlreadyRequested && !keepsFocus)
             }
-            for id in selected where id != focus && !heldByPopup(id) {
+            for id in selected where permitsRaise && id != focus && !heldByPopup(id) {
+                guard isCurrent(), !Task.isCancelled else { throw WindowSystemError.operationFailed("The desktop changed.") }
                 touched = true
                 try tabSystem.raiseWindow(id, activate: false)
             }
             // Activation already raised the focused tab. Raise it again only
             // when ordering another pane put a window in front of it.
             if let focus, selected.contains(where: { $0 != focus }) {
+                guard isCurrent(), !Task.isCancelled else { throw WindowSystemError.operationFailed("The desktop changed.") }
                 try tabSystem.raiseWindow(focus, activate: false)
             }
             var previousFrames: [WindowID: BTRect] = [:]
@@ -1361,7 +1632,7 @@ extension WindowCoordinator {
             // A size refusal is reported only once the minimum-size learner
             // can confirm a kept size, so an application that applies a size
             // late is not reported as refusing it.
-            let written = ContinuousClock.now
+            let written = clock.now
             // Timed at the sample read, so a stall after the read does not
             // age the sample.
             var sampledAt = written
@@ -1373,9 +1644,12 @@ extension WindowCoordinator {
             // so accepted frames keep waiting for focus instead of rolling back.
             for attempt in 0..<12 {
                 guard isCurrent(), !Task.isCancelled else {
-                    return touched ? .degraded(reason: "The desktop changed during Tabbed placement. Return to that desktop and use Repair Tabbed.") : .failed(reason: "The desktop changed.")
+                    if canRestore?() == true {
+                        throw WindowSystemError.operationFailed("The Tabbed request ended before placement finished.")
+                    }
+                    return touched ? .degraded(reason: "The desktop changed during Tabbed placement. Return to that desktop and use Repair Layout.") : .failed(reason: "The desktop changed.")
                 }
-                sampledAt = ContinuousClock.now
+                sampledAt = clock.now
                 let actual = Dictionary(uniqueKeysWithValues: try snapshots(ids: ids).map { ($0.id, $0.frame) })
                 // An application that resizes in steps settles just short of
                 // the request. Once that frame is stable it is accepted; the
@@ -1415,7 +1689,7 @@ extension WindowCoordinator {
                     }
                     previousHiddenFrames = Dictionary(uniqueKeysWithValues: hiddenFrames.map { ($0.id, $0.frame) })
                     if unsettledHidden, !refusalCanSettle(attempt) {
-                        try await Task.sleep(for: .milliseconds(50))
+                        try await clock.sleep(for: .milliseconds(50))
                         continue
                     }
                     expectSteppedFrames(placements, actual: actual, allowsGrowth: acceptsSteppedGrowth)
@@ -1430,7 +1704,7 @@ extension WindowCoordinator {
                         onApplied?(actual)
                         return .applied
                     }
-                    try await Task.sleep(for: .milliseconds(50))
+                    try await clock.sleep(for: .milliseconds(50))
                     continue
                 }
                 // Stable size refusals in either axis can inform a retry.
@@ -1448,23 +1722,32 @@ extension WindowCoordinator {
                 }
                 previousFrames = actual
                 if settled { break }
-                try await Task.sleep(for: .milliseconds(50))
+                try await clock.sleep(for: .milliseconds(50))
             }
-            throw WindowSystemError.operationFailed("A window did not accept its Tabbed size. Choose a larger pane or try Repair Tabbed.")
+            throw WindowSystemError.operationFailed("A window did not accept its Tabbed size. Choose a larger pane or try Repair Layout.")
         } catch {
-            guard isCurrent() else { return .degraded(reason: "The desktop changed before Tabbed could restore its windows.") }
+            if error is DegradedApplyError { onRollbackFailure?() }
+            guard canRestore?() ?? isCurrent() else {
+                if !Task.isCancelled, !(error is CancellationError) { onRollbackFailure?() }
+                return .degraded(reason: "The desktop changed before Tabbed could restore its windows.")
+            }
             guard let participantDisplayID else { return .failed(reason: error.localizedDescription) }
             let restoration = await restoreTabbedFrames(
                 baseline.merging(bestEffortBaseline) { before, _ in before }, required: ids.union(rollbackRequired ?? []),
-                on: participantDisplayID, exempting: destination?.sourceWindowID, steppedWindowIDs: steppedWindowIDs,
-                isCurrent: isCurrent)
-            guard isCurrent(), !Task.isCancelled else {
+                on: participantDisplayID, exempting: destination?.sourceWindowID, displayDestinations: baselineDisplays, steppedWindowIDs: steppedWindowIDs,
+                onRollbackFailure: onRollbackFailure, ignoresRequestCancellation: canRestore != nil,
+                isCurrent: { canRestore?() ?? isCurrent() })
+            guard canRestore?() ?? isCurrent(), (canRestore != nil || !Task.isCancelled) else {
+                if !restoration.isApplied, !Task.isCancelled, !(error is CancellationError) { onRollbackFailure?() }
                 return .degraded(reason: "The desktop changed before Tabbed could restore its windows.")
             }
             var failed = !restoration.isApplied
             if touched {
-                for id in previousSelected { do { try tabSystem.raiseWindow(id, activate: false) } catch { failed = true } }
-                if let oldFocus, ids.contains(oldFocus) || previousSelected.contains(oldFocus) {
+                for id in previousSelected where allowingRaise() {
+                    guard canRestore?() ?? isCurrent(), (canRestore != nil || !Task.isCancelled) else { failed = true; break }
+                    do { try tabSystem.raiseWindow(id, activate: false) } catch { failed = true }
+                }
+                if (canRestore?() ?? isCurrent()), (canRestore != nil || !Task.isCancelled), allowingRaise(), let oldFocus, ids.contains(oldFocus) || previousSelected.contains(oldFocus) {
                     // Reactivate only if focus moved, so a rollback never takes
                     // focus from BetterTile or an app it cannot read.
                     let needsFocus = (try? system.focusedWindow()?.id) != oldFocus
@@ -1475,7 +1758,8 @@ extension WindowCoordinator {
             if baseline.contains(where: { id, frame in !restored.contains {
                 $0.id == id && Self.isRestored($0.frame, to: frame, stepped: steppedWindowIDs.contains(id))
             } }) { failed = true }
-            return failed ? .degraded(reason: "Tabbed could not fully restore the previous arrangement. Use Repair Tabbed or switch to Native.") : .failed(reason: error.localizedDescription)
+            if failed { onRollbackFailure?() }
+            return failed ? .degraded(reason: "Tabbed could not fully restore the previous arrangement. Use Repair Layout or switch to Manual.") : .failed(reason: error.localizedDescription)
         }
     }
 
@@ -1518,7 +1802,7 @@ extension WindowCoordinator {
         for id in ids {
             do { try tabSystem.raiseWindow(id, activate: false) } catch { failed = true }
         }
-        return failed ? .failed(reason: "Tabbed could not restore window order. Select the tab again or use Repair Tabbed.") : .applied
+        return failed ? .failed(reason: "Tabbed could not restore window order. Select the tab again or use Repair Layout.") : .applied
     }
 
     /// Raises a selected tab and gives it keyboard focus.

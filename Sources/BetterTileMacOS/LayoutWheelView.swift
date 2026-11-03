@@ -165,7 +165,7 @@ public struct LayoutWheelSlot: Equatable, Sendable {
             self = .empty
         case .repairBento:
             self.init(
-                label: "Repair Bento",
+                label: "Repair Layout",
                 symbolName: "arrow.triangle.2.circlepath",
                 isEmpty: false,
                 isAvailable: isAvailable

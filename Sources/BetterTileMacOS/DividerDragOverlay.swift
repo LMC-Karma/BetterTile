@@ -53,6 +53,7 @@ final class DividerDragOverlay {
 
     /// A fade that finishes after a new gesture began must not hide it.
     private var presentationGeneration = 0
+    private(set) var fadeTask: Task<Void, Never>?
 
     /// True from a fade's start until the overlay ends. The panel is still
     /// visible meanwhile, but a new gesture must start a fresh presentation.
@@ -175,7 +176,7 @@ final class DividerDragOverlay {
         }
         // End after the fade on the main actor; animation completion
         // handlers are not guaranteed to run promptly.
-        Task { @MainActor [weak self] in
+        fadeTask = Task { @MainActor [weak self] in
             try? await Task.sleep(for: .seconds(duration))
             guard let self, self.presentationGeneration == generation else { return }
             self.end()

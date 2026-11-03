@@ -3,6 +3,44 @@ import Testing
 import Dispatch
 @testable import BetterTileApp
 
+@Suite(.appTestApplication, .timeLimit(.minutes(1))) @MainActor
+struct ManualWindowTestTimeTests {
+    @Test func aJoinWithoutProgressReportsFailureAndReturns() async throws {
+        let system = makeManualWindowSystem()
+        let clock = try #require(system.manualClock)
+        let task = Task {
+            try? await clock.sleep(for: .seconds(1_000))
+            return 42
+        }
+        defer { task.cancel() }
+        try #require(await clock.waitForSleepers(count: 1, timeout: .seconds(45)))
+        var result: Int?
+        await withKnownIssue("The virtual-time budget must report missing progress") {
+            result = await system.join(task, budget: .milliseconds(5))
+        }
+        #expect(result == nil)
+        #expect(task.isCancelled)
+        #expect(clock.pendingSleepCount == 0)
+    }
+
+    @Test func driveCancelsItsOwnedSleeperWhenItsBudgetExpires() async throws {
+        let system = makeManualWindowSystem()
+        let clock = try #require(system.manualClock)
+        var started = false
+        var result: Int?
+        await withKnownIssue("The virtual-time budget must report missing progress") {
+            result = await system.drive(budget: .milliseconds(5)) {
+                started = true
+                try? await clock.sleep(for: .seconds(1_000))
+                return 42
+            }
+        }
+        #expect(result == nil)
+        #expect(started)
+        #expect(clock.pendingSleepCount == 0)
+    }
+}
+
 @Test(.appTestApplication, .timeLimit(.minutes(1))) @MainActor
 func manualWindowWaitAdvancesOnlyToRegisteredDeadlines() async throws {
     let system = makeManualWindowSystem()

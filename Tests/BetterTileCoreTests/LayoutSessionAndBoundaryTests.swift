@@ -728,3 +728,30 @@ private func testWindow(_ id: String, x: Double, y: Double = 0, width: Double = 
     WindowSnapshot(id: WindowID(rawValue: id), processIdentifier: 1,
         frame: BTRect(x: x, y: y, width: width, height: height), displayID: sessionDisplay)
 }
+
+@Test func degradedRecoverySuspendsStoredOwnerWithoutReplacingNewerState() throws {
+    var store = LayoutSessionStore()
+    let first = NativeSpaceID(rawValue: 1), second = NativeSpaceID(rawValue: 2)
+    let original = store.select(displayID: sessionDisplay, nativeSpaceID: first, defaultMode: .bento)
+    let window = WindowID(rawValue: "newer-window")
+    let frame = BTRect(x: 50, y: 20, width: 300, height: 400)
+    store.update(sessionDisplay) {
+        $0.mode = .manual
+        $0.windowIDs = [window]
+        $0.lastObservedFrames = [window: frame]
+    }
+    let expected = try #require(store.session(for: sessionDisplay))
+    let active = store.select(displayID: sessionDisplay, nativeSpaceID: second, defaultMode: .tabbed)
+    store.suspendAutomaticWrites(sessionID: original.id, on: sessionDisplay)
+    let suspended = try #require(store.allSessions(for: sessionDisplay).first { $0.id == original.id })
+    #expect(suspended.revision == expected.revision + 1)
+    #expect(suspended.mode == .manual)
+    #expect(suspended.windowIDs == [window])
+    #expect(suspended.lastObservedFrames == [window: frame])
+    #expect(store.session(for: sessionDisplay) == active)
+    store.suspendAutomaticWrites(sessionID: original.id, on: sessionDisplay)
+    #expect(store.allSessions(for: sessionDisplay).first { $0.id == original.id } == suspended)
+    store.removeMissingNativeSpaces([sessionDisplay: [second]])
+    store.suspendAutomaticWrites(sessionID: original.id, on: sessionDisplay)
+    #expect(store.allSessions(for: sessionDisplay) == [active])
+}

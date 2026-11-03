@@ -449,8 +449,12 @@ enum DividerTestEnding: CaseIterable {
     case commit, rapidCommit, cancel, participantLoss, stationaryParticipantLoss, failedAcquisition
 }
 
+/// The gesture installs Escape monitors and orders real panels, so the test holds the MacOS UI lease.
+/// It injects the Escape monitors and the display link: a real Escape pressed anywhere on the machine
+/// reaches a real monitor while another test runs `NSApplication.run()`, and cancels every gesture in
+/// flight. The test also never suspends, so no other test interleaves with it.
 @Test(.macOSTestApplication, .macOSUI, arguments: [ResizeFeedbackMode.ghost, .live], DividerTestEnding.allCases)
-@MainActor func dividerGestureCommitsOrRollsBackWithTheFakeWindowSystem(feedback: ResizeFeedbackMode, ending: DividerTestEnding) async throws {
+@MainActor func dividerGestureCommitsOrRollsBackWithTheFakeWindowSystem(feedback: ResizeFeedbackMode, ending: DividerTestEnding) throws {
     _ = NSApplication.shared
     let system = FakeWindowSystem()
     let bounds = BTRect(x: -10_000, y: -10_000, width: 800, height: 600)
@@ -470,7 +474,15 @@ enum DividerTestEnding: CaseIterable {
     config.resizeFeedbackMode = feedback
     config.bentoInnerGap = 12
     let coordinator = WindowCoordinator(system: system)
-    let controller = DividerOverlayController(coordinator: coordinator, configuration: config)
+    let displayTicks = ResizeDisplayLink(automatic: false)
+    let controller = DividerOverlayController(
+        coordinator: coordinator,
+        configuration: config,
+        displayTicks: displayTicks,
+        addGlobalKeyMonitor: { _ in NSObject() },
+        addLocalKeyMonitor: { _ in NSObject() },
+        removeKeyMonitor: { _ in }
+    )
     controller.bentoStateProvider = { _ in state }
     let boundaries = BentoBoundaryResolver().boundaries(state: state, windows: system.windows, displayID: display, bounds: bounds)
     let start = BTPoint(x: bounds.midX + 14, y: bounds.midY - 12)
@@ -488,7 +500,8 @@ enum DividerTestEnding: CaseIterable {
     let screen = try #require(NSScreen.screens.first)
     for delta in [20.0, 50.0] {
         controller.drag(to: CGPoint(x: start.x + delta, y: screen.frame.maxY - (start.y + delta)))
-        if ending != .rapidCommit { try await Task.sleep(for: .milliseconds(40)) }
+        // A display tick between samples, as the display link delivers it. A rapid release has none.
+        if ending == .commit || ending == .cancel { displayTicks.fire() }
     }
     if feedback == .ghost { #expect(system.frameWriteCounts.isEmpty) }
     if ending == .participantLoss {
@@ -508,6 +521,10 @@ enum DividerTestEnding: CaseIterable {
         #expect(system.windows.map(\.frame) == Array(original.dropLast()))
         return
     } else if ending == .cancel {
+        if feedback == .live {
+            #expect(system.windows.map(\.frame) != original, "Live ticks must move frames before cancellation tests rollback")
+            #expect(!system.frameWriteCounts.isEmpty)
+        }
         controller.cancelActiveGesture()
         #expect(system.windows.map(\.frame) == original)
     } else {
@@ -1708,4 +1725,134 @@ func aLiveDragContinuesAfterAnApplicationStopsAnsweringForAWhile(midWrite: Bool)
         now += step
         return now
     }
+}
+
+
+@Test(.macOSTestApplication) @MainActor func dividerCoalescesHoverAndFlushesBeforeAPress() throws {
+    _ = NSApplication.shared
+    let system = FakeWindowSystem()
+    let display = DisplayID(rawValue: "main")
+    let bounds = BTRect(x: -10000, y: -10000, width: 800, height: 600)
+    system.availableDisplays = [.init(id: display, frame: bounds, visibleFrame: bounds, isMain: true)]
+    system.windows = [
+        .init(id: .init(rawValue: "a-before"), processIdentifier: 1,
+              frame: .init(x: -10000, y: -10000, width: 400, height: 600), displayID: display),
+        .init(id: .init(rawValue: "a-after"), processIdentifier: 1,
+              frame: .init(x: -9600, y: -10000, width: 400, height: 600), displayID: display)
+    ]
+    let ticks = ResizeDisplayLink(automatic: false)
+    let controller = DividerOverlayController(coordinator: WindowCoordinator(system: system), configuration: .init(),
+        displayTicks: ResizeDisplayLink(automatic: false), hoverTicks: ticks)
+    controller.ownWindowsProvider = { [] }
+    defer { controller.hideAndCancel() }
+    let main = try #require(NSScreen.screens.first?.frame)
+    let point = CGPoint(x: -9600, y: main.maxY + 9700)
+    controller.mouseLocation = { point }
+    controller.refresh(boundaries: [boundary("a", axis: .vertical, coordinate: -9600, start: -10000, end: -9400)])
+    #expect(controller.visibleHandleView == nil)
+    for _ in 0..<1000 { controller.queueHover(at: point) }
+    #expect(controller.visibleHandleView == nil)
+    // The mouse-down path must consume the latest point even before the tick.
+    controller.beginHoveredGesture()
+    #expect(controller.isDragging)
+    ticks.fire()
+    #expect(controller.isDragging)
+    controller.hideAndCancel()
+    controller.queueHover(at: point)
+    ticks.fire()
+    #expect(controller.visibleHandleView?.window?.isVisible != true)
+}
+
+
+@Test(.macOSTestApplication) @MainActor func dividerTrackingExitWaitsForTheLatestHoverTick() throws {
+    _ = NSApplication.shared
+    let system = FakeWindowSystem()
+    let display = DisplayID(rawValue: "main")
+    let bounds = BTRect(x: -10000, y: -10000, width: 800, height: 600)
+    system.availableDisplays = [.init(id: display, frame: bounds, visibleFrame: bounds, isMain: true)]
+    system.windows = [
+        .init(id: .init(rawValue: "a-before"), processIdentifier: 1,
+              frame: .init(x: -10000, y: -10000, width: 400, height: 600), displayID: display),
+        .init(id: .init(rawValue: "a-after"), processIdentifier: 1,
+              frame: .init(x: -9600, y: -10000, width: 400, height: 600), displayID: display)
+    ]
+    let ticks = ResizeDisplayLink(automatic: false)
+    let controller = DividerOverlayController(coordinator: WindowCoordinator(system: system), configuration: .init(),
+        displayTicks: ResizeDisplayLink(automatic: false), hoverTicks: ticks)
+    controller.ownWindowsProvider = { [] }
+    defer { controller.hideAndCancel() }
+    let main = try #require(NSScreen.screens.first?.frame)
+    let point = CGPoint(x: -9600, y: main.maxY + 9700)
+    controller.mouseLocation = { point }
+    controller.refresh(boundaries: [boundary("a", axis: .vertical, coordinate: -9600, start: -10000, end: -9400)])
+    controller.queueHover(at: point)
+    ticks.fire()
+    let handle = try #require(controller.visibleHandleView)
+    #expect(handle.window?.isVisible == true)
+    controller.mouseLocation = { CGPoint(x: -12000, y: main.maxY + 12000) }
+    handle.onExit?()
+    #expect(handle.window?.isVisible == true)
+    ticks.fire()
+    #expect(handle.window?.isVisible == false)
+}
+
+
+@Test(.macOSTestApplication) @MainActor func dividerHoverBoundsFollowBoundaryAndWidthChanges() throws {
+    _ = NSApplication.shared
+    let system = FakeWindowSystem()
+    let controller = DividerOverlayController(coordinator: WindowCoordinator(system: system), configuration: .init(),
+        displayTicks: ResizeDisplayLink(automatic: false), hoverTicks: ResizeDisplayLink(automatic: false))
+    defer { controller.hideAndCancel() }
+    controller.refresh(boundaries: [boundary("a", axis: .vertical, coordinate: -10000, start: -10000, end: -9400)])
+    #expect(controller.hoverBounds?.contains(.init(x: -10000, y: -9700)) == true)
+    controller.refresh(boundaries: [boundary("b", axis: .vertical, coordinate: -10500, start: -10000, end: -9400)])
+    #expect(controller.hoverBounds?.contains(.init(x: -10000, y: -9700)) == false)
+    #expect(controller.hoverBounds?.contains(.init(x: -10500, y: -9700)) == true)
+    let width = try #require(controller.hoverBounds?.size.width)
+    controller.configuration.dividerThickness = 12
+    #expect(try #require(controller.hoverBounds?.size.width) > width)
+    controller.refresh(boundaries: [])
+    #expect(controller.hoverBounds == nil)
+}
+
+@MainActor
+@Test(.macOSTestApplication, arguments: [ResizeFeedbackMode.ghost, .live])
+func tabbedDividerKeepsFractionalRequestsAtTheMinimum(feedback: ResizeFeedbackMode) throws {
+    _ = NSApplication.shared
+    let system = FakeWindowSystem()
+    let bounds = BTRect(x: -10_000, y: -10_000, width: 999, height: 600)
+    let display = DisplayID(rawValue: "fractional-divider-display")
+    system.availableDisplays = [DisplaySnapshot(id: display, frame: bounds, visibleFrame: bounds, isMain: true)]
+    let left = WindowID(rawValue: "left"), right = WindowID(rawValue: "right")
+    let state = BentoLayoutState(root: .partition(BentoPartition(
+        axis: .vertical, weight: 399.5 / 999, first: .leaf(left), second: .leaf(right)
+    )), metrics: BentoLayoutMetrics(contentTopInset: 32))
+    system.windows = state.contentFrames(in: bounds).map {
+        WindowSnapshot(id: $0.key, processIdentifier: 1, frame: $0.value, displayID: display,
+                       constraints: WindowConstraints(minimumSize: BTSize(width: $0.key == right ? 499.5 : 1, height: 1)))
+    }
+    var configuration = BetterTileConfiguration()
+    configuration.resizeFeedbackMode = feedback
+    let ticks = ResizeDisplayLink(automatic: false)
+    let controller = DividerOverlayController(coordinator: WindowCoordinator(system: system),
+                                              configuration: configuration, displayTicks: ticks)
+    controller.bentoStateProvider = { _ in state }
+    var committedFrames: [WindowID: BTRect]?
+    controller.bentoStateChangedHandler = { _, _, frames, _ in committedFrames = frames }
+    let start = BTPoint(x: bounds.minX + 399.5, y: bounds.midY)
+    let interaction = try #require(DividerInteractionResolver.resolve(
+        at: start, in: state.boundaries(in: bounds, displayID: display), hitWidth: 18, adjacencyTolerance: 6
+    ))
+    let screen = try #require(NSScreen.screens.first)
+    let end = CGPoint(x: bounds.minX + 499.5, y: screen.frame.maxY - start.y)
+    controller.beginGesture(interaction: interaction, at: start)
+    defer { controller.hideAndCancel() }
+    controller.drag(to: end)
+    ticks.fire()
+    controller.end(at: end)
+    let frames = try #require(committedFrames)
+    #expect(frames[right]?.minX == bounds.minX + 499.5)
+    #expect(frames[right]?.size.width == 499.5)
+    #expect(frames[left]?.maxX == bounds.minX + 499.5)
+    #expect(system.windows.first { $0.id == right }?.frame == frames[right])
 }

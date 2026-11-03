@@ -21,7 +21,7 @@ public enum ApplicationRule: String, Codable, CaseIterable, Sendable, Identifiab
     public var title: String {
         switch self {
         case .manageNormally: "Manage Normally"
-        case .excludeFromBento: "Exclude from Bento"
+        case .excludeFromBento: "Exclude from Adaptive"
         case .ignoreEverywhere: "Ignore Everywhere"
         }
     }
@@ -31,7 +31,7 @@ public enum ApplicationRule: String, Codable, CaseIterable, Sendable, Identifiab
         case .manageNormally:
             "BetterTile arranges this app like any other."
         case .excludeFromBento:
-            "Keeps this app out of Bento layouts. Shortcuts and drag snapping still work when you use them on it."
+            "Keeps this app out of Adaptive layouts. Shortcuts and drag snapping still work when you use them on it."
         case .ignoreEverywhere:
             "BetterTile never moves or resizes this app."
         }

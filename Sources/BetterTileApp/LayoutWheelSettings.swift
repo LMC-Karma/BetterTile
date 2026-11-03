@@ -157,8 +157,8 @@ struct LayoutWheelSettings: View {
                         }
                     }
                 }
-                Section("Bento") {
-                    Text("Repair Bento").tag(Optional(LayoutWheelCommand.repairBento))
+                Section("Adaptive") {
+                    Text("Repair Layout").tag(Optional(LayoutWheelCommand.repairBento))
                 }
             }
             .labelsHidden()
@@ -182,7 +182,7 @@ struct LayoutWheelSettings: View {
         case .none:
             "Releasing here cancels without changing the window."
         case .repairBento:
-            "Available only while the window's display is in Bento mode."
+            "Available only while the window's display is in Adaptive mode."
         case .customZone:
             "This legacy assignment is no longer available."
         case .windowAction:

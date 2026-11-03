@@ -1,11 +1,12 @@
 import AppKit
 import Testing
+import BetterTileTestSupport
 @testable import BetterTileCore
 @testable import BetterTileMacOS
 
 @Test(.macOSTestApplication) func resultPillUsesCompactSuccessAndFailureContent() {
     let success = ResultPillFeedback.success()
-    let failure = ResultPillFeedback.failure("That Bento drop cannot satisfy the windows’ minimum sizes.")
+    let failure = ResultPillFeedback.failure("That Adaptive drop cannot satisfy the windows’ minimum sizes.")
 
     #expect(success.message == "Layout applied")
     #expect(success.symbolName == "checkmark")
@@ -13,7 +14,7 @@ import Testing
     #expect(failure.message == "Can’t fit this layout")
     #expect(failure.symbolName == "xmark")
     // The title does not say why, so the reason stays readable longer.
-    #expect(failure.detail == "That Bento drop cannot satisfy the windows’ minimum sizes.")
+    #expect(failure.detail == "That Adaptive drop cannot satisfy the windows’ minimum sizes.")
     #expect(failure.dismissDelay == 3)
 }
 
@@ -46,14 +47,22 @@ import Testing
     #expect(ResultPillFeedback.failure("The captured window is no longer available.").message == "Window changed")
     #expect(ResultPillFeedback.failure("BetterTile is set to ignore this app.").message == "App is ignored")
     #expect(ResultPillFeedback.failure("That layout cannot satisfy the windows' minimum sizes.").message == "Can’t fit this layout")
-    #expect(ResultPillFeedback.failure("Repair Bento is available only on a Bento desktop.").message == "Bento not active")
+    #expect(ResultPillFeedback.failure("Repair Layout is available only on an Adaptive desktop.").message == "Adaptive not active")
+    #expect(ResultPillFeedback.failure("Adaptive manages up to six windows. The others stay floating.").message == "Adaptive is full")
+    #expect(ResultPillFeedback.failure("Adaptive could not fit this window's minimum size.").message == "Can’t fit this layout")
     #expect(ResultPillFeedback.failure("Something unexpected happened.").message == "Couldn’t apply layout")
 }
 
 @Test(.macOSTestApplication) func resultPillNamesTabbedFailures() {
-    #expect(ResultPillFeedback.failure("A window did not accept its Tabbed size. Choose a larger pane or try Repair Tabbed.").message == "Window refused this size")
-    #expect(ResultPillFeedback.failure("Tabbed could not fully restore the previous arrangement. Use Repair Tabbed or switch to Native.").message == "Use Repair Tabbed")
-    #expect(ResultPillFeedback.failure("The desktop changed before Tabbed could restore its windows.").message == "Use Repair Tabbed")
+    #expect(ResultPillFeedback.failure("A window did not accept its Tabbed size. Choose a larger pane or try Repair Layout.").message == "Window refused this size")
+    #expect(ResultPillFeedback.failure("Tabbed could not fully restore the previous arrangement. Use Repair Layout or switch to Manual.").message == "Use Repair Layout")
+    #expect(ResultPillFeedback.failure("The desktop changed before Tabbed could restore its windows.").message == "Use Repair Layout")
+    let recovery = repairLayoutRecoverySuffix
+    let dividerFailure = ResultPillFeedback.failure("Adaptive could not adopt the settled divider." + recovery)
+    #expect(dividerFailure.message == "Couldn’t apply layout")
+    #expect(dividerFailure.detail == "Adaptive could not adopt the settled divider." + recovery)
+    #expect(ResultPillFeedback.failure("The desktop changed." + recovery).message == "Desktop changed")
+    #expect(ResultPillFeedback.failure("Tabbed could not restore window order. Use Repair Layout.").message == "Use Repair Layout")
     #expect(ResultPillFeedback.failure("The desktop changed.").message == "Desktop changed")
     #expect(ResultPillFeedback.failure("That window is no longer available.").message == "Window changed")
 }
@@ -152,7 +161,7 @@ private final class ResultPillTestPanel: NSPanel {
                                   visibleFrame: BTRect(x: 0, y: 0, width: 1920, height: 1050))
     let short = ResultPillLayout.frame(for: .failure("That layout cannot fit."), on: display)
     let long = ResultPillLayout.frame(for: .failure(
-        "Bento manages up to six windows. “Report” stays floating: drop it on a pane to swap, or switch this desktop to Tabbed."
+        "Adaptive manages up to six windows. “Report” stays floating: drop it on a pane to swap, or switch this desktop to Tabbed."
     ), on: display)
     #expect(short.size.height == 58)
     #expect(long.size.width == 520)
@@ -188,7 +197,7 @@ private final class ResultPillTestPanel: NSPanel {
 func resultPillDetailShortensTitlesToKeepItsSentence(title: String) {
     let ending = " stays floating: drop it on a pane to swap, or switch this desktop to Tabbed."
     let detail = ResultPillLayout.detail(naming: [title, title]) { titles in
-        "Bento manages up to six windows. “\(titles.joined(separator: "” and “"))”\(ending)"
+        "Adaptive manages up to six windows. “\(titles.joined(separator: "” and “"))”\(ending)"
     }
     #expect(detail.hasSuffix(ending))
     #expect(detail.contains("“\(title.prefix(3))"), "\(detail)")

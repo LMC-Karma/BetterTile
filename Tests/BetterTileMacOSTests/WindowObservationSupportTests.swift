@@ -208,6 +208,33 @@ func returningWindowIdentitiesPreserveBentoOrientationAndDragging(omittedByAcces
     #expect(cache.snapshots == nil)
 }
 
+@Test(.macOSTestApplication) func aCreatedWindowIsAddedToTheCachedInventoryOnlyWhileItIsValid() throws {
+    let displayID = DisplayID(rawValue: "display")
+    func window(_ name: String) -> WindowSnapshot {
+        WindowSnapshot(id: WindowID(rawValue: name), processIdentifier: 1,
+                       frame: BTRect(x: 0, y: 0, width: 400, height: 400), displayID: displayID)
+    }
+    var cache = WindowSnapshotCache()
+    #expect(cache.merge([window("new")], expectedWindowIDs: [window("new").id]) == nil)
+    cache.recordFullSweep([window("old")])
+    let mergeResult = cache.merge([window("new")], expectedWindowIDs: [window("new").id])
+    let added = try #require(mergeResult)
+    #expect(added.map(\.id.rawValue) == ["new", "old"])
+    cache.invalidate() // A window that opened, closed, or minimized since.
+    #expect(cache.merge([window("other")], expectedWindowIDs: [window("other").id]) == nil)
+}
+
+@Test(.macOSTestApplication) @MainActor func aRepeatedCreationCallbackKeepsItsTokenAndUnreadTokensStayBounded() {
+    let system = AccessibilityWindowSystem()
+    let element = AXUIElementCreateApplication(getpid())
+    let token = system.creationToken(for: element, processIdentifier: getpid())
+    #expect(system.creationToken(for: AXUIElementCreateApplication(getpid()), processIdentifier: getpid()) == token)
+    #expect(system.creationToken(for: AXUIElementCreateApplication(1), processIdentifier: 1) != token)
+    for pid in Int32(2)..<80 { _ = system.creationToken(for: AXUIElementCreateApplication(pid), processIdentifier: pid) }
+    #expect(system.creationElements.count <= 32)
+    #expect(system.readCreatedWindow(token: 999_999) == .unavailable)
+}
+
 @Test(.macOSTestApplication) func privateMinimumSizesAreValidatedAndMergedByGreatestDimension() {
     let result = MinimumSizeHintValidator.merged(
         defaultSize: BTSize(width: 120, height: 80),
@@ -354,4 +381,34 @@ func invalidAccessibilityElementConfirmsClosureOnlyAfterSuccessfulAbsentInventor
     #expect(!WindowFloatingClassifier.isTransientPopup(subrole: "AXFloatingWindow"))
     #expect(!WindowFloatingClassifier.isTransientPopup(subrole: "AXSystemFloatingWindow"))
     #expect(!WindowFloatingClassifier.isTransientPopup(subrole: nil))
+}
+
+@Test(.macOSTestApplication) func cachedPeerVisibilityKeepsOnScreenPeersDropsStaleOnesAndSkipsEmptyLists() {
+    let displayID = DisplayID(rawValue: "display")
+    func peer(_ name: String, pid: Int32) -> WindowSnapshot {
+        WindowSnapshot(id: WindowID(rawValue: name), processIdentifier: pid,
+                       frame: BTRect(x: 0, y: 0, width: 400, height: 400), displayID: displayID)
+    }
+    func record(_ id: CGWindowID, pid: pid_t, onscreen: Bool = true) -> WindowServerRecord {
+        WindowServerRecord(windowID: id, processIdentifier: pid, layer: 0,
+                           frame: BTRect(x: 0, y: 0, width: 400, height: 400), isOnscreen: onscreen)
+    }
+    let kept = peer("kept", pid: 1)
+    let stale = peer("stale", pid: 2)
+    var lookups = 0
+
+    // A peer still on screen is kept.
+    #expect(CachedPeerVisibility.allOnScreen(
+        peers: [kept], exactWindowIDs: [kept.id: 10],
+        windowServer: { _ in lookups += 1; return WindowServerIndex(records: [record(10, pid: 1)]) }))
+
+    // A peer that left the screen makes the cache stale, so the whole list is dropped.
+    #expect(!CachedPeerVisibility.allOnScreen(
+        peers: [kept, stale], exactWindowIDs: [kept.id: 10, stale.id: 20],
+        windowServer: { _ in WindowServerIndex(records: [record(10, pid: 1), record(20, pid: 2, onscreen: false)]) }))
+
+    // An empty list needs no WindowServer read.
+    #expect(CachedPeerVisibility.allOnScreen(
+        peers: [], exactWindowIDs: [:], windowServer: { _ in lookups += 1; return nil }))
+    #expect(lookups == 1)
 }

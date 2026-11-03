@@ -7,7 +7,7 @@ public enum TabbedPreset: String, Codable, CaseIterable, Sendable {
         case .single: "One Pane"
         case .columns: "Two Columns"
         case .rows: "Two Rows"
-        case .focus: "Bento — Focus"
+        case .focus: "Adaptive — Focus"
         case .grid: "Four Panes"
         }
     }

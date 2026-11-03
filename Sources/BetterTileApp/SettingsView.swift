@@ -426,7 +426,7 @@ private struct GeneralSettings: View {
                 .font(.callout)
                 Text(
                     "Window ▸ Move & Resize and its keyboard equivalents keep working. "
-                        + "Bento recognises where macOS put a window and adopts that arrangement, "
+                        + "Adaptive recognises where macOS put a window and adopts that arrangement, "
                         + "so you can tile with either and carry on with BetterTile's dividers."
                 )
                 .font(.system(size: 12))
@@ -434,7 +434,7 @@ private struct GeneralSettings: View {
                 Text(
                     "Dragging is the one place they overlap. macOS and BetterTile both interpret a drag to a screen edge, "
                         + "so pick one: leave BetterTile Drag Snapping on, or turn it off and use macOS's edge tiling. "
-                        + "Bento adopts the result either way."
+                        + "Adaptive adopts the result either way."
                 )
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
@@ -639,7 +639,7 @@ struct WindowLayoutSettings: View {
                     }
                 }
                 Text(
-                    "Applied each time a desktop is left with a single window. After that the window "
+                    "Applied only when an Adaptive desktop is left with a single window. After that the window "
                         + "keeps whatever size you give it, until another window opens or you repair the layout."
                 )
                 .font(.system(size: 12))
@@ -716,16 +716,16 @@ struct WindowLayoutSettings: View {
                 )
                 Text(
                     "When windows share an edge, resizing one adjusts its neighbor. "
-                        + "Available in Native mode only."
+                        + "Available in Manual mode only."
                 )
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
                 Picker("Window feedback", selection: configurationBinding(\.resizeFeedbackMode)) {
-                    Text("Ghost Preview").tag(ResizeFeedbackMode.ghost)
+                    Text("Resize Preview").tag(ResizeFeedbackMode.ghost)
                     Text("Live Resize").tag(ResizeFeedbackMode.live)
                 }
                 .pickerStyle(.segmented)
-                Text("Controls shared dividers in Native, Bento, and Tabbed.")
+                Text("Controls shared dividers in Manual, Adaptive, and Tabbed.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                 HStack {
@@ -753,7 +753,7 @@ struct WindowLayoutSettings: View {
                 .padding(.vertical, 8)
             }
 
-            Section("Bento Behavior") {
+            Section("Adaptive Behavior") {
                 Picker("New window side", selection: configurationBinding(\.bentoNewWindowSide)) {
                     Text("Automatic").tag(BentoNewWindowSide.automatic)
                     Text("Left").tag(BentoNewWindowSide.left)
@@ -762,7 +762,7 @@ struct WindowLayoutSettings: View {
                     Text("Bottom").tag(BentoNewWindowSide.bottom)
                 }
                 Text(
-                    "Choose where new windows prefer to join a Bento layout. "
+                    "Choose where new windows prefer to join an Adaptive layout. "
                         + "Available space and window size limits may affect placement."
                 )
                 .font(.system(size: 12))
@@ -770,7 +770,7 @@ struct WindowLayoutSettings: View {
 
                 Toggle("Balance on new window", isOn: configurationBinding(\.bentoBalancesNewWindows))
                 Text(
-                    "When a window opens, Bento makes panes equal sizes again. "
+                    "When a window opens, Adaptive makes panes equal sizes again. "
                         + "A window that can't shrink that far keeps its smallest size. "
                         + "This replaces divider positions you set. Tabbed is not affected."
                 )
@@ -780,20 +780,20 @@ struct WindowLayoutSettings: View {
                 HStack {
                     Text("Pane gap")
                     Slider(value: configurationBinding(\.bentoInnerGap), in: 0...12, step: 1)
-                        .accessibilityLabel("Bento pane gap")
+                        .accessibilityLabel("Adaptive pane gap")
                         .accessibilityValue("\(Int(model.configuration.bentoInnerGap)) points")
                     Text("\(Int(model.configuration.bentoInnerGap)) pt")
                         .monospacedDigit()
                         .frame(width: 42)
                 }
                 HStack {
-                    Text("Bento swap delay")
+                    Text("Adaptive swap delay")
                     Slider(
                         value: configurationBinding(\.bentoSwapHoverDelay),
                         in: 0...1,
                         step: 0.01
                     )
-                    .accessibilityLabel("Bento swap delay")
+                    .accessibilityLabel("Adaptive swap delay")
                     Text(
                         model.configuration.bentoSwapHoverDelay
                             .formatted(.number.precision(.fractionLength(2))) + "s"
@@ -802,7 +802,7 @@ struct WindowLayoutSettings: View {
                     .frame(width: 48)
                 }
                 Text(
-                    "Bento swapping starts only when dragging from a window title bar. "
+                    "Adaptive swapping starts only when dragging from a window title bar. "
                         + "Resizing from an edge does not activate a swap target."
                 )
                 .font(.system(size: 12))

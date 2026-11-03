@@ -146,7 +146,10 @@ public struct AmbientLayoutReconciler: Sendable {
         let eligibleWindowCount = session.mode == .bento && observation.windows.count == 1
             ? max(observation.windows.count, session.bentoState.root?.windowIDs.count ?? 0)
             : observation.windows.count
-        let becameSingleWindow = session.shouldApplySingleWindowPlacement(
+        // Only Adaptive places a lone window: Tabbed fills its panes, and Manual leaves windows
+        // where they are. Manual keeps the latch armed, so a switch to Adaptive still places it.
+        let placesLoneWindow = session.mode.availableMode == .bento
+        let becameSingleWindow = placesLoneWindow && session.shouldApplySingleWindowPlacement(
             eligibleWindowCount: eligibleWindowCount
         )
         let singlePlacement: Placement? = if becameSingleWindow,

@@ -20,7 +20,39 @@ private func rows() -> TabbedLayoutState {
 }
 
 private func slot(_ id: WindowID, _ state: TabbedLayoutState) throws -> BTRect {
-    try #require(state.layout.placements(in: bounds).first { $0.windowID == id }?.frame)
+    try #require(state.layout.contentFrames(in: bounds)[id])
+}
+
+@Test func oddWidthTabbedSteppedGrowthUsesTheFractionalRequestedArea() throws {
+    let area = BTRect(x: 0, y: 0, width: 999, height: 800)
+    let state = try #require(TabbedLayoutState(adopting: BentoLayoutState(
+        root: .partition(BentoPartition(axis: .vertical, children: [.leaf(top), .leaf(bottom)])),
+        metrics: BentoLayoutMetrics(paneGap: 0))))
+    let windows = [window(top), window(bottom)]
+    let requested = try state.placements(in: area, windows: windows)
+    let first = try #require(requested.first { $0.windowID == top }?.frame)
+    #expect(first.size.width == 499.5)
+    let snap = try #require(state.snappingToSteppedSizes(
+        [top: BTSize(width: 502, height: first.size.height)], in: area, windows: windows))
+    #expect(snap.snaps.map(\.delta) == [2.5])
+    #expect(snap.placements.first { $0.windowID == top }?.frame.size.width == 502)
+    #expect(snap.placements.first { $0.windowID == bottom }?.frame.minX == 502)
+}
+
+@Test(arguments: [0.0, -999.0])
+func oddWidthTabbedResizeFitsFromUnsnappedContentEdges(origin: Double) throws {
+    let area = BTRect(x: origin, y: -100, width: 999, height: 800)
+    let state = try #require(TabbedLayoutState(adopting: BentoLayoutState(
+        root: .partition(BentoPartition(axis: .vertical, children: [.leaf(top), .leaf(bottom)])),
+        metrics: BentoLayoutMetrics(paneGap: 0))))
+    var frames = Dictionary(uniqueKeysWithValues: try state.placements(in: area, windows: [window(top), window(bottom)])
+        .map { ($0.windowID, $0.frame) })
+    frames[top]?.size.width = 502
+    let adopted = try #require(state.adoptingResize(
+        of: [top], frames: frames, constraints: [:], in: area, tolerance: 0.1))
+    let content = adopted.layout.contentFrames(in: area)
+    #expect(content[top]?.size.width == 502)
+    #expect(content[bottom]?.minX == origin + 502)
 }
 
 /// Terminal rounded its height up to the next row: its pane grows by the

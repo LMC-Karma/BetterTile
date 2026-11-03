@@ -8,13 +8,19 @@ import Testing
 @testable import BetterTileApp
 
 @MainActor
-final class FakeAppWindowSystem: BetterTileWindowSystem, TabbedWindowSystem, MinimumSizeProbing {
+final class FakeAppWindowSystem: BetterTileWindowSystem, CreatedWindowReading, TabbedWindowSystem, MinimumSizeProbing {
     let manualClock: ManualClock?
     /// Use registered deadlines even for short boundary waits.
     var drivesPolicyDeadlines = false
     var windowEventSleepDeadlines: [Task<Void, Never>: ContinuousClock.Instant] = [:]
     var isAwaitingWindowEventSleepRegistration: (() -> Bool)?
     let clock: BetterTileClock
+    private let clockOrigin: BetterTileClock.Instant
+    private let uptimeOrigin: TimeInterval
+    var uptime: TimeInterval {
+        let elapsed = clockOrigin.duration(to: clock.now).components
+        return uptimeOrigin + Double(elapsed.seconds) + Double(elapsed.attoseconds) / 1e18
+    }
     let mainDisplay = DisplaySnapshot(
         id: DisplayID(rawValue: "main"),
         frame: BTRect(x: 0, y: 0, width: 1000, height: 800),
@@ -32,6 +38,7 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, TabbedWindowSystem, Min
     var measuresOnWrite = false
     /// Every frame BetterTile asked for, per window, in order.
     var requestedFrames: [WindowID: [BTRect]] = [:]
+    var onFrameWrite: ((WindowID, BTRect) -> Void)?
     /// Simulates an application that resizes in steps, such as Terminal's
     /// character cells: widths round down to a multiple of the step.
     var widthSteps: [WindowID: Double] = [:]
@@ -48,6 +55,8 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, TabbedWindowSystem, Min
     /// size when asked for another width that is still wider.
     var appKitWidthLimit: Double?
     var frameWriteCounts: [WindowID: Int] = [:]
+    var onBeforeFrameWrite: ((WindowID) -> Void)?
+    var managedWindowUpdateCount = 0
     var failedFrameWriteNumbers: [WindowID: Set<Int>] = [:]
     var completeSweepCount = 0
     var failedVisibleWindowSweeps: Set<Int> = []
@@ -58,9 +67,24 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, TabbedWindowSystem, Min
     var cachedRefreshFails = false
     var cachedVisibilityOmittedIDs: Set<WindowID> = []
     var offscreenWindowIDs: Set<WindowID> = []
+    var unresponsiveWindowIDs: Set<WindowID> = []
+    var unresponsiveProcessIDs: Set<Int32> = []
+    var applicationHoldsUntil: [Int32: TimeInterval] = [:]
+    var applicationHoldDuration: TimeInterval = 0.15
+    var applicationHoldUptime: () -> TimeInterval = { 1000 }
+    var unresponsiveInventoryDelay: TimeInterval = 0
+    var onWindowSnapshots: (() -> Void)?
+    var unresponsiveInventoryAttemptTimes: [Int32: [TimeInterval]] = [:]
+    var unresponsiveApplicationRecoveryDeadlines: [Int32: TimeInterval] {
+        applicationHoldsUntil.filter { pid, _ in windows.contains { $0.processIdentifier == pid } }
+    }
     var emitsFrameEvents = false
     var desktopObservation: NativeDesktopObservation?
+    private(set) var frameWriteBatches: [[Placement]] = []
+    private(set) var delayedFrameWrites: [Task<Void, Never>] = []
     var frameApplicationDelays: [WindowID: Duration] = [:]
+    private var appliedDelayedWrites: [WindowID: Int] = [:]
+    var frameReadbackTransform: ((WindowID, BTRect) -> BTRect)?
     private var minimumSizeLearner = WindowMinimumSizeLearner()
     var availableDisplays: [DisplaySnapshot]
     var windows: [WindowSnapshot]
@@ -69,6 +93,8 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, TabbedWindowSystem, Min
     init(manualClock: ManualClock? = nil) {
         self.manualClock = manualClock
         clock = manualClock?.clock ?? .live
+        clockOrigin = clock.now
+        uptimeOrigin = manualClock == nil ? ProcessInfo.processInfo.systemUptime : 1000
         TestWindowAudit.start()
         availableDisplays = [mainDisplay]
         windows = [WindowSnapshot(
@@ -78,9 +104,11 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, TabbedWindowSystem, Min
             frame: BTRect(x: 200, y: 200, width: 600, height: 400),
             displayID: mainDisplay.id
         )]
+        applicationHoldUptime = { [weak self] in self?.uptime ?? 1000 }
     }
 
     func requestAccessibilityPermission(prompt: Bool) -> Bool { permission }
+    func isApplicationUnresponsive(for windowID: WindowID) -> Bool { unresponsiveWindowIDs.contains(windowID) }
     var focusedID: WindowID?
     var focusRequests: [WindowID] = []
     var acceptsFocusRequests = true
@@ -95,9 +123,14 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, TabbedWindowSystem, Min
     /// window key instead of the requested one.
     var activationFocusesInstead: WindowID?
     var windowNumberRequests: [Set<WindowID>] = []
+    var windowNumberMap: [WindowID: Int] = [:]
+    var onWindowNumbers: (() -> Void)?
     func windowNumbers(for windows: [WindowSnapshot]) -> [WindowID: Int] {
+        onWindowNumbers?()
         windowNumberRequests.append(Set(windows.map(\.id)))
-        return [:] // Simulate unavailable exact identities without live AX.
+        // Empty by default: simulates unavailable exact identities without live AX.
+        let ids = Set(windows.map(\.id))
+        return windowNumberMap.filter { ids.contains($0.key) }
     }
     /// WindowServer order, front to back. Nil simulates unavailable exact
     /// identities. Raises move a window to the front, as AXRaise does.
@@ -153,20 +186,53 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, TabbedWindowSystem, Min
     }
     func requestCloseWindow(_ id: WindowID) throws {}
     var focusedWindowReadFails = false
+    var focusedWindowIsAbsent = false
+    var focusedWindowReadCount = 0
     func focusedWindow() throws -> WindowSnapshot? {
+        focusedWindowReadCount += 1
+        if focusedWindowIsAbsent { return nil }
         if focusedWindowReadFails { throw WindowSystemError.operationFailed("Simulated focused-window failure") }
         return windows.first { $0.id == focusedID } ?? windows.first
     }
     func visibleWindows() throws -> [WindowSnapshot] {
+        var recoveryPIDs: Set<Int32>?
+        return try visibleWindows(recoveryPIDs: &recoveryPIDs)
+    }
+    func visibleWindows(recoveringApplicationPIDs: inout Set<Int32>) throws -> [WindowSnapshot] {
+        var recoveryPIDs: Set<Int32>? = recoveringApplicationPIDs
+        defer { recoveringApplicationPIDs = recoveryPIDs ?? [] }
+        return try visibleWindows(recoveryPIDs: &recoveryPIDs)
+    }
+    private func visibleWindows(recoveryPIDs: inout Set<Int32>?) throws -> [WindowSnapshot] {
         completeSweepCount += 1
         onVisibleWindowSweep?(completeSweepCount)
         if failedVisibleWindowSweeps.contains(completeSweepCount) {
             throw WindowSystemError.operationFailed("Injected visible-window observation failure.")
         }
         refreshLearnedConstraints()
-        return windows.filter { !offscreenWindowIDs.contains($0.id) }
+        for pid in Set(windows.map(\.processIdentifier)).sorted() {
+            let now = applicationHoldUptime()
+            guard (applicationHoldsUntil[pid] ?? 0) <= now else { continue }
+            if applicationHoldsUntil[pid] != nil, recoveryPIDs != nil {
+                guard recoveryPIDs?.remove(pid) != nil else { continue }
+            }
+            if unresponsiveProcessIDs.contains(pid) {
+                unresponsiveInventoryAttemptTimes[pid, default: []].append(now)
+                if let manualClock { manualClock.advance(by: .seconds(unresponsiveInventoryDelay)) }
+                else { precondition(unresponsiveInventoryDelay == 0, "Inventory latency requires a manual fixture clock") }
+                applicationHoldsUntil[pid] = applicationHoldUptime() + applicationHoldDuration
+            } else {
+                applicationHoldsUntil.removeValue(forKey: pid)
+            }
+        }
+        return windows.filter {
+            !offscreenWindowIDs.contains($0.id) && applicationHoldsUntil[$0.processIdentifier] == nil
+        }
     }
+    /// Runs on the next display read, to change the desktop in the middle of a synchronous pass.
+    var onDisplays: (() -> Void)?
     func displays() -> [DisplaySnapshot] {
+        onDisplays?()
         guard leavesSpaceForDock else { return availableDisplays }
         // A bottom Dock 80 points thick, kept out of the work area.
         return availableDisplays.map { display in
@@ -178,7 +244,10 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, TabbedWindowSystem, Min
     /// Windows that targeted reads leave out once they took this many frame
     /// writes, as for an application that stops answering after a write.
     var unreadableAfterWrites: [WindowID: Int] = [:]
+    private(set) var windowSnapshotRequests: [Set<WindowID>] = []
     func windowSnapshots(ids: Set<WindowID>) throws -> [WindowSnapshot] {
+        windowSnapshotRequests.append(ids)
+        onWindowSnapshots?()
         refreshLearnedConstraints()
         return windows.filter { window in
             ids.contains(window.id)
@@ -190,7 +259,7 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, TabbedWindowSystem, Min
             let id = windows[index].id
             minimumSizeLearner.confirmClampCandidate(
                 windowID: id, application: windows[index].bundleIdentifier,
-                size: windows[index].frame.size, now: ProcessInfo.processInfo.systemUptime
+                size: windows[index].frame.size, now: uptime
             )
             minimumSizeLearner.observeAcceptedSize(windowID: id, size: windows[index].frame.size)
             if measuresOnWrite {
@@ -202,6 +271,41 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, TabbedWindowSystem, Min
                 windows[index].constraints = minimumSizeLearner.merging(reported, for: id)
             }
         }
+    }
+    /// The window each creation token named. Windows listed here are not in the
+    /// cached inventory until a read adds them, as for the real adapter.
+    var createdWindowsByToken: [UInt64: WindowID] = [:]
+    /// The adapter's last complete inventory when it is older than `windows`, as after
+    /// an unnotified hide, Space move, or close. Nil means the cache is fresh.
+    var staleCache: [WindowSnapshot]?
+    /// Answers `.notReady` this many times for a token before it reads the window.
+    var notReadyReads: [UInt64: Int] = [:]
+    var unavailableTokens: Set<UInt64> = []
+    var createdReadCount = 0
+    func readCreatedWindow(token: UInt64) -> CreatedWindowRead {
+        createdReadCount += 1
+        if unavailableTokens.contains(token) { return .unavailable }
+        if let remaining = notReadyReads[token], remaining > 0 {
+            notReadyReads[token] = remaining - 1
+            return .notReady
+        }
+        guard let id = createdWindowsByToken[token],
+              let window = windows.first(where: { $0.id == id }) else { return .unavailable }
+        guard let observation = desktopObservation else { return .window(window) }
+        return observation.windowsOnCurrentSpaces([window]).first.map(CreatedWindowRead.window) ?? .unavailable
+    }
+    func cachedVisibleWindows(adding added: [WindowSnapshot]) -> [WindowSnapshot]? {
+        guard cachedSnapshotsAvailable else { return nil }
+        let unread = Set(createdWindowsByToken.values).subtracting(added.map(\.id))
+        // Like the adapter, one WindowServer check of every cached peer; a failure means "take a complete inventory".
+        let cached = (staleCache ?? windows).filter { !unread.contains($0.id) }
+        if cached.contains(where: { offscreenWindowIDs.contains($0.id) }) {
+            staleCache = nil
+            return nil
+        }
+        var merged = Dictionary(cached.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        for window in added { merged[window.id] = window }
+        return windows.compactMap { merged[$0.id] }
     }
     func cachedVisibleWindows(refreshing ids: Set<WindowID>) throws -> [WindowSnapshot]? {
         cachedRefreshCount += 1
@@ -218,8 +322,10 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, TabbedWindowSystem, Min
         guard let index = windows.firstIndex(where: { $0.id == windowID }) else {
             throw WindowSystemError.windowNotFound(windowID)
         }
+        onBeforeFrameWrite?(windowID)
         frameWriteCounts[windowID, default: 0] += 1
         requestedFrames[windowID, default: []].append(frame)
+        onFrameWrite?(windowID, frame)
         // Like the adapter, a new write replaces any pending clamp.
         minimumSizeLearner.discardClampCandidate(for: windowID)
         if failedFrameWriteNumbers[windowID]?.contains(frameWriteCounts[windowID, default: 0]) == true {
@@ -227,14 +333,41 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, TabbedWindowSystem, Min
         }
         guard !ignoredFrameWriteWindowIDs.contains(windowID) else { return }
         if let delay = frameApplicationDelays[windowID] {
-            Task { @MainActor [clock, weak self] in
+            // An application applies its writes in order: a delayed write
+            // that wakes after a newer one is already superseded.
+            let sequence = frameWriteCounts[windowID, default: 0]
+            delayedFrameWrites.append(Task { @MainActor [clock, weak self] in
                 try? await clock.sleep(for: delay)
-                self?.applyFrame(frame, at: index)
-            }
+                guard let self, sequence > self.appliedDelayedWrites[windowID, default: 0] else { return }
+                self.appliedDelayedWrites[windowID] = sequence
+                self.applyFrame(frame, at: index)
+            })
             return
         }
         applyFrame(frame, at: index)
     }
+    private(set) var preparedFrameWriteIDs: [Set<WindowID>] = []
+    func preflightFrameWrites(_ ids: Set<WindowID>) throws {
+        preparedFrameWriteIDs.append(ids)
+        for id in ids {
+            guard let window = windows.first(where: { $0.id == id }), window.isEligible,
+                  window.constraints.isMovable, !isApplicationUnresponsive(for: id) else {
+                throw WindowSystemError.unsupportedWindow(id)
+            }
+        }
+    }
+
+    func setFrames(_ writes: [Placement], knownCurrentFrames: [WindowID: BTRect]) -> FrameBatchResult {
+        frameWriteBatches.append(writes)
+        var attempted: [WindowID] = []
+        for write in writes {
+            attempted.append(write.windowID)
+            do { try setFrame(write.frame, knownCurrentFrame: knownCurrentFrames[write.windowID], for: write.windowID) }
+            catch { return FrameBatchResult(attempted: attempted, failure: (write.windowID, error)) }
+        }
+        return FrameBatchResult(attempted: attempted, failure: nil)
+    }
+
     private func applyFrame(_ frame: BTRect, at index: Int) {
         let windowID = windows[index].id
         let before = windows[index].frame
@@ -242,7 +375,7 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, TabbedWindowSystem, Min
             // Like the Accessibility adapter, read the size straight back.
             if measuresOnWrite {
                 if reportedConstraints[windowID] == nil { reportedConstraints[windowID] = windows[index].constraints }
-                let now = ProcessInfo.processInfo.systemUptime
+                let now = uptime
                 let actual = windows[index].frame
                 if !minimumSizeLearner.observeWriteReadback(
                     windowID: windowID, application: windows[index].bundleIdentifier,
@@ -283,6 +416,9 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, TabbedWindowSystem, Min
         }
         if let limit = appKitWidthLimit, before.size.width > limit, windows[index].frame.size.width > limit {
             windows[index].frame.size = before.size
+        }
+        if let frameReadbackTransform {
+            windows[index].frame = frameReadbackTransform(windowID, windows[index].frame)
         }
         // Like the Accessibility adapter, a window belongs to the display
         // that holds most of it.
@@ -336,8 +472,19 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, TabbedWindowSystem, Min
     func resetCachedWindows() {}
     var quitRestoreCount = 0
     func restoreEnhancedUserInterfaceBeforeQuit() { quitRestoreCount += 1 }
-    func nativeDesktopObservation() -> NativeDesktopObservation? { desktopObservation }
-    func refreshNativeDesktopObservation() -> NativeDesktopObservation? { desktopObservation }
+    /// The Space the user is really on. A refresh copies it into the cached observation, as the adapter does.
+    var physicalSpace: NativeSpaceID?
+    var nativeDesktopRefreshCount = 0
+    var nativeDesktopReadCount = 0
+    func nativeDesktopObservation() -> NativeDesktopObservation? {
+        nativeDesktopReadCount += 1
+        return desktopObservation
+    }
+    func refreshNativeDesktopObservation() -> NativeDesktopObservation? {
+        nativeDesktopRefreshCount += 1
+        if let physicalSpace { desktopObservation?.currentSpaceByDisplay[mainDisplay.id] = physicalSpace }
+        return desktopObservation
+    }
     func observeApplicationEnforcedMinimum(
         windowID: WindowID,
         requested: BTRect,
@@ -346,7 +493,7 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, TabbedWindowSystem, Min
     ) -> Bool {
         let learned = minimumSizeLearner.observe(
             windowID: windowID, application: windows.first { $0.id == windowID }?.bundleIdentifier,
-            requested: requested, baseline: baseline, actual: actual, now: ProcessInfo.processInfo.systemUptime
+            requested: requested, baseline: baseline, actual: actual, now: uptime
         )
         if let index = windows.firstIndex(where: { $0.id == windowID }) {
             if reportedConstraints[windowID] == nil { reportedConstraints[windowID] = windows[index].constraints }
@@ -359,11 +506,14 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, TabbedWindowSystem, Min
     /// Windows whose application clamps a size only after a delay, so the
     /// probe's immediate read-back measures nothing.
     var unprobeableWindowIDs: Set<WindowID> = []
-    func probeMinimumSizes(for ids: Set<WindowID>) -> Set<WindowID> {
+    func probeMinimumSizes(for ids: Set<WindowID>, validating isCurrent: () -> Bool) -> MinimumSizeProbeOutcome {
+        var outcome = MinimumSizeProbeOutcome()
         probeRequests.append(ids)
-        guard measuresOnWrite else { return [] }
-        for id in ids where !unprobeableWindowIDs.contains(id) {
+        guard measuresOnWrite else { outcome.wasInterrupted = !isCurrent(); return outcome }
+        for id in ids.sorted() where !unprobeableWindowIDs.contains(id) {
             guard let index = windows.firstIndex(where: { $0.id == id }) else { continue }
+            guard isCurrent() else { outcome.wasInterrupted = true; break }
+            outcome.startedWindowIDs.insert(id)
             let frame = windows[index].frame
             let clamped = BTSize(width: max(1, enforcedMinimumWidths[id] ?? 1),
                                  height: max(1, enforcedMinimumHeights[id] ?? 1))
@@ -376,16 +526,18 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, TabbedWindowSystem, Min
         }
         refreshLearnedConstraints()
         // A window left at its probe size.
-        let unrestored = unrestoredProbeWindowIDs.intersection(ids)
+        let unrestored = unrestoredProbeWindowIDs.intersection(outcome.startedWindowIDs)
         for index in windows.indices where unrestored.contains(windows[index].id) {
             windows[index].frame.size = BTSize(width: 1, height: 1)
         }
-        return unrestored
+        outcome.unrestoredWindowIDs = unrestored
+        if !outcome.wasInterrupted, !isCurrent() { outcome.wasInterrupted = true }
+        return outcome
     }
     var unrestoredProbeWindowIDs: Set<WindowID> = []
     func startDisplayReconfigurationMonitoring(onChange: @escaping @MainActor () -> Void) {}
     func stopDisplayReconfigurationMonitoring() {}
-    func updateManagedWindowIDs(_ ids: Set<WindowID>) {}
+    func updateManagedWindowIDs(_ ids: Set<WindowID>) { managedWindowUpdateCount += 1 }
 }
 
 @MainActor
@@ -552,7 +704,9 @@ func bentoPlacementContainsAnUnreportedApplicationMinimum(automaticArrival: Bool
     defer { model.shutdown() }
     model.tileCurrentDisplay()
     let settled = await waitFor {
-        abs(system.windows[0].frame.size.width - system.windows[1].frame.size.width) < 1
+        system.windows.map(\.frame).sorted { $0.minX < $1.minX } == [
+            BTRect(x: 0, y: 0, width: 500, height: 800), BTRect(x: 501, y: 0, width: 499, height: 800),
+        ]
     }
     #expect(settled)
     #expect(system.windows[1].constraints.minimumSize.width == 120)
@@ -847,7 +1001,7 @@ func waitFor(
         return
     }
 
-    #expect(placements.map(\.windowID) == [captured.windowID])
+    #expect(placements.map(\.windowID) == [try #require(captured.windowID)])
     // Focus mode: the window covers the display and its peer is minimized
     // in the same action, exactly as the keyboard shortcut does.
     model.performLayoutWheel(.windowAction(.maximize), for: captured)
@@ -1285,15 +1439,33 @@ func aFocusPartitionWaitsForSlowPeers(fromWheel: Bool, focusChangesWhileWaiting:
     #expect(model.statusMessage == nil)
     #expect(model.lastActionFeedback?.kind == .success)
     await drainFocusPartition(model, system: system)
-    #expect(system.requestedFrames[captured.windowID] == [left])
+    #expect(system.requestedFrames[try #require(captured.windowID)] == [left])
     #expect(system.requestedFrames[peer] == nil || system.requestedFrames[peer] == [right])
+}
+
+@Test(.appTestApplication, .timeLimit(.minutes(1))) @MainActor
+func aFocusRestoreDeadlineUsesItsInjectedClock() async throws {
+    let (system, model, _) = try await makeFocusPartitionContext(peerCount: 2, system: makeManualWindowSystem())
+    defer { system.onVisibleWindowSweep = nil; model.shutdown() }
+    let clock = try #require(system.manualClock)
+    system.failedRestoreWindowIDs = [system.windows[2].id]
+    model.perform(.leftHalf)
+    var observedPendingRestore = false
+    system.onVisibleWindowSweep = { _ in observedPendingRestore = system.windows[2].isMinimized }
+    try #require(await waitFor { observedPendingRestore && clock.pendingSleepCount > 0 }) // real-time: observes the executor's first retry registration without advancing policy time
+    system.onVisibleWindowSweep = nil
+    #expect(system.requestedFrames.isEmpty)
+    clock.advance(by: .milliseconds(1500))
+    let expected = [BTRect(x: 0, y: 0, width: 500, height: 800), BTRect(x: 500, y: 0, width: 500, height: 800)]
+    #expect(await system.waitFor(timeout: .milliseconds(200)) { Array(system.windows.prefix(2).map(\.frame)) == expected },
+            "The bounded peer-return deadline must use the same clock as its retries")
+    #expect(system.windows[2].isMinimized)
 }
 
 @Test(.appTestApplication, .timeLimit(.minutes(1)), arguments: [false, true], [false, true]) @MainActor
 func aFocusPartitionReturnsAvailablePeersAfterARestoreFailure(fromWheel: Bool, slowPeer: Bool) async throws {
     let (system, model, captured) = try await makeFocusPartitionContext(peerCount: 2, system: makeManualWindowSystem())
     defer { system.onVisibleWindowSweep = nil; model.shutdown() }
-    let clock = try #require(system.manualClock)
     let failedPeer = system.windows[2].id
     let feedback = model.lastActionFeedback
     if slowPeer { system.slowRestoreIDs = [failedPeer] }
@@ -1305,11 +1477,8 @@ func aFocusPartitionReturnsAvailablePeersAfterARestoreFailure(fromWheel: Bool, s
     #expect(model.lastActionFeedback == feedback)
     let left = BTRect(x: 0, y: 0, width: 500, height: 800)
     let right = BTRect(x: 500, y: 0, width: 500, height: 800)
-    try #require(await waitFor {
-        // The restore deadline still uses Date. Poll completion in real time
-        // while advancing only the fixture's retry clock.
-        clock.advance(by: .milliseconds(50))
-        return Array(system.windows.prefix(2).map(\.frame)) == [left, right]
+    try #require(await system.waitFor {
+        Array(system.windows.prefix(2).map(\.frame)) == [left, right]
     },
         "Frames: \(system.windows.map(\.frame)); requests: \(system.requestedFrames); status: \(model.statusMessage ?? "none")")
     #expect(system.windows[2].isMinimized)
@@ -1347,7 +1516,7 @@ func aNewerFocusPartitionSupersedesThePendingPartitionAndRepair(fromWheel: Bool)
     try #require(await system.waitFor { system.windows.map(\.frame) == [right, left] })
     #expect(model.lastActionFeedback?.kind == .success)
     await drainFocusPartition(model, system: system)
-    #expect(system.requestedFrames[captured.windowID] == [right])
+    #expect(system.requestedFrames[try #require(captured.windowID)] == [right])
     #expect(system.requestedFrames[peer] == nil || system.requestedFrames[peer] == [left])
 }
 
@@ -1432,7 +1601,7 @@ func repairQueuedBehindAFocusPartitionRunsAfterItsPlacement(fromWheel: Bool) asy
     let right = BTRect(x: 500, y: 0, width: 500, height: 800)
     try #require(await system.waitFor { model.lastActionFeedback?.kind == .failure })
     #expect(system.windows.map(\.frame) == [left, right])
-    #expect(system.requestedFrames[captured.windowID] == [left])
+    #expect(system.requestedFrames[try #require(captured.windowID)] == [left])
     #expect(system.requestedFrames[peer] == nil || system.requestedFrames[peer] == [right])
     #expect(model.statusMessage?.contains(fromWheel ? "captured window" : "Simulated focused-window failure") == true)
 }
@@ -1449,7 +1618,7 @@ func repairQueuedBehindAFocusPartitionRunsAfterItsPlacement(fromWheel: Bool) asy
     try #require(await waitFor { system.windows[0].frame == half })
     system.focusedID = captured.windowID
     model.perform(.leftHalf)
-    let third = try #require(WindowAction.leftThird.partition).frame(in: system.mainDisplay.visibleFrame)
+    let third = BTRect(x: 0, y: 0, width: 333, height: 800)
     #expect(system.windows[0].frame == third)
     #expect(model.lastActionFeedback?.kind == .success)
 }
@@ -1462,7 +1631,7 @@ func aFocusPartitionReportsPlacementFailureAfterThePeersReturn(fromWheel: Bool) 
     system.slowRestoreIDs = [peer]
     if fromWheel { model.performLayoutWheel(.windowAction(.leftHalf), for: captured) }
     else { model.perform(.leftHalf) }
-    system.failedFrameWriteNumbers[captured.windowID] = [system.frameWriteCounts[captured.windowID, default: 0] + 1]
+    system.failedFrameWriteNumbers[try #require(captured.windowID)] = [system.frameWriteCounts[try #require(captured.windowID), default: 0] + 1]
     system.slowRestoreIDs = []
     system.windows[1].isMinimized = false
     try #require(await waitFor { model.lastActionFeedback?.kind == .failure })
@@ -1578,20 +1747,20 @@ func aFocusPartitionReportsPlacementFailureAfterThePeersReturn(fromWheel: Bool) 
         .repairBento,
         for: captured
     ) else {
-        Issue.record("Expected Repair Bento to require a Bento desktop")
+        Issue.record("Expected Repair Layout to require an Adaptive desktop")
         return
     }
 
-    #expect(reason == "Repair Bento is available only on a Bento desktop.")
+    #expect(reason == "Repair Layout is available only on an Adaptive desktop.")
     model.performLayoutWheel(.repairBento, for: captured)
-    #expect(model.lastActionFeedback?.message == "Bento not active")
+    #expect(model.lastActionFeedback?.message == "Adaptive not active")
 
     model.setActiveMode(.bento)
     guard case let .ready(placements) = model.previewLayoutWheel(
         .repairBento,
         for: captured
     ) else {
-        Issue.record("Expected Repair Bento on a Bento desktop")
+        Issue.record("Expected Repair Layout on an Adaptive desktop")
         return
     }
 
@@ -2345,7 +2514,7 @@ func repairOverlapMessageFitsTheResultPillWithLongTitles(title: String) {
     system.windows.append(WindowSnapshot(id: seventh, processIdentifier: 90, title: "Report",
         frame: BTRect(x: 100, y: 100, width: 400, height: 300), displayID: system.mainDisplay.id))
     system.eventHandler?(WindowSystemEvent(kind: .created, windowID: seventh, processIdentifier: 90))
-    #expect(await waitFor { model.lastActionFeedback?.message == "Bento is full" })
+    #expect(await waitFor { model.lastActionFeedback?.message == "Adaptive is full" })
     #expect(model.lastActionFeedback?.detail?.contains("Report") == true)
 }
 
@@ -2371,7 +2540,7 @@ func seventhBentoWindowAnnouncementKeepsItsInstructionWithALongTitle(title: Stri
     system.windows.append(WindowSnapshot(id: seventh, processIdentifier: 90, title: title,
         frame: BTRect(x: 100, y: 100, width: 400, height: 300), displayID: system.mainDisplay.id))
     system.eventHandler?(WindowSystemEvent(kind: .created, windowID: seventh, processIdentifier: 90))
-    try #require(await waitFor(timeout: .seconds(2)) { model.lastActionFeedback?.message == "Bento is full" })
+    try #require(await waitFor(timeout: .seconds(2)) { model.lastActionFeedback?.message == "Adaptive is full" })
     let detail = try #require(model.lastActionFeedback?.detail)
     #expect(detail.hasSuffix("switch this desktop to Tabbed."))
     #expect(detail.contains("“\(title.prefix(4))"))
@@ -2710,7 +2879,7 @@ func bentoFocusCheckWaitsForDesktopInteraction(interaction: String) async throws
     system.focusedID = wide
     system.eventHandler?(WindowSystemEvent(kind: .created, windowID: arrival, processIdentifier: 81))
     let suspended = await waitFor(timeout: .seconds(3)) {
-        model.statusMessage?.hasSuffix("Use Repair to rebuild Bento.") == true
+        model.statusMessage?.hasSuffix("Use Repair Layout to rebuild the layout.") == true
     }
     #expect(suspended, "\(String(describing: model.statusMessage)) \(system.requestedFrames.mapValues { $0.map { "\($0.minX),\($0.minY) \($0.size.width)x\($0.size.height)" } })")
 }
@@ -2835,6 +3004,11 @@ func bentoFocusCheckWaitsForDesktopInteraction(interaction: String) async throws
             bundleIdentifier: "com.example.\(name)", frame: BTRect(x: 300 + Double(index) * 40, y: 300, width: 500, height: 400),
             displayID: system.mainDisplay.id))
     }
+    // Give the fault sequence a known tree: focused is tall, swap-c is the
+    // sibling which must shrink during the correction.
+    system.windows[0].frame = BTRect(x: 0, y: 0, width: 500, height: 800)
+    system.windows[1].frame = BTRect(x: 501, y: 0, width: 499, height: 400)
+    system.windows[2].frame = BTRect(x: 501, y: 401, width: 499, height: 399)
     let model = makeModel(system: system)
     defer { model.shutdown() }
     model.setActiveMode(.bento)
@@ -2857,7 +3031,7 @@ func bentoFocusCheckWaitsForDesktopInteraction(interaction: String) async throws
     let before = system.frameWriteCounts
     try #require(model.beginBentoDrag(displayID: system.mainDisplay.id, sourceID: tall.id))
     model.finishBentoDrag(displayID: system.mainDisplay.id, sourceID: tall.id, outcome: .swap(targetWindowID: short.id))
-    #expect(model.statusMessage?.hasSuffix("Use Repair to rebuild Bento.") == true, "\(model.statusMessage ?? "nil")")
+    #expect(model.statusMessage?.hasSuffix("Use Repair Layout to rebuild the layout.") == true, "\(model.statusMessage ?? "nil")")
     // The window the correction never touched got only the drop's write: the
     // drag was not restored over the mixed layout.
     let untouched = WindowID(rawValue: "swap-b")
@@ -2984,6 +3158,7 @@ func restoringAWindowKeepsAUserChangeMadeAfterAnEarlierMinimize(change: String) 
     func tiled(_ count: Int) -> Bool {
         let visible = system.windows.filter { !$0.isMinimized }
         return visible.count == count && Set(visible.map(\.frame)).count == count
+            && BentoLayoutVerifier.overlappingWindowIDs(frames()).isEmpty
             && visible.reduce(0) { $0 + $1.frame.area } > system.mainDisplay.visibleFrame.area * 0.99
     }
     func frames() -> [WindowID: BTRect] {
@@ -3032,6 +3207,8 @@ func restoringAWindowKeepsAUserChangeMadeAfterAnEarlierMinimize(change: String) 
         ))
         let screen = try #require(NSScreen.screens.first)
         let release = CGPoint(x: start.x + 100, y: screen.frame.maxY - start.y)
+        // Concurrent tests share NSApp.windows; another test's panel must not cover this grip.
+        model.dividerResize.ownWindowsProvider = { [] }
         model.dividerResize.beginGesture(interaction: interaction, at: start)
         try #require(model.dividerResize.isDragging)
         model.dividerResize.drag(to: release)
@@ -3046,6 +3223,7 @@ func restoringAWindowKeepsAUserChangeMadeAfterAnEarlierMinimize(change: String) 
     try #require(await waitFor { tiled(2) }, "\(frames())")
     try await settle()
     try system.setMinimized(false, for: c)
+    #expect(!tiled(3), "The restored frame still overlaps its expanded neighbour before the event is delivered")
     try #require(await waitFor { tiled(3) }, "\(frames())")
     try await settle()
     #expect(frames() == changed, "before the change: \(beforeChange)")
@@ -3129,7 +3307,7 @@ func bentoDropLandsOnItsDisplayAfterTheSourceCenterCrossed(entry: String) async 
         #expect(placed.displayID == second)
         #expect(model.statusMessage?.hasPrefix("The dragged window could not return to its pane.") == true,
                 "\(model.statusMessage ?? "nil")")
-        #expect(model.statusMessage?.hasSuffix("Use Repair to rebuild Bento.") == true)
+        #expect(model.statusMessage?.hasSuffix("Use Repair Layout to rebuild the layout.") == true)
     }
 }
 
@@ -3423,4 +3601,62 @@ func temporaryWindowAbsenceKeepsRestoreDuringSpaceStabilization(reason: String) 
     }
     model.perform(.restore)
     #expect(system.windows[0].frame == original.frame)
+}
+
+
+private enum RepairFrameReadback: Sendable, Equatable {
+    case exact, wholePointEdges, independentOriginAndSize
+}
+
+/// Repair emits whole pane edges before an application can round its frame components.
+@Test(.appTestApplication, arguments: [4, 5], [
+    (0.0, RepairFrameReadback.exact), (1.0, .exact), (6.0, .exact),
+    (0.0, .wholePointEdges), (1.0, .wholePointEdges), (6.0, .wholePointEdges),
+    (0.0, .independentOriginAndSize), (1.0, .independentOriginAndSize), (6.0, .independentOriginAndSize),
+]) @MainActor
+private func repairKeepsBottomEdgesInsideTheWorkArea(count: Int, options: (Double, RepairFrameReadback)) async throws {
+    let (gap, readback) = options
+    let system = makeManualWindowSystem()
+    let display = DisplaySnapshot(id: system.mainDisplay.id,
+        frame: .init(x: 1210, y: 0, width: 2560, height: 1440),
+        visibleFrame: .init(x: 1210, y: 30, width: 2560, height: 1410), isMain: true)
+    system.availableDisplays = [display]
+    system.windows = (0..<count).map { (i: Int) -> WindowSnapshot in
+        let x: Double = 1210 + Double(i % 2) * 1280
+        let y: Double = 30 + Double(i / 2) * 470
+        return WindowSnapshot(id: .init(rawValue: "edge-\(i)"), processIdentifier: Int32(400 + i),
+            bundleIdentifier: "com.example.Edge\(i)",
+            frame: .init(x: x, y: y, width: 1279, height: 469), displayID: display.id)
+    }
+    system.focusedID = system.windows[0].id
+    if readback != .exact {
+        system.ignoredFrameWriteWindowIDs = Set(system.windows.map(\.id))
+        system.onFrameWrite = { id, frame in
+            guard let index = system.windows.firstIndex(where: { $0.id == id }) else { return }
+            if readback == .independentOriginAndSize {
+                // An app rounds AX position and size separately, so fractions can overshoot the far edge.
+                system.windows[index].frame = .init(x: frame.minX.rounded(), y: frame.minY.rounded(),
+                    width: frame.size.width.rounded(), height: frame.size.height.rounded())
+            } else {
+                let x = (frame.minX + 0.5).rounded(.down), y = (frame.minY + 0.5).rounded(.down)
+                system.windows[index].frame = .init(x: x, y: y,
+                    width: (frame.maxX + 0.5).rounded(.down) - x, height: (frame.maxY + 0.5).rounded(.down) - y)
+            }
+        }
+    }
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    model.configuration.bentoInnerGap = gap
+    model.tileCurrentDisplay()
+    try #require(await system.waitFor { model.settlementTasks.isEmpty })
+    let requested = system.windows.compactMap { system.requestedFrames[$0.id]?.last }
+    #expect(requested.count == count)
+    for frame in requested {
+        for edge in [frame.minX, frame.minY, frame.maxX, frame.maxY] { #expect(edge == edge.rounded()) }
+    }
+    let maxBottom = try #require(system.windows.map { $0.frame.maxY }.max())
+    let maxRight = try #require(system.windows.map { $0.frame.maxX }.max())
+    #expect(maxBottom <= 1440)
+    #expect(maxRight <= 3770)
+    #expect(model.statusMessage == nil)
 }

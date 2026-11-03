@@ -36,18 +36,18 @@ public struct ResultPillFeedback: Equatable, Sendable {
     }
 
     public static func failure(_ error: String?) -> Self {
-        let value = (error ?? "").lowercased()
+        let value = (error ?? "").replacingOccurrences(of: repairLayoutRecoverySuffix, with: "").lowercased()
         let message: String
         if value.contains("accessibility") || value.contains("permission") {
             message = "Accessibility required"
         } else if value.contains("ignore this app") {
             message = "App is ignored"
-        } else if value.contains("repair bento") {
-            message = "Bento not active"
+        } else if value.contains("repair layout is available only on an adaptive desktop") {
+            message = "Adaptive not active"
         } else if value.contains("eligible") || value.contains("focused window") {
             message = "No eligible window"
         } else if value.contains("up to six") {
-            message = "Bento is full"
+            message = "Adaptive is full"
         } else if value.contains("cannot fit") || value.contains("can't fit") || value.contains("minimum size") {
             message = "Can’t fit this layout"
         } else if value.contains("tabbed size") {
@@ -58,8 +58,8 @@ public struct ResultPillFeedback: Equatable, Sendable {
             message = "Use Tabbed Undo"
         } else if value.contains("float the window to use this action") {
             message = "Float this window first"
-        } else if value.contains("repair tabbed") || (value.contains("tabbed") && value.contains("restore")) {
-            message = "Use Repair Tabbed"
+        } else if value.contains("repair layout") || (value.contains("tabbed") && value.contains("restore")) {
+            message = "Use Repair Layout"
         } else if value.contains("desktop changed") {
             message = "Desktop changed"
         } else if value.contains("no longer matches")
@@ -72,7 +72,7 @@ public struct ResultPillFeedback: Equatable, Sendable {
         }
         // Titles that do not say why carry the reason as a second line.
         let reason = error?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let explains = ["Couldn’t apply layout", "Can’t fit this layout", "Window refused this size", "Bento is full"].contains(message)
+        let explains = ["Couldn’t apply layout", "Can’t fit this layout", "Window refused this size", "Adaptive is full", "Use Repair Layout"].contains(message)
         let detail = explains && !reason.isEmpty ? reason : nil
         return Self(kind: .failure, message: message, detail: detail, symbolName: "xmark",
                     dismissDelay: detail == nil ? 1.6 : 3)
@@ -194,6 +194,7 @@ public final class ResultPillController {
     public var overlayAppearance = OverlayAppearance() {
         didSet { (panel.contentView as? OverlayGlassView)?.overlayAppearance = overlayAppearance }
     }
+    private let clock: BetterTileClock
     private let panel: NSPanel
     private let stack = NSStackView()
     private let icon = NSImageView()
@@ -211,7 +212,8 @@ public final class ResultPillController {
         ))
     }
 
-    init(panel: NSPanel) {
+    init(panel: NSPanel, clock: BetterTileClock = .live) {
+        self.clock = clock
         self.panel = panel
         panel.level = .statusBar
         panel.isOpaque = false
@@ -254,8 +256,8 @@ public final class ResultPillController {
             }
         }
 
-        dismissalTask = Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .seconds(feedback.dismissDelay))
+        dismissalTask = Task { @MainActor [clock, weak self] in
+            try? await clock.sleep(for: .seconds(feedback.dismissDelay))
             guard let self, !Task.isCancelled else { return }
             if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
                 self.panel.orderOut(nil)

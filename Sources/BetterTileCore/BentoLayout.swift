@@ -598,17 +598,23 @@ public struct BentoLayoutState: Hashable, Sendable {
         self.root = update(root, rect: bounds)
     }
 
+    /// Adaptive window requests, with pane edges snapped before content insets and clamping.
     public func placements(in bounds: BTRect, constraints: [WindowID: WindowConstraints] = [:]) -> [Placement] {
         guard let root else { return [] }
         return frames(for: root, in: bounds)
             .map { id, frame in
                 Placement(
                     windowID: id,
-                    frame: metrics.contentFrame(forPane: frame)
+                    frame: metrics.contentFrame(forPane: frame.snappedToWholePoints())
                         .clamped(to: bounds, minimumSize: constraints[id]?.minimumSize ?? .zero)
                 )
             }
             .sorted { $0.windowID < $1.windowID }
+    }
+
+    /// Unsnapped window areas. Tabbed requests and reference geometry use this projection.
+    public func contentFrames(in bounds: BTRect) -> [WindowID: BTRect] {
+        paneFrames(in: bounds).mapValues { metrics.contentFrame(forPane: $0) }
     }
 
     /// Full pane frames of occupied leaves, including any content reserve.

@@ -5,7 +5,7 @@ import os
 import Synchronization
 
 @MainActor
-public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventSource {
+public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventSource, CreatedWindowReading {
     private static let signposter = OSSignposter(
         subsystem: "com.lmckarma.BetterTile",
         category: "Accessibility"
@@ -20,6 +20,9 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
     private let nativeDesktopProvider: NativeDesktopObservationProvider
     private let stageManagerGroupResolver: StageManagerGroupResolver
     private var snapshotCache = WindowSnapshotCache()
+    /// Elements that creation callbacks delivered, until `readCreatedWindow` decides them.
+    private(set) var creationElements: [UInt64: (processIdentifier: pid_t, element: AXUIElement)] = [:]
+    private var nextCreationToken: UInt64 = 0
     private var snapshotGeneration: UInt64 = 0
     private var nativeObservationGeneration: UInt64?
     private var lastNativeDesktopObservation: NativeDesktopObservation?
@@ -42,6 +45,20 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
     }
     private var registrations: [pid_t: Set<Registration>] = [:]
     private var eventHandler: (@MainActor (WindowSystemEvent) -> Void)?
+    private var unreadableApplicationHolds: [pid_t: TimeInterval] = [:]
+
+    /// Uptime deadlines from the last sweep. Checking process liveness makes
+    /// recovery stop without another Accessibility call after an app quits.
+    public var unresponsiveApplicationRecoveryDeadlines: [Int32: TimeInterval] {
+        let running = unreadableApplicationHolds.filter { pid, _ in
+            NSRunningApplication(processIdentifier: pid).map { !$0.isTerminated } == true
+        }
+        return running.reduce(into: [:]) { deadlines, entry in
+            let (pid, deadline) = entry
+            let latest = Self.unresponsiveApplications.withLock { $0.holdDeadline(pid) }
+            deadlines[pid] = max(deadline, latest ?? deadline)
+        }
+    }
     private var minimumSizeLearner = WindowMinimumSizeLearner()
     private let dockSpaceReader = DockSpaceReader()
     private var recentApplicationPIDs: [pid_t] = []
@@ -169,6 +186,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         observers.removeAll()
         observationLifetime.removeAll()
         registrations.removeAll()
+        creationElements.removeAll()
         observationCallbackContext = nil
     }
 
@@ -178,6 +196,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
     }
 
     public func resetCachedWindows() {
+        unreadableApplicationHolds.removeAll()
         metadata.removeAll()
         elements.removeAll()
         identities.removeAll()
@@ -220,16 +239,16 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
     /// apply sizes late. Only for new windows, which are animating in and
     /// about to move, and for a hidden tab about to be shown; never for
     /// settled, visible windows. Each window is probed at most once.
-    public func probeMinimumSizes(for ids: Set<WindowID>) -> Set<WindowID> {
-        guard AXIsProcessTrusted() else { return [] }
+    public func probeMinimumSizes(for ids: Set<WindowID>, validating isCurrent: () -> Bool) -> MinimumSizeProbeOutcome {
+        var outcome = MinimumSizeProbeOutcome()
+        guard AXIsProcessTrusted() else { outcome.wasInterrupted = true; return outcome }
         var measured = false
-        var unrestored: Set<WindowID> = []
         // A window with its own measurement is not probed again. A window
         // that has only its application's seed is: the seed came from another
         // window, which can have a larger minimum. Until the probe measures
         // the window, it plans with the seed. Its own measurement then
         // replaces the seed for it and becomes the application's new seed.
-        for id in minimumSizeLearner.windowsNeedingMeasurement(ids) {
+        for id in minimumSizeLearner.windowsNeedingMeasurement(ids).sorted() {
             guard let element = elements[id] ?? refreshElement(for: id),
                   isSettable(kAXSizeAttribute, on: element),
                   (try? requireResponsive(element)) != nil,
@@ -246,9 +265,11 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
             AXUIElementSetMessagingTimeout(element, Self.frameWriteMessagingTimeout)
             defer { AXUIElementSetMessagingTimeout(element, 0) }
             minimumSizeLearner.discardClampCandidate(for: id)
-            guard Self.setFrameAttribute(element, kAXSizeAttribute, tinyValue) == .success else { continue }
-            minimumSizeLearner.recordProbe(of: id)
-            let clamped: CGSize? = axValue(kAXSizeAttribute, from: element, type: .cgSize)
+            guard isCurrent() else { outcome.wasInterrupted = true; break }
+            outcome.startedWindowIDs.insert(id)
+            let wroteMeasurement = Self.setFrameAttribute(element, kAXSizeAttribute, tinyValue) == .success
+            if wroteMeasurement { minimumSizeLearner.recordProbe(of: id) }
+            let clamped: CGSize? = wroteMeasurement ? axValue(kAXSizeAttribute, from: element, type: .cgSize) : nil
             // Confirm the original size; try once more before reporting it.
             let sizeRestored = (0..<2).contains { _ in
                 // Not gated: putting the user's window back outweighs a timeout.
@@ -259,7 +280,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
             // Some applications move a window to keep it on screen when it
             // shrinks; put its position back too, even when the size stayed off.
             let positionRestored = Self.restorePosition(element, to: position)
-            if !sizeRestored || !positionRestored { unrestored.insert(id) }
+            if !sizeRestored || !positionRestored { outcome.unrestoredWindowIDs.insert(id) }
             guard let clamped else { continue }
             // Only an axis that shrank and stopped is a minimum. A kept size
             // stays unmeasured; the restore above leaves nothing to confirm.
@@ -282,7 +303,8 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
             }
         }
         if measured { snapshotGeneration &+= 1 }
-        return unrestored
+        if !outcome.wasInterrupted, !isCurrent() { outcome.wasInterrupted = true }
+        return outcome
     }
 
     public func focusedWindow() throws -> WindowSnapshot? {
@@ -290,6 +312,11 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         defer { Self.signposter.endInterval("focusedWindow", interval) }
         try ensurePermission()
         let frontmostPID = NSWorkspace.shared.frontmostApplication?.processIdentifier
+        #if DEBUG
+        let tracePID = frontmostPID ?? getpid()
+        ArrivalTrace.shared.record("focus_read_started", pid: tracePID)
+        defer { ArrivalTrace.shared.record("focus_read_finished", pid: tracePID) }
+        #endif
         let candidates = ([frontmostPID].compactMap { $0 } + recentApplicationPIDs)
             .reduce(into: [pid_t]()) { result, pid in
                 if !result.contains(pid) { result.append(pid) }
@@ -351,6 +378,18 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
     }
 
     public func visibleWindows() throws -> [WindowSnapshot] {
+        var recoveryPIDs: Set<Int32>?
+        return try visibleWindows(recoveryPIDs: &recoveryPIDs)
+    }
+
+    /// Consumes a PID only when its expired hold permits an inventory read.
+    public func visibleWindows(recoveringApplicationPIDs: inout Set<Int32>) throws -> [WindowSnapshot] {
+        var recoveryPIDs: Set<Int32>? = recoveringApplicationPIDs
+        defer { recoveringApplicationPIDs = recoveryPIDs ?? [] }
+        return try visibleWindows(recoveryPIDs: &recoveryPIDs)
+    }
+
+    private func visibleWindows(recoveryPIDs: inout Set<Int32>?) throws -> [WindowSnapshot] {
         let interval = Self.signposter.beginInterval("completeSweep")
         defer { Self.signposter.endInterval("completeSweep", interval) }
         try ensurePermission()
@@ -361,6 +400,8 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         var snapshots: [WindowSnapshot] = []
         var refreshedElements: [WindowID: AXUIElement] = [:]
         var observedApplications: [ApplicationLaunchInstance: Set<CFHashCode>] = [:]
+        let previousHolds = unreadableApplicationHolds
+        unreadableApplicationHolds.removeAll()
         for application in NSWorkspace.shared.runningApplications where Self.shouldManageApplication(
             processIdentifier: application.processIdentifier,
             ownProcessIdentifier: getpid(),
@@ -368,9 +409,39 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
             isHidden: application.isHidden,
             includeHidden: false
         ) {
+            let pid = application.processIdentifier
+            defer {
+                let now = ProcessInfo.processInfo.systemUptime
+                if let deadline = Self.unresponsiveApplications.withLock({ $0.holdDeadline(pid) }), deadline > now {
+                    unreadableApplicationHolds[pid] = deadline
+                }
+            }
+            if let deadline = previousHolds[pid], recoveryPIDs != nil {
+                guard recoveryPIDs?.contains(pid) == true, !Self.isUnresponsive(pid) else {
+                    // Keep expired holds visible so another app's timer cannot
+                    // probe an exhausted app or reset its retry budget.
+                    unreadableApplicationHolds[pid] = max(
+                        deadline, Self.unresponsiveApplications.withLock { $0.holdDeadline(pid) } ?? deadline
+                    )
+                    continue
+                }
+                recoveryPIDs?.remove(pid)
+            }
             let applicationInstance = applicationInstance(for: application)
             let appElement = makeApplicationElement(pid: application.processIdentifier)
-            guard let windows: [AXUIElement] = value(kAXWindowsAttribute, from: appElement) else { continue }
+            #if DEBUG
+            ArrivalTrace.shared.record("readiness_attempt", pid: pid, reason: "ax_windows_inventory")
+            #endif
+            guard let windows: [AXUIElement] = value(kAXWindowsAttribute, from: appElement) else {
+                #if DEBUG
+                ArrivalTrace.shared.record("readiness_outcome", pid: pid, outcome: "inventory_unreadable", reason: "ax_windows_inventory")
+                #endif
+                continue
+            }
+            #if DEBUG
+            ArrivalTrace.shared.record("readiness_outcome", pid: pid,
+                outcome: windows.isEmpty ? "no_windows" : "windows_present", reason: "ax_windows_inventory")
+            #endif
             observedApplications[applicationInstance] = Set(windows.map { CFHash($0) })
             for window in windows {
                 guard let snapshot = snapshot(
@@ -468,6 +539,62 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
             return nil
         }
         return snapshotCache.merge(refreshed, expectedWindowIDs: ids)
+    }
+
+    /// Reads the one window a creation callback delivered: its attributes,
+    /// WindowServer record, and Space membership. No application is enumerated.
+    public func readCreatedWindow(token: UInt64) -> CreatedWindowRead {
+        guard let entry = creationElements[token], (try? ensurePermission()) != nil else { return .unavailable }
+        let element = entry.element
+        let pid = entry.processIdentifier
+        guard var window = snapshot(
+            element,
+            application: applicationInstance(forPID: pid),
+            bundleIdentifier: NSRunningApplication(processIdentifier: pid)?.bundleIdentifier,
+            displays: displays()
+        ) else {
+            var role: CFTypeRef?
+            let status = Self.gatedCall(element) {
+                AXUIElementCopyAttributeValue(element, kAXRoleAttribute as CFString, &role)
+            }
+            if status == .invalidUIElement { creationElements.removeValue(forKey: token) }
+            return status == .invalidUIElement ? .unavailable : .notReady
+        }
+        // A floating verdict this early is provisional: keep the element and let the next read judge again.
+        if window.isFloating {
+            metadata.popupVerdicts[window.id] = nil
+            return .window(window)
+        }
+        do {
+            guard let exactWindowID = identities.exactWindowID(for: window.id),
+                  let records = targetedWindowServerRecords(ids: [exactWindowID])
+            else { return .unavailable }
+            if let record = records.first(where: { $0.windowID == exactWindowID }),
+               record.processIdentifier == pid, record.layer != 0 {
+                // Above the normal layer, like a utility panel: the complete inventory omits it too.
+                window.isFloating = true
+            } else if !WindowServerIndex(records: records).contains(window, exactWindowID: exactWindowID) {
+                // Not on screen yet, or on another Space: wait for the deadline's complete inventory.
+                return .notReady
+            }
+        }
+        guard !window.isFloating else { return .window(window) }
+        creationElements.removeValue(forKey: token)
+        guard let observation = refreshNativeDesktopObservation() else { return .window(window) }
+        return observation.windowsOnCurrentSpaces([window]).first.map(CreatedWindowRead.window) ?? .unavailable
+    }
+
+    public func cachedVisibleWindows(adding windows: [WindowSnapshot]) -> [WindowSnapshot]? {
+        // A peer that closed, hid, or left the Space without an event must not join the layout.
+        let peers = snapshotCache.snapshots?.values.filter { $0.isEligible && !$0.isFloating } ?? []
+        let exactIDs = Dictionary(uniqueKeysWithValues: peers.compactMap { peer in
+            identities.exactWindowID(for: peer.id).map { (peer.id, $0) }
+        })
+        guard CachedPeerVisibility.allOnScreen(peers: peers, exactWindowIDs: exactIDs, windowServer: { targetedWindowServerIndex(ids: $0) }) else {
+            snapshotCache.invalidate()
+            return nil
+        }
+        return snapshotCache.merge(windows, expectedWindowIDs: Set(windows.map(\.id)))
     }
 
     func windowSnapshot(id: WindowID) throws -> WindowSnapshot? {
@@ -684,6 +811,9 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
            let actualSize: CGSize = axValue(kAXSizeAttribute, from: element, type: .cgSize) {
             let actual = BTRect(x: actualPosition.x, y: actualPosition.y,
                                 width: actualSize.width, height: actualSize.height)
+            #if DEBUG
+            ArrivalTrace.shared.readback(windowID: windowID, frame: actual)
+            #endif
             metadata.lastWriteReadback[windowID] = actual
             let now = ProcessInfo.processInfo.systemUptime
             if minimumSizeLearner.observeWriteReadback(
@@ -934,6 +1064,17 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
     /// growing window never covers a neighbour from another application that
     /// has not yet made room. Within one application the writes keep their
     /// order.
+    public func preflightFrameWrites(_ windowIDs: Set<WindowID>) throws {
+        try ensurePermission()
+        for id in windowIDs.sorted() {
+            guard let element = elements[id] ?? refreshElement(for: id) else {
+                throw WindowSystemError.windowNotFound(id)
+            }
+            try requireResponsive(element)
+            guard try movability(of: element) else { throw WindowSystemError.unsupportedWindow(id) }
+        }
+    }
+
     public func setFrames(_ writes: [Placement], knownCurrentFrames: [WindowID: BTRect]) -> FrameBatchResult {
         guard writes.count > 1 else {
             var attempted: [WindowID] = []
@@ -1013,6 +1154,9 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
                 continue
             }
             guard let actual = result.actual else { continue }
+            #if DEBUG
+            ArrivalTrace.shared.readback(windowID: write.windowID, frame: actual)
+            #endif
             metadata.lastWriteReadback[write.windowID] = actual
             if minimumSizeLearner.observeWriteReadback(
                 windowID: write.windowID, application: metadata.applicationKeys[write.windowID],
@@ -1369,7 +1513,12 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
     private func installObserver(for pid: pid_t) {
         var observer: AXObserver?
         let error = AXObserverCreate(pid, betterTileAXObserverCallback, &observer)
-        guard error == .success, let observer else { return }
+        guard error == .success, let observer else {
+            #if DEBUG
+            if ArrivalTrace.shared.isEnabled { ArrivalTrace.shared.record("ax_observer_registered", pid: pid, outcome: "failed", reason: "AXObserverCreate=\(error.rawValue)") }
+            #endif
+            return
+        }
         guard let applicationInstance = launchRecords[pid]?.instance else { return }
         observers[pid] = observer
         observationLifetime.install(applicationInstance)
@@ -1419,6 +1568,13 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         observationCallbackContext = context
         let pointer = Unmanaged.passUnretained(context).toOpaque()
         let result = AXObserverAddNotification(observer, element, notification as CFString, pointer)
+        #if DEBUG
+        if notification == kAXWindowCreatedNotification, ArrivalTrace.shared.isEnabled {
+            ArrivalTrace.shared.record("ax_observer_registered", pid: pid,
+                outcome: result == .success || result == .notificationAlreadyRegistered ? "registered" : "failed",
+                reason: "AXObserverAddNotification=\(result.rawValue)")
+        }
+        #endif
         if result != .success, result != .notificationAlreadyRegistered {
             registrations[pid]?.remove(registration)
         }
@@ -1446,7 +1602,9 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
             minimumSizeLearner.remove(windowID)
             metadata.remove(windowID)
         }
-        if event.kind != .moved, event.kind != .resized, event.kind != .focused {
+        // A creation with an element is merged by readCreatedWindow, or invalidates there.
+        if event.kind != .moved, event.kind != .resized, event.kind != .focused,
+           event.creationToken == nil {
             snapshotCache.invalidate()
         }
         eventHandler?(event)
@@ -1456,16 +1614,43 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         observer: AXObserver,
         kind: WindowSystemEvent.Kind,
         processIdentifier: pid_t,
-        accessibilityHash: CFHashCode
+        accessibilityHash: CFHashCode,
+        element: AXUIElement
     ) -> CapturedWindowObservation? {
         guard let installedObserver = observers[processIdentifier], observer === installedObserver,
               let application = launchRecords[processIdentifier]?.instance else { return nil }
-        return observationLifetime.capture(kind: kind, application: application,
+        var captured = observationLifetime.capture(kind: kind, application: application,
             accessibilityHash: accessibilityHash, identities: identities)
+        if kind == .created {
+            captured?.event.creationToken = creationToken(for: element, processIdentifier: processIdentifier)
+        }
+        return captured
+    }
+
+    /// A repeated callback for the same element reuses its token.
+    func creationToken(for element: AXUIElement, processIdentifier: pid_t) -> UInt64 {
+        if let known = creationElements.first(where: {
+            $0.value.processIdentifier == processIdentifier && CFEqual($0.value.element, element)
+        }) { return known.key }
+        nextCreationToken &+= 1
+        creationElements[nextCreationToken] = (processIdentifier, element)
+        // A callback the model never reads must not accumulate elements.
+        if creationElements.count > 32 {
+            for token in creationElements.keys.sorted().prefix(creationElements.count - 16) {
+                creationElements.removeValue(forKey: token)
+            }
+        }
+        return nextCreationToken
     }
 
     fileprivate func receiveAXEvent(_ captured: CapturedWindowObservation) {
-        guard let event = observationLifetime.event(for: captured, identities: identities) else { return }
+        guard let event = observationLifetime.event(for: captured, identities: identities) else {
+            #if DEBUG
+            if captured.event.kind == .created { ArrivalTrace.shared.record("arrival_dropped", pid: captured.event.processIdentifier,
+                windowID: captured.event.windowID, reason: "stale_observer_or_window_identity") }
+            #endif
+            return
+        }
         receiveWindowEvent(event)
     }
 
@@ -1498,6 +1683,20 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         bundleIdentifier: String?,
         displays availableDisplays: [DisplaySnapshot]
     ) -> WindowSnapshot? {
+        #if DEBUG
+        var traceID: WindowID?
+        var traceOutcome = "attributes_unreadable_or_not_window_sized"
+        if ArrivalTrace.shared.isEnabled {
+            ArrivalTrace.shared.record("readiness_attempt", pid: application.processIdentifier,
+                reason: "ax_snapshot", axHash: CFHash(element))
+        }
+        defer {
+            if ArrivalTrace.shared.isEnabled {
+                ArrivalTrace.shared.record("readiness_outcome", pid: application.processIdentifier, windowID: traceID,
+                    outcome: traceOutcome, reason: "ax_snapshot", axHash: CFHash(element))
+            }
+        }
+        #endif
         guard let attributes = snapshotAttributes(element),
               attributes.role == kAXWindowRole,
               attributes.size.width > 20, attributes.size.height > 20
@@ -1514,6 +1713,13 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
             accessibilityHash: CFHash(element),
             exactWindowID: exactWindowIDResolver.windowID(for: element)
         )
+        #if DEBUG
+        if ArrivalTrace.shared.isEnabled {
+            traceID = id
+            traceOutcome = "readable"
+            ArrivalTrace.shared.readable(pid: application.processIdentifier, windowID: id, frame: frame, axHash: CFHash(element))
+        }
+        #endif
         elements[id] = element
         // An application that does not answer in time says nothing about
         // the window. Counting that as "cannot move" would drop the window
@@ -2162,8 +2368,16 @@ private func betterTileAXObserverCallback(
     // AX sources are installed on CFRunLoopGetMain(); capture ownership before
     // the asynchronous hop, then defer delivery to avoid mutation reentrancy.
     MainActor.assumeIsolated {
+        #if DEBUG
+        if kind == .created, ArrivalTrace.shared.isEnabled { ArrivalTrace.shared.record("window_created_notification", pid: pid, axHash: accessibilityHash) }
+        #endif
         guard let captured = context.system?.captureAXEvent(observer: observer,
-            kind: kind, processIdentifier: pid, accessibilityHash: accessibilityHash) else { return }
+            kind: kind, processIdentifier: pid, accessibilityHash: accessibilityHash, element: element) else {
+            #if DEBUG
+            if kind == .created { ArrivalTrace.shared.record("arrival_dropped", pid: pid, reason: "observer_not_current") }
+            #endif
+            return
+        }
         Task { @MainActor [weak context] in context?.system?.receiveAXEvent(captured) }
     }
 }

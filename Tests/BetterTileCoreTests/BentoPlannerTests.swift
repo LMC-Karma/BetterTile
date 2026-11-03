@@ -489,7 +489,7 @@ private func plannerWindow(
     #expect(eighth.minimizeWindowIDs.isEmpty, "nothing is hidden to make room")
     #expect(eighth.state.layout.floatingWindowIDs.isSuperset(of: [windows[6].id, windows[7].id]))
     #expect(eighth.placements.isEmpty, "an overflow window keeps its own frame")
-    #expect(eighth.pill == .overflow("Bento manages up to six panes. This window will remain floating."))
+    #expect(eighth.pill == .overflow("Adaptive manages up to six panes. This window will remain floating."))
 }
 
 /// Activating a desktop that already holds more than six windows floats the

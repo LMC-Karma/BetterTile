@@ -462,7 +462,7 @@ public final class TabbedOverlayController {
         menu.addItem(layout)
         menu.addItem(.separator())
         item("Undo Layout Change", .undo, enabled: canUndo, in: menu)
-        item("Repair Tabbed", .repair, in: menu)
+        item("Repair Layout", .repair, in: menu)
         if pane.tabs.isEmpty && state.panes.count > 1 { item("Remove Empty Pane", .removePane(pane.id), in: menu) }
         return menu
     }

@@ -73,6 +73,15 @@ public struct BTRect: Codable, Hashable, Sendable {
         return BTRect(x: x1, y: y1, width: x2 - x1, height: y2 - y1)
     }
 
+    /// Rounds edges to whole logical points, with half points toward positive infinity.
+    /// Whole-point gaps stay exact, including across zero.
+    public func snappedToWholePoints() -> BTRect {
+        let x = Self.snappedEdge(minX), y = Self.snappedEdge(minY)
+        return BTRect(x: x, y: y, width: Self.snappedEdge(maxX) - x, height: Self.snappedEdge(maxY) - y)
+    }
+
+    static func snappedEdge(_ value: Double) -> Double { (value + 0.5).rounded(.down) }
+
     public func clamped(to bounds: BTRect, minimumSize: BTSize = .zero) -> BTRect {
         let width = min(bounds.size.width, max(minimumSize.width, size.width))
         let height = min(bounds.size.height, max(minimumSize.height, size.height))

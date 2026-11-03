@@ -381,6 +381,59 @@ func partiallyFailedFrameWriteRestoresTheFailingWindow(rollbackFails: Bool) thro
     #expect(system.frameWriteCounts[system.windows[1].id] == 2)
 }
 
+@Test(.macOSTestApplication, arguments: [664.0, 662.5]) @MainActor
+func authoritativeSettlementChecksFractionalBottomEdgeRounding(actualHeight: Double) async throws {
+    let system = FakeWindowSystem()
+    system.availableDisplays = [DisplaySnapshot(
+        id: DisplayID(rawValue: "main"),
+        frame: BTRect(x: 0, y: 0, width: 2560, height: 1440),
+        visibleFrame: BTRect(x: 0, y: 30, width: 2560, height: 1332),
+        isMain: true
+    )]
+    let coordinator = WindowCoordinator(system: system)
+    let id = system.windows[0].id
+    let requested = BTRect(x: 1707.3333333333333, y: 696.5, width: 852.6666666666667, height: 665.5)
+    let actual = BTRect(x: 1707, y: 697, width: 853, height: actualHeight)
+    // Direct AX writes reproduced a stable 1.5 pt height shortfall at the
+    // work-area bottom. Return that measured frame on every write, including retries.
+    system.writeReadbackHandler = { [unowned system] _, _, _, _ in system.windows[0].frame = actual }
+    let placements = [Placement(windowID: id, frame: requested)]
+
+    #expect(coordinator.applyPlacements(placements).isApplied)
+    let outcome = await coordinator.settleAuthoritativePlacements(placements, retryDelay: .zero)
+    if actualHeight == 664 {
+        #expect(outcome.isApplied)
+        #expect(system.frameWriteCounts[id] == 1)
+    } else {
+        #expect(outcome == .failed(reason: "One or more windows did not settle at the requested frame."))
+        #expect(system.frameWriteCounts[id] == 3)
+    }
+    #expect(system.windows[0].frame == actual)
+}
+
+@Test(.macOSTestApplication, arguments: [2.0, -2.0, 2.01, -2.01, 3.0, -3.0], [0, 1, 2, 3]) @MainActor
+func authoritativeSettlementBoundsEachFrameComponent(difference: Double, component: Int) async throws {
+    let system = FakeWindowSystem()
+    let coordinator = WindowCoordinator(system: system)
+    let id = system.windows[0].id
+    let requested = BTRect(x: 100, y: 50, width: 500, height: 600)
+    var components = [requested.minX, requested.minY, requested.size.width, requested.size.height]
+    components[component] += difference
+    let actual = BTRect(x: components[0], y: components[1], width: components[2], height: components[3])
+    system.writeReadbackHandler = { [unowned system] _, _, _, _ in system.windows[0].frame = actual }
+    let placements = [Placement(windowID: id, frame: requested)]
+
+    #expect(coordinator.applyPlacements(placements).isApplied)
+    let outcome = await coordinator.settleAuthoritativePlacements(placements, retryDelay: .zero)
+    if abs(difference) <= 2 {
+        #expect(outcome.isApplied)
+        #expect(system.frameWriteCounts[id] == 1)
+    } else {
+        #expect(outcome == .failed(reason: "One or more windows did not settle at the requested frame."))
+        #expect(system.frameWriteCounts[id] == 3)
+    }
+}
+
 @Test(.macOSTestApplication) @MainActor func authoritativeSettlementStopsAfterItsRetryLimit() async throws {
     let system = FakeWindowSystem()
     system.addSecondWindow()

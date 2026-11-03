@@ -138,8 +138,12 @@ public final class DragSnapController {
     /// The drop the overlay shows: the only decision. Release commits it and
     /// does not evaluate the release point again.
     private(set) var dropTarget: WindowDropTarget? {
-        didSet { if dropTarget != nil { showedDropTarget = true } }
+        didSet {
+            if dropTarget != nil { showedDropTarget = true }
+            dropTargetDidChange?(dropTarget)
+        }
     }
+    var dropTargetDidChange: ((WindowDropTarget?) -> Void)?
     /// Whether this gesture showed any drop. A fast flick shows none, so its
     /// release evaluates the release point once.
     private var showedDropTarget = false

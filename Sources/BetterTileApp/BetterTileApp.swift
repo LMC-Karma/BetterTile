@@ -1145,22 +1145,12 @@ struct MenuPanelControls: View {
     let activeMode: LayoutMode
     let contextDescription: String
 
-    /// Native has no layout to repair; the same action arranges its windows
-    /// with Bento, so the label names that effect.
-    private var repairTitle: String {
-        switch activeMode {
-        case .tabbed: "Repair Tabbed"
-        case .bento: "Repair Bento"
-        case .manual, .linked: "Arrange with Bento"
-        }
-    }
-
     private var repairHelp: String {
         switch activeMode {
         case .tabbed: "Rebuild this desktop's panes and tabs from its current windows."
-        case .bento: "Re-tile this desktop's windows into a clean Bento layout."
+        case .bento: "Re-tile this desktop's windows into a clean Adaptive layout."
         case .manual, .linked:
-            "Tile this display's windows with Bento. A single window moves to its configured placement."
+            "Tile this display's windows with Adaptive. A single window moves to its configured placement."
         }
     }
     let snappingEnabled: Bool
@@ -1222,7 +1212,7 @@ struct MenuPanelControls: View {
             Button {
                 repairLayout?()
             } label: {
-                Label(repairTitle, systemImage: "arrow.triangle.2.circlepath")
+                Label("Repair Layout", systemImage: "arrow.triangle.2.circlepath")
                     .font(.system(size: 12, weight: .semibold))
                     .frame(maxWidth: .infinity, minHeight: 28)
             }

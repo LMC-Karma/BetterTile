@@ -98,11 +98,11 @@ public struct DividerResizePreview: View {
             HStack {
                 Text(dragStart == nil ? "Grab the divider to stretch and resize." : "Release to keep the layout. Escape cancels.")
                 Spacer()
-                Text(feedback == .ghost ? "Ghost Preview" : "Live Resize")
+                Text(feedback == .ghost ? "Resize Preview" : "Live Resize")
             }
             .font(.system(size: 12))
             .foregroundStyle(.secondary)
-            Text("Sample windows only. Plus and T dividers resize Bento intersections.")
+            Text("Sample windows only. Plus and T dividers resize Adaptive intersections.")
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
         }

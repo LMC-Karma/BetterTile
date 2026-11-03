@@ -1,11 +1,13 @@
 # Domain glossary
 
 Shared vocabulary for BetterTile's domain. Terms here name concepts, not Swift
-types; code and documentation should use them consistently.
+types; code and documentation should use them consistently. Product text names
+the modes Adaptive and Manual; code identifiers still use `bento`, `manual`,
+and `ghost`.
 
 ## Layout Wheel
 
-BetterTile's pointer-centered chooser for window actions and Repair Bento. It
+BetterTile's pointer-centered chooser for window actions and Repair Layout. It
 presents one or two concentric levels around a cancel hub.
 
 _Avoid_: Snap Wheel, radial menu, Layout Dial
@@ -34,8 +36,10 @@ transaction or asks for a repair.
 
 The complete result of reconciling one display's observed windows with its
 active layout session during a background desktop sweep. It either updates
-bookkeeping without moving windows, places the lone window when its latch
-fires, or proposes a Bento layout for the mutation path to apply atomically.
+bookkeeping without moving windows, places the lone window of an Adaptive
+desktop when its latch fires, or proposes an Adaptive layout for the mutation
+path to apply atomically. A Manual desktop never receives an automatic
+single-window placement; Repair Layout places its lone window on request.
 
 ## Native Space
 
@@ -49,7 +53,7 @@ The real windows represented by one Stage Manager thumbnail. BetterTile may
 select one validated frontmost member for a drag. It does not create a layout
 session for the group or synchronize the other members.
 
-## Bento
+## Adaptive
 
 A per-desktop layout mode that divides the work area among up to six visible
 windows. Its layout is a tree of splits: a new window takes room from existing
@@ -57,17 +61,24 @@ panes, and a closed window gives its room back. A region of the tree without a
 window, such as the rest of the screen after a half-screen snap, is an empty
 slot.
 
-## Repair Bento
+_Avoid_: Bento (in product text)
 
-A command that rebuilds the Bento layout of one display from its visible
-windows. It picks the arrangement closest to the current window frames, with
-equal shares and no empty slots. It ends Focus mode and resumes automatic
+## Repair Layout
+
+A command that rebuilds the current desktop's layout from its visible windows.
+On an Adaptive desktop, it picks the arrangement closest to the current
+window frames, with equal shares and no empty slots. It ends Focus mode and resumes automatic
 placement after a degraded mutation. With one window, it restores that
-window's configured placement instead.
+window's configured placement instead. On a Tabbed desktop, it rebuilds panes
+and tabs from current windows and returns automatic floats that a pane can show.
+In Manual, one window moves to its configured placement and the desktop stays
+Manual; several windows are arranged and the desktop switches to Adaptive.
+
+_Avoid_: Repair Bento, Repair Tabbed, Arrange with Bento
 
 ## Balance on new window
 
-A Bento setting, off by default. After a new window joins, each partition
+An Adaptive setting, off by default. After a new window joins, each partition
 gives its children equal shares. A window that cannot shrink that far keeps
 its minimum size. Tabbed is not affected.
 
@@ -106,9 +117,9 @@ covers hidden tabs, including portions that extend beyond their panes.
 ## Floating window
 
 A window on a managed desktop that the active layout leaves in place. The user
-can float a window out of Bento or out of a Tabbed pane. BetterTile floats
+can float a window out of Adaptive or out of a Tabbed pane. BetterTile floats
 popup windows, such as file pickers and dialogs, and windows that appear on
-several Spaces. On a Bento desktop it also floats windows that cannot be
+several Spaces. On an Adaptive desktop it also floats windows that cannot be
 resized or moved, and a seventh window. On a Tabbed desktop it floats a window
 that no pane can show, even after boundaries adapt. A floating window keeps
 its own frame until the user returns it to the layout, for example by dragging
@@ -117,25 +128,25 @@ its selected tab; a window that the pane cannot show stays floating.
 
 ## Automatic float
 
-A floating window that Tabbed or Bento floated on its own, for example a
-window that no pane can show, or a seventh Bento window. Tabbed returns it to
+A floating window that Tabbed or Adaptive floated on its own, for example a
+window that no pane can show, or a seventh Adaptive window. Tabbed returns it to
 a pane when a pane can show it. It checks on each entry to Tabbed, once about
 1 second after the window floats, again when the pane layout changes, and when
-the user chooses Repair Tabbed. A window the user floated never returns on its
+the user chooses Repair Layout. A window the user floated never returns on its
 own.
 
 ## Focus mode
 
-A temporary Bento arrangement that expands one tiled window to the work area
+A temporary Adaptive arrangement that expands one tiled window to the work area
 and minimizes its covered peers. Maximize enters Focus mode. Restore, Maximize
-again, or restoring a peer from the Dock ends it and returns the previous Bento
-layout after the peers return. Repair Bento also brings the peers back. A
+again, or restoring a peer from the Dock ends it and returns the previous Adaptive
+layout after the peers return. Repair Layout also brings the peers back. A
 partition shortcut ends Focus mode before applying the requested partition.
 
 ## Tabbed preset
 
 A starting pane arrangement for Tabbed: One Pane, Two Columns, Two Rows,
-Bento — Focus, or Four Panes. The user picks the default in Settings.
+Adaptive — Focus, or Four Panes. The user picks the default in Settings.
 
 ## Minimum size
 
@@ -145,11 +156,20 @@ sizes a window refuses. Each application keeps a seed: the latest measurement
 from any of its windows. A new window plans with the seed until it is measured,
 and the seed is dropped when the application quits.
 
-## Ghost Preview
+## Resize Preview
 
 A resize feedback mode for shared dividers. During the drag, BetterTile draws
 the new frames and moves no window. Release applies the previewed layout, and
 Escape cancels it.
+
+_Avoid_: Ghost Preview
+
+## Manual
+
+A per-desktop mode that leaves windows where they are, while BetterTile's
+snapping and linked resizing remain available.
+
+_Avoid_: Native (as a mode name)
 
 ## Live Resize
 

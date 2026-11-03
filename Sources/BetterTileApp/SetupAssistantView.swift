@@ -219,7 +219,7 @@ struct SetupAssistantView: View {
                 symbol: "rectangle.split.2x1",
                 explanation:
                     "Window ▸ Move & Resize and its keyboard equivalents work as they always did. "
-                        + "Bento recognises where macOS put a window and adopts that arrangement, "
+                        + "Adaptive recognises where macOS put a window and adopts that arrangement, "
                         + "so you can tile with either and carry on resizing with BetterTile's dividers.",
                 directions: [
                     "Nothing to change. Use whichever you reach for.",
@@ -232,7 +232,7 @@ struct SetupAssistantView: View {
                 symbol: "hand.draw",
                 explanation:
                     "Dragging to a screen edge is the one place the two overlap: macOS and BetterTile "
-                        + "would both try to interpret the same drag. Bento adopts the result either way, "
+                        + "would both try to interpret the same drag. Adaptive adopts the result either way, "
                         + "so this is about which one you want to feel.",
                 directions: [
                     "Keep BetterTile Drag Snapping on for BetterTile's zones and previews, or",
@@ -249,11 +249,11 @@ struct SetupAssistantView: View {
                 symbol: "uiwindow.split.2x1",
                 explanation:
                     "BetterTile resolves a Stage Manager thumbnail to one real window and leaves "
-                        + "the rest of its group alone. Bento behavior is still most predictable "
+                        + "the rest of its group alone. Adaptive behavior is still most predictable "
                         + "when Stage Manager is off.",
                 directions: [
                     "Leave Stage Manager on for single-window thumbnail drags, or",
-                    "Turn it off in Desktop & Dock or Control Center for ordinary Bento desktops.",
+                    "Turn it off in Desktop & Dock or Control Center for ordinary Adaptive desktops.",
                 ],
                 isAcknowledged: configurationBinding(
                     \.stageManagerRecommendationAcknowledged
@@ -287,7 +287,7 @@ struct SetupAssistantView: View {
                         symbol: "arrow.left.and.right"
                     )
                     featurePoint(
-                        "Adaptive Bento layouts",
+                        "Adaptive layouts",
                         detail: "Arrange visible windows into a stable split layout that adapts as windows change.",
                         symbol: "rectangle.split.2x2"
                     )

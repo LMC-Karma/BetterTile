@@ -37,6 +37,20 @@ public struct GlobalGestureEvent: Equatable, Sendable {
         BTPoint(x: cgEventLocation.x, y: cgEventLocation.y)
     }
 
+    /// The shared event tap's conversion. It copies only scalar gesture data.
+    init?(tapEvent event: CGEvent, type: CGEventType) {
+        guard let kind = GlobalGestureEventKind(type) else { return nil }
+        self.init(
+            kind: kind,
+            // CGEvent's global display coordinates already use the same
+            // upper-left origin as BetterTile's logical coordinates.
+            position: Self.position(cgEventLocation: event.location),
+            button: event.getIntegerValueField(.mouseEventButtonNumber),
+            modifiers: ShortcutModifiers(event.flags),
+            timestamp: GestureEventClock.nanoseconds(cgEventTimestamp: event.timestamp)
+        )
+    }
+
     static func position(
         nsEventMouseLocation: CGPoint,
         primaryScreenFrame: CGRect
@@ -468,23 +482,15 @@ final class GestureEventTapWorker: GestureEventTapWorking, @unchecked Sendable {
             }
             return Unmanaged.passUnretained(event)
         }
-        guard let kind = GlobalGestureEventKind(type) else {
+        guard let gesture = GlobalGestureEvent(tapEvent: event, type: type) else {
             return Unmanaged.passUnretained(event)
         }
-        worker.handler(.event(GlobalGestureEvent(
-            kind: kind,
-            // CGEvent's global display coordinates already use the same
-            // upper-left origin as BetterTile's logical coordinates.
-            position: GlobalGestureEvent.position(cgEventLocation: event.location),
-            button: event.getIntegerValueField(.mouseEventButtonNumber),
-            modifiers: ShortcutModifiers(event.flags),
-            timestamp: GestureEventClock.nanoseconds(cgEventTimestamp: event.timestamp)
-        )))
+        worker.handler(.event(gesture))
         return Unmanaged.passUnretained(event)
     }
 }
 
-private extension GlobalGestureEventKind {
+extension GlobalGestureEventKind {
     init?(_ type: CGEventType) {
         switch type {
         case .leftMouseDown: self = .leftMouseDown

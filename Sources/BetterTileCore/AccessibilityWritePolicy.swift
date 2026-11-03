@@ -212,6 +212,10 @@ public struct UnresponsiveApplicationGate: Sendable {
         (holdsUntil[processIdentifier] ?? -.infinity) > now
     }
 
+    public func holdDeadline(_ processIdentifier: Int32) -> Double? {
+        holdsUntil[processIdentifier]
+    }
+
     /// Records one call. A quick `cannotComplete` is an answer from a busy
     /// application, not a hang, so it neither starts nor ends a hold.
     public mutating func record(_ processIdentifier: Int32, cannotComplete: Bool, elapsed: Double, now: Double) {

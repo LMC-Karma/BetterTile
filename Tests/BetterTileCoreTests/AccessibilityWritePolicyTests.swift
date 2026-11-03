@@ -212,11 +212,13 @@ private let target = BTRect(x: 100, y: 100, width: 600, height: 400)
 @Test func aCallThatWaitsOutItsTimeoutHoldsItsApplicationBriefly() {
     var gate = UnresponsiveApplicationGate()
     #expect(!gate.isHeld(42, now: 10))
+    #expect(gate.holdDeadline(42) == nil)
     // A quick refusal is a busy application answering, not a hang.
     gate.record(42, cannotComplete: true, elapsed: 0.05, now: 10)
     #expect(!gate.isHeld(42, now: 10))
     // A call that waited out its timeout holds the application.
     gate.record(42, cannotComplete: true, elapsed: 1.5, now: 11.5)
+    #expect(gate.holdDeadline(42) == 13.5)
     #expect(gate.isHeld(42, now: 11.6))
     #expect(gate.isHeld(42, now: 11.5 + UnresponsiveApplicationGate.holdSeconds - 0.01))
     #expect(!gate.isHeld(42, now: 11.5 + UnresponsiveApplicationGate.holdSeconds))
@@ -226,6 +228,7 @@ private let target = BTRect(x: 100, y: 100, width: 600, height: 400)
     gate.record(42, cannotComplete: true, elapsed: 0.35, now: 12)
     #expect(gate.isHeld(42, now: 12.1))
     gate.record(42, cannotComplete: false, elapsed: 0.01, now: 12.2)
+    #expect(gate.holdDeadline(42) == nil)
     #expect(!gate.isHeld(42, now: 12.3))
 }
 
