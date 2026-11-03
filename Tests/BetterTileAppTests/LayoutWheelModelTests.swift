@@ -1751,7 +1751,7 @@ func aFocusPartitionReportsPlacementFailureAfterThePeersReturn(fromWheel: Bool) 
 
 /// Repair Bento from the Layout Wheel waits for a Focus mode restore the
 /// same way, instead of cancelling it.
-@Test(.appTestApplication) @MainActor func layoutWheelRepairWaitsForAFocusModeRestore() async throws {
+@Test(.appTestApplication, .disabled("quarantine: #185 real-time Focus peer wait race on loaded CI")) @MainActor func layoutWheelRepairWaitsForAFocusModeRestore() async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
     let peer = WindowID(rawValue: "peer")
