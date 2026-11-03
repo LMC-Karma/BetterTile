@@ -1,0 +1,93 @@
+name: Rerun unacquired CI jobs
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+
+# This workflow never checks out a repository or runs pull-request code.
+# All unspecified permissions are disabled.
+permissions:
+  actions: write
+  checks: read
+
+jobs:
+  rerun:
+    if: github.event.workflow_run.conclusion == 'failure' && github.event.workflow_run.run_attempt < 3
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPOSITORY: ${{ github.repository }}
+      RUN_ID: ${{ github.event.workflow_run.id }}
+      RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+    steps:
+      - name: Decide whether every failed job lacked a runner
+        id: decision
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo 'rerun=false' >> "$GITHUB_OUTPUT"
+          [[ "$RUN_ID" =~ ^[0-9]+$ && "$RUN_ATTEMPT" =~ ^[12]$ ]]
+          [[ "$REPOSITORY" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]
+
+          # Pin the attempt: the default jobs endpoint returns the latest one.
+          jobs=$(gh api --paginate --slurp \
+            "repos/$REPOSITORY/actions/runs/$RUN_ID/attempts/$RUN_ATTEMPT/jobs?per_page=100" \
+            | jq '[.[].jobs[]]')
+          failed=$(jq '[.[] | select(.name != "test")
+            | select(.conclusion == "failure" or .conclusion == "cancelled")]' <<< "$jobs")
+          if [ "$(jq 'length' <<< "$failed")" -eq 0 ]; then
+            echo 'Do not rerun: no failed or cancelled job other than test.'
+            exit 0
+          fi
+
+          while IFS= read -r job; do
+            name=$(jq -r '.name' <<< "$job")
+            # Missing step data is unknown, not proof that no step ran.
+            if ! jq -e '.steps | type == "array"' <<< "$job" > /dev/null; then
+              echo "Do not rerun: $name has no step data."
+              exit 0
+            fi
+            if [ "$(jq '.steps | length' <<< "$job")" -eq 0 ]; then
+              echo "$name: zero steps."
+              continue
+            fi
+            # Never retry a job that executed any step, even if it also has
+            # a runner annotation. This includes checkout and setup failures.
+            if jq -e 'any(.steps[]; .started_at != null or .status == "in_progress"
+                or (.conclusion != null and .conclusion != "skipped"))' <<< "$job" > /dev/null; then
+              echo "Do not rerun: $name ran steps."
+              exit 0
+            fi
+            # Some runner failures may have only unstarted step placeholders.
+            # Build a repository-scoped API path; never request a payload URL.
+            check_id=$(jq -r '.check_run_url | capture("/check-runs/(?<id>[0-9]+)$").id' <<< "$job")
+            [[ "$check_id" =~ ^[0-9]+$ ]]
+            annotations=$(gh api --paginate --slurp \
+              "repos/$REPOSITORY/check-runs/$check_id/annotations?per_page=100")
+            if ! jq -e 'any(.[][]; (.message // "") | contains("not acquired by Runner"))' \
+                <<< "$annotations" > /dev/null; then
+              echo "Do not rerun: $name has steps but no runner-acquisition annotation."
+              exit 0
+            fi
+            echo "$name: unstarted steps and a runner-acquisition annotation."
+          done < <(jq -c '.[]' <<< "$failed")
+
+          echo 'Rerun: every failed or cancelled job other than test never started.'
+          echo 'rerun=true' >> "$GITHUB_OUTPUT"
+      - name: Rerun failed jobs if this is still the completed attempt
+        if: steps.decision.outputs.rerun == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Avoid acting on an older completion event after a manual rerun.
+          current=$(gh api "repos/$REPOSITORY/actions/runs/$RUN_ID")
+          if ! jq -e --argjson attempt "$RUN_ATTEMPT" \
+              '.run_attempt == $attempt and .run_attempt < 3
+               and .status == "completed" and .conclusion == "failure"' \
+              <<< "$current" > /dev/null; then
+            echo 'Do not rerun: the run changed after this completion event.'
+            exit 0
+          fi
+          gh api --method POST "repos/$REPOSITORY/actions/runs/$RUN_ID/rerun-failed-jobs"

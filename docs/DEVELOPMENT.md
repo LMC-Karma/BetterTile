@@ -162,23 +162,47 @@ must not be distributed. The release script still builds and validates
 `BetterTile.app` from the Release configuration.
 
 CI first runs `changes`, which decides whether the pull request can affect a
-build. Then these jobs run in parallel:
+build. For build-affecting pull requests, these jobs run in parallel:
 
-- `guards`: the timing and quarantine guard, its self-test, the Metal setup self-test,
-  and the release test-completion self-test, on Ubuntu.
-- `unit-tests`: the Core, MacOS and App test targets.
-- `release-package`: the release tool tests, including the completion guard,
-  and `swift build -c release`.
-- `app-debug`: the Debug app build.
-- `app-release`: the Release app build.
+- `guards` (Ubuntu): the timing and quarantine guard, its self-test, the Metal
+  setup self-test, the runner recovery decision self-test, and six portable
+  release shell tests. These cover test completion, release test completion,
+  source selection, appcast handling,
+  signing policy and bundled licenses. Appcast tests use `xmllint` from Ubuntu's
+  `libxml2-utils` package; all build and signing commands in these tests are stubs.
+- `unit-tests` (macOS): the Core, MacOS and App test targets. SwiftPM builds all
+  targets while running these suites.
+- `app` (macOS, 60-minute limit): the Debug Xcode build, the Release Xcode build,
+  the release workspace cleanup and dry-run key tests, then `swift build -c release`.
+  The workspace test checks the macOS release tool's fixed temporary directory;
+  the key test uses Swift CryptoKit and BSD `stat`. The SwiftPM Release build
+  remains a separate check of the package build, including test support, rather
+  than only the Xcode app target. Each existing Metal setup step remains before
+  its corresponding build.
 
-Every macOS job sets up Metal before its build or test. `release-package` runs
-its shell tests first, then sets up Metal immediately before the release build.
+Pushes to `main` run `changes`, `guards` and `unit-tests`, and skip `app`.
+The unit tests catch skew between merged pull requests even though branches need
+not be up to date. Pull requests and `workflow_dispatch` keep full validation.
+A nightly schedule at **07:23 UTC** runs full validation on `main`. PR runs replace
+older runs on the same ref. Other runs, including scheduled runs, share a
+per-commit concurrency group and do not cancel in-progress runs.
 
-The required `test` check passes only when `changes` succeeds and all five jobs
-succeed. For a documentation-only pull request, it passes when `changes`
-succeeds and all five jobs are skipped. A new CI job must be added to the
-`needs` list of `test`; `test` then checks its result automatically.
+The required `test` aggregate always runs. It requires `changes` to succeed and
+each downstream job to match its expected result. For docs-only pull requests,
+all three downstream jobs must be skipped. For pushes, only `app` must be skipped.
+For other build-affecting runs, all three must succeed. A failed or cancelled
+classification, or an unexpected failed, cancelled or skipped job, fails `test`.
+Add every new CI job to `test`'s `needs` list and define its expected result.
+
+`rerun-unacquired.yml` observes completed CI failures and can rerun failed jobs
+at most twice (only attempts 1 and 2 qualify). It ignores the `test` aggregate
+and requires every other failed or cancelled job to have zero steps, or only
+unstarted step placeholders plus a “not acquired by Runner” check annotation.
+Any executed step blocks the rerun, including setup failures and real test
+failures. The workflow uses only `GITHUB_TOKEN` and GitHub's API on Ubuntu; it
+never checks out or runs PR code. See [the security disclosure](../SECURITY.md#ci-runner-recovery)
+for its permissions and removal. The push-only rule, nightly run and automatic
+rerun need verification after merge.
 
 > **Note:** The Layout Wheel liquid tests need the compiled shader,
 > `LayoutWheelLiquid.metal`. Swift 6.4's default build system (Swift Build)

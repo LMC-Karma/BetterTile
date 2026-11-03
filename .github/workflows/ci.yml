@@ -7,14 +7,17 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+  schedule:
+    # Full validation on main at 07:23 UTC, away from the top of the hour.
+    - cron: "23 7 * * *"
 
 permissions:
   contents: read
 
 # A new push to a pull request replaces its older run. Other runs are grouped by
 # commit, because a shared group keeps only the newest waiting run. That way
-# each merge to `main` gets its own complete run, even when merges land close
-# together.
+# each main commit keeps its run when merges land close together. Scheduled
+# runs use the same per-commit group and never cancel an in-progress run.
 concurrency:
   group: ci-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -41,8 +44,8 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Anything that is not a pull request (a push to `main` or a manual
-          # dispatch) gets the full run.
+          # Classify pushes, scheduled runs and manual dispatches as code.
+          # The app job separately skips pushes to main.
           if [ "${{ github.event_name }}" != "pull_request" ]; then
             echo "code=true" >> "$GITHUB_OUTPUT"
             exit 0
@@ -84,6 +87,24 @@ jobs:
         run: Tools/tests/setup-metal-test.sh
       - name: Check test timing and quarantine rules
         run: Tools/ci/check-test-timing.sh
+
+      - name: Test runner recovery decision
+        run: Tools/tests/rerun-unacquired-test.sh
+      - name: Test test-run completion guard
+        run: Tools/tests/test-completion-test.sh
+      - name: Test release test-run completion guard
+        run: Tools/tests/release-test-completion-test.sh
+      - name: Test release source target
+        run: Tools/tests/release-source-test.sh
+
+      - name: Install XML tools for release appcast tests
+        run: sudo apt-get update && sudo apt-get install -y libxml2-utils
+      - name: Test release appcast handling
+        run: Tools/tests/release-appcast-test.sh
+      - name: Test release signing policy
+        run: Tools/tests/release-signing-policy-test.sh
+      - name: Test release bundled licenses
+        run: Tools/tests/release-bundle-test.sh
 
   unit-tests:
     needs: changes
@@ -145,7 +166,8 @@ jobs:
           done
           exit "$failed"
       # Prevent cache poisoning from pull requests: only trusted runs save.
-      # Pushes to main and manual dispatches qualify; dispatch needs write access.
+      # Pushes to main, scheduled runs and manual dispatches qualify;
+      # dispatch needs write access.
       - name: Save SwiftPM Debug build
         if: github.event_name != 'pull_request' && steps.swiftpm-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # version 4
@@ -153,54 +175,18 @@ jobs:
           path: .build
           key: ${{ steps.swiftpm-cache.outputs.cache-primary-key }}
 
-  release-package:
+  app:
     needs: changes
-    if: needs.changes.outputs.code == 'true'
+    if: needs.changes.outputs.code == 'true' && github.event_name != 'push'
     runs-on: macos-26
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - name: Test test-run completion guard
-        run: Tools/tests/test-completion-test.sh
-      - name: Test release test-run completion guard
-        run: Tools/tests/release-test-completion-test.sh
-      # Guards the `rm -rf` in the release tool's exit trap.
-      - name: Test release workspace cleanup
-        run: Tools/tests/release-workspace-test.sh
-      - name: Test release appcast handling
-        run: Tools/tests/release-appcast-test.sh
-      - name: Test release dry-run key
-        run: Tools/tests/release-dry-run-key-test.sh
-      - name: Test release signing policy
-        run: Tools/tests/release-signing-policy-test.sh
-      - name: Test release source target
-        run: Tools/tests/release-source-test.sh
-      - name: Test release bundled licenses
-        run: Tools/tests/release-bundle-test.sh
-      - name: Set up Metal Toolchain
-        uses: ./.github/actions/setup-metal
-      - name: Build release
-        run: swift build -c release
-
-  app-debug:
-    needs: changes
-    if: needs.changes.outputs.code == 'true'
-    runs-on: macos-26
-    timeout-minutes: 20
+    # Preserve the combined budget of the three former 20-minute jobs.
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Set up Metal Toolchain
         uses: ./.github/actions/setup-metal
       - name: Build application bundle
         run: xcodebuild -project BetterTile.xcodeproj -scheme BetterTile -configuration Debug CODE_SIGNING_ALLOWED=NO build
-
-  app-release:
-    needs: changes
-    if: needs.changes.outputs.code == 'true'
-    runs-on: macos-26
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Set up Metal Toolchain
         uses: ./.github/actions/setup-metal
       # Release is what ships. It resolves BETTERTILE_ENABLE_AUTOMATIC_CHECKS
@@ -208,6 +194,15 @@ jobs:
       # release configuration.
       - name: Build release application bundle
         run: xcodebuild -project BetterTile.xcodeproj -scheme BetterTile -configuration Release CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build
+      # Guards the `rm -rf` in the release tool's exit trap.
+      - name: Test release workspace cleanup
+        run: Tools/tests/release-workspace-test.sh
+      - name: Test release dry-run key
+        run: Tools/tests/release-dry-run-key-test.sh
+      - name: Set up Metal Toolchain
+        uses: ./.github/actions/setup-metal
+      - name: Build release
+        run: swift build -c release
 
   # A job skipped because its dependency failed reports the same "skipped"
   # conclusion as one skipped by its own condition, and a skipped required
@@ -217,7 +212,7 @@ jobs:
   # Keep `always()` rather than `!cancelled()`: a cancelled run must fail this
   # check, because a skipped required check counts as passing.
   test:
-    needs: [changes, guards, unit-tests, release-package, app-debug, app-release]
+    needs: [changes, guards, unit-tests, app]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -236,6 +231,7 @@ jobs:
         env:
           CODE: ${{ needs.changes.outputs.code }}
           NEEDS: ${{ toJSON(needs) }}
+          EVENT: ${{ github.event_name }}
         run: |
           set -euo pipefail
           case "$CODE" in
@@ -246,12 +242,14 @@ jobs:
 
           # Read every job in `needs` except `changes`, so a new job only has
           # to be added to `needs`.
-          unexpected=$(jq -r --arg expected "$expected" \
-            'to_entries[] | select(.key != "changes" and .value.result != $expected)
-             | "\(.key): \(.value.result)"' <<< "$NEEDS")
+          unexpected=$(jq -r --arg expected "$expected" --arg event "$EVENT" \
+            'to_entries[] | select(.key != "changes")
+             | (if .key == "app" and $event == "push" then "skipped" else $expected end) as $wanted
+             | select(.value.result != $wanted)
+             | "\(.key): \(.value.result) (expected \($wanted))"' <<< "$NEEDS")
           if [ -n "$unexpected" ]; then
-            echo "Expected every build and test job to be '$expected', got:"
+            echo "Unexpected build and test results:"
             echo "$unexpected"
             exit 1
           fi
-          echo "Every build and test job ended as '$expected'."
+          echo "Every build and test job matched its expected result."

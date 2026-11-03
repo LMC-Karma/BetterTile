@@ -6,7 +6,7 @@ script_dir="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=../lib/release-appcast.sh
 source "$script_dir/../lib/release-appcast.sh"
 
-scratch="$(mktemp -d /private/tmp/release-appcast-test.XXXXXXXX)"
+scratch="$(mktemp -d "${TMPDIR:-/tmp}/release-appcast-test.XXXXXXXX")"
 trap 'rm -rf "$scratch"' EXIT
 
 failures=0

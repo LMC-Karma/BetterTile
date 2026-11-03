@@ -10,7 +10,7 @@ check="$(awk '/^# The license and third-party notices ship/ { found = 1 } found 
     exit 1
 }
 
-fixture="$(mktemp -d /private/tmp/bettertile-bundle-test.XXXXXX)"
+fixture="$(mktemp -d "${TMPDIR:-/tmp}/bettertile-bundle-test.XXXXXX")"
 trap 'rm -rf "$fixture"' EXIT
 repo_root="$fixture/repo"
 app_path="$fixture/BetterTile.app"
