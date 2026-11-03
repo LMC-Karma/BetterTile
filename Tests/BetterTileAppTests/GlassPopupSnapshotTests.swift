@@ -134,7 +134,19 @@ import Testing
             let text = try #require(GlassPixels.resolved(Color(nsColor: .textBackgroundColor), over: .windowBackgroundColor, in: appearance))
             let page = try #require(GlassPixels.resolved(.clear, over: .windowBackgroundColor, in: appearance))
             if !GlassPixels.close(text, card), !GlassPixels.close(text, page) {
-                #expect(GlassPixels.rows(content, matching: text).isEmpty, "\(variant.name): text background rows")
+                // The canvas panes above the palette are filled with the text background on purpose, so they read
+                // as windows. Only the palette must not paint it: leave out the rows the canvas stage covers.
+                let scale = Double(content.pixelsHigh) / scene.root.bounds.height
+                let stageRows = panelViews(scene.root, SavedLayoutStageAnchorView.self).map { anchor in
+                    let rect = anchor.convert(anchor.bounds, to: scene.root)
+                    let top = scene.root.isFlipped ? rect.minY : scene.root.bounds.height - rect.maxY
+                    return Int((top * scale).rounded(.down))..<Int(((top + rect.height) * scale).rounded(.up))
+                }
+                #expect(stageRows.count == 1, "\(variant.name): \(stageRows.count) canvas stages")
+                let paletteTextRows = GlassPixels.rows(content, matching: text).filter { row in
+                    !stageRows.contains { $0.contains(row) }
+                }
+                #expect(paletteTextRows.isEmpty, "\(variant.name): \(paletteTextRows.count) text background rows outside the canvas stage, first at \(paletteTextRows.first ?? -1) px")
             }
         }
         if variant.mode == .reduceTransparency, scene.hasGlass {
