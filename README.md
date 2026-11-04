@@ -39,10 +39,10 @@
 
 <p align="center">
   <a href="https://lmc-karma.github.io/BetterTile/#overview">
-    <img src="https://lmc-karma.github.io/BetterTile/assets/media/overview.jpg" alt="Watch the full BetterTile tour: snapping, linked resizing, Adaptive, Tabbed, and the Layout Wheel" width="800" height="450">
+    <img src="https://lmc-karma.github.io/BetterTile/assets/media/overview.jpg" alt="Watch the full BetterTile tour: snapping, linked resizing, Adaptive, Tabbed, the Layout Wheel, Saved Layouts, and multiple displays" width="800" height="450">
   </a>
   <br>
-  <a href="https://lmc-karma.github.io/BetterTile/#overview"><strong>Watch the full tour · 25 seconds</strong></a>
+  <a href="https://lmc-karma.github.io/BetterTile/#overview"><strong>Watch the full tour · 38 seconds</strong></a>
 </p>
 
 <h2 align="center" id="everything-it-does">Everything it does</h2>
@@ -51,7 +51,7 @@
   Feature demonstrations. For videos with playback controls, <a href="https://lmc-karma.github.io/BetterTile/#features">visit the website</a>.
 </p>
 
-<!-- Rendered product demonstrations, exported at 800 × 450 and 20 fps. GitHub attachments keep the GIFs out of Git history. -->
+<!-- Rendered product demonstrations of 0.6.0, exported at 800 × 450 and 20 fps. The GIFs are hosted with the website on GitHub Pages. -->
 
 <h3 align="center" id="resize-neighbours-together">Resize neighbours together</h3>
 
@@ -62,7 +62,7 @@
 
 <p align="center">
   <a href="https://lmc-karma.github.io/BetterTile/#linked">
-    <img src="https://github.com/user-attachments/assets/9352bbca-5a8a-49e1-8193-b9abe254a527" alt="Linked resizing demonstration: moving a shared boundary resizes neighbouring windows together" width="800" height="450">
+    <img src="https://lmc-karma.github.io/BetterTile/assets/media/gifs/bettertile-resize.gif" alt="Linked resizing demonstration: moving a shared boundary resizes neighbouring windows together" width="800" height="450">
   </a>
 </p>
 
@@ -75,7 +75,7 @@
 
 <p align="center">
   <a href="https://lmc-karma.github.io/BetterTile/#bento">
-    <img src="https://github.com/user-attachments/assets/3fe57264-071c-4e88-af05-c57aa665a299" alt="Adaptive demonstration: the layout adjusts as new windows open" width="800" height="450">
+    <img src="https://lmc-karma.github.io/BetterTile/assets/media/gifs/bettertile-adaptive.gif" alt="Adaptive demonstration: each new window takes a pane and the layout makes room" width="800" height="450">
   </a>
 </p>
 
@@ -83,18 +83,63 @@
 
 <p align="center">
   Group windows into resizable panes. Select a tab to bring its window forward.<br>
-  Drag tabs between panes or float a window out. The other windows stay open behind it.
+  Drag tabs between panes, or drag a floating window onto a tab bar to add it as a tab.
 </p>
 
 <p align="center">
   <a href="https://lmc-karma.github.io/BetterTile/#tabbed">
-    <img src="https://github.com/user-attachments/assets/8be13f8a-705e-4d1f-8d72-f625acd41308" alt="Tabbed demonstration: selecting tabs changes the visible window, and tabs move between panes" width="800" height="450">
+    <img src="https://lmc-karma.github.io/BetterTile/assets/media/gifs/bettertile-tabbed.gif" alt="Tabbed demonstration: tabs switch the visible window, a tab moves between panes, and a floating window joins a pane as a tab" width="800" height="450">
+  </a>
+</p>
+
+<p align="center">
+  <strong>Layout Gallery</strong> shows a picture of each pane layout and applies it to the whole display.<br>
+  The <strong>+</strong> button opens an app straight into a pane. Tab bars can hide until you point at them.
+</p>
+
+<p align="center">
+  <a href="https://lmc-karma.github.io/BetterTile/#tabbed">
+    <img src="https://lmc-karma.github.io/BetterTile/assets/media/gifs/bettertile-layout-gallery.gif" alt="Layout Gallery demonstration: the gallery opens from the tab bar menu, previews a 2 × 2 grid, and applies it" width="800" height="450">
   </a>
 </p>
 
 <p align="center">
   Turn off Stage Manager for Tabbed. Pane assignments last for the current app session.<br>
   Cross-display tab dragging is unavailable.
+</p>
+
+<h3 align="center" id="saved-layouts">Saved Layouts</h3>
+
+<p align="center">
+  Save a desktop's arrangement and bring it back with one click. <strong>Undo Apply</strong> puts the windows back.<br>
+  Each pane can prefer apps or an <strong>App Group</strong>. Bind a layout to a set of displays to apply it when they connect.<br>
+  Apply never opens an app or takes a window from another desktop.
+</p>
+
+<p align="center">
+  <a href="https://lmc-karma.github.io/BetterTile/#saved-layouts">
+    <img src="https://lmc-karma.github.io/BetterTile/assets/media/gifs/bettertile-saved-layouts.gif" alt="Saved Layouts demonstration: a layout applied from the menu bar panel arranges three windows, then Undo puts them back" width="800" height="450">
+  </a>
+</p>
+
+<h3 align="center" id="layout-wheel">Layout Wheel</h3>
+
+<p align="center">
+  Hold Control + Option + Shift, choose a sector, and release. The center or Escape cancels.<br>
+  The default wheel places windows and has <strong>Repair Layout</strong> at the bottom.<br>
+  The <strong>Grouped</strong> style fans out groups such as Size, Thirds, Displays, Mode, and Choose Layout.
+</p>
+
+<p align="center">
+  <a href="https://lmc-karma.github.io/BetterTile/#wheel">
+    <img src="https://lmc-karma.github.io/BetterTile/assets/media/gifs/bettertile-wheel.gif" alt="Layout Wheel demonstration: the wheel opens at the pointer, places a window on the right half, then Repair Layout arranges the desktop" width="800" height="450">
+  </a>
+</p>
+
+<p align="center">
+  Configure the style, trigger, size, and actions on the Layout Wheel Settings page.<br>
+  The optional Middle Click trigger reserves unmodified middle-click system-wide while enabled.<br>
+  Other apps receive that button again when you turn the option off.
 </p>
 
 <h3 align="center" id="more-ways-to-arrange-your-windows">More ways to arrange your windows</h3>
@@ -105,9 +150,13 @@
 </p>
 
 <p align="center">
-  <strong>Layout Wheel</strong><br>
-  Hold Control + Option + Shift, choose a sector, and release.<br>
-  Configure the trigger, actions, and one or two levels in Settings. The center or Escape cancels.
+  <strong>Repair Layout</strong><br>
+  Rebuild the current desktop's layout from its visible windows, with equal shares and no gaps.
+</p>
+
+<p align="center">
+  <strong>Multiple displays</strong><br>
+  <strong>Next Display</strong> and <strong>Previous Display</strong> make room on the destination and close the gap on the source.
 </p>
 
 <p align="center">
@@ -117,13 +166,8 @@
 </p>
 
 <p align="center">
-  The optional Middle Click trigger reserves unmodified middle-click system-wide while enabled.<br>
-  Other apps receive that button again when you turn the option off.
-</p>
-
-<p align="center">
   <a href="https://lmc-karma.github.io/BetterTile/#snapping">Watch drag snapping</a>
-  · <a href="https://lmc-karma.github.io/BetterTile/#wheel">Watch the Layout Wheel</a>
+  · <a href="https://lmc-karma.github.io/BetterTile/#more">Watch Repair Layout and multiple displays</a>
   · <a href="https://lmc-karma.github.io/BetterTile/#keyboard">Watch shortcuts and undo</a>
 </p>
 
@@ -203,11 +247,12 @@ private observations, fallback behavior, and vulnerability reporting.
 - **Stage Manager groups stay single-window.** A thumbnail drag selects one
   validated frontmost member. BetterTile does not move or synchronize the other
   windows in that Stage group.
-- **Tabbed needs Stage Manager off.** Pane assignments and placement undo history
-  last for the current app session. Cross-display tab dragging is unavailable.
+- **Tabbed needs Stage Manager off.** Pane assignments, followed Saved Layouts,
+  and placement undo history last for the current app session. Cross-display tab
+  dragging is unavailable.
 - **Some apps restrict window sizes.** Broader real-app stacking,
   multi-display, and Space-switch behavior remains under validation. Read the
-  [beta notes](docs/releases/0.5.1-beta.md).
+  [beta notes](docs/releases/0.6.0-beta.md).
 
 <h2 align="center" id="bettertile-is-free">BetterTile is free</h2>
 
