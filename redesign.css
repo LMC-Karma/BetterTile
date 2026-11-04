@@ -394,4 +394,24 @@ h1 span,h2 span{color:#8a95a9}
  .closing .fine{font-size:11px}
  .site-footer{gap:24px}
 }
+/* 0.6: secondary demos inside the feature cards and a compact grid for smaller changes.
+   Subgrid rows keep the two cards' videos level, whatever the length of their copy. */
+.anchor-alias{display:block;height:0}
+.feature-card{display:grid;grid-row:span 4;grid-template-rows:subgrid;row-gap:0;align-content:start}
+.feature-card .media-copy{min-height:0}
+.feature-extra{padding:36px 0 8px}
+.feature-extra h3{font-size:20px}
+.feature-extra p{margin-top:10px;font-size:14px;line-height:1.7;max-width:520px}
+.media-saved-layouts,.media-wheel-grouped,.media-multi-display{--spill:rgba(43,182,166,.38)}
+.more-section .section-heading>div:last-child{max-width:400px}
+.more-section .section-heading p{font-size:15px}
+.more-section .section-heading .text-link{margin-top:8px}
+.more-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:40px 64px}
+.more-card{display:grid;grid-row:span 2;grid-template-rows:subgrid;row-gap:0;min-width:0}
+.more-copy{padding-bottom:12px}
+.more-copy h3{font-size:22px}
+.more-copy p{margin-top:10px;font-size:15px;line-height:1.7;max-width:460px}
+@media(max-width:1100px){.more-grid{gap:40px}}
+@media(max-width:800px){.more-grid{gap:34px 26px}.feature-extra{padding-top:30px}}
+@media(max-width:600px){.more-section .section-heading>div:last-child{margin-top:20px}.more-grid{grid-template-columns:minmax(0,1fr);gap:44px}.feature-extra{padding:30px 0 14px}.more-copy{padding-bottom:16px}}
 @media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}*,*:before,*:after{animation:none!important;transition:none!important}}

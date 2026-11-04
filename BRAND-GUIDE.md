@@ -4,7 +4,7 @@ Selected and built 4 October 2026. BetterTile remains the name. The website now 
 
 ## Foundation
 
-For Mac users who work across several windows, BetterTile keeps the workspace aligned as work changes. Linked resizing, adaptive Bento and familiar placement controls reduce repeated arranging. The intended feeling is calm confidence.
+For Mac users who work across several windows, BetterTile keeps the workspace aligned as work changes. Linked resizing, Adaptive tiling and familiar placement controls reduce repeated arranging. The intended feeling is calm confidence.
 
 Promise: keep your windows working together so attention stays on the work.
 
@@ -12,13 +12,13 @@ Personality: precise, calm, approachable.
 
 Primary line: **Your windows. Working together.**
 
-Description: a free, native macOS window manager that snaps windows into place, resizes neighbours together and arranges windows with adaptive Bento tiling.
+Description: a free, native macOS window manager that snaps windows into place, resizes neighbours together arranges windows with Adaptive tiling and brings a desktop back with Saved Layouts.
 
 Central idea: individual windows retain their character while a shared boundary moves them together. Demonstrate this in the opening. Give later real recordings generous, consistent frames.
 
 ## Voice
 
-Use concrete verbs and short explanations. Keep Bento, Tabbed and Layout Wheel consistent. Use “window” for an app window and “pane” for a region in Tabbed. Disclose beta and network behavior accurately. Do not invent endorsements, performance gains or exclusivity claims.
+Use concrete verbs and short explanations. Keep Adaptive, Manual, Tabbed, Layout Wheel, Saved Layout and Repair Layout consistent with the app's CONTEXT.md. Do not use Bento or ghost preview in product text. Use “window” for an app window and “pane” for a region in Tabbed. Disclose beta and network behavior accurately. Do not invent endorsements, performance gains or exclusivity claims.
 
 ## Current icon assets
 
@@ -56,7 +56,7 @@ Standalone controls are at least 44×44 px. Focus uses a 2 px teal outline. FAQ 
 
 ## Motion and media
 
-The complete overview occupies the opening. Six feature videos show linked resizing, Bento, snapping, Tabbed, Layout Wheel and keyboard placement/undo. Use the supplied 1920×1080, 60 fps MP4s; do not replace them with smaller GIFs.
+The complete overview occupies the opening. Eleven feature videos show Adaptive tiling, linked resizing, snapping, Saved Layouts, Tabbed and the Layout Gallery, the Layout Wheel and its Grouped style, keyboard placement/undo, Repair Layout and multiple displays. Use the supplied 1920×1080, 60 fps MP4s; do not replace them with smaller GIFs.
 
 All videos are silent and loop in view. Feature loops have no closing card; the overview retains the logo/name ending at the user's request. Small Play/Pause icons preserve visitor control without Replay buttons. Playback pauses offscreen and in hidden tabs. Explicit pause survives scrolling. Reduced motion shows posters until Play.
 

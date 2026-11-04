@@ -1,171 +1,571 @@
 {
-  "snap": {
-    "source": "bettertile-videos/out/loops/bettertile-snap.mp4",
-    "website": "assets/media/snap.mp4",
+  "overview": {
+    "source": "bettertile-videos/out/v2/bettertile-overview.mp4",
+    "website": "assets/media/overview.mp4",
+    "poster": "assets/media/overview.jpg",
+    "posterFrameSeconds": 3.2,
+    "processing": "ffmpeg -map 0:v:0 -c:v copy -an -movflags +faststart (music track removed, video stream copied)",
     "trimEnd": null,
-    "audio": "removed; video stream only",
-    "origin": "User-created Remotion rendered demonstration, not a live app capture",
+    "audio": "none",
+    "origin": "User-created Remotion rendered demonstration (0.6.0 set, rendered 2026-11-04), not a live app capture",
     "probe": {
-      "programs": [],
-      "stream_groups": [],
       "streams": [
         {
           "codec_name": "h264",
           "codec_type": "video",
           "width": 1920,
           "height": 1080,
-          "r_frame_rate": "60/1"
+          "r_frame_rate": "60/1",
+          "nb_frames": "2316"
+        }
+      ],
+      "format": {
+        "duration": "38.600000",
+        "size": "15293843"
+      }
+    },
+    "note": "38.6-second 0.6.0 overview, including its BetterTile closing card. Original video stream preserved; audio removed."
+  },
+  "snap": {
+    "source": "bettertile-videos/out/v2/loops/bettertile-snap.mp4",
+    "website": "assets/media/snap.mp4",
+    "poster": "assets/media/snap.jpg",
+    "posterFrameSeconds": 3.5,
+    "processing": "ffmpeg -map 0:v:0 -c:v copy -an -movflags +faststart (video stream copied; the source has no audio)",
+    "trimEnd": null,
+    "audio": "none",
+    "origin": "User-created Remotion rendered demonstration (0.6.0 set, rendered 2026-11-04), not a live app capture",
+    "probe": {
+      "streams": [
+        {
+          "codec_name": "h264",
+          "codec_type": "video",
+          "width": 1920,
+          "height": 1080,
+          "r_frame_rate": "60/1",
+          "nb_frames": "504"
         }
       ],
       "format": {
         "duration": "8.400000",
-        "size": "2816976"
+        "size": "2838522"
       }
     }
   },
   "resize": {
-    "source": "bettertile-videos/out/loops/bettertile-resize.mp4",
+    "source": "bettertile-videos/out/v2/loops/bettertile-resize.mp4",
     "website": "assets/media/resize.mp4",
+    "poster": "assets/media/resize.jpg",
+    "posterFrameSeconds": 5,
+    "processing": "ffmpeg -map 0:v:0 -c:v copy -an -movflags +faststart (video stream copied; the source has no audio)",
     "trimEnd": null,
-    "audio": "removed; video stream only",
-    "origin": "User-created Remotion rendered demonstration, not a live app capture",
+    "audio": "none",
+    "origin": "User-created Remotion rendered demonstration (0.6.0 set, rendered 2026-11-04), not a live app capture",
     "probe": {
-      "programs": [],
-      "stream_groups": [],
       "streams": [
         {
           "codec_name": "h264",
           "codec_type": "video",
           "width": 1920,
           "height": 1080,
-          "r_frame_rate": "60/1"
+          "r_frame_rate": "60/1",
+          "nb_frames": "480"
         }
       ],
       "format": {
         "duration": "8.000000",
-        "size": "1316507"
+        "size": "1202606"
       }
     }
   },
   "bento": {
-    "source": "bettertile-videos/out/loops/bettertile-bento.mp4",
+    "source": "bettertile-videos/out/v2/loops/bettertile-adaptive.mp4",
     "website": "assets/media/bento.mp4",
+    "poster": "assets/media/bento.jpg",
+    "posterFrameSeconds": 5,
+    "processing": "ffmpeg -map 0:v:0 -c:v copy -an -movflags +faststart (video stream copied; the source has no audio)",
     "trimEnd": null,
-    "audio": "removed; video stream only",
-    "origin": "User-created Remotion rendered demonstration, not a live app capture",
+    "audio": "none",
+    "origin": "User-created Remotion rendered demonstration (0.6.0 set, rendered 2026-11-04), not a live app capture",
     "probe": {
-      "programs": [],
-      "stream_groups": [],
       "streams": [
         {
           "codec_name": "h264",
           "codec_type": "video",
           "width": 1920,
           "height": 1080,
-          "r_frame_rate": "60/1"
+          "r_frame_rate": "60/1",
+          "nb_frames": "456"
         }
       ],
       "format": {
         "duration": "7.600000",
-        "size": "2696579"
+        "size": "2670404"
+      }
+    },
+    "note": "Adaptive loop. The file keeps its earlier name so existing links stay valid."
+  },
+  "saved-layouts": {
+    "source": "bettertile-videos/out/v2/loops/bettertile-saved-layouts.mp4",
+    "website": "assets/media/saved-layouts.mp4",
+    "poster": "assets/media/saved-layouts.jpg",
+    "posterFrameSeconds": 2.46,
+    "processing": "ffmpeg -map 0:v:0 -c:v copy -an -movflags +faststart (video stream copied; the source has no audio)",
+    "trimEnd": null,
+    "audio": "none",
+    "origin": "User-created Remotion rendered demonstration (0.6.0 set, rendered 2026-11-04), not a live app capture",
+    "probe": {
+      "streams": [
+        {
+          "codec_name": "h264",
+          "codec_type": "video",
+          "width": 1920,
+          "height": 1080,
+          "r_frame_rate": "60/1",
+          "nb_frames": "492"
+        }
+      ],
+      "format": {
+        "duration": "8.200000",
+        "size": "4198025"
       }
     }
   },
   "tabbed": {
-    "source": "bettertile-videos/out/loops/bettertile-tabbed.mp4",
+    "source": "bettertile-videos/out/v2/loops/bettertile-tabbed.mp4",
     "website": "assets/media/tabbed.mp4",
+    "poster": "assets/media/tabbed.jpg",
+    "posterFrameSeconds": 5.5,
+    "processing": "ffmpeg -map 0:v:0 -c:v copy -an -movflags +faststart (video stream copied; the source has no audio)",
     "trimEnd": null,
-    "audio": "removed; video stream only",
-    "origin": "User-created Remotion rendered demonstration, not a live app capture",
+    "audio": "none",
+    "origin": "User-created Remotion rendered demonstration (0.6.0 set, rendered 2026-11-04), not a live app capture",
     "probe": {
-      "programs": [],
-      "stream_groups": [],
       "streams": [
         {
           "codec_name": "h264",
           "codec_type": "video",
           "width": 1920,
           "height": 1080,
-          "r_frame_rate": "60/1"
+          "r_frame_rate": "60/1",
+          "nb_frames": "540"
         }
       ],
       "format": {
-        "duration": "7.800000",
-        "size": "1284055"
+        "duration": "9.000000",
+        "size": "4440560"
+      }
+    }
+  },
+  "layout-gallery": {
+    "source": "bettertile-videos/out/v2/loops/bettertile-layout-gallery.mp4",
+    "website": "assets/media/layout-gallery.mp4",
+    "poster": "assets/media/layout-gallery.jpg",
+    "posterFrameSeconds": 3.33,
+    "processing": "ffmpeg -map 0:v:0 -c:v copy -an -movflags +faststart (video stream copied; the source has no audio)",
+    "trimEnd": null,
+    "audio": "none",
+    "origin": "User-created Remotion rendered demonstration (0.6.0 set, rendered 2026-11-04), not a live app capture",
+    "probe": {
+      "streams": [
+        {
+          "codec_name": "h264",
+          "codec_type": "video",
+          "width": 1920,
+          "height": 1080,
+          "r_frame_rate": "60/1",
+          "nb_frames": "444"
+        }
+      ],
+      "format": {
+        "duration": "7.400000",
+        "size": "3541786"
       }
     }
   },
   "wheel": {
-    "source": "bettertile-videos/out/loops/bettertile-wheel.mp4",
+    "source": "bettertile-videos/out/v2/loops/bettertile-wheel.mp4",
     "website": "assets/media/wheel.mp4",
+    "poster": "assets/media/wheel.jpg",
+    "posterFrameSeconds": 1.02,
+    "processing": "ffmpeg -map 0:v:0 -c:v copy -an -movflags +faststart (video stream copied; the source has no audio)",
     "trimEnd": null,
-    "audio": "removed; video stream only",
-    "origin": "User-created Remotion rendered demonstration, not a live app capture",
+    "audio": "none",
+    "origin": "User-created Remotion rendered demonstration (0.6.0 set, rendered 2026-11-04), not a live app capture",
     "probe": {
-      "programs": [],
-      "stream_groups": [],
       "streams": [
         {
           "codec_name": "h264",
           "codec_type": "video",
           "width": 1920,
           "height": 1080,
-          "r_frame_rate": "60/1"
+          "r_frame_rate": "60/1",
+          "nb_frames": "408"
         }
       ],
       "format": {
-        "duration": "6.600000",
-        "size": "887659"
+        "duration": "6.800000",
+        "size": "3931455"
+      }
+    }
+  },
+  "wheel-grouped": {
+    "source": "bettertile-videos/out/v2/loops/bettertile-wheel-grouped.mp4",
+    "website": "assets/media/wheel-grouped.mp4",
+    "poster": "assets/media/wheel-grouped.jpg",
+    "posterFrameSeconds": 1.74,
+    "processing": "ffmpeg -map 0:v:0 -c:v copy -an -movflags +faststart (video stream copied; the source has no audio)",
+    "trimEnd": null,
+    "audio": "none",
+    "origin": "User-created Remotion rendered demonstration (0.6.0 set, rendered 2026-11-04), not a live app capture",
+    "probe": {
+      "streams": [
+        {
+          "codec_name": "h264",
+          "codec_type": "video",
+          "width": 1920,
+          "height": 1080,
+          "r_frame_rate": "60/1",
+          "nb_frames": "348"
+        }
+      ],
+      "format": {
+        "duration": "5.800000",
+        "size": "3113618"
       }
     }
   },
   "keyboard": {
-    "source": "bettertile-videos/out/loops/bettertile-keyboard.mp4",
+    "source": "bettertile-videos/out/v2/loops/bettertile-keyboard.mp4",
     "website": "assets/media/keyboard.mp4",
+    "poster": "assets/media/keyboard.jpg",
+    "posterFrameSeconds": 2.5,
+    "processing": "ffmpeg -map 0:v:0 -c:v copy -an -movflags +faststart (video stream copied; the source has no audio)",
     "trimEnd": null,
-    "audio": "removed; video stream only",
-    "origin": "User-created Remotion rendered demonstration, not a live app capture",
+    "audio": "none",
+    "origin": "User-created Remotion rendered demonstration (0.6.0 set, rendered 2026-11-04), not a live app capture",
     "probe": {
-      "programs": [],
-      "stream_groups": [],
       "streams": [
         {
           "codec_name": "h264",
           "codec_type": "video",
           "width": 1920,
           "height": 1080,
-          "r_frame_rate": "60/1"
+          "r_frame_rate": "60/1",
+          "nb_frames": "336"
         }
       ],
       "format": {
         "duration": "5.600000",
-        "size": "1028858"
+        "size": "1071123"
       }
     }
   },
-  "overview": {
-    "source": "bettertile-videos/out/bettertile-overview.mp4",
-    "website": "assets/media/overview.mp4",
+  "repair-layout": {
+    "source": "bettertile-videos/out/v2/loops/bettertile-repair-layout.mp4",
+    "website": "assets/media/repair-layout.mp4",
+    "poster": "assets/media/repair-layout.jpg",
+    "posterFrameSeconds": 2.19,
+    "processing": "ffmpeg -map 0:v:0 -c:v copy -an -movflags +faststart (video stream copied; the source has no audio)",
     "trimEnd": null,
-    "audio": "removed; video stream only",
-    "origin": "User-created Remotion rendered demonstration, not a live app capture",
+    "audio": "none",
+    "origin": "User-created Remotion rendered demonstration (0.6.0 set, rendered 2026-11-04), not a live app capture",
     "probe": {
-      "programs": [],
-      "stream_groups": [],
       "streams": [
         {
           "codec_name": "h264",
           "codec_type": "video",
           "width": 1920,
           "height": 1080,
-          "r_frame_rate": "60/1"
+          "r_frame_rate": "60/1",
+          "nb_frames": "438"
         }
       ],
       "format": {
-        "duration": "25.000000",
-        "size": "9499501"
+        "duration": "7.300000",
+        "size": "2521480"
       }
+    }
+  },
+  "multi-display": {
+    "source": "bettertile-videos/out/v2/loops/bettertile-multi-display.mp4",
+    "website": "assets/media/multi-display.mp4",
+    "poster": "assets/media/multi-display.jpg",
+    "posterFrameSeconds": 3.72,
+    "processing": "ffmpeg -map 0:v:0 -c:v copy -an -movflags +faststart (video stream copied; the source has no audio)",
+    "trimEnd": null,
+    "audio": "none",
+    "origin": "User-created Remotion rendered demonstration (0.6.0 set, rendered 2026-11-04), not a live app capture",
+    "probe": {
+      "streams": [
+        {
+          "codec_name": "h264",
+          "codec_type": "video",
+          "width": 1920,
+          "height": 1080,
+          "r_frame_rate": "60/1",
+          "nb_frames": "372"
+        }
+      ],
+      "format": {
+        "duration": "6.200000",
+        "size": "644084"
+      }
+    }
+  },
+  "gifs": {
+    "snap": {
+      "source": "bettertile-videos/out/v2/gifs/bettertile-snap.gif",
+      "website": "assets/media/gifs/bettertile-snap.gif",
+      "processing": "byte-for-byte copy for the app README",
+      "url": "https://lmc-karma.github.io/BetterTile/assets/media/gifs/bettertile-snap.gif",
+      "probe": {
+        "streams": [
+          {
+            "codec_name": "gif",
+            "codec_type": "video",
+            "width": 800,
+            "height": 450,
+            "r_frame_rate": "20/1",
+            "nb_frames": "170"
+          }
+        ],
+        "format": {
+          "duration": "8.500000",
+          "size": "2594419"
+        }
+      },
+      "bytes": 2594419
     },
-    "note": "Complete overview including BetterTile logo/name closing card, as requested. Original video stream preserved; audio removed."
+    "resize": {
+      "source": "bettertile-videos/out/v2/gifs/bettertile-resize.gif",
+      "website": "assets/media/gifs/bettertile-resize.gif",
+      "processing": "byte-for-byte copy for the app README",
+      "url": "https://lmc-karma.github.io/BetterTile/assets/media/gifs/bettertile-resize.gif",
+      "probe": {
+        "streams": [
+          {
+            "codec_name": "gif",
+            "codec_type": "video",
+            "width": 800,
+            "height": 450,
+            "r_frame_rate": "20/1",
+            "nb_frames": "162"
+          }
+        ],
+        "format": {
+          "duration": "8.100000",
+          "size": "2454681"
+        }
+      },
+      "bytes": 2454681
+    },
+    "adaptive": {
+      "source": "bettertile-videos/out/v2/gifs/bettertile-adaptive.gif",
+      "website": "assets/media/gifs/bettertile-adaptive.gif",
+      "processing": "byte-for-byte copy for the app README",
+      "url": "https://lmc-karma.github.io/BetterTile/assets/media/gifs/bettertile-adaptive.gif",
+      "probe": {
+        "streams": [
+          {
+            "codec_name": "gif",
+            "codec_type": "video",
+            "width": 800,
+            "height": 450,
+            "r_frame_rate": "20/1",
+            "nb_frames": "154"
+          }
+        ],
+        "format": {
+          "duration": "7.700000",
+          "size": "2215546"
+        }
+      },
+      "bytes": 2215546
+    },
+    "tabbed": {
+      "source": "bettertile-videos/out/v2/gifs/bettertile-tabbed.gif",
+      "website": "assets/media/gifs/bettertile-tabbed.gif",
+      "processing": "byte-for-byte copy for the app README",
+      "url": "https://lmc-karma.github.io/BetterTile/assets/media/gifs/bettertile-tabbed.gif",
+      "probe": {
+        "streams": [
+          {
+            "codec_name": "gif",
+            "codec_type": "video",
+            "width": 800,
+            "height": 450,
+            "r_frame_rate": "20/1",
+            "nb_frames": "182"
+          }
+        ],
+        "format": {
+          "duration": "9.100000",
+          "size": "4692757"
+        }
+      },
+      "bytes": 4692757
+    },
+    "layout-gallery": {
+      "source": "bettertile-videos/out/v2/gifs/bettertile-layout-gallery.gif",
+      "website": "assets/media/gifs/bettertile-layout-gallery.gif",
+      "processing": "byte-for-byte copy for the app README",
+      "url": "https://lmc-karma.github.io/BetterTile/assets/media/gifs/bettertile-layout-gallery.gif",
+      "probe": {
+        "streams": [
+          {
+            "codec_name": "gif",
+            "codec_type": "video",
+            "width": 800,
+            "height": 450,
+            "r_frame_rate": "20/1",
+            "nb_frames": "150"
+          }
+        ],
+        "format": {
+          "duration": "7.500000",
+          "size": "3322117"
+        }
+      },
+      "bytes": 3322117
+    },
+    "wheel": {
+      "source": "bettertile-videos/out/v2/gifs/bettertile-wheel.gif",
+      "website": "assets/media/gifs/bettertile-wheel.gif",
+      "processing": "byte-for-byte copy for the app README",
+      "url": "https://lmc-karma.github.io/BetterTile/assets/media/gifs/bettertile-wheel.gif",
+      "probe": {
+        "streams": [
+          {
+            "codec_name": "gif",
+            "codec_type": "video",
+            "width": 800,
+            "height": 450,
+            "r_frame_rate": "20/1",
+            "nb_frames": "138"
+          }
+        ],
+        "format": {
+          "duration": "6.900000",
+          "size": "3692823"
+        }
+      },
+      "bytes": 3692823
+    },
+    "wheel-grouped": {
+      "source": "bettertile-videos/out/v2/gifs/bettertile-wheel-grouped.gif",
+      "website": "assets/media/gifs/bettertile-wheel-grouped.gif",
+      "processing": "byte-for-byte copy for the app README",
+      "url": "https://lmc-karma.github.io/BetterTile/assets/media/gifs/bettertile-wheel-grouped.gif",
+      "probe": {
+        "streams": [
+          {
+            "codec_name": "gif",
+            "codec_type": "video",
+            "width": 800,
+            "height": 450,
+            "r_frame_rate": "20/1",
+            "nb_frames": "118"
+          }
+        ],
+        "format": {
+          "duration": "5.900000",
+          "size": "2857302"
+        }
+      },
+      "bytes": 2857302
+    },
+    "saved-layouts": {
+      "source": "bettertile-videos/out/v2/gifs/bettertile-saved-layouts.gif",
+      "website": "assets/media/gifs/bettertile-saved-layouts.gif",
+      "processing": "byte-for-byte copy for the app README",
+      "url": "https://lmc-karma.github.io/BetterTile/assets/media/gifs/bettertile-saved-layouts.gif",
+      "probe": {
+        "streams": [
+          {
+            "codec_name": "gif",
+            "codec_type": "video",
+            "width": 800,
+            "height": 450,
+            "r_frame_rate": "20/1",
+            "nb_frames": "166"
+          }
+        ],
+        "format": {
+          "duration": "8.300000",
+          "size": "3749454"
+        }
+      },
+      "bytes": 3749454
+    },
+    "repair-layout": {
+      "source": "bettertile-videos/out/v2/gifs/bettertile-repair-layout.gif",
+      "website": "assets/media/gifs/bettertile-repair-layout.gif",
+      "processing": "byte-for-byte copy for the app README",
+      "url": "https://lmc-karma.github.io/BetterTile/assets/media/gifs/bettertile-repair-layout.gif",
+      "probe": {
+        "streams": [
+          {
+            "codec_name": "gif",
+            "codec_type": "video",
+            "width": 800,
+            "height": 450,
+            "r_frame_rate": "20/1",
+            "nb_frames": "148"
+          }
+        ],
+        "format": {
+          "duration": "7.400000",
+          "size": "2491947"
+        }
+      },
+      "bytes": 2491947
+    },
+    "multi-display": {
+      "source": "bettertile-videos/out/v2/gifs/bettertile-multi-display.gif",
+      "website": "assets/media/gifs/bettertile-multi-display.gif",
+      "processing": "byte-for-byte copy for the app README",
+      "url": "https://lmc-karma.github.io/BetterTile/assets/media/gifs/bettertile-multi-display.gif",
+      "probe": {
+        "streams": [
+          {
+            "codec_name": "gif",
+            "codec_type": "video",
+            "width": 800,
+            "height": 450,
+            "r_frame_rate": "20/1",
+            "nb_frames": "126"
+          }
+        ],
+        "format": {
+          "duration": "6.300000",
+          "size": "654268"
+        }
+      },
+      "bytes": 654268
+    },
+    "keyboard": {
+      "source": "bettertile-videos/out/v2/gifs/bettertile-keyboard.gif",
+      "website": "assets/media/gifs/bettertile-keyboard.gif",
+      "processing": "byte-for-byte copy for the app README",
+      "url": "https://lmc-karma.github.io/BetterTile/assets/media/gifs/bettertile-keyboard.gif",
+      "probe": {
+        "streams": [
+          {
+            "codec_name": "gif",
+            "codec_type": "video",
+            "width": 800,
+            "height": 450,
+            "r_frame_rate": "20/1",
+            "nb_frames": "114"
+          }
+        ],
+        "format": {
+          "duration": "5.700000",
+          "size": "963575"
+        }
+      },
+      "bytes": 963575
+    }
   }
 }

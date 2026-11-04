@@ -5,7 +5,7 @@ export async function runChecks() {
   const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
   const until = async test => { for (let i = 0; i < 100; i++) { if (test()) return; await wait(100); } throw Error('Timed out waiting for video'); };
   const videos = [...document.querySelectorAll('video')];
-  check('Seven matching product videos', videos.length === 7);
+  check('Twelve matching product videos', videos.length === 12);
   check('Overview occupies the opening', $('#overview video').dataset.videoSrc === 'assets/media/overview.mp4');
   check('No old simulation, recording or replay buttons', !$('#shared-edge') && !$('[data-replay]') && !videos.some(v => v.dataset.videoSrc === 'assets/demo.mp4'));
   check('All videos are silent inline loops without native toolbars', videos.every(v => v.muted && v.defaultMuted && v.loop && v.playsInline && !v.controls));
@@ -43,6 +43,8 @@ export async function runChecks() {
   $('.menu-toggle').click(); check('Mobile menu opens', !$('#mobile-menu').hidden);
   $('#mobile-menu a').click(); check('Mobile navigation closes after selection', $('#mobile-menu').hidden);
   check('No document overflow', document.documentElement.scrollWidth <= innerWidth);
+  check('README anchors resolve', ['overview','features','bento','linked','snapping','tabbed','wheel','keyboard'].every(id => document.getElementById(id)));
+  check('Tabbed and Layout Wheel each show a second video', $('#tabbed #video-layout-gallery') && $('#wheel #video-wheel-grouped'));
   check('Unique IDs', new Set([...document.querySelectorAll('[id]')].map(el => el.id)).size === document.querySelectorAll('[id]').length);
   scrollTo({top: 0, behavior: 'instant'});
   return results;

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFile, access } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
-import { brand, comparison, media } from './content.mjs';
+import { brand, comparison, media, gifs } from './content.mjs';
 for(const file of ['index.html','brand.html','export.html']){
   const html=await readFile(file,'utf8');
   assert.equal((html.match(/<h1[\s>]/g)||[]).length,1,`${file}: one main heading`);
@@ -20,10 +20,15 @@ assert(!html.includes('shared-edge'));
 assert(!html.includes('data-replay'));
 assert(!html.includes('appearance-picker'));
 assert(!html.includes('assets/demo.mp4'));
-assert.equal((html.match(/<video /g)||[]).length,7);
+assert.equal((html.match(/<video /g)||[]).length,12);
 assert(!html.includes('theme-toggle')&&!html.includes('data-theme="light"')); // Midnight only
 assert(html.includes('data-video-src="assets/media/overview.mp4"'));
 assert(html.includes('notarization'));
+assert(html.includes('Apple silicon'),'Page states the Apple silicon requirement');
+assert(!/>[^<]*\b(?:Bento|ghost preview)\b/i.test(html),'Visible copy uses Adaptive and Resize Preview');
+// The app README links these anchors and GIFs.
+for(const id of ['overview','features','bento','adaptive','linked','snapping','saved-layouts','tabbed','wheel','keyboard','more'])assert(html.includes(`id="${id}"`),`Anchor #${id}`);
+for(const stem of gifs)await access(`assets/media/gifs/bettertile-${stem}.gif`);
 assert(html.includes('Update checks and downloads contact GitHub'));
 assert.equal(comparison.length,4);
 assert.match(brand.links.download,/^https:\/\/github\.com\/LMC-Karma\/BetterTile\/releases\/download\/v[\d.]+(-beta)?\/BetterTile-[\d.]+(-beta)?\.dmg$/,'Download links the latest disk image');
