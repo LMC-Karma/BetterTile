@@ -105,6 +105,8 @@ jobs:
         run: Tools/tests/release-signing-policy-test.sh
       - name: Test release bundled licenses
         run: Tools/tests/release-bundle-test.sh
+      - name: Test release Layout Wheel shader check
+        run: Tools/tests/release-shader-test.sh
 
   unit-tests:
     needs: changes
