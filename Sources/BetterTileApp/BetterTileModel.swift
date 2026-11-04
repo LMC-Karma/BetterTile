@@ -1033,7 +1033,8 @@ final class BetterTileModel {
             default: break
             }
         case let .ready(.repairBento(displayID, focusedWindowID)):
-            repairBento(displayID: displayID, focusedWindowID: focusedWindowID)
+            if activeMode(for: displayID) == .tabbed { handleTabbed(.repair, on: displayID) }
+            else { repairBento(displayID: displayID, focusedWindowID: focusedWindowID) }
         case let .ready(.tabCommand(action, displayID)):
             performTabbedCommand(action, windowID: target.windowID, displayID: displayID)
         case let .ready(.tabbed(_, action, displayID)):
@@ -1226,12 +1227,8 @@ final class BetterTileModel {
             )
 
         case .repairBento:
-            guard activeMode(for: window.displayID) == .bento else {
-                return .unavailable(
-                    reason: "Repair Layout is available only on an Adaptive desktop.",
-                    displayID: window.displayID
-                )
-            }
+            // Same command as the menu and shortcut: it repairs Adaptive and
+            // Tabbed, and in Manual places one window or arranges several.
             return .ready(.repairBento(
                 displayID: window.displayID,
                 focusedWindowID: windowID

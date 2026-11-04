@@ -102,7 +102,7 @@ public struct LayoutWheelConfiguration: Codable, Hashable, Sendable {
         style: LayoutWheelStyle = .custom,
         isEnabled: Bool = true,
         levelCount: LayoutWheelLevelCount = .one,
-        innerSlots: [LayoutWheelCommand?] = Self.defaultInnerSlots,
+        innerSlots: [LayoutWheelCommand?]? = nil,
         outerSlots: [LayoutWheelCommand?] = Self.defaultOuterSlots,
         keyboardTriggerEnabled: Bool = true,
         keyboardModifiers: ShortcutModifiers = [.control, .option, .shift],
@@ -116,7 +116,7 @@ public struct LayoutWheelConfiguration: Codable, Hashable, Sendable {
         self.style = style
         self.isEnabled = isEnabled
         self.levelCount = levelCount
-        self.innerSlots = innerSlots
+        self.innerSlots = innerSlots ?? Self.defaultInnerSlots(for: levelCount)
         self.outerSlots = outerSlots
         self.groupOverrides = groupOverrides
         self.groupedInnerSlots = groupedInnerSlots
@@ -130,7 +130,12 @@ public struct LayoutWheelConfiguration: Codable, Hashable, Sendable {
         case style, appearance, groupOverrides, groupedInnerSlots, triggers
         case isEnabled, levelCount, innerSlots, outerSlots
         case keyboardTriggerEnabled, keyboardModifiers, middleClickTriggerEnabled, scale
+        case slotDefaults
     }
+
+    /// Written with every save. A file without it predates the One Level
+    /// Repair Layout default; older builds ignore the key.
+    static let currentSlotDefaults = 2
 
     public init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -153,8 +158,7 @@ public struct LayoutWheelConfiguration: Codable, Hashable, Sendable {
             style: style,
             isEnabled: try container.decodeIfPresent(Bool.self, forKey: .isEnabled) ?? true,
             levelCount: legacyGrouped ? .two : storedLevels,
-            innerSlots: try container.decodeIfPresent([LayoutWheelCommand?].self, forKey: .innerSlots)
-                ?? Self.defaultInnerSlots,
+            innerSlots: try container.decodeIfPresent([LayoutWheelCommand?].self, forKey: .innerSlots),
             outerSlots: try container.decodeIfPresent([LayoutWheelCommand?].self, forKey: .outerSlots)
                 ?? Self.defaultOuterSlots,
             keyboardTriggerEnabled: try container.decodeIfPresent(
@@ -174,6 +178,10 @@ public struct LayoutWheelConfiguration: Codable, Hashable, Sendable {
             groupedInnerSlots: groupedInnerSlots,
             triggers: try container.decodeIfPresent(LayoutWheelTriggers.self, forKey: .triggers)
         )
+        // Untouched first-release defaults move to the current One Level default once.
+        if !container.contains(.slotDefaults), levelCount == .one, innerSlots == Self.defaultInnerSlots {
+            innerSlots = Self.oneLevelDefaultInnerSlots
+        }
         if container.contains(.appearance), try !container.decodeNil(forKey: .appearance) {
             appearance = try LayoutWheelAppearance(
                 from: container.superDecoder(forKey: .appearance), legacyScale: legacyScale
@@ -197,6 +205,7 @@ public struct LayoutWheelConfiguration: Codable, Hashable, Sendable {
         try container.encode(groupOverrides, forKey: .groupOverrides)
         try container.encode(groupedInnerSlots, forKey: .groupedInnerSlots)
         try container.encode(triggers.normalized(), forKey: .triggers)
+        try container.encode(Self.currentSlotDefaults, forKey: .slotDefaults)
     }
 
     public var effectiveLevelCount: LayoutWheelLevelCount { levelCount }
@@ -234,6 +243,17 @@ public struct LayoutWheelConfiguration: Codable, Hashable, Sendable {
         .windowAction(.topLeftQuarter),
     ]
 
+    /// One Level has no outer ring, so Repair Layout takes the bottom slot.
+    public static let oneLevelDefaultInnerSlots: [LayoutWheelCommand?] = {
+        var slots = defaultInnerSlots
+        slots[LayoutWheelSector.bottom.rawValue] = .repairBento
+        return slots
+    }()
+
+    public static func defaultInnerSlots(for levelCount: LayoutWheelLevelCount) -> [LayoutWheelCommand?] {
+        levelCount == .one ? oneLevelDefaultInnerSlots : defaultInnerSlots
+    }
+
     public static let defaultOuterSlots: [LayoutWheelCommand?] = [
         .windowAction(.maximize),
         .windowAction(.almostMaximize),
@@ -252,7 +272,7 @@ public struct LayoutWheelConfiguration: Codable, Hashable, Sendable {
     public func normalized() -> LayoutWheelConfiguration {
         var result = self
         if result.innerSlots.count != Self.slotCount {
-            result.innerSlots = Self.defaultInnerSlots
+            result.innerSlots = Self.defaultInnerSlots(for: result.levelCount)
         }
         if result.outerSlots.count != Self.slotCount {
             result.outerSlots = Self.defaultOuterSlots

@@ -241,7 +241,7 @@ func invalidGlassStrengthIsRejected(strength: Double) {
     #expect(migrated.schemaVersion == BetterTileConfiguration.currentSchemaVersion)
     #expect(migrated.layoutWheel == LayoutWheelConfiguration())
     #expect(migrated.layoutWheel.levelCount == .one)
-    #expect(migrated.layoutWheel.innerSlots == LayoutWheelConfiguration.defaultInnerSlots)
+    #expect(migrated.layoutWheel.innerSlots == LayoutWheelConfiguration.oneLevelDefaultInnerSlots)
     #expect(migrated.layoutWheel.outerSlots == LayoutWheelConfiguration.defaultOuterSlots)
     #expect(migrated.layoutWheel.keyboardModifiers == [.control, .option, .shift])
     #expect(migrated.layoutWheel.keyboardTriggerEnabled)
@@ -277,7 +277,7 @@ func invalidGlassStrengthIsRejected(strength: Double) {
     )
 
     let normalized = try configuration.validated().layoutWheel
-    #expect(normalized.innerSlots == LayoutWheelConfiguration.defaultInnerSlots)
+    #expect(normalized.innerSlots == LayoutWheelConfiguration.oneLevelDefaultInnerSlots)
     #expect(normalized.outerSlots == LayoutWheelConfiguration.defaultOuterSlots)
     #expect(normalized.keyboardModifiers == [.control, .option, .shift])
 }

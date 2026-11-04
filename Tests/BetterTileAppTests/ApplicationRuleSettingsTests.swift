@@ -322,12 +322,19 @@ import Testing
         // field understood by the older build, including its enabled app rules.
         var saved = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: store.fileURL)) as? [String: Any])
         var wheel = try #require(saved["layoutWheel"] as? [String: Any])
-        for field in ["appearance", "groupOverrides", "groupedInnerSlots", "triggers"] {
+        for field in ["appearance", "groupOverrides", "groupedInnerSlots", "slotDefaults", "triggers"] {
             #expect(wheel.removeValue(forKey: field) != nil)
         }
         saved["layoutWheel"] = wheel
-        let expected = try #require(JSONSerialization.jsonObject(with: original) as? NSDictionary)
-        #expect(NSDictionary(dictionary: saved) == expected)
+        // The one documented change: an untouched One Level wheel's bottom slot
+        // moves from Bottom Half to Repair Layout once.
+        var expected = try #require(JSONSerialization.jsonObject(with: original) as? [String: Any])
+        var expectedWheel = try #require(expected["layoutWheel"] as? [String: Any])
+        var expectedSlots = try #require(expectedWheel["innerSlots"] as? [Any])
+        expectedSlots[LayoutWheelSector.bottom.rawValue] = ["repairBento": [String: Any]()]
+        expectedWheel["innerSlots"] = expectedSlots
+        expected["layoutWheel"] = expectedWheel
+        #expect(NSDictionary(dictionary: saved) == NSDictionary(dictionary: expected))
         #expect(try store.load() == loaded)
     }
 }
