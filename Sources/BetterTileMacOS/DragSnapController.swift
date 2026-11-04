@@ -1086,12 +1086,26 @@ private final class SnapPreviewPanel {
             destination,
             display: true,
             animate: !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-                && !panel.frame.equalTo(destination)
+                && SnapPreviewMotion.animates(from: panel.frame, to: destination,
+                                              screenFrames: NSScreen.screens.map(\.frame))
         )
         panel.orderFrontRegardless()
     }
 
     func hide() { panel.orderOut(nil) }
+}
+
+enum SnapPreviewMotion {
+    /// A morph between two displays would sweep the preview across the space
+    /// between them, so a preview that changes display moves without animation.
+    static func animates(from current: CGRect, to destination: CGRect, screenFrames: [CGRect]) -> Bool {
+        guard !current.equalTo(destination) else { return false }
+        func screen(_ rect: CGRect) -> Int? {
+            screenFrames.firstIndex { $0.contains(CGPoint(x: rect.midX, y: rect.midY)) }
+        }
+        guard let from = screen(current) else { return false }
+        return from == screen(destination)
+    }
 }
 
 @MainActor
