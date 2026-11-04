@@ -20,7 +20,7 @@ private func groupedVector(_ sector: LayoutWheelSector, radius: Double = 124) ->
     let migrated = try encoder.encode(wheel)
     let originalFields = try #require(JSONSerialization.jsonObject(with: fixture) as? [String: Any])
     var migratedFields = try #require(JSONSerialization.jsonObject(with: migrated) as? [String: Any])
-    for key in ["appearance", "groupOverrides", "groupedInnerSlots", "triggers"] {
+    for key in ["appearance", "groupOverrides", "groupedInnerSlots", "slotDefaults", "triggers"] {
         migratedFields.removeValue(forKey: key)
     }
     #expect(NSDictionary(dictionary: originalFields).isEqual(to: migratedFields))

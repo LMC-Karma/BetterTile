@@ -1795,24 +1795,60 @@ func aFocusPartitionReportsPlacementFailureAfterThePeersReturn(fromWheel: Bool) 
     #expect(system.requestedFrames[arrival]?.first == original)
 }
 
-@Test(.appTestApplication) @MainActor func repairBentoRequiresBentoAndRunsWhenAvailable() {
+/// The wheel's Repair Layout is the menu command: it works on every mode, so the
+/// One Level wheel's default bottom sector never answers "Adaptive not active".
+@Test(.appTestApplication) @MainActor func layoutWheelRepairPlacesOneManualWindowAndKeepsManual() async throws {
+    _ = NSApplication.shared
     let system = FakeAppWindowSystem()
     let model = makeModel(system: system)
     defer { model.shutdown() }
     let captured = target(for: system)
+    #expect(model.activeMode(for: captured.displayID) != .bento)
+    #expect(model.previewLayoutWheel(.repairBento, for: captured) == .ready(placements: []))
 
-    guard case let .unavailable(reason) = model.previewLayoutWheel(
-        .repairBento,
-        for: captured
-    ) else {
-        Issue.record("Expected Repair Layout to require an Adaptive desktop")
-        return
-    }
-
-    #expect(reason == "Repair Layout is available only on an Adaptive desktop.")
     model.performLayoutWheel(.repairBento, for: captured)
-    #expect(model.lastActionFeedback?.message == "Adaptive not active")
+    #expect(model.lastActionFeedback?.message != "Adaptive not active")
+    #expect(await waitFor { system.windows[0].frame == system.mainDisplay.visibleFrame })
+    #expect(model.activeMode(for: captured.displayID) != .bento)
+}
 
+@Test(.appTestApplication) @MainActor func layoutWheelRepairArrangesSeveralManualWindowsInAdaptive() async throws {
+    _ = NSApplication.shared
+    let system = FakeAppWindowSystem()
+    system.windows.append(WindowSnapshot(id: WindowID(rawValue: "repair-peer"), processIdentifier: 91,
+        bundleIdentifier: "com.example.Peer", frame: BTRect(x: 50, y: 60, width: 300, height: 300),
+        displayID: system.mainDisplay.id))
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    model.performLayoutWheel(.repairBento, for: target(for: system))
+    #expect(model.lastActionFeedback?.message != "Adaptive not active")
+    #expect(model.activeMode(for: system.mainDisplay.id) == .bento)
+    #expect(await waitFor { system.windows.allSatisfy { $0.frame.size.height == 800 } })
+}
+
+@Test(.appTestApplication) @MainActor func layoutWheelRepairRebuildsATabbedDesktop() async throws {
+    _ = NSApplication.shared
+    let system = FakeAppWindowSystem()
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    model.setActiveMode(.tabbed)
+    try #require(await waitFor { model.activeTabbedState != nil })
+    try #require(await waitFor { model.settlementTasks.isEmpty })
+    let placed = system.windows[0].frame
+    #expect(placed != BTRect(x: 200, y: 200, width: 600, height: 400))
+    system.windows[0].frame = BTRect(x: 10, y: 10, width: 200, height: 150)
+    let captured = try #require(model.captureLayoutWheelTarget())
+    model.performLayoutWheel(.repairBento, for: captured)
+    #expect(model.lastActionFeedback?.message != "Adaptive not active")
+    #expect(await waitFor { system.windows[0].frame == placed })
+    #expect(model.activeMode(for: captured.displayID) == .tabbed)
+}
+
+@Test(.appTestApplication) @MainActor func repairBentoRunsOnAnAdaptiveDesktop() {
+    let system = FakeAppWindowSystem()
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    let captured = target(for: system)
     model.setActiveMode(.bento)
     guard case let .ready(placements) = model.previewLayoutWheel(
         .repairBento,
