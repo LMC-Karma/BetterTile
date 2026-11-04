@@ -22,3 +22,7 @@ Browser checks ran in Remotion's chrome-headless-shell 149 through the DevTools 
 The site's Dark icon (`app-icon-native-dark-*`, from `docs/icon-composer/previews/ice-dark.png`) has the same artwork as the icon macOS draws for the installed 0.6.0 app, but a graphite body instead of the installed icon's near-black navy body. The icons were not regenerated.
 
 No Swift tests or Xcode build ran because native code and resources were unchanged.
+
+## App icon (2026-11-04)
+
+The Dark icon exports `assets/identity/app-icon-native-dark-{32,64,128,256,512,1024}.png` now come from the icon macOS draws for the installed release 0.6.0 (NSWorkspace icon of `/Applications/BetterTile.app`, cropped to its 824 px body and resized). The previous exports came from an older Ice Dark preview with a grey body. The Light exports, the favicon and the social preview image are unchanged. `npm run build` passed after the change; the browser checks were not re-run for this icon-only change.
