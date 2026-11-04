@@ -321,6 +321,15 @@ for notice in LICENSE THIRD_PARTY_NOTICES.md; do
     }
 done
 
+# The Layout Wheel's liquid renderer needs its compiled shader. A build machine
+# without Xcode's Metal toolchain omits it silently, and the wheel falls back.
+shader="$app_path/Contents/Resources/BetterTile_BetterTileMacOS.bundle/Contents/Resources/default.metallib"
+[[ -s "$shader" ]] || {
+    echo "The application does not contain the Layout Wheel shader (default.metallib)." >&2
+    echo "Install the Metal toolchain: xcodebuild -downloadComponent MetalToolchain" >&2
+    exit 1
+}
+
 mkdir -p "$stage_dir"
 ditto "$app_path" "$stage_dir/BetterTile.app"
 ln -s /Applications "$stage_dir/Applications"
