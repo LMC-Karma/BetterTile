@@ -1,5 +1,7 @@
 # BetterTile naming investigation
 
+> Terms updated 2026-11-04: Bento is now **Adaptive** and the ghost preview is now **Resize Preview**, as in BetterTile 0.6.0. The findings are unchanged from the dated research.
+
 Checked **2026-10-03, America/Phoenix**. Some services display 2026-10-04 because their records use UTC. This is a preliminary brand screen, not a trademark opinion or an availability guarantee. Findings describe the public records visible on that date.
 
 ## Recommendation
@@ -21,7 +23,7 @@ The three rename finalists below are **explorations for a separate brand preview
 | Pronunciation and spelling | Strong. **BET-er tyle**; two familiar English words. |
 | Searchability | Moderate to weak without “Mac.” Exact-name software reuse exists in a Unity editor tool; ordinary “better tile” searches also have building-material meanings. |
 | Visual potential | Strong enough. A shared-boundary symbol can describe the product independently of its initials. The selected identity avoids a three-pane B because Magnet already uses that arrangement. |
-| Fit with the experience | Good for snapping and Bento. Less explicit about linked resizing or Tabbed, which the product description and motion must establish. |
+| Fit with the experience | Good for snapping and Adaptive tiling. Less explicit about linked resizing or Tabbed, which the product description and motion must establish. |
 | Cost of changing | A rename would add migration work across app identity, documentation, releases, and existing links. No official rename is included in this project. |
 
 An exact GitHub repository-name query returned seven results, including this product, its website repositories, a [Unity editor tool named BetterTile](https://github.com/zlitzdev/BetterTile), and other tile-related code. The Unity use is an **observed software name conflict**, not a finding of trademark infringement. The existing [LMC-Karma/BetterTile repository](https://github.com/LMC-Karma/BetterTile) remains the authoritative destination for this app. [GitHub query](https://api.github.com/search/repositories?q=bettertile%20in%3Aname)
@@ -51,7 +53,7 @@ Do not publish rejected candidates as potential replacements. Their value is sho
 
 **Meaning and pronunciation:** PANE-hay-vən. A compound of *pane* and *haven*. This is a proposed brand interpretation, not an assertion that the word is unused.
 
-**Connection:** Emphasizes the intended feeling: an organized desktop that gives attention back to the work. The pane component keeps a useful link to Bento and Tabbed.
+**Connection:** Emphasizes the intended feeling: an organized desktop that gives attention back to the work. The pane component keeps a useful link to Adaptive and Tabbed.
 
 **Strengths:** Easy to say; the two parts are familiar; the promise is calm and approachable. “Make room for your work” fits naturally beneath it.
 
@@ -71,7 +73,7 @@ Do not publish rejected candidates as potential replacements. Their value is sho
 
 **Meaning and pronunciation:** tess-OON. A proposed coined blend of *tessellation* and *attune*. It suggests a layout made of fitted parts that adjusts as the work changes. No foreign-language meaning is being claimed.
 
-**Connection:** Supports adaptive Bento and linked movement without restricting the brand to snapping alone.
+**Connection:** Supports Adaptive tiling and linked movement without restricting the brand to snapping alone.
 
 **Strengths:** Short; visually compact; can carry a distinctive symbol independent of a literal window outline. More flexible than a descriptive pane compound.
 
@@ -151,7 +153,7 @@ The TMview interface itself states that it is not an official register and that 
 
 ## Research method and reuse notes
 
-- Source-of-truth product reading: repository `README.md` and `CONTEXT.md`. The name rationale uses linked resizing, Bento, Tabbed, and Layout Wheel as documented concepts. It does not imply cloud sync, artificial intelligence, cross-device input, or Apple affiliation.
+- Source-of-truth product reading: repository `README.md` and `CONTEXT.md`. The name rationale uses linked resizing, Adaptive, Tabbed, and Layout Wheel as documented concepts. It does not imply cloud sync, artificial intelligence, cross-device input, or Apple affiliation.
 - Public web exact-name searches and spelling variants were followed to first-party websites, repositories, store listings, or official records where available.
 - Store checks were search-engine queries scoped to `apps.apple.com`, `apps.microsoft.com`, `sourceforge.net`, and `producthunt.com`. They were not exhaustive queries of every national storefront.
 - GitHub checks used public `users/{name}` and repository search endpoints. Repository search is substring/token matching, so result counts are screening context, not counts of exact competing brands.

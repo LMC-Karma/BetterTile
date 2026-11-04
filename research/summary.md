@@ -1,12 +1,14 @@
 # Research and positioning
 
+> Terms updated 2026-11-04: Bento is now **Adaptive** and the ghost preview is now **Resize Preview**, as in BetterTile 0.6.0. The findings are unchanged from the dated research.
+
 Checked **3 October 2026, America/Phoenix**. Browser timestamps may show 4 October UTC. Product facts are drawn from primary sources. Design judgments below are creative recommendations, not measured outcomes.
 
 ## Recommendation
 
-Keep **BetterTile**. Lead with a visible shared boundary, then adaptive Bento and Tabbed. Free ownership is reassurance, not a unique category claim. Rectangle, Loop, AeroSpace, and Amethyst also offer free open-source software. Rectangle Pro documents adjacent resizing on release and saved-layout automation. BetterTile can confidently demonstrate its direct seam, live/ghost choice, and adaptive layout behavior without saying it is first or exclusive.
+Keep **BetterTile**. Lead with a visible shared boundary, then Adaptive tiling and Tabbed. Free ownership is reassurance, not a unique category claim. Rectangle, Loop, AeroSpace, and Amethyst also offer free open-source software. Rectangle Pro documents adjacent resizing on release and saved-layout automation. BetterTile can confidently demonstrate its direct seam, Live Resize or Resize Preview choice, and adaptive layout behavior without saying it is first or exclusive.
 
-**Positioning:** For Mac users working across several windows, BetterTile keeps the workspace aligned as work changes. Direct linked resizing, adaptive Bento, and familiar placement controls reduce repeated arranging. The experience should feel precise, calm, capable, and approachable.
+**Positioning:** For Mac users working across several windows, BetterTile keeps the workspace aligned as work changes. Direct linked resizing, Adaptive tiling, and familiar placement controls reduce repeated arranging. The experience should feel precise, calm, capable, and approachable.
 
 Sources and detailed competitive evidence: [category report](category.md). Naming screen, 12 candidates, finalists and limitations: [naming report](naming.md).
 

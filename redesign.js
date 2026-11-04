@@ -114,7 +114,7 @@ addEventListener('scroll', () => { if (!ticking) { ticking = true; requestAnimat
 frost();
 
 // Media and panels rise into place once, as they enter the viewport.
-const revealable = $$('.media-section .feature-media, .feature-card .feature-media, .tile, .compare-table, .step-visual, .release-strip');
+const revealable = $$('.media-section .feature-media, .feature-card .feature-media, .more-card .feature-media, .tile, .compare-table, .step-visual, .release-strip');
 if ('IntersectionObserver' in window && !reduced.matches) {
   const revealer = new IntersectionObserver(entries => entries.forEach(entry => {
     if (!entry.isIntersecting) return;

@@ -1,6 +1,6 @@
 # BetterTile website
 
-A static product website with an overview and six feature videos. The site is Midnight only, with no appearance toggle. Current native Dark and Ice Blue icon exports are used throughout. Live site: https://lmc-karma.github.io/BetterTile/.
+A static product website for BetterTile 0.6 with an overview video and eleven feature videos. The site is Midnight only, with no appearance toggle. Current native Dark and Ice Blue icon exports are used throughout. Live site: https://lmc-karma.github.io/BetterTile/.
 
 ## Preview and build
 
@@ -33,15 +33,19 @@ Rebuild after content changes. Do not hand-edit generated HTML. Generated HTML a
 
 ## Videos
 
-`assets/media/` contains silent H.264 MP4s at 1920×1080, 60 fps, with matching JPEG posters. `manifest.json` records source, processing and measured metadata.
+`assets/media/` contains silent H.264 MP4s at 1920×1080, 60 fps, with matching JPEG posters. `manifest.json` records the source, processing, poster frame and measured metadata of each file.
 
-- Overview: the complete 25-second opening video, including its BetterTile logo/name closing card. Its original video stream is preserved and audio track removed.
-- Resize, Bento, snap, Tabbed, wheel, keyboard: dedicated website loops from `bettertile-videos/out/loops/`, copied without video re-encoding and with fast-start metadata. These already have no closing cards or audio.
-- These supplied exports are rendered product demonstrations, not live screen recordings. The separate recorded-video output folder was empty when inspected.
+- Overview: the complete 38.6-second 0.6.0 overview from `bettertile-videos/out/v2/bettertile-overview.mp4`, including its BetterTile closing card. Its video stream is copied and its music track removed.
+- Feature loops: `bettertile-videos/out/v2/loops/bettertile-<stem>.mp4`, remuxed with `-c:v copy -an -movflags +faststart`. They have no closing cards or audio. The seven earlier file names stay stable: `snap`, `resize`, `bento` (the Adaptive loop), `tabbed`, `wheel`, `keyboard` and `overview`. New clips use the video project's stems: `saved-layouts`, `layout-gallery`, `wheel-grouped`, `repair-layout` and `multi-display`.
+- Posters: one representative frame per video, extracted at full size with `ffmpeg -ss <seconds> -frames:v 1 -q:v 3`. The frame times are in `manifest.json`.
+- GIFs: `assets/media/gifs/bettertile-<stem>.gif` are byte-for-byte copies of the 800 × 450, 20 fps exports. The page does not use them; the app README links them at `https://lmc-karma.github.io/BetterTile/assets/media/gifs/bettertile-<stem>.gif`.
+- These are code-built replicas of 0.6.0, not live screen recordings. The video project's README lists what each scene shows and its accuracy notes.
 
-Videos load and loop when visible, pause offscreen/in hidden tabs, and preserve a visitor's explicit pause. Reduced motion uses posters until Play. Each video has one small Play/Pause control, with no Replay button or native playback toolbar. Source aspect ratios are preserved at all widths. The older `assets/demo.mp4` and its poster were removed.
+Page placement: Adaptive, linked resizing, snapping, Saved Layouts and keyboard each have a full section. Tabbed shows the Layout Gallery as a second video, and the Layout Wheel shows the Grouped style. "Also new in 0.6" holds Repair Layout and Multiple displays. `#bento` is an alias for `#adaptive`, because the app README links it.
 
-To replace a clip, update its `src`, `poster`, `alt`, `caption`, `width` and `height` in `media`. Keep high-resolution originals elsewhere, remove audio and (for feature loops) any closing title card, and check the loop seam. Do not upscale the smaller GIFs in place of the MP4s.
+Videos load and loop when visible, pause offscreen/in hidden tabs, and preserve a visitor's explicit pause. Reduced motion uses posters until Play. Each video has one small Play/Pause control, with no Replay button or native playback toolbar. Source aspect ratios are preserved at all widths.
+
+To replace a clip, update the file and its entry in `content.mjs` → `media` (alt and caption), then refresh `manifest.json`. Keep high-resolution originals elsewhere, remove audio and (for feature loops) any closing title card, and check the loop seam. Do not upscale the GIFs in place of the MP4s.
 
 ## Icons
 
