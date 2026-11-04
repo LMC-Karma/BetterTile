@@ -2,7 +2,7 @@ import CoreGraphics
 import Testing
 @testable import BetterTileMacOS
 
-/// Displays from the 2026-11-03 live test, in AppKit coordinates: the main
+/// Displays from a live test, in AppKit coordinates: the main
 /// display at the origin, the test display to its right, and a shorter test
 /// screen to the right of that.
 struct SnapPreviewMotionTests {
