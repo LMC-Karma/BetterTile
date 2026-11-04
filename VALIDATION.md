@@ -25,4 +25,6 @@ No Swift tests or Xcode build ran because native code and resources were unchang
 
 ## App icon (2026-11-04)
 
-The Dark icon exports `assets/identity/app-icon-native-dark-{32,64,128,256,512,1024}.png` now come from the icon macOS draws for the installed release 0.6.0 (NSWorkspace icon of `/Applications/BetterTile.app`, cropped to its 824 px body and resized). The previous exports came from an older Ice Dark preview with a grey body. The Light exports, the favicon and the social preview image are unchanged. `npm run build` passed after the change; the browser checks were not re-run for this icon-only change.
+The Dark icon exports `assets/identity/app-icon-native-dark-{32,64,128,256,512,1024}.png` now come from the icon macOS draws for the installed release 0.6.0 (NSWorkspace icon of `/Applications/BetterTile.app`, cropped to its 824 px body and resized). The previous exports came from an older Ice Dark preview with a grey body. The Light exports and the favicon are unchanged. `assets/identity/social-preview.png` was re-rendered from `social-preview.html` at 1200 × 630 (headless Chrome 149, 1x) with the new icon and the feature line "Linked resizing · Adaptive tiling · Tabbed · Saved Layouts". `npm run build` passed after the change; the browser checks were not re-run for this icon-only change.
+
+The dated research notes in `research/` keep their findings; their product terms now read Adaptive and Resize Preview, with a dated note at the top of each file.

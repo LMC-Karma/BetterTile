@@ -1,21 +1,23 @@
 # BetterTile category research
 
+> Terms updated 2026-11-04: Bento is now **Adaptive** and the ghost preview is now **Resize Preview**, as in BetterTile 0.6.0. The findings are unchanged from the dated research.
+
 Checked **2026-10-03, America/Phoenix** (browser logs use 2026-10-04 UTC). Research only; no competitor apps installed or runtime performance tested. All product claims below come from the product's own site, documentation, repository, or developer-supplied App Store listing. Visual observations are separate from strategic interpretation.
 
 ## Decision for the website
 
-Lead with coordinated windows: a shared boundary that visitors can move. Then explain adaptive Bento and familiar placement controls. Free and open source reinforce straightforward ownership; they do not distinguish BetterTile on their own. Rectangle, Loop, AeroSpace, and Amethyst also have free open-source offerings.
+Lead with coordinated windows: a shared boundary that visitors can move. Then explain Adaptive tiling and familiar placement controls. Free and open source reinforce straightforward ownership; they do not distinguish BetterTile on their own. Rectangle, Loop, AeroSpace, and Amethyst also have free open-source offerings.
 
 Do **not** claim exclusive adjacent-window resizing. Rectangle Pro documents it explicitly. Do not turn absence from a feature page into a red cross in a comparison. Moom's documented saved layouts are different from adaptive tiling, but this review does not prove that every form of coordinated resizing is absent.
 
-Recommended positioning (creative recommendation): **For Mac users working across several windows, BetterTile keeps the workspace aligned as their work changes. Direct linked resizing, adaptive Bento, and familiar Mac controls reduce repeated window arranging. The brand should feel calm, capable, and easy to understand.**
+Recommended positioning (creative recommendation): **For Mac users working across several windows, BetterTile keeps the workspace aligned as their work changes. Direct linked resizing, Adaptive tiling, and familiar Mac controls reduce repeated window arranging. The brand should feel calm, capable, and easy to understand.**
 
 ## BetterTile facts checked locally
 
 Read `README.md`, `CONTEXT.md`, and `SECURITY.md` in checkout `d5c5ef5` on `docs/brand-category-research`. `Package.swift` specifies `.macOS(.v26)`; both app build configurations specify `MACOSX_DEPLOYMENT_TARGET = 26.0`.
 
-- Linked resizing operates on actual adjacent window boundaries. Ghost preview commits on release; live resizing updates during movement.
-- Bento scores candidate splits to reduce movement/resizing as windows enter, and adopts native pane resizing.
+- Linked resizing operates on actual adjacent window boundaries. Resize Preview commits on release; Live Resize updates during movement.
+- Adaptive scores candidate splits to reduce movement/resizing as windows enter, and adopts native pane resizing.
 - Tabbed groups windows in resizable panes. It is BetterTile-drawn tab UI, not native app tabbing. Stage Manager must be off. Assignments last for the app session; cross-display tab dragging is unavailable.
 - Layout Wheel uses configured modifiers, optionally middle click. Default modifiers: Control + Option + Shift. Keyboard placement and bounded per-window placement undo are supported.
 - Free forever, GPL v3 or later, no paid tier, advertising, behavioral tracking, or data sale.
@@ -32,7 +34,7 @@ Sources: [README](https://github.com/LMC-Karma/BetterTile/blob/main/README.md), 
 
 **Promise and name:** literal geometry name; free Rectangle centers on keyboard shortcuts and edge snapping. Pro presents faster placement and deeper customization. Free Rectangle supports macOS 10.15+, Intel/Apple Silicon. Live browser displayed **US$9.99** for Pro and a 10-day trial; Pro supports macOS 13.5+. [Rectangle](https://rectangleapp.com/), [Pro](https://rectangleapp.com/pro/).
 
-**Relevant behavior:** Pro can resize adjacent windows after a dragged edge is released. Saved layouts can run on display changes, wake, or a window opening; this is verified automation, not evidence of Bento-style candidate-scored layout adaptation. [General settings](https://rectangleapp.com/pro/docs/general/), [layouts](https://rectangleapp.com/pro/docs/layouts/).
+**Relevant behavior:** Pro can resize adjacent windows after a dragged edge is released. Saved layouts can run on display changes, wake, or a window opening; this is verified automation, not evidence of Adaptive-style candidate-scored layout adaptation. [General settings](https://rectangleapp.com/pro/docs/general/), [layouts](https://rectangleapp.com/pro/docs/layouts/).
 
 **Observed identity/site:** white opening, thin large sans-serif name, centered app icon, outlined download button. Icon: dark rounded square with a blue upright window occupying its right half; three small title-bar dots. Pro changes the foreground window to green. Subsequent sections show shortcuts and snap-area illustrations. At 375 px the icon and CTA stack at large scale. Simple silhouette; small dots and material effects are secondary. The full icon supplies the website identity, not a separate elaborate wordmark.
 
@@ -104,7 +106,7 @@ Use a fit-oriented comparison, not a scoreboard. These four rows distinguish int
 
 | Product | Strong fit | Coordinated behavior verified | Ownership / download context |
 | --- | --- | --- | --- |
-| BetterTile | A visible shared boundary plus adaptive Bento and Tabbed panes | Direct seam drag; ghost or live resizing; Bento changes as windows enter | Free, GPL v3 or later; macOS 26+ beta; self-signed, not notarized |
+| BetterTile | A visible shared boundary plus Adaptive tiling and Tabbed panes | Direct seam drag; Resize Preview or Live Resize; Adaptive changes as windows enter | Free, GPL v3 or later; macOS 26+ beta; self-signed, not notarized |
 | Rectangle Pro | Custom placement commands and saved workspaces | Adjacent windows adjust on release after edge dragging; layouts can run when a window opens | US$9.99 displayed; 10-day trial; free Rectangle also exists |
 | Moom | Reusable arrangements and a configurable palette | Saved multi-window arrangements, including recent-window layouts; shared seam not verified | $15 displayed; perpetual license, at least one year updates; trial |
 | AeroSpace | Keyboard/CLI-driven tiling and virtual workspaces | Tree layouts with resize/balance commands; pointer seam not tested | Free MIT source; configuration-oriented workflow |
