@@ -491,7 +491,13 @@ public final class TabbedOverlayController: NSObject, NSMenuDelegate {
         guard let pane = state.panes.first(where: { $0.id == id }), let frame = state.frames(in: bounds)[id],
               let panel = panes[id], let view = panel.contentView as? TabbedPaneView else { return }
         view.presentation = state.presentation
-        view.setAutoHideCollapsed(state.presentation == .autoHide && !pane.tabs.isEmpty && barVisibility[id]?.isRevealed != true,
+        let collapsed = state.presentation == .autoHide && !pane.tabs.isEmpty && barVisibility[id]?.isRevealed != true
+        // The selected window can rise above a visible strip without a focus event.
+        // Restore the validated anchor before the revealed strip overlaps that window.
+        if ordering, panel.level == .normal, view.collapsed, !collapsed, let anchor = paneAnchors[id] {
+            orderPanel(panel, .above, anchor)
+        }
+        view.setAutoHideCollapsed(collapsed,
                                   at: now, animated: animated && ordering && !spaceChangeSuspended && !dividerIsDragging() && !pane.tabs.isEmpty)
         if pane.tabs.isEmpty { panel.ignoresMouseEvents = false }
         view.keyboardTab = keyboardPaneID == id ? keyboardTab : nil
