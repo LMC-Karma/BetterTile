@@ -820,6 +820,14 @@ minimized event still removes the pane at once. A closed window that an
 application keeps alive off screen is not on screen, so it still loses its
 pane on the fifth miss.
 
+When native observation is unavailable, on-screen evidence alone cannot keep
+an omitted pane. The next reconciliation uses the ordinary three-miss budget.
+If native observation returns before removal, protection resumes and clears
+the absence tally. After removal, a readable returning window joins through
+the ordinary arrival path. The full eligible inventory excludes windows read
+on another display from native membership in ambient, command, recovery and
+settlement reconciliation, including when displays share a native Space.
+
 A protected pane has no absence tally, so no follow-up sweep is pending for
 it. The app model records which missing panes each ambient reducer pass kept
 only because of on-screen evidence. The watchdog then applies the reducer's

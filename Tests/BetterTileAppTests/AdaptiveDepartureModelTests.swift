@@ -391,3 +391,69 @@ func aHeldApplicationKeepsItsAdaptivePane() async throws {
     #expect(system.windows.first { $0.id == left }?.frame == tiled,
             "A held window keeps its pane; its neighbour must not fill the screen")
 }
+
+/// Shared native Spaces do not make a readable window on another display a
+/// missing member of this display. Commands must use the short absence budget.
+@Test(.appTestApplication) @MainActor
+func adaptiveCommandsExcludeReadableWindowsOnAnotherSharedSpaceDisplay() async throws {
+    let (system, model) = try await makeTwoPaneAdaptiveFixture()
+    defer { model.shutdown() }
+    let display = system.mainDisplay.id
+    let side = DisplaySnapshot(id: DisplayID(rawValue: "side"),
+        frame: BTRect(x: 1000, y: 0, width: 1000, height: 800),
+        visibleFrame: BTRect(x: 1000, y: 0, width: 1000, height: 800))
+    system.availableDisplays.append(side)
+    system.desktopObservation?.currentSpaceByDisplay[side.id] = NativeSpaceID(rawValue: 1)
+    system.desktopObservation?.knownSpacesByDisplay[side.id] = [NativeSpaceID(rawValue: 1)]
+    let index = try #require(system.windows.firstIndex { $0.id == right })
+    system.windows[index].displayID = side.id
+    system.windows[index].frame.origin.x = 1000
+    try #require(system.desktopObservation?.exclusiveWindowIDs(on: display).contains(right) == true)
+    model.handleApplicationTopologyChange()
+    model.handleApplicationTopologyChange()
+    try #require(try storedSession(model, display).presence.pending[right] == 2)
+    model.perform(.leftHalf)
+    #expect(try storedSession(model, display).presence.membershipOnlyAbsenceStarts[right] == nil)
+    #expect(try storedSession(model, display).bentoState.root?.windowIDs == [left])
+    #expect(system.windows[index].frame.origin.x == 1000)
+}
+
+/// Losing native observation cannot assign an unread on-screen window to a
+/// desktop. The ordinary absence budget applies until that capability returns.
+@Test(.appTestApplication, arguments: [false, true]) @MainActor
+func nativeObservationLossDuringProtectedOmissionUsesTheOrdinaryBudget(returnsBeforeRemoval: Bool) async throws {
+    let (system, model) = try await makeTwoPaneAdaptiveFixture()
+    defer { model.shutdown() }
+    let display = system.mainDisplay.id
+    let tree = try storedSession(model, display).bentoState
+    let observation = system.desktopObservation
+    system.offscreenWindowIDs = [right]
+    system.omittedButOnScreenWindowIDs = [right]
+    model.handleApplicationTopologyChange()
+    await system.advance(by: .milliseconds(400))
+    try #require(try storedSession(model, display).presence.pending.isEmpty)
+    try #require(try storedSession(model, display).bentoState == tree)
+    system.desktopObservation = nil
+    model.watchdog()
+    #expect(try storedSession(model, display).presence.pending[right] == 1)
+    #expect(system.unreadOnScreenWindowIDs.contains(right))
+    if returnsBeforeRemoval {
+        system.desktopObservation = observation
+        model.handleApplicationTopologyChange()
+        await system.advance(by: .seconds(2))
+        #expect(try storedSession(model, display).presence.pending.isEmpty)
+        #expect(try storedSession(model, display).bentoState == tree)
+    } else {
+        try #require(await system.waitFor {
+            system.windows.first { $0.id == left }?.frame == system.mainDisplay.visibleFrame
+        })
+        #expect(try storedSession(model, display).bentoState.root?.windowIDs == [left])
+        system.desktopObservation = observation
+        system.offscreenWindowIDs = []
+        system.omittedButOnScreenWindowIDs = []
+        model.handleApplicationTopologyChange()
+        try #require(await system.waitFor {
+            (try? storedSession(model, display).bentoState.root?.windowIDs.count) == 2
+        })
+    }
+}

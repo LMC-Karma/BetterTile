@@ -1267,13 +1267,14 @@ final class BetterTileModel {
               let display = system.displays().first(where: { $0.id == displayID }),
               let windows = try? observeVisibleWindows()
         else { return nil }
-        let displayWindows = bentoEligible(windows.filter {
-            $0.displayID == displayID && $0.isEligible && !$0.isFloating
-        })
+        let nativeObservation = system.nativeDesktopObservation()
+        let eligible = bentoEligible(windows.filter { $0.isEligible && !$0.isFloating })
+        let displayWindows = eligible.filter { $0.displayID == displayID }
         guard displayWindows.contains(where: { $0.id == sourceWindowID }) else { return nil }
         let baselineFrames = Dictionary(uniqueKeysWithValues: displayWindows.map { ($0.id, $0.frame) })
         let constraints = Dictionary(uniqueKeysWithValues: displayWindows.map { ($0.id, $0.constraints) })
-        reconcileBentoSession(&session, windows: displayWindows, display: display)
+        reconcileBentoSession(&session, windows: displayWindows, display: display,
+                              eligible: eligible, observation: nativeObservation)
         guard let plan = BentoDropPlanner().plan(
             intent: intent,
             sourceWindowID: sourceWindowID,
@@ -1439,6 +1440,7 @@ final class BetterTileModel {
               system.nativeDesktopObservation()?.allowsAutomaticLayout(on: destinationDisplay.id) != false
         else { return nil }
         let windows = try observeVisibleWindows()
+        let nativeObservation = system.nativeDesktopObservation()
         let eligible = bentoEligible(windows.filter { $0.isEligible && !$0.isFloating })
         guard var moved = eligible.first(where: { $0.id == actionPlan.windowID && $0.displayID == source.displayID })
         else { return nil }
@@ -1450,10 +1452,12 @@ final class BetterTileModel {
         let sourceWindows = eligible.filter { $0.displayID == source.displayID && $0.id != moved.id }
         var destinationWindows = eligible.filter { $0.displayID == destination.displayID }
         if source.mode == .bento {
-            reconcileBentoSession(&source, windows: sourceWindows, display: sourceDisplay, confirmedGone: [moved.id])
+            reconcileBentoSession(&source, windows: sourceWindows, display: sourceDisplay,
+                                  eligible: eligible, observation: nativeObservation, confirmedGone: [moved.id])
         }
         if destination.mode == .bento {
-            reconcileBentoSession(&destination, windows: destinationWindows, display: destinationDisplay)
+            reconcileBentoSession(&destination, windows: destinationWindows, display: destinationDisplay,
+                                  eligible: eligible, observation: nativeObservation)
         }
         moved.displayID = destination.displayID
         moved.frame = actionPlan.targetFrame
@@ -1660,12 +1664,13 @@ final class BetterTileModel {
             }
             session = resumed
         }
-        let displayWindows = bentoEligible(windows.filter {
-            $0.displayID == display.id && $0.isEligible && !$0.isFloating
-        })
+        let nativeObservation = system.nativeDesktopObservation()
+        let eligible = bentoEligible(windows.filter { $0.isEligible && !$0.isFloating })
+        let displayWindows = eligible.filter { $0.displayID == display.id }
         let frames = Dictionary(uniqueKeysWithValues: displayWindows.map { ($0.id, $0.frame) })
         let constraints = Dictionary(uniqueKeysWithValues: displayWindows.map { ($0.id, $0.constraints) })
-        reconcileBentoSession(&session, windows: displayWindows, display: display)
+        reconcileBentoSession(&session, windows: displayWindows, display: display,
+                              eligible: eligible, observation: nativeObservation)
         guard let plan = BentoDropPlanner().plan(
             intent: .snap(action: actionPlan.resolvedAction, frame: actionPlan.targetFrame),
             sourceWindowID: actionPlan.windowID,
@@ -1832,7 +1837,8 @@ final class BetterTileModel {
                 session.automaticallyFloatingWindowIDs.removeAll()
                 placements = result.placements
             } else {
-                reconcileBentoSession(&session, windows: displayWindows, display: display)
+                reconcileBentoSession(&session, windows: displayWindows, display: display,
+                                      eligible: bentoEligible(windows), observation: nativeObservation)
                 placements = BentoLayoutEngine(state: session.bentoState)
                     .placements(for: displayWindows, in: display)
             }
@@ -3918,7 +3924,9 @@ final class BetterTileModel {
             windows = completeSweep
         }
         // The adapter caches this by generation; ordinary frame merges do not advance it.
-        recordObservedWindows(windows, observation: system.nativeDesktopObservation())
+        let nativeObservation = system.nativeDesktopObservation()
+        let eligible = bentoEligible(windows.filter { $0.isEligible && !$0.isFloating })
+        recordObservedWindows(windows, observation: nativeObservation)
         let recoveredFrameIDs = Set(windows.filter {
             applicationRecoveryFrameEventPIDs[$0.id] == $0.processIdentifier
                 && !confirmedGoneWindowIDs.contains($0.id)
@@ -4115,7 +4123,8 @@ final class BetterTileModel {
                 settlementTasks.removeValue(forKey: displayID)?.cancel()
             }
             let removedIDs = confirmedGoneWindowIDs.union(confirmedMinimizedWindowIDs)
-            let knownSpaceWindowIDs = system.nativeDesktopObservation()?.exclusiveWindowIDs(on: displayID) ?? []
+            let knownSpaceWindowIDs = knownSpaceWindowIDs(
+                on: displayID, eligible: eligible, observation: nativeObservation)
             if !recoveredFrameIDs.isDisjoint(with: displayChanges),
                !removedIDs.isDisjoint(with: session.windowIDs
                    .union(session.bentoState.root?.windowIDs ?? [])
@@ -5129,6 +5138,8 @@ final class BetterTileModel {
             }
         }
 
+        let nativeObservation = system.nativeDesktopObservation()
+        let eligible = bentoEligible(settledWindows.filter { $0.isEligible && !$0.isFloating })
         let displayWindows = settledWindows.filter { session.windowIDs.contains($0.id) && $0.displayID == displayID }
         // A lone window owns a native divider edit, but an authoritative
         // transfer or reflow must still verify its requested frame.
@@ -5147,7 +5158,8 @@ final class BetterTileModel {
             ) {
                 session.bentoState = solved
             } else {
-                reconcileBentoSession(&session, windows: displayWindows, display: display)
+                reconcileBentoSession(&session, windows: displayWindows, display: display,
+                                      eligible: eligible, observation: nativeObservation)
             }
             let placements = BentoLayoutEngine(state: session.bentoState).placements(for: displayWindows, in: display)
             let commitResult = commitBentoProposal(
@@ -5753,10 +5765,13 @@ final class BetterTileModel {
         _ session: inout LayoutSession,
         windows: [WindowSnapshot],
         display: DisplaySnapshot,
+        eligible: [WindowSnapshot],
+        observation: NativeDesktopObservation?,
         confirmedGone: Set<WindowID> = [],
         minimized: Set<WindowID> = []
     ) {
-        let knownSpaceWindowIDs = system.nativeDesktopObservation()?.exclusiveWindowIDs(on: display.id) ?? []
+        let knownSpaceWindowIDs = knownSpaceWindowIDs(
+            on: display.id, eligible: eligible, observation: observation)
         let transition = BentoSessionReducer().reconcile(
             session: session,
             observation: BentoObservation(
@@ -5790,8 +5805,8 @@ final class BetterTileModel {
 
     /// Windows that macOS reports as members of only the current desktop of
     /// `displayID`, less windows that the inventory places on another
-    /// display. The ambient reducer and the watchdog's protection check both
-    /// use this set.
+    /// display. Ambient, command, recovery and settlement reconciliation and
+    /// the watchdog's protection check use the same set.
     private func knownSpaceWindowIDs(
         on displayID: DisplayID,
         eligible: [WindowSnapshot],
