@@ -172,6 +172,62 @@ Bento cue arms only after its hover delay, because the armed cue is the drop.
 At a screen edge, a snap area wins over the edge of the pane under it, so the
 overlay shows the snap and not a pane cue.
 
+macOS can carry a dragged window to another desktop, for example when the
+pointer stays at the screen edge. A desktop change suspends the window drag; it
+does not cancel it. Suspension ends the Adaptive or Tabbed drag of the old
+desktop with a restore, which writes nothing because its desktop changed, and
+hides the overlay. While the drag is suspended, a release applies nothing. When
+Space stabilization ends and the button is still down, the drag resumes: the
+newest sample of the gesture resolves the drop on the destination desktop at
+once. That sample can be one a display tick already evaluated, because a
+pointer that rests at the edge sends no new sample during the change. If the
+held window is not readable yet, the next display tick or sample reads it
+again. If the button came up during the change, the drag ends with no drop.
+macOS switches desktops again while the pointer stays at the edge; each switch
+suspends and resumes the same drag. A display change, wake, and Escape still
+cancel the drag.
+
+The carried window need not belong to the destination layout. Until the
+gesture ends, the destination layout neither places nor admits it: refreshes
+leave it out of that desktop's windows, so no single-window placement, first
+Adaptive layout, or Tabbed arrival moves it under the pointer. The destination
+session is still selected, and its other windows are observed as usual. An
+Adaptive or Tabbed destination starts its own drag for the window. In Tabbed,
+the window joins that drag as a floating window, so fixed snaps and Add as tab
+drops can plan with it. A drop that lands publishes its pane membership; a
+snap to a frame outside the panes keeps it floating. Any other end removes
+that provisional float: a release without a drop, Escape, invalid feedback, a
+changed desktop, and a drop whose preparation or placement fails. A failed
+placement rolls back to the membership from before the drag without the
+provisional float, and records no Undo step. The model records each
+provisional float with its session and its owner: first the drag, then the
+placement that its drop starts. Every exit of that owner removes the float
+unless a commit put the window in a pane. The removal uses the stored session
+by ID, so it also applies when a later desktop change made that session
+inactive. It changes only membership: it selects no session and moves no
+window. A record ends with its session when that session's display or
+Space goes away. A layout drag that starts on the same session before the
+owner ends removes every other window's provisional float in its own start
+commit. That commit already supersedes and cancels the older drop's
+placement, so the removal invalidates no running work. The new drag's
+baseline, rollback, and Undo step therefore never hold another window's
+provisional float, and that window arrives after the new drag ends. Only
+the dragged window's own provisional float stays, as the new drag's. A
+destination that refuses the
+layout drag, such as an Adaptive desktop with no tree, offers the plain snap
+areas; a snap there also stops that desktop's single-window placement from
+moving the window. Each gesture that carried a window records one topology
+change when it ends, so the next event pass admits the window like any window
+that arrives on the desktop that is current then. This does not depend on a
+stabilization refresh, which a failed observation can skip.
+
+Tabbed Undo of a carried window's drop that landed restores the layout from
+the start of the destination drag. That layout held the window as a floating
+window, so Undo floats it again at its frame from that moment. It stays
+floating: arrival admission does not take it into a pane, because it is a
+floating member of the layout. Repair Layout does not return it either; a
+window floated this way counts as one the user floated.
+
 On a Tabbed desktop, a dragged window joins a pane as a tab in three places:
 the center of a pane's selected tab, a pane's tab strip, and an empty pane.
 This holds for a floating window and for a tab from another pane.
@@ -333,6 +389,21 @@ backoff; held applications use recovery instead. Gestures and Space
 stabilization still defer discovery. Frame classification reuses its inventory
 for arrival reconciliation only when it attempted no mutation. A mutation
 attempt requires a new inventory before reconciliation.
+
+A Space change suspends an active window drag instead of cancelling it (see
+Window drag drops). The suspended gesture still counts as active, so event
+passes and arrival discovery stay deferred until the gesture ends. Every
+refresh during the gesture leaves the carried window out of the destination
+desktop's windows unless that layout already holds it. Suspension marks that
+the gesture carried a window; the gesture end records one topology change for
+the event pass after it, because a layout drag start on the destination clears
+queued events. The drag resumes after the
+stabilization refresh, also when a stabilization sample fails. The
+destination session is then selected before the drag resolves its drop, and
+the destination's Adaptive drag cannot make that refresh return early. A newer
+Space change restarts stabilization and keeps the drag suspended; only the
+newest stabilization resumes it. A drag that ended during the change ignores
+the late resume.
 
 Some applications close a document window without a destruction event; focus
 only moves to another window. When focus lands in a Bento layout, the model

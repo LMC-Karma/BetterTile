@@ -390,6 +390,29 @@ public struct LayoutSessionStore: Sendable {
         storedSessions[displayID]?[sessionID] = session
     }
 
+    /// Removes a window's floating membership from one stored Tabbed session,
+    /// active or not. A pane member does not change. This changes only
+    /// membership: it selects no session and moves no window. Returns true
+    /// when the session changed.
+    @discardableResult
+    public mutating func forgetTabbedFloat(
+        _ windowID: WindowID,
+        sessionID: DesktopSessionID,
+        on displayID: DisplayID
+    ) -> Bool {
+        guard var session = storedSessions[displayID]?[sessionID],
+              var state = session.tabbedState,
+              state.floatingWindowIDs.contains(windowID),
+              !state.windowIDs.contains(windowID)
+        else { return false }
+        state.forgetFloating(windowID)
+        session.tabbedState = state
+        session.windowIDs.remove(windowID)
+        session.advanceRevision()
+        storedSessions[displayID]?[sessionID] = session
+        return true
+    }
+
     public mutating func update(_ displayID: DisplayID, _ update: (inout LayoutSession) -> Void) {
         guard let id = activeSessionIDs[displayID], var session = storedSessions[displayID]?[id] else { return }
         let original = session
