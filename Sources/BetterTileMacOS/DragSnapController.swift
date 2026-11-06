@@ -125,7 +125,7 @@ public final class DragSnapController {
     public var gestureEndedHandler: (() -> Void)?
     /// A snap area placed the window this drag carried from another desktop.
     public var carriedWindowSnappedHandler: ((DisplayID, WindowID) -> Void)?
-    public var actionResultHandler: ((DisplayID, Bool, String?) -> Void)?
+    public var actionResultHandler: ((DisplayID, WindowMutationOutcome) -> Void)?
     /// Whether the left mouse button is down. Tests replace this so the
     /// physical button cannot start or hold a gesture.
     public var primaryButtonIsPressed: () -> Bool = { NSEvent.pressedMouseButtons & 1 == 1 }
@@ -1002,11 +1002,11 @@ public final class DragSnapController {
             if outcome.isApplied, windowID == carriedWindowID {
                 carriedWindowSnappedHandler?(drop.displayID, windowID)
             }
-            actionResultHandler?(drop.displayID, outcome.isApplied, outcome.failureReason)
+            actionResultHandler?(drop.displayID, outcome)
         case let .invalid(reason):
             // The overlay showed no valid drop. The window stays where the
             // user dropped it, as after any drag without a snap.
-            actionResultHandler?(drop.displayID, false, reason)
+            actionResultHandler?(drop.displayID, .failed(reason: reason))
         case .layout:
             return
         }

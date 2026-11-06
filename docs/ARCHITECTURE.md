@@ -188,42 +188,34 @@ suspends and resumes the same drag. A display change, wake, and Escape still
 cancel the drag.
 
 The carried window need not belong to the destination layout. Until the
-gesture ends, the destination layout neither places nor admits it: refreshes
-leave it out of that desktop's windows, so no single-window placement, first
-Adaptive layout, or Tabbed arrival moves it under the pointer. The destination
-session is still selected, and its other windows are observed as usual. An
-Adaptive or Tabbed destination starts its own drag for the window. In Tabbed,
-the window joins that drag as a floating window, so fixed snaps and Add as tab
-drops can plan with it. A drop that lands publishes its pane membership; a
-snap to a frame outside the panes keeps it floating. Any other end removes
-that provisional float: a release without a drop, Escape, invalid feedback, a
-changed desktop, and a drop whose preparation or placement fails. A failed
-placement rolls back to the membership from before the drag without the
-provisional float, and records no Undo step. The model records each
-provisional float with its session and its owner: first the drag, then the
-placement that its drop starts. Every exit of that owner removes the float
-unless a commit put the window in a pane. A placement or rollback removes its
-provisional float before draining queued tab actions. Cleanup can advance the
-session revision, so the next action must capture its owner after cleanup,
-including when a peer closes during the preceding drop. The next action's
-Undo step also excludes that failed drop's provisional float. The removal uses
-the stored session by ID, so it also applies when a later desktop change made that session
-inactive. It changes only membership: it selects no session and moves no
-window. A record ends with its session when that session's display or
-Space goes away. A layout drag that starts on the same session before the
-owner ends removes every other window's provisional float in its own start
-commit. That commit already supersedes and cancels the older drop's
-placement, so the removal invalidates no running work. The new drag's
-baseline, rollback, and Undo step therefore never hold another window's
-provisional float, and that window arrives after the new drag ends. Only
-the dragged window's own provisional float stays, as the new drag's. A
-destination that refuses the
-layout drag, such as an Adaptive desktop with no tree, offers the plain snap
-areas; a snap there also stops that desktop's single-window placement from
-moving the window. Each gesture that carried a window records one topology
-change when it ends, so the next event pass admits the window like any window
-that arrives on the desktop that is current then. This does not depend on a
-stabilization refresh, which a failed observation can skip.
+gesture ends, the destination neither places nor admits it. Refreshes leave
+it out, so no single-window placement, first Adaptive layout or Tabbed
+arrival moves it under the pointer. The destination session and its other
+windows are observed as usual. An Adaptive or Tabbed destination starts its
+own drag for the window. A destination that refuses the layout drag, such as
+an Adaptive desktop with no tree, offers the plain snap areas. A snap there
+also stops single-window placement from moving the window. Each carried
+gesture records a topology change when it ends, so the next event pass
+admits the window on the current desktop. This does not depend on a
+stabilization refresh, which a failed observation can skip. A plain snap
+whose rollback is incomplete also stops automatic writes on the destination
+and offers Repair Layout.
+
+Tabbed holds the carried window as a provisional float for fixed snaps and
+Add as tab. A landed drop publishes pane membership; a snap outside the
+panes keeps it floating. Every other exit removes the float. Failed
+placement restores the membership from before the drag without the float and
+adds no Undo step. Incomplete rollback suspends automatic writes and offers
+Repair Layout; cleanup preserves that suspension. Each float records its
+session and owner, first the drag and then its placement. Cleanup precedes
+queued actions, pane-picker resumption and work-area refreshes, so new
+placements and Undo steps use the cleaned membership and revision. Removal
+uses the stored session ID even when inactive; it selects no session and
+moves no window. A record ends when its session's display or Space
+disappears. A new drag removes other windows' provisional floats in its
+start commit, which already supersedes and cancels the older placement. Its
+baseline, rollback and Undo retain only its own provisional float, if any.
+Other windows arrive after that drag ends.
 
 Tabbed Undo of a carried window's drop that landed restores the layout from
 the start of the destination drag. That layout held the window as a floating
