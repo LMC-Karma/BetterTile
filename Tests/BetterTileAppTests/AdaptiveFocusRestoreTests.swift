@@ -20,7 +20,7 @@ func adaptiveFocusRestoreKeepsFourAsymmetricPanes(omitsReturningPeer: Bool, retu
     await system.advance(by: .milliseconds(200))
     #expect(system.windows[2].frame == expected[ids[2]])
     system.slowRestoreIDs.remove(ids[0])
-    try system.setMinimized(false, for: ids[0])
+    try await restoreAdaptiveFocusPeer(ids[0], model: model, system: system)
     await system.advance(by: .milliseconds(200))
     #expect(system.windows[2].frame == expected[ids[2]])
     if returnsAfterDeadline {
@@ -34,9 +34,10 @@ func adaptiveFocusRestoreKeepsFourAsymmetricPanes(omitsReturningPeer: Bool, retu
     }
     system.offscreenWindowIDs = []
     system.slowRestoreIDs = []
-    // The last peer becomes readable before its restored notification arrives.
+    // The omitted, before-deadline case delivers no later notification.
+    // Other cases explicitly synchronize the fake's asynchronous notification.
     system.emitsMinimizationEvents = !omitsReturningPeer || returnsAfterDeadline
-    try system.setMinimized(false, for: ids[3])
+    try await restoreAdaptiveFocusPeer(ids[3], model: model, system: system)
     await settleAdaptiveFocus(model, system: system)
     for window in system.windows {
         #expect(window.frame == expected[window.id], "\(window.id) must return to its pre-Maximize frame")
@@ -47,11 +48,71 @@ func adaptiveFocusRestoreKeepsFourAsymmetricPanes(omitsReturningPeer: Bool, retu
     #expect(system.frameWriteCounts == writes)
 }
 
+/// Observe this peer's callback, not merely an older event pass. The fake
+/// delivers restored notifications from a separate task after a yield.
+@MainActor private func restoreAdaptiveFocusPeer(
+    _ id: WindowID, model: BetterTileModel, system: FakeAppWindowSystem
+) async throws {
+    let originalHandler = system.eventHandler
+    var delivered = false
+    system.eventHandler = { event in
+        originalHandler?(event)
+        if event.kind == .restored && event.windowID == id { delivered = true }
+    }
+    defer { system.eventHandler = originalHandler }
+    try system.setMinimized(false, for: id)
+    if system.emitsMinimizationEvents {
+        try #require(await system.waitFor(stoppingTimeAt: system.clock.now) {
+            delivered && model.windowEventTask != nil
+        })
+    }
+}
+
 @MainActor private func settleAdaptiveFocus(_ model: BetterTileModel, system: FakeAppWindowSystem) async {
-    await system.advance(by: .milliseconds(350))
-    await system.joinWindowEvent(on: model)
-    for task in Array(model.settlementTasks.values) { await system.joinSettlement(task, on: model) }
+    for _ in 0..<10 {
+        await system.advance(by: .milliseconds(350))
+        await system.joinWindowEvent(on: model)
+        for task in Array(model.settlementTasks.values) { await system.joinSettlement(task, on: model) }
+        guard model.windowEventTask == nil && model.settlementTasks.isEmpty else { continue }
+        // Joining one pass can release another callback or settlement task.
+        // Require a whole additional clock step without new pending work.
+        await system.advance(by: .milliseconds(50))
+        if model.windowEventTask == nil && model.settlementTasks.isEmpty { return }
+    }
     #expect(model.windowEventTask == nil && model.settlementTasks.isEmpty)
+}
+
+@Test(.appTestApplication, .timeLimit(.minutes(1))) @MainActor
+func adaptiveFocusRestoreKeepsPeerHeightBeforeALateRestoredNotification() async throws {
+    let (system, model, ids, expected) = try await asymmetricFocusFixture()
+    defer { model.shutdown() }
+    let captured = try #require(model.captureLayoutWheelTarget())
+    system.slowRestoreIDs = [ids[0], ids[3]]
+    system.offscreenWindowIDs = [ids[3]]
+    model.performLayoutWheel(.windowAction(.restore), for: captured)
+    let clock = try #require(system.manualClock)
+    let retry = clock.now.advanced(by: .milliseconds(50))
+    try #require(await system.waitFor(stoppingTimeAt: clock.now) { clock.hasSleeper(until: retry) })
+    await system.advance(by: .milliseconds(200))
+    system.slowRestoreIDs.remove(ids[0])
+    try await restoreAdaptiveFocusPeer(ids[0], model: model, system: system)
+    await system.advance(by: .milliseconds(200))
+    // Main expands upper-right here even though the lower-right peer is alive.
+    #expect(system.windows[2].frame == expected[ids[2]])
+    system.offscreenWindowIDs = []
+    system.slowRestoreIDs = []
+    system.emitsMinimizationEvents = false
+    try system.setMinimized(false, for: ids[3])
+    await system.advance(by: .milliseconds(150))
+    #expect(system.windows[2].frame == expected[ids[2]])
+    // A genuinely late notification can heal main's overlap. It must not be
+    // needed to prevent the intermediate full-column write.
+    system.eventHandler?(WindowSystemEvent(kind: .restored, windowID: ids[3], processIdentifier: 45))
+    await settleAdaptiveFocus(model, system: system)
+    for window in system.windows { #expect(window.frame == expected[window.id]) }
+    let writes = system.frameWriteCounts
+    await settleAdaptiveFocus(model, system: system)
+    #expect(system.frameWriteCounts == writes)
 }
 
 @Test(.appTestApplication, .timeLimit(.minutes(1)), arguments: [false, true]) @MainActor
@@ -71,8 +132,7 @@ func adaptiveFocusRestoreRemembersConfirmedClosure(whileRestoring: Bool) async t
         await settleAdaptiveFocus(model, system: system)
         model.performLayoutWheel(.windowAction(.restore), for: captured)
     }
-    await system.advance(by: .milliseconds(350))
-    await system.joinWindowEvent(on: model)
+    await settleAdaptiveFocus(model, system: system)
     #expect(system.windows.allSatisfy { !$0.isMinimized })
     #expect(system.windows.first { $0.id == ids[0] }?.frame == expected[ids[0]])
     #expect(system.windows.first { $0.id == ids[1] }?.frame == expected[ids[1]])

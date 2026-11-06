@@ -3619,7 +3619,8 @@ final class BetterTileModel {
                     bentoStateBeforeFocus[id]?.closedWindowIDs.insert(windowID)
                 }
                 for displayID in focusRestores.keys
-                    where focusRestores[displayID]?.session.windowIDs.contains(windowID) == true {
+                    where focusRestores[displayID]?.session.excludedFocusWindowIDs.contains(windowID) == true
+                        || focusRestores[displayID]?.session.bentoState.root?.windowIDs.contains(windowID) == true {
                     focusRestores[displayID]?.closedWindowIDs.insert(windowID)
                 }
                 sessionStore.removeClosedTabbedWindow(windowID)

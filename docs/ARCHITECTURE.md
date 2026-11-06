@@ -873,8 +873,8 @@ Maximize enters Focus mode on a tiled Bento window and retains the previous
 tree for that desktop session. Restore, Maximize again, and a peer restored
 from the Dock share one bounded wait for the covered peers to return before
 restoring that tree. A missing Accessibility snapshot does not mean that a
-peer closed. The wait retains confirmed closures for its Focus session, even
-after background sweeps consume their events. Only a visible eligible peer or
+peer closed. The wait retains confirmed closures against its saved panes and
+covered peers, even after background sweeps consume their events. Only a visible eligible peer or
 a confirmed closure satisfies the wait before its deadline. A peer still
 minimized or unread when the wait ends leaves the tree like any minimized
 window: the available windows fill the display, and the peer's reinsertion
