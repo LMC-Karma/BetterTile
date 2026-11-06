@@ -132,6 +132,13 @@ not change macOS desktop-switch dwell handling.
 
 ## Window drag drops
 
+A window drag waits for observed window movement before it shows a drop.
+If the first targeted read is unavailable or still reports the starting frame,
+display ticks retry the latest drag sample while the pointer rests. Once the
+movement gate activates, ticks consume only new samples, except when a desktop
+change needs to resolve the held window again. Release and cancellation clear
+the saved sample and gate, so a late observation cannot restart the gesture.
+
 A window drag has one decision: the drop that its overlay shows.
 `DragSnapController` records that drop as a `WindowDropTarget` when it shows a
 snap preview or an armed Bento cue. An ordinary snap records its action and

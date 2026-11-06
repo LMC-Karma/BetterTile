@@ -529,9 +529,12 @@ public final class DragSnapController {
         if let event = pendingDragEvent {
             pendingDragEvent = nil
             mouseDragged(event)
-        } else if resolvesOnDestinationDesktop, !resolvedDragTarget, let event = latestDragEvent {
-            // The held window was not readable on the destination desktop
-            // yet. Read it again although the pointer rests.
+        } else if let event = latestDragEvent,
+                  (resolvesOnDestinationDesktop && !resolvedDragTarget)
+                    || (draggedWindowID == nil && dragGate.isTracking) {
+            // The first sample can precede observed movement or a readable
+            // window. Retry it while the gate waits, including on a new
+            // desktop, although the pointer rests.
             mouseDragged(event)
         }
     }
