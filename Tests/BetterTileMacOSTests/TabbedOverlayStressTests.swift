@@ -3,16 +3,7 @@ import BetterTileCore
 import Testing
 @testable import BetterTileMacOS
 
-/// Records ordering without showing a real window or taking focus.
-@MainActor private final class StressPanel: NSPanel {
-    var shown = false
-    override var isVisible: Bool { shown }
-    override var isKeyWindow: Bool { false }
-    override func orderFrontRegardless() { shown = true }
-    override func orderOut(_ sender: Any?) { shown = false }
-    override func order(_ place: NSWindow.OrderingMode, relativeTo otherWin: Int) { shown = place != .out }
-    override func makeKey() {}
-}
+private typealias StressPanel = UnconstrainedTabbedTestPanel
 
 @MainActor private final class StressChooserPanel: TabbedChooserPanel {
     var shown = false
@@ -20,6 +11,7 @@ import Testing
     override func orderFrontRegardless() { shown = true }
     override func orderOut(_ sender: Any?) { shown = false }
     override func makeKey() {}
+    override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect { frameRect }
 }
 
 private struct SplitMix64 {
@@ -68,7 +60,8 @@ private struct SplitMix64 {
         removeMonitor: { [unowned self] token in liveMonitors.remove(ObjectIdentifier(token as AnyObject)) },
         primaryButtonIsPressed: { false }, observesAutoHidePointer: false,
         visibilityClock: { [unowned self] in now }, automaticallyAdvanceVisibility: false,
-        pointerLocation: { [unowned self] in pointer })
+        pointerLocation: { [unowned self] in pointer },
+        mainScreenFrame: { StressPanel.referenceScreenFrame })
         // Mirrors BetterTileModel.cancelPaneApplicationRequest.
         overlay.onDismissApplicationPicker = { [unowned self] in cancelRequest() }
         overlay.onIntent = { [unowned self] _ in overlay.completeDrop() }
@@ -251,7 +244,7 @@ private struct SplitMix64 {
             if state.presentation != .autoHide { #expect(liveMonitors.isEmpty, "monitor without reveal \(context)") }
         }
         let frames = state.frames(in: bounds)
-        let main = NSScreen.screens.first?.frame ?? .zero
+        let main = StressPanel.referenceScreenFrame
         for (panel, view) in views {
             guard let frame = frames[view.pane.id], let pane = state.panes.first(where: { $0.id == view.pane.id }),
                   shownStrips.contains(where: { $0.0 === panel }) || suspended else { continue }
@@ -290,4 +283,19 @@ func tabbedOverlayRandomLifecycleKeepsSurfacesConsistent(seed: UInt64) async {
     stress.overlay.hide()
     stress.visible = false
     stress.check()
+}
+
+// Exercise AppKit's display-change frame constraint without changing any display.
+@Test(.macOSTestApplication, arguments: [false, true]) @MainActor
+func tabbedFixtureFrameConstraintKeepsOffscreenGeometry(chooser: Bool) {
+    let panel: NSPanel = chooser
+        ? StressChooserPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        : StressPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+    panel.orderFrontRegardless()
+    defer { panel.orderOut(nil) }
+    let requested = NSRect(x: 40000, y: 40000, width: 700, height: 34)
+    for screen in [nil] + NSScreen.screens.map(Optional.some) {
+        let constrained = panel.constrainFrameRect(requested, to: screen)
+        #expect(constrained == requested, "The fixture must preserve the controller's requested frame")
+    }
 }

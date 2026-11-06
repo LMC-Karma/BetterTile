@@ -894,6 +894,13 @@ requested partition without waiting indefinitely for missing peers.
 
 ### Tabbed on Bento
 
+Tabbed overlay lifecycle and resize hit-testing fixtures use unordered panels
+that bypass AppKit's screen constraining and a fixed reference frame for screen
+coordinate conversion. They still exercise native content layout, deferred
+resize completion and drag delivery. Geometry assertions compare the controller's
+frames and content sizes; they do not depend on the machine's display arrangement.
+The native-focus lane retains production panels and real ordering checks.
+
 Tabbed is Bento with tab groups. A Tabbed desktop's `bentoState` is its layout;
 `LayoutSession.tabbedState` adds only tab membership (`BentoTabbedLayoutState`)
 and the pane that receives new windows. Reading `tabbedState` follows any
