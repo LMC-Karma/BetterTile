@@ -34,6 +34,7 @@ struct DisplayTriggerNotice {
     var loadLayout: (String) throws -> SavedLayoutDocument? = { _ in nil }
     /// True once Space stabilization and Adaptive or Tabbed settlement have finished for a display.
     var isReady: (DisplayID) -> Bool = { _ in true }
+    var isDisplayChangeHeld: (DisplayID) -> Bool = { _ in false }
     /// True while a window, divider, or tab drag or the Layout Wheel is active, or a mouse button is held.
     var isInteracting: () -> Bool = { false }
     /// Frames of the eligible windows on these displays, or nil when they cannot be read now.
@@ -217,11 +218,16 @@ struct DisplayTriggerNotice {
                 return
             }
             let displays = Set(targets())
-            guard displays.allSatisfy(isReady) else {
+            if displays.contains(where: isDisplayChangeHeld) {
                 // The frame-read deadline cannot bypass the model's hold.
                 // Start a fresh quiet interval when layout becomes available.
                 detector = DisplaySettleDetector(quietInterval: tickSeconds, limit: settleLimit)
                 begun = uptime()
+                await sleep(tick)
+                continue
+            }
+            guard displays.allSatisfy(isReady) else {
+                if uptime() - begun >= settleLimit { return finish(token, moving: []) }
                 await sleep(tick)
                 continue
             }
@@ -288,7 +294,7 @@ struct DisplayTriggerNotice {
             // No slot may open an app, so a missing app is skipped and reported.
             let result = await applier.apply(document, displayID: display, excluding: moving, automatic: true,
                 layoutFileID: fire.layoutFile, sessionIsAvailable: { [weak self] in
-                    self?.canApplyInSession == true
+                    self?.canApplyInSession == true && self?.isDisplayChangeHeld(display) == false
                 }, validating: { [weak self] in
                     self?.bindingIsCurrent(fire.layoutFile, on: display) == true
                 })

@@ -186,6 +186,7 @@ struct SavedLayoutApplySnapshot {
     var stackingOrder: [TabbedStackEntry]? = nil
     /// A transient session hold forbids forward and recovery writes alike.
     var sessionIsAvailable: @MainActor () -> Bool = { true }
+    var isAutomatic = false
 
     var frontRanks: [WindowID: Int] {
         var ranks: [WindowID: Int] = [:]
@@ -1028,6 +1029,7 @@ private struct SavedLayoutUndoStructure: Equatable {
         lastPlan = plan
         var transaction = state
         transaction.sessionIsAvailable = sessionIsAvailable
+        transaction.isAutomatic = automatic
         transaction.requestedTransfers = prepared.transfers
         if document.keepForNewWindows, hasFollowedPane(document), let layoutFileID {
             transaction.followingIntent = .start(layoutFileID: layoutFileID, document: document,

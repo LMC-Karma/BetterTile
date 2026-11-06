@@ -1220,9 +1220,22 @@ func automaticApplyWaitsForDisplayHoldPastItsFrameReadLimit() async throws {
     h.addWindow("editor", on: h.second.id)
     h.bind()
     h.runtime.isReady = { _ in h.now >= 1006 }
+    h.runtime.isDisplayChangeHeld = { _ in h.now < 1006 }
     h.connectSecond()
     await h.finish()
     #expect(h.now >= 1006, "Automatic Apply must not bypass the model hold when its own settle limit expires")
     #expect(h.frameReads >= 2)
     #expect(h.commits == [h.second.id])
+}
+
+@Test(.appTestApplication) @MainActor
+func automaticApplyReadinessWithoutADisplayHoldRemainsBounded() async throws {
+    let h = RuntimeHarness()
+    defer { h.runtime.stop(); h.applier.stop() }
+    h.bind()
+    h.runtime.isReady = { _ in h.now >= 1008 }
+    h.connectSecond()
+    await h.finish()
+    #expect(h.now < 1004)
+    #expect(h.commits.isEmpty)
 }

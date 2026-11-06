@@ -17,7 +17,8 @@ public struct DisplayChangeHold: Sendable {
     public private(set) var settledByLimit = false
     private var sleeping = false
     private var inactive = false
-    private var reconfiguring = false
+    private var pendingReconfigurations = 0
+    public var isWaitingForWakeOrUnlock: Bool { sleeping || inactive }
     private var lastEvent: TimeInterval = 0
     private var signature: Set<DisplaySnapshot>?
     private var signatureSince: TimeInterval = 0
@@ -31,8 +32,8 @@ public struct DisplayChangeHold: Sendable {
         case .wake: sleeping = false
         case .sessionResigned: inactive = true
         case .sessionBecameActive: inactive = false
-        case .displayReconfigurationBegan: reconfiguring = true
-        case .displayReconfigurationEnded: reconfiguring = false
+        case .displayReconfigurationBegan: pendingReconfigurations += 1
+        case .displayReconfigurationEnded: pendingReconfigurations = max(0, pendingReconfigurations - 1)
         case .screenParametersChanged: break
         }
         token &+= 1
@@ -60,14 +61,14 @@ public struct DisplayChangeHold: Sendable {
             detector = DisplaySettleDetector(quietInterval: 0.25, limit: 5)
         }
         let quiet = detector.observe(windowFrames, at: time) == .quiet
-        guard !reconfiguring, !displaySignature.isEmpty, quiet, time - signatureSince >= 0.249 else { return nil }
+        guard pendingReconfigurations == 0, !displaySignature.isEmpty, quiet, time - signatureSince >= 0.249 else { return nil }
         return settle()
     }
 
     private mutating func settle(timedOut: Bool = false) -> Action {
         isHolding = false
         settledByLimit = timedOut
-        reconfiguring = false
+        pendingReconfigurations = 0
         return .settled(token: token)
     }
 }
