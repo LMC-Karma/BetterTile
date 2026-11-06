@@ -322,6 +322,14 @@ public struct BentoTabbedLayoutState: Hashable, Sendable {
     }
 }
 
+/// A tab's place while its window cannot participate in automatic layout.
+public struct TabbedReturnSlot: Hashable, Sendable {
+    public let paneID: UUID
+    public let index: Int
+    public let wasSelected: Bool
+    fileprivate let selectionGeneration: UInt64
+}
+
 /// A Tabbed desktop. The Bento tree owns all pane geometry, boundaries, and
 /// minimum-size solving; this adds tab groups and the pane that receives new
 /// windows. Bento's own operations (divider drags, drops, settlement) change
@@ -338,6 +346,55 @@ public struct TabbedLayoutState: Hashable, Sendable {
     /// repair or a later check can return them to a pane. Stored with the
     /// rest of the state, so Undo and a rollback keep it.
     private var automaticFloats: Set<WindowID> = []
+    /// Process-local places held for tabs that temporarily cannot participate.
+    public private(set) var returnSlots: [WindowID: TabbedReturnSlot] = [:]
+    private var selectionGenerations: [UUID: UInt64] = [:]
+
+    /// Return bookkeeping is part of session identity, but cannot by itself
+    /// require placement or invalidate a tab interaction.
+    public func layoutEquals(_ other: Self) -> Bool {
+        groups == other.groups && activePaneID == other.activePaneID
+            && preferredPaneRatios == other.preferredPaneRatios
+            && automaticFloats == other.automaticFloats
+    }
+
+    /// Apply only bookkeeping that changed while a proposal was pending.
+    /// A new preset owns its panes; slots for removed panes never carry over.
+    /// A slot the proposal dropped stays dropped: a concurrent close can shift
+    /// that slot's index, but the change must not bring it back. Only a window
+    /// that stepped away while the proposal was pending gains a slot.
+    mutating func mergeReturnChanges(from current: Self, since baseline: Self) {
+        for id in Set(current.returnSlots.keys).union(baseline.returnSlots.keys)
+            where current.returnSlots[id] != baseline.returnSlots[id] {
+            guard let updated = current.returnSlots[id] else {
+                returnSlots.removeValue(forKey: id)
+                continue
+            }
+            if baseline.returnSlots[id] == nil || returnSlots[id] != nil {
+                returnSlots[id] = updated
+            }
+        }
+        for id in Set(current.selectionGenerations.keys).union(baseline.selectionGenerations.keys)
+            where current.selectionGenerations[id] != baseline.selectionGenerations[id] {
+            selectionGenerations[id] = current.selectionGenerations[id]
+        }
+        let paneIDs = Set(groups.panes.map(\.id))
+        returnSlots = returnSlots.filter { paneIDs.contains($0.value.paneID) }
+        selectionGenerations = selectionGenerations.filter { paneIDs.contains($0.key) }
+    }
+
+    public mutating func clearReturnSlots() {
+        returnSlots.removeAll()
+        selectionGenerations.removeAll()
+    }
+
+    private mutating func recordSelection(in paneID: UUID) {
+        // Only pending returns need to distinguish user selections. Keeping
+        // no history otherwise also keeps repeated selections idempotent.
+        if returnSlots.values.contains(where: { $0.paneID == paneID }) {
+            selectionGenerations[paneID, default: 0] &+= 1
+        }
+    }
     /// The tab strip, reserved above each window by Bento's content inset.
     public static let headerHeight = 34.0
     public static let maximumPaneCount = 12
@@ -414,6 +471,7 @@ public struct TabbedLayoutState: Hashable, Sendable {
         var bento = bento
         bento.metrics = Self.tabbedMetrics(bento.metrics, presentation: presentation)
         let previousRoot = layout.root
+        let previousPanes = groups.panes
         let orphans = groups.synchronize(with: bento)
         if groups.panes.isEmpty {
             let paneID = UUID()
@@ -422,8 +480,32 @@ public struct TabbedLayoutState: Hashable, Sendable {
             groups.synchronize(with: empty)
         }
         if !groups.panes.contains(where: { $0.id == activePaneID }) { activePaneID = groups.panes[0].id }
-        for id in orphans { groups.add(id, to: activePaneID, select: false) }
+        // A tree edit can move a hidden peer or an absent tab out of a pane.
+        // Capture logical positions before changing slots, then close gaps from
+        // the end so multiple removals cannot change each other's indices.
+        var removedPositions: [(paneID: UUID, index: Int)] = []
+        for pane in previousPanes {
+            for id in pane.tabs where groups.pane(containing: id)?.id != pane.id {
+                if let index = logicalIndex(of: id, in: pane) { removedPositions.append((pane.id, index)) }
+            }
+        }
+        let placed = windowIDs.union(floatingWindowIDs)
+        for (id, slot) in returnSlots where placed.contains(id) {
+            removedPositions.append((slot.paneID, slot.index))
+            returnSlots.removeValue(forKey: id)
+        }
+        for position in removedPositions.sorted(by: { $0.index > $1.index }) {
+            removeReservedIndex(position.index, in: position.paneID)
+        }
+        for id in orphans {
+            if groups.add(id, to: activePaneID, select: false), groups.pane(containing: id)?.selected == id {
+                recordSelection(in: activePaneID)
+            }
+        }
         automaticFloats.formIntersection(floatingWindowIDs)
+        let paneIDs = Set(groups.panes.map(\.id))
+        returnSlots = returnSlots.filter { paneIDs.contains($0.value.paneID) }
+        selectionGenerations = selectionGenerations.filter { paneIDs.contains($0.key) }
         rememberPaneSizes(changedFrom: previousRoot)
     }
 
@@ -479,16 +561,21 @@ public struct TabbedLayoutState: Hashable, Sendable {
 
     public mutating func select(_ windowID: WindowID) {
         guard let pane = groups.pane(containing: windowID), groups.select(windowID) else { return }
+        recordSelection(in: pane.id)
         activePaneID = pane.id
     }
 
     /// New windows join the active pane as its selected tab. Absence alone is
     /// not closure: the caller supplies authoritative removals.
-    public mutating func reconcile(windowIDs observed: [WindowID], removed: Set<WindowID>, focused: WindowID?) {
+    public mutating func reconcile(windowIDs observed: [WindowID], removed: Set<WindowID>, away: Set<WindowID> = [], focused: WindowID?) {
         for id in removed { removeClosedWindow(id) }
+        for id in away.subtracting(removed).sorted() { stepAway(id) }
         let known = windowIDs.union(floatingWindowIDs)
         let added = Array(Set(observed).subtracting(known)).sorted()
-        for id in added { groups.add(id, to: activePaneID) }
+        for id in added {
+            removeTabPosition(id)
+            if groups.add(id, to: activePaneID) { recordSelection(in: activePaneID) }
+        }
         if let focused, windowIDs.contains(focused), added.isEmpty || added.contains(focused) { select(focused) }
     }
 
@@ -503,11 +590,13 @@ public struct TabbedLayoutState: Hashable, Sendable {
     public mutating func reconcile(
         windowIDs observed: [WindowID],
         removed: Set<WindowID>,
+        away: Set<WindowID> = [],
         fittingIn bounds: BTRect,
         windows: [WindowSnapshot],
         followed: FollowedLayout? = nil
     ) -> [TabbedAdoption] {
         for id in removed { removeClosedWindow(id) }
+        for id in away.subtracting(removed).sorted() { stepAway(id) }
         let known = windowIDs.union(floatingWindowIDs)
         return Array(Set(observed).subtracting(known)).sorted().map {
             adopt($0, fittingIn: bounds, windows: windows, followed: followed)
@@ -574,6 +663,32 @@ public struct TabbedLayoutState: Hashable, Sendable {
             }
             return (nil, .doesNotFit)
         }
+        // A remembered place takes precedence over Saved Layout following
+        // and the active pane. Prove that this pane can show the window even
+        // when the return will be a hidden tab.
+        let returnSlot = returnSlots.removeValue(forKey: id)
+        if let slot = returnSlot,
+           groups.panes.contains(where: { $0.id == slot.paneID }) {
+            var candidate = self
+            let absentBefore = returnSlots.values.filter {
+                $0.paneID == slot.paneID && $0.index < slot.index
+            }.count
+            let index = max(0, slot.index - absentBefore)
+            let selects = slot.wasSelected && selectionGenerations[slot.paneID, default: 0] == slot.selectionGeneration
+            if candidate.groups.add(id, to: slot.paneID, at: index) {
+                let (shown, result) = attempt(candidate)
+                trials.append(trial(slot.paneID, result))
+                if let shown {
+                    if selects || groups.panes.first(where: { $0.id == slot.paneID })?.selected == nil {
+                        self = shown
+                    } else {
+                        groups.add(id, to: slot.paneID, at: index, select: false)
+                    }
+                    return TabbedAdoption(windowID: id, outcome: .returned(slot.paneID), trials: trials)
+                }
+            }
+        }
+        if let slot = returnSlot { removeReservedIndex(slot.index, in: slot.paneID) }
         if let paneID = followed?.preferredPane(for: window?.bundleIdentifier, in: self) {
             var preferred = self
             if preferred.groups.add(id, to: paneID) {
@@ -581,6 +696,7 @@ public struct TabbedLayoutState: Hashable, Sendable {
                 trials.append(trial(paneID, result))
                 if let shown {
                     self = shown
+                    recordSelection(in: paneID)
                     return TabbedAdoption(windowID: id, outcome: .selected(paneID), trials: trials)
                 }
             }
@@ -597,6 +713,7 @@ public struct TabbedLayoutState: Hashable, Sendable {
                     return TabbedAdoption(windowID: id, outcome: .hidden(activePaneID), trials: trials)
                 }
                 self = shown
+                recordSelection(in: activePaneID)
                 return TabbedAdoption(windowID: id, outcome: .selected(activePaneID), trials: trials)
             }
         } else {
@@ -625,9 +742,11 @@ public struct TabbedLayoutState: Hashable, Sendable {
         if let best {
             if selecting, !showsFocus(best.paneID) {
                 self = best.shown
+                recordSelection(in: best.paneID)
                 return TabbedAdoption(windowID: id, outcome: .selected(best.paneID), trials: trials)
             }
             groups.add(id, to: best.paneID, select: false)
+            if groups.pane(containing: id)?.selected == id { recordSelection(in: best.paneID) }
             return TabbedAdoption(windowID: id, outcome: .hidden(best.paneID), trials: trials)
         }
         // No pane can show it, even after boundaries adapt. It floats at its
@@ -638,18 +757,86 @@ public struct TabbedLayoutState: Hashable, Sendable {
         return TabbedAdoption(windowID: id, outcome: .floated(Self.floatReason(for: window, in: bounds, presentation: presentation)), trials: trials)
     }
 
+    /// Forget a tab's logical position and close the gap for absent peers.
+    private mutating func removeTabPosition(_ id: WindowID) {
+        if let slot = returnSlots.removeValue(forKey: id) {
+            removeReservedIndex(slot.index, in: slot.paneID)
+        } else if let pane = groups.pane(containing: id), let index = logicalIndex(of: id, in: pane) {
+            removeReservedIndex(index, in: pane.id)
+        }
+    }
+
     /// The last tab of a pane leaves the pane empty, ready for another tab.
     public mutating func removeClosedWindow(_ id: WindowID) {
+        removeTabPosition(id)
         groups.remove(id)
         groups.forgetFloating(id)
         automaticFloats.remove(id)
+    }
+
+    /// An unavailable tab leaves a place to return to. Floating windows keep
+    /// their existing floating state and never become new tab arrivals.
+    public mutating func stepAway(_ id: WindowID) {
+        guard returnSlots[id] == nil, let pane = groups.pane(containing: id),
+              let index = logicalIndex(of: id, in: pane) else { return }
+        let generation = selectionGenerations[pane.id, default: 0]
+        // An automatic replacement must not also claim the original selection
+        // when several tabs step away before any of them returns.
+        let selectionIsHeld = returnSlots.values.contains {
+            $0.paneID == pane.id && $0.wasSelected && $0.selectionGeneration == generation
+        }
+        let slot = TabbedReturnSlot(paneID: pane.id, index: index,
+                                    wasSelected: pane.selected == id && !selectionIsHeld,
+                                    selectionGeneration: generation)
+        guard groups.remove(id) else { return }
+        returnSlots[id] = slot
+    }
+
+    private func logicalIndex(of id: WindowID, in pane: BentoTabbedPane) -> Int? {
+        guard var index = pane.tabs.firstIndex(of: id) else { return nil }
+        // Include already absent tabs, so an app hiding several windows over
+        // separate events preserves their order whichever one returns first.
+        for position in returnSlots.values.filter({ $0.paneID == pane.id }).sorted(by: { $0.index < $1.index }) {
+            if position.index <= index { index += 1 }
+        }
+        return index
+    }
+
+    /// Reserve a new position before inserting a present tab. Positions in
+    /// return slots include absent peers; UI insertion indices do not.
+    private mutating func insertTabPosition(at index: Int?, in paneID: UUID) {
+        guard let pane = groups.panes.first(where: { $0.id == paneID }) else { return }
+        let physical = min(max(0, index ?? pane.tabs.count), pane.tabs.count)
+        var logical = physical
+        for slot in returnSlots.values.filter({ $0.paneID == paneID }).sorted(by: { $0.index < $1.index }) {
+            if slot.index <= logical { logical += 1 }
+        }
+        for (id, slot) in returnSlots where slot.paneID == paneID && slot.index >= logical {
+            returnSlots[id] = TabbedReturnSlot(paneID: paneID, index: slot.index + 1,
+                wasSelected: slot.wasSelected, selectionGeneration: slot.selectionGeneration)
+        }
+    }
+
+    private mutating func removeReservedIndex(_ index: Int, in paneID: UUID) {
+        for (id, slot) in returnSlots where slot.paneID == paneID && slot.index > index {
+            returnSlots[id] = TabbedReturnSlot(paneID: paneID, index: slot.index - 1,
+                wasSelected: slot.wasSelected, selectionGeneration: slot.selectionGeneration)
+        }
     }
 
     /// - Parameter reselecting: The tab the source pane showed before the
     ///   gesture that selected `id`. The pane selects it again when it is
     ///   still a member; otherwise the next tab takes the pane as usual.
     public mutating func float(_ id: WindowID, reselecting: WindowID? = nil) {
+        if returnSlots[id] != nil {
+            removeTabPosition(id)
+            groups.layout.floatingWindowIDs.insert(id)
+            automaticFloats.remove(id)
+            return
+        }
+        if let pane = groups.pane(containing: id), pane.selected == id { recordSelection(in: pane.id) }
         // The user floated it: a repair leaves it floating.
+        removeTabPosition(id)
         if groups.float(id, reselecting: reselecting) { automaticFloats.remove(id) }
     }
 
@@ -658,8 +845,11 @@ public struct TabbedLayoutState: Hashable, Sendable {
     /// it came from, or nil for a lone tab, which moves as an ordinary Bento
     /// pane.
     public mutating func tearOff(_ id: WindowID) -> UUID? {
-        guard let pane = groups.pane(containing: id), pane.tabs.count > 1, groups.float(id) else { return nil }
+        guard let pane = groups.pane(containing: id), pane.tabs.count > 1 else { return nil }
+        removeTabPosition(id)
+        guard groups.float(id) else { return nil }
         automaticFloats.remove(id)
+        if pane.selected == id { recordSelection(in: pane.id) }
         return pane.id
     }
 
@@ -677,15 +867,18 @@ public struct TabbedLayoutState: Hashable, Sendable {
     ///   pane, and only while it is still a member of that pane.
     public mutating func move(_ id: WindowID, to paneID: UUID, at index: Int? = nil, reselecting: WindowID? = nil) {
         guard groups.panes.contains(where: { $0.id == paneID }),
-              windowIDs.contains(id) || floatingWindowIDs.contains(id) else { return }
-        if groups.pane(containing: id)?.id == paneID {
-            if let index { groups.reorder(id, to: index) }
+              windowIDs.contains(id) || floatingWindowIDs.contains(id) || returnSlots[id] != nil else { return }
+        if groups.pane(containing: id)?.id == paneID, index == nil {
             select(id)
             return
         }
+        if let source = groups.pane(containing: id), source.selected == id { recordSelection(in: source.id) }
+        recordSelection(in: paneID)
+        removeTabPosition(id)
         groups.remove(id, reselecting: reselecting)
         groups.forgetFloating(id)
         automaticFloats.remove(id)
+        insertTabPosition(at: index, in: paneID)
         if groups.add(id, to: paneID, at: index) { activePaneID = paneID }
     }
 
@@ -708,7 +901,9 @@ public struct TabbedLayoutState: Hashable, Sendable {
     public mutating func split(paneID: UUID, moving windowID: WindowID, edge: TabbedEdge, reselecting: WindowID? = nil) {
         guard groups.panes.count < Self.maximumPaneCount,
               groups.panes.contains(where: { $0.id == paneID }),
-              windowIDs.contains(windowID) || floatingWindowIDs.contains(windowID) else { return }
+              windowIDs.contains(windowID) || floatingWindowIDs.contains(windowID) || returnSlots[windowID] != nil else { return }
+        if let source = groups.pane(containing: windowID), source.selected == windowID { recordSelection(in: source.id) }
+        removeTabPosition(windowID)
         groups.remove(windowID, reselecting: reselecting)
         groups.forgetFloating(windowID)
         automaticFloats.remove(windowID)
@@ -773,6 +968,7 @@ public struct TabbedLayoutState: Hashable, Sendable {
     /// their order and overflow groups merge into the nearest pane.
     /// Distribution fills panes in tab order, then adds extra windows as tabs.
     public mutating func applyPreset(_ preset: TabbedPreset, grouping: TabbedPresetGrouping = .keepTabGroups) {
+        clearReturnSlots()
         let activeWindow = activeWindowID
         let unit = BTRect(x: 0, y: 0, width: 1000, height: 1000)
         let oldGroups = groups.panes
@@ -1203,6 +1399,8 @@ public struct TabbedAdoption: Hashable, Sendable {
         case selected(UUID)
         /// A hidden tab of the other pane that can show it with the least change.
         case hidden(UUID)
+        /// A tab restored to its remembered pane and position.
+        case returned(UUID)
         case floated(FloatReason)
     }
 
