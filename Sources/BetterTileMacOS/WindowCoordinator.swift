@@ -317,6 +317,13 @@ public final class WindowCoordinator {
         if restoringHistory, history.peek(for: plan.windowID) != plan.targetFrame {
             return .failed(reason: "The restore history changed before the action could be applied.")
         }
+        // History stores absolute frames. A disconnected or rearranged display
+        // can make an earlier position unreachable even after planning succeeds.
+        if restoringHistory, !system.displays().contains(where: {
+            PlacementBounds.isReachable(plan.targetFrame, in: $0.visibleFrame)
+        }) {
+            return .failed(reason: "The previous window position is off screen.")
+        }
         do {
             try applyAtomically(
                 [Placement(windowID: plan.windowID, frame: plan.targetFrame)],

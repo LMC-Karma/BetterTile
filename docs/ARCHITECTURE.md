@@ -98,6 +98,13 @@ Tabbed passes these expected frames to the shared divider fitter. The fitter
 matches projected window edges to projected boundaries; its tolerance stays
 unchanged. Logical pane frames and ratios remain precise.
 
+Restore history stores absolute window frames. Before restoring one, the
+coordinator checks that a current display can show it using the normal
+reachability threshold. If disconnecting or rearranging displays made that
+frame unreachable, Restore reports the failure without moving the window or
+consuming its history. A reachable frame on another connected display remains
+valid. Restore does not infer new coordinates from a changed arrangement.
+
 ## Snap Zones
 
 Snap Zones settings keeps zone selection directly below the diagram, followed
