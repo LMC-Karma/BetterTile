@@ -23,9 +23,35 @@ public struct WindowPresenceTracker: Hashable, Sendable {
     /// genuinely closed window in the tree long enough to be noticed.
     public var toleratedAbsences: Int
 
-    public init(consecutiveAbsences: [WindowID: Int] = [:], toleratedAbsences: Int = 2) {
+    /// How many sweeps a known window may be missing from while macOS still
+    /// reports it on this desktop. The membership covers a desktop transition
+    /// in which Accessibility exposes the window late. It is not proof that
+    /// the window is open: an application can keep a closed window alive off
+    /// screen. So the protection is longer than `toleratedAbsences`, but it
+    /// ends.
+    public var toleratedMembershipOnlyAbsences: Int
+
+    /// The least time a window that only the desktop membership reports must
+    /// be missing before it loses its place, when the caller gives a time.
+    /// Events make sweeps more frequent, so a count of sweeps alone can pass
+    /// in under half a second, for example while Accessibility exposes the
+    /// windows of a desktop one at a time after the user returns to it.
+    public var minimumMembershipOnlyAbsence: Duration
+
+    /// When each window that only the desktop membership reports was first
+    /// missed in its current run of misses.
+    public private(set) var membershipOnlyAbsenceStarts: [WindowID: ContinuousClock.Instant] = [:]
+
+    public init(
+        consecutiveAbsences: [WindowID: Int] = [:],
+        toleratedAbsences: Int = 2,
+        toleratedMembershipOnlyAbsences: Int = 4,
+        minimumMembershipOnlyAbsence: Duration = .milliseconds(1_400)
+    ) {
         self.consecutiveAbsences = consecutiveAbsences
         self.toleratedAbsences = max(0, toleratedAbsences)
+        self.toleratedMembershipOnlyAbsences = max(self.toleratedAbsences, toleratedMembershipOnlyAbsences)
+        self.minimumMembershipOnlyAbsence = max(.zero, minimumMembershipOnlyAbsence)
     }
 
     /// Records one sweep and returns the windows that have now been missing
@@ -38,34 +64,48 @@ public struct WindowPresenceTracker: Hashable, Sendable {
     ///     accounted for. Removed without waiting.
     ///   - exempt: Windows the layout is deliberately hiding, which are absent
     ///     by design and must not accumulate absences.
+    ///   - membershipOnly: Windows that only the desktop membership still
+    ///     reports. They count against `toleratedMembershipOnlyAbsences`.
+    ///   - now: The time of this sweep. With a time, a `membershipOnly`
+    ///     window also waits `minimumMembershipOnlyAbsence` from its first
+    ///     miss. Without one, only the count applies.
     public mutating func observe(
         known: Set<WindowID>,
         present: Set<WindowID>,
         confirmedGone: Set<WindowID> = [],
-        exempt: Set<WindowID> = []
+        exempt: Set<WindowID> = [],
+        membershipOnly: Set<WindowID> = [],
+        now: ContinuousClock.Instant? = nil
     ) -> Set<WindowID> {
         // Forget windows the layout no longer holds, so a reused identifier
         // never inherits a stale tally.
         consecutiveAbsences = consecutiveAbsences.filter { known.contains($0.key) }
+        membershipOnlyAbsenceStarts = membershipOnlyAbsenceStarts.filter { known.contains($0.key) }
 
         var removals: Set<WindowID> = []
         for windowID in known {
             if confirmedGone.contains(windowID) {
-                consecutiveAbsences.removeValue(forKey: windowID)
+                forget(windowID)
                 removals.insert(windowID)
                 continue
             }
-            if exempt.contains(windowID) {
-                consecutiveAbsences.removeValue(forKey: windowID)
-                continue
-            }
-            if present.contains(windowID) {
-                consecutiveAbsences.removeValue(forKey: windowID)
+            if exempt.contains(windowID) || present.contains(windowID) {
+                forget(windowID)
                 continue
             }
             let absences = (consecutiveAbsences[windowID] ?? 0) + 1
-            if absences > toleratedAbsences {
-                consecutiveAbsences.removeValue(forKey: windowID)
+            let isMembershipOnly = membershipOnly.contains(windowID)
+            var waitedLongEnough = true
+            if isMembershipOnly, let now {
+                let start = membershipOnlyAbsenceStarts[windowID] ?? now
+                membershipOnlyAbsenceStarts[windowID] = start
+                waitedLongEnough = start.duration(to: now) >= minimumMembershipOnlyAbsence
+            } else {
+                membershipOnlyAbsenceStarts.removeValue(forKey: windowID)
+            }
+            let tolerated = isMembershipOnly ? toleratedMembershipOnlyAbsences : toleratedAbsences
+            if absences > tolerated, waitedLongEnough {
+                forget(windowID)
                 removals.insert(windowID)
             } else {
                 consecutiveAbsences[windowID] = absences
@@ -80,10 +120,12 @@ public struct WindowPresenceTracker: Hashable, Sendable {
 
     public mutating func forget(_ windowID: WindowID) {
         consecutiveAbsences.removeValue(forKey: windowID)
+        membershipOnlyAbsenceStarts.removeValue(forKey: windowID)
     }
 
     public mutating func reset() {
         consecutiveAbsences.removeAll()
+        membershipOnlyAbsenceStarts.removeAll()
     }
 }
 

@@ -16,6 +16,10 @@ protocol BetterTileWindowSystem: TargetedWindowSystem, WindowEventSource, Window
     func cachedVisibleWindows(refreshing ids: Set<WindowID>) throws -> [WindowSnapshot]?
     func nativeDesktopObservation() -> NativeDesktopObservation?
     func refreshNativeDesktopObservation() -> NativeDesktopObservation?
+    /// Windows that the last complete sweep did not return, although the
+    /// window server showed them on screen. Positive evidence only: empty when
+    /// unknown.
+    var unreadOnScreenWindowIDs: Set<WindowID> { get }
     func observeApplicationEnforcedMinimum(
         windowID: WindowID,
         requested: BTRect,
@@ -35,6 +39,7 @@ extension AccessibilityWindowSystem: BetterTileWindowSystem {}
 
 extension BetterTileWindowSystem {
     var unresponsiveApplicationRecoveryDeadlines: [Int32: TimeInterval] { [:] }
+    var unreadOnScreenWindowIDs: Set<WindowID> { [] }
     func restoreEnhancedUserInterfaceBeforeQuit() {}
 }
 
@@ -474,6 +479,17 @@ final class BetterTileModel {
     /// Minimized panes are direct absences too, but retain a local reinsertion
     /// anchor when the membership transition commits.
     private var confirmedMinimizedWindowIDs: Set<WindowID> = []
+    /// The application of each window that a sweep observed, kept while a
+    /// layout still holds the window. A window of a held application is then
+    /// recognised when the inventory skips it.
+    private var observedProcessIdentifiers: [WindowID: Int32] = [:]
+    /// Missing Adaptive panes that the last ambient reducer pass kept only
+    /// because the window server showed them on screen on this desktop, by
+    /// session. The reducer then keeps no absence tally for them, so the
+    /// watchdog compares this with fresh evidence: a pane that loses its
+    /// protection needs another reconciliation even if the visible windows
+    /// did not change.
+    private var onScreenProtectedPanes: [DesktopSessionID: Set<WindowID>] = [:]
     private var actionVerificationTask: Task<Void, Never>?
     private var pendingRestoredWindowDeadlines: [WindowID: Date] = [:]
     private struct PendingWindowArrival {
@@ -3337,7 +3353,8 @@ final class BetterTileModel {
         defer { applicationRecoveryGeneration = priorRecoveryGeneration }
         retryDeferredTabbedRepair()
         guard let windows = try? observeVisibleWindows(reconcilesRecovery: true) else { return }
-        recordObservedWindows(windows, observation: system.nativeDesktopObservation())
+        let nativeObservation = system.nativeDesktopObservation()
+        recordObservedWindows(windows, observation: nativeObservation)
         if !Set(applicationRecoveryFrameEventPIDs.keys).isDisjoint(with: Set(windows.map(\.id))) {
             pendingWindowEvents.recordTopologyChange()
             processPendingWindowEvents(windows: windows)
@@ -3356,7 +3373,8 @@ final class BetterTileModel {
         let signature = windowSignature(windows)
         if (paneGapRelayoutPending && paneGapBeforeRelayout == nil && canRelayoutPaneGap)
             || signature != lastVisibleSignature
-            || windows.contains(where: { applicationRecoveryPendingWindows[$0.id] == $0.processIdentifier }) {
+            || windows.contains(where: { applicationRecoveryPendingWindows[$0.id] == $0.processIdentifier })
+            || hasLostOnScreenProtection(windows: windows, observation: nativeObservation) {
             refreshActiveWindows(force: false, windows: windows)
             return
         }
@@ -4097,6 +4115,7 @@ final class BetterTileModel {
                 settlementTasks.removeValue(forKey: displayID)?.cancel()
             }
             let removedIDs = confirmedGoneWindowIDs.union(confirmedMinimizedWindowIDs)
+            let knownSpaceWindowIDs = system.nativeDesktopObservation()?.exclusiveWindowIDs(on: displayID) ?? []
             if !recoveredFrameIDs.isDisjoint(with: displayChanges),
                !removedIDs.isDisjoint(with: session.windowIDs
                    .union(session.bentoState.root?.windowIDs ?? [])
@@ -4108,7 +4127,10 @@ final class BetterTileModel {
                    paneGap: session.paneGap(configured: paneGapForLayout),
                    confirmedGone: confirmedGoneWindowIDs,
                    minimized: confirmedMinimizedWindowIDs,
-                   knownSpaceWindowIDs: system.nativeDesktopObservation()?.exclusiveWindowIDs(on: displayID) ?? [],
+                   knownSpaceWindowIDs: knownSpaceWindowIDs,
+                   heldWindowIDs: heldWindowIDs(among: knownSpaceWindowIDs),
+                   onScreenWindowIDs: system.unreadOnScreenWindowIDs,
+                   now: clock.now,
                    newWindowSide: configuration.bentoNewWindowSide,
                    balancesNewWindows: configuration.bentoBalancesNewWindows
                ) {
@@ -4746,6 +4768,13 @@ final class BetterTileModel {
 
     /// Reuse reconciliation's snapshots and its native observation; compare each inventory once.
     private func recordObservedWindows(_ windows: [WindowSnapshot], observation: NativeDesktopObservation?) {
+        let laidOut = Set(sessionStore.sessions.keys.flatMap { displayID in
+            sessionStore.allSessions(for: displayID).flatMap { session in
+                (session.bentoState.root?.windowIDs ?? []) + Array(session.bentoState.floatingWindowIDs)
+            }
+        })
+        observedProcessIdentifiers = observedProcessIdentifiers.filter { laidOut.contains($0.key) }
+        for window in windows { observedProcessIdentifiers[window.id] = window.processIdentifier }
         let next = Dictionary(windows.filter(\.isEligible).map {
             ($0.id, SavedLayoutWindowLocation(display: $0.displayID, spaces: observation?.windowMembership[$0.id]))
         }, uniquingKeysWith: { _, new in new })
@@ -5277,10 +5306,11 @@ final class BetterTileModel {
         let unresolvedRecoveryDisplays = Set(unresolvedRecoveryWindows.map(\.displayID)).union(unmatchedRecoveryDisplays)
         pendingWindowEvents.recordFrameChanges(Set(unresolvedRecoveryWindows.map(\.id)))
         // Destroyed-window identifiers are a batch consumed by exactly one
-        // completed sweep. Capturing here means an early return above leaves
-        // them pending for the next attempt, while identifiers belonging to
-        // manual-mode desktops or sessions that were never initialised still
-        // expire at the end of this sweep instead of accumulating forever.
+        // completed sweep that is not a desktop transition. Capturing here
+        // means an early return above leaves them pending for the next
+        // attempt, while identifiers belonging to manual-mode desktops or
+        // sessions that were never initialised still expire at the end of
+        // that sweep instead of accumulating forever.
         let consumedRecoveryWindows = applicationRecoveryPendingWindows.filter { id, pid in
             windows.contains { $0.id == id && $0.processIdentifier == pid }
         }
@@ -5459,6 +5489,8 @@ final class BetterTileModel {
             } }
             #endif
             let arrivalSession = activation.session
+            let knownSpaceWindowIDs = self.knownSpaceWindowIDs(
+                on: display.id, eligible: eligible, observation: nativeObservation)
             let transition = ambientReconciler.transition(
                 session: arrivalSession,
                 observation: AmbientLayoutObservation(
@@ -5470,21 +5502,39 @@ final class BetterTileModel {
                     requestsRelayout: relayoutPaneGap,
                     confirmedGone: consumedDestroyedWindowIDs,
                     confirmedMinimized: consumedMinimizedWindowIDs,
-                    knownSpaceWindowIDs: (nativeObservation?.exclusiveWindowIDs(on: display.id) ?? [])
-                        .subtracting(eligible.filter { $0.displayID != display.id }.map(\.id))
+                    knownSpaceWindowIDs: knownSpaceWindowIDs,
+                    heldWindowIDs: heldWindowIDs(among: knownSpaceWindowIDs),
+                    onScreenWindowIDs: system.unreadOnScreenWindowIDs,
+                    now: clock.now
                 )
             )
             if shouldLogHeldAbsences {
                 logHeldAbsences(in: transition.session)
+                recordOnScreenProtection(
+                    in: transition.session,
+                    observed: Set(displayWindows.map(\.id)),
+                    knownSpaceWindowIDs: knownSpaceWindowIDs
+                )
             }
             // A desktop-switch sweep keeps the stored tree. A window that
             // arrived with the switch, for example dragged here in Mission
-            // Control, joins in a normal sweep once the switch settles.
+            // Control, joins in a normal sweep once the switch settles. A
+            // window that left while the user was away, or closed just before
+            // the switch, gives its room back in normal sweeps too: they
+            // corroborate its absence and then remove its pane.
             if desktopTransition, activation.session.mode == .bento, activation.session.isBentoInitialized {
                 let layout = transition.session.bentoState
                 let known = Set(layout.root?.windowIDs ?? []).union(layout.floatingWindowIDs)
-                if !Set(displayWindows.map(\.id)).subtracting(known).isEmpty {
+                let observed = Set(displayWindows.map(\.id))
+                if !observed.subtracting(known).isEmpty {
                     scheduleArrivalSweep()
+                }
+                // A suspended session runs no reducer, and a held window keeps
+                // its pane, so neither needs the follow-up.
+                if !activation.session.automaticWritesSuspended,
+                   !Set(layout.root?.windowIDs ?? []).subtracting(observed)
+                       .subtracting(heldWindowIDs(among: knownSpaceWindowIDs)).isEmpty {
+                    scheduleAbsenceConfirmation()
                 }
             }
 
@@ -5567,11 +5617,12 @@ final class BetterTileModel {
                     )
                 }
             }
-            confirmedGoneWindowIDs.subtract(consumedDestroyedWindowIDs.subtracting(deferredWindowIDs))
             // A desktop-transition sweep deliberately does not reconcile its
-            // stored tree. Retain minimize evidence for the first normal sweep
-            // so the reducer can still capture the pane's reinsertion anchor.
+            // stored tree. Retain destroyed and minimize evidence for the first
+            // normal sweep, so the reducer still removes a closed pane at once
+            // and captures a minimized pane's reinsertion anchor.
             if !desktopTransition {
+                confirmedGoneWindowIDs.subtract(consumedDestroyedWindowIDs.subtracting(deferredWindowIDs))
                 let stillReportedVisible = Set(windows.filter(\.isEligible).map(\.id))
                 confirmedMinimizedWindowIDs.subtract(
                     consumedMinimizedWindowIDs.subtracting(stillReportedVisible).subtracting(deferredWindowIDs)
@@ -5705,6 +5756,7 @@ final class BetterTileModel {
         confirmedGone: Set<WindowID> = [],
         minimized: Set<WindowID> = []
     ) {
+        let knownSpaceWindowIDs = system.nativeDesktopObservation()?.exclusiveWindowIDs(on: display.id) ?? []
         let transition = BentoSessionReducer().reconcile(
             session: session,
             observation: BentoObservation(
@@ -5715,13 +5767,86 @@ final class BetterTileModel {
             paneGap: session.paneGap(configured: paneGapForLayout),
             confirmedGone: confirmedGone,
             minimized: minimized.union(confirmedMinimizedWindowIDs),
-            knownSpaceWindowIDs: system.nativeDesktopObservation()?.exclusiveWindowIDs(on: display.id) ?? [],
+            knownSpaceWindowIDs: knownSpaceWindowIDs,
+            heldWindowIDs: heldWindowIDs(among: knownSpaceWindowIDs),
+            onScreenWindowIDs: system.unreadOnScreenWindowIDs,
+            now: clock.now,
             newWindowSide: configuration.bentoNewWindowSide,
             balancesNewWindows: configuration.bentoBalancesNewWindows
         )
         guard case let .update(updated, _, _) = transition else { return }
         session = updated
         logHeldAbsences(in: session)
+    }
+
+    /// Windows of a held application among windows that macOS still reports on
+    /// this desktop. The inventory skips a held application, so these windows
+    /// are absent by BetterTile's choice and keep their panes.
+    private func heldWindowIDs(among windowIDs: Set<WindowID>) -> Set<WindowID> {
+        let held = system.unresponsiveApplicationRecoveryDeadlines
+        guard !held.isEmpty else { return [] }
+        return windowIDs.filter { observedProcessIdentifiers[$0].map { held[$0] != nil } ?? false }
+    }
+
+    /// Windows that macOS reports as members of only the current desktop of
+    /// `displayID`, less windows that the inventory places on another
+    /// display. The ambient reducer and the watchdog's protection check both
+    /// use this set.
+    private func knownSpaceWindowIDs(
+        on displayID: DisplayID,
+        eligible: [WindowSnapshot],
+        observation: NativeDesktopObservation?
+    ) -> Set<WindowID> {
+        (observation?.exclusiveWindowIDs(on: displayID) ?? [])
+            .subtracting(eligible.filter { $0.displayID != displayID }.map(\.id))
+    }
+
+    /// Records which missing panes of `session` the reducer just kept only
+    /// because of on-screen evidence. See `onScreenProtectedPanes`.
+    private func recordOnScreenProtection(
+        in session: LayoutSession,
+        observed: Set<WindowID>,
+        knownSpaceWindowIDs: Set<WindowID>
+    ) {
+        let protected = Set(session.bentoState.root?.windowIDs ?? [])
+            .subtracting(observed)
+            .intersection(BentoSessionReducer.onScreenProtectedWindowIDs(
+                knownSpaceWindowIDs: knownSpaceWindowIDs,
+                onScreenWindowIDs: system.unreadOnScreenWindowIDs
+            ))
+        onScreenProtectedPanes[session.id] = protected.isEmpty ? nil : protected
+    }
+
+    /// True when a missing pane of an active Adaptive session lost the
+    /// protection that the last reducer pass used to keep it: the window is no
+    /// longer on screen, or no longer a member of only this desktop. The
+    /// reducer has not counted that pane as absent yet. The check uses the
+    /// reducer's predicate with the watchdog's inventory and native
+    /// observation. Suspended and Focus mode sessions, and held windows, keep
+    /// their own rules.
+    private func hasLostOnScreenProtection(
+        windows: [WindowSnapshot],
+        observation: NativeDesktopObservation?
+    ) -> Bool {
+        guard !onScreenProtectedPanes.isEmpty else { return false }
+        let active = sessionStore.sessions.values
+        let existing = Set(active.flatMap { sessionStore.allSessions(for: $0.displayID) }.map(\.id))
+        onScreenProtectedPanes = onScreenProtectedPanes.filter { existing.contains($0.key) }
+        let eligible = windows.filter { $0.isEligible && !$0.isFloating }
+        return active.contains { session in
+            guard session.mode == .bento, session.isBentoInitialized, !session.automaticWritesSuspended,
+                  !focusRestoreSessionIDs.contains(session.id),
+                  let protected = onScreenProtectedPanes[session.id] else { return false }
+            let stillProtected = BentoSessionReducer.onScreenProtectedWindowIDs(
+                knownSpaceWindowIDs: knownSpaceWindowIDs(
+                    on: session.displayID, eligible: eligible, observation: observation),
+                onScreenWindowIDs: system.unreadOnScreenWindowIDs
+            )
+            return !protected.subtracting(stillProtected)
+                .intersection(session.bentoState.root?.windowIDs ?? [])
+                .subtracting(heldWindowIDs(among: protected))
+                .isEmpty
+        }
     }
 
     private func logHeldAbsences(in session: LayoutSession) {

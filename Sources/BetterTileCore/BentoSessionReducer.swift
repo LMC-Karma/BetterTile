@@ -19,6 +19,19 @@ public struct BentoSessionReducer: Sendable {
         self.maximumManagedWindows = max(1, maximumManagedWindows)
     }
 
+    /// Missing windows that keep their panes without an absence tally:
+    /// windows that macOS reports both as members of only this desktop and on
+    /// screen. The window is visible to the user, so Accessibility only failed
+    /// to read it. On-screen evidence without the membership does not say
+    /// which desktop's layout the window belongs to. The app uses the same
+    /// predicate to notice when a kept pane loses this protection.
+    public static func onScreenProtectedWindowIDs(
+        knownSpaceWindowIDs: Set<WindowID>,
+        onScreenWindowIDs: Set<WindowID>
+    ) -> Set<WindowID> {
+        knownSpaceWindowIDs.intersection(onScreenWindowIDs)
+    }
+
     public func reconcile(
         session: LayoutSession,
         observation: BentoObservation,
@@ -26,6 +39,9 @@ public struct BentoSessionReducer: Sendable {
         confirmedGone: Set<WindowID> = [],
         minimized: Set<WindowID> = [],
         knownSpaceWindowIDs: Set<WindowID> = [],
+        heldWindowIDs: Set<WindowID> = [],
+        onScreenWindowIDs: Set<WindowID> = [],
+        now: ContinuousClock.Instant? = nil,
         newWindowSide: BentoNewWindowSide = .automatic,
         balancesNewWindows: Bool = false
     ) -> BentoSessionTransition {
@@ -45,13 +61,26 @@ public struct BentoSessionReducer: Sendable {
         })
         let present = observation.eligibleWindowIDs.subtracting(minimized).subtracting(confirmedGone)
         let known = Set(runtime.layout.root?.windowIDs ?? []).union(runtime.layout.floatingWindowIDs)
+        // A held window is absent because the sweep did not read its
+        // application, so it keeps its pane like a window the layout hides.
+        // A visible member of this desktop keeps its pane too.
+        let visibleMembers = Self.onScreenProtectedWindowIDs(
+            knownSpaceWindowIDs: knownSpaceWindowIDs,
+            onScreenWindowIDs: onScreenWindowIDs
+        )
         let exempt = next.excludedFocusWindowIDs.union(runtime.reinsertionAnchors.keys)
-            .union(knownSpaceWindowIDs)
+            .union(heldWindowIDs)
+            .union(visibleMembers)
+        // Desktop membership alone delays removal; it does not prevent it. An
+        // application can keep a closed window alive off screen, and macOS
+        // then still reports it on this desktop.
         let removals = next.presence.observe(
             known: known,
             present: present,
             confirmedGone: confirmedGone.union(minimized.subtracting(focusMinimized)),
-            exempt: exempt
+            exempt: exempt,
+            membershipOnly: knownSpaceWindowIDs.subtracting(visibleMembers),
+            now: now
         )
 
         let insertionIndexes = Dictionary(uniqueKeysWithValues: next.bentoInsertionOrder.enumerated().map {

@@ -65,6 +65,93 @@ private let c = WindowID(rawValue: "c")
     #expect(tracker.pending[b] == nil)
 }
 
+/// Desktop membership is weaker evidence than a deliberate hide: it buys a
+/// longer wait, not a permanent pane.
+@Test func membershipOnlyWindowsGetALongerButFiniteBudget() {
+    var tracker = WindowPresenceTracker(toleratedAbsences: 2, toleratedMembershipOnlyAbsences: 4)
+    for _ in 0..<4 {
+        #expect(tracker.observe(known: [a, b], present: [a], membershipOnly: [b]).isEmpty)
+    }
+    #expect(tracker.pending[b] == 4)
+    #expect(tracker.observe(known: [a, b], present: [a], membershipOnly: [b]) == [b])
+    #expect(tracker.pending[b] == nil)
+}
+
+@Test func losingDesktopMembershipFallsBackToTheShortBudget() {
+    var tracker = WindowPresenceTracker(toleratedAbsences: 2, toleratedMembershipOnlyAbsences: 4)
+    for _ in 0..<3 {
+        #expect(tracker.observe(known: [a, b], present: [a], membershipOnly: [b]).isEmpty)
+    }
+    #expect(tracker.observe(known: [a, b], present: [a]) == [b],
+            "a window that already missed more than the short budget goes once membership no longer covers it")
+}
+
+/// Events make sweeps frequent, so the count of misses alone can pass in a
+/// fraction of a second. With a time, a window known only by desktop
+/// membership also waits the minimum absence from its first miss.
+@Test func membershipOnlyWindowsAlsoWaitAMinimumTime() {
+    var tracker = WindowPresenceTracker(
+        toleratedAbsences: 2, toleratedMembershipOnlyAbsences: 4, minimumMembershipOnlyAbsence: .milliseconds(1_400))
+    let start = ContinuousClock().now
+    for sweep in 0..<10 {
+        #expect(tracker.observe(known: [a, b], present: [a], membershipOnly: [b],
+                                now: start.advanced(by: .milliseconds(100 * sweep))).isEmpty,
+                "sweep \(sweep) is still inside the minimum time")
+    }
+    #expect(tracker.pending[b] == 10)
+    #expect(tracker.observe(known: [a, b], present: [a], membershipOnly: [b],
+                            now: start.advanced(by: .milliseconds(1_400))) == [b])
+    #expect(tracker.pending[b] == nil)
+    #expect(tracker.membershipOnlyAbsenceStarts.isEmpty)
+}
+
+/// The time does not replace the count: a slow series of misses still needs
+/// the full membership budget.
+@Test func theMinimumTimeDoesNotShortenTheMembershipBudget() {
+    var tracker = WindowPresenceTracker(
+        toleratedAbsences: 2, toleratedMembershipOnlyAbsences: 4, minimumMembershipOnlyAbsence: .milliseconds(1_400))
+    let start = ContinuousClock().now
+    for sweep in 0..<4 {
+        #expect(tracker.observe(known: [a, b], present: [a], membershipOnly: [b],
+                                now: start.advanced(by: .seconds(sweep))).isEmpty)
+    }
+    #expect(tracker.observe(known: [a, b], present: [a], membershipOnly: [b],
+                            now: start.advanced(by: .seconds(4))) == [b])
+}
+
+/// A new run of misses starts a new minimum time. Direct evidence and the
+/// short budget do not wait for it.
+@Test func theMinimumTimeRestartsAndYieldsToDirectEvidence() {
+    var tracker = WindowPresenceTracker(
+        toleratedAbsences: 2, toleratedMembershipOnlyAbsences: 4, minimumMembershipOnlyAbsence: .milliseconds(1_400))
+    let start = ContinuousClock().now
+    func at(_ ms: Int) -> ContinuousClock.Instant { start.advanced(by: .milliseconds(ms)) }
+    for sweep in 0..<6 {
+        _ = tracker.observe(known: [a, b], present: [a], membershipOnly: [b], now: at(100 * sweep))
+    }
+    // b is seen again, then missed again: the time counts from the new miss.
+    _ = tracker.observe(known: [a, b], present: [a, b], now: at(700))
+    #expect(tracker.membershipOnlyAbsenceStarts[b] == nil)
+    for sweep in 0..<6 {
+        #expect(tracker.observe(known: [a, b], present: [a], membershipOnly: [b], now: at(800 + 100 * sweep)).isEmpty)
+    }
+    #expect(tracker.observe(known: [a, b], present: [a], membershipOnly: [b], now: at(2_200)) == [b])
+
+    // A destroyed event removes at once.
+    _ = tracker.observe(known: [a, c], present: [a], membershipOnly: [c], now: at(3_000))
+    #expect(tracker.observe(known: [a, c], present: [a], confirmedGone: [c], membershipOnly: [c], now: at(3_100)) == [c])
+    // Without membership, the short budget applies with no minimum time.
+    for sweep in 0..<2 {
+        #expect(tracker.observe(known: [a, b], present: [a], now: at(4_000 + 10 * sweep)).isEmpty)
+    }
+    #expect(tracker.observe(known: [a, b], present: [a], now: at(4_020)) == [b])
+}
+
+@Test func theMembershipBudgetIsNeverShorterThanTheOrdinaryOne() {
+    let tracker = WindowPresenceTracker(toleratedAbsences: 3, toleratedMembershipOnlyAbsences: 1)
+    #expect(tracker.toleratedMembershipOnlyAbsences == 3)
+}
+
 /// A window the layout no longer holds must not leave a tally behind for a
 /// later window to inherit.
 @Test func talliesAreDroppedWhenTheLayoutForgetsAWindow() {
