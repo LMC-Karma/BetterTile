@@ -286,6 +286,13 @@ it started. If a Bento drop is not committed and the dragged window cannot
 return to its frame from before the drag, BetterTile reports the failure and
 stops automatic writes until Repair, as for a degraded mutation.
 
+A carried Tabbed drop releases any unpublished floating membership before it
+drains queued actions or resumes pane application work. Cleanup can advance
+the session revision. A queued action and its Undo baseline therefore capture
+the cleaned session, even when the preceding placement ended with a stale
+revision on the same desktop. Cleanup preserves a degraded session's stop on
+automatic writes.
+
 ## Space boundary
 
 BetterTile operates on eligible on-screen windows exposed by its macOS integration layer. It refreshes the current window set immediately when apps, Spaces, or displays change. A validated native desktop observation selects one process-local runtime layout session for each display and Space pair. Missing or malformed native observations retain the public-API window-overlap matcher. Empty window membership remains unknown, windows reported on several Spaces float, and native fullscreen Spaces expose neither automatic layout writes nor dividers. With separate Spaces per display, a window's center can lie on a display whose current Space does not hold it, for example while the window is dragged across a shared edge. A window whose one Space is current on another display stays visible and is reported on that Space's display; only a window whose Space is current on no display is left out. BetterTile never assigns a window to a hidden Space. An explicit display transfer

@@ -6753,6 +6753,11 @@ extension BetterTileModel {
             return (fitted, proposed)
         }
         let taskID = UUID()
+        // Cleanup can advance the session revision. Finish it before any
+        // queued action, background reapply or picker captures that session.
+        func finishProvisionalMembership() {
+            if self.releaseProvisionalTabbedFloats(ownedBy: taskID) { self.schedulePendingWindowEvents() }
+        }
         var rollbackFailed = false
         // Only known handoffs can leave an unfinished placement to newer work.
         func retainInvalidatedDegradation(_ outcome: WindowMutationOutcome) {
@@ -6789,10 +6794,8 @@ extension BetterTileModel {
             transferProvisionalTabbedFloat(provisionalSourceID, sessionID: original.id, displayID: display.id, to: taskID)
             tabbedTasks[display.id] = Task { @MainActor [weak self] in
                 guard let self else { return }
-                // Every exit passes here: a provisional float that this
-                // rollback did not already remove ends with it.
-                defer { if self.releaseProvisionalTabbedFloats(ownedBy: taskID) { self.schedulePendingWindowEvents() } }
                 defer {
+                    finishProvisionalMembership()
                     self.resumeIdlePaneApplicationRequest(on: display.id)
                     if !self.isTabbedBusy(on: display.id), self.tabbedQueuedIntents[display.id] == nil {
                         self.tabbedOverlays[display.id]?.completeDrop()
@@ -6815,10 +6818,12 @@ extension BetterTileModel {
                     }
                     // A work area that changed during the placement, for
                     // example while the Dock settled, needs a placement too.
+                    finishProvisionalMembership()
                     if !Task.isCancelled, isSameDesktopAnyWorkArea() { self.refreshActiveWindows(force: true) }
                     return
                 }
                 guard isCurrent() else {
+                    finishProvisionalMembership()
                     self.drainTabbedQueuedIntent(on: display.id, sessionID: original.id)
                     self.schedulePendingWindowEvents()
                     return
@@ -6838,6 +6843,7 @@ extension BetterTileModel {
                 // The rollback may have reverted a selection the divider
                 // pointed at mid-gesture; our restore writes do not refresh it.
                 self.refreshDividerBoundaries()
+                finishProvisionalMembership()
                 self.drainTabbedQueuedIntent(on: display.id, sessionID: original.id)
                 self.schedulePendingWindowEvents()
             }
@@ -6861,9 +6867,6 @@ extension BetterTileModel {
         transferProvisionalTabbedFloat(provisionalSourceID, sessionID: original.id, displayID: display.id, to: taskID)
         let placement = Self.startTabbedPlacement(immediately: startsNow) { @MainActor [weak self] in
             guard let self else { return }
-            // Every exit passes here. Only a commit that puts the window in
-            // a pane publishes it; any other end removes its provisional float.
-            defer { if self.releaseProvisionalTabbedFloats(ownedBy: taskID) { self.schedulePendingWindowEvents() } }
             #if DEBUG
             if self.arrivalTrace.isEnabled { for window in windows {
                 self.arrivalTrace.disposition("tabbed_placement_started", windowID: window.id,
@@ -6871,6 +6874,7 @@ extension BetterTileModel {
             } }
             #endif
             defer {
+                finishProvisionalMembership()
                 self.resumeIdlePaneApplicationRequest(on: display.id)
                 if !self.isTabbedBusy(on: display.id), self.tabbedQueuedIntents[display.id] == nil {
                     self.tabbedOverlays[display.id]?.completeDrop()
@@ -7129,10 +7133,12 @@ extension BetterTileModel {
                 }
                 // A work area that changed during the placement, for
                 // example while the Dock settled, needs a placement too.
+                finishProvisionalMembership()
                 if !Task.isCancelled, isSameDesktopAnyWorkArea() { self.refreshActiveWindows(force: true) }
                 return
             }
             guard isCurrent() else {
+                finishProvisionalMembership()
                 self.drainTabbedQueuedIntent(on: display.id, sessionID: original.id)
                 self.schedulePendingWindowEvents()
                 return
@@ -7279,6 +7285,7 @@ extension BetterTileModel {
                 // divider at a selection the rollback just reverted.
                 self.refreshDividerBoundaries()
             }
+            finishProvisionalMembership()
             self.drainTabbedQueuedIntent(on: display.id, sessionID: original.id)
             if self.tabbedNeedsFocusRefresh || repairsStackingAfterSelection { self.handleTabbedFocus() }
             // An edge resize released during this placement is read now.

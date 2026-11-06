@@ -379,7 +379,7 @@ func aDestinationLayoutWaitsForTheCarriedWindowsRelease(destination: CarryDestin
     }
     fixture.button.pressed = false
     #expect(!fixture.drag.isGestureActive)
-    await fixture.system.advance(by: .seconds(2))
+    try await settle(fixture, for: .seconds(2))
 
     let state = fixture.session
     switch (destination, ending) {
@@ -448,7 +448,7 @@ func aTabbedDestinationTakesACarriedWindowOnlyWithADrop(ending: String) async th
         fixture.drag.cancel()
     }
     fixture.button.pressed = false
-    await fixture.system.advance(by: .seconds(2))
+    try await settle(fixture, for: .seconds(2))
     let state = try #require(fixture.session?.tabbedState)
     if ending == "addAsTab" {
         #expect(state.pane(containing: fixture.a1)?.id == target.id, "\(state.panes)")
@@ -480,7 +480,7 @@ func aTabbedTabCarriedToAManualDesktopSnapsThere(source: CarrySource) async thro
             "No snap on the Manual destination for a \(source)")
     fixture.send(.leftMouseUp, x: 999, y: 400)
     fixture.button.pressed = false
-    await fixture.system.advance(by: .milliseconds(500))
+    try await settle(fixture, for: .milliseconds(500))
     #expect(fixture.carriedFrame == rightHalf, "\(String(describing: fixture.carriedFrame))")
     #expect(fixture.destinationWindows.allSatisfy { window in
         fixture.system.windows.first { $0.id == window.id }?.frame == window.frame
@@ -545,7 +545,7 @@ func aTabbedTabCarriedToAManualDesktopSnapsThere(source: CarrySource) async thro
     #expect(!fixture.drag.isGestureActive)
     #expect(!hasLayoutDrag(fixture.model))
     #expect(fixture.drag.dropTarget == nil)
-    await fixture.system.advance(by: .seconds(2))
+    try await settle(fixture, for: .seconds(2))
     #expect(fixture.session?.tabbedState?.windowIDs.contains(fixture.a1) == true,
             "A1 never arrived on B: \(String(describing: fixture.session?.tabbedState))")
 }
@@ -624,11 +624,11 @@ func undoOfACarriedWindowsTabbedDropFloatsIt(drop: String) async throws {
     let target = try #require(before.panes.last)
     let dragStartFrame = try #require(fixture.carriedFrame)
     dropOnTabbedDestination(fixture, drop, target: target.id)
-    await fixture.system.advance(by: .seconds(1))
+    try await settle(fixture, for: .seconds(1))
     try #require(fixture.session?.tabbedState?.pane(containing: fixture.a1) != nil,
                  "The drop did not land: \(String(describing: fixture.session?.tabbedState))")
     fixture.model.performTabbed(.undo)
-    await fixture.system.advance(by: .seconds(2))
+    try await settle(fixture, for: .seconds(2))
     let state = try #require(fixture.session?.tabbedState)
     #expect(state.floatingWindowIDs.contains(fixture.a1), "\(state)")
     #expect(!state.windowIDs.contains(fixture.a1))
@@ -636,7 +636,7 @@ func undoOfACarriedWindowsTabbedDropFloatsIt(drop: String) async throws {
     #expect(fixture.carriedFrame == dragStartFrame, "\(String(describing: fixture.carriedFrame))")
     // Repair Layout returns only windows that floated on their own.
     fixture.model.performTabbed(.repair)
-    await fixture.system.advance(by: .seconds(1))
+    try await settle(fixture, for: .seconds(1))
     #expect(fixture.session?.tabbedState?.floatingWindowIDs.contains(fixture.a1) == true,
             "\(String(describing: fixture.session?.tabbedState))")
 }
@@ -705,7 +705,7 @@ func aCarriedWindowArrivesAfterAFaultedStabilization(carry: FaultedCarry) async 
     }
     fixture.button.pressed = false
     #expect(!fixture.drag.isGestureActive)
-    await fixture.system.advance(by: .seconds(2))
+    try await settle(fixture, for: .seconds(2))
     let tree = Set(fixture.session?.bentoState.root?.windowIDs ?? [])
     #expect(tree == Set(fixture.destinationWindows.map(\.id) + [fixture.a1]),
             "A1 did not join B's tree after the gesture: \(String(describing: fixture.session?.bentoState.root))")
@@ -763,7 +763,7 @@ func onlyTheFinalDestinationAdmitsACarriedWindow(faultOnC: StabilizationFault) a
     fixture.send(.leftMouseUp, x: 300, y: 430)
     fixture.button.pressed = false
     #expect(!fixture.drag.isGestureActive)
-    await system.advance(by: .seconds(2))
+    try await settle(fixture, for: .seconds(2))
     let b = sessions().first { $0.nativeSpaceID == spaceB }
     #expect(Set(b?.bentoState.root?.windowIDs ?? []) == Set(fixture.destinationWindows.map(\.id)),
             "B admitted A1 after A1 left B: \(String(describing: b?.bentoState.root))")
@@ -871,10 +871,9 @@ func aTabbedDropCancelledByADesktopChangeLeavesNoProvisionalFloat(drop: String, 
     let fixture = try await carry(to: .tabbed, suspendedSample: (300, 420))
     defer { fixture.model.shutdown() }
     try #require(hasLayoutDrag(fixture.model), "The resumed drag did not start B's Tabbed drag")
-    if pending == .placementPending {
-        // B's own placement after the desktop change ends first.
-        await fixture.system.advance(by: .milliseconds(100))
-    }
+    // Do not infer a pending placement from how many executor turns the
+    // stabilization wait happened to take. End B's placement explicitly.
+    try await settle(fixture, for: .milliseconds(100))
     let before = try #require(fixture.session?.tabbedState)
     let bID = try #require(fixture.session?.id)
     let target = try #require(before.panes.last)
@@ -882,16 +881,33 @@ func aTabbedDropCancelledByADesktopChangeLeavesNoProvisionalFloat(drop: String, 
     let onB = fixture.system.windows
     let writes = fixture.system.frameWriteCounts
 
+    if pending == .releaseDeferred {
+        // A second drag of the same carried window takes over its pending
+        // drop. No await lets that placement release the apply slot first.
+        let frame = try #require(fixture.carriedFrame)
+        dropOnTabbedDestination(fixture, "addAsTab", target: target.id)
+        fixture.button.pressed = true
+        try #require(fixture.model.hasPendingTabbedPlacement)
+        try #require(fixture.model.beginBentoDrag(displayID: fixture.display,
+            sourceID: fixture.a1, sourceFrame: frame))
+    }
     // No await between the release and the switch: the placement task
-    // has not run yet.
-    dropOnTabbedDestination(fixture, drop, target: target.id)
+    // has not run yet. The second drag above uses the model seam directly.
+    if pending == .releaseDeferred, drop == "halfSnap" {
+        let frame = BTRect(x: bounds.midX, y: bounds.minY, width: bounds.size.width / 2, height: bounds.size.height)
+        fixture.model.finishBentoDrag(displayID: fixture.display, sourceID: fixture.a1,
+                                     outcome: .snap(action: .rightHalf, frame: frame))
+        fixture.button.pressed = false
+    } else {
+        dropOnTabbedDestination(fixture, drop, target: target.id)
+    }
     try #require(hasLayoutDrag(fixture.model) == (pending == .releaseDeferred),
                  "The release did not finish as the case needs: \(pending)")
     switchToC(fixture)
     try #require(storedSession(fixture, bID)?.tabbedState?.floatingWindowIDs.contains(fixture.a1) == true,
                  "The drop did not leave a pending placement with the provisional float")
     try #require(await fixture.system.waitFor { !fixture.model.isStabilizingSpace })
-    await fixture.system.advance(by: .seconds(1))
+    try await settle(fixture, for: .seconds(1))
     try #require(fixture.session?.id != bID, "B is still the active session")
     let inactive = try #require(storedSession(fixture, bID)?.tabbedState)
     #expect(!inactive.floatingWindowIDs.contains(fixture.a1), "Inactive B kept the provisional float: \(inactive)")
@@ -946,7 +962,7 @@ func aDesktopChangeDuringTheReleaseInventoryLeavesNoProvisionalFloat(drop: Strin
     // The Space notification follows.
     switchToC(fixture)
     try #require(await system.waitFor { !fixture.model.isStabilizingSpace })
-    await system.advance(by: .seconds(1))
+    try await settle(fixture, for: .seconds(1))
     let inactive = try #require(storedSession(fixture, bID)?.tabbedState)
     #expect(!inactive.floatingWindowIDs.contains(fixture.a1), "Inactive B kept the provisional float: \(inactive)")
 
@@ -1122,7 +1138,41 @@ enum RecordLifecycleEnd: String, CustomStringConvertible, Sendable {
         fixture.send(.leftMouseUp, x: 300, y: 420)
         fixture.button.pressed = false
     }
-    await system.advance(by: .seconds(2))
+    try await settle(fixture, for: .seconds(2))
     #expect(!hasLayoutDrag(model), "The drag outlived its display")
     #expect(provisionalFloatRecordCount(model) == 0, "A record outlived its display")
+}
+
+/// A same-desktop revision change ends an older carried drop. Its provisional
+/// membership must be gone before a queued action captures its own revision.
+@Test(.appTestApplication) @MainActor
+func queuedTabbedActionStartsAfterStaleCarriedDropCleanup() async throws {
+    let fixture = try await carry(to: .tabbed, suspendedSample: (300, 420))
+    defer { fixture.model.shutdown() }
+    let model = fixture.model
+    let before = try #require(fixture.session)
+    let target = try #require(before.tabbedState?.panes.last)
+    let b1 = WindowID(rawValue: "B1")
+    dropOnTabbedDestination(fixture, "addAsTab", target: target.id)
+    try #require(model.hasPendingTabbedPlacement)
+    try #require(provisionalFloatRecordCount(model) == 1)
+    model.performTabbed(.move(b1, pane: target.id, index: nil, reselecting: nil))
+    // Explicitly simulate an independent owner's failed rollback while the
+    // placement is pending. This keeps the desktop and provisional record,
+    // but advances its revision; no new drag consumes the record first.
+    model.dividerResize.rollbackFailureHandler?(fixture.display, "Injected rollback failure")
+    try #require(fixture.session?.id == before.id)
+    try #require(fixture.session?.revision != before.revision)
+    try #require(fixture.session?.automaticWritesSuspended == true)
+    try #require(fixture.session?.tabbedState?.floatingWindowIDs.contains(fixture.a1) == true)
+    try await settle(fixture)
+    let state = try #require(fixture.session?.tabbedState)
+    #expect(state.pane(containing: b1)?.id == target.id, "The queued move was discarded after capturing a dirty revision")
+    #expect(!state.floatingWindowIDs.contains(fixture.a1))
+    #expect(provisionalFloatRecordCount(model) == 0)
+    model.performTabbed(.undo)
+    try await settle(fixture)
+    #expect(fixture.session?.tabbedState?.pane(containing: b1)?.id == before.tabbedState?.pane(containing: b1)?.id)
+    #expect(fixture.session?.tabbedState?.floatingWindowIDs.contains(fixture.a1) == false,
+            "The queued action's Undo captured provisional membership")
 }
