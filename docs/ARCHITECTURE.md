@@ -235,6 +235,26 @@ stops automatic writes until Repair, as for a degraded mutation.
 BetterTile operates on eligible on-screen windows exposed by its macOS integration layer. It refreshes the current window set immediately when apps, Spaces, or displays change. A validated native desktop observation selects one process-local runtime layout session for each display and Space pair. Missing or malformed native observations retain the public-API window-overlap matcher. Empty window membership remains unknown, windows reported on several Spaces float, and native fullscreen Spaces expose neither automatic layout writes nor dividers. With separate Spaces per display, a window's center can lie on a display whose current Space does not hold it, for example while the window is dragged across a shared edge. A window whose one Space is current on another display stays visible and is reported on that Space's display; only a window whose Space is current on no display is left out. BetterTile never assigns a window to a hidden Space. An explicit display transfer
 uses the destination display's current desktop.
 
+When a display or native Space disappears after the display hold, its sessions
+move to an in-memory retirement list. The list keeps at most 32 desktops and
+drops the oldest. A new session, including the first observation after native
+selection, can restore the desktop with the most window overlap. At least half
+of the new desktop's windows must overlap. Ties prefer the same display UUID,
+then the most recent retirement. Empty desktops stay at the default mode.
+If the native observation arrives later, its first matching window observation
+adopts the restored inferred session instead of replacing it with a default.
+
+The display UUID comes from public `CGDisplayCreateUUIDFromDisplayID`. It lets a
+screen reconnect with different Core Graphics and Space numbers. Carry-over is
+on by default; off permits restoration only from the same known UUID. A restored
+session adopts the new display and Space IDs and invalidates its work area, so
+the stored tree fits the new screen. It ends Saved Layout following and discards
+old Tabbed entry frames, committed placements and Undo history. Pane ratios, tab
+groups and reinsertion metadata remain. Continuing Tabbed does not capture a new
+entry baseline, so leaving it keeps current frames. Sessions, window identities,
+UUID associations and retired desktops are never persisted. The existing private
+native-desktop observations are unchanged; this adds no permission or dependency.
+
 ## Popup and fixed-size windows
 
 A popup window floats at its own size and never joins a Bento or Tabbed
@@ -1879,6 +1899,13 @@ Release drains those commands even when no new placement is needed.
 The linked-resize engine detects and merges shared boundary segments within a configurable tolerance. Linked and Bento boundaries share the same overlay interaction model, but Bento resizing stays tree-aware instead of applying flat per-window deltas. The requested operation clamps against recursive subtree minimum sizes and visible bounds.
 
 ## Configuration
+
+`keepsDesktopLayoutsAcrossDisplays` controls whether a retired desktop may match
+windows on another screen. It defaults to true, including when an older file
+omits the key. The optional field follows schema 12's existing compatibility
+convention. Window Layout exposes the setting with the native switch and includes
+it in the Window mode reset. Changing it affects future matching, not current
+window positions. Only the preference is saved; runtime desktop memory is not.
 
 Pane gap changes publish to Settings immediately. Window placement consumes the
 latest value once per 75 ms interval, with one final pass when the slider is

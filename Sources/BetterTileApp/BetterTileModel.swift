@@ -1789,7 +1789,9 @@ final class BetterTileModel {
                 defaultMode: configuration.defaultLayoutMode,
                 reuseActiveWhenUnmatched: true,
                 commitObservation: false,
-                nativeSpaceID: nativeObservation?.currentSpace(on: display.id)
+                nativeSpaceID: nativeObservation?.currentSpace(on: display.id),
+                displayIdentifier: display.persistentIdentifier,
+                carryOver: configuration.keepsDesktopLayoutsAcrossDisplays
             ).session
             // One window has no layout to repair. Restoring its configured
             // placement is the useful thing to do, and it deliberately leaves
@@ -3422,7 +3424,8 @@ final class BetterTileModel {
             return
         }
         savedLayoutApplier?.updateUndoDesktops(observation, displays: system.displays())
-        sessionStore.removeMissingNativeSpaces(observation.knownSpacesByDisplay)
+        sessionStore.observeDisplays(system.displays())
+        sessionStore.removeMissingNativeSpaces(observation.knownSpacesByDisplay, at: displayChangeTime)
         forgetEndedTabbedSessions(displayIDs: system.displays().map(\.id))
         for (displayID, nativeSpaceID) in observation.currentSpaceByDisplay {
             // Keep a recovering inferred owner until stable membership can establish overlap.
@@ -5456,9 +5459,10 @@ final class BetterTileModel {
             tabbedTasks.removeValue(forKey: id)?.cancel()
             tabbedTaskIDs.removeValue(forKey: id)
         }
-        if !isHoldingDisplayChange { sessionStore.removeMissingDisplays(displayIDs) }
+        sessionStore.observeDisplays(displays)
+        if !isHoldingDisplayChange { sessionStore.removeMissingDisplays(displayIDs, at: displayChangeTime) }
         if let nativeObservation, !isHoldingDisplayChange {
-            sessionStore.removeMissingNativeSpaces(nativeObservation.knownSpacesByDisplay)
+            sessionStore.removeMissingNativeSpaces(nativeObservation.knownSpacesByDisplay, at: displayChangeTime)
             nativeFullscreenDisplayIDs = Set(nativeObservation.currentSpaceByDisplay.compactMap {
                 nativeObservation.fullscreenSpaceIDs.contains($0.value) ? $0.key : nil
             })
@@ -5506,8 +5510,16 @@ final class BetterTileModel {
                 defaultMode: configuration.defaultLayoutMode,
                 reuseActiveWhenUnmatched: !desktopTransition,
                 commitObservation: false,
-                nativeSpaceID: nativeObservation?.currentSpace(on: display.id)
+                nativeSpaceID: nativeObservation?.currentSpace(on: display.id),
+                displayIdentifier: display.persistentIdentifier,
+                carryOver: configuration.keepsDesktopLayoutsAcrossDisplays
             )
+            if let restored = sessionStore.lastRestoration {
+                tabbedCommittedLayouts.removeValue(forKey: activation.session.id)
+                tabbedEntryBaselines.removeValue(forKey: activation.session.id)
+                tabbedUndo.removeValue(forKey: activation.session.id)
+                Self.bentoLog.debug("desktop restored: overlap \(restored.overlap, privacy: .public) of \(restored.observedCount, privacy: .public), same screen \(restored.sameDisplay, privacy: .public)")
+            }
             selectTabbedOverlay(for: activation.session)
             if focused?.displayID == display.id { resolvedActiveDisplay = display.id }
             #if DEBUG
@@ -9155,7 +9167,8 @@ extension BetterTileModel {
         }
         var session = current ?? sessionStore.activate(
             displayID: desktop.displayID, windowIDs: [], focusedWindowID: nil,
-            defaultMode: configuration.defaultLayoutMode, reuseActiveWhenUnmatched: false, nativeSpaceID: desktop.spaceID).session
+            defaultMode: configuration.defaultLayoutMode, reuseActiveWhenUnmatched: false, nativeSpaceID: desktop.spaceID,
+            displayIdentifier: display.persistentIdentifier, carryOver: configuration.keepsDesktopLayoutsAcrossDisplays).session
         let revision = session.revision
         let sessionID = session.id
         var placements = plan.placements

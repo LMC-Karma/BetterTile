@@ -773,3 +773,26 @@ private let placementActionIDsBeforeTabCommands = [
     #expect(try ConfigurationStore.decode(JSONEncoder().encode(saved)) == saved)
     #expect(saved.schemaVersion == 12)
 }
+
+@Test func desktopCarryOverDefaultsOnAndRoundTrips() throws {
+    let defaults = try ConfigurationStore.decode(Data(#"{"schemaVersion":12}"#.utf8))
+    #expect(defaults.keepsDesktopLayoutsAcrossDisplays)
+    #expect(BetterTileConfiguration().keepsDesktopLayoutsAcrossDisplays)
+    var changed = defaults
+    changed.keepsDesktopLayoutsAcrossDisplays = false
+    #expect(try ConfigurationStore.decode(JSONEncoder().encode(changed)) == changed)
+    #expect(ConfigurationChangeSet.between(defaults, changed).isEmpty)
+}
+
+@Test func displayUUIDIsOptionalForOlderSnapshots() throws {
+    let original = DisplaySnapshot(id: DisplayID(rawValue: "display"),
+        frame: BTRect(x: 0, y: 0, width: 1000, height: 800),
+        visibleFrame: BTRect(x: 0, y: 0, width: 1000, height: 800), persistentIdentifier: "screen-uuid")
+    let encoded = try JSONEncoder().encode(original)
+    #expect(try JSONDecoder().decode(DisplaySnapshot.self, from: encoded) == original)
+    var object = try #require(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+    object.removeValue(forKey: "persistentIdentifier")
+    let older = try JSONDecoder().decode(DisplaySnapshot.self, from: JSONSerialization.data(withJSONObject: object))
+    #expect(older.persistentIdentifier == nil)
+    #expect(older.id == original.id && older.frame == original.frame)
+}

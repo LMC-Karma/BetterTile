@@ -131,6 +131,8 @@ public struct BetterTileConfiguration: Codable, Hashable, Sendable {
     /// Keeps the Dock's strip out of the work area even while the Dock hides,
     /// so layouts stay put when it slides in and out.
     public var leavesSpaceForDock = false
+    /// Restores a removed desktop on another screen by process-local window overlap.
+    public var keepsDesktopLayoutsAcrossDisplays = true
     public var defaultLayoutMode: LayoutMode
     public var singleWindowPlacement: WindowAction?
     public var resizeFeedbackMode: ResizeFeedbackMode
@@ -237,6 +239,7 @@ public struct BetterTileConfiguration: Codable, Hashable, Sendable {
         case macOSTilingRecommendationAcknowledged, stageManagerRecommendationAcknowledged, accessibilityPromptRequested
         case showDockIcon, showMenuBarIcon, snappingEnabled, linkedResizeEnabled
         case defaultTabbedPreset
+        case keepsDesktopLayoutsAcrossDisplays
         case defaultLayoutMode, resizeFeedbackMode, dividerVisibility, dividerThickness, bentoInnerGap, bentoSwapHoverDelay
         case bentoNewWindowSide, bentoBalancesNewWindows
         case overlayAppearance
@@ -259,6 +262,7 @@ public struct BetterTileConfiguration: Codable, Hashable, Sendable {
         guard version <= Self.currentSchemaVersion else { throw ConfigurationError.unsupportedFutureVersion(version) }
 
         schemaVersion = Self.currentSchemaVersion
+        keepsDesktopLayoutsAcrossDisplays = try container.decodeIfPresent(Bool.self, forKey: .keepsDesktopLayoutsAcrossDisplays) ?? true
         defaultTabbedPreset = try container.decodeIfPresent(TabbedPreset.self, forKey: .defaultTabbedPreset) ?? .single
         tabbedStripPresentation = try container.decodeIfPresent(TabbedStripPresentation.self, forKey: .tabbedStripPresentation) ?? .alwaysVisible
         tabbedRestoresPaneSizes = try container.decodeIfPresent(Bool.self, forKey: .tabbedRestoresPaneSizes) ?? true
@@ -400,6 +404,7 @@ public struct BetterTileConfiguration: Codable, Hashable, Sendable {
         try container.encode(linkedResizeEnabled, forKey: .linkedResizeEnabled)
         try container.encode(defaultLayoutMode, forKey: .defaultLayoutMode)
         try container.encode(defaultTabbedPreset, forKey: .defaultTabbedPreset)
+        try container.encode(keepsDesktopLayoutsAcrossDisplays, forKey: .keepsDesktopLayoutsAcrossDisplays)
         try container.encode(tabbedRestoresPaneSizes, forKey: .tabbedRestoresPaneSizes)
         try container.encode(tabbedStripPresentation, forKey: .tabbedStripPresentation)
         try container.encode(leavesSpaceForDock, forKey: .leavesSpaceForDock)

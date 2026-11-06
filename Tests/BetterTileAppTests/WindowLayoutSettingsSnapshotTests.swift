@@ -12,7 +12,7 @@ import Testing
 
     @Test func rendersWindowLayoutStates() throws {
         let directory = ProcessInfo.processInfo.environment["BT_SNAPSHOT_DIR"]
-        let states: [State] = directory == nil ? [.adaptive] : State.allCases
+        let states: [State] = directory == nil ? [.adaptive, .modified] : State.allCases
         let themes = directory == nil ? [false] : [false, true]
         let widths: [Double] = directory == nil ? [770] : [770, 980, 1280]
         let glassValues = directory == nil ? [true] : [true, false]
@@ -37,6 +37,7 @@ import Testing
         if state == .modified {
             model.assign(shortcut: nil, to: .leftHalf)
             model.updateConfiguration {
+                $0.keepsDesktopLayoutsAcrossDisplays = false
                 $0.bentoInnerGap = 11
                 $0.overlayAppearance.transparency = 0.73
                 $0.dividerThickness = 12

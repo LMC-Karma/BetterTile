@@ -677,12 +677,18 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
             if let dock, dock.displayID == id {
                 visibleFrame = dock.workArea(fullFrame: frame, appKitVisibleFrame: visibleFrame)
             }
+            let number = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber
+            let identifier = number.flatMap { number -> String? in
+                guard let uuid = CGDisplayCreateUUIDFromDisplayID(number.uint32Value)?.takeRetainedValue() else { return nil }
+                return CFUUIDCreateString(nil, uuid) as String
+            }
             return DisplaySnapshot(
                 id: id,
                 frame: frame,
                 visibleFrame: visibleFrame,
                 scaleFactor: screen.backingScaleFactor,
-                isMain: screen == NSScreen.main
+                isMain: screen == NSScreen.main,
+                persistentIdentifier: identifier
             )
         }.sorted { lhs, rhs in
             lhs.frame.minX == rhs.frame.minX ? lhs.frame.minY < rhs.frame.minY : lhs.frame.minX < rhs.frame.minX

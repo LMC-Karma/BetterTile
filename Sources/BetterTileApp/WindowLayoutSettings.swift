@@ -117,6 +117,10 @@ struct WindowLayoutSettings: View {
                 }
                 .labelsHidden().fixedSize()
             }
+            SettingsRow("Keep desktop modes when displays change", caption: "A desktop keeps its mode and layout when it moves to another screen, for example when you dock or undock. Off: each screen remembers its own modes.") {
+                Toggle("Keep desktop modes when displays change", isOn: configurationBinding(\.keepsDesktopLayoutsAcrossDisplays))
+                    .labelsHidden().toggleStyle(.switch)
+            }
             SettingsRow("When a desktop has one window", caption: "Applies in Adaptive. Keeps later size changes until another window opens or you repair the layout.") {
                 Picker("When a desktop has one window", selection: configurationBinding(\.singleWindowPlacement)) {
                     Text("Leave Unchanged").tag(nil as WindowAction?)
@@ -137,11 +141,13 @@ struct WindowLayoutSettings: View {
                 isAtDefault: model.configuration.defaultLayoutMode == defaults.defaultLayoutMode
                     && model.configuration.singleWindowPlacement == defaults.singleWindowPlacement
                     && model.configuration.leavesSpaceForDock == defaults.leavesSpaceForDock
+                    && model.configuration.keepsDesktopLayoutsAcrossDisplays == defaults.keepsDesktopLayoutsAcrossDisplays
             ) {
                 model.updateConfiguration {
                     $0.defaultLayoutMode = defaults.defaultLayoutMode
                     $0.singleWindowPlacement = defaults.singleWindowPlacement
                     $0.leavesSpaceForDock = defaults.leavesSpaceForDock
+                    $0.keepsDesktopLayoutsAcrossDisplays = defaults.keepsDesktopLayoutsAcrossDisplays
                 }
             }
         }
