@@ -112,3 +112,9 @@ func everyVisibleRowLabelFindsItsPage(destination: SettingsDestination, labels: 
     #expect(SettingsDestination(rawValue: "Window Layout") == .windowLayout)
     #expect(SettingsDestination(rawValue: "Shortcuts") == .shortcuts)
 }
+
+@Test(.appTestApplication) func overlayCaptureSettingIsSearchableInGeneral() {
+    for term in ["Show overlays in screen recordings", "screenshots", "snap previews", "drop cues"] {
+        #expect(SettingsDestination.general.matchesSearch(term), "General must match \(term)")
+    }
+}

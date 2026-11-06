@@ -186,7 +186,7 @@ import Testing
         app.appearance = NSAppearance(named: override)
         let system: NSAppearance.Name = override == .darkAqua ? .aqua : .darkAqua
         let presenter = LayoutWheelPanelPresenter(renderer: LayoutWheelGlassRenderer(clock: WheelTestClock()),
-                                                  systemAppearance: { NSAppearance(named: system)! })
+                                                  capturePolicy: OverlayCapturePolicy(), systemAppearance: { NSAppearance(named: system)! })
         defer { presenter.close() }
         let placement = LayoutWheelPlacement.clamped(anchor: BTPoint(x: -5000, y: -5000), diameter: 300,
             visibleFrame: BTRect(x: -6000, y: -6000, width: 2000, height: 2000))
@@ -203,7 +203,7 @@ import Testing
     /// Settings override, so ink and plate follow the system.
     @Test(arguments: [NSAppearance.Name.darkAqua, .aqua]) func panelUsesTheSystemAppearance(name: NSAppearance.Name) throws {
         let presenter = LayoutWheelPanelPresenter(renderer: LayoutWheelGlassRenderer(clock: WheelTestClock()),
-                                                  systemAppearance: { NSAppearance(named: name)! })
+                                                  capturePolicy: OverlayCapturePolicy(), systemAppearance: { NSAppearance(named: name)! })
         defer { presenter.close() }
         let placement = LayoutWheelPlacement.clamped(anchor: BTPoint(x: -5000, y: -5000), diameter: 300,
             visibleFrame: BTRect(x: -6000, y: -6000, width: 2000, height: 2000))

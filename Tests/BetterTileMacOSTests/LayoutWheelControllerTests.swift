@@ -193,7 +193,7 @@ private struct Harness {
             visibleFrame: BTRect(x: -6000, y: -6000, width: 1200, height: 1000)),
         selection: nil, unavailableCommands: []
     )
-    let presenter = LayoutWheelPanelPresenter()
+    let presenter = LayoutWheelPanelPresenter(capturePolicy: OverlayCapturePolicy())
     presenter.open(presentation)
     let original = try #require(presenter.hosting)
     let renderer = try #require(presenter.scene?.renderer)
@@ -238,7 +238,7 @@ private struct Harness {
         visibleFrame: BTRect(x: -6000, y: -6000, width: 2000, height: 2000))
     let clock = WheelTestClock()
     let renderer = LayoutWheelGlassRenderer(clock: clock)
-    let presenter = LayoutWheelPanelPresenter(renderer: renderer)
+    let presenter = LayoutWheelPanelPresenter(renderer: renderer, capturePolicy: OverlayCapturePolicy())
     defer { presenter.close() }
     presenter.open(presentation)
     renderer.configure(.init(presentation), reduceMotion: false)

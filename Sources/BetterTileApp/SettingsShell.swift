@@ -60,7 +60,7 @@ enum SettingsDestination: String, CaseIterable, Identifiable {
                 + "start & personalize enable window controls keep bettertile ready about bettertile bettertile at a glance "
                 + "default mode adaptive compatibility development details macos window tiling launch at login startup login "
                 + "items menu bar icon status privacy what bettertile can see show menu bar icon bettertile appearance "
-                + "bettertile updates keyboard"
+                + "bettertile updates keyboard show overlays in screen recordings screenshots snap previews drop cues"
         case .windowLayout:
             "default mode manual native bento adaptive tabbed tabs pane preset linked divider ghost resize preview "
                 + "appearance liquid glass transparency opaque transparent new window side automatic dock space hide auto-hide "

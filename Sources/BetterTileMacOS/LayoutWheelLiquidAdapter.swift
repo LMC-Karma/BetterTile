@@ -144,7 +144,7 @@ enum LayoutWheelLiquidScene {
 /// shared drop-cue path; the liquid renderer has no window-mutation callback.
 @MainActor final class LayoutWheelLiquidAdapter: NSObject, LayoutWheelPresenting {
     let renderer: LayoutWheelLiquidPresenter
-    private let placements = PlacementWireframeController()
+    private let placements: PlacementWireframeController
     var prewarmHandler: ((LayoutWheelLiquidContent) -> Void)?
     var pipelinePrepareHandler: @MainActor () -> Bool = LayoutWheelLiquidPresenter.prepare
     var isOpenHandler: (() -> Bool)?
@@ -173,13 +173,16 @@ enum LayoutWheelLiquidScene {
     static func make(prepare: @MainActor () -> Bool = LayoutWheelLiquidPresenter.prepare) -> any LayoutWheelPresenting {
         guard prepare() else {
             log.error("Liquid Layout Wheel unavailable; using the panel fallback.")
-            return LayoutWheelPanelPresenter()
+            // Starts hidden from capture. LayoutWheelController applies the
+            // configured value right after it receives this presenter.
+            return LayoutWheelPanelPresenter(capturePolicy: OverlayCapturePolicy())
         }
         return LayoutWheelLiquidAdapter()
     }
 
     init(renderer: LayoutWheelLiquidPresenter = LayoutWheelLiquidPresenter()) {
         self.renderer = renderer
+        placements = PlacementWireframeController(capturePolicy: renderer.capturePolicy)
         super.init()
         renderer.onOpenWheelLost = { [weak self] in self?.presentationFailureHandler?() }
         NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(appearanceChanged),
@@ -197,6 +200,10 @@ enum LayoutWheelLiquidScene {
         appearanceTask?.cancel()
         renderer.close()
         placements.hide()
+    }
+
+    func setCaptureVisibility(showsInRecordings: Bool) {
+        renderer.capturePolicy.showsInRecordings = showsInRecordings
     }
 
     func prewarm(configuration: LayoutWheelConfiguration, appearance: OverlayAppearance) {
@@ -243,7 +250,7 @@ enum LayoutWheelLiquidScene {
             layoutAvailable: lastTarget?.layoutAvailable ?? true, currentMode: lastTarget?.currentMode)
         if !(prepareHandler?(content) ?? renderer.prepareToOpen(content)) {
             Self.log.error("Liquid Layout Wheel preparation failed; using the panel fallback.")
-            fallback = LayoutWheelPanelPresenter()
+            fallback = LayoutWheelPanelPresenter(capturePolicy: renderer.capturePolicy)
             fallbackHasOpened = false
         }
     }
@@ -274,7 +281,7 @@ enum LayoutWheelLiquidScene {
              ?? renderer.open(content, center: presentation.placement.center, state: state(presentation))) {
             // Metal can fail after startup as well. Leave a usable wheel.
             Self.log.error("Liquid Layout Wheel open failed; using the panel fallback.")
-            fallback = LayoutWheelPanelPresenter()
+            fallback = LayoutWheelPanelPresenter(capturePolicy: renderer.capturePolicy)
             fallbackHasOpened = true
             fallback?.open(presentation)
         }

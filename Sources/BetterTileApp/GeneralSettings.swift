@@ -176,6 +176,15 @@ struct GeneralSettings: View {
                     applyAppIcon: applyAppIcon
                 )
             }
+            SettingsRow(
+                "Show overlays in screen recordings",
+                caption: "Lets screenshots and screen recordings show the Layout Wheel, snap and layout previews, and drop cues. "
+                    + "Tab bars, dividers and messages always show."
+            ) {
+                Toggle("Show overlays in screen recordings", isOn: configurationBinding(\.showsOverlaysInScreenRecordings))
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+            }
         } footer: {
             GroupFooter(
                 help: "Reset to Default leaves Launch at login as it is; macOS keeps that setting.",
@@ -362,6 +371,7 @@ struct GeneralSettings: View {
     static func startupIsAtDefault(configuration: BetterTileConfiguration, iconRawValue: String) -> Bool {
         configuration.showMenuBarIcon
             && !configuration.showDockIcon
+            && !configuration.showsOverlaysInScreenRecordings
             && (AppIconStyle(rawValue: iconRawValue) ?? .defaultStyle) == .defaultStyle
     }
 
@@ -372,6 +382,7 @@ struct GeneralSettings: View {
         model.updateConfiguration {
             $0.showMenuBarIcon = true
             $0.showDockIcon = false
+            $0.showsOverlaysInScreenRecordings = false
         }
         // Without a saved choice the default icon already shows. Saving one would let this reset, or the
         // next launch, replace a Finder icon the user set outside BetterTile.

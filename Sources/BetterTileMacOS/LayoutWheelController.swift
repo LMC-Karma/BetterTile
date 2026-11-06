@@ -55,6 +55,7 @@ protocol LayoutWheelPresenting: AnyObject {
     /// controller then ends the gesture, so no command is chosen from a
     /// wheel the user cannot see correctly.
     var presentationFailureHandler: (@MainActor () -> Void)? { get set }
+    func setCaptureVisibility(showsInRecordings: Bool)
     func prewarm(configuration: LayoutWheelConfiguration, appearance: OverlayAppearance)
     /// Called when a gesture is about to open, whatever starts it (a keyboard hold or a mouse button).
     /// A presenter drops anything that belonged to an earlier gesture.
@@ -72,6 +73,7 @@ protocol LayoutWheelPresenting: AnyObject {
 extension LayoutWheelPresenting {
     var usesLiquidGeometry: Bool { false }
     var presentationFailureHandler: (@MainActor () -> Void)? { get { nil } set {} }
+    func setCaptureVisibility(showsInRecordings: Bool) {}
     func prewarm(configuration: LayoutWheelConfiguration, appearance: OverlayAppearance) {}
     func beginGesture() {}
     func prepareToOpen(configuration: LayoutWheelConfiguration, appearance: OverlayAppearance) {}
@@ -99,6 +101,7 @@ public final class LayoutWheelController {
 
     public var configuration: BetterTileConfiguration {
         didSet {
+            presenter.setCaptureVisibility(showsInRecordings: configuration.showsOverlaysInScreenRecordings)
             if configuration.layoutWheel != oldValue.layoutWheel || configuration.overlayAppearance != oldValue.overlayAppearance {
                 presenter.prewarm(configuration: configuration.layoutWheel, appearance: configuration.overlayAppearance)
             }
@@ -297,6 +300,7 @@ public final class LayoutWheelController {
         self.removeMonitor = removeMonitor
         self.modifierFlagsProvider = modifierFlagsProvider
         self.middleClickMonitor = middleClickMonitor
+        presenter.setCaptureVisibility(showsInRecordings: configuration.showsOverlaysInScreenRecordings)
         presenter.presentationFailureHandler = { [weak self] in self?.cancel(reason: .presenterFailed) }
         middleClickMonitor.eventHandler = { [weak self] event in
             self?.handleMiddleClick(event)
@@ -1251,7 +1255,8 @@ extension LayoutWheelKey {
 @MainActor
 final class LayoutWheelPanelPresenter: LayoutWheelPresenting {
     private let panel: NSPanel
-    private let placementPreviews = PlacementWireframeController()
+    private let placementPreviews: PlacementWireframeController
+    private let capturePolicy: OverlayCapturePolicy
     private(set) var hosting: NSHostingView<LayoutWheelRuntimeContent>?
     private(set) var scene: LayoutWheelRuntimeScene?
     private var presentationGeneration = 0
@@ -1268,8 +1273,11 @@ final class LayoutWheelPanelPresenter: LayoutWheelPresenting {
     }
 
     init(renderer: LayoutWheelGlassRenderer = LayoutWheelGlassRenderer(),
+         capturePolicy: OverlayCapturePolicy,
          systemAppearance: @escaping @MainActor () -> NSAppearance = LayoutWheelPanelPresenter.currentSystemAppearance) {
         self.renderer = renderer
+        self.capturePolicy = capturePolicy
+        placementPreviews = PlacementWireframeController(capturePolicy: capturePolicy)
         self.systemAppearance = systemAppearance
         panel = NSPanel(
             contentRect: .zero,
@@ -1285,7 +1293,11 @@ final class LayoutWheelPanelPresenter: LayoutWheelPresenting {
         // click away from the window underneath it.
         panel.ignoresMouseEvents = true
         panel.collectionBehavior = [.moveToActiveSpace, .transient, .ignoresCycle, .fullScreenAuxiliary]
-        panel.sharingType = .none
+        capturePolicy.apply(to: panel)
+    }
+
+    func setCaptureVisibility(showsInRecordings: Bool) {
+        capturePolicy.showsInRecordings = showsInRecordings
     }
 
     func open(_ presentation: LayoutWheelPresentation) {

@@ -44,12 +44,13 @@ import Testing
     var panels: [FakeSpacePanel] { weakPanels.compactMap(\.value) }
     var overlays: [WeakSpacePanelOverlay] = []
 
-    init(exact: Bool = true, usesManualClock: Bool = false) {
+    init(exact: Bool = true, usesManualClock: Bool = false,
+         layoutWheelFactory: (BetterTileConfiguration) -> LayoutWheelController = { LayoutWheelController(configuration: $0) }) {
         _ = NSApplication.shared
         system = usesManualClock ? makeManualWindowSystem(drivingPolicyDeadlines: true) : FakeAppWindowSystem()
         model = makeOffscreenModel(
             store: ConfigurationStore(fileURL: URL(filePath: "/tmp/BetterTileSpacePanelTests-\(UUID().uuidString)/configuration.json")),
-            system: system, startRuntime: false, presentsTabbedChrome: true)
+            system: system, startRuntime: false, presentsTabbedChrome: true, layoutWheelFactory: layoutWheelFactory)
         system.installWindowEventClock(in: model)
         model.primaryButtonIsPressed = { false }
         system.availableDisplays[0].frame.origin.x = 40000
@@ -688,4 +689,56 @@ func spacePanelRevalidatesCapabilityBeforeFirstOrder(losesObservation: Bool) asy
     let overlay = try #require(f.overlays.last?.value)
     #expect(overlay.keepsPanelsOnSpace == !losesObservation)
     #expect(f.panels.contains { $0.isVisible })
+}
+
+@MainActor private final class CaptureRecordingWheelPresenter: LayoutWheelPresenting {
+    var captureValues: [Bool] = []
+    func setCaptureVisibility(showsInRecordings: Bool) { captureValues.append(showsInRecordings) }
+    func open(_ presentation: LayoutWheelPresentation) {}
+    func update(_ presentation: LayoutWheelPresentation) {}
+    func showPlacements(_ placements: [Placement]) {}
+    func hidePlacements() {}
+    func close() {}
+}
+
+@Test(.appTestApplication) @MainActor
+func overlayCaptureConfigurationReachesControllersAndRetainedSpaceOverlays() async throws {
+    let presenter = CaptureRecordingWheelPresenter()
+    let f = SpacePanelFixture(usesManualClock: true, layoutWheelFactory: {
+        LayoutWheelController(configuration: $0, presenter: presenter)
+    })
+    defer { f.close() }
+    #expect(presenter.captureValues.last == false)
+    #expect(!f.model.dragSnapForTesting.capturePolicy.showsInRecordings)
+    f.model.updateConfiguration { $0.showsOverlaysInScreenRecordings = true }
+    #expect(f.model.dragSnapForTesting.capturePolicy.showsInRecordings)
+    #expect(presenter.captureValues.last == true)
+    try await f.enter()
+    let first = try #require(f.overlays.first?.value)
+    #expect(first.showsOverlaysInScreenRecordings)
+
+    f.switchTo(f.b)
+    try await f.settle()
+    var bWindow = f.system.windows[0]
+    bWindow.id = WindowID(rawValue: "capture-space-b")
+    bWindow.processIdentifier += 1
+    f.system.windows.append(bWindow)
+    f.system.desktopObservation?.windowMembership[bWindow.id] = [f.b]
+    f.system.offscreenWindowIDs = [f.system.windows[0].id]
+    f.system.focusedID = bWindow.id
+    f.model.setActiveMode(.tabbed)
+    try #require(await f.system.waitFor { f.overlays.count == 2 && !f.model.hasPendingTabbedPlacement })
+    let second = try #require(f.overlays[1].value)
+    #expect(first !== second && first.keepsPanelsOnSpace && second.keepsPanelsOnSpace)
+    #expect(second.showsOverlaysInScreenRecordings)
+
+    for enabled in [false, true] {
+        let writes = f.system.frameWriteCounts
+        f.model.updateConfiguration { $0.showsOverlaysInScreenRecordings = enabled }
+        #expect(f.model.dragSnapForTesting.capturePolicy.showsInRecordings == enabled)
+        #expect(presenter.captureValues.last == enabled)
+        #expect(first.showsOverlaysInScreenRecordings == enabled, "The inactive Space's retained overlay must update")
+        #expect(second.showsOverlaysInScreenRecordings == enabled)
+        #expect(f.system.frameWriteCounts == writes)
+    }
 }
