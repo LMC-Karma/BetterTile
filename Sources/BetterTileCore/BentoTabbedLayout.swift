@@ -381,16 +381,20 @@ public struct TabbedLayoutState: Hashable, Sendable {
     public var hiddenWindowIDs: Set<WindowID> { groups.hiddenWindowIDs }
     public var activeWindowID: WindowID? { groups.panes.first { $0.id == activePaneID }?.selected }
 
-    public init(preset: TabbedPreset = .single, presentation: TabbedStripPresentation = .alwaysVisible) {
+    /// A fresh pane arrangement can retain floating windows from Adaptive.
+    /// Only automatic floats are offered a pane on entry.
+    public init(preset: TabbedPreset = .single, presentation: TabbedStripPresentation = .alwaysVisible,
+                floatingWindowIDs: Set<WindowID> = [], automaticallyFloating: Set<WindowID> = []) {
         let ids = (0..<preset.paneCount).map { _ in UUID() }
         let layout = BentoLayoutState(root: Self.tree(preset, leaves: ids.map { BentoNode.vacant($0) }),
-                                      metrics: Self.tabbedMetrics(BentoLayoutMetrics(paneGap: Self.gap), presentation: presentation))
+                                      floatingWindowIDs: floatingWindowIDs, metrics: Self.tabbedMetrics(BentoLayoutMetrics(paneGap: Self.gap), presentation: presentation))
         groups = BentoTabbedLayoutState(adopting: layout, contentTopInset: presentation.reservedInset)!
         activePaneID = groups.panes[0].id
+        automaticFloats = automaticallyFloating.intersection(floatingWindowIDs)
         rememberPaneSizes()
     }
 
-    /// Entering Tabbed from Bento keeps every pane where it is; each window
+    /// Entering Tabbed with Keep Adaptive panes keeps every pane where it is; each window
     /// becomes a one-tab pane.
     /// - Parameter automaticallyFloating: The windows Bento floated on its
     ///   own, such as a seventh window or one that fit no pane. They stay

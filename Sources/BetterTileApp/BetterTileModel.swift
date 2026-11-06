@@ -809,13 +809,17 @@ final class BetterTileModel {
                 $0.tabbedBaselineFrames = [:]
                 $0.tabbedHasEntryBaseline = false
                 $0.resumeAutomaticWrites()
-                // From Bento, every pane stays put. Otherwise the tab groups
-                // from the last Tabbed visit (if any) come back.
-                if $0.mode == .bento, $0.isBentoInitialized, $0.bentoState.root != nil {
-                    // Windows Bento floated on its own stay automatic
-                    // floats; the entry sweep offers them a pane.
-                    $0.tabbedState = TabbedLayoutState(
-                        adopting: $0.bentoState, automaticallyFloating: $0.automaticallyFloatingWindowIDs, presentation: configuration.tabbedStripPresentation)
+                // Manual restores the last tab groups. Adaptive starts fresh
+                // unless the user explicitly keeps its pane arrangement.
+                if $0.mode == .bento {
+                    if configuration.tabbedEntryPlacement == .keepAdaptivePanes,
+                       $0.isBentoInitialized, $0.bentoState.root != nil {
+                        $0.tabbedState = TabbedLayoutState(
+                            adopting: $0.bentoState, automaticallyFloating: $0.automaticallyFloatingWindowIDs,
+                            presentation: configuration.tabbedStripPresentation)
+                    } else {
+                        $0.tabbedState = nil
+                    }
                 }
             }
             $0.mode = mode
@@ -5988,7 +5992,10 @@ extension BetterTileModel {
         let windows = ignoringOversizedSeeds(windows, in: display.visibleFrame)
         var session = original
         let wasUninitialized = session.tabbedState == nil
-        var state = session.tabbedState ?? TabbedLayoutState(preset: configuration.defaultTabbedPreset, presentation: configuration.tabbedStripPresentation)
+        var state = session.tabbedState ?? TabbedLayoutState(
+            preset: configuration.defaultTabbedPreset, presentation: configuration.tabbedStripPresentation,
+            floatingWindowIDs: session.bentoState.floatingWindowIDs,
+            automaticallyFloating: session.automaticallyFloatingWindowIDs)
         let entering = !session.tabbedHasEntryBaseline
         if entering {
             if tabbedEntryBaselines[session.id] == nil {
@@ -6013,16 +6020,19 @@ extension BetterTileModel {
                                            fittingIn: display.visibleFrame, windows: windows, followed: session.followed)
             logTabbedAdoptions(arrivals, transition: entering ? "entry arrival" : "arrival",
                                before: before, windows: windows, bounds: display.visibleFrame)
-            // Entering Tabbed, from Bento or Native, offers the windows that
-            // floated on their own a pane again: the panes changed since.
-            if entering, !state.automaticallyFloatingWindowIDs.isEmpty {
-                let returning = state
-                let returned = state.returnAutomaticFloats(state.automaticallyFloatingWindowIDs,
-                                                           fittingIn: display.visibleFrame, windows: windows,
-                                                           selecting: true, keeping: focused ?? state.activeWindowID, followed: session.followed)
-                logTabbedAdoptions(returned, transition: "entry return", before: returning,
-                                   windows: windows, bounds: display.visibleFrame)
-            }
+        }
+        // Both a fresh preset and a restored layout offer automatic floats
+        // a pane. User-floated windows retain their floating status.
+        if entering, !state.automaticallyFloatingWindowIDs.isEmpty {
+            let returning = state
+            let returned = state.returnAutomaticFloats(state.automaticallyFloatingWindowIDs,
+                                                       fittingIn: display.visibleFrame, windows: windows,
+                                                       selecting: true, keeping: focused ?? state.activeWindowID, followed: session.followed)
+            logTabbedAdoptions(returned, transition: "entry return", before: returning,
+                               windows: windows, bounds: display.visibleFrame)
+        }
+        if wasUninitialized, configuration.tabbedEntryPlacement == .onePerPane {
+            state.applyPreset(configuration.defaultTabbedPreset, grouping: .distributeWindows)
         }
         session.tabbedState = state
         session.windowIDs = state.windowIDs
