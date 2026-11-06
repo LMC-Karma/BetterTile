@@ -3163,13 +3163,19 @@ final class BetterTileModel {
 
     private var displayChangeWorkspaceIsActive = true
     private var displayChangeScreenWasLocked = false
+    private var displayChangeLastLockCheck: TimeInterval = -.infinity
+    private var displayHoldTabbedHandoffs: [UUID: LayoutSession] = [:]
+
+    private static func isLockApplication(_ bundleID: String?) -> Bool {
+        bundleID == DisplayTriggerRuntime.loginWindowBundleID || bundleID == "com.apple.ScreenSaver.Engine"
+    }
     var displayChangeScreenIsLocked: () -> Bool = {
-        NSWorkspace.shared.frontmostApplication?.bundleIdentifier == DisplayTriggerRuntime.loginWindowBundleID
+        BetterTileModel.isLockApplication(NSWorkspace.shared.frontmostApplication?.bundleIdentifier)
     }
 
     func handleDisplayChangeApplicationActivation(bundleID: String?) {
         guard displayChangeWorkspaceIsActive else { return }
-        if bundleID == DisplayTriggerRuntime.loginWindowBundleID || displayChangeScreenIsLocked() {
+        if Self.isLockApplication(bundleID) || displayChangeScreenIsLocked() {
             displayChangeScreenWasLocked = true
             startDisplayChangeHold(.sessionResigned)
         } else if displayChangeScreenWasLocked {
@@ -3211,6 +3217,11 @@ final class BetterTileModel {
         cancelPendingFocusRestore(on: nil)
         applicationRecoveryTask?.cancel()
         applicationRecoveryTask = nil
+        for (display, taskID) in tabbedTaskIDs {
+            if let owner = sessionStore.session(for: display), !owner.automaticWritesSuspended {
+                displayHoldTabbedHandoffs[taskID] = owner
+            }
+        }
         tabbedTasks.values.forEach { $0.cancel() }
         tabbedFocusTask?.cancel()
         tabbedResizeReleaseTask?.cancel()
@@ -3231,6 +3242,7 @@ final class BetterTileModel {
     }
 
     private func recordDisplayChangeObservation(windows: [WindowSnapshot]? = nil) {
+        guard !displayChangeHold.isWaitingForWakeOrUnlock else { return }
         if let observed = windows ?? (try? observeVisibleWindows()) {
             recordObservedWindows(observed, observation: system.nativeDesktopObservation())
         }
@@ -3240,6 +3252,20 @@ final class BetterTileModel {
     }
 
     private func sampleDisplayChangeHold(token: UInt64) -> Bool {
+        if displayChangeHold.isWaitingForWakeOrUnlock {
+            // A lost activation notification must not strand a lock hold. This
+            // public frontmost-application check performs no window inventory.
+            if displayChangeScreenWasLocked, displayChangeWorkspaceIsActive,
+               displayChangeTime - displayChangeLastLockCheck >= 2 {
+                displayChangeLastLockCheck = displayChangeTime
+                if !displayChangeScreenIsLocked() {
+                    displayChangeScreenWasLocked = false
+                    startDisplayChangeHold(.sessionBecameActive)
+                    return true
+                }
+            }
+            return false
+        }
         let windows = try? observeVisibleWindows()
         recordDisplayChangeObservation(windows: windows)
         let frames = windows.map { Dictionary(uniqueKeysWithValues: $0.map { ($0.id, $0.frame) }) }
@@ -3258,6 +3284,16 @@ final class BetterTileModel {
         pendingWindowEvents.recordTopologyChange()
         schedulePendingWindowEvents()
         return true
+    }
+
+    private func completeDisplayHoldTabbedHandoff(_ taskID: UUID, on displayID: DisplayID) {
+        guard let owner = displayHoldTabbedHandoffs.removeValue(forKey: taskID),
+              sessionStore.isCurrent(owner.id, revision: owner.revision, on: displayID),
+              sessionStore.session(for: displayID)?.automaticWritesSuspended == false else { return }
+        tabbedCommittedLayouts.removeValue(forKey: owner.id)
+        // Usually the post-hold transition owns this placement. If cancellation
+        // completed later, that transition saw a busy display; resume it now.
+        if !isHoldingDisplayChange { refreshActiveWindows(force: true) }
     }
 
     private func displayChangeAllowsLayout(on displayID: DisplayID) -> Bool {
@@ -3289,10 +3325,6 @@ final class BetterTileModel {
     }
 
     func beginActiveSpaceStabilization() {
-        if isHoldingDisplayChange {
-            pendingWindowEvents.recordTopologyChange()
-            return
-        }
         invalidateMenuPanelFocusReplay()
         savedLayoutApplier?.cancel()
         cancelPaneApplicationRequest()
@@ -3322,6 +3354,10 @@ final class BetterTileModel {
         settlementTasks.values.forEach { $0.cancel() }
         settlementTasks.removeAll()
         spaceStabilizationTask?.cancel()
+        if isHoldingDisplayChange {
+            pendingWindowEvents.recordTopologyChange()
+            return
+        }
         selectNativeDesktopSessions()
         selectSpacePanelOverlays()
         spaceStabilizationGeneration &+= 1
@@ -6596,9 +6632,11 @@ extension BetterTileModel {
         let nativeObservation = system.refreshNativeDesktopObservation()
         let expectedSpace = expectedSpaceID ?? (nativeObservation == nil ? nil : original.nativeSpaceID)
             ?? (snapAction == nil ? nil : nativeObservation?.currentSpace(on: display.id))
+        let displayChangeToken = displayChangeHold.token
         // The same desktop, even if its work area changed after planning.
         let isSameDesktopAnyWorkArea = { @MainActor [weak self] in
             guard let self, !self.isShutDown, !self.isStabilizingSpace, self.hasAccessibilityPermission,
+                  self.displayChangeHold.token == displayChangeToken, self.displayChangeAllowsLayout(on: display.id),
                   !self.nativeFullscreenDisplayIDs.contains(display.id), !self.tabbedExiting.contains(display.id),
                   self.activeMode(for: display.id) == .tabbed, additionalValidation() else { return false }
             let observation = self.system.refreshNativeDesktopObservation()
@@ -6734,7 +6772,23 @@ extension BetterTileModel {
                 let workArea = self.system.displays().first(where: { $0.id == display.id })?.visibleFrame
                 let workAreaOwnsRecovery = !Task.isCancelled && workArea != nil
                     && workArea != display.visibleFrame && isSameDesktopAnyWorkArea()
-                guard rollbackFailed || (!gestureOwnsRecovery && !workAreaOwnsRecovery) else { return }
+                let holdOwnsRecovery = self.displayHoldTabbedHandoffs[taskID].map {
+                    $0.id == original.id && $0.revision == original.revision
+                        && self.sessionStore.isCurrent(original.id, revision: original.revision, on: display.id)
+                } == true
+                if holdOwnsRecovery, !rollbackFailed, let gestureBaseline {
+                    // The interrupted rollback also owned the provisional tear-off.
+                    // Restore that membership now; the hold still forbids frames.
+                    var restored = original
+                    restored.tabbedState = gestureBaseline
+                    restored.windowIDs = gestureBaseline.windowIDs
+                    restored.lastObservedFrames = rollbackFrames ?? original.lastObservedFrames
+                    if let committed = self.sessionStore.commit(restored, replacing: original.revision) {
+                        self.displayHoldTabbedHandoffs[taskID] = committed
+                    }
+                }
+                if rollbackFailed { self.displayHoldTabbedHandoffs.removeValue(forKey: taskID) }
+                guard rollbackFailed || (!gestureOwnsRecovery && !workAreaOwnsRecovery && !holdOwnsRecovery) else { return }
                 self.suspendAutomaticBentoWrites(displayID: display.id, sessionID: original.id, error: reason)
             }
         }
@@ -6774,6 +6828,7 @@ extension BetterTileModel {
                 guard self.tabbedTaskIDs[display.id] == taskID else { return }
                 self.tabbedTaskIDs.removeValue(forKey: display.id)
                 self.tabbedTasks[display.id] = nil
+                defer { self.completeDisplayHoldTabbedHandoff(taskID, on: display.id) }
                 guard isSameDesktop(), !Task.isCancelled else {
                     if !isSameDesktop() || self.activeBentoDrag?.layoutSession.id != original.id {
                         self.tabbedQueuedIntents.removeValue(forKey: display.id)
@@ -7084,6 +7139,7 @@ extension BetterTileModel {
             guard self.tabbedTaskIDs[display.id] == taskID else { return }
             self.tabbedTaskIDs.removeValue(forKey: display.id)
             self.tabbedTasks[display.id] = nil
+            defer { self.completeDisplayHoldTabbedHandoff(taskID, on: display.id) }
             guard !Task.isCancelled, isSameDesktop() else {
                 if !isSameDesktop() || self.activeBentoDrag?.layoutSession.id != original.id {
                     self.tabbedQueuedIntents.removeValue(forKey: display.id)
@@ -9066,12 +9122,13 @@ extension BetterTileModel {
         runtime.triggers = { [weak self] in self?.hasAccessibilityPermission == true ? triggerStore.document.triggers : [] }
         runtime.liveDisplays = { DisplayFingerprintReader.current() }
         runtime.isScreenLocked = {
-            NSWorkspace.shared.frontmostApplication?.bundleIdentifier == DisplayTriggerRuntime.loginWindowBundleID
+            Self.isLockApplication(NSWorkspace.shared.frontmostApplication?.bundleIdentifier)
         }
         runtime.loadLayout = { file in
             guard DisplayTriggerDocument.isValidLayoutFile(file) else { return nil }
             return try SavedLayoutValidator.decode(files.read(files.directory.appendingPathComponent(file)))
         }
+        runtime.isDisplayChangeHeld = { [weak self] _ in self?.isHoldingDisplayChange ?? true }
         runtime.isReady = { [weak self] id in
             guard let self else { return false }
             return !self.isHoldingDisplayChange && !self.isStabilizingSpace && !self.isTabbedBusy(on: id) && self.settlementTasks[id] == nil
@@ -9177,7 +9234,8 @@ extension BetterTileModel {
             try self.system.cachedVisibleWindows(refreshing: ids) ?? self.observeVisibleWindows()
         }
         let ownerMatchesObservation = { @MainActor [weak self] (visible: [WindowSnapshot], observation: NativeDesktopObservation?) in
-            guard snapshot.sessionIsAvailable(), let self, !self.isShutDown, self.hasAccessibilityPermission, !self.isStabilizingSpace,
+            guard snapshot.sessionIsAvailable(), let self, self.displayChangeAllowsLayout(on: desktop.displayID),
+                  !snapshot.isAutomatic || !self.isHoldingDisplayChange, !self.isShutDown, self.hasAccessibilityPermission, !self.isStabilizingSpace,
                   self.sessionStore.isCurrent(sessionID, revision: revision, on: desktop.displayID),
                   self.system.displays().first(where: { $0.id == desktop.displayID })?.visibleFrame == display.visibleFrame,
                   let observation,
@@ -9202,8 +9260,12 @@ extension BetterTileModel {
                 return now.displayID == desktop.displayID && (membership.isEmpty || membership == [desktop.spaceID])
             }
         }
+        let transactionIsAvailable = { @MainActor in
+            snapshot.sessionIsAvailable() && self.displayChangeAllowsLayout(on: desktop.displayID)
+                && (!snapshot.isAutomatic || !self.isHoldingDisplayChange)
+        }
         let ownerIsCurrent = { @MainActor in
-            guard !self.isShutDown, self.hasAccessibilityPermission, !self.isStabilizingSpace,
+            guard transactionIsAvailable(), !self.isShutDown, self.hasAccessibilityPermission, !self.isStabilizingSpace,
                   let visible = try? readParticipants(),
                   let observation = self.system.refreshNativeDesktopObservation() else { return false }
             return ownerMatchesObservation(visible, observation)
@@ -9212,7 +9274,7 @@ extension BetterTileModel {
         // can itself observe an endpoint Space change. isCurrent then refreshes
         // destination state; use the latest cached observation to authorize writes.
         let valid = { @MainActor in
-            guard !self.isShutDown, self.hasAccessibilityPermission, !self.isStabilizingSpace,
+            guard transactionIsAvailable(), !self.isShutDown, self.hasAccessibilityPermission, !self.isStabilizingSpace,
                   let visible = try? readParticipants(),
                   isCurrent(), let observation = self.system.nativeDesktopObservation() else { return false }
             return ownerMatchesObservation(visible, observation)
