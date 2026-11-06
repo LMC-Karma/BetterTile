@@ -878,7 +878,8 @@ windows fill the display, and the peer's reinsertion anchor keeps the previous
 tree for its return. A rejected layout restore suspends
 automatic placement until Repair. Background sweeps retain membership without
 moving windows while the wait owns that session. A newer layout action cancels
-the wait.
+the wait. After a successful restore, arrivals observed during the wait resume
+through the normal arrival pipeline without waiting for another notification.
 
 Keyboard and captured Layout Wheel partitions use the same peer-return wait.
 When all peers are visible, the partition runs synchronously. Otherwise it

@@ -4473,10 +4473,22 @@ final class BetterTileModel {
                     // Commit the returned peers as members too, so a divider drag
                     // or Maximize right after the restore includes them.
                     restored.windowIDs.formUnion(displayWindows.map(\.id))
-                    self.restoreBentoLayout(
+                    let result = self.restoreBentoLayout(
                         session: restored, displayWindows: displayWindows, display: display,
                         suspendOnRejection: true
                     )
+                    // Creation events consumed during this wait retained
+                    // membership but could not insert new panes. Resume the
+                    // ordinary arrival pipeline after the saved tree commits.
+                    let represented = Set(restored.bentoState.root?.windowIDs ?? [])
+                        .union(restored.bentoState.floatingWindowIDs)
+                    let hasArrivals = self.bentoEligible(windows.filter {
+                        $0.displayID == display.id && $0.isEligible && !$0.isFloating
+                    }).contains { !represented.contains($0.id) }
+                    if result == .committed && hasArrivals {
+                        self.pendingWindowEvents.recordTopologyChange()
+                        self.schedulePendingWindowEvents(expeditesArrival: true)
+                    }
                     if let afterRestore {
                         self.focusRestores.removeValue(forKey: display.id)
                         afterRestore()
