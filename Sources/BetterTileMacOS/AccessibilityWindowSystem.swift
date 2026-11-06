@@ -384,6 +384,20 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         knownWindowSnapshots.values.filter { identities.records[$0.id] != nil }
     }
 
+    /// Hidden applications are skipped by AX inventory, but their known
+    /// windows still exist. This uses public application state without AX reads.
+    public var hiddenWindowIDs: Set<WindowID> {
+        let applications = Set(NSWorkspace.shared.runningApplications.compactMap { application -> ApplicationLaunchInstance? in
+            guard application.isHidden,
+                  let token = application.launchDate?.timeIntervalSinceReferenceDate.bitPattern,
+                  let launch = launchRecords[application.processIdentifier],
+                  launch.launchToken == token
+            else { return nil }
+            return launch.instance
+        })
+        return identities.windowIDs(belongingTo: applications)
+    }
+
     public func visibleWindows() throws -> [WindowSnapshot] {
         var recoveryPIDs: Set<Int32>?
         return try visibleWindows(recoveryPIDs: &recoveryPIDs)

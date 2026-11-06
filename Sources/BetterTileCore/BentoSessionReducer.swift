@@ -25,6 +25,7 @@ public struct BentoSessionReducer: Sendable {
         paneGap: Double,
         confirmedGone: Set<WindowID> = [],
         minimized: Set<WindowID> = [],
+        hiddenWindowIDs: Set<WindowID> = [],
         knownSpaceWindowIDs: Set<WindowID> = [],
         newWindowSide: BentoNewWindowSide = .automatic,
         balancesNewWindows: Bool = false
@@ -43,14 +44,19 @@ public struct BentoSessionReducer: Sendable {
                 && (next.followed?.anchorsWindow(windowID, in: runtime.layout) == true
                     || next.followed?.hasReturnVacancy(for: windowID, in: runtime.layout) == true)
         })
-        let present = observation.eligibleWindowIDs.subtracting(minimized).subtracting(confirmedGone)
+        // App hiding is direct evidence that a pane stepped away, not that
+        // its window closed. Floating windows retain their existing disposition.
+        let hiddenPanes = Set(runtime.layout.root?.windowIDs ?? [])
+            .intersection(hiddenWindowIDs).subtracting(confirmedGone)
+        let present = observation.eligibleWindowIDs.subtracting(minimized)
+            .subtracting(hiddenWindowIDs).subtracting(confirmedGone)
         let known = Set(runtime.layout.root?.windowIDs ?? []).union(runtime.layout.floatingWindowIDs)
         let exempt = next.excludedFocusWindowIDs.union(runtime.reinsertionAnchors.keys)
-            .union(knownSpaceWindowIDs)
+            .union(knownSpaceWindowIDs).union(hiddenWindowIDs.subtracting(hiddenPanes))
         let removals = next.presence.observe(
             known: known,
             present: present,
-            confirmedGone: confirmedGone.union(minimized.subtracting(focusMinimized)),
+            confirmedGone: confirmedGone.union(minimized.subtracting(focusMinimized)).union(hiddenPanes),
             exempt: exempt
         )
 
@@ -68,7 +74,7 @@ public struct BentoSessionReducer: Sendable {
         }
 
         for windowID in orderedRemovals {
-            if minimized.contains(windowID), !focusMinimized.contains(windowID) {
+            if minimized.contains(windowID) || hiddenPanes.contains(windowID), !focusMinimized.contains(windowID) {
                 runtime = BentoPlanner(maximumManagedWindows: maximumManagedWindows).plan(
                     state: runtime,
                     observation: observation,
@@ -87,7 +93,7 @@ public struct BentoSessionReducer: Sendable {
             reconcileRuntimeFollowing()
         }
         next.bentoInsertionOrder.removeAll { removals.contains($0) }
-        next.automaticallyFloatingWindowIDs.formIntersection(present)
+        next.automaticallyFloatingWindowIDs.formIntersection(present.union(hiddenWindowIDs).subtracting(confirmedGone))
         for windowID in present.sorted() where !next.bentoInsertionOrder.contains(windowID) {
             next.bentoInsertionOrder.append(windowID)
         }

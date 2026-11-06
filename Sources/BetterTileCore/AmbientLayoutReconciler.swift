@@ -13,6 +13,7 @@ public struct AmbientLayoutObservation: Sendable {
     public var isDesktopTransition: Bool
     public var confirmedGone: Set<WindowID>
     public var confirmedMinimized: Set<WindowID>
+    public var hiddenWindowIDs: Set<WindowID>
     /// Windows whose native membership still belongs to this desktop, even
     /// when the current on-screen Accessibility sweep cannot see them.
     public var knownSpaceWindowIDs: Set<WindowID>
@@ -26,6 +27,7 @@ public struct AmbientLayoutObservation: Sendable {
         requestsRelayout: Bool = false,
         confirmedGone: Set<WindowID> = [],
         confirmedMinimized: Set<WindowID> = [],
+        hiddenWindowIDs: Set<WindowID> = [],
         knownSpaceWindowIDs: Set<WindowID> = []
     ) {
         self.display = display
@@ -36,6 +38,7 @@ public struct AmbientLayoutObservation: Sendable {
         self.isDesktopTransition = isDesktopTransition
         self.confirmedGone = confirmedGone
         self.confirmedMinimized = confirmedMinimized
+        self.hiddenWindowIDs = hiddenWindowIDs
         self.knownSpaceWindowIDs = knownSpaceWindowIDs
     }
 }
@@ -122,6 +125,7 @@ public struct AmbientLayoutReconciler: Sendable {
                     paneGap: session.paneGap(configured: paneGap),
                     confirmedGone: observation.confirmedGone,
                     minimized: observation.confirmedMinimized,
+                    hiddenWindowIDs: observation.hiddenWindowIDs,
                     knownSpaceWindowIDs: observation.knownSpaceWindowIDs,
                     newWindowSide: newWindowSide,
                     balancesNewWindows: balancesNewWindows

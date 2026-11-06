@@ -412,3 +412,19 @@ func invalidAccessibilityElementConfirmsClosureOnlyAfterSuccessfulAbsentInventor
         peers: [], exactWindowIDs: [:], windowServer: { _ in lookups += 1; return nil }))
     #expect(lookups == 1)
 }
+
+@Test func hiddenWindowIdentitySelectionRequiresTheCurrentApplicationLaunch() {
+    var registry = WindowIdentityRegistry()
+    let old = ApplicationLaunchInstance(processIdentifier: 90, generation: 1)
+    let current = ApplicationLaunchInstance(processIdentifier: 90, generation: 2)
+    let other = ApplicationLaunchInstance(processIdentifier: 91, generation: 1)
+    let stale = registry.resolve(application: old, accessibilityHash: 1, exactWindowID: nil)
+    let first = registry.resolve(application: current, accessibilityHash: 2, exactWindowID: nil)
+    let second = registry.resolve(application: current, accessibilityHash: 3, exactWindowID: nil)
+    _ = registry.resolve(application: other, accessibilityHash: 4, exactWindowID: nil)
+    #expect(registry.windowIDs(belongingTo: [current]) == [first, second])
+    #expect(!registry.windowIDs(belongingTo: [current]).contains(stale))
+    registry.remove(first)
+    #expect(registry.windowIDs(belongingTo: [current]) == [second])
+    #expect(registry.windowIDs(belongingTo: []).isEmpty)
+}

@@ -861,6 +861,15 @@ cannot meet the minimum sizes, the unbalanced insertion stands, so balancing
 never turns a placement into a failure. A size an application refuses on write
 goes through the same learned-minimum correction as any other Bento placement.
 
+Hidden applications leave the Accessibility inventory. The macOS adapter
+reports their known window identities from public application state, matched
+to the current application launch. Adaptive removes hidden panes with the same
+reinsertion anchors used for minimized panes. Their return restores the prior
+positions and ratios even when focus or the new-window side preference changed.
+Hidden floating windows retain their user or overflow disposition. Confirmed
+closure still removes a pane permanently. Unknown absence keeps its existing
+corroboration policy. This adds no AX reads, permissions, or persisted data.
+
 Each reinsertion anchor stores a neighbor, an edge, and the tree from just
 before the minimize. Restoring several windows rebuilds the largest stored
 tree. A drop, swap, partition, Layout Wheel command, or divider move clears
