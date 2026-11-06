@@ -7312,7 +7312,13 @@ extension BetterTileModel {
             previous.setPresentation(configuration.tabbedStripPresentation)
             restorationFrames = step.floatingFrames
             let visible = Set(windows.map(\.id))
-            previous.reconcile(windowIDs: windows.map(\.id), removed: [], away: previous.windowIDs.subtracting(visible), focused: nil)
+            // A window can return after this Undo snapshot was recorded.
+            // Restore its saved place through the same fit check as an arrival,
+            // before ordinary new windows are added to the active pane.
+            let returning = visible.intersection(previous.returnSlots.keys)
+            previous.reconcile(windowIDs: returning.sorted(), removed: [], away: previous.windowIDs.subtracting(visible),
+                               fittingIn: display.visibleFrame, windows: windows)
+            previous.reconcile(windowIDs: windows.map(\.id), removed: [], focused: nil)
             state = previous
             consumeUndo = true
             focus = state.activeWindowID; undo = false

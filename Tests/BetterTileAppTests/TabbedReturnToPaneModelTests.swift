@@ -294,6 +294,41 @@ func reproTabbedKeepsPaneAfterInterruption(_ interruption: ReproInterruption) as
     }
 
 
+    @Test(.appTestApplication) func undoAfterRestorationKeepsTheSnapshotsReturnPane() async throws {
+        let (system, model) = try await fixture()
+        defer { model.shutdown() }
+        func settle() async throws {
+            await system.advance(by: .milliseconds(300))
+            try #require(await system.waitFor {
+                !model.hasPendingTabbedPlacement && model.windowEventTask == nil
+            })
+        }
+        let b = WindowID(rawValue: "A2"), c = WindowID(rawValue: "A3")
+        let before = try #require(model.activeTabbedState)
+        let home = try #require(before.pane(containing: b))
+        let active = before.activePaneID
+        try #require(home.tabs == [b, c] && home.selected == b && active != home.id)
+        let index = try #require(system.windows.firstIndex { $0.id == b })
+        system.windows[index].isMinimized = true
+        system.eventHandler?(.init(kind: .minimized, windowID: b, processIdentifier: 42))
+        try await settle()
+        try #require(model.activeTabbedState?.returnSlots[b]?.paneID == home.id)
+        model.performTabbed(.move(c, pane: active, index: nil))
+        try await settle()
+        try #require(model.activeTabbedState?.paneID(containing: c) == active)
+        system.windows[index].isMinimized = false
+        system.eventHandler?(.init(kind: .restored, windowID: b, processIdentifier: 42))
+        try await settle()
+        try #require(model.activeTabbedState?.paneID(containing: b) == home.id)
+        model.performTabbed(.undo)
+        try await settle()
+        let after = try #require(model.activeTabbedState)
+        #expect(after.paneID(containing: b) == home.id)
+        #expect(after.panes.map(\.tabs) == before.panes.map(\.tabs))
+        #expect(after.panes.map(\.selected) == before.panes.map(\.selected))
+        #expect(after.panes.map(\.id) == before.panes.map(\.id))
+    }
+
     @Test(.appTestApplication, arguments: [false, true])
     func slotOnlyCloseDoesNotRejectPendingSavedLayoutApply(atFinalCheckpoint: Bool) async throws {
         let system = makeManualWindowSystem(drivingPolicyDeadlines: true)

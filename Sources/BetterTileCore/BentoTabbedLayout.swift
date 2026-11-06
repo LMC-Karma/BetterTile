@@ -845,9 +845,9 @@ public struct TabbedLayoutState: Hashable, Sendable {
     /// it came from, or nil for a lone tab, which moves as an ordinary Bento
     /// pane.
     public mutating func tearOff(_ id: WindowID) -> UUID? {
-        guard let pane = groups.pane(containing: id), pane.tabs.count > 1 else { return nil }
-        removeTabPosition(id)
-        guard groups.float(id) else { return nil }
+        guard let pane = groups.pane(containing: id), pane.tabs.count > 1,
+              let index = logicalIndex(of: id, in: pane), groups.float(id) else { return nil }
+        removeReservedIndex(index, in: pane.id)
         automaticFloats.remove(id)
         if pane.selected == id { recordSelection(in: pane.id) }
         return pane.id

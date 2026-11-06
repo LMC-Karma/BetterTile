@@ -915,13 +915,16 @@ changed in that pane while it was away. Selecting a newly adopted window counts
 as a change. A selection in another pane does not prevent restoration.
 Automatic replacement of an absent selected tab does not count as a selection
 change. Undo treats windows still open but unavailable as temporary absences;
-close evidence has already removed closed windows from Undo steps.
+close evidence has already removed closed windows from Undo steps. A tab that
+returned after the Undo snapshot uses that snapshot's return slot and the
+ordinary fit check, so Undo does not move it to the active pane.
 
 An open window that stays ineligible keeps its slot without a timeout. It can
 still return to that pane later, but a newer selection in the pane prevents it
 from taking selection back. Close evidence deletes the slot, including for an
-inactive desktop. Presets, Repair Layout, leaving Tabbed for Adaptive, removal
-of the owning pane, and an explicit move of that window also clear it. Leaving
+inactive desktop. Presets, Repair Layout, Saved Layout Apply, leaving Tabbed for
+Adaptive, removal of the owning pane, and an explicit move of that window also
+clear it. Leaving
 Tabbed for Manual and switching desktops retain slots. Tree synchronization
 keeps them while their pane exists.
 
