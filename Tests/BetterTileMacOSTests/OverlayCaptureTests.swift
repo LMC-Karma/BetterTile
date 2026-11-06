@@ -34,6 +34,7 @@ import Testing
         // Landing panels are released on hide and created again with the new value.
         cues.hide()
         showCue()
+        #expect(policy.panelsForTesting.count > panels.count, "Showing the cue again must create new landing panels")
         #expect(policy.panelsForTesting.allSatisfy { $0.sharingType == (enabled ? .none : .readOnly) })
     }
 

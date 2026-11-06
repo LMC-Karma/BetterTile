@@ -69,7 +69,7 @@ import Testing
 
 @Test(.appTestApplication, arguments: [
     (SettingsDestination.general, [
-        "Startup", "Launch at login", "Show menu bar icon", "Show Dock icon", "App icon",
+        "Startup", "Launch at login", "Show menu bar icon", "Show Dock icon", "App icon", "Show overlays in screen recordings",
         "Appearance", "BetterTile appearance", "Keyboard", "Setup Assistant",
         "Updates", "Automatically check for updates", "BetterTile updates", "Development details",
         "Compatibility", "Enhanced accessibility", "Privacy", "What BetterTile can see", "About", "Version",
@@ -114,7 +114,7 @@ func everyVisibleRowLabelFindsItsPage(destination: SettingsDestination, labels: 
 }
 
 @Test(.appTestApplication) func overlayCaptureSettingIsSearchableInGeneral() {
-    for term in ["Show overlays in screen recordings", "screenshots", "snap previews", "drop cues"] {
+    for term in ["Show overlays in screen recordings", "screenshots", "snap previews", "drop cues", "capture", "screen capture"] {
         #expect(SettingsDestination.general.matchesSearch(term), "General must match \(term)")
     }
 }
