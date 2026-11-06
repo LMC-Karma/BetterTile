@@ -1176,3 +1176,41 @@ func queuedTabbedActionStartsAfterStaleCarriedDropCleanup() async throws {
     #expect(fixture.session?.tabbedState?.floatingWindowIDs.contains(fixture.a1) == false,
             "The queued action's Undo captured provisional membership")
 }
+
+/// A closed peer invalidates the carried drop before its placement runs.
+/// The next queued move must use the session after the drop's float cleanup.
+@Test(.appTestApplication, arguments: ["addAsTab", "halfSnap"]) @MainActor
+func aQueuedTabMoveSurvivesAnInvalidatedCarriedDrop(drop: String) async throws {
+    let fixture = try await carry(to: .tabbed, suspendedSample: (300, 420))
+    defer { fixture.model.shutdown() }
+    let model = fixture.model, system = fixture.system
+    try #require(hasLayoutDrag(model))
+    try await settle(fixture, for: .milliseconds(100))
+    let before = try #require(fixture.session?.tabbedState)
+    let target = try #require(before.panes.last)
+    let b1 = WindowID(rawValue: "B1"), b2 = WindowID(rawValue: "B2")
+    let peer = try #require(system.windows.first { $0.id == b2 })
+    let undoSteps = tabbedUndoStepCount(model)
+    dropOnTabbedDestination(fixture, drop, target: target.id)
+    try #require(model.hasPendingTabbedPlacement)
+    model.performTabbed(.move(b1, pane: target.id, index: nil))
+    system.windows.removeAll { $0.id == b2 }
+    system.eventHandler?(WindowSystemEvent(kind: .destroyed, windowID: b2,
+                                          processIdentifier: peer.processIdentifier))
+    try await settle(fixture)
+    let state = try #require(fixture.session?.tabbedState)
+    #expect(state.paneID(containing: b1) == target.id, "The queued move was lost after carried-drop cleanup")
+    #expect(state.windowIDs.contains(fixture.a1), "The carried window did not arrive")
+    #expect(!state.floatingWindowIDs.contains(fixture.a1))
+    #expect(!state.windowIDs.contains(b2))
+    #expect(fixture.session?.automaticWritesSuspended == false)
+    #expect(provisionalFloatRecordCount(model) == 0)
+    #expect(tabbedUndoStepCount(model) == undoSteps + 1, "Only the queued move should add an Undo step")
+    model.performTabbed(.undo)
+    try await settle(fixture)
+    let undone = try #require(fixture.session?.tabbedState)
+    #expect(undone.paneID(containing: b1) == before.paneID(containing: b1))
+    #expect(undone.windowIDs.contains(fixture.a1))
+    #expect(!undone.floatingWindowIDs.contains(fixture.a1), "Undo restored the failed drop's provisional float")
+    #expect(!undone.windowIDs.contains(b2), "Undo restored the closed peer")
+}

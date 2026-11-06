@@ -202,8 +202,12 @@ placement rolls back to the membership from before the drag without the
 provisional float, and records no Undo step. The model records each
 provisional float with its session and its owner: first the drag, then the
 placement that its drop starts. Every exit of that owner removes the float
-unless a commit put the window in a pane. The removal uses the stored session
-by ID, so it also applies when a later desktop change made that session
+unless a commit put the window in a pane. A placement or rollback removes its
+provisional float before draining queued tab actions. Cleanup can advance the
+session revision, so the next action must capture its owner after cleanup,
+including when a peer closes during the preceding drop. The next action's
+Undo step also excludes that failed drop's provisional float. The removal uses
+the stored session by ID, so it also applies when a later desktop change made that session
 inactive. It changes only membership: it selects no session and moves no
 window. A record ends with its session when that session's display or
 Space goes away. A layout drag that starts on the same session before the
@@ -285,13 +289,6 @@ A Bento or Tabbed drag stays on the display where
 it started. If a Bento drop is not committed and the dragged window cannot
 return to its frame from before the drag, BetterTile reports the failure and
 stops automatic writes until Repair, as for a degraded mutation.
-
-A carried Tabbed drop releases any unpublished floating membership before it
-drains queued actions or resumes pane application work. Cleanup can advance
-the session revision. A queued action and its Undo baseline therefore capture
-the cleaned session, even when the preceding placement ended with a stale
-revision on the same desktop. Cleanup preserves a degraded session's stop on
-automatic writes.
 
 ## Space boundary
 
