@@ -250,14 +250,6 @@ struct WindowLayoutSettings: View {
                     .frame(maxWidth: 600, alignment: .leading)
                 }
                 .padding(SettingsSpacing.s3)
-                if model.activeLayoutMode == .tabbed {
-                    SettingsRow("Apply starting layout", caption: "Arranges this desktop's windows in \(model.configuration.defaultTabbedPreset.title) now.") {
-                        Button("Apply to This Desktop") {
-                            model.performTabbed(.preset(model.configuration.defaultTabbedPreset))
-                        }
-                        .buttonStyle(.borderedProminent)
-                    }
-                }
                 SettingsRow("Place windows", caption: "Keep Adaptive panes applies only when switching from Adaptive.") {
                     Picker("Place windows", selection: tabbedEntryPlacementBinding) {
                         ForEach(TabbedEntryPlacement.allCases, id: \.self) { placement in
@@ -265,6 +257,14 @@ struct WindowLayoutSettings: View {
                         }
                     }
                     .labelsHidden().fixedSize()
+                }
+                if model.activeLayoutMode == .tabbed {
+                    SettingsRow("Apply starting layout", caption: "Uses \(model.configuration.defaultTabbedPreset.title) and keeps the current tab groups.") {
+                        Button("Apply to This Desktop") {
+                            model.performTabbed(.preset(model.configuration.defaultTabbedPreset))
+                        }
+                        .buttonStyle(.borderedProminent)
+                    }
                 }
                 SettingsRow("Tab bar presentation", caption: "Auto-hide reveals the bar after a short hover. Show Tab Bar gives it keyboard focus. Revealing it keeps windows in place.") {
                     Picker("Tab bar presentation", selection: configurationBinding(\.tabbedStripPresentation)) {

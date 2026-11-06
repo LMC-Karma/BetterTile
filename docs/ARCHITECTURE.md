@@ -1186,18 +1186,21 @@ change a Bento operation made to the tree; writing it also writes the tree.
   minimum with their sources, and the result for each pane it tried.
   Entering Tabbed from Adaptive uses the starting layout (`defaultTabbedPreset`).
   `tabbedEntryPlacement` puts all windows in one pane by default. One per pane
-  distributes windows across the starting panes, with extra windows added as
-  tabs in turn. Keep Adaptive panes adopts the Adaptive tree instead.
+  distributes windows in screen reading order: top to bottom, then left to
+  right within a row. Extra windows join the panes as tabs in turn. The incoming
+  focused window stays selected in its pane and keeps focus. Keep Adaptive
+  panes adopts the Adaptive tree instead.
   The first entry from Manual also uses the starting layout; Keep Adaptive
   panes behaves like All in one pane there. Returning from Manual restores
   the last tab groups regardless of these settings.
   Distribution runs before the first placement and adds no Undo step. Menu
   bar, Layout Wheel Mode commands and shortcuts share `setMode`; Saved Layout
   Apply keeps its own placement policy.
-  Windows that Adaptive floated on its own, such as a seventh window, stay
-  automatic floats. Every entry offers them a pane again. User-floated windows
-  stay floating. Leaving for Bento gives Tabbed's automatic floats
-  back to Bento as its own.
+  Direct entry from Adaptive carries its floats. Windows that Adaptive floated
+  on its own, such as a seventh window, stay automatic floats and are offered
+  a pane again. User-floated windows stay floating. A first entry from Manual
+  does not carry floats from an earlier Adaptive visit. Leaving for Bento gives
+  Tabbed's automatic floats back to Bento as its own.
   Leaving for Bento gives every hidden tab its own pane (`unstacked(in:)`) and
   removes the reserve. Hidden tabs fill empty panes first, largest empty pane
   first, each taking the next hidden tab from the nearest pane. The other
@@ -1894,7 +1897,9 @@ default), `onePerPane`, or `keepAdaptivePanes`. A missing key uses
 starting layout when switching from Adaptive; Keep Adaptive panes restores the
 previous entry behavior. Reset to Default restores this setting together with
 the starting layout and tab bar settings. Changing it affects future entries,
-not the current layout or Saved Layout Apply.
+not the current layout or Saved Layout Apply. Apply to This Desktop applies
+the starting layout while keeping the current tab groups; it does not use
+Place windows.
 
 Settings use a versioned Codable envelope. Version-1 display-keyed Bento states are discarded during migration because their Accessibility IDs cannot survive relaunch; all other supported preferences migrate. Runtime display sessions are not persisted. Writes use Foundation's atomic file replacement.
 

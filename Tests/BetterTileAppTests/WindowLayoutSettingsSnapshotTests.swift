@@ -7,7 +7,7 @@ import Testing
 
 @MainActor @Suite(.appTestApplication, .serialized) struct WindowLayoutSettingsSnapshotTests {
     private enum State: String, CaseIterable {
-        case adaptive, tabbed, tabbedKeepAdaptive, modified
+        case adaptive, tabbed, tabbedOnePerPane, tabbedKeepAdaptive, modified
     }
 
     @Test func rendersWindowLayoutStates() throws {
@@ -31,9 +31,12 @@ import Testing
         let model = makeModel(system: FakeAppWindowSystem())
         defer { model.shutdown() }
         model.updateConfiguration { $0.overlayAppearance.useLiquidGlass = glass }
-        let mode: LayoutMode = state == .tabbed || state == .tabbedKeepAdaptive ? .tabbed : .bento
+        let mode: LayoutMode = state == .tabbed || state == .tabbedOnePerPane || state == .tabbedKeepAdaptive ? .tabbed : .bento
         model.hasAccessibilityPermission = true
         model.setActiveMode(mode)
+        if state == .tabbedOnePerPane {
+            model.configuration.tabbedEntryPlacement = .onePerPane
+        }
         if state == .tabbedKeepAdaptive {
             model.configuration.tabbedEntryPlacement = .keepAdaptivePanes
         }

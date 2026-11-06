@@ -104,7 +104,7 @@ struct TabbedEntryPlacementTests {
     }
 
     @Test(arguments: ["allInOnePane", "onePerPane", "keepAdaptivePanes"])
-    func adaptiveAutomaticFloatsJoinOnEntry(placement: String) async throws {
+    func adaptiveAutomaticFloatEntryRegressionGuard(placement: String) async throws {
         let system = makeSystem(count: 7)
         let model = makeModel(system: system)
         defer { model.shutdown() }
@@ -206,6 +206,88 @@ struct TabbedEntryPlacementTests {
         #expect(model.savedLayoutSessions()[system.mainDisplay.id] == session)
         #expect(system.windows.map(\.frame) == frames)
         #expect(model.lastActionFeedback?.kind == .failure)
+    }
+
+    @Test(arguments: [LayoutMode.manual, .bento], [TabbedPreset.single, .columns])
+    func entryDistributionKeepsIncomingFocus(mode: LayoutMode, preset: TabbedPreset) async throws {
+        for fromWheel in [false, true] {
+            let system = makeSystem()
+            let model = makeModel(system: system)
+            defer { model.shutdown() }
+            try configure("onePerPane", preset: preset, model: model)
+            model.setActiveMode(mode)
+            try await settle(model, system: system)
+            let focused = system.windows[0].id
+            system.focusedID = focused
+            let writes = system.frameWriteCounts
+            if fromWheel {
+                model.performLayoutWheel(.setMode(.tabbed), for: try #require(model.captureLayoutWheelTarget()))
+            } else {
+                model.setActiveMode(.tabbed)
+            }
+            try await settle(model, system: system)
+            let state = try #require(model.activeTabbedState)
+            #expect(state.selectedWindowIDs.contains(focused))
+            #expect(state.activeWindowID == focused)
+            #expect(try system.focusedWindow()?.id == focused)
+            for window in system.windows {
+                #expect(system.frameWriteCounts[window.id, default: 0] - writes[window.id, default: 0] == 1)
+            }
+            model.performTabbed(.undo)
+            await system.advance(by: .seconds(1))
+            try await settle(model, system: system)
+            #expect(model.activeTabbedState == state)
+            #expect(try system.focusedWindow()?.id == focused)
+        }
+    }
+
+    @Test(arguments: ["allInOnePane", "onePerPane", "keepAdaptivePanes"], [false, true])
+    func firstManualEntryDiscardsFloatsFromEarlierAdaptiveVisit(placement: String, automatic: Bool) async throws {
+        let system = makeSystem(count: automatic ? 7 : 3)
+        let model = makeModel(system: system)
+        defer { model.shutdown() }
+        if !automatic {
+            model.setActiveMode(.tabbed)
+            try await settle(model, system: system)
+            model.performTabbed(.float(system.windows[1].id))
+            try await settle(model, system: system)
+        }
+        model.setActiveMode(.bento)
+        try #require(await system.waitFor { model.activeLayoutMode == .bento })
+        try await settle(model, system: system)
+        guard case let .bento(adaptive) = model.savedLayoutSessions()[system.mainDisplay.id] else {
+            Issue.record("Expected the earlier Adaptive visit"); return
+        }
+        #expect(!adaptive.floatingWindowIDs.isEmpty)
+        model.setActiveMode(.manual)
+        try #require(await system.waitFor { model.activeLayoutMode == .manual })
+        try await settle(model, system: system)
+        try configure(placement, preset: .columns, model: model)
+        model.setActiveMode(.tabbed)
+        try await settle(model, system: system)
+        let state = try #require(model.activeTabbedState)
+        #expect(state.windowIDs == Set(system.windows.map(\.id)))
+        #expect(state.floatingWindowIDs.isEmpty)
+    }
+
+    @Test(arguments: [LayoutMode.manual, .bento])
+    func entryDistributionFollowsScreenReadingOrder(mode: LayoutMode) async throws {
+        let system = makeSystem()
+        // IDs intentionally disagree with the visible order; the last two
+        // frames share a row, so the x-coordinate breaks the tie.
+        system.windows[0].frame = BTRect(x: 600, y: 400, width: 300, height: 300)
+        system.windows[1].frame = BTRect(x: 600, y: 0, width: 300, height: 300)
+        system.windows[2].frame = BTRect(x: 0, y: 0, width: 300, height: 300)
+        let model = makeModel(system: system)
+        defer { model.shutdown() }
+        try configure("onePerPane", preset: .columns, model: model)
+        model.setActiveMode(mode)
+        try await settle(model, system: system)
+        let expected = [system.windows[2].id, system.windows[1].id, system.windows[0].id]
+        model.setActiveMode(.tabbed)
+        try await settle(model, system: system)
+        let panes = try #require(model.activeTabbedState).panes
+        #expect(panes.map(\.tabs) == [[expected[0], expected[2]], [expected[1]]])
     }
 
 }

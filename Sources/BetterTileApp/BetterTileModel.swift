@@ -5992,10 +5992,11 @@ extension BetterTileModel {
         let windows = ignoringOversizedSeeds(windows, in: display.visibleFrame)
         var session = original
         let wasUninitialized = session.tabbedState == nil
+        let entersFromAdaptive = tabbedEntryBaselines[session.id]?.mode == .bento
         var state = session.tabbedState ?? TabbedLayoutState(
             preset: configuration.defaultTabbedPreset, presentation: configuration.tabbedStripPresentation,
-            floatingWindowIDs: session.bentoState.floatingWindowIDs,
-            automaticallyFloating: session.automaticallyFloatingWindowIDs)
+            floatingWindowIDs: entersFromAdaptive ? session.bentoState.floatingWindowIDs : [],
+            automaticallyFloating: entersFromAdaptive ? session.automaticallyFloatingWindowIDs : [])
         let entering = !session.tabbedHasEntryBaseline
         if entering {
             if tabbedEntryBaselines[session.id] == nil {
@@ -6032,7 +6033,24 @@ extension BetterTileModel {
                                windows: windows, bounds: display.visibleFrame)
         }
         if wasUninitialized, configuration.tabbedEntryPlacement == .onePerPane {
+            let incomingSelection = focused.flatMap { state.windowIDs.contains($0) ? $0 : nil }
+                ?? state.activeWindowID
+            // Entry follows the visible arrangement, not Accessibility IDs.
+            // Gather members in reading order before distributing the tabs.
+            let ordered = windows.filter { state.windowIDs.contains($0.id) }.sorted {
+                if $0.frame.minY != $1.frame.minY { return $0.frame.minY < $1.frame.minY }
+                if $0.frame.minX != $1.frame.minX { return $0.frame.minX < $1.frame.minX }
+                return $0.id < $1.id
+            }
+            if let pane = state.panes.first?.id {
+                for (index, window) in ordered.enumerated() {
+                    state.move(window.id, to: pane, at: index)
+                }
+            }
             state.applyPreset(configuration.defaultTabbedPreset, grouping: .distributeWindows)
+            // Distribution selects each pane's first tab. Entry must keep the
+            // incoming focused member visible before fitting and placement.
+            if let incomingSelection { state.select(incomingSelection) }
         }
         session.tabbedState = state
         session.windowIDs = state.windowIDs
