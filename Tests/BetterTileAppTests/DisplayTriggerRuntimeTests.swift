@@ -1212,3 +1212,17 @@ extension DisplayTriggerRuntimeTests {
         #expect(h.runtime.runs["studio.json"]?.result.placed == 0)
     }
 }
+
+@Test(.appTestApplication) @MainActor
+func automaticApplyWaitsForDisplayHoldPastItsFrameReadLimit() async throws {
+    let h = RuntimeHarness()
+    defer { h.runtime.stop(); h.applier.stop() }
+    h.addWindow("editor", on: h.second.id)
+    h.bind()
+    h.runtime.isReady = { _ in h.now >= 1006 }
+    h.connectSecond()
+    await h.finish()
+    #expect(h.now >= 1006, "Automatic Apply must not bypass the model hold when its own settle limit expires")
+    #expect(h.frameReads >= 2)
+    #expect(h.commits == [h.second.id])
+}

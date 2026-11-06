@@ -63,7 +63,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
     private let dockSpaceReader = DockSpaceReader()
     private var recentApplicationPIDs: [pid_t] = []
     private var activationObserver: NSObjectProtocol?
-    private var displayReconfigurationHandler: (@MainActor () -> Void)?
+    private var displayReconfigurationHandler: (@MainActor (CGDisplayChangeSummaryFlags) -> Void)?
     private var isMonitoringDisplayReconfiguration = false
     private var displayCallbackContext: AccessibilityCallbackContext?
 
@@ -127,7 +127,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
     }
 
     public func startDisplayReconfigurationMonitoring(
-        onChange: @escaping @MainActor () -> Void
+        onChange: @escaping @MainActor (CGDisplayChangeSummaryFlags) -> Void
     ) {
         displayReconfigurationHandler = onChange
         guard !isMonitoringDisplayReconfiguration else { return }
@@ -159,8 +159,8 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         displayReconfigurationHandler = nil
     }
 
-    fileprivate func displayConfigurationChanged() {
-        displayReconfigurationHandler?()
+    fileprivate func displayConfigurationChanged(_ flags: CGDisplayChangeSummaryFlags) {
+        displayReconfigurationHandler?(flags)
     }
 
     public func setWindowEventHandler(_ handler: (@MainActor (WindowSystemEvent) -> Void)?) {
@@ -2347,7 +2347,7 @@ private func betterTileDisplayReconfigurationCallback(
     guard let userInfo else { return }
     let context = Unmanaged<AccessibilityCallbackContext>.fromOpaque(userInfo).takeUnretainedValue()
     Task { @MainActor [weak context] in
-        context?.system?.displayConfigurationChanged()
+        context?.system?.displayConfigurationChanged(flags)
     }
 }
 

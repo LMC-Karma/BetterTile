@@ -24,7 +24,7 @@ protocol BetterTileWindowSystem: TargetedWindowSystem, WindowEventSource, Window
     ) -> Bool
     func refreshApplicationObservers()
     func resetCachedWindows()
-    func startDisplayReconfigurationMonitoring(onChange: @escaping @MainActor () -> Void)
+    func startDisplayReconfigurationMonitoring(onChange: @escaping @MainActor (CGDisplayChangeSummaryFlags) -> Void)
     func stopDisplayReconfigurationMonitoring()
     func updateManagedWindowIDs(_ ids: Set<WindowID>)
     /// Puts back settings that BetterTile changed and could not restore yet.
@@ -518,6 +518,12 @@ final class BetterTileModel {
     private var configurationNeedsSave = false
     private var isShortcutCaptureActive = false
     private var isShutDown = false
+    private var displayChangeHold = DisplayChangeHold()
+    private var displayChangeHoldTask: Task<Void, Never>?
+    private var displayChangeTimeOrigin: ContinuousClock.Instant?
+    private var displayChangeUserOverrides: Set<DisplayID> = []
+    var isHoldingDisplayChange: Bool { displayChangeHold.isHolding }
+
     let clock: BetterTileClock
 
     init(
@@ -613,6 +619,7 @@ final class BetterTileModel {
             self.schedulePendingWindowEvents()
         }
         dragSnap.actionResultHandler = { [weak self] displayID, succeeded, error in
+            if succeeded { self?.releaseDisplayChangeHoldForUserAction(on: displayID) }
             self?.presentActionResult(succeeded: succeeded, error: error, displayID: displayID)
         }
         dividerResize.stackProvider = { [weak self] ids in
@@ -626,6 +633,7 @@ final class BetterTileModel {
             self?.sessionStore.session(for: displayID)?.bentoState
         }
         dividerResize.bentoStateChangedHandler = { [weak self] displayID, state, frames, baselineFrames in
+            self?.releaseDisplayChangeHoldForUserAction(on: displayID)
             guard let self, var session = self.sessionStore.session(for: displayID) else { return }
             if session.mode == .tabbed {
                 var proposal = session
@@ -747,8 +755,8 @@ final class BetterTileModel {
             layoutWheel.start()
             refreshPermission()
             installWorkspaceTriggers()
-            system.startDisplayReconfigurationMonitoring { [weak self] in
-                self?.scheduleDisplayRefresh()
+            system.startDisplayReconfigurationMonitoring { [weak self] flags in
+                self?.handleDisplayReconfiguration(flags)
             }
             refreshActiveWindows(force: true)
 
@@ -779,6 +787,7 @@ final class BetterTileModel {
     }
 
     func setActiveMode(_ mode: LayoutMode) {
+        if let id = actionDisplayID() { releaseDisplayChangeHoldForUserAction(on: id) }
         cancelPaneApplicationRequest()
         cancelPendingFocusRestore(on: actionDisplayID())
         refreshActiveWindows(force: false)
@@ -792,6 +801,7 @@ final class BetterTileModel {
 
     /// Shared by the menu bar and the captured Layout Wheel desktop.
     private func setMode(_ mode: LayoutMode, on displayID: DisplayID, focusedWindowID: WindowID?) {
+        releaseDisplayChangeHoldForUserAction(on: displayID)
         rememberUserActionDisplay(displayID)
         cancelPaneApplicationRequest()
         cancelPendingFocusRestore(on: displayID)
@@ -833,6 +843,7 @@ final class BetterTileModel {
         invalidateMenuPanelFocusReplay()
         if action == .showTabBar { showTabBar(); return }
         let originalDisplayID = actionDisplayID()
+        if let originalDisplayID { releaseDisplayChangeHoldForUserAction(on: originalDisplayID) }
         let restoringSession = originalDisplayID.flatMap { focusRestores[$0]?.session }
         cancelPendingFocusRestore(on: originalDisplayID)
         guard !isShutDown else { return }
@@ -1002,6 +1013,7 @@ final class BetterTileModel {
         for target: LayoutWheelTarget,
         cyclesShortcut: Bool
     ) {
+        releaseDisplayChangeHoldForUserAction(on: target.displayID)
         invalidateMenuPanelFocusReplay()
         if command == .repairBento,
            repairsAfterFocusRestore(on: target.displayID, { [weak self] in
@@ -1730,6 +1742,7 @@ final class BetterTileModel {
     }
 
     private func repairBento(displayID: DisplayID, focusedWindowID: WindowID?) {
+        releaseDisplayChangeHoldForUserAction(on: displayID)
         // Repair during Focus mode ends it: the covered peers come back and the
         // previous layout returns, instead of forgetting the minimized peers.
         // Repair then verifies that layout and reports, so success is never
@@ -1958,6 +1971,7 @@ final class BetterTileModel {
     }
 
     func beginBentoDrag(displayID: DisplayID, sourceID: WindowID, sourceFrame: BTRect? = nil) -> Bool {
+        releaseDisplayChangeHoldForUserAction(on: displayID)
         invalidateMenuPanelFocusReplay()
         cancelPendingFocusRestore(on: displayID)
         guard activeBentoDrag == nil, !tabbedExiting.contains(displayID),
@@ -2819,6 +2833,7 @@ final class BetterTileModel {
     func shutdown() {
         savedLayoutActions.stop()
         displayTriggerRuntime?.stop()
+        displayChangeHoldTask?.cancel()
         savedLayoutApplier?.stop()
         cancelPaneApplicationRequest()
         for id in Array(completedRequestFocus.keys) { releaseCompletedRequestFocus(id) }
@@ -3053,6 +3068,7 @@ final class BetterTileModel {
             notificationTokens.append(workspaceCenter.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
                 Task { @MainActor in
                     guard let self, !self.isShutDown else { return }
+                    self.handleDisplayChange(.sleep)
                     self.displayTriggerRuntime?.sleeping()
                 }
             })
@@ -3061,6 +3077,7 @@ final class BetterTileModel {
             notificationTokens.append(workspaceCenter.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
                 Task { @MainActor in
                     guard let self, !self.isShutDown else { return }
+                    self.handleDisplayChange(.wake)
                     self.displayTriggerRuntime?.wake()
                 }
             })
@@ -3074,6 +3091,7 @@ final class BetterTileModel {
             // placement continuation can raise or finish the request.
             MainActor.assumeIsolated {
                 guard let self, !self.isShutDown else { return }
+                self.handleDisplayChangeApplicationActivation(bundleID: bundleID)
                 self.displayTriggerRuntime?.applicationActivated(bundleID: bundleID)
                 self.requestApplicationActivated(bundleID, processIdentifier: processIdentifier)
             }
@@ -3081,12 +3099,14 @@ final class BetterTileModel {
         notificationTokens.append(workspaceCenter.addObserver(forName: NSWorkspace.sessionDidResignActiveNotification, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self, !self.isShutDown else { return }
+                self.handleDisplayChange(.sessionResigned)
                 self.displayTriggerRuntime?.sessionResigned()
             }
         })
         notificationTokens.append(workspaceCenter.addObserver(forName: NSWorkspace.sessionDidBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self, !self.isShutDown else { return }
+                self.handleDisplayChange(.sessionBecameActive)
                 self.displayTriggerRuntime?.sessionBecameActive()
             }
         })
@@ -3127,22 +3147,132 @@ final class BetterTileModel {
         guard !isShutDown else { return }
         savedLayoutInventoryRevision &+= 1
         if waking {
+            handleDisplayChange(.wake)
             dragSnap.cancel()
             layoutWheel.cancel(reason: .waking)
         }
         #if DEBUG
         tracePendingArrivals("arrival_dropped", reason: "application_topology_refresh")
         #endif
-        pendingWindowArrivals.removeAll()
+        if !isHoldingDisplayChange { pendingWindowArrivals.removeAll() }
         system.refreshApplicationObservers()
         dividerResize.hideAndCancel()
         refreshActiveWindows(force: true)
         refreshPaneApplicationWindowChoices()
     }
 
+    private var displayChangeWorkspaceIsActive = true
+    private var displayChangeScreenWasLocked = false
+    var displayChangeScreenIsLocked: () -> Bool = {
+        NSWorkspace.shared.frontmostApplication?.bundleIdentifier == DisplayTriggerRuntime.loginWindowBundleID
+    }
+
+    func handleDisplayChangeApplicationActivation(bundleID: String?) {
+        guard displayChangeWorkspaceIsActive else { return }
+        if bundleID == DisplayTriggerRuntime.loginWindowBundleID || displayChangeScreenIsLocked() {
+            displayChangeScreenWasLocked = true
+            startDisplayChangeHold(.sessionResigned)
+        } else if displayChangeScreenWasLocked {
+            displayChangeScreenWasLocked = false
+            startDisplayChangeHold(.sessionBecameActive)
+        }
+    }
+
+    private var displayChangeTime: TimeInterval {
+        if displayChangeTimeOrigin == nil { displayChangeTimeOrigin = clock.now }
+        let elapsed = (clock.now - displayChangeTimeOrigin!).components
+        return Double(elapsed.seconds) + Double(elapsed.attoseconds) / 1e18
+    }
+
+    func handleDisplayReconfiguration(_ flags: CGDisplayChangeSummaryFlags) {
+        handleDisplayChange(flags.contains(.beginConfigurationFlag)
+            ? .displayReconfigurationBegan : .displayReconfigurationEnded)
+        scheduleDisplayRefresh()
+    }
+
+    func handleDisplayChange(_ event: DisplayChangeHold.Event) {
+        guard !isShutDown else { return }
+        if event == .sessionResigned { displayChangeWorkspaceIsActive = false }
+        if event == .sessionBecameActive { displayChangeWorkspaceIsActive = true }
+        startDisplayChangeHold(event)
+        if displayChangeScreenIsLocked() {
+            displayChangeScreenWasLocked = true
+            startDisplayChangeHold(.sessionResigned)
+        }
+    }
+
+    private func startDisplayChangeHold(_ event: DisplayChangeHold.Event) {
+        displayChangeHold.receive(event, at: displayChangeTime)
+        displayChangeUserOverrides.removeAll()
+        Self.bentoLog.debug("display hold started: \(event.rawValue, privacy: .public)")
+        displayChangeHoldTask?.cancel()
+        windowEventTask?.cancel()
+        windowEventTask = nil
+        cancelPendingFocusRestore(on: nil)
+        applicationRecoveryTask?.cancel()
+        applicationRecoveryTask = nil
+        tabbedTasks.values.forEach { $0.cancel() }
+        tabbedFocusTask?.cancel()
+        tabbedResizeReleaseTask?.cancel()
+        settlementTasks.values.forEach { $0.cancel() }
+        settlementTasks.removeAll()
+        spaceStabilizationTask?.cancel()
+        isStabilizingSpace = false
+        spaceStabilizationGeneration &+= 1
+        pendingWindowEvents.recordTopologyChange()
+        let token = displayChangeHold.token
+        displayChangeHoldTask = Task { @MainActor [weak self, clock] in
+            while !Task.isCancelled {
+                guard let self, !self.isShutDown, self.displayChangeHold.token == token else { return }
+                if self.sampleDisplayChangeHold(token: token) { return }
+                try? await clock.sleep(for: .milliseconds(250))
+            }
+        }
+    }
+
+    private func recordDisplayChangeObservation(windows: [WindowSnapshot]? = nil) {
+        if let observed = windows ?? (try? observeVisibleWindows()) {
+            recordObservedWindows(observed, observation: system.nativeDesktopObservation())
+        }
+        let connected = Set(system.displays().map(\.id))
+        for (id, overlay) in tabbedOverlays where !connected.contains(id) { overlay.hide() }
+        pendingWindowEvents.recordTopologyChange()
+    }
+
+    private func sampleDisplayChangeHold(token: UInt64) -> Bool {
+        let windows = try? observeVisibleWindows()
+        recordDisplayChangeObservation(windows: windows)
+        let frames = windows.map { Dictionary(uniqueKeysWithValues: $0.map { ($0.id, $0.frame) }) }
+        guard displayChangeHold.sample(displaySignature: Set(system.displays()), windowFrames: frames,
+                                       at: displayChangeTime, token: token) != nil else { return false }
+        displayChangeHoldTask = nil
+        displayChangeUserOverrides.removeAll()
+        let reason = displayChangeHold.settledByLimit ? "limit" : "quiet"
+        Self.bentoLog.debug("display hold settled: \(reason, privacy: .public)")
+        let closed = confirmedGoneWindowIDs
+        let minimized = confirmedMinimizedWindowIDs
+        refreshActiveWindows(force: true, windows: windows, desktopTransition: true)
+        confirmedGoneWindowIDs.formUnion(closed)
+        confirmedMinimizedWindowIDs.formUnion(minimized)
+        // Preserve lifecycle evidence for the ordinary sweep after the transition.
+        pendingWindowEvents.recordTopologyChange()
+        schedulePendingWindowEvents()
+        return true
+    }
+
+    private func displayChangeAllowsLayout(on displayID: DisplayID) -> Bool {
+        !isHoldingDisplayChange || displayChangeUserOverrides.contains(displayID)
+    }
+
+    private func releaseDisplayChangeHoldForUserAction(on displayID: DisplayID) {
+        guard isHoldingDisplayChange else { return }
+        displayChangeUserOverrides.insert(displayID)
+    }
+
     /// Coalesces Core Graphics and AppKit display notifications into the same
     /// refresh. AppKit remains the fallback when callback registration fails.
     func scheduleDisplayRefresh() {
+        handleDisplayChange(.screenParametersChanged)
         layoutWheel.cancel(reason: .displayChanged)
         displayRefreshDebouncer.schedule { [weak self] in
             guard let self else { return }
@@ -3159,6 +3289,10 @@ final class BetterTileModel {
     }
 
     func beginActiveSpaceStabilization() {
+        if isHoldingDisplayChange {
+            pendingWindowEvents.recordTopologyChange()
+            return
+        }
         invalidateMenuPanelFocusReplay()
         savedLayoutApplier?.cancel()
         cancelPaneApplicationRequest()
@@ -3326,6 +3460,7 @@ final class BetterTileModel {
     }
 
     func watchdog() {
+        if isHoldingDisplayChange { recordDisplayChangeObservation(); return }
         guard refreshPermission() else { return }
         guard activeBentoDrag == nil, !isStabilizingSpace else { return }
         let priorRecoveryGeneration = applicationRecoveryGeneration
@@ -3517,7 +3652,7 @@ final class BetterTileModel {
     /// Wake once after a held application's deadline, then back off. Recovery
     /// observes the current desktop; it never retains a placement proposal.
     private func scheduleUnresponsiveApplicationRecovery() {
-        guard !isShutDown, !isStabilizingSpace,
+        guard !isShutDown, !isStabilizingSpace, !isHoldingDisplayChange,
               activeBentoDrag == nil, !dragSnap.isGestureActive, !dividerResize.isDragging else { return }
         let deadlines = system.unresponsiveApplicationRecoveryDeadlines
         applicationRecoveries = applicationRecoveries.filter { deadlines[$0.key] != nil }
@@ -3625,6 +3760,10 @@ final class BetterTileModel {
             for overlay in spacePanelOverlays.values {
                 overlay.removeUnavailableWindows([windowID])
             }
+        }
+        if isHoldingDisplayChange {
+            pendingWindowEvents.record(event)
+            return
         }
         guard !isStabilizingSpace else { return }
         // A wheel aimed at a window that just went away must not fall through to
@@ -3829,7 +3968,7 @@ final class BetterTileModel {
         #if DEBUG
         if isGestureActive || isStabilizingSpace { tracePendingArrivals("arrival_deferred", reason: isGestureActive ? "drag" : "space_stabilization") }
         #endif
-        guard !isGestureActive, !isStabilizingSpace,
+        guard !isGestureActive, !isStabilizingSpace, !isHoldingDisplayChange,
               !pendingWindowEvents.isEmpty || pendingBentoFocusCheck else { return }
         // Frame traffic must not postpone an already queued window arrival.
         if windowEventTask != nil, windowEventTaskIncludesTopology,
@@ -3864,7 +4003,7 @@ final class BetterTileModel {
     func processPendingWindowEvents(windows suppliedWindows: [WindowSnapshot]? = nil, forceRefresh: Bool = false) {
         if savedLayoutApplier?.ownedDisplayID != nil { return }
         let isGestureActive = activeBentoDrag != nil || dragSnap.isGestureActive || dividerResize.isDragging
-        guard !isGestureActive, !isStabilizingSpace,
+        guard !isGestureActive, !isStabilizingSpace, !isHoldingDisplayChange,
               !pendingWindowEvents.isEmpty || pendingBentoFocusCheck else { return }
         if suppliedWindows == nil, !forceRefresh, placeCreatedWindowsFromTargetedReads() { return }
         let priorRecoveryGeneration = applicationRecoveryGeneration
@@ -4576,7 +4715,7 @@ final class BetterTileModel {
         arrivalTrace.decided(placements, mode: "Adaptive")
         #endif
         let expectedRevision = session.revision
-        guard ownerIsCurrent(), recoveryDesktopIsCurrent(for: session),
+        guard displayChangeAllowsLayout(on: display.id), ownerIsCurrent(), recoveryDesktopIsCurrent(for: session),
               sessionStore.isCurrent(session.id, revision: expectedRevision, on: display.id) else {
             statusMessage = "The Adaptive layout changed before this update could finish. Try again."
             Self.bentoLog.notice("discarded stale proposal for revision \(expectedRevision, privacy: .public)")
@@ -5213,6 +5352,10 @@ final class BetterTileModel {
         relayoutPaneGap: Bool = false
     ) {
         guard !isShutDown else { return }
+        if isHoldingDisplayChange && displayChangeUserOverrides.isEmpty {
+            recordDisplayChangeObservation(windows: suppliedWindows)
+            return
+        }
         let isPaneGapOnlyRefresh = relayoutPaneGap
         let relayoutPaneGap = relayoutPaneGap
             || (paneGapRelayoutPending && paneGapBeforeRelayout == nil && canRelayoutPaneGap)
@@ -5313,8 +5456,8 @@ final class BetterTileModel {
             tabbedTasks.removeValue(forKey: id)?.cancel()
             tabbedTaskIDs.removeValue(forKey: id)
         }
-        sessionStore.removeMissingDisplays(displayIDs)
-        if let nativeObservation {
+        if !isHoldingDisplayChange { sessionStore.removeMissingDisplays(displayIDs) }
+        if let nativeObservation, !isHoldingDisplayChange {
             sessionStore.removeMissingNativeSpaces(nativeObservation.knownSpacesByDisplay)
             nativeFullscreenDisplayIDs = Set(nativeObservation.currentSpaceByDisplay.compactMap {
                 nativeObservation.fullscreenSpaceIDs.contains($0.value) ? $0.key : nil
@@ -5336,6 +5479,10 @@ final class BetterTileModel {
         )
 
         for display in displays {
+            if !displayChangeAllowsLayout(on: display.id) {
+                if let held = sessionStore.session(for: display.id) { deferredWindowIDs.formUnion(held.windowIDs.union(held.bentoState.root?.windowIDs ?? []).union(held.tabbedState?.windowIDs ?? [])) }
+                continue
+            }
             if isPaneGapOnlyRefresh {
                 guard sessionStore.session(for: display.id)?.mode == .bento else { continue }
             }
@@ -5966,6 +6113,7 @@ extension BetterTileModel {
         _ original: LayoutSession, display: DisplaySnapshot, windows: [WindowSnapshot],
         removed: Set<WindowID>, focused: WindowID?, force: Bool
     ) {
+        guard displayChangeAllowsLayout(on: display.id) else { return }
         guard tabbedTasks[display.id] == nil else {
             #if DEBUG
             if arrivalTrace.isEnabled { for window in windows {
@@ -6433,6 +6581,7 @@ extension BetterTileModel {
         validating additionalValidation: @escaping @MainActor () -> Bool = { true }
     ) {
         let windows = ignoringOversizedSeeds(windows, in: display.visibleFrame)
+        guard displayChangeAllowsLayout(on: display.id) else { return }
         guard tabbedTasks[display.id] == nil else {
             #if DEBUG
             if arrivalTrace.isEnabled { for window in windows {
@@ -7210,6 +7359,7 @@ extension BetterTileModel {
     ///   before the placement. A selection that follows a focus change the
     ///   user made does not: that window is already in front.
     private func handleTabbed(_ intent: TabbedUIIntent, on displayID: DisplayID, raisesEarly: Bool = true) {
+        if raisesEarly { releaseDisplayChangeHoldForUserAction(on: displayID) }
         // A manual destination supersedes the request. Observing focus on another
         // pane only changes selection; the captured destination still owns the arrival.
         if raisesEarly { cancelPaneApplicationRequest() }
@@ -7709,6 +7859,7 @@ extension BetterTileModel {
     }
 
     func performTabbed(_ intent: TabbedUIIntent) {
+        if let id = actionDisplayID() { releaseDisplayChangeHoldForUserAction(on: id) }
         invalidateMenuPanelFocusReplay()
         guard let activeDisplayID else { return }
         handleTabbed(intent, on: activeDisplayID)
@@ -7722,7 +7873,7 @@ extension BetterTileModel {
     /// whose application is really in front becomes selected. Otherwise the
     /// stacking repair puts hidden tabs back behind their selected tabs.
     private func handleTabbedFocus() {
-        guard !isStabilizingSpace, sessionStore.sessions.values.contains(where: { $0.mode == .tabbed }) else { return }
+        guard !isHoldingDisplayChange, !isStabilizingSpace, sessionStore.sessions.values.contains(where: { $0.mode == .tabbed }) else { return }
         tabbedNeedsFocusRefresh = true
         tabbedFocusTask?.cancel()
         let clock = tabbedClock
@@ -8793,6 +8944,7 @@ extension BetterTileModel {
             let document = try savedLayoutActions.load(file)
             savedLayoutActions.message = nil
             rememberUserActionDisplay(display)
+            releaseDisplayChangeHoldForUserAction(on: display)
             savedLayoutActionFile = file
             applier.start(document, displayID: display, positions: .init(file: file, store: .init(files: savedLayoutActions.files)))
             refreshSavedLayoutActionTarget()
@@ -8922,7 +9074,7 @@ extension BetterTileModel {
         }
         runtime.isReady = { [weak self] id in
             guard let self else { return false }
-            return !self.isStabilizingSpace && !self.isTabbedBusy(on: id) && self.settlementTasks[id] == nil
+            return !self.isHoldingDisplayChange && !self.isStabilizingSpace && !self.isTabbedBusy(on: id) && self.settlementTasks[id] == nil
         }
         runtime.isInteracting = { [weak self] in
             guard let self else { return false }

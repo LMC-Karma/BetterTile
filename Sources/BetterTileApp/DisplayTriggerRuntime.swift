@@ -204,7 +204,7 @@ struct DisplayTriggerNotice {
     /// user is dragging. Ends with `.settled`, which lets the reducer judge the newest display set.
     private func wait(_ token: Int) async {
         var detector = DisplaySettleDetector(quietInterval: tickSeconds, limit: settleLimit)
-        let begun = uptime()
+        var begun = uptime()
         while !Task.isCancelled, reducer.currentToken == token {
             // The lock screen came up during the wait. Keep the attempt for the unlock.
             if !sessionIsActive || isScreenLocked() {
@@ -217,7 +217,15 @@ struct DisplayTriggerNotice {
                 return
             }
             let displays = Set(targets())
-            if displays.allSatisfy(isReady), let frames = observeFrames(displays) {
+            guard displays.allSatisfy(isReady) else {
+                // The frame-read deadline cannot bypass the model's hold.
+                // Start a fresh quiet interval when layout becomes available.
+                detector = DisplaySettleDetector(quietInterval: tickSeconds, limit: settleLimit)
+                begun = uptime()
+                await sleep(tick)
+                continue
+            }
+            if let frames = observeFrames(displays) {
                 switch detector.observe(frames, at: uptime()) {
                 case .quiet: return finish(token, moving: [])
                 case let .timedOut(still): return finish(token, moving: still)

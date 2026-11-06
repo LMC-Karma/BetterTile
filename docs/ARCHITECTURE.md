@@ -273,6 +273,21 @@ fixed-size window, which could float.
 
 ## Event ordering
 
+Display and sleep notifications start a `DisplayChangeHold` before refreshing
+layouts. The Core reducer uses monotonic time and `DisplaySettleDetector`.
+Two equal display and window observations 250 ms apart release the hold.
+An unfinished display reconfiguration releases after five seconds without a new
+display event. Sleep and an inactive or locked session wait for wake and unlock;
+those events restart the deadline. The public Core Graphics callback forwards
+its begin and completion flags, with AppKit screen notifications as a fallback.
+
+During the hold, observations and closed or minimized evidence accumulate.
+Missing displays and Spaces keep their sessions. Automatic reconciliation,
+minimum-size probes and frame writes wait. Removed displays hide their Tabbed
+chrome. Settling runs a desktop-transition refresh followed by an ordinary event
+pass. Explicit layout actions release their target display from the hold.
+Display Trigger Automatic Apply also waits for the hold to end.
+
 Window identities survive off-screen and incomplete Accessibility sweeps.
 After a successful application Accessibility inventory omits a window, cleanup
 requires either its exact identity to be absent from the full public WindowServer
