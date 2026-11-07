@@ -919,8 +919,8 @@ change a Bento operation made to the tree; writing it also writes the tree.
   Compact draws every app icon and only the selected title. Tooltips,
   accessibility labels, and the pane menu retain full titles.
 - Auto-hide reserves its 6-point band once. Revealing a 34-point strip changes
-  only the panel frame and overlays the selected window. It does not mutate
-  an application window. Both states span the pane's full width. The collapsed
+  the panel frame and overlays the selected window. It does not mutate an
+  application window. Both states span the pane's full width. The collapsed
   band draws a three-point line with the strip's regular glass at reduced
   opacity. Dark appearance adds a 15-percent neutral tint beneath the glass line.
   The active pane's line is slightly brighter, without accent color.
@@ -928,6 +928,11 @@ change a Bento operation made to the tree; writing it also writes the tree.
   clipping animation expands the strip without scaling its content; Reduce
   Motion disables it. Content fades in over the final 60 percent. Lower-pane
   bands start inside their pane, after the gap.
+  Before reveal starts, a normal-level strip is ordered again directly above
+  its pane's selected window. A click can raise an already-focused window above
+  the strip without a focus event, so this restores the strip's place. Hover,
+  holds, Show Tab Bar, and a hover that reverses a collapse share this path.
+  Collapse and Space suspension add no orders.
   Local and global pointer-only monitors receive every mouse move and drag
   while Auto-hide is active, not only near a strip. Each sample reads the
   pointer location and acts only inside the six-point hidden band, the full
