@@ -1863,6 +1863,14 @@ Release drains those commands even when no new placement is needed.
 
 The linked-resize engine detects and merges shared boundary segments within a configurable tolerance. Linked and Bento boundaries share the same overlay interaction model, but Bento resizing stays tree-aware instead of applying flat per-window deltas. The requested operation clamps against recursive subtree minimum sizes and visible bounds.
 
+Native linked resizing captures window geometry when it receives the mouse
+press. Admission resolves focus after the press, so clicking an unfocused
+window selects the correct source.
+It reuses the captured geometry when that source is still on the same display;
+otherwise it reads a fresh baseline. Admission releases the press snapshot,
+and ending or cancelling the gesture clears it. Release applies the latest
+observed source frame even if no display tick ran during the gesture.
+
 ## Configuration
 
 Pane gap changes publish to Settings immediately. Window placement consumes the
