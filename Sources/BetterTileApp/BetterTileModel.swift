@@ -3623,7 +3623,7 @@ final class BetterTileModel {
         if let windowID = event.windowID, event.kind == .destroyed || event.kind == .minimized {
             // Update cached content before stabilization or gesture buffering can defer a sweep.
             for overlay in spacePanelOverlays.values {
-                overlay.removeUnavailableWindows([windowID])
+                overlay.removeUnavailableWindows([windowID], closed: event.kind == .destroyed)
             }
         }
         guard !isStabilizingSpace else { return }
@@ -5436,7 +5436,8 @@ final class BetterTileModel {
             if activation.session.mode == .tabbed {
                 refreshTabbedSession(
                     activation.session, display: display, windows: displayWindows,
-                    removed: consumedDestroyedWindowIDs.union(consumedMinimizedWindowIDs)
+                    closed: consumedDestroyedWindowIDs,
+                    away: consumedMinimizedWindowIDs
                         .union(windows.filter { $0.displayID != display.id || !$0.isEligible }.map(\.id))
                         .union(activation.session.tabbedState?.windowIDs.filter { id in
                             guard let memberships = nativeObservation?.windowMembership[id],
@@ -5964,7 +5965,7 @@ private enum PendingTabbedIntent {
 extension BetterTileModel {
     private func refreshTabbedSession(
         _ original: LayoutSession, display: DisplaySnapshot, windows: [WindowSnapshot],
-        removed: Set<WindowID>, focused: WindowID?, force: Bool
+        closed: Set<WindowID>, away: Set<WindowID>, focused: WindowID?, force: Bool
     ) {
         guard tabbedTasks[display.id] == nil else {
             #if DEBUG
@@ -6007,9 +6008,9 @@ extension BetterTileModel {
         reservePaneApplicationArrivals(in: &state, session: session, windows: windows)
         state.setPresentation(configuration.tabbedStripPresentation)
         if wasUninitialized {
-            state.reconcile(windowIDs: windows.map(\.id), removed: removed, focused: focused)
+            state.reconcile(windowIDs: windows.map(\.id), removed: closed, away: away, focused: focused)
         } else {
-            let arrivals = state.reconcile(windowIDs: windows.map(\.id), removed: removed,
+            let arrivals = state.reconcile(windowIDs: windows.map(\.id), removed: closed, away: away,
                                            fittingIn: display.visibleFrame, windows: windows, followed: session.followed)
             logTabbedAdoptions(arrivals, transition: entering ? "entry arrival" : "arrival",
                                before: before, windows: windows, bounds: display.visibleFrame)
@@ -6063,7 +6064,7 @@ extension BetterTileModel {
         let selectionNeedsPlacement = tabbedCommittedLayouts[session.id].map {
             $0.selected != Set(state.selectedWindowIDs)
         } ?? false
-        let changed = wasUninitialized || before != state || selectionNeedsPlacement
+        let changed = wasUninitialized || !before.layoutEquals(state) || selectionNeedsPlacement
             || session.lastWorkArea != display.visibleFrame
         if spacePanelCorrections.contains(session.id), changed {
             tabbedOverlays[display.id]?.hide()
@@ -7311,11 +7312,18 @@ extension BetterTileModel {
             previous.setPresentation(configuration.tabbedStripPresentation)
             restorationFrames = step.floatingFrames
             let visible = Set(windows.map(\.id))
-            previous.reconcile(windowIDs: windows.map(\.id), removed: previous.windowIDs.subtracting(visible), focused: nil)
+            // A window can return after this Undo snapshot was recorded.
+            // Restore its saved place through the same fit check as an arrival,
+            // before ordinary new windows are added to the active pane.
+            let returning = visible.intersection(previous.returnSlots.keys)
+            previous.reconcile(windowIDs: returning.sorted(), removed: [], away: previous.windowIDs.subtracting(visible),
+                               fittingIn: display.visibleFrame, windows: windows)
+            previous.reconcile(windowIDs: windows.map(\.id), removed: [], focused: nil)
             state = previous
             consumeUndo = true
             focus = state.activeWindowID; undo = false
         case .repair:
+            state.clearReturnSlots()
             session.prepareForRepair()
             session.resumeAutomaticWrites()
             // Windows that floated on their own come back first, decided
@@ -7477,6 +7485,7 @@ extension BetterTileModel {
             let outcome: String = switch adoption.outcome {
             case let .selected(id): "selected tab of pane \(pane(id))"
             case let .hidden(id): "hidden tab of pane \(pane(id)), which can show it"
+            case let .returned(id): "returned to pane \(pane(id))"
             case let .floated(reason): "floating (\(reason.rawValue))"
             }
             let trials = adoption.trials.map { "\(pane($0.paneID)) \(text($0.contentFrame)): \($0.result.rawValue)" }
@@ -8996,15 +9005,19 @@ extension BetterTileModel {
         let current = sessionStore.session(for: desktop.displayID)
         if startsFollowing || current?.followed != nil, let owners = snapshot.sessionOwners {
             let previous = owners[desktop.displayID]
-            // Bookkeeping sweeps may advance the revision without changing this proposal's policy.
+            // Return bookkeeping cannot change this proposal's pane policy.
+            var previousTabbed = previous?.tabbedState
+            var currentTabbed = current?.tabbedState
+            previousTabbed?.clearReturnSlots()
+            currentTabbed?.clearReturnSlots()
             guard previous?.id == current?.id, previous?.mode == current?.mode,
-                  previous?.bentoState == current?.bentoState, previous?.tabbedState == current?.tabbedState,
+                  previous?.bentoState == current?.bentoState, previousTabbed == currentTabbed,
                   previous?.followed == current?.followed else { return false }
         }
         var session = current ?? sessionStore.activate(
             displayID: desktop.displayID, windowIDs: [], focusedWindowID: nil,
             defaultMode: configuration.defaultLayoutMode, reuseActiveWhenUnmatched: false, nativeSpaceID: desktop.spaceID).session
-        let revision = session.revision
+        let owner = session
         let sessionID = session.id
         var placements = plan.placements
         var required: Set<WindowID>?
@@ -9026,7 +9039,7 @@ extension BetterTileModel {
         }
         let ownerMatchesObservation = { @MainActor [weak self] (visible: [WindowSnapshot], observation: NativeDesktopObservation?) in
             guard snapshot.sessionIsAvailable(), let self, !self.isShutDown, self.hasAccessibilityPermission, !self.isStabilizingSpace,
-                  self.sessionStore.isCurrent(sessionID, revision: revision, on: desktop.displayID),
+                  self.sessionStore.session(for: desktop.displayID)?.equalsIgnoringTabbedReturns(owner) == true,
                   self.system.displays().first(where: { $0.id == desktop.displayID })?.visibleFrame == display.visibleFrame,
                   let observation,
                   observation.currentSpace(on: desktop.displayID) == desktop.spaceID,
@@ -9214,7 +9227,7 @@ extension BetterTileModel {
             savedLayoutApplier?.precommitRefusal = .mutationChanged
             recover(); return false
         }
-        guard sessionStore.commit(session, replacing: revision) != nil else {
+        guard sessionStore.commitIgnoringTabbedReturns(session, replacing: owner) != nil else {
             savedLayoutApplier?.recordFailure(.modelSessionCommit)
             recover(); return false
         }

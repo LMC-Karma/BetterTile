@@ -899,6 +899,46 @@ Tabbed is Bento with tab groups. A Tabbed desktop's `bentoState` is its layout;
 and the pane that receives new windows. Reading `tabbedState` follows any
 change a Bento operation made to the tree; writing it also writes the tree.
 
+`TabbedLayoutState.returnSlots` remembers a tab's pane, tab index, and selection
+when the window is temporarily unavailable: minimized, hidden, full screen,
+unmovable, reported on another display, or assigned to another desktop. The tab
+leaves the pane but keeps its return slot. A returning window tries this slot
+before Saved Layout preferences and the active pane. The existing fit check
+must prove that the pane can show it, with boundary adaptation if needed;
+otherwise ordinary arrival routing takes over. The slot is consumed in either
+case. A floating window keeps its floating state while unavailable.
+
+Returns preserve tab order even when several windows leave or return in a
+different order. Removing, moving, floating, or reordering a peer updates the
+other reserved positions. A selected tab returns selected unless a selection
+changed in that pane while it was away. Selecting a newly adopted window counts
+as a change. A selection in another pane does not prevent restoration.
+Automatic replacement of an absent selected tab does not count as a selection
+change. Undo treats windows still open but unavailable as temporary absences;
+close evidence has already removed closed windows from Undo steps. A tab that
+returned after the Undo snapshot uses that snapshot's return slot and the
+same fit check as any return, so Undo does not move it to the active pane
+while its own pane can show it.
+
+An open window that stays ineligible keeps its slot without a timeout. It can
+still return to that pane later, but a newer selection in the pane prevents it
+from taking selection back. Close evidence deletes the slot, including for an
+inactive desktop. Presets, Repair Layout, Saved Layout Apply, leaving Tabbed for
+Adaptive, removal of the owning pane, and an explicit move of that window also
+clear it. Leaving Tabbed for Manual and switching desktops retain slots. Tree
+synchronization keeps them while their pane exists.
+
+Slots and selection generations remain part of full session equality and
+revision checks. A sweep uses `layoutEquals` to decide whether to place windows;
+return bookkeeping alone cannot start a placement. Tab interactions also use
+`layoutEquals`, so return-only changes do not cancel a drag or pending drop.
+Saved Layout Apply excludes this metadata and entry-frame cleanup for the absent
+tabs from its owner checks. It still rejects changes to membership, selection,
+mode, pane geometry, following, and other session state. Its final commit merges
+return bookkeeping changed since its baseline, so it cannot restore a slot that
+was closed during Apply. Ordinary session commits still require the exact
+revision. These values exist only in memory and are never persisted.
+
 - Each pane is a Bento leaf holding its selected tab, or a vacancy with the
   pane's identity when empty. A pane follows its selected window, so a swap
   carries the whole group. Selecting a tab replaces the leaf's window.
