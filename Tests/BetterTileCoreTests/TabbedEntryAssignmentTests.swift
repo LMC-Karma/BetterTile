@@ -85,7 +85,7 @@ import Testing
     }
 
     private struct Seed {
-        var state: UInt64 = 0xB7_2026_11_06
+        var state: UInt64 = 0x9E37_79B9_7F4A_7C15
         mutating func next(_ upper: Int) -> Int {
             state = state &* 6_364_136_223_846_793_005 &+ 1
             return Int((state >> 32) % UInt64(upper))
