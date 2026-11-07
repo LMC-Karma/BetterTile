@@ -26,6 +26,9 @@ protocol BetterTileWindowSystem: TargetedWindowSystem, WindowEventSource, Window
     func resetCachedWindows()
     func startDisplayReconfigurationMonitoring(onChange: @escaping @MainActor (CGDisplayChangeSummaryFlags) -> Void)
     func stopDisplayReconfigurationMonitoring()
+    /// The current display arrangement, read where it is current during a
+    /// reconfiguration callback.
+    func displayArrangement() -> DisplayArrangement
     func updateManagedWindowIDs(_ ids: Set<WindowID>)
     /// Puts back settings that BetterTile changed and could not restore yet.
     func restoreEnhancedUserInterfaceBeforeQuit()
@@ -35,6 +38,7 @@ extension AccessibilityWindowSystem: BetterTileWindowSystem {}
 
 extension BetterTileWindowSystem {
     var unresponsiveApplicationRecoveryDeadlines: [Int32: TimeInterval] { [:] }
+    func displayArrangement() -> DisplayArrangement { DisplayArrangement(displays()) }
     func restoreEnhancedUserInterfaceBeforeQuit() {}
 }
 
@@ -520,6 +524,16 @@ final class BetterTileModel {
     private var isShutDown = false
     private var displayChangeHold = DisplayChangeHold()
     private var displayChangeHoldTask: Task<Void, Never>?
+    /// The arrangement when the last hold settled. A screen-parameter
+    /// notification that leaves it unchanged starts no hold.
+    private var settledDisplayArrangement: DisplayArrangement?
+    /// The arrangement at the latest event that started or extended this hold.
+    private var heldDisplayArrangement: DisplayArrangement?
+    /// The arrangement when the first pending reconfiguration began.
+    private var reconfigurationStartArrangement: DisplayArrangement?
+    /// True when this hold has a cause other than reconfigurations that end
+    /// without changing the arrangement, such as sleep, lock or a real change.
+    private var displayHoldHasOtherCause = false
     private var displayChangeTimeOrigin: ContinuousClock.Instant?
     private var displayChangeUserOverrides: Set<DisplayID> = []
     var isHoldingDisplayChange: Bool { displayChangeHold.isHolding }
@@ -735,6 +749,7 @@ final class BetterTileModel {
             self?.setUsesSharedGestureEvents(false)
         }
         system.setWindowEventHandler { [weak self] event in self?.receiveWindowSystemEvent(event) }
+        settledDisplayArrangement = system.displayArrangement()
         shortcuts.update(bindings: loaded.shortcuts)
         configureSavedLayoutApply()
         savedLayoutActions.didChange = { [weak self] in self?.refreshSavedLayoutActions() }
@@ -3228,15 +3243,54 @@ final class BetterTileModel {
         guard !isShutDown else { return }
         if event == .sessionResigned { displayChangeWorkspaceIsActive = false }
         if event == .sessionBecameActive { displayChangeWorkspaceIsActive = true }
-        startDisplayChangeHold(event)
+        if !isHoldingDisplayChange { displayHoldHasOtherCause = false }
+        let tokenBefore = displayChangeHold.token
+        let arrangement = system.displayArrangement()
+        switch event {
+        case .screenParametersChanged:
+            // AppKit also posts this for unrelated reasons. Only a changed
+            // arrangement starts or extends a hold.
+            let reference = isHoldingDisplayChange ? heldDisplayArrangement : settledDisplayArrangement
+            if arrangement != reference {
+                startDisplayChangeHold(event)
+                heldDisplayArrangement = arrangement
+            }
+        case .displayReconfigurationBegan:
+            if displayChangeHold.pendingReconfigurationCount == 0 { reconfigurationStartArrangement = arrangement }
+            startDisplayChangeHold(event)
+        case .displayReconfigurationEnded:
+            startDisplayChangeHold(event)
+            if displayChangeHold.pendingReconfigurationCount == 0, let start = reconfigurationStartArrangement {
+                reconfigurationStartArrangement = nil
+                if arrangement != start {
+                    displayHoldHasOtherCause = true
+                    heldDisplayArrangement = arrangement
+                } else if !displayHoldHasOtherCause, !displayChangeScreenIsLocked() {
+                    // Every reconfiguration ended where it began: nothing to wait for.
+                    endUnchangedDisplayChangeHold()
+                    return
+                }
+            }
+        case .sleep, .wake, .sessionResigned, .sessionBecameActive:
+            startDisplayChangeHold(event)
+        }
         if displayChangeScreenIsLocked() {
             displayChangeScreenWasLocked = true
-            // The first call already restarted the event tap in this turn.
-            startDisplayChangeHold(.sessionResigned, restartsEventTap: false)
+            // A hold start earlier in this call already restarted the event tap.
+            startDisplayChangeHold(.sessionResigned, restartsEventTap: displayChangeHold.token == tokenBefore)
         }
     }
 
+    private func endUnchangedDisplayChangeHold() {
+        guard displayChangeHold.releaseUnchanged(token: displayChangeHold.token) != nil else { return }
+        Self.bentoLog.debug("display hold released: arrangement unchanged")
+        displayChangeHoldTask?.cancel()
+        finishDisplayChangeHold(windows: try? observeVisibleWindows())
+    }
+
     private func startDisplayChangeHold(_ event: DisplayChangeHold.Event, restartsEventTap: Bool = true) {
+        if !isHoldingDisplayChange { heldDisplayArrangement = system.displayArrangement() }
+        if event != .displayReconfigurationBegan, event != .displayReconfigurationEnded { displayHoldHasOtherCause = true }
         if event == .sessionResigned { displayChangeLastLockCheck = displayChangeTime }
         displayChangeHold.receive(event, at: displayChangeTime)
         displayChangeUserOverrides.removeAll()
@@ -3280,6 +3334,8 @@ final class BetterTileModel {
 
     private func recordDisplayChangeObservation(windows: [WindowSnapshot]? = nil) {
         guard !displayChangeHold.isWaitingForWakeOrUnlock else { return }
+        // Past the limit, end the hold instead of starting another inventory.
+        if windows == nil, settleOverdueDisplayChangeHold(cancellingSampler: true) { return }
         if let observed = windows ?? (try? observeVisibleWindows()) {
             recordObservedWindows(observed, observation: system.nativeDesktopObservation())
         }
@@ -3303,12 +3359,36 @@ final class BetterTileModel {
             }
             return false
         }
+        guard isHoldingDisplayChange, displayChangeHold.token == token else { return true }
+        // The limit is a time limit. Check it before the synchronous inventory,
+        // which can take seconds when applications do not answer.
+        if displayChangeHold.isPastLimit(at: displayChangeTime) {
+            return settleOverdueDisplayChangeHold(cancellingSampler: false)
+        }
         let windows = try? observeVisibleWindows()
         recordDisplayChangeObservation(windows: windows)
         let frames = windows.map { Dictionary(uniqueKeysWithValues: $0.map { ($0.id, $0.frame) }) }
         guard displayChangeHold.sample(displaySignature: Set(system.displays()), windowFrames: frames,
                                        at: displayChangeTime, token: token) != nil else { return false }
         displayChangeHoldTask = nil
+        finishDisplayChangeHold(windows: windows)
+        return true
+    }
+
+    /// Ends a hold whose time limit has passed, without another inventory.
+    private func settleOverdueDisplayChangeHold(cancellingSampler: Bool) -> Bool {
+        guard displayChangeHold.isPastLimit(at: displayChangeTime),
+              displayChangeHold.sample(displaySignature: [], windowFrames: nil, at: displayChangeTime,
+                                       token: displayChangeHold.token) != nil else { return false }
+        if cancellingSampler { displayChangeHoldTask?.cancel() }
+        displayChangeHoldTask = nil
+        finishDisplayChangeHold(windows: nil)
+        return true
+    }
+
+    private func finishDisplayChangeHold(windows: [WindowSnapshot]?) {
+        settledDisplayArrangement = system.displayArrangement()
+        reconfigurationStartArrangement = nil
         displayChangeUserOverrides.removeAll()
         let reason = displayChangeHold.settledByLimit ? "limit" : "quiet"
         Self.bentoLog.debug("display hold settled: \(reason, privacy: .public)")
@@ -3332,7 +3412,6 @@ final class BetterTileModel {
         // Preserve lifecycle evidence for the ordinary sweep after the transition.
         pendingWindowEvents.recordTopologyChange()
         schedulePendingWindowEvents()
-        return true
     }
 
     private func retainDisplayHoldRecovery(owner: LayoutSession, frames: [WindowID: BTRect],

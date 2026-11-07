@@ -281,6 +281,25 @@ without a new display event. Sleep and an inactive or locked session wait for wa
 those events restart the deadline. The public Core Graphics callback forwards
 its begin and completion flags, with AppKit screen notifications as a fallback.
 
+Only a changed `DisplayArrangement` holds: the set of displays, their frames
+and their pixel sizes. AppKit also posts screen-parameter notifications for
+unrelated reasons. One that leaves the arrangement as it was when the last
+hold settled starts no hold, and during a hold it does not extend it. A Core
+Graphics reconfiguration still starts a hold at its begin flag. When every
+pending reconfiguration has ended and the arrangement is the one it began with,
+the hold settles at once, unless sleep, lock or a real change also holds. The
+arrangement leaves out work areas. A Dock or menu bar change moves no window
+between displays, and the ordinary work-area reflow places windows for the new
+work area without delaying closes and arrivals. The adapter reads the
+arrangement from Core Graphics, which is current inside the reconfiguration
+callback; `NSScreen` can still describe the previous arrangement then.
+
+The five-second limit is checked by time before each inventory that a hold
+starts, by the sampler, the watchdog and a refresh. Window inventories are
+synchronous and can take seconds when applications do not answer
+Accessibility. A hold past its limit settles without starting another
+inventory, so it lasts at most about five seconds plus one read in progress.
+
 During an awake, active hold, observations and closed or minimized evidence
 accumulate. Sleep and lock holds do not sample windows; a slow public lock-state
 check starts two seconds after lock begins and recovers a missed unlock notification. ScreenSaverEngine activation also
