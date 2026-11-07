@@ -3276,12 +3276,10 @@ final class BetterTileModel {
         displayChangeUserOverrides.removeAll()
         let reason = displayChangeHold.settledByLimit ? "limit" : "quiet"
         Self.bentoLog.debug("display hold settled: \(reason, privacy: .public)")
-        // A restore event can be lost while the workspace is inactive. Quiet
-        // positive visibility supersedes only minimize evidence from that gap.
-        let visible = Set((windows ?? []).filter(\.isEligible).map(\.id))
+        // Restore and close events cancel deferred Tabbed removal. Apply any
+        // remaining minimize evidence only after the inactive hold settles.
         let deferred = displayChangeDeferredMinimizedWindows.intersection(confirmedMinimizedWindowIDs)
-        confirmedMinimizedWindowIDs.subtract(deferred.intersection(visible))
-        for id in deferred.subtracting(visible) { sessionStore.removeMinimizedTabbedWindow(id) }
+        for id in deferred { sessionStore.removeMinimizedTabbedWindow(id) }
         displayChangeDeferredMinimizedWindows.removeAll()
         let closed = confirmedGoneWindowIDs
         let minimized = confirmedMinimizedWindowIDs

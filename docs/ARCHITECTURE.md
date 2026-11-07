@@ -285,10 +285,14 @@ During an awake, active hold, observations and closed or minimized evidence
 accumulate. Sleep and lock holds do not sample windows; a slow public lock-state
 check recovers a missed unlock notification. ScreenSaverEngine activation also
 holds layout until the user returns.
-A minimize event received while sleeping or inactive waits for the settled wake
-observation before changing Tabbed membership. A visible eligible window clears
-that deferred evidence; a still-minimized or unread window keeps it. Explicit
-restore and close events clear the deferred entry. Awake minimize events keep
+Minimize events received while sleeping or inactive defer Tabbed removal until
+the hold settles. A restore event before settlement clears the deferred removal
+and the confirmed minimize evidence that Adaptive uses after the hold. A
+minimize and restore pair during sleep therefore keeps Tabbed tab order and
+selection, and leaves the Adaptive layout unchanged. A close event clears the
+deferred entry and removes the window normally. Without a restore event,
+settlement removes the deferred Tabbed tab, and Adaptive reconciles the confirmed
+minimize evidence, even when the window is unread. Awake minimize events keep
 their authority, including during a display reconfiguration.
 Missing displays and Spaces keep their sessions. Automatic reconciliation,
 minimum-size probes and frame writes wait. Removed displays hide their Tabbed
