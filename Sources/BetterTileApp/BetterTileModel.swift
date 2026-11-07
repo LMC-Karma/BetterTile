@@ -3231,18 +3231,19 @@ final class BetterTileModel {
         startDisplayChangeHold(event)
         if displayChangeScreenIsLocked() {
             displayChangeScreenWasLocked = true
-            startDisplayChangeHold(.sessionResigned)
+            // The first call already restarted the event tap in this turn.
+            startDisplayChangeHold(.sessionResigned, restartsEventTap: false)
         }
     }
 
-    private func startDisplayChangeHold(_ event: DisplayChangeHold.Event) {
+    private func startDisplayChangeHold(_ event: DisplayChangeHold.Event, restartsEventTap: Bool = true) {
         if event == .sessionResigned { displayChangeLastLockCheck = displayChangeTime }
         displayChangeHold.receive(event, at: displayChangeTime)
         displayChangeUserOverrides.removeAll()
         // A press the shared event tap received before this hold can still wait
         // in its main-queue delivery. Restarting the tap retires that generation,
         // so the old press is dropped; a new press reaches the new generation.
-        let restartsEventTap = sharedGestureEvents.isUsingEventTap
+        let restartsEventTap = restartsEventTap && sharedGestureEvents.isUsingEventTap
         if restartsEventTap { sharedGestureEvents.stop() }
         interruptGesturesForDisplayChange()
         if restartsEventTap { setUsesSharedGestureEvents(sharedGestureEvents.start()) }

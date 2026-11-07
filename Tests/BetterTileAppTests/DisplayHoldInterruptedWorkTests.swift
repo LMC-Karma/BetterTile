@@ -372,6 +372,8 @@ private final class InjectedTapWorker: GestureEventTapWorking {
 /// Holds the forwarding closure of the tap generation that is running now.
 private final class InjectedTapDelivery: @unchecked Sendable {
     var handler: (@Sendable (GestureEventTapMessage) -> Void)?
+    /// Each tap start makes one worker.
+    var workers = 0
 }
 
 @MainActor private final class SharedTapFixture {
@@ -390,6 +392,7 @@ private final class InjectedTapDelivery: @unchecked Sendable {
         let delivery = delivery
         monitor = SharedGestureEventMonitor(disabled: false, makeWorker: { handler in
             delivery.handler = handler
+            delivery.workers += 1
             return InjectedTapWorker()
         })
         model = makeModel(system: system, gestureEvents: monitor)
@@ -472,4 +475,19 @@ func aSharedTapPressQueuedBeforeAHoldDoesNotStartLinkedResizing(newPress: Bool) 
     f.deliver(.leftMouseUp, 9)
     await f.drain()
     #expect(try frame(f.peer, in: f.system).minX == edge + 50, "A press after the hold did not link")
+}
+
+/// A display event while the screen is locked starts the hold twice in one
+/// main-actor turn. No event can reach the tap between those calls, so the tap
+/// restarts only once.
+@Test(.appTestApplication) @MainActor
+func aDisplayEventWhileLockedRestartsTheEventTapOnce() async throws {
+    let f = try SharedTapFixture()
+    defer { f.model.shutdown() }
+    let workers = f.delivery.workers
+    f.model.displayChangeScreenIsLocked = { true }
+    f.model.handleDisplayChange(.displayReconfigurationBegan)
+    #expect(f.delivery.workers == workers + 1, "The tap restarted \(f.delivery.workers - workers) times")
+    #expect(f.monitor.isUsingEventTap)
+    f.model.displayChangeScreenIsLocked = { false }
 }
