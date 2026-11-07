@@ -674,8 +674,9 @@ struct FaultedCarry: CustomStringConvertible, Sendable {
         }
     }
     if let omitted {
-        // A1 is readable again; the resumed drag retries its read.
+        // A1 is readable again; the next eligible idle retry resolves it.
         fixture.system.windows.append(omitted)
+        await fixture.system.advance(by: .milliseconds(50))
         fixture.drag.displayTick()
     }
     return fixture
@@ -751,8 +752,9 @@ func onlyTheFinalDestinationAdmitsACarriedWindow(faultOnC: StabilizationFault) a
     fixture.send(.leftMouseDragged, x: 300, y: 430)
     try #require(await system.waitFor { !fixture.model.isStabilizingSpace })
     if faultOnC == .omittedWindow {
-        // A1 is readable again; the resumed drag retries its read.
+        // A1 is readable again; the next eligible idle retry resolves it.
         system.windows.append(carried)
+        await system.advance(by: .milliseconds(50))
         fixture.drag.displayTick()
     }
     try #require(fixture.session?.id == cBefore.id, "C's stored session is not active")

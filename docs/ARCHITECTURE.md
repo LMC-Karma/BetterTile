@@ -59,7 +59,8 @@ the session. Restoring a valid file and relaunching resumes normal saving.
 `BetterTileClock` in Core wraps Swift's `Clock` protocol with `Duration` and
 monotonic `ContinuousClock.Instant` values. Its live default uses
 `ContinuousClock`. `BetterTileModel` passes its injected clock to
-`WindowCoordinator` and display-refresh debouncing. It drives recovery,
+`WindowCoordinator`, idle observation retries in `DragSnapController`, and
+display-refresh debouncing. It drives recovery,
 window-event scheduling, Space stabilization, settlement, arrival confirmation,
 configuration-save delays, and coordinator retry waits. Arrival dates project
 elapsed monotonic time from one initial wall-clock date.
@@ -68,7 +69,7 @@ elapsed monotonic time from one initial wall-clock date.
 Application responsiveness holds and pane-application deadlines use separate
 uptime callbacks, defaulting to process system uptime. Tests replace these
 callbacks together with the clock so hold expiry and recovery deadlines agree.
-The 10-second watchdog remains a native run-loop timer. DragSnap pointer and
+The 10-second watchdog remains a native run-loop timer. DragSnap hover and
 chooser delays and the pane-application picker retain separate UI timing seams.
 Clock injection does not change the layer dependencies.
 
@@ -132,13 +133,6 @@ not change macOS desktop-switch dwell handling.
 
 ## Window drag drops
 
-A window drag waits for observed window movement before it shows a drop.
-If the first targeted read is unavailable or still reports the starting frame,
-display ticks retry the latest drag sample while the pointer rests. Once the
-movement gate activates, ticks consume only new samples, except when a desktop
-change needs to resolve the held window again. Release and cancellation clear
-the saved sample and gate, so a late observation cannot restart the gesture.
-
 A window drag has one decision: the drop that its overlay shows.
 `DragSnapController` records that drop as a `WindowDropTarget` when it shows a
 snap preview or an armed Bento cue. An ordinary snap records its action and
@@ -148,6 +142,17 @@ Tabbed arrangement. A Bento snap preview shows the planned frame of the dragged
 window, with its gaps, and the frames of the windows that move. The value
 clears when the overlay hides, for example when the pointer leaves the snap
 area, a suppression modifier is held, or Escape cancels the drag.
+
+A window drag waits for observed window movement before it shows a drop.
+If a targeted read is unavailable or still reports the starting frame, display
+ticks retry the latest sample no more than once every 50 ms, for three seconds
+after the newest drag sample or desktop resume. This window leaves time for the existing
+two-second Accessibility responsiveness hold and a paced retry after it.
+Reads skip applications held as unresponsive. New samples retain display pacing;
+resume evaluates the latest sample at once. Activation stops idle retries unless
+a desktop change needs to resolve the held window again. Release and cancellation
+clear the sample, retry deadlines and gate, so late observations cannot restart
+the gesture.
 
 A drop that cannot apply shows invalid feedback: a red snap frame or a red
 pane cue. It is recorded as a non-committable target with a reason. Release

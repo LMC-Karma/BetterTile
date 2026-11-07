@@ -195,6 +195,9 @@ public final class DragSnapController {
     }
     var removeEventMonitor: (Any) -> Void = { NSEvent.removeMonitor($0) }
     private let displayTicks: ResizeDisplayLink
+    private let clock: BetterTileClock
+    private var waitingObservationDeadline: BetterTileClock.Instant?
+    private var nextWaitingObservation: BetterTileClock.Instant?
     /// The newest drag sample not yet evaluated. A high-rate pointer sends
     /// events faster than the display can show a new preview.
     private var pendingDragEvent: GlobalGestureEvent?
@@ -204,19 +207,25 @@ public final class DragSnapController {
     private var latestDragEvent: GlobalGestureEvent?
     private(set) var pacingDisplayID: DisplayID?
 
+    private static let waitingObservationInterval: Duration = .milliseconds(50)
+    // Covers the two-second responsiveness hold and a paced recovery attempt.
+    private static let waitingObservationWindow: Duration = .seconds(3)
     private static let bentoCueArmDelay = 0.12
     private static let bentoReflowPreviewDelay = 0.22
     private static let unavailableDropReason = "The layout changed during the drag. Try again."
     private static let minimumSizeDoesNotFitReason = "The window’s minimum size does not fit in that snap area."
 
-    public convenience init(coordinator: WindowCoordinator, configuration: BetterTileConfiguration) {
-        self.init(coordinator: coordinator, configuration: configuration, displayTicks: ResizeDisplayLink())
+    public convenience init(
+        coordinator: WindowCoordinator, configuration: BetterTileConfiguration, clock: BetterTileClock = .live
+    ) {
+        self.init(coordinator: coordinator, configuration: configuration, displayTicks: ResizeDisplayLink(), clock: clock)
     }
 
-    init(coordinator: WindowCoordinator, configuration: BetterTileConfiguration, displayTicks: ResizeDisplayLink) {
+    init(coordinator: WindowCoordinator, configuration: BetterTileConfiguration, displayTicks: ResizeDisplayLink, clock: BetterTileClock = .live) {
         self.coordinator = coordinator
         self.configuration = configuration
         self.displayTicks = displayTicks
+        self.clock = clock
     }
 
     public func start() {
@@ -387,6 +396,8 @@ public final class DragSnapController {
         resolvesOnDestinationDesktop = false
         showedDropTarget = false
         pendingDragEvent = nil
+        waitingObservationDeadline = nil
+        nextWaitingObservation = nil
         pacingDisplayID = nil
         displayTicks.stop()
         isSuspendedForDesktopChange = true
@@ -407,6 +418,7 @@ public final class DragSnapController {
         resolvesOnDestinationDesktop = true
         pendingDragEvent = nil
         guard let event = latestDragEvent else { return }
+        renewWaitingObservationWindow()
         mouseDragged(event)
         if isGestureActive { startDisplayTicks(at: event.position) }
     }
@@ -486,6 +498,7 @@ public final class DragSnapController {
         case .leftMouseDragged where isGestureActive:
             sawDragSample = true
             latestDragEvent = event
+            renewWaitingObservationWindow()
             // The first sample resolves the dragged window at once. Later
             // samples keep only the newest and run once per display frame.
             if resolvedDragTarget {
@@ -530,16 +543,23 @@ public final class DragSnapController {
             pendingDragEvent = nil
             mouseDragged(event)
         } else if let event = latestDragEvent,
+                  let deadline = waitingObservationDeadline, clock.now < deadline,
+                  let next = nextWaitingObservation, clock.now >= next,
                   (resolvesOnDestinationDesktop && !resolvedDragTarget)
                     || (draggedWindowID == nil && dragGate.isTracking) {
-            // The first sample can precede observed movement or a readable
-            // window. Retry it while the gate waits, including on a new
-            // desktop, although the pointer rests.
+            // Retry delayed observation while the pointer rests, with a
+            // bounded cadence and lifetime. Only new input or resume renews it.
             mouseDragged(event)
         }
     }
 
+    private func renewWaitingObservationWindow() {
+        waitingObservationDeadline = clock.now.advanced(by: Self.waitingObservationWindow)
+    }
+
     private func mousePressed(_ event: GlobalGestureEvent) {
+        waitingObservationDeadline = nil
+        nextWaitingObservation = nil
         dragGate.reset()
         sawDragSample = false
         draggedWindowID = nil
@@ -576,6 +596,7 @@ public final class DragSnapController {
     }
 
     private func mouseDragged(_ event: GlobalGestureEvent) {
+        nextWaitingObservation = clock.now.advanced(by: Self.waitingObservationInterval)
         guard configuration.snappingEnabled else { clearTargets(); return }
         let activeModifiers = event.modifiers
         guard !activeModifiers.isSuperset(of: configuration.snapSuppressionModifiers) else { clearTargets(); return }
@@ -1031,6 +1052,8 @@ public final class DragSnapController {
         showedDropTarget = false
         pendingDragEvent = nil
         latestDragEvent = nil
+        waitingObservationDeadline = nil
+        nextWaitingObservation = nil
         pacingDisplayID = nil
         displayTicks.stop()
         removeGestureMonitors()
@@ -1090,6 +1113,7 @@ public final class DragSnapController {
     }
 
     private func windowSnapshot(id: WindowID) -> WindowSnapshot? {
+        guard !coordinator.system.isApplicationUnresponsive(for: id) else { return nil }
         if let system = coordinator.system as? AccessibilityWindowSystem {
             return try? system.windowSnapshot(id: id)
         }
