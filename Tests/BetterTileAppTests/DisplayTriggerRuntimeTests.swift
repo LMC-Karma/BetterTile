@@ -175,6 +175,18 @@ import Testing
         }
     }
 
+    /// Joins the runtime's forward work by awaiting its own settle, apply and
+    /// watch tasks until none is left. There is no polling budget and no
+    /// real-time deadline: a loaded executor only makes the join slower. The
+    /// test's time limit still bounds a real hang.
+    func joinForwardWork() async {
+        var joined: Set<Task<Void, Never>> = []
+        while let task = forwardTasks().first(where: { !joined.contains($0) }) {
+            await task.value
+            joined.insert(task)
+        }
+    }
+
     private func forwardTasks() -> [Task<Void, Never>] {
         Mirror(reflecting: runtime!).children.compactMap { field in
             guard let label = field.label else { return nil }
@@ -1213,7 +1225,7 @@ extension DisplayTriggerRuntimeTests {
     }
 }
 
-@Test(.appTestApplication) @MainActor
+@Test(.appTestApplication, .timeLimit(.minutes(2))) @MainActor
 func automaticApplyWaitsForDisplayHoldPastItsFrameReadLimit() async throws {
     let h = RuntimeHarness()
     defer { h.runtime.stop(); h.applier.stop() }
@@ -1222,20 +1234,22 @@ func automaticApplyWaitsForDisplayHoldPastItsFrameReadLimit() async throws {
     h.runtime.isReady = { _ in h.now >= 1006 }
     h.runtime.isDisplayChangeHeld = { _ in h.now < 1006 }
     h.connectSecond()
-    await h.finish()
+    await h.joinForwardWork()
+    #expect(h.runtime.isIdle && !h.applier.isRunning)
     #expect(h.now >= 1006, "Automatic Apply must not bypass the model hold when its own settle limit expires")
     #expect(h.frameReads >= 2)
     #expect(h.commits == [h.second.id])
 }
 
-@Test(.appTestApplication) @MainActor
+@Test(.appTestApplication, .timeLimit(.minutes(2))) @MainActor
 func automaticApplyReadinessWithoutADisplayHoldRemainsBounded() async throws {
     let h = RuntimeHarness()
     defer { h.runtime.stop(); h.applier.stop() }
     h.bind()
     h.runtime.isReady = { _ in h.now >= 1008 }
     h.connectSecond()
-    await h.finish()
+    await h.joinForwardWork()
+    #expect(h.runtime.isIdle && !h.applier.isRunning)
     #expect(h.now < 1004)
     #expect(h.commits.isEmpty)
 }
