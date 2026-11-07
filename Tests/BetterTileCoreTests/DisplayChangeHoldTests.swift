@@ -52,6 +52,45 @@ struct DisplayChangeHoldTests {
     }
 }
 
+@Test func displayArrangementIgnoresWorkAreasButNotFramesOrPixels() {
+    let display = DisplaySnapshot(id: DisplayID(rawValue: "test"),
+        frame: BTRect(x: 0, y: 0, width: 1000, height: 800),
+        visibleFrame: BTRect(x: 0, y: 0, width: 1000, height: 800))
+    var dock = display
+    dock.visibleFrame.size.height = 740
+    var moved = display
+    moved.frame.origin.x = 1000
+    var sharper = display
+    sharper.scaleFactor = 2
+    #expect(DisplayArrangement([dock]) == DisplayArrangement([display]))
+    #expect(DisplayArrangement([moved]) != DisplayArrangement([display]))
+    #expect(DisplayArrangement([sharper]) != DisplayArrangement([display]))
+    #expect(DisplayArrangement([]) != DisplayArrangement([display]))
+}
+
+@Test func theLimitIsKnownBeforeASampleAndSleepStillWaits() {
+    var hold = DisplayChangeHold()
+    hold.receive(.displayReconfigurationBegan, at: 0)
+    #expect(!hold.isPastLimit(at: 4.99))
+    #expect(hold.isPastLimit(at: 5))
+    hold.receive(.sleep, at: 6)
+    #expect(!hold.isPastLimit(at: 20))
+}
+
+@Test func anUnchangedReconfigurationReleasesOnlyWhenNothingElseHolds() {
+    var hold = DisplayChangeHold()
+    hold.receive(.displayReconfigurationBegan, at: 0)
+    #expect(hold.releaseUnchanged(token: hold.token) == nil)
+    hold.receive(.displayReconfigurationEnded, at: 0.1)
+    let old = hold.token
+    hold.receive(.sleep, at: 0.2)
+    #expect(hold.releaseUnchanged(token: old) == nil)
+    #expect(hold.releaseUnchanged(token: hold.token) == nil)
+    hold.receive(.wake, at: 0.3)
+    #expect(hold.releaseUnchanged(token: hold.token) == .settled(token: hold.token))
+    #expect(!hold.isHolding && !hold.settledByLimit)
+}
+
 @Test func displayHoldTransitionPreservesPendingWorkAreaReflow() throws {
     let id = DisplayID(rawValue: "screen")
     let old = BTRect(x: 0, y: 0, width: 1000, height: 800)

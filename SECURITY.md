@@ -874,8 +874,14 @@ the user did not trigger at that moment, so it is limited:
 - **Stops on input.** While it waits or applies, a temporary AppKit mouse-down and
   key-down monitor cancels it. The monitor reads the event kind only, keeps
   nothing, and is removed when the wait ends. It is not installed otherwise.
-- **No loop.** One connect applies once. A failed or cancelled attempt is not
-  retried, and a repeated display notification does not start another.
+- **No loop.** One connect applies once. A failed attempt, or one that input
+  cancelled, is not retried, and a repeated display notification does not
+  start another. One bounded exception: when a display change interrupts a
+  started attempt before it places any window, the same task waits for the
+  display hold to settle and the display to be ready, revalidates the binding,
+  and applies once more. Input still cancels that wait and attempt. The wait
+  lasts until the hold ends, then at most the settle limit. A second
+  interruption, a lock or a session switch gets no further attempt.
 - **Data and permissions.** No new permission, private API, dependency or
   network use. It reads window frames through the same Accessibility path that
   Apply uses, and only while a wait is pending. It also reads the frontmost app’s
@@ -883,9 +889,11 @@ the user did not trigger at that moment, so it is limited:
   notifications to hold attempts at the lock screen or during a switched-out
   session. A hold cancels a started automatic Apply and blocks further frame
   writes, including restoration. Unused pending attempts settle again after
-  the user returns; a started attempt is not retried. Cancellation shows no
-  result pill while the session is held. If windows were left changed, the result
-  appears once after return; incomplete recovery explains Undo or Repair Layout.
+  the user returns. A started attempt is not retried after a lock or a session
+  switch; only the display-change continuation above applies. Cancellation
+  shows no result pill while the session is held. If windows were left
+  changed, the result appears once after return; incomplete recovery explains
+  Undo or Repair Layout.
   These transient identifiers and notifications are not stored or logged.
 - **Visible.** When windows change, a Result pill offers **Undo** and **Details**.
   Nothing to place or an already arranged layout produces no pill.

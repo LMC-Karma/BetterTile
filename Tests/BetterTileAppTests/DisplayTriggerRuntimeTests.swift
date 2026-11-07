@@ -175,6 +175,18 @@ import Testing
         }
     }
 
+    /// Joins the runtime's forward work by awaiting its own settle, apply and
+    /// watch tasks until none is left. There is no polling budget and no
+    /// real-time deadline: a loaded executor only makes the join slower. The
+    /// test's time limit still bounds a real hang.
+    func joinForwardWork() async {
+        var joined: Set<Task<Void, Never>> = []
+        while let task = forwardTasks().first(where: { !joined.contains($0) }) {
+            await task.value
+            joined.insert(task)
+        }
+    }
+
     private func forwardTasks() -> [Task<Void, Never>] {
         Mirror(reflecting: runtime!).children.compactMap { field in
             guard let label = field.label else { return nil }
@@ -1213,7 +1225,7 @@ extension DisplayTriggerRuntimeTests {
     }
 }
 
-@Test(.appTestApplication) @MainActor
+@Test(.appTestApplication, .timeLimit(.minutes(2))) @MainActor
 func automaticApplyWaitsForDisplayHoldPastItsFrameReadLimit() async throws {
     let h = RuntimeHarness()
     defer { h.runtime.stop(); h.applier.stop() }
@@ -1222,20 +1234,93 @@ func automaticApplyWaitsForDisplayHoldPastItsFrameReadLimit() async throws {
     h.runtime.isReady = { _ in h.now >= 1006 }
     h.runtime.isDisplayChangeHeld = { _ in h.now < 1006 }
     h.connectSecond()
-    await h.finish()
+    await h.joinForwardWork()
+    #expect(h.runtime.isIdle && !h.applier.isRunning)
     #expect(h.now >= 1006, "Automatic Apply must not bypass the model hold when its own settle limit expires")
     #expect(h.frameReads >= 2)
     #expect(h.commits == [h.second.id])
 }
 
-@Test(.appTestApplication) @MainActor
+@Test(.appTestApplication, .timeLimit(.minutes(2))) @MainActor
 func automaticApplyReadinessWithoutADisplayHoldRemainsBounded() async throws {
     let h = RuntimeHarness()
     defer { h.runtime.stop(); h.applier.stop() }
     h.bind()
     h.runtime.isReady = { _ in h.now >= 1008 }
     h.connectSecond()
-    await h.finish()
+    await h.joinForwardWork()
+    #expect(h.runtime.isIdle && !h.applier.isRunning)
     #expect(h.now < 1004)
     #expect(h.commits.isEmpty)
+}
+
+/// The model reports no further display change once its hold settles, so the
+/// retry must not depend on another `displaysChanged()`.
+@Test(.appTestApplication, arguments: [(false, true), (true, true), (false, false)]) @MainActor
+func automaticApplyInterruptedByDisplayHoldRetriesOnce(cancelWithInput: Bool, displaysChangeAgain: Bool) async throws {
+    let h = RuntimeHarness()
+    defer { h.runtime.stop(); h.applier.stop() }
+    h.runtime.stop()
+    h.runtime = h.makeRuntime(initial: [h.mainFingerprint], autoSettle: false)
+    h.addWindow("editor", on: h.second.id)
+    h.bind()
+    var held = false
+    var attempts = 0
+    h.runtime.isDisplayChangeHeld = { _ in held }
+    h.beforeCommit = {
+        attempts += 1
+        held = true
+    }
+    h.connectSecond()
+    let system = FakeAppWindowSystem(manualClock: h.clock)
+    system.drivesPolicyDeadlines = true
+    try #require(await system.waitFor { attempts == 1 && !h.applier.isRunning })
+    if cancelWithInput { h.runtime.userInput() }
+    h.beforeCommit = { attempts += 1 }
+    held = false
+    if displaysChangeAgain { h.runtime.displaysChanged() }
+    await system.advance(by: .seconds(2))
+    try #require(await system.waitFor { h.runtime.isIdle })
+    #expect(attempts == (cancelWithInput ? 1 : 2))
+    #expect(h.commits == (cancelWithInput ? [] : [h.second.id]))
+    h.runtime.displaysChanged()
+    await system.advance(by: .seconds(2))
+    #expect(attempts == (cancelWithInput ? 1 : 2))
+}
+
+
+/// A display hold that starts after the Apply's final commit check still marks
+/// the attempt when the Apply reads its session to report the result. macOS
+/// then moves the window during the hold. The continuation must not apply the
+/// layout again over that move.
+@Test(.appTestApplication) @MainActor
+func automaticApplyThatCommittedBeforeAHoldIsNotRetried() async throws {
+    let h = RuntimeHarness()
+    defer { h.runtime.stop(); h.applier.stop() }
+    h.runtime.stop()
+    h.runtime = h.makeRuntime(initial: [h.mainFingerprint], autoSettle: false)
+    h.addWindow("editor", on: h.second.id)
+    h.bind()
+    var released = false
+    var readsAfterCommit = 0
+    var attempts = 0
+    h.runtime.isDisplayChangeHeld = { _ in
+        guard !released, !h.commits.isEmpty else { return false }
+        readsAfterCommit += 1
+        // The first read is the Apply's final commit check. The hold starts after it.
+        guard readsAfterCommit >= 2 else { return false }
+        if readsAfterCommit == 2 { h.system.windows[0].frame.origin.x += 50 }
+        return true
+    }
+    h.beforeCommit = { attempts += 1 }
+    h.connectSecond()
+    let system = FakeAppWindowSystem(manualClock: h.clock)
+    system.drivesPolicyDeadlines = true
+    try #require(await system.waitFor { attempts == 1 && !h.applier.isRunning })
+    try #require(readsAfterCommit >= 2)
+    released = true
+    await system.advance(by: .seconds(2))
+    try #require(await system.waitFor { h.runtime.isIdle })
+    #expect(attempts == 1, "A committed Apply ran again after the hold")
+    #expect(h.commits == [h.second.id])
 }

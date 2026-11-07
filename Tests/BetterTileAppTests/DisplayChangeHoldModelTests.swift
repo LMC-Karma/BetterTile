@@ -52,7 +52,7 @@ private func window(_ id: String, pid: Int32, x: Double, width: Double = 500, di
 }
 
 
-@Test(.appTestApplication) @MainActor func reproAdaptiveKeepsPlaceAfterOneMisreportedSweep() async throws {
+@Test(.appTestApplication) @MainActor func adaptiveKeepsPlaceAfterOneMisreportedSweep() async throws {
     let (system, model) = twoDisplayFixture()
     defer { model.shutdown() }
     system.windows.removeAll { $0.id.rawValue == "E3" }
@@ -87,7 +87,7 @@ private func window(_ id: String, pid: Int32, x: Double, width: Double = 500, di
 }
 
 @Test(.appTestApplication, arguments: [LayoutMode.tabbed, .bento]) @MainActor
-func reproLaptopLayoutSurvivesExternalDropout(mode: LayoutMode) async throws {
+func laptopLayoutSurvivesExternalDropout(mode: LayoutMode) async throws {
     let (system, model) = twoDisplayFixture()
     defer { model.shutdown() }
     system.windows.append(window("L3", pid: 43, x: 250, display: laptopID))

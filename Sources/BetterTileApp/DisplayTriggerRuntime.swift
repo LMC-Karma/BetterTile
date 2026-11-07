@@ -292,12 +292,28 @@ struct DisplayTriggerNotice {
             }
             let begin = Date()
             // No slot may open an app, so a missing app is skipped and reported.
-            let result = await applier.apply(document, displayID: display, excluding: moving, automatic: true,
-                layoutFileID: fire.layoutFile, sessionIsAvailable: { [weak self] in
-                    self?.canApplyInSession == true && self?.isDisplayChangeHeld(display) == false
-                }, validating: { [weak self] in
-                    self?.bindingIsCurrent(fire.layoutFile, on: display) == true
-                })
+            var interruptedByHold = false
+            func attempt() async -> SavedLayoutApplyResult {
+                await applier.apply(document, displayID: display, excluding: moving, automatic: true,
+                    layoutFileID: fire.layoutFile, sessionIsAvailable: { [weak self] in
+                        guard let self else { return false }
+                        if self.isDisplayChangeHeld(display) { interruptedByHold = true; return false }
+                        return self.canApplyInSession
+                    }, validating: { [weak self] in
+                        self?.bindingIsCurrent(fire.layoutFile, on: display) == true
+                    })
+            }
+            var result = await attempt()
+            // A hold can start after a commit and still mark the attempt. An
+            // attempt that placed windows is finished; applying again would
+            // write over frames that changed during the hold.
+            if interruptedByHold, result.placed == 0, !Task.isCancelled, bindingIsCurrent(fire.layoutFile, on: display),
+               await waitForInterruptedApply(on: display), !Task.isCancelled,
+               bindingIsCurrent(fire.layoutFile, on: display) {
+                // One continuation of this connect attempt. Input still owns
+                // the same task and cancels both the wait and this retry.
+                result = await attempt()
+            }
             record(fire.layoutFile, document, display, since: begin, result: result)
             // The session can return after publication but before this task resumes.
             presentDeferredResults()
@@ -311,6 +327,27 @@ struct DisplayTriggerNotice {
                 }
             }
         }
+    }
+
+    private func waitForInterruptedApply(on display: DisplayID) async -> Bool {
+        var detector = DisplaySettleDetector(quietInterval: tickSeconds, limit: settleLimit)
+        var begun = uptime()
+        while !Task.isCancelled, canApplyInSession, !isInteracting() {
+            if isDisplayChangeHeld(display) {
+                detector = DisplaySettleDetector(quietInterval: tickSeconds, limit: settleLimit)
+                begun = uptime()
+            } else if !isReady(display) {
+                if uptime() - begun >= settleLimit { return false }
+            } else if let frames = observeFrames([display]) {
+                switch detector.observe(frames, at: uptime()) {
+                case .quiet: return true
+                case let .timedOut(still): moving = still; return true
+                case .waiting: break
+                }
+            } else if uptime() - begun >= settleLimit { return false }
+            await sleep(tick)
+        }
+        return false
     }
 
     /// This predicate travels with the transaction, including its coordinator validation callback.

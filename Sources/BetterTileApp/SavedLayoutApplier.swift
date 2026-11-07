@@ -11,10 +11,12 @@ enum SavedLayoutCommitRefusal {
     case beforeWrite(String)
     case bindingChanged
     case mutationChanged
+    case displayChanged
 
     var message: String {
         switch self {
         case let .beforeWrite(reason): reason
+        case .displayChanged: "Displays changed while applying. Apply the layout again after they settle."
         case .bindingChanged: "The display binding changed. Automatic Apply stopped."
         case .mutationChanged: "A window changed while applying. Use Repair Layout or try again."
         }
@@ -1140,9 +1142,11 @@ private struct SavedLayoutUndoStructure: Equatable {
                     undos[desktop.displayID] = previousUndo; undoOrder = previousOrder; runCheckpoint = previousCheckpoint
                 }
                 if let reason = precommitRefusal {
-                    if case .mutationChanged = reason {
+                    switch reason {
+                    case .mutationChanged, .displayChanged:
                         result.issues.append(.init(.other, reason.message))
                         return false
+                    default: break
                     }
                     let detail = rolledBack ? " Nothing was moved." : " Use Undo to restore the previous layout."
                     result.issues.append(.init(.other, reason.message + detail))
