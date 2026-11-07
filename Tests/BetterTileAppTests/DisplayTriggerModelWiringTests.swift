@@ -33,6 +33,8 @@ import Testing
                                    system: system, displayTriggerStore: store)
         runtime = try #require(model.displayTriggerRuntime)
         model.hasAccessibilityPermission = permission
+        // The fake owns lock state; the real frontmost application must not hold layout.
+        model.displayChangeScreenIsLocked = { false }
         runtime.observesInput = false
         let origin = clock.now
         runtime.uptime = { [clock] in
@@ -62,6 +64,15 @@ import Testing
     func post(_ name: Notification.Name, userInfo: [AnyHashable: Any]? = nil) {
         workspaceCenter.post(name: name, object: nil, userInfo: userInfo)
     }
+    /// Wake, a returning session and unlock start the model's display hold.
+    /// Display Trigger reads no frames during it. The hold settles on the
+    /// model's clock; the trigger then reads at its next tick.
+    func settleDisplayHold() async throws {
+        await system.advance(by: .seconds(1))
+        try #require(await waitFor { !self.model.isHoldingDisplayChange })
+        clock.advance(by: runtime.tick)
+    }
+
     func finish() {
         model.shutdown()
         try? FileManager.default.removeItem(at: root)
@@ -115,6 +126,7 @@ struct DisplayTriggerModelWiringTests {
         h.system.onBeforeFrameWrite = nil
         applier.prepareAppGroups = {}
         h.post(NSWorkspace.sessionDidBecomeActiveNotification)
+        try await h.settleDisplayHold()
         let reads = h.frameReads
         h.connected = false; h.runtime.displaysChanged(); h.connect()
         try await waitForSavedLayoutState("The returning session did not begin fresh settling.", timeout: .seconds(2)) {
@@ -156,6 +168,14 @@ struct DisplayTriggerModelWiringTests {
         #expect(h.loads == 0)
         let reads = h.frameReads
         h.post(wake)
+        // The wake starts the model's display hold. The trigger keeps waiting
+        // and reads no frames until the hold settles.
+        try #require(h.model.isHoldingDisplayChange)
+        try #require(await waitFor { !h.runtime.isIdle && h.clock.pendingSleepCount > 0 })
+        h.clock.advance(by: h.runtime.tick)
+        await Task.yield()
+        #expect(h.frameReads == reads, "The trigger read frames during the display hold")
+        try await h.settleDisplayHold()
         try #require(await waitFor { h.frameReads > reads && !h.runtime.isIdle })
         #expect(h.loads == 0)
     }
@@ -182,6 +202,7 @@ struct DisplayTriggerModelWiringTests {
             ? [NSWorkspace.applicationUserInfoKey: NSRunningApplication.current] : nil
         locked = false
         h.post(unlock, userInfo: info)
+        try await h.settleDisplayHold()
         try #require(await waitFor { h.frameReads > reads })
         #expect(h.loads == 0)
     }
