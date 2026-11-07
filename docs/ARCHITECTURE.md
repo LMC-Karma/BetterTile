@@ -152,9 +152,9 @@ starts later can outlast the window. The preview then waits for the next drag
 sample, and release still places the window.
 Reads skip applications held as unresponsive. New samples retain display pacing;
 resume evaluates the latest sample at once. Activation stops idle retries unless
-a desktop change needs to resolve the held window again. Release and cancellation
-clear the sample, retry deadlines and gate, so late observations cannot restart
-the gesture.
+a desktop change needs to resolve the held window again. Release and
+cancellation clear the sample, retry deadlines and gate, so late observations
+cannot restart the gesture.
 
 A drop that cannot apply shows invalid feedback: a red snap frame or a red
 pane cue. It is recorded as a non-committable target with a reason. Release
