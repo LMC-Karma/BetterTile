@@ -76,6 +76,29 @@ struct DesktopRetirementCouncilTests {
         #expect(sessions.first { $0.id == destination.id }?.mode == .tabbed)
     }
 
+    /// macOS can merge the windows of two desktops onto one desktop of the new
+    /// screen. Carrying the first desktop there must not delete the second
+    /// desktop's memory, and both must return to their own desktops later.
+    @Test(arguments: [false, true])
+    func carryingMergedDesktopsKeepsEachDesktopsMemory(firstDesktopFirst: Bool) {
+        var store = LayoutSessionStore()
+        let first = activate(&store, old, 1, [a, b], uuid: "A")
+        store.update(old) { $0.mode = .bento }
+        let second = activate(&store, old, 2, [c], uuid: "A")
+        store.update(old) { $0.mode = .tabbed }
+        store.removeMissingDisplays([], at: 1)
+        let merged = activate(&store, new, 21, [a, b, c], uuid: "B")
+        #expect(merged.id == first.id && merged.mode == .bento)
+        #expect(store.retiredSessions.map(\.session.id) == [second.id])
+        store.removeMissingDisplays([], at: 2)
+        let returned = DisplayID(rawValue: "returned")
+        for isFirst in [firstDesktopFirst, !firstDesktopFirst] {
+            let session = activate(&store, returned, isFirst ? 31 : 32, isFirst ? [a, b] : [c], uuid: "A")
+            #expect(session.id == (isFirst ? first.id : second.id))
+            #expect(session.mode == (isFirst ? .bento : .tabbed))
+        }
+    }
+
     @Test func anEmptyLookDoesNotMakeLaterArrivalsANewDesktop() {
         var store = LayoutSessionStore()
         let empty = store.activate(displayID: old, windowIDs: [], focusedWindowID: nil,

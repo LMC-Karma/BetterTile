@@ -664,11 +664,14 @@ public struct LayoutSessionStore: Sendable {
             return lhs.id > rhs.id
         }) else { return nil }
         let restored = retiredSessions.remove(at: match.index)
-        // Only current membership can supersede another desktop's memory.
-        // The restored snapshot may still contain windows that moved away.
-        // Off keeps the other screen's independent memory for its next return.
+        // A superseded copy holds only windows that this desktop remembers
+        // and still shows. The restored snapshot may hold windows that moved
+        // away, and the current desktop may hold windows merged from another
+        // desktop; neither alone proves a copy. Off keeps the other screen's
+        // independent memory for its next return.
+        let copiedWindowIDs = restored.windowIDs.intersection(windowIDs)
         retiredSessions.removeAll {
-            $0.windowIDs.isSubset(of: windowIDs)
+            $0.windowIDs.isSubset(of: copiedWindowIDs)
                 && (carryOver || (identifier != nil && $0.displayIdentifier == identifier))
         }
         var session = restored.session

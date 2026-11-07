@@ -247,10 +247,11 @@ A new session can restore the desktop with the most window overlap. At least
 half of the new desktop's windows must overlap. Ties prefer the desktop covered
 most fully, then the newest retirement when carry-over is on, the same display
 UUID, and a fixed session order. Restoring removes copies whose entire window
-set is covered by the current observation. Old membership alone cannot supersede
-another desktop's memory because its windows may have moved. Uncertain copies
-remain in the bounded retirement list. With carry-over off, other screens keep
-their independent memories.
+set is both in the restored desktop's memory and in the current observation.
+Neither alone proves a copy: remembered windows may have moved away, and macOS
+can merge several desktops' windows onto one desktop of the new screen.
+Uncertain copies remain in the bounded retirement list. With carry-over off,
+other screens keep their independent memories.
 An empty first observation keeps the restoration opportunity until windows
 arrive or the user chooses a mode or Tabbed arrangement. This opportunity is
 separate from the first-observation flag, so later arrivals still receive their

@@ -303,3 +303,61 @@ func arrivalsAfterAnEmptyDesktopAreMeasuredBeforePlacement(mode: LayoutMode, win
     #expect(!frames.isEmpty)
     #expect(frames.allSatisfy { $0.size.width >= 650 }, "Requested widths: \(frames.map { $0.size.width })")
 }
+
+@Test(.appTestApplication, arguments: [false, true]) @MainActor
+func mergedDesktopsReturnToTheirOwnModesAfterCarryOver(firstDesktopFirst: Bool) async throws {
+    let f = DesktopMemoryCouncilFixture()
+    defer { f.model.shutdown() }
+    let c = WindowID(rawValue: "c")
+    f.system.windows.append(WindowSnapshot(id: c, processIdentifier: 43, bundleIdentifier: "example.c",
+        frame: BTRect(x: 200, y: 40, width: 400, height: 500), displayID: f.display))
+    func observe(display: DisplayID, current: UInt64, first: UInt64, second: UInt64) {
+        f.system.offscreenWindowIDs = current == first ? [c] : [f.a, f.b]
+        f.system.focusedID = current == first ? f.b : c
+        f.system.desktopObservation = NativeDesktopObservation(
+            currentSpaceByDisplay: [display: .init(rawValue: current)],
+            knownSpacesByDisplay: [display: [.init(rawValue: first), .init(rawValue: second)]],
+            windowMembership: [f.a: [.init(rawValue: first)], f.b: [.init(rawValue: first)],
+                               c: [.init(rawValue: second)]])
+    }
+    observe(display: f.display, current: 1, first: 1, second: 2)
+    f.model.setActiveMode(.bento)
+    try await f.idle()
+    let first = try #require(f.store().session(for: f.display))
+    observe(display: f.display, current: 2, first: 1, second: 2)
+    f.model.beginActiveSpaceStabilization()
+    try #require(await f.system.waitFor { !f.model.isStabilizingSpace })
+    f.model.setActiveMode(.tabbed)
+    try await f.idle()
+    let second = try #require(f.store().session(for: f.display))
+    try #require(second.id != first.id && second.mode == .tabbed)
+
+    // The new screen has one desktop, and macOS moves every window onto it.
+    f.system.offscreenWindowIDs = []
+    try await f.replaceDisplay("external", uuid: "B", space: 21)
+    let merged = try #require(f.store().session(for: f.display))
+    #expect(merged.id == first.id && merged.mode == .bento)
+    #expect(try f.store().retiredSessions.map(\.session.id) == [second.id])
+
+    // The original screen returns with new runtime IDs and two desktops.
+    f.model.handleDisplayChange(.displayReconfigurationBegan)
+    var returned = f.system.mainDisplay
+    returned.id = DisplayID(rawValue: "returned")
+    returned.persistentIdentifier = "A"
+    f.system.availableDisplays = [returned]
+    for index in f.system.windows.indices { f.system.windows[index].displayID = returned.id }
+    observe(display: returned.id, current: firstDesktopFirst ? 31 : 32, first: 31, second: 32)
+    f.model.handleDisplayChange(.displayReconfigurationEnded)
+    try await f.idle()
+    for isFirst in [firstDesktopFirst, !firstDesktopFirst] {
+        if isFirst != firstDesktopFirst {
+            observe(display: returned.id, current: isFirst ? 31 : 32, first: 31, second: 32)
+            f.model.beginActiveSpaceStabilization()
+            try #require(await f.system.waitFor { !f.model.isStabilizingSpace })
+            try await f.idle()
+        }
+        let session = try #require(f.store().session(for: f.display))
+        #expect(session.id == (isFirst ? first.id : second.id))
+        #expect(session.mode == (isFirst ? .bento : .tabbed))
+    }
+}
