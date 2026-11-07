@@ -107,8 +107,88 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, CreatedWindowReading, T
     var unresponsiveInventoryDelay: TimeInterval = 0
     var onWindowSnapshots: (() -> Void)?
     var unresponsiveInventoryAttemptTimes: [Int32: [TimeInterval]] = [:]
+    /// Opt-in adapter fidelity for hung applications: complete sweeps run the
+    /// adapter's own `ApplicationInventorySweep` and `UnresponsiveApplicationGate`
+    /// instead of `applicationHoldsUntil`. Each read of a listed application waits
+    /// out its timeout on the manual clock and fails. Nil keeps the simple model.
+    var adapterInventoryTimeouts: [Int32: TimeInterval]?
+    private(set) var adapterGate = UnresponsiveApplicationGate()
+    private var adapterHolds: [Int32: TimeInterval] = [:]
+    /// The applications that each adapter-mode sweep actually messaged, in order.
+    /// A held application fails without a message, as in `gatedCall`.
+    private(set) var adapterInventoryReads: [[Int32]] = []
+    /// What the adapter does when an application becomes active or posts an
+    /// Accessibility notification.
+    func adapterApplicationRuns(_ pid: Int32) { adapterGate.release(pid) }
     var unresponsiveApplicationRecoveryDeadlines: [Int32: TimeInterval] {
-        applicationHoldsUntil.filter { pid, _ in windows.contains { $0.processIdentifier == pid } }
+        guard adapterInventoryTimeouts != nil else {
+            return applicationHoldsUntil.filter { pid, _ in windows.contains { $0.processIdentifier == pid } }
+        }
+        return adapterHolds.reduce(into: [:]) { deadlines, entry in
+            guard windows.contains(where: { $0.processIdentifier == entry.key })
+                || adapterRunningProcessIDs.contains(entry.key) else { return }
+            deadlines[entry.key] = max(entry.value, adapterGate.inventoryBackoffDeadline(entry.key) ?? entry.value)
+        }
+    }
+    /// Adapter mode keeps an identity record for every window that a sweep
+    /// read, as the adapter does. A window that closes without a destroyed
+    /// event keeps its record until closure evidence retires it.
+    private var adapterKnownWindows: [WindowID: Int32] = [:]
+    private var adapterWindowNumbers: [WindowID: CGWindowID] = [:]
+    private var adapterUnreadClosure = UnreadWindowClosureEvidence()
+    /// False simulates windows without an exact WindowServer identity.
+    var adapterExactIdentities = true
+    /// Applications that keep running without any window. Otherwise an
+    /// application runs while it has a window in `windows`.
+    var adapterRunningProcessIDs: Set<Int32> = []
+    var unreadableApplicationWindowIDs: Set<WindowID> {
+        guard adapterInventoryTimeouts != nil else {
+            let unread = Set(applicationHoldsUntil.keys)
+            return Set(windows.filter { unread.contains($0.processIdentifier) }.map(\.id))
+        }
+        return Set(adapterKnownWindows.compactMap { adapterHolds[$0.value] == nil ? nil : $0.key })
+    }
+    private func adapterWindowNumber(_ id: WindowID) -> CGWindowID {
+        if let number = adapterWindowNumbers[id] { return number }
+        let number = CGWindowID(adapterWindowNumbers.count + 1)
+        adapterWindowNumbers[id] = number
+        return number
+    }
+    /// The adapter's identity cleanup after a sweep: an observed application's
+    /// missing window closes at once; an unread one's needs the full list twice.
+    private func retireAdapterIdentities(answered: Set<Int32>) {
+        for window in windows where answered.contains(window.processIdentifier) {
+            adapterKnownWindows[window.id] = window.processIdentifier
+            _ = adapterWindowNumber(window.id)
+        }
+        let existing = Set(windows.map(\.id))
+        var closed = adapterKnownWindows.filter { answered.contains($0.value) && !existing.contains($0.key) }.map(\.key)
+        let windowServer = WindowServerIndex(records: windows.map { window in
+            WindowServerRecord(windowID: adapterWindowNumber(window.id), processIdentifier: window.processIdentifier,
+                layer: 0, frame: window.frame, isOnscreen: !offscreenWindowIDs.contains(window.id))
+        })
+        closed += adapterUnreadClosure.confirmClosed(adapterKnownWindows.compactMap { id, pid in
+            adapterHolds[pid] == nil ? nil : UnreadWindowClosureEvidence.Candidate(windowID: id, processIdentifier: pid,
+                exactWindowID: adapterExactIdentities ? adapterWindowNumber(id) : nil)
+        }, windowServer: windowServer)
+        for id in closed.sorted() {
+            guard let pid = adapterKnownWindows.removeValue(forKey: id) else { continue }
+            eventHandler?(WindowSystemEvent(kind: .destroyed, windowID: id, processIdentifier: pid))
+        }
+    }
+    /// One gated Accessibility call in adapter mode, as `gatedCall` makes it:
+    /// false without a message while held, false after a timeout, true after an answer.
+    private func adapterCall(_ pid: Int32) -> Bool {
+        guard let timeouts = adapterInventoryTimeouts else { return true }
+        let start = applicationHoldUptime()
+        guard !adapterGate.isHeld(pid, now: start) else { return false }
+        guard let timeout = timeouts[pid] else {
+            adapterGate.record(pid, cannotComplete: false, elapsed: 0, now: start)
+            return true
+        }
+        if let manualClock { manualClock.advance(by: .seconds(timeout)) }
+        adapterGate.record(pid, cannotComplete: true, elapsed: timeout, now: applicationHoldUptime())
+        return false
     }
     var emitsFrameEvents = false
     var desktopObservation: NativeDesktopObservation?
@@ -229,7 +309,12 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, CreatedWindowReading, T
         focusedWindowReadCount += 1
         if focusedWindowIsAbsent { return nil }
         if focusedWindowReadFails { throw WindowSystemError.operationFailed("Simulated focused-window failure") }
-        return windows.first { $0.id == focusedID } ?? windows.first
+        let focused = windows.first { $0.id == focusedID } ?? windows.first
+        // The adapter's frontmost check: a front application that does not answer is not replaced.
+        if let focused, !adapterCall(focused.processIdentifier) {
+            throw WindowSystemError.operationFailed(AccessibilityWindowSystem.unresponsiveApplicationMessage)
+        }
+        return focused
     }
     func visibleWindows() throws -> [WindowSnapshot] {
         var recoveryPIDs: Set<Int32>?
@@ -251,6 +336,36 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, CreatedWindowReading, T
             throw WindowSystemError.operationFailed("Injected visible-window observation failure.")
         }
         refreshLearnedConstraints()
+        if let timeouts = adapterInventoryTimeouts {
+            var answered: Set<Int32> = []
+            var reads: [Int32] = []
+            adapterHolds = ApplicationInventorySweep.run(
+                Set(windows.map(\.processIdentifier)).union(adapterRunningProcessIDs).sorted(),
+                processIdentifier: { $0 },
+                previousHolds: adapterHolds,
+                recoveryPIDs: &recoveryPIDs,
+                now: { self.applicationHoldUptime() },
+                gate: { self.adapterGate }
+            ) { pid in
+                let start = applicationHoldUptime()
+                guard !adapterGate.isHeld(pid, now: start) else { return }
+                reads.append(pid)
+                if let timeout = timeouts[pid] {
+                    unresponsiveInventoryAttemptTimes[pid, default: []].append(start)
+                    if let manualClock { manualClock.advance(by: .seconds(timeout)) }
+                    else { precondition(timeout == 0, "Inventory latency requires a manual fixture clock") }
+                    adapterGate.record(pid, cannotComplete: true, elapsed: timeout, now: applicationHoldUptime())
+                } else {
+                    adapterGate.record(pid, cannotComplete: false, elapsed: 0, now: start)
+                    answered.insert(pid)
+                }
+            }
+            adapterInventoryReads.append(reads)
+            retireAdapterIdentities(answered: answered)
+            return classifyUsingNativeCache(windows.filter {
+                !offscreenWindowIDs.contains($0.id) && answered.contains($0.processIdentifier)
+            })
+        }
         for pid in Set(windows.map(\.processIdentifier)).sorted() {
             let now = applicationHoldUptime()
             guard (applicationHoldsUntil[pid] ?? 0) <= now else { continue }
@@ -298,6 +413,7 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, CreatedWindowReading, T
         let snapshots = windows.filter { window in
             ids.contains(window.id)
                 && unreadableAfterWrites[window.id].map { frameWriteCounts[window.id, default: 0] < $0 } ?? true
+                && adapterCall(window.processIdentifier)
         }
         return classifyUsingNativeCache(snapshots)
     }
@@ -372,6 +488,10 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, CreatedWindowReading, T
     func setFrame(_ frame: BTRect, knownCurrentFrame: BTRect?, for windowID: WindowID) throws {
         guard let index = windows.firstIndex(where: { $0.id == windowID }) else {
             throw WindowSystemError.windowNotFound(windowID)
+        }
+        // `requireResponsive`, then the gated write.
+        guard adapterCall(windows[index].processIdentifier) else {
+            throw WindowSystemError.operationFailed(AccessibilityWindowSystem.unresponsiveApplicationMessage)
         }
         onBeforeFrameWrite?(windowID)
         frameWriteCounts[windowID, default: 0] += 1
@@ -515,7 +635,12 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, CreatedWindowReading, T
     }
 
     func setWindowEventHandler(_ handler: (@MainActor (WindowSystemEvent) -> Void)?) {
-        eventHandler = handler
+        guard let handler else { eventHandler = nil; return }
+        // Like the adapter, a destroyed event retires the window's identity record.
+        eventHandler = { [weak self] event in
+            if event.kind == .destroyed, let id = event.windowID { self?.adapterKnownWindows.removeValue(forKey: id) }
+            handler(event)
+        }
     }
     func startWindowObservation() {}
     func stopWindowObservation() {}

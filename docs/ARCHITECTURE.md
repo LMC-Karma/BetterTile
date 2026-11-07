@@ -918,10 +918,69 @@ write. `UnresponsiveApplicationGate` in Core limits that cost to about one
 timeout for each hang.
 
 - A call that fails with `cannotComplete` after at least 0.3 s holds its
-  application for 2 s.
+  application for 2 s. This call hold stays 2 s after any number of stalls,
+  so a shortcut, a Layout Wheel action or a frame write reaches an
+  application that recovered quietly within 2 s.
+- Complete sweeps use a separate inventory backoff. It starts at 2 s and
+  doubles with each further stall before the application answers: 4 s, 8 s,
+  16 s, then at most 30 s. A fixed 2 s interval was shorter than one sweep over
+  nine hung applications, so every sweep waited out every timeout again, about
+  3.2 s each time.
 - A quick `cannotComplete` is a busy application that answered. It neither
   starts nor ends a hold.
-- Any completed call ends the hold.
+- Any completed call ends the hold and the backoff. So does an activation of
+  the application, and any Accessibility notification that it posts, because
+  both show that it runs again. A window that the application announces with a
+  registered notification therefore does not wait for the end of a long
+  backoff. A failed application-level registration, such as the window
+  creation notification registered when the observer is installed, is not
+  retried. For such an application the fallback is an activation, a completed
+  call, or the end of the backoff. A failed per-window registration of a
+  managed or recent window, such as its destroyed notification, is retried by
+  the next sweep that reads the application.
+
+`ApplicationInventorySweep` chooses which applications a complete sweep reads.
+It sends no message to an application during its backoff. After one call in a
+sweep times out, the sweep also keeps every later application that stalled
+before and has not answered since. A per-application timeout serial detects
+the timeout, so a completed call earlier in the same read cannot hide it. The
+sweep still reads every other application. Applications that already stalled
+therefore cost at most one timeout per sweep, and the growing backoffs spread
+their later reads apart. An application that stalls for the first time is
+always read, so two applications that start to hang in the same sweep cost two
+timeouts.
+
+A kept application is reported with its inventory deadline, exactly like a
+held one. Its windows stay out of the sweep and keep their identities.
+`unreadableApplicationWindowIDs` lists them, and the model passes them to the
+Adaptive reducer through `heldWindowIDs`. Native desktop membership stays
+separate and keeps its finite absence budget. An unread pane therefore stays
+when native observation is unavailable, too. Native
+membership on another desktop still lets such a pane leave, and confirmed
+destruction and minimization still remove it.
+
+An unread application's window can also close without a destroyed event, for
+example after a failed notification registration. Accessibility gives no
+evidence for it, so `UnreadWindowClosureEvidence` uses the full public
+WindowServer list that the sweep already builds, which includes other Spaces
+and minimized windows. Two consecutive lists must omit the window's exact
+identity. A window without an exact identity closes only when the list has no
+window of its application at all. A missing list, or one with no on-screen
+window, is not evidence. A confirmed closure retires the identity and reaches
+the model as a destroyed event, so the pane leaves and its neighbours fill.
+
+The exemption has limits:
+
+- With private APIs disabled, windows have no exact identity. A closed window
+  of an unread application that keeps another window keeps its pane until the
+  application answers a sweep.
+- Without native observation, a window that the user moved to another Space
+  keeps its pane until its application answers.
+
+A recovery sweep leaves a kept application's PID eligible, so it is not
+charged a recovery attempt. Kept applications stay due, so recovery sweeps can
+come about once a second. Each one reads and charges at least one due
+application, so the three-attempt limit still ends them.
 
 `AccessibilityWindowSystem` routes reads, settable checks, frame writes, and
 notification removals through `gatedCall`. `requireResponsive` stops a frame
@@ -932,10 +991,10 @@ its panes stay in the layout. A frame-write sequence stops at the first
 refused call.
 
 After reconciliation omits a held application, the app model schedules a fresh
-sweep 0.1 s after its hold deadline. One main-actor task covers all held
+sweep 0.1 s after its inventory deadline. One main-actor task covers all held
 applications. Each application gets at most three automatic recovery attempts,
 with at least 1 s and then 2 s between attempts, and always after the latest
-hold expires. Recovery sweeps admit only due applications whose retry budget
+inventory backoff ends. Recovery sweeps admit only due applications whose retry budget
 remains. Each actual inventory probe consumes one attempt, including probes in
 follow-up sweeps during the same recovery pass. A completed sweep that reads
 the application clears its retry budget. After exhaustion, the ordinary watchdog remains the fallback. A process
@@ -1056,9 +1115,11 @@ in under half a second, for example while Accessibility exposes a desktop's
 windows one at a time after the user returns to it. The app model gives the
 reducer the sweep time from its injected clock. Desktop membership delays the
 removal but does not prevent it, because an application can keep a closed
-window alive off screen. A window of an application held as unresponsive keeps
-its pane while macOS reports it on this desktop, because the sweep did not read
-that application.
+window alive off screen. A window of an application skipped as unresponsive
+keeps its pane even without native membership, because the sweep did not read
+that application. Known membership on another desktop or a readable window on
+another display still lets it leave. Confirmed closure or minimization also
+removes the pane.
 
 Positive on-screen evidence protects a live window that Accessibility omits.
 Each complete sweep already reads the WindowServer window list. The adapter

@@ -36,7 +36,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
     private var nextLaunchGeneration: UInt64 = 0
     private var loggedBatchFallback = false
     private var observers: [pid_t: AXObserver] = [:]
-    private var observationLifetime = WindowObservationLifetime()
+    var observationLifetime = WindowObservationLifetime()
     private var observationCallbackContext: AccessibilityCallbackContext?
     private struct Registration: Hashable {
         var windowID: WindowID?
@@ -46,6 +46,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
     private var registrations: [pid_t: Set<Registration>] = [:]
     private var eventHandler: (@MainActor (WindowSystemEvent) -> Void)?
     private var unreadableApplicationHolds: [pid_t: TimeInterval] = [:]
+    private var unreadWindowClosure = UnreadWindowClosureEvidence()
 
     /// Uptime deadlines from the last sweep. Checking process liveness makes
     /// recovery stop without another Accessibility call after an app quits.
@@ -55,9 +56,21 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         }
         return running.reduce(into: [:]) { deadlines, entry in
             let (pid, deadline) = entry
-            let latest = Self.unresponsiveApplications.withLock { $0.holdDeadline(pid) }
+            let latest = Self.unresponsiveApplications.withLock { $0.inventoryBackoffDeadline(pid) }
             deadlines[pid] = max(deadline, latest ?? deadline)
         }
+    }
+
+    /// Known windows of the applications that the last sweep did not read,
+    /// because they were held or kept. Their absence from that sweep proves
+    /// nothing, so the model exempts them from absence removal. Confirmed
+    /// destruction and minimization still remove them, and so does closure
+    /// that two full WindowServer lists prove (`UnreadWindowClosureEvidence`).
+    public var unreadableApplicationWindowIDs: Set<WindowID> {
+        guard !unreadableApplicationHolds.isEmpty else { return [] }
+        return Set(identities.records.values.compactMap { record in
+            unreadableApplicationHolds[record.application.processIdentifier] == nil ? nil : record.windowID
+        })
     }
     private var minimumSizeLearner = WindowMinimumSizeLearner()
     private let dockSpaceReader = DockSpaceReader()
@@ -81,7 +94,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
     /// worse than a slow one.
     private nonisolated static let frameWriteMessagingTimeout: Float = 1.5
     /// Shared by the main actor and the per-application write threads.
-    private nonisolated static let unresponsiveApplications = Mutex(UnresponsiveApplicationGate())
+    nonisolated static let unresponsiveApplications = Mutex(UnresponsiveApplicationGate())
     private nonisolated static let acceptedWriteErrors: [AXError] = [.success, .attributeUnsupported]
     static let unresponsiveApplicationMessage = "The application is not responding, so its window cannot move right now."
     private nonisolated static let enhancedUserInterfaceAttribute = "AXEnhancedUserInterface"
@@ -197,6 +210,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
 
     public func resetCachedWindows() {
         unreadableApplicationHolds.removeAll()
+        unreadWindowClosure.reset()
         metadata.removeAll()
         elements.removeAll()
         identities.removeAll()
@@ -440,31 +454,24 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         var observedApplications: [ApplicationLaunchInstance: Set<CFHashCode>] = [:]
         let previousHolds = unreadableApplicationHolds
         unreadableApplicationHolds.removeAll()
-        for application in NSWorkspace.shared.runningApplications where Self.shouldManageApplication(
-            processIdentifier: application.processIdentifier,
-            ownProcessIdentifier: getpid(),
-            activationPolicy: application.activationPolicy,
-            isHidden: application.isHidden,
-            includeHidden: false
-        ) {
+        let applications = NSWorkspace.shared.runningApplications.filter { application in
+            Self.shouldManageApplication(
+                processIdentifier: application.processIdentifier,
+                ownProcessIdentifier: getpid(),
+                activationPolicy: application.activationPolicy,
+                isHidden: application.isHidden,
+                includeHidden: false
+            )
+        }
+        unreadableApplicationHolds = ApplicationInventorySweep.run(
+            applications,
+            processIdentifier: \.processIdentifier,
+            previousHolds: previousHolds,
+            recoveryPIDs: &recoveryPIDs,
+            now: { ProcessInfo.processInfo.systemUptime },
+            gate: { Self.unresponsiveApplications.withLock { $0 } }
+        ) { application in
             let pid = application.processIdentifier
-            defer {
-                let now = ProcessInfo.processInfo.systemUptime
-                if let deadline = Self.unresponsiveApplications.withLock({ $0.holdDeadline(pid) }), deadline > now {
-                    unreadableApplicationHolds[pid] = deadline
-                }
-            }
-            if let deadline = previousHolds[pid], recoveryPIDs != nil {
-                guard recoveryPIDs?.contains(pid) == true, !Self.isUnresponsive(pid) else {
-                    // Keep expired holds visible so another app's timer cannot
-                    // probe an exhausted app or reset its retry budget.
-                    unreadableApplicationHolds[pid] = max(
-                        deadline, Self.unresponsiveApplications.withLock { $0.holdDeadline(pid) } ?? deadline
-                    )
-                    continue
-                }
-                recoveryPIDs?.remove(pid)
-            }
             let applicationInstance = applicationInstance(for: application)
             let appElement = makeApplicationElement(pid: application.processIdentifier)
             #if DEBUG
@@ -474,7 +481,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
                 #if DEBUG
                 ArrivalTrace.shared.record("readiness_outcome", pid: pid, outcome: "inventory_unreadable", reason: "ax_windows_inventory")
                 #endif
-                continue
+                return
             }
             #if DEBUG
             ArrivalTrace.shared.record("readiness_outcome", pid: pid,
@@ -513,6 +520,18 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
                 return AXUIElementCopyAttributeValue(element, kAXRoleAttribute as CFString, &role)
             }
         ), notifyClosure: true)
+        // An unread application gives no Accessibility evidence. The full
+        // WindowServer list still proves that one of its windows closed.
+        let closedWhileUnread = unreadWindowClosure.confirmClosed(
+            identities.records.values.compactMap { record in
+                unreadableApplicationHolds[record.application.processIdentifier] == nil ? nil
+                    : UnreadWindowClosureEvidence.Candidate(windowID: record.windowID,
+                        processIdentifier: record.application.processIdentifier,
+                        exactWindowID: record.exactWindowID)
+            },
+            windowServer: windowServer
+        )
+        removeCachedState(for: closedWhileUnread.sorted().compactMap { identities.remove($0) }, notifyClosure: true)
         knownWindowSnapshots = knownWindowSnapshots.filter { identities.records[$0.key] != nil }
         let sorted = snapshots.sorted { $0.id < $1.id }
         snapshotCache.recordFullSweep(sorted)
@@ -1506,20 +1525,36 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
     }
 
     private func recordActivation(of application: NSRunningApplication) {
-        let pid = application.processIdentifier
+        guard recordActivation(
+            processIdentifier: application.processIdentifier,
+            activationPolicy: application.activationPolicy,
+            isHidden: application.isHidden
+        ) else { return }
+        _ = applicationInstance(for: application)
+    }
+
+    /// Returns false for an application that BetterTile does not manage.
+    @discardableResult
+    func recordActivation(
+        processIdentifier pid: pid_t,
+        activationPolicy: NSApplication.ActivationPolicy,
+        isHidden: Bool
+    ) -> Bool {
         guard Self.shouldManageApplication(
             processIdentifier: pid,
             ownProcessIdentifier: getpid(),
-            activationPolicy: application.activationPolicy,
-            isHidden: application.isHidden,
+            activationPolicy: activationPolicy,
+            isHidden: isHidden,
             includeHidden: true
-        ) else { return }
-        _ = applicationInstance(for: application)
+        ) else { return false }
+        // An application that became active runs again: read it at once instead of after its backoff.
+        Self.unresponsiveApplications.withLock { $0.release(pid) }
         recentApplicationPIDs.removeAll { $0 == pid }
         recentApplicationPIDs.insert(pid, at: 0)
         if recentApplicationPIDs.count > 12 {
             recentApplicationPIDs.removeLast(recentApplicationPIDs.count - 12)
         }
+        return true
     }
 
     private func synchronizeObservers() {
@@ -1722,7 +1757,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         return nextCreationToken
     }
 
-    fileprivate func receiveAXEvent(_ captured: CapturedWindowObservation) {
+    func receiveAXEvent(_ captured: CapturedWindowObservation) {
         guard let event = observationLifetime.event(for: captured, identities: identities) else {
             #if DEBUG
             if captured.event.kind == .created { ArrivalTrace.shared.record("arrival_dropped", pid: captured.event.processIdentifier,
@@ -1730,6 +1765,11 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
             #endif
             return
         }
+        // The application posted this notification, so it runs again. A window
+        // that it announces does not wait for the end of a backoff. Without a
+        // registered notification, activation, a completed call or the end of
+        // the backoff is the fallback.
+        Self.unresponsiveApplications.withLock { $0.release(event.processIdentifier) }
         receiveWindowEvent(event)
     }
 

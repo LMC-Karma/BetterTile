@@ -14,6 +14,8 @@ protocol BetterTileWindowSystem: TargetedWindowSystem, WindowEventSource, Window
     var unresponsiveApplicationRecoveryDeadlines: [Int32: TimeInterval] { get }
     /// Known identities owned by currently hidden application launches.
     var hiddenApplicationWindowIDs: Set<WindowID> { get }
+    /// Known windows of the applications that the last complete sweep did not read.
+    var unreadableApplicationWindowIDs: Set<WindowID> { get }
     func visibleWindows(recoveringApplicationPIDs: inout Set<Int32>) throws -> [WindowSnapshot]
     func cachedVisibleWindows(refreshing ids: Set<WindowID>) throws -> [WindowSnapshot]?
     func nativeDesktopObservation() -> NativeDesktopObservation?
@@ -48,6 +50,7 @@ extension BetterTileWindowSystem {
     var hiddenApplicationWindowIDs: Set<WindowID> { [] }
     var unreadOnScreenWindowIDs: Set<WindowID> { [] }
     func displayArrangement() -> DisplayArrangement { DisplayArrangement(displays()) }
+    var unreadableApplicationWindowIDs: Set<WindowID> { [] }
     func restoreEnhancedUserInterfaceBeforeQuit() {}
 }
 
@@ -4210,6 +4213,23 @@ final class BetterTileModel {
         }
     }
 
+    /// Windows of applications the last sweep did not read. Their absence
+    /// does not count toward removal. Native membership on another desktop
+    /// still lets such a pane leave.
+    /// Confirmed destruction and minimization override every exemption.
+    private func unreadApplicationWindowIDs(
+        on displayID: DisplayID,
+        observation: NativeDesktopObservation?
+    ) -> Set<WindowID> {
+        let space = observation?.currentSpace(on: displayID)
+        let unreadable = system.unreadableApplicationWindowIDs.filter { windowID in
+            guard let memberships = observation?.windowMembership[windowID], !memberships.isEmpty,
+                  let space else { return true }
+            return memberships == [space]
+        }
+        return unreadable
+    }
+
     /// Wake once after a held application's deadline, then back off. Recovery
     /// observes the current desktop; it never retains a placement proposal.
     private func scheduleUnresponsiveApplicationRecovery() {
@@ -4832,7 +4852,8 @@ final class BetterTileModel {
                    minimized: confirmedMinimizedWindowIDs,
                    hiddenApplicationWindowIDs: system.hiddenApplicationWindowIDs,
                    knownSpaceWindowIDs: knownSpaceWindowIDs,
-                   heldWindowIDs: heldWindowIDs(among: knownSpaceWindowIDs),
+                   heldWindowIDs: heldWindowIDs(
+                       among: knownSpaceWindowIDs, on: displayID, eligible: eligible, observation: nativeObservation),
                    onScreenWindowIDs: system.unreadOnScreenWindowIDs,
                    now: clock.now,
                    newWindowSide: configuration.bentoNewWindowSide,
@@ -6262,7 +6283,8 @@ final class BetterTileModel {
                     confirmedMinimized: consumedMinimizedWindowIDs,
                     hiddenApplicationWindowIDs: system.hiddenApplicationWindowIDs,
                     knownSpaceWindowIDs: knownSpaceWindowIDs,
-                    heldWindowIDs: heldWindowIDs(among: knownSpaceWindowIDs),
+                    heldWindowIDs: heldWindowIDs(
+                        among: knownSpaceWindowIDs, on: display.id, eligible: eligible, observation: nativeObservation),
                     onScreenWindowIDs: system.unreadOnScreenWindowIDs,
                     now: clock.now
                 )
@@ -6292,7 +6314,8 @@ final class BetterTileModel {
                 // its pane, so neither needs the follow-up.
                 if !activation.session.automaticWritesSuspended,
                    !Set(layout.root?.windowIDs ?? []).subtracting(observed)
-                       .subtracting(heldWindowIDs(among: knownSpaceWindowIDs)).isEmpty {
+                       .subtracting(heldWindowIDs(among: knownSpaceWindowIDs, on: display.id,
+                           eligible: eligible, observation: nativeObservation)).isEmpty {
                     scheduleAbsenceConfirmation()
                 }
             }
@@ -6531,7 +6554,8 @@ final class BetterTileModel {
             minimized: minimized.union(confirmedMinimizedWindowIDs),
             hiddenApplicationWindowIDs: system.hiddenApplicationWindowIDs,
             knownSpaceWindowIDs: knownSpaceWindowIDs,
-            heldWindowIDs: heldWindowIDs(among: knownSpaceWindowIDs),
+            heldWindowIDs: heldWindowIDs(
+                among: knownSpaceWindowIDs, on: display.id, eligible: eligible, observation: observation),
             onScreenWindowIDs: system.unreadOnScreenWindowIDs,
             now: clock.now,
             newWindowSide: configuration.bentoNewWindowSide,
@@ -6543,12 +6567,21 @@ final class BetterTileModel {
     }
 
     /// Windows of a held application among windows that macOS still reports on
-    /// this desktop. The inventory skips a held application, so these windows
-    /// are absent by BetterTile's choice and keep their panes.
-    private func heldWindowIDs(among windowIDs: Set<WindowID>) -> Set<WindowID> {
+    /// this desktop, and windows of applications that the last sweep did not
+    /// read. The inventory skips these applications, so their windows are
+    /// absent by BetterTile's choice and keep their panes, even without native
+    /// membership. Membership alone still uses the finite absence budget.
+    /// Confirmed closure and minimization override the reducer's exemption.
+    private func heldWindowIDs(
+        among windowIDs: Set<WindowID>,
+        on displayID: DisplayID,
+        eligible: [WindowSnapshot],
+        observation: NativeDesktopObservation?
+    ) -> Set<WindowID> {
         let held = system.unresponsiveApplicationRecoveryDeadlines
-        guard !held.isEmpty else { return [] }
-        return windowIDs.filter { observedProcessIdentifiers[$0].map { held[$0] != nil } ?? false }
+        let knownHeld = windowIDs.filter { observedProcessIdentifiers[$0].map { held[$0] != nil } ?? false }
+        return knownHeld.union(unreadApplicationWindowIDs(on: displayID, observation: observation))
+            .subtracting(eligible.filter { $0.displayID != displayID }.map(\.id))
     }
 
     /// Windows that macOS reports as members of only the current desktop of
@@ -6607,7 +6640,8 @@ final class BetterTileModel {
             )
             return !protected.subtracting(stillProtected)
                 .intersection(session.bentoState.root?.windowIDs ?? [])
-                .subtracting(heldWindowIDs(among: protected))
+                .subtracting(heldWindowIDs(among: protected, on: session.displayID,
+                    eligible: eligible, observation: observation))
                 .isEmpty
         }
     }
