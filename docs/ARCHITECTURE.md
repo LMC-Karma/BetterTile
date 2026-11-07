@@ -298,15 +298,24 @@ restoration write. The coordinator records actual frame and rollback write
 failures separately so a later display event cannot hide a genuine failure.
 Manual Apply explains the interruption. Display Trigger waits for settlement
 and retries an interrupted automatic Apply once under its original input
-cancellation. A second interruption receives no further retry.
+cancellation. An attempt that already placed windows is not repeated. A second
+interruption receives no further retry.
 
 Display changes stop divider and window gestures without restoring old frames
-inside the hold. Recovery checks the session, desktop and window processes
-again, then uses the current work area. A newer explicit action on the display
-supersedes retained recovery. Escape outside a hold restores normally.
+inside the hold. Native linked resizing stops too: its queued display tick, the
+rest of the drag and the release resend write nothing. Only a linked resize
+that left its windows in an unknown arrangement keeps a recovery. A resize that
+starts during the hold is a new explicit action and links as usual. Recovery
+checks the session, desktop and window processes again, then uses the current
+work area. Recovery for a Manual desktop writes only the interrupted
+transaction's own windows. It skips a window whose frame changed during the
+hold, moves the old frames with a moved display origin, and writes nothing when
+the display changed size. A newer explicit action on the display supersedes
+retained recovery. Escape outside a hold restores normally.
 A queued Tabbed exit retains its desktop owner, action identity and hold
-generation. A newer hold defers it until settlement; a newer mode action
-supersedes it. Its continuation never grants a new user override. Automatic
+generation. A newer hold defers it until settlement. Only a newer mode choice
+supersedes it; other explicit actions, such as a snap or a refused drag, do
+not. Its continuation never grants a new user override. Automatic
 float checks whose deadlines fall inside a hold stay pending without spending
 the busy retry budget. They run once after settlement. Departed displays discard
 unused Tabbed placement handoffs.

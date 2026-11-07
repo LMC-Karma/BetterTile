@@ -544,3 +544,35 @@ func degradedLinkedResizeRestoresPeersOrReportsTerminalFailure(recoveryFails: Bo
     #expect(system.frameWriteCounts == writes)
     controller.stop()
 }
+
+/// A display change interrupts a press whose gesture start is still deferred.
+/// The rest of that drag must not start a gesture or move the neighbour.
+@Test(.macOSTestApplication) @MainActor func linkedResizeInterruptionCancelsADeferredStart() async {
+    let system = FakeWindowSystem()
+    system.addSecondWindow()
+    system.windows[0].frame = BTRect(x: 0, y: 0, width: 500, height: 800)
+    system.windows[1].frame = BTRect(x: 500, y: 0, width: 500, height: 800)
+    var configuration = BetterTileConfiguration()
+    configuration.linkedResizeEnabled = true
+    let ticks = ResizeDisplayLink(automatic: false)
+    let controller = LinkedResizeController(
+        coordinator: WindowCoordinator(system: system), configuration: configuration, displayTicks: ticks
+    )
+    controller.isEnabledForDisplay = { _ in true }
+    controller.setUsesSharedGestureEvents(true)
+    func event(_ kind: GlobalGestureEventKind) -> GlobalGestureEvent {
+        GlobalGestureEvent(kind: kind, position: BTPoint(x: 500, y: 400), button: 0, modifiers: [], timestamp: 1)
+    }
+
+    controller.handleSharedGestureEvent(event(.leftMouseDown))
+    #expect(controller.interruptForDisplayChange().map { _ in true } == nil)
+    await Task.yield()
+    await Task.yield()
+    system.windows[0].frame.size.width = 600
+    controller.handleSharedGestureEvent(event(.leftMouseDragged))
+    ticks.fire()
+    controller.handleSharedGestureEvent(event(.leftMouseUp))
+
+    #expect(system.frameWriteCounts[system.windows[1].id] == nil)
+    #expect(!controller.isResizing)
+}
