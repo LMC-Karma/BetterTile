@@ -243,3 +243,39 @@ private let target = BTRect(x: 100, y: 100, width: 600, height: 400)
     #expect(gate.isHeld(42, now: 10 + UnresponsiveApplicationGate.holdSeconds - 0.01))
     #expect(!gate.isHeld(42, now: 10 + UnresponsiveApplicationGate.holdSeconds))
 }
+
+/// A fixed two-second hold was shorter than one sweep over nine hung
+/// applications, so every sweep waited out every timeout again.
+@Test func eachStallWithoutAnAnswerDoublesTheHoldUpToItsLimit() throws {
+    var gate = UnresponsiveApplicationGate()
+    var now = 100.0
+    var holds: [Double] = []
+    for _ in 0..<7 {
+        gate.record(42, cannotComplete: true, elapsed: 0.35, now: now)
+        let deadline = try #require(gate.holdDeadline(42))
+        holds.append(deadline - now)
+        now = deadline
+    }
+    #expect(holds == [2, 4, 8, 16, 30, 30, 30])
+    #expect(gate.stallCount(42) == 7)
+    // A quick refusal is an answer from a busy application: the backoff stays.
+    gate.record(42, cannotComplete: true, elapsed: 0.01, now: now)
+    #expect(gate.stallCount(42) == 7)
+    // A completed call ends the hold and the backoff.
+    gate.record(42, cannotComplete: false, elapsed: 0.01, now: now)
+    #expect(gate.stallCount(42) == 0 && gate.holdDeadline(42) == nil)
+    gate.record(42, cannotComplete: true, elapsed: 0.35, now: now)
+    #expect(gate.holdDeadline(42) == now + UnresponsiveApplicationGate.holdSeconds)
+}
+
+@Test func releaseEndsTheHoldAndTheBackoffForOneApplication() {
+    var gate = UnresponsiveApplicationGate()
+    for now in [10.0, 12, 16, 24] { gate.record(42, cannotComplete: true, elapsed: 0.35, now: now) }
+    gate.record(43, cannotComplete: true, elapsed: 0.35, now: 24)
+    #expect(gate.isHeld(42, now: 25) && gate.stallCount(42) == 4)
+    gate.release(42)
+    #expect(!gate.isHeld(42, now: 25) && gate.stallCount(42) == 0)
+    #expect(gate.isHeld(43, now: 25), "Other applications keep their holds")
+    gate.record(42, cannotComplete: true, elapsed: 0.35, now: 26)
+    #expect(gate.holdDeadline(42) == 26 + UnresponsiveApplicationGate.holdSeconds)
+}

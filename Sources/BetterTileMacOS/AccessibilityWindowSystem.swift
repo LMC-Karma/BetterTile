@@ -1437,6 +1437,8 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
             isHidden: application.isHidden,
             includeHidden: true
         ) else { return }
+        // An application that became active runs again: read it at once instead of after its backoff.
+        Self.unresponsiveApplications.withLock { $0.release(pid) }
         _ = applicationInstance(for: application)
         recentApplicationPIDs.removeAll { $0 == pid }
         recentApplicationPIDs.insert(pid, at: 0)
@@ -1653,6 +1655,9 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
             #endif
             return
         }
+        // The application posted this notification, so it runs again. Its
+        // created or destroyed window must not wait for the end of a backoff.
+        Self.unresponsiveApplications.withLock { $0.release(event.processIdentifier) }
         receiveWindowEvent(event)
     }
 

@@ -4,6 +4,13 @@ import BetterTileCore
 /// unreadable. A kept application's windows are left out of the sweep but keep
 /// their identities, so their panes stay in the layout.
 ///
+/// One sweep waits out at most one messaging timeout for applications that
+/// already stalled. After any read in the sweep stalls, the sweep keeps each
+/// later application whose last call stalled and that has not answered since.
+/// It still reads every other application. Several hung applications then cost
+/// one timeout per sweep, not one each, and the holds that the gate grows
+/// spread their next reads apart.
+///
 /// The Accessibility adapter runs this loop over its running applications.
 /// Tests run it with injected per-application read times.
 enum ApplicationInventorySweep {
@@ -27,6 +34,7 @@ enum ApplicationInventorySweep {
         read: (Application) -> Void
     ) -> [Int32: Double] {
         var holds: [Int32: Double] = [:]
+        var waitedOutTimeout = false
         for application in applications {
             let pid = processIdentifier(application)
             defer {
@@ -41,9 +49,18 @@ enum ApplicationInventorySweep {
                     holds[pid] = max(deadline, gate().holdDeadline(pid) ?? deadline)
                     continue
                 }
-                recoveryPIDs?.remove(pid)
             }
+            let stalls = gate().stallCount(pid)
+            if waitedOutTimeout, stalls > 0, !gate().isHeld(pid, now: now()) {
+                // Kept like a held application. A recovery sweep leaves its PID
+                // in place, so the model does not count an attempt.
+                let deadline = gate().holdDeadline(pid) ?? now()
+                holds[pid] = max(deadline, previousHolds[pid] ?? deadline)
+                continue
+            }
+            if previousHolds[pid] != nil { recoveryPIDs?.remove(pid) }
             read(application)
+            if gate().stallCount(pid) > stalls { waitedOutTimeout = true }
         }
         return holds
     }

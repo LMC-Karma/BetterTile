@@ -667,9 +667,26 @@ timeout for each hang.
 
 - A call that fails with `cannotComplete` after at least 0.3 s holds its
   application for 2 s.
+- Each further stall before the application answers doubles the hold: 4 s,
+  8 s, 16 s, then at most 30 s. A fixed 2 s hold was shorter than one sweep
+  over nine hung applications, so every sweep waited out every timeout again,
+  about 3.2 s each time.
 - A quick `cannotComplete` is a busy application that answered. It neither
   starts nor ends a hold.
-- Any completed call ends the hold.
+- Any completed call ends the hold and its backoff. So does an activation of
+  the application, and any Accessibility notification that it posts, because
+  both show that it runs again. A created or destroyed window therefore never
+  waits for the end of a long hold.
+
+`ApplicationInventorySweep` chooses which applications a complete sweep reads.
+After one read in a sweep waits out its timeout, the sweep keeps every later
+application that stalled before and has not answered since. It still reads
+every other application. A kept application is reported with its hold
+deadline, exactly like a held one: its windows stay out of the sweep, keep
+their identities, and keep their panes. A recovery sweep leaves a kept
+application's PID eligible, so it is not charged a recovery attempt. Several
+hung applications therefore cost at most one timeout per sweep after the first
+sweep, and the growing holds spread their later reads apart.
 
 `AccessibilityWindowSystem` routes reads, settable checks, frame writes, and
 notification removals through `gatedCall`. `requireResponsive` stops a frame

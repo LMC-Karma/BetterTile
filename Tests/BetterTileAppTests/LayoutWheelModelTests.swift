@@ -99,8 +99,27 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, CreatedWindowReading, T
     var unresponsiveInventoryDelay: TimeInterval = 0
     var onWindowSnapshots: (() -> Void)?
     var unresponsiveInventoryAttemptTimes: [Int32: [TimeInterval]] = [:]
+    /// Opt-in adapter fidelity for hung applications: complete sweeps run the
+    /// adapter's own `ApplicationInventorySweep` and `UnresponsiveApplicationGate`
+    /// instead of `applicationHoldsUntil`. Each read of a listed application waits
+    /// out its timeout on the manual clock and fails. Nil keeps the simple model.
+    var adapterInventoryTimeouts: [Int32: TimeInterval]?
+    private(set) var adapterGate = UnresponsiveApplicationGate()
+    private var adapterHolds: [Int32: TimeInterval] = [:]
+    /// The applications that each adapter-mode sweep actually messaged, in order.
+    /// A held application fails without a message, as in `gatedCall`.
+    private(set) var adapterInventoryReads: [[Int32]] = []
+    /// What the adapter does when an application becomes active or posts an
+    /// Accessibility notification.
+    func adapterApplicationRuns(_ pid: Int32) { adapterGate.release(pid) }
     var unresponsiveApplicationRecoveryDeadlines: [Int32: TimeInterval] {
-        applicationHoldsUntil.filter { pid, _ in windows.contains { $0.processIdentifier == pid } }
+        guard adapterInventoryTimeouts != nil else {
+            return applicationHoldsUntil.filter { pid, _ in windows.contains { $0.processIdentifier == pid } }
+        }
+        return adapterHolds.reduce(into: [:]) { deadlines, entry in
+            guard windows.contains(where: { $0.processIdentifier == entry.key }) else { return }
+            deadlines[entry.key] = max(entry.value, adapterGate.holdDeadline(entry.key) ?? entry.value)
+        }
     }
     var emitsFrameEvents = false
     var desktopObservation: NativeDesktopObservation?
@@ -243,6 +262,35 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, CreatedWindowReading, T
             throw WindowSystemError.operationFailed("Injected visible-window observation failure.")
         }
         refreshLearnedConstraints()
+        if let timeouts = adapterInventoryTimeouts {
+            var answered: Set<Int32> = []
+            var reads: [Int32] = []
+            adapterHolds = ApplicationInventorySweep.run(
+                Set(windows.map(\.processIdentifier)).sorted(),
+                processIdentifier: { $0 },
+                previousHolds: adapterHolds,
+                recoveryPIDs: &recoveryPIDs,
+                now: { self.applicationHoldUptime() },
+                gate: { self.adapterGate }
+            ) { pid in
+                let start = applicationHoldUptime()
+                guard !adapterGate.isHeld(pid, now: start) else { return }
+                reads.append(pid)
+                if let timeout = timeouts[pid] {
+                    unresponsiveInventoryAttemptTimes[pid, default: []].append(start)
+                    if let manualClock { manualClock.advance(by: .seconds(timeout)) }
+                    else { precondition(timeout == 0, "Inventory latency requires a manual fixture clock") }
+                    adapterGate.record(pid, cannotComplete: true, elapsed: timeout, now: applicationHoldUptime())
+                } else {
+                    adapterGate.record(pid, cannotComplete: false, elapsed: 0, now: start)
+                    answered.insert(pid)
+                }
+            }
+            adapterInventoryReads.append(reads)
+            return classifyUsingNativeCache(windows.filter {
+                !offscreenWindowIDs.contains($0.id) && answered.contains($0.processIdentifier)
+            })
+        }
         for pid in Set(windows.map(\.processIdentifier)).sorted() {
             let now = applicationHoldUptime()
             guard (applicationHoldsUntil[pid] ?? 0) <= now else { continue }

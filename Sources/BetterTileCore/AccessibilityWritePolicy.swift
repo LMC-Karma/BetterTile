@@ -198,15 +198,29 @@ public enum WriteReadbackPolicy {
 /// many reads and writes, so a single divider drag froze BetterTile for about
 /// five seconds. Calls to a held application fail at once, as a timed-out call
 /// would, until the hold ends; a call that completes ends it sooner.
+///
+/// Each further stall without an answer doubles the hold, up to
+/// `maximumHoldSeconds`. A fixed two-second hold was shorter than one complete
+/// sweep over several hung applications, so every sweep waited out every
+/// timeout again.
 public struct UnresponsiveApplicationGate: Sendable {
     /// A `cannotComplete` that took this long waited out its timeout. The
     /// shortest timeout BetterTile sets is 0.35 s.
     public static let stallSeconds = 0.3
+    /// The hold after the first stall.
     public static let holdSeconds = 2.0
+    public static let maximumHoldSeconds = 30.0
 
     private var holdsUntil: [Int32: Double] = [:]
+    private var stalls: [Int32: Int] = [:]
 
     public init() {}
+
+    /// The hold that follows this many consecutive stalls.
+    public static func holdSeconds(afterStalls count: Int) -> Double {
+        guard count > 1 else { return holdSeconds }
+        return min(maximumHoldSeconds, holdSeconds * pow(2, Double(min(count - 1, 16))))
+    }
 
     public func isHeld(_ processIdentifier: Int32, now: Double) -> Bool {
         (holdsUntil[processIdentifier] ?? -.infinity) > now
@@ -216,13 +230,29 @@ public struct UnresponsiveApplicationGate: Sendable {
         holdsUntil[processIdentifier]
     }
 
+    /// Stalls since the application last answered. Nonzero after its hold
+    /// ends, too, until a call completes or `release` runs.
+    public func stallCount(_ processIdentifier: Int32) -> Int {
+        stalls[processIdentifier] ?? 0
+    }
+
     /// Records one call. A quick `cannotComplete` is an answer from a busy
     /// application, not a hang, so it neither starts nor ends a hold.
     public mutating func record(_ processIdentifier: Int32, cannotComplete: Bool, elapsed: Double, now: Double) {
         if !cannotComplete {
-            holdsUntil.removeValue(forKey: processIdentifier)
+            release(processIdentifier)
         } else if elapsed >= Self.stallSeconds {
-            holdsUntil[processIdentifier] = now + Self.holdSeconds
+            let count = stallCount(processIdentifier) + 1
+            stalls[processIdentifier] = count
+            holdsUntil[processIdentifier] = now + Self.holdSeconds(afterStalls: count)
         }
+    }
+
+    /// Ends the hold and its backoff. For signs that the application runs
+    /// again without a completed call: it became active, or it sent an
+    /// Accessibility notification.
+    public mutating func release(_ processIdentifier: Int32) {
+        holdsUntil.removeValue(forKey: processIdentifier)
+        stalls.removeValue(forKey: processIdentifier)
     }
 }
