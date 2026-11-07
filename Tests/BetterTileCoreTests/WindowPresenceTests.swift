@@ -188,6 +188,16 @@ func historyRestoreBoundsRequiresMinimumPartiallyVisibleTitleStripArea(visibleHe
     #expect(PlacementBounds.isHistoryRestoreReachable(frame, in: [display]) == reachable)
 }
 
+@Test(arguments: [
+    (BTRect(x: 100, y: 100, width: 8, height: 400), true),
+    (BTRect(x: 100, y: 100, width: 200, height: 1), true),
+    (BTRect(x: 996, y: 100, width: 8, height: 400), false)
+])
+func historyRestoreBoundsAcceptsWholeStripSmallerThanMinimum(frame: BTRect, reachable: Bool) {
+    let display = BTRect(x: 0, y: 0, width: 1_000, height: 800)
+    #expect(PlacementBounds.isHistoryRestoreReachable(frame, in: [display]) == reachable)
+}
+
 @Test func historyRestoreBoundsDoesNotCombineSmallFragments() {
     let displays = [
         BTRect(x: 0, y: 0, width: 5, height: 800),
