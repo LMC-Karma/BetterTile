@@ -2158,10 +2158,12 @@ struct ReservedWorkAreaActionTests {
         let west = DisplayID(rawValue: "west")
         let east = DisplayID(rawValue: "east")
         system.availableDisplays += [
-            DisplaySnapshot(id: east, frame: rect(1_000, 0, 1_000, 800), visibleFrame: rect(1_000, 0, 1_000, 800)),
-            DisplaySnapshot(id: west, frame: rect(-1_000, 0, 1_000, 800), visibleFrame: rect(-1_000, 0, 1_000, 800))]
+            DisplaySnapshot(id: west, frame: rect(-1_000, 0, 1_000, 800), visibleFrame: rect(-1_000, 0, 1_000, 800)),
+            DisplaySnapshot(id: east, frame: rect(1_000, 0, 1_000, 800), visibleFrame: rect(1_000, 0, 1_000, 800))]
         let coordinator = WindowCoordinator(system: system)
-        // Enumeration is main, east, west; spatial order is west, main, east.
+        // Enumeration is main, west, east; spatial order is west, main, east.
+        // From main, enumeration order would pick west for Next Display and
+        // east for Previous Display, the opposite of spatial order.
         let plan = try #require(coordinator.plan(action).readyPlan)
         let x = action == .nextDisplay ? 1_000.0 : -1_000.0
         #expect(plan.targetFrame.approximatelyEquals(rect(x + 148.936170212766, 193.939393939394, 638.297872340426, 440.771349862259), tolerance: 0.001))

@@ -1605,12 +1605,11 @@ struct ReservedAreaSnapTests {
         let controller = startSnap(system)
         defer { controller.cancel() }
         controller.handleSharedGestureEvent(event(.leftMouseDragged, 1, 400))
+        #expect(controller.dropTarget != nil)
         let baseline = system.windows[0].frame
         system.availableDisplays = []
         controller.handleSharedGestureEvent(event(.leftMouseUp, 1, 400))
         #expect(system.frameWriteCounts.isEmpty)
         #expect(system.windows[0].frame == baseline)
     }
-
-
 }
