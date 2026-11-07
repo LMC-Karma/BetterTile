@@ -112,6 +112,58 @@ func manualApplyRecoveryRestoresOnlyItsWindowsAndKeepsNewerFrames(change: Manual
     #expect(try sessionStore(of: model).session(for: system.mainDisplay.id)?.automaticWritesSuspended == false)
 }
 
+/// An explicit Apply on a Manual desktop pulls a window in from another
+/// display. A display change interrupts the Apply. Recovery must not write that
+/// window's old frame from the other display onto the target display. The
+/// window stays at its Apply frame.
+@Test(.appTestApplication) @MainActor
+func manualApplyRecoveryDoesNotWriteAWindowPulledFromAnotherDisplay() async throws {
+    let system = makeManualWindowSystem(drivingPolicyDeadlines: true)
+    let h = ApplyHarness(system: system)
+    defer { h.close() }
+    let source = DisplaySnapshot(id: .init(rawValue: "source"),
+        frame: .init(x: 1000, y: 0, width: 1000, height: 800),
+        visibleFrame: .init(x: 1000, y: 0, width: 1000, height: 800), isMain: false)
+    system.availableDisplays.append(source)
+    system.desktopObservation?.currentSpaceByDisplay[source.id] = h.space(2)
+    let pulled = WindowID(rawValue: "pulled")
+    let original = BTRect(x: 1100, y: 100, width: 400, height: 300)
+    system.windows = [.init(id: pulled, processIdentifier: 42, bundleIdentifier: "com.example.Editor",
+        frame: original, displayID: source.id)]
+    system.desktopObservation?.windowMembership[pulled] = [h.space(2)]
+    system.onFrameWrite = { _, frame in
+        system.desktopObservation?.windowMembership[pulled] = [frame.midX >= 1000 ? h.space(2) : h.space(1)]
+    }
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    model.setActiveMode(.manual)
+    await system.advance(by: .seconds(1))
+    let applier = try #require(model.savedLayoutApplier)
+    applier.observesKeyboard = false
+    applier.application = h.applier.application
+    let writesBefore = system.frameWriteCounts
+    var interrupted = false
+    system.onWindowSnapshots = {
+        guard !interrupted, system.frameWriteCounts != writesBefore else { return }
+        interrupted = true
+        model.handleDisplayChange(.displayReconfigurationBegan)
+    }
+    _ = await system.drive { await applier.apply(h.document(mode: .bento), displayID: system.mainDisplay.id) }
+    try #require(interrupted)
+    system.onWindowSnapshots = nil
+    let applied = try frame(pulled, in: system)
+    try #require(system.windows[0].displayID == system.mainDisplay.id)
+    try #require(!applied.approximatelyEquals(original, tolerance: 2))
+    let heldWrites = system.frameWriteCounts
+    model.handleDisplayChange(.displayReconfigurationEnded)
+    try await settleHold(model, system)
+    #expect(system.frameWriteCounts[pulled, default: 0] == heldWrites[pulled, default: 0],
+            "Recovery wrote the pulled window after the hold")
+    let final = try frame(pulled, in: system)
+    #expect(final == applied, "The pulled window is at \(final), not at its Apply frame \(applied)")
+    #expect(try sessionStore(of: model).session(for: system.mainDisplay.id)?.automaticWritesSuspended == false)
+}
+
 // MARK: - Native linked resizing
 
 @MainActor private final class LinkedResizeFixture {
