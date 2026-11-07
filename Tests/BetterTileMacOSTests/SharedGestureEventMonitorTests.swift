@@ -297,3 +297,32 @@ private final class FakeGestureEventTapWorker: GestureEventTapWorking {
     let gestureEvent = try #require(GlobalGestureEvent(event, kind: .leftMouseUp))
     #expect(gestureEvent.position == CoordinateConverter.pointToTopLeft(location, mainScreenFrame: mainFrame))
 }
+
+/// A stop can arrive after the tap thread signals that it is ready, but before
+/// it enters its run loop. `CFRunLoopStop` alone is lost then, and the thread
+/// keeps its tap forever. The thread must end and disable its tap.
+@Test(.macOSTestApplication) func aTapWorkerStoppedBeforeItsRunLoopStartsEndsAndDisablesItsTap() {
+    final class Record: @unchecked Sendable {
+        let lock = NSLock()
+        var enabled: [Bool] = []
+    }
+    let record = Record()
+    let worker = GestureEventTapWorker(handler: { _ in })
+    // A plain mach port keeps the run loop alive like a tap, without permission.
+    worker.makePort = {
+        CFMachPortCreate(kCFAllocatorDefault, { _, _, _, _ in }, nil, nil)
+    }
+    worker.setPortEnabled = { _, enabled in record.lock.withLock { record.enabled.append(enabled) } }
+    worker.portIsEnabled = { _ in true }
+    let entering = DispatchSemaphore(value: 0)
+    let exited = DispatchSemaphore(value: 0)
+    worker.willEnterRunLoop = { entering.wait() }
+    worker.didExit = { exited.signal() }
+
+    #expect(worker.start())
+    worker.stop()
+    entering.signal()
+
+    #expect(exited.wait(timeout: .now() + 2) == .success, "The tap thread kept running after stop")
+    #expect(record.lock.withLock { record.enabled } == [true, false])
+}

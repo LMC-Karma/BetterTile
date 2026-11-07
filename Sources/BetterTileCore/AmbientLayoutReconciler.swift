@@ -13,6 +13,7 @@ public struct AmbientLayoutObservation: Sendable {
     public var isDesktopTransition: Bool
     public var confirmedGone: Set<WindowID>
     public var confirmedMinimized: Set<WindowID>
+    public var hiddenApplicationWindowIDs: Set<WindowID>
     /// Windows whose native membership still belongs to this desktop, even
     /// when the current on-screen Accessibility sweep cannot see them. They
     /// get a longer absence budget, not a permanent pane, unless
@@ -38,6 +39,7 @@ public struct AmbientLayoutObservation: Sendable {
         requestsRelayout: Bool = false,
         confirmedGone: Set<WindowID> = [],
         confirmedMinimized: Set<WindowID> = [],
+        hiddenApplicationWindowIDs: Set<WindowID> = [],
         knownSpaceWindowIDs: Set<WindowID> = [],
         heldWindowIDs: Set<WindowID> = [],
         onScreenWindowIDs: Set<WindowID> = [],
@@ -51,6 +53,7 @@ public struct AmbientLayoutObservation: Sendable {
         self.isDesktopTransition = isDesktopTransition
         self.confirmedGone = confirmedGone
         self.confirmedMinimized = confirmedMinimized
+        self.hiddenApplicationWindowIDs = hiddenApplicationWindowIDs
         self.knownSpaceWindowIDs = knownSpaceWindowIDs
         self.heldWindowIDs = heldWindowIDs
         self.onScreenWindowIDs = onScreenWindowIDs
@@ -146,6 +149,7 @@ public struct AmbientLayoutReconciler: Sendable {
                     paneGap: session.paneGap(configured: paneGap),
                     confirmedGone: observation.confirmedGone,
                     minimized: observation.confirmedMinimized,
+                    hiddenApplicationWindowIDs: observation.hiddenApplicationWindowIDs,
                     knownSpaceWindowIDs: observation.knownSpaceWindowIDs,
                     heldWindowIDs: observation.heldWindowIDs,
                     onScreenWindowIDs: observation.onScreenWindowIDs,
@@ -210,7 +214,9 @@ public struct AmbientLayoutReconciler: Sendable {
         session.lastObservedFrames = frames
         if let settleWorkArea {
             session.pendingWorkArea = settleWorkArea
-        } else {
+        } else if !observation.isDesktopTransition || !workAreaChanged {
+            // A transition keeps the tree without writing it. The next normal
+            // sweep must still see any work-area change that needs a reflow.
             session.lastWorkArea = observation.display.visibleFrame
         }
 

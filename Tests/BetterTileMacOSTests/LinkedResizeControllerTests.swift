@@ -545,3 +545,93 @@ func degradedLinkedResizeRestoresPeersOrReportsTerminalFailure(recoveryFails: Bo
     #expect(system.frameWriteCounts == writes)
     controller.stop()
 }
+
+/// A display change interrupts a press whose gesture start is still deferred.
+/// The rest of that drag must not start a gesture or move the neighbour.
+@Test(.macOSTestApplication) @MainActor func linkedResizeInterruptionCancelsADeferredStart() async {
+    let system = FakeWindowSystem()
+    system.addSecondWindow()
+    system.windows[0].frame = BTRect(x: 0, y: 0, width: 500, height: 800)
+    system.windows[1].frame = BTRect(x: 500, y: 0, width: 500, height: 800)
+    var configuration = BetterTileConfiguration()
+    configuration.linkedResizeEnabled = true
+    let ticks = ResizeDisplayLink(automatic: false)
+    let controller = LinkedResizeController(
+        coordinator: WindowCoordinator(system: system), configuration: configuration, displayTicks: ticks
+    )
+    controller.isEnabledForDisplay = { _ in true }
+    controller.setUsesSharedGestureEvents(true)
+    func event(_ kind: GlobalGestureEventKind) -> GlobalGestureEvent {
+        GlobalGestureEvent(kind: kind, position: BTPoint(x: 500, y: 400), button: 0, modifiers: [], timestamp: 1)
+    }
+
+    controller.handleSharedGestureEvent(event(.leftMouseDown))
+    #expect(controller.interruptForDisplayChange().map { _ in true } == nil)
+    await Task.yield()
+    await Task.yield()
+    system.windows[0].frame.size.width = 600
+    controller.handleSharedGestureEvent(event(.leftMouseDragged))
+    ticks.fire()
+    controller.handleSharedGestureEvent(event(.leftMouseUp))
+
+    #expect(system.frameWriteCounts[system.windows[1].id] == nil)
+    #expect(!controller.isResizing)
+}
+
+/// The NSEvent fallback delivers a press through a queued main-actor task. A
+/// display change interrupts the controller before that task runs. The old
+/// press must not restart linked resizing, start a new explicit resize or move
+/// the neighbour. A new press after the interruption links as usual.
+@Test(.macOSTestApplication, arguments: [false, true]) @MainActor
+func linkedResizeInterruptionInvalidatesAQueuedFallbackPress(newPress: Bool) async {
+    let system = FakeWindowSystem()
+    system.addSecondWindow()
+    system.windows[0].frame = BTRect(x: 0, y: 0, width: 500, height: 800)
+    system.windows[1].frame = BTRect(x: 500, y: 0, width: 500, height: 800)
+    var configuration = BetterTileConfiguration()
+    configuration.linkedResizeEnabled = true
+    let ticks = ResizeDisplayLink(automatic: false)
+    let controller = LinkedResizeController(
+        coordinator: WindowCoordinator(system: system), configuration: configuration, displayTicks: ticks
+    )
+    controller.isEnabledForDisplay = { _ in true }
+    var down: ((NSEvent) -> Void)?
+    var drag: ((NSEvent) -> Void)?
+    var up: ((NSEvent) -> Void)?
+    controller.addGlobalMonitor = { mask, handler in
+        if mask.contains(.leftMouseDown) { down = handler }
+        if mask.contains(.leftMouseDragged) { drag = handler }
+        if mask.contains(.leftMouseUp) { up = handler }
+        return NSObject()
+    }
+    controller.removeEventMonitor = { _ in }
+    var starts = 0
+    controller.resizeWillBeginHandler = { _ in starts += 1 }
+    controller.start()
+    defer { controller.stop() }
+    func mouse(_ type: NSEvent.EventType, _ number: Int) -> NSEvent {
+        NSEvent.mouseEvent(with: type, location: .zero, modifierFlags: [], timestamp: TimeInterval(number),
+            windowNumber: 0, context: nil, eventNumber: number, clickCount: 1, pressure: 1)!
+    }
+    func drain() async { for _ in 0..<20 { await Task.yield() } }
+
+    // The press reached the monitor before the hold; its task has not run.
+    down?(mouse(.leftMouseDown, 1))
+    #expect(controller.interruptForDisplayChange().map { _ in true } == nil)
+    await drain()
+    if newPress { down?(mouse(.leftMouseDown, 2)); await drain() }
+    system.windows[0].frame.size.width = 600
+    drag?(mouse(.leftMouseDragged, 3))
+    await drain()
+    ticks.fire()
+    up?(mouse(.leftMouseUp, 4))
+    await drain()
+
+    if newPress {
+        #expect(starts == 1)
+        #expect(system.windows[1].frame == BTRect(x: 600, y: 0, width: 400, height: 800))
+    } else {
+        #expect(starts == 0, "The old press started a new explicit resize")
+        #expect(system.frameWriteCounts[system.windows[1].id] == nil, "The old press moved the neighbour")
+    }
+}

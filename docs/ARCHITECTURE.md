@@ -59,7 +59,8 @@ the session. Restoring a valid file and relaunching resumes normal saving.
 `BetterTileClock` in Core wraps Swift's `Clock` protocol with `Duration` and
 monotonic `ContinuousClock.Instant` values. Its live default uses
 `ContinuousClock`. `BetterTileModel` passes its injected clock to
-`WindowCoordinator` and display-refresh debouncing. It drives recovery,
+`WindowCoordinator`, idle observation retries in `DragSnapController`, and
+display-refresh debouncing. It drives recovery,
 window-event scheduling, Space stabilization, settlement, arrival confirmation,
 configuration-save delays, and coordinator retry waits. Arrival dates project
 elapsed monotonic time from one initial wall-clock date.
@@ -68,7 +69,7 @@ elapsed monotonic time from one initial wall-clock date.
 Application responsiveness holds and pane-application deadlines use separate
 uptime callbacks, defaulting to process system uptime. Tests replace these
 callbacks together with the clock so hold expiry and recovery deadlines agree.
-The 10-second watchdog remains a native run-loop timer. DragSnap pointer and
+The 10-second watchdog remains a native run-loop timer. DragSnap hover and
 chooser delays and the pane-application picker retain separate UI timing seams.
 Clock injection does not change the layer dependencies.
 
@@ -156,6 +157,19 @@ window, with its gaps, and the frames of the windows that move. The value
 clears when the overlay hides, for example when the pointer leaves the snap
 area, a suppression modifier is held, or Escape cancels the drag.
 
+A window drag waits for observed window movement before it shows a drop.
+If a targeted read is unavailable or still reports the starting frame, display
+ticks retry the latest sample no more than once every 50 ms, for three seconds
+after the newest drag sample or desktop resume. This window covers a two-second
+Accessibility responsiveness hold that starts early in the rest. A hold that
+starts later can outlast the window. The preview then waits for the next drag
+sample, and release still places the window.
+Reads skip applications held as unresponsive. New samples retain display pacing;
+resume evaluates the latest sample at once. Activation stops idle retries unless
+a desktop change needs to resolve the held window again. Release and
+cancellation clear the sample, retry deadlines and gate, so late observations
+cannot restart the gesture.
+
 A drop that cannot apply shows invalid feedback: a red snap frame or a red
 pane cue. It is recorded as a non-committable target with a reason. Release
 over it applies nothing and shows the reason in the result pill. A window
@@ -185,6 +199,58 @@ release point once. A suppression modifier held at release cancels the drop. A
 Bento cue arms only after its hover delay, because the armed cue is the drop.
 At a screen edge, a snap area wins over the edge of the pane under it, so the
 overlay shows the snap and not a pane cue.
+
+macOS can carry a dragged window to another desktop, for example when the
+pointer stays at the screen edge. A desktop change suspends the window drag; it
+does not cancel it. Suspension ends the Adaptive or Tabbed drag of the old
+desktop with a restore, which writes nothing because its desktop changed, and
+hides the overlay. While the drag is suspended, a release applies nothing. When
+Space stabilization ends and the button is still down, the drag resumes: the
+newest sample of the gesture resolves the drop on the destination desktop at
+once. That sample can be one a display tick already evaluated, because a
+pointer that rests at the edge sends no new sample during the change. If the
+held window is not readable yet, the next display tick or sample reads it
+again. If the button came up during the change, the drag ends with no drop.
+macOS switches desktops again while the pointer stays at the edge; each switch
+suspends and resumes the same drag. A display change, wake, and Escape still
+cancel the drag.
+
+The carried window need not belong to the destination layout. Until the
+gesture ends, the destination neither places nor admits it. Refreshes leave
+it out, so no single-window placement, first Adaptive layout or Tabbed
+arrival moves it under the pointer. The destination session and its other
+windows are observed as usual. An Adaptive or Tabbed destination starts its
+own drag for the window. A destination that refuses the layout drag, such as
+an Adaptive desktop with no tree, offers the plain snap areas. A snap there
+also stops single-window placement from moving the window. Each carried
+gesture records a topology change when it ends, so the next event pass
+admits the window on the current desktop. This does not depend on a
+stabilization refresh, which a failed observation can skip. A plain snap
+whose rollback is incomplete also stops automatic writes on the destination
+and offers Repair Layout.
+
+Tabbed holds the carried window as a provisional float for fixed snaps and
+Add as tab. A landed drop publishes pane membership; a snap outside the
+panes keeps it floating. Every other exit removes the float. Failed
+placement restores the membership from before the drag without the float and
+adds no Undo step. Incomplete rollback suspends automatic writes and offers
+Repair Layout; cleanup preserves that suspension. Each float records its
+session and owner, first the drag and then its placement. Cleanup precedes
+queued actions, pane-picker resumption and work-area refreshes, so new
+placements and Undo steps use the cleaned membership and revision. Removal
+uses the stored session ID even when inactive; it selects no session and
+moves no window. A record ends when its session's display or Space
+disappears. A new drag removes other windows' provisional floats in its
+start commit, which already supersedes and cancels the older placement. Its
+baseline, rollback and Undo retain only its own provisional float, if any.
+Other windows arrive after that drag ends.
+
+Tabbed Undo of a carried window's drop that landed restores the layout from
+the start of the destination drag. That layout held the window as a floating
+window, so Undo floats it again at its frame from that moment. It stays
+floating: arrival admission does not take it into a pane, because it is a
+floating member of the layout. Repair Layout does not return it either; a
+window floated this way counts as one the user floated.
 
 On a Tabbed desktop, a dragged window joins a pane as a tab in three places:
 the center of a pane's selected tab, a pane's tab strip, and an empty pane.
@@ -288,6 +354,88 @@ fixed-size window, which could float.
 
 ## Event ordering
 
+Display and sleep notifications start a `DisplayChangeHold` before refreshing
+layouts. The Core reducer uses monotonic time and `DisplaySettleDetector`.
+Two equal display and window observations 250 ms apart release the hold.
+Any active-session hold that does not become quiet releases after five seconds
+without a new display event. Sleep and an inactive or locked session wait for wake and unlock;
+those events restart the deadline. The public Core Graphics callback forwards
+its begin and completion flags, with AppKit screen notifications as a fallback.
+
+Only a changed `DisplayArrangement` holds: the set of displays, their frames
+and their pixel sizes. AppKit also posts screen-parameter notifications for
+unrelated reasons. One that leaves the arrangement as it was when the last
+hold settled starts no hold, and during a hold it does not extend it. A Core
+Graphics reconfiguration still starts a hold at its begin flag. The callback
+reaches the model through a main-actor task, so a busy main actor can handle the
+begin after the displays already changed. The hold therefore settles at once
+only when all of these are true:
+
+- every pending reconfiguration has ended;
+- the arrangement equals the one seen at the begin;
+- the arrangement equals the one from the last settlement;
+- no end callback reported an added, removed, enabled, disabled, mirrored or
+  unmirrored display;
+- sleep, lock or a real change does not also hold.
+
+A stale settled arrangement only makes a spurious reconfiguration hold once,
+which is the safe direction. The arrangement leaves out work areas. A Dock or
+menu bar change moves no window between displays, and the ordinary work-area
+reflow places windows for the new work area without delaying closes and
+arrivals. The adapter reads the arrangement from Core Graphics when the model
+handles the event. `NSScreen` can still describe the previous arrangement then.
+
+The five-second limit is checked by time before each inventory that a hold
+starts: by the sampler, the watchdog and every refresh, also a background
+refresh after an explicit action released one display. Window inventories are
+synchronous and can take seconds when applications do not answer
+Accessibility. A hold past its limit settles without starting another
+inventory, so it lasts at most about five seconds plus one read in progress.
+
+During an awake, active hold, observations and closed or minimized evidence
+accumulate. Sleep and lock holds do not sample windows; a slow public lock-state
+check starts two seconds after lock begins and recovers a missed unlock notification. ScreenSaverEngine activation also
+holds layout until the user returns.
+Missing displays and Spaces keep their sessions. Automatic reconciliation,
+minimum-size probes and frame writes wait. Removed displays hide their Tabbed
+chrome. Settling runs a desktop-transition refresh followed by an ordinary event
+pass. Explicit layout actions release their target display until the next hold
+event. In-flight Automatic Apply cannot write forward or recovery frames during
+the hold. Interrupted Tabbed placements hand recovery to the post-hold refresh
+only while their session and revision still match; failed recovery stays suspended.
+An interrupted Saved Layout Apply keeps the previous session and hands its
+restoration to the same refresh. A refused ownership check is not a failed
+restoration write. The coordinator records actual frame and rollback write
+failures separately so a later display event cannot hide a genuine failure.
+Manual Apply explains the interruption. Display Trigger waits for settlement
+and retries an interrupted automatic Apply once under its original input
+cancellation. An attempt that already placed windows is not repeated. A second
+interruption receives no further retry.
+
+Display changes stop divider and window gestures without restoring old frames
+inside the hold. Native linked resizing stops too: its queued display tick, the
+rest of the drag and the release resend write nothing. A press queued before
+the hold does not restart it, on either input path. The AppKit fallback
+reinstalls its mouse-down monitor, and the hold restarts the shared event tap,
+so the old delivery generation is dropped. Only a linked resize that left its
+windows in an unknown arrangement keeps a recovery. A resize that starts
+during the hold is a new explicit action and links as usual. Recovery
+checks the session, desktop and window processes again, then uses the current
+work area. Recovery for a Manual desktop writes only the interrupted
+transaction's own windows that started on that display; a window an Apply
+pulled in from another display keeps its Apply frame. It skips a window whose
+frame changed during the hold, moves the old frames with a moved display
+origin, and writes nothing when the display changed size. A newer explicit
+action on the display supersedes retained recovery. Escape outside a hold
+restores normally.
+A queued Tabbed exit retains its desktop owner, action identity and hold
+generation. A newer hold defers it until settlement. Only a newer mode choice
+supersedes it; other explicit actions, such as a snap or a refused drag, do
+not. Its continuation never grants a new user override. Automatic
+float checks whose deadlines fall inside a hold stay pending without spending
+the busy retry budget. They run once after settlement. Departed displays discard
+unused Tabbed placement handoffs.
+
 Window identities survive off-screen and incomplete Accessibility sweeps.
 After a successful application Accessibility inventory omits a window, cleanup
 requires either its exact identity to be absent from the full public WindowServer
@@ -348,6 +496,21 @@ backoff; held applications use recovery instead. Gestures and Space
 stabilization still defer discovery. Frame classification reuses its inventory
 for arrival reconciliation only when it attempted no mutation. A mutation
 attempt requires a new inventory before reconciliation.
+
+A Space change suspends an active window drag instead of cancelling it (see
+Window drag drops). The suspended gesture still counts as active, so event
+passes and arrival discovery stay deferred until the gesture ends. Every
+refresh during the gesture leaves the carried window out of the destination
+desktop's windows unless that layout already holds it. Suspension marks that
+the gesture carried a window; the gesture end records one topology change for
+the event pass after it, because a layout drag start on the destination clears
+queued events. The drag resumes after the
+stabilization refresh, also when a stabilization sample fails. The
+destination session is then selected before the drag resolves its drop, and
+the destination's Adaptive drag cannot make that refresh return early. A newer
+Space change restarts stabilization and keeps the drag suspended; only the
+newest stabilization resumes it. A drag that ended during the change ignores
+the late resume.
 
 Some applications close a document window without a destruction event; focus
 only moves to another window. When focus lands in a Bento layout, the model
@@ -948,6 +1111,17 @@ cannot meet the minimum sizes, the unbalanced insertion stands, so balancing
 never turns a placement into a failure. A size an application refuses on write
 goes through the same learned-minimum correction as any other Bento placement.
 
+Hidden applications leave the Accessibility inventory. The macOS adapter reports
+`hiddenApplicationWindowIDs` from public application state, matched to the
+current application launch. Adaptive removes panes of hidden applications with
+the same reinsertion anchors used for minimized panes. Their return restores the
+prior positions and ratios even when focus or the new-window side preference
+changed. Floating windows of hidden applications retain their user or overflow
+disposition. Focus-covered peers keep Focus's existing exclusion and minimize
+policy when their application is hidden in the same pass. Confirmed closure
+still removes a pane permanently. Unknown absence keeps its existing
+corroboration policy. This adds no AX reads, permissions, or persisted data.
+
 Each reinsertion anchor stores a neighbor, an edge, and the tree from just
 before the minimize. Restoring several windows rebuilds the largest stored
 tree. A drop, swap, partition, Layout Wheel command, or divider move clears
@@ -966,10 +1140,14 @@ eligible peer or a confirmed closure satisfies the wait before its deadline. A
 peer still minimized or unread when the wait ends leaves the tree like any
 minimized window: the available windows fill the display, and the peer's
 reinsertion anchor keeps the previous tree for its return. Confirmed closures
-remove their panes permanently. A rejected layout restore suspends
-automatic placement until Repair. Background sweeps retain membership without
-moving windows while the wait owns that session. A newer layout action cancels
-the wait.
+remove their panes permanently. A rejected layout restore suspends automatic
+placement until Repair. Background sweeps retain represented panes, floats and
+the covered Focus peers without moving windows while the wait owns that
+session. Unplaced arrivals stay outside committed membership so they remain
+eligible for the guarded minimum-size probe. A newer layout action cancels the
+wait. After a committed or stale restore, an ordinary topology pass measures
+arrivals before their first placement without waiting for another notification.
+Rejected or degraded restores leave them unprobed and unmoved until Repair.
 
 Keyboard and captured Layout Wheel partitions use the same peer-return wait.
 When all peers are visible, the partition runs synchronously. Otherwise it

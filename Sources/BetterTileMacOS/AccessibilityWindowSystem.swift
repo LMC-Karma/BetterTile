@@ -63,7 +63,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
     private let dockSpaceReader = DockSpaceReader()
     private var recentApplicationPIDs: [pid_t] = []
     private var activationObserver: NSObjectProtocol?
-    private var displayReconfigurationHandler: (@MainActor () -> Void)?
+    private var displayReconfigurationHandler: (@MainActor (CGDisplayChangeSummaryFlags) -> Void)?
     private var isMonitoringDisplayReconfiguration = false
     private var displayCallbackContext: AccessibilityCallbackContext?
 
@@ -127,7 +127,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
     }
 
     public func startDisplayReconfigurationMonitoring(
-        onChange: @escaping @MainActor () -> Void
+        onChange: @escaping @MainActor (CGDisplayChangeSummaryFlags) -> Void
     ) {
         displayReconfigurationHandler = onChange
         guard !isMonitoringDisplayReconfiguration else { return }
@@ -159,8 +159,8 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         displayReconfigurationHandler = nil
     }
 
-    fileprivate func displayConfigurationChanged() {
-        displayReconfigurationHandler?()
+    fileprivate func displayConfigurationChanged(_ flags: CGDisplayChangeSummaryFlags) {
+        displayReconfigurationHandler?(flags)
     }
 
     public func setWindowEventHandler(_ handler: (@MainActor (WindowSystemEvent) -> Void)?) {
@@ -389,6 +389,30 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
     private var knownWindowSnapshots: [WindowID: WindowSnapshot] = [:]
     public func knownWindows() -> [WindowSnapshot] {
         knownWindowSnapshots.values.filter { identities.records[$0.id] != nil }
+    }
+
+    /// Hidden applications are skipped by AX inventory, but their known
+    /// windows still exist. This uses public application state without AX reads.
+    public var hiddenApplicationWindowIDs: Set<WindowID> {
+        let applications = Set(NSWorkspace.shared.runningApplications.compactMap { application -> ApplicationLaunchInstance? in
+            Self.hiddenApplicationLaunch(
+                isHidden: application.isHidden,
+                launchToken: application.launchDate?.timeIntervalSinceReferenceDate.bitPattern,
+                recordedLaunch: launchRecords[application.processIdentifier].map { ($0.launchToken, $0.instance) }
+            )
+        })
+        return identities.windowIDs(belongingTo: applications)
+    }
+
+    /// Unknown launch dates and records cannot establish hidden-application evidence.
+    nonisolated static func hiddenApplicationLaunch(
+        isHidden: Bool,
+        launchToken: UInt64?,
+        recordedLaunch: (launchToken: UInt64?, instance: ApplicationLaunchInstance)?
+    ) -> ApplicationLaunchInstance? {
+        guard isHidden, let launchToken, let recordedLaunch,
+              recordedLaunch.launchToken == launchToken else { return nil }
+        return recordedLaunch.instance
     }
 
     public func visibleWindows() throws -> [WindowSnapshot] {
@@ -672,6 +696,29 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
 
     func recordStageManagerWindowExposureFailure() {
         stageManagerGroupResolver.logExposureFallbackOnce()
+    }
+
+    /// Read from Core Graphics, which describes the displays as they are now.
+    /// After a reconfiguration callback `NSScreen` can still describe the
+    /// previous arrangement.
+    public func displayArrangement() -> DisplayArrangement {
+        var count: UInt32 = 0
+        guard CGGetActiveDisplayList(0, nil, &count) == .success, count > 0 else {
+            return DisplayArrangement(displays())
+        }
+        var ids = [CGDirectDisplayID](repeating: 0, count: Int(count))
+        guard CGGetActiveDisplayList(count, &ids, &count) == .success else {
+            return DisplayArrangement(displays())
+        }
+        return DisplayArrangement(displays: Set(ids.prefix(Int(count)).map { id in
+            let bounds = CGDisplayBounds(id)
+            let mode = CGDisplayCopyDisplayMode(id)
+            return DisplayArrangement.Display(
+                id: DisplayID(rawValue: String(id)),
+                frame: BTRect(x: bounds.minX, y: bounds.minY, width: bounds.width, height: bounds.height),
+                pixelWidth: mode?.pixelWidth ?? CGDisplayPixelsWide(id),
+                pixelHeight: mode?.pixelHeight ?? CGDisplayPixelsHigh(id))
+        }))
     }
 
     public func displays() -> [DisplaySnapshot] {
@@ -2364,7 +2411,7 @@ private func betterTileDisplayReconfigurationCallback(
     guard let userInfo else { return }
     let context = Unmanaged<AccessibilityCallbackContext>.fromOpaque(userInfo).takeUnretainedValue()
     Task { @MainActor [weak context] in
-        context?.system?.displayConfigurationChanged()
+        context?.system?.displayConfigurationChanged(flags)
     }
 }
 

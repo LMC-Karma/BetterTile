@@ -53,6 +53,7 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, CreatedWindowReading, T
         newWindowRequests.append((processIdentifier, bundleIdentifier))
         return newWindowRequestResult
     }
+    var hiddenApplicationWindowIDs: Set<WindowID> { Set(windows.filter { $0.isHidden }.map(\.id)) }
     var permission = true
     var ignoredFrameWriteWindowIDs: Set<WindowID> = []
     var enforcedMinimumWidths: [WindowID: Double] = [:]
@@ -586,7 +587,7 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, CreatedWindowReading, T
         return outcome
     }
     var unrestoredProbeWindowIDs: Set<WindowID> = []
-    func startDisplayReconfigurationMonitoring(onChange: @escaping @MainActor () -> Void) {}
+    func startDisplayReconfigurationMonitoring(onChange: @escaping @MainActor (CGDisplayChangeSummaryFlags) -> Void) {}
     func stopDisplayReconfigurationMonitoring() {}
     func updateManagedWindowIDs(_ ids: Set<WindowID>) { managedWindowUpdateCount += 1 }
 }
@@ -602,6 +603,7 @@ func makeModel(system: FakeAppWindowSystem, gestureEvents: SharedGestureEventMon
     system.installWindowEventClock(in: model)
     // Fake-window tests own button state; physical input must not defer work.
     model.primaryButtonIsPressed = { false }
+    model.displayChangeScreenIsLocked = { false }
     return model
 }
 

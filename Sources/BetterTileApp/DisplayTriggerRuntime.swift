@@ -34,6 +34,7 @@ struct DisplayTriggerNotice {
     var loadLayout: (String) throws -> SavedLayoutDocument? = { _ in nil }
     /// True once Space stabilization and Adaptive or Tabbed settlement have finished for a display.
     var isReady: (DisplayID) -> Bool = { _ in true }
+    var isDisplayChangeHeld: (DisplayID) -> Bool = { _ in false }
     /// True while a window, divider, or tab drag or the Layout Wheel is active, or a mouse button is held.
     var isInteracting: () -> Bool = { false }
     /// Frames of the eligible windows on these displays, or nil when they cannot be read now.
@@ -204,7 +205,7 @@ struct DisplayTriggerNotice {
     /// user is dragging. Ends with `.settled`, which lets the reducer judge the newest display set.
     private func wait(_ token: Int) async {
         var detector = DisplaySettleDetector(quietInterval: tickSeconds, limit: settleLimit)
-        let begun = uptime()
+        var begun = uptime()
         while !Task.isCancelled, reducer.currentToken == token {
             // The lock screen came up during the wait. Keep the attempt for the unlock.
             if !sessionIsActive || isScreenLocked() {
@@ -217,7 +218,20 @@ struct DisplayTriggerNotice {
                 return
             }
             let displays = Set(targets())
-            if displays.allSatisfy(isReady), let frames = observeFrames(displays) {
+            if displays.contains(where: isDisplayChangeHeld) {
+                // The frame-read deadline cannot bypass the model's hold.
+                // Start a fresh quiet interval when layout becomes available.
+                detector = DisplaySettleDetector(quietInterval: tickSeconds, limit: settleLimit)
+                begun = uptime()
+                await sleep(tick)
+                continue
+            }
+            guard displays.allSatisfy(isReady) else {
+                if uptime() - begun >= settleLimit { return finish(token, moving: []) }
+                await sleep(tick)
+                continue
+            }
+            if let frames = observeFrames(displays) {
                 switch detector.observe(frames, at: uptime()) {
                 case .quiet: return finish(token, moving: [])
                 case let .timedOut(still): return finish(token, moving: still)
@@ -278,12 +292,28 @@ struct DisplayTriggerNotice {
             }
             let begin = Date()
             // No slot may open an app, so a missing app is skipped and reported.
-            let result = await applier.apply(document, displayID: display, excluding: moving, automatic: true,
-                layoutFileID: fire.layoutFile, sessionIsAvailable: { [weak self] in
-                    self?.canApplyInSession == true
-                }, validating: { [weak self] in
-                    self?.bindingIsCurrent(fire.layoutFile, on: display) == true
-                })
+            var interruptedByHold = false
+            func attempt() async -> SavedLayoutApplyResult {
+                await applier.apply(document, displayID: display, excluding: moving, automatic: true,
+                    layoutFileID: fire.layoutFile, sessionIsAvailable: { [weak self] in
+                        guard let self else { return false }
+                        if self.isDisplayChangeHeld(display) { interruptedByHold = true; return false }
+                        return self.canApplyInSession
+                    }, validating: { [weak self] in
+                        self?.bindingIsCurrent(fire.layoutFile, on: display) == true
+                    })
+            }
+            var result = await attempt()
+            // A hold can start after a commit and still mark the attempt. An
+            // attempt that placed windows is finished; applying again would
+            // write over frames that changed during the hold.
+            if interruptedByHold, result.placed == 0, !Task.isCancelled, bindingIsCurrent(fire.layoutFile, on: display),
+               await waitForInterruptedApply(on: display), !Task.isCancelled,
+               bindingIsCurrent(fire.layoutFile, on: display) {
+                // One continuation of this connect attempt. Input still owns
+                // the same task and cancels both the wait and this retry.
+                result = await attempt()
+            }
             record(fire.layoutFile, document, display, since: begin, result: result)
             // The session can return after publication but before this task resumes.
             presentDeferredResults()
@@ -297,6 +327,27 @@ struct DisplayTriggerNotice {
                 }
             }
         }
+    }
+
+    private func waitForInterruptedApply(on display: DisplayID) async -> Bool {
+        var detector = DisplaySettleDetector(quietInterval: tickSeconds, limit: settleLimit)
+        var begun = uptime()
+        while !Task.isCancelled, canApplyInSession, !isInteracting() {
+            if isDisplayChangeHeld(display) {
+                detector = DisplaySettleDetector(quietInterval: tickSeconds, limit: settleLimit)
+                begun = uptime()
+            } else if !isReady(display) {
+                if uptime() - begun >= settleLimit { return false }
+            } else if let frames = observeFrames([display]) {
+                switch detector.observe(frames, at: uptime()) {
+                case .quiet: return true
+                case let .timedOut(still): moving = still; return true
+                case .waiting: break
+                }
+            } else if uptime() - begun >= settleLimit { return false }
+            await sleep(tick)
+        }
+        return false
     }
 
     /// This predicate travels with the transaction, including its coordinator validation callback.
