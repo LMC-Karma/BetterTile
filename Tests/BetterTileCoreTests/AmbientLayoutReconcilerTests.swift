@@ -739,7 +739,7 @@ func aDesktopTransitionRestartsTheAbsenceRunOfAMissingPane(observedOnReturn: Boo
         lastWorkArea: ambientBounds
     )
     let reconciler = ambientReconciler()
-    let start = ContinuousClock.now
+    let start = ContinuousClock.now // real-time: base instant only; every observation uses fixed offsets
     func observe(_ windows: [WindowSnapshot], at offset: Duration, transition: Bool = false) -> LayoutSession {
         var observation = ambientObservation(
             windows: windows, isDesktopTransition: transition, knownSpaceWindowIDs: members)

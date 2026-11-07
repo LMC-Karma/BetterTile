@@ -92,7 +92,7 @@ private let c = WindowID(rawValue: "c")
 @Test func membershipOnlyWindowsAlsoWaitAMinimumTime() {
     var tracker = WindowPresenceTracker(
         toleratedAbsences: 2, toleratedMembershipOnlyAbsences: 4, minimumMembershipOnlyAbsence: .milliseconds(1_400))
-    let start = ContinuousClock().now
+    let start = ContinuousClock().now // real-time: base instant only; every observation uses fixed offsets
     for sweep in 0..<10 {
         #expect(tracker.observe(known: [a, b], present: [a], membershipOnly: [b],
                                 now: start.advanced(by: .milliseconds(100 * sweep))).isEmpty,
@@ -110,7 +110,7 @@ private let c = WindowID(rawValue: "c")
 @Test func theMinimumTimeDoesNotShortenTheMembershipBudget() {
     var tracker = WindowPresenceTracker(
         toleratedAbsences: 2, toleratedMembershipOnlyAbsences: 4, minimumMembershipOnlyAbsence: .milliseconds(1_400))
-    let start = ContinuousClock().now
+    let start = ContinuousClock().now // real-time: base instant only; every observation uses fixed offsets
     for sweep in 0..<4 {
         #expect(tracker.observe(known: [a, b], present: [a], membershipOnly: [b],
                                 now: start.advanced(by: .seconds(sweep))).isEmpty)
@@ -124,7 +124,7 @@ private let c = WindowID(rawValue: "c")
 @Test func theMinimumTimeRestartsAndYieldsToDirectEvidence() {
     var tracker = WindowPresenceTracker(
         toleratedAbsences: 2, toleratedMembershipOnlyAbsences: 4, minimumMembershipOnlyAbsence: .milliseconds(1_400))
-    let start = ContinuousClock().now
+    let start = ContinuousClock().now // real-time: base instant only; every observation uses fixed offsets
     func at(_ ms: Int) -> ContinuousClock.Instant { start.advanced(by: .milliseconds(ms)) }
     for sweep in 0..<6 {
         _ = tracker.observe(known: [a, b], present: [a], membershipOnly: [b], now: at(100 * sweep))
