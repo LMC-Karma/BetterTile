@@ -283,7 +283,7 @@ its begin and completion flags, with AppKit screen notifications as a fallback.
 
 During an awake, active hold, observations and closed or minimized evidence
 accumulate. Sleep and lock holds do not sample windows; a slow public lock-state
-check recovers a missed unlock notification. ScreenSaverEngine activation also
+check starts two seconds after lock begins and recovers a missed unlock notification. ScreenSaverEngine activation also
 holds layout until the user returns.
 Missing displays and Spaces keep their sessions. Automatic reconciliation,
 minimum-size probes and frame writes wait. Removed displays hide their Tabbed
@@ -292,7 +292,24 @@ pass. Explicit layout actions release their target display until the next hold
 event. In-flight Automatic Apply cannot write forward or recovery frames during
 the hold. Interrupted Tabbed placements hand recovery to the post-hold refresh
 only while their session and revision still match; failed recovery stays suspended.
-Display Trigger Automatic Apply also waits for the hold to end.
+An interrupted Saved Layout Apply keeps the previous session and hands its
+restoration to the same refresh. A refused ownership check is not a failed
+restoration write. The coordinator records actual frame and rollback write
+failures separately so a later display event cannot hide a genuine failure.
+Manual Apply explains the interruption. Display Trigger waits for settlement
+and retries an interrupted automatic Apply once under its original input
+cancellation. A second interruption receives no further retry.
+
+Display changes stop divider and window gestures without restoring old frames
+inside the hold. Recovery checks the session, desktop and window processes
+again, then uses the current work area. A newer explicit action on the display
+supersedes retained recovery. Escape outside a hold restores normally.
+A queued Tabbed exit retains its desktop owner, action identity and hold
+generation. A newer hold defers it until settlement; a newer mode action
+supersedes it. Its continuation never grants a new user override. Automatic
+float checks whose deadlines fall inside a hold stay pending without spending
+the busy retry budget. They run once after settlement. Departed displays discard
+unused Tabbed placement handoffs.
 
 Window identities survive off-screen and incomplete Accessibility sweeps.
 After a successful application Accessibility inventory omits a window, cleanup
