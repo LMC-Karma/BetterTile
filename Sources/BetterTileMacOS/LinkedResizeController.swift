@@ -188,8 +188,7 @@ public final class LinkedResizeController {
             isLeftButtonDown = true
             // Focus may settle after the press, but the native app can resize
             // before admission runs. Keep the original shared edges now.
-            mouseDownWindows = configuration.linkedResizeEnabled
-                ? (try? coordinator.system.visibleWindows()) : nil
+            mouseDownWindows = captureMouseDownWindows(at: event.position)
             let generation = lifecycleGeneration
             Task { @MainActor [weak self] in
                 await Task.yield()
@@ -209,6 +208,21 @@ public final class LinkedResizeController {
             }
             endGesture()
         }
+    }
+
+    private func captureMouseDownWindows(at point: BTPoint) -> [WindowSnapshot]? {
+        guard configuration.linkedResizeEnabled,
+              let display = PointerDisplay.display(at: point, in: coordinator.system.displays()),
+              isEnabledForDisplay?(display.id) == true
+        else { return nil }
+        // Hit testing reads only the pressed target. Do not sweep all windows
+        // for a desktop click or a target that admission would reject.
+        if let hitTesting = coordinator.system as? any WindowHitTesting {
+            guard let target = try? hitTesting.window(at: point),
+                  allowsLinkedResize(for: target)
+            else { return nil }
+        }
+        return try? coordinator.system.visibleWindows()
     }
 
     private func beginGesture() {
