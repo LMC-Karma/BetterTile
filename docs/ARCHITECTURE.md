@@ -399,12 +399,12 @@ interruption receives no further retry.
 
 Display changes stop divider and window gestures without restoring old frames
 inside the hold. Native linked resizing stops too: its queued display tick, the
-rest of the drag and the release resend write nothing. A press that the AppKit
-fallback queued before the hold does not restart it. A press that the shared
-event tap queued just before the hold starts a new resize, like a press during
-the hold. Only a linked resize that left its windows in an unknown arrangement
-keeps a recovery. A resize that starts during the hold is a new explicit action
-and links as usual. Recovery
+rest of the drag and the release resend write nothing. A press queued before
+the hold does not restart it, on either input path. The AppKit fallback
+reinstalls its mouse-down monitor, and the hold restarts the shared event tap,
+so the old delivery generation is dropped. Only a linked resize that left its
+windows in an unknown arrangement keeps a recovery. A resize that starts
+during the hold is a new explicit action and links as usual. Recovery
 checks the session, desktop and window processes again, then uses the current
 work area. Recovery for a Manual desktop writes only the interrupted
 transaction's own windows that started on that display; a window an Apply

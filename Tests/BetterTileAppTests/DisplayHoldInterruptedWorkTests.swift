@@ -361,3 +361,148 @@ func aTabbedTabDragInterruptedByAHoldReturnsTheTabAndAllowsTabDrags() async thro
     #expect(await system.waitFor { (try? overlays()[display]?.acceptsTabDrags) == true },
             "Tab drags stayed disabled after the hold")
 }
+
+// MARK: - Presses the shared event tap queued before a hold
+
+private final class InjectedTapWorker: GestureEventTapWorking {
+    func start() -> Bool { true }
+    func stop() {}
+}
+
+/// Holds the forwarding closure of the tap generation that is running now.
+private final class InjectedTapDelivery: @unchecked Sendable {
+    var handler: (@Sendable (GestureEventTapMessage) -> Void)?
+    /// Each tap start makes one worker.
+    var workers = 0
+}
+
+@MainActor private final class SharedTapFixture {
+    let system = makeManualWindowSystem(drivingPolicyDeadlines: true)
+    let delivery = InjectedTapDelivery()
+    let monitor: SharedGestureEventMonitor
+    let model: BetterTileModel
+    let controller: LinkedResizeController
+    let peer = WindowID(rawValue: "peer")
+
+    init() throws {
+        system.windows[0].frame = BTRect(x: 0, y: 0, width: 500, height: 800)
+        system.windows.append(.init(id: peer, processIdentifier: 43, bundleIdentifier: "com.example.Peer",
+            frame: BTRect(x: 500, y: 0, width: 500, height: 800), displayID: system.mainDisplay.id))
+        system.focusedID = system.windows[0].id
+        let delivery = delivery
+        monitor = SharedGestureEventMonitor(disabled: false, makeWorker: { handler in
+            delivery.handler = handler
+            delivery.workers += 1
+            return InjectedTapWorker()
+        })
+        model = makeModel(system: system, gestureEvents: monitor)
+        model.setActiveMode(.manual)
+        controller = try #require(Mirror(reflecting: model).children.first {
+            $0.label?.hasSuffix("linkedResize") == true
+        }?.value as? LinkedResizeController)
+        var configuration = model.configuration
+        configuration.linkedResizeEnabled = true
+        controller.configuration = configuration
+        try #require(monitor.start())
+        controller.setUsesSharedGestureEvents(true)
+    }
+
+    /// The tap worker forwards an event. Production code queues its delivery
+    /// on the main queue under the tap generation that is running now.
+    func deliver(_ kind: GlobalGestureEventKind, _ timestamp: UInt64) {
+        delivery.handler?(.event(GlobalGestureEvent(kind: kind, position: BTPoint(x: 500, y: 400),
+            button: 0, modifiers: [], timestamp: timestamp)))
+    }
+
+    func drain() async {
+        await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in
+            DispatchQueue.main.async { done.resume() }
+        }
+        for _ in 0..<20 { await Task.yield() }
+    }
+
+    var hasOverride: Bool {
+        (Mirror(reflecting: model).children.first { $0.label?.hasSuffix("displayChangeUserOverrides") == true }?
+            .value as? Set<DisplayID>)?.contains(system.mainDisplay.id) == true
+    }
+
+    /// Widens the source by `delta` with the drag that follows a press.
+    func drag(by delta: Double, from timestamp: UInt64) async {
+        deliver(.leftMouseDragged, timestamp)
+        await drain()
+        controller.displayTick()
+        system.windows[0].frame.size.width += delta
+        deliver(.leftMouseDragged, timestamp + 1)
+        await drain()
+        controller.displayTick()
+    }
+}
+
+/// A press reached the shared event tap before a display hold, but its main
+/// queue delivery runs after the hold starts. It must not start a resize,
+/// grant an override or move the neighbour. A new press during the hold links
+/// as usual, and the tap keeps delivering presses after the hold.
+@Test(.appTestApplication, arguments: [false, true]) @MainActor
+func aSharedTapPressQueuedBeforeAHoldDoesNotStartLinkedResizing(newPress: Bool) async throws {
+    let f = try SharedTapFixture()
+    defer { f.model.shutdown() }
+    f.deliver(.leftMouseDown, 1)
+    f.model.handleDisplayChange(.displayReconfigurationBegan)
+    await f.drain()
+    if newPress {
+        f.deliver(.leftMouseDown, 2)
+        await f.drain()
+    }
+    await f.drag(by: 100, from: 3)
+    #expect(f.model.isHoldingDisplayChange)
+    if newPress {
+        #expect(f.hasOverride)
+        #expect(try frame(f.peer, in: f.system) == BTRect(x: 600, y: 0, width: 400, height: 800))
+    } else {
+        #expect(!f.hasOverride, "The queued press granted a display override")
+        #expect(f.system.frameWriteCounts[f.peer] == nil, "The queued press moved the neighbour during the hold")
+    }
+    f.deliver(.leftMouseUp, 5)
+    await f.drain()
+
+    f.model.handleDisplayChange(.displayReconfigurationEnded)
+    try await settleHold(f.model, f.system)
+    let edge = try frame(f.peer, in: f.system).minX
+    f.system.windows[0].frame.size.width = edge
+    f.deliver(.leftMouseDown, 6)
+    await f.drain()
+    await f.drag(by: 50, from: 7)
+    f.deliver(.leftMouseUp, 9)
+    await f.drain()
+    #expect(try frame(f.peer, in: f.system).minX == edge + 50, "A press after the hold did not link")
+}
+
+/// A display event while the screen is locked starts the hold twice in one
+/// main-actor turn. No event can reach the tap between those calls, so the tap
+/// restarts only once.
+@Test(.appTestApplication) @MainActor
+func aDisplayEventWhileLockedRestartsTheEventTapOnce() async throws {
+    let f = try SharedTapFixture()
+    defer { f.model.shutdown() }
+    let workers = f.delivery.workers
+    f.model.displayChangeScreenIsLocked = { true }
+    f.model.handleDisplayChange(.displayReconfigurationBegan)
+    #expect(f.delivery.workers == workers + 1, "The tap restarted \(f.delivery.workers - workers) times")
+    #expect(f.monitor.isUsingEventTap)
+    f.model.displayChangeScreenIsLocked = { false }
+}
+
+/// While the screen is locked, a screen-parameter notification that leaves the
+/// displays unchanged starts no display hold of its own. The lock hold it finds
+/// is then the only hold start, so it still restarts the event tap once.
+@Test(.appTestApplication) @MainActor
+func aLockFoundByAnUnchangedScreenNotificationRestartsTheEventTapOnce() async throws {
+    let f = try SharedTapFixture()
+    defer { f.model.shutdown() }
+    let workers = f.delivery.workers
+    f.model.displayChangeScreenIsLocked = { true }
+    f.model.handleDisplayChange(.screenParametersChanged)
+    #expect(f.model.isHoldingDisplayChange)
+    #expect(f.delivery.workers == workers + 1, "The tap restarted \(f.delivery.workers - workers) times")
+    f.model.displayChangeScreenIsLocked = { false }
+}

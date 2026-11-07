@@ -3432,6 +3432,7 @@ final class BetterTileModel {
         if event == .sessionResigned { displayChangeWorkspaceIsActive = false }
         if event == .sessionBecameActive { displayChangeWorkspaceIsActive = true }
         if !isHoldingDisplayChange { displayHoldHasOtherCause = false }
+        let tokenBefore = displayChangeHold.token
         let arrangement = system.displayArrangement()
         switch event {
         case .screenParametersChanged:
@@ -3469,7 +3470,8 @@ final class BetterTileModel {
         }
         if displayChangeScreenIsLocked() {
             displayChangeScreenWasLocked = true
-            startDisplayChangeHold(.sessionResigned)
+            // A hold start earlier in this call already restarted the event tap.
+            startDisplayChangeHold(.sessionResigned, restartsEventTap: displayChangeHold.token == tokenBefore)
         }
     }
 
@@ -3480,13 +3482,19 @@ final class BetterTileModel {
         finishDisplayChangeHold(windows: try? observeVisibleWindows())
     }
 
-    private func startDisplayChangeHold(_ event: DisplayChangeHold.Event) {
+    private func startDisplayChangeHold(_ event: DisplayChangeHold.Event, restartsEventTap: Bool = true) {
         if !isHoldingDisplayChange { heldDisplayArrangement = system.displayArrangement() }
         if event != .displayReconfigurationBegan, event != .displayReconfigurationEnded { displayHoldHasOtherCause = true }
         if event == .sessionResigned { displayChangeLastLockCheck = displayChangeTime }
         displayChangeHold.receive(event, at: displayChangeTime)
         displayChangeUserOverrides.removeAll()
+        // A press the shared event tap received before this hold can still wait
+        // in its main-queue delivery. Restarting the tap retires that generation,
+        // so the old press is dropped; a new press reaches the new generation.
+        let restartsEventTap = restartsEventTap && sharedGestureEvents.isUsingEventTap
+        if restartsEventTap { sharedGestureEvents.stop() }
         interruptGesturesForDisplayChange()
+        if restartsEventTap { setUsesSharedGestureEvents(sharedGestureEvents.start()) }
         Self.bentoLog.debug("display hold started: \(event.rawValue, privacy: .public)")
         displayChangeHoldTask?.cancel()
         windowEventTask?.cancel()
