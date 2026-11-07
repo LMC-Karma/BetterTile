@@ -251,7 +251,9 @@ set is both in the restored desktop's memory and in the current observation.
 Neither alone proves a copy: remembered windows may have moved away, and macOS
 can merge several desktops' windows onto one desktop of the new screen.
 When a restore keeps another retired desktop whose windows it shows, those
-windows count as merged into the restored desktop. While that other desktop is
+windows count as merged into the restored desktop. With carry-over off, this
+applies only to copies from the same screen; another screen's copy is kept on
+purpose and its windows do not count as merged. While that other desktop is
 remembered, they are not the restored desktop's evidence, also after a later
 screen change retires it again: they prove no copy and add no match overlap.
 Uncertain copies remain in the bounded retirement list. With carry-over off,
