@@ -925,8 +925,8 @@ still return to that pane later, but a newer selection in the pane prevents it
 from taking selection back. Close evidence deletes the slot, including for an
 inactive desktop. Presets, Repair Layout, Saved Layout Apply, leaving Tabbed for
 Adaptive, removal of the owning pane, and an explicit move of that window also
-clear it. Leaving Tabbed for Manual and switching desktops retain slots. Tree synchronization
-keeps them while their pane exists.
+clear it. Leaving Tabbed for Manual and switching desktops retain slots. Tree
+synchronization keeps them while their pane exists.
 
 Slots and selection generations remain part of full session equality and
 revision checks. A sweep uses `layoutEquals` to decide whether to place windows;

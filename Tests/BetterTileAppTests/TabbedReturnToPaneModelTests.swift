@@ -66,7 +66,7 @@ private func window(_ id: String, pid: Int32, x: Double, width: Double = 500, di
     return panes
 }
 
-@Test(.appTestApplication) @MainActor func reproTabbedKeepsPaneAfterOneMisreportedSweep() async throws {
+@Test(.appTestApplication) @MainActor func tabbedKeepsPaneAfterOneMisreportedSweep() async throws {
     let (system, model) = twoDisplayFixture()
     defer { model.shutdown() }
     let panesBefore = try await enterTabbedOnExternal(model, system)
@@ -95,7 +95,7 @@ private func window(_ id: String, pid: Int32, x: Double, width: Double = 500, di
 
 /// An ordinary desktop switch away and back, on one display.
 @Test(.appTestApplication, arguments: [false, true]) @MainActor
-func reproTabbedKeepsPanesAcrossDesktopSwitch(otherDesktopIsTabbed: Bool) async throws {
+func tabbedKeepsPanesAcrossDesktopSwitch(otherDesktopIsTabbed: Bool) async throws {
     _ = NSApplication.shared
     let system = makeManualWindowSystem(drivingPolicyDeadlines: true)
     let a = NativeSpaceID(rawValue: 1), b = NativeSpaceID(rawValue: 2)
@@ -150,11 +150,11 @@ func reproTabbedKeepsPanesAcrossDesktopSwitch(otherDesktopIsTabbed: Bool) async 
     #expect(history.allSatisfy { $0 == "\(panesBefore)" }, "before \(panesBefore) after each return \(history)")
 }
 
-enum ReproInterruption: String, CaseIterable, Sendable { case hideApp, minimize, fullScreen, narrowWorkArea }
+enum TabbedInterruption: String, CaseIterable, Sendable { case hideApp, minimize, fullScreen, narrowWorkArea }
 
 /// Everyday actions that take a tab out of its pane for a moment.
-@Test(.appTestApplication, arguments: ReproInterruption.allCases) @MainActor
-func reproTabbedKeepsPaneAfterInterruption(_ interruption: ReproInterruption) async throws {
+@Test(.appTestApplication, arguments: TabbedInterruption.allCases) @MainActor
+func tabbedKeepsPaneAfterInterruption(_ interruption: TabbedInterruption) async throws {
     _ = NSApplication.shared
     let system = makeManualWindowSystem(drivingPolicyDeadlines: true)
     let d = system.mainDisplay.id
