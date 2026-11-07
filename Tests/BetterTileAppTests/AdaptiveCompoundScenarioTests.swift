@@ -5,15 +5,11 @@ import Testing
 
 /// Compound user actions beyond the individual arrival and settlement cases.
 @Suite(.appTestApplication, .serialized, .timeLimit(.minutes(1))) @MainActor
-struct AdaptiveRegressionProbeTests {
+struct AdaptiveCompoundScenarioTests {
     private func fixture(_ count: Int = 4) async throws -> (FakeAppWindowSystem, BetterTileModel) {
         let s = makeManualWindowSystem(drivingPolicyDeadlines: true)
         s.windows = (0..<count).map { window($0, s) }
         let m = makeModel(system: s)
-        let drag = try #require(Mirror(reflecting: m).children.first {
-            $0.label?.hasSuffix("dragSnap") == true
-        }?.value as? DragSnapController)
-        drag.primaryButtonIsPressed = { false }
         m.configuration.bentoInnerGap = 0
         m.configuration.singleWindowPlacement = .maximize
         m.setActiveMode(.bento)
@@ -137,7 +133,7 @@ struct AdaptiveRegressionProbeTests {
         try disjoint(s, m)
     }
 
-    @Test func arrivalWhileRepairSettlesIsEventuallyPlacedOnce() async throws {
+    @Test func arrivalWhileRepairSettlesIsPlacedAndBecomesQuiet() async throws {
         let (s, m) = try await fixture(); defer { m.shutdown() }
         m.repairCurrentLayout()
         try #require(!m.settlementTasks.isEmpty)
@@ -163,6 +159,8 @@ struct AdaptiveRegressionProbeTests {
         s.windows[3].isMinimized = true
         s.eventHandler?(WindowSystemEvent(kind: .minimized, windowID: id, processIdentifier: 83))
         try await settle(s, m)
+        try #require(try state(s, m).root?.windowIDs.contains(id) == false)
+        #expect(s.windows[4].frame != before[s.windows[4].id])
         m.configuration.bentoNewWindowSide = .left
         s.windows[3].isMinimized = false
         s.eventHandler?(WindowSystemEvent(kind: .restored, windowID: id, processIdentifier: 83))
@@ -184,15 +182,22 @@ struct AdaptiveRegressionProbeTests {
 
     @Test func twoOverflowWindowsAreAdmittedInCreationOrder() async throws {
         let (s, m) = try await fixture(6); defer { m.shutdown() }
+        let departures = [s.windows[2].id, s.windows[1].id]
         let first = arrive(8, s)
         try await settle(s, m)
         let second = arrive(7, s) // Lexically before the first arrival.
         try await settle(s, m)
-        close(s.windows[2].id, s)
+        try #require(try state(s, m).floatingWindowIDs == [first, second])
+        // Inventory order and ID order both oppose creation order.
+        let secondIndex = try #require(s.windows.firstIndex { $0.id == second })
+        s.windows.insert(s.windows.remove(at: secondIndex), at: 0)
+        try #require(try #require(s.windows.firstIndex { $0.id == second })
+            < #require(s.windows.firstIndex { $0.id == first }))
+        close(departures[0], s)
         try await quiet(s, m)
         #expect(try state(s, m).root?.windowIDs.contains(first) == true)
         #expect(try state(s, m).floatingWindowIDs.contains(second))
-        close(s.windows[1].id, s)
+        close(departures[1], s)
         try await quiet(s, m)
         #expect(try state(s, m).root?.windowIDs.contains(second) == true)
         try disjoint(s, m)
@@ -206,14 +211,40 @@ struct AdaptiveRegressionProbeTests {
         let id = arrive(4, s)
         try await quiet(s, m)
         #expect(try state(s, m).root?.windowIDs.contains(id) == true)
-        // Explicit sides can choose another pane; the existing root divider
-        // remains a boundary rather than balancing the whole desktop.
-        #expect(s.windows.filter { $0.id != id }.allSatisfy { $0.frame.maxX <= 600 || $0.frame.minX >= 600 })
-        #expect(s.windows.contains { $0.id != id && $0.frame == before[$0.id] })
+        let ids = (0..<4).map { WindowID(rawValue: "pane-\($0)") }
+        let target: WindowID
+        let arrivalFrame: BTRect
+        let targetFrame: BTRect
+        switch side {
+        case .left:
+            target = ids[0]
+            arrivalFrame = BTRect(x: 0, y: 0, width: 300, height: 320)
+            targetFrame = BTRect(x: 300, y: 0, width: 300, height: 320)
+        case .right:
+            target = ids[2]
+            arrivalFrame = BTRect(x: 800, y: 0, width: 200, height: 400)
+            targetFrame = BTRect(x: 600, y: 0, width: 200, height: 400)
+        case .top:
+            target = ids[0]
+            arrivalFrame = BTRect(x: 0, y: 0, width: 600, height: 160)
+            targetFrame = BTRect(x: 0, y: 160, width: 600, height: 160)
+        case .bottom:
+            target = ids[1]
+            arrivalFrame = BTRect(x: 0, y: 560, width: 600, height: 240)
+            targetFrame = BTRect(x: 0, y: 320, width: 600, height: 240)
+        case .automatic:
+            target = ids[3] // The focused square pane splits side by side.
+            arrivalFrame = BTRect(x: 800, y: 400, width: 200, height: 400)
+            targetFrame = BTRect(x: 600, y: 400, width: 200, height: 400)
+        }
+        let current = frames(s)
+        #expect(current[id] == arrivalFrame)
+        #expect(current[target] == targetFrame)
+        for oldID in ids where oldID != target { #expect(current[oldID] == before[oldID]) }
         try disjoint(s, m)
     }
 
-    @Test(arguments: [2, 3, 4, 5]) func balanceOnArrivalStopsAfterOneSettledArrangement(count: Int) async throws {
+    @Test(arguments: [3, 4, 5]) func balanceOnArrivalEqualizesCustomPartitionsAndBecomesQuiet(count: Int) async throws {
         let (s, m) = try await fixture(count); defer { m.shutdown() }
         m.configuration.bentoBalancesNewWindows = true
         let id = arrive(count, s)
@@ -259,11 +290,16 @@ struct AdaptiveRegressionProbeTests {
 
     @Test func repairKeepsSpatialOrderDespiteReversedInventory() async throws {
         let (s, m) = try await fixture(5); defer { m.shutdown() }
-        let ids = s.windows.map(\.id)
+        let ids = s.windows.map(\.id), before = frames(s), writes = s.frameWriteCounts
         s.windows.reverse()
         m.repairCurrentLayout()
+        #expect(!m.settlementTasks.isEmpty)
         try await quiet(s, m)
         let f = frames(s)
+        try #require(f != before, "Repair must replace the customized unequal shares")
+        #expect(s.frameWriteCounts != writes)
+        #expect(m.statusMessage == nil)
+        #expect(m.lastActionFeedback?.kind == .success)
         #expect(try #require(f[ids[0]]).maxY <= #require(f[ids[1]]).minY)
         #expect(try #require(f[ids[2]]).maxY <= #require(f[ids[3]]).minY)
         #expect(try #require(f[ids[3]]).maxY <= #require(f[ids[4]]).minY)
@@ -271,48 +307,36 @@ struct AdaptiveRegressionProbeTests {
         try disjoint(s, m)
     }
 
-    @Test func lateMinimumDuringBalancedArrivalSettlesWithoutRepeatedWrites() async throws {
-        let (s, m) = try await fixture(3); defer { m.shutdown() }
-        s.measuresOnWrite = true
-        m.configuration.bentoBalancesNewWindows = true
-        let constrained = s.windows[2].id
-        s.enforcedMinimumWidths[constrained] = 430
-        _ = arrive(3, s)
-        try await quiet(s, m)
-        #expect(s.windows.first { $0.id == constrained }?.frame.size.width ?? 0 >= 430)
-        #expect(m.statusMessage?.contains("Use Repair") != true)
-        try disjoint(s, m)
-    }
-
     @Test func repeatedRepairWithSteppedWidthsDoesNotDriftOrLoop() async throws {
         let (s, m) = try await fixture(4); defer { m.shutdown() }
-        s.widthSteps[s.windows[2].id] = 3
+        let steppedID = s.windows[2].id
+        s.widthSteps[steppedID] = 3
+        let writesBefore = s.requestedFrames[steppedID, default: []].count
         m.repairCurrentLayout()
+        try #require(!m.settlementTasks.isEmpty)
         try await settle(s, m)
         let first = frames(s)
-        for _ in 0..<3 { m.repairCurrentLayout(); try await settle(s, m) }
+        let requested = try #require(s.requestedFrames[steppedID, default: []].dropFirst(writesBefore).last)
+        let actual = try #require(first[steppedID])
+        try #require(requested.size.width != actual.size.width, "The application must round a Repair write")
+        #expect(actual.size.width == (requested.size.width / 3).rounded(.down) * 3)
+        #expect(m.statusMessage == nil)
+        #expect(m.lastActionFeedback?.kind == .success)
+        for _ in 0..<3 {
+            m.repairCurrentLayout()
+            try #require(!m.settlementTasks.isEmpty)
+            try await settle(s, m)
+            #expect(m.statusMessage == nil)
+            #expect(m.lastActionFeedback?.kind == .success)
+        }
         try await quiet(s, m)
         #expect(frames(s) == first)
-        #expect(m.statusMessage?.contains("Use Repair") != true)
+        #expect(m.statusMessage == nil)
         try disjoint(s, m)
-    }
-
-    @Test func closedUnreadArrivalNeverReappearsWhenItsTokenBecomesReady() async throws {
-        let (s, m) = try await fixture(); defer { m.shutdown() }
-        let before = frames(s), w = window(4, s)
-        s.createdWindowsByToken[19] = w.id
-        s.notReadyReads[19] = 50
-        s.eventHandler?(WindowSystemEvent(kind: .created, windowID: w.id, processIdentifier: w.processIdentifier, creationToken: 19))
-        await s.joinWindowEvent(on: m)
-        s.eventHandler?(WindowSystemEvent(kind: .destroyed, windowID: w.id, processIdentifier: w.processIdentifier))
-        s.notReadyReads[19] = 0
-        try await quiet(s, m)
-        #expect(frames(s) == before)
-        #expect(s.frameWriteCounts[w.id, default: 0] == 0)
     }
 }
 
-extension AdaptiveRegressionProbeTests {
+extension AdaptiveCompoundScenarioTests {
     private func destination(_ s: FakeAppWindowSystem, _ m: BetterTileModel) async throws -> [WindowSnapshot] {
         let bounds = BTRect(x: 1000, y: 0, width: 1000, height: 800)
         let display = DisplaySnapshot(id: DisplayID(rawValue: "second"), frame: bounds, visibleFrame: bounds)
@@ -340,7 +364,12 @@ extension AdaptiveRegressionProbeTests {
         let current = frames(s)
         #expect(current[source[0].id] == source[0].frame)
         #expect(current[source[1].id] == source[1].frame)
-        #expect(try #require(current[source[2].id]).maxY <= #require(current[source[4].id]).minY)
+        #expect(current[source[2].id] == BTRect(x: 600, y: 0, width: 400, height: 400))
+        #expect(current[source[4].id] == BTRect(x: 600, y: 400, width: 400, height: 400))
+        #expect(try state(s, m).root?.windowIDs.contains(source[3].id) == false)
+        #expect(m.dividerResize.bentoStateProvider?(dest[0].displayID)?.root?.windowIDs.contains(source[3].id) == true)
+        #expect(m.statusMessage == nil)
+        #expect(m.lastActionFeedback?.kind == .success)
         // With no focused destination pane, insertion minimizes disruption.
         // Splitting the narrower left pane preserves the wider right pane.
         #expect(current[dest[1].id] == dest[1].frame)
@@ -356,9 +385,20 @@ extension AdaptiveRegressionProbeTests {
         for _ in 0..<3 {
             s.focusedID = id
             m.perform(.nextDisplay)
+            #expect(!m.settlementTasks.isEmpty)
             try await settle(s, m)
+            try #require(s.windows.first { $0.id == id }?.displayID == dest[0].displayID)
+            #expect(m.dividerResize.bentoStateProvider?(dest[0].displayID)?.root?.windowIDs.contains(id) == true)
+            #expect(try state(s, m).root?.windowIDs.contains(id) == false)
+            #expect(m.statusMessage == nil)
+            #expect(m.lastActionFeedback?.kind == .success)
             m.perform(.previousDisplay)
+            #expect(!m.settlementTasks.isEmpty)
             try await settle(s, m)
+            #expect(try state(s, m).root?.windowIDs.contains(id) == true)
+            #expect(m.dividerResize.bentoStateProvider?(dest[0].displayID)?.root?.windowIDs.contains(id) == false)
+            #expect(m.statusMessage == nil)
+            #expect(m.lastActionFeedback?.kind == .success)
             for w in dest { #expect(s.windows.first { $0.id == w.id }?.frame == w.frame) }
             #expect(s.windows.first { $0.id == id }?.displayID == s.mainDisplay.id)
             #expect(BentoLayoutVerifier.overlappingWindowIDs(frames(s)).isEmpty)

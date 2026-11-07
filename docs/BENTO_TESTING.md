@@ -14,6 +14,12 @@ xcodebuild -project BetterTile.xcodeproj -scheme BetterTile \
   -configuration Debug CODE_SIGNING_ALLOWED=NO build
 ```
 
+`AdaptiveCompoundScenarioTests` combines arrivals with divider edits, overflow
+admission, work-area changes during settlement, repeated Repair, and display
+round trips. These model checks use the injected clock, compare pane order and
+ratios, and require a quiet interval with no later writes. Their arrival bounds
+describe deterministic scheduling, not live application response times.
+
 ## Manual checks
 
 Choose the checks that match the changed behavior. This list is guidance, not a
