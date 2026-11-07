@@ -328,6 +328,7 @@ import Testing
         saved["layoutWheel"] = wheel
         // An additive top-level field is also written with its default, without a
         // schema change: the older build ignores it.
+        #expect(saved.removeValue(forKey: "keepsDesktopLayoutsAcrossDisplays") as? Bool == true)
         #expect(saved.removeValue(forKey: "showsOverlaysInScreenRecordings") as? Bool == false)
         #expect(saved.removeValue(forKey: "tabbedEntryPlacement") as? String == "allInOnePane")
         // The one documented change: an untouched One Level wheel's bottom slot

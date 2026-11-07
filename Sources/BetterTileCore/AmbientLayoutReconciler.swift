@@ -115,7 +115,7 @@ public struct AmbientLayoutReconciler: Sendable {
         if observation.requestsRelayout { session.savedLayoutPaneGap = nil }
         let before = session.bentoState
         let frames = Dictionary(uniqueKeysWithValues: observation.windows.map { ($0.id, $0.frame) })
-        let workAreaChanged = [session.lastWorkArea, session.pendingWorkArea].contains { area in
+        let workAreaChanged = session.needsDisplayRestorationLayout || [session.lastWorkArea, session.pendingWorkArea].contains { area in
             area.map { !$0.approximatelyEquals(observation.display.visibleFrame, tolerance: 0.5) } ?? false
         }
 

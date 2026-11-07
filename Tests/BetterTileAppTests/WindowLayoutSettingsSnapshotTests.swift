@@ -43,6 +43,7 @@ import Testing
         if state == .modified {
             model.assign(shortcut: nil, to: .leftHalf)
             model.updateConfiguration {
+                $0.keepsDesktopLayoutsAcrossDisplays = false
                 $0.bentoInnerGap = 11
                 $0.overlayAppearance.transparency = 0.73
                 $0.dividerThickness = 12

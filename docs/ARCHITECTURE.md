@@ -316,6 +316,52 @@ stops automatic writes until Repair, as for a degraded mutation.
 BetterTile operates on eligible on-screen windows exposed by its macOS integration layer. It refreshes the current window set immediately when apps, Spaces, or displays change. A validated native desktop observation selects one process-local runtime layout session for each display and Space pair. Missing or malformed native observations retain the public-API window-overlap matcher. Empty window membership remains unknown, windows reported on several Spaces float, and native fullscreen Spaces expose neither automatic layout writes nor dividers. With separate Spaces per display, a window's center can lie on a display whose current Space does not hold it, for example while the window is dragged across a shared edge. A window whose one Space is current on another display stays visible and is reported on that Space's display; only a window whose Space is current on no display is left out. BetterTile never assigns a window to a hidden Space. An explicit display transfer
 uses the destination display's current desktop.
 
+When a display disappears, or Mission Control removes a native Space, its
+sessions move to an in-memory retirement list. Normal refresh retires them after
+the display hold. An explicit action during the hold can retire missing displays
+before activating its target. The list keeps at most 32 nonempty desktops in a
+fixed order and drops the oldest. Empty and native fullscreen placeholders do
+not enter it. Authoritative close and minimize events update retired Tabbed
+state too; only closure removes an identity from restoration evidence.
+
+A new session can restore the desktop with the most window overlap. At least
+half of the new desktop's windows must overlap. Ties prefer the desktop covered
+most fully, then the newest retirement when carry-over is on, the same display
+UUID, and a fixed session order. Restoring removes copies whose entire window
+set is both in the restored desktop's memory and in the current observation.
+Neither alone proves a copy: remembered windows may have moved away, and macOS
+can merge several desktops' windows onto one desktop of the new screen.
+When a restore keeps another retired desktop whose windows it shows, those
+windows count as merged into the restored desktop. With carry-over off, this
+applies only to copies from the same screen; another screen's copy is kept on
+purpose and its windows do not count as merged. While that other desktop is
+remembered, they are not the restored desktop's evidence, also after a later
+screen change retires it again: they prove no copy and add no match overlap.
+Uncertain copies remain in the bounded retirement list. With carry-over off,
+other screens keep their independent memories. One case stays ambiguous: a
+desktop whose windows are also in another desktop's stale memory, for example
+after a Mission Control move, can be removed when macOS merges them.
+An empty first observation keeps the restoration opportunity until windows
+arrive or the user chooses a mode or Tabbed arrangement. This opportunity is
+separate from the first-observation flag, so later arrivals still receive their
+minimum-size measurement before placement. A shortcut during the
+hold selects the carried mode before interpreting the action. If the native
+observation arrives later, its first matching window observation adopts the
+restored inferred session instead of replacing it with a default.
+
+The display UUID comes from public `CGDisplayCreateUUIDFromDisplayID`. It lets a
+screen reconnect with different Core Graphics and Space numbers. Carry-over is
+on by default; off permits restoration only from the same known UUID. A restored
+session adopts the new display and Space IDs and invalidates its work area, so
+the stored tree fits the new screen. It ends Saved Layout following and discards
+old Tabbed entry frames, committed placements, frame Restore history and Undo
+Apply checkpoints. Every restoration path, including Repair, clears this history.
+Pane ratios, tab groups and reinsertion metadata remain. Continuing Tabbed does
+not capture a new entry baseline, so leaving it keeps current frames. Sessions,
+window identities, UUID associations and retired desktops are never persisted.
+The existing private native-desktop observations are unchanged; this adds no
+permission or dependency.
+
 ## Popup and fixed-size windows
 
 A popup window floats at its own size and never joins a Bento or Tabbed
@@ -396,6 +442,15 @@ During an awake, active hold, observations and closed or minimized evidence
 accumulate. Sleep and lock holds do not sample windows; a slow public lock-state
 check starts two seconds after lock begins and recovers a missed unlock notification. ScreenSaverEngine activation also
 holds layout until the user returns.
+Minimize events received while sleeping or inactive defer Tabbed removal until
+the hold settles. A restore event before settlement clears the deferred removal
+and the confirmed minimize evidence that Adaptive uses after the hold. A
+minimize and restore pair during sleep therefore keeps Tabbed tab order and
+selection, and leaves the Adaptive layout unchanged. A close event clears the
+deferred entry and removes the window normally. Without a restore event,
+settlement removes the deferred Tabbed tab, and Adaptive reconciles the confirmed
+minimize evidence, even when the window is unread. Awake minimize events keep
+their authority, including during a display reconfiguration.
 Missing displays and Spaces keep their sessions. Automatic reconciliation,
 minimum-size probes and frame writes wait. Removed displays hide their Tabbed
 chrome. Settling runs a desktop-transition refresh followed by an ordinary event
@@ -2231,6 +2286,13 @@ before capture. Release applies the latest observed source frame even if no
 display tick ran during the gesture.
 
 ## Configuration
+
+`keepsDesktopLayoutsAcrossDisplays` controls whether a retired desktop may match
+windows on another screen. It defaults to true, including when an older file
+omits the key. The optional field follows schema 12's existing compatibility
+convention. Window Layout exposes the setting with the native switch and includes
+it in the Window mode reset. Changing it affects future matching, not current
+window positions. Only the preference is saved; runtime desktop memory is not.
 
 Pane gap changes publish to Settings immediately. Window placement consumes the
 latest value once per 75 ms interval, with one final pass when the slider is

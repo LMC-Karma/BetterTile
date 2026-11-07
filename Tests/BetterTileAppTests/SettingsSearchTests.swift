@@ -77,7 +77,7 @@ import Testing
     (.windowLayout, [
         "Window mode", "Default mode", "When a desktop has one window", "New window side", "Balance on new window",
         "Swap delay", "Apply starting layout", "Tab bar presentation", "Restore pane size when switching tabs",
-        "Leave space for Dock", "Resize", "Resize adjacent windows together", "Window feedback", "Divider width",
+        "Keep desktop modes when displays change", "Leave space for Dock", "Resize", "Resize adjacent windows together", "Window feedback", "Divider width",
         "Appearance", "Use Liquid Glass", "Glass transparency", "Pane gap", "Starting layout",
     ]),
     (.snapZones, [
