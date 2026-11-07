@@ -33,6 +33,7 @@ public final class LinkedResizeController {
     private var gestureEventSource = GestureEventSourceGate()
     private var eventTapHandoff = GestureEventSourceHandoff()
     private var baselineWindows: [WindowSnapshot] = []
+    private var mouseDownWindows: [WindowSnapshot]?
     private var sourceID: WindowID?
     private var transaction: WindowFrameTransaction?
     private var isLeftButtonDown = false
@@ -221,6 +222,9 @@ public final class LinkedResizeController {
         switch event.kind {
         case .leftMouseDown:
             isLeftButtonDown = true
+            // Focus may settle after the press, but the native app can resize
+            // before admission runs. Keep the original shared edges now.
+            mouseDownWindows = captureMouseDownWindows(at: event.position)
             let generation = lifecycleGeneration
             Task { @MainActor [weak self] in
                 await Task.yield()
@@ -242,6 +246,21 @@ public final class LinkedResizeController {
         }
     }
 
+    private func captureMouseDownWindows(at point: BTPoint) -> [WindowSnapshot]? {
+        guard configuration.linkedResizeEnabled,
+              let display = PointerDisplay.display(at: point, in: coordinator.system.displays()),
+              isEnabledForDisplay?(display.id) == true
+        else { return nil }
+        // Hit testing reads only the pressed target. Do not sweep all windows
+        // for a desktop click or a target that admission would reject.
+        if let hitTesting = coordinator.system as? any WindowHitTesting {
+            guard let target = try? hitTesting.window(at: point),
+                  allowsLinkedResize(for: target)
+            else { return nil }
+        }
+        return try? coordinator.system.visibleWindows()
+    }
+
     private func beginGesture() {
         guard configuration.linkedResizeEnabled else {
             endGesture()
@@ -254,7 +273,16 @@ public final class LinkedResizeController {
                 endGesture()
                 return
             }
-            baselineWindows = try coordinator.system.visibleWindows().filter {
+            let windows: [WindowSnapshot]
+            if let mouseDownWindows, mouseDownWindows.contains(where: {
+                $0.id == focused.id && $0.displayID == focused.displayID
+            }) {
+                windows = mouseDownWindows
+            } else {
+                windows = try coordinator.system.visibleWindows()
+            }
+            self.mouseDownWindows = nil
+            baselineWindows = windows.filter {
                 $0.displayID == focused.displayID && allowsLinkedResize(for: $0)
             }
             guard baselineWindows.contains(where: { $0.id == focused.id }) else {
@@ -367,6 +395,7 @@ public final class LinkedResizeController {
         }
         isLeftButtonDown = false
         baselineWindows = []
+        mouseDownWindows = nil
         sourceID = nil
         transaction = nil
         hasPendingDisplayUpdate = false

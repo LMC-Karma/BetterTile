@@ -329,6 +329,7 @@ import Testing
         // An additive top-level field is also written with its default, without a
         // schema change: the older build ignores it.
         #expect(saved.removeValue(forKey: "keepsDesktopLayoutsAcrossDisplays") as? Bool == true)
+        #expect(saved.removeValue(forKey: "tabbedEntryPlacement") as? String == "allInOnePane")
         // The one documented change: an untouched One Level wheel's bottom slot
         // moves from Bottom Half to Repair Layout once.
         var expected = try #require(JSONSerialization.jsonObject(with: original) as? [String: Any])

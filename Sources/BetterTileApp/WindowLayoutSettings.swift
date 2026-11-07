@@ -241,7 +241,7 @@ struct WindowLayoutSettings: View {
             SettingsGroup {
                 VStack(alignment: .leading, spacing: SettingsSpacing.s2) {
                     Text("Starting layout")
-                    Text("Used when a desktop first enters Tabbed. Existing panes keep their layout.")
+                    Text("Used when a desktop enters Tabbed from Manual or Adaptive.")
                         .font(SettingsFont.caption).foregroundStyle(.secondary)
                     LazyVGrid(columns: PictureChoice<EmptyView>.gridColumns, alignment: .leading, spacing: SettingsSpacing.s3) {
                         ForEach(TabbedPreset.allCases, id: \.self) { preset in
@@ -256,8 +256,16 @@ struct WindowLayoutSettings: View {
                     .frame(maxWidth: 600, alignment: .leading)
                 }
                 .padding(SettingsSpacing.s3)
+                SettingsRow("Place windows", caption: "Keep Adaptive panes applies only when switching from Adaptive.") {
+                    Picker("Place windows", selection: tabbedEntryPlacementBinding) {
+                        ForEach(TabbedEntryPlacement.allCases, id: \.self) { placement in
+                            Text(placement.title).tag(placement)
+                        }
+                    }
+                    .labelsHidden().fixedSize()
+                }
                 if model.activeLayoutMode == .tabbed {
-                    SettingsRow("Apply starting layout", caption: "Arranges this desktop's windows in \(model.configuration.defaultTabbedPreset.title) now.") {
+                    SettingsRow("Apply starting layout", caption: "Uses \(model.configuration.defaultTabbedPreset.title) and keeps the current tab groups.") {
                         Button("Apply to This Desktop") {
                             model.performTabbed(.preset(model.configuration.defaultTabbedPreset))
                         }
@@ -279,17 +287,30 @@ struct WindowLayoutSettings: View {
             } footer: {
                 GroupFooter(
                     help: "Select a tab to focus its window. Drag tabs between panes or onto an edge to split. Drag a divider to resize. Escape cancels the drag. Apply to This Desktop appears while Tabbed is active.",
-                    isAtDefault: model.configuration.defaultTabbedPreset == defaults.defaultTabbedPreset
-                        && model.configuration.tabbedStripPresentation == defaults.tabbedStripPresentation
-                        && model.configuration.tabbedRestoresPaneSizes == defaults.tabbedRestoresPaneSizes
-                ) {
-                    model.updateConfiguration {
-                        $0.defaultTabbedPreset = defaults.defaultTabbedPreset
-                        $0.tabbedStripPresentation = defaults.tabbedStripPresentation
-                        $0.tabbedRestoresPaneSizes = defaults.tabbedRestoresPaneSizes
-                    }
-                }
+                    isAtDefault: tabbedSettingsAreAtDefault,
+                    reset: resetTabbedSettings
+                )
             }
+        }
+    }
+
+    var tabbedEntryPlacementBinding: Binding<TabbedEntryPlacement> {
+        configurationBinding(\.tabbedEntryPlacement)
+    }
+
+    var tabbedSettingsAreAtDefault: Bool {
+        model.configuration.defaultTabbedPreset == defaults.defaultTabbedPreset
+            && model.configuration.tabbedEntryPlacement == defaults.tabbedEntryPlacement
+            && model.configuration.tabbedStripPresentation == defaults.tabbedStripPresentation
+            && model.configuration.tabbedRestoresPaneSizes == defaults.tabbedRestoresPaneSizes
+    }
+
+    func resetTabbedSettings() {
+        model.updateConfiguration {
+            $0.defaultTabbedPreset = defaults.defaultTabbedPreset
+            $0.tabbedEntryPlacement = defaults.tabbedEntryPlacement
+            $0.tabbedStripPresentation = defaults.tabbedStripPresentation
+            $0.tabbedRestoresPaneSizes = defaults.tabbedRestoresPaneSizes
         }
     }
 

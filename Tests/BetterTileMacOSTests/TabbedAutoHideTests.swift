@@ -74,6 +74,198 @@ private func fillingEmptyPanes(_ state: TabbedLayoutState) -> TabbedLayoutState 
     }
 }
 
+/// Records ordering without showing a window or taking focus on the shared desktop.
+@MainActor private final class AutoHideOrderingPanel: NSPanel {
+    var shown = false
+    var frontOrders = 0
+    var keyRequests = 0
+    override var isVisible: Bool { shown }
+    override func order(_ place: NSWindow.OrderingMode, relativeTo otherWin: Int) { shown = place != .out }
+    override func orderFrontRegardless() { frontOrders += 1; shown = true }
+    override func orderOut(_ sender: Any?) { shown = false }
+    override func makeKey() { keyRequests += 1 }
+}
+
+@MainActor private final class AutoHideOrderingFixture {
+    struct Order {
+        let panel: NSPanel
+        let mode: NSWindow.OrderingMode
+        let anchor: Int
+        let wasCollapsed: Bool
+    }
+
+    var now = 0.0
+    var panels: [AutoHideOrderingPanel] = []
+    var orders: [Order] = []
+    let state = fillingEmptyPanes(TabbedLayoutState(preset: .single, presentation: .autoHide))
+    let bounds = BTRect(x: 40000, y: 0, width: 800, height: 720)
+    var paneID: UUID { state.activePaneID }
+    var strip: AutoHideOrderingPanel { panels.first { $0.contentView is TabbedPaneView }! }
+    var view: TabbedPaneView { strip.contentView as! TabbedPaneView }
+    lazy var overlay = TabbedOverlayController(panelFactory: { [unowned self] in
+        let panel = AutoHideOrderingPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel],
+                                          backing: .buffered, defer: false)
+        panels.append(panel)
+        return panel
+    }, addGlobalKeyMonitor: { _ in NSObject() }, addLocalKeyMonitor: { _ in NSObject() }, removeMonitor: { _ in },
+    orderPanel: { [unowned self] panel, mode, anchor in
+        orders.append(Order(panel: panel, mode: mode, anchor: anchor,
+                            wasCollapsed: (panel.contentView as? TabbedPaneView)?.collapsed == true))
+        panel.order(mode, relativeTo: anchor)
+    }, visibilityClock: { [unowned self] in now }, automaticallyAdvanceVisibility: false)
+
+    init(anchor: Int? = 101, reduceMotion: Bool = true) {
+        _ = NSApplication.shared
+        refresh(anchor: anchor)
+        view.reduceMotion = { reduceMotion }
+        orders.removeAll()
+    }
+
+    func refresh(anchor: Int?, obscuringFrames: [BTRect] = []) {
+        let numbers = anchor.map { [state.activeWindowID!: $0] } ?? [:]
+        overlay.refresh(state: state, bounds: bounds, windows: [], obscuringFrames: obscuringFrames,
+                        selectedWindowNumbers: numbers)
+    }
+
+    func tick(to time: Double) {
+        now = time
+        overlay.advanceBarVisibility()
+    }
+
+    func hover() { overlay.updateAutoHidePointer(at: BTPoint(x: bounds.minX + 100, y: 3)) }
+    func leave() { overlay.updateAutoHidePointer(at: BTPoint(x: bounds.minX + 100, y: 100)) }
+}
+
+@Test(.macOSTestApplication, arguments: [false, true]) @MainActor
+func autoHideRevealHoverOrdersAboveAnchorExactlyOnceBeforeExpansion(reduceMotion: Bool) throws {
+    let f = AutoHideOrderingFixture(reduceMotion: reduceMotion)
+    defer { f.overlay.hide() }
+    #expect(f.strip.level == .normal && f.strip.isVisible && f.view.collapsed)
+    f.hover()
+    f.tick(to: 0.079)
+    #expect(f.orders.isEmpty)
+    f.tick(to: 0.081)
+    #expect(!f.view.collapsed)
+    #expect(f.orders.count == 1, "Revealing a visible anchored strip must order it above its window exactly once")
+    let order = try #require(f.orders.first)
+    #expect(order.panel === f.strip && order.mode == .above && order.anchor == 101)
+    #expect(order.wasCollapsed, "Order the strip before its expand animation starts")
+    f.hover()
+    f.tick(to: 0.250)
+    #expect(f.orders.count == 1, "A revealed strip must not be ordered again on pointer samples or animation ticks")
+    #expect(f.strip.keyRequests == 0 && f.strip.frontOrders == 0)
+}
+
+@Test(.macOSTestApplication) @MainActor
+func autoHideRevealCollapseOrdersNothing() {
+    let f = AutoHideOrderingFixture(reduceMotion: false)
+    defer { f.overlay.hide() }
+    f.hover()
+    f.tick(to: 0.081)
+    f.tick(to: 0.250)
+    f.orders.removeAll()
+    f.leave()
+    f.tick(to: 0.551)
+    #expect(f.view.collapsed)
+    f.tick(to: 0.672)
+    #expect(f.view.autoHideAnimationDeadline == nil)
+    #expect(f.orders.isEmpty, "Collapsing an Auto-hide strip must not order a panel")
+}
+
+/// Hovering while the strip is still collapsing reverses the animation. That
+/// reveal starts from a collapsed view, so it restores the order once.
+@Test(.macOSTestApplication) @MainActor
+func autoHideRevealThatReversesACollapseOrdersOnce() throws {
+    let f = AutoHideOrderingFixture(reduceMotion: false)
+    defer { f.overlay.hide() }
+    f.hover()
+    f.tick(to: 0.081)
+    f.tick(to: 0.250)
+    f.leave()
+    f.tick(to: 0.551)
+    #expect(f.view.collapsed)
+    f.now = 0.600
+    #expect(f.view.isAutoHideCollapsing(at: f.now), "The hover must arrive during the collapse animation")
+    f.orders.removeAll()
+    f.hover()
+    #expect(!f.view.collapsed, "A hover during the collapse animation reveals the strip again at once")
+    #expect(f.orders.count == 1, "Reversing a collapse must restore the strip's order exactly once")
+    let order = try #require(f.orders.first)
+    #expect(order.panel === f.strip && order.mode == .above && order.anchor == 101 && order.wasCollapsed)
+    f.hover()
+    f.tick(to: 0.800)
+    #expect(f.orders.count == 1, "Later samples and ticks must not order the revealed strip again")
+}
+
+@Test(.macOSTestApplication) @MainActor
+func autoHideRevealWhileSpaceSuspendedOrdersNothing() {
+    let f = AutoHideOrderingFixture()
+    defer { f.overlay.hide() }
+    f.hover()
+    f.overlay.prepareForSpaceChange()
+    f.hover()
+    f.tick(to: 1)
+    f.overlay.holdApplicationPicker(f.paneID, enabled: true)
+    #expect(!f.overlay.showTabBar())
+    #expect(f.view.collapsed)
+    #expect(f.orders.isEmpty, "A Space-suspended overlay must not order a panel for reveal or collapse")
+    #expect(f.strip.keyRequests == 0)
+}
+
+@Test(.macOSTestApplication) @MainActor
+func autoHideRevealFloatingFallbackKeepsOcclusionPath() {
+    let f = AutoHideOrderingFixture(anchor: nil)
+    defer { f.overlay.hide() }
+    let obscuring = BTRect(x: f.bounds.minX, y: 10, width: f.bounds.size.width, height: 24)
+    f.refresh(anchor: nil, obscuringFrames: [obscuring])
+    let frontOrders = f.strip.frontOrders
+    #expect(f.strip.level == .floating && f.strip.isVisible)
+    f.hover()
+    f.tick(to: 0.081)
+    #expect(!f.view.collapsed && !f.strip.isVisible)
+    #expect(f.orders.isEmpty && f.strip.frontOrders == frontOrders)
+    f.leave()
+    f.tick(to: 0.382)
+    #expect(f.view.collapsed && f.strip.isVisible)
+    #expect(f.strip.frontOrders == frontOrders + 1)
+    #expect(f.orders.isEmpty, "A floating strip must keep its occlusion path without an anchor order")
+}
+
+@Test(.macOSTestApplication, arguments: ["picker", "keyboard"]) @MainActor
+func autoHideRevealHoldOrdersAboveAnchorExactlyOnce(source: String) throws {
+    let f = AutoHideOrderingFixture()
+    defer { f.overlay.hide() }
+    if source == "keyboard" { #expect(f.overlay.showTabBar()) }
+    else { f.overlay.holdApplicationPicker(f.paneID, enabled: true) }
+    #expect(!f.view.collapsed)
+    #expect(f.orders.count == 1, "A hold that reveals a visible anchored strip must restore its order")
+    let order = try #require(f.orders.first)
+    #expect(order.panel === f.strip && order.mode == .above && order.anchor == 101 && order.wasCollapsed)
+    f.overlay.holdApplicationPicker(f.paneID, enabled: true)
+    f.tick(to: 1)
+    #expect(f.orders.count == 1, "Adding a hold to a revealed strip must not order it again")
+}
+
+@Test(.macOSTestApplication, arguments: [false, true]) @MainActor
+func autoHideRevealUsesRefreshedAnchorAndDiscardsRemovedSelection(removesSelected: Bool) throws {
+    let f = AutoHideOrderingFixture()
+    defer { f.overlay.hide() }
+    if removesSelected {
+        f.overlay.removeUnavailableWindows([try #require(f.state.activeWindowID)])
+        #expect(!f.view.pane.tabs.isEmpty)
+    } else { f.refresh(anchor: 202) }
+    f.orders.removeAll()
+    f.hover()
+    f.tick(to: 0.081)
+    #expect(!f.view.collapsed)
+    if removesSelected {
+        #expect(f.orders.isEmpty, "A removed selected tab must not leave an anchor for reveal")
+    } else {
+        #expect(f.orders.count == 1, "Reveal must use the latest validated anchor")
+        #expect(f.orders.first?.anchor == 202)
+    }
+}
+
 @Test(.macOSTestApplication, arguments: [false, true]) @MainActor
 func autoHideLastTabClosureRestoresEmptyPaneInputWithPointerObservation(retainedLifecycle: Bool) throws {
     _ = NSApplication.shared

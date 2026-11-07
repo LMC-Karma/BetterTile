@@ -4,8 +4,13 @@ import BetterTileCore
 @testable import BetterTileApp
 import Testing
 
-/// No test panel is ever ordered into the real window system.
-@MainActor private final class FakeSpacePanel: NSPanel {
+/// No test panel is ever ordered into the real window system. Keep AppKit
+/// frame readbacks off screen too: the audit observes synthetic visibility.
+@MainActor private final class FakeSpacePanel: OffscreenTestPanel {
+    override func setFrame(_ frameRect: NSRect, display flag: Bool) {
+        super.setFrame(frameRect, display: flag)
+        OffscreenTestWindows.check(self)
+    }
     var shown = false
     var currentSpace: (() -> NativeSpaceID?)?
     var firstOrderedSpace: NativeSpaceID?
@@ -253,6 +258,8 @@ func spacePanelOffSpaceLifecycleUpdatesBeforeArrival(kind: WindowSystemEvent.Kin
     else { f.system.windows[0].isMinimized = true }
     f.system.eventHandler?(WindowSystemEvent(kind: kind, windowID: window.id, processIdentifier: window.processIdentifier))
     #expect(overlay.state.windowIDs.isEmpty, "The retained strip must drop the unavailable tab before returning to its Space")
+    #expect((overlay.state.returnSlots[window.id] != nil) == (kind == .minimized),
+            "Minimization keeps the pane for a return; destruction forgets it")
     #expect(f.panels.compactMap { $0.contentView as? TabbedPaneView }.allSatisfy { $0.pane.tabs.isEmpty })
     #expect(f.system.frameWriteCounts == writes)
     #expect(f.system.raiseRequests.count == raises)
@@ -342,10 +349,12 @@ func spacePanelPresentationResetsWithoutOrderingOnDeparture(presentation: Tabbed
         overlay.menuWillOpen(menu)
         #expect(!view.collapsed)
     }
+    OffscreenTestWindows.check(panel)
     let orders = panel.orders
     f.switchTo(f.b)
     #expect(panel.orders == orders)
     #expect(abs(panel.frame.height - (presentation == .autoHide ? 6 : presentation.barHeight)) < 0.01)
+    OffscreenTestWindows.check(panel)
     #expect(view.collapsed == (presentation == .autoHide))
     #expect(!overlay.showTabBar())
     try await f.settle()
@@ -700,4 +709,21 @@ func spacePanelRevalidatesCapabilityBeforeFirstOrder(losesObservation: Bool) asy
     let overlay = try #require(f.overlays.last?.value)
     #expect(overlay.keepsPanelsOnSpace == !losesObservation)
     #expect(f.panels.contains { $0.isVisible })
+}
+
+/// Even a stale or reset source frame must stay in the reserved off-screen
+/// range. Synthetic visibility must not make the process audit see a display.
+@Test(.appTestApplication, arguments: [0.0, 40000.0]) @MainActor
+func spacePanelSyntheticVisibilityUsesOffscreenGeometry(sourceX: Double) {
+    _ = NSApplication.shared
+    let panel = FakeSpacePanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel],
+                               backing: .buffered, defer: true)
+    defer { panel.orderOut(nil) }
+    let requested = NSRect(x: sourceX, y: 0, width: 1000, height: 34)
+    panel.setFrame(requested, display: false)
+    panel.orderFrontRegardless()
+    panel.setFrame(NSRect(x: sourceX, y: 28, width: 1000, height: 6), display: false)
+    panel.setFrame(requested, display: true)
+    #expect(panel.frame == OffscreenTestWindows.windowFrame(requested))
+    OffscreenTestWindows.check(panel)
 }

@@ -67,8 +67,9 @@ enum SettingsDestination: String, CaseIterable, Identifiable {
                 + "compact always visible tab bar presentation pane gap balance thin standard wide balanced starting layout "
                 + "single pane columns rows main grid show settings for window mode when a desktop has one window balance on "
                 + "new window apply starting layout restore pane size when switching tabs leave space for dock resize adjacent "
-                + "windows together window feedback divider width use liquid glass swap delay instant short long"
-                + " keep desktop modes when displays change dock undock screen"
+                + "windows together window feedback divider width use liquid glass swap delay instant short long "
+                + "keep desktop modes when displays change dock undock screen "
+                + "place windows all in one pane one per pane keep adaptive panes"
                 + " " + TabbedPreset.allCases.map(\.title).joined(separator: " ").lowercased()
         case .shortcuts:
             "shortcut shortcuts keyboard hotkey hotkeys keybinding keybindings keys binding record recording duplicate "
