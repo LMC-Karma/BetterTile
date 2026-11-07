@@ -194,10 +194,79 @@ func displayOnlyHoldDoesNotWaitForWakeMembership() async throws {
     let (system, model) = try await wakeFixture(mode: .bento)
     defer { model.shutdown() }
     model.handleDisplayChange(.displayReconfigurationBegan)
+    // A real change, so the hold settles through the sampler rather than the
+    // early release of an unchanged arrangement.
+    system.availableDisplays.append(DisplaySnapshot(id: DisplayID(rawValue: "added"),
+        frame: BTRect(x: 1000, y: 0, width: 800, height: 600), visibleFrame: BTRect(x: 1000, y: 0, width: 800, height: 600)))
     system.offscreenWindowIDs = [system.windows[3].id]
     model.handleDisplayChange(.displayReconfigurationEnded)
+    try #require(model.isHoldingDisplayChange, "A changed arrangement must hold")
+    let released = await system.waitFor(timeout: .seconds(2)) { !model.isHoldingDisplayChange }
+    #expect(released, "A display-only hold must not wait for the missing window")
+}
+
+@MainActor private func readinessState(_ model: BetterTileModel) -> (expected: Set<WindowID>?, minimized: Set<WindowID>) {
+    let fields = Mirror(reflecting: model).children
+    let expected = fields.first { $0.label?.hasSuffix("displayChangeExpectedWindows") == true }?.value as? Set<WindowID>?
+    let minimized = fields.first { $0.label?.hasSuffix("displayChangeActiveMinimizedWindows") == true }?.value as? Set<WindowID>
+    return (expected ?? nil, minimized ?? [])
+}
+
+/// A wake hold that ends at its time limit must clear the readiness state,
+/// like a quiet settlement, so no captured window or minimize carries over.
+@Test(.appTestApplication) @MainActor
+func aLimitEndedWakeHoldLeavesNoReadinessState() async throws {
+    let (system, model) = try await wakeFixture(mode: .bento)
+    defer { model.shutdown() }
+    model.handleDisplayChange(.sleep)
     await system.advance(by: .seconds(1))
-    #expect(!model.isHoldingDisplayChange)
+    system.desktopObservation = nil
+    system.offscreenWindowIDs = [system.windows[3].id]
+    model.handleApplicationTopologyChange(waking: true)
+    let minimized = system.windows[2]
+    await system.advance(by: .milliseconds(100))
+    system.windows[2].isMinimized = true
+    system.eventHandler?(WindowSystemEvent(kind: .minimized, windowID: minimized.id, processIdentifier: minimized.processIdentifier))
+    try #require(readinessState(model).expected?.isEmpty == false)
+    try #require(readinessState(model).minimized == [minimized.id])
+    let released = await system.waitFor(timeout: .seconds(7)) { !model.isHoldingDisplayChange }
+    try #require(released)
+    let state = readinessState(model)
+    #expect(state.expected == nil, "The limit left captured windows: \(String(describing: state.expected))")
+    #expect(state.minimized.isEmpty, "The limit left awake minimize evidence: \(state.minimized)")
+}
+
+/// The readiness wait ends five seconds after the last real event. An
+/// unchanged screen notification after the wake does not extend it; a real
+/// display change does.
+@Test(.appTestApplication, arguments: [false, true]) @MainActor
+func wakeReadinessDeadlineCountsFromTheLastRealEvent(realChange: Bool) async throws {
+    let (system, model) = try await wakeFixture(mode: .bento)
+    defer { model.shutdown() }
+    model.handleDisplayChange(.sleep)
+    await system.advance(by: .seconds(1))
+    system.desktopObservation = nil
+    system.offscreenWindowIDs = [system.windows[3].id]
+    model.handleApplicationTopologyChange(waking: true)
+    let origin = system.clock.now
+    await system.advance(by: .seconds(3))
+    try #require(model.isHoldingDisplayChange)
+    if realChange {
+        system.availableDisplays.append(DisplaySnapshot(id: DisplayID(rawValue: "added"),
+            frame: BTRect(x: 1000, y: 0, width: 800, height: 600), visibleFrame: BTRect(x: 1000, y: 0, width: 800, height: 600)))
+    }
+    model.scheduleDisplayRefresh()
+    var released: Duration?
+    for _ in 0..<80 {
+        await system.advance(by: .milliseconds(100))
+        if !model.isHoldingDisplayChange { released = system.clock.now - origin; break }
+    }
+    let at = try #require(released, "The hold must end")
+    if realChange {
+        #expect(at >= .milliseconds(7900), "A real change must restart the deadline; the hold ended at \(at)")
+    } else {
+        #expect(at <= .milliseconds(5500), "An unchanged notification extended the wait to \(at)")
+    }
 }
 
 /// Focus mode only adds to a session's observed windows. A window that opens

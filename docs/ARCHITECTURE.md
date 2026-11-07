@@ -290,7 +290,10 @@ was active. The model captures that membership without reading Accessibility
 while inactive, after the hold has stopped any gesture, so a tab that an
 interrupted drag returns to its pane counts. Repeated wake events during the
 hold keep the same captured set. This readiness wait ends at the same
-five-second deadline; it does not add permanent membership protection.
+five-second deadline; it does not add permanent membership protection. The
+deadline counts from the last wake, lock or real display event: an unchanged
+screen notification does not extend it. Every settlement clears the captured
+set, also at the limit and at the early release of an unchanged arrangement.
 Known limit: a Tabbed float that the user moved to another Space stays in the
 float set, because the Tabbed sweep drops only tabs that belong elsewhere.
 Accessibility does not list it after wake, so each return from sleep, lock or
