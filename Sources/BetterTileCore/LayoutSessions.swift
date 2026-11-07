@@ -695,8 +695,11 @@ public struct LayoutSessionStore: Sendable {
                 && (carryOver || (identifier != nil && $0.displayIdentifier == identifier))
         }
         // Visible windows that a kept retired desktop owns and this desktop
-        // never remembered arrived through a merge.
-        let mergedNow = retiredSessions.reduce(into: Set<WindowID>()) { $0.formUnion($1.windowIDs) }
+        // never remembered arrived through a merge. With carry-over off, the
+        // other screen's copy is kept on purpose; its windows are not merged.
+        let mergedNow = retiredSessions
+            .filter { carryOver || (identifier != nil && $0.displayIdentifier == identifier) }
+            .reduce(into: Set<WindowID>()) { $0.formUnion($1.windowIDs) }
             .intersection(windowIDs).subtracting(restored.windowIDs)
         if !merged.union(mergedNow).isEmpty { mergedWindowIDs[restored.session.id] = merged.union(mergedNow) }
         var session = restored.session

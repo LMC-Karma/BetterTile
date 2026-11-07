@@ -254,6 +254,38 @@ struct DesktopRetirementMatchingTests {
             #expect(session.mode == (isFirst ? .bento : .tabbed))
         }
     }
+
+    /// With carry-over off, a restore keeps the other screen's copy of the
+    /// same desktop on purpose. A window opened on that screen is not merged
+    /// into the restored desktop, so turning carry-over on later still finds
+    /// the newest copy.
+    @Test func carryOverOffDoesNotTreatTheOtherScreensWindowsAsMerged() throws {
+        let laptop = DisplayID(rawValue: "laptop"), dock = DisplayID(rawValue: "dock")
+        let laptopAgain = DisplayID(rawValue: "laptop-again"), dockAgain = DisplayID(rawValue: "dock-again")
+        func observe(_ store: inout LayoutSessionStore, _ display: DisplayID, _ space: UInt64,
+                     _ windows: Set<WindowID>, uuid: String, carry: Bool) throws -> LayoutSession {
+            let activation = store.activate(displayID: display, windowIDs: windows, focusedWindowID: windows.sorted().first,
+                defaultMode: .manual, reuseActiveWhenUnmatched: false, commitObservation: false,
+                nativeSpaceID: NativeSpaceID(rawValue: space), displayIdentifier: uuid, carryOver: carry)
+            let committed = store.commit(activation.session, replacing: activation.session.revision)
+            return try #require(committed)
+        }
+        var store = LayoutSessionStore()
+        let laptopDesktop = try observe(&store, laptop, 1, [a], uuid: "A", carry: false)
+        store.update(laptop) { $0.mode = .bento }
+        store.removeMissingDisplays([], at: 1)
+        let dockDesktop = try observe(&store, dock, 11, [a], uuid: "B", carry: false)
+        #expect(dockDesktop.id != laptopDesktop.id)
+        _ = try observe(&store, dock, 11, [a, c], uuid: "B", carry: false)
+        store.removeMissingDisplays([], at: 2)
+        let back = try observe(&store, laptopAgain, 21, [a, c], uuid: "A", carry: false)
+        #expect(back.id == laptopDesktop.id)
+        #expect(back.mode == .bento)
+        store.removeMissingDisplays([], at: 3)
+        let docked = try observe(&store, dockAgain, 31, [a, c], uuid: "B", carry: true)
+        #expect(docked.id == laptopDesktop.id, "Carry-over must take the newest copy")
+        #expect(docked.mode == .bento)
+    }
 }
 
 enum RepeatedMergeEvent: String, Sendable { case none, close, minimize, move }
