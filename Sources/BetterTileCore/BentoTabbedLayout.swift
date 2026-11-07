@@ -88,6 +88,13 @@ public struct BentoTabbedLayoutState: Hashable, Sendable {
         layout.floatingWindowIDs.remove(id)
     }
 
+    /// Adds a window that is in no pane and not in the tree as floating.
+    public mutating func addFloating(_ id: WindowID) {
+        guard !panes.contains(where: { $0.tabs.contains(id) }),
+              layout.root?.windowIDs.contains(id) != true else { return }
+        layout.floatingWindowIDs.insert(id)
+    }
+
     /// Selecting a tab changes one Bento leaf without moving a boundary.
     @discardableResult
     public mutating func select(_ id: WindowID) -> Bool {
@@ -826,6 +833,21 @@ public struct TabbedLayoutState: Hashable, Sendable {
             returnSlots[id] = TabbedReturnSlot(paneID: paneID, index: slot.index - 1,
                 wasSelected: slot.wasSelected, selectionGeneration: slot.selectionGeneration)
         }
+    }
+
+    /// Adds a window from outside this layout as a floating window, such as
+    /// one a window drag carried here from another desktop. A member does
+    /// not change.
+    public mutating func addFloating(_ id: WindowID) {
+        groups.addFloating(id)
+    }
+
+    /// Removes a floating window from this layout. A pane member does not
+    /// change.
+    public mutating func forgetFloating(_ id: WindowID) {
+        guard floatingWindowIDs.contains(id) else { return }
+        groups.forgetFloating(id)
+        automaticFloats.remove(id)
     }
 
     /// - Parameter reselecting: The tab the source pane showed before the

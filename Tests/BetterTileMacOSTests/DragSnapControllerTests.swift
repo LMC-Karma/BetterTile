@@ -797,7 +797,7 @@ func excludedTabbedMembersNeverUseRawNativeSnapping(membership: String) {
     controller.bentoStateProvider = { _ in BentoLayoutState(root: .leaf(system.windows[0].id)) }
     controller.setUsesSharedGestureEvents(true)
     var resultCount = 0
-    controller.actionResultHandler = { _, _, _ in resultCount += 1 }
+    controller.actionResultHandler = { _, _ in resultCount += 1 }
     let existing = Set(NSApplication.shared.windows.map(ObjectIdentifier.init))
     func send(_ kind: GlobalGestureEventKind, _ point: BTPoint) {
         controller.handleSharedGestureEvent(GlobalGestureEvent(kind: kind, position: point,
@@ -900,7 +900,7 @@ func dropAtASharedEdgeCommitsTheSnapAreaUnderThePointer(releaseX: Double) throws
     let controller = DragSnapController(coordinator: WindowCoordinator(system: system),
                                         configuration: BetterTileConfiguration())
     var results: [(DisplayID, Bool, String?)] = []
-    controller.actionResultHandler = { results.append(($0, $1, $2)) }
+    controller.actionResultHandler = { results.append(($0, $1.isApplied, $1.failureReason)) }
     controller.setUsesSharedGestureEvents(true)
     send(controller, .leftMouseDown, x: 300, y: 220)
     // macOS moved the window with the pointer: its center is now on B.
@@ -998,7 +998,7 @@ func releaseEvaluatesThePointOnlyWhenNoDropWasShown(showedEarlier: Bool) {
     let controller = DragSnapController(coordinator: WindowCoordinator(system: system),
                                         configuration: BetterTileConfiguration())
     var results: [(Bool, String?)] = []
-    controller.actionResultHandler = { results.append(($1, $2)) }
+    controller.actionResultHandler = { results.append(($1.isApplied, $1.failureReason)) }
     controller.setUsesSharedGestureEvents(true)
     send(controller, .leftMouseDown, x: 300, y: 220)
     system.windows[0].frame.origin.x = 750
@@ -1160,7 +1160,7 @@ func bentoReleaseWithASuppressionModifierRestores(modified: Bool) {
     let controller = DragSnapController(coordinator: WindowCoordinator(system: system),
                                         configuration: BetterTileConfiguration())
     var results: [(Bool, String?)] = []
-    controller.actionResultHandler = { results.append(($1, $2)) }
+    controller.actionResultHandler = { results.append(($1.isApplied, $1.failureReason)) }
     controller.setUsesSharedGestureEvents(true)
     send(controller, .leftMouseDown, x: 300, y: 220)
     system.windows[0].frame.origin.x += 3
@@ -1220,7 +1220,7 @@ func bentoReleaseWithASuppressionModifierRestores(modified: Bool) {
     let controller = DragSnapController(coordinator: WindowCoordinator(system: system),
                                         configuration: BetterTileConfiguration())
     var results: [(Bool, String?)] = []
-    controller.actionResultHandler = { results.append(($1, $2)) }
+    controller.actionResultHandler = { results.append(($1.isApplied, $1.failureReason)) }
     controller.setUsesSharedGestureEvents(true)
     send(controller, .leftMouseDown, x: 300, y: 220)
     // The center-based display is B; the Space is still A's.
