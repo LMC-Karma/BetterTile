@@ -15,8 +15,10 @@ import Testing
         }
     }
 
+    /// Pane members in pane order, `-` for an empty pane, then overflow tabs.
     private func assign(_ windows: [WindowSnapshot], _ frames: [BTRect]) -> [String] {
-        TabbedEntryAssignment.orderedWindowIDs(windows: windows, paneFrames: frames).map(\.rawValue)
+        let result = TabbedEntryAssignment.assign(windows: windows, paneFrames: frames)
+        return result.primary.map { $0?.rawValue ?? "-" } + result.overflow.map(\.rawValue)
     }
 
     @Test func overlapOutranksDistanceAndChoosesOverflowJointly() {
@@ -29,14 +31,38 @@ import Testing
         #expect(assign([tiny, top], [bounds]) == ["top", "tiny"])
     }
 
-    @Test func emptyPanesStayLastEvenWhenAnotherPaneIsCloser() {
+    /// With fewer windows than panes, overlap chooses the panes, so the empty
+    /// pane can be anywhere. A window that overlaps no pane still takes the
+    /// nearest free pane, and a full tie leaves empty panes last.
+    @Test func fewerWindowsThanPanesUseTheOverlappingPanes() {
         let right = window("right", .init(x: 700, y: 600, width: 100, height: 100))
-        #expect(assign([right], panes(.grid)) == ["right"])
+        #expect(assign([right], panes(.grid)) == ["-", "-", "-", "right"])
         let left = window("left", .init(x: 0, y: 0, width: 200, height: 100))
         let topRight = window("top-right", .init(x: 605, y: 190, width: 120, height: 200))
-        #expect(assign([topRight, left], panes(.focus)) == ["left", "top-right"])
-        #expect(assign([], panes(.grid)).isEmpty)
+        // Focus: a left pane, then top-right and bottom-right panes.
+        #expect(assign([topRight, left], panes(.focus)) == ["left", "top-right", "-"])
+        // No overlap at all: the nearest pane by centre distance.
+        let below = window("below", .init(x: 800, y: 900, width: 100, height: 100))
+        #expect(assign([below], panes(.grid)) == ["-", "-", "-", "below"])
+        // Equal scores: empty panes stay last.
+        let everywhere = window("everywhere", .init(x: 0, y: 0, width: 1000, height: 800))
+        #expect(assign([everywhere], Array(repeating: bounds, count: 3)) == ["everywhere", "-", "-"])
+        #expect(assign([], panes(.grid)) == ["-", "-", "-", "-"])
         #expect(assign([right, left], []) == ["left", "right"])
+    }
+
+    /// Live check: a left full-height window and a right column of two. Grid
+    /// has four panes. The bottom-right window must take the bottom-right
+    /// pane, leaving bottom-left empty.
+    @Test func gridEntryLeavesTheUncoveredPaneEmpty() {
+        let area = BTRect(x: 0, y: 30, width: 2560, height: 1410)
+        let frames = TabbedLayoutState(preset: .grid).frames(in: area).values.sorted {
+            $0.minY == $1.minY ? $0.minX < $1.minX : $0.minY < $1.minY
+        }
+        let a = window("a", .init(x: 1281, y: 736, width: 1279, height: 704))
+        let b = window("b", .init(x: 1281, y: 30, width: 1279, height: 705))
+        let c = window("c", .init(x: 0, y: 30, width: 1280, height: 1410))
+        #expect(assign([a, b, c], frames) == ["c", "b", "-", "a"])
     }
 
     @Test func zeroOverlapUsesTotalDistanceRatherThanGreedyDistance() {
@@ -92,16 +118,18 @@ import Testing
         }
     }
 
-    @Test func seededWindowsWhollyInsideDistinctPaneRegionsKeepTheirPanes() {
+    @Test func seededWindowsWhollyInsideAnyPaneRegionsKeepTheirPanes() {
         var seed = Seed()
         var covered = Set<TabbedPreset>()
         for example in 0..<300 {
             let preset = TabbedPreset.allCases[seed.next(TabbedPreset.allCases.count)]
             covered.insert(preset)
             let frames = panes(preset)
-            // Use a random prefix: trailing empty panes remain the entry policy.
-            let count = 1 + seed.next(frames.count)
-            let windows = frames.prefix(count).enumerated().map { index, frame in
+            // Use a random subset of the panes, so empty panes can be anywhere.
+            var chosen = Array(frames.indices)
+            for index in chosen.indices.reversed() { chosen.swapAt(index, seed.next(index + 1)) }
+            let occupied = Set(chosen.prefix(1 + seed.next(frames.count)))
+            let windows = frames.enumerated().filter { occupied.contains($0.offset) }.map { index, frame in
                 let width = Double(1 + seed.next(Int(frame.size.width)))
                 let height = Double(1 + seed.next(Int(frame.size.height)))
                 let x = frame.minX + Double(seed.next(1001)) / 1000 * (frame.size.width - width)
@@ -110,12 +138,13 @@ import Testing
             }
             var shuffled = windows
             for index in shuffled.indices.reversed() { shuffled.swapAt(index, seed.next(index + 1)) }
-            #expect(assign(shuffled, frames) == windows.map { $0.id.rawValue }, "seeded case \(example), \(preset)")
+            let expected = frames.indices.map { occupied.contains($0) ? "region-\($0)" : "-" }
+            #expect(assign(shuffled, frames) == expected, "seeded case \(example), \(preset)")
         }
         #expect(covered == Set(TabbedPreset.allCases))
     }
 
-    @Test func seededAssignmentsMatchExhaustiveOracleIncludingOverflow() {
+    @Test func seededAssignmentsMatchExhaustiveOracleIncludingOverflowAndEmptyPanes() {
         var seed = Seed()
         for example in 0..<250 {
             let frames = panes(TabbedPreset.allCases[seed.next(TabbedPreset.allCases.count)])
@@ -128,10 +157,17 @@ import Testing
                 return $0.id < $1.id
             }
             let count = min(windows.count, frames.count)
+            // One entry per pane: a window rank, or `empty` for an empty pane.
+            // Any `frames.count - count` panes may stay empty.
+            let empty = windows.count
             var bestRanks: [Int] = [], bestOverlap = -1.0, bestDistance = Double.infinity
             func visit(_ ranks: [Int]) {
-                if ranks.count < count {
-                    for rank in windows.indices where !ranks.contains(rank) { visit(ranks + [rank]) }
+                if ranks.count < frames.count {
+                    let filled = ranks.filter { $0 != empty }.count
+                    if ranks.count - filled < frames.count - count { visit(ranks + [empty]) }
+                    if filled < count {
+                        for rank in windows.indices where !ranks.contains(rank) { visit(ranks + [rank]) }
+                    }
                     return
                 }
                 var overlap = 0.0, distance = 0.0
@@ -150,7 +186,7 @@ import Testing
                 }
             }
             visit([])
-            let expected = bestRanks.map { windows[$0].id.rawValue }
+            let expected = bestRanks.map { $0 == empty ? "-" : windows[$0].id.rawValue }
                 + windows.indices.filter { !bestRanks.contains($0) }.map { windows[$0].id.rawValue }
             #expect(assign(Array(windows.reversed()), frames) == expected, "oracle case \(example)")
         }

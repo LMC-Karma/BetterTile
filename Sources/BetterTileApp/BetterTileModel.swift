@@ -6035,7 +6035,7 @@ extension BetterTileModel {
         if wasUninitialized, configuration.tabbedEntryPlacement == .onePerPane {
             let incomingSelection = focused.flatMap { state.windowIDs.contains($0) ? $0 : nil }
                 ?? state.activeWindowID
-            // Keep a stable reading order for Adaptive entry and overflow tabs.
+            // A stable reading order ranks equal scores and orders overflow tabs.
             let remaining = windows.filter { state.windowIDs.contains($0.id) }.sorted {
                 if $0.frame.minY != $1.frame.minY { return $0.frame.minY < $1.frame.minY }
                 if $0.frame.minX != $1.frame.minX { return $0.frame.minX < $1.frame.minX }
@@ -6049,13 +6049,16 @@ extension BetterTileModel {
                 return $0.value.minX < $1.value.minX
             }
             let panes = paneFrames.map(\.key)
-            // Adaptive already has aligned rows; preserve its distribution.
-            // Match fresh Manual/startup entry jointly, including overflow choices.
-            let ordered = entersFromAdaptive ? remaining.map(\.id)
-                : TabbedEntryAssignment.orderedWindowIDs(windows: remaining, paneFrames: paneFrames.map(\.value))
+            // Match windows to panes jointly by overlap, including overflow
+            // choices. With fewer windows than panes, any pane can stay empty.
+            let assignment = TabbedEntryAssignment.assign(windows: remaining, paneFrames: paneFrames.map(\.value))
             if !panes.isEmpty {
-                for (index, id) in ordered.enumerated() {
-                    state.move(id, to: panes[index % panes.count], at: index / panes.count)
+                for (index, id) in assignment.primary.enumerated() {
+                    if let id { state.move(id, to: panes[index], at: 0) }
+                }
+                // Overflow exists only when every pane has a member.
+                for (index, id) in assignment.overflow.enumerated() {
+                    state.move(id, to: panes[index % panes.count], at: 1 + index / panes.count)
                 }
                 for pane in state.panes {
                     if let first = pane.tabs.first { state.select(first) }

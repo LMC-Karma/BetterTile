@@ -323,7 +323,7 @@ struct TabbedEntryPlacementTests {
     }
 
     @Test(arguments: [LayoutMode.manual, .bento], [TabbedPreset.columns, .rows, .focus, .grid])
-    func entryDistributionFollowsScreenReadingOrder(mode: LayoutMode, preset: TabbedPreset) async throws {
+    func entryDistributionFollowsWindowGeometry(mode: LayoutMode, preset: TabbedPreset) async throws {
         let manualColumns = mode == .manual && preset == .columns
         let system = makeSystem(count: preset == .grid ? 4 : (manualColumns ? 2 : 3))
         // IDs disagree with the visible order. Manual windows in the same
@@ -358,14 +358,19 @@ struct TabbedEntryPlacementTests {
             case .single: expected = [ids]
             }
         } else {
-            // Adaptive has already rearranged the fixture. Keep its established
-            // reading-order result as a guard against changes to Adaptive entry.
-            let ordered = system.windows.sorted {
-                if $0.frame.minY != $1.frame.minY { return $0.frame.minY < $1.frame.minY }
-                return $0.frame.minX < $1.frame.minX
-            }.map(\.id)
-            expected = (0..<preset.paneCount).map { pane in
-                ordered.enumerated().filter { $0.offset % preset.paneCount == pane }.map(\.element)
+            // Adaptive has already rearranged the fixture: ids[2] fills the left
+            // half (top-left quarter in Grid, with ids[3] below it), ids[1] is
+            // top-right and ids[0] bottom-right. Entry matches by overlap like
+            // Manual entry. In Rows, ids[2] overlaps both rows equally; the
+            // smaller centre distance puts it with ids[1] in the top pane, so
+            // ids[0] keeps the bottom pane it covers. Overflow tabs still go to
+            // the panes in turn, so in Columns ids[0] joins the first pane.
+            switch preset {
+            case .columns: expected = [[ids[2], ids[0]], [ids[1]]]
+            case .rows: expected = [[ids[2], ids[1]], [ids[0]]]
+            case .focus: expected = [[ids[2]], [ids[1]], [ids[0]]]
+            case .grid: expected = [[ids[2]], [ids[1]], [ids[3]], [ids[0]]]
+            case .single: expected = [ids]
             }
         }
         model.setActiveMode(.tabbed)
@@ -515,4 +520,63 @@ struct TabbedEntryPlacementTests {
         #expect(covered == Set(TabbedPreset.allCases))
     }
 
+
+    /// Live check: Adaptive shows a full-height left window and a right
+    /// column of two on a 2560 x 1440 screen. Grid with One per pane must put
+    /// the bottom-right window in the bottom-right pane and leave bottom-left
+    /// empty, in one placement.
+    @Test
+    func gridEntryFromAdaptiveLeavesTheUncoveredPaneEmpty() async throws {
+        let system = makeSystem(count: 3)
+        let id = system.mainDisplay.id
+        let area = BTRect(x: 0, y: 30, width: 2560, height: 1410)
+        system.availableDisplays = [DisplaySnapshot(id: id, frame: BTRect(x: 0, y: 0, width: 2560, height: 1440),
+                                                    visibleFrame: area, isMain: true)]
+        let a = system.windows[0].id, b = system.windows[1].id, c = system.windows[2].id
+        system.windows[0].frame = BTRect(x: 1281, y: 736, width: 1279, height: 704)
+        system.windows[1].frame = BTRect(x: 1281, y: 30, width: 1279, height: 705)
+        system.windows[2].frame = BTRect(x: 0, y: 30, width: 1280, height: 1410)
+        system.focusedID = a
+        let model = makeModel(system: system)
+        defer { model.shutdown() }
+        try configure("onePerPane", preset: .grid, model: model)
+        model.setActiveMode(.bento)
+        try await settle(model, system: system)
+        var tree = BentoLayoutState(root: .partition(BentoPartition(axis: .vertical, weight: 0.5,
+            first: .leaf(c), second: .partition(BentoPartition(axis: .horizontal, weight: 0.5,
+                first: .leaf(b), second: .leaf(a))))))
+        // The model's own pane gap, so Adaptive does not rewrite these frames.
+        tree.metrics.paneGap = model.configuration.bentoInnerGap
+        let old = Dictionary(uniqueKeysWithValues: system.windows.map { ($0.id, $0.frame) })
+        let display = try #require(system.displays().first)
+        let placed = Dictionary(uniqueKeysWithValues: BentoLayoutEngine(state: tree)
+            .placements(for: system.windows, in: display).map { ($0.windowID, $0.frame) })
+        for index in system.windows.indices { system.windows[index].frame = try #require(placed[system.windows[index].id]) }
+        model.dividerResize.bentoStateChangedHandler?(id, tree, placed, old)
+        try await settle(model, system: system)
+        // The Adaptive frames from the live check.
+        try #require(system.windows[0].frame == BTRect(x: 1281, y: 736, width: 1279, height: 704), "A \(system.windows[0].frame)")
+        try #require(system.windows[1].frame == BTRect(x: 1281, y: 30, width: 1279, height: 705), "B \(system.windows[1].frame)")
+        try #require(system.windows[2].frame == BTRect(x: 0, y: 30, width: 1280, height: 1410), "C \(system.windows[2].frame)")
+        let writes = system.frameWriteCounts
+        model.setActiveMode(.tabbed)
+        try await settle(model, system: system)
+        let state = try #require(model.activeTabbedState)
+        let frames = state.frames(in: area)
+        let panes = state.panes.sorted {
+            let p = frames[$0.id]!, q = frames[$1.id]!
+            return p.minY == q.minY ? p.minX < q.minX : p.minY < q.minY
+        }
+        #expect(panes.map(\.tabs) == [[c], [b], [], [a]])
+        #expect(state.activeWindowID == a)
+        #expect(try system.focusedWindow()?.id == a)
+        for window in system.windows {
+            #expect(system.frameWriteCounts[window.id, default: 0] - writes[window.id, default: 0] == 1)
+        }
+        // One placement: a single Undo returns to Adaptive's layout.
+        model.performTabbed(.undo)
+        await system.advance(by: .seconds(1))
+        try await settle(model, system: system)
+        #expect(model.activeTabbedState == state)
+    }
 }
