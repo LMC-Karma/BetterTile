@@ -210,7 +210,9 @@ public struct AmbientLayoutReconciler: Sendable {
         session.lastObservedFrames = frames
         if let settleWorkArea {
             session.pendingWorkArea = settleWorkArea
-        } else {
+        } else if !observation.isDesktopTransition || !workAreaChanged {
+            // A transition keeps the tree without writing it. The next normal
+            // sweep must still see any work-area change that needs a reflow.
             session.lastWorkArea = observation.display.visibleFrame
         }
 
