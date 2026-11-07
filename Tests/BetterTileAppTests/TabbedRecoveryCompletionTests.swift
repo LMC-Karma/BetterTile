@@ -55,6 +55,8 @@ struct TabbedRecoveryDegradationTests {
         defer { model.shutdown() }
         model.configuration.defaultLayoutMode = .manual
         model.configuration.defaultTabbedPreset = .columns
+        // The failed participant must remain selected in its own Adaptive pane.
+        model.configuration.tabbedEntryPlacement = .keepAdaptivePanes
         model.configuration.bentoInnerGap = 0
         model.setActiveMode(.bento)
         try #require(await waitFor { model.settlementTasks.isEmpty })

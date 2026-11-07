@@ -38,7 +38,8 @@ import Testing
 }
 
 @MainActor private func waitForOverlayPanelGeometry(
-    _ overlay: TabbedOverlayController, state: TabbedLayoutState, bounds: BTRect
+    _ overlay: TabbedOverlayController, state: TabbedLayoutState, bounds: BTRect,
+    mainScreenFrame: () -> NSRect = { NSScreen.screens.first?.frame ?? .zero }
 ) async -> Bool {
     func views() -> [TabbedPaneView] {
         NSApp.windows.filter { overlay.windowNumbers.contains($0.windowNumber) }
@@ -53,8 +54,16 @@ import Testing
             let height = view.pane.tabs.isEmpty ? pane.size.height
                 : view.collapsed ? TabbedStripPresentation.autoHide.reservedInset : state.presentation.barHeight
             let expected = CoordinateConverter.toAppKit(BTRect(x: pane.minX, y: pane.minY,
-                width: pane.size.width, height: height), mainScreenFrame: NSScreen.screens.first?.frame ?? .zero)
-            return panel.frame == expected && view.bounds.size == expected.size
+                width: pane.size.width, height: height), mainScreenFrame: mainScreenFrame())
+            let requested: NSRect
+            if let fixture = panel as? UnconstrainedTabbedTestPanel {
+                guard let frame = fixture.requestedFrame else { return false }
+                requested = frame
+            } else {
+                requested = panel.frame
+            }
+            return requested == expected && panel.frame.size == expected.size
+                && view.bounds.size == expected.size
                 && view.content.bounds.size == expected.size
         }
     })
@@ -477,30 +486,45 @@ func tabBarPresentationGeometryCurtainAndKeyboardRouting(_ presentation: TabbedS
 @Suite(.macOSTestApplication, .serialized) @MainActor struct TabbedProductionPanelTests {
 
 
-    @Test(.macOSUI, .timeLimit(.minutes(5)), arguments: TabbedStripPresentation.allCases, [false, true])
-    func resizedContentKeepsDragHitTesting(presentation: TabbedStripPresentation, anchored: Bool) async throws {
+    @Test(.macOSUI, .timeLimit(.minutes(5)), arguments: TabbedStripPresentation.allCases, [(false, false), (false, true), (true, false), (true, true)])
+    // Ordering is simulated here. NativeFocus.autoHideBandSurvivesDeferredLayout
+    // retains production panels and real AppKit ordering.
+    func resizedContentKeepsDragHitTesting(presentation: TabbedStripPresentation, fixture: (anchored: Bool, relocated: Bool)) async throws {
+        let (anchored, relocated) = fixture
         _ = NSApplication.shared
+        let reference = UnconstrainedTabbedTestPanel.referenceScreenFrame
         for dropY in [17.0, 300.0] {
-            let anchor = NSPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+            let anchor = UnconstrainedTabbedTestPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
             anchor.orderFrontForTesting()
             defer { anchor.orderOutForTesting() }
             let id = WindowID(rawValue: "sized-drag")
             var state = TabbedLayoutState(preset: .columns, presentation: presentation)
             state.reconcile(windowIDs: [id], removed: [], focused: id)
             let overlay = TabbedOverlayController(dragTicks: ResizeDisplayLink(automatic: false),
+                panelFactory: { UnconstrainedTabbedTestPanel(contentRect: .zero,
+                    styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false) },
                 addGlobalKeyMonitor: { _ in NSObject() }, addLocalKeyMonitor: { _ in NSObject() },
-                removeMonitor: { _ in }, primaryButtonIsPressed: { true })
+                removeMonitor: { _ in }, primaryButtonIsPressed: { true },
+                mainScreenFrame: { reference })
             defer { overlay.hide() }
             var bounds = BTRect(x: 32000, y: 0, width: 1600, height: 800)
+            func relocatePanels() {
+                guard relocated else { return }
+                NSApp.windows.filter { overlay.windowNumbers.contains($0.windowNumber) }
+                    .compactMap { $0 as? UnconstrainedTabbedTestPanel }
+                    .forEach { $0.simulateNativeRelocation() }
+            }
             func refresh() {
                 overlay.refresh(state: state, bounds: bounds, windows: [], selectedWindowNumbers: anchored ? [id: anchor.windowNumber] : [:])
+                relocatePanels()
             }
             refresh()
-            try #require(await waitForOverlayPanelGeometry(overlay, state: state, bounds: bounds))
+            try #require(await waitForOverlayPanelGeometry(overlay, state: state, bounds: bounds, mainScreenFrame: { reference }))
             bounds.size.width = 1400
             refresh()
             #expect(overlay.showTabBar())
-            try #require(await waitForOverlayPanelGeometry(overlay, state: state, bounds: bounds))
+            relocatePanels()
+            try #require(await waitForOverlayPanelGeometry(overlay, state: state, bounds: bounds, mainScreenFrame: { reference }))
             let views = NSApp.windows.filter { overlay.windowNumbers.contains($0.windowNumber) }
                 .compactMap { $0.contentView as? TabbedPaneView }
             for view in views {
@@ -516,11 +540,12 @@ func tabBarPresentationGeometryCurtainAndKeyboardRouting(_ presentation: TabbedS
             hit.mouseDown(with: try presentationEvent(panel, type: .leftMouseDown, point: press))
             let target = try #require(state.frames(in: bounds)[state.panes[1].id])
             let screen = CoordinateConverter.toAppKit(BTRect(x: target.midX, y: dropY, width: 0, height: 0),
-                mainScreenFrame: NSScreen.screens.first?.frame ?? .zero).origin
+                mainScreenFrame: reference).origin
             let point = panel.convertPoint(fromScreen: screen)
             var indexes: [Int?] = []
             overlay.onIntent = { if case let .move(_, _, index, _) = $0 { indexes.append(index) } }
             hit.mouseDragged(with: try presentationEvent(panel, type: .leftMouseDragged, point: point))
+            relocatePanels()
             hit.mouseUp(with: try presentationEvent(panel, type: .leftMouseUp, point: point))
             #expect(indexes.count == 1)
             if let first = indexes.first { #expect(first == (dropY < presentation.barHeight ? 0 : nil)) }
