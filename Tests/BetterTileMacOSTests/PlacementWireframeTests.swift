@@ -7,7 +7,7 @@ import Testing
 func unchangedWireframesPreserveTheirInFlightPresentation(initialReduceMotion: Bool) throws {
     var panels: [CountingWireframePanel] = []
     var reduceMotion = initialReduceMotion
-    let controller = PlacementWireframeController(reduceMotion: { reduceMotion }) {
+    let controller = PlacementWireframeController(capturePolicy: OverlayCapturePolicy(), reduceMotion: { reduceMotion }) {
         let panel = CountingWireframePanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel],
                                            backing: .buffered, defer: true)
         panels.append(panel)

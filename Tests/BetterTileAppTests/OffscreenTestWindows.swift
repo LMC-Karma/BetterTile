@@ -146,7 +146,8 @@ import Testing
     displayTriggerStore: DisplayTriggerStore? = nil,
     appGroupsStore: AppGroupsStore? = nil,
     shortcutMonitor: GlobalShortcutMonitor? = nil,
-    gestureEvents: SharedGestureEventMonitor? = nil
+    gestureEvents: SharedGestureEventMonitor? = nil,
+    layoutWheelFactory: (BetterTileConfiguration) -> LayoutWheelController = { LayoutWheelController(configuration: $0) }
 ) -> BetterTileModel {
     NativeApplicationBootstrap.recordWindowAccess("create a model with native window fixtures")
     let fakeSystem = system as? FakeAppWindowSystem
@@ -156,7 +157,7 @@ import Testing
     let model = BetterTileModel(store: store, system: system, startRuntime: startRuntime,
                                presentsTabbedChrome: presentsTabbedChrome,
                                displayTriggerStore: displayTriggerStore, appGroupsStore: appGroupsStore, shortcutMonitor: shortcutMonitor, gestureEvents: gestureEvents,
-                               clock: fakeSystem?.clock ?? .live, uptime: modelUptime)
+                               clock: fakeSystem?.clock ?? .live, uptime: modelUptime, layoutWheelFactory: layoutWheelFactory)
     model.resultPillFactory = { ResultPillController(panel: OffscreenTestWindows.panel()) }
     model.tabbedOverlayFactory = {
         let overlay = TabbedOverlayController(panelFactory: OffscreenTestWindows.tabbedPanel)

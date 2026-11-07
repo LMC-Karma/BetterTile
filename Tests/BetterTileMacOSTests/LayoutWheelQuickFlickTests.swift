@@ -144,7 +144,7 @@ import Testing
             var presentation = LayoutWheelPresentation(configuration: configuration, placement: placement,
                                                       selection: nil, unavailableCommands: [])
             for iteration in 0..<12 {
-                let presenter = LayoutWheelPanelPresenter()
+                let presenter = LayoutWheelPanelPresenter(capturePolicy: OverlayCapturePolicy())
                 presentation.selection = nil
                 let open = millis { presenter.open(presentation) }
                 let openSettle = drain()

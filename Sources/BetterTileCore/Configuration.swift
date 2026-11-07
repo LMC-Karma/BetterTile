@@ -118,6 +118,7 @@ public struct BetterTileConfiguration: Codable, Hashable, Sendable {
     /// requests send the user to System Settings instead.
     public var accessibilityPromptRequested: Bool
     public var showDockIcon: Bool
+    public var showsOverlaysInScreenRecordings: Bool
     /// The BetterTile status items in the menu bar. With this and the Dock icon off,
     /// reopening the app (Finder, Spotlight, `open`) shows Settings.
     public var showMenuBarIcon: Bool
@@ -168,6 +169,7 @@ public struct BetterTileConfiguration: Codable, Hashable, Sendable {
         stageManagerRecommendationAcknowledged: Bool = false,
         accessibilityPromptRequested: Bool = false,
         showDockIcon: Bool = false,
+        showsOverlaysInScreenRecordings: Bool = false,
         showMenuBarIcon: Bool = true,
         snappingEnabled: Bool = true,
         linkedResizeEnabled: Bool = true,
@@ -200,6 +202,7 @@ public struct BetterTileConfiguration: Codable, Hashable, Sendable {
         self.stageManagerRecommendationAcknowledged = stageManagerRecommendationAcknowledged
         self.accessibilityPromptRequested = accessibilityPromptRequested
         self.showDockIcon = showDockIcon
+        self.showsOverlaysInScreenRecordings = showsOverlaysInScreenRecordings
         self.showMenuBarIcon = showMenuBarIcon
         self.snappingEnabled = snappingEnabled
         self.linkedResizeEnabled = linkedResizeEnabled
@@ -235,7 +238,7 @@ public struct BetterTileConfiguration: Codable, Hashable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case schemaVersion, setupCompletionVersion
         case macOSTilingRecommendationAcknowledged, stageManagerRecommendationAcknowledged, accessibilityPromptRequested
-        case showDockIcon, showMenuBarIcon, snappingEnabled, linkedResizeEnabled
+        case showDockIcon, showMenuBarIcon, showsOverlaysInScreenRecordings, snappingEnabled, linkedResizeEnabled
         case defaultTabbedPreset
         case defaultLayoutMode, resizeFeedbackMode, dividerVisibility, dividerThickness, bentoInnerGap, bentoSwapHoverDelay
         case bentoNewWindowSide, bentoBalancesNewWindows
@@ -277,6 +280,7 @@ public struct BetterTileConfiguration: Codable, Hashable, Sendable {
         ) ?? false
         accessibilityPromptRequested = try container.decodeIfPresent(Bool.self, forKey: .accessibilityPromptRequested) ?? false
         showDockIcon = try container.decodeIfPresent(Bool.self, forKey: .showDockIcon) ?? false
+        showsOverlaysInScreenRecordings = try container.decodeIfPresent(Bool.self, forKey: .showsOverlaysInScreenRecordings) ?? false
         // Configurations saved before this setting existed keep the menu bar icon.
         showMenuBarIcon = try container.decodeIfPresent(Bool.self, forKey: .showMenuBarIcon) ?? true
         snappingEnabled = try container.decodeIfPresent(Bool.self, forKey: .snappingEnabled) ?? true
@@ -395,6 +399,7 @@ public struct BetterTileConfiguration: Codable, Hashable, Sendable {
         )
         try container.encode(accessibilityPromptRequested, forKey: .accessibilityPromptRequested)
         try container.encode(showDockIcon, forKey: .showDockIcon)
+        try container.encode(showsOverlaysInScreenRecordings, forKey: .showsOverlaysInScreenRecordings)
         try container.encode(showMenuBarIcon, forKey: .showMenuBarIcon)
         try container.encode(snappingEnabled, forKey: .snappingEnabled)
         try container.encode(linkedResizeEnabled, forKey: .linkedResizeEnabled)
@@ -525,10 +530,11 @@ public struct ConfigurationChangeSet: OptionSet, Hashable, Sendable {
     public static let overlayAppearance = Self(rawValue: 1 << 10)
     public static let workArea = Self(rawValue: 1 << 11)
     public static let menuBarIcon = Self(rawValue: 1 << 12)
+    public static let overlayCapture = Self(rawValue: 1 << 13)
     public static let all: Self = [
         .shortcuts, .snapping, .linkedResize, .divider,
         .bentoGeometry, .activationPolicy, .titleBar, .accessibilityWrites,
-        .applicationRules, .layoutWheel, .overlayAppearance, .workArea, .menuBarIcon,
+        .applicationRules, .layoutWheel, .overlayAppearance, .workArea, .menuBarIcon, .overlayCapture,
     ]
 
     public static func between(
@@ -536,6 +542,9 @@ public struct ConfigurationChangeSet: OptionSet, Hashable, Sendable {
         _ new: BetterTileConfiguration
     ) -> Self {
         var changes: Self = []
+        if old.showsOverlaysInScreenRecordings != new.showsOverlaysInScreenRecordings {
+            changes.insert(.overlayCapture)
+        }
         if old.overlayAppearance != new.overlayAppearance {
             changes.insert(.overlayAppearance)
         }

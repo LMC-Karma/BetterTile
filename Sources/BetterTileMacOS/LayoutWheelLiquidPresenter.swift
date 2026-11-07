@@ -100,6 +100,7 @@ public struct LayoutWheelLiquidState: Equatable, Sendable {
 
     let frameSource: any LayoutWheelLiquidFrameSource
     private let panel: NSPanel
+    let capturePolicy: OverlayCapturePolicy
     private var embedded = false
     private let root = FlippedView()
     var previewView: NSView { root }
@@ -154,6 +155,7 @@ public struct LayoutWheelLiquidState: Equatable, Sendable {
 
     init(frameSource: any LayoutWheelLiquidFrameSource, capturable: Bool = false) {
         self.frameSource = frameSource
+        capturePolicy = OverlayCapturePolicy(showsInRecordings: capturable)
         panel = NSPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel],
                         backing: .buffered, defer: true)
         panel.level = .statusBar
@@ -162,8 +164,8 @@ public struct LayoutWheelLiquidState: Equatable, Sendable {
         panel.hasShadow = false
         panel.ignoresMouseEvents = true
         panel.collectionBehavior = [.moveToActiveSpace, .transient, .ignoresCycle, .fullScreenAuxiliary]
-        // The prototype harness records itself; the product wheel stays private.
-        panel.sharingType = capturable ? .readOnly : .none
+        // The prototype harness can opt in without a product configuration.
+        capturePolicy.apply(to: panel)
         panel.isReleasedWhenClosed = false
 
         root.wantsLayer = true
