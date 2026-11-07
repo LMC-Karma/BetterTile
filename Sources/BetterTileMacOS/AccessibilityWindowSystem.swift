@@ -657,6 +657,28 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         stageManagerGroupResolver.logExposureFallbackOnce()
     }
 
+    /// Read from Core Graphics, which is current inside a reconfiguration
+    /// callback. `NSScreen` can still describe the previous arrangement then.
+    public func displayArrangement() -> DisplayArrangement {
+        var count: UInt32 = 0
+        guard CGGetActiveDisplayList(0, nil, &count) == .success, count > 0 else {
+            return DisplayArrangement(displays())
+        }
+        var ids = [CGDirectDisplayID](repeating: 0, count: Int(count))
+        guard CGGetActiveDisplayList(count, &ids, &count) == .success else {
+            return DisplayArrangement(displays())
+        }
+        return DisplayArrangement(displays: Set(ids.prefix(Int(count)).map { id in
+            let bounds = CGDisplayBounds(id)
+            let mode = CGDisplayCopyDisplayMode(id)
+            return DisplayArrangement.Display(
+                id: DisplayID(rawValue: String(id)),
+                frame: BTRect(x: bounds.minX, y: bounds.minY, width: bounds.width, height: bounds.height),
+                pixelWidth: mode?.pixelWidth ?? CGDisplayPixelsWide(id),
+                pixelHeight: mode?.pixelHeight ?? CGDisplayPixelsHigh(id))
+        }))
+    }
+
     public func displays() -> [DisplaySnapshot] {
         let screens = NSScreen.screens
         guard let mainFrame = screens.first?.frame else { return [] }
