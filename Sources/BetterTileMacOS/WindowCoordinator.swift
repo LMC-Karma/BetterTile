@@ -319,9 +319,9 @@ public final class WindowCoordinator {
         }
         // History stores absolute frames. A disconnected or rearranged display
         // can make an earlier position unreachable even after planning succeeds.
-        if restoringHistory, !system.displays().contains(where: {
-            PlacementBounds.isReachable(plan.targetFrame, in: $0.visibleFrame)
-        }) {
+        if restoringHistory, !PlacementBounds.isHistoryRestoreReachable(
+            plan.targetFrame, in: system.displays().map(\.frame)
+        ) {
             return .failed(reason: "The previous window position is off screen.")
         }
         do {

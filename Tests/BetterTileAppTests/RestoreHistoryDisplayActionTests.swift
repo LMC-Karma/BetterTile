@@ -3,7 +3,7 @@ import Testing
 @testable import BetterTileApp
 
 @Suite(.appTestApplication, .serialized) @MainActor
-struct RestoreDisplayActionProbeTests {
+struct RestoreHistoryDisplayActionTests {
     @Test(arguments: [false, true])
     func restoreAfterUnplugKeepsWindowReachable(fromWheel: Bool) async throws {
         let system = makeManualWindowSystem()

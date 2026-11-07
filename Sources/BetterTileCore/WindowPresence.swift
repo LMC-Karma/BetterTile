@@ -111,6 +111,20 @@ public enum PlacementBounds {
         let visible = frame.intersection(visibleFrame)?.area ?? 0
         return visible / area >= minimumVisibleFraction
     }
+
+    /// History restores a user-chosen frame, which may overhang the work area
+    /// or span displays. Reject only almost invisible frames or a missing
+    /// title bar, estimated by the top 22 logical points of the window.
+    public static func isHistoryRestoreReachable(_ frame: BTRect, in displayFrames: [BTRect]) -> Bool {
+        guard !frame.isEmpty,
+              [frame.minX, frame.minY, frame.maxX, frame.maxY, frame.area].allSatisfy(\.isFinite)
+        else { return false }
+        let visibleArea = displayFrames.reduce(0.0) { $0 + (frame.intersection($1)?.area ?? 0) }
+        guard visibleArea / frame.area >= 0.01 else { return false }
+        let titleBar = BTRect(x: frame.minX, y: frame.minY,
+            width: frame.size.width, height: min(22, frame.size.height))
+        return displayFrames.contains { titleBar.intersection($0) != nil }
+    }
 }
 
 /// What actually became of a frame BetterTile asked for.
