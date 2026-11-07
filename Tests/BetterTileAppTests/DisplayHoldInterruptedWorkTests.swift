@@ -109,7 +109,7 @@ func manualApplyRecoveryRestoresOnlyItsWindowsAndKeepsNewerFrames(change: Manual
                 "Recovery wrote an absolute frame on a display that changed size")
         #expect(recovered == held[window])
     }
-    #expect(try councilStore(model).session(for: system.mainDisplay.id)?.automaticWritesSuspended == false)
+    #expect(try layoutSessionStore(model).session(for: system.mainDisplay.id)?.automaticWritesSuspended == false)
 }
 
 // MARK: - Native linked resizing
@@ -304,7 +304,7 @@ func aTabbedTabDragInterruptedByAHoldReturnsTheTabAndAllowsTabDrags() async thro
     try await settleHold(model, system)
     #expect(model.activeTabbedState?.windowIDs == state.windowIDs)
     #expect(model.activeTabbedState?.panes.map(\.tabs) == state.panes.map(\.tabs))
-    #expect(try councilStore(model).session(for: display)?.automaticWritesSuspended == false)
+    #expect(try layoutSessionStore(model).session(for: display)?.automaticWritesSuspended == false)
     #expect(system.windows[index].frame.approximatelyEquals(placed, tolerance: 2))
     #expect(await system.waitFor { (try? overlays()[display]?.acceptsTabDrags) == true },
             "Tab drags stayed disabled after the hold")
