@@ -18,6 +18,9 @@ public final class LinkedResizeController {
     /// Runs when a drag first resizes a window, not on every click. The
     /// gesture then re-reads its windows' minimums.
     public var gestureWillBeginHandler: (() -> Void)?
+    /// Runs with `gestureWillBeginHandler`. The owner treats the display as
+    /// the target of a new explicit action.
+    public var resizeWillBeginHandler: ((DisplayID) -> Void)?
     public var isResizing: Bool { hasStartedResizing }
     private var hasStartedResizing = false
     public var isEnabledForDisplay: ((DisplayID) -> Bool)?
@@ -62,6 +65,39 @@ public final class LinkedResizeController {
     public func start() {
         isStarted = true
         syncMonitoring()
+    }
+
+    /// Stops the current gesture without writing any frame. A display change
+    /// can already have moved its windows, so neither its queued display tick,
+    /// nor the rest of the drag, nor its release may write. A deferred start is
+    /// invalidated too. Only a transaction that left its windows in an unknown
+    /// arrangement returns its baseline, for the owner to validate later.
+    public func interruptForDisplayChange() -> (displayID: DisplayID, frames: [WindowID: BTRect],
+                                                applied: [WindowID: BTRect])? {
+        lifecycleGeneration &+= 1
+        var recovery: (displayID: DisplayID, frames: [WindowID: BTRect], applied: [WindowID: BTRect])?
+        if let transaction {
+            if transaction.hasDegradedApply, let displayID = baselineWindows.first?.displayID {
+                recovery = (displayID, transaction.baselineFrames, transaction.lastAppliedFrames)
+            }
+            coordinator.finishLive(transaction: transaction, recordHistory: false)
+        }
+        self.transaction = nil
+        hasStartedResizing = false
+        isLeftButtonDown = false
+        baselineWindows = []
+        sourceID = nil
+        hasPendingDisplayUpdate = false
+        displayTicks.stop()
+        removeGestureMonitors()
+        // A press already delivered to the fallback monitor waits in a queued
+        // task. A new monitor generation rejects it; a new press still arrives.
+        if mouseDownMonitor != nil {
+            removeMouseDownMonitor()
+            syncMonitoring()
+        }
+        applyPendingEventTapHandoff()
+        return recovery
     }
 
     public func stop() {
@@ -276,6 +312,7 @@ public final class LinkedResizeController {
             // once, then read the windows' current minimums and solve again.
             hasStartedResizing = true
             gestureWillBeginHandler?()
+            resizeWillBeginHandler?(baseline.displayID)
             if let targeted = coordinator.system as? any TargetedWindowSystem,
                let fresh = try? targeted.windowSnapshots(ids: Set(baselineWindows.map(\.id))) {
                 let constraints = Dictionary(fresh.map { ($0.id, $0.constraints) }, uniquingKeysWith: { first, _ in first })
