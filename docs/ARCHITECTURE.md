@@ -300,7 +300,8 @@ reads the arrangement from Core Graphics when the model handles the event.
 `NSScreen` can still describe the previous arrangement then.
 
 The five-second limit is checked by time before each inventory that a hold
-starts, by the sampler, the watchdog and a refresh. Window inventories are
+starts: by the sampler, the watchdog and every refresh, also a background
+refresh after an explicit action released one display. Window inventories are
 synchronous and can take seconds when applications do not answer
 Accessibility. A hold past its limit settles without starting another
 inventory, so it lasts at most about five seconds plus one read in progress.

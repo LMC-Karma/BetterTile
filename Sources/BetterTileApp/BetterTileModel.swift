@@ -5641,6 +5641,9 @@ final class BetterTileModel {
         relayoutPaneGap: Bool = false
     ) {
         guard !isShutDown else { return }
+        // A display override admits explicit work before the deadline. Past
+        // it, end the hold first; its settlement runs this refresh's work.
+        if isHoldingDisplayChange, settleOverdueDisplayChangeHold(cancellingSampler: true) { return }
         if isHoldingDisplayChange && displayChangeUserOverrides.isEmpty {
             recordDisplayChangeObservation(windows: suppliedWindows)
             return

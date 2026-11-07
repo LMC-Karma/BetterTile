@@ -111,6 +111,13 @@ func onlyARealDisplayChangeHoldsTheLayout(source: DisplayChangeSource, change: D
 enum LateReconfiguration: String, CaseIterable, Sendable {
     /// The second display is gone before the callbacks reach the model.
     case removal
+    /// The active display list shrinks, as hardware mirroring does, and the
+    /// end callbacks carry no display flag.
+    case activeSetShrinks
+    /// The main display doubles its pixels and keeps its logical bounds.
+    case pixelSizeOnly
+    /// The second display moves in the arrangement; nothing else changes.
+    case originOnly
     /// The main display changed resolution before the callbacks reach the
     /// model. Its end callbacks report a mode change, not an added or removed
     /// display, so only the settled arrangement shows the change.
@@ -133,8 +140,15 @@ func aDisplayChangeHandledLateStillHolds(change: LateReconfiguration) async thro
     defer { model.shutdown() }
     model.setActiveMode(.bento)
     await system.advance(by: .seconds(1))
+    let secondSessions = { @MainActor in try sessionStore(of: model).allSessions(for: secondDisplay.id).count }
+    let sessionsBefore = try secondSessions()
+    try #require(sessionsBefore > 0)
     switch change {
-    case .removal: system.availableDisplays.removeAll { $0.id == secondDisplay.id }
+    case .removal, .activeSetShrinks: system.availableDisplays.removeAll { $0.id == secondDisplay.id }
+    case .pixelSizeOnly: system.availableDisplays[0].scaleFactor = 2
+    case .originOnly:
+        system.availableDisplays[1].frame.origin.x = 1200
+        system.availableDisplays[1].visibleFrame.origin.x = 1200
     case .resolution:
         system.availableDisplays[0].frame = BTRect(x: 0, y: 0, width: 1280, height: 800)
         system.availableDisplays[0].visibleFrame = BTRect(x: 0, y: 0, width: 1280, height: 800)
@@ -146,6 +160,12 @@ func aDisplayChangeHandledLateStillHolds(change: LateReconfiguration) async thro
     case .removal:
         model.handleDisplayReconfiguration(.removeFlag)
         model.handleDisplayReconfiguration([])
+    case .activeSetShrinks, .pixelSizeOnly:
+        model.handleDisplayReconfiguration([])
+        model.handleDisplayReconfiguration([])
+    case .originOnly:
+        model.handleDisplayReconfiguration(.movedFlag)
+        model.handleDisplayReconfiguration([])
     case .resolution:
         model.handleDisplayReconfiguration(.setModeFlag)
         model.handleDisplayReconfiguration([])
@@ -155,6 +175,11 @@ func aDisplayChangeHandledLateStillHolds(change: LateReconfiguration) async thro
     }
     model.scheduleDisplayRefresh()
     #expect(model.isHoldingDisplayChange, "A display change handled late ended its hold at once")
+    // The missing display keeps its session while the hold lasts.
+    #expect(try secondSessions() == sessionsBefore)
+    // The hold then ends by the normal quiet settlement, well before its limit.
+    await system.advance(by: .seconds(1))
+    #expect(await system.waitFor { !model.isHoldingDisplayChange })
 }
 
 /// With two displays Core Graphics sends a begin and an end for each display.
@@ -206,4 +231,42 @@ func anUnchangedReconfigurationDuringAWakeHoldKeepsTheHold() async throws {
     model.handleDisplayReconfiguration(.beginConfigurationFlag)
     model.handleDisplayReconfiguration([])
     #expect(model.isHoldingDisplayChange, "An unchanged reconfiguration ended the wake hold")
+}
+
+/// One display has an explicit override during a hold that never reports
+/// completion. Every full inventory blocks the main actor for 3 s. Application
+/// launch and termination refreshes must check the limit before they read, so
+/// no background inventory starts during the hold after 5 s.
+@Test(.appTestApplication) @MainActor
+func backgroundRefreshesCheckTheHoldLimitEvenWithADisplayOverride() async throws {
+    let system = makeManualWindowSystem(drivingPolicyDeadlines: true)
+    system.availableDisplays = [system.mainDisplay, secondDisplay]
+    let clock = try #require(system.manualClock)
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    model.setActiveMode(.bento)
+    await system.advance(by: .seconds(1))
+    model.handleDisplayChange(.displayReconfigurationBegan)
+    // An explicit action releases its own display before the deadline.
+    let before = system.frameWriteCounts
+    model.perform(.leftHalf)
+    try #require(system.frameWriteCounts != before)
+    let origin = clock.now
+    var heldReadsAfterLimit: [Duration] = []
+    var holdEnded: Duration?
+    system.onVisibleWindowSweep = { _ in
+        let elapsed = clock.now - origin
+        if model.isHoldingDisplayChange {
+            if elapsed >= .seconds(5) { heldReadsAfterLimit.append(elapsed) }
+        } else if holdEnded == nil {
+            holdEnded = elapsed
+        }
+        clock.advance(by: .seconds(3))
+    }
+    for _ in 0..<4 { model.handleApplicationTopologyChange() }
+    system.onVisibleWindowSweep = nil
+    #expect(heldReadsAfterLimit.isEmpty, "Reads started during the hold after its limit: \(heldReadsAfterLimit)")
+    #expect(!model.isHoldingDisplayChange)
+    let ended = try #require(holdEnded)
+    #expect(ended <= .seconds(8), "The hold lasted \(ended)")
 }
