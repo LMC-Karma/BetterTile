@@ -103,8 +103,7 @@ func wakeReadinessKeepsTheFiveSecondLimit() async throws {
     model.handleDisplayChange(.sleep)
     system.offscreenWindowIDs = [system.windows[3].id]
     model.handleApplicationTopologyChange(waking: true)
-    await system.advance(by: .seconds(5.2))
-    #expect(!model.isHoldingDisplayChange)
+    #expect(await system.waitFor(timeout: .seconds(5)) { !model.isHoldingDisplayChange })
 }
 
 @Test(.appTestApplication) @MainActor
