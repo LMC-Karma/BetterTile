@@ -4,7 +4,7 @@ import BetterTileMacOS
 import Testing
 @testable import BetterTileApp
 
-@MainActor private func councilStore(_ model: BetterTileModel) throws -> LayoutSessionStore {
+@MainActor func councilStore(_ model: BetterTileModel) throws -> LayoutSessionStore {
     try #require(Mirror(reflecting: model).children.first {
         $0.label?.hasSuffix("sessionStore") == true
     }?.value as? LayoutSessionStore)
@@ -126,6 +126,12 @@ func savedApplyNeverRollsBackThroughANewerDisplayHold(mode: LayoutMode, automati
     await task.value
     let writes = try #require(atHold, "The hold must start after a forward write")
     #expect(system.frameWriteCounts == writes, "Recovery must not write during an unsettled display configuration")
+    system.onWindowSnapshots = nil
+    #expect(applier.message?.contains("could not be restored") != true)
+    model.handleDisplayChange(.displayReconfigurationEnded)
+    await system.advance(by: .seconds(2))
+    try #require(await system.waitFor { !model.isHoldingDisplayChange && !model.hasPendingTabbedPlacement && model.windowEventTask == nil })
+    #expect(try councilStore(model).session(for: system.mainDisplay.id)?.automaticWritesSuspended == false)
 }
 
 @Test(.appTestApplication, arguments: [false, true]) @MainActor

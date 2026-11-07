@@ -531,6 +531,17 @@ public final class DividerOverlayController {
         updateHover(at: NSEvent.mouseLocation)
     }
 
+    /// Stops an interrupted display gesture without restoring old coordinates.
+    /// The model owns later recovery after validating the desktop again.
+    public func interruptForDisplayChange() -> (displayID: DisplayID, frames: [WindowID: BTRect])? {
+        let recovery = activeInteraction.flatMap { interaction in
+            transaction.map { (displayID: interaction.displayID, frames: $0.baselineFrames) }
+        }
+        transaction = nil
+        hideAndCancel()
+        return recovery
+    }
+
     public func hideAndCancel() {
         releaseVerificationTask?.cancel()
         releaseVerificationTask = nil
