@@ -43,7 +43,7 @@ func displayHoldSavedApplyRestoresTreeAndTilesArrival(automatic: Bool) async thr
     system.onWindowSnapshots = nil
     model.handleDisplayChange(.displayReconfigurationEnded)
     try await holdSettled(model, system)
-    #expect(try layoutSessionStore(model).session(for: system.mainDisplay.id)?.automaticWritesSuspended == false)
+    #expect(try sessionStore(of: model).session(for: system.mainDisplay.id)?.automaticWritesSuspended == false)
     #expect(system.windows.map(\.frame) == frames)
     let arrival = WindowSnapshot(id: .init(rawValue: "arrival"), processIdentifier: 45,
         frame: BTRect(x: 50, y: 50, width: 300, height: 300), displayID: system.mainDisplay.id)
@@ -52,7 +52,7 @@ func displayHoldSavedApplyRestoresTreeAndTilesArrival(automatic: Bool) async thr
     await system.advance(by: .seconds(2))
     try #require(await system.waitFor { model.windowEventTask == nil && model.settlementTasks.isEmpty })
     #expect(system.frameWriteCounts[arrival.id, default: 0] > 0)
-    #expect(try layoutSessionStore(model).session(for: system.mainDisplay.id)?.bentoState.root?.windowIDs.contains(arrival.id) == true)
+    #expect(try sessionStore(of: model).session(for: system.mainDisplay.id)?.bentoState.root?.windowIDs.contains(arrival.id) == true)
 }
 
 @Test(.appTestApplication, arguments: [LayoutMode.manual, .bento], [false, true]) @MainActor
@@ -92,7 +92,7 @@ func displayHoldStopsQueuedTwoPaneTabbedExit(destination: LayoutMode, pendingPla
     model.handleDisplayChange(.displayReconfigurationEnded)
     try await holdSettled(model, system)
     #expect(model.activeMode(for: system.mainDisplay.id) == destination)
-    #expect(try layoutSessionStore(model).session(for: system.mainDisplay.id)?.automaticWritesSuspended == false)
+    #expect(try sessionStore(of: model).session(for: system.mainDisplay.id)?.automaticWritesSuspended == false)
     // A current explicit command still owns an override, unlike the old exit.
     model.handleDisplayChange(.displayReconfigurationBegan)
     let beforeAction = system.frameWriteCounts
@@ -122,7 +122,7 @@ func displayHoldDefersAdaptiveDragRestoration(escape: Bool) async throws {
     model.handleDisplayChange(.displayReconfigurationEnded)
     try await holdSettled(model, system)
     #expect(system.windows[0].frame == baseline)
-    #expect(try layoutSessionStore(model).session(for: system.mainDisplay.id)?.automaticWritesSuspended == false)
+    #expect(try sessionStore(of: model).session(for: system.mainDisplay.id)?.automaticWritesSuspended == false)
 }
 
 @Test(.appTestApplication, arguments: [false, true]) @MainActor
@@ -149,7 +149,7 @@ func displayHoldDebounceKeepsANewerDividerGesture() async throws {
     model.dividerResize.configuration = model.configuration
     model.setActiveMode(.bento)
     await system.advance(by: .seconds(1))
-    let state = try #require(layoutSessionStore(model).session(for: display)?.bentoState)
+    let state = try #require(sessionStore(of: model).session(for: display)?.bentoState)
     let boundaries = BentoBoundaryResolver().boundaries(state: state, windows: system.windows, displayID: display, bounds: bounds)
     let boundary = try #require(boundaries.first)
     let start = BTPoint(x: boundary.coordinate, y: (boundary.spanStart + boundary.spanEnd) / 2)
@@ -237,7 +237,7 @@ func displayHoldInterruptsOrdinaryTabbedPlacement() async throws {
     system.onWindowSnapshots = nil
     model.handleDisplayChange(.displayReconfigurationEnded)
     try await holdSettled(model, system)
-    #expect(try layoutSessionStore(model).session(for: system.mainDisplay.id)?.automaticWritesSuspended == false)
+    #expect(try sessionStore(of: model).session(for: system.mainDisplay.id)?.automaticWritesSuspended == false)
     let state = try #require(model.activeTabbedState)
     let placements = try state.placements(in: system.mainDisplay.visibleFrame, windows: system.windows)
     for placement in placements {
@@ -273,7 +273,7 @@ func savedApplyRealRestorationFailureStillSuspends(displayChangesDuringRestore: 
     }
     _ = await system.drive { await applier.apply(h.document(mode: .bento)) }
     #expect(system.frameWriteCounts[source, default: 0] >= 2)
-    #expect(try layoutSessionStore(model).session(for: system.mainDisplay.id)?.automaticWritesSuspended == true)
+    #expect(try sessionStore(of: model).session(for: system.mainDisplay.id)?.automaticWritesSuspended == true)
 }
 
 @Test(.appTestApplication) @MainActor
