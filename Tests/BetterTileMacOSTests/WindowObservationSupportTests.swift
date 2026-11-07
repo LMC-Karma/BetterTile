@@ -180,6 +180,23 @@ func returningWindowIdentitiesPreserveBentoOrientationAndDragging(omittedByAcces
     #expect(!index.containsIdentity(20, processIdentifier: 43))
 }
 
+/// Only a window that the window server shows on screen, at the normal window
+/// layer and for the same application, is positive on-screen evidence. A closed
+/// window that its application keeps alive off screen is not.
+@Test(.macOSTestApplication) func onScreenEvidenceNeedsAnOnScreenNormalLayerRecordOfTheSameApplication() {
+    let frame = BTRect(x: 0, y: 0, width: 500, height: 400)
+    let index = WindowServerIndex(records: [
+        WindowServerRecord(windowID: 10, processIdentifier: 42, layer: 0, frame: frame, isOnscreen: true),
+        WindowServerRecord(windowID: 20, processIdentifier: 42, layer: 0, frame: frame, isOnscreen: false),
+        WindowServerRecord(windowID: 30, processIdentifier: 42, layer: 3, frame: frame, isOnscreen: true),
+    ])
+    #expect(index.isOnScreen(10, processIdentifier: 42))
+    #expect(!index.isOnScreen(10, processIdentifier: 43), "another application's record is no evidence")
+    #expect(!index.isOnScreen(20, processIdentifier: 42), "kept alive off screen")
+    #expect(!index.isOnScreen(30, processIdentifier: 42), "not the normal window layer")
+    #expect(!index.isOnScreen(40, processIdentifier: 42), "no record")
+}
+
 @Test(.macOSTestApplication) func targetedSnapshotCacheMergesOnlyCompleteRefreshes() throws {
     let displayID = DisplayID(rawValue: "main")
     let first = WindowSnapshot(

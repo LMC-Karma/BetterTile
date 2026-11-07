@@ -794,6 +794,78 @@ shortcut never acts on a window the user is not looking at.
 
 Bento uses a binary split tree held by each display's runtime `LayoutSession`. Leaves reference currently visible windows and branches carry an axis, normalized weight, and lock state. Closed or hidden windows are removed from the current tree. `BentoResizeEngine` changes branch weights and recursively derives all affected frames, `BentoLayoutFitter` adopts native edge changes, and `BentoBoundaryResolver` exposes only shared segments verified against current window frames.
 
+`BentoSessionReducer` removes a pane on direct evidence or after a
+corroborated absence. A destroyed or minimized event removes the pane in the
+next ordinary sweep. A window that a sweep does not observe loses its pane on
+its third consecutive miss. A window that macOS still reports on this desktop
+loses its pane on its fifth consecutive miss, and no earlier than 1.4 s after
+its first miss. Events make sweeps more frequent, so the count alone can pass
+in under half a second, for example while Accessibility exposes a desktop's
+windows one at a time after the user returns to it. The app model gives the
+reducer the sweep time from its injected clock. Desktop membership delays the
+removal but does not prevent it, because an application can keep a closed
+window alive off screen. A window of an application held as unresponsive keeps
+its pane while macOS reports it on this desktop, because the sweep did not read
+that application.
+
+Positive on-screen evidence protects a live window that Accessibility omits.
+Each complete sweep already reads the WindowServer window list. The adapter
+reports the windows that this list shows on screen, at the normal window layer
+and for the same application, but that the sweep did not return
+(`unreadOnScreenWindowIDs`). It needs no extra enumeration. A window that is in
+this set and that macOS reports on this desktop keeps its pane through every
+absence budget. On-screen evidence alone does not protect a pane, because it
+does not say which desktop's layout the window belongs to. A destroyed or
+minimized event still removes the pane at once. A closed window that an
+application keeps alive off screen is not on screen, so it still loses its
+pane on the fifth miss.
+
+When native observation is unavailable, on-screen evidence alone cannot keep
+an omitted pane. The next reconciliation uses the ordinary three-miss budget.
+If native observation returns before removal, protection resumes and clears
+the absence tally. After removal, a readable returning window joins through
+the ordinary arrival path. The full eligible inventory excludes windows read
+on another display from native membership in ambient, command, recovery and
+settlement reconciliation, including when displays share a native Space.
+
+A protected pane has no absence tally, so no follow-up sweep is pending for
+it. The app model records which missing panes each ambient reducer pass kept
+only because of on-screen evidence. The watchdog then applies the reducer's
+protection predicate to its own complete sweep and native desktop
+observation: the window must still be on screen and still a member of only
+this display's current desktop, and the inventory must not place it on another
+display. When a recorded pane fails this check, the watchdog reconciles again,
+even if the visible windows and the work area did not change. That pass starts
+the ordinary absence budget. So a window that leaves the screen, or that moves
+to another display's desktop or onto every desktop while Accessibility still
+omits it, gives its room back. The watchdog compares with the recorded state,
+not with the adapter's previous set, because another complete read can replace
+that set first. Suspended and Focus mode sessions and held windows are not
+checked.
+
+While a pane is missing, the app model starts another sweep after a 250 ms
+wait and the 120 ms event debounce. An inferred closure then takes about
+0.9 s, or about 1.6 s to 1.9 s with desktop membership.
+
+A desktop-switch sweep keeps the stored tree and does not run the reducer. It
+also keeps destroyed and minimize evidence for the next ordinary sweep. It
+restarts every absence tally and every membership start time of an Adaptive
+session that is not suspended. A window that the switch sweep observes was
+present, so its earlier run of misses has ended. A window that the switch
+sweep does not observe starts a new run on this desktop: time spent on another
+desktop is not evidence, and Accessibility can expose windows late after a
+return. A restart, not a pause, is the simpler rule. It can only delay a
+removal: the full budget runs again after the last switch, through ordinary
+sweeps. The switch sweep covers every display, so a switch on one display also
+restarts the tallies of the other displays' sessions. While the user keeps
+switching desktops on one display faster than one budget, a pending removal on
+another display waits; it completes once the switching stops. If the
+stored tree holds a window that the switch sweep does not observe, for example
+a window that closed just before the switch or that left while the user was
+on another desktop, an ordinary sweep follows 250 ms later. If the switch
+sweep observes a window that the tree does not hold, an ordinary sweep follows
+400 ms later to place it.
+
 `BentoPlanner` places a new window in this order. An explicit **New window
 side**, described below, applies first. Bento holds at most six windows; a
 seventh floats where it is.
