@@ -276,6 +276,12 @@ fixed-size window, which could float.
 Display and sleep notifications start a `DisplayChangeHold` before refreshing
 layouts. The Core reducer uses monotonic time and `DisplaySettleDetector`.
 Two equal display and window observations 250 ms apart release the hold.
+After sleep or session inactivity, those observations must also contain the
+previously managed windows as eligible, except confirmed closures and peers
+excluded by Focus mode. The model captures that membership without reading
+Accessibility while inactive. Repeated wake events keep the same captured set.
+This readiness wait ends with the hold's existing five-second deadline; it does
+not add permanent membership protection.
 Any active-session hold that does not become quiet releases after five seconds
 without a new display event. Sleep and an inactive or locked session wait for wake and unlock;
 those events restart the deadline. The public Core Graphics callback forwards

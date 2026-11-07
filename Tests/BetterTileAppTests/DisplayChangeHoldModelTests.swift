@@ -169,6 +169,7 @@ func displayHoldWaitsForSessionAndScreenUnlock() async throws {
     model.setActiveMode(.bento)
     await system.advance(by: .seconds(1))
     system.requestedFrames = [:]
+    let windowsBeforeLock = system.windows
     model.handleDisplayChange(.sessionResigned)
     system.windows.removeAll()
     model.handleDisplayChangeApplicationActivation(bundleID: "com.example.App")
@@ -179,6 +180,7 @@ func displayHoldWaitsForSessionAndScreenUnlock() async throws {
     model.handleDisplayChange(.sessionBecameActive)
     await system.advance(by: .seconds(6))
     #expect(model.isHoldingDisplayChange)
+    system.windows = windowsBeforeLock
     model.displayChangeScreenIsLocked = { false }
     model.handleDisplayChangeApplicationActivation(bundleID: "com.example.App")
     await system.advance(by: .seconds(1))

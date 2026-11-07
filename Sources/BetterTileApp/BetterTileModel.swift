@@ -520,6 +520,7 @@ final class BetterTileModel {
     private var isShutDown = false
     private var displayChangeHold = DisplayChangeHold()
     private var displayChangeHoldTask: Task<Void, Never>?
+    private var displayChangeExpectedWindows: Set<WindowID>?
     private var displayChangeTimeOrigin: ContinuousClock.Instant?
     private var displayChangeUserOverrides: Set<DisplayID> = []
     var isHoldingDisplayChange: Bool { displayChangeHold.isHolding }
@@ -3208,6 +3209,16 @@ final class BetterTileModel {
     }
 
     private func startDisplayChangeHold(_ event: DisplayChangeHold.Event) {
+        if !isHoldingDisplayChange { displayChangeExpectedWindows = nil }
+        if displayChangeExpectedWindows == nil,
+           [.sleep, .wake, .sessionResigned, .sessionBecameActive].contains(event) {
+            // Capture the pre-transition membership without reading AX during
+            // sleep or lock. A partial wake inventory cannot replace this base.
+            displayChangeExpectedWindows = sessionStore.sessions.values.reduce(into: Set<WindowID>()) { ids, session in
+                guard session.mode != .manual else { return }
+                ids.formUnion(session.windowIDs.subtracting(session.excludedFocusWindowIDs))
+            }
+        }
         displayChangeHold.receive(event, at: displayChangeTime)
         displayChangeUserOverrides.removeAll()
         Self.bentoLog.debug("display hold started: \(event.rawValue, privacy: .public)")
@@ -3268,10 +3279,16 @@ final class BetterTileModel {
         }
         let windows = try? observeVisibleWindows()
         recordDisplayChangeObservation(windows: windows)
-        let frames = windows.map { Dictionary(uniqueKeysWithValues: $0.map { ($0.id, $0.frame) }) }
+        let frames = windows.flatMap { observed -> [WindowID: BTRect]? in
+            let required = (displayChangeExpectedWindows ?? []).subtracting(confirmedGoneWindowIDs)
+            let eligible = Set(observed.filter(\.isEligible).map(\.id))
+            guard required.isSubset(of: eligible) else { return nil }
+            return Dictionary(uniqueKeysWithValues: observed.map { ($0.id, $0.frame) })
+        }
         guard displayChangeHold.sample(displaySignature: Set(system.displays()), windowFrames: frames,
                                        at: displayChangeTime, token: token) != nil else { return false }
         displayChangeHoldTask = nil
+        displayChangeExpectedWindows = nil
         displayChangeUserOverrides.removeAll()
         let reason = displayChangeHold.settledByLimit ? "limit" : "quiet"
         Self.bentoLog.debug("display hold settled: \(reason, privacy: .public)")
