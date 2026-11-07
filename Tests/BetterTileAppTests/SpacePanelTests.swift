@@ -258,6 +258,8 @@ func spacePanelOffSpaceLifecycleUpdatesBeforeArrival(kind: WindowSystemEvent.Kin
     else { f.system.windows[0].isMinimized = true }
     f.system.eventHandler?(WindowSystemEvent(kind: kind, windowID: window.id, processIdentifier: window.processIdentifier))
     #expect(overlay.state.windowIDs.isEmpty, "The retained strip must drop the unavailable tab before returning to its Space")
+    #expect((overlay.state.returnSlots[window.id] != nil) == (kind == .minimized),
+            "Minimization keeps the pane for a return; destruction forgets it")
     #expect(f.panels.compactMap { $0.contentView as? TabbedPaneView }.allSatisfy { $0.pane.tabs.isEmpty })
     #expect(f.system.frameWriteCounts == writes)
     #expect(f.system.raiseRequests.count == raises)

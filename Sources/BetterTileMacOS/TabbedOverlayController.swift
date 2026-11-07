@@ -676,9 +676,10 @@ public final class TabbedOverlayController: NSObject, NSMenuDelegate {
         if let id = applicationPickerPaneID, !state.panes.contains(where: { $0.id == id }) || self.bounds != bounds {
             onDismissApplicationPicker?()
         }
-        if self.state != state || self.bounds != bounds { gallery?.cancel() }
-        if isDropPending, self.state != state || self.bounds != bounds { completeDrop() }
-        if isInteracting, self.state != state || self.bounds != bounds { cancelInteraction() }
+        let layoutChanged = !self.state.layoutEquals(state) || self.bounds != bounds
+        if layoutChanged { gallery?.cancel() }
+        if isDropPending, layoutChanged { completeDrop() }
+        if isInteracting, layoutChanged { cancelInteraction() }
         if self.state.presentation != state.presentation {
             endKeyboardFocus(returning: false)
             barVisibility.removeAll()
@@ -772,11 +773,17 @@ public final class TabbedOverlayController: NSObject, NSMenuDelegate {
 
     /// Confirmed lifecycle evidence can update a retained desktop without ordering
     /// any surface onto the current Space or touching an application window.
-    public func removeUnavailableWindows(_ ids: Set<WindowID>) {
-        let removed = state.windowIDs.union(state.floatingWindowIDs).intersection(ids)
+    public func removeUnavailableWindows(_ ids: Set<WindowID>, closed: Bool = true) {
+        let known = state.windowIDs.union(state.floatingWindowIDs)
+            .union(closed ? Set(state.returnSlots.keys) : [])
+        let removed = known.intersection(ids)
         guard !removed.isEmpty else { return }
         let selectedWasRemoved = !Set(state.selectedWindowIDs).isDisjoint(with: removed)
-        for id in removed { state.removeClosedWindow(id); windows.removeValue(forKey: id) }
+        for id in removed {
+            if closed { state.removeClosedWindow(id) }
+            else { state.stepAway(id) }
+            windows.removeValue(forKey: id)
+        }
         for (index, pane) in state.panes.enumerated() {
             guard let view = panes[pane.id]?.contentView as? TabbedPaneView else { continue }
             view.setAccessibilityLabel("Pane \(index + 1)\(pane.tabs.isEmpty ? ", empty" : "")")
@@ -932,9 +939,10 @@ public final class TabbedOverlayController: NSObject, NSMenuDelegate {
     /// A resize changes geometry only. Keep panel ordering and content views
     /// intact, and let AppKit draw the changes together after this tick.
     public func refreshResize(state: TabbedLayoutState, bounds: BTRect) {
+        let layoutChanged = !self.state.layoutEquals(state) || self.bounds != bounds
         gallery?.cancel()
-        if isDropPending, self.state != state || self.bounds != bounds { completeDrop() }
-        if isInteracting, self.state != state || self.bounds != bounds { cancelInteraction() }
+        if isDropPending, layoutChanged { completeDrop() }
+        if isInteracting, layoutChanged { cancelInteraction() }
         self.state = state
         self.bounds = bounds
         for pane in state.panes { updateBar(pane.id) }
