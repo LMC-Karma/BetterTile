@@ -3,6 +3,19 @@ import Testing
 @testable import BetterTileCore
 
 extension FollowedLayoutTests {
+    @Test func tabbedReturnSlotPrecedesFollowedPreference() throws {
+        let a = Self.window("a"), b = Self.window("b", app: "test.preferred")
+        let (_, _, session) = try Self.fixture(mode: .tabbed, windows: [a, b])
+        var state = try #require(session.tabbedState)
+        let home = try #require(state.paneID(containing: a.id))
+        state.move(b.id, to: home)
+        state.stepAway(b.id)
+        let result = state.reconcile(windowIDs: [a.id, b.id], removed: [], fittingIn: Self.bounds,
+                                    windows: [a, b], followed: session.followed)
+        #expect(result.map(\.outcome) == [.returned(home)])
+        #expect(state.paneID(containing: b.id) == home)
+    }
+
     @Test func tabbedCloseKeepsPaneAndPreferredArrivalFillsItOnce() throws {
         let a = Self.window("a"), b = Self.window("b", app: "test.preferred")
         let (_, _, original) = try Self.fixture(mode: .tabbed, windows: [a, b])

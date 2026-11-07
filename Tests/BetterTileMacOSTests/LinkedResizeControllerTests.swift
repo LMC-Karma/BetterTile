@@ -262,7 +262,8 @@ import Testing
     controller.handleSharedGestureEvent(event(.leftMouseDragged, timestamp: 3))
     controller.handleSharedGestureEvent(event(.leftMouseUp, timestamp: 4))
 
-    #expect(system.windows[1].frame.minX == 517)
+    #expect(system.windows[1].frame.minX == 520)
+    #expect(system.windows[0].frame.maxX == system.windows[1].frame.minX)
 }
 
 @Test(.macOSTestApplication) @MainActor func eventTapHandoffWaitsForTheActiveNSEventLinkedResize() async {
@@ -324,8 +325,8 @@ import Testing
     await Task.yield()
 
     // The deferred handoff applies, so the next gesture uses the event tap. The
-    // first drag only establishes the baseline, whichever path reaches it
-    // first, so the measured change comes from the second drag alone.
+    // press captures the original shared edge, and the first drag admits the
+    // focused source. The second drag then changes that edge.
     system.windows[0].frame = BTRect(x: 0, y: 0, width: 500, height: 800)
     system.windows[1].frame = BTRect(x: 500, y: 0, width: 500, height: 800)
     controller.handleSharedGestureEvent(event(.leftMouseDown, timestamp: 7))
