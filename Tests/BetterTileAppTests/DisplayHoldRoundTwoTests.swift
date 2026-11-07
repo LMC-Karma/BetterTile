@@ -57,12 +57,32 @@ func displayHoldSavedApplyRestoresTreeAndTilesArrival(automatic: Bool) async thr
 
 @Test(.appTestApplication, arguments: [LayoutMode.manual, .bento], [false, true]) @MainActor
 func displayHoldStopsQueuedTabbedExit(destination: LayoutMode, pendingPlacement: Bool) async throws {
+    try await queuedTabbedExitScenario(destination: destination, pendingPlacement: pendingPlacement, twoPanes: false)
+}
+
+/// Two occupied panes reach the Adaptive commit and the Manual baseline restoration with real frames.
+@Test(.appTestApplication, arguments: [LayoutMode.manual, .bento], [false, true]) @MainActor
+func displayHoldStopsQueuedTwoPaneTabbedExit(destination: LayoutMode, pendingPlacement: Bool) async throws {
+    try await queuedTabbedExitScenario(destination: destination, pendingPlacement: pendingPlacement, twoPanes: true)
+}
+
+@MainActor private func queuedTabbedExitScenario(destination: LayoutMode, pendingPlacement: Bool, twoPanes: Bool) async throws {
     let system = makeManualWindowSystem(drivingPolicyDeadlines: true)
+    if twoPanes {
+        system.windows.append(.init(id: .init(rawValue: "peer"), processIdentifier: 43, bundleIdentifier: "com.example.Peer",
+            frame: BTRect(x: 300, y: 200, width: 600, height: 400), displayID: system.mainDisplay.id))
+    }
     let model = makeModel(system: system)
     defer { model.shutdown() }
+    model.tabbedClock = system.clock
     model.setActiveMode(.tabbed)
     try #require(await system.waitFor { !model.hasPendingTabbedPlacement })
-    if pendingPlacement { model.performTabbed(.preset(.columns)) }
+    if twoPanes {
+        model.performTabbed(.preset(.columns, grouping: .distributeWindows))
+        try #require(await system.waitFor { !model.hasPendingTabbedPlacement && model.windowEventTask == nil })
+        try #require(model.activeTabbedState?.panes.filter { !$0.tabs.isEmpty }.count == 2)
+    }
+    if pendingPlacement { model.performTabbed(.preset(twoPanes ? .rows : .columns)) }
     model.setActiveMode(destination)
     model.handleDisplayChange(.displayReconfigurationBegan)
     let heldWrites = system.frameWriteCounts
@@ -176,6 +196,25 @@ func displayHoldLockCheckStartsAfterTwoSeconds() async throws {
     #expect(checks == 0)
     #expect(model.isHoldingDisplayChange)
     try #require(await system.waitFor(timeout: .seconds(3)) { !model.isHoldingDisplayChange })
+}
+
+/// `frontmostApplication` can still name the previous app just after the
+/// lock activation. The first check must wait until it names the lock screen.
+@Test(.appTestApplication) @MainActor
+func displayHoldLockSurvivesALateFrontmostApplicationUpdate() async throws {
+    let system = makeManualWindowSystem(drivingPolicyDeadlines: true)
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    let origin = system.clock.now
+    model.displayChangeScreenIsLocked = { system.clock.now - origin >= .milliseconds(500) }
+    model.handleDisplayChangeApplicationActivation(bundleID: "com.apple.loginwindow")
+    for _ in 0..<16 {
+        await system.advance(by: .milliseconds(250))
+        #expect(model.isHoldingDisplayChange, "The lock hold ended at \(system.clock.now - origin)")
+    }
+    model.displayChangeScreenIsLocked = { false }
+    model.handleDisplayChangeApplicationActivation(bundleID: "org.example.Editor")
+    try #require(await system.waitFor(timeout: .seconds(2)) { !model.isHoldingDisplayChange })
 }
 
 @Test(.appTestApplication) @MainActor

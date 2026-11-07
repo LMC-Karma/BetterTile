@@ -1240,8 +1240,10 @@ func automaticApplyReadinessWithoutADisplayHoldRemainsBounded() async throws {
     #expect(h.commits.isEmpty)
 }
 
-@Test(.appTestApplication, arguments: [false, true]) @MainActor
-func automaticApplyInterruptedByDisplayHoldRetriesOnce(cancelWithInput: Bool) async throws {
+/// The model reports no further display change once its hold settles, so the
+/// retry must not depend on another `displaysChanged()`.
+@Test(.appTestApplication, arguments: [(false, true), (true, true), (false, false)]) @MainActor
+func automaticApplyInterruptedByDisplayHoldRetriesOnce(cancelWithInput: Bool, displaysChangeAgain: Bool) async throws {
     let h = RuntimeHarness()
     defer { h.runtime.stop(); h.applier.stop() }
     h.runtime.stop()
@@ -1262,7 +1264,7 @@ func automaticApplyInterruptedByDisplayHoldRetriesOnce(cancelWithInput: Bool) as
     if cancelWithInput { h.runtime.userInput() }
     h.beforeCommit = { attempts += 1 }
     held = false
-    h.runtime.displaysChanged()
+    if displaysChangeAgain { h.runtime.displaysChanged() }
     await system.advance(by: .seconds(2))
     try #require(await system.waitFor { h.runtime.isIdle })
     #expect(attempts == (cancelWithInput ? 1 : 2))
