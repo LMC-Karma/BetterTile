@@ -304,7 +304,10 @@ struct DisplayTriggerNotice {
                     })
             }
             var result = await attempt()
-            if interruptedByHold, !Task.isCancelled, bindingIsCurrent(fire.layoutFile, on: display),
+            // A hold can start after a commit and still mark the attempt. An
+            // attempt that placed windows is finished; applying again would
+            // write over frames that changed during the hold.
+            if interruptedByHold, result.placed == 0, !Task.isCancelled, bindingIsCurrent(fire.layoutFile, on: display),
                await waitForInterruptedApply(on: display), !Task.isCancelled,
                bindingIsCurrent(fire.layoutFile, on: display) {
                 // One continuation of this connect attempt. Input still owns

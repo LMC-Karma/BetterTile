@@ -281,6 +281,36 @@ without a new display event. Sleep and an inactive or locked session wait for wa
 those events restart the deadline. The public Core Graphics callback forwards
 its begin and completion flags, with AppKit screen notifications as a fallback.
 
+Only a changed `DisplayArrangement` holds: the set of displays, their frames
+and their pixel sizes. AppKit also posts screen-parameter notifications for
+unrelated reasons. One that leaves the arrangement as it was when the last
+hold settled starts no hold, and during a hold it does not extend it. A Core
+Graphics reconfiguration still starts a hold at its begin flag. The callback
+reaches the model through a main-actor task, so a busy main actor can handle the
+begin after the displays already changed. The hold therefore settles at once
+only when all of these are true:
+
+- every pending reconfiguration has ended;
+- the arrangement equals the one seen at the begin;
+- the arrangement equals the one from the last settlement;
+- no end callback reported an added, removed, enabled, disabled, mirrored or
+  unmirrored display;
+- sleep, lock or a real change does not also hold.
+
+A stale settled arrangement only makes a spurious reconfiguration hold once,
+which is the safe direction. The arrangement leaves out work areas. A Dock or
+menu bar change moves no window between displays, and the ordinary work-area
+reflow places windows for the new work area without delaying closes and
+arrivals. The adapter reads the arrangement from Core Graphics when the model
+handles the event. `NSScreen` can still describe the previous arrangement then.
+
+The five-second limit is checked by time before each inventory that a hold
+starts: by the sampler, the watchdog and every refresh, also a background
+refresh after an explicit action released one display. Window inventories are
+synchronous and can take seconds when applications do not answer
+Accessibility. A hold past its limit settles without starting another
+inventory, so it lasts at most about five seconds plus one read in progress.
+
 During an awake, active hold, observations and closed or minimized evidence
 accumulate. Sleep and lock holds do not sample windows; a slow public lock-state
 check starts two seconds after lock begins and recovers a missed unlock notification. ScreenSaverEngine activation also
@@ -307,15 +337,29 @@ restoration write. The coordinator records actual frame and rollback write
 failures separately so a later display event cannot hide a genuine failure.
 Manual Apply explains the interruption. Display Trigger waits for settlement
 and retries an interrupted automatic Apply once under its original input
-cancellation. A second interruption receives no further retry.
+cancellation. An attempt that already placed windows is not repeated. A second
+interruption receives no further retry.
 
 Display changes stop divider and window gestures without restoring old frames
-inside the hold. Recovery checks the session, desktop and window processes
-again, then uses the current work area. A newer explicit action on the display
-supersedes retained recovery. Escape outside a hold restores normally.
+inside the hold. Native linked resizing stops too: its queued display tick, the
+rest of the drag and the release resend write nothing. A press that the AppKit
+fallback queued before the hold does not restart it. A press that the shared
+event tap queued just before the hold starts a new resize, like a press during
+the hold. Only a linked resize that left its windows in an unknown arrangement
+keeps a recovery. A resize that starts during the hold is a new explicit action
+and links as usual. Recovery
+checks the session, desktop and window processes again, then uses the current
+work area. Recovery for a Manual desktop writes only the interrupted
+transaction's own windows that started on that display; a window an Apply
+pulled in from another display keeps its Apply frame. It skips a window whose
+frame changed during the hold, moves the old frames with a moved display
+origin, and writes nothing when the display changed size. A newer explicit
+action on the display supersedes retained recovery. Escape outside a hold
+restores normally.
 A queued Tabbed exit retains its desktop owner, action identity and hold
-generation. A newer hold defers it until settlement; a newer mode action
-supersedes it. Its continuation never grants a new user override. Automatic
+generation. A newer hold defers it until settlement. Only a newer mode choice
+supersedes it; other explicit actions, such as a snap or a refused drag, do
+not. Its continuation never grants a new user override. Automatic
 float checks whose deadlines fall inside a hold stay pending without spending
 the busy retry budget. They run once after settlement. Departed displays discard
 unused Tabbed placement handoffs.
