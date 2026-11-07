@@ -1361,6 +1361,15 @@ revision. These values exist only in memory and are never persisted.
   over is removed, so Bento shows no empty slot. Leaving for Native restores
   the pre-Tabbed frames and keeps the tab groups for the next Tabbed visit.
 
+Tabbed overlay lifecycle and resize hit-testing fixtures record the controller's
+frame requests separately from native panel frames. They use a fixed screen
+reference for coordinate conversion and bypass AppKit's screen constraining.
+The tests compare requested frames with pane geometry, check native panel and
+content sizes after deferred layout, and deliver synthetic drags. They inject
+native origin shifts; they do not reproduce a display reconfiguration. Ordering
+is simulated. The native-focus lane retains production panels and real ordering
+checks.
+
 ## Tabbed panels on native Spaces
 
 An exact native Space session owns its `TabbedOverlayController` and panels.
