@@ -409,31 +409,24 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         var observedApplications: [ApplicationLaunchInstance: Set<CFHashCode>] = [:]
         let previousHolds = unreadableApplicationHolds
         unreadableApplicationHolds.removeAll()
-        for application in NSWorkspace.shared.runningApplications where Self.shouldManageApplication(
-            processIdentifier: application.processIdentifier,
-            ownProcessIdentifier: getpid(),
-            activationPolicy: application.activationPolicy,
-            isHidden: application.isHidden,
-            includeHidden: false
-        ) {
+        let applications = NSWorkspace.shared.runningApplications.filter { application in
+            Self.shouldManageApplication(
+                processIdentifier: application.processIdentifier,
+                ownProcessIdentifier: getpid(),
+                activationPolicy: application.activationPolicy,
+                isHidden: application.isHidden,
+                includeHidden: false
+            )
+        }
+        unreadableApplicationHolds = ApplicationInventorySweep.run(
+            applications,
+            processIdentifier: \.processIdentifier,
+            previousHolds: previousHolds,
+            recoveryPIDs: &recoveryPIDs,
+            now: { ProcessInfo.processInfo.systemUptime },
+            gate: { Self.unresponsiveApplications.withLock { $0 } }
+        ) { application in
             let pid = application.processIdentifier
-            defer {
-                let now = ProcessInfo.processInfo.systemUptime
-                if let deadline = Self.unresponsiveApplications.withLock({ $0.holdDeadline(pid) }), deadline > now {
-                    unreadableApplicationHolds[pid] = deadline
-                }
-            }
-            if let deadline = previousHolds[pid], recoveryPIDs != nil {
-                guard recoveryPIDs?.contains(pid) == true, !Self.isUnresponsive(pid) else {
-                    // Keep expired holds visible so another app's timer cannot
-                    // probe an exhausted app or reset its retry budget.
-                    unreadableApplicationHolds[pid] = max(
-                        deadline, Self.unresponsiveApplications.withLock { $0.holdDeadline(pid) } ?? deadline
-                    )
-                    continue
-                }
-                recoveryPIDs?.remove(pid)
-            }
             let applicationInstance = applicationInstance(for: application)
             let appElement = makeApplicationElement(pid: application.processIdentifier)
             #if DEBUG
@@ -443,7 +436,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
                 #if DEBUG
                 ArrivalTrace.shared.record("readiness_outcome", pid: pid, outcome: "inventory_unreadable", reason: "ax_windows_inventory")
                 #endif
-                continue
+                return
             }
             #if DEBUG
             ArrivalTrace.shared.record("readiness_outcome", pid: pid,
