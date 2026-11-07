@@ -15,8 +15,20 @@ public struct AmbientLayoutObservation: Sendable {
     public var confirmedMinimized: Set<WindowID>
     public var hiddenApplicationWindowIDs: Set<WindowID>
     /// Windows whose native membership still belongs to this desktop, even
-    /// when the current on-screen Accessibility sweep cannot see them.
+    /// when the current on-screen Accessibility sweep cannot see them. They
+    /// get a longer absence budget, not a permanent pane, unless
+    /// `onScreenWindowIDs` also holds them.
     public var knownSpaceWindowIDs: Set<WindowID>
+    /// Windows of an application held as unresponsive. The sweep did not read
+    /// them, so their absence is not evidence and they keep their panes.
+    public var heldWindowIDs: Set<WindowID>
+    /// Windows that macOS showed on screen although the sweep did not read
+    /// them. With desktop membership, they keep their panes. Empty when
+    /// unknown.
+    public var onScreenWindowIDs: Set<WindowID>
+    /// The time of the sweep, for the least absence of a window known only by
+    /// its desktop membership. Nil applies only the count of misses.
+    public var now: ContinuousClock.Instant?
 
     public init(
         display: DisplaySnapshot,
@@ -28,7 +40,10 @@ public struct AmbientLayoutObservation: Sendable {
         confirmedGone: Set<WindowID> = [],
         confirmedMinimized: Set<WindowID> = [],
         hiddenApplicationWindowIDs: Set<WindowID> = [],
-        knownSpaceWindowIDs: Set<WindowID> = []
+        knownSpaceWindowIDs: Set<WindowID> = [],
+        heldWindowIDs: Set<WindowID> = [],
+        onScreenWindowIDs: Set<WindowID> = [],
+        now: ContinuousClock.Instant? = nil
     ) {
         self.display = display
         self.windows = windows
@@ -40,6 +55,9 @@ public struct AmbientLayoutObservation: Sendable {
         self.confirmedMinimized = confirmedMinimized
         self.hiddenApplicationWindowIDs = hiddenApplicationWindowIDs
         self.knownSpaceWindowIDs = knownSpaceWindowIDs
+        self.heldWindowIDs = heldWindowIDs
+        self.onScreenWindowIDs = onScreenWindowIDs
+        self.now = now
     }
 }
 
@@ -112,7 +130,13 @@ public struct AmbientLayoutReconciler: Sendable {
                     previousWindowIDs: observation.previousWindowIDs
                 )
             } else if observation.isDesktopTransition {
-                // A known desktop keeps its stored Bento tree and ratios.
+                // A known desktop keeps its stored Bento tree and ratios. The
+                // absence tallies restart: a window that this observation sees
+                // was present, and a window that it misses starts a new run of
+                // misses on this desktop. Time on another desktop is not
+                // evidence, and Accessibility can expose windows late after a
+                // return, so an old run must not finish on the first new miss.
+                session.presence.reset()
             } else if session.isBentoInitialized {
                 let transition = BentoSessionReducer().reconcile(
                     session: session,
@@ -127,6 +151,9 @@ public struct AmbientLayoutReconciler: Sendable {
                     minimized: observation.confirmedMinimized,
                     hiddenApplicationWindowIDs: observation.hiddenApplicationWindowIDs,
                     knownSpaceWindowIDs: observation.knownSpaceWindowIDs,
+                    heldWindowIDs: observation.heldWindowIDs,
+                    onScreenWindowIDs: observation.onScreenWindowIDs,
+                    now: observation.now,
                     newWindowSide: newWindowSide,
                     balancesNewWindows: balancesNewWindows
                 )

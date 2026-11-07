@@ -92,6 +92,13 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, CreatedWindowReading, T
     var cachedRefreshFails = false
     var cachedVisibilityOmittedIDs: Set<WindowID> = []
     var offscreenWindowIDs: Set<WindowID> = []
+    /// Windows that a complete sweep omits, for example through
+    /// `offscreenWindowIDs`, while the window server still shows them on
+    /// screen, as when Accessibility briefly returns no window for a live one.
+    var omittedButOnScreenWindowIDs: Set<WindowID> = []
+    /// Like the adapter: windows the last complete sweep did not return,
+    /// although the window server showed them on screen.
+    private(set) var unreadOnScreenWindowIDs: Set<WindowID> = []
     var unresponsiveWindowIDs: Set<WindowID> = []
     var unresponsiveProcessIDs: Set<Int32> = []
     var applicationHoldsUntil: [Int32: TimeInterval] = [:]
@@ -262,7 +269,11 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, CreatedWindowReading, T
         let visible = windows.filter {
             !offscreenWindowIDs.contains($0.id) && applicationHoldsUntil[$0.processIdentifier] == nil
         }
-        return classifyUsingNativeCache(visible)
+        let returned = classifyUsingNativeCache(visible)
+        unreadOnScreenWindowIDs = omittedButOnScreenWindowIDs
+            .intersection(windows.map(\.id))
+            .subtracting(returned.map(\.id))
+        return returned
     }
     /// Runs on the next display read, to change the desktop in the middle of a synchronous pass.
     var onDisplays: (() -> Void)?

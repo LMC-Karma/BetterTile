@@ -253,6 +253,14 @@ struct WindowServerIndex {
         recordsByID[windowID]?.processIdentifier == processIdentifier
     }
 
+    /// True when the window server shows this window on screen at the normal
+    /// window layer. A window on another desktop, a minimized window, a hidden
+    /// application's window, and a closed window kept alive off screen are not.
+    func isOnScreen(_ windowID: CGWindowID, processIdentifier: pid_t) -> Bool {
+        guard let record = recordsByID[windowID] else { return false }
+        return record.processIdentifier == processIdentifier && record.layer == 0 && record.isOnscreen
+    }
+
     func contains(_ snapshot: WindowSnapshot, exactWindowID: CGWindowID?) -> Bool {
         if let exactWindowID {
             guard let record = recordsByID[exactWindowID] else { return false }

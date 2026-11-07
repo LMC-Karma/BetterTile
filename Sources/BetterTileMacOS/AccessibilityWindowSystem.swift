@@ -200,6 +200,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         metadata.removeAll()
         elements.removeAll()
         identities.removeAll()
+        unreadOnScreenWindowIDs.removeAll()
         snapshotCache.invalidate()
         snapshotGeneration &+= 1
         nativeObservationGeneration = nil
@@ -377,6 +378,12 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         return nil
     }
 
+    /// Windows that the last complete sweep did not return, although its
+    /// window-server list showed them on screen: Accessibility omitted a
+    /// window that the user can still see. It reuses the sweep's own list.
+    /// Empty when the list or the exact window identities are not available.
+    public private(set) var unreadOnScreenWindowIDs: Set<WindowID> = []
+
     /// Windows seen by an earlier sweep, kept in memory only. Saved Layouts uses them to say that an
     /// app's window is on another desktop. Nothing here is persisted or used to move a window.
     private var knownWindowSnapshots: [WindowID: WindowSnapshot] = [:]
@@ -513,6 +520,16 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         nativeObservationGeneration = nil
         let classified = nativeDesktopObservation()?.windowsOnCurrentSpaces(sorted) ?? sorted
         snapshotCache.recordFullSweep(classified)
+        let returnedIDs = Set(classified.map(\.id))
+        unreadOnScreenWindowIDs = windowServer.map { index in
+            Set(identities.records.values.compactMap { record in
+                guard !returnedIDs.contains(record.windowID),
+                      let exactID = record.exactWindowID,
+                      index.isOnScreen(exactID, processIdentifier: record.application.processIdentifier)
+                else { return nil }
+                return record.windowID
+            })
+        } ?? []
         return classified
     }
 
