@@ -562,6 +562,7 @@ final class BetterTileModel {
     private var isShutDown = false
     private var displayChangeHold = DisplayChangeHold()
     private var displayChangeHoldTask: Task<Void, Never>?
+    private var displayChangeDeferredMinimizedWindows: Set<WindowID> = []
     /// The arrangement when the last hold settled. A screen-parameter
     /// notification that leaves it unchanged starts no hold.
     private var settledDisplayArrangement: DisplayArrangement?
@@ -3590,6 +3591,11 @@ final class BetterTileModel {
         displayChangeUserOverrides.removeAll()
         let reason = displayChangeHold.settledByLimit ? "limit" : "quiet"
         Self.bentoLog.debug("display hold settled: \(reason, privacy: .public)")
+        // Restore and close events cancel deferred Tabbed removal. Apply any
+        // remaining minimize evidence only after the inactive hold settles.
+        let deferred = displayChangeDeferredMinimizedWindows.intersection(confirmedMinimizedWindowIDs)
+        for id in deferred { sessionStore.removeMinimizedTabbedWindow(id) }
+        displayChangeDeferredMinimizedWindows.removeAll()
         let closed = confirmedGoneWindowIDs
         let minimized = confirmedMinimizedWindowIDs
         refreshActiveWindows(force: true, windows: windows, desktopTransition: true)
@@ -4217,9 +4223,15 @@ final class BetterTileModel {
         if let windowID = event.windowID {
             if event.kind == .minimized {
                 confirmedMinimizedWindowIDs.insert(windowID)
-                sessionStore.removeMinimizedTabbedWindow(windowID)
+                if displayChangeHold.isWaitingForWakeOrUnlock {
+                    displayChangeDeferredMinimizedWindows.insert(windowID)
+                } else {
+                    displayChangeDeferredMinimizedWindows.remove(windowID)
+                    sessionStore.removeMinimizedTabbedWindow(windowID)
+                }
             }
             if event.kind == .restored || event.kind == .destroyed {
+                displayChangeDeferredMinimizedWindows.remove(windowID)
                 confirmedMinimizedWindowIDs.remove(windowID)
             }
             if event.kind == .destroyed {
