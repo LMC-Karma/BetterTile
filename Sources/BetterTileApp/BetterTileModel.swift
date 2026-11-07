@@ -4486,8 +4486,9 @@ final class BetterTileModel {
                         session: restored, displayWindows: displayWindows, display: display,
                         suspendOnRejection: true
                     )
-                    // The next actor turn revalidates the current session after
-                    // Focus releases ownership, including a stale transaction.
+                    // Measure arrivals in the next actor turn, after Focus releases
+                    // ownership. A stale transaction already schedules its own
+                    // retry; this only starts it sooner.
                     if !arrivals.isEmpty, result == .committed || result == .stale {
                         self.pendingWindowEvents.recordTopologyChange()
                         self.schedulePendingWindowEvents(expeditesArrival: true)

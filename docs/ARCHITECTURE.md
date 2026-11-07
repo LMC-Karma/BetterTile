@@ -876,8 +876,9 @@ restoring that tree. A peer still minimized when the wait ends, such as one
 whose restore failed, leaves the tree like any minimized window: the available
 windows fill the display, and the peer's reinsertion anchor keeps the previous
 tree for its return. A rejected layout restore suspends
-automatic placement until Repair. Background sweeps retain represented panes
-and intentional floats without moving windows while the wait owns that session.
+automatic placement until Repair. Background sweeps retain represented panes,
+floats and the covered Focus peers without moving windows while the wait owns
+that session.
 Unplaced arrivals stay outside committed membership so they remain eligible for
 the guarded minimum-size probe. A newer layout action cancels the wait. After a
 committed or stale restore, an ordinary topology pass measures arrivals before
