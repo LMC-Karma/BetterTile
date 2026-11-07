@@ -45,6 +45,8 @@ func failedTabbedEntryRestoresBentoWithoutShowingStrips(failure: String) async t
     let model = makeOffscreenModel(store: store, system: system, startRuntime: false, presentsTabbedChrome: true)
     model.primaryButtonIsPressed = { false }
     defer { model.shutdown() }
+    // This failure fixture requires each Adaptive window to stay selected.
+    model.configuration.tabbedEntryPlacement = .keepAdaptivePanes
     model.setActiveMode(.bento)
     try #require(await waitFor { zip(system.windows, initialFrames).allSatisfy { $0.frame != $1 } })
     let frames = system.windows.map(\.frame)
@@ -194,6 +196,8 @@ func failedTabbedEntryNamesTheUnavailableApplication(knownApplication: Bool, mis
     system.windows[0].bundleIdentifier = knownApplication ? "com.apple.Preview" : nil
     let model = makeModel(system: system)
     defer { model.shutdown() }
+    // Retain the selected participant even when it is missing from the entry sweep.
+    model.configuration.tabbedEntryPlacement = .keepAdaptivePanes
     model.setActiveMode(.bento)
     let id = system.windows[0].id
     system.unresponsiveWindowIDs.insert(id)
@@ -214,6 +218,8 @@ func failedTabbedEntryNamesTheUnavailableApplication(knownApplication: Bool, mis
     system.windows[1].bundleIdentifier = "com.apple.Preview"
     let model = makeModel(system: system)
     defer { model.shutdown() }
+    // This failure fixture requires each Adaptive window to stay selected.
+    model.configuration.tabbedEntryPlacement = .keepAdaptivePanes
     model.setActiveMode(.bento)
     model.setActiveMode(.tabbed)
     try #require(await waitFor { !model.hasPendingTabbedPlacement && model.activeTabbedState != nil })
@@ -238,6 +244,8 @@ func failedTabbedEntryNamesTheUnavailableApplication(knownApplication: Bool, mis
     system.windows[0].bundleIdentifier = "com.apple.Preview"
     let model = makeModel(system: system)
     defer { model.shutdown() }
+    // Retain the selected participant even when it is missing from the entry sweep.
+    model.configuration.tabbedEntryPlacement = .keepAdaptivePanes
     model.setActiveMode(.bento)
     let id = system.windows[0].id
     system.offscreenWindowIDs.insert(id)
@@ -1336,11 +1344,11 @@ func tabbedLearnedWidthFailureDoesNotCommitOrRetryDegradedRestoration(failRestor
     model.installWorkspaceTriggers()
     system.desktopObservation?.currentSpaceByDisplay[display] = b
     system.windows = []
-    NSWorkspace.shared.notificationCenter.post(name: NSWorkspace.activeSpaceDidChangeNotification, object: nil)
+    model.beginActiveSpaceStabilization()
     try #require(await waitFor { model.activeLayoutMode == .manual })
     system.desktopObservation?.currentSpaceByDisplay[display] = a
     system.windows = firstWindows
-    NSWorkspace.shared.notificationCenter.post(name: NSWorkspace.activeSpaceDidChangeNotification, object: nil)
+    model.beginActiveSpaceStabilization()
     try #require(await waitFor { model.activeLayoutMode == .tabbed && model.activeTabbedState?.panes[0].id == originalPane })
 }
 
