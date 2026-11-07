@@ -9433,15 +9433,21 @@ extension BetterTileModel {
         }
         let ids = Set(placements.map(\.windowID)).union(plan.assignments.values)
         let participants = Dictionary(uniqueKeysWithValues: snapshot.windows.filter { ids.contains($0.id) }.map { ($0.id, $0) })
-        // Recovery after a hold restores only this transaction's windows.
-        let requestedFrames = Dictionary(placements.map { ($0.windowID, [$0.frame]) }) { first, _ in first }
+        // Recovery after a hold restores only this transaction's windows that
+        // started on the target display. A window pulled in from another
+        // display keeps its Apply frame: its old frame belongs to that display.
+        let localParticipants = participants.filter {
+            snapshot.requestedTransfers[$0.key] == nil && $0.value.displayID == desktop.displayID
+        }
+        let requestedFrames = Dictionary(placements.filter { localParticipants[$0.windowID] != nil }
+            .map { ($0.windowID, [$0.frame]) }) { first, _ in first }
         let handOffToDisplayRefresh = { @MainActor in
             guard self.displayChangeHold.token != displayToken, !restorationWriteFailed,
                   rollbackFailureGenerations.allSatisfy({ self.coordinator.rollbackWriteFailureGeneration(for: $0.key) == $0.value }),
                   self.sessionStore.isCurrent(sessionID, revision: revision, on: desktop.displayID),
                   !recoveryOwner.automaticWritesSuspended else { return false }
             self.retainDisplayHoldRecovery(owner: recoveryOwner,
-                frames: participants.mapValues(\.frame), written: requestedFrames, reference: display.frame)
+                frames: localParticipants.mapValues(\.frame), written: requestedFrames, reference: display.frame)
             self.savedLayoutApplier?.precommitRefusal = .displayChanged
             if !self.isHoldingDisplayChange { self.recoverAfterDisplayChange() }
             return true

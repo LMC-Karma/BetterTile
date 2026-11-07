@@ -90,6 +90,12 @@ public final class LinkedResizeController {
         hasPendingDisplayUpdate = false
         displayTicks.stop()
         removeGestureMonitors()
+        // A press already delivered to the fallback monitor waits in a queued
+        // task. A new monitor generation rejects it; a new press still arrives.
+        if mouseDownMonitor != nil {
+            removeMouseDownMonitor()
+            syncMonitoring()
+        }
         applyPendingEventTapHandoff()
         return recovery
     }
