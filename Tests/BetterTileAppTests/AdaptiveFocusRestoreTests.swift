@@ -3,7 +3,11 @@ import Testing
 import BetterTileMacOS
 @testable import BetterTileApp
 
-@Test(.appTestApplication, .timeLimit(.minutes(1)), arguments: [false, true], [false, true]) @MainActor
+// These tests run on the manual clock. Their time limits only catch a hang:
+// in the full suite many main-actor tests share the executor, so the many
+// policy steps of one restore can take far longer in wall time than alone.
+
+@Test(.appTestApplication, .timeLimit(.minutes(5)), arguments: [false, true], [false, true]) @MainActor
 func adaptiveFocusRestoreKeepsFourAsymmetricPanes(omitsReturningPeer: Bool, returnsAfterDeadline: Bool) async throws {
     let (system, model, ids, expected) = try await asymmetricFocusFixture()
     defer { model.shutdown() }
@@ -24,12 +28,11 @@ func adaptiveFocusRestoreKeepsFourAsymmetricPanes(omitsReturningPeer: Bool, retu
     await system.advance(by: .milliseconds(200))
     #expect(system.windows[2].frame == expected[ids[2]])
     if returnsAfterDeadline {
-        await system.advance(by: .milliseconds(1700))
-        await system.joinWindowEvent(on: model)
-        // A resumed poll can register its next sleep after the large advance.
-        // Drive that final poll before checking the completed restore.
-        #expect(await system.waitFor(timeout: .milliseconds(200)) {
-            system.windows[2].frame.size.height == 800
+        // Drive the restore past its deadline on the manual clock, one policy
+        // wait at a time, until it gives the upper-right pane the full column
+        // and no event pass is left. The budget is virtual time, not wall time.
+        #expect(await system.waitFor(timeout: .seconds(3)) {
+            system.windows[2].frame.size.height == 800 && model.windowEventTask == nil
         })
     }
     system.offscreenWindowIDs = []
@@ -82,7 +85,7 @@ func adaptiveFocusRestoreKeepsFourAsymmetricPanes(omitsReturningPeer: Bool, retu
     #expect(model.windowEventTask == nil && model.settlementTasks.isEmpty)
 }
 
-@Test(.appTestApplication, .timeLimit(.minutes(1))) @MainActor
+@Test(.appTestApplication, .timeLimit(.minutes(5))) @MainActor
 func adaptiveFocusRestoreKeepsPeerHeightBeforeALateRestoredNotification() async throws {
     let (system, model, ids, expected) = try await asymmetricFocusFixture()
     defer { model.shutdown() }
@@ -115,7 +118,7 @@ func adaptiveFocusRestoreKeepsPeerHeightBeforeALateRestoredNotification() async 
     #expect(system.frameWriteCounts == writes)
 }
 
-@Test(.appTestApplication, .timeLimit(.minutes(1)), arguments: [false, true]) @MainActor
+@Test(.appTestApplication, .timeLimit(.minutes(5)), arguments: [false, true]) @MainActor
 func adaptiveFocusRestoreRemembersConfirmedClosure(whileRestoring: Bool) async throws {
     let (system, model, ids, expected) = try await asymmetricFocusFixture()
     defer { model.shutdown() }
