@@ -9,11 +9,12 @@ import BetterTileTestSupport
 // suspends for the desktop change and resumes on the destination desktop.
 
 @MainActor private func controller(
-    _ system: FakeWindowSystem, buttonPressed: @escaping () -> Bool = { true }
+    _ system: FakeWindowSystem, clock: BetterTileClock = .live,
+    buttonPressed: @escaping () -> Bool = { true }
 ) -> DragSnapController {
     let controller = DragSnapController(coordinator: WindowCoordinator(system: system),
                                         configuration: BetterTileConfiguration(),
-                                        displayTicks: ResizeDisplayLink(automatic: false))
+                                        displayTicks: ResizeDisplayLink(automatic: false), clock: clock)
     controller.primaryButtonIsPressed = buttonPressed
     controller.setUsesSharedGestureEvents(true)
     return controller
@@ -342,11 +343,12 @@ private let rightHalf = BTRect(x: 500, y: 0, width: 500, height: 800)
 }
 
 /// The held window can be unreadable just after the desktop change. The drag
-/// keeps the gesture and reads the window again on the next display tick,
+/// keeps the gesture and reads the window again on the next eligible retry tick,
 /// even while the pointer rests; a new sample also retries.
 @Test(.macOSTestApplication) @MainActor func aFailedDestinationReadRetriesWithARestingPointer() {
+    let clock = ManualClock()
     let system = FakeWindowSystem()
-    let controller = controller(system)
+    let controller = controller(system, clock: clock.clock)
     defer { controller.cancel() }
     beginDrag(controller, system)
     send(controller, .leftMouseDragged, x: 999)
@@ -360,6 +362,7 @@ private let rightHalf = BTRect(x: 500, y: 0, width: 500, height: 800)
     controller.displayTick()
     #expect(controller.dropTarget == nil)
     system.targetedSnapshotsFail = false
+    clock.advance(by: .milliseconds(50))
     controller.displayTick()
     #expect(controller.dropTarget?.drop == .snap(SnapTarget(action: .rightHalf, frame: rightHalf)),
             "The resting pointer never retried the destination read")
@@ -395,27 +398,33 @@ private let rightHalf = BTRect(x: 500, y: 0, width: 500, height: 800)
 }
 
 /// While the held window stays unreadable after the desktop change, each
-/// display tick reads it once. The retry stops when the gesture ends by a
+/// eligible retry tick reads it once. The retry stops when the gesture ends by a
 /// release or by a cancel: later ticks read nothing.
 @Test(.macOSTestApplication, arguments: ["release", "cancel"]) @MainActor
 func theDestinationReadRetryStopsWhenTheGestureEnds(ending: String) {
+    let clock = ManualClock()
     let system = FakeWindowSystem()
-    let controller = controller(system)
+    let controller = controller(system, clock: clock.clock)
     defer { controller.cancel() }
     beginDrag(controller, system)
     controller.suspendForDesktopChange()
     system.targetedSnapshotsFail = true
     controller.resumeAfterDesktopChange()
     let afterResume = system.targetedSnapshotRequests
-    controller.displayTick()
-    controller.displayTick()
-    #expect(system.targetedSnapshotRequests == afterResume + 2, "One read per display tick")
+    for _ in 0..<2 {
+        clock.advance(by: .milliseconds(50))
+        controller.displayTick()
+    }
+    #expect(system.targetedSnapshotRequests == afterResume + 2, "One read per eligible retry")
     let frame = system.windows[0].frame
     if ending == "release" { send(controller, .leftMouseUp, x: 999) } else { controller.cancel() }
     #expect(!controller.isGestureActive)
     let afterEnd = system.targetedSnapshotRequests
     system.targetedSnapshotsFail = false
-    for _ in 0..<5 { controller.displayTick() }
+    for _ in 0..<5 {
+        clock.advance(by: .milliseconds(50))
+        controller.displayTick()
+    }
     #expect(system.targetedSnapshotRequests == afterEnd, "The read retry continued after the gesture ended")
     #expect(system.windows[0].frame == frame, "The ended gesture still placed the window")
     #expect(controller.dropTarget == nil)

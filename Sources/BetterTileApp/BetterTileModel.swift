@@ -583,7 +583,7 @@ final class BetterTileModel {
         system = windowSystem
         coordinator = WindowCoordinator(system: windowSystem, clock: clock)
         shortcuts = shortcutMonitor ?? GlobalShortcutMonitor { _ in }
-        dragSnap = DragSnapController(coordinator: coordinator, configuration: loaded)
+        dragSnap = DragSnapController(coordinator: coordinator, configuration: loaded, clock: clock)
         titleBarDoubleClick = TitleBarDoubleClickController(
             coordinator: coordinator,
             isEnabled: loaded.doubleClickTitleBarToMaximize
