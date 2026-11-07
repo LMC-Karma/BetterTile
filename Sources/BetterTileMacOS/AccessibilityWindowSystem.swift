@@ -657,8 +657,9 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         stageManagerGroupResolver.logExposureFallbackOnce()
     }
 
-    /// Read from Core Graphics, which is current inside a reconfiguration
-    /// callback. `NSScreen` can still describe the previous arrangement then.
+    /// Read from Core Graphics, which describes the displays as they are now.
+    /// After a reconfiguration callback `NSScreen` can still describe the
+    /// previous arrangement.
     public func displayArrangement() -> DisplayArrangement {
         var count: UInt32 = 0
         guard CGGetActiveDisplayList(0, nil, &count) == .success, count > 0 else {

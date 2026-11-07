@@ -26,8 +26,9 @@ protocol BetterTileWindowSystem: TargetedWindowSystem, WindowEventSource, Window
     func resetCachedWindows()
     func startDisplayReconfigurationMonitoring(onChange: @escaping @MainActor (CGDisplayChangeSummaryFlags) -> Void)
     func stopDisplayReconfigurationMonitoring()
-    /// The current display arrangement, read where it is current during a
-    /// reconfiguration callback.
+    /// The current display arrangement. The model reads it on the main actor
+    /// after a reconfiguration callback, which can be late; Core Graphics is
+    /// still current then, while `NSScreen` can lag behind.
     func displayArrangement() -> DisplayArrangement
     func updateManagedWindowIDs(_ ids: Set<WindowID>)
     /// Puts back settings that BetterTile changed and could not restore yet.
@@ -529,8 +530,11 @@ final class BetterTileModel {
     private var settledDisplayArrangement: DisplayArrangement?
     /// The arrangement at the latest event that started or extended this hold.
     private var heldDisplayArrangement: DisplayArrangement?
-    /// The arrangement when the first pending reconfiguration began.
+    /// The arrangement when the first pending reconfiguration's begin was handled.
     private var reconfigurationStartArrangement: DisplayArrangement?
+    /// True when an end callback of the pending reconfigurations reported that a
+    /// display was added, removed, enabled, disabled, mirrored or unmirrored.
+    private var reconfigurationReportedDisplayChange = false
     /// True when this hold has a cause other than reconfigurations that end
     /// without changing the arrangement, such as sleep, lock or a real change.
     private var displayHoldHasOtherCause = false
@@ -3234,6 +3238,11 @@ final class BetterTileModel {
     }
 
     func handleDisplayReconfiguration(_ flags: CGDisplayChangeSummaryFlags) {
+        let displayChangeFlags: CGDisplayChangeSummaryFlags = [.addFlag, .removeFlag, .enabledFlag, .disabledFlag,
+                                                               .mirrorFlag, .unMirrorFlag]
+        if !flags.contains(.beginConfigurationFlag), !flags.isDisjoint(with: displayChangeFlags) {
+            reconfigurationReportedDisplayChange = true
+        }
         handleDisplayChange(flags.contains(.beginConfigurationFlag)
             ? .displayReconfigurationBegan : .displayReconfigurationEnded)
         scheduleDisplayRefresh()
@@ -3262,7 +3271,13 @@ final class BetterTileModel {
             startDisplayChangeHold(event)
             if displayChangeHold.pendingReconfigurationCount == 0, let start = reconfigurationStartArrangement {
                 reconfigurationStartArrangement = nil
-                if arrangement != start {
+                let reportedChange = reconfigurationReportedDisplayChange
+                reconfigurationReportedDisplayChange = false
+                // The callbacks reach the main actor late when it is busy, so the
+                // begin can already see the new arrangement. Release only when the
+                // displays also match the last settled arrangement and no end
+                // reported an added, removed or mirrored display.
+                if reportedChange || arrangement != start || arrangement != settledDisplayArrangement {
                     displayHoldHasOtherCause = true
                     heldDisplayArrangement = arrangement
                 } else if !displayHoldHasOtherCause, !displayChangeScreenIsLocked() {
@@ -3389,6 +3404,7 @@ final class BetterTileModel {
     private func finishDisplayChangeHold(windows: [WindowSnapshot]?) {
         settledDisplayArrangement = system.displayArrangement()
         reconfigurationStartArrangement = nil
+        reconfigurationReportedDisplayChange = false
         displayChangeUserOverrides.removeAll()
         let reason = displayChangeHold.settledByLimit ? "limit" : "quiet"
         Self.bentoLog.debug("display hold settled: \(reason, privacy: .public)")
