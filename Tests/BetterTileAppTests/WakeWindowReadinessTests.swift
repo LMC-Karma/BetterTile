@@ -183,8 +183,10 @@ func wakeReadinessDoesNotWaitForConfirmedClosure() async throws {
     let closed = system.windows.removeLast()
     system.eventHandler?(WindowSystemEvent(kind: .destroyed, windowID: closed.id, processIdentifier: closed.processIdentifier))
     model.handleApplicationTopologyChange(waking: true)
-    await system.advance(by: .seconds(1))
-    #expect(!model.isHoldingDisplayChange)
+    // A confirmed closure settles on quiet observations, well before the
+    // five-second deadline. Wait for the sampler instead of a fixed step.
+    let released = await system.waitFor(timeout: .seconds(2)) { !model.isHoldingDisplayChange }
+    #expect(released, "The hold waited for a window that was confirmed closed")
 }
 
 @Test(.appTestApplication) @MainActor
