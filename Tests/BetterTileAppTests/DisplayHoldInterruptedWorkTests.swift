@@ -491,3 +491,18 @@ func aDisplayEventWhileLockedRestartsTheEventTapOnce() async throws {
     #expect(f.monitor.isUsingEventTap)
     f.model.displayChangeScreenIsLocked = { false }
 }
+
+/// While the screen is locked, a screen-parameter notification that leaves the
+/// displays unchanged starts no display hold of its own. The lock hold it finds
+/// is then the only hold start, so it still restarts the event tap once.
+@Test(.appTestApplication) @MainActor
+func aLockFoundByAnUnchangedScreenNotificationRestartsTheEventTapOnce() async throws {
+    let f = try SharedTapFixture()
+    defer { f.model.shutdown() }
+    let workers = f.delivery.workers
+    f.model.displayChangeScreenIsLocked = { true }
+    f.model.handleDisplayChange(.screenParametersChanged)
+    #expect(f.model.isHoldingDisplayChange)
+    #expect(f.delivery.workers == workers + 1, "The tap restarted \(f.delivery.workers - workers) times")
+    f.model.displayChangeScreenIsLocked = { false }
+}
