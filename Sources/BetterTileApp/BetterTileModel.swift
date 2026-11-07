@@ -825,13 +825,17 @@ final class BetterTileModel {
                 $0.tabbedBaselineFrames = [:]
                 $0.tabbedHasEntryBaseline = false
                 $0.resumeAutomaticWrites()
-                // From Bento, every pane stays put. Otherwise the tab groups
-                // from the last Tabbed visit (if any) come back.
-                if $0.mode == .bento, $0.isBentoInitialized, $0.bentoState.root != nil {
-                    // Windows Bento floated on its own stay automatic
-                    // floats; the entry sweep offers them a pane.
-                    $0.tabbedState = TabbedLayoutState(
-                        adopting: $0.bentoState, automaticallyFloating: $0.automaticallyFloatingWindowIDs, presentation: configuration.tabbedStripPresentation)
+                // Manual restores the last tab groups. Adaptive starts fresh
+                // unless the user explicitly keeps its pane arrangement.
+                if $0.mode == .bento {
+                    if configuration.tabbedEntryPlacement == .keepAdaptivePanes,
+                       $0.isBentoInitialized, $0.bentoState.root != nil {
+                        $0.tabbedState = TabbedLayoutState(
+                            adopting: $0.bentoState, automaticallyFloating: $0.automaticallyFloatingWindowIDs,
+                            presentation: configuration.tabbedStripPresentation)
+                    } else {
+                        $0.tabbedState = nil
+                    }
                 }
             }
             $0.mode = mode
@@ -6129,7 +6133,11 @@ extension BetterTileModel {
         let windows = ignoringOversizedSeeds(windows, in: display.visibleFrame)
         var session = original
         let wasUninitialized = session.tabbedState == nil
-        var state = session.tabbedState ?? TabbedLayoutState(preset: configuration.defaultTabbedPreset, presentation: configuration.tabbedStripPresentation)
+        let entersFromAdaptive = tabbedEntryBaselines[session.id]?.mode == .bento
+        var state = session.tabbedState ?? TabbedLayoutState(
+            preset: configuration.defaultTabbedPreset, presentation: configuration.tabbedStripPresentation,
+            floatingWindowIDs: entersFromAdaptive ? session.bentoState.floatingWindowIDs : [],
+            automaticallyFloating: entersFromAdaptive ? session.automaticallyFloatingWindowIDs : [])
         let entering = !session.tabbedHasEntryBaseline
         if entering {
             if tabbedEntryBaselines[session.id] == nil {
@@ -6154,16 +6162,49 @@ extension BetterTileModel {
                                            fittingIn: display.visibleFrame, windows: windows, followed: session.followed)
             logTabbedAdoptions(arrivals, transition: entering ? "entry arrival" : "arrival",
                                before: before, windows: windows, bounds: display.visibleFrame)
-            // Entering Tabbed, from Bento or Native, offers the windows that
-            // floated on their own a pane again: the panes changed since.
-            if entering, !state.automaticallyFloatingWindowIDs.isEmpty {
-                let returning = state
-                let returned = state.returnAutomaticFloats(state.automaticallyFloatingWindowIDs,
-                                                           fittingIn: display.visibleFrame, windows: windows,
-                                                           selecting: true, keeping: focused ?? state.activeWindowID, followed: session.followed)
-                logTabbedAdoptions(returned, transition: "entry return", before: returning,
-                                   windows: windows, bounds: display.visibleFrame)
+        }
+        // Both a fresh preset and a restored layout offer automatic floats
+        // a pane. User-floated windows retain their floating status.
+        if entering, !state.automaticallyFloatingWindowIDs.isEmpty {
+            let returning = state
+            let returned = state.returnAutomaticFloats(state.automaticallyFloatingWindowIDs,
+                                                       fittingIn: display.visibleFrame, windows: windows,
+                                                       selecting: true, keeping: focused ?? state.activeWindowID, followed: session.followed)
+            logTabbedAdoptions(returned, transition: "entry return", before: returning,
+                               windows: windows, bounds: display.visibleFrame)
+        }
+        if wasUninitialized, configuration.tabbedEntryPlacement == .onePerPane {
+            let incomingSelection = focused.flatMap { state.windowIDs.contains($0) ? $0 : nil }
+                ?? state.activeWindowID
+            // A stable reading order ranks equal scores and orders overflow tabs.
+            let remaining = windows.filter { state.windowIDs.contains($0.id) }.sorted {
+                if $0.frame.minY != $1.frame.minY { return $0.frame.minY < $1.frame.minY }
+                if $0.frame.minX != $1.frame.minX { return $0.frame.minX < $1.frame.minX }
+                return $0.id < $1.id
             }
+            state.applyPreset(configuration.defaultTabbedPreset, grouping: .distributeWindows)
+            // Preset leaves need not follow reading order (Grid is column-first).
+            // Fill panes by geometry, including empty panes, before placement.
+            let paneFrames = state.frames(in: display.visibleFrame).sorted {
+                if $0.value.minY != $1.value.minY { return $0.value.minY < $1.value.minY }
+                return $0.value.minX < $1.value.minX
+            }
+            let panes = paneFrames.map(\.key)
+            // Match windows to panes jointly by overlap, including overflow
+            // choices. With fewer windows than panes, any pane can stay empty.
+            let assignment = TabbedEntryAssignment.assign(windows: remaining, paneFrames: paneFrames.map(\.value))
+            if !panes.isEmpty {
+                // Each extra tab joins the pane it overlaps most.
+                for (index, tabs) in assignment.panes.enumerated() {
+                    for (position, id) in tabs.enumerated() { state.move(id, to: panes[index], at: position) }
+                }
+                for pane in state.panes {
+                    if let first = pane.tabs.first { state.select(first) }
+                }
+            }
+            // Distribution selects each pane's first tab. Entry must keep the
+            // incoming focused member visible before fitting and placement.
+            if let incomingSelection { state.select(incomingSelection) }
         }
         session.tabbedState = state
         session.windowIDs = state.windowIDs
@@ -6210,8 +6251,13 @@ extension BetterTileModel {
             tabbedOverlays[display.id]?.hide()
         }
         if (changed || force || tabbedEntryBaselines[session.id] != nil), !session.automaticWritesSuspended {
+            // A fresh preset has an active tab even when the user's focus
+            // belongs to a retained float. Entry must not activate that tab.
+            let keepsFloatingFocus = entering && focused.map(state.floatingWindowIDs.contains) == true
+            let focus = keepsFloatingFocus ? nil
+                : (wasUninitialized || before.activeWindowID != state.activeWindowID ? state.activeWindowID : nil)
             applyTabbedState(state, session: session, display: display, windows: windows,
-                             focus: wasUninitialized || before.activeWindowID != state.activeWindowID ? state.activeWindowID : nil,
+                             focus: focus,
                              restorationFrames: restorationFrames,
                              arrivals: wasUninitialized ? [] : state.windowIDs.subtracting(before.windowIDs),
                              appliedFeedback: floatedFeedback, focusedBeforePlacement: focused)

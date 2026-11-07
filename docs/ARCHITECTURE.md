@@ -1301,11 +1301,41 @@ revision. These values exist only in memory and are never persisted.
   do not retry a rejected mode switch. Each adoption, return, and float writes a debug line
   in the `Tabbed` log category with the window's frame, its resizability and
   minimum with their sources, and the result for each pane it tried.
-  Entering Tabbed from Bento adopts the tree, so every pane stays where it was.
-  Windows that Bento floated on its own, such as a seventh window, become
-  automatic floats, and every entry to Tabbed, from Bento or Native, adopts
-  the automatic floats again. Leaving for Bento gives Tabbed's automatic floats
-  back to Bento as its own.
+  Entering Tabbed from Adaptive uses the starting layout
+  (`defaultTabbedPreset`). `tabbedEntryPlacement` puts all windows in one pane
+  by default. One per pane lists panes in screen reading order: top to bottom,
+  then left to right within a row. On entry from Adaptive or Manual, or on a
+  desktop that starts in Tabbed, Core jointly matches windows to panes. It
+  maximizes total window overlap with the pane frames, then minimizes total
+  squared distance between centres. Each term is rounded to 1/1024 pt², and
+  the terms are summed in pane order, so evenly split panes and coincident
+  windows tie exactly instead of by rounding noise.
+  With fewer windows than panes, every pane can take a window, so an empty
+  pane can be anywhere. Equal scores use window reading order (top edge, left
+  edge, then ID) in pane order, and an empty pane ranks after every window, so
+  ties leave empty panes last. The assignment also chooses which windows
+  become overflow tabs. A bit-mask search uses at most 64 transitions per
+  window for the presets' four-pane limit, plus window sorting. More than four
+  panes falls back to window reading order to bound the search.
+  Overflow windows are taken in window reading order. Each joins the pane it
+  overlaps most as a tab, then the nearest pane by centre distance; a window
+  that overlaps no pane joins the nearest. Remaining ties keep the panes in
+  turn: the i-th overflow window prefers pane i modulo the pane count. Each
+  pane selects its first member, and the incoming focused window stays
+  selected and keeps focus when it becomes a tab. If it stays floating, entry
+  requests no focus change. Keep Adaptive panes adopts the Adaptive tree
+  instead.
+  The first entry from Manual also uses the starting layout; Keep Adaptive
+  panes behaves like All in one pane there. Returning from Manual restores
+  the last tab groups regardless of these settings.
+  Distribution runs before the first placement and adds no Undo step. Menu
+  bar, Layout Wheel Mode commands and shortcuts share `setMode`; Saved Layout
+  Apply keeps its own placement policy.
+  Direct entry from Adaptive carries its floats. Windows that Adaptive floated
+  on its own, such as a seventh window, stay automatic floats and are offered
+  a pane again. User-floated windows stay floating. A first entry from Manual
+  does not carry floats from an earlier Adaptive visit. Leaving for Bento gives
+  Tabbed's automatic floats back to Bento as its own.
   Leaving for Bento gives every hidden tab its own pane (`unstacked(in:)`) and
   removes the reserve. Hidden tabs fill empty panes first, largest empty pane
   first, each taking the next hidden tab from the nearest pane. The other
@@ -1995,6 +2025,16 @@ commit the new gap. Later refreshes, including watchdog inventories, retry it
 without starting a 75 ms inventory polling loop. Tabbed keeps its own preset
 spacing and strip reserve. Shutdown cancels the timer and clears the pending
 request.
+
+Window Layout → Tabbed stores `tabbedEntryPlacement`: `allInOnePane` (the
+default), `onePerPane`, or `keepAdaptivePanes`. A missing key uses
+`allInOnePane` without a schema bump. Existing configurations therefore use the
+starting layout when switching from Adaptive; Keep Adaptive panes restores the
+previous entry behavior. Reset to Default restores this setting together with
+the starting layout and tab bar settings. Changing it affects future entries,
+not the current layout or Saved Layout Apply. Apply to This Desktop applies
+the starting layout while keeping the current tab groups; it does not use
+Place windows.
 
 Settings use a versioned Codable envelope. Version-1 display-keyed Bento states are discarded during migration because their Accessibility IDs cannot survive relaunch; all other supported preferences migrate. Runtime display sessions are not persisted. Writes use Foundation's atomic file replacement.
 

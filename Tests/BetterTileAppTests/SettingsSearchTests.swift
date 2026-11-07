@@ -112,3 +112,9 @@ func everyVisibleRowLabelFindsItsPage(destination: SettingsDestination, labels: 
     #expect(SettingsDestination(rawValue: "Window Layout") == .windowLayout)
     #expect(SettingsDestination(rawValue: "Shortcuts") == .shortcuts)
 }
+
+@Test(.appTestApplication) func tabbedEntryPlacementSettingsAreSearchable() {
+    for term in ["Place windows", "All in one pane", "One per pane", "Keep Adaptive panes"] {
+        #expect(SettingsDestination.windowLayout.matchesSearch(term), "Window Layout must match \(term)")
+    }
+}

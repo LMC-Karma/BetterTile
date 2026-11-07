@@ -16,6 +16,8 @@ func tabbedArrivalKeepsRoundedBottomInsideThe1440PointDisplay() async throws {
         frame: BTRect(x: 1210, y: 737.5, width: 2560, height: 702.5), displayID: display))
     let model = makeModel(system: system)
     defer { model.shutdown() }
+    // This geometry regression requires the adopted Adaptive split and gap.
+    model.configuration.tabbedEntryPlacement = .keepAdaptivePanes
     model.configuration.bentoInnerGap = 1
     model.tileCurrentDisplay()
     try #require(await system.waitFor { model.settlementTasks.isEmpty })
