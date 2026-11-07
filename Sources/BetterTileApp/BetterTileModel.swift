@@ -4473,10 +4473,26 @@ final class BetterTileModel {
                     // Commit the returned peers as members too, so a divider drag
                     // or Maximize right after the restore includes them.
                     restored.windowIDs.formUnion(displayWindows.map(\.id))
-                    self.restoreBentoLayout(
+                    // Sweeps can observe arrivals while this wait owns the
+                    // layout. Keep unplaced windows out of committed membership
+                    // so the next pass measures them before their first write.
+                    let represented = Set(restored.bentoState.root?.windowIDs ?? [])
+                        .union(restored.bentoState.floatingWindowIDs)
+                    let arrivals = Set(self.bentoEligible(windows.filter {
+                        $0.displayID == display.id && $0.isEligible && !$0.isFloating
+                    }).map(\.id)).subtracting(represented)
+                    restored.windowIDs.subtract(arrivals)
+                    let result = self.restoreBentoLayout(
                         session: restored, displayWindows: displayWindows, display: display,
                         suspendOnRejection: true
                     )
+                    // Measure arrivals in the next actor turn, after Focus releases
+                    // ownership. A stale transaction already schedules its own
+                    // retry; this only starts it sooner.
+                    if !arrivals.isEmpty, result == .committed || result == .stale {
+                        self.pendingWindowEvents.recordTopologyChange()
+                        self.schedulePendingWindowEvents(expeditesArrival: true)
+                    }
                     if let afterRestore {
                         self.focusRestores.removeValue(forKey: display.id)
                         afterRestore()
@@ -5375,8 +5391,15 @@ final class BetterTileModel {
             }
             #endif
             if focusRestoreSessionIDs.contains(activation.session.id) {
+                var waiting = activation.session
+                let represented = Set(waiting.bentoState.root?.windowIDs ?? [])
+                    .union(waiting.bentoState.floatingWindowIDs)
+                    .union(focusRestores[display.id]?.session.excludedFocusWindowIDs ?? [])
+                // Preserve known peers even while they are unread or minimized.
+                // New arrivals remain unmeasured if Restore later goes stale.
+                waiting.windowIDs = represented
                 let committed = sessionStore.commit(
-                    activation.session,
+                    waiting,
                     replacing: activation.session.revision
                 ) != nil
                 sweepCommitted = sweepCommitted && committed
