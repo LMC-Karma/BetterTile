@@ -208,7 +208,8 @@ public final class DragSnapController {
     private(set) var pacingDisplayID: DisplayID?
 
     private static let waitingObservationInterval: Duration = .milliseconds(50)
-    // Covers the two-second responsiveness hold and a paced recovery attempt.
+    // Covers a two-second responsiveness hold that starts early in the rest.
+    // A later hold can outlast the window; new input or release still works.
     private static let waitingObservationWindow: Duration = .seconds(3)
     private static let bentoCueArmDelay = 0.12
     private static let bentoReflowPreviewDelay = 0.22

@@ -146,8 +146,10 @@ area, a suppression modifier is held, or Escape cancels the drag.
 A window drag waits for observed window movement before it shows a drop.
 If a targeted read is unavailable or still reports the starting frame, display
 ticks retry the latest sample no more than once every 50 ms, for three seconds
-after the newest drag sample or desktop resume. This window leaves time for the existing
-two-second Accessibility responsiveness hold and a paced retry after it.
+after the newest drag sample or desktop resume. This window covers a two-second
+Accessibility responsiveness hold that starts early in the rest. A hold that
+starts later can outlast the window. The preview then waits for the next drag
+sample, and release still places the window.
 Reads skip applications held as unresponsive. New samples retain display pacing;
 resume evaluates the latest sample at once. Activation stops idle retries unless
 a desktop change needs to resolve the held window again. Release and cancellation
