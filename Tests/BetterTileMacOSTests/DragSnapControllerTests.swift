@@ -1511,3 +1511,106 @@ func tabStripHoverShowsAnInsertionAndCommitsATabDrop(edgeWidth: Double) async th
     controller.setUsesSharedGestureEvents(true)
     #expect(monitors.isEmpty, "A working tap removes the fallback instead of duplicating it")
 }
+
+/// Manual gestures use synthetic displays far outside the desktop.
+@Suite(.macOSTestApplication, .serialized) @MainActor
+struct ReservedAreaSnapTests {
+    private let origin = BTPoint(x: -12_000, y: -12_000)
+
+    private func system() -> FakeWindowSystem {
+        let system = FakeWindowSystem()
+        let frame = rect(0, 0, 1_000, 800)
+        system.availableDisplays = [DisplaySnapshot(id: DisplayID(rawValue: "main"),
+            frame: frame, visibleFrame: rect(60, 24, 940, 726), isMain: true)]
+        system.windows[0].frame = rect(200, 200, 600, 400)
+        return system
+    }
+
+    private func rect(_ x: Double, _ y: Double, _ width: Double, _ height: Double) -> BTRect {
+        BTRect(x: origin.x + x, y: origin.y + y, width: width, height: height)
+    }
+
+    private func event(_ kind: GlobalGestureEventKind, _ x: Double, _ y: Double,
+                       modifiers: ShortcutModifiers = []) -> GlobalGestureEvent {
+        GlobalGestureEvent(kind: kind, position: BTPoint(x: origin.x + x, y: origin.y + y),
+            button: 0, modifiers: modifiers, timestamp: 1)
+    }
+
+    private func startSnap(_ system: FakeWindowSystem, bottom: WindowAction? = nil) -> DragSnapController {
+        var configuration = BetterTileConfiguration()
+        if let bottom { configuration.snapAreaBindings = [.init(area: .bottom, action: bottom)] }
+        let controller = DragSnapController(coordinator: WindowCoordinator(system: system),
+            configuration: configuration, displayTicks: ResizeDisplayLink(automatic: false))
+        controller.setUsesSharedGestureEvents(true)
+        controller.handleSharedGestureEvent(event(.leftMouseDown, 300, 220))
+        system.windows[0].frame.origin.x += 3
+        return controller
+    }
+
+    enum ReservedArea: CaseIterable { case menu, dock, leftDock, corner }
+
+    @Test(arguments: ReservedArea.allCases)
+    func snapFromReservedAreaMatchesShownFrame(area: ReservedArea) throws {
+        let system = system()
+        let controller = startSnap(system, bottom: area == .dock ? .bottomHalf : nil)
+        defer { controller.cancel() }
+        let point: (Double, Double) = switch area {
+        case .menu: (500, 1)
+        case .dock: (500, 799)
+        case .leftDock: (1, 400)
+        case .corner: (1, 1)
+        }
+        controller.handleSharedGestureEvent(event(.leftMouseDragged, point.0, point.1))
+        let drop = try #require(controller.dropTarget)
+        guard case let .snap(target) = drop.drop else { Issue.record("Expected a snap preview"); return }
+        let expected = switch area {
+        case .menu: rect(84, 48, 892, 678)
+        case .dock: rect(60, 387, 940, 363)
+        case .leftDock: rect(60, 24, 470, 726)
+        case .corner: rect(60, 24, 470, 363)
+        }
+        #expect(target.frame == expected)
+        controller.handleSharedGestureEvent(event(.leftMouseUp, point.0, point.1))
+        #expect(system.windows[0].frame == target.frame)
+        #expect(system.frameWriteCounts[system.windows[0].id] == 1)
+    }
+
+    @Test func sharedEdgeSnapUsesPointerDisplayWithWindowCenterOnSource() throws {
+        let system = system()
+        let other = DisplayID(rawValue: "east")
+        system.availableDisplays.append(DisplaySnapshot(id: other,
+            frame: rect(1_000, 0, 1_200, 900), visibleFrame: rect(1_000, 30, 1_200, 820)))
+        let controller = startSnap(system)
+        defer { controller.cancel() }
+        controller.handleSharedGestureEvent(event(.leftMouseDragged, 1_000, 400))
+        #expect(controller.dropTarget?.displayID == other)
+        controller.handleSharedGestureEvent(event(.leftMouseUp, 1_000, 400))
+        #expect(system.windows[0].frame == rect(1_000, 30, 600, 820))
+    }
+
+    @Test func suppressedDragCanSnapAfterModifierIsReleased() throws {
+        let system = system()
+        let controller = startSnap(system)
+        defer { controller.cancel() }
+        controller.handleSharedGestureEvent(event(.leftMouseDragged, 1, 400, modifiers: .option))
+        #expect(controller.dropTarget == nil)
+        controller.handleSharedGestureEvent(event(.leftMouseDragged, 999, 400))
+        #expect(controller.dropTarget?.drop == .snap(SnapTarget(action: .rightHalf, frame: rect(530, 24, 470, 726))))
+        controller.handleSharedGestureEvent(event(.leftMouseUp, 500, 400))
+        #expect(system.windows[0].frame == rect(530, 24, 470, 726))
+    }
+
+    @Test func disappearingSnapDisplayDoesNotWriteAStaleFrame() {
+        let system = system()
+        let controller = startSnap(system)
+        defer { controller.cancel() }
+        controller.handleSharedGestureEvent(event(.leftMouseDragged, 1, 400))
+        let baseline = system.windows[0].frame
+        system.availableDisplays = []
+        controller.handleSharedGestureEvent(event(.leftMouseUp, 1, 400))
+        #expect(system.frameWriteCounts.isEmpty)
+        #expect(system.windows[0].frame == baseline)
+    }
+
+
+}
