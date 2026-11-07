@@ -197,7 +197,8 @@ its own strip shows no drop, because the drop would change nothing. If the
 placement of a floating window's tab drop fails, the window stays where it was
 dropped and the pill reports the failure. Undo returns a floating window to its
 frame from before the drag. Drop cue panels follow the General setting
-**Show overlays in screen recordings**. They are excluded from capture by default.
+**Show overlays in screen recordings**. They are excluded from capture by
+default.
 
 `PointerDisplay` maps the pointer to exactly one display. Display frames are
 half-open, as in CoreGraphics: a point on an edge that two displays share
@@ -1884,15 +1885,15 @@ Settings use a versioned Codable envelope. Version-1 display-keyed Bento states 
 `showsOverlaysInScreenRecordings` defaults to false, including when the key is
 missing. General Settings can enable capture of the Layout Wheel, snap previews,
 drop cues and their placement wireframes, and the Tabbed Layout Gallery hover
-preview wireframes. `OverlayCapturePolicy` maps the value
-to AppKit's `.readOnly` or `.none` sharing type. Each controller passes one policy
-to its owned panels, including the wheel's liquid and fallback presenters. The
-policy updates existing panels immediately and applies the current value when a
-later panel is created. The model also updates inactive Space overlays that it
-retains for a later return. Startup's Reset to Default turns this setting off.
-Tab bars, the curtain, empty panes, dividers, result pills and the menu bar panel
-keep their existing capture behavior. This setting adds no permission and starts
-no capture. It only changes how BetterTile's own windows participate in a
+preview wireframes. `OverlayCapturePolicy` maps the value to AppKit's
+`.readOnly` or `.none` sharing type. Each controller passes one policy to its
+owned panels, including the wheel's liquid and fallback presenters. The policy
+updates existing panels immediately and applies the current value when a later
+panel is created. The model also updates inactive Space overlays that it retains
+for a later return. Startup's Reset to Default turns this setting off. Tab bars,
+the curtain, empty panes, dividers, result pills and the menu bar panel keep
+their existing capture behavior. This setting adds no permission and starts no
+capture. It only changes how BetterTile's own windows participate in a
 screenshot or recording that the user starts. Capture tools and macOS versions
 can differ in how they honor AppKit's sharing type.
 
