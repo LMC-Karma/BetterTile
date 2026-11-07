@@ -3234,14 +3234,17 @@ final class BetterTileModel {
            [.sleep, .wake, .sessionResigned, .sessionBecameActive].contains(event) {
             // Capture the pre-transition membership without reading AX during
             // sleep or lock. A partial wake inventory cannot replace this base.
-            // Only windows with a place in the layout count. Focus mode only
-            // adds to `windowIDs`, so it can keep windows that already left.
+            // Only windows with a place in the layout count, floats included.
+            // Focus mode only adds to `windowIDs`, so it can keep windows that
+            // already left.
             displayChangeExpectedWindows = sessionStore.sessions.values.reduce(into: Set<WindowID>()) { ids, session in
                 let placed: Set<WindowID>
                 switch session.mode {
                 case .manual: return
-                case .bento: placed = Set(session.bentoState.root?.windowIDs ?? [])
-                case .tabbed: placed = session.tabbedState?.windowIDs ?? []
+                case .bento:
+                    placed = Set(session.bentoState.root?.windowIDs ?? []).union(session.bentoState.floatingWindowIDs)
+                case .tabbed:
+                    placed = (session.tabbedState?.windowIDs ?? []).union(session.tabbedState?.floatingWindowIDs ?? [])
                 case .linked: placed = session.windowIDs
                 }
                 ids.formUnion(placed.subtracting(session.excludedFocusWindowIDs))
