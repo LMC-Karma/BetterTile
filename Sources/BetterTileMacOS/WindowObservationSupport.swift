@@ -247,6 +247,11 @@ struct WindowServerIndex {
         recordsByID[windowID]?.processIdentifier == processIdentifier
     }
 
+    /// Any window of the process, on screen or not, at any layer.
+    func containsAnyWindow(of processIdentifier: pid_t) -> Bool {
+        recordsByID.values.contains { $0.processIdentifier == processIdentifier }
+    }
+
     func contains(_ snapshot: WindowSnapshot, exactWindowID: CGWindowID?) -> Bool {
         if let exactWindowID {
             guard let record = recordsByID[exactWindowID] else { return false }
@@ -261,6 +266,44 @@ struct WindowServerIndex {
             )
         }
     }
+}
+
+/// Closure evidence for the known windows of applications that a sweep did not
+/// read, because they were held or kept. Accessibility gives no evidence for
+/// them, so only the full WindowServer list, which includes other Spaces and
+/// minimized windows, can prove a closure:
+/// - a window with an exact identity closes when the list omits that identity;
+/// - a window without one closes only when the list has no window of its
+///   application at all.
+/// Two consecutive complete lists must agree. A missing list, or one with no
+/// on-screen window, is not evidence and starts the count again.
+struct UnreadWindowClosureEvidence {
+    struct Candidate: Equatable {
+        var windowID: WindowID
+        var processIdentifier: pid_t
+        var exactWindowID: CGWindowID?
+    }
+
+    private var absentOnce: Set<WindowID> = []
+
+    /// Returns the candidates that this list and the previous one both omitted.
+    mutating func confirmClosed(_ candidates: [Candidate], windowServer: WindowServerIndex?) -> Set<WindowID> {
+        guard let windowServer, !windowServer.isEmpty else {
+            absentOnce.removeAll()
+            return []
+        }
+        let absent = Set(candidates.filter { candidate in
+            if let exactWindowID = candidate.exactWindowID {
+                return !windowServer.containsIdentity(exactWindowID, processIdentifier: candidate.processIdentifier)
+            }
+            return !windowServer.containsAnyWindow(of: candidate.processIdentifier)
+        }.map(\.windowID))
+        let confirmed = absent.intersection(absentOnce)
+        absentOnce = absent.subtracting(confirmed)
+        return confirmed
+    }
+
+    mutating func reset() { absentOnce.removeAll() }
 }
 
 /// Decides whether every cached peer is still on screen before a targeted read adds a window.

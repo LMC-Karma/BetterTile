@@ -689,9 +689,11 @@ It sends no message to an application during its backoff. After one call in a
 sweep times out, the sweep also keeps every later application that stalled
 before and has not answered since. A per-application timeout serial detects
 the timeout, so a completed call earlier in the same read cannot hide it. The
-sweep still reads every other application. Several hung applications
-therefore cost at most one timeout per sweep after the first sweep, and the
-growing backoffs spread their later reads apart.
+sweep still reads every other application. Applications that already stalled
+therefore cost at most one timeout per sweep, and the growing backoffs spread
+their later reads apart. An application that stalls for the first time is
+always read, so two applications that start to hang in the same sweep cost two
+timeouts.
 
 A kept application is reported with its inventory deadline, exactly like a
 held one. Its windows stay out of the sweep and keep their identities.
@@ -699,7 +701,25 @@ held one. Its windows stay out of the sweep and keep their identities.
 Adaptive reducer as absence exemptions, beside native desktop membership. A
 pane therefore stays when native observation is unavailable, too. Native
 membership on another desktop still lets such a pane leave, and confirmed
-destruction and minimization still remove it. A recovery sweep leaves a kept
+destruction and minimization still remove it.
+
+An unread application's window can also close without a destroyed event, for
+example after a failed notification registration. Accessibility gives no
+evidence for it, so `UnreadWindowClosureEvidence` uses the full public
+WindowServer list that the sweep already builds, which includes other Spaces
+and minimized windows. Two consecutive lists must omit the window's exact
+identity. A window without an exact identity closes only when the list has no
+window of its application at all. A missing list, or one with no on-screen
+window, is not evidence. A confirmed closure retires the identity and reaches
+the model as a destroyed event, so the pane leaves and its neighbours fill.
+
+The exemption has limits:
+
+- With private APIs disabled, windows have no exact identity. A closed window
+  of an unread application that keeps another window keeps its pane until the
+  application answers a sweep.
+- Without native observation, a window that the user moved to another Space
+  keeps its pane until its application answers. A recovery sweep leaves a kept
 application's PID eligible, so it is not charged a recovery attempt. Kept
 applications stay due, so recovery sweeps can come about once a second. Each
 one reads and charges at least one due application, so the three-attempt limit

@@ -46,6 +46,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
     private var registrations: [pid_t: Set<Registration>] = [:]
     private var eventHandler: (@MainActor (WindowSystemEvent) -> Void)?
     private var unreadableApplicationHolds: [pid_t: TimeInterval] = [:]
+    private var unreadWindowClosure = UnreadWindowClosureEvidence()
 
     /// Uptime deadlines from the last sweep. Checking process liveness makes
     /// recovery stop without another Accessibility call after an app quits.
@@ -63,7 +64,8 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
     /// Known windows of the applications that the last sweep did not read,
     /// because they were held or kept. Their absence from that sweep proves
     /// nothing, so the model exempts them from absence removal. Confirmed
-    /// destruction and minimization still remove them.
+    /// destruction and minimization still remove them, and so does closure
+    /// that two full WindowServer lists prove (`UnreadWindowClosureEvidence`).
     public var unreadableApplicationWindowIDs: Set<WindowID> {
         guard !unreadableApplicationHolds.isEmpty else { return [] }
         return Set(identities.records.values.compactMap { record in
@@ -208,6 +210,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
 
     public func resetCachedWindows() {
         unreadableApplicationHolds.removeAll()
+        unreadWindowClosure.reset()
         metadata.removeAll()
         elements.removeAll()
         identities.removeAll()
@@ -486,6 +489,18 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
                 return AXUIElementCopyAttributeValue(element, kAXRoleAttribute as CFString, &role)
             }
         ), notifyClosure: true)
+        // An unread application gives no Accessibility evidence. The full
+        // WindowServer list still proves that one of its windows closed.
+        let closedWhileUnread = unreadWindowClosure.confirmClosed(
+            identities.records.values.compactMap { record in
+                unreadableApplicationHolds[record.application.processIdentifier] == nil ? nil
+                    : UnreadWindowClosureEvidence.Candidate(windowID: record.windowID,
+                        processIdentifier: record.application.processIdentifier,
+                        exactWindowID: record.exactWindowID)
+            },
+            windowServer: windowServer
+        )
+        removeCachedState(for: closedWhileUnread.sorted().compactMap { identities.remove($0) }, notifyClosure: true)
         knownWindowSnapshots = knownWindowSnapshots.filter { identities.records[$0.key] != nil }
         let sorted = snapshots.sorted { $0.id < $1.id }
         snapshotCache.recordFullSweep(sorted)

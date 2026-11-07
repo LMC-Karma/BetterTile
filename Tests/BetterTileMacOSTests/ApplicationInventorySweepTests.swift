@@ -1,3 +1,4 @@
+import CoreGraphics
 import Testing
 @testable import BetterTileCore
 @testable import BetterTileMacOS
@@ -234,5 +235,60 @@ struct AccessibilityReleaseTests {
         #expect(stallCount == 2)
         system.receiveAXEvent(captured)
         #expect(stallCount == 0)
+    }
+}
+
+/// Closure of an unread application's window, proved only by the full
+/// WindowServer list. Identifiers are made up.
+@Suite struct UnreadWindowClosureEvidenceTests {
+    private static let pid: pid_t = 301
+    private static let open = WindowID(rawValue: "open")
+    private static let closed = WindowID(rawValue: "closed")
+
+    private func list(_ windows: [(CGWindowID, Bool)], pid: pid_t = pid) -> WindowServerIndex {
+        // A responsive application's on-screen window keeps the list complete.
+        WindowServerIndex(records: [WindowServerRecord(windowID: 900, processIdentifier: 42, layer: 0,
+            frame: BTRect(x: 0, y: 0, width: 100, height: 100), isOnscreen: true)]
+            + windows.map { WindowServerRecord(windowID: $0.0, processIdentifier: pid, layer: 0,
+                frame: BTRect(x: 0, y: 0, width: 100, height: 100), isOnscreen: $0.1) })
+    }
+
+    private var candidates: [UnreadWindowClosureEvidence.Candidate] {
+        [.init(windowID: Self.open, processIdentifier: Self.pid, exactWindowID: 1),
+         .init(windowID: Self.closed, processIdentifier: Self.pid, exactWindowID: 2)]
+    }
+
+    @Test func twoFullListsWithoutTheExactIdentityProveClosure() {
+        var evidence = UnreadWindowClosureEvidence()
+        // Window 1 is on another Space or minimized: off screen, but in the full list.
+        #expect(evidence.confirmClosed(candidates, windowServer: list([(1, false)])).isEmpty)
+        #expect(evidence.confirmClosed(candidates, windowServer: list([(1, false)])) == [Self.closed])
+    }
+
+    @Test func aWindowThatReturnsToTheListStartsAgain() {
+        var evidence = UnreadWindowClosureEvidence()
+        _ = evidence.confirmClosed(candidates, windowServer: list([(1, true)]))
+        _ = evidence.confirmClosed(candidates, windowServer: list([(1, true), (2, true)]))
+        #expect(evidence.confirmClosed(candidates, windowServer: list([(1, true)])).isEmpty)
+    }
+
+    @Test func aMissingOrEmptyListIsNotEvidence() {
+        var evidence = UnreadWindowClosureEvidence()
+        for unavailable in [nil, WindowServerIndex(records: [])] {
+            _ = evidence.confirmClosed(candidates, windowServer: list([(1, true)]))
+            #expect(evidence.confirmClosed(candidates, windowServer: unavailable).isEmpty)
+            #expect(evidence.confirmClosed(candidates, windowServer: list([(1, true)])).isEmpty, "The count started again")
+            evidence.reset()
+        }
+    }
+
+    /// Without an exact identity, only an application with no window left proves closure.
+    @Test func withoutAnExactIdentityOnlyAnApplicationWithoutWindowsProvesClosure() {
+        var evidence = UnreadWindowClosureEvidence()
+        let withoutIDs = candidates.map { UnreadWindowClosureEvidence.Candidate(windowID: $0.windowID,
+            processIdentifier: $0.processIdentifier, exactWindowID: nil) }
+        for _ in 0..<3 { #expect(evidence.confirmClosed(withoutIDs, windowServer: list([(1, false)])).isEmpty) }
+        _ = evidence.confirmClosed(withoutIDs, windowServer: list([]))
+        #expect(evidence.confirmClosed(withoutIDs, windowServer: list([])) == [Self.open, Self.closed])
     }
 }

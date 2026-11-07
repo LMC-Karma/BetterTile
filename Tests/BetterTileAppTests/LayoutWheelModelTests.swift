@@ -121,9 +121,48 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, CreatedWindowReading, T
             deadlines[entry.key] = max(entry.value, adapterGate.inventoryBackoffDeadline(entry.key) ?? entry.value)
         }
     }
+    /// Adapter mode keeps an identity record for every window that a sweep
+    /// read, as the adapter does. A window that closes without a destroyed
+    /// event keeps its record until closure evidence retires it.
+    private var adapterKnownWindows: [WindowID: Int32] = [:]
+    private var adapterWindowNumbers: [WindowID: CGWindowID] = [:]
+    private var adapterUnreadClosure = UnreadWindowClosureEvidence()
+    /// False simulates windows without an exact WindowServer identity.
+    var adapterExactIdentities = true
     var unreadableApplicationWindowIDs: Set<WindowID> {
-        let unread = adapterInventoryTimeouts == nil ? Set(applicationHoldsUntil.keys) : Set(adapterHolds.keys)
-        return Set(windows.filter { unread.contains($0.processIdentifier) }.map(\.id))
+        guard adapterInventoryTimeouts != nil else {
+            let unread = Set(applicationHoldsUntil.keys)
+            return Set(windows.filter { unread.contains($0.processIdentifier) }.map(\.id))
+        }
+        return Set(adapterKnownWindows.compactMap { adapterHolds[$0.value] == nil ? nil : $0.key })
+    }
+    private func adapterWindowNumber(_ id: WindowID) -> CGWindowID {
+        if let number = adapterWindowNumbers[id] { return number }
+        let number = CGWindowID(adapterWindowNumbers.count + 1)
+        adapterWindowNumbers[id] = number
+        return number
+    }
+    /// The adapter's identity cleanup after a sweep: an observed application's
+    /// missing window closes at once; an unread one's needs the full list twice.
+    private func retireAdapterIdentities(answered: Set<Int32>) {
+        for window in windows where answered.contains(window.processIdentifier) {
+            adapterKnownWindows[window.id] = window.processIdentifier
+            _ = adapterWindowNumber(window.id)
+        }
+        let existing = Set(windows.map(\.id))
+        var closed = adapterKnownWindows.filter { answered.contains($0.value) && !existing.contains($0.key) }.map(\.key)
+        let windowServer = WindowServerIndex(records: windows.map { window in
+            WindowServerRecord(windowID: adapterWindowNumber(window.id), processIdentifier: window.processIdentifier,
+                layer: 0, frame: window.frame, isOnscreen: !offscreenWindowIDs.contains(window.id))
+        })
+        closed += adapterUnreadClosure.confirmClosed(adapterKnownWindows.compactMap { id, pid in
+            adapterHolds[pid] == nil ? nil : UnreadWindowClosureEvidence.Candidate(windowID: id, processIdentifier: pid,
+                exactWindowID: adapterExactIdentities ? adapterWindowNumber(id) : nil)
+        }, windowServer: windowServer)
+        for id in closed.sorted() {
+            guard let pid = adapterKnownWindows.removeValue(forKey: id) else { continue }
+            eventHandler?(WindowSystemEvent(kind: .destroyed, windowID: id, processIdentifier: pid))
+        }
     }
     /// One gated Accessibility call in adapter mode, as `gatedCall` makes it:
     /// false without a message while held, false after a timeout, true after an answer.
@@ -310,6 +349,7 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, CreatedWindowReading, T
                 }
             }
             adapterInventoryReads.append(reads)
+            retireAdapterIdentities(answered: answered)
             return classifyUsingNativeCache(windows.filter {
                 !offscreenWindowIDs.contains($0.id) && answered.contains($0.processIdentifier)
             })
@@ -579,7 +619,12 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, CreatedWindowReading, T
     }
 
     func setWindowEventHandler(_ handler: (@MainActor (WindowSystemEvent) -> Void)?) {
-        eventHandler = handler
+        guard let handler else { eventHandler = nil; return }
+        // Like the adapter, a destroyed event retires the window's identity record.
+        eventHandler = { [weak self] event in
+            if event.kind == .destroyed, let id = event.windowID { self?.adapterKnownWindows.removeValue(forKey: id) }
+            handler(event)
+        }
     }
     func startWindowObservation() {}
     func stopWindowObservation() {}
