@@ -15,20 +15,22 @@ import Testing
         }
     }
 
-    /// Pane members in pane order, `-` for an empty pane, then overflow tabs.
+    /// Each pane's tabs in pane order, joined by `+`; `-` for an empty pane.
     private func assign(_ windows: [WindowSnapshot], _ frames: [BTRect]) -> [String] {
-        let result = TabbedEntryAssignment.assign(windows: windows, paneFrames: frames)
-        return result.primary.map { $0?.rawValue ?? "-" } + result.overflow.map(\.rawValue)
+        TabbedEntryAssignment.assign(windows: windows, paneFrames: frames).panes.map {
+            $0.isEmpty ? "-" : $0.map(\.rawValue).joined(separator: "+")
+        }
     }
 
     @Test func overlapOutranksDistanceAndChoosesOverflowJointly() {
         let top = window("top", .init(x: 0, y: 0, width: 300, height: 200))
         let bottom = window("bottom", .init(x: 350, y: 410, width: 300, height: 200))
         let extra = window("extra", .init(x: 0, y: 650, width: 300, height: 100))
-        #expect(assign([extra, bottom, top], panes(.rows)) == ["top", "bottom", "extra"])
+        // The extra window joins the bottom pane, which it overlaps.
+        #expect(assign([extra, bottom, top], panes(.rows)) == ["top", "bottom+extra"])
         // The nearest window is not the largest-overlap primary, even for one pane.
         let tiny = window("tiny", .init(x: 495, y: 395, width: 10, height: 10))
-        #expect(assign([tiny, top], [bounds]) == ["top", "tiny"])
+        #expect(assign([tiny, top], [bounds]) == ["top+tiny"])
     }
 
     /// With fewer windows than panes, overlap chooses the panes, so the empty
@@ -48,7 +50,9 @@ import Testing
         let everywhere = window("everywhere", .init(x: 0, y: 0, width: 1000, height: 800))
         #expect(assign([everywhere], Array(repeating: bounds, count: 3)) == ["everywhere", "-", "-"])
         #expect(assign([], panes(.grid)) == ["-", "-", "-", "-"])
-        #expect(assign([right, left], []) == ["left", "right"])
+        let paneless = TabbedEntryAssignment.assign(windows: [right, left], paneFrames: [])
+        #expect(paneless.primary.isEmpty && paneless.panes.isEmpty)
+        #expect(paneless.overflow == [left.id, right.id])
     }
 
     /// Live check: a left full-height window and a right column of two. Grid
@@ -72,8 +76,9 @@ import Testing
         let right = window("right", .init(x: 55, y: -110, width: 10, height: 10))
         #expect([left, right].allSatisfy { w in frames.allSatisfy { w.frame.intersection($0) == nil } })
         #expect(assign([right, left], frames) == ["left", "right"])
-        let distant = window("distant", .init(x: -1000, y: -110, width: 10, height: 10))
-        #expect(assign([distant, right, left], frames) == ["left", "right", "distant"])
+        // An extra window that overlaps no pane joins the nearest pane.
+        let distant = window("distant", .init(x: 1000, y: -110, width: 10, height: 10))
+        #expect(assign([distant, right, left], frames) == ["left", "right+distant"])
     }
 
     @Test func tiesUseWindowReadingOrderThenIDInPaneOrder() {
@@ -87,27 +92,68 @@ import Testing
         let left = window("zz-left", .init(x: 0, y: 50, width: 100, height: 100))
         #expect(assign([highID, earlier, left, lowID], Array(repeating: bounds, count: 4))
                 == ["first", "zz-left", "a", "z"])
+        // Extra windows that tie everywhere keep the panes-in-turn order.
         let same = (0..<6).reversed().map { window("w\($0)", .init(x: 350, y: 250, width: 300, height: 300)) }
-        #expect(assign(same, panes(.grid)) == (0..<6).map { "w\($0)" })
+        #expect(assign(same, panes(.grid)) == ["w0+w4", "w1+w5", "w2", "w3"])
     }
 
-    @Test func overflowRetainsReadingOrderAndCyclesThroughPanes() {
+    /// Extra windows join the pane they overlap most, in reading order.
+    /// Without overlap they join the nearest pane; full ties take the panes
+    /// in turn.
+    @Test func overflowJoinsTheMostOverlappedPaneThenTheNearest() {
         let left = window("left", .init(x: 0, y: 0, width: 500, height: 800))
         let right = window("right", .init(x: 500, y: 0, width: 500, height: 800))
-        let extras = (0..<5).map { window("extra-\($0)", .init(x: Double($0 * 10), y: 900, width: 10, height: 10)) }
-        let ordered = assign(Array(extras.reversed()) + [right, left], panes(.columns))
-        let tabs = (0..<2).map { pane in ordered.enumerated().filter { $0.offset % 2 == pane }.map(\.element) }
-        #expect(tabs == [["left", "extra-0", "extra-2", "extra-4"], ["right", "extra-1", "extra-3"]])
+        let inRight = (0..<2).map { window("in-right-\($0)", .init(x: 600 + Double($0 * 10), y: 500, width: 100, height: 100)) }
+        #expect(assign(Array(inRight.reversed()) + [right, left], panes(.columns))
+                == ["left", "right+in-right-0+in-right-1"])
+        let nearLeft = (0..<3).map { window("near-left-\($0)", .init(x: Double($0 * 10), y: 900, width: 10, height: 10)) }
+        #expect(assign(Array(nearLeft.reversed()) + [right, left], panes(.columns))
+                == ["left+near-left-0+near-left-1+near-left-2", "right"])
+        // Centred on the gap between the columns: equal distance to both.
+        let tied = (0..<5).map { window("tied-\($0)", .init(x: 495, y: 900, width: 10, height: 10)) }
+        #expect(assign(Array(tied.reversed()) + [right, left], panes(.columns))
+                == ["left+tied-0+tied-2+tied-4", "right+tied-1+tied-3"])
+    }
+
+    /// Live layout on Columns: the bottom-right window lies inside the right
+    /// pane, so it becomes a tab there.
+    @Test func columnsEntryPutsTheExtraWindowInThePaneItCovers() {
+        let area = BTRect(x: 0, y: 30, width: 2560, height: 1410)
+        let frames = TabbedLayoutState(preset: .columns).frames(in: area).values.sorted {
+            $0.minY == $1.minY ? $0.minX < $1.minX : $0.minY < $1.minY
+        }
+        let a = window("a", .init(x: 1281, y: 736, width: 1279, height: 704))
+        let b = window("b", .init(x: 1281, y: 30, width: 1279, height: 705))
+        let c = window("c", .init(x: 0, y: 30, width: 1280, height: 1410))
+        #expect(assign([a, b, c], frames) == ["c", "b+a"])
+    }
+
+    /// Evenly split panes give scores that are equal in exact arithmetic but
+    /// differ by floating-point noise when summed. Quantized terms tie
+    /// exactly, so window reading order decides, as documented.
+    @Test func equalScoresTieExactlyDespiteFloatingPointNoise() {
+        let main = BTRect(x: 0, y: 25, width: 1148.4, height: 1055)
+        let topRight = BTRect(x: 1154, y: 25, width: 765.6, height: 524.5)
+        let bottomRight = BTRect(x: 1154, y: 555.5, width: 765.6, height: 524.5)
+        let w1 = window("w1", .init(x: 0, y: 25, width: 960, height: 527))
+        let w0 = window("w0", .init(x: 0, y: 553, width: 960, height: 527))
+        let w2 = window("w2", .init(x: 961, y: 25, width: 959, height: 1055))
+        #expect(assign([w0, w1, w2], [main, topRight, bottomRight]) == ["w1", "w2", "w0"])
     }
 
     @Test func boundedSearchHandlesManyWindowsAndFallsBackAboveFourPanes() {
         let members = (0..<10_000).map {
             window("w\($0)", .init(x: 350, y: Double($0), width: 300, height: 300))
         }
-        let result = assign(Array(members.reversed()), panes(.grid))
-        #expect(result.count == members.count)
-        #expect(Set(result).count == members.count)
-        #expect(assign(Array(members.reversed()), Array(repeating: bounds, count: 5)) == members.map { $0.id.rawValue })
+        let result = TabbedEntryAssignment.assign(windows: Array(members.reversed()), paneFrames: panes(.grid))
+        let tabs = result.panes.flatMap { $0 }
+        #expect(tabs.count == members.count)
+        #expect(Set(tabs).count == members.count)
+        // Above four panes the members follow window reading order.
+        let fallback = TabbedEntryAssignment.assign(windows: Array(members.reversed()),
+                                                    paneFrames: Array(repeating: bounds, count: 5))
+        #expect(fallback.primary == members.prefix(5).map(\.id))
+        #expect(fallback.panes.flatMap { $0 }.count == members.count)
     }
 
     private struct Seed {
@@ -171,14 +217,11 @@ import Testing
                     return
                 }
                 var overlap = 0.0, distance = 0.0
-                // Sum in window reading order to compare the same floating-point
-                // totals without using the DP's state pruning.
+                // Quantized terms sum exactly, in any order.
                 for rank in windows.indices {
                     guard let pane = ranks.firstIndex(of: rank) else { continue }
-                    overlap += windows[rank].frame.intersection(frames[pane])?.area ?? 0
-                    let dx = windows[rank].frame.midX - frames[pane].midX
-                    let dy = windows[rank].frame.midY - frames[pane].midY
-                    distance += dx * dx + dy * dy
+                    overlap += quantizedOverlap(windows[rank].frame, frames[pane])
+                    distance += quantizedDistance(windows[rank].frame, frames[pane])
                 }
                 if overlap > bestOverlap || (overlap == bestOverlap &&
                     (distance < bestDistance || (distance == bestDistance && ranks.lexicographicallyPrecedes(bestRanks)))) {
@@ -186,9 +229,32 @@ import Testing
                 }
             }
             visit([])
-            let expected = bestRanks.map { $0 == empty ? "-" : windows[$0].id.rawValue }
-                + windows.indices.filter { !bestRanks.contains($0) }.map { windows[$0].id.rawValue }
+            // Extra windows: most overlap, then nearest centre, then panes in turn.
+            var tabs = bestRanks.map { $0 == empty ? [String]() : [windows[$0].id.rawValue] }
+            for (turn, rank) in windows.indices.filter({ !bestRanks.contains($0) }).enumerated() {
+                let order = frames.indices.map { (turn + $0) % frames.count }
+                let pane = order.max { lhs, rhs in
+                    let a = quantizedOverlap(windows[rank].frame, frames[lhs])
+                    let b = quantizedOverlap(windows[rank].frame, frames[rhs])
+                    if a != b { return a < b }
+                    let p = quantizedDistance(windows[rank].frame, frames[lhs])
+                    let q = quantizedDistance(windows[rank].frame, frames[rhs])
+                    if p != q { return p > q }
+                    return order.firstIndex(of: lhs)! > order.firstIndex(of: rhs)!
+                }!
+                tabs[pane].append(windows[rank].id.rawValue)
+            }
+            let expected = tabs.map { $0.isEmpty ? "-" : $0.joined(separator: "+") }
             #expect(assign(Array(windows.reversed()), frames) == expected, "oracle case \(example)")
         }
+    }
+
+    private func quantizedOverlap(_ window: BTRect, _ pane: BTRect) -> Double {
+        ((window.intersection(pane)?.area ?? 0) * 1024).rounded()
+    }
+
+    private func quantizedDistance(_ window: BTRect, _ pane: BTRect) -> Double {
+        let dx = window.midX - pane.midX, dy = window.midY - pane.midY
+        return ((dx * dx + dy * dy) * 1024).rounded()
     }
 }

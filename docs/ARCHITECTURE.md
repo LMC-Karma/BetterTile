@@ -1190,19 +1190,23 @@ change a Bento operation made to the tree; writing it also writes the tree.
   then left to right within a row. On entry from Adaptive or Manual, or on a
   desktop that starts in Tabbed, Core jointly matches windows to panes. It
   maximizes total window overlap with the pane frames, then minimizes total
-  squared distance between centres. With fewer windows than panes, every pane
-  can take a window, so an empty pane can be anywhere. Equal scores use window
-  reading order (top edge, left edge, then ID) in pane order, and an empty pane
-  ranks after every window, so ties leave empty panes last. The assignment
-  also chooses which windows become overflow tabs. A bit-mask search uses at
-  most 64 transitions per window for the presets' four-pane limit, plus window
-  sorting. More than four panes falls back to window reading order to bound
-  the search.
-  Overflow windows are ordered by top edge, then left edge and window ID. They
-  join the panes as tabs in turn, in the same pane order. The incoming
-  focused window stays selected and keeps focus when it becomes a tab. If it
-  stays floating, entry requests no focus change. Keep Adaptive panes adopts
-  the Adaptive tree instead.
+  squared distance between centres. Each term is rounded to 1/1024 pt² before
+  it is summed, so evenly split panes tie exactly instead of by rounding noise.
+  With fewer windows than panes, every pane can take a window, so an empty
+  pane can be anywhere. Equal scores use window reading order (top edge, left
+  edge, then ID) in pane order, and an empty pane ranks after every window, so
+  ties leave empty panes last. The assignment also chooses which windows
+  become overflow tabs. A bit-mask search uses at most 64 transitions per
+  window for the presets' four-pane limit, plus window sorting. More than four
+  panes falls back to window reading order to bound the search.
+  Overflow windows are taken in window reading order. Each joins the pane it
+  overlaps most as a tab, then the nearest pane by centre distance; a window
+  that overlaps no pane joins the nearest. Remaining ties keep the panes in
+  turn: the i-th overflow window prefers pane i modulo the pane count. Each
+  pane selects its first member, and the incoming focused window stays
+  selected and keeps focus when it becomes a tab. If it stays floating, entry
+  requests no focus change. Keep Adaptive panes adopts the Adaptive tree
+  instead.
   The first entry from Manual also uses the starting layout; Keep Adaptive
   panes behaves like All in one pane there. Returning from Manual restores
   the last tab groups regardless of these settings.

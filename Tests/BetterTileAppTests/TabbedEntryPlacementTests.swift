@@ -363,10 +363,10 @@ struct TabbedEntryPlacementTests {
             // top-right and ids[0] bottom-right. Entry matches by overlap like
             // Manual entry. In Rows, ids[2] overlaps both rows equally; the
             // smaller centre distance puts it with ids[1] in the top pane, so
-            // ids[0] keeps the bottom pane it covers. Overflow tabs still go to
-            // the panes in turn, so in Columns ids[0] joins the first pane.
+            // ids[0] keeps the bottom pane it covers. An extra tab joins the
+            // pane it overlaps most, so in Columns ids[0] joins the right pane.
             switch preset {
-            case .columns: expected = [[ids[2], ids[0]], [ids[1]]]
+            case .columns: expected = [[ids[2]], [ids[1], ids[0]]]
             case .rows: expected = [[ids[2], ids[1]], [ids[0]]]
             case .focus: expected = [[ids[2]], [ids[1]], [ids[0]]]
             case .grid: expected = [[ids[2]], [ids[1]], [ids[3]], [ids[0]]]
@@ -425,7 +425,7 @@ struct TabbedEntryPlacementTests {
                       BTRect(x: 605, y: 190, width: 120, height: 200)], [[0], [1], []]),
             (.rows, [BTRect(x: 0, y: 0, width: 300, height: 200),
                      BTRect(x: 350, y: 410, width: 300, height: 200),
-                     BTRect(x: 0, y: 650, width: 300, height: 100)], [[0, 2], [1]]),
+                     BTRect(x: 0, y: 650, width: 300, height: 100)], [[0], [1, 2]]),
             (.grid, [BTRect(x: 0, y: 0, width: 120, height: 80),
                      BTRect(x: 510, y: 150, width: 120, height: 80),
                      BTRect(x: 188.5, y: 403, width: 120, height: 80),
@@ -522,11 +522,12 @@ struct TabbedEntryPlacementTests {
 
 
     /// Live check: Adaptive shows a full-height left window and a right
-    /// column of two on a 2560 x 1440 screen. Grid with One per pane must put
+    /// column of two on a 2560 x 1440 screen. With One per pane, Grid must put
     /// the bottom-right window in the bottom-right pane and leave bottom-left
-    /// empty, in one placement.
-    @Test
-    func gridEntryFromAdaptiveLeavesTheUncoveredPaneEmpty() async throws {
+    /// empty. Columns must make it a tab of the right pane, which it lies in.
+    /// Both in one placement, with the focused window selected.
+    @Test(arguments: [TabbedPreset.grid, .columns])
+    func entryFromAdaptiveKeepsEachWindowInThePaneItCovers(preset: TabbedPreset) async throws {
         let system = makeSystem(count: 3)
         let id = system.mainDisplay.id
         let area = BTRect(x: 0, y: 30, width: 2560, height: 1410)
@@ -539,7 +540,7 @@ struct TabbedEntryPlacementTests {
         system.focusedID = a
         let model = makeModel(system: system)
         defer { model.shutdown() }
-        try configure("onePerPane", preset: .grid, model: model)
+        try configure("onePerPane", preset: preset, model: model)
         model.setActiveMode(.bento)
         try await settle(model, system: system)
         var tree = BentoLayoutState(root: .partition(BentoPartition(axis: .vertical, weight: 0.5,
@@ -567,7 +568,8 @@ struct TabbedEntryPlacementTests {
             let p = frames[$0.id]!, q = frames[$1.id]!
             return p.minY == q.minY ? p.minX < q.minX : p.minY < q.minY
         }
-        #expect(panes.map(\.tabs) == [[c], [b], [], [a]])
+        #expect(panes.map(\.tabs) == (preset == .grid ? [[c], [b], [], [a]] : [[c], [b, a]]))
+        #expect(state.selectedWindowIDs.contains(c))
         #expect(state.activeWindowID == a)
         #expect(try system.focusedWindow()?.id == a)
         for window in system.windows {
@@ -578,5 +580,36 @@ struct TabbedEntryPlacementTests {
         await system.advance(by: .seconds(1))
         try await settle(model, system: system)
         #expect(model.activeTabbedState == state)
+    }
+
+    /// Manual entry with fewer windows than panes: the window takes the pane
+    /// it lies in, and the other panes stay empty.
+    @Test
+    func manualEntryWithFewerWindowsKeepsTheWindowInItsPane() async throws {
+        let system = makeSystem(count: 2)
+        system.windows[0].frame = BTRect(x: 700, y: 500, width: 200, height: 200)
+        system.windows[1].frame = BTRect(x: 560, y: 60, width: 300, height: 200)
+        let bottomRight = system.windows[0].id, topRight = system.windows[1].id
+        system.focusedID = bottomRight
+        let model = makeModel(system: system)
+        defer { model.shutdown() }
+        try configure("onePerPane", preset: .grid, model: model)
+        model.setActiveMode(.manual)
+        try await settle(model, system: system)
+        let writes = system.frameWriteCounts
+        model.setActiveMode(.tabbed)
+        try await settle(model, system: system)
+        let state = try #require(model.activeTabbedState)
+        let frames = state.frames(in: system.mainDisplay.visibleFrame)
+        let panes = state.panes.sorted {
+            let p = frames[$0.id]!, q = frames[$1.id]!
+            return p.minY == q.minY ? p.minX < q.minX : p.minY < q.minY
+        }
+        #expect(panes.map(\.tabs) == [[], [topRight], [], [bottomRight]])
+        #expect(state.activeWindowID == bottomRight)
+        #expect(try system.focusedWindow()?.id == bottomRight)
+        for window in system.windows {
+            #expect(system.frameWriteCounts[window.id, default: 0] - writes[window.id, default: 0] == 1)
+        }
     }
 }

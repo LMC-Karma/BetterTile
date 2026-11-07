@@ -6053,12 +6053,9 @@ extension BetterTileModel {
             // choices. With fewer windows than panes, any pane can stay empty.
             let assignment = TabbedEntryAssignment.assign(windows: remaining, paneFrames: paneFrames.map(\.value))
             if !panes.isEmpty {
-                for (index, id) in assignment.primary.enumerated() {
-                    if let id { state.move(id, to: panes[index], at: 0) }
-                }
-                // Overflow exists only when every pane has a member.
-                for (index, id) in assignment.overflow.enumerated() {
-                    state.move(id, to: panes[index % panes.count], at: 1 + index / panes.count)
+                // Each extra tab joins the pane it overlaps most.
+                for (index, tabs) in assignment.panes.enumerated() {
+                    for (position, id) in tabs.enumerated() { state.move(id, to: panes[index], at: position) }
                 }
                 for pane in state.panes {
                     if let first = pane.tabs.first { state.select(first) }
