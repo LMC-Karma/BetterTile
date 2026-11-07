@@ -6036,7 +6036,7 @@ extension BetterTileModel {
             let incomingSelection = focused.flatMap { state.windowIDs.contains($0) ? $0 : nil }
                 ?? state.activeWindowID
             // Keep a stable reading order for Adaptive entry and overflow tabs.
-            var remaining = windows.filter { state.windowIDs.contains($0.id) }.sorted {
+            let remaining = windows.filter { state.windowIDs.contains($0.id) }.sorted {
                 if $0.frame.minY != $1.frame.minY { return $0.frame.minY < $1.frame.minY }
                 if $0.frame.minX != $1.frame.minX { return $0.frame.minX < $1.frame.minX }
                 return $0.id < $1.id
@@ -6049,24 +6049,10 @@ extension BetterTileModel {
                 return $0.value.minX < $1.value.minX
             }
             let panes = paneFrames.map(\.key)
-            var ordered: [WindowID] = []
             // Adaptive already has aligned rows; preserve its distribution.
-            // Manual windows may share a row without sharing an exact top edge.
-            if !entersFromAdaptive {
-                for (_, frame) in paneFrames {
-                    let center = frame.center
-                    guard let nearest = remaining.indices.min(by: { a, b in
-                        func distance(_ index: Int) -> Double {
-                            let point = remaining[index].frame.center
-                            return pow(point.x - center.x, 2) + pow(point.y - center.y, 2)
-                        }
-                        let da = distance(a), db = distance(b)
-                        return da == db ? remaining[a].id < remaining[b].id : da < db
-                    }) else { break }
-                    ordered.append(remaining.remove(at: nearest).id)
-                }
-            }
-            ordered.append(contentsOf: remaining.map(\.id))
+            // Match fresh Manual/startup entry jointly, including overflow choices.
+            let ordered = entersFromAdaptive ? remaining.map(\.id)
+                : TabbedEntryAssignment.orderedWindowIDs(windows: remaining, paneFrames: paneFrames.map(\.value))
             if !panes.isEmpty {
                 for (index, id) in ordered.enumerated() {
                     state.move(id, to: panes[index % panes.count], at: index / panes.count)

@@ -409,4 +409,110 @@ struct TabbedEntryPlacementTests {
         #expect(try system.focusedWindow()?.id == ids[5])
     }
 
+    @Test(arguments: 0..<7, [false, true])
+    func entryDistributionPreservesPaneRegions(example: Int, startsInTabbed: Bool) async throws {
+        let cases: [(TabbedPreset, [BTRect], [[Int]])] = [
+            (.rows, [BTRect(x: 0, y: 0, width: 300, height: 200),
+                     BTRect(x: 350, y: 410, width: 300, height: 200)], [[0], [1]]),
+            (.columns, [BTRect(x: 0, y: 0, width: 200, height: 100),
+                        BTRect(x: 510, y: 350, width: 200, height: 100)], [[0], [1]]),
+            (.focus, [BTRect(x: 0, y: 0, width: 200, height: 100),
+                      BTRect(x: 605, y: 190, width: 120, height: 200)], [[0], [1], []]),
+            (.rows, [BTRect(x: 0, y: 0, width: 300, height: 200),
+                     BTRect(x: 350, y: 410, width: 300, height: 200),
+                     BTRect(x: 0, y: 650, width: 300, height: 100)], [[0, 2], [1]]),
+            (.grid, [BTRect(x: 0, y: 0, width: 120, height: 80),
+                     BTRect(x: 510, y: 150, width: 120, height: 80),
+                     BTRect(x: 188.5, y: 403, width: 120, height: 80),
+                     BTRect(x: 510, y: 410, width: 120, height: 80)], [[0], [1], [2], [3]]),
+            (.grid, [BTRect(x: 0, y: 0, width: 120, height: 80),
+                     BTRect(x: 510, y: 150, width: 120, height: 80),
+                     BTRect(x: 188.5, y: 403, width: 120, height: 80)], [[0], [1], [2], []]),
+            (.columns, [BTRect(x: 0, y: 0, width: 200, height: 200),
+                        BTRect(x: 210, y: 150, width: 700, height: 500)], [[0], [1]])
+        ]
+        let (preset, frames, expected) = cases[example]
+        let system = makeSystem(count: frames.count)
+        for index in frames.indices { system.windows[index].frame = frames[index] }
+        let ids = system.windows.map(\.id)
+        system.focusedID = ids.last
+        let model = makeModel(system: system)
+        defer { model.shutdown() }
+        try configure("onePerPane", preset: preset, model: model)
+        if startsInTabbed {
+            model.configuration.defaultLayoutMode = .tabbed
+            model.watchdog()
+        } else {
+            model.setActiveMode(.manual)
+            model.setActiveMode(.tabbed)
+        }
+        try await settle(model, system: system)
+        let state = try #require(model.activeTabbedState)
+        let paneFrames = state.frames(in: system.mainDisplay.visibleFrame)
+        let panes = state.panes.sorted {
+            let a = paneFrames[$0.id]!, b = paneFrames[$1.id]!
+            return a.minY == b.minY ? a.minX < b.minX : a.minY < b.minY
+        }
+        #expect(panes.map(\.tabs) == expected.map { $0.map { ids[$0] } })
+        #expect(state.activeWindowID == ids.last)
+        #expect(try system.focusedWindow()?.id == ids.last)
+        #expect(system.frameWriteCounts.values.allSatisfy { $0 == 1 })
+        let writes = system.frameWriteCounts
+        model.performTabbed(.undo)
+        await system.advance(by: .seconds(1))
+        try await settle(model, system: system)
+        #expect(model.activeTabbedState == state)
+        #expect(system.frameWriteCounts == writes)
+    }
+
+    @Test
+    func entryDistributionSeededPaneRegions() async throws {
+        struct Seed {
+            var state: UInt64 = 0xB7_2026_11_06
+            mutating func next(_ upper: Int) -> Int {
+                state = state &* 6_364_136_223_846_793_005 &+ 1
+                return Int((state >> 32) % UInt64(upper))
+            }
+        }
+        var seed = Seed()
+        var covered = Set<TabbedPreset>()
+        for example in 0..<240 {
+            let preset = TabbedPreset.allCases[seed.next(TabbedPreset.allCases.count)]
+            covered.insert(preset)
+            let system = makeSystem(count: preset.paneCount)
+            let regions = TabbedLayoutState(preset: preset).frames(in: system.mainDisplay.visibleFrame).values.sorted {
+                $0.minY == $1.minY ? $0.minX < $1.minX : $0.minY < $1.minY
+            }
+            for (index, region) in regions.enumerated() {
+                let width = Double(120 + seed.next(Int(min(300, region.size.width)) - 119))
+                let height = Double(80 + seed.next(Int(min(200, region.size.height)) - 79))
+                system.windows[index].frame = BTRect(
+                    x: region.minX + Double(seed.next(1001)) / 1000 * (region.size.width - width),
+                    y: region.minY + Double(seed.next(1001)) / 1000 * (region.size.height - height),
+                    width: width, height: height)
+            }
+            let expected = system.windows.map { [$0.id] }
+            for index in system.windows.indices.reversed() { system.windows.swapAt(index, seed.next(index + 1)) }
+            let model = makeModel(system: system)
+            defer { model.shutdown() }
+            try configure("onePerPane", preset: preset, model: model)
+            if example.isMultiple(of: 2) {
+                model.configuration.defaultLayoutMode = .tabbed
+                model.watchdog()
+            } else {
+                model.setActiveMode(.manual)
+                model.setActiveMode(.tabbed)
+            }
+            try await settle(model, system: system)
+            let state = try #require(model.activeTabbedState)
+            let frames = state.frames(in: system.mainDisplay.visibleFrame)
+            let panes = state.panes.sorted {
+                let a = frames[$0.id]!, b = frames[$1.id]!
+                return a.minY == b.minY ? a.minX < b.minX : a.minY < b.minY
+            }
+            #expect(panes.map(\.tabs) == expected, "seeded case \(example), \(preset)")
+        }
+        #expect(covered == Set(TabbedPreset.allCases))
+    }
+
 }

@@ -1187,9 +1187,15 @@ change a Bento operation made to the tree; writing it also writes the tree.
   Entering Tabbed from Adaptive uses the starting layout (`defaultTabbedPreset`).
   `tabbedEntryPlacement` puts all windows in one pane by default. One per pane
   fills panes in screen reading order: top to bottom, then left to right within
-  a row. On fresh entry from Manual, each pane takes the unassigned window
-  whose centre is nearest its centre, with window ID breaking equal-distance
-  ties. Adaptive entry keeps windows in screen reading order. Remaining Manual
+  a row. On fresh entry from Manual, or on a desktop that starts in Tabbed,
+  Core jointly matches windows to the first min(window count, pane count) panes.
+  It maximizes total window overlap with the pane frames, then minimizes total
+  squared distance between centres. Equal scores use window reading order
+  (top edge, left edge, then ID) in pane order. The assignment also chooses which
+  windows become overflow tabs. A bit-mask search uses at most 64 transitions
+  per window for the presets' four-pane limit, plus window sorting. More than
+  four panes falls back to window reading order to bound the search.
+  Adaptive entry keeps windows in screen reading order. Remaining Manual
   windows are ordered by top edge, then left edge and window ID. Extra windows
   join the panes as tabs in turn, in the same pane order. The incoming
   focused window stays selected and keeps focus when it becomes a tab. If it
