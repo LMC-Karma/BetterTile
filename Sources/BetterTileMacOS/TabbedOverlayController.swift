@@ -204,6 +204,7 @@ public final class TabbedOverlayController: NSObject, NSMenuDelegate {
     private let removeMonitor: (Any) -> Void
     private let orderPanel: (NSPanel, NSWindow.OrderingMode, Int) -> Void
     private let panelFactory: () -> NSPanel
+    private let mainScreenFrame: () -> NSRect
     var chooserPresenterFactory: ((NSView, NSSize) -> TabbedChooserPresenter)?
     private var draggedWindow: WindowID?
     /// The tab the source pane showed before the press that selected the
@@ -633,9 +634,11 @@ public final class TabbedOverlayController: NSObject, NSMenuDelegate {
         visibilityClock: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
         timerClock: BetterTileClock = .live,
         automaticallyAdvanceVisibility: Bool = true,
-        pointerLocation: @escaping () -> BTPoint? = { nil }
+        pointerLocation: @escaping () -> BTPoint? = { nil },
+        mainScreenFrame: @escaping () -> NSRect = { NSScreen.screens.first?.frame ?? .zero }
     ) {
         self.panelFactory = panelFactory
+        self.mainScreenFrame = mainScreenFrame
         self.observesAutoHidePointer = observesAutoHidePointer
         self.visibilityClock = visibilityClock
         self.timerClock = timerClock
@@ -873,7 +876,7 @@ public final class TabbedOverlayController: NSObject, NSMenuDelegate {
         view.onClick = { [weak self, weak panel] point in
             guard let self, let panel else { return }
             let screen = panel.convertPoint(toScreen: point)
-            let point = CoordinateConverter.pointToTopLeft(screen, mainScreenFrame: NSScreen.screens.first?.frame ?? .zero)
+            let point = CoordinateConverter.pointToTopLeft(screen, mainScreenFrame: self.mainScreenFrame())
             let frames = self.state.frames(in: self.bounds)
             guard let pane = self.state.panes.first(where: { frames[$0.id]?.contains(point) == true }) else { return }
             if let selected = pane.selected { self.send(.select(selected)) }
@@ -956,12 +959,12 @@ public final class TabbedOverlayController: NSObject, NSMenuDelegate {
     }
 
     private func appKit(_ rect: BTRect) -> NSRect {
-        CoordinateConverter.toAppKit(rect, mainScreenFrame: NSScreen.screens.first?.frame ?? .zero)
+        CoordinateConverter.toAppKit(rect, mainScreenFrame: mainScreenFrame())
     }
 
     fileprivate func screenPoint(_ event: NSEvent) -> BTPoint {
         let point = event.window?.convertPoint(toScreen: event.locationInWindow) ?? NSEvent.mouseLocation
-        return CoordinateConverter.pointToTopLeft(point, mainScreenFrame: NSScreen.screens.first?.frame ?? .zero)
+        return CoordinateConverter.pointToTopLeft(point, mainScreenFrame: mainScreenFrame())
     }
 
     fileprivate func send(_ intent: TabbedUIIntent) { onIntent?(intent) }
