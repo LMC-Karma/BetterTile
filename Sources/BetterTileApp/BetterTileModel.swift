@@ -6042,12 +6042,21 @@ extension BetterTileModel {
                 if $0.frame.minX != $1.frame.minX { return $0.frame.minX < $1.frame.minX }
                 return $0.id < $1.id
             }
-            if let pane = state.panes.first?.id {
+            state.applyPreset(configuration.defaultTabbedPreset, grouping: .distributeWindows)
+            // Preset leaves need not follow reading order (Grid is column-first).
+            // Fill panes by geometry, including empty panes, before placement.
+            let panes = state.frames(in: display.visibleFrame).sorted {
+                if $0.value.minY != $1.value.minY { return $0.value.minY < $1.value.minY }
+                return $0.value.minX < $1.value.minX
+            }.map(\.key)
+            if !panes.isEmpty {
                 for (index, window) in ordered.enumerated() {
-                    state.move(window.id, to: pane, at: index)
+                    state.move(window.id, to: panes[index % panes.count], at: index / panes.count)
+                }
+                for pane in state.panes {
+                    if let first = pane.tabs.first { state.select(first) }
                 }
             }
-            state.applyPreset(configuration.defaultTabbedPreset, grouping: .distributeWindows)
             // Distribution selects each pane's first tab. Entry must keep the
             // incoming focused member visible before fitting and placement.
             if let incomingSelection { state.select(incomingSelection) }
@@ -6097,8 +6106,13 @@ extension BetterTileModel {
             tabbedOverlays[display.id]?.hide()
         }
         if (changed || force || tabbedEntryBaselines[session.id] != nil), !session.automaticWritesSuspended {
+            // A fresh preset has an active tab even when the user's focus
+            // belongs to a retained float. Entry must not activate that tab.
+            let keepsFloatingFocus = entering && focused.map(state.floatingWindowIDs.contains) == true
+            let focus = keepsFloatingFocus ? nil
+                : (wasUninitialized || before.activeWindowID != state.activeWindowID ? state.activeWindowID : nil)
             applyTabbedState(state, session: session, display: display, windows: windows,
-                             focus: wasUninitialized || before.activeWindowID != state.activeWindowID ? state.activeWindowID : nil,
+                             focus: focus,
                              restorationFrames: restorationFrames,
                              arrivals: wasUninitialized ? [] : state.windowIDs.subtracting(before.windowIDs),
                              appliedFeedback: floatedFeedback, focusedBeforePlacement: focused)

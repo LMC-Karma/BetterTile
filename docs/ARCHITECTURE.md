@@ -1188,8 +1188,9 @@ change a Bento operation made to the tree; writing it also writes the tree.
   `tabbedEntryPlacement` puts all windows in one pane by default. One per pane
   distributes windows in screen reading order: top to bottom, then left to
   right within a row. Extra windows join the panes as tabs in turn. The incoming
-  focused window stays selected in its pane and keeps focus. Keep Adaptive
-  panes adopts the Adaptive tree instead.
+  focused window stays selected and keeps focus when it becomes a tab. If it
+  stays floating, entry requests no focus change. Keep Adaptive panes adopts
+  the Adaptive tree instead.
   The first entry from Manual also uses the starting layout; Keep Adaptive
   panes behaves like All in one pane there. Returning from Manual restores
   the last tab groups regardless of these settings.
