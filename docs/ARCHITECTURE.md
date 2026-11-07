@@ -1190,8 +1190,9 @@ change a Bento operation made to the tree; writing it also writes the tree.
   then left to right within a row. On entry from Adaptive or Manual, or on a
   desktop that starts in Tabbed, Core jointly matches windows to panes. It
   maximizes total window overlap with the pane frames, then minimizes total
-  squared distance between centres. Each term is rounded to 1/1024 pt² before
-  it is summed, so evenly split panes tie exactly instead of by rounding noise.
+  squared distance between centres. Each term is rounded to 1/1024 pt², and
+  the terms are summed in pane order, so evenly split panes and coincident
+  windows tie exactly instead of by rounding noise.
   With fewer windows than panes, every pane can take a window, so an empty
   pane can be anywhere. Equal scores use window reading order (top edge, left
   edge, then ID) in pane order, and an empty pane ranks after every window, so

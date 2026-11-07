@@ -13,9 +13,10 @@ public enum TabbedEntryAssignment {
         public var panes: [[WindowID]]
     }
 
-    /// Scores are quantized to 1/1024 pt² before summing. Integer-valued
-    /// sums are exact at these magnitudes, so mathematically equal layouts,
-    /// such as evenly split panes, tie exactly and reach the rank tie-break.
+    /// Scores are quantized to 1/1024 pt² and summed in pane order.
+    /// Integer-valued sums are exact at these magnitudes, so mathematically
+    /// equal layouts, such as evenly split panes or coincident windows, tie
+    /// exactly and reach the rank tie-break.
     static func quantized(_ value: Double) -> Double { (value * 1024).rounded() }
 
     static func overlap(_ window: BTRect, _ pane: BTRect) -> Double {
@@ -71,7 +72,8 @@ public enum TabbedEntryAssignment {
         guard count > 0, panes <= 4 else { return readingOrder() }
         let full = (1 << panes) - 1
         var best = Array<Assignment?>(repeating: nil, count: full + 1)
-        best[0] = Assignment(overlap: 0, distance: 0, ranks: Array(repeating: windows.count, count: panes))
+        best[0] = Assignment(overlaps: Array(repeating: 0, count: panes), distances: Array(repeating: 0, count: panes),
+                             ranks: Array(repeating: windows.count, count: panes))
         for (rank, window) in windows.enumerated() {
             let overlaps = paneFrames.map { overlap(window.frame, $0) }
             let distances = paneFrames.map { distance(window.frame, $0) }
@@ -82,8 +84,8 @@ public enum TabbedEntryAssignment {
                 guard let prior = best[mask], mask.nonzeroBitCount < count else { continue }
                 for pane in 0..<panes where mask & (1 << pane) == 0 {
                     var candidate = prior
-                    candidate.overlap += overlaps[pane]
-                    candidate.distance += distances[pane]
+                    candidate.overlaps[pane] = overlaps[pane]
+                    candidate.distances[pane] = distances[pane]
                     candidate.ranks[pane] = rank
                     let destination = mask | (1 << pane)
                     if best[destination].map({ candidate.precedes($0) }) ?? true {
@@ -99,10 +101,14 @@ public enum TabbedEntryAssignment {
         return result(primary: assignment.ranks.map { $0 < windows.count ? $0 : nil })
     }
 
+    /// Keeps each pane's contribution and sums them in pane order, so the
+    /// totals never depend on the order in which windows were assigned.
     private struct Assignment {
-        var overlap: Double
-        var distance: Double
+        var overlaps: [Double]
+        var distances: [Double]
         var ranks: [Int]
+        var overlap: Double { overlaps.reduce(0, +) }
+        var distance: Double { distances.reduce(0, +) }
 
         func precedes(_ other: Self) -> Bool {
             if overlap != other.overlap { return overlap > other.overlap }

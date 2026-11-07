@@ -128,6 +128,28 @@ import Testing
         #expect(assign([a, b, c], frames) == ["c", "b+a"])
     }
 
+    /// Coincident windows score the same in every assignment. Summing their
+    /// terms in a different window order must not change the result: window
+    /// reading order (then ID) decides, in pane order. Main + 2 on integer and
+    /// fractional work areas.
+    @Test(arguments: [BTRect(x: 0, y: 0, width: 1000, height: 800),
+                      BTRect(x: 0, y: 25, width: 1440.5, height: 875.25)])
+    func coincidentWindowsFollowReadingOrderOnMainPlusTwo(area: BTRect) {
+        let frames = TabbedLayoutState(preset: .focus).frames(in: area).values.sorted {
+            $0.minY == $1.minY ? $0.minX < $1.minX : $0.minY < $1.minY
+        }
+        let frame = BTRect(x: area.minX + area.size.width * 0.35, y: area.minY + area.size.height * 0.3125,
+                           width: area.size.width * 0.3, height: area.size.height * 0.375)
+        let three = (0..<3).map { window("w\($0)", frame) }
+        #expect(assign(three, frames) == ["w0", "w1", "w2"])
+        #expect(assign(three.reversed(), frames) == ["w0", "w1", "w2"])
+        // The main pane is the largest, so the extra windows overlap it most.
+        let five = (0..<5).map { window("w\($0)", frame) }
+        #expect(assign(five.reversed(), frames) == ["w0+w3+w4", "w1", "w2"])
+        let exact = (0..<3).map { window("w\($0)", .init(x: 350, y: 250, width: 300, height: 300)) }
+        #expect(assign(exact.reversed(), panes(.focus)) == ["w0", "w1", "w2"])
+    }
+
     /// Evenly split panes give scores that are equal in exact arithmetic but
     /// differ by floating-point noise when summed. Quantized terms tie
     /// exactly, so window reading order decides, as documented.
@@ -194,9 +216,15 @@ import Testing
         var seed = Seed()
         for example in 0..<250 {
             let frames = panes(TabbedPreset.allCases[seed.next(TabbedPreset.allCases.count)])
+            // About a third of the windows coincide with the previous one, so
+            // exact ties reach the rank tie-break.
+            var previous: BTRect?
             let windows = (0..<seed.next(7)).map { index in
-                window("w\(index)", .init(x: Double(seed.next(1400) - 200), y: Double(seed.next(1200) - 200),
-                                         width: Double(1 + seed.next(700)), height: Double(1 + seed.next(600))))
+                let frame = previous.flatMap { seed.next(3) == 0 ? $0 : nil }
+                    ?? BTRect(x: Double(seed.next(1400) - 200), y: Double(seed.next(1200) - 200),
+                              width: Double(1 + seed.next(700)), height: Double(1 + seed.next(600)))
+                previous = frame
+                return window("w\(index)", frame)
             }.sorted {
                 if $0.frame.minY != $1.frame.minY { return $0.frame.minY < $1.frame.minY }
                 if $0.frame.minX != $1.frame.minX { return $0.frame.minX < $1.frame.minX }
@@ -206,7 +234,7 @@ import Testing
             // One entry per pane: a window rank, or `empty` for an empty pane.
             // Any `frames.count - count` panes may stay empty.
             let empty = windows.count
-            var bestRanks: [Int] = [], bestOverlap = -1.0, bestDistance = Double.infinity
+            var bestRanks: [Int] = [], bestOverlap = -1, bestDistance = Int.max
             func visit(_ ranks: [Int]) {
                 if ranks.count < frames.count {
                     let filled = ranks.filter { $0 != empty }.count
@@ -216,12 +244,12 @@ import Testing
                     }
                     return
                 }
-                var overlap = 0.0, distance = 0.0
-                // Quantized terms sum exactly, in any order.
-                for rank in windows.indices {
-                    guard let pane = ranks.firstIndex(of: rank) else { continue }
-                    overlap += quantizedOverlap(windows[rank].frame, frames[pane])
-                    distance += quantizedDistance(windows[rank].frame, frames[pane])
+                // Exact integer totals of the quantized terms: independent of
+                // the order in which any implementation adds them.
+                var overlap = 0, distance = 0
+                for (pane, rank) in ranks.enumerated() where rank != empty {
+                    overlap += Int(quantizedOverlap(windows[rank].frame, frames[pane]))
+                    distance += Int(quantizedDistance(windows[rank].frame, frames[pane]))
                 }
                 if overlap > bestOverlap || (overlap == bestOverlap &&
                     (distance < bestDistance || (distance == bestDistance && ranks.lexicographicallyPrecedes(bestRanks)))) {
