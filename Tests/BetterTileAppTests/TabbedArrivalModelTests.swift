@@ -328,18 +328,34 @@ private func addFalselyMeasuredWindow(_ name: String, pid: Int32, to system: Fak
 /// An automatic float is checked again once, a moment after its placement
 /// settles, with a fresh snapshot. An application that was busy, or that
 /// applied its size late, then gets a pane without a repair.
-@Test(.appTestApplication) @MainActor func anAutomaticFloatIsCheckedAgainOnce() async throws {
-    let (system, model) = try await onePaneFixture()
+@Test(.appTestApplication, arguments: [false, true]) @MainActor
+func anAutomaticFloatIsCheckedAgainOnce(held: Bool) async throws {
+    let system = makeManualWindowSystem(drivingPolicyDeadlines: true)
+    let model = makeModel(system: system)
     defer { model.shutdown() }
+    model.tabbedClock = system.clock
+    model.configuration.defaultTabbedPreset = .single
+    model.setActiveMode(.tabbed)
+    try #require(await system.waitFor { !model.hasPendingTabbedPlacement })
     model.tabbedAutomaticFloatRetryDelay = .seconds(1)
     let tall = addFalselyMeasuredWindow("tall", pid: 930_011, to: system)
-    try #require(await waitFor { model.activeTabbedState?.automaticallyFloatingWindowIDs == [tall] })
-    // The window's real minimum shows before the check.
+    try #require(await system.waitFor { model.activeTabbedState?.automaticallyFloatingWindowIDs == [tall] && !model.hasPendingTabbedPlacement })
     let index = try #require(system.windows.firstIndex { $0.id == tall })
     system.windows[index].constraints = WindowConstraints()
-
-    #expect(await waitFor(timeout: .seconds(5)) { model.activeTabbedState?.windowIDs.contains(tall) == true })
+    if held {
+        model.handleDisplayChange(.displayReconfigurationBegan)
+        let writes = system.frameWriteCounts
+        await system.advance(by: .seconds(3))
+        #expect(system.frameWriteCounts == writes)
+        #expect(model.tabbedAutomaticFloatChecksRun == 0)
+        #expect(model.tabbedAutomaticFloatChecksGivenUp == 0)
+        model.handleDisplayChange(.displayReconfigurationEnded)
+    }
+    #expect(await system.waitFor(timeout: .seconds(5)) { model.activeTabbedState?.windowIDs.contains(tall) == true && !model.hasPendingTabbedPlacement })
     #expect(model.activeTabbedState?.floatingWindowIDs.isEmpty == true)
+    #expect(model.tabbedAutomaticFloatChecksRun == 1)
+    await system.advance(by: .seconds(3))
+    #expect(model.tabbedAutomaticFloatChecksRun == 1)
 }
 
 /// Entering Tabbed again returns an automatic float that a pane can now

@@ -1239,3 +1239,37 @@ func automaticApplyReadinessWithoutADisplayHoldRemainsBounded() async throws {
     #expect(h.now < 1004)
     #expect(h.commits.isEmpty)
 }
+
+/// The model reports no further display change once its hold settles, so the
+/// retry must not depend on another `displaysChanged()`.
+@Test(.appTestApplication, arguments: [(false, true), (true, true), (false, false)]) @MainActor
+func automaticApplyInterruptedByDisplayHoldRetriesOnce(cancelWithInput: Bool, displaysChangeAgain: Bool) async throws {
+    let h = RuntimeHarness()
+    defer { h.runtime.stop(); h.applier.stop() }
+    h.runtime.stop()
+    h.runtime = h.makeRuntime(initial: [h.mainFingerprint], autoSettle: false)
+    h.addWindow("editor", on: h.second.id)
+    h.bind()
+    var held = false
+    var attempts = 0
+    h.runtime.isDisplayChangeHeld = { _ in held }
+    h.beforeCommit = {
+        attempts += 1
+        held = true
+    }
+    h.connectSecond()
+    let system = FakeAppWindowSystem(manualClock: h.clock)
+    system.drivesPolicyDeadlines = true
+    try #require(await system.waitFor { attempts == 1 && !h.applier.isRunning })
+    if cancelWithInput { h.runtime.userInput() }
+    h.beforeCommit = { attempts += 1 }
+    held = false
+    if displaysChangeAgain { h.runtime.displaysChanged() }
+    await system.advance(by: .seconds(2))
+    try #require(await system.waitFor { h.runtime.isIdle })
+    #expect(attempts == (cancelWithInput ? 1 : 2))
+    #expect(h.commits == (cancelWithInput ? [] : [h.second.id]))
+    h.runtime.displaysChanged()
+    await system.advance(by: .seconds(2))
+    #expect(attempts == (cancelWithInput ? 1 : 2))
+}
