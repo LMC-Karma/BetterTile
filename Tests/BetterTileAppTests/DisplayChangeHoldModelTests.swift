@@ -162,13 +162,16 @@ func displayHoldEndsAtLimitWithoutCompletionCallback() async throws {
     #expect(!model.isHoldingDisplayChange)
 }
 
-@Test(.appTestApplication) @MainActor
-func displayHoldWaitsForSessionAndScreenUnlock() async throws {
+/// `windowsReturn: false` keeps every managed window missing after unlock.
+/// The hold then waits for them until its deadline, then releases.
+@Test(.appTestApplication, arguments: [true, false]) @MainActor
+func displayHoldWaitsForSessionAndScreenUnlock(windowsReturn: Bool) async throws {
     let (system, model) = twoDisplayFixture()
     defer { model.shutdown() }
     model.setActiveMode(.bento)
     await system.advance(by: .seconds(1))
     system.requestedFrames = [:]
+    let windowsBeforeLock = system.windows
     model.handleDisplayChange(.sessionResigned)
     system.windows.removeAll()
     model.handleDisplayChangeApplicationActivation(bundleID: "com.example.App")
@@ -179,10 +182,17 @@ func displayHoldWaitsForSessionAndScreenUnlock() async throws {
     model.handleDisplayChange(.sessionBecameActive)
     await system.advance(by: .seconds(6))
     #expect(model.isHoldingDisplayChange)
+    if windowsReturn { system.windows = windowsBeforeLock }
     model.displayChangeScreenIsLocked = { false }
     model.handleDisplayChangeApplicationActivation(bundleID: "com.example.App")
     await system.advance(by: .seconds(1))
-    #expect(!model.isHoldingDisplayChange)
+    if !windowsReturn {
+        #expect(model.isHoldingDisplayChange, "Missing windows keep an unlocked hold until its deadline")
+        #expect(system.requestedFrames.isEmpty)
+        await system.advance(by: .seconds(5))
+    }
+    #expect(await system.waitFor(timeout: .seconds(1)) { !model.isHoldingDisplayChange })
+    #expect(system.requestedFrames.isEmpty)
 }
 
 @Test(.appTestApplication) @MainActor

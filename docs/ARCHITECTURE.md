@@ -402,10 +402,29 @@ fixed-size window, which could float.
 Display and sleep notifications start a `DisplayChangeHold` before refreshing
 layouts. The Core reducer uses monotonic time and `DisplaySettleDetector`.
 Two equal display and window observations 250 ms apart release the hold.
+The public Core Graphics callback forwards its begin and completion flags, with
+AppKit screen notifications as a fallback.
 Any active-session hold that does not become quiet releases after five seconds
 without a new display event. Sleep and an inactive or locked session wait for wake and unlock;
-those events restart the deadline. The public Core Graphics callback forwards
-its begin and completion flags, with AppKit screen notifications as a fallback.
+those events restart the deadline.
+After sleep or session inactivity, the quiet observations must also contain, as
+eligible, the windows that held a place in a layout: Adaptive panes, Tabbed
+tabs and floating windows in either mode, except peers excluded by Focus mode.
+An Adaptive desktop's only window counts too, although it has no tree.
+Confirmed closures do not count, nor do minimizes recorded while the session
+was active. The model captures that membership without reading Accessibility
+while inactive, after the hold has stopped any gesture, so a tab that an
+interrupted drag returns to its pane counts. Repeated wake events during the
+hold keep the same captured set. This readiness wait ends at the same
+five-second deadline; it does not add permanent membership protection. The
+deadline counts from the last wake, lock or real display event: an unchanged
+screen notification does not extend it. Every settlement clears the captured
+set, also at the limit and at the early release of an unchanged arrangement.
+Known limit: a Tabbed float that the user moved to another Space stays in the
+float set, because the Tabbed sweep drops only tabs that belong elsewhere.
+Accessibility does not list it after wake, so each return from sleep, lock or
+the screen saver waits the full five seconds until that window returns or
+closes. The layout is not changed.
 
 Only a changed `DisplayArrangement` holds: the set of displays, their frames
 and their pixel sizes. AppKit also posts screen-parameter notifications for

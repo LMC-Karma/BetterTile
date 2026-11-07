@@ -562,6 +562,10 @@ final class BetterTileModel {
     private var isShutDown = false
     private var displayChangeHold = DisplayChangeHold()
     private var displayChangeHoldTask: Task<Void, Never>?
+    private var displayChangeExpectedWindows: Set<WindowID>?
+    /// Minimize evidence recorded while the session was active. Evidence from
+    /// sleep or lock can be stale, so the wake readiness wait ignores it.
+    private var displayChangeActiveMinimizedWindows: Set<WindowID> = []
     private var displayChangeDeferredMinimizedWindows: Set<WindowID> = []
     /// The arrangement when the last hold settled. A screen-parameter
     /// notification that leaves it unchanged starts no hold.
@@ -3483,6 +3487,29 @@ final class BetterTileModel {
         }
     }
 
+    /// Captures the pre-transition membership without reading AX during sleep
+    /// or lock. A partial wake inventory cannot replace this base. Runs after
+    /// gesture interruption, which restores a dragged tab to its pane. Only
+    /// windows with a place in the layout count, floats included. Focus mode
+    /// only adds to `windowIDs`, so it can keep windows that already left. An
+    /// Adaptive desktop has no tree for its only window; outside Focus, which
+    /// needs a tree, `windowIDs` is then exact.
+    private func captureDisplayChangeExpectedWindows() {
+        displayChangeExpectedWindows = sessionStore.sessions.values.reduce(into: Set<WindowID>()) { ids, session in
+            let placed: Set<WindowID>
+            switch session.mode {
+            case .manual: return
+            case .bento:
+                let tree = session.bentoState.root.map { Set($0.windowIDs) } ?? session.windowIDs
+                placed = tree.union(session.bentoState.floatingWindowIDs)
+            case .tabbed:
+                placed = (session.tabbedState?.windowIDs ?? []).union(session.tabbedState?.floatingWindowIDs ?? [])
+            case .linked: placed = session.windowIDs
+            }
+            ids.formUnion(placed.subtracting(session.excludedFocusWindowIDs))
+        }
+    }
+
     private func endUnchangedDisplayChangeHold() {
         guard displayChangeHold.releaseUnchanged(token: displayChangeHold.token) != nil else { return }
         Self.bentoLog.debug("display hold released: arrangement unchanged")
@@ -3491,7 +3518,10 @@ final class BetterTileModel {
     }
 
     private func startDisplayChangeHold(_ event: DisplayChangeHold.Event, restartsEventTap: Bool = true) {
-        if !isHoldingDisplayChange { heldDisplayArrangement = system.displayArrangement() }
+        if !isHoldingDisplayChange {
+            displayChangeExpectedWindows = nil
+            heldDisplayArrangement = system.displayArrangement()
+        }
         if event != .displayReconfigurationBegan, event != .displayReconfigurationEnded { displayHoldHasOtherCause = true }
         if event == .sessionResigned { displayChangeLastLockCheck = displayChangeTime }
         displayChangeHold.receive(event, at: displayChangeTime)
@@ -3503,6 +3533,10 @@ final class BetterTileModel {
         if restartsEventTap { sharedGestureEvents.stop() }
         interruptGesturesForDisplayChange()
         if restartsEventTap { setUsesSharedGestureEvents(sharedGestureEvents.start()) }
+        if displayChangeExpectedWindows == nil,
+           [.sleep, .wake, .sessionResigned, .sessionBecameActive].contains(event) {
+            captureDisplayChangeExpectedWindows()
+        }
         Self.bentoLog.debug("display hold started: \(event.rawValue, privacy: .public)")
         displayChangeHoldTask?.cancel()
         windowEventTask?.cancel()
@@ -3569,7 +3603,13 @@ final class BetterTileModel {
         }
         let windows = try? observeVisibleWindows()
         recordDisplayChangeObservation(windows: windows)
-        let frames = windows.map { Dictionary(uniqueKeysWithValues: $0.map { ($0.id, $0.frame) }) }
+        let frames = windows.flatMap { observed -> [WindowID: BTRect]? in
+            let required = (displayChangeExpectedWindows ?? []).subtracting(confirmedGoneWindowIDs)
+                .subtracting(confirmedMinimizedWindowIDs.intersection(displayChangeActiveMinimizedWindows))
+            let eligible = Set(observed.filter(\.isEligible).map(\.id))
+            guard required.isSubset(of: eligible) else { return nil }
+            return Dictionary(uniqueKeysWithValues: observed.map { ($0.id, $0.frame) })
+        }
         guard displayChangeHold.sample(displaySignature: Set(system.displays()), windowFrames: frames,
                                        at: displayChangeTime, token: token) != nil else { return false }
         displayChangeHoldTask = nil
@@ -3590,6 +3630,10 @@ final class BetterTileModel {
 
     private func finishDisplayChangeHold(windows: [WindowSnapshot]?) {
         settledDisplayArrangement = system.displayArrangement()
+        // Every settlement path ends the wake readiness wait: quiet sampling,
+        // the time limit and the early release of an unchanged arrangement.
+        displayChangeExpectedWindows = nil
+        displayChangeActiveMinimizedWindows.removeAll()
         reconfigurationStartArrangement = nil
         reconfigurationReportedDisplayChange = false
         displayChangeUserOverrides.removeAll()
@@ -4241,14 +4285,17 @@ final class BetterTileModel {
                 confirmedMinimizedWindowIDs.insert(windowID)
                 if displayChangeHold.isWaitingForWakeOrUnlock {
                     displayChangeDeferredMinimizedWindows.insert(windowID)
+                    displayChangeActiveMinimizedWindows.remove(windowID)
                 } else {
                     displayChangeDeferredMinimizedWindows.remove(windowID)
                     sessionStore.removeMinimizedTabbedWindow(windowID)
+                    displayChangeActiveMinimizedWindows.insert(windowID)
                 }
             }
             if event.kind == .restored || event.kind == .destroyed {
                 displayChangeDeferredMinimizedWindows.remove(windowID)
                 confirmedMinimizedWindowIDs.remove(windowID)
+                displayChangeActiveMinimizedWindows.remove(windowID)
             }
             if event.kind == .destroyed {
                 pendingWindowArrivals.removeAll {
