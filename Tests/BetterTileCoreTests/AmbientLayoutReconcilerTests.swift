@@ -329,7 +329,8 @@ func aTemporarilyMissingBentoPeerDoesNotMaximizeTheRemainingWindow(knownMember: 
         lastWorkArea: ambientBounds
     )
     let reconciler = ambientReconciler(singleWindowPlacement: .maximize)
-    for _ in 0..<(knownMember ? 8 : 2) {
+    let budget = knownMember ? session.presence.toleratedMembershipOnlyAbsences : session.presence.toleratedAbsences
+    for _ in 0..<budget {
         let transition = reconciler.transition(
             session: session,
             observation: ambientObservation(
@@ -717,4 +718,58 @@ func aTemporarilyMissingBentoPeerDoesNotMaximizeTheRemainingWindow(knownMember: 
     #expect(transition.session.paneGap(configured: 0) == 8)
     session.savedLayoutPaneGap = nil
     #expect(session.paneGap(configured: 4) == 4)
+}
+
+/// Right, known by desktop membership, has a partial run of timed misses. The
+/// user leaves for more than the minimum membership time and returns. The
+/// desktop-transition observation keeps the tree read-only, and it restarts
+/// the absence tally, whether it sees Right again or not. Then a dense run of
+/// misses starts. The new run needs its full count of misses and its full
+/// minimum time; the old count and start time must not finish it.
+@Test(arguments: [true, false])
+func aDesktopTransitionRestartsTheAbsenceRunOfAMissingPane(observedOnReturn: Bool) throws {
+    let all = [ambientLeft, ambientRight]
+    let members = Set(all.map(\.id))
+    var session = LayoutSession(
+        displayID: ambientDisplayID,
+        mode: .bento,
+        bentoState: horizontalPaneState(all),
+        windowIDs: members,
+        bentoInsertionOrder: all.map(\.id),
+        lastWorkArea: ambientBounds
+    )
+    let reconciler = ambientReconciler()
+    let start = ContinuousClock.now
+    func observe(_ windows: [WindowSnapshot], at offset: Duration, transition: Bool = false) -> LayoutSession {
+        var observation = ambientObservation(
+            windows: windows, isDesktopTransition: transition, knownSpaceWindowIDs: members)
+        observation.now = start + offset
+        return reconciler.transition(session: session, observation: observation).session
+    }
+    let budget = session.presence.toleratedMembershipOnlyAbsences
+    for index in 0..<budget {
+        session = observe([ambientLeft], at: .milliseconds(100 * index))
+    }
+    try #require(session.presence.pending[ambientRight.id] == budget)
+    try #require(session.presence.membershipOnlyAbsenceStarts[ambientRight.id] == start)
+
+    let tree = session.bentoState
+    session = observe(observedOnReturn ? all : [ambientLeft], at: .seconds(2), transition: true)
+    #expect(session.bentoState == tree, "the transition keeps the tree read-only")
+    #expect(session.presence.pending.isEmpty)
+    #expect(session.presence.membershipOnlyAbsenceStarts.isEmpty)
+
+    let runStart = Duration.milliseconds(2_100)
+    var misses = 0
+    var removedAt: Duration?
+    while removedAt == nil, misses < 40 {
+        let offset = runStart + .milliseconds(90 * misses)
+        session = observe([ambientLeft], at: offset)
+        misses += 1
+        if session.bentoState.root?.windowIDs == [ambientLeft.id] { removedAt = offset }
+    }
+    let removal = try #require(removedAt, "the new run must still remove the pane")
+    #expect(misses > budget, "the new run gets its full count")
+    #expect(removal - runStart >= session.presence.minimumMembershipOnlyAbsence,
+            "the new run gets its full minimum time")
 }
