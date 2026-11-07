@@ -107,3 +107,103 @@ func onlyARealDisplayChangeHoldsTheLayout(source: DisplayChangeSource, change: D
         #expect(await system.waitFor { !model.isHoldingDisplayChange })
     }
 }
+
+enum LateReconfiguration: String, CaseIterable, Sendable {
+    /// The second display is gone before the callbacks reach the model.
+    case removal
+    /// The main display changed resolution before the callbacks reach the
+    /// model. Its end callbacks report a mode change, not an added or removed
+    /// display, so only the settled arrangement shows the change.
+    case resolution
+    /// The second display is removed and added again before the callbacks
+    /// reach the model. Every arrangement read matches, but the end callbacks
+    /// report the removal and the addition.
+    case removeAndReAdd
+}
+
+/// The Core Graphics callback reaches the model through a main-actor task.
+/// When the main actor was busy, every begin and end runs after macOS changed
+/// the displays, so the begin already sees the new arrangement. The hold must
+/// still cover that change.
+@Test(.appTestApplication, arguments: LateReconfiguration.allCases) @MainActor
+func aDisplayChangeHandledLateStillHolds(change: LateReconfiguration) async throws {
+    let system = makeManualWindowSystem(drivingPolicyDeadlines: true)
+    system.availableDisplays = [system.mainDisplay, secondDisplay]
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    model.setActiveMode(.bento)
+    await system.advance(by: .seconds(1))
+    switch change {
+    case .removal: system.availableDisplays.removeAll { $0.id == secondDisplay.id }
+    case .resolution:
+        system.availableDisplays[0].frame = BTRect(x: 0, y: 0, width: 1280, height: 800)
+        system.availableDisplays[0].visibleFrame = BTRect(x: 0, y: 0, width: 1280, height: 800)
+    case .removeAndReAdd: break
+    }
+    model.handleDisplayReconfiguration(.beginConfigurationFlag)
+    model.handleDisplayReconfiguration(.beginConfigurationFlag)
+    switch change {
+    case .removal:
+        model.handleDisplayReconfiguration(.removeFlag)
+        model.handleDisplayReconfiguration([])
+    case .resolution:
+        model.handleDisplayReconfiguration(.setModeFlag)
+        model.handleDisplayReconfiguration([])
+    case .removeAndReAdd:
+        model.handleDisplayReconfiguration(.removeFlag)
+        model.handleDisplayReconfiguration(.addFlag)
+    }
+    model.scheduleDisplayRefresh()
+    #expect(model.isHoldingDisplayChange, "A display change handled late ended its hold at once")
+}
+
+/// With two displays Core Graphics sends a begin and an end for each display.
+/// An unchanged pair for each ends the hold after the last end, not before.
+@Test(.appTestApplication) @MainActor
+func twoUnchangedReconfigurationPairsEndTheHoldAfterTheLastEnd() async throws {
+    let system = makeManualWindowSystem(drivingPolicyDeadlines: true)
+    system.availableDisplays = [system.mainDisplay, secondDisplay]
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    model.setActiveMode(.bento)
+    await system.advance(by: .seconds(1))
+    model.handleDisplayReconfiguration(.beginConfigurationFlag)
+    model.handleDisplayReconfiguration(.beginConfigurationFlag)
+    model.handleDisplayReconfiguration([])
+    #expect(model.isHoldingDisplayChange)
+    model.handleDisplayReconfiguration([])
+    #expect(!model.isHoldingDisplayChange)
+}
+
+/// Adding a display sends more ends than begins: one for each online display
+/// and one for the added display. That is a real change and holds.
+@Test(.appTestApplication) @MainActor
+func aDisplayAddWithMoreEndsThanBeginsHolds() async throws {
+    let system = makeManualWindowSystem(drivingPolicyDeadlines: true)
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    model.setActiveMode(.bento)
+    await system.advance(by: .seconds(1))
+    model.handleDisplayReconfiguration(.beginConfigurationFlag)
+    system.availableDisplays.append(secondDisplay)
+    model.handleDisplayReconfiguration([])
+    model.handleDisplayReconfiguration(.addFlag)
+    #expect(model.isHoldingDisplayChange)
+}
+
+/// A wake hold keeps waiting when an unchanged reconfiguration pair arrives
+/// during it.
+@Test(.appTestApplication) @MainActor
+func anUnchangedReconfigurationDuringAWakeHoldKeepsTheHold() async throws {
+    let system = makeManualWindowSystem(drivingPolicyDeadlines: true)
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    model.setActiveMode(.bento)
+    await system.advance(by: .seconds(1))
+    model.handleDisplayChange(.sleep)
+    model.handleDisplayChange(.wake)
+    try #require(model.isHoldingDisplayChange)
+    model.handleDisplayReconfiguration(.beginConfigurationFlag)
+    model.handleDisplayReconfiguration([])
+    #expect(model.isHoldingDisplayChange, "An unchanged reconfiguration ended the wake hold")
+}
