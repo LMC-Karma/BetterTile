@@ -291,6 +291,11 @@ while inactive, after the hold has stopped any gesture, so a tab that an
 interrupted drag returns to its pane counts. Repeated wake events during the
 hold keep the same captured set. This readiness wait ends at the same
 five-second deadline; it does not add permanent membership protection.
+Known limit: a Tabbed float that the user moved to another Space stays in the
+float set, because the Tabbed sweep drops only tabs that belong elsewhere.
+Accessibility does not list it after wake, so each wake from sleep or lock
+waits the full five seconds until that window returns or closes. The layout
+is not changed.
 
 During an awake, active hold, observations and closed or minimized evidence
 accumulate. Sleep and lock holds do not sample windows; a slow public lock-state
