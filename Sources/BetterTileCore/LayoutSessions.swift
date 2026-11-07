@@ -258,6 +258,9 @@ public struct LayoutSessionStore: Sendable {
         public var overlap: Int
         public var observedCount: Int
         public var sameDisplay: Bool
+        public var windowIDs: Set<WindowID>
+        public var previousDisplayID: DisplayID
+        public var previousSpaceID: NativeSpaceID?
     }
     public private(set) var lastRestoration: Restoration?
 
@@ -386,6 +389,10 @@ public struct LayoutSessionStore: Sendable {
             storedSessions[displayID, default: [:]][session.id] = session
         }
         activeSessionIDs[displayID] = session.id
+        if firstObservation, windowIDs.isEmpty {
+            // An empty AX look is not evidence that this is a new desktop.
+            awaitingFirstObservation.insert(session.id)
+        }
         return (session, wasCreated, previousWindowIDs)
     }
 
@@ -446,12 +453,50 @@ public struct LayoutSessionStore: Sendable {
         storedSessions[displayID].map { Array($0.values) } ?? []
     }
 
+    /// Metadata ownership includes dormant and retired desktops. This does not
+    /// authorize a window write; those still require the active desktop.
+    public func retainedSession(_ id: DesktopSessionID) -> LayoutSession? {
+        for sessions in storedSessions.values {
+            if let session = sessions[id] { return session }
+        }
+        return retiredSessions.first { $0.session.id == id }?.session
+    }
+
+    /// A cancelled transaction can finish bookkeeping after its display retires.
+    /// It may change only the exact retired revision it originally owned.
+    @discardableResult
+    public mutating func commitRetiredBookkeeping(_ proposed: LayoutSession, replacing revision: UInt64) -> LayoutSession? {
+        guard proposed.revision == revision,
+              let index = retiredSessions.firstIndex(where: {
+                  $0.session.id == proposed.id && $0.session.displayID == proposed.displayID && $0.session.revision == revision
+              }) else { return nil }
+        if proposed == retiredSessions[index].session { return proposed }
+        var committed = proposed
+        committed.advanceRevision()
+        retiredSessions[index].session = committed
+        return committed
+    }
+
+    /// Even choosing the existing default mode is an explicit user decision.
+    public mutating func endRestorationOpportunity(on displayID: DisplayID) {
+        if let id = activeSessionIDs[displayID] { awaitingFirstObservation.remove(id) }
+    }
+
     /// Incomplete rollback belongs to its original session, even after selection changes.
     public mutating func suspendAutomaticWrites(sessionID: DesktopSessionID, on displayID: DisplayID) {
-        guard var session = storedSessions[displayID]?[sessionID], !session.automaticWritesSuspended else { return }
-        session.automaticWritesSuspended = true
-        session.advanceRevision()
-        storedSessions[displayID]?[sessionID] = session
+        // A restoration may already have moved the same runtime owner to a
+        // new display number. A real failure must still reach that owner.
+        for display in storedSessions.keys.sorted() {
+            guard var session = storedSessions[display]?[sessionID], !session.automaticWritesSuspended else { continue }
+            session.automaticWritesSuspended = true
+            session.advanceRevision()
+            storedSessions[display]?[sessionID] = session
+        }
+        for index in retiredSessions.indices where retiredSessions[index].session.id == sessionID {
+            guard !retiredSessions[index].session.automaticWritesSuspended else { continue }
+            retiredSessions[index].session.automaticWritesSuspended = true
+            retiredSessions[index].session.advanceRevision()
+        }
     }
 
     public mutating func update(_ displayID: DisplayID, _ update: (inout LayoutSession) -> Void) {
@@ -459,6 +504,7 @@ public struct LayoutSessionStore: Sendable {
         let original = session
         update(&session)
         guard session != original else { return }
+        if session.mode != original.mode || !session.windowIDs.isEmpty { awaitingFirstObservation.remove(id) }
         session.advanceRevision()
         storedSessions[displayID]?[id] = session
     }
@@ -475,6 +521,7 @@ public struct LayoutSessionStore: Sendable {
         else { return nil }
         guard let current = storedSessions[proposed.displayID]?[proposed.id] else { return nil }
         if proposed == current { return current }
+        if proposed.mode != current.mode || !proposed.windowIDs.isEmpty { awaitingFirstObservation.remove(proposed.id) }
         var committed = proposed
         committed.advanceRevision()
         storedSessions[proposed.displayID]?[proposed.id] = committed
@@ -494,27 +541,46 @@ public struct LayoutSessionStore: Sendable {
     }
 
     private mutating func removeUnavailableTabbedWindow(_ windowID: WindowID, closed: Bool) {
+        func update(_ session: inout LayoutSession) {
+            guard let state = session.tabbedState,
+                  state.windowIDs.contains(windowID) || state.floatingWindowIDs.contains(windowID)
+                    || (closed && session.tabbedBaselineFrames[windowID] != nil) else { return }
+            session.tabbedState?.removeClosedWindow(windowID)
+            if !closed { session.endFollowing() }
+            if closed { session.tabbedBaselineFrames.removeValue(forKey: windowID) }
+            session.windowIDs.remove(windowID)
+            session.advanceRevision()
+        }
         for displayID in Array(storedSessions.keys) {
             for id in Array(storedSessions[displayID]?.keys ?? Dictionary<DesktopSessionID, LayoutSession>().keys) {
-                guard var session = storedSessions[displayID]?[id],
-                      let state = session.tabbedState,
-                      state.windowIDs.contains(windowID)
-                        || state.floatingWindowIDs.contains(windowID)
-                        || (closed && session.tabbedBaselineFrames[windowID] != nil)
-                else { continue }
-                session.tabbedState?.removeClosedWindow(windowID)
-                if !closed { session.endFollowing() }
-                if closed { session.tabbedBaselineFrames.removeValue(forKey: windowID) }
-                session.windowIDs.remove(windowID)
-                session.advanceRevision()
+                guard var session = storedSessions[displayID]?[id] else { continue }
+                update(&session)
                 storedSessions[displayID]?[id] = session
             }
         }
+        for index in retiredSessions.indices {
+            let previous = retiredSessions[index].session
+            update(&retiredSessions[index].session)
+            if closed {
+                retiredSessions[index].windowIDs.remove(windowID)
+                if retiredSessions[index].session.tabbedState == nil {
+                    retiredSessions[index].session.windowIDs.remove(windowID)
+                    retiredSessions[index].session.bentoState.remove(windowID)
+                }
+                retiredSessions[index].session.bentoReinsertionAnchors.removeValue(forKey: windowID)
+                retiredSessions[index].session.excludedFocusWindowIDs.remove(windowID)
+                retiredSessions[index].session.bentoInsertionOrder.removeAll { $0 == windowID }
+                if retiredSessions[index].session != previous, retiredSessions[index].session.revision == previous.revision {
+                    retiredSessions[index].session.advanceRevision()
+                }
+            }
+        }
+        retiredSessions.removeAll { $0.windowIDs.isEmpty }
     }
 
     public mutating func removeMissingDisplays(_ displayIDs: Set<DisplayID>, at time: TimeInterval = 0) {
         for displayID in storedSessions.keys.sorted() where !displayIDs.contains(displayID) {
-            for session in allSessions(for: displayID) { retire(session, at: time) }
+            for session in allSessions(for: displayID).sorted(by: { $0.id.rawValue.uuidString < $1.id.rawValue.uuidString }) { retire(session, at: time) }
             storedSessions.removeValue(forKey: displayID)
             displayIdentifiers.removeValue(forKey: displayID)
         }
@@ -528,9 +594,11 @@ public struct LayoutSessionStore: Sendable {
     public mutating func removeMissingNativeSpaces(
         _ knownSpacesByDisplay: [DisplayID: Set<NativeSpaceID>], at time: TimeInterval = 0
     ) {
-        for (displayID, knownSpaceIDs) in knownSpacesByDisplay {
+        for displayID in knownSpacesByDisplay.keys.sorted() {
+            let knownSpaceIDs = knownSpacesByDisplay[displayID] ?? []
             guard var sessions = storedSessions[displayID] else { continue }
-            for (id, session) in sessions where session.nativeSpaceID.map({ !knownSpaceIDs.contains($0) }) == true {
+            for id in sessions.keys.sorted(by: { $0.rawValue.uuidString < $1.rawValue.uuidString }) {
+                guard let session = sessions[id], session.nativeSpaceID.map({ !knownSpaceIDs.contains($0) }) == true else { continue }
                 retire(session, at: time)
                 sessions.removeValue(forKey: id)
             }
@@ -547,6 +615,7 @@ public struct LayoutSessionStore: Sendable {
             .union(session.bentoState.floatingWindowIDs)
             .union(session.tabbedState?.windowIDs ?? [])
             .union(session.tabbedState?.floatingWindowIDs ?? [])
+        guard !windows.isEmpty else { return }
         retiredSessions.append(RetiredDesktop(session: session,
             displayIdentifier: displayIdentifiers[session.displayID], windowIDs: windows, retiredAt: time))
         if retiredSessions.count > 32 { retiredSessions.removeFirst(retiredSessions.count - 32) }
@@ -554,24 +623,36 @@ public struct LayoutSessionStore: Sendable {
 
     /// Match only desktops with evidence: at least half of the destination's
     /// windows must belong to the retired desktop. A missing UUID is never a
-    /// same-screen match. Equal scores prefer that screen, then recent retirement.
+    /// same-screen match. Equal overlaps prefer the most fully covered desktop.
+    /// Carry-over prefers its newest copy; UUID then resolves an equal-time tie.
     public mutating func restoreRetired(on displayID: DisplayID, identifier: String?,
                                        windowIDs: Set<WindowID>, carryOver: Bool) -> LayoutSession? {
         lastRestoration = nil
         guard !windowIDs.isEmpty else { return nil }
-        let matches = retiredSessions.enumerated().compactMap { index, retired -> (Int, Int, Bool, TimeInterval)? in
+        let matches = retiredSessions.enumerated().compactMap { index, retired ->
+            (index: Int, overlap: Int, coverage: Double, same: Bool, time: TimeInterval, id: String)? in
             let same = identifier != nil && identifier == retired.displayIdentifier
             let overlap = windowIDs.intersection(retired.windowIDs).count
             guard (carryOver || same), overlap * 2 >= windowIDs.count else { return nil }
-            return (index, overlap, same, retired.retiredAt)
+            return (index, overlap, Double(overlap) / Double(retired.windowIDs.count), same,
+                    retired.retiredAt, retired.session.id.rawValue.uuidString)
         }
         guard let match = matches.max(by: { lhs, rhs in
-            if lhs.1 != rhs.1 { return lhs.1 < rhs.1 }
-            if lhs.2 != rhs.2 { return !lhs.2 }
-            if lhs.3 != rhs.3 { return lhs.3 < rhs.3 }
-            return lhs.0 < rhs.0
+            if lhs.overlap != rhs.overlap { return lhs.overlap < rhs.overlap }
+            if lhs.coverage != rhs.coverage { return lhs.coverage < rhs.coverage }
+            if carryOver, lhs.time != rhs.time { return lhs.time < rhs.time }
+            if lhs.same != rhs.same { return !lhs.same }
+            if lhs.time != rhs.time { return lhs.time < rhs.time }
+            return lhs.id > rhs.id
         }) else { return nil }
-        var session = retiredSessions.remove(at: match.0).session
+        let restored = retiredSessions.remove(at: match.index)
+        // With carry-over on, these are older copies of the same desktop.
+        // Off keeps the other screen's independent memory for its next return.
+        retiredSessions.removeAll {
+            $0.windowIDs.isSubset(of: restored.windowIDs)
+                && (carryOver || (identifier != nil && $0.displayIdentifier == identifier))
+        }
+        var session = restored.session
         session.displayID = displayID
         session.nativeSpaceID = nil
         session.lastWorkArea = nil
@@ -582,7 +663,9 @@ public struct LayoutSessionStore: Sendable {
         // This is a continuation of Tabbed, not a fresh entry. Do not capture
         // macOS's temporary relocated frames as a new Manual-mode baseline.
         if session.mode == .tabbed { session.tabbedHasEntryBaseline = true }
-        lastRestoration = Restoration(overlap: match.1, observedCount: windowIDs.count, sameDisplay: match.2)
+        lastRestoration = Restoration(overlap: match.overlap, observedCount: windowIDs.count, sameDisplay: match.same,
+            windowIDs: restored.windowIDs, previousDisplayID: restored.session.displayID,
+            previousSpaceID: restored.session.nativeSpaceID)
         return session
     }
 

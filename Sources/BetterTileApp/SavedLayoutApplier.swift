@@ -496,6 +496,14 @@ private struct SavedLayoutUndoStructure: Equatable {
     var hasUndo: Bool { !undos.isEmpty }
     var tracksUndoSessions: Bool { undos.values.contains { !expiredUndoIDs.contains($0.id) } }
     func canUndo(on displayID: DisplayID) -> Bool { !isBusy && undos[displayID].map { !undoSessionChanged($0) } == true }
+    /// Retired desktops cannot reuse an Apply checkpoint from the old screen.
+    func invalidateUndo(involving windowIDs: Set<WindowID>, desktop: SavedLayoutDesktop?) {
+        for undo in undos.values where !windowIDs.isDisjoint(with: undo.frames.keys)
+            || desktop.map({ undo.committedSessions[$0] != nil }) == true {
+            expiredUndoIDs.insert(undo.id)
+        }
+    }
+
     var lastLayoutURL: URL? { positionContext?.layoutURL }
     /// Apply inventories and model events refresh this cache. Rendering performs no system reads.
     func updateUndoDesktops(_ observation: NativeDesktopObservation?, displays: [DisplaySnapshot], sessions: [DisplayID: SavedLayoutSession]? = nil) {

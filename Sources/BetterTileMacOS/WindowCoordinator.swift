@@ -162,6 +162,13 @@ public final class WindowCoordinator {
         self.actionEngine = actionEngine
     }
 
+    /// A restored desktop adopts a new screen's geometry. Old-screen Restore
+    /// steps and shortcut cycles must not move its windows back there.
+    public func discardHistory(for windowIDs: Set<WindowID>) {
+        for id in windowIDs { history.remove(windowID: id) }
+        if let lastCycle, windowIDs.contains(lastCycle.windowID) { self.lastCycle = nil }
+    }
+
     /// Retires only a window whose closure the window system confirmed.
     public func removeClosedWindow(_ windowID: WindowID) {
         history.remove(windowID: windowID)

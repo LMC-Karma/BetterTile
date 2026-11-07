@@ -235,21 +235,33 @@ stops automatic writes until Repair, as for a degraded mutation.
 BetterTile operates on eligible on-screen windows exposed by its macOS integration layer. It refreshes the current window set immediately when apps, Spaces, or displays change. A validated native desktop observation selects one process-local runtime layout session for each display and Space pair. Missing or malformed native observations retain the public-API window-overlap matcher. Empty window membership remains unknown, windows reported on several Spaces float, and native fullscreen Spaces expose neither automatic layout writes nor dividers. With separate Spaces per display, a window's center can lie on a display whose current Space does not hold it, for example while the window is dragged across a shared edge. A window whose one Space is current on another display stays visible and is reported on that Space's display; only a window whose Space is current on no display is left out. BetterTile never assigns a window to a hidden Space. An explicit display transfer
 uses the destination display's current desktop.
 
-When a display or native Space disappears after the display hold, its sessions
-move to an in-memory retirement list. The list keeps at most 32 desktops and
-drops the oldest. A new session, including the first observation after native
-selection, can restore the desktop with the most window overlap. At least half
-of the new desktop's windows must overlap. Ties prefer the same display UUID,
-then the most recent retirement. Empty desktops stay at the default mode.
-If the native observation arrives later, its first matching window observation
-adopts the restored inferred session instead of replacing it with a default.
+When a display disappears, or Mission Control removes a native Space, its
+sessions move to an in-memory retirement list. Normal refresh retires them after
+the display hold. An explicit action during the hold can retire missing displays
+before activating its target. The list keeps at most 32 nonempty desktops in a
+fixed order and drops the oldest. Empty and native fullscreen placeholders do
+not enter it. Authoritative close and minimize events update retired Tabbed
+state too; only closure removes an identity from restoration evidence.
+
+A new session can restore the desktop with the most window overlap. At least
+half of the new desktop's windows must overlap. Ties prefer the desktop covered
+most fully, then the newest retirement when carry-over is on, the same display
+UUID, and a fixed session order. Restoring removes superseded copies of that
+desktop. With carry-over off, other screens keep their independent memories.
+An empty first observation keeps the restoration opportunity until windows
+arrive or the user chooses a mode or Tabbed arrangement. A shortcut during the
+hold selects the carried mode before interpreting the action. If the native
+observation arrives later, its first matching window observation adopts the
+restored inferred session instead of replacing it with a default.
 
 The display UUID comes from public `CGDisplayCreateUUIDFromDisplayID`. It lets a
 screen reconnect with different Core Graphics and Space numbers. Carry-over is
 on by default; off permits restoration only from the same known UUID. A restored
 session adopts the new display and Space IDs and invalidates its work area, so
 the stored tree fits the new screen. It ends Saved Layout following and discards
-old Tabbed entry frames, committed placements and Undo history. Pane ratios, tab
+old Tabbed entry frames, committed placements, frame Restore history and Undo
+Apply checkpoints. Every restoration path, including Repair, clears this history.
+Pane ratios, tab
 groups and reinsertion metadata remain. Continuing Tabbed does not capture a new
 entry baseline, so leaving it keeps current frames. Sessions, window identities,
 UUID associations and retired desktops are never persisted. The existing private

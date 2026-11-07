@@ -94,14 +94,14 @@ struct LayoutSessionRetirementTests {
         #expect(store.restoreRetired(on: old, identifier: nil, windowIDs: [a], carryOver: false) == nil)
     }
 
-    @Test func sameUUIDBreaksOverlapTiesBeforeRecency() throws {
+    @Test func sameUUIDFiltersCandidatesWhenCarryOverIsOff() throws {
         var store = LayoutSessionStore()
         let original = activate(&store, display: old, space: 1, windows: [a, b])
         store.removeMissingDisplays([], at: 1)
         // Off keeps the first screen's history parked while the other gets defaults.
         _ = activate(&store, display: new, space: 2, windows: [a, b], uuid: "other", carry: false)
         store.removeMissingDisplays([], at: 2)
-        let candidate = store.restoreRetired(on: old, identifier: "screen", windowIDs: [a, b], carryOver: true)
+        let candidate = store.restoreRetired(on: old, identifier: "screen", windowIDs: [a, b], carryOver: false)
         let match = try #require(candidate)
         #expect(match.id == original.id)
         #expect(store.lastRestoration?.sameDisplay == true)

@@ -807,6 +807,7 @@ final class BetterTileModel {
         cancelPendingFocusRestore(on: displayID)
         let mode = mode.availableMode
         sessionStore.ensure(displayID: displayID, defaultMode: configuration.defaultLayoutMode)
+        sessionStore.endRestorationOpportunity(on: displayID)
         if activeMode(for: displayID) == .tabbed, mode != .tabbed {
             leaveTabbed(displayID: displayID, destination: mode, focusedWindowID: focusedWindowID)
             return
@@ -1793,6 +1794,7 @@ final class BetterTileModel {
                 displayIdentifier: display.persistentIdentifier,
                 carryOver: configuration.keepsDesktopLayoutsAcrossDisplays
             ).session
+            finishDesktopRestoration(session)
             // One window has no layout to repair. Restoring its configured
             // placement is the useful thing to do, and it deliberately leaves
             // the desktop's mode alone: a manual desktop stays manual.
@@ -3290,12 +3292,12 @@ final class BetterTileModel {
 
     private func completeDisplayHoldTabbedHandoff(_ taskID: UUID, on displayID: DisplayID) {
         guard let owner = displayHoldTabbedHandoffs.removeValue(forKey: taskID),
-              sessionStore.isCurrent(owner.id, revision: owner.revision, on: displayID),
-              sessionStore.session(for: displayID)?.automaticWritesSuspended == false else { return }
+              let retained = sessionStore.retainedSession(owner.id), retained.revision == owner.revision,
+              !retained.automaticWritesSuspended else { return }
         tabbedCommittedLayouts.removeValue(forKey: owner.id)
         // Usually the post-hold transition owns this placement. If cancellation
         // completed later, that transition saw a busy display; resume it now.
-        if !isHoldingDisplayChange { refreshActiveWindows(force: true) }
+        if !isHoldingDisplayChange, sessionStore.isActive(owner.id, on: displayID) { refreshActiveWindows(force: true) }
     }
 
     private func displayChangeAllowsLayout(on displayID: DisplayID) -> Bool {
@@ -3304,7 +3306,18 @@ final class BetterTileModel {
 
     private func releaseDisplayChangeHoldForUserAction(on displayID: DisplayID) {
         guard isHoldingDisplayChange else { return }
-        displayChangeUserOverrides.insert(displayID)
+        // A shortcut can reach the replacement display before the hold settles.
+        // Retain the absent screen's sessions before activating that target.
+        let displays = system.displays()
+        sessionStore.observeDisplays(displays)
+        sessionStore.removeMissingDisplays(Set(displays.map(\.id)), at: displayChangeTime)
+        forgetEndedTabbedSessions(displayIDs: displays.map(\.id))
+        let firstOverride = displayChangeUserOverrides.insert(displayID).inserted
+        if firstOverride, sessionStore.session(for: displayID)?.windowIDs.isEmpty != false {
+            // Choose the carried mode before interpreting the shortcut. A
+            // later restoration must not undo a snap planned as Manual.
+            refreshActiveWindows(force: false)
+        }
     }
 
     /// Coalesces Core Graphics and AppKit display notifications into the same
@@ -5550,12 +5563,7 @@ final class BetterTileModel {
                 displayIdentifier: display.persistentIdentifier,
                 carryOver: configuration.keepsDesktopLayoutsAcrossDisplays
             )
-            if let restored = sessionStore.lastRestoration {
-                tabbedCommittedLayouts.removeValue(forKey: activation.session.id)
-                tabbedEntryBaselines.removeValue(forKey: activation.session.id)
-                tabbedUndo.removeValue(forKey: activation.session.id)
-                Self.bentoLog.debug("desktop restored: overlap \(restored.overlap, privacy: .public) of \(restored.observedCount, privacy: .public), same screen \(restored.sameDisplay, privacy: .public)")
-            }
+            finishDesktopRestoration(activation.session)
             selectTabbedOverlay(for: activation.session)
             if focused?.displayID == display.id { resolvedActiveDisplay = display.id }
             #if DEBUG
@@ -6786,7 +6794,7 @@ extension BetterTileModel {
                     && workArea != display.visibleFrame && isSameDesktopAnyWorkArea()
                 let holdOwnsRecovery = self.displayHoldTabbedHandoffs[taskID].map {
                     $0.id == original.id && $0.revision == original.revision
-                        && self.sessionStore.isCurrent(original.id, revision: original.revision, on: display.id)
+                        && self.sessionStore.retainedSession(original.id)?.revision == original.revision
                 } == true
                 if holdOwnsRecovery, !rollbackFailed, let gestureBaseline {
                     // The interrupted rollback also owned the provisional tear-off.
@@ -6795,7 +6803,8 @@ extension BetterTileModel {
                     restored.tabbedState = gestureBaseline
                     restored.windowIDs = gestureBaseline.windowIDs
                     restored.lastObservedFrames = rollbackFrames ?? original.lastObservedFrames
-                    if let committed = self.sessionStore.commit(restored, replacing: original.revision) {
+                    if let committed = self.sessionStore.commit(restored, replacing: original.revision)
+                        ?? self.sessionStore.commitRetiredBookkeeping(restored, replacing: original.revision) {
                         self.displayHoldTabbedHandoffs[taskID] = committed
                     }
                 }
@@ -6825,6 +6834,7 @@ extension BetterTileModel {
             tabbedOverlays[display.id]?.acceptsTabDrags = false
             tabbedTasks[display.id] = Task { @MainActor [weak self] in
                 guard let self else { return }
+                defer { self.completeDisplayHoldTabbedHandoff(taskID, on: display.id) }
                 defer {
                     self.resumeIdlePaneApplicationRequest(on: display.id)
                     if !self.isTabbedBusy(on: display.id), self.tabbedQueuedIntents[display.id] == nil {
@@ -6840,7 +6850,6 @@ extension BetterTileModel {
                 guard self.tabbedTaskIDs[display.id] == taskID else { return }
                 self.tabbedTaskIDs.removeValue(forKey: display.id)
                 self.tabbedTasks[display.id] = nil
-                defer { self.completeDisplayHoldTabbedHandoff(taskID, on: display.id) }
                 guard isSameDesktop(), !Task.isCancelled else {
                     if !isSameDesktop() || self.activeBentoDrag?.layoutSession.id != original.id {
                         self.tabbedQueuedIntents.removeValue(forKey: display.id)
@@ -6894,6 +6903,7 @@ extension BetterTileModel {
         let requestFocusEpoch = menuPanelFocusEpoch
         let placement = Self.startTabbedPlacement(immediately: startsNow) { @MainActor [weak self] in
             guard let self else { return }
+            defer { self.completeDisplayHoldTabbedHandoff(taskID, on: display.id) }
             #if DEBUG
             if self.arrivalTrace.isEnabled { for window in windows {
                 self.arrivalTrace.disposition("tabbed_placement_started", windowID: window.id,
@@ -7151,7 +7161,6 @@ extension BetterTileModel {
             guard self.tabbedTaskIDs[display.id] == taskID else { return }
             self.tabbedTaskIDs.removeValue(forKey: display.id)
             self.tabbedTasks[display.id] = nil
-            defer { self.completeDisplayHoldTabbedHandoff(taskID, on: display.id) }
             guard !Task.isCancelled, isSameDesktop() else {
                 if !isSameDesktop() || self.activeBentoDrag?.layoutSession.id != original.id {
                     self.tabbedQueuedIntents.removeValue(forKey: display.id)
@@ -7435,6 +7444,7 @@ extension BetterTileModel {
               var session = sessionStore.session(for: displayID), session.mode == .tabbed,
               let display = system.displays().first(where: { $0.id == displayID }),
               var state = session.tabbedState else { return }
+        if raisesEarly { sessionStore.endRestorationOpportunity(on: displayID) }
         if isTabbedBusy(on: displayID) {
             tabbedQueuedIntents[displayID, default: []].append(.ui(intent))
             tabbedOverlays[displayID]?.yieldPressSelection()
@@ -8181,6 +8191,20 @@ extension BetterTileModel {
             }
             return Placement(windowID: id, frame: restored)
         }
+    }
+
+    /// Every activation path drops geometry-dependent history from the old screen.
+    private func finishDesktopRestoration(_ session: LayoutSession) {
+        guard let restored = sessionStore.lastRestoration else { return }
+        tabbedCommittedLayouts.removeValue(forKey: session.id)
+        tabbedEntryBaselines.removeValue(forKey: session.id)
+        tabbedUndo.removeValue(forKey: session.id)
+        coordinator.discardHistory(for: restored.windowIDs)
+        let desktop = restored.previousSpaceID.map {
+            SavedLayoutDesktop(displayID: restored.previousDisplayID, spaceID: $0)
+        }
+        savedLayoutApplier?.invalidateUndo(involving: restored.windowIDs, desktop: desktop)
+        Self.bentoLog.debug("desktop restored: overlap \(restored.overlap, privacy: .public) of \(restored.observedCount, privacy: .public), same screen \(restored.sameDisplay, privacy: .public)")
     }
 
     /// Drops the committed layouts of sessions whose display or Space is gone.
@@ -9226,6 +9250,7 @@ extension BetterTileModel {
             displayID: desktop.displayID, windowIDs: [], focusedWindowID: nil,
             defaultMode: configuration.defaultLayoutMode, reuseActiveWhenUnmatched: false, nativeSpaceID: desktop.spaceID,
             displayIdentifier: display.persistentIdentifier, carryOver: configuration.keepsDesktopLayoutsAcrossDisplays).session
+        if current == nil { finishDesktopRestoration(session) }
         let revision = session.revision
         let sessionID = session.id
         var placements = plan.placements
