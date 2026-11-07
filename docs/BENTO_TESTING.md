@@ -15,10 +15,11 @@ xcodebuild -project BetterTile.xcodeproj -scheme BetterTile \
 ```
 
 `AdaptiveCompoundScenarioTests` combines arrivals with divider edits, overflow
-admission, work-area changes during settlement, repeated Repair, and display
-round trips. These model checks use the injected clock, compare pane order and
-ratios, and require a quiet interval with no later writes. Their arrival bounds
-describe deterministic scheduling, not live application response times.
+admission, work-area changes during settlement, repeated Repair Layout, and
+display round trips. These model checks use the injected clock, compare pane
+order and ratios, and require a quiet interval with no later writes. Their
+arrival bounds describe deterministic scheduling, not live application response
+times.
 
 ## Manual checks
 

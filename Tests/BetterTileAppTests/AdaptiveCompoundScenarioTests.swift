@@ -123,7 +123,7 @@ struct AdaptiveCompoundScenarioTests {
         try disjoint(s, m)
     }
 
-    @Test func burstNotificationsInReverseOrderKeepAllThreeArrivals() async throws {
+    @Test func burstWithReversedInventoryKeepsAllThreeArrivals() async throws {
         let (s, m) = try await fixture(3); defer { m.shutdown() }
         let added = (3...5).map { window($0, s) }
         s.windows.append(contentsOf: added.reversed())
@@ -168,18 +168,6 @@ struct AdaptiveCompoundScenarioTests {
         #expect(frames(s) == before)
     }
 
-    @Test func seventhWindowJoinsAfterMiddlePaneCloses() async throws {
-        let (s, m) = try await fixture(6); defer { m.shutdown() }
-        let id = arrive(6, s)
-        try await settle(s, m)
-        try #require(try state(s, m).floatingWindowIDs.contains(id))
-        close(s.windows[2].id, s)
-        try await quiet(s, m)
-        #expect(try state(s, m).root?.windowIDs.contains(id) == true)
-        #expect(try state(s, m).floatingWindowIDs.isEmpty)
-        try disjoint(s, m)
-    }
-
     @Test func twoOverflowWindowsAreAdmittedInCreationOrder() async throws {
         let (s, m) = try await fixture(6); defer { m.shutdown() }
         let departures = [s.windows[2].id, s.windows[1].id]
@@ -200,6 +188,7 @@ struct AdaptiveCompoundScenarioTests {
         close(departures[1], s)
         try await quiet(s, m)
         #expect(try state(s, m).root?.windowIDs.contains(second) == true)
+        #expect(try state(s, m).floatingWindowIDs.isEmpty)
         try disjoint(s, m)
     }
 
@@ -276,7 +265,7 @@ struct AdaptiveCompoundScenarioTests {
         #expect(frames(s) == before)
     }
 
-    @Test func workAreaShrinksWhileArrivalSettlementOwnsTheLayout() async throws {
+    @Test func arrivalStaysTiledInsideAWorkAreaThatShrinksDuringSettlement() async throws {
         let (s, m) = try await fixture(); defer { m.shutdown() }
         let id = arrive(4, s)
         await s.joinWindowEvent(on: m)
@@ -285,6 +274,10 @@ struct AdaptiveCompoundScenarioTests {
         m.handleApplicationTopologyChange()
         try await quiet(s, m)
         #expect(try state(s, m).root?.windowIDs.contains(id) == true)
+        let area = s.availableDisplays[0].visibleFrame
+        for w in s.windows {
+            #expect(w.frame.minY >= area.minY - 0.5 && w.frame.maxY <= area.maxY + 0.5, "\(w.id) \(w.frame)")
+        }
         try disjoint(s, m)
     }
 
