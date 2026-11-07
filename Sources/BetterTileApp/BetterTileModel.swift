@@ -521,6 +521,9 @@ final class BetterTileModel {
     private var displayChangeHold = DisplayChangeHold()
     private var displayChangeHoldTask: Task<Void, Never>?
     private var displayChangeExpectedWindows: Set<WindowID>?
+    /// Minimize evidence recorded while the session was active. Evidence from
+    /// sleep or lock can be stale, so the wake readiness wait ignores it.
+    private var displayChangeActiveMinimizedWindows: Set<WindowID> = []
     private var displayChangeTimeOrigin: ContinuousClock.Instant?
     private var displayChangeUserOverrides: Set<DisplayID> = []
     var isHoldingDisplayChange: Bool { displayChangeHold.isHolding }
@@ -3231,9 +3234,17 @@ final class BetterTileModel {
            [.sleep, .wake, .sessionResigned, .sessionBecameActive].contains(event) {
             // Capture the pre-transition membership without reading AX during
             // sleep or lock. A partial wake inventory cannot replace this base.
+            // Only windows with a place in the layout count. Focus mode only
+            // adds to `windowIDs`, so it can keep windows that already left.
             displayChangeExpectedWindows = sessionStore.sessions.values.reduce(into: Set<WindowID>()) { ids, session in
-                guard session.mode != .manual else { return }
-                ids.formUnion(session.windowIDs.subtracting(session.excludedFocusWindowIDs))
+                let placed: Set<WindowID>
+                switch session.mode {
+                case .manual: return
+                case .bento: placed = Set(session.bentoState.root?.windowIDs ?? [])
+                case .tabbed: placed = session.tabbedState?.windowIDs ?? []
+                case .linked: placed = session.windowIDs
+                }
+                ids.formUnion(placed.subtracting(session.excludedFocusWindowIDs))
             }
         }
         if event == .sessionResigned { displayChangeLastLockCheck = displayChangeTime }
@@ -3300,6 +3311,7 @@ final class BetterTileModel {
         recordDisplayChangeObservation(windows: windows)
         let frames = windows.flatMap { observed -> [WindowID: BTRect]? in
             let required = (displayChangeExpectedWindows ?? []).subtracting(confirmedGoneWindowIDs)
+                .subtracting(confirmedMinimizedWindowIDs.intersection(displayChangeActiveMinimizedWindows))
             let eligible = Set(observed.filter(\.isEligible).map(\.id))
             guard required.isSubset(of: eligible) else { return nil }
             return Dictionary(uniqueKeysWithValues: observed.map { ($0.id, $0.frame) })
@@ -3308,6 +3320,7 @@ final class BetterTileModel {
                                        at: displayChangeTime, token: token) != nil else { return false }
         displayChangeHoldTask = nil
         displayChangeExpectedWindows = nil
+        displayChangeActiveMinimizedWindows.removeAll()
         displayChangeUserOverrides.removeAll()
         let reason = displayChangeHold.settledByLimit ? "limit" : "quiet"
         Self.bentoLog.debug("display hold settled: \(reason, privacy: .public)")
@@ -3898,9 +3911,15 @@ final class BetterTileModel {
             if event.kind == .minimized {
                 confirmedMinimizedWindowIDs.insert(windowID)
                 sessionStore.removeMinimizedTabbedWindow(windowID)
+                if displayChangeHold.isWaitingForWakeOrUnlock {
+                    displayChangeActiveMinimizedWindows.remove(windowID)
+                } else {
+                    displayChangeActiveMinimizedWindows.insert(windowID)
+                }
             }
             if event.kind == .restored || event.kind == .destroyed {
                 confirmedMinimizedWindowIDs.remove(windowID)
+                displayChangeActiveMinimizedWindows.remove(windowID)
             }
             if event.kind == .destroyed {
                 pendingWindowArrivals.removeAll {
