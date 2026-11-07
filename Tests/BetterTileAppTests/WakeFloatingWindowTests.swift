@@ -45,7 +45,7 @@ func wakeWaitsForAUserFloatedAdaptiveWindow() async throws {
     system.windows[3].frame = BTRect(x: 200, y: 200, width: 250, height: 250)
     model.dividerResize.bentoStateChangedHandler?(system.mainDisplay.id, state, frames, old)
     try await settleAfterWake(model, system)
-    let before = try #require(councilStore(model).session(for: system.mainDisplay.id))
+    let before = try #require(layoutSessionStore(model).session(for: system.mainDisplay.id))
     try #require(before.bentoState.floatingWindowIDs.contains(ids[3]), "float set up: \(before.bentoState)")
     try #require(!before.automaticallyFloatingWindowIDs.contains(ids[3]))
     let start = Dictionary(uniqueKeysWithValues: system.windows.map { ($0.id, $0.frame) })
@@ -59,7 +59,7 @@ func wakeWaitsForAUserFloatedAdaptiveWindow() async throws {
     model.handleApplicationTopologyChange()
     try await settleAfterWake(model, system)
     for _ in 0..<4 { model.watchdog(); await system.advance(by: .milliseconds(500)) }
-    let after = try #require(councilStore(model).session(for: system.mainDisplay.id))
+    let after = try #require(layoutSessionStore(model).session(for: system.mainDisplay.id))
     let end = Dictionary(uniqueKeysWithValues: system.windows.map { ($0.id, $0.frame) })
     #expect(heldAt3s, "hold released before the floated window returned")
     #expect(after.bentoState.floatingWindowIDs.contains(ids[3]), "floating lost: tree \(after.bentoState.root?.windowIDs ?? [])")

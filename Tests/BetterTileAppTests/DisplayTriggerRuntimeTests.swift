@@ -1273,3 +1273,40 @@ func automaticApplyInterruptedByDisplayHoldRetriesOnce(cancelWithInput: Bool, di
     await system.advance(by: .seconds(2))
     #expect(attempts == (cancelWithInput ? 1 : 2))
 }
+
+
+/// A display hold that starts after the Apply's final commit check still marks
+/// the attempt when the Apply reads its session to report the result. macOS
+/// then moves the window during the hold. The continuation must not apply the
+/// layout again over that move.
+@Test(.appTestApplication) @MainActor
+func automaticApplyThatCommittedBeforeAHoldIsNotRetried() async throws {
+    let h = RuntimeHarness()
+    defer { h.runtime.stop(); h.applier.stop() }
+    h.runtime.stop()
+    h.runtime = h.makeRuntime(initial: [h.mainFingerprint], autoSettle: false)
+    h.addWindow("editor", on: h.second.id)
+    h.bind()
+    var released = false
+    var readsAfterCommit = 0
+    var attempts = 0
+    h.runtime.isDisplayChangeHeld = { _ in
+        guard !released, !h.commits.isEmpty else { return false }
+        readsAfterCommit += 1
+        // The first read is the Apply's final commit check. The hold starts after it.
+        guard readsAfterCommit >= 2 else { return false }
+        if readsAfterCommit == 2 { h.system.windows[0].frame.origin.x += 50 }
+        return true
+    }
+    h.beforeCommit = { attempts += 1 }
+    h.connectSecond()
+    let system = FakeAppWindowSystem(manualClock: h.clock)
+    system.drivesPolicyDeadlines = true
+    try #require(await system.waitFor { attempts == 1 && !h.applier.isRunning })
+    try #require(readsAfterCommit >= 2)
+    released = true
+    await system.advance(by: .seconds(2))
+    try #require(await system.waitFor { h.runtime.isIdle })
+    #expect(attempts == 1, "A committed Apply ran again after the hold")
+    #expect(h.commits == [h.second.id])
+}

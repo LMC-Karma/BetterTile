@@ -169,7 +169,7 @@ func wakeReadinessKeepsTheFiveSecondLimit() async throws {
     for _ in 0..<10 {
         model.watchdog()
         await system.advance(by: .milliseconds(500))
-        tree = try councilStore(model).session(for: system.mainDisplay.id)?.bentoState.root?.windowIDs ?? []
+        tree = try layoutSessionStore(model).session(for: system.mainDisplay.id)?.bentoState.root?.windowIDs ?? []
         if !tree.contains(missing) { break }
     }
     #expect(Set(tree) == Set(system.windows.map(\.id)).subtracting([missing]), "tree \(tree)")
@@ -225,7 +225,7 @@ func wakeDoesNotWaitForAWindowThatLeftDuringFocus() async throws {
     try await settleWake(model, system)
     model.watchdog()
     try await settleWake(model, system)
-    let session = try #require(councilStore(model).session(for: system.mainDisplay.id))
+    let session = try #require(layoutSessionStore(model).session(for: system.mainDisplay.id))
     try #require(!session.excludedFocusWindowIDs.isEmpty, "Focus mode must still be active")
     try #require(session.windowIDs.contains(late), "Focus keeps the closed window in the observed windows")
     try #require(session.bentoState.root?.windowIDs.contains(late) != true, "The closed window holds no place in the layout")

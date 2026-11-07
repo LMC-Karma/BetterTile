@@ -4,7 +4,7 @@ import BetterTileMacOS
 import Testing
 @testable import BetterTileApp
 
-@MainActor func councilStore(_ model: BetterTileModel) throws -> LayoutSessionStore {
+@MainActor func layoutSessionStore(_ model: BetterTileModel) throws -> LayoutSessionStore {
     try #require(Mirror(reflecting: model).children.first {
         $0.label?.hasSuffix("sessionStore") == true
     }?.value as? LayoutSessionStore)
@@ -17,7 +17,7 @@ func displayHoldDoesNotPollWindowsWhileSleepingOrLocked(reason: String) async th
     defer { model.shutdown() }
     model.setActiveMode(.bento)
     await system.advance(by: .seconds(1))
-    let before = try councilStore(model).session(for: system.mainDisplay.id)
+    let before = try layoutSessionStore(model).session(for: system.mainDisplay.id)
     let locked = reason == "lock" || reason == "screensaver"
     if locked {
         model.displayChangeScreenIsLocked = { true }
@@ -29,7 +29,7 @@ func displayHoldDoesNotPollWindowsWhileSleepingOrLocked(reason: String) async th
     for _ in 0..<240 { model.watchdog(); await system.advance(by: .milliseconds(250)) }
     #expect(system.completeSweepCount - sweeps <= 1)
     #expect(system.frameWriteCounts == writes)
-    let held = try councilStore(model).session(for: system.mainDisplay.id)
+    let held = try layoutSessionStore(model).session(for: system.mainDisplay.id)
     #expect(held?.bentoState == before?.bentoState)
     #expect(held?.presence == before?.presence)
     #expect(model.isHoldingDisplayChange)
@@ -40,7 +40,7 @@ func displayHoldDoesNotPollWindowsWhileSleepingOrLocked(reason: String) async th
     else { model.handleApplicationTopologyChange(waking: true) }
     await system.advance(by: .seconds(1))
     #expect(await system.waitFor { !model.isHoldingDisplayChange && model.windowEventTask == nil })
-    #expect(try councilStore(model).session(for: system.mainDisplay.id)?.bentoState == before?.bentoState)
+    #expect(try layoutSessionStore(model).session(for: system.mainDisplay.id)?.bentoState == before?.bentoState)
 }
 
 @Test(.appTestApplication) @MainActor
@@ -131,7 +131,7 @@ func savedApplyNeverRollsBackThroughANewerDisplayHold(mode: LayoutMode, automati
     model.handleDisplayChange(.displayReconfigurationEnded)
     await system.advance(by: .seconds(2))
     try #require(await system.waitFor { !model.isHoldingDisplayChange && !model.hasPendingTabbedPlacement && model.windowEventTask == nil })
-    #expect(try councilStore(model).session(for: system.mainDisplay.id)?.automaticWritesSuspended == false)
+    #expect(try layoutSessionStore(model).session(for: system.mainDisplay.id)?.automaticWritesSuspended == false)
 }
 
 @Test(.appTestApplication, arguments: [false, true]) @MainActor
@@ -158,13 +158,13 @@ func displayHoldHandsOffInterruptedTabbedRecovery(failsWrite: Bool) async throws
     await system.advance(by: .seconds(1))
     try #require(await system.waitFor { !model.hasPendingTabbedPlacement })
     #expect(system.frameWriteCounts == heldWrites)
-    #expect(try councilStore(model).session(for: display)?.automaticWritesSuspended == failsWrite)
+    #expect(try layoutSessionStore(model).session(for: display)?.automaticWritesSuspended == failsWrite)
     system.ignoredFrameWriteWindowIDs = []
     system.failedFrameWriteNumbers = [:]
     model.handleDisplayChange(.displayReconfigurationEnded)
     await system.advance(by: .seconds(1))
     try #require(await system.waitFor { !model.isHoldingDisplayChange && !model.hasPendingTabbedPlacement && model.windowEventTask == nil })
-    #expect(try councilStore(model).session(for: display)?.automaticWritesSuspended == failsWrite)
+    #expect(try layoutSessionStore(model).session(for: display)?.automaticWritesSuspended == failsWrite)
     if !failsWrite {
         #expect(system.windows[0].frame.origin.x == 0)
         let arrival = WindowSnapshot(id: WindowID(rawValue: "arrival"), processIdentifier: 43,

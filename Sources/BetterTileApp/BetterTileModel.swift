@@ -689,6 +689,8 @@ final class BetterTileModel {
         linkedResize.rollbackFailureHandler = dividerResize.rollbackFailureHandler
         dividerResize.gestureWillBeginHandler = { [weak self] in self?.prepareWindowGesture() }
         linkedResize.gestureWillBeginHandler = { [weak self] in self?.prepareWindowGesture() }
+        // A resize that starts during a hold is a new explicit action on its display.
+        linkedResize.resizeWillBeginHandler = { [weak self] in self?.releaseDisplayChangeHoldForUserAction(on: $0) }
         dividerResize.gestureEndedHandler = { [weak self] in
             self?.schedulePendingWindowEvents()
         }
@@ -3174,10 +3176,19 @@ final class BetterTileModel {
     private var displayHoldTabbedHandoffs: [UUID: LayoutSession] = [:]
     private struct DisplayHoldRecovery {
         var owner: LayoutSession
+        /// The frames a Manual recovery restores, in the coordinates of `reference`.
         var frames: [WindowID: BTRect]
+        /// Other frames that this transaction wrote. A window at none of these
+        /// frames, nor at its restoration frame, changed during the hold.
+        var written: [WindowID: [BTRect]]
+        /// The display frame when `frames` and `written` were recorded.
+        var reference: BTRect?
         var participants: [WindowID: Int32]
     }
     private var displayHoldRecoveries: [DisplayID: DisplayHoldRecovery] = [:]
+    /// Display frames from the last refresh outside a hold. A gesture's
+    /// baseline was recorded in these coordinates.
+    private var settledDisplayFrames: [DisplayID: BTRect] = [:]
     private var displayHoldFloatRetries: [DisplayID: (DesktopSessionID, Set<WindowID>)] = [:]
     private struct DeferredTabbedExit {
         var owner: DesktopSessionID
@@ -3350,18 +3361,33 @@ final class BetterTileModel {
         return true
     }
 
-    private func retainDisplayHoldRecovery(owner: LayoutSession, frames: [WindowID: BTRect]) {
+    private func retainDisplayHoldRecovery(owner: LayoutSession, frames: [WindowID: BTRect],
+                                           written: [WindowID: [BTRect]], reference: BTRect?) {
         let participants = Dictionary(uniqueKeysWithValues: observedRuleWindows.filter {
             frames[$0.id] != nil
         }.map { ($0.id, $0.processIdentifier) })
-        displayHoldRecoveries[owner.displayID] = DisplayHoldRecovery(owner: owner, frames: frames, participants: participants)
+        displayHoldRecoveries[owner.displayID] = DisplayHoldRecovery(owner: owner, frames: frames, written: written,
+            reference: reference, participants: participants)
         tabbedCommittedLayouts.removeValue(forKey: owner.id)
+    }
+
+    /// A gesture recorded its baseline before the hold, in settled display coordinates.
+    private func gestureReferenceFrame(on displayID: DisplayID) -> BTRect? {
+        settledDisplayFrames[displayID] ?? system.displays().first { $0.id == displayID }?.frame
     }
 
     private func interruptGesturesForDisplayChange() {
         if let interrupted = dividerResize.interruptForDisplayChange(),
            let owner = sessionStore.session(for: interrupted.displayID) {
-            retainDisplayHoldRecovery(owner: owner, frames: interrupted.frames)
+            retainDisplayHoldRecovery(owner: owner, frames: interrupted.frames,
+                written: interrupted.applied.mapValues { [$0] }, reference: gestureReferenceFrame(on: interrupted.displayID))
+        }
+        // Native linked resizing writes neighbours from its own display link.
+        // Stop it before its queued tick or release can write in the hold.
+        if let interrupted = linkedResize.interruptForDisplayChange(),
+           let owner = sessionStore.session(for: interrupted.displayID) {
+            retainDisplayHoldRecovery(owner: owner, frames: interrupted.frames,
+                written: interrupted.applied.mapValues { [$0] }, reference: gestureReferenceFrame(on: interrupted.displayID))
         }
         if let active = activeBentoDrag {
             var owner = active.layoutSession
@@ -3371,7 +3397,9 @@ final class BetterTileModel {
                 if let restored = sessionStore.commit(owner, replacing: owner.revision) { owner = restored }
             }
             activeBentoDrag = nil
-            retainDisplayHoldRecovery(owner: owner, frames: active.transaction.baselineFrames)
+            retainDisplayHoldRecovery(owner: owner, frames: active.transaction.baselineFrames,
+                written: active.transaction.lastAppliedFrames.mapValues { [$0] },
+                reference: gestureReferenceFrame(on: owner.displayID))
             replayBufferedBentoDragEvents()
         }
         // The model has relinquished ownership before the controller calls its
@@ -3409,11 +3437,26 @@ final class BetterTileModel {
                 refreshActiveWindows(force: true)
                 continue
             }
-            let placements = owner.mode == .bento
-                ? owner.bentoState.placements(in: display.visibleFrame).filter { currentIDs.contains($0.windowID) }
-                : recovery.frames.compactMap { id, frame in
-                    currentIDs.contains(id) ? Placement(windowID: id, frame: frame.clamped(to: display.visibleFrame)) : nil
+            let placements: [Placement]
+            if owner.mode == .bento {
+                placements = owner.bentoState.placements(in: display.visibleFrame).filter { currentIDs.contains($0.windowID) }
+            } else {
+                // Manual frames are absolute. Follow a moved display origin, and
+                // write nothing on a display that changed size.
+                let reference = recovery.reference ?? display.frame
+                guard abs(reference.size.width - display.frame.size.width) < 0.5,
+                      abs(reference.size.height - display.frame.size.height) < 0.5 else { continue }
+                let dx = display.frame.minX - reference.minX, dy = display.frame.minY - reference.minY
+                let current = Dictionary(windows.map { ($0.id, $0.frame) }) { first, _ in first }
+                placements = recovery.frames.sorted { $0.key < $1.key }.compactMap { id, frame in
+                    guard let now = current[id] else { return nil }
+                    // Keep a frame that the user or macOS changed during the hold.
+                    let ours = [frame] + (recovery.written[id] ?? [])
+                    guard ours.contains(where: { $0.offsetBy(dx: dx, dy: dy).approximatelyEquals(now, tolerance: 2) }) else { return nil }
+                    let target = frame.offsetBy(dx: dx, dy: dy).clamped(to: display.visibleFrame)
+                    return target.approximatelyEquals(now, tolerance: 0.5) ? nil : Placement(windowID: id, frame: target)
                 }
+            }
             let token = displayChangeHold.token
             let revision = owner.revision
             let valid = { @MainActor in
@@ -3421,8 +3464,9 @@ final class BetterTileModel {
                     && self.sessionStore.isCurrent(owner.id, revision: revision, on: displayID)
                     && self.displayHoldDesktopIsCurrent(owner)
             }
-            let outcome = coordinator.applyPlacements(placements, recordHistory: false,
-                revalidateBeforeEachWrite: true, validating: valid)
+            // Every window can keep a newer frame; then nothing needs writing.
+            let outcome: WindowMutationOutcome = placements.isEmpty ? .applied : coordinator.applyPlacements(placements,
+                recordHistory: false, revalidateBeforeEachWrite: true, validating: valid)
             if outcome.isApplied {
                 owner.recordProposedFrames(Dictionary(uniqueKeysWithValues: placements.map { ($0.windowID, $0.frame) }))
                 _ = sessionStore.commit(owner, replacing: revision)
@@ -3448,9 +3492,9 @@ final class BetterTileModel {
     }
 
     private func releaseDisplayChangeHoldForUserAction(on displayID: DisplayID) {
+        // Only a newer mode choice replaces a Tabbed exit in progress; `setMode`
+        // records its own request. Other explicit actions keep the exit.
         displayHoldRecoveries.removeValue(forKey: displayID)
-        deferredTabbedExits.removeValue(forKey: displayID)
-        tabbedExitRequests.removeValue(forKey: displayID)
         guard isHoldingDisplayChange else { return }
         displayChangeUserOverrides.insert(displayID)
     }
@@ -5636,6 +5680,9 @@ final class BetterTileModel {
         let focused = try? system.focusedWindow()
         let displays = system.displays()
         lastDisplayWorkAreaSignature = displayWorkAreaSignature(displays)
+        if !isHoldingDisplayChange {
+            settledDisplayFrames = Dictionary(displays.map { ($0.id, $0.frame) }) { first, _ in first }
+        }
         let displayIDs = Set(displays.map(\.id))
         for id in automaticResultPills.keys.filter({ !displayIDs.contains($0) }) {
             automaticResultPills.removeValue(forKey: id)?.hide()
@@ -9414,17 +9461,6 @@ extension BetterTileModel {
             ($0.windowID, coordinator.rollbackWriteFailureGeneration(for: $0.windowID))
         })
         var restorationWriteFailed = false
-        let handOffToDisplayRefresh = { @MainActor in
-            guard self.displayChangeHold.token != displayToken, !restorationWriteFailed,
-                  rollbackFailureGenerations.allSatisfy({ self.coordinator.rollbackWriteFailureGeneration(for: $0.key) == $0.value }),
-                  self.sessionStore.isCurrent(sessionID, revision: revision, on: desktop.displayID),
-                  !recoveryOwner.automaticWritesSuspended else { return false }
-            self.retainDisplayHoldRecovery(owner: recoveryOwner,
-                frames: Dictionary(uniqueKeysWithValues: snapshot.windows.filter { $0.displayID == desktop.displayID }.map { ($0.id, $0.frame) }))
-            self.savedLayoutApplier?.precommitRefusal = .displayChanged
-            if !self.isHoldingDisplayChange { self.recoverAfterDisplayChange() }
-            return true
-        }
         var placements = plan.placements
         var required: Set<WindowID>?
         if case let .tabbed(state) = plan.targetSession {
@@ -9436,6 +9472,19 @@ extension BetterTileModel {
         }
         let ids = Set(placements.map(\.windowID)).union(plan.assignments.values)
         let participants = Dictionary(uniqueKeysWithValues: snapshot.windows.filter { ids.contains($0.id) }.map { ($0.id, $0) })
+        // Recovery after a hold restores only this transaction's windows.
+        let requestedFrames = Dictionary(placements.map { ($0.windowID, [$0.frame]) }) { first, _ in first }
+        let handOffToDisplayRefresh = { @MainActor in
+            guard self.displayChangeHold.token != displayToken, !restorationWriteFailed,
+                  rollbackFailureGenerations.allSatisfy({ self.coordinator.rollbackWriteFailureGeneration(for: $0.key) == $0.value }),
+                  self.sessionStore.isCurrent(sessionID, revision: revision, on: desktop.displayID),
+                  !recoveryOwner.automaticWritesSuspended else { return false }
+            self.retainDisplayHoldRecovery(owner: recoveryOwner,
+                frames: participants.mapValues(\.frame), written: requestedFrames, reference: display.frame)
+            self.savedLayoutApplier?.precommitRefusal = .displayChanged
+            if !self.isHoldingDisplayChange { self.recoverAfterDisplayChange() }
+            return true
+        }
         var validatedParticipants: [WindowSnapshot] = []
         // Closures nested in `recover` read this through a main-actor closure. Swift 6.3
         // wrongly treats a direct capture of the variable there as task-isolated.
