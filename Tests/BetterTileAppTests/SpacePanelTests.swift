@@ -306,19 +306,31 @@ func spacePanelOffSpaceLifecycleUpdatesBeforeArrival(kind: WindowSystemEvent.Kin
         #expect(f.panels.count == initialCount)
     }
     for value in 100..<120 {
+        // Mission Control removes the Tabbed desktop. Its window is not yet
+        // visible on the new desktop, so the ended session is only retired.
         let space = NativeSpaceID(rawValue: UInt64(value))
+        let created = f.overlays.count
         f.system.desktopObservation?.knownSpacesByDisplay[f.system.mainDisplay.id] = [space]
         f.system.desktopObservation?.windowMembership[f.system.windows[0].id] = [space]
         f.system.desktopObservation?.currentSpaceByDisplay[f.system.mainDisplay.id] = space
-        f.system.offscreenWindowIDs = []
+        f.system.offscreenWindowIDs = Set(f.system.windows.map(\.id))
         f.model.beginActiveSpaceStabilization()
         try await f.settle()
+        // A retired session keeps model state only: no controller and no panel.
         #expect(f.overlays.compactMap(\.value).isEmpty)
         // AppKit can release a panel after its controller, on a later native callback.
         try #require(await f.system.waitFor { f.panels.isEmpty })
         #expect(f.panels.isEmpty)
-        try await f.enter()
+        // The window arrives. The new desktop restores the retired Tabbed
+        // desktop with a newly built controller and the same panel count.
+        f.system.offscreenWindowIDs = []
+        f.model.handleApplicationTopologyChange()
+        try #require(await f.system.waitFor {
+            f.model.presentedTabbedState(on: f.system.mainDisplay.id)?.windowIDs.count == 1 && !f.model.hasPendingTabbedPlacement
+        })
+        // The retired controller is gone, so the live one was built on restore.
         #expect(f.overlays.compactMap(\.value).count == 1)
+        #expect(f.overlays.count == created + 1)
         #expect(f.panels.count == initialCount)
     }
 }
