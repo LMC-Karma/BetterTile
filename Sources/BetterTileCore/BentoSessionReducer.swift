@@ -49,7 +49,7 @@ public struct BentoSessionReducer: Sendable {
         // Focus owns its excluded peers, including a minimize in this pass.
         let hiddenPanes = Set(runtime.layout.root?.windowIDs ?? [])
             .intersection(hiddenApplicationWindowIDs).subtracting(confirmedGone)
-            .subtracting(next.excludedFocusWindowIDs.union(focusMinimized))
+            .subtracting(next.excludedFocusWindowIDs)
         let present = observation.eligibleWindowIDs.subtracting(minimized)
             .subtracting(hiddenApplicationWindowIDs).subtracting(confirmedGone)
         let known = Set(runtime.layout.root?.windowIDs ?? []).union(runtime.layout.floatingWindowIDs)
