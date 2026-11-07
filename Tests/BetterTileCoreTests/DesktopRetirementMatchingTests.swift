@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import BetterTileCore
 
-struct DesktopRetirementCouncilTests {
+struct DesktopRetirementMatchingTests {
     let a = WindowID(rawValue: "a"), b = WindowID(rawValue: "b"), c = WindowID(rawValue: "c")
     let old = DisplayID(rawValue: "old"), new = DisplayID(rawValue: "new")
     func activate(_ store: inout LayoutSessionStore, _ display: DisplayID, _ space: UInt64,

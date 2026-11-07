@@ -71,7 +71,7 @@ private func window(_ id: String, pid: Int32, x: Double, width: Double = 500, di
 }
 
 @Test(.appTestApplication, arguments: [false, true]) @MainActor
-func reproDisplayReconnectKeepsDesktopMode(nativeObservationArrivesLate: Bool) async throws {
+func displayReconnectKeepsDesktopMode(nativeObservationArrivesLate: Bool) async throws {
     let (system, model) = twoDisplayFixture()
     defer { model.shutdown() }
     system.focusedID = WindowID(rawValue: "L1")
@@ -128,7 +128,7 @@ func reproDisplayReconnectKeepsDesktopMode(nativeObservationArrivesLate: Bool) a
 }
 
 @Test(.appTestApplication, arguments: [LayoutMode.manual, .bento, .tabbed]) @MainActor
-func reproClamshellSwapKeepsDesktopMode(mode: LayoutMode) async throws {
+func clamshellSwapKeepsDesktopMode(mode: LayoutMode) async throws {
     try await checkClamshellSwap(mode: mode, carry: true)
 }
 

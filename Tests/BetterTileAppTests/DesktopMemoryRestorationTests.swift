@@ -4,7 +4,7 @@ import Testing
 @testable import BetterTileCore
 @testable import BetterTileMacOS
 
-@MainActor private final class DesktopMemoryCouncilFixture {
+@MainActor private final class DesktopMemoryRestorationFixture {
     let system = makeManualWindowSystem(drivingPolicyDeadlines: true)
     let model: BetterTileModel
     let a = WindowID(rawValue: "a"), b = WindowID(rawValue: "b")
@@ -49,7 +49,7 @@ import Testing
 
 @Test(.appTestApplication, arguments: [false, true], [false, true]) @MainActor
 func retiredDesktopLifecycleSurvivesCarryOffRoundTrip(closed: Bool, missingSpace: Bool) async throws {
-    let f = DesktopMemoryCouncilFixture()
+    let f = DesktopMemoryRestorationFixture()
     defer { f.model.shutdown() }
     f.model.configuration.keepsDesktopLayoutsAcrossDisplays = false
     f.model.setActiveMode(.tabbed)
@@ -86,7 +86,7 @@ func retiredDesktopLifecycleSurvivesCarryOffRoundTrip(closed: Bool, missingSpace
 
 @Test(.appTestApplication, arguments: [false, true]) @MainActor
 func enablingDesktopCarryOverUsesNewestMode(offRoundTrip: Bool) async throws {
-    let f = DesktopMemoryCouncilFixture()
+    let f = DesktopMemoryRestorationFixture()
     defer { f.model.shutdown() }
     f.model.configuration.keepsDesktopLayoutsAcrossDisplays = false
     f.model.setActiveMode(.bento)
@@ -106,7 +106,7 @@ func enablingDesktopCarryOverUsesNewestMode(offRoundTrip: Bool) async throws {
 
 @Test(.appTestApplication) @MainActor
 func aShortcutDuringDisplayHoldDoesNotConsumeDesktopRestoration() async throws {
-    let f = DesktopMemoryCouncilFixture()
+    let f = DesktopMemoryRestorationFixture()
     defer { f.model.shutdown() }
     f.model.setActiveMode(.bento)
     try await f.idle()
@@ -126,7 +126,7 @@ func aShortcutDuringDisplayHoldDoesNotConsumeDesktopRestoration() async throws {
 
 @Test(.appTestApplication) @MainActor
 func desktopRestorationDropsOldScreenFrameHistory() async throws {
-    let f = DesktopMemoryCouncilFixture()
+    let f = DesktopMemoryRestorationFixture()
     defer { f.model.shutdown() }
     f.model.watchdog()
     f.model.perform(.leftHalf)
@@ -140,7 +140,7 @@ func desktopRestorationDropsOldScreenFrameHistory() async throws {
 
 @Test(.appTestApplication) @MainActor
 func nativeFullscreenPlaceholdersDoNotEnterDesktopMemory() async throws {
-    let f = DesktopMemoryCouncilFixture()
+    let f = DesktopMemoryRestorationFixture()
     defer { f.model.shutdown() }
     f.model.setActiveMode(.bento)
     try await f.idle()
@@ -159,7 +159,7 @@ func nativeFullscreenPlaceholdersDoNotEnterDesktopMemory() async throws {
 
 @Test(.appTestApplication, arguments: [false, true]) @MainActor
 func repairDropsOldTabbedUndoDuringHoldOrAfterAnEmptyObservation(duringHold: Bool) async throws {
-    let f = DesktopMemoryCouncilFixture()
+    let f = DesktopMemoryRestorationFixture()
     defer { f.model.shutdown() }
     f.model.setActiveMode(.tabbed)
     try await f.idle()
@@ -206,7 +206,7 @@ func retiredDesktopInvalidatesSavedApplyUndoWithoutWritingFrames() async throws 
 
 @Test(.appTestApplication, arguments: [false, true], [false, true]) @MainActor
 func movedWindowKeepsBothDesktopOwnersOnReconnect(carryOver: Bool, destinationFirst: Bool) async throws {
-    let f = DesktopMemoryCouncilFixture()
+    let f = DesktopMemoryRestorationFixture()
     defer { f.model.shutdown() }
     f.model.configuration.keepsDesktopLayoutsAcrossDisplays = carryOver
     let c = WindowID(rawValue: "c")
@@ -271,7 +271,7 @@ func movedWindowKeepsBothDesktopOwnersOnReconnect(carryOver: Bool, destinationFi
 
 @Test(.appTestApplication, arguments: [LayoutMode.bento, .tabbed], [1, 2]) @MainActor
 func arrivalsAfterAnEmptyDesktopAreMeasuredBeforePlacement(mode: LayoutMode, windowCount: Int) async throws {
-    let f = DesktopMemoryCouncilFixture()
+    let f = DesktopMemoryRestorationFixture()
     defer { f.model.shutdown() }
     f.model.configuration.defaultLayoutMode = mode
     f.model.configuration.defaultTabbedPreset = .columns
@@ -306,7 +306,7 @@ func arrivalsAfterAnEmptyDesktopAreMeasuredBeforePlacement(mode: LayoutMode, win
 
 @Test(.appTestApplication, arguments: [false, true]) @MainActor
 func mergedDesktopsReturnToTheirOwnModesAfterCarryOver(firstDesktopFirst: Bool) async throws {
-    let f = DesktopMemoryCouncilFixture()
+    let f = DesktopMemoryRestorationFixture()
     defer { f.model.shutdown() }
     let c = WindowID(rawValue: "c")
     f.system.windows.append(WindowSnapshot(id: c, processIdentifier: 43, bundleIdentifier: "example.c",
