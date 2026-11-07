@@ -254,6 +254,11 @@ public struct LayoutSessionStore: Sendable {
     private var restorationPending: Set<DesktopSessionID> = []
     private var restoredSessionsAwaitingNativeIdentity: Set<DesktopSessionID> = []
     private var displayIdentifiers: [DisplayID: String] = [:]
+    /// Windows a restored desktop showed only because macOS merged another,
+    /// still retired desktop onto it. While that desktop is remembered, they
+    /// are not this desktop's evidence for matching or for pruning copies,
+    /// also after this desktop is retired again. Process-local only.
+    private var mergedWindowIDs: [DesktopSessionID: Set<WindowID>] = [:]
     public private(set) var retiredSessions: [RetiredDesktop] = []
     public struct Restoration: Sendable {
         public var overlap: Int
@@ -576,6 +581,9 @@ public struct LayoutSessionStore: Sendable {
                 storedSessions[displayID]?[id] = session
             }
         }
+        if closed {
+            for id in Array(mergedWindowIDs.keys) { mergedWindowIDs[id]?.remove(windowID) }
+        }
         for index in retiredSessions.indices {
             let previous = retiredSessions[index].session
             update(&retiredSessions[index].session)
@@ -647,13 +655,23 @@ public struct LayoutSessionStore: Sendable {
                                        windowIDs: Set<WindowID>, carryOver: Bool) -> LayoutSession? {
         lastRestoration = nil
         guard !windowIDs.isEmpty else { return nil }
+        // Windows a desktop showed only through a merge are not its evidence
+        // while the desktop they came from is still remembered.
+        func evidence(_ retired: RetiredDesktop) -> Set<WindowID> {
+            guard let merged = mergedWindowIDs[retired.session.id], !merged.isEmpty else { return retired.windowIDs }
+            let owned = retiredSessions.reduce(into: Set<WindowID>()) {
+                if $1.session.id != retired.session.id { $0.formUnion($1.windowIDs) }
+            }
+            return retired.windowIDs.subtracting(merged.intersection(owned))
+        }
         let matches = retiredSessions.enumerated().compactMap { index, retired ->
-            (index: Int, overlap: Int, coverage: Double, same: Bool, time: TimeInterval, id: String)? in
+            (index: Int, overlap: Int, coverage: Double, same: Bool, time: TimeInterval, id: String, evidence: Set<WindowID>)? in
             let same = identifier != nil && identifier == retired.displayIdentifier
-            let overlap = windowIDs.intersection(retired.windowIDs).count
-            guard (carryOver || same), overlap * 2 >= windowIDs.count else { return nil }
-            return (index, overlap, Double(overlap) / Double(retired.windowIDs.count), same,
-                    retired.retiredAt, retired.session.id.rawValue.uuidString)
+            let own = evidence(retired)
+            let overlap = windowIDs.intersection(own).count
+            guard (carryOver || same), !own.isEmpty, overlap * 2 >= windowIDs.count else { return nil }
+            return (index, overlap, Double(overlap) / Double(own.count), same,
+                    retired.retiredAt, retired.session.id.rawValue.uuidString, own)
         }
         guard let match = matches.max(by: { lhs, rhs in
             if lhs.overlap != rhs.overlap { return lhs.overlap < rhs.overlap }
@@ -668,12 +686,19 @@ public struct LayoutSessionStore: Sendable {
         // and still shows. The restored snapshot may hold windows that moved
         // away, and the current desktop may hold windows merged from another
         // desktop; neither alone proves a copy. Off keeps the other screen's
-        // independent memory for its next return.
-        let copiedWindowIDs = restored.windowIDs.intersection(windowIDs)
+        // independent memory for its next return. Windows this desktop
+        // learned from an earlier merge do not prove a copy either.
+        let merged = mergedWindowIDs[restored.session.id, default: []]
+        let copiedWindowIDs = match.evidence.intersection(windowIDs)
         retiredSessions.removeAll {
             $0.windowIDs.isSubset(of: copiedWindowIDs)
                 && (carryOver || (identifier != nil && $0.displayIdentifier == identifier))
         }
+        // Visible windows that a kept retired desktop owns and this desktop
+        // never remembered arrived through a merge.
+        let mergedNow = retiredSessions.reduce(into: Set<WindowID>()) { $0.formUnion($1.windowIDs) }
+            .intersection(windowIDs).subtracting(restored.windowIDs)
+        if !merged.union(mergedNow).isEmpty { mergedWindowIDs[restored.session.id] = merged.union(mergedNow) }
         var session = restored.session
         session.displayID = displayID
         session.nativeSpaceID = nil
@@ -697,6 +722,8 @@ public struct LayoutSessionStore: Sendable {
         }
         awaitingFirstObservation.formIntersection(retainedSessionIDs)
         restorationPending.formIntersection(retainedSessionIDs)
+        let rememberedSessionIDs = retainedSessionIDs.union(retiredSessions.map(\.session.id))
+        mergedWindowIDs = mergedWindowIDs.filter { rememberedSessionIDs.contains($0.key) }
         restoredSessionsAwaitingNativeIdentity.formIntersection(retainedSessionIDs)
     }
 

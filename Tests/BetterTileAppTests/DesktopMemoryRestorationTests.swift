@@ -361,3 +361,98 @@ func mergedDesktopsReturnToTheirOwnModesAfterCarryOver(firstDesktopFirst: Bool) 
         #expect(session.mode == (isFirst ? .bento : .tabbed))
     }
 }
+
+/// Laptop desktop 1 is Adaptive {a,b,e}; desktop 2 is Tabbed {c,d}. macOS
+/// merges all five windows onto one external desktop, twice, before the
+/// laptop returns. The second merge must keep desktop 2's memory.
+/// `.minimize` and carry-over off are controls that already pass.
+@Test(.appTestApplication, arguments: RepeatedMergeModelCase.all) @MainActor
+func desktopsMergedOnTwoScreenSetupsReturnToTheirOwnModes(_ run: RepeatedMergeModelCase) async throws {
+    let f = DesktopMemoryRestorationFixture()
+    defer { f.model.shutdown() }
+    f.model.configuration.keepsDesktopLayoutsAcrossDisplays = run.carry
+    let c = WindowID(rawValue: "c"), d = WindowID(rawValue: "d"), e = WindowID(rawValue: "e")
+    for (index, id) in [c, d, e].enumerated() {
+        f.system.windows.append(WindowSnapshot(id: id, processIdentifier: Int32(43 + index), bundleIdentifier: "example.\(id.rawValue)",
+            frame: BTRect(x: 100 + Double(index * 100), y: 40, width: 400, height: 500), displayID: f.display))
+    }
+    let firstWindows: Set<WindowID> = [f.a, f.b, e]
+    func observeLaptop(_ display: DisplayID, current: UInt64, first: UInt64, second: UInt64) {
+        let showsFirst = current == first
+        f.system.offscreenWindowIDs = Set(f.system.windows.map(\.id)).filter { firstWindows.contains($0) != showsFirst }
+        f.system.focusedID = showsFirst ? f.b : c
+        f.system.desktopObservation = NativeDesktopObservation(
+            currentSpaceByDisplay: [display: .init(rawValue: current)],
+            knownSpacesByDisplay: [display: [.init(rawValue: first), .init(rawValue: second)]],
+            windowMembership: Dictionary(uniqueKeysWithValues: f.system.windows.map {
+                ($0.id, [NativeSpaceID(rawValue: firstWindows.contains($0.id) ? first : second)])
+            }))
+    }
+    observeLaptop(f.display, current: 1, first: 1, second: 2)
+    f.model.setActiveMode(.bento)
+    try await f.idle()
+    let first = try #require(f.store().session(for: f.display))
+    observeLaptop(f.display, current: 2, first: 1, second: 2)
+    f.model.beginActiveSpaceStabilization()
+    try #require(await f.system.waitFor { !f.model.isStabilizingSpace })
+    f.model.setActiveMode(.tabbed)
+    try await f.idle()
+    let second = try #require(f.store().session(for: f.display))
+    try #require(second.id != first.id && second.mode == .tabbed && second.tabbedState?.windowIDs == [c, d])
+
+    // One external desktop shows all five windows.
+    f.system.offscreenWindowIDs = []
+    try await f.replaceDisplay("external", uuid: "B", space: 21)
+    try #require(f.store().retiredSessions.contains { $0.session.id == second.id })
+    let index = try #require(f.system.windows.firstIndex { $0.id == d })
+    switch run.event {
+    case .none: break
+    case .close:
+        f.system.windows.remove(at: index)
+        f.system.eventHandler?(WindowSystemEvent(kind: .destroyed, windowID: d, processIdentifier: 44))
+    case .minimize:
+        f.system.windows[index].isMinimized = true
+        f.system.eventHandler?(WindowSystemEvent(kind: .minimized, windowID: d, processIdentifier: 44))
+    }
+    try await f.idle()
+    // The external screen reconnects with new runtime IDs, still merged.
+    try await f.replaceDisplay("external-again", uuid: "B", space: 22)
+    let retired = try f.store().retiredSessions
+    #expect(retired.contains { $0.session.id == second.id }, "The second merge deleted desktop 2: \(retired.map(\.windowIDs))")
+
+    // The laptop returns with new runtime IDs and its two desktops.
+    f.model.handleDisplayChange(.displayReconfigurationBegan)
+    var returned = f.system.mainDisplay
+    returned.id = DisplayID(rawValue: "returned")
+    returned.persistentIdentifier = "A"
+    f.system.availableDisplays = [returned]
+    for index in f.system.windows.indices { f.system.windows[index].displayID = returned.id }
+    if let minimized = f.system.windows.firstIndex(where: { $0.id == d }) { f.system.windows[minimized].isMinimized = run.event == .minimize }
+    observeLaptop(returned.id, current: run.firstDesktopFirst ? 31 : 32, first: 31, second: 32)
+    f.model.handleDisplayChange(.displayReconfigurationEnded)
+    try await f.idle()
+    for isFirst in [run.firstDesktopFirst, !run.firstDesktopFirst] {
+        if isFirst != run.firstDesktopFirst {
+            observeLaptop(returned.id, current: isFirst ? 31 : 32, first: 31, second: 32)
+            f.model.beginActiveSpaceStabilization()
+            try #require(await f.system.waitFor { !f.model.isStabilizingSpace })
+            try await f.idle()
+        }
+        let session = try #require(f.store().session(for: f.display))
+        #expect(session.id == (isFirst ? first.id : second.id), "\(isFirst ? "first" : "second") desktop lost its owner")
+        #expect(session.mode == (isFirst ? .bento : .tabbed))
+    }
+}
+
+struct RepeatedMergeModelCase: Sendable, CustomTestStringConvertible {
+    enum Event: String, Sendable { case none, close, minimize }
+    var carry: Bool
+    var firstDesktopFirst: Bool
+    var event: Event
+    var testDescription: String { "carry \(carry), first desktop first \(firstDesktopFirst), \(event.rawValue)" }
+    static let all: [RepeatedMergeModelCase] = [false, true].flatMap { carry in
+        [false, true].flatMap { order in
+            [Event.none, .close, .minimize].map { RepeatedMergeModelCase(carry: carry, firstDesktopFirst: order, event: $0) }
+        }
+    }
+}

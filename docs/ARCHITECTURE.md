@@ -250,8 +250,14 @@ UUID, and a fixed session order. Restoring removes copies whose entire window
 set is both in the restored desktop's memory and in the current observation.
 Neither alone proves a copy: remembered windows may have moved away, and macOS
 can merge several desktops' windows onto one desktop of the new screen.
+When a restore keeps another retired desktop whose windows it shows, those
+windows count as merged into the restored desktop. While that other desktop is
+remembered, they are not the restored desktop's evidence, also after a later
+screen change retires it again: they prove no copy and add no match overlap.
 Uncertain copies remain in the bounded retirement list. With carry-over off,
-other screens keep their independent memories.
+other screens keep their independent memories. One case stays ambiguous: a
+desktop whose windows are also in another desktop's stale memory, for example
+after a Mission Control move, can be removed when macOS merges them.
 An empty first observation keeps the restoration opportunity until windows
 arrive or the user chooses a mode or Tabbed arrangement. This opportunity is
 separate from the first-observation flag, so later arrivals still receive their

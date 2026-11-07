@@ -200,4 +200,72 @@ struct DesktopRetirementMatchingTests {
         #expect(store.retiredSessions.first?.windowIDs.contains(b) == false)
     }
 
+
+    /// A second settled screen setup that still shows both desktops' windows
+    /// together. The first merge taught the carried desktop the other
+    /// desktop's windows; that must not make the other desktop look like a
+    /// copy of it, nor make the carried desktop the better match for the
+    /// other desktop's windows. `.minimize` keeps the window as evidence.
+    @Test(arguments: RepeatedMergeCase.all)
+    func aSecondMergedScreenSetupKeepsTheOtherDesktopsMemory(_ run: RepeatedMergeCase) throws {
+        let d = WindowID(rawValue: "d"), e = WindowID(rawValue: "e")
+        let merged = DisplayID(rawValue: "merged"), mergedAgain = DisplayID(rawValue: "merged-again")
+        let returned = DisplayID(rawValue: "returned")
+        // The model stages each observation and then commits it.
+        func observe(_ store: inout LayoutSessionStore, _ display: DisplayID, _ space: UInt64,
+                     _ windows: Set<WindowID>, uuid: String) throws -> LayoutSession {
+            let activation = store.activate(displayID: display, windowIDs: windows, focusedWindowID: windows.sorted().first,
+                defaultMode: .manual, reuseActiveWhenUnmatched: false, commitObservation: false,
+                nativeSpaceID: NativeSpaceID(rawValue: space), displayIdentifier: uuid, carryOver: run.carry)
+            let committed = store.commit(activation.session, replacing: activation.session.revision)
+            return try #require(committed)
+        }
+        var store = LayoutSessionStore()
+        let first = try observe(&store, old, 1, [a, b, e], uuid: "A")
+        store.update(old) { $0.mode = .bento }
+        let second = try observe(&store, old, 2, [c, d], uuid: "A")
+        var tabs = TabbedLayoutState(preset: .single)
+        tabs.reconcile(windowIDs: [c, d], removed: [], focused: d)
+        store.update(old) { $0.mode = .tabbed; $0.tabbedState = tabs }
+        store.removeMissingDisplays([], at: 1)
+        _ = try observe(&store, merged, 11, [a, b, c, d, e], uuid: "B")
+        switch run.event {
+        case .none, .move: break
+        case .close: store.removeClosedTabbedWindow(d)
+        case .minimize: store.removeMinimizedTabbedWindow(d)
+        }
+        let visible: Set<WindowID> = [.none, .move].contains(run.event) ? [a, b, c, d, e] : [a, b, c, e]
+        _ = try observe(&store, merged, 11, visible, uuid: "B")
+        store.removeMissingDisplays([], at: 2)
+        _ = try observe(&store, mergedAgain, 21, visible, uuid: "B")
+        #expect(store.retiredSessions.contains { $0.session.id == second.id },
+                "The second merge deleted the independent desktop: \(store.retiredSessions.map(\.windowIDs))")
+        store.removeMissingDisplays([], at: 3)
+        // `.move`: in Mission Control the user moved b to the second desktop.
+        let firstWindows: Set<WindowID> = run.event == .move ? [a, e] : [a, b, e]
+        let secondWindows: Set<WindowID> = switch run.event {
+        case .none: [c, d]
+        case .move: [b, c, d]
+        case .close, .minimize: [c]
+        }
+        for isFirst in [run.firstDesktopFirst, !run.firstDesktopFirst] {
+            let session = try observe(&store, returned, isFirst ? 31 : 32, isFirst ? firstWindows : secondWindows, uuid: "A")
+            #expect(session.id == (isFirst ? first.id : second.id), "\(isFirst ? "first" : "second") desktop lost its owner")
+            #expect(session.mode == (isFirst ? .bento : .tabbed))
+        }
+    }
+}
+
+enum RepeatedMergeEvent: String, Sendable { case none, close, minimize, move }
+
+struct RepeatedMergeCase: Sendable, CustomTestStringConvertible {
+    var carry: Bool
+    var firstDesktopFirst: Bool
+    var event: RepeatedMergeEvent
+    var testDescription: String { "carry \(carry), first desktop first \(firstDesktopFirst), \(event.rawValue)" }
+    static let all: [RepeatedMergeCase] = [false, true].flatMap { carry in
+        [false, true].flatMap { order in
+            [RepeatedMergeEvent.none, .close, .minimize, .move].map { RepeatedMergeCase(carry: carry, firstDesktopFirst: order, event: $0) }
+        }
+    }
 }
