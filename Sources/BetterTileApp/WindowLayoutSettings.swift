@@ -117,7 +117,7 @@ struct WindowLayoutSettings: View {
                 }
                 .labelsHidden().fixedSize()
             }
-            SettingsRow("Keep desktop modes when displays change", caption: "A desktop keeps its mode and layout when it moves to another screen, for example when you dock or undock. Off: each screen remembers its own modes.") {
+            SettingsRow("Keep desktop modes when displays change", caption: "A desktop keeps its mode and layout when it moves to another screen, for example when you dock or undock. Off: from the next screen change, each screen remembers its own modes.") {
                 Toggle("Keep desktop modes when displays change", isOn: configurationBinding(\.keepsDesktopLayoutsAcrossDisplays))
                     .labelsHidden().toggleStyle(.switch)
             }
