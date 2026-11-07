@@ -112,18 +112,23 @@ public enum PlacementBounds {
         return visible / area >= minimumVisibleFraction
     }
 
+    /// A small grab region independent of window size: ten points wide at the
+    /// full estimated title-bar height. This accepts deliberate overhangs while
+    /// refusing one-point slivers. Require this area on one display so separate
+    /// unusable fragments do not combine into an apparently usable title bar.
+    public static let minimumHistoryTitleStripArea: Double = 220
+
     /// History restores a user-chosen frame, which may overhang the work area
-    /// or span displays. Reject only almost invisible frames or a missing
-    /// title bar, estimated by the top 22 logical points of the window.
+    /// or span displays. Estimate title-bar access with the top 22 logical points.
     public static func isHistoryRestoreReachable(_ frame: BTRect, in displayFrames: [BTRect]) -> Bool {
         guard !frame.isEmpty,
               [frame.minX, frame.minY, frame.maxX, frame.maxY, frame.area].allSatisfy(\.isFinite)
         else { return false }
-        let visibleArea = displayFrames.reduce(0.0) { $0 + (frame.intersection($1)?.area ?? 0) }
-        guard visibleArea / frame.area >= 0.01 else { return false }
         let titleBar = BTRect(x: frame.minX, y: frame.minY,
             width: frame.size.width, height: min(22, frame.size.height))
-        return displayFrames.contains { titleBar.intersection($0) != nil }
+        return displayFrames.contains {
+            (titleBar.intersection($0)?.area ?? 0) >= minimumHistoryTitleStripArea
+        }
     }
 }
 

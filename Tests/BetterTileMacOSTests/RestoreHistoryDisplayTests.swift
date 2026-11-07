@@ -94,6 +94,23 @@ struct RestoreHistoryDisplayTests {
         #expect(system.windows[0].frame == original)
     }
 
+    @Test(arguments: [
+        BTRect(x: 900, y: 775, width: 600, height: 600),
+        BTRect(x: -500, y: 775, width: 600, height: 600),
+        BTRect(x: 985, y: 30, width: 1_900, height: 760)
+    ])
+    func restoreReturnsToWindowWithSmallVisibleTitleStrip(original: BTRect) throws {
+        let system = FakeWindowSystem()
+        let coordinator = WindowCoordinator(system: system)
+        system.windows[0].frame = original
+        try #require(coordinator.performHistoryAction(.leftHalf))
+        guard case let .ready(plan) = coordinator.plan(.restore) else {
+            Issue.record("Expected Restore plan"); return
+        }
+        #expect(coordinator.perform(plan).isApplied)
+        #expect(system.windows[0].frame == original)
+    }
+
     @Test func restoreReturnsToWindowSpanningConnectedDisplays() throws {
         let system = FakeWindowSystem()
         system.availableDisplays.append(DisplaySnapshot(id: DisplayID(rawValue: "east"),

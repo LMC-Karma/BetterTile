@@ -162,23 +162,50 @@ private let screen = BTRect(x: 0, y: 0, width: 1920, height: 983)
 
 // MARK: - History Restore bounds
 
-@Test func historyRestoreBoundsAddsAreaAcrossWholeDisplayFrames() {
+@Test func historyRestoreBoundsAcceptsLargeSpanningWindowOnNegativeOriginDisplays() {
     let displays = [
         BTRect(x: -1_000, y: 0, width: 1_000, height: 800),
         BTRect(x: 0, y: 0, width: 1_000, height: 800)
     ]
-    // Each display shows less than 1%; together they show more than 1%.
     let spanning = BTRect(x: -90_000, y: 100, width: 180_000, height: 400)
     #expect(PlacementBounds.isHistoryRestoreReachable(spanning, in: displays))
-    #expect(!PlacementBounds.isHistoryRestoreReachable(spanning, in: [displays[0]]))
-    #expect(!PlacementBounds.isHistoryRestoreReachable(spanning, in: [displays[1]]))
+    for display in displays {
+        #expect(PlacementBounds.isHistoryRestoreReachable(spanning, in: [display]))
+    }
 }
 
-@Test(arguments: [(5.9, false), (6.0, true), (6.1, true)])
-func historyRestoreBoundsRequiresOnePercent(visibleWidth: Double, reachable: Bool) {
+@Test(arguments: [(9.9, false), (10.0, true), (10.1, true)])
+func historyRestoreBoundsRequiresMinimumTitleStripArea(visibleWidth: Double, reachable: Bool) {
     let display = BTRect(x: 0, y: 0, width: 1_000, height: 800)
     let frame = BTRect(x: 1_000 - visibleWidth, y: 200, width: 600, height: 400)
     #expect(PlacementBounds.isHistoryRestoreReachable(frame, in: [display]) == reachable)
+}
+
+@Test(arguments: [(1.0, false), (2.0, true), (3.0, true)])
+func historyRestoreBoundsRequiresMinimumPartiallyVisibleTitleStripArea(visibleHeight: Double, reachable: Bool) {
+    let display = BTRect(x: 0, y: 0, width: 1_000, height: 800)
+    let frame = BTRect(x: 890, y: 800 - visibleHeight, width: 600, height: 600)
+    #expect(PlacementBounds.isHistoryRestoreReachable(frame, in: [display]) == reachable)
+}
+
+@Test func historyRestoreBoundsDoesNotCombineSmallFragments() {
+    let displays = [
+        BTRect(x: 0, y: 0, width: 5, height: 800),
+        BTRect(x: 10, y: 0, width: 5, height: 800)
+    ]
+    #expect(!PlacementBounds.isHistoryRestoreReachable(
+        BTRect(x: 0, y: 100, width: 600, height: 400), in: displays))
+}
+
+@Test func historyRestoreBoundsRejectsTitleBarInOffsetDisplayGap() {
+    let displays = [
+        BTRect(x: 0, y: 0, width: 1_000, height: 800),
+        BTRect(x: 1_000, y: 300, width: 1_000, height: 800)
+    ]
+    #expect(!PlacementBounds.isHistoryRestoreReachable(
+        BTRect(x: 1_100, y: 150, width: 600, height: 400), in: displays))
+    #expect(!PlacementBounds.isHistoryRestoreReachable(
+        BTRect(x: 0, y: 0, width: 600, height: 400), in: []))
 }
 
 @Test(arguments: [(-22.0, false), (-21.0, true), (779.0, true), (800.0, false)])
