@@ -12,6 +12,8 @@ protocol BetterTileWindowSystem: TargetedWindowSystem, WindowEventSource, Window
     var enhancedUserInterfacePolicy: EnhancedUserInterfacePolicy { get set }
     var leavesSpaceForDock: Bool { get set }
     var unresponsiveApplicationRecoveryDeadlines: [Int32: TimeInterval] { get }
+    /// Known identities owned by currently hidden application launches.
+    var hiddenApplicationWindowIDs: Set<WindowID> { get }
     func visibleWindows(recoveringApplicationPIDs: inout Set<Int32>) throws -> [WindowSnapshot]
     func cachedVisibleWindows(refreshing ids: Set<WindowID>) throws -> [WindowSnapshot]?
     func nativeDesktopObservation() -> NativeDesktopObservation?
@@ -43,6 +45,7 @@ extension AccessibilityWindowSystem: BetterTileWindowSystem {}
 
 extension BetterTileWindowSystem {
     var unresponsiveApplicationRecoveryDeadlines: [Int32: TimeInterval] { [:] }
+    var hiddenApplicationWindowIDs: Set<WindowID> { [] }
     var unreadOnScreenWindowIDs: Set<WindowID> { [] }
     func displayArrangement() -> DisplayArrangement { DisplayArrangement(displays()) }
     func restoreEnhancedUserInterfaceBeforeQuit() {}
@@ -4745,6 +4748,7 @@ final class BetterTileModel {
                    paneGap: session.paneGap(configured: paneGapForLayout),
                    confirmedGone: confirmedGoneWindowIDs,
                    minimized: confirmedMinimizedWindowIDs,
+                   hiddenApplicationWindowIDs: system.hiddenApplicationWindowIDs,
                    knownSpaceWindowIDs: knownSpaceWindowIDs,
                    heldWindowIDs: heldWindowIDs(among: knownSpaceWindowIDs),
                    onScreenWindowIDs: system.unreadOnScreenWindowIDs,
@@ -6147,6 +6151,7 @@ final class BetterTileModel {
                     requestsRelayout: relayoutPaneGap,
                     confirmedGone: consumedDestroyedWindowIDs,
                     confirmedMinimized: consumedMinimizedWindowIDs,
+                    hiddenApplicationWindowIDs: system.hiddenApplicationWindowIDs,
                     knownSpaceWindowIDs: knownSpaceWindowIDs,
                     heldWindowIDs: heldWindowIDs(among: knownSpaceWindowIDs),
                     onScreenWindowIDs: system.unreadOnScreenWindowIDs,
@@ -6415,6 +6420,7 @@ final class BetterTileModel {
             paneGap: session.paneGap(configured: paneGapForLayout),
             confirmedGone: confirmedGone,
             minimized: minimized.union(confirmedMinimizedWindowIDs),
+            hiddenApplicationWindowIDs: system.hiddenApplicationWindowIDs,
             knownSpaceWindowIDs: knownSpaceWindowIDs,
             heldWindowIDs: heldWindowIDs(among: knownSpaceWindowIDs),
             onScreenWindowIDs: system.unreadOnScreenWindowIDs,

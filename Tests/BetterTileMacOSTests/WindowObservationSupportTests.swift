@@ -429,3 +429,34 @@ func invalidAccessibilityElementConfirmsClosureOnlyAfterSuccessfulAbsentInventor
         peers: [], exactWindowIDs: [:], windowServer: { _ in lookups += 1; return nil }))
     #expect(lookups == 1)
 }
+
+@Test(arguments: ["matching", "visible", "unknown-current-launch", "unknown-recorded-launch",
+                  "both-launches-unknown", "reused-pid", "unrecorded"])
+func hiddenApplicationLaunchRequiresPositiveCurrentEvidence(evidence: String) {
+    let instance = ApplicationLaunchInstance(processIdentifier: 90, generation: 2)
+    let currentToken: UInt64? = ["unknown-current-launch", "both-launches-unknown"].contains(evidence) ? nil : 200
+    let recordedToken: UInt64? = ["unknown-recorded-launch", "both-launches-unknown"].contains(evidence)
+        ? nil : (evidence == "reused-pid" ? 100 : 200)
+    let result = AccessibilityWindowSystem.hiddenApplicationLaunch(
+        isHidden: evidence != "visible",
+        launchToken: currentToken,
+        recordedLaunch: evidence == "unrecorded" ? nil : (recordedToken, instance)
+    )
+    #expect(result == (evidence == "matching" ? instance : nil))
+}
+
+@Test func hiddenApplicationWindowIdentitySelectionRequiresTheCurrentApplicationLaunch() {
+    var registry = WindowIdentityRegistry()
+    let old = ApplicationLaunchInstance(processIdentifier: 90, generation: 1)
+    let current = ApplicationLaunchInstance(processIdentifier: 90, generation: 2)
+    let other = ApplicationLaunchInstance(processIdentifier: 91, generation: 1)
+    let stale = registry.resolve(application: old, accessibilityHash: 1, exactWindowID: nil)
+    let first = registry.resolve(application: current, accessibilityHash: 2, exactWindowID: nil)
+    let second = registry.resolve(application: current, accessibilityHash: 3, exactWindowID: nil)
+    _ = registry.resolve(application: other, accessibilityHash: 4, exactWindowID: nil)
+    #expect(registry.windowIDs(belongingTo: [current]) == [first, second])
+    #expect(!registry.windowIDs(belongingTo: [current]).contains(stale))
+    registry.remove(first)
+    #expect(registry.windowIDs(belongingTo: [current]) == [second])
+    #expect(registry.windowIDs(belongingTo: []).isEmpty)
+}
