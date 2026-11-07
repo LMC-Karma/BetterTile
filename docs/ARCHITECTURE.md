@@ -1186,8 +1186,12 @@ change a Bento operation made to the tree; writing it also writes the tree.
   minimum with their sources, and the result for each pane it tried.
   Entering Tabbed from Adaptive uses the starting layout (`defaultTabbedPreset`).
   `tabbedEntryPlacement` puts all windows in one pane by default. One per pane
-  distributes windows in screen reading order: top to bottom, then left to
-  right within a row. Extra windows join the panes as tabs in turn. The incoming
+  fills panes in screen reading order: top to bottom, then left to right within
+  a row. On fresh entry from Manual, each pane takes the unassigned window
+  whose centre is nearest its centre, with window ID breaking equal-distance
+  ties. Adaptive entry keeps windows in screen reading order. Remaining Manual
+  windows are ordered by top edge, then left edge and window ID. Extra windows
+  join the panes as tabs in turn, in the same pane order. The incoming
   focused window stays selected and keeps focus when it becomes a tab. If it
   stays floating, entry requests no focus change. Keep Adaptive panes adopts
   the Adaptive tree instead.

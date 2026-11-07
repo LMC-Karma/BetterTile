@@ -6035,9 +6035,8 @@ extension BetterTileModel {
         if wasUninitialized, configuration.tabbedEntryPlacement == .onePerPane {
             let incomingSelection = focused.flatMap { state.windowIDs.contains($0) ? $0 : nil }
                 ?? state.activeWindowID
-            // Entry follows the visible arrangement, not Accessibility IDs.
-            // Gather members in reading order before distributing the tabs.
-            let ordered = windows.filter { state.windowIDs.contains($0.id) }.sorted {
+            // Keep a stable reading order for Adaptive entry and overflow tabs.
+            var remaining = windows.filter { state.windowIDs.contains($0.id) }.sorted {
                 if $0.frame.minY != $1.frame.minY { return $0.frame.minY < $1.frame.minY }
                 if $0.frame.minX != $1.frame.minX { return $0.frame.minX < $1.frame.minX }
                 return $0.id < $1.id
@@ -6045,13 +6044,32 @@ extension BetterTileModel {
             state.applyPreset(configuration.defaultTabbedPreset, grouping: .distributeWindows)
             // Preset leaves need not follow reading order (Grid is column-first).
             // Fill panes by geometry, including empty panes, before placement.
-            let panes = state.frames(in: display.visibleFrame).sorted {
+            let paneFrames = state.frames(in: display.visibleFrame).sorted {
                 if $0.value.minY != $1.value.minY { return $0.value.minY < $1.value.minY }
                 return $0.value.minX < $1.value.minX
-            }.map(\.key)
+            }
+            let panes = paneFrames.map(\.key)
+            var ordered: [WindowID] = []
+            // Adaptive already has aligned rows; preserve its distribution.
+            // Manual windows may share a row without sharing an exact top edge.
+            if !entersFromAdaptive {
+                for (_, frame) in paneFrames {
+                    let center = frame.center
+                    guard let nearest = remaining.indices.min(by: { a, b in
+                        func distance(_ index: Int) -> Double {
+                            let point = remaining[index].frame.center
+                            return pow(point.x - center.x, 2) + pow(point.y - center.y, 2)
+                        }
+                        let da = distance(a), db = distance(b)
+                        return da == db ? remaining[a].id < remaining[b].id : da < db
+                    }) else { break }
+                    ordered.append(remaining.remove(at: nearest).id)
+                }
+            }
+            ordered.append(contentsOf: remaining.map(\.id))
             if !panes.isEmpty {
-                for (index, window) in ordered.enumerated() {
-                    state.move(window.id, to: panes[index % panes.count], at: index / panes.count)
+                for (index, id) in ordered.enumerated() {
+                    state.move(id, to: panes[index % panes.count], at: index / panes.count)
                 }
                 for pane in state.panes {
                     if let first = pane.tabs.first { state.select(first) }

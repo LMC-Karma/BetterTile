@@ -324,25 +324,50 @@ struct TabbedEntryPlacementTests {
 
     @Test(arguments: [LayoutMode.manual, .bento], [TabbedPreset.columns, .rows, .focus, .grid])
     func entryDistributionFollowsScreenReadingOrder(mode: LayoutMode, preset: TabbedPreset) async throws {
-        let system = makeSystem(count: preset == .grid ? 4 : 3)
-        // IDs intentionally disagree with the visible order; the last two
-        // frames share a row, so the x-coordinate breaks the tie.
+        let manualColumns = mode == .manual && preset == .columns
+        let system = makeSystem(count: preset == .grid ? 4 : (manualColumns ? 2 : 3))
+        // IDs disagree with the visible order. Manual windows in the same
+        // visual row have top edges one point apart.
         system.windows[0].frame = BTRect(x: 600, y: 400, width: 300, height: 300)
-        system.windows[1].frame = BTRect(x: 600, y: 0, width: 300, height: 300)
-        system.windows[2].frame = BTRect(x: 0, y: 0, width: 300, height: 300)
-        if preset == .grid {
-            system.windows[3].frame = BTRect(x: 0, y: 400, width: 300, height: 300)
+        system.windows[1].frame = BTRect(x: 600, y: mode == .manual ? 40 : 0, width: 300, height: 300)
+        if manualColumns {
+            system.windows[0].frame = BTRect(x: 620, y: 40, width: 360, height: 500)
+            system.windows[1].frame = BTRect(x: 20, y: 41, width: 360, height: 500)
+        } else {
+            let left = mode == .manual && preset == .rows ? 400.0 : 0.0
+            system.windows[2].frame = BTRect(x: left, y: mode == .manual ? 41 : 0, width: 300, height: 300)
         }
+        if preset == .grid {
+            system.windows[3].frame = BTRect(x: 0, y: mode == .manual ? 401 : 400, width: 300, height: 300)
+        }
+        let ids = system.windows.map(\.id)
         let model = makeModel(system: system)
         defer { model.shutdown() }
         try configure("onePerPane", preset: preset, model: model)
         model.setActiveMode(mode)
         try await settle(model, system: system)
-        // Adaptive may have rearranged the fixture. Rank its actual frames.
-        let expected = system.windows.sorted {
-            if $0.frame.minY != $1.frame.minY { return $0.frame.minY < $1.frame.minY }
-            return $0.frame.minX < $1.frame.minX
-        }.map(\.id)
+        let expected: [[WindowID]]
+        if mode == .manual {
+            // Explicit pane contents: left to right within each visual row.
+            // These expectations must not copy the production matching policy.
+            switch preset {
+            case .columns: expected = [[ids[1]], [ids[0]]]
+            case .rows: expected = [[ids[2], ids[1]], [ids[0]]]
+            case .focus: expected = [[ids[2]], [ids[1]], [ids[0]]]
+            case .grid: expected = [[ids[2]], [ids[1]], [ids[3]], [ids[0]]]
+            case .single: expected = [ids]
+            }
+        } else {
+            // Adaptive has already rearranged the fixture. Keep its established
+            // reading-order result as a guard against changes to Adaptive entry.
+            let ordered = system.windows.sorted {
+                if $0.frame.minY != $1.frame.minY { return $0.frame.minY < $1.frame.minY }
+                return $0.frame.minX < $1.frame.minX
+            }.map(\.id)
+            expected = (0..<preset.paneCount).map { pane in
+                ordered.enumerated().filter { $0.offset % preset.paneCount == pane }.map(\.element)
+            }
+        }
         model.setActiveMode(.tabbed)
         try await settle(model, system: system)
         let state = try #require(model.activeTabbedState)
@@ -352,8 +377,36 @@ struct TabbedEntryPlacementTests {
             return a.minY == b.minY ? a.minX < b.minX : a.minY < b.minY
         }
         for (index, pane) in panes.enumerated() {
-            #expect(pane.tabs == expected.enumerated().filter { $0.offset % panes.count == index }.map(\.element))
+            #expect(pane.tabs == expected[index])
         }
+    }
+
+    @Test
+    func entryDistributionBreaksDistanceTiesByWindowID() async throws {
+        let system = makeSystem(count: 6)
+        for index in system.windows.indices {
+            system.windows[index].frame = BTRect(x: 350, y: 250, width: 300, height: 300)
+        }
+        let ids = system.windows.map(\.id).sorted()
+        // Neither scan order nor incoming focus should break distance ties.
+        system.windows.reverse()
+        system.focusedID = ids[5]
+        let model = makeModel(system: system)
+        defer { model.shutdown() }
+        try configure("onePerPane", preset: .grid, model: model)
+        model.setActiveMode(.manual)
+        model.setActiveMode(.tabbed)
+        try await settle(model, system: system)
+        let state = try #require(model.activeTabbedState)
+        let frames = state.frames(in: system.mainDisplay.visibleFrame)
+        let panes = state.panes.sorted {
+            let a = frames[$0.id]!, b = frames[$1.id]!
+            return a.minY == b.minY ? a.minX < b.minX : a.minY < b.minY
+        }
+        let expected = [[ids[0], ids[4]], [ids[1], ids[5]], [ids[2]], [ids[3]]]
+        #expect(panes.map(\.tabs) == expected)
+        #expect(state.activeWindowID == ids[5])
+        #expect(try system.focusedWindow()?.id == ids[5])
     }
 
 }
