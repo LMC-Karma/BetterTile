@@ -325,7 +325,8 @@ func displayHoldRecoveryYieldsToANewerGesture() async throws {
     // Missing completion reaches the hold limit while this newer gesture
     // still owns the display. Old recovery must not move its participant.
     await system.advance(by: .seconds(6))
-    #expect(!model.isHoldingDisplayChange)
+    // The jump to the deadline can finish before the sampler's last turn.
+    #expect(await system.waitFor(timeout: .seconds(1)) { !model.isHoldingDisplayChange })
     #expect(system.frameWriteCounts == writes)
     #expect(system.windows[0].frame == frame)
     model.finishBentoDrag(displayID: display, sourceID: source, end: .restore)
