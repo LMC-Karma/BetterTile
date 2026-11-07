@@ -59,7 +59,8 @@ the session. Restoring a valid file and relaunching resumes normal saving.
 `BetterTileClock` in Core wraps Swift's `Clock` protocol with `Duration` and
 monotonic `ContinuousClock.Instant` values. Its live default uses
 `ContinuousClock`. `BetterTileModel` passes its injected clock to
-`WindowCoordinator` and display-refresh debouncing. It drives recovery,
+`WindowCoordinator`, idle observation retries in `DragSnapController`, and
+display-refresh debouncing. It drives recovery,
 window-event scheduling, Space stabilization, settlement, arrival confirmation,
 configuration-save delays, and coordinator retry waits. Arrival dates project
 elapsed monotonic time from one initial wall-clock date.
@@ -68,7 +69,7 @@ elapsed monotonic time from one initial wall-clock date.
 Application responsiveness holds and pane-application deadlines use separate
 uptime callbacks, defaulting to process system uptime. Tests replace these
 callbacks together with the clock so hold expiry and recovery deadlines agree.
-The 10-second watchdog remains a native run-loop timer. DragSnap pointer and
+The 10-second watchdog remains a native run-loop timer. DragSnap hover and
 chooser delays and the pane-application picker retain separate UI timing seams.
 Clock injection does not change the layer dependencies.
 
@@ -97,6 +98,20 @@ use the same `windowFrame(forPane:)` projection, exposed by `contentFrames(in:)`
 Tabbed passes these expected frames to the shared divider fitter. The fitter
 matches projected window edges to projected boundaries; its tolerance stays
 unchanged. Logical pane frames and ratios remain precise.
+
+Restore history stores absolute window frames. Before restoring one, the
+coordinator checks its top 22-point strip as an estimate of title-bar access.
+At least 220 square logical points of that strip must intersect one connected
+display's whole frame, including menu-bar and Dock space. This minimum equals
+10 points of width at the full strip height. It preserves reachable overhangs
+regardless of window size while refusing narrower strips. A window whose whole
+strip is smaller than the minimum needs all of its strip on one display.
+Parked, spanning, and oversized windows remain valid. A fully off-screen window
+or a title bar in the gap between offset displays is refused. If disconnecting
+or rearranging displays made that frame unreachable, Restore reports the failure
+without moving the window or consuming its history. A reachable frame on another
+connected display remains valid. Restore does not infer new coordinates from a
+changed arrangement.
 
 ## Snap Zones
 
@@ -142,6 +157,19 @@ window, with its gaps, and the frames of the windows that move. The value
 clears when the overlay hides, for example when the pointer leaves the snap
 area, a suppression modifier is held, or Escape cancels the drag.
 
+A window drag waits for observed window movement before it shows a drop.
+If a targeted read is unavailable or still reports the starting frame, display
+ticks retry the latest sample no more than once every 50 ms, for three seconds
+after the newest drag sample or desktop resume. This window covers a two-second
+Accessibility responsiveness hold that starts early in the rest. A hold that
+starts later can outlast the window. The preview then waits for the next drag
+sample, and release still places the window.
+Reads skip applications held as unresponsive. New samples retain display pacing;
+resume evaluates the latest sample at once. Activation stops idle retries unless
+a desktop change needs to resolve the held window again. Release and
+cancellation clear the sample, retry deadlines and gate, so late observations
+cannot restart the gesture.
+
 A drop that cannot apply shows invalid feedback: a red snap frame or a red
 pane cue. It is recorded as a non-committable target with a reason. Release
 over it applies nothing and shows the reason in the result pill. A window
@@ -171,6 +199,58 @@ release point once. A suppression modifier held at release cancels the drop. A
 Bento cue arms only after its hover delay, because the armed cue is the drop.
 At a screen edge, a snap area wins over the edge of the pane under it, so the
 overlay shows the snap and not a pane cue.
+
+macOS can carry a dragged window to another desktop, for example when the
+pointer stays at the screen edge. A desktop change suspends the window drag; it
+does not cancel it. Suspension ends the Adaptive or Tabbed drag of the old
+desktop with a restore, which writes nothing because its desktop changed, and
+hides the overlay. While the drag is suspended, a release applies nothing. When
+Space stabilization ends and the button is still down, the drag resumes: the
+newest sample of the gesture resolves the drop on the destination desktop at
+once. That sample can be one a display tick already evaluated, because a
+pointer that rests at the edge sends no new sample during the change. If the
+held window is not readable yet, the next display tick or sample reads it
+again. If the button came up during the change, the drag ends with no drop.
+macOS switches desktops again while the pointer stays at the edge; each switch
+suspends and resumes the same drag. A display change, wake, and Escape still
+cancel the drag.
+
+The carried window need not belong to the destination layout. Until the
+gesture ends, the destination neither places nor admits it. Refreshes leave
+it out, so no single-window placement, first Adaptive layout or Tabbed
+arrival moves it under the pointer. The destination session and its other
+windows are observed as usual. An Adaptive or Tabbed destination starts its
+own drag for the window. A destination that refuses the layout drag, such as
+an Adaptive desktop with no tree, offers the plain snap areas. A snap there
+also stops single-window placement from moving the window. Each carried
+gesture records a topology change when it ends, so the next event pass
+admits the window on the current desktop. This does not depend on a
+stabilization refresh, which a failed observation can skip. A plain snap
+whose rollback is incomplete also stops automatic writes on the destination
+and offers Repair Layout.
+
+Tabbed holds the carried window as a provisional float for fixed snaps and
+Add as tab. A landed drop publishes pane membership; a snap outside the
+panes keeps it floating. Every other exit removes the float. Failed
+placement restores the membership from before the drag without the float and
+adds no Undo step. Incomplete rollback suspends automatic writes and offers
+Repair Layout; cleanup preserves that suspension. Each float records its
+session and owner, first the drag and then its placement. Cleanup precedes
+queued actions, pane-picker resumption and work-area refreshes, so new
+placements and Undo steps use the cleaned membership and revision. Removal
+uses the stored session ID even when inactive; it selects no session and
+moves no window. A record ends when its session's display or Space
+disappears. A new drag removes other windows' provisional floats in its
+start commit, which already supersedes and cancels the older placement. Its
+baseline, rollback and Undo retain only its own provisional float, if any.
+Other windows arrive after that drag ends.
+
+Tabbed Undo of a carried window's drop that landed restores the layout from
+the start of the destination drag. That layout held the window as a floating
+window, so Undo floats it again at its frame from that moment. It stays
+floating: arrival admission does not take it into a pane, because it is a
+floating member of the layout. Repair Layout does not return it either; a
+window floated this way counts as one the user floated.
 
 On a Tabbed desktop, a dragged window joins a pane as a tab in three places:
 the center of a pane's selected tab, a pane's tab strip, and an empty pane.
@@ -235,6 +315,52 @@ stops automatic writes until Repair, as for a degraded mutation.
 BetterTile operates on eligible on-screen windows exposed by its macOS integration layer. It refreshes the current window set immediately when apps, Spaces, or displays change. A validated native desktop observation selects one process-local runtime layout session for each display and Space pair. Missing or malformed native observations retain the public-API window-overlap matcher. Empty window membership remains unknown, windows reported on several Spaces float, and native fullscreen Spaces expose neither automatic layout writes nor dividers. With separate Spaces per display, a window's center can lie on a display whose current Space does not hold it, for example while the window is dragged across a shared edge. A window whose one Space is current on another display stays visible and is reported on that Space's display; only a window whose Space is current on no display is left out. BetterTile never assigns a window to a hidden Space. An explicit display transfer
 uses the destination display's current desktop.
 
+When a display disappears, or Mission Control removes a native Space, its
+sessions move to an in-memory retirement list. Normal refresh retires them after
+the display hold. An explicit action during the hold can retire missing displays
+before activating its target. The list keeps at most 32 nonempty desktops in a
+fixed order and drops the oldest. Empty and native fullscreen placeholders do
+not enter it. Authoritative close and minimize events update retired Tabbed
+state too; only closure removes an identity from restoration evidence.
+
+A new session can restore the desktop with the most window overlap. At least
+half of the new desktop's windows must overlap. Ties prefer the desktop covered
+most fully, then the newest retirement when carry-over is on, the same display
+UUID, and a fixed session order. Restoring removes copies whose entire window
+set is both in the restored desktop's memory and in the current observation.
+Neither alone proves a copy: remembered windows may have moved away, and macOS
+can merge several desktops' windows onto one desktop of the new screen.
+When a restore keeps another retired desktop whose windows it shows, those
+windows count as merged into the restored desktop. With carry-over off, this
+applies only to copies from the same screen; another screen's copy is kept on
+purpose and its windows do not count as merged. While that other desktop is
+remembered, they are not the restored desktop's evidence, also after a later
+screen change retires it again: they prove no copy and add no match overlap.
+Uncertain copies remain in the bounded retirement list. With carry-over off,
+other screens keep their independent memories. One case stays ambiguous: a
+desktop whose windows are also in another desktop's stale memory, for example
+after a Mission Control move, can be removed when macOS merges them.
+An empty first observation keeps the restoration opportunity until windows
+arrive or the user chooses a mode or Tabbed arrangement. This opportunity is
+separate from the first-observation flag, so later arrivals still receive their
+minimum-size measurement before placement. A shortcut during the
+hold selects the carried mode before interpreting the action. If the native
+observation arrives later, its first matching window observation adopts the
+restored inferred session instead of replacing it with a default.
+
+The display UUID comes from public `CGDisplayCreateUUIDFromDisplayID`. It lets a
+screen reconnect with different Core Graphics and Space numbers. Carry-over is
+on by default; off permits restoration only from the same known UUID. A restored
+session adopts the new display and Space IDs and invalidates its work area, so
+the stored tree fits the new screen. It ends Saved Layout following and discards
+old Tabbed entry frames, committed placements, frame Restore history and Undo
+Apply checkpoints. Every restoration path, including Repair, clears this history.
+Pane ratios, tab groups and reinsertion metadata remain. Continuing Tabbed does
+not capture a new entry baseline, so leaving it keeps current frames. Sessions,
+window identities, UUID associations and retired desktops are never persisted.
+The existing private native-desktop observations are unchanged; this adds no
+permission or dependency.
+
 ## Popup and fixed-size windows
 
 A popup window floats at its own size and never joins a Bento or Tabbed
@@ -272,6 +398,116 @@ dropped it from its pane as ineligible and adopted it again later as a
 fixed-size window, which could float.
 
 ## Event ordering
+
+Display and sleep notifications start a `DisplayChangeHold` before refreshing
+layouts. The Core reducer uses monotonic time and `DisplaySettleDetector`.
+Two equal display and window observations 250 ms apart release the hold.
+The public Core Graphics callback forwards its begin and completion flags, with
+AppKit screen notifications as a fallback.
+Any active-session hold that does not become quiet releases after five seconds
+without a new display event. Sleep and an inactive or locked session wait for wake and unlock;
+those events restart the deadline.
+After sleep or session inactivity, the quiet observations must also contain, as
+eligible, the windows that held a place in a layout: Adaptive panes, Tabbed
+tabs and floating windows in either mode, except peers excluded by Focus mode.
+An Adaptive desktop's only window counts too, although it has no tree.
+Confirmed closures do not count, nor do minimizes recorded while the session
+was active. The model captures that membership without reading Accessibility
+while inactive, after the hold has stopped any gesture, so a tab that an
+interrupted drag returns to its pane counts. Repeated wake events during the
+hold keep the same captured set. This readiness wait ends at the same
+five-second deadline; it does not add permanent membership protection. The
+deadline counts from the last wake, lock or real display event: an unchanged
+screen notification does not extend it. Every settlement clears the captured
+set, also at the limit and at the early release of an unchanged arrangement.
+Known limit: a Tabbed float that the user moved to another Space stays in the
+float set, because the Tabbed sweep drops only tabs that belong elsewhere.
+Accessibility does not list it after wake, so each return from sleep, lock or
+the screen saver waits the full five seconds until that window returns or
+closes. The layout is not changed.
+
+Only a changed `DisplayArrangement` holds: the set of displays, their frames
+and their pixel sizes. AppKit also posts screen-parameter notifications for
+unrelated reasons. One that leaves the arrangement as it was when the last
+hold settled starts no hold, and during a hold it does not extend it. A Core
+Graphics reconfiguration still starts a hold at its begin flag. The callback
+reaches the model through a main-actor task, so a busy main actor can handle the
+begin after the displays already changed. The hold therefore settles at once
+only when all of these are true:
+
+- every pending reconfiguration has ended;
+- the arrangement equals the one seen at the begin;
+- the arrangement equals the one from the last settlement;
+- no end callback reported an added, removed, enabled, disabled, mirrored or
+  unmirrored display;
+- sleep, lock or a real change does not also hold.
+
+A stale settled arrangement only makes a spurious reconfiguration hold once,
+which is the safe direction. The arrangement leaves out work areas. A Dock or
+menu bar change moves no window between displays, and the ordinary work-area
+reflow places windows for the new work area without delaying closes and
+arrivals. The adapter reads the arrangement from Core Graphics when the model
+handles the event. `NSScreen` can still describe the previous arrangement then.
+
+The five-second limit is checked by time before each inventory that a hold
+starts: by the sampler, the watchdog and every refresh, also a background
+refresh after an explicit action released one display. Window inventories are
+synchronous and can take seconds when applications do not answer
+Accessibility. A hold past its limit settles without starting another
+inventory, so it lasts at most about five seconds plus one read in progress.
+
+During an awake, active hold, observations and closed or minimized evidence
+accumulate. Sleep and lock holds do not sample windows; a slow public lock-state
+check starts two seconds after lock begins and recovers a missed unlock notification. ScreenSaverEngine activation also
+holds layout until the user returns.
+Minimize events received while sleeping or inactive defer Tabbed removal until
+the hold settles. A restore event before settlement clears the deferred removal
+and the confirmed minimize evidence that Adaptive uses after the hold. A
+minimize and restore pair during sleep therefore keeps Tabbed tab order and
+selection, and leaves the Adaptive layout unchanged. A close event clears the
+deferred entry and removes the window normally. Without a restore event,
+settlement removes the deferred Tabbed tab, and Adaptive reconciles the confirmed
+minimize evidence, even when the window is unread. Awake minimize events keep
+their authority, including during a display reconfiguration.
+Missing displays and Spaces keep their sessions. Automatic reconciliation,
+minimum-size probes and frame writes wait. Removed displays hide their Tabbed
+chrome. Settling runs a desktop-transition refresh followed by an ordinary event
+pass. Explicit layout actions release their target display until the next hold
+event. In-flight Automatic Apply cannot write forward or recovery frames during
+the hold. Interrupted Tabbed placements hand recovery to the post-hold refresh
+only while their session and revision still match; failed recovery stays suspended.
+An interrupted Saved Layout Apply keeps the previous session and hands its
+restoration to the same refresh. A refused ownership check is not a failed
+restoration write. The coordinator records actual frame and rollback write
+failures separately so a later display event cannot hide a genuine failure.
+Manual Apply explains the interruption. Display Trigger waits for settlement
+and retries an interrupted automatic Apply once under its original input
+cancellation. An attempt that already placed windows is not repeated. A second
+interruption receives no further retry.
+
+Display changes stop divider and window gestures without restoring old frames
+inside the hold. Native linked resizing stops too: its queued display tick, the
+rest of the drag and the release resend write nothing. A press queued before
+the hold does not restart it, on either input path. The AppKit fallback
+reinstalls its mouse-down monitor, and the hold restarts the shared event tap,
+so the old delivery generation is dropped. Only a linked resize that left its
+windows in an unknown arrangement keeps a recovery. A resize that starts
+during the hold is a new explicit action and links as usual. Recovery
+checks the session, desktop and window processes again, then uses the current
+work area. Recovery for a Manual desktop writes only the interrupted
+transaction's own windows that started on that display; a window an Apply
+pulled in from another display keeps its Apply frame. It skips a window whose
+frame changed during the hold, moves the old frames with a moved display
+origin, and writes nothing when the display changed size. A newer explicit
+action on the display supersedes retained recovery. Escape outside a hold
+restores normally.
+A queued Tabbed exit retains its desktop owner, action identity and hold
+generation. A newer hold defers it until settlement. Only a newer mode choice
+supersedes it; other explicit actions, such as a snap or a refused drag, do
+not. Its continuation never grants a new user override. Automatic
+float checks whose deadlines fall inside a hold stay pending without spending
+the busy retry budget. They run once after settlement. Departed displays discard
+unused Tabbed placement handoffs.
 
 Window identities survive off-screen and incomplete Accessibility sweeps.
 After a successful application Accessibility inventory omits a window, cleanup
@@ -333,6 +569,21 @@ backoff; held applications use recovery instead. Gestures and Space
 stabilization still defer discovery. Frame classification reuses its inventory
 for arrival reconciliation only when it attempted no mutation. A mutation
 attempt requires a new inventory before reconciliation.
+
+A Space change suspends an active window drag instead of cancelling it (see
+Window drag drops). The suspended gesture still counts as active, so event
+passes and arrival discovery stay deferred until the gesture ends. Every
+refresh during the gesture leaves the carried window out of the destination
+desktop's windows unless that layout already holds it. Suspension marks that
+the gesture carried a window; the gesture end records one topology change for
+the event pass after it, because a layout drag start on the destination clears
+queued events. The drag resumes after the
+stabilization refresh, also when a stabilization sample fails. The
+destination session is then selected before the drag resolves its drop, and
+the destination's Adaptive drag cannot make that refresh return early. A newer
+Space change restarts stabilization and keeps the drag suspended; only the
+newest stabilization resumes it. A drag that ended during the change ignores
+the late resume.
 
 Some applications close a document window without a destruction event; focus
 only moves to another window. When focus lands in a Bento layout, the model
@@ -701,8 +952,9 @@ timeouts.
 A kept application is reported with its inventory deadline, exactly like a
 held one. Its windows stay out of the sweep and keep their identities.
 `unreadableApplicationWindowIDs` lists them, and the model passes them to the
-Adaptive reducer as absence exemptions, beside native desktop membership. A
-pane therefore stays when native observation is unavailable, too. Native
+Adaptive reducer through `heldWindowIDs`. Native desktop membership stays
+separate and keeps its finite absence budget. An unread pane therefore stays
+when native observation is unavailable, too. Native
 membership on another desktop still lets such a pane leave, and confirmed
 destruction and minimization still remove it.
 
@@ -852,6 +1104,80 @@ shortcut never acts on a window the user is not looking at.
 
 Bento uses a binary split tree held by each display's runtime `LayoutSession`. Leaves reference currently visible windows and branches carry an axis, normalized weight, and lock state. Closed or hidden windows are removed from the current tree. `BentoResizeEngine` changes branch weights and recursively derives all affected frames, `BentoLayoutFitter` adopts native edge changes, and `BentoBoundaryResolver` exposes only shared segments verified against current window frames.
 
+`BentoSessionReducer` removes a pane on direct evidence or after a
+corroborated absence. A destroyed or minimized event removes the pane in the
+next ordinary sweep. A window that a sweep does not observe loses its pane on
+its third consecutive miss. A window that macOS still reports on this desktop
+loses its pane on its fifth consecutive miss, and no earlier than 1.4 s after
+its first miss. Events make sweeps more frequent, so the count alone can pass
+in under half a second, for example while Accessibility exposes a desktop's
+windows one at a time after the user returns to it. The app model gives the
+reducer the sweep time from its injected clock. Desktop membership delays the
+removal but does not prevent it, because an application can keep a closed
+window alive off screen. A window of an application skipped as unresponsive
+keeps its pane even without native membership, because the sweep did not read
+that application. Known membership on another desktop or a readable window on
+another display still lets it leave. Confirmed closure or minimization also
+removes the pane.
+
+Positive on-screen evidence protects a live window that Accessibility omits.
+Each complete sweep already reads the WindowServer window list. The adapter
+reports the windows that this list shows on screen, at the normal window layer
+and for the same application, but that the sweep did not return
+(`unreadOnScreenWindowIDs`). It needs no extra enumeration. A window that is in
+this set and that macOS reports on this desktop keeps its pane through every
+absence budget. On-screen evidence alone does not protect a pane, because it
+does not say which desktop's layout the window belongs to. A destroyed or
+minimized event still removes the pane at once. A closed window that an
+application keeps alive off screen is not on screen, so it still loses its
+pane on the fifth miss.
+
+When native observation is unavailable, on-screen evidence alone cannot keep
+an omitted pane. The next reconciliation uses the ordinary three-miss budget.
+If native observation returns before removal, protection resumes and clears
+the absence tally. After removal, a readable returning window joins through
+the ordinary arrival path. The full eligible inventory excludes windows read
+on another display from native membership in ambient, command, recovery and
+settlement reconciliation, including when displays share a native Space.
+
+A protected pane has no absence tally, so no follow-up sweep is pending for
+it. The app model records which missing panes each ambient reducer pass kept
+only because of on-screen evidence. The watchdog then applies the reducer's
+protection predicate to its own complete sweep and native desktop
+observation: the window must still be on screen and still a member of only
+this display's current desktop, and the inventory must not place it on another
+display. When a recorded pane fails this check, the watchdog reconciles again,
+even if the visible windows and the work area did not change. That pass starts
+the ordinary absence budget. So a window that leaves the screen, or that moves
+to another display's desktop or onto every desktop while Accessibility still
+omits it, gives its room back. The watchdog compares with the recorded state,
+not with the adapter's previous set, because another complete read can replace
+that set first. Suspended and Focus mode sessions and held windows are not
+checked.
+
+While a pane is missing, the app model starts another sweep after a 250 ms
+wait and the 120 ms event debounce. An inferred closure then takes about
+0.9 s, or about 1.6 s to 1.9 s with desktop membership.
+
+A desktop-switch sweep keeps the stored tree and does not run the reducer. It
+also keeps destroyed and minimize evidence for the next ordinary sweep. It
+restarts every absence tally and every membership start time of an Adaptive
+session that is not suspended. A window that the switch sweep observes was
+present, so its earlier run of misses has ended. A window that the switch
+sweep does not observe starts a new run on this desktop: time spent on another
+desktop is not evidence, and Accessibility can expose windows late after a
+return. A restart, not a pause, is the simpler rule. It can only delay a
+removal: the full budget runs again after the last switch, through ordinary
+sweeps. The switch sweep covers every display, so a switch on one display also
+restarts the tallies of the other displays' sessions. While the user keeps
+switching desktops on one display faster than one budget, a pending removal on
+another display waits; it completes once the switching stops. If the
+stored tree holds a window that the switch sweep does not observe, for example
+a window that closed just before the switch or that left while the user was
+on another desktop, an ordinary sweep follows 250 ms later. If the switch
+sweep observes a window that the tree does not hold, an ordinary sweep follows
+400 ms later to place it.
+
 `BentoPlanner` places a new window in this order. An explicit **New window
 side**, described below, applies first. Bento holds at most six windows; a
 seventh floats where it is.
@@ -919,6 +1245,17 @@ cannot meet the minimum sizes, the unbalanced insertion stands, so balancing
 never turns a placement into a failure. A size an application refuses on write
 goes through the same learned-minimum correction as any other Bento placement.
 
+Hidden applications leave the Accessibility inventory. The macOS adapter reports
+`hiddenApplicationWindowIDs` from public application state, matched to the
+current application launch. Adaptive removes panes of hidden applications with
+the same reinsertion anchors used for minimized panes. Their return restores the
+prior positions and ratios even when focus or the new-window side preference
+changed. Floating windows of hidden applications retain their user or overflow
+disposition. Focus-covered peers keep Focus's existing exclusion and minimize
+policy when their application is hidden in the same pass. Confirmed closure
+still removes a pane permanently. Unknown absence keeps its existing
+corroboration policy. This adds no AX reads, permissions, or persisted data.
+
 Each reinsertion anchor stores a neighbor, an edge, and the tree from just
 before the minimize. Restoring several windows rebuilds the largest stored
 tree. A drop, swap, partition, Layout Wheel command, or divider move clears
@@ -930,13 +1267,21 @@ it began.
 Maximize enters Focus mode on a tiled Bento window and retains the previous
 tree for that desktop session. Restore, Maximize again, and a peer restored
 from the Dock share one bounded wait for the covered peers to return before
-restoring that tree. A peer still minimized when the wait ends, such as one
-whose restore failed, leaves the tree like any minimized window: the available
-windows fill the display, and the peer's reinsertion anchor keeps the previous
-tree for its return. A rejected layout restore suspends
-automatic placement until Repair. Background sweeps retain membership without
-moving windows while the wait owns that session. A newer layout action cancels
-the wait.
+restoring that tree. A missing Accessibility snapshot does not mean that a peer
+closed. The wait retains confirmed closures against its saved panes and covered
+peers, even after background sweeps consume their events. Only a visible
+eligible peer or a confirmed closure satisfies the wait before its deadline. A
+peer still minimized or unread when the wait ends leaves the tree like any
+minimized window: the available windows fill the display, and the peer's
+reinsertion anchor keeps the previous tree for its return. Confirmed closures
+remove their panes permanently. A rejected layout restore suspends automatic
+placement until Repair. Background sweeps retain represented panes, floats and
+the covered Focus peers without moving windows while the wait owns that
+session. Unplaced arrivals stay outside committed membership so they remain
+eligible for the guarded minimum-size probe. A newer layout action cancels the
+wait. After a committed or stale restore, an ordinary topology pass measures
+arrivals before their first placement without waiting for another notification.
+Rejected or degraded restores leave them unprobed and unmoved until Repair.
 
 Keyboard and captured Layout Wheel partitions use the same peer-return wait.
 When all peers are visible, the partition runs synchronously. Otherwise it
@@ -956,6 +1301,46 @@ Tabbed is Bento with tab groups. A Tabbed desktop's `bentoState` is its layout;
 `LayoutSession.tabbedState` adds only tab membership (`BentoTabbedLayoutState`)
 and the pane that receives new windows. Reading `tabbedState` follows any
 change a Bento operation made to the tree; writing it also writes the tree.
+
+`TabbedLayoutState.returnSlots` remembers a tab's pane, tab index, and selection
+when the window is temporarily unavailable: minimized, hidden, full screen,
+unmovable, reported on another display, or assigned to another desktop. The tab
+leaves the pane but keeps its return slot. A returning window tries this slot
+before Saved Layout preferences and the active pane. The existing fit check
+must prove that the pane can show it, with boundary adaptation if needed;
+otherwise ordinary arrival routing takes over. The slot is consumed in either
+case. A floating window keeps its floating state while unavailable.
+
+Returns preserve tab order even when several windows leave or return in a
+different order. Removing, moving, floating, or reordering a peer updates the
+other reserved positions. A selected tab returns selected unless a selection
+changed in that pane while it was away. Selecting a newly adopted window counts
+as a change. A selection in another pane does not prevent restoration.
+Automatic replacement of an absent selected tab does not count as a selection
+change. Undo treats windows still open but unavailable as temporary absences;
+close evidence has already removed closed windows from Undo steps. A tab that
+returned after the Undo snapshot uses that snapshot's return slot and the
+same fit check as any return, so Undo does not move it to the active pane
+while its own pane can show it.
+
+An open window that stays ineligible keeps its slot without a timeout. It can
+still return to that pane later, but a newer selection in the pane prevents it
+from taking selection back. Close evidence deletes the slot, including for an
+inactive desktop. Presets, Repair Layout, Saved Layout Apply, leaving Tabbed for
+Adaptive, removal of the owning pane, and an explicit move of that window also
+clear it. Leaving Tabbed for Manual and switching desktops retain slots. Tree
+synchronization keeps them while their pane exists.
+
+Slots and selection generations remain part of full session equality and
+revision checks. A sweep uses `layoutEquals` to decide whether to place windows;
+return bookkeeping alone cannot start a placement. Tab interactions also use
+`layoutEquals`, so return-only changes do not cancel a drag or pending drop.
+Saved Layout Apply excludes this metadata and entry-frame cleanup for the absent
+tabs from its owner checks. It still rejects changes to membership, selection,
+mode, pane geometry, following, and other session state. Its final commit merges
+return bookkeeping changed since its baseline, so it cannot restore a slot that
+was closed during Apply. Ordinary session commits still require the exact
+revision. These values exist only in memory and are never persisted.
 
 - Each pane is a Bento leaf holding its selected tab, or a vacancy with the
   pane's identity when empty. A pane follows its selected window, so a swap
@@ -977,8 +1362,8 @@ change a Bento operation made to the tree; writing it also writes the tree.
   Compact draws every app icon and only the selected title. Tooltips,
   accessibility labels, and the pane menu retain full titles.
 - Auto-hide reserves its 6-point band once. Revealing a 34-point strip changes
-  only the panel frame and overlays the selected window. It does not mutate
-  an application window. Both states span the pane's full width. The collapsed
+  the panel frame and overlays the selected window. It does not mutate an
+  application window. Both states span the pane's full width. The collapsed
   band draws a three-point line with the strip's regular glass at reduced
   opacity. Dark appearance adds a 15-percent neutral tint beneath the glass line.
   The active pane's line is slightly brighter, without accent color.
@@ -986,6 +1371,11 @@ change a Bento operation made to the tree; writing it also writes the tree.
   clipping animation expands the strip without scaling its content; Reduce
   Motion disables it. Content fades in over the final 60 percent. Lower-pane
   bands start inside their pane, after the gap.
+  Before reveal starts, a normal-level strip is ordered again directly above
+  its pane's selected window. A click can raise an already-focused window above
+  the strip without a focus event, so this restores the strip's place. Hover,
+  holds, Show Tab Bar, and a hover that reverses a collapse share this path.
+  Collapse and Space suspension add no orders.
   Local and global pointer-only monitors receive every mouse move and drag
   while Auto-hide is active, not only near a strip. Each sample reads the
   pointer location and acts only inside the six-point hidden band, the full
@@ -1242,17 +1632,56 @@ change a Bento operation made to the tree; writing it also writes the tree.
   do not retry a rejected mode switch. Each adoption, return, and float writes a debug line
   in the `Tabbed` log category with the window's frame, its resizability and
   minimum with their sources, and the result for each pane it tried.
-  Entering Tabbed from Bento adopts the tree, so every pane stays where it was.
-  Windows that Bento floated on its own, such as a seventh window, become
-  automatic floats, and every entry to Tabbed, from Bento or Native, adopts
-  the automatic floats again. Leaving for Bento gives Tabbed's automatic floats
-  back to Bento as its own.
+  Entering Tabbed from Adaptive uses the starting layout
+  (`defaultTabbedPreset`). `tabbedEntryPlacement` puts all windows in one pane
+  by default. One per pane lists panes in screen reading order: top to bottom,
+  then left to right within a row. On entry from Adaptive or Manual, or on a
+  desktop that starts in Tabbed, Core jointly matches windows to panes. It
+  maximizes total window overlap with the pane frames, then minimizes total
+  squared distance between centres. Each term is rounded to 1/1024 pt², and
+  the terms are summed in pane order, so evenly split panes and coincident
+  windows tie exactly instead of by rounding noise.
+  With fewer windows than panes, every pane can take a window, so an empty
+  pane can be anywhere. Equal scores use window reading order (top edge, left
+  edge, then ID) in pane order, and an empty pane ranks after every window, so
+  ties leave empty panes last. The assignment also chooses which windows
+  become overflow tabs. A bit-mask search uses at most 64 transitions per
+  window for the presets' four-pane limit, plus window sorting. More than four
+  panes falls back to window reading order to bound the search.
+  Overflow windows are taken in window reading order. Each joins the pane it
+  overlaps most as a tab, then the nearest pane by centre distance; a window
+  that overlaps no pane joins the nearest. Remaining ties keep the panes in
+  turn: the i-th overflow window prefers pane i modulo the pane count. Each
+  pane selects its first member, and the incoming focused window stays
+  selected and keeps focus when it becomes a tab. If it stays floating, entry
+  requests no focus change. Keep Adaptive panes adopts the Adaptive tree
+  instead.
+  The first entry from Manual also uses the starting layout; Keep Adaptive
+  panes behaves like All in one pane there. Returning from Manual restores
+  the last tab groups regardless of these settings.
+  Distribution runs before the first placement and adds no Undo step. Menu
+  bar, Layout Wheel Mode commands and shortcuts share `setMode`; Saved Layout
+  Apply keeps its own placement policy.
+  Direct entry from Adaptive carries its floats. Windows that Adaptive floated
+  on its own, such as a seventh window, stay automatic floats and are offered
+  a pane again. User-floated windows stay floating. A first entry from Manual
+  does not carry floats from an earlier Adaptive visit. Leaving for Bento gives
+  Tabbed's automatic floats back to Bento as its own.
   Leaving for Bento gives every hidden tab its own pane (`unstacked(in:)`) and
   removes the reserve. Hidden tabs fill empty panes first, largest empty pane
   first, each taking the next hidden tab from the nearest pane. The other
   hidden tabs split their own pane along its longer side. An empty pane left
   over is removed, so Bento shows no empty slot. Leaving for Native restores
   the pre-Tabbed frames and keeps the tab groups for the next Tabbed visit.
+
+Tabbed overlay lifecycle and resize hit-testing fixtures record the controller's
+frame requests separately from native panel frames. They use a fixed screen
+reference for coordinate conversion and bypass AppKit's screen constraining.
+The tests compare requested frames with pane geometry, check native panel and
+content sizes after deferred layout, and deliver synthetic drags. They inject
+native origin shifts; they do not reproduce a display reconfiguration. Ordering
+is simulated. The native-focus lane retains production panels and real ordering
+checks.
 
 ## Tabbed panels on native Spaces
 
@@ -1921,7 +2350,28 @@ Release drains those commands even when no new placement is needed.
 
 The linked-resize engine detects and merges shared boundary segments within a configurable tolerance. Linked and Bento boundaries share the same overlay interaction model, but Bento resizing stays tree-aware instead of applying flat per-window deltas. The requested operation clamps against recursive subtree minimum sizes and visible bounds.
 
+Native linked resizing captures window geometry at mouse press only when the
+pointer's display allows linked resizing. When the adapter supports window hit
+testing, the target must also pass the same eligibility and application rules
+as admission. This skips the inventory for Adaptive and Tabbed displays,
+ignored applications, floating windows, and desktop clicks. Admission resolves
+focus after the press, so clicking an unfocused window selects the correct
+source. It reuses the captured geometry when that source is still on the same
+display; otherwise it reads a fresh baseline. Admission releases the press
+snapshot, and ending or cancelling the gesture clears it. Capture still runs
+after dispatch to the main actor and DragSnap's press sweep. It shortens the
+race with native resizing but does not remove it: the app can move an edge
+before capture. Release applies the latest observed source frame even if no
+display tick ran during the gesture.
+
 ## Configuration
+
+`keepsDesktopLayoutsAcrossDisplays` controls whether a retired desktop may match
+windows on another screen. It defaults to true, including when an older file
+omits the key. The optional field follows schema 12's existing compatibility
+convention. Window Layout exposes the setting with the native switch and includes
+it in the Window mode reset. Changing it affects future matching, not current
+window positions. Only the preference is saved; runtime desktop memory is not.
 
 Pane gap changes publish to Settings immediately. Window placement consumes the
 latest value once per 75 ms interval, with one final pass when the slider is
@@ -1936,6 +2386,16 @@ commit the new gap. Later refreshes, including watchdog inventories, retry it
 without starting a 75 ms inventory polling loop. Tabbed keeps its own preset
 spacing and strip reserve. Shutdown cancels the timer and clears the pending
 request.
+
+Window Layout → Tabbed stores `tabbedEntryPlacement`: `allInOnePane` (the
+default), `onePerPane`, or `keepAdaptivePanes`. A missing key uses
+`allInOnePane` without a schema bump. Existing configurations therefore use the
+starting layout when switching from Adaptive; Keep Adaptive panes restores the
+previous entry behavior. Reset to Default restores this setting together with
+the starting layout and tab bar settings. Changing it affects future entries,
+not the current layout or Saved Layout Apply. Apply to This Desktop applies
+the starting layout while keeping the current tab groups; it does not use
+Place windows.
 
 Settings use a versioned Codable envelope. Version-1 display-keyed Bento states are discarded during migration because their Accessibility IDs cannot survive relaunch; all other supported preferences migrate. Runtime display sessions are not persisted. Writes use Foundation's atomic file replacement.
 

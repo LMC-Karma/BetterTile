@@ -189,6 +189,7 @@ func invalidGlassStrengthIsRejected(strength: Double) {
         ([.applicationRules], { $0.applicationRules.set(.ignoreEverywhere, for: "test.application") }),
         ([.accessibilityWrites], { $0.enhancedUserInterfacePolicy = .disableOnly }),
         ([], { $0.defaultTabbedPreset = .columns }),
+        ([], { $0.tabbedEntryPlacement = .onePerPane }),
         ([], { $0.bentoNewWindowSide = .left }),
         ([], { $0.setupCompletionVersion = 1 }),
         ([], { $0.macOSTilingRecommendationAcknowledged = true }),
@@ -772,4 +773,44 @@ private let placementActionIDsBeforeTabCommands = [
     saved.menuBarActions = WindowAction.tabCommands
     #expect(try ConfigurationStore.decode(JSONEncoder().encode(saved)) == saved)
     #expect(saved.schemaVersion == 12)
+}
+
+@Test func desktopCarryOverDefaultsOnAndRoundTrips() throws {
+    let defaults = try ConfigurationStore.decode(Data(#"{"schemaVersion":12}"#.utf8))
+    #expect(defaults.keepsDesktopLayoutsAcrossDisplays)
+    #expect(BetterTileConfiguration().keepsDesktopLayoutsAcrossDisplays)
+    var changed = defaults
+    changed.keepsDesktopLayoutsAcrossDisplays = false
+    #expect(try ConfigurationStore.decode(JSONEncoder().encode(changed)) == changed)
+    #expect(ConfigurationChangeSet.between(defaults, changed).isEmpty)
+}
+
+@Test func displayUUIDIsOptionalForOlderSnapshots() throws {
+    let original = DisplaySnapshot(id: DisplayID(rawValue: "display"),
+        frame: BTRect(x: 0, y: 0, width: 1000, height: 800),
+        visibleFrame: BTRect(x: 0, y: 0, width: 1000, height: 800), persistentIdentifier: "screen-uuid")
+    let encoded = try JSONEncoder().encode(original)
+    #expect(try JSONDecoder().decode(DisplaySnapshot.self, from: encoded) == original)
+    var object = try #require(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+    object.removeValue(forKey: "persistentIdentifier")
+    let older = try JSONDecoder().decode(DisplaySnapshot.self, from: JSONSerialization.data(withJSONObject: object))
+    #expect(older.persistentIdentifier == nil)
+    #expect(older.id == original.id && older.frame == original.frame)
+}
+
+@Test func tabbedEntryPlacementDefaultsForMissingKey() throws {
+    for configuration in [BetterTileConfiguration(), try ConfigurationStore.decode(Data(#"{"schemaVersion":12}"#.utf8))] {
+        let json = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(configuration)) as? [String: Any])
+        #expect(json["tabbedEntryPlacement"] as? String == "allInOnePane")
+    }
+}
+
+@Test(arguments: ["allInOnePane", "onePerPane", "keepAdaptivePanes"])
+func tabbedEntryPlacementConfigurationRoundTrips(value: String) throws {
+    let input = try JSONSerialization.data(withJSONObject: ["schemaVersion": 12, "tabbedEntryPlacement": value])
+    let decoded = try ConfigurationStore.decode(input)
+    let encoded = try JSONEncoder().encode(decoded)
+    let json = try #require(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+    #expect(json["tabbedEntryPlacement"] as? String == value)
+    #expect(try ConfigurationStore.decode(encoded) == decoded)
 }

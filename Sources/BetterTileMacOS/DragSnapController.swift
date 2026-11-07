@@ -123,7 +123,9 @@ public final class DragSnapController {
     public var activeModeProvider: ((DisplayID) -> LayoutMode?)?
     public var bentoStateProvider: ((DisplayID) -> BentoLayoutState?)?
     public var gestureEndedHandler: (() -> Void)?
-    public var actionResultHandler: ((DisplayID, Bool, String?) -> Void)?
+    /// A snap area placed the window this drag carried from another desktop.
+    public var carriedWindowSnappedHandler: ((DisplayID, WindowID) -> Void)?
+    public var actionResultHandler: ((DisplayID, WindowMutationOutcome) -> Void)?
     /// Whether the left mouse button is down. Tests replace this so the
     /// physical button cannot start or hold a gesture.
     public var primaryButtonIsPressed: () -> Bool = { NSEvent.pressedMouseButtons & 1 == 1 }
@@ -174,6 +176,15 @@ public final class DragSnapController {
     /// A drag sample arrived since the press, even one suppressed by the
     /// snap modifiers.
     private var sawDragSample = false
+    /// Whether a desktop change suspended the window drag. Drag samples then
+    /// only keep the newest pointer position, and release applies nothing.
+    public private(set) var isSuspendedForDesktopChange = false
+    /// The drag resumed after a desktop change and has not resolved its
+    /// window on the destination desktop yet.
+    private var resolvesOnDestinationDesktop = false
+    /// The window this drag carried to another desktop, until the gesture
+    /// ends. The destination layout neither places nor admits it before then.
+    public private(set) var carriedWindowID: WindowID?
     private var isStarted = false
     private var mouseDownMonitorGeneration: UInt64 = 0
     private var requestMonitorGeneration: UInt64 = 0
@@ -184,24 +195,38 @@ public final class DragSnapController {
     }
     var removeEventMonitor: (Any) -> Void = { NSEvent.removeMonitor($0) }
     private let displayTicks: ResizeDisplayLink
+    private let clock: BetterTileClock
+    private var waitingObservationDeadline: BetterTileClock.Instant?
+    private var nextWaitingObservation: BetterTileClock.Instant?
     /// The newest drag sample not yet evaluated. A high-rate pointer sends
     /// events faster than the display can show a new preview.
     private var pendingDragEvent: GlobalGestureEvent?
+    /// The newest drag sample of this gesture, evaluated or not. A pointer
+    /// that rests during a desktop change sends no new sample, so resume
+    /// evaluates this one.
+    private var latestDragEvent: GlobalGestureEvent?
     private(set) var pacingDisplayID: DisplayID?
 
+    private static let waitingObservationInterval: Duration = .milliseconds(50)
+    // Covers a two-second responsiveness hold that starts early in the rest.
+    // A later hold can outlast the window; new input or release still works.
+    private static let waitingObservationWindow: Duration = .seconds(3)
     private static let bentoCueArmDelay = 0.12
     private static let bentoReflowPreviewDelay = 0.22
     private static let unavailableDropReason = "The layout changed during the drag. Try again."
     private static let minimumSizeDoesNotFitReason = "The window’s minimum size does not fit in that snap area."
 
-    public convenience init(coordinator: WindowCoordinator, configuration: BetterTileConfiguration) {
-        self.init(coordinator: coordinator, configuration: configuration, displayTicks: ResizeDisplayLink())
+    public convenience init(
+        coordinator: WindowCoordinator, configuration: BetterTileConfiguration, clock: BetterTileClock = .live
+    ) {
+        self.init(coordinator: coordinator, configuration: configuration, displayTicks: ResizeDisplayLink(), clock: clock)
     }
 
-    init(coordinator: WindowCoordinator, configuration: BetterTileConfiguration, displayTicks: ResizeDisplayLink) {
+    init(coordinator: WindowCoordinator, configuration: BetterTileConfiguration, displayTicks: ResizeDisplayLink, clock: BetterTileClock = .live) {
         self.coordinator = coordinator
         self.configuration = configuration
         self.displayTicks = displayTicks
+        self.clock = clock
     }
 
     public func start() {
@@ -351,6 +376,54 @@ public final class DragSnapController {
         gestureEndedHandler?()
     }
 
+    /// macOS can carry a dragged window to another desktop, when the pointer
+    /// stays at the screen edge. The drag continues there. This ends only the
+    /// Adaptive or Tabbed drag of the old desktop, which writes nothing for a
+    /// changed desktop, and keeps the gesture until the desktop settles.
+    /// Anything else cancels as before: no gesture, a gesture whose button is
+    /// up, or a Dock or Stage Manager window that is not exposed yet.
+    public func suspendForDesktopChange() {
+        guard isGestureActive, primaryButtonIsPressed(), dragGate.isTracking,
+              pendingRestoredWindowID == nil, pendingStageManagerWindowID == nil
+        else {
+            cancel()
+            return
+        }
+        carriedWindowID = carriedWindowID ?? draggedWindowID ?? dragGate.candidateWindowID
+        finishActiveBentoDrag(end: .restore)
+        clearTargets()
+        bentoDragDisplayID = nil
+        resolvedDragTarget = false
+        resolvesOnDestinationDesktop = false
+        showedDropTarget = false
+        pendingDragEvent = nil
+        waitingObservationDeadline = nil
+        nextWaitingObservation = nil
+        pacingDisplayID = nil
+        displayTicks.stop()
+        isSuspendedForDesktopChange = true
+    }
+
+    /// Resumes a suspended drag on the destination desktop when its desktop
+    /// settled. The newest sample of the gesture resolves the drop there at
+    /// once, also when the pointer has not moved since before the change. If
+    /// the button came up meanwhile, the gesture ends with no drop.
+    public func resumeAfterDesktopChange() {
+        guard isSuspendedForDesktopChange else { return }
+        isSuspendedForDesktopChange = false
+        guard primaryButtonIsPressed() else {
+            clear()
+            gestureEndedHandler?()
+            return
+        }
+        resolvesOnDestinationDesktop = true
+        pendingDragEvent = nil
+        guard let event = latestDragEvent else { return }
+        renewWaitingObservationWindow()
+        mouseDragged(event)
+        if isGestureActive { startDisplayTicks(at: event.position) }
+    }
+
     /// A window dragged out of the Dock can appear after the global mouse-down
     /// event. Retry briefly from the Accessibility restore notification so the
     /// user does not need to generate extra drag events by shaking the mouse.
@@ -414,8 +487,19 @@ public final class DragSnapController {
                 pressedMouseButtons: primaryButtonIsPressed() ? 1 : 0
             ) else { return }
             mousePressed(event)
+        case .leftMouseDragged where isSuspendedForDesktopChange:
+            // The destination desktop is not settled yet. Resume evaluates
+            // the newest sample.
+            sawDragSample = true
+            latestDragEvent = event
+        case .leftMouseUp where isSuspendedForDesktopChange:
+            // No drop was shown on the destination desktop.
+            clear()
+            gestureEndedHandler?()
         case .leftMouseDragged where isGestureActive:
             sawDragSample = true
+            latestDragEvent = event
+            renewWaitingObservationWindow()
             // The first sample resolves the dragged window at once. Later
             // samples keep only the newest and run once per display frame.
             if resolvedDragTarget {
@@ -455,15 +539,35 @@ public final class DragSnapController {
     }
 
     func displayTick() {
-        guard let event = pendingDragEvent else { return }
-        pendingDragEvent = nil
-        mouseDragged(event)
+        guard !isSuspendedForDesktopChange else { return }
+        if let event = pendingDragEvent {
+            pendingDragEvent = nil
+            mouseDragged(event)
+        } else if let event = latestDragEvent,
+                  let deadline = waitingObservationDeadline, clock.now < deadline,
+                  let next = nextWaitingObservation, clock.now >= next,
+                  (resolvesOnDestinationDesktop && !resolvedDragTarget)
+                    || (draggedWindowID == nil && dragGate.isTracking) {
+            // Retry delayed observation while the pointer rests, with a
+            // bounded cadence and lifetime. Only new input or resume renews it.
+            mouseDragged(event)
+        }
+    }
+
+    private func renewWaitingObservationWindow() {
+        waitingObservationDeadline = clock.now.advanced(by: Self.waitingObservationWindow)
     }
 
     private func mousePressed(_ event: GlobalGestureEvent) {
+        waitingObservationDeadline = nil
+        nextWaitingObservation = nil
         dragGate.reset()
         sawDragSample = false
         draggedWindowID = nil
+        isSuspendedForDesktopChange = false
+        resolvesOnDestinationDesktop = false
+        carriedWindowID = nil
+        latestDragEvent = nil
         guard configuration.snappingEnabled,
               !event.modifiers.isSuperset(of: configuration.snapSuppressionModifiers)
         else { return }
@@ -493,6 +597,7 @@ public final class DragSnapController {
     }
 
     private func mouseDragged(_ event: GlobalGestureEvent) {
+        nextWaitingObservation = clock.now.advanced(by: Self.waitingObservationInterval)
         guard configuration.snappingEnabled else { clearTargets(); return }
         let activeModifiers = event.modifiers
         guard !activeModifiers.isSuperset(of: configuration.snapSuppressionModifiers) else { clearTargets(); return }
@@ -502,7 +607,31 @@ public final class DragSnapController {
             clearTargets()
             return
         }
-        if !resolvedDragTarget {
+        if !resolvedDragTarget, resolvesOnDestinationDesktop {
+            // The window is the one this drag holds, whatever is under the
+            // mouse-down point on the destination desktop. A window that is
+            // not readable yet is read again with the next sample.
+            guard let windowID = draggedWindowID ?? dragGate.candidateWindowID else {
+                clear()
+                gestureEndedHandler?()
+                return
+            }
+            guard let window = windowSnapshot(id: windowID) else {
+                clearTargets()
+                return
+            }
+            resolvedDragTarget = true
+            resolvesOnDestinationDesktop = false
+            // The destination desktop's own layout decides the drop. The
+            // window need not belong to it. Where that layout refuses the
+            // drag, the plain snap areas apply.
+            // The frame from before the press is on the old desktop. Here
+            // the drag starts where the window is now.
+            if usesBentoDrops(window.displayID), allowsBentoDrag(for: window),
+               bentoDragBeganHandler?(window.displayID, window.id, window.frame) == true {
+                bentoDragDisplayID = window.displayID
+            }
+        } else if !resolvedDragTarget {
             resolvedDragTarget = true
             guard let window = resolvedWindowForFirstDrag(),
                   configuration.applicationRules
@@ -895,11 +1024,14 @@ public final class DragSnapController {
                 destination: DropDestination(displayID: drop.displayID, sourceWindowID: windowID,
                                              minimumSizes: minimumSizes)
             )
-            actionResultHandler?(drop.displayID, outcome.isApplied, outcome.failureReason)
+            if outcome.isApplied, windowID == carriedWindowID {
+                carriedWindowSnappedHandler?(drop.displayID, windowID)
+            }
+            actionResultHandler?(drop.displayID, outcome)
         case let .invalid(reason):
             // The overlay showed no valid drop. The window stays where the
             // user dropped it, as after any drag without a snap.
-            actionResultHandler?(drop.displayID, false, reason)
+            actionResultHandler?(drop.displayID, .failed(reason: reason))
         case .layout:
             return
         }
@@ -914,9 +1046,15 @@ public final class DragSnapController {
         bentoDragDisplayID = nil
         mouseDownPoint = nil
         resolvedDragTarget = false
+        isSuspendedForDesktopChange = false
+        resolvesOnDestinationDesktop = false
+        carriedWindowID = nil
         sawDragSample = false
         showedDropTarget = false
         pendingDragEvent = nil
+        latestDragEvent = nil
+        waitingObservationDeadline = nil
+        nextWaitingObservation = nil
         pacingDisplayID = nil
         displayTicks.stop()
         removeGestureMonitors()
@@ -976,6 +1114,7 @@ public final class DragSnapController {
     }
 
     private func windowSnapshot(id: WindowID) -> WindowSnapshot? {
+        guard !coordinator.system.isApplicationUnresponsive(for: id) else { return nil }
         if let system = coordinator.system as? AccessibilityWindowSystem {
             return try? system.windowSnapshot(id: id)
         }

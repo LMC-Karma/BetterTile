@@ -81,6 +81,12 @@ struct WindowIdentityRegistry {
         )]
     }
 
+    /// Match the launch, not just the PID, so a restarted app cannot claim
+    /// windows retained from its previous process instance.
+    func windowIDs(belongingTo applications: Set<ApplicationLaunchInstance>) -> Set<WindowID> {
+        Set(records.values.filter { applications.contains($0.application) }.map(\.windowID))
+    }
+
     func exactWindowID(for windowID: WindowID) -> CGWindowID? {
         records[windowID]?.exactWindowID
     }
@@ -250,6 +256,14 @@ struct WindowServerIndex {
     /// Any window of the process, on screen or not, at any layer.
     func containsAnyWindow(of processIdentifier: pid_t) -> Bool {
         recordsByID.values.contains { $0.processIdentifier == processIdentifier }
+    }
+
+    /// True when the window server shows this window on screen at the normal
+    /// window layer. A window on another desktop, a minimized window, a hidden
+    /// application's window, and a closed window kept alive off screen are not.
+    func isOnScreen(_ windowID: CGWindowID, processIdentifier: pid_t) -> Bool {
+        guard let record = recordsByID[windowID] else { return false }
+        return record.processIdentifier == processIdentifier && record.layer == 0 && record.isOnscreen
     }
 
     func contains(_ snapshot: WindowSnapshot, exactWindowID: CGWindowID?) -> Bool {

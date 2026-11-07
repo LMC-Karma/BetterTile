@@ -12,6 +12,8 @@ func oddWidthTabbedColumnsCorrectSteppedGrowthPastTheirWholePointArea() async th
     system.windows[0].frame = BTRect(x: 0, y: 0, width: 499.5, height: 800)
     let model = makeModel(system: system)
     defer { model.shutdown() }
+    // This geometry regression requires the adopted Adaptive split and gap.
+    model.configuration.tabbedEntryPlacement = .keepAdaptivePanes
     model.configuration.bentoInnerGap = 0
     // Entering from Adaptive preserves its zero-gap tree instead of the preset's 6-point gap.
     model.tileCurrentDisplay()

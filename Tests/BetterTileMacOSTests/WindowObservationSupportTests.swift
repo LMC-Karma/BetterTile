@@ -180,6 +180,23 @@ func returningWindowIdentitiesPreserveBentoOrientationAndDragging(omittedByAcces
     #expect(!index.containsIdentity(20, processIdentifier: 43))
 }
 
+/// Only a window that the window server shows on screen, at the normal window
+/// layer and for the same application, is positive on-screen evidence. A closed
+/// window that its application keeps alive off screen is not.
+@Test(.macOSTestApplication) func onScreenEvidenceNeedsAnOnScreenNormalLayerRecordOfTheSameApplication() {
+    let frame = BTRect(x: 0, y: 0, width: 500, height: 400)
+    let index = WindowServerIndex(records: [
+        WindowServerRecord(windowID: 10, processIdentifier: 42, layer: 0, frame: frame, isOnscreen: true),
+        WindowServerRecord(windowID: 20, processIdentifier: 42, layer: 0, frame: frame, isOnscreen: false),
+        WindowServerRecord(windowID: 30, processIdentifier: 42, layer: 3, frame: frame, isOnscreen: true),
+    ])
+    #expect(index.isOnScreen(10, processIdentifier: 42))
+    #expect(!index.isOnScreen(10, processIdentifier: 43), "another application's record is no evidence")
+    #expect(!index.isOnScreen(20, processIdentifier: 42), "kept alive off screen")
+    #expect(!index.isOnScreen(30, processIdentifier: 42), "not the normal window layer")
+    #expect(!index.isOnScreen(40, processIdentifier: 42), "no record")
+}
+
 @Test(.macOSTestApplication) func targetedSnapshotCacheMergesOnlyCompleteRefreshes() throws {
     let displayID = DisplayID(rawValue: "main")
     let first = WindowSnapshot(
@@ -411,4 +428,35 @@ func invalidAccessibilityElementConfirmsClosureOnlyAfterSuccessfulAbsentInventor
     #expect(CachedPeerVisibility.allOnScreen(
         peers: [], exactWindowIDs: [:], windowServer: { _ in lookups += 1; return nil }))
     #expect(lookups == 1)
+}
+
+@Test(arguments: ["matching", "visible", "unknown-current-launch", "unknown-recorded-launch",
+                  "both-launches-unknown", "reused-pid", "unrecorded"])
+func hiddenApplicationLaunchRequiresPositiveCurrentEvidence(evidence: String) {
+    let instance = ApplicationLaunchInstance(processIdentifier: 90, generation: 2)
+    let currentToken: UInt64? = ["unknown-current-launch", "both-launches-unknown"].contains(evidence) ? nil : 200
+    let recordedToken: UInt64? = ["unknown-recorded-launch", "both-launches-unknown"].contains(evidence)
+        ? nil : (evidence == "reused-pid" ? 100 : 200)
+    let result = AccessibilityWindowSystem.hiddenApplicationLaunch(
+        isHidden: evidence != "visible",
+        launchToken: currentToken,
+        recordedLaunch: evidence == "unrecorded" ? nil : (recordedToken, instance)
+    )
+    #expect(result == (evidence == "matching" ? instance : nil))
+}
+
+@Test func hiddenApplicationWindowIdentitySelectionRequiresTheCurrentApplicationLaunch() {
+    var registry = WindowIdentityRegistry()
+    let old = ApplicationLaunchInstance(processIdentifier: 90, generation: 1)
+    let current = ApplicationLaunchInstance(processIdentifier: 90, generation: 2)
+    let other = ApplicationLaunchInstance(processIdentifier: 91, generation: 1)
+    let stale = registry.resolve(application: old, accessibilityHash: 1, exactWindowID: nil)
+    let first = registry.resolve(application: current, accessibilityHash: 2, exactWindowID: nil)
+    let second = registry.resolve(application: current, accessibilityHash: 3, exactWindowID: nil)
+    _ = registry.resolve(application: other, accessibilityHash: 4, exactWindowID: nil)
+    #expect(registry.windowIDs(belongingTo: [current]) == [first, second])
+    #expect(!registry.windowIDs(belongingTo: [current]).contains(stale))
+    registry.remove(first)
+    #expect(registry.windowIDs(belongingTo: [current]) == [second])
+    #expect(registry.windowIDs(belongingTo: []).isEmpty)
 }

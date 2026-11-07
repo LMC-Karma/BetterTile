@@ -122,13 +122,17 @@ public struct WindowSnapshot: Codable, Hashable, Sendable {
 
 public struct DisplaySnapshot: Codable, Hashable, Sendable {
     public var id: DisplayID
+    /// The public display UUID. It identifies a screen, not a desktop.
+    public var persistentIdentifier: String?
     public var frame: BTRect
     public var visibleFrame: BTRect
     public var scaleFactor: Double
     public var isMain: Bool
 
-    public init(id: DisplayID, frame: BTRect, visibleFrame: BTRect, scaleFactor: Double = 1, isMain: Bool = false) {
+    public init(id: DisplayID, frame: BTRect, visibleFrame: BTRect, scaleFactor: Double = 1, isMain: Bool = false,
+                persistentIdentifier: String? = nil) {
         self.id = id
+        self.persistentIdentifier = persistentIdentifier
         self.frame = frame
         self.visibleFrame = visibleFrame
         self.scaleFactor = scaleFactor

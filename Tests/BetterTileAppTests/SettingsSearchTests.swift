@@ -77,7 +77,7 @@ import Testing
     (.windowLayout, [
         "Window mode", "Default mode", "When a desktop has one window", "New window side", "Balance on new window",
         "Swap delay", "Apply starting layout", "Tab bar presentation", "Restore pane size when switching tabs",
-        "Leave space for Dock", "Resize", "Resize adjacent windows together", "Window feedback", "Divider width",
+        "Keep desktop modes when displays change", "Leave space for Dock", "Resize", "Resize adjacent windows together", "Window feedback", "Divider width",
         "Appearance", "Use Liquid Glass", "Glass transparency", "Pane gap", "Starting layout",
     ]),
     (.snapZones, [
@@ -111,4 +111,10 @@ func everyVisibleRowLabelFindsItsPage(destination: SettingsDestination, labels: 
     #expect(SettingsDestination.layoutWheel.matchesSearch("shortcut"))
     #expect(SettingsDestination(rawValue: "Window Layout") == .windowLayout)
     #expect(SettingsDestination(rawValue: "Shortcuts") == .shortcuts)
+}
+
+@Test(.appTestApplication) func tabbedEntryPlacementSettingsAreSearchable() {
+    for term in ["Place windows", "All in one pane", "One per pane", "Keep Adaptive panes"] {
+        #expect(SettingsDestination.windowLayout.matchesSearch(term), "Window Layout must match \(term)")
+    }
 }

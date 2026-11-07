@@ -149,6 +149,16 @@ public final class WindowCoordinator {
     private var history: FrameHistory
     private var generations: [WindowID: UInt64] = [:]
     private var nextWriteGeneration: UInt64 = 0
+    private var frameWriteFailureGenerations: [WindowID: UInt64] = [:]
+    /// Advances only when a dispatched frame write fails, never on an owner refusal.
+    public func frameWriteFailureGeneration(for windowID: WindowID) -> UInt64 {
+        frameWriteFailureGenerations[windowID, default: 0]
+    }
+    private var rollbackWriteFailureGenerations: [WindowID: UInt64] = [:]
+    /// Separates an actual failed rollback write from deferred recovery.
+    public func rollbackWriteFailureGeneration(for windowID: WindowID) -> UInt64 {
+        rollbackWriteFailureGenerations[windowID, default: 0]
+    }
     private var expectedMutations: [WindowID: [ExpectedMutation]] = [:]
     private var lastCycle: (windowID: WindowID, requestedAction: WindowAction, index: Int, date: Date)?
     /// Repeating a half shortcut within this many seconds cycles to the next
@@ -162,10 +172,19 @@ public final class WindowCoordinator {
         self.actionEngine = actionEngine
     }
 
+    /// A restored desktop adopts a new screen's geometry. Old-screen Restore
+    /// steps and shortcut cycles must not move its windows back there.
+    public func discardHistory(for windowIDs: Set<WindowID>) {
+        for id in windowIDs { history.remove(windowID: id) }
+        if let lastCycle, windowIDs.contains(lastCycle.windowID) { self.lastCycle = nil }
+    }
+
     /// Retires only a window whose closure the window system confirmed.
     public func removeClosedWindow(_ windowID: WindowID) {
         history.remove(windowID: windowID)
         generations.removeValue(forKey: windowID)
+        rollbackWriteFailureGenerations.removeValue(forKey: windowID)
+        frameWriteFailureGenerations.removeValue(forKey: windowID)
         expectedMutations.removeValue(forKey: windowID)
         lastPlacementBaselineFrames.removeValue(forKey: windowID)
         if lastCycle?.windowID == windowID { lastCycle = nil }
@@ -316,6 +335,13 @@ public final class WindowCoordinator {
     private func perform(_ plan: WindowPlacementPlan, restoringHistory: Bool) -> WindowMutationOutcome {
         if restoringHistory, history.peek(for: plan.windowID) != plan.targetFrame {
             return .failed(reason: "The restore history changed before the action could be applied.")
+        }
+        // History stores absolute frames. A disconnected or rearranged display
+        // can make an earlier position unreachable even after planning succeeds.
+        if restoringHistory, !PlacementBounds.isHistoryRestoreReachable(
+            plan.targetFrame, in: system.displays().map(\.frame)
+        ) {
+            return .failed(reason: "The previous window position is off screen.")
         }
         do {
             try applyAtomically(
@@ -1002,6 +1028,7 @@ public final class WindowCoordinator {
             #endif
             try system.setFrame(frame, knownCurrentFrame: knownCurrentFrame, for: windowID)
         } catch {
+            frameWriteFailureGenerations[windowID, default: 0] &+= 1
             cancelExpectedMutation(for: windowID, generation: generation)
             throw error
         }
@@ -1178,6 +1205,7 @@ public final class WindowCoordinator {
                     let result = system.setFrames(pass, knownCurrentFrames: known)
                     attempted.append(contentsOf: result.attempted)
                     if let failure = result.failure {
+                        frameWriteFailureGenerations[failure.windowID, default: 0] &+= 1
                         failedWindowID = failure.windowID
                         if let generation = generationsWritten[failure.windowID] {
                             cancelExpectedMutation(for: failure.windowID, generation: generation)
@@ -1242,6 +1270,7 @@ public final class WindowCoordinator {
                     do {
                         try apply(frame, to: id, knownCurrentFrame: actualFrames[id])
                     } catch {
+                        rollbackWriteFailureGenerations[id, default: 0] &+= 1
                         rollbackFailures.append(id)
                     }
                 }
@@ -1443,7 +1472,7 @@ extension WindowCoordinator {
                 where current[id] != nil && current[id]?.approximatelyEquals(frame, tolerance: 1) != true {
                 guard isCurrent(), (ignoresRequestCancellation || !Task.isCancelled) else { break }
                 do { try apply(frame, to: id, knownCurrentFrame: current[id]) }
-                catch { failedWrite = true }
+                catch { rollbackWriteFailureGenerations[id, default: 0] &+= 1; failedWrite = true }
             }
         }
         for attempt in 0..<4 {

@@ -76,7 +76,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
     private let dockSpaceReader = DockSpaceReader()
     private var recentApplicationPIDs: [pid_t] = []
     private var activationObserver: NSObjectProtocol?
-    private var displayReconfigurationHandler: (@MainActor () -> Void)?
+    private var displayReconfigurationHandler: (@MainActor (CGDisplayChangeSummaryFlags) -> Void)?
     private var isMonitoringDisplayReconfiguration = false
     private var displayCallbackContext: AccessibilityCallbackContext?
 
@@ -140,7 +140,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
     }
 
     public func startDisplayReconfigurationMonitoring(
-        onChange: @escaping @MainActor () -> Void
+        onChange: @escaping @MainActor (CGDisplayChangeSummaryFlags) -> Void
     ) {
         displayReconfigurationHandler = onChange
         guard !isMonitoringDisplayReconfiguration else { return }
@@ -172,8 +172,8 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         displayReconfigurationHandler = nil
     }
 
-    fileprivate func displayConfigurationChanged() {
-        displayReconfigurationHandler?()
+    fileprivate func displayConfigurationChanged(_ flags: CGDisplayChangeSummaryFlags) {
+        displayReconfigurationHandler?(flags)
     }
 
     public func setWindowEventHandler(_ handler: (@MainActor (WindowSystemEvent) -> Void)?) {
@@ -214,6 +214,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         metadata.removeAll()
         elements.removeAll()
         identities.removeAll()
+        unreadOnScreenWindowIDs.removeAll()
         snapshotCache.invalidate()
         snapshotGeneration &+= 1
         nativeObservationGeneration = nil
@@ -391,11 +392,41 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         return nil
     }
 
+    /// Windows that the last complete sweep did not return, although its
+    /// window-server list showed them on screen: Accessibility omitted a
+    /// window that the user can still see. It reuses the sweep's own list.
+    /// Empty when the list or the exact window identities are not available.
+    public private(set) var unreadOnScreenWindowIDs: Set<WindowID> = []
+
     /// Windows seen by an earlier sweep, kept in memory only. Saved Layouts uses them to say that an
     /// app's window is on another desktop. Nothing here is persisted or used to move a window.
     private var knownWindowSnapshots: [WindowID: WindowSnapshot] = [:]
     public func knownWindows() -> [WindowSnapshot] {
         knownWindowSnapshots.values.filter { identities.records[$0.id] != nil }
+    }
+
+    /// Hidden applications are skipped by AX inventory, but their known
+    /// windows still exist. This uses public application state without AX reads.
+    public var hiddenApplicationWindowIDs: Set<WindowID> {
+        let applications = Set(NSWorkspace.shared.runningApplications.compactMap { application -> ApplicationLaunchInstance? in
+            Self.hiddenApplicationLaunch(
+                isHidden: application.isHidden,
+                launchToken: application.launchDate?.timeIntervalSinceReferenceDate.bitPattern,
+                recordedLaunch: launchRecords[application.processIdentifier].map { ($0.launchToken, $0.instance) }
+            )
+        })
+        return identities.windowIDs(belongingTo: applications)
+    }
+
+    /// Unknown launch dates and records cannot establish hidden-application evidence.
+    nonisolated static func hiddenApplicationLaunch(
+        isHidden: Bool,
+        launchToken: UInt64?,
+        recordedLaunch: (launchToken: UInt64?, instance: ApplicationLaunchInstance)?
+    ) -> ApplicationLaunchInstance? {
+        guard isHidden, let launchToken, let recordedLaunch,
+              recordedLaunch.launchToken == launchToken else { return nil }
+        return recordedLaunch.instance
     }
 
     public func visibleWindows() throws -> [WindowSnapshot] {
@@ -508,6 +539,16 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         nativeObservationGeneration = nil
         let classified = nativeDesktopObservation()?.windowsOnCurrentSpaces(sorted) ?? sorted
         snapshotCache.recordFullSweep(classified)
+        let returnedIDs = Set(classified.map(\.id))
+        unreadOnScreenWindowIDs = windowServer.map { index in
+            Set(identities.records.values.compactMap { record in
+                guard !returnedIDs.contains(record.windowID),
+                      let exactID = record.exactWindowID,
+                      index.isOnScreen(exactID, processIdentifier: record.application.processIdentifier)
+                else { return nil }
+                return record.windowID
+            })
+        } ?? []
         return classified
     }
 
@@ -676,6 +717,29 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         stageManagerGroupResolver.logExposureFallbackOnce()
     }
 
+    /// Read from Core Graphics, which describes the displays as they are now.
+    /// After a reconfiguration callback `NSScreen` can still describe the
+    /// previous arrangement.
+    public func displayArrangement() -> DisplayArrangement {
+        var count: UInt32 = 0
+        guard CGGetActiveDisplayList(0, nil, &count) == .success, count > 0 else {
+            return DisplayArrangement(displays())
+        }
+        var ids = [CGDirectDisplayID](repeating: 0, count: Int(count))
+        guard CGGetActiveDisplayList(count, &ids, &count) == .success else {
+            return DisplayArrangement(displays())
+        }
+        return DisplayArrangement(displays: Set(ids.prefix(Int(count)).map { id in
+            let bounds = CGDisplayBounds(id)
+            let mode = CGDisplayCopyDisplayMode(id)
+            return DisplayArrangement.Display(
+                id: DisplayID(rawValue: String(id)),
+                frame: BTRect(x: bounds.minX, y: bounds.minY, width: bounds.width, height: bounds.height),
+                pixelWidth: mode?.pixelWidth ?? CGDisplayPixelsWide(id),
+                pixelHeight: mode?.pixelHeight ?? CGDisplayPixelsHigh(id))
+        }))
+    }
+
     public func displays() -> [DisplaySnapshot] {
         let screens = NSScreen.screens
         guard let mainFrame = screens.first?.frame else { return [] }
@@ -696,12 +760,18 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
             if let dock, dock.displayID == id {
                 visibleFrame = dock.workArea(fullFrame: frame, appKitVisibleFrame: visibleFrame)
             }
+            let number = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber
+            let identifier = number.flatMap { number -> String? in
+                guard let uuid = CGDisplayCreateUUIDFromDisplayID(number.uint32Value)?.takeRetainedValue() else { return nil }
+                return CFUUIDCreateString(nil, uuid) as String
+            }
             return DisplaySnapshot(
                 id: id,
                 frame: frame,
                 visibleFrame: visibleFrame,
                 scaleFactor: screen.backingScaleFactor,
-                isMain: screen == NSScreen.main
+                isMain: screen == NSScreen.main,
+                persistentIdentifier: identifier
             )
         }.sorted { lhs, rhs in
             lhs.frame.minX == rhs.frame.minX ? lhs.frame.minY < rhs.frame.minY : lhs.frame.minX < rhs.frame.minX
@@ -2387,7 +2457,7 @@ private func betterTileDisplayReconfigurationCallback(
     guard let userInfo else { return }
     let context = Unmanaged<AccessibilityCallbackContext>.fromOpaque(userInfo).takeUnretainedValue()
     Task { @MainActor [weak context] in
-        context?.system?.displayConfigurationChanged()
+        context?.system?.displayConfigurationChanged(flags)
     }
 }
 

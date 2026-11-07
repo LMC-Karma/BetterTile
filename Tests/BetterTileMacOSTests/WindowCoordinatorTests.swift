@@ -2116,3 +2116,83 @@ func unavailableSurvivorStillReceivesCancellationAndRetainsRestore(rejectRestore
     coordinator.resetRefusedSizes()
     #expect(coordinator.refusedSizes.isEmpty)
 }
+
+@Suite(.macOSTestApplication, .serialized) @MainActor
+struct ReservedWorkAreaActionTests {
+    private let origin = BTPoint(x: -12_000, y: -12_000)
+
+    private func system() -> FakeWindowSystem {
+        let system = FakeWindowSystem()
+        let frame = rect(0, 0, 1_000, 800)
+        system.availableDisplays = [DisplaySnapshot(id: DisplayID(rawValue: "main"),
+            frame: frame, visibleFrame: rect(60, 24, 940, 726), isMain: true)]
+        system.windows[0].frame = rect(200, 200, 600, 400)
+        return system
+    }
+
+    private func rect(_ x: Double, _ y: Double, _ width: Double, _ height: Double) -> BTRect {
+        BTRect(x: origin.x + x, y: origin.y + y, width: width, height: height)
+    }
+
+    @Test(arguments: [WindowAction.leftThird, .centerThird, .rightThird, .maximize, .almostMaximize])
+    func exactActionUsesReservedWorkArea(action: WindowAction) throws {
+        let system = system()
+        system.availableDisplays[0].visibleFrame = rect(0, 24, 940, 776)
+        let coordinator = WindowCoordinator(system: system)
+        let plan = try #require(coordinator.planExact(action, for: system.windows[0].id).readyPlan)
+        let expected: BTRect = switch action {
+        case .leftThird: rect(0, 24, 940.0 / 3, 776)
+        case .centerThird: rect(940.0 / 3, 24, 940.0 / 3, 776)
+        case .rightThird: rect(940.0 * 2 / 3, 24, 940.0 / 3, 776)
+        case .maximize: rect(0, 24, 940, 776)
+        default: rect(24, 48, 892, 728)
+        }
+        #expect(plan.targetFrame.approximatelyEquals(expected, tolerance: 0.001))
+        #expect(coordinator.perform(plan).isApplied)
+        #expect(system.windows[0].frame.approximatelyEquals(expected, tolerance: 0.001))
+    }
+
+    @Test(arguments: [WindowAction.nextDisplay, .previousDisplay])
+    func displayTransferFollowsSpatialOrderNotEnumerationOrder(action: WindowAction) throws {
+        let system = system()
+        let west = DisplayID(rawValue: "west")
+        let east = DisplayID(rawValue: "east")
+        system.availableDisplays += [
+            DisplaySnapshot(id: west, frame: rect(-1_000, 0, 1_000, 800), visibleFrame: rect(-1_000, 0, 1_000, 800)),
+            DisplaySnapshot(id: east, frame: rect(1_000, 0, 1_000, 800), visibleFrame: rect(1_000, 0, 1_000, 800))]
+        let coordinator = WindowCoordinator(system: system)
+        // Enumeration is main, west, east; spatial order is west, main, east.
+        // From main, enumeration order would pick west for Next Display and
+        // east for Previous Display, the opposite of spatial order.
+        let plan = try #require(coordinator.plan(action).readyPlan)
+        let x = action == .nextDisplay ? 1_000.0 : -1_000.0
+        #expect(plan.targetFrame.approximatelyEquals(rect(x + 148.936170212766, 193.939393939394, 638.297872340426, 440.771349862259), tolerance: 0.001))
+        #expect(coordinator.perform(plan).isApplied)
+        #expect(system.windows[0].displayID == (action == .nextDisplay ? east : west))
+    }
+
+    @Test func failedActionLeavesRestoreHistoryIntact() throws {
+        let system = system()
+        let original = system.windows[0].frame
+        let id = system.windows[0].id
+        let coordinator = WindowCoordinator(system: system)
+        #expect(coordinator.performAction(.leftHalf))
+        system.failedFrameWriteNumbers[id] = [2]
+        #expect(!coordinator.performAction(.rightHalf))
+        #expect(coordinator.performAction(.restore))
+        #expect(system.windows[0].frame == original)
+        #expect(coordinator.plan(.restore).readyPlan == nil)
+    }
+
+    @Test func transferThenRestoreReturnsToOriginalDisplayAndFrame() {
+        let system = system()
+        let original = system.windows[0].frame
+        system.availableDisplays.append(DisplaySnapshot(id: DisplayID(rawValue: "east"),
+            frame: rect(1_000, 0, 1_600, 1_000), visibleFrame: rect(1_000, 30, 1_600, 900)))
+        let coordinator = WindowCoordinator(system: system)
+        #expect(coordinator.performAction(.nextDisplay))
+        #expect(coordinator.performAction(.restore))
+        #expect(system.windows[0].frame == original)
+        #expect(system.windows[0].displayID == system.availableDisplays[0].id)
+    }
+}

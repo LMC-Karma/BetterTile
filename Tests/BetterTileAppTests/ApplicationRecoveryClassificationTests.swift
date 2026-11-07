@@ -86,7 +86,12 @@ struct ApplicationRecoveryClassificationTests {
         // Same refresh entry used by app launch/termination and wake callbacks.
         switch entry {
         case "application": model.handleApplicationTopologyChange()
-        case "wake": model.handleApplicationTopologyChange(waking: true)
+        case "wake":
+            model.handleApplicationTopologyChange(waking: true)
+            // A wake starts a display hold. It settles on the model's clock,
+            // and its settlement runs the sweep that honors the retained snap.
+            await system.advance(by: .seconds(1))
+            try #require(await system.waitFor { !model.isHoldingDisplayChange })
         case "AX": system.eventHandler?(WindowSystemEvent(kind: .created, windowID: nil, processIdentifier: 42))
         default: model.watchdog()
         }

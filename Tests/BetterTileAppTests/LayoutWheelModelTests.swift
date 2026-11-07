@@ -53,6 +53,7 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, CreatedWindowReading, T
         newWindowRequests.append((processIdentifier, bundleIdentifier))
         return newWindowRequestResult
     }
+    var hiddenApplicationWindowIDs: Set<WindowID> { Set(windows.filter { $0.isHidden }.map(\.id)) }
     var permission = true
     var ignoredFrameWriteWindowIDs: Set<WindowID> = []
     var enforcedMinimumWidths: [WindowID: Double] = [:]
@@ -91,6 +92,13 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, CreatedWindowReading, T
     var cachedRefreshFails = false
     var cachedVisibilityOmittedIDs: Set<WindowID> = []
     var offscreenWindowIDs: Set<WindowID> = []
+    /// Windows that a complete sweep omits, for example through
+    /// `offscreenWindowIDs`, while the window server still shows them on
+    /// screen, as when Accessibility briefly returns no window for a live one.
+    var omittedButOnScreenWindowIDs: Set<WindowID> = []
+    /// Like the adapter: windows the last complete sweep did not return,
+    /// although the window server showed them on screen.
+    private(set) var unreadOnScreenWindowIDs: Set<WindowID> = []
     var unresponsiveWindowIDs: Set<WindowID> = []
     var unresponsiveProcessIDs: Set<Int32> = []
     var applicationHoldsUntil: [Int32: TimeInterval] = [:]
@@ -376,7 +384,11 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, CreatedWindowReading, T
         let visible = windows.filter {
             !offscreenWindowIDs.contains($0.id) && applicationHoldsUntil[$0.processIdentifier] == nil
         }
-        return classifyUsingNativeCache(visible)
+        let returned = classifyUsingNativeCache(visible)
+        unreadOnScreenWindowIDs = omittedButOnScreenWindowIDs
+            .intersection(windows.map(\.id))
+            .subtracting(returned.map(\.id))
+        return returned
     }
     /// Runs on the next display read, to change the desktop in the middle of a synchronous pass.
     var onDisplays: (() -> Void)?
@@ -700,7 +712,7 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, CreatedWindowReading, T
         return outcome
     }
     var unrestoredProbeWindowIDs: Set<WindowID> = []
-    func startDisplayReconfigurationMonitoring(onChange: @escaping @MainActor () -> Void) {}
+    func startDisplayReconfigurationMonitoring(onChange: @escaping @MainActor (CGDisplayChangeSummaryFlags) -> Void) {}
     func stopDisplayReconfigurationMonitoring() {}
     func updateManagedWindowIDs(_ ids: Set<WindowID>) { managedWindowUpdateCount += 1 }
 }
@@ -716,6 +728,7 @@ func makeModel(system: FakeAppWindowSystem, gestureEvents: SharedGestureEventMon
     system.installWindowEventClock(in: model)
     // Fake-window tests own button state; physical input must not defer work.
     model.primaryButtonIsPressed = { false }
+    model.displayChangeScreenIsLocked = { false }
     return model
 }
 

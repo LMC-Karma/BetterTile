@@ -11,10 +11,12 @@ enum SavedLayoutCommitRefusal {
     case beforeWrite(String)
     case bindingChanged
     case mutationChanged
+    case displayChanged
 
     var message: String {
         switch self {
         case let .beforeWrite(reason): reason
+        case .displayChanged: "Displays changed while applying. Apply the layout again after they settle."
         case .bindingChanged: "The display binding changed. Automatic Apply stopped."
         case .mutationChanged: "A window changed while applying. Use Repair Layout or try again."
         }
@@ -186,6 +188,7 @@ struct SavedLayoutApplySnapshot {
     var stackingOrder: [TabbedStackEntry]? = nil
     /// A transient session hold forbids forward and recovery writes alike.
     var sessionIsAvailable: @MainActor () -> Bool = { true }
+    var isAutomatic = false
 
     var frontRanks: [WindowID: Int] {
         var ranks: [WindowID: Int] = [:]
@@ -495,6 +498,14 @@ private struct SavedLayoutUndoStructure: Equatable {
     var hasUndo: Bool { !undos.isEmpty }
     var tracksUndoSessions: Bool { undos.values.contains { !expiredUndoIDs.contains($0.id) } }
     func canUndo(on displayID: DisplayID) -> Bool { !isBusy && undos[displayID].map { !undoSessionChanged($0) } == true }
+    /// Retired desktops cannot reuse an Apply checkpoint from the old screen.
+    func invalidateUndo(involving windowIDs: Set<WindowID>, desktop: SavedLayoutDesktop?) {
+        for undo in undos.values where !windowIDs.isDisjoint(with: undo.frames.keys)
+            || desktop.map({ undo.committedSessions[$0] != nil }) == true {
+            expiredUndoIDs.insert(undo.id)
+        }
+    }
+
     var lastLayoutURL: URL? { positionContext?.layoutURL }
     /// Apply inventories and model events refresh this cache. Rendering performs no system reads.
     func updateUndoDesktops(_ observation: NativeDesktopObservation?, displays: [DisplaySnapshot], sessions: [DisplayID: SavedLayoutSession]? = nil) {
@@ -1028,6 +1039,7 @@ private struct SavedLayoutUndoStructure: Equatable {
         lastPlan = plan
         var transaction = state
         transaction.sessionIsAvailable = sessionIsAvailable
+        transaction.isAutomatic = automatic
         transaction.requestedTransfers = prepared.transfers
         if document.keepForNewWindows, hasFollowedPane(document), let layoutFileID {
             transaction.followingIntent = .start(layoutFileID: layoutFileID, document: document,
@@ -1130,9 +1142,11 @@ private struct SavedLayoutUndoStructure: Equatable {
                     undos[desktop.displayID] = previousUndo; undoOrder = previousOrder; runCheckpoint = previousCheckpoint
                 }
                 if let reason = precommitRefusal {
-                    if case .mutationChanged = reason {
+                    switch reason {
+                    case .mutationChanged, .displayChanged:
                         result.issues.append(.init(.other, reason.message))
                         return false
+                    default: break
                     }
                     let detail = rolledBack ? " Nothing was moved." : " Use Undo to restore the previous layout."
                     result.issues.append(.init(.other, reason.message + detail))
