@@ -149,6 +149,7 @@ struct DisplayTriggerModelWiringTests {
     func workspaceSleepAndWakeNotificationsReachTheRuntime(sleep: Notification.Name, wake: Notification.Name) async throws {
         let h = try TriggerModelHarness()
         defer { h.finish() }
+        h.model.displayChangeScreenIsLocked = { false }
         h.connect()
         try #require(await waitFor { h.clock.pendingSleepCount > 0 && !h.runtime.isIdle })
         h.post(sleep)
@@ -156,6 +157,17 @@ struct DisplayTriggerModelWiringTests {
         #expect(h.loads == 0)
         let reads = h.frameReads
         h.post(wake)
+        // The wake starts the model's display hold. The trigger keeps waiting
+        // and reads no frames until the hold settles.
+        try #require(h.model.isHoldingDisplayChange)
+        try #require(await waitFor { !h.runtime.isIdle && h.clock.pendingSleepCount > 0 })
+        h.clock.advance(by: h.runtime.tick)
+        await Task.yield()
+        #expect(h.frameReads == reads, "The trigger read frames during the display hold")
+        // The model's clock drives the hold. It settles once windows are quiet.
+        await h.system.advance(by: .seconds(1))
+        try #require(await waitFor { !h.model.isHoldingDisplayChange })
+        h.clock.advance(by: h.runtime.tick)
         try #require(await waitFor { h.frameReads > reads && !h.runtime.isIdle })
         #expect(h.loads == 0)
     }
