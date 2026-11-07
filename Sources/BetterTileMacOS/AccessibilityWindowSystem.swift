@@ -36,7 +36,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
     private var nextLaunchGeneration: UInt64 = 0
     private var loggedBatchFallback = false
     private var observers: [pid_t: AXObserver] = [:]
-    private var observationLifetime = WindowObservationLifetime()
+    var observationLifetime = WindowObservationLifetime()
     private var observationCallbackContext: AccessibilityCallbackContext?
     private struct Registration: Hashable {
         var windowID: WindowID?
@@ -55,9 +55,20 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         }
         return running.reduce(into: [:]) { deadlines, entry in
             let (pid, deadline) = entry
-            let latest = Self.unresponsiveApplications.withLock { $0.holdDeadline(pid) }
+            let latest = Self.unresponsiveApplications.withLock { $0.inventoryBackoffDeadline(pid) }
             deadlines[pid] = max(deadline, latest ?? deadline)
         }
+    }
+
+    /// Known windows of the applications that the last sweep did not read,
+    /// because they were held or kept. Their absence from that sweep proves
+    /// nothing, so the model exempts them from absence removal. Confirmed
+    /// destruction and minimization still remove them.
+    public var unreadableApplicationWindowIDs: Set<WindowID> {
+        guard !unreadableApplicationHolds.isEmpty else { return [] }
+        return Set(identities.records.values.compactMap { record in
+            unreadableApplicationHolds[record.application.processIdentifier] == nil ? nil : record.windowID
+        })
     }
     private var minimumSizeLearner = WindowMinimumSizeLearner()
     private let dockSpaceReader = DockSpaceReader()
@@ -81,7 +92,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
     /// worse than a slow one.
     private nonisolated static let frameWriteMessagingTimeout: Float = 1.5
     /// Shared by the main actor and the per-application write threads.
-    private nonisolated static let unresponsiveApplications = Mutex(UnresponsiveApplicationGate())
+    nonisolated static let unresponsiveApplications = Mutex(UnresponsiveApplicationGate())
     private nonisolated static let acceptedWriteErrors: [AXError] = [.success, .attributeUnsupported]
     static let unresponsiveApplicationMessage = "The application is not responding, so its window cannot move right now."
     private nonisolated static let enhancedUserInterfaceAttribute = "AXEnhancedUserInterface"
@@ -1429,22 +1440,36 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
     }
 
     private func recordActivation(of application: NSRunningApplication) {
-        let pid = application.processIdentifier
+        guard recordActivation(
+            processIdentifier: application.processIdentifier,
+            activationPolicy: application.activationPolicy,
+            isHidden: application.isHidden
+        ) else { return }
+        _ = applicationInstance(for: application)
+    }
+
+    /// Returns false for an application that BetterTile does not manage.
+    @discardableResult
+    func recordActivation(
+        processIdentifier pid: pid_t,
+        activationPolicy: NSApplication.ActivationPolicy,
+        isHidden: Bool
+    ) -> Bool {
         guard Self.shouldManageApplication(
             processIdentifier: pid,
             ownProcessIdentifier: getpid(),
-            activationPolicy: application.activationPolicy,
-            isHidden: application.isHidden,
+            activationPolicy: activationPolicy,
+            isHidden: isHidden,
             includeHidden: true
-        ) else { return }
+        ) else { return false }
         // An application that became active runs again: read it at once instead of after its backoff.
         Self.unresponsiveApplications.withLock { $0.release(pid) }
-        _ = applicationInstance(for: application)
         recentApplicationPIDs.removeAll { $0 == pid }
         recentApplicationPIDs.insert(pid, at: 0)
         if recentApplicationPIDs.count > 12 {
             recentApplicationPIDs.removeLast(recentApplicationPIDs.count - 12)
         }
+        return true
     }
 
     private func synchronizeObservers() {
@@ -1647,7 +1672,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         return nextCreationToken
     }
 
-    fileprivate func receiveAXEvent(_ captured: CapturedWindowObservation) {
+    func receiveAXEvent(_ captured: CapturedWindowObservation) {
         guard let event = observationLifetime.event(for: captured, identities: identities) else {
             #if DEBUG
             if captured.event.kind == .created { ArrivalTrace.shared.record("arrival_dropped", pid: captured.event.processIdentifier,
@@ -1655,8 +1680,10 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
             #endif
             return
         }
-        // The application posted this notification, so it runs again. Its
-        // created or destroyed window must not wait for the end of a backoff.
+        // The application posted this notification, so it runs again. A window
+        // that it announces does not wait for the end of a backoff. Without a
+        // registered notification, activation, a completed call or the end of
+        // the backoff is the fallback.
         Self.unresponsiveApplications.withLock { $0.release(event.processIdentifier) }
         receiveWindowEvent(event)
     }

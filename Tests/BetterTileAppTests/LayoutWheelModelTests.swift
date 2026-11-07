@@ -118,8 +118,26 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, CreatedWindowReading, T
         }
         return adapterHolds.reduce(into: [:]) { deadlines, entry in
             guard windows.contains(where: { $0.processIdentifier == entry.key }) else { return }
-            deadlines[entry.key] = max(entry.value, adapterGate.holdDeadline(entry.key) ?? entry.value)
+            deadlines[entry.key] = max(entry.value, adapterGate.inventoryBackoffDeadline(entry.key) ?? entry.value)
         }
+    }
+    var unreadableApplicationWindowIDs: Set<WindowID> {
+        let unread = adapterInventoryTimeouts == nil ? Set(applicationHoldsUntil.keys) : Set(adapterHolds.keys)
+        return Set(windows.filter { unread.contains($0.processIdentifier) }.map(\.id))
+    }
+    /// One gated Accessibility call in adapter mode, as `gatedCall` makes it:
+    /// false without a message while held, false after a timeout, true after an answer.
+    private func adapterCall(_ pid: Int32) -> Bool {
+        guard let timeouts = adapterInventoryTimeouts else { return true }
+        let start = applicationHoldUptime()
+        guard !adapterGate.isHeld(pid, now: start) else { return false }
+        guard let timeout = timeouts[pid] else {
+            adapterGate.record(pid, cannotComplete: false, elapsed: 0, now: start)
+            return true
+        }
+        if let manualClock { manualClock.advance(by: .seconds(timeout)) }
+        adapterGate.record(pid, cannotComplete: true, elapsed: timeout, now: applicationHoldUptime())
+        return false
     }
     var emitsFrameEvents = false
     var desktopObservation: NativeDesktopObservation?
@@ -240,7 +258,12 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, CreatedWindowReading, T
         focusedWindowReadCount += 1
         if focusedWindowIsAbsent { return nil }
         if focusedWindowReadFails { throw WindowSystemError.operationFailed("Simulated focused-window failure") }
-        return windows.first { $0.id == focusedID } ?? windows.first
+        let focused = windows.first { $0.id == focusedID } ?? windows.first
+        // The adapter's frontmost check: a front application that does not answer is not replaced.
+        if let focused, !adapterCall(focused.processIdentifier) {
+            throw WindowSystemError.operationFailed(AccessibilityWindowSystem.unresponsiveApplicationMessage)
+        }
+        return focused
     }
     func visibleWindows() throws -> [WindowSnapshot] {
         var recoveryPIDs: Set<Int32>?
@@ -334,6 +357,7 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, CreatedWindowReading, T
         let snapshots = windows.filter { window in
             ids.contains(window.id)
                 && unreadableAfterWrites[window.id].map { frameWriteCounts[window.id, default: 0] < $0 } ?? true
+                && adapterCall(window.processIdentifier)
         }
         return classifyUsingNativeCache(snapshots)
     }
@@ -408,6 +432,10 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, CreatedWindowReading, T
     func setFrame(_ frame: BTRect, knownCurrentFrame: BTRect?, for windowID: WindowID) throws {
         guard let index = windows.firstIndex(where: { $0.id == windowID }) else {
             throw WindowSystemError.windowNotFound(windowID)
+        }
+        // `requireResponsive`, then the gated write.
+        guard adapterCall(windows[index].processIdentifier) else {
+            throw WindowSystemError.operationFailed(AccessibilityWindowSystem.unresponsiveApplicationMessage)
         }
         onBeforeFrameWrite?(windowID)
         frameWriteCounts[windowID, default: 0] += 1

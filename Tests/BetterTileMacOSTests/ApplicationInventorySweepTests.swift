@@ -12,6 +12,9 @@ private final class InventorySweepFixture {
     var holds: [Int32: Double] = [:]
     var applications: [Int32]
     var hung: Set<Int32>
+    /// Applications whose `AXWindows` read answers and whose next window
+    /// snapshot then waits out its timeout.
+    var answersThenStalls: Set<Int32> = []
 
     init(responsive: [Int32], hung: [Int32]) {
         applications = responsive + hung
@@ -41,7 +44,11 @@ private final class InventorySweepFixture {
             // `gatedCall`: a held application fails without a message.
             guard !gate.isHeld(pid, now: now) else { return }
             result.messaged.append(pid)
-            if hung.contains(pid) {
+            if answersThenStalls.contains(pid) {
+                gate.record(pid, cannotComplete: false, elapsed: 0.001, now: now)
+                now += Self.timeout
+                gate.record(pid, cannotComplete: true, elapsed: Self.timeout, now: now)
+            } else if hung.contains(pid) {
                 now += Self.timeout
                 gate.record(pid, cannotComplete: true, elapsed: Self.timeout, now: now)
             } else {
@@ -122,16 +129,46 @@ private final class InventorySweepFixture {
         #expect(fixture.holds[202] != nil)
     }
 
+    /// The inventory answers, then a window snapshot times out. That completed
+    /// call resets the stall count, but the sweep must still count the timeout
+    /// and keep the next application that already stalled.
+    @Test func aTimeoutAfterACompletedCallStillEndsTheSweepsReadsOfStalledApplications() {
+        let fixture = InventorySweepFixture(responsive: Self.responsive, hung: [201, 202, 203])
+        fixture.sweep()
+        fixture.now += UnresponsiveApplicationGate.holdSeconds + 1
+        fixture.hung = [202, 203]
+        fixture.answersThenStalls = [201]
+        let sweep = fixture.sweep()
+        #expect(sweep.messaged.filter { $0 > 200 } == [201], "Read after the first timeout: \(sweep.messaged)")
+        #expect(sweep.duration <= InventorySweepFixture.timeout + 0.001)
+        #expect([201, 202, 203].allSatisfy { fixture.holds[$0] != nil })
+    }
+
+    /// The sweep reads no application during its backoff, even after the
+    /// shorter call hold has ended.
+    @Test func aSweepDoesNotMessageAnApplicationDuringItsBackoff() throws {
+        let fixture = InventorySweepFixture(responsive: Self.responsive, hung: [201])
+        for index in 0..<4 {
+            if index > 0 { fixture.now = (fixture.gate.inventoryBackoffDeadline(201) ?? fixture.now) + 0.01 }
+            fixture.sweep()
+        }
+        let backoff = try #require(fixture.gate.inventoryBackoffDeadline(201))
+        fixture.now += UnresponsiveApplicationGate.holdSeconds + 0.5
+        #expect(!fixture.gate.isHeld(201, now: fixture.now) && fixture.now < backoff)
+        #expect(!fixture.sweep().messaged.contains(201))
+        #expect(fixture.holds[201] == backoff, "The model's recovery waits for the backoff")
+    }
+
     @Test func aRecoveredApplicationIsReadAgainAfterItsHold() throws {
         let fixture = InventorySweepFixture(responsive: Self.responsive, hung: [201])
         for index in 0..<5 {
-            if index > 0 { fixture.now = (fixture.gate.holdDeadline(201) ?? fixture.now) + 0.01 }
+            if index > 0 { fixture.now = (fixture.gate.inventoryBackoffDeadline(201) ?? fixture.now) + 0.01 }
             fixture.sweep()
         }
         #expect(fixture.gate.stallCount(201) == 5)
         fixture.now += 1
         fixture.hung.removeAll()
-        let deadline = try #require(fixture.gate.holdDeadline(201))
+        let deadline = try #require(fixture.gate.inventoryBackoffDeadline(201))
         #expect(!fixture.sweep().answered.contains(201), "Still held before its deadline")
         fixture.now = deadline + 0.01
         #expect(fixture.sweep().answered.contains(201))
@@ -144,7 +181,7 @@ private final class InventorySweepFixture {
         let fixture = InventorySweepFixture(responsive: Self.responsive, hung: [201])
         for _ in 0..<5 {
             fixture.sweep()
-            fixture.now = (fixture.gate.holdDeadline(201) ?? fixture.now) + 0.01
+            fixture.now = (fixture.gate.inventoryBackoffDeadline(201) ?? fixture.now) + 0.01
         }
         fixture.sweep()
         fixture.hung.removeAll()
@@ -152,5 +189,50 @@ private final class InventorySweepFixture {
         fixture.gate.release(201)
         let sweep = fixture.sweep()
         #expect(sweep.answered.contains(201) && fixture.holds[201] == nil)
+    }
+}
+
+/// The adapter's own release paths. The process identifier is made up: no
+/// Accessibility message is sent to it.
+@Suite(.macOSTestApplication, .serialized) @MainActor
+struct AccessibilityReleaseTests {
+    private static let pid: Int32 = 999_901
+
+    private func stall() {
+        AccessibilityWindowSystem.unresponsiveApplications.withLock {
+            $0.record(Self.pid, cannotComplete: true, elapsed: 0.351, now: 1)
+            $0.record(Self.pid, cannotComplete: true, elapsed: 0.351, now: 3)
+        }
+    }
+
+    private var stallCount: Int {
+        AccessibilityWindowSystem.unresponsiveApplications.withLock { $0.stallCount(Self.pid) }
+    }
+
+    @Test func activationReleasesAManagedApplication() {
+        let system = AccessibilityWindowSystem()
+        defer { AccessibilityWindowSystem.unresponsiveApplications.withLock { $0.release(Self.pid) } }
+        stall()
+        system.recordActivation(processIdentifier: Self.pid, activationPolicy: .accessory, isHidden: false)
+        #expect(stallCount == 2, "An application BetterTile does not manage keeps its backoff")
+        system.recordActivation(processIdentifier: Self.pid, activationPolicy: .regular, isHidden: false)
+        #expect(stallCount == 0)
+    }
+
+    @Test func aDeliveredNotificationReleasesItsApplication() throws {
+        let system = AccessibilityWindowSystem()
+        defer { AccessibilityWindowSystem.unresponsiveApplications.withLock { $0.release(Self.pid) } }
+        let application = ApplicationLaunchInstance(processIdentifier: Self.pid, generation: 1)
+        system.observationLifetime.install(application)
+        let captured = try #require(system.observationLifetime.capture(kind: .focused, application: application,
+            accessibilityHash: 0, identities: WindowIdentityRegistry()))
+        stall()
+        // A callback from a replaced observer is not proof that the application runs.
+        var stale = captured
+        stale.observerToken &+= 1
+        system.receiveAXEvent(stale)
+        #expect(stallCount == 2)
+        system.receiveAXEvent(captured)
+        #expect(stallCount == 0)
     }
 }

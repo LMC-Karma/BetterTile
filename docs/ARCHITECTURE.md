@@ -666,27 +666,44 @@ write. `UnresponsiveApplicationGate` in Core limits that cost to about one
 timeout for each hang.
 
 - A call that fails with `cannotComplete` after at least 0.3 s holds its
-  application for 2 s.
-- Each further stall before the application answers doubles the hold: 4 s,
-  8 s, 16 s, then at most 30 s. A fixed 2 s hold was shorter than one sweep
-  over nine hung applications, so every sweep waited out every timeout again,
-  about 3.2 s each time.
+  application for 2 s. This call hold stays 2 s after any number of stalls,
+  so a shortcut, a Layout Wheel action or a frame write reaches an
+  application that recovered quietly within 2 s.
+- Complete sweeps use a separate inventory backoff. It starts at 2 s and
+  doubles with each further stall before the application answers: 4 s, 8 s,
+  16 s, then at most 30 s. A fixed 2 s interval was shorter than one sweep over
+  nine hung applications, so every sweep waited out every timeout again, about
+  3.2 s each time.
 - A quick `cannotComplete` is a busy application that answered. It neither
   starts nor ends a hold.
-- Any completed call ends the hold and its backoff. So does an activation of
+- Any completed call ends the hold and the backoff. So does an activation of
   the application, and any Accessibility notification that it posts, because
-  both show that it runs again. A created or destroyed window therefore never
-  waits for the end of a long hold.
+  both show that it runs again. A window that the application announces with a
+  registered notification therefore does not wait for the end of a long
+  backoff. A failed notification registration is not retried, so for such an
+  application the fallback is an activation, a completed call, or the end of
+  the backoff.
 
 `ApplicationInventorySweep` chooses which applications a complete sweep reads.
-After one read in a sweep waits out its timeout, the sweep keeps every later
-application that stalled before and has not answered since. It still reads
-every other application. A kept application is reported with its hold
-deadline, exactly like a held one: its windows stay out of the sweep, keep
-their identities, and keep their panes. A recovery sweep leaves a kept
-application's PID eligible, so it is not charged a recovery attempt. Several
-hung applications therefore cost at most one timeout per sweep after the first
-sweep, and the growing holds spread their later reads apart.
+It sends no message to an application during its backoff. After one call in a
+sweep times out, the sweep also keeps every later application that stalled
+before and has not answered since. A per-application timeout serial detects
+the timeout, so a completed call earlier in the same read cannot hide it. The
+sweep still reads every other application. Several hung applications
+therefore cost at most one timeout per sweep after the first sweep, and the
+growing backoffs spread their later reads apart.
+
+A kept application is reported with its inventory deadline, exactly like a
+held one. Its windows stay out of the sweep and keep their identities.
+`unreadableApplicationWindowIDs` lists them, and the model passes them to the
+Adaptive reducer as absence exemptions, beside native desktop membership. A
+pane therefore stays when native observation is unavailable, too. Native
+membership on another desktop still lets such a pane leave, and confirmed
+destruction and minimization still remove it. A recovery sweep leaves a kept
+application's PID eligible, so it is not charged a recovery attempt. Kept
+applications stay due, so recovery sweeps can come about once a second. Each
+one reads and charges at least one due application, so the three-attempt limit
+still ends them.
 
 `AccessibilityWindowSystem` routes reads, settable checks, frame writes, and
 notification removals through `gatedCall`. `requireResponsive` stops a frame
@@ -697,10 +714,10 @@ its panes stay in the layout. A frame-write sequence stops at the first
 refused call.
 
 After reconciliation omits a held application, the app model schedules a fresh
-sweep 0.1 s after its hold deadline. One main-actor task covers all held
+sweep 0.1 s after its inventory deadline. One main-actor task covers all held
 applications. Each application gets at most three automatic recovery attempts,
 with at least 1 s and then 2 s between attempts, and always after the latest
-hold expires. Recovery sweeps admit only due applications whose retry budget
+inventory backoff ends. Recovery sweeps admit only due applications whose retry budget
 remains. Each actual inventory probe consumes one attempt, including probes in
 follow-up sweeps during the same recovery pass. A completed sweep that reads
 the application clears its retry budget. After exhaustion, the ordinary watchdog remains the fallback. A process

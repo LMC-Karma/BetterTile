@@ -12,6 +12,8 @@ protocol BetterTileWindowSystem: TargetedWindowSystem, WindowEventSource, Window
     var enhancedUserInterfacePolicy: EnhancedUserInterfacePolicy { get set }
     var leavesSpaceForDock: Bool { get set }
     var unresponsiveApplicationRecoveryDeadlines: [Int32: TimeInterval] { get }
+    /// Known windows of the applications that the last complete sweep did not read.
+    var unreadableApplicationWindowIDs: Set<WindowID> { get }
     func visibleWindows(recoveringApplicationPIDs: inout Set<Int32>) throws -> [WindowSnapshot]
     func cachedVisibleWindows(refreshing ids: Set<WindowID>) throws -> [WindowSnapshot]?
     func nativeDesktopObservation() -> NativeDesktopObservation?
@@ -35,6 +37,7 @@ extension AccessibilityWindowSystem: BetterTileWindowSystem {}
 
 extension BetterTileWindowSystem {
     var unresponsiveApplicationRecoveryDeadlines: [Int32: TimeInterval] { [:] }
+    var unreadableApplicationWindowIDs: Set<WindowID> { [] }
     func restoreEnhancedUserInterfaceBeforeQuit() {}
 }
 
@@ -3514,6 +3517,24 @@ final class BetterTileModel {
         }
     }
 
+    /// Windows whose absence from the last sweep does not count toward removal:
+    /// members of this desktop, and windows of applications the sweep did not
+    /// read. Native membership on another desktop still lets such a pane leave.
+    /// Confirmed destruction and minimization override every exemption.
+    private func absenceExemptWindowIDs(
+        on displayID: DisplayID,
+        observation: NativeDesktopObservation?? = nil
+    ) -> Set<WindowID> {
+        let observation = observation ?? system.nativeDesktopObservation()
+        let space = observation?.currentSpace(on: displayID)
+        let unreadable = system.unreadableApplicationWindowIDs.filter { windowID in
+            guard let memberships = observation?.windowMembership[windowID], !memberships.isEmpty,
+                  let space else { return true }
+            return memberships == [space]
+        }
+        return (observation?.exclusiveWindowIDs(on: displayID) ?? []).union(unreadable)
+    }
+
     /// Wake once after a held application's deadline, then back off. Recovery
     /// observes the current desktop; it never retains a placement proposal.
     private func scheduleUnresponsiveApplicationRecovery() {
@@ -4108,7 +4129,7 @@ final class BetterTileModel {
                    paneGap: session.paneGap(configured: paneGapForLayout),
                    confirmedGone: confirmedGoneWindowIDs,
                    minimized: confirmedMinimizedWindowIDs,
-                   knownSpaceWindowIDs: system.nativeDesktopObservation()?.exclusiveWindowIDs(on: displayID) ?? [],
+                   knownSpaceWindowIDs: absenceExemptWindowIDs(on: displayID),
                    newWindowSide: configuration.bentoNewWindowSide,
                    balancesNewWindows: configuration.bentoBalancesNewWindows
                ) {
@@ -5470,7 +5491,7 @@ final class BetterTileModel {
                     requestsRelayout: relayoutPaneGap,
                     confirmedGone: consumedDestroyedWindowIDs,
                     confirmedMinimized: consumedMinimizedWindowIDs,
-                    knownSpaceWindowIDs: (nativeObservation?.exclusiveWindowIDs(on: display.id) ?? [])
+                    knownSpaceWindowIDs: absenceExemptWindowIDs(on: display.id, observation: nativeObservation)
                         .subtracting(eligible.filter { $0.displayID != display.id }.map(\.id))
                 )
             )
@@ -5715,7 +5736,7 @@ final class BetterTileModel {
             paneGap: session.paneGap(configured: paneGapForLayout),
             confirmedGone: confirmedGone,
             minimized: minimized.union(confirmedMinimizedWindowIDs),
-            knownSpaceWindowIDs: system.nativeDesktopObservation()?.exclusiveWindowIDs(on: display.id) ?? [],
+            knownSpaceWindowIDs: absenceExemptWindowIDs(on: display.id),
             newWindowSide: configuration.bentoNewWindowSide,
             balancesNewWindows: configuration.bentoBalancesNewWindows
         )

@@ -244,38 +244,59 @@ private let target = BTRect(x: 100, y: 100, width: 600, height: 400)
     #expect(!gate.isHeld(42, now: 10 + UnresponsiveApplicationGate.holdSeconds))
 }
 
-/// A fixed two-second hold was shorter than one sweep over nine hung
+/// A fixed two-second interval was shorter than one sweep over nine hung
 /// applications, so every sweep waited out every timeout again.
-@Test func eachStallWithoutAnAnswerDoublesTheHoldUpToItsLimit() throws {
+@Test func eachStallWithoutAnAnswerDoublesTheInventoryBackoffUpToItsLimit() throws {
     var gate = UnresponsiveApplicationGate()
     var now = 100.0
-    var holds: [Double] = []
+    var backoffs: [Double] = []
     for _ in 0..<7 {
         gate.record(42, cannotComplete: true, elapsed: 0.35, now: now)
-        let deadline = try #require(gate.holdDeadline(42))
-        holds.append(deadline - now)
+        let deadline = try #require(gate.inventoryBackoffDeadline(42))
+        backoffs.append(deadline - now)
+        #expect(gate.isInventoryBackedOff(42, now: deadline - 0.01) && !gate.isInventoryBackedOff(42, now: deadline))
         now = deadline
     }
-    #expect(holds == [2, 4, 8, 16, 30, 30, 30])
-    #expect(gate.stallCount(42) == 7)
+    #expect(backoffs == [2, 4, 8, 16, 30, 30, 30])
+    #expect(gate.stallCount(42) == 7 && gate.timeoutSerial(42) == 7)
     // A quick refusal is an answer from a busy application: the backoff stays.
     gate.record(42, cannotComplete: true, elapsed: 0.01, now: now)
     #expect(gate.stallCount(42) == 7)
-    // A completed call ends the hold and the backoff.
+    // A completed call ends the hold and the backoff. The serial never goes back.
     gate.record(42, cannotComplete: false, elapsed: 0.01, now: now)
-    #expect(gate.stallCount(42) == 0 && gate.holdDeadline(42) == nil)
+    #expect(gate.stallCount(42) == 0 && gate.holdDeadline(42) == nil && gate.inventoryBackoffDeadline(42) == nil)
+    #expect(gate.timeoutSerial(42) == 7)
     gate.record(42, cannotComplete: true, elapsed: 0.35, now: now)
-    #expect(gate.holdDeadline(42) == now + UnresponsiveApplicationGate.holdSeconds)
+    #expect(gate.inventoryBackoffDeadline(42) == now + UnresponsiveApplicationGate.holdSeconds)
+    #expect(gate.timeoutSerial(42) == 8)
+}
+
+/// Shortcuts, Layout Wheel actions and frame writes use the call hold. After
+/// any number of stalls it ends two seconds after the last one, so a
+/// quietly recovered application answers them again.
+@Test func theCallHoldEndsTwoSecondsAfterTheLastStallWhateverTheCount() {
+    var gate = UnresponsiveApplicationGate()
+    var now = 100.0
+    for _ in 0..<6 {
+        gate.record(42, cannotComplete: true, elapsed: 0.35, now: now)
+        #expect(gate.holdDeadline(42) == now + UnresponsiveApplicationGate.holdSeconds)
+        now = (gate.inventoryBackoffDeadline(42) ?? now) + 0.1
+    }
+    let last = now - 0.1 - UnresponsiveApplicationGate.maximumInventoryBackoffSeconds
+    #expect(gate.isHeld(42, now: last + UnresponsiveApplicationGate.holdSeconds - 0.01))
+    #expect(!gate.isHeld(42, now: last + UnresponsiveApplicationGate.holdSeconds))
+    #expect(gate.isInventoryBackedOff(42, now: last + UnresponsiveApplicationGate.holdSeconds),
+        "Only the complete-sweep backoff stays long")
 }
 
 @Test func releaseEndsTheHoldAndTheBackoffForOneApplication() {
     var gate = UnresponsiveApplicationGate()
     for now in [10.0, 12, 16, 24] { gate.record(42, cannotComplete: true, elapsed: 0.35, now: now) }
     gate.record(43, cannotComplete: true, elapsed: 0.35, now: 24)
-    #expect(gate.isHeld(42, now: 25) && gate.stallCount(42) == 4)
+    #expect(gate.isInventoryBackedOff(42, now: 25) && gate.stallCount(42) == 4)
     gate.release(42)
-    #expect(!gate.isHeld(42, now: 25) && gate.stallCount(42) == 0)
+    #expect(!gate.isHeld(42, now: 25) && !gate.isInventoryBackedOff(42, now: 25) && gate.stallCount(42) == 0)
     #expect(gate.isHeld(43, now: 25), "Other applications keep their holds")
     gate.record(42, cannotComplete: true, elapsed: 0.35, now: 26)
-    #expect(gate.holdDeadline(42) == 26 + UnresponsiveApplicationGate.holdSeconds)
+    #expect(gate.inventoryBackoffDeadline(42) == 26 + UnresponsiveApplicationGate.holdSeconds)
 }

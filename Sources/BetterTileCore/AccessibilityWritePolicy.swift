@@ -199,29 +199,36 @@ public enum WriteReadbackPolicy {
 /// five seconds. Calls to a held application fail at once, as a timed-out call
 /// would, until the hold ends; a call that completes ends it sooner.
 ///
-/// Each further stall without an answer doubles the hold, up to
-/// `maximumHoldSeconds`. A fixed two-second hold was shorter than one complete
-/// sweep over several hung applications, so every sweep waited out every
-/// timeout again.
+/// The call hold stays at `holdSeconds`, so a shortcut, a Layout Wheel action
+/// or a frame write to an application that recovered quietly works again
+/// within two seconds.
+///
+/// Complete inventory sweeps use a separate backoff. Each further stall
+/// without an answer doubles it, up to `maximumInventoryBackoffSeconds`. A
+/// fixed two-second interval was shorter than one complete sweep over several
+/// hung applications, so every sweep waited out every timeout again.
 public struct UnresponsiveApplicationGate: Sendable {
     /// A `cannotComplete` that took this long waited out its timeout. The
     /// shortest timeout BetterTile sets is 0.35 s.
     public static let stallSeconds = 0.3
-    /// The hold after the first stall.
+    /// The call hold after every stall, and the first inventory backoff.
     public static let holdSeconds = 2.0
-    public static let maximumHoldSeconds = 30.0
+    public static let maximumInventoryBackoffSeconds = 30.0
 
     private var holdsUntil: [Int32: Double] = [:]
+    private var inventoryBackoffsUntil: [Int32: Double] = [:]
     private var stalls: [Int32: Int] = [:]
+    private var timeouts: [Int32: UInt64] = [:]
 
     public init() {}
 
-    /// The hold that follows this many consecutive stalls.
-    public static func holdSeconds(afterStalls count: Int) -> Double {
+    /// The inventory backoff that follows this many consecutive stalls.
+    public static func inventoryBackoffSeconds(afterStalls count: Int) -> Double {
         guard count > 1 else { return holdSeconds }
-        return min(maximumHoldSeconds, holdSeconds * pow(2, Double(min(count - 1, 16))))
+        return min(maximumInventoryBackoffSeconds, holdSeconds * pow(2, Double(min(count - 1, 16))))
     }
 
+    /// Calls to a held application fail at once.
     public func isHeld(_ processIdentifier: Int32, now: Double) -> Bool {
         (holdsUntil[processIdentifier] ?? -.infinity) > now
     }
@@ -230,10 +237,26 @@ public struct UnresponsiveApplicationGate: Sendable {
         holdsUntil[processIdentifier]
     }
 
-    /// Stalls since the application last answered. Nonzero after its hold
-    /// ends, too, until a call completes or `release` runs.
+    /// Complete sweeps do not read an application during its backoff.
+    public func isInventoryBackedOff(_ processIdentifier: Int32, now: Double) -> Bool {
+        (inventoryBackoffsUntil[processIdentifier] ?? -.infinity) > now
+    }
+
+    /// Never earlier than the call hold's deadline.
+    public func inventoryBackoffDeadline(_ processIdentifier: Int32) -> Double? {
+        inventoryBackoffsUntil[processIdentifier]
+    }
+
+    /// Stalls since the application last answered. Nonzero after the hold and
+    /// backoff end, too, until a call completes or `release` runs.
     public func stallCount(_ processIdentifier: Int32) -> Int {
         stalls[processIdentifier] ?? 0
+    }
+
+    /// Counts every stall of the application and never goes back, so a caller
+    /// can see a stall even when a completed call reset `stallCount` first.
+    public func timeoutSerial(_ processIdentifier: Int32) -> UInt64 {
+        timeouts[processIdentifier] ?? 0
     }
 
     /// Records one call. A quick `cannotComplete` is an answer from a busy
@@ -244,15 +267,18 @@ public struct UnresponsiveApplicationGate: Sendable {
         } else if elapsed >= Self.stallSeconds {
             let count = stallCount(processIdentifier) + 1
             stalls[processIdentifier] = count
-            holdsUntil[processIdentifier] = now + Self.holdSeconds(afterStalls: count)
+            timeouts[processIdentifier, default: 0] &+= 1
+            holdsUntil[processIdentifier] = now + Self.holdSeconds
+            inventoryBackoffsUntil[processIdentifier] = now + Self.inventoryBackoffSeconds(afterStalls: count)
         }
     }
 
-    /// Ends the hold and its backoff. For signs that the application runs
+    /// Ends the hold and the backoff. For signs that the application runs
     /// again without a completed call: it became active, or it sent an
     /// Accessibility notification.
     public mutating func release(_ processIdentifier: Int32) {
         holdsUntil.removeValue(forKey: processIdentifier)
+        inventoryBackoffsUntil.removeValue(forKey: processIdentifier)
         stalls.removeValue(forKey: processIdentifier)
     }
 }
