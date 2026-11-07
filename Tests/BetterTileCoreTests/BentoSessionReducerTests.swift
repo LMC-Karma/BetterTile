@@ -320,6 +320,152 @@ private extension BentoSessionTransition {
     #expect(thirdUpdate.removedWindowIDs == [b.id])
 }
 
+/// Desktop membership delays removal but does not prevent it: an application
+/// can keep a closed window alive off screen, and macOS then still reports it
+/// on this desktop.
+@Test func aPaneKnownOnlyByDesktopMembershipIsRemovedAfterItsLongerBudget() throws {
+    let a = reducerWindow("a")
+    let b = reducerWindow("b")
+    var session = LayoutSession(
+        displayID: reducerDisplay,
+        mode: .bento,
+        bentoState: BentoLayoutState(root: .partition(BentoPartition(
+            axis: .vertical,
+            children: [.leaf(a.id), .leaf(b.id)]
+        ))),
+        windowIDs: [a.id],
+        bentoInsertionOrder: [a.id, b.id]
+    )
+    let observation = BentoObservation(bounds: reducerBounds, windows: [a])
+    let budget = session.presence.toleratedMembershipOnlyAbsences
+    try #require(budget > session.presence.toleratedAbsences)
+
+    for miss in 1...budget {
+        let update = try #require(BentoSessionReducer().reconcile(
+            session: session, observation: observation, paneGap: 0, knownSpaceWindowIDs: [a.id, b.id]
+        ).update)
+        #expect(update.removedWindowIDs.isEmpty, "miss \(miss) of \(budget) must keep the pane")
+        #expect(update.session.bentoState.root?.windowIDs.contains(b.id) == true)
+        #expect(update.session.presence.pending[b.id] == miss)
+        session = update.session
+    }
+    let removed = try #require(BentoSessionReducer().reconcile(
+        session: session, observation: observation, paneGap: 0, knownSpaceWindowIDs: [a.id, b.id]
+    ).update)
+    #expect(removed.removedWindowIDs == [b.id])
+    #expect(removed.session.bentoState.root == .leaf(a.id))
+    #expect(removed.session.presence.pending.isEmpty)
+}
+
+/// The sweep skips a held application, so its window's absence is not
+/// evidence. It keeps its pane past every absence budget.
+@Test func aHeldWindowKeepsItsPanePastTheMembershipBudget() throws {
+    let a = reducerWindow("a")
+    let b = reducerWindow("b")
+    var session = LayoutSession(
+        displayID: reducerDisplay,
+        mode: .bento,
+        bentoState: BentoLayoutState(root: .partition(BentoPartition(
+            axis: .vertical,
+            children: [.leaf(a.id), .leaf(b.id)]
+        ))),
+        windowIDs: [a.id],
+        bentoInsertionOrder: [a.id, b.id]
+    )
+    let observation = BentoObservation(bounds: reducerBounds, windows: [a])
+    for _ in 0...(session.presence.toleratedMembershipOnlyAbsences * 2) {
+        let transition = BentoSessionReducer().reconcile(
+            session: session, observation: observation, paneGap: 0,
+            knownSpaceWindowIDs: [a.id, b.id], heldWindowIDs: [b.id]
+        )
+        if let update = transition.update {
+            #expect(update.removedWindowIDs.isEmpty)
+            session = update.session
+        }
+        #expect(session.bentoState.root?.windowIDs.contains(b.id) == true)
+        #expect(session.presence.pending.isEmpty)
+    }
+    let closed = try #require(BentoSessionReducer().reconcile(
+        session: session, observation: observation, paneGap: 0,
+        confirmedGone: [b.id], knownSpaceWindowIDs: [a.id, b.id], heldWindowIDs: [b.id]
+    ).update)
+    #expect(closed.removedWindowIDs == [b.id], "a destroyed event still removes a held window")
+}
+
+/// Accessibility can omit a live window for a while. When macOS still shows it
+/// on screen and on this desktop, the omission is not evidence of a closure,
+/// so the pane stays past every absence budget. Direct evidence still wins.
+@Test func aVisibleDesktopMemberKeepsItsPanePastTheMembershipBudget() throws {
+    let a = reducerWindow("a")
+    let b = reducerWindow("b")
+    let root: BentoNode = .partition(BentoPartition(axis: .vertical, children: [.leaf(a.id), .leaf(b.id)]))
+    var session = LayoutSession(
+        displayID: reducerDisplay,
+        mode: .bento,
+        bentoState: BentoLayoutState(root: root),
+        windowIDs: [a.id],
+        bentoInsertionOrder: [a.id, b.id]
+    )
+    let observation = BentoObservation(bounds: reducerBounds, windows: [a])
+    for _ in 0...(session.presence.toleratedMembershipOnlyAbsences * 2) {
+        let transition = BentoSessionReducer().reconcile(
+            session: session, observation: observation, paneGap: 0,
+            knownSpaceWindowIDs: [a.id, b.id], onScreenWindowIDs: [a.id, b.id]
+        )
+        if let update = transition.update {
+            #expect(update.removedWindowIDs.isEmpty)
+            session = update.session
+        }
+        #expect(session.bentoState.root == root)
+        #expect(session.presence.pending.isEmpty)
+    }
+    let closed = try #require(BentoSessionReducer().reconcile(
+        session: session, observation: observation, paneGap: 0,
+        confirmedGone: [b.id], knownSpaceWindowIDs: [a.id, b.id], onScreenWindowIDs: [a.id, b.id]
+    ).update)
+    #expect(closed.removedWindowIDs == [b.id], "a destroyed event outranks on-screen evidence")
+    let minimized = try #require(BentoSessionReducer().reconcile(
+        session: session, observation: observation, paneGap: 0,
+        minimized: [b.id], knownSpaceWindowIDs: [a.id, b.id], onScreenWindowIDs: [a.id, b.id]
+    ).update)
+    #expect(minimized.removedWindowIDs == [b.id], "a minimize event outranks on-screen evidence")
+}
+
+/// On-screen evidence does not say which desktop's layout a window belongs to.
+/// Without this desktop's membership, a missing window keeps the ordinary
+/// budget; with membership but off screen, it keeps the membership budget.
+@Test func onScreenEvidenceProtectsOnlyAMemberOfThisDesktop() throws {
+    let a = reducerWindow("a")
+    let b = reducerWindow("b")
+    let start = LayoutSession(
+        displayID: reducerDisplay,
+        mode: .bento,
+        bentoState: BentoLayoutState(root: .partition(BentoPartition(
+            axis: .vertical,
+            children: [.leaf(a.id), .leaf(b.id)]
+        ))),
+        windowIDs: [a.id],
+        bentoInsertionOrder: [a.id, b.id]
+    )
+    let observation = BentoObservation(bounds: reducerBounds, windows: [a])
+    func missesBeforeRemoval(knownSpace: Set<WindowID>, onScreen: Set<WindowID>) throws -> Int {
+        var session = start
+        for miss in 1...20 {
+            let update = try #require(BentoSessionReducer().reconcile(
+                session: session, observation: observation, paneGap: 0,
+                knownSpaceWindowIDs: knownSpace, onScreenWindowIDs: onScreen
+            ).update)
+            if update.removedWindowIDs == [b.id] { return miss }
+            session = update.session
+        }
+        return .max
+    }
+    #expect(try missesBeforeRemoval(knownSpace: [a.id], onScreen: [a.id, b.id])
+        == start.presence.toleratedAbsences + 1)
+    #expect(try missesBeforeRemoval(knownSpace: [a.id, b.id], onScreen: [a.id])
+        == start.presence.toleratedMembershipOnlyAbsences + 1)
+}
+
 @Test func minimizedMembershipRemovalKeepsAReinsertionAnchor() throws {
     let a = reducerWindow("a")
     let b = reducerWindow("b")

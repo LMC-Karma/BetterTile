@@ -6,7 +6,7 @@ import Testing
 /// BetterTileMacOS test suite. Failure knobs simulate rejected, ignored,
 /// numbered-failing, clamped, and late-settling Accessibility writes.
 @MainActor
-final class FakeWindowSystem: ApplicationActivating, ApplicationWindowRequesting, WindowSystem, TargetedWindowSystem, WindowEventSource, TabbedWindowSystem, WindowStackReading, MinimumSizeProbing {
+final class FakeWindowSystem: ApplicationActivating, ApplicationWindowRequesting, WindowSystem, TargetedWindowSystem, WindowEventSource, TabbedWindowSystem, WindowStackReading, MinimumSizeProbing, WindowHitTesting {
     func activateApplication(bundleIdentifier: String, processIdentifier: Int32?) -> ApplicationActivationResult {
         .unavailable
     }
@@ -183,9 +183,14 @@ final class FakeWindowSystem: ApplicationActivating, ApplicationWindowRequesting
     /// Native Space membership. Like the Accessibility adapter, reads
     /// classify every snapshot with it when it is set.
     var nativeObservation: NativeDesktopObservation?
+    private(set) var visibleWindowsReadCount = 0
     func visibleWindows() throws -> [WindowSnapshot] {
+        visibleWindowsReadCount += 1
         settlePendingFrames()
         return nativeObservation?.windowsOnCurrentSpaces(windows) ?? windows
+    }
+    func window(at point: BTPoint) throws -> WindowSnapshot? {
+        windows.first { $0.frame.contains(point) && !$0.isMinimized && !$0.isHidden }
     }
     /// Windows a targeted read leaves out, as Accessibility does for an
     /// element it cannot read at the moment.
