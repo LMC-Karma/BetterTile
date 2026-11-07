@@ -118,3 +118,9 @@ func everyVisibleRowLabelFindsItsPage(destination: SettingsDestination, labels: 
         #expect(SettingsDestination.general.matchesSearch(term), "General must match \(term)")
     }
 }
+
+@Test(.appTestApplication) func tabbedEntryPlacementSettingsAreSearchable() {
+    for term in ["Place windows", "All in one pane", "One per pane", "Keep Adaptive panes"] {
+        #expect(SettingsDestination.windowLayout.matchesSearch(term), "Window Layout must match \(term)")
+    }
+}
