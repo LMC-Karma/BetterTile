@@ -262,3 +262,69 @@ func wakeTreatsAnAwakeMinimizeLikeAClosure(afterWake: Bool) async throws {
     let released = await system.waitFor(timeout: .seconds(2)) { !model.isHoldingDisplayChange }
     #expect(released == afterWake, "Hold state after \(system.clock.now - origin): holding \(model.isHoldingDisplayChange)")
 }
+
+/// A tab drag removes the tab from its pane until the drop. Sleep interrupts
+/// the drag and puts the tab back. The wake must wait for that tab too, and
+/// it must return to its pane, order and selection.
+@Test(.appTestApplication) @MainActor
+func wakeWaitsForATabThatSleepReturnedFromADrag() async throws {
+    let (system, model) = try await wakeFixture(mode: .tabbed)
+    defer { model.shutdown() }
+    let display = system.mainDisplay.id
+    let panes = try #require(model.activeTabbedState?.panes.map(\.tabs))
+    let selected = model.activeTabbedState?.selectedWindowIDs
+    let frames = Dictionary(uniqueKeysWithValues: system.windows.map { ($0.id, $0.frame) })
+    let group = try #require(model.activeTabbedState?.panes.first { $0.tabs.count > 1 })
+    let dragged = try #require(group.tabs.first { $0 != group.selected })
+    try #require(model.beginBentoDrag(displayID: display, sourceID: dragged))
+    try #require(model.activeTabbedState?.windowIDs.contains(dragged) == false, "The drag tears the tab off its pane")
+    let observation = system.desktopObservation
+    model.handleDisplayChange(.sleep)
+    try #require(model.activeTabbedState?.panes.map(\.tabs) == panes, "Sleep puts the dragged tab back")
+    await system.advance(by: .seconds(7))
+    let writes = system.frameWriteCounts
+    // The tab's application answers late after wake.
+    system.desktopObservation = nil
+    let index = try #require(system.windows.firstIndex { $0.id == dragged })
+    system.windows[index].isHidden = true
+    model.handleApplicationTopologyChange(waking: true)
+    for _ in 0..<8 { model.watchdog(); await system.advance(by: .milliseconds(375)) }
+    #expect(model.isHoldingDisplayChange, "The hold must still wait for the returned tab")
+    #expect(system.frameWriteCounts == writes)
+    system.windows[index].isHidden = false
+    system.desktopObservation = observation
+    model.handleApplicationTopologyChange()
+    try await settleWake(model, system)
+    #expect(model.activeTabbedState?.panes.map(\.tabs) == panes)
+    #expect(model.activeTabbedState?.selectedWindowIDs == selected)
+    #expect(Dictionary(uniqueKeysWithValues: system.windows.map { ($0.id, $0.frame) }) == frames)
+}
+
+/// Adaptive builds no tree for a lone window. A wake that cannot read that
+/// window yet must not settle and let its first sweep place it again.
+@Test(.appTestApplication) @MainActor
+func wakeWaitsForTheOnlyWindowOfAnAdaptiveDesktop() async throws {
+    let system = makeManualWindowSystem(drivingPolicyDeadlines: true)
+    let model = makeModel(system: system)
+    defer { model.shutdown() }
+    model.setActiveMode(.bento)
+    try await settleWake(model, system)
+    try #require(sessionStore(of: model).session(for: system.mainDisplay.id)?.bentoState.root == nil)
+    // The user sizes the window by hand; Adaptive keeps that frame.
+    system.windows[0].frame = BTRect(x: 120, y: 80, width: 500, height: 400)
+    model.handleApplicationTopologyChange()
+    try await settleWake(model, system)
+    let frame = system.windows[0].frame
+    try #require(frame == BTRect(x: 120, y: 80, width: 500, height: 400))
+    model.handleDisplayChange(.sleep)
+    await system.advance(by: .seconds(2))
+    system.desktopObservation = nil
+    system.offscreenWindowIDs = [system.windows[0].id]
+    model.handleApplicationTopologyChange(waking: true)
+    for _ in 0..<4 { model.watchdog(); await system.advance(by: .milliseconds(375)) }
+    #expect(model.isHoldingDisplayChange, "The hold must wait for the only window")
+    system.offscreenWindowIDs = []
+    model.handleApplicationTopologyChange()
+    try await settleWake(model, system)
+    #expect(system.windows[0].frame == frame, "The lone window was placed again after the wake")
+}

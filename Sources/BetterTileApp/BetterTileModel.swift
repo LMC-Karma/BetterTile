@@ -3239,32 +3239,39 @@ final class BetterTileModel {
         }
     }
 
+    /// Captures the pre-transition membership without reading AX during sleep
+    /// or lock. A partial wake inventory cannot replace this base. Runs after
+    /// gesture interruption, which restores a dragged tab to its pane. Only
+    /// windows with a place in the layout count, floats included. Focus mode
+    /// only adds to `windowIDs`, so it can keep windows that already left. An
+    /// Adaptive desktop has no tree for its only window; outside Focus, which
+    /// needs a tree, `windowIDs` is then exact.
+    private func captureDisplayChangeExpectedWindows() {
+        displayChangeExpectedWindows = sessionStore.sessions.values.reduce(into: Set<WindowID>()) { ids, session in
+            let placed: Set<WindowID>
+            switch session.mode {
+            case .manual: return
+            case .bento:
+                let tree = session.bentoState.root.map { Set($0.windowIDs) } ?? session.windowIDs
+                placed = tree.union(session.bentoState.floatingWindowIDs)
+            case .tabbed:
+                placed = (session.tabbedState?.windowIDs ?? []).union(session.tabbedState?.floatingWindowIDs ?? [])
+            case .linked: placed = session.windowIDs
+            }
+            ids.formUnion(placed.subtracting(session.excludedFocusWindowIDs))
+        }
+    }
+
     private func startDisplayChangeHold(_ event: DisplayChangeHold.Event) {
         if !isHoldingDisplayChange { displayChangeExpectedWindows = nil }
-        if displayChangeExpectedWindows == nil,
-           [.sleep, .wake, .sessionResigned, .sessionBecameActive].contains(event) {
-            // Capture the pre-transition membership without reading AX during
-            // sleep or lock. A partial wake inventory cannot replace this base.
-            // Only windows with a place in the layout count, floats included.
-            // Focus mode only adds to `windowIDs`, so it can keep windows that
-            // already left.
-            displayChangeExpectedWindows = sessionStore.sessions.values.reduce(into: Set<WindowID>()) { ids, session in
-                let placed: Set<WindowID>
-                switch session.mode {
-                case .manual: return
-                case .bento:
-                    placed = Set(session.bentoState.root?.windowIDs ?? []).union(session.bentoState.floatingWindowIDs)
-                case .tabbed:
-                    placed = (session.tabbedState?.windowIDs ?? []).union(session.tabbedState?.floatingWindowIDs ?? [])
-                case .linked: placed = session.windowIDs
-                }
-                ids.formUnion(placed.subtracting(session.excludedFocusWindowIDs))
-            }
-        }
         if event == .sessionResigned { displayChangeLastLockCheck = displayChangeTime }
         displayChangeHold.receive(event, at: displayChangeTime)
         displayChangeUserOverrides.removeAll()
         interruptGesturesForDisplayChange()
+        if displayChangeExpectedWindows == nil,
+           [.sleep, .wake, .sessionResigned, .sessionBecameActive].contains(event) {
+            captureDisplayChangeExpectedWindows()
+        }
         Self.bentoLog.debug("display hold started: \(event.rawValue, privacy: .public)")
         displayChangeHoldTask?.cancel()
         windowEventTask?.cancel()

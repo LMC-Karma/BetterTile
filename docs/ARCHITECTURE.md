@@ -283,10 +283,13 @@ without a new display event. Sleep and an inactive or locked session wait for wa
 those events restart the deadline.
 After sleep or session inactivity, the quiet observations must also contain, as
 eligible, the windows that held a place in a layout: Adaptive panes, Tabbed
-tabs and floating windows in either mode, except peers excluded by Focus mode. Confirmed closures do not count, nor
-do minimizes recorded while the session was active. The model captures that
-membership without reading Accessibility while inactive. Repeated wake events
-during the hold keep the same captured set. This readiness wait ends at the same
+tabs and floating windows in either mode, except peers excluded by Focus mode.
+An Adaptive desktop's only window counts too, although it has no tree.
+Confirmed closures do not count, nor do minimizes recorded while the session
+was active. The model captures that membership without reading Accessibility
+while inactive, after the hold has stopped any gesture, so a tab that an
+interrupted drag returns to its pane counts. Repeated wake events during the
+hold keep the same captured set. This readiness wait ends at the same
 five-second deadline; it does not add permanent membership protection.
 
 During an awake, active hold, observations and closed or minimized evidence
