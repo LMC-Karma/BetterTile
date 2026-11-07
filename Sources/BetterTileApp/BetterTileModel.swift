@@ -639,8 +639,16 @@ final class BetterTileModel {
             session.hasAppliedSingleWindowPlacement = true
             _ = self.sessionStore.commit(session, replacing: session.revision)
         }
-        dragSnap.actionResultHandler = { [weak self] displayID, succeeded, error in
-            self?.presentActionResult(succeeded: succeeded, error: error, displayID: displayID)
+        dragSnap.actionResultHandler = { [weak self] displayID, outcome in
+            guard let self else { return }
+            // A plain carried snap has no layout drag to retain degradation.
+            // Stop its destination before the gesture's arrival pass can write.
+            if case let .degraded(reason) = outcome, self.dragSnap.carriedWindowID != nil,
+               let owner = self.sessionStore.session(for: displayID), owner.mode != .manual {
+                self.suspendAutomaticBentoWrites(displayID: displayID, sessionID: owner.id, error: reason)
+            } else {
+                self.presentActionResult(succeeded: outcome.isApplied, error: outcome.failureReason, displayID: displayID)
+            }
         }
         dividerResize.stackProvider = { [weak self] ids in
             (self?.system as? any WindowStackReading)?.onScreenStack(labeling: ids)
@@ -2331,13 +2339,23 @@ final class BetterTileModel {
                     let placement = WindowPlacementPlan(windowID: sourceID, displayID: displayID,
                         sourceFrame: before, targetFrame: frame)
                     let outcome = coordinator.perform(placement)
-                    presentActionResult(succeeded: outcome.isApplied, error: outcome.failureReason, displayID: displayID)
-                    // A carried window that this snap placed stays floating here.
-                    if outcome.isApplied {
+                    switch outcome {
+                    case .applied:
+                        presentActionResult(succeeded: true, displayID: displayID)
+                        // A carried window that this snap placed stays floating here.
                         publishProvisionalTabbedFloat(active.provisionalSourceID, sessionID: active.layoutSession.id,
                                                       displayID: displayID)
                         verifyPlacementLanded(placement, displayID: displayID)
-                    } else { discardProvisionalTabbedSource() }
+                    case let .failed(reason):
+                        presentActionResult(succeeded: false, error: reason, displayID: displayID)
+                        discardProvisionalTabbedSource()
+                    case let .degraded(reason):
+                        // Cleanup can make this window an arrival. Suspend its
+                        // owner before that pass can authorize another write.
+                        suspendAutomaticBentoWrites(displayID: displayID,
+                            sessionID: active.layoutSession.id, error: reason)
+                        discardProvisionalTabbedSource()
+                    }
                 } else {
                     applyTabbedState(baseline, session: context.session, display: context.display,
                         windows: context.windows, focus: sourceID, rememberUndo: true,
@@ -6789,10 +6807,9 @@ extension BetterTileModel {
             transferProvisionalTabbedFloat(provisionalSourceID, sessionID: original.id, displayID: display.id, to: taskID)
             tabbedTasks[display.id] = Task { @MainActor [weak self] in
                 guard let self else { return }
-                // Every exit passes here: a provisional float that this
-                // rollback did not already remove ends with it.
-                defer { if self.releaseProvisionalTabbedFloats(ownedBy: taskID) { self.schedulePendingWindowEvents() } }
                 defer {
+                    // Resumed picker work must capture membership after cleanup.
+                    if self.releaseProvisionalTabbedFloats(ownedBy: taskID) { self.schedulePendingWindowEvents() }
                     self.resumeIdlePaneApplicationRequest(on: display.id)
                     if !self.isTabbedBusy(on: display.id), self.tabbedQueuedIntents[display.id] == nil {
                         self.tabbedOverlays[display.id]?.completeDrop()
@@ -6815,7 +6832,10 @@ extension BetterTileModel {
                     }
                     // A work area that changed during the placement, for
                     // example while the Dock settled, needs a placement too.
-                    if !Task.isCancelled, isSameDesktopAnyWorkArea() { self.refreshActiveWindows(force: true) }
+                    if !Task.isCancelled, isSameDesktopAnyWorkArea() {
+                        if self.releaseProvisionalTabbedFloats(ownedBy: taskID) { self.schedulePendingWindowEvents() }
+                        self.refreshActiveWindows(force: true)
+                    }
                     return
                 }
                 guard isCurrent() else {
@@ -6861,9 +6881,6 @@ extension BetterTileModel {
         transferProvisionalTabbedFloat(provisionalSourceID, sessionID: original.id, displayID: display.id, to: taskID)
         let placement = Self.startTabbedPlacement(immediately: startsNow) { @MainActor [weak self] in
             guard let self else { return }
-            // Every exit passes here. Only a commit that puts the window in
-            // a pane publishes it; any other end removes its provisional float.
-            defer { if self.releaseProvisionalTabbedFloats(ownedBy: taskID) { self.schedulePendingWindowEvents() } }
             #if DEBUG
             if self.arrivalTrace.isEnabled { for window in windows {
                 self.arrivalTrace.disposition("tabbed_placement_started", windowID: window.id,
@@ -6871,6 +6888,8 @@ extension BetterTileModel {
             } }
             #endif
             defer {
+                // Resumed picker work must capture membership after cleanup.
+                if self.releaseProvisionalTabbedFloats(ownedBy: taskID) { self.schedulePendingWindowEvents() }
                 self.resumeIdlePaneApplicationRequest(on: display.id)
                 if !self.isTabbedBusy(on: display.id), self.tabbedQueuedIntents[display.id] == nil {
                     self.tabbedOverlays[display.id]?.completeDrop()
@@ -7129,7 +7148,10 @@ extension BetterTileModel {
                 }
                 // A work area that changed during the placement, for
                 // example while the Dock settled, needs a placement too.
-                if !Task.isCancelled, isSameDesktopAnyWorkArea() { self.refreshActiveWindows(force: true) }
+                if !Task.isCancelled, isSameDesktopAnyWorkArea() {
+                    if self.releaseProvisionalTabbedFloats(ownedBy: taskID) { self.schedulePendingWindowEvents() }
+                    self.refreshActiveWindows(force: true)
+                }
                 return
             }
             guard isCurrent() else {

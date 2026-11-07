@@ -351,7 +351,7 @@ struct CarryHold: CustomStringConvertible, Sendable {
 /// carried window alone while the button is down, whether a drag sample
 /// arrived during the change or not. After the gesture, a snap keeps its
 /// frame, or the window becomes an ordinary arrival.
-@Test(.appTestApplication, arguments: [CarryDestination.emptyAdaptive, .firstObservationAdaptive, .tabbed],
+@Test(.appTestApplication, arguments: [CarryDestination.emptyAdaptive, .firstObservationAdaptive, .adaptive, .tabbed],
       CarryHold.all) @MainActor
 func aDestinationLayoutWaitsForTheCarriedWindowsRelease(destination: CarryDestination, hold: CarryHold) async throws {
     let sampleDuringChange = hold.sampleDuringChange, ending = hold.ending
@@ -389,7 +389,7 @@ func aDestinationLayoutWaitsForTheCarriedWindowsRelease(destination: CarryDestin
         #expect(pane?.selected == fixture.a1, "\(String(describing: state?.tabbedState?.panes))")
         #expect(state?.tabbedState?.floatingWindowIDs.contains(fixture.a1) == false)
         #expect(fixture.carriedFrame.map { $0.minX >= rightHalf.minX - 0.5 } == true, "\(String(describing: fixture.carriedFrame))")
-    case (.firstObservationAdaptive, .snapAtRightEdge):
+    case (.firstObservationAdaptive, .snapAtRightEdge), (.adaptive, .snapAtRightEdge):
         // B's layout took the drag, and A1 joins it as the right half.
         #expect(Set(state?.bentoState.root?.windowIDs ?? []) == Set(fixture.destinationWindows.map(\.id) + [fixture.a1]))
         #expect(fixture.carriedFrame == rightHalf, "\(String(describing: fixture.carriedFrame))")
@@ -413,7 +413,7 @@ func aDestinationLayoutWaitsForTheCarriedWindowsRelease(destination: CarryDestin
         if destination == .tabbed {
             #expect(state?.tabbedState?.floatingWindowIDs.contains(fixture.a1) == false)
         }
-    case (.manual, _), (.adaptive, _):
+    case (.manual, _):
         Issue.record("Not a case of this test")
     }
 }
@@ -1213,4 +1213,116 @@ func aQueuedTabMoveSurvivesAnInvalidatedCarriedDrop(drop: String) async throws {
     #expect(undone.windowIDs.contains(fixture.a1))
     #expect(!undone.floatingWindowIDs.contains(fixture.a1), "Undo restored the failed drop's provisional float")
     #expect(!undone.windowIDs.contains(b2), "Undo restored the closed peer")
+}
+
+// MARK: - Council round 1: degraded recovery and completion ordering
+
+@Test(.appTestApplication, arguments: [CarryDestination.tabbed, .emptyAdaptive]) @MainActor
+func aDegradedCarriedFrameSnapWaitsForRepair(destination: CarryDestination) async throws {
+    let fixture = try await carry(to: destination, suspendedSample: (300, 420))
+    defer { fixture.model.shutdown() }
+    let model = fixture.model, system = fixture.system
+    try await settle(fixture, for: .milliseconds(100))
+    let owner = try #require(fixture.session?.id)
+    let before = try #require(fixture.carriedFrame)
+    let undoSteps = tabbedUndoStepCount(model)
+    // Apply only the position, then fail both the forward write and rollback.
+    system.failedFrameWriteNumbers[fixture.a1] = [1, 2]
+    system.onFrameWrite = { id, frame in
+        guard id == fixture.a1, system.frameWriteCounts[id] == 1,
+              let index = system.windows.firstIndex(where: { $0.id == id }) else { return }
+        system.windows[index].frame.origin = frame.origin
+    }
+    fixture.send(.leftMouseDragged, x: 500, y: 0)
+    fixture.drag.displayTick()
+    switch fixture.drag.dropTarget?.drop {
+    case let .layout(prepared):
+        guard case let .snap(action, _) = prepared.outcome else {
+            Issue.record("No layout snap at the top edge"); return
+        }
+        try #require(!BentoDropPlanner.partitionActions.contains(action))
+    case .snap:
+        try #require(destination == .emptyAdaptive)
+    default:
+        Issue.record("No frame-only snap at the top edge"); return
+    }
+    fixture.send(.leftMouseUp, x: 500, y: 0)
+    fixture.button.pressed = false
+    system.onFrameWrite = nil
+    try #require(system.frameWriteCounts[fixture.a1] == 2, "Forward write and rollback must both run")
+    try #require(fixture.carriedFrame != before, "The rollback unexpectedly restored the window")
+    #expect(fixture.session?.id == owner)
+    #expect(fixture.session?.automaticWritesSuspended == true, "An incomplete rollback must suspend its owner")
+    #expect(model.statusMessage?.contains("Repair Layout") == true)
+    #expect(provisionalFloatRecordCount(model) == 0)
+    if destination == .tabbed {
+        #expect(fixture.session?.tabbedState?.floatingWindowIDs.contains(fixture.a1) == false)
+    }
+    #expect(tabbedUndoStepCount(model) == undoSteps)
+    let writes = system.frameWriteCounts
+    let frames = system.windows.map(\.frame)
+    system.failedFrameWriteNumbers = [:]
+    model.handleApplicationTopologyChange()
+    try await settle(fixture)
+    model.watchdog()
+    try await settle(fixture)
+    #expect(system.frameWriteCounts == writes, "Automatic reconciliation wrote after a degraded snap")
+    #expect(system.windows.map(\.frame) == frames)
+    #expect(fixture.session?.automaticWritesSuspended == true)
+    #expect(tabbedUndoStepCount(model) == undoSteps)
+    model.repairCurrentLayout()
+    try await settle(fixture)
+    #expect(fixture.session?.automaticWritesSuspended == false)
+    #expect(system.frameWriteCounts != writes, "Repair must resume placement")
+    #expect(fixture.session?.windowIDs.contains(fixture.a1) == true)
+}
+
+@Test(.appTestApplication, arguments: [false, true]) @MainActor
+func aWorkAreaRefreshStartsAfterCarriedDropCleanup(afterWrite: Bool) async throws {
+    let fixture = try await carry(to: .tabbed, suspendedSample: (300, 420))
+    defer { fixture.model.shutdown() }
+    let model = fixture.model, system = fixture.system
+    try await settle(fixture, for: .milliseconds(100))
+    let target = try #require(fixture.session?.tabbedState?.panes.last)
+    var changedWorkArea = false
+    var recordsAtRefresh: Int?
+    system.onFrameWrite = { id, _ in
+        guard afterWrite, id == fixture.a1, !changedWorkArea else { return }
+        changedWorkArea = true
+        system.availableDisplays[0].visibleFrame.size.width -= 100
+    }
+    system.onVisibleWindowSweep = { _ in
+        guard changedWorkArea, !model.hasPendingTabbedPlacement, recordsAtRefresh == nil else { return }
+        recordsAtRefresh = provisionalFloatRecordCount(model)
+    }
+    defer { system.onFrameWrite = nil; system.onVisibleWindowSweep = nil; system.onWindowSnapshots = nil }
+    dropOnTabbedDestination(fixture, "addAsTab", target: target.id)
+    if !afterWrite {
+        // The task has not run: change the work area on its preflight read,
+        // before it can mutate a frame or require rollback.
+        try #require(model.hasPendingTabbedPlacement && system.frameWriteCounts[fixture.a1] == nil)
+        system.onWindowSnapshots = {
+            guard !changedWorkArea else { return }
+            changedWorkArea = true
+            system.availableDisplays[0].visibleFrame.size.width -= 100
+        }
+    }
+    try await settle(fixture)
+    try #require(changedWorkArea, "The work-area change did not reach the placement")
+    #expect(recordsAtRefresh == 0, "The work-area refresh captured provisional membership")
+    #expect(provisionalFloatRecordCount(model) == 0)
+    if afterWrite {
+        // A write already landed in the old work area. Preserve its degraded
+        // recovery instead of allowing the refresh to move windows again.
+        #expect(fixture.session?.automaticWritesSuspended == true)
+        let writes = system.frameWriteCounts
+        model.watchdog()
+        try await settle(fixture)
+        #expect(system.frameWriteCounts == writes)
+        model.performTabbed(.repair)
+        try await settle(fixture)
+    }
+    #expect(fixture.session?.lastWorkArea == system.availableDisplays[0].visibleFrame)
+    #expect(fixture.session?.tabbedState?.windowIDs.contains(fixture.a1) == true)
+    #expect(fixture.session?.automaticWritesSuspended == false)
 }
