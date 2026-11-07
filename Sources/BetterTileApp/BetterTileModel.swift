@@ -3239,7 +3239,13 @@ final class BetterTileModel {
         if event == .sessionResigned { displayChangeLastLockCheck = displayChangeTime }
         displayChangeHold.receive(event, at: displayChangeTime)
         displayChangeUserOverrides.removeAll()
+        // A press the shared event tap received before this hold can still wait
+        // in its main-queue delivery. Restarting the tap retires that generation,
+        // so the old press is dropped; a new press reaches the new generation.
+        let restartsEventTap = sharedGestureEvents.isUsingEventTap
+        if restartsEventTap { sharedGestureEvents.stop() }
         interruptGesturesForDisplayChange()
+        if restartsEventTap { setUsesSharedGestureEvents(sharedGestureEvents.start()) }
         Self.bentoLog.debug("display hold started: \(event.rawValue, privacy: .public)")
         displayChangeHoldTask?.cancel()
         windowEventTask?.cancel()
