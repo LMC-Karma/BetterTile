@@ -254,9 +254,13 @@ private struct SplitMix64 {
                 #expect(!view.content.isHidden, "hidden request status \(context)")
             }
             let expected = CoordinateConverter.toAppKit(frame, mainScreenFrame: main)
-            #expect(abs(panel.frame.minX - expected.minX) <= 1 && abs(panel.frame.maxX - expected.maxX) <= 1,
-                    "strip width \(panel.frame) vs \(expected) \(context)")
-            #expect(abs(panel.frame.maxY - expected.maxY) <= 1, "strip top \(context)")
+            guard let requested = panel.requestedFrame else {
+                Issue.record("Missing controller frame request \(context)")
+                continue
+            }
+            #expect(abs(requested.minX - expected.minX) <= 1 && abs(requested.maxX - expected.maxX) <= 1,
+                    "strip width \(requested) vs \(expected) \(context)")
+            #expect(abs(requested.maxY - expected.maxY) <= 1, "strip top \(context)")
         }
     }
 }
@@ -270,12 +274,13 @@ private func stressCount(_ variable: String, default fallback: Int) -> Int {
 
 // The default is a short lifecycle sweep. Restore the full exploration with:
 // BT_STRESS_SEEDS=40 BT_STRESS_STEPS=400 swift test --filter tabbedOverlayRandomLifecycle
-@Test(.macOSTestApplication, arguments: (1...stressCount("BT_STRESS_SEEDS", default: 6)).map { UInt64($0) }) @MainActor
-func tabbedOverlayRandomLifecycleKeepsSurfacesConsistent(seed: UInt64) async {
+@Test(.macOSTestApplication, arguments: (1...stressCount("BT_STRESS_SEEDS", default: 6)).map { UInt64($0) }, [false, true]) @MainActor
+func tabbedOverlayRandomLifecycleKeepsSurfacesConsistent(seed: UInt64, relocated: Bool) async {
     let stress = TabbedOverlayStress(seed: seed)
     stress.refresh()
     for _ in 0..<stressCount("BT_STRESS_STEPS", default: 100) {
         stress.step()
+        if relocated { stress.panels.forEach { $0.simulateNativeRelocation() } }
         stress.check()
         // Keep each transition and its checks together, then let queued main-actor work run.
         await Task.yield()
@@ -285,17 +290,38 @@ func tabbedOverlayRandomLifecycleKeepsSurfacesConsistent(seed: UInt64) async {
     stress.check()
 }
 
-// Exercise AppKit's display-change frame constraint without changing any display.
+// Guard the fixture overrides against screen constraining of offscreen frames.
 @Test(.macOSTestApplication, arguments: [false, true]) @MainActor
 func tabbedFixtureFrameConstraintKeepsOffscreenGeometry(chooser: Bool) {
     let panel: NSPanel = chooser
         ? StressChooserPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         : StressPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
-    panel.orderFrontRegardless()
-    defer { panel.orderOut(nil) }
     let requested = NSRect(x: 40000, y: 40000, width: 700, height: 34)
     for screen in [nil] + NSScreen.screens.map(Optional.some) {
         let constrained = panel.constrainFrameRect(requested, to: screen)
         #expect(constrained == requested, "The fixture must preserve the controller's requested frame")
     }
+}
+
+
+@Test(.macOSTestApplication, arguments: [false, true]) @MainActor
+func tabbedFixtureRecordsFrameRequestsAcrossNativeRelocation(animatedSetter: Bool) throws {
+    let panel = StressPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+    let requested = NSRect(x: 40000, y: 300, width: 700, height: 34)
+    if animatedSetter {
+        panel.setFrame(requested, display: false, animate: false)
+    } else {
+        panel.setFrame(requested, display: false)
+    }
+    #expect(panel.requestedFrame == requested)
+    let nativeFrame = panel.frame
+    let local = NSPoint(x: 45, y: 12)
+    let screen = panel.convertPoint(toScreen: local)
+    #expect(screen == NSPoint(x: requested.minX + local.x, y: requested.minY + local.y))
+    panel.simulateNativeRelocation()
+    #expect(panel.frame.origin != nativeFrame.origin)
+    #expect(panel.frame.size == nativeFrame.size)
+    #expect(panel.requestedFrame == requested)
+    #expect(panel.convertPoint(toScreen: local) == screen)
+    #expect(panel.convertPoint(fromScreen: screen) == local)
 }

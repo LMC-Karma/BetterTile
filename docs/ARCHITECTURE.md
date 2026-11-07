@@ -894,13 +894,6 @@ requested partition without waiting indefinitely for missing peers.
 
 ### Tabbed on Bento
 
-Tabbed overlay lifecycle and resize hit-testing fixtures use unordered panels
-that bypass AppKit's screen constraining and a fixed reference frame for screen
-coordinate conversion. They still exercise native content layout, deferred
-resize completion and drag delivery. Geometry assertions compare the controller's
-frames and content sizes; they do not depend on the machine's display arrangement.
-The native-focus lane retains production panels and real ordering checks.
-
 Tabbed is Bento with tab groups. A Tabbed desktop's `bentoState` is its layout;
 `LayoutSession.tabbedState` adds only tab membership (`BentoTabbedLayoutState`)
 and the pane that receives new windows. Reading `tabbedState` follows any
@@ -1202,6 +1195,15 @@ change a Bento operation made to the tree; writing it also writes the tree.
   hidden tabs split their own pane along its longer side. An empty pane left
   over is removed, so Bento shows no empty slot. Leaving for Native restores
   the pre-Tabbed frames and keeps the tab groups for the next Tabbed visit.
+
+Tabbed overlay lifecycle and resize hit-testing fixtures record the controller's
+frame requests separately from native panel frames. They use a fixed screen
+reference for coordinate conversion and bypass AppKit's screen constraining.
+The tests compare requested frames with pane geometry, check native panel and
+content sizes after deferred layout, and deliver synthetic drags. They inject
+native origin shifts; they do not reproduce a display reconfiguration. Ordering
+is simulated. The native-focus lane retains production panels and real ordering
+checks.
 
 ## Tabbed panels on native Spaces
 
