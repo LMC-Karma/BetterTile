@@ -368,7 +368,12 @@ final class BetterTileModel {
     private var lastTabbedNativeResizePreview: BetterTileClock.Instant?
     /// The Bento tree from before Focus mode, per desktop session, so ending
     /// Focus mode returns exactly the previous layout.
-    private var bentoStateBeforeFocus: [DesktopSessionID: BentoLayoutState] = [:]
+    private struct BentoFocusSnapshot {
+        var layout: BentoLayoutState
+        // Keep direct closure evidence after ordinary sweeps consume it.
+        var closedWindowIDs: Set<WindowID> = []
+    }
+    private var bentoStateBeforeFocus: [DesktopSessionID: BentoFocusSnapshot] = [:]
     /// Finishes a layout command once Focus mode peers return, one per
     /// display. A newer layout action on the same display cancels it; an
     /// action on another display leaves it running.
@@ -376,6 +381,7 @@ final class BetterTileModel {
         var task: Task<Void, Never>
         var session: LayoutSession
         var generation: Int
+        var closedWindowIDs: Set<WindowID>
     }
     private var focusRestores: [DisplayID: FocusRestore] = [:]
     private var focusRestoreSessionIDs: Set<DesktopSessionID> { Set(focusRestores.values.map(\.session.id)) }
@@ -3636,6 +3642,15 @@ final class BetterTileModel {
                 applicationRecoveryFrameEventPIDs.removeValue(forKey: windowID)
                 coordinator.removeClosedWindow(windowID)
                 confirmedGoneWindowIDs.insert(windowID)
+                for id in bentoStateBeforeFocus.keys
+                    where bentoStateBeforeFocus[id]?.layout.root?.windowIDs.contains(windowID) == true {
+                    bentoStateBeforeFocus[id]?.closedWindowIDs.insert(windowID)
+                }
+                for displayID in focusRestores.keys
+                    where focusRestores[displayID]?.session.excludedFocusWindowIDs.contains(windowID) == true
+                        || focusRestores[displayID]?.session.bentoState.root?.windowIDs.contains(windowID) == true {
+                    focusRestores[displayID]?.closedWindowIDs.insert(windowID)
+                }
                 sessionStore.removeClosedTabbedWindow(windowID)
                 tabbedSteppedWindows.removeValue(forKey: windowID)
                 tabbedUndo = tabbedUndo.mapValues { histories in
@@ -4404,7 +4419,7 @@ final class BetterTileModel {
         }
         // A lone window has no peers to cover; it maximizes normally.
         guard displayWindows.count > 1 else { return nil }
-        bentoStateBeforeFocus[session.id] = session.bentoState
+        bentoStateBeforeFocus[session.id] = BentoFocusSnapshot(layout: session.bentoState)
         applyExternalSnap(
             windowID: window.id, action: .maximize, session: &session,
             sourceBaselineFrame: window.frame, displayWindows: displayWindows, display: display
@@ -4450,10 +4465,12 @@ final class BetterTileModel {
                     return
                 }
                 let windows = (try? self.observeVisibleWindows()) ?? []
-                // A peer that closed during Focus mode is not coming back.
+                // A missing AX snapshot can be a peer still returning. Only
+                // direct closure evidence releases its place in this wait.
+                let closed = self.focusRestores[display.id]?.closedWindowIDs ?? []
                 let back = peers.allSatisfy { id in
                     windows.contains { $0.id == id && $0.displayID == display.id && $0.isEligible }
-                        || !windows.contains { $0.id == id }
+                        || closed.contains(id)
                 }
                 if back || clock.now >= deadline {
                     guard var restored = self.sessionStore.session(for: display.id), restored.mode == .bento,
@@ -4477,24 +4494,20 @@ final class BetterTileModel {
                     // A sweep while the peers were minimized can drop them from
                     // the session's members. They are members again on return.
                     let members = restored.windowIDs.union(peers)
-                    if var previous = self.bentoStateBeforeFocus.removeValue(forKey: restored.id) {
-                        // A window closed during Focus mode must not keep an
-                        // empty pane, whether it was the focused window or a
-                        // covered peer. A peer that still exists is handled below.
+                    if let snapshot = self.bentoStateBeforeFocus.removeValue(forKey: restored.id) {
+                        var previous = snapshot.layout
+                        // A closed pane leaves permanently. An unread peer at
+                        // the deadline keeps an anchor, just like a minimized
+                        // peer, so its later return can rebuild this tree.
+                        for id in snapshot.closedWindowIDs.union(closed) { previous.remove(id) }
                         let present = Set(windows.filter { $0.displayID == display.id && $0.isEligible }.map(\.id))
-                        let existingPeers = peers.filter { id in windows.contains { $0.id == id } }
-                        for id in Set(previous.root?.windowIDs ?? []).subtracting(present).subtracting(existingPeers) {
-                            previous.remove(id)
-                        }
-                        // A peer still minimized when the wait ends leaves the
-                        // layout like any minimized window. Its anchor keeps
-                        // this tree, so a later return rebuilds the grid.
+                        let unavailable = Set(previous.root?.windowIDs ?? []).subtracting(present)
                         let stillMinimized = peers.filter { id in windows.contains { $0.id == id && $0.isMinimized } }
                         var runtime = BentoRuntimeState(layout: previous, reinsertionAnchors: restored.bentoReinsertionAnchors)
                         let observation = BentoObservation(bounds: display.visibleFrame, windows: windows.filter {
                             $0.displayID == display.id && members.contains($0.id) && $0.isEligible
                         })
-                        for id in stillMinimized.sorted() where runtime.layout.root?.windowIDs.contains(id) == true {
+                        for id in unavailable.sorted() where runtime.layout.root?.windowIDs.contains(id) == true {
                             runtime = BentoPlanner().plan(state: runtime, observation: observation,
                                                           intent: .remove(id, minimized: true)).state
                         }
@@ -4521,7 +4534,10 @@ final class BetterTileModel {
                 try? await clock.sleep(for: .milliseconds(50))
             }
         }
-        focusRestores[display.id] = FocusRestore(task: task, session: session, generation: generation)
+        focusRestores[display.id] = FocusRestore(
+            task: task, session: session, generation: generation,
+            closedWindowIDs: confirmedGoneWindowIDs.union(bentoStateBeforeFocus[sessionID]?.closedWindowIDs ?? [])
+        )
     }
 
     /// Applies a focus plan that arrived from macOS rather than from a drag.
