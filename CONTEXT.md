@@ -149,7 +149,10 @@ partition shortcut ends Focus mode before applying the requested partition.
 ## Tabbed preset
 
 A starting pane arrangement for Tabbed: Single Pane, 2 Columns, 2 Rows,
-Main + 2, or 2×2 Grid. The user picks the default in Settings.
+Main + 2, or 2×2 Grid. The user picks the default in Settings. It applies when
+a desktop enters Tabbed from Adaptive or first enters from Manual. Keep
+Adaptive panes preserves the Adaptive arrangement instead. Returning from
+Manual restores the last tab groups.
 
 ## Minimum size
 

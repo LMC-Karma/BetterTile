@@ -409,7 +409,8 @@ private func addFalselyMeasuredWindow(_ name: String, pid: Int32, to system: Fak
 
 /// Bento floats a seventh window on its own. Entering Tabbed keeps it an
 /// automatic float rather than the user's, and offers it a pane at once.
-@Test(.appTestApplication) @MainActor func enteringTabbedFromBentoGivesBentoFloatsAPane() async throws {
+@Test(.appTestApplication, arguments: TabbedEntryPlacement.allCases) @MainActor
+func enteringTabbedFromBentoGivesBentoFloatsAPane(placement: TabbedEntryPlacement) async throws {
     _ = NSApplication.shared
     let system = FakeAppWindowSystem()
     let area = system.mainDisplay.visibleFrame
@@ -419,6 +420,7 @@ private func addFalselyMeasuredWindow(_ name: String, pid: Int32, to system: Fak
     }
     let model = makeModel(system: system)
     defer { model.shutdown() }
+    model.configuration.tabbedEntryPlacement = placement
     // The later check must not be what brings it in.
     model.tabbedAutomaticFloatRetryDelay = .seconds(60)
     model.setActiveMode(.bento)
@@ -429,7 +431,7 @@ private func addFalselyMeasuredWindow(_ name: String, pid: Int32, to system: Fak
     #expect(await waitFor { model.activeTabbedState?.windowIDs.count == 7 },
             "\(model.activeTabbedState?.panes.map(\.tabs) as Any) \(model.activeTabbedState?.floatingWindowIDs as Any)")
     #expect(model.activeTabbedState?.floatingWindowIDs.isEmpty == true)
-    #expect(model.activeTabbedState?.panes.count == 6)
+    #expect(model.activeTabbedState?.panes.count == (placement == .keepAdaptivePanes ? 6 : 1))
 }
 
 /// Repair keeps a proven minimum. A window whose probe measured it taller

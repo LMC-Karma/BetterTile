@@ -130,6 +130,7 @@ public struct LayoutSession: Hashable, Sendable {
     /// visible membership instead of carrying exclusions and reinsertion
     /// guesses forward into the canonical planner.
     public mutating func prepareForRepair() {
+        tabbedState?.clearReturnSlots()
         endFollowing()
         savedLayoutPaneGap = nil
         resumeAutomaticWrites()
@@ -171,6 +172,35 @@ public struct LayoutSession: Hashable, Sendable {
     /// All store writes that can change structure pass through this check.
     public mutating func reconcileFollowing() {
         followed = followed?.reconciled(with: self)
+    }
+
+    /// Deferred layout work ignores return slots, selection generations, and
+    /// entry-frame cleanup for those absent tabs. Every other change remains
+    /// current only at the exact captured value, including mode and membership.
+    public func equalsIgnoringTabbedReturns(_ other: Self) -> Bool {
+        var lhs = self, rhs = other
+        lhs.revision = rhs.revision
+        let absent = Set(lhs.storedTabbedState?.returnSlots.keys.map { $0 } ?? [])
+            .union(rhs.storedTabbedState?.returnSlots.keys.map { $0 } ?? [])
+        lhs.storedTabbedState?.clearReturnSlots()
+        rhs.storedTabbedState?.clearReturnSlots()
+        for id in absent {
+            lhs.tabbedBaselineFrames.removeValue(forKey: id)
+            rhs.tabbedBaselineFrames.removeValue(forKey: id)
+        }
+        return lhs == rhs
+    }
+
+    fileprivate func mergingTabbedReturns(from current: Self, since baseline: Self) -> Self {
+        var result = self
+        result.revision = current.revision
+        if let latest = current.storedTabbedState, let previous = baseline.storedTabbedState {
+            result.storedTabbedState?.mergeReturnChanges(from: latest, since: previous)
+            for id in previous.returnSlots.keys where current.tabbedBaselineFrames[id] == nil {
+                result.tabbedBaselineFrames.removeValue(forKey: id)
+            }
+        }
+        return result
     }
 
     mutating func advanceRevision() {
@@ -417,6 +447,19 @@ public struct LayoutSessionStore: Sendable {
         return committed
     }
 
+    /// A Saved Layout may finish across return-only bookkeeping. Keep full
+    /// revisions for ordinary proposals and merge concurrent slot cleanup so a
+    /// pending proposal cannot resurrect a closed window's return slot.
+    @discardableResult
+    public mutating func commitIgnoringTabbedReturns(_ proposed: LayoutSession, replacing baseline: LayoutSession) -> LayoutSession? {
+        guard proposed.revision == baseline.revision,
+              proposed.id == baseline.id, proposed.displayID == baseline.displayID,
+              isActive(baseline.id, on: baseline.displayID),
+              let current = storedSessions[baseline.displayID]?[baseline.id],
+              current.equalsIgnoringTabbedReturns(baseline) else { return nil }
+        return commit(proposed.mergingTabbedReturns(from: current, since: baseline), replacing: current.revision)
+    }
+
     /// Closure evidence updates retained Tabbed sessions without moving any
     /// inactive desktop's windows. Incomplete sweeps never use this operation.
     public mutating func removeClosedTabbedWindow(_ windowID: WindowID) {
@@ -436,12 +479,16 @@ public struct LayoutSessionStore: Sendable {
                       let state = session.tabbedState,
                       state.windowIDs.contains(windowID)
                         || state.floatingWindowIDs.contains(windowID)
+                        || (closed && state.returnSlots[windowID] != nil)
                         || (closed && session.tabbedBaselineFrames[windowID] != nil)
                 else { continue }
-                session.tabbedState?.removeClosedWindow(windowID)
+                let previous = session
+                if closed { session.tabbedState?.removeClosedWindow(windowID) }
+                else { session.tabbedState?.stepAway(windowID) }
                 if !closed { session.endFollowing() }
                 if closed { session.tabbedBaselineFrames.removeValue(forKey: windowID) }
                 session.windowIDs.remove(windowID)
+                guard session != previous else { continue }
                 session.advanceRevision()
                 storedSessions[displayID]?[id] = session
             }

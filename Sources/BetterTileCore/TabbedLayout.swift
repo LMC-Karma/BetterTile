@@ -1,5 +1,18 @@
 import Foundation
 
+/// How windows join a desktop's starting Tabbed layout.
+public enum TabbedEntryPlacement: String, Codable, CaseIterable, Sendable {
+    case allInOnePane, onePerPane, keepAdaptivePanes
+
+    public var title: String {
+        switch self {
+        case .allInOnePane: "All in one pane"
+        case .onePerPane: "One per pane"
+        case .keepAdaptivePanes: "Keep Adaptive panes"
+        }
+    }
+}
+
 public enum TabbedPresetGrouping: CaseIterable, Sendable {
     case keepTabGroups, distributeWindows
 }

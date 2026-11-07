@@ -371,7 +371,12 @@ final class BetterTileModel {
     private var lastTabbedNativeResizePreview: BetterTileClock.Instant?
     /// The Bento tree from before Focus mode, per desktop session, so ending
     /// Focus mode returns exactly the previous layout.
-    private var bentoStateBeforeFocus: [DesktopSessionID: BentoLayoutState] = [:]
+    private struct BentoFocusSnapshot {
+        var layout: BentoLayoutState
+        // Keep direct closure evidence after ordinary sweeps consume it.
+        var closedWindowIDs: Set<WindowID> = []
+    }
+    private var bentoStateBeforeFocus: [DesktopSessionID: BentoFocusSnapshot] = [:]
     /// Finishes a layout command once Focus mode peers return, one per
     /// display. A newer layout action on the same display cancels it; an
     /// action on another display leaves it running.
@@ -379,6 +384,7 @@ final class BetterTileModel {
         var task: Task<Void, Never>
         var session: LayoutSession
         var generation: Int
+        var closedWindowIDs: Set<WindowID>
     }
     private var focusRestores: [DisplayID: FocusRestore] = [:]
     private var focusRestoreSessionIDs: Set<DesktopSessionID> { Set(focusRestores.values.map(\.session.id)) }
@@ -828,13 +834,17 @@ final class BetterTileModel {
                 $0.tabbedBaselineFrames = [:]
                 $0.tabbedHasEntryBaseline = false
                 $0.resumeAutomaticWrites()
-                // From Bento, every pane stays put. Otherwise the tab groups
-                // from the last Tabbed visit (if any) come back.
-                if $0.mode == .bento, $0.isBentoInitialized, $0.bentoState.root != nil {
-                    // Windows Bento floated on its own stay automatic
-                    // floats; the entry sweep offers them a pane.
-                    $0.tabbedState = TabbedLayoutState(
-                        adopting: $0.bentoState, automaticallyFloating: $0.automaticallyFloatingWindowIDs, presentation: configuration.tabbedStripPresentation)
+                // Manual restores the last tab groups. Adaptive starts fresh
+                // unless the user explicitly keeps its pane arrangement.
+                if $0.mode == .bento {
+                    if configuration.tabbedEntryPlacement == .keepAdaptivePanes,
+                       $0.isBentoInitialized, $0.bentoState.root != nil {
+                        $0.tabbedState = TabbedLayoutState(
+                            adopting: $0.bentoState, automaticallyFloating: $0.automaticallyFloatingWindowIDs,
+                            presentation: configuration.tabbedStripPresentation)
+                    } else {
+                        $0.tabbedState = nil
+                    }
                 }
             }
             $0.mode = mode
@@ -3635,6 +3645,15 @@ final class BetterTileModel {
                 applicationRecoveryFrameEventPIDs.removeValue(forKey: windowID)
                 coordinator.removeClosedWindow(windowID)
                 confirmedGoneWindowIDs.insert(windowID)
+                for id in bentoStateBeforeFocus.keys
+                    where bentoStateBeforeFocus[id]?.layout.root?.windowIDs.contains(windowID) == true {
+                    bentoStateBeforeFocus[id]?.closedWindowIDs.insert(windowID)
+                }
+                for displayID in focusRestores.keys
+                    where focusRestores[displayID]?.session.excludedFocusWindowIDs.contains(windowID) == true
+                        || focusRestores[displayID]?.session.bentoState.root?.windowIDs.contains(windowID) == true {
+                    focusRestores[displayID]?.closedWindowIDs.insert(windowID)
+                }
                 sessionStore.removeClosedTabbedWindow(windowID)
                 tabbedSteppedWindows.removeValue(forKey: windowID)
                 tabbedUndo = tabbedUndo.mapValues { histories in
@@ -3650,7 +3669,7 @@ final class BetterTileModel {
         if let windowID = event.windowID, event.kind == .destroyed || event.kind == .minimized {
             // Update cached content before stabilization or gesture buffering can defer a sweep.
             for overlay in spacePanelOverlays.values {
-                overlay.removeUnavailableWindows([windowID])
+                overlay.removeUnavailableWindows([windowID], closed: event.kind == .destroyed)
             }
         }
         guard !isStabilizingSpace else { return }
@@ -4404,7 +4423,7 @@ final class BetterTileModel {
         }
         // A lone window has no peers to cover; it maximizes normally.
         guard displayWindows.count > 1 else { return nil }
-        bentoStateBeforeFocus[session.id] = session.bentoState
+        bentoStateBeforeFocus[session.id] = BentoFocusSnapshot(layout: session.bentoState)
         applyExternalSnap(
             windowID: window.id, action: .maximize, session: &session,
             sourceBaselineFrame: window.frame, displayWindows: displayWindows, display: display
@@ -4450,10 +4469,12 @@ final class BetterTileModel {
                     return
                 }
                 let windows = (try? self.observeVisibleWindows()) ?? []
-                // A peer that closed during Focus mode is not coming back.
+                // A missing AX snapshot can be a peer still returning. Only
+                // direct closure evidence releases its place in this wait.
+                let closed = self.focusRestores[display.id]?.closedWindowIDs ?? []
                 let back = peers.allSatisfy { id in
                     windows.contains { $0.id == id && $0.displayID == display.id && $0.isEligible }
-                        || !windows.contains { $0.id == id }
+                        || closed.contains(id)
                 }
                 if back || clock.now >= deadline {
                     guard var restored = self.sessionStore.session(for: display.id), restored.mode == .bento,
@@ -4477,24 +4498,20 @@ final class BetterTileModel {
                     // A sweep while the peers were minimized can drop them from
                     // the session's members. They are members again on return.
                     let members = restored.windowIDs.union(peers)
-                    if var previous = self.bentoStateBeforeFocus.removeValue(forKey: restored.id) {
-                        // A window closed during Focus mode must not keep an
-                        // empty pane, whether it was the focused window or a
-                        // covered peer. A peer that still exists is handled below.
+                    if let snapshot = self.bentoStateBeforeFocus.removeValue(forKey: restored.id) {
+                        var previous = snapshot.layout
+                        // A closed pane leaves permanently. An unread peer at
+                        // the deadline keeps an anchor, just like a minimized
+                        // peer, so its later return can rebuild this tree.
+                        for id in snapshot.closedWindowIDs.union(closed) { previous.remove(id) }
                         let present = Set(windows.filter { $0.displayID == display.id && $0.isEligible }.map(\.id))
-                        let existingPeers = peers.filter { id in windows.contains { $0.id == id } }
-                        for id in Set(previous.root?.windowIDs ?? []).subtracting(present).subtracting(existingPeers) {
-                            previous.remove(id)
-                        }
-                        // A peer still minimized when the wait ends leaves the
-                        // layout like any minimized window. Its anchor keeps
-                        // this tree, so a later return rebuilds the grid.
+                        let unavailable = Set(previous.root?.windowIDs ?? []).subtracting(present)
                         let stillMinimized = peers.filter { id in windows.contains { $0.id == id && $0.isMinimized } }
                         var runtime = BentoRuntimeState(layout: previous, reinsertionAnchors: restored.bentoReinsertionAnchors)
                         let observation = BentoObservation(bounds: display.visibleFrame, windows: windows.filter {
                             $0.displayID == display.id && members.contains($0.id) && $0.isEligible
                         })
-                        for id in stillMinimized.sorted() where runtime.layout.root?.windowIDs.contains(id) == true {
+                        for id in unavailable.sorted() where runtime.layout.root?.windowIDs.contains(id) == true {
                             runtime = BentoPlanner().plan(state: runtime, observation: observation,
                                                           intent: .remove(id, minimized: true)).state
                         }
@@ -4521,7 +4538,10 @@ final class BetterTileModel {
                 try? await clock.sleep(for: .milliseconds(50))
             }
         }
-        focusRestores[display.id] = FocusRestore(task: task, session: session, generation: generation)
+        focusRestores[display.id] = FocusRestore(
+            task: task, session: session, generation: generation,
+            closedWindowIDs: confirmedGoneWindowIDs.union(bentoStateBeforeFocus[sessionID]?.closedWindowIDs ?? [])
+        )
     }
 
     /// Applies a focus plan that arrived from macOS rather than from a drag.
@@ -5482,7 +5502,8 @@ final class BetterTileModel {
             if activation.session.mode == .tabbed {
                 refreshTabbedSession(
                     activation.session, display: display, windows: displayWindows,
-                    removed: consumedDestroyedWindowIDs.union(consumedMinimizedWindowIDs)
+                    closed: consumedDestroyedWindowIDs,
+                    away: consumedMinimizedWindowIDs
                         .union(windows.filter { $0.displayID != display.id || !$0.isEligible }.map(\.id))
                         .union(activation.session.tabbedState?.windowIDs.filter { id in
                             guard let memberships = nativeObservation?.windowMembership[id],
@@ -6110,7 +6131,7 @@ private enum PendingTabbedIntent {
 extension BetterTileModel {
     private func refreshTabbedSession(
         _ original: LayoutSession, display: DisplaySnapshot, windows: [WindowSnapshot],
-        removed: Set<WindowID>, focused: WindowID?, force: Bool
+        closed: Set<WindowID>, away: Set<WindowID>, focused: WindowID?, force: Bool
     ) {
         guard tabbedTasks[display.id] == nil else {
             #if DEBUG
@@ -6134,7 +6155,11 @@ extension BetterTileModel {
         let windows = ignoringOversizedSeeds(windows, in: display.visibleFrame)
         var session = original
         let wasUninitialized = session.tabbedState == nil
-        var state = session.tabbedState ?? TabbedLayoutState(preset: configuration.defaultTabbedPreset, presentation: configuration.tabbedStripPresentation)
+        let entersFromAdaptive = tabbedEntryBaselines[session.id]?.mode == .bento
+        var state = session.tabbedState ?? TabbedLayoutState(
+            preset: configuration.defaultTabbedPreset, presentation: configuration.tabbedStripPresentation,
+            floatingWindowIDs: entersFromAdaptive ? session.bentoState.floatingWindowIDs : [],
+            automaticallyFloating: entersFromAdaptive ? session.automaticallyFloatingWindowIDs : [])
         let entering = !session.tabbedHasEntryBaseline
         if entering {
             if tabbedEntryBaselines[session.id] == nil {
@@ -6153,22 +6178,55 @@ extension BetterTileModel {
         reservePaneApplicationArrivals(in: &state, session: session, windows: windows)
         state.setPresentation(configuration.tabbedStripPresentation)
         if wasUninitialized {
-            state.reconcile(windowIDs: windows.map(\.id), removed: removed, focused: focused)
+            state.reconcile(windowIDs: windows.map(\.id), removed: closed, away: away, focused: focused)
         } else {
-            let arrivals = state.reconcile(windowIDs: windows.map(\.id), removed: removed,
+            let arrivals = state.reconcile(windowIDs: windows.map(\.id), removed: closed, away: away,
                                            fittingIn: display.visibleFrame, windows: windows, followed: session.followed)
             logTabbedAdoptions(arrivals, transition: entering ? "entry arrival" : "arrival",
                                before: before, windows: windows, bounds: display.visibleFrame)
-            // Entering Tabbed, from Bento or Native, offers the windows that
-            // floated on their own a pane again: the panes changed since.
-            if entering, !state.automaticallyFloatingWindowIDs.isEmpty {
-                let returning = state
-                let returned = state.returnAutomaticFloats(state.automaticallyFloatingWindowIDs,
-                                                           fittingIn: display.visibleFrame, windows: windows,
-                                                           selecting: true, keeping: focused ?? state.activeWindowID, followed: session.followed)
-                logTabbedAdoptions(returned, transition: "entry return", before: returning,
-                                   windows: windows, bounds: display.visibleFrame)
+        }
+        // Both a fresh preset and a restored layout offer automatic floats
+        // a pane. User-floated windows retain their floating status.
+        if entering, !state.automaticallyFloatingWindowIDs.isEmpty {
+            let returning = state
+            let returned = state.returnAutomaticFloats(state.automaticallyFloatingWindowIDs,
+                                                       fittingIn: display.visibleFrame, windows: windows,
+                                                       selecting: true, keeping: focused ?? state.activeWindowID, followed: session.followed)
+            logTabbedAdoptions(returned, transition: "entry return", before: returning,
+                               windows: windows, bounds: display.visibleFrame)
+        }
+        if wasUninitialized, configuration.tabbedEntryPlacement == .onePerPane {
+            let incomingSelection = focused.flatMap { state.windowIDs.contains($0) ? $0 : nil }
+                ?? state.activeWindowID
+            // A stable reading order ranks equal scores and orders overflow tabs.
+            let remaining = windows.filter { state.windowIDs.contains($0.id) }.sorted {
+                if $0.frame.minY != $1.frame.minY { return $0.frame.minY < $1.frame.minY }
+                if $0.frame.minX != $1.frame.minX { return $0.frame.minX < $1.frame.minX }
+                return $0.id < $1.id
             }
+            state.applyPreset(configuration.defaultTabbedPreset, grouping: .distributeWindows)
+            // Preset leaves need not follow reading order (Grid is column-first).
+            // Fill panes by geometry, including empty panes, before placement.
+            let paneFrames = state.frames(in: display.visibleFrame).sorted {
+                if $0.value.minY != $1.value.minY { return $0.value.minY < $1.value.minY }
+                return $0.value.minX < $1.value.minX
+            }
+            let panes = paneFrames.map(\.key)
+            // Match windows to panes jointly by overlap, including overflow
+            // choices. With fewer windows than panes, any pane can stay empty.
+            let assignment = TabbedEntryAssignment.assign(windows: remaining, paneFrames: paneFrames.map(\.value))
+            if !panes.isEmpty {
+                // Each extra tab joins the pane it overlaps most.
+                for (index, tabs) in assignment.panes.enumerated() {
+                    for (position, id) in tabs.enumerated() { state.move(id, to: panes[index], at: position) }
+                }
+                for pane in state.panes {
+                    if let first = pane.tabs.first { state.select(first) }
+                }
+            }
+            // Distribution selects each pane's first tab. Entry must keep the
+            // incoming focused member visible before fitting and placement.
+            if let incomingSelection { state.select(incomingSelection) }
         }
         session.tabbedState = state
         session.windowIDs = state.windowIDs
@@ -6209,14 +6267,19 @@ extension BetterTileModel {
         let selectionNeedsPlacement = tabbedCommittedLayouts[session.id].map {
             $0.selected != Set(state.selectedWindowIDs)
         } ?? false
-        let changed = wasUninitialized || before != state || selectionNeedsPlacement
+        let changed = wasUninitialized || !before.layoutEquals(state) || selectionNeedsPlacement
             || session.lastWorkArea != display.visibleFrame
         if spacePanelCorrections.contains(session.id), changed {
             tabbedOverlays[display.id]?.hide()
         }
         if (changed || force || tabbedEntryBaselines[session.id] != nil), !session.automaticWritesSuspended {
+            // A fresh preset has an active tab even when the user's focus
+            // belongs to a retained float. Entry must not activate that tab.
+            let keepsFloatingFocus = entering && focused.map(state.floatingWindowIDs.contains) == true
+            let focus = keepsFloatingFocus ? nil
+                : (wasUninitialized || before.activeWindowID != state.activeWindowID ? state.activeWindowID : nil)
             applyTabbedState(state, session: session, display: display, windows: windows,
-                             focus: wasUninitialized || before.activeWindowID != state.activeWindowID ? state.activeWindowID : nil,
+                             focus: focus,
                              restorationFrames: restorationFrames,
                              arrivals: wasUninitialized ? [] : state.windowIDs.subtracting(before.windowIDs),
                              appliedFeedback: floatedFeedback, focusedBeforePlacement: focused)
@@ -7457,11 +7520,18 @@ extension BetterTileModel {
             previous.setPresentation(configuration.tabbedStripPresentation)
             restorationFrames = step.floatingFrames
             let visible = Set(windows.map(\.id))
-            previous.reconcile(windowIDs: windows.map(\.id), removed: previous.windowIDs.subtracting(visible), focused: nil)
+            // A window can return after this Undo snapshot was recorded.
+            // Restore its saved place through the same fit check as an arrival,
+            // before ordinary new windows are added to the active pane.
+            let returning = visible.intersection(previous.returnSlots.keys)
+            previous.reconcile(windowIDs: returning.sorted(), removed: [], away: previous.windowIDs.subtracting(visible),
+                               fittingIn: display.visibleFrame, windows: windows)
+            previous.reconcile(windowIDs: windows.map(\.id), removed: [], focused: nil)
             state = previous
             consumeUndo = true
             focus = state.activeWindowID; undo = false
         case .repair:
+            state.clearReturnSlots()
             session.prepareForRepair()
             session.resumeAutomaticWrites()
             // Windows that floated on their own come back first, decided
@@ -7623,6 +7693,7 @@ extension BetterTileModel {
             let outcome: String = switch adoption.outcome {
             case let .selected(id): "selected tab of pane \(pane(id))"
             case let .hidden(id): "hidden tab of pane \(pane(id)), which can show it"
+            case let .returned(id): "returned to pane \(pane(id))"
             case let .floated(reason): "floating (\(reason.rawValue))"
             }
             let trials = adoption.trials.map { "\(pane($0.paneID)) \(text($0.contentFrame)): \($0.result.rawValue)" }
@@ -9142,15 +9213,19 @@ extension BetterTileModel {
         let current = sessionStore.session(for: desktop.displayID)
         if startsFollowing || current?.followed != nil, let owners = snapshot.sessionOwners {
             let previous = owners[desktop.displayID]
-            // Bookkeeping sweeps may advance the revision without changing this proposal's policy.
+            // Return bookkeeping cannot change this proposal's pane policy.
+            var previousTabbed = previous?.tabbedState
+            var currentTabbed = current?.tabbedState
+            previousTabbed?.clearReturnSlots()
+            currentTabbed?.clearReturnSlots()
             guard previous?.id == current?.id, previous?.mode == current?.mode,
-                  previous?.bentoState == current?.bentoState, previous?.tabbedState == current?.tabbedState,
+                  previous?.bentoState == current?.bentoState, previousTabbed == currentTabbed,
                   previous?.followed == current?.followed else { return false }
         }
         var session = current ?? sessionStore.activate(
             displayID: desktop.displayID, windowIDs: [], focusedWindowID: nil,
             defaultMode: configuration.defaultLayoutMode, reuseActiveWhenUnmatched: false, nativeSpaceID: desktop.spaceID).session
-        let revision = session.revision
+        let owner = session
         let sessionID = session.id
         var placements = plan.placements
         var required: Set<WindowID>?
@@ -9172,7 +9247,7 @@ extension BetterTileModel {
         }
         let ownerMatchesObservation = { @MainActor [weak self] (visible: [WindowSnapshot], observation: NativeDesktopObservation?) in
             guard snapshot.sessionIsAvailable(), let self, !self.isShutDown, self.hasAccessibilityPermission, !self.isStabilizingSpace,
-                  self.sessionStore.isCurrent(sessionID, revision: revision, on: desktop.displayID),
+                  self.sessionStore.session(for: desktop.displayID)?.equalsIgnoringTabbedReturns(owner) == true,
                   self.system.displays().first(where: { $0.id == desktop.displayID })?.visibleFrame == display.visibleFrame,
                   let observation,
                   observation.currentSpace(on: desktop.displayID) == desktop.spaceID,
@@ -9360,7 +9435,7 @@ extension BetterTileModel {
             savedLayoutApplier?.precommitRefusal = .mutationChanged
             recover(); return false
         }
-        guard sessionStore.commit(session, replacing: revision) != nil else {
+        guard sessionStore.commitIgnoringTabbedReturns(session, replacing: owner) != nil else {
             savedLayoutApplier?.recordFailure(.modelSessionCommit)
             recover(); return false
         }
