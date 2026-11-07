@@ -680,9 +680,12 @@ timeout for each hang.
   the application, and any Accessibility notification that it posts, because
   both show that it runs again. A window that the application announces with a
   registered notification therefore does not wait for the end of a long
-  backoff. A failed notification registration is not retried, so for such an
-  application the fallback is an activation, a completed call, or the end of
-  the backoff.
+  backoff. A failed application-level registration, such as the window
+  creation notification registered when the observer is installed, is not
+  retried. For such an application the fallback is an activation, a completed
+  call, or the end of the backoff. A failed per-window registration of a
+  managed or recent window, such as its destroyed notification, is retried by
+  the next sweep that reads the application.
 
 `ApplicationInventorySweep` chooses which applications a complete sweep reads.
 It sends no message to an application during its backoff. After one call in a
@@ -719,11 +722,12 @@ The exemption has limits:
   of an unread application that keeps another window keeps its pane until the
   application answers a sweep.
 - Without native observation, a window that the user moved to another Space
-  keeps its pane until its application answers. A recovery sweep leaves a kept
-application's PID eligible, so it is not charged a recovery attempt. Kept
-applications stay due, so recovery sweeps can come about once a second. Each
-one reads and charges at least one due application, so the three-attempt limit
-still ends them.
+  keeps its pane until its application answers.
+
+A recovery sweep leaves a kept application's PID eligible, so it is not
+charged a recovery attempt. Kept applications stay due, so recovery sweeps can
+come about once a second. Each one reads and charges at least one due
+application, so the three-attempt limit still ends them.
 
 `AccessibilityWindowSystem` routes reads, settable checks, frame writes, and
 notification removals through `gatedCall`. `requireResponsive` stops a frame

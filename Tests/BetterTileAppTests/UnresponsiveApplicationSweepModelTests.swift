@@ -104,15 +104,20 @@ struct UnresponsiveApplicationSweepModelTests {
             && system.windows[2].frame.size == tiled[WindowID(rawValue: "third")]!.size,
             "A neighbour must not grow over the hung application's pane")
 
-        // It runs again and posts a notification: the next pass reads it at once.
+        // It runs again and posts a notification, inside a long backoff. The
+        // next complete sweep reads it at once. The event pass may use a
+        // targeted read, so the watchdog supplies that sweep deterministically.
+        try #require(system.adapterGate.isInventoryBackedOff(43, now: system.uptime), "A long backoff is running")
         system.adapterInventoryTimeouts?.removeValue(forKey: 43)
         system.adapterApplicationRuns(43)
-        let readsBefore = system.adapterInventoryReads.count
         system.eventHandler?(WindowSystemEvent(kind: .moved, windowID: held, processIdentifier: 43))
-        #expect(await system.waitFor(timeout: .seconds(1)) {
-            system.adapterInventoryReads.dropFirst(readsBefore).contains { $0.contains(43) }
-                && system.unresponsiveApplicationRecoveryDeadlines[43] == nil
-        }, "A recovered application is read on the next pass")
+        await system.joinWindowEvent(on: model)
+        try #require(await system.waitFor { model.settlementTasks.isEmpty && model.windowEventTask == nil })
+        let readsBefore = system.adapterInventoryReads.count
+        model.watchdog()
+        #expect(system.adapterInventoryReads.dropFirst(readsBefore).first?.contains(43) == true,
+            "A recovered application is read on the next complete sweep")
+        #expect(system.unresponsiveApplicationRecoveryDeadlines[43] == nil)
         try #require(await system.waitFor { model.settlementTasks.isEmpty && model.windowEventTask == nil })
         #expect(system.windows[1].frame == tiled[held])
     }
@@ -206,18 +211,24 @@ struct UnresponsiveApplicationSweepModelTests {
     }
 
     /// Three Adaptive windows; the middle one's application keeps timing out.
-    private func prepareUnreadPane(native: Bool) async throws -> (FakeAppWindowSystem, BetterTileModel, NativeSpaceID) {
+    private func prepareUnreadPane(native: Bool, exactIdentities: Bool = true, keepsAnotherWindow: Bool = true)
+        async throws -> (FakeAppWindowSystem, BetterTileModel, NativeSpaceID) {
         let system = makeManualWindowSystem()
+        system.adapterExactIdentities = exactIdentities
         let display = system.mainDisplay.id
         for (name, pid) in [("unread", Int32(43)), ("third", Int32(44))] {
             system.windows.append(WindowSnapshot(id: WindowID(rawValue: name), processIdentifier: pid,
                 frame: BTRect(x: 300, y: 200, width: 400, height: 300), displayID: display))
         }
-        // The application keeps running with another open window on another Space.
+        // The application keeps running, with another open window on another Space or with none.
         let elsewhere = WindowSnapshot(id: WindowID(rawValue: "unread-elsewhere"), processIdentifier: 43,
             frame: BTRect(x: 100, y: 100, width: 300, height: 200), displayID: display)
-        system.windows.append(elsewhere)
-        system.offscreenWindowIDs.insert(elsewhere.id)
+        if keepsAnotherWindow {
+            system.windows.append(elsewhere)
+            system.offscreenWindowIDs.insert(elsewhere.id)
+        } else {
+            system.adapterRunningProcessIDs = [43]
+        }
         let space = NativeSpaceID(rawValue: 7), other = NativeSpaceID(rawValue: 8)
         if native {
             var membership: [WindowID: Set<NativeSpaceID>] = Dictionary(uniqueKeysWithValues: system.windows.map { ($0.id, [space]) })
@@ -271,6 +282,32 @@ struct UnresponsiveApplicationSweepModelTests {
         #expect(system.unresponsiveApplicationRecoveryDeadlines[43] != nil, "The application stayed unread")
         #expect(!system.unreadableApplicationWindowIDs.contains(unread), "Closure evidence retired its record")
         #expect(neighboursFillTheDisplay(system), "Neighbours must fill the closed pane: \(system.windows.map(\.frame))")
+    }
+
+    /// Without exact identities, as with private APIs disabled, only an
+    /// application with no window left proves a silent closure. With another
+    /// window kept, the closed pane stays until the application answers.
+    @Test(arguments: [false, true])
+    func withoutExactIdentitiesASilentCloseNeedsTheApplicationToHaveNoWindowLeft(keepsAnotherWindow: Bool) async throws {
+        _ = NSApplication.shared
+        let (system, model, _) = try await prepareUnreadPane(native: false, exactIdentities: false,
+            keepsAnotherWindow: keepsAnotherWindow)
+        defer { model.shutdown() }
+        let unread = WindowID(rawValue: "unread")
+        system.windows.removeAll { $0.id == unread }
+        await sweepWhileUnread(system, model)
+        #expect(system.unresponsiveApplicationRecoveryDeadlines[43] != nil, "The application stayed unread")
+        if keepsAnotherWindow {
+            #expect(system.unreadableApplicationWindowIDs.contains(unread), "No evidence: the record stays")
+            #expect(!neighboursFillTheDisplay(system), "The documented limit: the pane waits for the application")
+            // It answers again: its inventory omits the window, which closes at once.
+            system.adapterInventoryTimeouts?.removeValue(forKey: 43)
+            system.adapterApplicationRuns(43)
+            await sweepWhileUnread(system, model, times: 2)
+        } else {
+            #expect(!system.unreadableApplicationWindowIDs.contains(unread), "No window of the application is left")
+        }
+        #expect(neighboursFillTheDisplay(system), "\(system.windows.map(\.frame))")
     }
 
     /// Controls: an open unread window keeps its pane; confirmed departures still leave.

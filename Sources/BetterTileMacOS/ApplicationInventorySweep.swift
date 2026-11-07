@@ -9,9 +9,10 @@ import BetterTileCore
 /// messaging it. It also waits out at most one messaging timeout for
 /// applications that already stalled: after any call in the sweep times out,
 /// it keeps each later application that stalled before and has not answered
-/// since. It still reads every other application. Several hung applications
-/// then cost one timeout per sweep, not one each, and the growing backoffs
-/// spread their next reads apart.
+/// since. It still reads every other application. Applications that already
+/// stalled then cost at most one timeout per sweep, and the growing backoffs
+/// spread their next reads apart. An application that stalls for the first
+/// time is always read.
 ///
 /// The Accessibility adapter runs this loop over its running applications.
 /// Tests run it with injected per-application read times.

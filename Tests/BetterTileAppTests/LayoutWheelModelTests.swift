@@ -117,7 +117,8 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, CreatedWindowReading, T
             return applicationHoldsUntil.filter { pid, _ in windows.contains { $0.processIdentifier == pid } }
         }
         return adapterHolds.reduce(into: [:]) { deadlines, entry in
-            guard windows.contains(where: { $0.processIdentifier == entry.key }) else { return }
+            guard windows.contains(where: { $0.processIdentifier == entry.key })
+                || adapterRunningProcessIDs.contains(entry.key) else { return }
             deadlines[entry.key] = max(entry.value, adapterGate.inventoryBackoffDeadline(entry.key) ?? entry.value)
         }
     }
@@ -129,6 +130,9 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, CreatedWindowReading, T
     private var adapterUnreadClosure = UnreadWindowClosureEvidence()
     /// False simulates windows without an exact WindowServer identity.
     var adapterExactIdentities = true
+    /// Applications that keep running without any window. Otherwise an
+    /// application runs while it has a window in `windows`.
+    var adapterRunningProcessIDs: Set<Int32> = []
     var unreadableApplicationWindowIDs: Set<WindowID> {
         guard adapterInventoryTimeouts != nil else {
             let unread = Set(applicationHoldsUntil.keys)
@@ -328,7 +332,7 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, CreatedWindowReading, T
             var answered: Set<Int32> = []
             var reads: [Int32] = []
             adapterHolds = ApplicationInventorySweep.run(
-                Set(windows.map(\.processIdentifier)).sorted(),
+                Set(windows.map(\.processIdentifier)).union(adapterRunningProcessIDs).sorted(),
                 processIdentifier: { $0 },
                 previousHolds: adapterHolds,
                 recoveryPIDs: &recoveryPIDs,
