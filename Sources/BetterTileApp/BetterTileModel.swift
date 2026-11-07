@@ -520,6 +520,7 @@ final class BetterTileModel {
     private var isShutDown = false
     private var displayChangeHold = DisplayChangeHold()
     private var displayChangeHoldTask: Task<Void, Never>?
+    private var displayChangeDeferredMinimizedWindows: Set<WindowID> = []
     private var displayChangeTimeOrigin: ContinuousClock.Instant?
     private var displayChangeUserOverrides: Set<DisplayID> = []
     var isHoldingDisplayChange: Bool { displayChangeHold.isHolding }
@@ -3275,6 +3276,13 @@ final class BetterTileModel {
         displayChangeUserOverrides.removeAll()
         let reason = displayChangeHold.settledByLimit ? "limit" : "quiet"
         Self.bentoLog.debug("display hold settled: \(reason, privacy: .public)")
+        // A restore event can be lost while the workspace is inactive. Quiet
+        // positive visibility supersedes only minimize evidence from that gap.
+        let visible = Set((windows ?? []).filter(\.isEligible).map(\.id))
+        let deferred = displayChangeDeferredMinimizedWindows.intersection(confirmedMinimizedWindowIDs)
+        confirmedMinimizedWindowIDs.subtract(deferred.intersection(visible))
+        for id in deferred.subtracting(visible) { sessionStore.removeMinimizedTabbedWindow(id) }
+        displayChangeDeferredMinimizedWindows.removeAll()
         let closed = confirmedGoneWindowIDs
         let minimized = confirmedMinimizedWindowIDs
         refreshActiveWindows(force: true, windows: windows, desktopTransition: true)
@@ -3765,9 +3773,15 @@ final class BetterTileModel {
         if let windowID = event.windowID {
             if event.kind == .minimized {
                 confirmedMinimizedWindowIDs.insert(windowID)
-                sessionStore.removeMinimizedTabbedWindow(windowID)
+                if displayChangeHold.isWaitingForWakeOrUnlock {
+                    displayChangeDeferredMinimizedWindows.insert(windowID)
+                } else {
+                    displayChangeDeferredMinimizedWindows.remove(windowID)
+                    sessionStore.removeMinimizedTabbedWindow(windowID)
+                }
             }
             if event.kind == .restored || event.kind == .destroyed {
+                displayChangeDeferredMinimizedWindows.remove(windowID)
                 confirmedMinimizedWindowIDs.remove(windowID)
             }
             if event.kind == .destroyed {

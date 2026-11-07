@@ -285,6 +285,11 @@ During an awake, active hold, observations and closed or minimized evidence
 accumulate. Sleep and lock holds do not sample windows; a slow public lock-state
 check recovers a missed unlock notification. ScreenSaverEngine activation also
 holds layout until the user returns.
+A minimize event received while sleeping or inactive waits for the settled wake
+observation before changing Tabbed membership. A visible eligible window clears
+that deferred evidence; a still-minimized or unread window keeps it. Explicit
+restore and close events clear the deferred entry. Awake minimize events keep
+their authority, including during a display reconfiguration.
 Missing displays and Spaces keep their sessions. Automatic reconciliation,
 minimum-size probes and frame writes wait. Removed displays hide their Tabbed
 chrome. Settling runs a desktop-transition refresh followed by an ordinary event
