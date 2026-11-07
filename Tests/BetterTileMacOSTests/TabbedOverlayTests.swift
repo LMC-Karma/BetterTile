@@ -1296,3 +1296,38 @@ func tabbedRequestRevealEndOrdersNothingWhileHiddenOrSuspended(_ lifecycle: Stri
                     selectedWindowNumbers: [fixture.a: 1001, fixture.b: 1002])
     #expect(panel.level == .normal && panel.orders.last == "above 1002")
 }
+
+
+@Test(.macOSTestApplication, arguments: [false, true]) @MainActor
+func slotOnlyRefreshKeepsPendingTabDrag(resizing: Bool) throws {
+    _ = NSApplication.shared
+    let ids = (0..<4).map { WindowID(rawValue: "return-drag-\($0)") }
+    var state = TabbedLayoutState()
+    state.reconcile(windowIDs: ids, removed: [], focused: ids[0])
+    state.stepAway(ids[3])
+    let bounds = BTRect(x: 12000, y: 0, width: 800, height: 600)
+    let ticks = ResizeDisplayLink(automatic: false)
+    let overlay = TabbedOverlayController(dragTicks: ticks)
+    defer { overlay.hide() }
+    overlay.refresh(state: state, bounds: bounds, windows: [])
+    let view = try #require(NSApp.windows.compactMap(\.contentView).compactMap { $0 as? TabbedPaneView }.first { $0.pane.id == state.panes[0].id })
+    view.layoutSubtreeIfNeeded()
+    let panel = try #require(view.window)
+    func event(_ type: NSEvent.EventType, x: Double) throws -> NSEvent {
+        try #require(NSEvent.mouseEvent(with: type, location: NSPoint(x: x, y: 17), modifierFlags: [], timestamp: 0,
+            windowNumber: panel.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1))
+    }
+    var moved = false
+    overlay.onIntent = { if case .move = $0 { moved = true } }
+    view.mouseDown(with: try event(.leftMouseDown, x: 80))
+    view.mouseDragged(with: try event(.leftMouseDragged, x: 650))
+    ticks.fire()
+    try #require(overlay.isInteracting)
+    state.removeClosedWindow(ids[3])
+    if resizing { overlay.refreshResize(state: state, bounds: bounds) }
+    else { overlay.refresh(state: state, bounds: bounds, windows: []) }
+    #expect(overlay.isInteracting)
+    #expect(view.content.previewOrder == [ids[1], ids[2], ids[0]])
+    view.mouseUp(with: try event(.leftMouseUp, x: 650))
+    #expect(moved && overlay.isDropPending)
+}
