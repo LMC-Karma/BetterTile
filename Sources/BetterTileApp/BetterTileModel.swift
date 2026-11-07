@@ -502,6 +502,18 @@ final class BetterTileModel {
     var displayRefreshDebouncer = DisplayRefreshDebouncer()
     private var spaceStabilizationGeneration = 0
     private(set) var isStabilizingSpace = false
+    /// A held drag carried a window from another desktop. The gesture end
+    /// records one topology change, so the event pass after the gesture
+    /// admits the window on the then-current desktop. It is set when the
+    /// drag is suspended, not by a refresh, because a failed or incomplete
+    /// stabilization observation can skip that refresh.
+    private var heldCarriedWindowArrival = false
+    /// Floating membership that a carried window has in a Tabbed session
+    /// only for its drag. The value is the owner: the drag's transaction,
+    /// then the placement task that its drop starts. When the owner ends
+    /// without publishing the window's membership, the float is removed
+    /// from that stored session, whether it is active or not.
+    private var provisionalTabbedFloats: [ProvisionalTabbedFloat: UUID] = [:]
     private var nativeFullscreenDisplayIDs: Set<DisplayID> = []
     private var suppressSpaceFrameEventsUntil: BetterTileClock.Instant?
     private var activeBentoDrag: ActiveBentoDrag?
@@ -610,10 +622,33 @@ final class BetterTileModel {
         }
         dragSnap.gestureEndedHandler = { [weak self] in
             guard let self else { return }
+            // A layout drag start clears pending events; the held window
+            // still needs its arrival pass.
+            if self.heldCarriedWindowArrival {
+                self.heldCarriedWindowArrival = false
+                self.pendingWindowEvents.recordTopologyChange()
+            }
             self.schedulePendingWindowEvents()
         }
-        dragSnap.actionResultHandler = { [weak self] displayID, succeeded, error in
-            self?.presentActionResult(succeeded: succeeded, error: error, displayID: displayID)
+        dragSnap.carriedWindowSnappedHandler = { [weak self] displayID, _ in
+            // The user placed a window carried from another desktop with a
+            // snap area. An Adaptive desktop with no tree keeps that frame:
+            // its single-window placement does not move the window again.
+            guard let self, var session = self.sessionStore.session(for: displayID),
+                  session.mode == .bento, session.bentoState.root == nil else { return }
+            session.hasAppliedSingleWindowPlacement = true
+            _ = self.sessionStore.commit(session, replacing: session.revision)
+        }
+        dragSnap.actionResultHandler = { [weak self] displayID, outcome in
+            guard let self else { return }
+            // A plain carried snap has no layout drag to retain degradation.
+            // Stop its destination before the gesture's arrival pass can write.
+            if case let .degraded(reason) = outcome, self.dragSnap.carriedWindowID != nil,
+               let owner = self.sessionStore.session(for: displayID), owner.mode != .manual {
+                self.suspendAutomaticBentoWrites(displayID: displayID, sessionID: owner.id, error: reason)
+            } else {
+                self.presentActionResult(succeeded: outcome.isApplied, error: outcome.failureReason, displayID: displayID)
+            }
         }
         dividerResize.stackProvider = { [weak self] ids in
             (self?.system as? any WindowStackReading)?.onScreenStack(labeling: ids)
@@ -1969,6 +2004,38 @@ final class BetterTileModel {
         // Dragging one tab of a group moves only that window.
         cancelPaneApplicationRequest()
         var tabbedOrigin: UUID?
+        // A window that a drag carried here from another desktop belongs to
+        // no pane. It joins this drag as a floating window, so the drop
+        // planning sees it. Only a committed drop keeps it; any other end
+        // removes it, and arrival admission runs after the gesture.
+        var provisionalSourceID: WindowID?
+        // An older drop's provisional floats on this session end in this
+        // drag's start commit. That commit supersedes the drop's placement,
+        // which this drag cancels below, so the drag's baseline never holds
+        // another window's provisional float. A dragged window that still
+        // floats only provisionally stays so, as this drag's.
+        let olderProvisionalFloats = provisionalTabbedFloats.keys.filter {
+            $0.sessionID == layoutSession.id && $0.displayID == displayID
+        }
+        var endsOlderProvisionalFloats = false
+        if layoutSession.mode == .tabbed, var tabbed = layoutSession.tabbedState {
+            for key in olderProvisionalFloats
+            where tabbed.floatingWindowIDs.contains(key.windowID) && !tabbed.windowIDs.contains(key.windowID) {
+                if key.windowID == sourceID {
+                    provisionalSourceID = sourceID
+                } else {
+                    tabbed.forgetFloating(key.windowID)
+                    layoutSession.windowIDs.remove(key.windowID)
+                    endsOlderProvisionalFloats = true
+                }
+            }
+            if provisionalSourceID == nil, dragSnap.carriedWindowID == sourceID,
+               !tabbed.windowIDs.contains(sourceID), !tabbed.floatingWindowIDs.contains(sourceID) {
+                tabbed.addFloating(sourceID)
+                provisionalSourceID = sourceID
+            }
+            layoutSession.tabbedState = tabbed
+        }
         let tabbedUndoBaseline = layoutSession.mode == .tabbed ? layoutSession.tabbedState : nil
         let tabbedSpaceID = layoutSession.nativeSpaceID
             ?? system.refreshNativeDesktopObservation()?.currentSpace(on: displayID)
@@ -1996,6 +2063,11 @@ final class BetterTileModel {
             layoutSession,
             replacing: layoutSession.revision
         ) else { return false }
+        for key in olderProvisionalFloats { provisionalTabbedFloats.removeValue(forKey: key) }
+        if let provisionalSourceID {
+            provisionalTabbedFloats[ProvisionalTabbedFloat(windowID: provisionalSourceID, sessionID: resumedSession.id,
+                                                           displayID: displayID)] = transaction.id
+        }
 
         // The gesture now owns this desktop revision. An older placement
         // must not drain queued work into the provisional tear-off state.
@@ -2022,7 +2094,9 @@ final class BetterTileModel {
             tabbedSpaceID: tabbedSpaceID,
             tabbedRollbackFrames: tabbedRollbackFrames,
             tabbedWindows: bentoEligible(windows.filter { $0.displayID == displayID && $0.isEligible && !$0.isFloating }),
-            droppedTabbedReapply: droppedTabbedReapply
+            droppedTabbedReapply: droppedTabbedReapply,
+            provisionalSourceID: provisionalSourceID,
+            endsOlderProvisionalFloats: endsOlderProvisionalFloats
         )
         tabbedOverlays[displayID]?.acceptsTabDrags = false
         dividerResize.refresh(boundaries: [])
@@ -2150,7 +2224,23 @@ final class BetterTileModel {
               active.session.displayID == displayID,
               active.session.sourceWindowID == sourceID
         else { return }
+        // A removed provisional float needs an arrival pass after the drag.
+        // An explicit release below runs while the drag still blocks event
+        // passes, so the pass is scheduled here, once the drag has ended.
+        var needsArrivalPass = active.endsOlderProvisionalFloats
+        func discardProvisionalTabbedSource() {
+            if releaseProvisionalTabbedFloats(ownedBy: active.transaction.id) { needsArrivalPass = true }
+        }
         defer {
+            // Every end of the drag passes here. A provisional float that no
+            // placement took over ends with the drag.
+            if activeBentoDrag == nil {
+                discardProvisionalTabbedSource()
+                if needsArrivalPass {
+                    pendingWindowEvents.recordTopologyChange()
+                    schedulePendingWindowEvents()
+                }
+            }
             if activeBentoDrag == nil, !isTabbedBusy(on: displayID) {
                 drainTabbedQueuedIntent(on: displayID, sessionID: active.layoutSession.id)
                 if !isTabbedBusy(on: displayID), tabbedQueuedIntents[displayID] == nil {
@@ -2192,6 +2282,7 @@ final class BetterTileModel {
                 statusMessage = reason
                 presentActionResult(succeeded: false, error: reason, displayID: displayID)
             }
+            discardProvisionalTabbedSource()
             activeBentoDrag = nil
             replayBufferedBentoDragEvents()
             refreshDividerBoundaries()
@@ -2225,6 +2316,7 @@ final class BetterTileModel {
             if !restoreBentoDragIfNeeded(active.session) {
                 presentActionResult(succeeded: false, error: reason, displayID: displayID)
             }
+            discardProvisionalTabbedSource()
             activeBentoDrag = nil
             replayBufferedBentoDragEvents()
             refreshDividerBoundaries()
@@ -2247,14 +2339,30 @@ final class BetterTileModel {
                     let placement = WindowPlacementPlan(windowID: sourceID, displayID: displayID,
                         sourceFrame: before, targetFrame: frame)
                     let outcome = coordinator.perform(placement)
-                    presentActionResult(succeeded: outcome.isApplied, error: outcome.failureReason, displayID: displayID)
-                    if outcome.isApplied { verifyPlacementLanded(placement, displayID: displayID) }
+                    switch outcome {
+                    case .applied:
+                        presentActionResult(succeeded: true, displayID: displayID)
+                        // A carried window that this snap placed stays floating here.
+                        publishProvisionalTabbedFloat(active.provisionalSourceID, sessionID: active.layoutSession.id,
+                                                      displayID: displayID)
+                        verifyPlacementLanded(placement, displayID: displayID)
+                    case let .failed(reason):
+                        presentActionResult(succeeded: false, error: reason, displayID: displayID)
+                        discardProvisionalTabbedSource()
+                    case let .degraded(reason):
+                        // Cleanup can make this window an arrival. Suspend its
+                        // owner before that pass can authorize another write.
+                        suspendAutomaticBentoWrites(displayID: displayID,
+                            sessionID: active.layoutSession.id, error: reason)
+                        discardProvisionalTabbedSource()
+                    }
                 } else {
                     applyTabbedState(baseline, session: context.session, display: context.display,
                         windows: context.windows, focus: sourceID, rememberUndo: true,
                         rollbackFrames: active.tabbedRollbackFrames, snapAction: action, snapScope: .window,
                         preparedDrop: prepared.tabbedState.map { PreparedTabbedArrangement(state: $0, windows: active.tabbedWindows) },
-                        gestureBaseline: baseline, gestureSourceID: sourceID, expectedSpaceID: active.tabbedSpaceID)
+                        gestureBaseline: baseline, gestureSourceID: sourceID,
+                        provisionalSourceID: active.provisionalSourceID, expectedSpaceID: active.tabbedSpaceID)
                 }
             } else if let baseline = active.tabbedUndoBaseline,
                       let session = sessionStore.session(for: displayID),
@@ -2268,7 +2376,7 @@ final class BetterTileModel {
                     snapAction: action, snapScope: .window,
                     preparedDrop: prepared.tabbedState.map { PreparedTabbedArrangement(state: $0, windows: active.tabbedWindows) },
                     gestureBaseline: baseline, gestureSourceID: sourceID,
-                    expectedSpaceID: active.tabbedSpaceID)
+                    provisionalSourceID: active.provisionalSourceID, expectedSpaceID: active.tabbedSpaceID)
             }
             replayBufferedBentoDragEvents()
             refreshDividerBoundaries()
@@ -2426,6 +2534,7 @@ final class BetterTileModel {
         if !committed, active.tabbedOrigin != nil {
             _ = finishTabbedDrop(active, sourceID: sourceID, end: .restore)
         }
+        if !committed { discardProvisionalTabbedSource() }
         if isDrop, !recoveryFailurePresented {
             presentActionResult(
                 succeeded: committed,
@@ -2437,6 +2546,43 @@ final class BetterTileModel {
         activeBentoDrag = nil
         replayBufferedBentoDragEvents()
         refreshDividerBoundaries()
+    }
+
+    /// The placement that a drop starts owns the drag's provisional float
+    /// from now on.
+    private func transferProvisionalTabbedFloat(_ windowID: WindowID?, sessionID: DesktopSessionID,
+                                                displayID: DisplayID, to owner: UUID) {
+        guard let windowID else { return }
+        let key = ProvisionalTabbedFloat(windowID: windowID, sessionID: sessionID, displayID: displayID)
+        if provisionalTabbedFloats[key] != nil { provisionalTabbedFloats[key] = owner }
+    }
+
+    /// A drop published the window's membership. Its float, if any, is no
+    /// longer provisional.
+    private func publishProvisionalTabbedFloat(_ windowID: WindowID?, sessionID: DesktopSessionID, displayID: DisplayID) {
+        guard let windowID else { return }
+        provisionalTabbedFloats.removeValue(
+            forKey: ProvisionalTabbedFloat(windowID: windowID, sessionID: sessionID, displayID: displayID))
+    }
+
+    /// Ends the provisional floats that `owner` holds. Each float leaves its
+    /// own stored session, active or not; no session is selected and no
+    /// window moves. A window that joined a pane does not change. No other
+    /// drag can be running on that session: a drag's start ends every older
+    /// provisional float there. Returns true when the active session
+    /// changed, so that an event pass can admit the window.
+    @discardableResult
+    private func releaseProvisionalTabbedFloats(ownedBy owner: UUID) -> Bool {
+        var changedActiveSession = false
+        for (key, keyOwner) in provisionalTabbedFloats where keyOwner == owner {
+            provisionalTabbedFloats.removeValue(forKey: key)
+            if sessionStore.forgetTabbedFloat(key.windowID, sessionID: key.sessionID, on: key.displayID),
+               sessionStore.isActive(key.sessionID, on: key.displayID) {
+                pendingWindowEvents.recordTopologyChange()
+                changedActiveSession = true
+            }
+        }
+        return changedActiveSession
     }
 
     /// Runs one complete Bento window drag with a known drop outcome. The
@@ -2524,7 +2670,8 @@ final class BetterTileModel {
                 rollbackFrames: rollbackFrames,
                 preparedDrop: preparedState.map { PreparedTabbedArrangement(state: $0, windows: active.tabbedWindows) },
                 gestureBaseline: baseline, floatingUndoFrame: floated ? active.tabbedRollbackFrames[sourceID] : nil,
-                gestureSourceID: sourceID, expectedSpaceID: active.tabbedSpaceID)
+                gestureSourceID: sourceID, provisionalSourceID: active.provisionalSourceID,
+                expectedSpaceID: active.tabbedSpaceID)
             return true
         }
         statusMessage = "The desktop changed during the drop. Use Repair Layout to return the window to a pane."
@@ -3180,7 +3327,10 @@ final class BetterTileModel {
             if overlay.keepsPanelsOnSpace { overlay.prepareForSpaceChange() }
             else { overlay.hide() }
         }
-        dragSnap.cancel()
+        // macOS can carry a dragged window to the new desktop. The drag
+        // continues there once the desktop settles.
+        dragSnap.suspendForDesktopChange()
+        if dragSnap.carriedWindowID != nil { heldCarriedWindowArrival = true }
         layoutWheel.cancel(reason: .spaceChanged)
         dividerResize.hideAndCancel()
         windowEventTask?.cancel()
@@ -3203,6 +3353,7 @@ final class BetterTileModel {
                     self.isStabilizingSpace = false
                     self.allTabbedOverlays.forEach { $0.hide() }
                     self.schedulePendingWindowEvents()
+                    self.dragSnap.resumeAfterDesktopChange()
                     return
                 }
                 latestWindows = sampled
@@ -3227,6 +3378,9 @@ final class BetterTileModel {
                 self.pendingWindowEvents.recordTopologyChange()
             }
             self.schedulePendingWindowEvents()
+            // After the refresh, so the drag resolves on the selected
+            // destination layout and its Adaptive drag cannot skip the refresh.
+            self.dragSnap.resumeAfterDesktopChange()
         }
     }
 
@@ -5352,6 +5506,14 @@ final class BetterTileModel {
                 continue
             }
             var displayWindows = bentoEligible(eligible.filter { $0.displayID == display.id })
+            // A held drag carried this window from another desktop. The
+            // destination layout neither places nor admits it before the drop
+            // or release; the event pass after the gesture does.
+            if let carried = dragSnap.carriedWindowID, displayWindows.contains(where: { $0.id == carried }),
+               sessionStore.session(for: display.id).map({ Self.layoutHolds(carried, in: $0) }) != true {
+                displayWindows.removeAll { $0.id == carried }
+                pendingWindowEvents.recordTopologyChange()
+            }
             let activation = sessionStore.activate(
                 displayID: display.id,
                 windowIDs: Set(displayWindows.map(\.id)),
@@ -5942,6 +6104,19 @@ private struct ActiveBentoDrag {
     var tabbedWindows: [WindowSnapshot]
     /// A pending Tabbed re-application the gesture took over.
     var droppedTabbedReapply = false
+    /// A window carried from another desktop that floats in the Tabbed
+    /// state only for this drag.
+    var provisionalSourceID: WindowID?
+    /// The drag's start removed an older drop's provisional float. That
+    /// window needs an arrival pass when the drag ends.
+    var endsOlderProvisionalFloats = false
+}
+
+/// A carried window's provisional float in one stored Tabbed session.
+private struct ProvisionalTabbedFloat: Hashable {
+    let windowID: WindowID
+    let sessionID: DesktopSessionID
+    let displayID: DisplayID
 }
 
 private struct TabbedCommittedLayout: Equatable {
@@ -6080,6 +6255,15 @@ extension BetterTileModel {
             }
             showTabbed(session: session, display: display, windows: windows)
         }
+    }
+
+    /// Whether a window is a pane or floating member of the session's
+    /// Adaptive or Tabbed layout.
+    private static func layoutHolds(_ id: WindowID, in session: LayoutSession) -> Bool {
+        if let tabbed = session.tabbedState, tabbed.windowIDs.contains(id) || tabbed.floatingWindowIDs.contains(id) {
+            return true
+        }
+        return session.bentoState.root?.windowIDs.contains(id) == true || session.bentoState.floatingWindowIDs.contains(id)
     }
 
     private func hideTabbedOverlay(on displayID: DisplayID) {
@@ -6425,6 +6609,7 @@ extension BetterTileModel {
         snapAction: WindowAction? = nil, snapScope: TabbedSnapScope = .pane, preparedDrop: PreparedTabbedArrangement? = nil,
         gestureBaseline: TabbedLayoutState? = nil, floatingUndoFrame: BTRect? = nil,
         floatingUndoSourceID: WindowID? = nil, gestureSourceID: WindowID? = nil,
+        provisionalSourceID: WindowID? = nil,
         expectedSpaceID: NativeSpaceID? = nil, restorationFrames: [WindowID: BTRect] = [:],
         arrivals: Set<WindowID> = [], appliedFeedback: ResultPillFeedback? = nil, rejection: String? = nil,
         reportsFailure: Bool = true, focusedBeforePlacement: WindowID? = nil,
@@ -6475,13 +6660,24 @@ extension BetterTileModel {
             snapAction == nil ? Set(self.tabbedSteppedWindows.keys) : []
         }
         let previous = gestureBaseline ?? sessionStore.session(for: display.id)?.tabbedState
+        // A drop that did not land restores the membership from before the
+        // drag. A window a drag carried here from another desktop was a
+        // floating member only for that drag: it leaves the layout, and the
+        // next event pass admits it as any arrival. Undo of a drop that
+        // landed keeps the gesture baseline, which floats it.
         func restoreGestureMembership() -> LayoutSession {
-            guard let gestureBaseline, isCurrent() else { return original }
+            guard var baseline = gestureBaseline, isCurrent() else { return original }
+            let discards = provisionalSourceID.map {
+                baseline.floatingWindowIDs.contains($0) && !baseline.windowIDs.contains($0)
+            } ?? false
+            if discards, let provisionalSourceID { baseline.forgetFloating(provisionalSourceID) }
             var restored = original
-            restored.tabbedState = gestureBaseline
-            restored.windowIDs = gestureBaseline.windowIDs
+            restored.tabbedState = baseline
+            restored.windowIDs = baseline.windowIDs
             restored.lastObservedFrames = rollbackFrames ?? original.lastObservedFrames
-            return sessionStore.commit(restored, replacing: original.revision) ?? original
+            guard let committed = sessionStore.commit(restored, replacing: original.revision) else { return original }
+            if discards { pendingWindowEvents.recordTopologyChange() }
+            return committed
         }
         // Windows that left the panes, and any new window the caller floated
         // with a frame to put it at.
@@ -6608,9 +6804,12 @@ extension BetterTileModel {
             }
             tabbedTaskIDs[display.id] = taskID
             tabbedOverlays[display.id]?.acceptsTabDrags = false
+            transferProvisionalTabbedFloat(provisionalSourceID, sessionID: original.id, displayID: display.id, to: taskID)
             tabbedTasks[display.id] = Task { @MainActor [weak self] in
                 guard let self else { return }
                 defer {
+                    // Resumed picker work must capture membership after cleanup.
+                    if self.releaseProvisionalTabbedFloats(ownedBy: taskID) { self.schedulePendingWindowEvents() }
                     self.resumeIdlePaneApplicationRequest(on: display.id)
                     if !self.isTabbedBusy(on: display.id), self.tabbedQueuedIntents[display.id] == nil {
                         self.tabbedOverlays[display.id]?.completeDrop()
@@ -6633,11 +6832,14 @@ extension BetterTileModel {
                     }
                     // A work area that changed during the placement, for
                     // example while the Dock settled, needs a placement too.
-                    if !Task.isCancelled, isSameDesktopAnyWorkArea() { self.refreshActiveWindows(force: true) }
+                    if !Task.isCancelled, isSameDesktopAnyWorkArea() {
+                        if self.releaseProvisionalTabbedFloats(ownedBy: taskID) { self.schedulePendingWindowEvents() }
+                        self.refreshActiveWindows(force: true)
+                    }
                     return
                 }
                 guard isCurrent() else {
-                    self.drainTabbedQueuedIntent(on: display.id, sessionID: original.id)
+                    self.drainTabbedQueuedIntent(on: display.id, sessionID: original.id, endingProvisionalOwner: taskID)
                     self.schedulePendingWindowEvents()
                     return
                 }
@@ -6656,7 +6858,7 @@ extension BetterTileModel {
                 // The rollback may have reverted a selection the divider
                 // pointed at mid-gesture; our restore writes do not refresh it.
                 self.refreshDividerBoundaries()
-                self.drainTabbedQueuedIntent(on: display.id, sessionID: original.id)
+                self.drainTabbedQueuedIntent(on: display.id, sessionID: original.id, endingProvisionalOwner: taskID)
                 self.schedulePendingWindowEvents()
             }
             return
@@ -6676,6 +6878,7 @@ extension BetterTileModel {
         // dismissal keeps the deferral, so only the authorized close path can replay focus.
         let requestDefersFocus = menuPanelIsShown()
         let requestFocusEpoch = menuPanelFocusEpoch
+        transferProvisionalTabbedFloat(provisionalSourceID, sessionID: original.id, displayID: display.id, to: taskID)
         let placement = Self.startTabbedPlacement(immediately: startsNow) { @MainActor [weak self] in
             guard let self else { return }
             #if DEBUG
@@ -6685,6 +6888,8 @@ extension BetterTileModel {
             } }
             #endif
             defer {
+                // Resumed picker work must capture membership after cleanup.
+                if self.releaseProvisionalTabbedFloats(ownedBy: taskID) { self.schedulePendingWindowEvents() }
                 self.resumeIdlePaneApplicationRequest(on: display.id)
                 if !self.isTabbedBusy(on: display.id), self.tabbedQueuedIntents[display.id] == nil {
                     self.tabbedOverlays[display.id]?.completeDrop()
@@ -6943,11 +7148,14 @@ extension BetterTileModel {
                 }
                 // A work area that changed during the placement, for
                 // example while the Dock settled, needs a placement too.
-                if !Task.isCancelled, isSameDesktopAnyWorkArea() { self.refreshActiveWindows(force: true) }
+                if !Task.isCancelled, isSameDesktopAnyWorkArea() {
+                    if self.releaseProvisionalTabbedFloats(ownedBy: taskID) { self.schedulePendingWindowEvents() }
+                    self.refreshActiveWindows(force: true)
+                }
                 return
             }
             guard isCurrent() else {
-                self.drainTabbedQueuedIntent(on: display.id, sessionID: original.id)
+                self.drainTabbedQueuedIntent(on: display.id, sessionID: original.id, endingProvisionalOwner: taskID)
                 self.schedulePendingWindowEvents()
                 return
             }
@@ -6981,6 +7189,9 @@ extension BetterTileModel {
                     : placedFrames
                 proposed.resumeAutomaticWrites()
                 if let committed = self.sessionStore.commit(proposed, replacing: original.revision) {
+                    if committed.tabbedState?.windowIDs.contains(where: { $0 == provisionalSourceID }) == true {
+                        self.publishProvisionalTabbedFloat(provisionalSourceID, sessionID: original.id, displayID: display.id)
+                    }
                     if let deferredFocus {
                         self.menuPanelDeferredFocus = MenuPanelDeferredFocus(windowID: deferredFocus,
                             displayID: display.id, sessionID: committed.id, spaceID: expectedSpace,
@@ -7090,7 +7301,7 @@ extension BetterTileModel {
                 // divider at a selection the rollback just reverted.
                 self.refreshDividerBoundaries()
             }
-            self.drainTabbedQueuedIntent(on: display.id, sessionID: original.id)
+            self.drainTabbedQueuedIntent(on: display.id, sessionID: original.id, endingProvisionalOwner: taskID)
             if self.tabbedNeedsFocusRefresh || repairsStackingAfterSelection { self.handleTabbedFocus() }
             // An edge resize released during this placement is read now.
             self.schedulePendingWindowEvents()
@@ -7641,7 +7852,15 @@ extension BetterTileModel {
         applyTabbedState(state, session: session, display: display, windows: displayWindows, focus: nil)
     }
 
-    private func drainTabbedQueuedIntent(on displayID: DisplayID, sessionID: DesktopSessionID) {
+    private func drainTabbedQueuedIntent(on displayID: DisplayID, sessionID: DesktopSessionID,
+                                         endingProvisionalOwner: UUID? = nil) {
+        // Cleanup can advance the session revision. Finish it before the next
+        // queued placement captures its owner, including when a peer's close
+        // invalidated the preceding drop. The task's defer remains a fallback
+        // for exits that never reach this queue.
+        if let endingProvisionalOwner, releaseProvisionalTabbedFloats(ownedBy: endingProvisionalOwner) {
+            schedulePendingWindowEvents()
+        }
         guard !Task.isCancelled, !isStabilizingSpace, !isShutDown,
               sessionStore.session(for: displayID)?.id == sessionID,
               activeMode(for: displayID) == .tabbed else {
@@ -7975,6 +8194,8 @@ extension BetterTileModel {
             spacePanelCorrections.remove(id)
         }
         let live = Set(sessions.map(\.id))
+        // A provisional float whose session is gone has nothing to remove.
+        provisionalTabbedFloats = provisionalTabbedFloats.filter { live.contains($0.key.sessionID) }
         tabbedCommittedLayouts = tabbedCommittedLayouts.filter { live.contains($0.key) }
         tabbedEntryBaselines = tabbedEntryBaselines.filter { live.contains($0.key) }
     }
