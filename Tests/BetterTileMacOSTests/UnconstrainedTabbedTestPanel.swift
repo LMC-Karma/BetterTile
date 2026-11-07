@@ -1,7 +1,8 @@
 import AppKit
 @testable import BetterTileMacOS
 
-/// Records controller frame requests independently of native panel relocation.
+/// Records the outermost setFrame request. A relocation that bypasses these
+/// setters does not replace it.
 /// Content sizing and deferred layout still use AppKit. Ordering is simulated.
 @MainActor class UnconstrainedTabbedTestPanel: TabbedStripPanel {
     static let referenceScreenFrame = NSRect(x: 0, y: 0, width: 1600, height: 1000)

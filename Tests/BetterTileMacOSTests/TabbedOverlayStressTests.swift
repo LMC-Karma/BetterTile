@@ -261,6 +261,7 @@ private struct SplitMix64 {
             #expect(abs(requested.minX - expected.minX) <= 1 && abs(requested.maxX - expected.maxX) <= 1,
                     "strip width \(requested) vs \(expected) \(context)")
             #expect(abs(requested.maxY - expected.maxY) <= 1, "strip top \(context)")
+            #expect(abs(panel.frame.width - requested.width) <= 1, "native strip width \(panel.frame) \(context)")
         }
     }
 }
