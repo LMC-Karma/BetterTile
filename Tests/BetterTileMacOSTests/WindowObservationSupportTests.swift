@@ -413,7 +413,22 @@ func invalidAccessibilityElementConfirmsClosureOnlyAfterSuccessfulAbsentInventor
     #expect(lookups == 1)
 }
 
-@Test func hiddenWindowIdentitySelectionRequiresTheCurrentApplicationLaunch() {
+@Test(arguments: ["matching", "visible", "unknown-current-launch", "unknown-recorded-launch",
+                  "both-launches-unknown", "reused-pid", "unrecorded"])
+func hiddenApplicationLaunchRequiresPositiveCurrentEvidence(evidence: String) {
+    let instance = ApplicationLaunchInstance(processIdentifier: 90, generation: 2)
+    let currentToken: UInt64? = ["unknown-current-launch", "both-launches-unknown"].contains(evidence) ? nil : 200
+    let recordedToken: UInt64? = ["unknown-recorded-launch", "both-launches-unknown"].contains(evidence)
+        ? nil : (evidence == "reused-pid" ? 100 : 200)
+    let result = AccessibilityWindowSystem.hiddenApplicationLaunch(
+        isHidden: evidence != "visible",
+        launchToken: currentToken,
+        recordedLaunch: evidence == "unrecorded" ? nil : (recordedToken, instance)
+    )
+    #expect(result == (evidence == "matching" ? instance : nil))
+}
+
+@Test func hiddenApplicationWindowIdentitySelectionRequiresTheCurrentApplicationLaunch() {
     var registry = WindowIdentityRegistry()
     let old = ApplicationLaunchInstance(processIdentifier: 90, generation: 1)
     let current = ApplicationLaunchInstance(processIdentifier: 90, generation: 2)

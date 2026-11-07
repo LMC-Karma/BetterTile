@@ -53,7 +53,7 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, CreatedWindowReading, T
         newWindowRequests.append((processIdentifier, bundleIdentifier))
         return newWindowRequestResult
     }
-    var hiddenWindowIDs: Set<WindowID> { Set(windows.filter { $0.isHidden }.map(\.id)) }
+    var hiddenApplicationWindowIDs: Set<WindowID> { Set(windows.filter { $0.isHidden }.map(\.id)) }
     var permission = true
     var ignoredFrameWriteWindowIDs: Set<WindowID> = []
     var enforcedMinimumWidths: [WindowID: Double] = [:]

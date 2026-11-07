@@ -386,16 +386,26 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
 
     /// Hidden applications are skipped by AX inventory, but their known
     /// windows still exist. This uses public application state without AX reads.
-    public var hiddenWindowIDs: Set<WindowID> {
+    public var hiddenApplicationWindowIDs: Set<WindowID> {
         let applications = Set(NSWorkspace.shared.runningApplications.compactMap { application -> ApplicationLaunchInstance? in
-            guard application.isHidden,
-                  let token = application.launchDate?.timeIntervalSinceReferenceDate.bitPattern,
-                  let launch = launchRecords[application.processIdentifier],
-                  launch.launchToken == token
-            else { return nil }
-            return launch.instance
+            Self.hiddenApplicationLaunch(
+                isHidden: application.isHidden,
+                launchToken: application.launchDate?.timeIntervalSinceReferenceDate.bitPattern,
+                recordedLaunch: launchRecords[application.processIdentifier].map { ($0.launchToken, $0.instance) }
+            )
         })
         return identities.windowIDs(belongingTo: applications)
+    }
+
+    /// Unknown launch dates and records cannot establish hidden-application evidence.
+    nonisolated static func hiddenApplicationLaunch(
+        isHidden: Bool,
+        launchToken: UInt64?,
+        recordedLaunch: (launchToken: UInt64?, instance: ApplicationLaunchInstance)?
+    ) -> ApplicationLaunchInstance? {
+        guard isHidden, let launchToken, let recordedLaunch,
+              recordedLaunch.launchToken == launchToken else { return nil }
+        return recordedLaunch.instance
     }
 
     public func visibleWindows() throws -> [WindowSnapshot] {

@@ -25,7 +25,7 @@ public struct BentoSessionReducer: Sendable {
         paneGap: Double,
         confirmedGone: Set<WindowID> = [],
         minimized: Set<WindowID> = [],
-        hiddenWindowIDs: Set<WindowID> = [],
+        hiddenApplicationWindowIDs: Set<WindowID> = [],
         knownSpaceWindowIDs: Set<WindowID> = [],
         newWindowSide: BentoNewWindowSide = .automatic,
         balancesNewWindows: Bool = false
@@ -46,13 +46,15 @@ public struct BentoSessionReducer: Sendable {
         })
         // App hiding is direct evidence that a pane stepped away, not that
         // its window closed. Floating windows retain their existing disposition.
+        // Focus owns its excluded peers, including a minimize in this pass.
         let hiddenPanes = Set(runtime.layout.root?.windowIDs ?? [])
-            .intersection(hiddenWindowIDs).subtracting(confirmedGone)
+            .intersection(hiddenApplicationWindowIDs).subtracting(confirmedGone)
+            .subtracting(next.excludedFocusWindowIDs.union(focusMinimized))
         let present = observation.eligibleWindowIDs.subtracting(minimized)
-            .subtracting(hiddenWindowIDs).subtracting(confirmedGone)
+            .subtracting(hiddenApplicationWindowIDs).subtracting(confirmedGone)
         let known = Set(runtime.layout.root?.windowIDs ?? []).union(runtime.layout.floatingWindowIDs)
         let exempt = next.excludedFocusWindowIDs.union(runtime.reinsertionAnchors.keys)
-            .union(knownSpaceWindowIDs).union(hiddenWindowIDs.subtracting(hiddenPanes))
+            .union(knownSpaceWindowIDs).union(hiddenApplicationWindowIDs.subtracting(hiddenPanes))
         let removals = next.presence.observe(
             known: known,
             present: present,
@@ -93,7 +95,7 @@ public struct BentoSessionReducer: Sendable {
             reconcileRuntimeFollowing()
         }
         next.bentoInsertionOrder.removeAll { removals.contains($0) }
-        next.automaticallyFloatingWindowIDs.formIntersection(present.union(hiddenWindowIDs).subtracting(confirmedGone))
+        next.automaticallyFloatingWindowIDs.formIntersection(present.union(hiddenApplicationWindowIDs).subtracting(confirmedGone))
         for windowID in present.sorted() where !next.bentoInsertionOrder.contains(windowID) {
             next.bentoInsertionOrder.append(windowID)
         }

@@ -13,7 +13,7 @@ protocol BetterTileWindowSystem: TargetedWindowSystem, WindowEventSource, Window
     var leavesSpaceForDock: Bool { get set }
     var unresponsiveApplicationRecoveryDeadlines: [Int32: TimeInterval] { get }
     /// Known identities owned by currently hidden application launches.
-    var hiddenWindowIDs: Set<WindowID> { get }
+    var hiddenApplicationWindowIDs: Set<WindowID> { get }
     func visibleWindows(recoveringApplicationPIDs: inout Set<Int32>) throws -> [WindowSnapshot]
     func cachedVisibleWindows(refreshing ids: Set<WindowID>) throws -> [WindowSnapshot]?
     func nativeDesktopObservation() -> NativeDesktopObservation?
@@ -37,7 +37,7 @@ extension AccessibilityWindowSystem: BetterTileWindowSystem {}
 
 extension BetterTileWindowSystem {
     var unresponsiveApplicationRecoveryDeadlines: [Int32: TimeInterval] { [:] }
-    var hiddenWindowIDs: Set<WindowID> { [] }
+    var hiddenApplicationWindowIDs: Set<WindowID> { [] }
     func restoreEnhancedUserInterfaceBeforeQuit() {}
 }
 
@@ -4111,7 +4111,7 @@ final class BetterTileModel {
                    paneGap: session.paneGap(configured: paneGapForLayout),
                    confirmedGone: confirmedGoneWindowIDs,
                    minimized: confirmedMinimizedWindowIDs,
-                   hiddenWindowIDs: system.hiddenWindowIDs,
+                   hiddenApplicationWindowIDs: system.hiddenApplicationWindowIDs,
                    knownSpaceWindowIDs: system.nativeDesktopObservation()?.exclusiveWindowIDs(on: displayID) ?? [],
                    newWindowSide: configuration.bentoNewWindowSide,
                    balancesNewWindows: configuration.bentoBalancesNewWindows
@@ -5474,7 +5474,7 @@ final class BetterTileModel {
                     requestsRelayout: relayoutPaneGap,
                     confirmedGone: consumedDestroyedWindowIDs,
                     confirmedMinimized: consumedMinimizedWindowIDs,
-                    hiddenWindowIDs: system.hiddenWindowIDs,
+                    hiddenApplicationWindowIDs: system.hiddenApplicationWindowIDs,
                     knownSpaceWindowIDs: (nativeObservation?.exclusiveWindowIDs(on: display.id) ?? [])
                         .subtracting(eligible.filter { $0.displayID != display.id }.map(\.id))
                 )
@@ -5720,7 +5720,7 @@ final class BetterTileModel {
             paneGap: session.paneGap(configured: paneGapForLayout),
             confirmedGone: confirmedGone,
             minimized: minimized.union(confirmedMinimizedWindowIDs),
-            hiddenWindowIDs: system.hiddenWindowIDs,
+            hiddenApplicationWindowIDs: system.hiddenApplicationWindowIDs,
             knownSpaceWindowIDs: system.nativeDesktopObservation()?.exclusiveWindowIDs(on: display.id) ?? [],
             newWindowSide: configuration.bentoNewWindowSide,
             balancesNewWindows: configuration.bentoBalancesNewWindows

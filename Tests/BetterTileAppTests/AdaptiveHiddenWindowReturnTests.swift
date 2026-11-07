@@ -6,9 +6,9 @@ import Testing
 /// Hidden applications leave the AX inventory but retain their pane positions.
 @Suite(.appTestApplication, .serialized, .timeLimit(.minutes(1))) @MainActor
 struct AdaptiveHiddenWindowReturnTests {
-    private func fixture(_ count: Int = 4) async throws -> (FakeAppWindowSystem, BetterTileModel) {
+    private func fixture(_ count: Int = 4, sharedApplicationIndexes: Set<Int> = []) async throws -> (FakeAppWindowSystem, BetterTileModel) {
         let s = makeManualWindowSystem(drivingPolicyDeadlines: true)
-        s.windows = (0..<count).map { window($0, s) }
+        s.windows = (0..<count).map { window($0, s, pid: sharedApplicationIndexes.contains($0) ? 140 : nil) }
         let m = makeModel(system: s)
         let drag = try #require(Mirror(reflecting: m).children.first {
             $0.label?.hasSuffix("dragSnap") == true
@@ -64,7 +64,16 @@ struct AdaptiveHiddenWindowReturnTests {
     }
     @Test(arguments: [[3], [2, 3], [0, 1, 2, 3, 4]])
     func hiddenPanesReturnToTheirOriginalFramesAfterOtherFocus(hiddenIndexes: [Int]) async throws {
-        let (s, m) = try await fixture(5); defer { m.shutdown() }
+        try await assertHiddenPanesReturn(hiddenIndexes: hiddenIndexes)
+    }
+
+    @Test func twoPanesOfOneHiddenApplicationReturnToTheirOriginalFrames() async throws {
+        try await assertHiddenPanesReturn(hiddenIndexes: [2, 3], sharedApplicationIndexes: [2, 3])
+    }
+
+    private func assertHiddenPanesReturn(hiddenIndexes: [Int], sharedApplicationIndexes: Set<Int> = []) async throws {
+        let (s, m) = try await fixture(5, sharedApplicationIndexes: sharedApplicationIndexes)
+        defer { m.shutdown() }
         let before = frames(s)
         let hiddenIDs = Set(hiddenIndexes.map { s.windows[$0].id })
         for i in hiddenIndexes { s.windows[i].isHidden = true }
@@ -80,9 +89,14 @@ struct AdaptiveHiddenWindowReturnTests {
         #expect(Set(try state(s, m).root?.windowIDs ?? []).isDisjoint(with: hiddenIDs))
         s.focusedID = s.windows.first { !hiddenIDs.contains($0.id) }?.id
         m.configuration.bentoNewWindowSide = .left
+        var returnedApplicationPIDs: Set<Int32> = []
         for i in hiddenIndexes.reversed() {
-            s.windows[i].isHidden = false
-            s.offscreenWindowIDs.remove(s.windows[i].id)
+            let pid = s.windows[i].processIdentifier
+            guard returnedApplicationPIDs.insert(pid).inserted else { continue }
+            for j in hiddenIndexes where s.windows[j].processIdentifier == pid {
+                s.windows[j].isHidden = false
+                s.offscreenWindowIDs.remove(s.windows[j].id)
+            }
             s.focusedWindowIsUnknown = false
             if s.focusedID == nil { s.focusedID = s.windows[i].id }
             m.handleApplicationTopologyChange()
