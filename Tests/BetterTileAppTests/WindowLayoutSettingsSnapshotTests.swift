@@ -7,14 +7,14 @@ import Testing
 
 @MainActor @Suite(.appTestApplication, .serialized) struct WindowLayoutSettingsSnapshotTests {
     private enum State: String, CaseIterable {
-        case adaptive, tabbed, modified
+        case adaptive, tabbed, tabbedOnePerPane, tabbedKeepAdaptive, modified
     }
 
     @Test func rendersWindowLayoutStates() throws {
         let directory = ProcessInfo.processInfo.environment["BT_SNAPSHOT_DIR"]
-        let states: [State] = directory == nil ? [.adaptive] : State.allCases
-        let themes = directory == nil ? [false] : [false, true]
-        let widths: [Double] = directory == nil ? [770] : [770, 980, 1280]
+        let states: [State] = directory == nil ? [.adaptive, .tabbed, .tabbedKeepAdaptive] : State.allCases
+        let themes = [false, true]
+        let widths: [Double] = directory == nil ? [770, 980] : [770, 980, 1280]
         let glassValues = directory == nil ? [true] : [true, false]
         for state in states {
             for dark in themes {
@@ -31,9 +31,15 @@ import Testing
         let model = makeModel(system: FakeAppWindowSystem())
         defer { model.shutdown() }
         model.updateConfiguration { $0.overlayAppearance.useLiquidGlass = glass }
-        let mode: LayoutMode = state == .tabbed ? .tabbed : .bento
+        let mode: LayoutMode = state == .tabbed || state == .tabbedOnePerPane || state == .tabbedKeepAdaptive ? .tabbed : .bento
         model.hasAccessibilityPermission = true
         model.setActiveMode(mode)
+        if state == .tabbedOnePerPane {
+            model.configuration.tabbedEntryPlacement = .onePerPane
+        }
+        if state == .tabbedKeepAdaptive {
+            model.configuration.tabbedEntryPlacement = .keepAdaptivePanes
+        }
         if state == .modified {
             model.assign(shortcut: nil, to: .leftHalf)
             model.updateConfiguration {
