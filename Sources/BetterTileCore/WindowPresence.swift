@@ -153,6 +153,27 @@ public enum PlacementBounds {
         let visible = frame.intersection(visibleFrame)?.area ?? 0
         return visible / area >= minimumVisibleFraction
     }
+
+    /// A small grab region independent of window size: ten points wide at the
+    /// full estimated title-bar height. This accepts deliberate overhangs while
+    /// refusing narrower strips. A window whose whole strip is smaller needs all
+    /// of it. Require this area on one display so separate unusable fragments do
+    /// not combine into an apparently usable title bar.
+    public static let minimumHistoryTitleStripArea: Double = 220
+
+    /// History restores a user-chosen frame, which may overhang the work area
+    /// or span displays. Estimate title-bar access with the top 22 logical points.
+    public static func isHistoryRestoreReachable(_ frame: BTRect, in displayFrames: [BTRect]) -> Bool {
+        guard !frame.isEmpty,
+              [frame.minX, frame.minY, frame.maxX, frame.maxY, frame.area].allSatisfy(\.isFinite)
+        else { return false }
+        let titleBar = BTRect(x: frame.minX, y: frame.minY,
+            width: frame.size.width, height: min(22, frame.size.height))
+        let required = min(minimumHistoryTitleStripArea, titleBar.area)
+        return displayFrames.contains {
+            (titleBar.intersection($0)?.area ?? 0) >= required
+        }
+    }
 }
 
 /// What actually became of a frame BetterTile asked for.
