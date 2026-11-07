@@ -203,3 +203,103 @@ func retiredDesktopInvalidatesSavedApplyUndoWithoutWritingFrames() async throws 
     await h.applier.undoLastApply()
     #expect(h.system.frameWriteCounts == writes)
 }
+
+@Test(.appTestApplication, arguments: [false, true], [false, true]) @MainActor
+func movedWindowKeepsBothDesktopOwnersOnReconnect(carryOver: Bool, destinationFirst: Bool) async throws {
+    let f = DesktopMemoryCouncilFixture()
+    defer { f.model.shutdown() }
+    f.model.configuration.keepsDesktopLayoutsAcrossDisplays = carryOver
+    let c = WindowID(rawValue: "c")
+    f.system.windows.append(WindowSnapshot(id: c, processIdentifier: 43, bundleIdentifier: "example.c",
+        frame: BTRect(x: 200, y: 40, width: 400, height: 500), displayID: f.display))
+    f.system.desktopObservation?.windowMembership[c] = [.init(rawValue: 1)]
+    f.model.setActiveMode(.bento)
+    try await f.idle()
+    let source = try #require(f.store().session(for: f.display))
+    func observe(current: UInt64, source: UInt64, destination: UInt64) {
+        f.system.offscreenWindowIDs = current == source ? [f.b] : [f.a, c]
+        f.system.focusedID = current == source ? f.a : f.b
+        f.system.desktopObservation = NativeDesktopObservation(
+            currentSpaceByDisplay: [f.display: .init(rawValue: current)],
+            knownSpacesByDisplay: [f.display: [.init(rawValue: source), .init(rawValue: destination)]],
+            windowMembership: [f.a: [.init(rawValue: source)], c: [.init(rawValue: source)],
+                               f.b: [.init(rawValue: destination)]])
+    }
+    // Move b while the source is inactive, then choose Tabbed on its new desktop.
+    observe(current: 2, source: 1, destination: 2)
+    f.model.beginActiveSpaceStabilization()
+    try #require(await f.system.waitFor { !f.model.isStabilizingSpace })
+    f.model.setActiveMode(.tabbed)
+    try await f.idle()
+    let destination = try #require(f.store().session(for: f.display))
+    try #require(destination.id != source.id && destination.mode == .tabbed)
+    try #require(f.store().allSessions(for: f.display).first { $0.id == source.id }?.windowIDs.contains(f.b) == true)
+
+    // Disconnect both desktops, then reconnect the same UUID with new runtime IDs.
+    f.model.handleDisplayChange(.displayReconfigurationBegan)
+    f.system.availableDisplays = []
+    f.system.offscreenWindowIDs = [f.a, f.b, c]
+    f.system.desktopObservation = NativeDesktopObservation(
+        currentSpaceByDisplay: [:], knownSpacesByDisplay: [:], windowMembership: [:])
+    f.model.handleDisplayChange(.displayReconfigurationEnded)
+    try await f.idle()
+    try #require(f.store().retiredSessions.count == 2)
+    f.model.handleDisplayChange(.displayReconfigurationBegan)
+    var returned = f.system.mainDisplay
+    returned.id = DisplayID(rawValue: "reconnected")
+    returned.persistentIdentifier = "A"
+    f.system.availableDisplays = [returned]
+    for index in f.system.windows.indices { f.system.windows[index].displayID = returned.id }
+    observe(current: destinationFirst ? 22 : 11, source: 11, destination: 22)
+    f.model.handleDisplayChange(.displayReconfigurationEnded)
+    try await f.idle()
+    for isDestination in [destinationFirst, !destinationFirst] {
+        if isDestination != destinationFirst {
+            observe(current: isDestination ? 22 : 11, source: 11, destination: 22)
+            f.model.beginActiveSpaceStabilization()
+            try #require(await f.system.waitFor { !f.model.isStabilizingSpace })
+            try await f.idle()
+        }
+        let session = try #require(f.store().session(for: f.display))
+        #expect(session.id == (isDestination ? destination.id : source.id))
+        #expect(session.mode == (isDestination ? .tabbed : .bento))
+    }
+    let sessions = try f.store().allSessions(for: f.display)
+    #expect(sessions.first { $0.id == source.id }?.mode == .bento)
+    #expect(sessions.first { $0.id == destination.id }?.mode == .tabbed)
+}
+
+@Test(.appTestApplication, arguments: [LayoutMode.bento, .tabbed], [1, 2]) @MainActor
+func arrivalsAfterAnEmptyDesktopAreMeasuredBeforePlacement(mode: LayoutMode, windowCount: Int) async throws {
+    let f = DesktopMemoryCouncilFixture()
+    defer { f.model.shutdown() }
+    f.model.configuration.defaultLayoutMode = mode
+    f.model.configuration.defaultTabbedPreset = .columns
+    f.system.windows = []
+    f.system.focusedID = nil
+    f.system.desktopObservation?.windowMembership = [:]
+    f.system.measuresOnWrite = true
+    f.model.watchdog()
+    try await f.idle()
+    try #require(f.model.activeMode(for: f.display) == mode)
+    try #require(f.system.probeRequests.isEmpty)
+    let arrivals = Array([f.a, f.b].prefix(windowCount))
+    // Tabbed selects the last arrival in the active pane. Its selected tab,
+    // rather than a hidden peer, must be the one that needs the wider pane.
+    let wide = mode == .tabbed && windowCount == 2 ? f.b : f.a
+    f.system.windows = arrivals.map { id in
+        WindowSnapshot(id: id, processIdentifier: id == f.a ? 41 : 42,
+            bundleIdentifier: "example.\(id.rawValue)",
+            frame: BTRect(x: 0, y: 0, width: 800, height: 600), displayID: f.display)
+    }
+    f.system.enforcedMinimumWidths = Dictionary(uniqueKeysWithValues: arrivals.map { ($0, $0 == wide ? 650.0 : 300.0) })
+    f.system.focusedID = wide
+    f.system.desktopObservation?.windowMembership = Dictionary(uniqueKeysWithValues: arrivals.map { ($0, [.init(rawValue: 1)]) })
+    f.model.handleApplicationTopologyChange()
+    try await f.idle()
+    #expect(f.system.probeRequests == [Set(arrivals)])
+    if mode == .tabbed { #expect(f.model.activeTabbedState?.selectedWindowIDs.contains(wide) == true) }
+    let frames = f.system.requestedFrames[wide] ?? []
+    #expect(!frames.isEmpty)
+    #expect(frames.allSatisfy { $0.size.width >= 650 }, "Requested widths: \(frames.map { $0.size.width })")
+}

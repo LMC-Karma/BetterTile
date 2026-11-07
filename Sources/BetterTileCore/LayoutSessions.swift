@@ -251,6 +251,7 @@ public struct LayoutSessionStore: Sendable {
     private var storedSessions: [DisplayID: [DesktopSessionID: LayoutSession]] = [:]
     private var activeSessionIDs: [DisplayID: DesktopSessionID] = [:]
     private var awaitingFirstObservation: Set<DesktopSessionID> = []
+    private var restorationPending: Set<DesktopSessionID> = []
     private var restoredSessionsAwaitingNativeIdentity: Set<DesktopSessionID> = []
     private var displayIdentifiers: [DisplayID: String] = [:]
     public private(set) var retiredSessions: [RetiredDesktop] = []
@@ -331,9 +332,11 @@ public struct LayoutSessionStore: Sendable {
         }
 
         let firstObservation = matched.map { awaitingFirstObservation.remove($0.id) != nil } ?? true
+        let restorationOpportunity = firstObservation
+            || (matched.map { restorationPending.contains($0.id) } ?? false)
         // Native metadata may arrive after the display has settled. Adopt only
         // a session restored during that gap, with the same membership evidence.
-        let inferredRestoration = firstObservation && nativeSpaceID != nil && !windowIDs.isEmpty
+        let inferredRestoration = restorationOpportunity && nativeSpaceID != nil && !windowIDs.isEmpty
             ? candidates.filter {
                 $0.nativeSpaceID == nil && restoredSessionsAwaitingNativeIdentity.contains($0.id)
                     && $0.windowIDs.intersection(windowIDs).count * 2 >= windowIDs.count
@@ -343,7 +346,7 @@ public struct LayoutSessionStore: Sendable {
                 if left != right { return left < right }
                 return lhs.id.rawValue.uuidString < rhs.id.rawValue.uuidString
             } : nil
-        let restored = firstObservation
+        let restored = restorationOpportunity
             ? inferredRestoration ?? restoreRetired(
                 on: displayID, identifier: displayIdentifier ?? displayIdentifiers[displayID],
                 windowIDs: windowIDs, carryOver: carryOver) : nil
@@ -351,7 +354,10 @@ public struct LayoutSessionStore: Sendable {
         let wasCreated: Bool
         let previousWindowIDs: Set<WindowID>
         if var restored {
-            if let matched { storedSessions[displayID]?.removeValue(forKey: matched.id) }
+            if let matched {
+                storedSessions[displayID]?.removeValue(forKey: matched.id)
+                restorationPending.remove(matched.id)
+            }
             restored.nativeSpaceID = nativeSpaceID
             if nativeSpaceID == nil {
                 restoredSessionsAwaitingNativeIdentity.insert(restored.id)
@@ -389,9 +395,12 @@ public struct LayoutSessionStore: Sendable {
             storedSessions[displayID, default: [:]][session.id] = session
         }
         activeSessionIDs[displayID] = session.id
-        if firstObservation, windowIDs.isEmpty {
-            // An empty AX look is not evidence that this is a new desktop.
-            awaitingFirstObservation.insert(session.id)
+        if restorationOpportunity, windowIDs.isEmpty {
+            // Keep the restoration chance without marking later arrivals as
+            // a new desktop; those arrivals still need minimum-size probes.
+            restorationPending.insert(session.id)
+        } else {
+            restorationPending.remove(session.id)
         }
         return (session, wasCreated, previousWindowIDs)
     }
@@ -479,7 +488,10 @@ public struct LayoutSessionStore: Sendable {
 
     /// Even choosing the existing default mode is an explicit user decision.
     public mutating func endRestorationOpportunity(on displayID: DisplayID) {
-        if let id = activeSessionIDs[displayID] { awaitingFirstObservation.remove(id) }
+        if let id = activeSessionIDs[displayID] {
+            awaitingFirstObservation.remove(id)
+            restorationPending.remove(id)
+        }
     }
 
     /// Incomplete rollback belongs to its original session, even after selection changes.
@@ -504,7 +516,10 @@ public struct LayoutSessionStore: Sendable {
         let original = session
         update(&session)
         guard session != original else { return }
-        if session.mode != original.mode || !session.windowIDs.isEmpty { awaitingFirstObservation.remove(id) }
+        if session.mode != original.mode || !session.windowIDs.isEmpty {
+            awaitingFirstObservation.remove(id)
+            restorationPending.remove(id)
+        }
         session.advanceRevision()
         storedSessions[displayID]?[id] = session
     }
@@ -521,7 +536,10 @@ public struct LayoutSessionStore: Sendable {
         else { return nil }
         guard let current = storedSessions[proposed.displayID]?[proposed.id] else { return nil }
         if proposed == current { return current }
-        if proposed.mode != current.mode || !proposed.windowIDs.isEmpty { awaitingFirstObservation.remove(proposed.id) }
+        if proposed.mode != current.mode || !proposed.windowIDs.isEmpty {
+            awaitingFirstObservation.remove(proposed.id)
+            restorationPending.remove(proposed.id)
+        }
         var committed = proposed
         committed.advanceRevision()
         storedSessions[proposed.displayID]?[proposed.id] = committed
@@ -646,10 +664,11 @@ public struct LayoutSessionStore: Sendable {
             return lhs.id > rhs.id
         }) else { return nil }
         let restored = retiredSessions.remove(at: match.index)
-        // With carry-over on, these are older copies of the same desktop.
+        // Only current membership can supersede another desktop's memory.
+        // The restored snapshot may still contain windows that moved away.
         // Off keeps the other screen's independent memory for its next return.
         retiredSessions.removeAll {
-            $0.windowIDs.isSubset(of: restored.windowIDs)
+            $0.windowIDs.isSubset(of: windowIDs)
                 && (carryOver || (identifier != nil && $0.displayIdentifier == identifier))
         }
         var session = restored.session
@@ -674,6 +693,7 @@ public struct LayoutSessionStore: Sendable {
             $0.formUnion($1.keys)
         }
         awaitingFirstObservation.formIntersection(retainedSessionIDs)
+        restorationPending.formIntersection(retainedSessionIDs)
         restoredSessionsAwaitingNativeIdentity.formIntersection(retainedSessionIDs)
     }
 

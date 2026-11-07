@@ -246,10 +246,15 @@ state too; only closure removes an identity from restoration evidence.
 A new session can restore the desktop with the most window overlap. At least
 half of the new desktop's windows must overlap. Ties prefer the desktop covered
 most fully, then the newest retirement when carry-over is on, the same display
-UUID, and a fixed session order. Restoring removes superseded copies of that
-desktop. With carry-over off, other screens keep their independent memories.
+UUID, and a fixed session order. Restoring removes copies whose entire window
+set is covered by the current observation. Old membership alone cannot supersede
+another desktop's memory because its windows may have moved. Uncertain copies
+remain in the bounded retirement list. With carry-over off, other screens keep
+their independent memories.
 An empty first observation keeps the restoration opportunity until windows
-arrive or the user chooses a mode or Tabbed arrangement. A shortcut during the
+arrive or the user chooses a mode or Tabbed arrangement. This opportunity is
+separate from the first-observation flag, so later arrivals still receive their
+minimum-size measurement before placement. A shortcut during the
 hold selects the carried mode before interpreting the action. If the native
 observation arrives later, its first matching window observation adopts the
 restored inferred session instead of replacing it with a default.
@@ -261,11 +266,11 @@ session adopts the new display and Space IDs and invalidates its work area, so
 the stored tree fits the new screen. It ends Saved Layout following and discards
 old Tabbed entry frames, committed placements, frame Restore history and Undo
 Apply checkpoints. Every restoration path, including Repair, clears this history.
-Pane ratios, tab
-groups and reinsertion metadata remain. Continuing Tabbed does not capture a new
-entry baseline, so leaving it keeps current frames. Sessions, window identities,
-UUID associations and retired desktops are never persisted. The existing private
-native-desktop observations are unchanged; this adds no permission or dependency.
+Pane ratios, tab groups and reinsertion metadata remain. Continuing Tabbed does
+not capture a new entry baseline, so leaving it keeps current frames. Sessions,
+window identities, UUID associations and retired desktops are never persisted.
+The existing private native-desktop observations are unchanged; this adds no
+permission or dependency.
 
 ## Popup and fixed-size windows
 

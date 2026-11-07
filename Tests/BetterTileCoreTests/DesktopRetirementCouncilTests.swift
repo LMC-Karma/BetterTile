@@ -55,6 +55,39 @@ struct DesktopRetirementCouncilTests {
         #expect(store.retiredSessions.isEmpty)
     }
 
+    @Test(arguments: [false, true], [false, true])
+    func movedWindowDoesNotPruneAnotherRetiredDesktop(carryOver: Bool, destinationFirst: Bool) throws {
+        var store = LayoutSessionStore()
+        let source = activate(&store, old, 1, [a, b, c], uuid: "A", carry: carryOver)
+        store.update(old) { $0.mode = .bento }
+        // The source is inactive when b moves, so its old membership still has b.
+        let destination = activate(&store, old, 2, [b], uuid: "A", carry: carryOver)
+        store.update(old) { $0.mode = .tabbed }
+        store.removeMissingDisplays([], at: 1)
+        let sourceSpace: UInt64 = 11, destinationSpace: UInt64 = 22
+        for isDestination in [destinationFirst, !destinationFirst] {
+            let returned = activate(&store, new, isDestination ? destinationSpace : sourceSpace,
+                isDestination ? [b] : [a, c], uuid: "A", carry: carryOver)
+            #expect(returned.id == (isDestination ? destination.id : source.id))
+            #expect(returned.mode == (isDestination ? .tabbed : .bento))
+        }
+        let sessions = store.allSessions(for: new)
+        #expect(sessions.first { $0.id == source.id }?.mode == .bento)
+        #expect(sessions.first { $0.id == destination.id }?.mode == .tabbed)
+    }
+
+    @Test func anEmptyLookDoesNotMakeLaterArrivalsANewDesktop() {
+        var store = LayoutSessionStore()
+        let empty = store.activate(displayID: old, windowIDs: [], focusedWindowID: nil,
+            defaultMode: .bento, reuseActiveWhenUnmatched: true, nativeSpaceID: .init(rawValue: 1))
+        #expect(empty.wasCreated)
+        let arrival = store.activate(displayID: old, windowIDs: [a, b], focusedWindowID: a,
+            defaultMode: .bento, reuseActiveWhenUnmatched: true, nativeSpaceID: .init(rawValue: 1))
+        #expect(arrival.session.id == empty.session.id)
+        #expect(!arrival.wasCreated)
+        #expect(arrival.previousWindowIDs.isEmpty)
+    }
+
     @Test func overlapTiePrefersTheDesktopCoveredMostFully() {
         var store = LayoutSessionStore()
         _ = activate(&store, old, 1, [a, b, c], uuid: "A", carry: false)
