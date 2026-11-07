@@ -550,7 +550,7 @@ func aTabbedTabCarriedToAManualDesktopSnapsThere(source: CarrySource) async thro
             "A1 never arrived on B: \(String(describing: fixture.session?.tabbedState))")
 }
 
-// MARK: - Round 3: failed drops and failed observations
+// MARK: - Failed drops and failed observations
 
 /// The number of Tabbed Undo steps the model holds, over all sessions.
 @MainActor private func tabbedUndoStepCount(_ model: BetterTileModel) -> Int {
@@ -806,7 +806,7 @@ func aCarriedWindowsFrameOnlyTabbedSnap(writeFails: Bool) async throws {
     }
 }
 
-// MARK: - Round 4: the provisional float ends with its drag on every path
+// MARK: - The provisional float ends with its drag on every path
 
 /// B's stored session, active or not.
 @MainActor private func storedSession(_ fixture: Carry, _ id: DesktopSessionID) -> LayoutSession? {
@@ -1217,7 +1217,7 @@ func aQueuedTabMoveSurvivesAnInvalidatedCarriedDrop(drop: String) async throws {
     #expect(!undone.windowIDs.contains(b2), "Undo restored the closed peer")
 }
 
-// MARK: - Council round 1: degraded recovery and completion ordering
+// MARK: - Degraded recovery and completion ordering
 
 @Test(.appTestApplication, arguments: [CarryDestination.tabbed, .emptyAdaptive]) @MainActor
 func aDegradedCarriedFrameSnapWaitsForRepair(destination: CarryDestination) async throws {
