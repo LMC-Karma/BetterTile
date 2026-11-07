@@ -98,6 +98,20 @@ Tabbed passes these expected frames to the shared divider fitter. The fitter
 matches projected window edges to projected boundaries; its tolerance stays
 unchanged. Logical pane frames and ratios remain precise.
 
+Restore history stores absolute window frames. Before restoring one, the
+coordinator checks its top 22-point strip as an estimate of title-bar access.
+At least 220 square logical points of that strip must intersect one connected
+display's whole frame, including menu-bar and Dock space. This minimum equals
+10 points of width at the full strip height. It preserves reachable overhangs
+regardless of window size while refusing narrower strips. A window whose whole
+strip is smaller than the minimum needs all of its strip on one display.
+Parked, spanning, and oversized windows remain valid. A fully off-screen window
+or a title bar in the gap between offset displays is refused. If disconnecting
+or rearranging displays made that frame unreachable, Restore reports the failure
+without moving the window or consuming its history. A reachable frame on another
+connected display remains valid. Restore does not infer new coordinates from a
+changed arrangement.
+
 ## Snap Zones
 
 Snap Zones settings keeps zone selection directly below the diagram, followed
