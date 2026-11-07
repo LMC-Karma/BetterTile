@@ -132,6 +132,9 @@ final class BetterTileModel {
     private let coordinator: WindowCoordinator
     private let store: ConfigurationStore
     private let shortcuts: GlobalShortcutMonitor
+#if BETTERTILE_TEST_HOOKS
+    var dragSnapForTesting: DragSnapController { dragSnap }
+#endif
     private let dragSnap: DragSnapController
     private let titleBarDoubleClick: TitleBarDoubleClickController
     private let linkedResize: LinkedResizeController
@@ -597,7 +600,8 @@ final class BetterTileModel {
         shortcutMonitor: GlobalShortcutMonitor? = nil,
         gestureEvents: SharedGestureEventMonitor? = nil,
         clock: BetterTileClock = .live,
-        uptime: (@MainActor () -> TimeInterval)? = nil
+        uptime: (@MainActor () -> TimeInterval)? = nil,
+        layoutWheelFactory: (BetterTileConfiguration) -> LayoutWheelController = { LayoutWheelController(configuration: $0) }
     ) {
         self.store = store
         self.clock = clock
@@ -644,7 +648,7 @@ final class BetterTileModel {
         )
         titleBarDoubleClick.applicationRules = loaded.applicationRules
         linkedResize = LinkedResizeController(coordinator: coordinator, configuration: loaded)
-        layoutWheel = LayoutWheelController(configuration: loaded)
+        layoutWheel = layoutWheelFactory(loaded)
         sharedGestureEvents = gestureEvents ?? SharedGestureEventMonitor()
         dividerResize = DividerOverlayController(coordinator: coordinator, configuration: loaded)
         layoutWheel.suspend()
@@ -3151,10 +3155,10 @@ final class BetterTileModel {
     private func applyRuntimeConfiguration(_ changes: ConfigurationChangeSet) {
         let interval = Self.signposter.beginInterval("applyConfiguration")
         defer { Self.signposter.endInterval("applyConfiguration", interval) }
-        if !changes.isDisjoint(with: [.snapping, .bentoGeometry, .applicationRules, .overlayAppearance]) {
+        if !changes.isDisjoint(with: [.snapping, .bentoGeometry, .applicationRules, .overlayAppearance, .overlayCapture]) {
             dragSnap.configuration = configuration
         }
-        if !changes.isDisjoint(with: [.layoutWheel, .overlayAppearance]) {
+        if !changes.isDisjoint(with: [.layoutWheel, .overlayAppearance, .overlayCapture]) {
             layoutWheel.configuration = configuration
         }
         if !changes.isDisjoint(with: [.linkedResize, .applicationRules]) {
@@ -3165,6 +3169,9 @@ final class BetterTileModel {
         }
         if !changes.isDisjoint(with: [.divider, .bentoGeometry, .overlayAppearance]) {
             dividerResize.configuration = configuration
+        }
+        if changes.contains(.overlayCapture) {
+            allTabbedOverlays.forEach { $0.showsOverlaysInScreenRecordings = configuration.showsOverlaysInScreenRecordings }
         }
         if changes.contains(.overlayAppearance) {
             allTabbedOverlays.forEach { $0.overlayAppearance = configuration.overlayAppearance }
@@ -7055,6 +7062,7 @@ extension BetterTileModel {
         overlay.acceptsTabDrags = !isTabbedBusy(on: display.id)
         overlay.dividerIsDragging = { [weak self] in self?.dividerResize.isDragging == true }
         overlay.overlayAppearance = configuration.overlayAppearance
+        overlay.showsOverlaysInScreenRecordings = configuration.showsOverlaysInScreenRecordings
         let sessionID = session.id
         overlay.onChooserVisibilityChange = { [weak self] in self?.syncSharedGestureMonitoring() }
         overlay.onAddApplication = { [weak self, weak overlay] paneID, view, rect in

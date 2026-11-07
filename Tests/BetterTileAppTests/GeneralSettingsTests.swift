@@ -168,7 +168,7 @@ import Testing
     nonisolated static let snapshotDirectory = ProcessInfo.processInfo.environment["BT_SNAPSHOT_DIR"]
 
     enum State: String, CaseIterable {
-        case normal, accessibilityFirstRequest, accessibilityPromptDismissed, menuBarIconOff, loginNeedsApproval
+        case normal, accessibilityFirstRequest, accessibilityPromptDismissed, menuBarIconOff, loginNeedsApproval, overlayCaptureOn
     }
 
     struct Variant: CustomTestStringConvertible {
@@ -202,6 +202,8 @@ import Testing
             model.updateConfiguration { $0.showMenuBarIcon = false }
         case .loginNeedsApproval:
             launch = FakeLaunchAtLogin(.needsApproval)
+        case .overlayCaptureOn:
+            model.updateConfiguration { $0.showsOverlaysInScreenRecordings = true }
         }
         let page = SettingsTestFactory.makeGeneralSettingsPage(
             model: model, openSetup: {}, search: "", openShortcuts: {}, openSnapZones: {}, launchAtLogin: launch
@@ -269,5 +271,54 @@ import Testing
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         let data = try #require(bitmap.representation(using: .png, properties: [:]))
         try data.write(to: folder.appendingPathComponent(name + ".png"))
+    }
+}
+
+@MainActor @Suite(.appTestApplication, .serialized, .settingsUI) struct GeneralOverlayCaptureSettingsTests {
+    @Test func captureToggleWritesConfigurationAndReflectsExternalChanges() async throws {
+        let model = makeOffscreenModel(system: FakeAppWindowSystem())
+        defer { model.shutdown() }
+        let page = SettingsTestFactory.makeGeneralSettingsPage(
+            model: model, openSetup: {}, search: "", openShortcuts: {}, openSnapZones: {},
+            launchAtLogin: FakeLaunchAtLogin(.off)
+        )
+        let host = try SettingsSnapshotHost(page, dark: false, width: 770, height: 2400)
+        defer { host.close() }
+        func switches(_ view: NSView) -> [NSSwitch] {
+            ((view as? NSSwitch).map { [$0] } ?? []) + view.subviews.flatMap(switches)
+        }
+        func captureToggle() -> NSSwitch? {
+            // Startup orders Launch at login, menu bar icon, Dock icon, then capture.
+            // Like the Launch at login tests above, address the native switches by
+            // their page position; SwiftUI owns the row's separate title element.
+            let ordered = switches(host.view).sorted {
+                $0.convert($0.bounds, to: nil).minY > $1.convert($1.bounds, to: nil).minY
+            }
+            return ordered.count >= 4 ? ordered[3] : nil
+        }
+        try await waitForSettingsUI("the capture toggle", in: host.view) { captureToggle() != nil }
+        let toggle = try #require(captureToggle())
+        #expect(toggle.state == .off)
+        toggle.performClick(nil)
+        try await waitForSettingsUI("capture enabled", in: host.view) {
+            model.configuration.showsOverlaysInScreenRecordings && toggle.state == .on
+        }
+        toggle.performClick(nil)
+        try await waitForSettingsUI("capture disabled", in: host.view) {
+            !model.configuration.showsOverlaysInScreenRecordings && toggle.state == .off
+        }
+        model.updateConfiguration { $0.showsOverlaysInScreenRecordings = true }
+        try await waitForSettingsUI("the external capture change", in: host.view) { toggle.state == .on }
+    }
+
+    @Test func startupResetRestoresCaptureDefault() {
+        let model = makeOffscreenModel(system: FakeAppWindowSystem())
+        defer { model.shutdown() }
+        let icon = AppIconStyle.defaultStyle.rawValue
+        model.updateConfiguration { $0.showsOverlaysInScreenRecordings = true }
+        #expect(!GeneralSettings.startupIsAtDefault(configuration: model.configuration, iconRawValue: icon))
+        #expect(GeneralSettings.resetStartup(model: model, iconRawValue: .constant(icon), applyAppIcon: { _ in true }))
+        #expect(!model.configuration.showsOverlaysInScreenRecordings)
+        #expect(GeneralSettings.startupIsAtDefault(configuration: model.configuration, iconRawValue: icon))
     }
 }

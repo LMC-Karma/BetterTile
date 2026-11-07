@@ -97,6 +97,7 @@ enum WindowExposureRetry {
 public final class DragSnapController {
     public var configuration: BetterTileConfiguration {
         didSet {
+            capturePolicy.showsInRecordings = configuration.showsOverlaysInScreenRecordings
             if !configuration.snappingEnabled {
                 eventTapHandoff.clear()
                 cancel()
@@ -168,6 +169,8 @@ public final class DragSnapController {
     private var presentedTabbedZone: TabbedDropZone?
     private var preview: SnapPreviewPanel?
     private var bentoPreview: BentoDropPreviewController?
+    let capturePolicy: OverlayCapturePolicy
+    private let previewPanelFactory: () -> NSPanel
     private var restoredDragTask: Task<Void, Never>?
     private var pendingRestoredWindowID: WindowID?
     private var pendingStageManagerWindowID: CGWindowID?
@@ -222,10 +225,16 @@ public final class DragSnapController {
         self.init(coordinator: coordinator, configuration: configuration, displayTicks: ResizeDisplayLink(), clock: clock)
     }
 
-    init(coordinator: WindowCoordinator, configuration: BetterTileConfiguration, displayTicks: ResizeDisplayLink, clock: BetterTileClock = .live) {
+    init(coordinator: WindowCoordinator, configuration: BetterTileConfiguration, displayTicks: ResizeDisplayLink,
+         clock: BetterTileClock = .live,
+         previewPanelFactory: @escaping () -> NSPanel = {
+             NSPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: true)
+         }) {
         self.coordinator = coordinator
         self.configuration = configuration
+        self.capturePolicy = OverlayCapturePolicy(showsInRecordings: configuration.showsOverlaysInScreenRecordings)
         self.displayTicks = displayTicks
+        self.previewPanelFactory = previewPanelFactory
         self.clock = clock
     }
 
@@ -1074,7 +1083,7 @@ public final class DragSnapController {
 
     private var activeBentoPreview: BentoDropPreviewController {
         if let bentoPreview { return bentoPreview }
-        let controller = BentoDropPreviewController()
+        let controller = BentoDropPreviewController(capturePolicy: capturePolicy, panelFactory: previewPanelFactory)
         bentoPreview = controller
         return controller
     }
@@ -1087,11 +1096,24 @@ public final class DragSnapController {
         bentoDragDisplayID = nil
     }
 
-    private func showPreview(frame: BTRect, invalid: Bool = false, mainScreenFrame: CGRect) {
-        let panel = preview ?? SnapPreviewPanel()
+    private var activeSnapPreview: SnapPreviewPanel {
+        if let preview { return preview }
+        let panel = SnapPreviewPanel(capturePolicy: capturePolicy, panelFactory: previewPanelFactory)
         preview = panel
-        panel.show(frame: frame, invalid: invalid, mainScreenFrame: mainScreenFrame)
+        return panel
     }
+
+    private func showPreview(frame: BTRect, invalid: Bool = false, mainScreenFrame: CGRect) {
+        activeSnapPreview.show(frame: frame, invalid: invalid, mainScreenFrame: mainScreenFrame)
+    }
+
+#if BETTERTILE_TEST_HOOKS
+    /// Creates the same lazy panels as a drag, without showing a snap preview.
+    func prepareOverlayPanelsForTesting() -> BentoDropPreviewController {
+        _ = activeSnapPreview
+        return activeBentoPreview
+    }
+#endif
 
     private func windowUnderTitleBar(at point: BTPoint) -> WindowSnapshot? {
         let focusedWindow = try? coordinator.system.focusedWindow()
@@ -1197,18 +1219,21 @@ public final class DragSnapController {
 }
 
 @MainActor
-private final class SnapPreviewPanel {
+final class SnapPreviewPanel {
     private let panel: NSPanel
 
-    init() {
-        panel = NSPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: true)
+    init(capturePolicy: OverlayCapturePolicy,
+         panelFactory: () -> NSPanel = {
+             NSPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: true)
+         }) {
+        panel = panelFactory()
         panel.level = .floating
         panel.ignoresMouseEvents = true
         panel.hasShadow = false
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.collectionBehavior = [.moveToActiveSpace, .transient, .ignoresCycle]
-        panel.sharingType = .none
+        capturePolicy.apply(to: panel)
         panel.contentView = PlacementWireframeView()
     }
 
@@ -1256,7 +1281,7 @@ enum BentoPreviewMetrics {
 }
 
 @MainActor
-private final class BentoDropPreviewController {
+final class BentoDropPreviewController {
     private static let signposter = OSSignposter(
         subsystem: "com.lmckarma.BetterTile",
         category: "Overlay"
@@ -1264,15 +1289,24 @@ private final class BentoDropPreviewController {
 
     private let cuePanel: NSPanel
     private let cueView = BentoDropCueView()
-    private let placementPreviews = PlacementWireframeController()
+    private let placementPreviews: PlacementWireframeController
+    private let capturePolicy: OverlayCapturePolicy
+    private let panelFactory: () -> NSPanel
     private var landingPanel: NSPanel?
     private var swapOriginPanel: NSPanel?
     /// The tab insertion line, above the dragged window that covers the strip.
     private var insertionPanel: NSPanel?
     private(set) var showsSnapWireframes = false
 
-    init() {
-        cuePanel = Self.makePanel()
+    init(capturePolicy: OverlayCapturePolicy,
+         panelFactory: @escaping () -> NSPanel = {
+             NSPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: true)
+         }) {
+        self.capturePolicy = capturePolicy
+        self.panelFactory = panelFactory
+        placementPreviews = PlacementWireframeController(capturePolicy: capturePolicy, panelFactory: panelFactory)
+        cuePanel = panelFactory()
+        configure(cuePanel)
         cuePanel.contentView = cueView
     }
 
@@ -1299,7 +1333,7 @@ private final class BentoDropPreviewController {
         )
         cuePanel.orderFrontRegardless()
         if let insertion {
-            let panel = insertionPanel ?? Self.makePanel()
+            let panel = insertionPanel ?? makePanel()
             if insertionPanel == nil { panel.contentView = TabInsertionIndicatorView() }
             insertionPanel = panel
             panel.setFrame(CoordinateConverter.toAppKit(insertion, mainScreenFrame: mainScreenFrame), display: true)
@@ -1372,7 +1406,7 @@ private final class BentoDropPreviewController {
         if let existing = existingPanel {
             panel = existing
         } else {
-            let created = Self.makePanel()
+            let created = makePanel()
             created.contentView = BentoLandingView()
             panel = created
         }
@@ -1388,26 +1422,25 @@ private final class BentoDropPreviewController {
         return panel
     }
 
-    private static func makePanel() -> NSPanel {
-        let panel = NSPanel(
-            contentRect: .zero,
-            styleMask: [.borderless, .nonactivatingPanel],
-            backing: .buffered,
-            defer: true
-        )
+    private func makePanel() -> NSPanel {
+        let panel = panelFactory()
+        configure(panel)
+        return panel
+    }
+
+    private func configure(_ panel: NSPanel) {
         panel.level = .floating
         panel.ignoresMouseEvents = true
         panel.isOpaque = false
         panel.hasShadow = false
         panel.backgroundColor = .clear
         panel.collectionBehavior = [.moveToActiveSpace, .transient, .ignoresCycle]
-        panel.sharingType = .none
-        return panel
+        capturePolicy.apply(to: panel)
     }
 }
 
 @MainActor
-private final class BentoDropCueView: NSView {
+final class BentoDropCueView: NSView {
     enum Phase: Equatable {
         case tracking
         case armed
@@ -1773,13 +1806,16 @@ final class PlacementWireframeController {
     private var destinations: [WindowID: CGRect] = [:]
     private let panelFactory: () -> NSPanel
     private let reduceMotion: () -> Bool
+    private let capturePolicy: OverlayCapturePolicy
     private var wasReducingMotion = false
 
-    init(reduceMotion: @escaping () -> Bool = { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion },
+    init(capturePolicy: OverlayCapturePolicy,
+         reduceMotion: @escaping () -> Bool = { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion },
          panelFactory: @escaping () -> NSPanel = {
              NSPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: true)
          }) {
         self.reduceMotion = reduceMotion
+        self.capturePolicy = capturePolicy
         self.panelFactory = panelFactory
     }
 
@@ -1851,7 +1887,7 @@ final class PlacementWireframeController {
         panel.hasShadow = false
         panel.ignoresMouseEvents = true
         panel.collectionBehavior = [.moveToActiveSpace, .transient, .ignoresCycle]
-        panel.sharingType = .none
+        capturePolicy.apply(to: panel)
         panel.contentView = PlacementWireframeView()
         panels[id] = panel
         return panel

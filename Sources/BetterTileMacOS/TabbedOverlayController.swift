@@ -151,6 +151,10 @@ public final class TabbedOverlayController: NSObject, NSMenuDelegate {
         gallery?.cancel()
         onAddApplication?(paneID, view, rect)
     }
+    public var showsOverlaysInScreenRecordings = false {
+        didSet { galleryCapturePolicy.showsInRecordings = showsOverlaysInScreenRecordings }
+    }
+
     public var overlayAppearance = OverlayAppearance() {
         didSet {
             (curtain?.contentView as? TabbedCurtainView)?.overlayAppearance = overlayAppearance
@@ -228,6 +232,7 @@ public final class TabbedOverlayController: NSObject, NSMenuDelegate {
     private var cancelled = false
     private var canUndo = false
     private(set) var gallery: TabbedLayoutGallery?
+    private let galleryCapturePolicy = OverlayCapturePolicy()
     private let galleryPreview: PlacementWireframeController
     private(set) var previewedGalleryState: TabbedLayoutState?
     private var barVisibility: [UUID: TabbedBarVisibility] = [:]
@@ -649,7 +654,7 @@ public final class TabbedOverlayController: NSObject, NSMenuDelegate {
         self.visibilityClock = visibilityClock
         self.timerClock = timerClock
         self.automaticallyAdvanceVisibility = automaticallyAdvanceVisibility
-        galleryPreview = PlacementWireframeController(panelFactory: panelFactory)
+        galleryPreview = PlacementWireframeController(capturePolicy: galleryCapturePolicy, panelFactory: panelFactory)
         self.primaryButtonIsPressed = primaryButtonIsPressed
         self.pointerLocation = pointerLocation
         self.dragTicks = dragTicks
