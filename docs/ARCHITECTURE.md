@@ -794,6 +794,12 @@ shortcut never acts on a window the user is not looking at.
 
 Bento uses a binary split tree held by each display's runtime `LayoutSession`. Leaves reference currently visible windows and branches carry an axis, normalized weight, and lock state. Closed or hidden windows are removed from the current tree. `BentoResizeEngine` changes branch weights and recursively derives all affected frames, `BentoLayoutFitter` adopts native edge changes, and `BentoBoundaryResolver` exposes only shared segments verified against current window frames.
 
+`AdaptiveRegressionProbeTests` combines arrivals with divider edits, overflow
+admission, work-area changes during settlement, repeated Repair, and display
+round trips. These model checks use the injected clock, compare pane order and
+ratios, and require a quiet interval with no later writes. Their arrival bounds
+describe deterministic scheduling, not live application response times.
+
 `BentoPlanner` places a new window in this order. An explicit **New window
 side**, described below, applies first. Bento holds at most six windows; a
 seventh floats where it is.
