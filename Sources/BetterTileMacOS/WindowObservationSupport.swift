@@ -81,6 +81,12 @@ struct WindowIdentityRegistry {
         )]
     }
 
+    /// Match the launch, not just the PID, so a restarted app cannot claim
+    /// windows retained from its previous process instance.
+    func windowIDs(belongingTo applications: Set<ApplicationLaunchInstance>) -> Set<WindowID> {
+        Set(records.values.filter { applications.contains($0.application) }.map(\.windowID))
+    }
+
     func exactWindowID(for windowID: WindowID) -> CGWindowID? {
         records[windowID]?.exactWindowID
     }

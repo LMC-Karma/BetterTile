@@ -59,7 +59,8 @@ the session. Restoring a valid file and relaunching resumes normal saving.
 `BetterTileClock` in Core wraps Swift's `Clock` protocol with `Duration` and
 monotonic `ContinuousClock.Instant` values. Its live default uses
 `ContinuousClock`. `BetterTileModel` passes its injected clock to
-`WindowCoordinator` and display-refresh debouncing. It drives recovery,
+`WindowCoordinator`, idle observation retries in `DragSnapController`, and
+display-refresh debouncing. It drives recovery,
 window-event scheduling, Space stabilization, settlement, arrival confirmation,
 configuration-save delays, and coordinator retry waits. Arrival dates project
 elapsed monotonic time from one initial wall-clock date.
@@ -68,7 +69,7 @@ elapsed monotonic time from one initial wall-clock date.
 Application responsiveness holds and pane-application deadlines use separate
 uptime callbacks, defaulting to process system uptime. Tests replace these
 callbacks together with the clock so hold expiry and recovery deadlines agree.
-The 10-second watchdog remains a native run-loop timer. DragSnap pointer and
+The 10-second watchdog remains a native run-loop timer. DragSnap hover and
 chooser delays and the pane-application picker retain separate UI timing seams.
 Clock injection does not change the layer dependencies.
 
@@ -155,6 +156,19 @@ Tabbed arrangement. A Bento snap preview shows the planned frame of the dragged
 window, with its gaps, and the frames of the windows that move. The value
 clears when the overlay hides, for example when the pointer leaves the snap
 area, a suppression modifier is held, or Escape cancels the drag.
+
+A window drag waits for observed window movement before it shows a drop.
+If a targeted read is unavailable or still reports the starting frame, display
+ticks retry the latest sample no more than once every 50 ms, for three seconds
+after the newest drag sample or desktop resume. This window covers a two-second
+Accessibility responsiveness hold that starts early in the rest. A hold that
+starts later can outlast the window. The preview then waits for the next drag
+sample, and release still places the window.
+Reads skip applications held as unresponsive. New samples retain display pacing;
+resume evaluates the latest sample at once. Activation stops idle retries unless
+a desktop change needs to resolve the held window again. Release and
+cancellation clear the sample, retry deadlines and gate, so late observations
+cannot restart the gesture.
 
 A drop that cannot apply shows invalid feedback: a red snap frame or a red
 pane cue. It is recorded as a non-committable target with a reason. Release
@@ -418,12 +432,12 @@ interruption receives no further retry.
 
 Display changes stop divider and window gestures without restoring old frames
 inside the hold. Native linked resizing stops too: its queued display tick, the
-rest of the drag and the release resend write nothing. A press that the AppKit
-fallback queued before the hold does not restart it. A press that the shared
-event tap queued just before the hold starts a new resize, like a press during
-the hold. Only a linked resize that left its windows in an unknown arrangement
-keeps a recovery. A resize that starts during the hold is a new explicit action
-and links as usual. Recovery
+rest of the drag and the release resend write nothing. A press queued before
+the hold does not restart it, on either input path. The AppKit fallback
+reinstalls its mouse-down monitor, and the hold restarts the shared event tap,
+so the old delivery generation is dropped. Only a linked resize that left its
+windows in an unknown arrangement keeps a recovery. A resize that starts
+during the hold is a new explicit action and links as usual. Recovery
 checks the session, desktop and window processes again, then uses the current
 work area. Recovery for a Manual desktop writes only the interrupted
 transaction's own windows that started on that display; a window an Apply
@@ -1115,6 +1129,17 @@ cannot meet the minimum sizes, the unbalanced insertion stands, so balancing
 never turns a placement into a failure. A size an application refuses on write
 goes through the same learned-minimum correction as any other Bento placement.
 
+Hidden applications leave the Accessibility inventory. The macOS adapter reports
+`hiddenApplicationWindowIDs` from public application state, matched to the
+current application launch. Adaptive removes panes of hidden applications with
+the same reinsertion anchors used for minimized panes. Their return restores the
+prior positions and ratios even when focus or the new-window side preference
+changed. Floating windows of hidden applications retain their user or overflow
+disposition. Focus-covered peers keep Focus's existing exclusion and minimize
+policy when their application is hidden in the same pass. Confirmed closure
+still removes a pane permanently. Unknown absence keeps its existing
+corroboration policy. This adds no AX reads, permissions, or persisted data.
+
 Each reinsertion anchor stores a neighbor, an edge, and the tree from just
 before the minimize. Restoring several windows rebuilds the largest stored
 tree. A drop, swap, partition, Layout Wheel command, or divider move clears
@@ -1133,10 +1158,14 @@ eligible peer or a confirmed closure satisfies the wait before its deadline. A
 peer still minimized or unread when the wait ends leaves the tree like any
 minimized window: the available windows fill the display, and the peer's
 reinsertion anchor keeps the previous tree for its return. Confirmed closures
-remove their panes permanently. A rejected layout restore suspends
-automatic placement until Repair. Background sweeps retain membership without
-moving windows while the wait owns that session. A newer layout action cancels
-the wait.
+remove their panes permanently. A rejected layout restore suspends automatic
+placement until Repair. Background sweeps retain represented panes, floats and
+the covered Focus peers without moving windows while the wait owns that
+session. Unplaced arrivals stay outside committed membership so they remain
+eligible for the guarded minimum-size probe. A newer layout action cancels the
+wait. After a committed or stale restore, an ordinary topology pass measures
+arrivals before their first placement without waiting for another notification.
+Rejected or degraded restores leave them unprobed and unmoved until Repair.
 
 Keyboard and captured Layout Wheel partitions use the same peer-return wait.
 When all peers are visible, the partition runs synchronously. Otherwise it

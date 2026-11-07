@@ -12,6 +12,8 @@ protocol BetterTileWindowSystem: TargetedWindowSystem, WindowEventSource, Window
     var enhancedUserInterfacePolicy: EnhancedUserInterfacePolicy { get set }
     var leavesSpaceForDock: Bool { get set }
     var unresponsiveApplicationRecoveryDeadlines: [Int32: TimeInterval] { get }
+    /// Known identities owned by currently hidden application launches.
+    var hiddenApplicationWindowIDs: Set<WindowID> { get }
     func visibleWindows(recoveringApplicationPIDs: inout Set<Int32>) throws -> [WindowSnapshot]
     func cachedVisibleWindows(refreshing ids: Set<WindowID>) throws -> [WindowSnapshot]?
     func nativeDesktopObservation() -> NativeDesktopObservation?
@@ -43,6 +45,7 @@ extension AccessibilityWindowSystem: BetterTileWindowSystem {}
 
 extension BetterTileWindowSystem {
     var unresponsiveApplicationRecoveryDeadlines: [Int32: TimeInterval] { [:] }
+    var hiddenApplicationWindowIDs: Set<WindowID> { [] }
     var unreadOnScreenWindowIDs: Set<WindowID> { [] }
     func displayArrangement() -> DisplayArrangement { DisplayArrangement(displays()) }
     func restoreEnhancedUserInterfaceBeforeQuit() {}
@@ -633,7 +636,7 @@ final class BetterTileModel {
         system = windowSystem
         coordinator = WindowCoordinator(system: windowSystem, clock: clock)
         shortcuts = shortcutMonitor ?? GlobalShortcutMonitor { _ in }
-        dragSnap = DragSnapController(coordinator: coordinator, configuration: loaded)
+        dragSnap = DragSnapController(coordinator: coordinator, configuration: loaded, clock: clock)
         titleBarDoubleClick = TitleBarDoubleClickController(
             coordinator: coordinator,
             isEnabled: loaded.doubleClickTitleBarToMaximize
@@ -3436,6 +3439,7 @@ final class BetterTileModel {
         if event == .sessionResigned { displayChangeWorkspaceIsActive = false }
         if event == .sessionBecameActive { displayChangeWorkspaceIsActive = true }
         if !isHoldingDisplayChange { displayHoldHasOtherCause = false }
+        let tokenBefore = displayChangeHold.token
         let arrangement = system.displayArrangement()
         switch event {
         case .screenParametersChanged:
@@ -3473,7 +3477,8 @@ final class BetterTileModel {
         }
         if displayChangeScreenIsLocked() {
             displayChangeScreenWasLocked = true
-            startDisplayChangeHold(.sessionResigned)
+            // A hold start earlier in this call already restarted the event tap.
+            startDisplayChangeHold(.sessionResigned, restartsEventTap: displayChangeHold.token == tokenBefore)
         }
     }
 
@@ -3507,7 +3512,7 @@ final class BetterTileModel {
         finishDisplayChangeHold(windows: try? observeVisibleWindows())
     }
 
-    private func startDisplayChangeHold(_ event: DisplayChangeHold.Event) {
+    private func startDisplayChangeHold(_ event: DisplayChangeHold.Event, restartsEventTap: Bool = true) {
         if !isHoldingDisplayChange {
             displayChangeExpectedWindows = nil
             heldDisplayArrangement = system.displayArrangement()
@@ -3516,7 +3521,13 @@ final class BetterTileModel {
         if event == .sessionResigned { displayChangeLastLockCheck = displayChangeTime }
         displayChangeHold.receive(event, at: displayChangeTime)
         displayChangeUserOverrides.removeAll()
+        // A press the shared event tap received before this hold can still wait
+        // in its main-queue delivery. Restarting the tap retires that generation,
+        // so the old press is dropped; a new press reaches the new generation.
+        let restartsEventTap = restartsEventTap && sharedGestureEvents.isUsingEventTap
+        if restartsEventTap { sharedGestureEvents.stop() }
         interruptGesturesForDisplayChange()
+        if restartsEventTap { setUsesSharedGestureEvents(sharedGestureEvents.start()) }
         if displayChangeExpectedWindows == nil,
            [.sleep, .wake, .sessionResigned, .sessionBecameActive].contains(event) {
             captureDisplayChangeExpectedWindows()
@@ -4787,6 +4798,7 @@ final class BetterTileModel {
                    paneGap: session.paneGap(configured: paneGapForLayout),
                    confirmedGone: confirmedGoneWindowIDs,
                    minimized: confirmedMinimizedWindowIDs,
+                   hiddenApplicationWindowIDs: system.hiddenApplicationWindowIDs,
                    knownSpaceWindowIDs: knownSpaceWindowIDs,
                    heldWindowIDs: heldWindowIDs(among: knownSpaceWindowIDs),
                    onScreenWindowIDs: system.unreadOnScreenWindowIDs,
@@ -5153,10 +5165,26 @@ final class BetterTileModel {
                     // Commit the returned peers as members too, so a divider drag
                     // or Maximize right after the restore includes them.
                     restored.windowIDs.formUnion(displayWindows.map(\.id))
-                    self.restoreBentoLayout(
+                    // Sweeps can observe arrivals while this wait owns the
+                    // layout. Keep unplaced windows out of committed membership
+                    // so the next pass measures them before their first write.
+                    let represented = Set(restored.bentoState.root?.windowIDs ?? [])
+                        .union(restored.bentoState.floatingWindowIDs)
+                    let arrivals = Set(self.bentoEligible(windows.filter {
+                        $0.displayID == display.id && $0.isEligible && !$0.isFloating
+                    }).map(\.id)).subtracting(represented)
+                    restored.windowIDs.subtract(arrivals)
+                    let result = self.restoreBentoLayout(
                         session: restored, displayWindows: displayWindows, display: display,
                         suspendOnRejection: true
                     )
+                    // Measure arrivals in the next actor turn, after Focus releases
+                    // ownership. A stale transaction already schedules its own
+                    // retry; this only starts it sooner.
+                    if !arrivals.isEmpty, result == .committed || result == .stale {
+                        self.pendingWindowEvents.recordTopologyChange()
+                        self.schedulePendingWindowEvents(expeditesArrival: true)
+                    }
                     if let afterRestore {
                         self.focusRestores.removeValue(forKey: display.id)
                         afterRestore()
@@ -6091,8 +6119,15 @@ final class BetterTileModel {
             }
             #endif
             if focusRestoreSessionIDs.contains(activation.session.id) {
+                var waiting = activation.session
+                let represented = Set(waiting.bentoState.root?.windowIDs ?? [])
+                    .union(waiting.bentoState.floatingWindowIDs)
+                    .union(focusRestores[display.id]?.session.excludedFocusWindowIDs ?? [])
+                // Preserve known peers even while they are unread or minimized.
+                // New arrivals remain unmeasured if Restore later goes stale.
+                waiting.windowIDs = represented
                 let committed = sessionStore.commit(
-                    activation.session,
+                    waiting,
                     replacing: activation.session.revision
                 ) != nil
                 sweepCommitted = sweepCommitted && committed
@@ -6189,6 +6224,7 @@ final class BetterTileModel {
                     requestsRelayout: relayoutPaneGap,
                     confirmedGone: consumedDestroyedWindowIDs,
                     confirmedMinimized: consumedMinimizedWindowIDs,
+                    hiddenApplicationWindowIDs: system.hiddenApplicationWindowIDs,
                     knownSpaceWindowIDs: knownSpaceWindowIDs,
                     heldWindowIDs: heldWindowIDs(among: knownSpaceWindowIDs),
                     onScreenWindowIDs: system.unreadOnScreenWindowIDs,
@@ -6457,6 +6493,7 @@ final class BetterTileModel {
             paneGap: session.paneGap(configured: paneGapForLayout),
             confirmedGone: confirmedGone,
             minimized: minimized.union(confirmedMinimizedWindowIDs),
+            hiddenApplicationWindowIDs: system.hiddenApplicationWindowIDs,
             knownSpaceWindowIDs: knownSpaceWindowIDs,
             heldWindowIDs: heldWindowIDs(among: knownSpaceWindowIDs),
             onScreenWindowIDs: system.unreadOnScreenWindowIDs,
