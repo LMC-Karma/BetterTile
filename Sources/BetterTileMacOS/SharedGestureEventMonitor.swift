@@ -438,6 +438,14 @@ final class GestureEventTapWorker: GestureEventTapWorking, @unchecked Sendable {
     private var runLoop: CFRunLoop?
     private var tap: CFMachPort?
     private var isStopping = false
+    /// Test seams. Production uses the session event tap.
+    var makePort: (() -> CFMachPort?)?
+    var setPortEnabled: ((CFMachPort, Bool) -> Void)?
+    var portIsEnabled: ((CFMachPort) -> Bool)?
+    /// Runs on the tap thread just before it enters its run loop.
+    var willEnterRunLoop: (() -> Void)?
+    /// Runs on the tap thread after it has released its tap.
+    var didExit: (() -> Void)?
 
     init(handler: @escaping @Sendable (GestureEventTapMessage) -> Void) {
         self.handler = handler
@@ -458,7 +466,29 @@ final class GestureEventTapWorker: GestureEventTapWorking, @unchecked Sendable {
             isStopping = true
             return self.runLoop
         }
-        if let runLoop { CFRunLoopStop(runLoop) }
+        guard let runLoop else { return }
+        // `CFRunLoopStop` does nothing before the thread enters its run loop.
+        // A performed block waits for the run loop, so this stop is not lost.
+        CFRunLoopPerformBlock(runLoop, CFRunLoopMode.defaultMode.rawValue) {
+            CFRunLoopStop(CFRunLoopGetCurrent())
+        }
+        CFRunLoopWakeUp(runLoop)
+        CFRunLoopStop(runLoop)
+    }
+
+    private func setEnabled(_ tap: CFMachPort, _ enabled: Bool) {
+        if let setPortEnabled { setPortEnabled(tap, enabled) } else { CGEvent.tapEnable(tap: tap, enable: enabled) }
+    }
+
+    private func isEnabled(_ tap: CFMachPort) -> Bool {
+        portIsEnabled?(tap) ?? CGEvent.tapIsEnabled(tap: tap)
+    }
+
+    /// Disables and releases the tap, so a finished thread leaves no tap behind.
+    private func release(_ tap: CFMachPort, source: CFRunLoopSource, from runLoop: CFRunLoop) {
+        setEnabled(tap, false)
+        CFRunLoopRemoveSource(runLoop, source, .defaultMode)
+        CFMachPortInvalidate(tap)
     }
 
     private func fallBack() {
@@ -468,31 +498,32 @@ final class GestureEventTapWorker: GestureEventTapWorking, @unchecked Sendable {
 
     private func recoverTap() -> Bool {
         guard let tap = lock.withLock({ self.tap }) else { return false }
-        CGEvent.tapEnable(tap: tap, enable: true)
-        return CGEvent.tapIsEnabled(tap: tap)
+        setEnabled(tap, true)
+        return isEnabled(tap)
     }
 
     private func run(ready: DispatchSemaphore) {
-        guard let tap = CGEvent.tapCreate(
+        defer { didExit?() }
+        guard let tap = makePort?() ?? CGEvent.tapCreate(
             tap: .cgSessionEventTap,
             place: .headInsertEventTap,
             options: .listenOnly,
             eventsOfInterest: Self.eventMask,
             callback: Self.callback,
             userInfo: Unmanaged.passUnretained(self).toOpaque()
-        ) else {
+        ), let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0) else {
             ready.signal()
             return
         }
-        let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
-        let runLoop = CFRunLoopGetCurrent()
+        let runLoop: CFRunLoop = CFRunLoopGetCurrent()
         lock.withLock {
             self.tap = tap
             self.runLoop = runLoop
         }
         CFRunLoopAddSource(runLoop, source, .defaultMode)
-        CGEvent.tapEnable(tap: tap, enable: true)
-        guard CGEvent.tapIsEnabled(tap: tap) else {
+        setEnabled(tap, true)
+        guard isEnabled(tap) else {
+            release(tap, source: source, from: runLoop)
             lock.withLock {
                 self.tap = nil
                 self.runLoop = nil
@@ -501,8 +532,11 @@ final class GestureEventTapWorker: GestureEventTapWorking, @unchecked Sendable {
             return
         }
         ready.signal()
-        CFRunLoopRun()
-        CFMachPortInvalidate(tap)
+        willEnterRunLoop?()
+        // A stop that came before the run loop starts is also queued on it;
+        // checking here avoids entering the run loop at all.
+        if !lock.withLock({ isStopping }) { CFRunLoopRun() }
+        release(tap, source: source, from: runLoop)
         let stoppedUnexpectedly = lock.withLock {
             let stoppedUnexpectedly = !isStopping
             self.tap = nil
