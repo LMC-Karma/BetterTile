@@ -60,7 +60,7 @@ func displayHoldSavedApplyRestoresTreeAndTilesArrival(automatic: Bool) async thr
     system.windows.append(arrival)
     system.eventHandler?(.init(kind: .created, windowID: arrival.id, processIdentifier: 45))
     await system.advance(by: .seconds(2))
-    try #require(await system.waitFor { model.windowEventTask == nil && model.settlementTasks.isEmpty })
+    try await adaptiveSettled(model, system)
     #expect(system.frameWriteCounts[arrival.id, default: 0] > 0)
     #expect(try sessionStore(of: model).session(for: system.mainDisplay.id)?.bentoState.root?.windowIDs.contains(arrival.id) == true)
 }
