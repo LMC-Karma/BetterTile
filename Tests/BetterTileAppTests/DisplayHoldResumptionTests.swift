@@ -23,6 +23,10 @@ func displayHoldSavedApplyRestoresTreeAndTilesArrival(automatic: Bool) async thr
     defer { model.shutdown() }
     model.setActiveMode(.bento)
     await system.advance(by: .seconds(1))
+    // Apply refuses a desktop that still settles, so it would write nothing to interrupt.
+    // The settlement registers each 40 ms sample wait off the main actor; `advance` can
+    // reach its own deadline first and return before settlement ends. Wait for it.
+    try #require(await system.waitFor { model.windowEventTask == nil && model.settlementTasks.isEmpty })
     let frames = system.windows.map(\.frame)
     let before = system.frameWriteCounts
     let applier = try #require(model.savedLayoutApplier)
