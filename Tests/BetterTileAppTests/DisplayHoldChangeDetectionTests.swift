@@ -21,6 +21,7 @@ func aScreenNotificationWithoutADisplayChangeDoesNotDelayACloseFill() async thro
     defer { model.shutdown() }
     model.setActiveMode(.bento)
     await system.advance(by: .seconds(1))
+    try await adaptiveSettled(model, system)
     let survivor = system.windows[0].id
     try #require(system.windows.allSatisfy { $0.frame.size.width < 600 })
 

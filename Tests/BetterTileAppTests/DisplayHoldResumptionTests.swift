@@ -12,6 +12,14 @@ import Testing
     })
 }
 
+/// Waits until the initial Adaptive placement has settled. Its settlement samples on
+/// 40 ms clock waits that register off the main actor, so `advance` can reach its own
+/// deadline first and return while settlement still runs. An action then meets a
+/// desktop that is still settling.
+@MainActor func adaptiveSettled(_ model: BetterTileModel, _ system: FakeAppWindowSystem) async throws {
+    try #require(await system.waitFor { model.windowEventTask == nil && model.settlementTasks.isEmpty })
+}
+
 @Test(.appTestApplication, arguments: [false, true]) @MainActor
 func displayHoldSavedApplyRestoresTreeAndTilesArrival(automatic: Bool) async throws {
     let system = makeManualWindowSystem(drivingPolicyDeadlines: true)
@@ -23,6 +31,8 @@ func displayHoldSavedApplyRestoresTreeAndTilesArrival(automatic: Bool) async thr
     defer { model.shutdown() }
     model.setActiveMode(.bento)
     await system.advance(by: .seconds(1))
+    // Apply refuses a desktop that still settles, so it would write nothing to interrupt.
+    try await adaptiveSettled(model, system)
     let frames = system.windows.map(\.frame)
     let before = system.frameWriteCounts
     let applier = try #require(model.savedLayoutApplier)
@@ -50,7 +60,7 @@ func displayHoldSavedApplyRestoresTreeAndTilesArrival(automatic: Bool) async thr
     system.windows.append(arrival)
     system.eventHandler?(.init(kind: .created, windowID: arrival.id, processIdentifier: 45))
     await system.advance(by: .seconds(2))
-    try #require(await system.waitFor { model.windowEventTask == nil && model.settlementTasks.isEmpty })
+    try await adaptiveSettled(model, system)
     #expect(system.frameWriteCounts[arrival.id, default: 0] > 0)
     #expect(try sessionStore(of: model).session(for: system.mainDisplay.id)?.bentoState.root?.windowIDs.contains(arrival.id) == true)
 }
@@ -109,6 +119,7 @@ func displayHoldDefersAdaptiveDragRestoration(escape: Bool) async throws {
     defer { model.shutdown() }
     model.setActiveMode(.bento)
     await system.advance(by: .seconds(1))
+    try await adaptiveSettled(model, system)
     let source = system.windows[0].id
     let baseline = system.windows[0].frame
     try #require(model.beginBentoDrag(displayID: system.mainDisplay.id, sourceID: source))
@@ -149,6 +160,7 @@ func displayHoldDebounceKeepsANewerDividerGesture() async throws {
     model.dividerResize.configuration = model.configuration
     model.setActiveMode(.bento)
     await system.advance(by: .seconds(1))
+    try await adaptiveSettled(model, system)
     let state = try #require(sessionStore(of: model).session(for: display)?.bentoState)
     let boundaries = BentoBoundaryResolver().boundaries(state: state, windows: system.windows, displayID: display, bounds: bounds)
     let boundary = try #require(boundaries.first)
@@ -292,6 +304,7 @@ func displayHoldDragRecoveryDoesNotCrossDesktopOwners() async throws {
     defer { model.shutdown() }
     model.setActiveMode(.bento)
     await system.advance(by: .seconds(1))
+    try await adaptiveSettled(model, system)
     try #require(model.beginBentoDrag(displayID: display, sourceID: source))
     system.windows[0].frame.origin.x += 130
     model.handleDisplayReconfiguration(.beginConfigurationFlag)
@@ -314,6 +327,7 @@ func displayHoldRecoveryYieldsToANewerGesture() async throws {
     defer { model.shutdown() }
     model.setActiveMode(.bento)
     await system.advance(by: .seconds(1))
+    try await adaptiveSettled(model, system)
     let display = system.mainDisplay.id, source = system.windows[0].id
     try #require(model.beginBentoDrag(displayID: display, sourceID: source))
     system.windows[0].frame.origin.x += 130
