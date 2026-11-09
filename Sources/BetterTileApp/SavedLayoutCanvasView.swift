@@ -1075,10 +1075,21 @@ final class SavedLayoutStageAnchorView: NSView {
 }
 
 /// A small picture of a layout: panes or window rectangles inside a radius-8 frame.
+/// Settings uses the default style. The menu bar picker uses `.menu`, which fits an app icon in every pane.
 struct SavedLayoutThumbnail: View {
+    enum Style { case settings, menu }
+
     let document: SavedLayoutDocument
+    var style: Style = .settings
 
     var body: some View {
+        switch style {
+        case .settings: settingsBody
+        case .menu: SavedLayoutMenuThumbnail(document: document)
+        }
+    }
+
+    @ViewBuilder private var settingsBody: some View {
         let icons = Dictionary(uniqueKeysWithValues: Set(document.slots.flatMap { $0.prefer.compactMap { preference -> String? in if case let .app(id) = preference { id } else { nil } } }).map { id in
             let icon = NSWorkspace.shared.urlForApplication(withBundleIdentifier: id)
                 .map { NSWorkspace.shared.icon(forFile: $0.path) }
