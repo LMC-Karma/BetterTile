@@ -13,6 +13,7 @@
 		B2A000000000000000000021 /* AppGroupResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2A000000000000000000022 /* AppGroupResolver.swift */; };
 		B2A000000000000000000011 /* AppGroupsStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2A000000000000000000012 /* AppGroupsStore.swift */; };
 		C62610000000000000000003 /* SavedLayoutAnywhereViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = C62610000000000000000004 /* SavedLayoutAnywhereViews.swift */; };
+		C6261AA00000000000000001 /* SavedLayoutMenuThumbnail.swift in Sources */ = {isa = PBXBuildFile; fileRef = C6261AA00000000000000002 /* SavedLayoutMenuThumbnail.swift */; };
 		C62610000000000000000001 /* SavedLayoutActions.swift in Sources */ = {isa = PBXBuildFile; fileRef = C62610000000000000000002 /* SavedLayoutActions.swift */; };
 		F52900000000000000000001 /* SavedLayoutFileWatcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = F52900000000000000000002 /* SavedLayoutFileWatcher.swift */; };
 		E7B9BA700000000000000003 /* SavedLayoutPositions.swift in Sources */ = {isa = PBXBuildFile; fileRef = E7B9BA700000000000000004 /* SavedLayoutPositions.swift */; };
@@ -74,6 +75,7 @@
 		B2A000000000000000000022 /* AppGroupResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppGroupResolver.swift; sourceTree = "<group>"; };
 		B2A000000000000000000012 /* AppGroupsStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppGroupsStore.swift; sourceTree = "<group>"; };
 		C62610000000000000000004 /* SavedLayoutAnywhereViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SavedLayoutAnywhereViews.swift; sourceTree = "<group>"; };
+		C6261AA00000000000000002 /* SavedLayoutMenuThumbnail.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SavedLayoutMenuThumbnail.swift; sourceTree = "<group>"; };
 		C62610000000000000000002 /* SavedLayoutActions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SavedLayoutActions.swift; sourceTree = "<group>"; };
 		F52900000000000000000002 /* SavedLayoutFileWatcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SavedLayoutFileWatcher.swift; sourceTree = "<group>"; };
 		E7B9BA700000000000000004 /* SavedLayoutPositions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SavedLayoutPositions.swift; sourceTree = "<group>"; };
@@ -192,6 +194,7 @@
 				C62610000000000000000002 /* SavedLayoutActions.swift */,
 				F52900000000000000000002 /* SavedLayoutFileWatcher.swift */,
 				C62610000000000000000004 /* SavedLayoutAnywhereViews.swift */,
+				C6261AA00000000000000002 /* SavedLayoutMenuThumbnail.swift */,
 				E7B9BA700000000000000004 /* SavedLayoutPositions.swift */,
 				E7B9BA700000000000000002 /* SavedLayoutPagePlan.swift */,
 				200000000000000000000024 /* SavedLayoutEditor.swift */,
@@ -339,6 +342,7 @@
 				C62610000000000000000001 /* SavedLayoutActions.swift in Sources */,
 				F52900000000000000000001 /* SavedLayoutFileWatcher.swift in Sources */,
 				C62610000000000000000003 /* SavedLayoutAnywhereViews.swift in Sources */,
+				C6261AA00000000000000001 /* SavedLayoutMenuThumbnail.swift in Sources */,
 				E7B9BA700000000000000003 /* SavedLayoutPositions.swift in Sources */,
 				E7B9BA700000000000000001 /* SavedLayoutPagePlan.swift in Sources */,
 				100000000000000000000024 /* SavedLayoutEditor.swift in Sources */,

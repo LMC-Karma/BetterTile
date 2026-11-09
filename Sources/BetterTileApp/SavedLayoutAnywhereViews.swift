@@ -102,7 +102,8 @@ struct SavedLayoutPanelSection: View {
                             ForEach(model.savedLayoutActions.menuEntries) { entry in
                                 Button { _ = model.applySavedLayoutAction(entry.file) } label: {
                                     HStack(spacing: 9) {
-                                        SavedLayoutThumbnail(document: entry.document).frame(width: 36, height: 27)
+                                        SavedLayoutThumbnail(document: entry.document, style: .menu)
+                                            .frame(width: SavedLayoutMenuThumbnailMetrics.size.width, height: SavedLayoutMenuThumbnailMetrics.size.height)
                                         VStack(alignment: .leading, spacing: 2) {
                                             Text(entry.name).lineLimit(1)
                                             Text(SavedLayoutQuickCapture.subtitle(for: entry.document, appNames: model.savedLayoutActions.applicationNames))
@@ -111,13 +112,14 @@ struct SavedLayoutPanelSection: View {
                                         Spacer(minLength: 4)
                                         ShortcutLabel(shortcut: model.savedLayoutActions.store.settings(for: entry.file).shortcut, emptyLabel: "", size: 11)
                                             .foregroundStyle(.secondary)
-                                    }.padding(.vertical, 7).frame(height: 53).contentShape(Rectangle())
+                                    }.padding(.vertical, SavedLayoutMenuThumbnailMetrics.rowVerticalPadding)
+                                    .frame(height: SavedLayoutMenuThumbnailMetrics.rowHeight).contentShape(Rectangle())
                                 }
                                 .buttonStyle(.plain).disabled(model.savedLayoutApplier?.isBusy == true || !model.hasAccessibilityPermission)
                                 .help("Applies on the focused app window’s screen, even when this panel is on another screen.")
                             }
                         }
-                    }.frame(height: CGFloat(min(4, model.savedLayoutActions.menuEntries.count)) * 53)
+                    }.frame(height: CGFloat(min(4, model.savedLayoutActions.menuEntries.count)) * SavedLayoutMenuThumbnailMetrics.rowHeight)
                 }
                 SavedLayoutPanelRun(model: model)
                 if let message = model.savedLayoutActions.message {
