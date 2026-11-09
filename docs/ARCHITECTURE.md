@@ -2772,8 +2772,9 @@ shorter side, from 8 to 20 pt; a pane too small for 8 pt shows no icon.
 `SavedLayoutMenuIconCache` holds only the icons that the pictures draw, as 16, 20,
 32 and 40 px bitmaps. It is a least-recently-used cache of at most 64 icons. Its
 key is the app's bundle URL, the bundle's modification date and the light or dark
-appearance. Each time a picture is built, it asks LaunchServices for the URL again, so an updated app gets
-a new icon and an uninstalled app gets none and leaves no entry. Settings pictures
+appearance. Each time a picture is built, it asks LaunchServices for the URL again,
+so a replaced app bundle gets a new icon, and an uninstalled app gets none and
+leaves no entry. Settings pictures
 fetch icons without this cache and are unchanged.
 
 ## Security
