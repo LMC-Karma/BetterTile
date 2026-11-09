@@ -2764,6 +2764,18 @@ category release commits nothing. More release opens a native chooser through a
 separate navigation callback. Hover checks cached library data and captured target/session provenance, without
 an Accessibility read; release resolves focus again and enters the existing applier.
 
+The menu bar panel draws each layout with the menu style of `SavedLayoutThumbnail`,
+a 56×42 pt picture in a 56 pt row. It fills each pane and draws its icon in pane
+order, as the Settings picture does, so a later window or float covers the icons
+below it. Each pane shows the icon of its first preference at 70% of the pane's
+shorter side, from 8 to 20 pt; a pane too small for 8 pt shows no icon.
+`SavedLayoutMenuIconCache` holds only the icons that the pictures draw, as 16, 20,
+32 and 40 px bitmaps. It is a least-recently-used cache of at most 64 icons. Its
+key is the app's bundle URL, the bundle's modification date and the light or dark
+appearance. Each time a picture is built, it asks LaunchServices for the URL again, so an updated app gets
+a new icon and an uninstalled app gets none and leaves no entry. Settings pictures
+fetch icons without this cache and are unchanged.
+
 ## Security
 
 Only Accessibility permission is required. BetterTile does not inject code or disable SIP. Public Apple APIs are preferred; any private API integration requires the design review, approval, fallback, testing, and disclosure defined in [SECURITY.md](../SECURITY.md).

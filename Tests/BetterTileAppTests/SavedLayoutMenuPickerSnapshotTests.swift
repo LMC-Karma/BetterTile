@@ -7,7 +7,7 @@ import Testing
 
 /// Renders the menu panel's Saved Layouts picker offscreen. Set `BT_SNAPSHOT_DIR` to keep the PNGs.
 @Suite(.appTestApplication, .serialized, .settingsUI) @MainActor struct SavedLayoutMenuPickerSnapshotTests {
-    static let documents: [SavedLayoutDocument] = [
+    nonisolated static let documents: [SavedLayoutDocument] = [
         .init(name: "Writing", mode: .bento,
               layout: .split(axis: .vertical, ratios: [0.5, 0.5], children: [.slot("a"), .slot("b")]),
               slots: [.init(id: "a", bundleID: "com.apple.Safari"), .init(id: "b", bundleID: "com.apple.Notes")]),
@@ -47,6 +47,7 @@ import Testing
             .frame(width: size.width, height: size.height, alignment: .top)
             .background(Color(nsColor: .windowBackgroundColor))
             .environment(\.colorScheme, dark ? .dark : .light)
+            .environment(\.savedLayoutMenuIcons, SavedLayoutMenuThumbnailTests.paletteCache())
         let host = NSHostingView(rootView: content)
         host.frame = NSRect(origin: .zero, size: size); host.appearance = appearance
         // A plain host: cacheDisplay draws the panel glass's vibrant text dark in Dark Mode.
@@ -64,10 +65,43 @@ import Testing
             colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0))
         bitmap.size = size
         root.cacheDisplay(in: root.bounds, to: bitmap)
-        #expect(bitmap.pixelsWide == Int(size.width) * scale)
+        #expect(bitmap.pixelsWide == Int(size.width) * scale && bitmap.pixelsHigh == Int(size.height) * scale)
+        expectIcons(in: bitmap, scale: CGFloat(scale))
         if let output = ProcessInfo.processInfo.environment["BT_SNAPSHOT_DIR"] {
             try #require(bitmap.representation(using: .png, properties: [:])).write(
                 to: URL(filePath: output).appending(path: "menu-saved-layouts-\(dark ? "dark" : "light")-\(scale)x.png"))
+        }
+    }
+
+    /// Each solid-colour test icon appears at its expected size, only in the picture column of the rows.
+    private func expectIcons(in bitmap: NSBitmapImageRep, scale: CGFloat) {
+        typealias Metrics = SavedLayoutMenuThumbnailMetrics
+        var expected: [String: (low: CGFloat, high: CGFloat)] = [:]
+        for document in Self.documents {
+            for placement in Metrics.iconPlacements(of: document, in: Metrics.canvasSize) {
+                guard case let .app(id) = placement.preference else { continue }
+                let side = placement.rect.width * scale
+                expected[id, default: (0, 0)].low += max(0, side - 2) * max(0, side - 2)
+                expected[id, default: (0, 0)].high += (side + 1) * (side + 1)
+            }
+        }
+        let palette = SavedLayoutMenuThumbnailTests.palette
+        let column = (MenuPanelMetrics.padding + Metrics.padding) * scale...(MenuPanelMetrics.padding + Metrics.size.width - Metrics.padding) * scale
+        var counts: [String: CGFloat] = [:]
+        var outside = 0
+        for y in 0..<bitmap.pixelsHigh {
+            for x in 0..<bitmap.pixelsWide {
+                let color = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.sRGB)
+                guard let id = palette.first(where: { SavedLayoutMenuThumbnailTests.matches(color, $0.value) })?.key else { continue }
+                counts[id, default: 0] += 1
+                if !column.contains(CGFloat(x)) { outside += 1 }
+            }
+        }
+        #expect(outside == 0, "Icon pixels outside the picture column")
+        #expect(Set(counts.keys) == Set(expected.keys))
+        for (id, range) in expected {
+            let count = counts[id] ?? 0
+            #expect(count >= range.low && count <= range.high, "\(id): \(count) px, expected \(range.low)–\(range.high)")
         }
     }
 }
