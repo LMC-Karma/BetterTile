@@ -54,6 +54,95 @@ struct SettingsLazyListTests {
         #expect(coordinator.displayed == saved)
     }
 
+    /// The catalogue lists every group in its own order, whatever order the menu has, and a search
+    /// filters the lower groups too, not only the groups a lazy stack has built.
+    @Test func menuCatalogueKeepsGroupOrderAndSearchesEveryGroup() throws {
+        let all = MenuActionCatalogue.groups(search: "")
+        #expect(all.map(\.group) == WindowActionGroup.allCases)
+        #expect(all.flatMap(\.actions) == WindowActionGroup.flattenedActions)
+
+        let lastGroup = try #require(WindowActionGroup.allCases.last)
+        let lastAction = try #require(lastGroup.actions.last)
+        let found = MenuActionCatalogue.groups(search: "  \(lastAction.title)  ")
+        #expect(found.contains { $0.group == lastGroup && $0.actions.contains(lastAction) })
+        for query in [lastAction.title, "display", "third"] {
+            let shown = MenuActionCatalogue.groups(search: query)
+            let expected = WindowActionGroup.allCases.flatMap { group in
+                group.actions.filter { $0.title.localizedStandardContains(query) || group.title.localizedStandardContains(query) }
+            }
+            #expect(shown.flatMap(\.actions) == expected, "query \(query)")
+            #expect(shown.allSatisfy { !$0.actions.isEmpty })
+        }
+        let byGroup = MenuActionCatalogue.groups(search: lastGroup.title)
+        #expect(byGroup.first { $0.group == lastGroup }?.actions == lastGroup.actions)
+        #expect(MenuActionCatalogue.groups(search: "unmatched-action-query").isEmpty)
+    }
+
+    /// A checkbox adds its action at the end of the menu and removes it in place. Reordering the menu
+    /// changes neither the catalogue order nor which actions are checked.
+    @Test func menuCatalogueSelectionKeepsTheMenuOrder() throws {
+        let reordered = Array(WindowAction.menuBarDefaultOrder.reversed())
+        let lower = try #require(WindowActionGroup.allCases.last?.actions.first { !reordered.contains($0) })
+        let added = try #require(MenuActionCatalogue.setting(lower, visible: true, in: reordered))
+        #expect(added == reordered + [lower])
+        #expect(MenuActionCatalogue.setting(lower, visible: true, in: added) == nil)
+        let middle = reordered[reordered.count / 2]
+        let removed = try #require(MenuActionCatalogue.setting(middle, visible: false, in: added))
+        #expect(removed == added.filter { $0 != middle })
+        #expect(MenuActionCatalogue.groups(search: "").flatMap(\.actions) == WindowActionGroup.flattenedActions)
+    }
+
+    /// The catalogue builds rows near the viewport only. Scrolling builds the lowest group, and menu
+    /// reorder and selection edits keep the catalogue's scroll position and height.
+    @Test func menuCatalogueBuildsLowerGroupsWhenTheyScrollIntoView() async throws {
+        let model = makeModel(system: FakeAppWindowSystem())
+        defer { model.shutdown() }
+        let host = try SettingsSnapshotHost(MenuBarSettings(model: model), dark: false, width: 1000, height: 900, fitHeight: false)
+        defer { host.close() }
+        func scrollViews(_ view: NSView) -> [NSScrollView] {
+            ((view as? NSScrollView).map { [$0] } ?? []) + view.subviews.flatMap(scrollViews)
+        }
+        try await waitForSettingsUI("the action catalogue", in: host.view) {
+            scrollViews(host.view).contains { $0.frame.height == 600 && ($0.documentView?.frame.height ?? 0) > 1200 }
+        }
+        let catalogue = try #require(scrollViews(host.view).first { $0.frame.height == 600 })
+        let document = try #require(catalogue.documentView)
+        try #require(document.isFlipped)
+        // SwiftUI draws each row's text in its own layer; a row that was never built has none.
+        func lowestText() throws -> CGFloat {
+            let root = try #require(document.layer)
+            var lowest: CGFloat = 0
+            func visit(_ layer: CALayer) {
+                if String(describing: type(of: layer)) == "CGDrawingLayer" {
+                    lowest = max(lowest, layer.convert(layer.bounds, to: root).maxY)
+                }
+                layer.sublayers?.forEach(visit)
+            }
+            visit(root)
+            return lowest
+        }
+        #expect(try lowestText() < document.visibleRect.maxY + catalogue.frame.height)
+
+        document.scroll(NSPoint(x: 0, y: document.frame.height - catalogue.frame.height))
+        try await waitForSettingsUI("the lowest catalogue group", in: host.view) {
+            (try? lowestText()).map { $0 > document.frame.height - 40 } ?? false
+                && document.visibleRect.maxY >= document.frame.height - 1
+        }
+        let origin = document.visibleRect.origin
+        let height = document.frame.height
+
+        let lower = try #require(WindowActionGroup.allCases.last?.actions.first { !model.configuration.menuBarActions.contains($0) })
+        let reordered = Array(model.configuration.menuBarActions.reversed())
+        model.updateConfiguration { $0.menuBarActions = reordered }
+        try await settle(host.view)
+        model.updateConfiguration { $0.menuBarActions = MenuActionCatalogue.setting(lower, visible: true, in: $0.menuBarActions)! }
+        try await settle(host.view)
+        #expect(model.configuration.menuBarActions == reordered + [lower])
+        #expect(document.visibleRect.origin == origin)
+        #expect(document.frame.height == height)
+        #expect(try lowestText() > document.frame.height - 40)
+    }
+
     private func settle(_ view: NSView) async throws {
         var previous: NSRect?
         try await waitForSettingsUI("stable native list geometry", in: view) {
