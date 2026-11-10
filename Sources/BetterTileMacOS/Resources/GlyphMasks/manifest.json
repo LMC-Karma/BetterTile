@@ -10916,7 +10916,7 @@
     "build" : "26A434",
     "macOS" : "27.0.1",
     "sampling" : "N=20; most frequent final RGBA; lexicographic byte tie break; exact set membership",
-    "toolchain" : "swift-driver version: 1.168.6 Apple Swift version 6.4 (swiftlang-6.4.0.34.1 clang-2100.3.34.1)\nTarget: arm64-apple-macosx27.0.0"
+    "toolchain" : "swift-driver version: 1.168.6 Apple Swift version 6.4.2 (swiftlang-6.4.2.1.9 clang-2100.4.1.1)\nTarget: arm64-apple-macosx27.0.0"
   },
   "sources" : {
     "Sources/BetterTileCore/LayoutGlyph.swift" : "aa3c6f17e4070efee9b0d35b48115f62421b5852d17d6b629ceea20ed8433332",
