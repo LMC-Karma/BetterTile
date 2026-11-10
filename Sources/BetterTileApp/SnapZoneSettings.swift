@@ -9,6 +9,8 @@ import SwiftUI
 
 struct ZoneSettings: View {
     @Bindable var model: BetterTileModel
+    @Environment(\.displayScale) private var glyphDisplayScale
+    @Environment(\.colorScheme) private var glyphColorScheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var selectedArea: SnapArea = .topLeft
     @State private var showsCustomActivation: Bool
@@ -76,7 +78,8 @@ struct ZoneSettings: View {
                     Picker("Action for \(selectedArea.title)", selection: snapActionBinding(selectedArea)) {
                         Label("Disabled", systemImage: "minus.rectangle").tag(nil as WindowAction?)
                         ForEach(WindowAction.snapAssignableActions) { action in
-                            Label { Text(action.title) } icon: { WindowActionGlyph.image(for: action) }
+                            Label { Text(action.title) } icon: { WindowActionGlyph.image(for: action, scale: glyphDisplayScale,
+                                appearance: glyphColorScheme == .dark ? .dark : .light) }
                                 .tag(Optional(action))
                         }
                     }

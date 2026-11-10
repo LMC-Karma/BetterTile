@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		C6A600000000000000000001 /* WindowActionGlyphCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = C6A600000000000000000002 /* WindowActionGlyphCache.swift */; };
 		B3A000000000000000000021 /* SavedLayoutPreferences.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A000000000000000000022 /* SavedLayoutPreferences.swift */; };
 		B3A000000000000000000011 /* SavedLayoutTransfer.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A000000000000000000012 /* SavedLayoutTransfer.swift */; };
 		B3B000000000000000000001 /* AppGroupsSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3B000000000000000000002 /* AppGroupsSection.swift */; };
@@ -69,6 +70,7 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		C6A600000000000000000002 /* WindowActionGlyphCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowActionGlyphCache.swift; sourceTree = "<group>"; };
 		B3A000000000000000000022 /* SavedLayoutPreferences.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SavedLayoutPreferences.swift; sourceTree = "<group>"; };
 		B3A000000000000000000012 /* SavedLayoutTransfer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SavedLayoutTransfer.swift; sourceTree = "<group>"; };
 		B3B000000000000000000002 /* AppGroupsSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppGroupsSection.swift; sourceTree = "<group>"; };
@@ -169,6 +171,7 @@
 			isa = PBXGroup;
 			children = (
 				200000000000000000000001 /* BetterTileApp.swift */,
+				C6A600000000000000000002 /* WindowActionGlyphCache.swift */,
 				200000000000000000000002 /* BetterTileModel.swift */,
 				200000000000000000000003 /* SettingsShell.swift */,
 				5A0A0000000000000000F001 /* SettingsStyle.swift */,
@@ -317,6 +320,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				100000000000000000000001 /* BetterTileApp.swift in Sources */,
+				C6A600000000000000000001 /* WindowActionGlyphCache.swift in Sources */,
 				100000000000000000000002 /* BetterTileModel.swift in Sources */,
 				100000000000000000000003 /* SettingsShell.swift in Sources */,
 				5A0A0000000000000000B001 /* SettingsStyle.swift in Sources */,

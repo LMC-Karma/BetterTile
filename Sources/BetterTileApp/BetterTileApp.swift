@@ -1984,27 +1984,21 @@ private extension View {
 
 struct WindowActionGlyph: View {
     let action: WindowAction
-    private static var images: [WindowAction: NSImage] = [:]
+    @Environment(\.displayScale) private var displayScale
+    @Environment(\.colorScheme) private var colorScheme
 
-    /// A template image also works in AppKit-backed Picker menus, where a
-    /// Canvas label cannot reliably supply an NSMenuItem image.
-    static func image(for action: WindowAction) -> Image {
-        if let cached = images[action] { return Image(nsImage: cached) }
-        let renderer = ImageRenderer(content:
-            LayoutWheelActionGlyph(action: action, tint: .black, fontSize: 20)
-                .frame(width: 30, height: 26)
-        )
-        renderer.scale = 2
-        guard let image = renderer.nsImage else {
-            return Image(systemName: action.layoutWheelSymbolName)
+    /// Keep a concrete Image for AppKit-backed Picker labels. These pixels
+    /// contain final ink and must never receive template colouring.
+    static func image(for action: WindowAction, scale: CGFloat, appearance: GlyphMaskStore.Appearance) -> Image {
+        guard let bitmap = WindowActionGlyphCache.image(for: action, scale: scale, appearance: appearance) else {
+            // Missing bundled artwork stays empty rather than changing symbols.
+            return Image(nsImage: NSImage(size: NSSize(width: 30, height: 26))).renderingMode(.original)
         }
-        image.isTemplate = true
-        images[action] = image
-        return Image(nsImage: image)
+        return Image(decorative: bitmap, scale: scale).renderingMode(.original).interpolation(.none)
     }
 
     var body: some View {
-        Self.image(for: action)
+        Self.image(for: action, scale: displayScale, appearance: colorScheme == .dark ? .dark : .light)
             .frame(width: 30, height: 26)
             .accessibilityHidden(true)
     }
