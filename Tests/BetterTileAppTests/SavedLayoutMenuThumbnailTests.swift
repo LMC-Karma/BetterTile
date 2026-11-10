@@ -297,10 +297,47 @@ import Testing
     @Test(arguments: shapes.indices.map { $0 } + [-1], [false, true])
     func theSettingsPictureIsUnchanged(_ index: Int, dark: Bool) throws {
         let document = index < 0 ? Self.fourColumns : Self.shapes[index].1
-        let current = try Self.pixels(SavedLayoutThumbnail(document: document), dark: dark)
-        let legacy = try Self.pixels(LegacySettingsThumbnail(document: document), dark: dark)
-        #expect(current == legacy)
-        #expect(Set(legacy).count > 8, "The renderer drew the picture, not a blank image.")
+        let pair = try #require(try Self.pairWithSettledIcons(
+            current: { try Self.pixels(SavedLayoutThumbnail(document: document), dark: dark) },
+            legacy: { try Self.pixels(LegacySettingsThumbnail(document: document), dark: dark) }),
+            "The app icons kept changing during every comparison.")
+        #expect(pair.current == pair.legacy)
+        #expect(Set(pair.legacy).count > 8, "The renderer drew the picture, not a blank image.")
+    }
+
+    /// Renders the current picture between two renders of the frozen copy, and returns a pair only when both
+    /// copies match. In its first draws in a process, IconServices replaces an app icon's rendition with a
+    /// slightly different one at a time the test does not control (less than one 8-bit step per channel).
+    /// The renditions only move forward, so a matching pair of copies shows that all three renders drew the
+    /// same icons. A real change in the current picture fails on every attempt.
+    static func pairWithSettledIcons(attempts: Int = 20, current: () throws -> Data,
+                                     legacy: () throws -> Data) throws -> (current: Data, legacy: Data)? {
+        for _ in 0..<attempts {
+            let before = try legacy()
+            let drawn = try current()
+            if try legacy() == before { return (drawn, before) }
+        }
+        return nil
+    }
+
+    @Test func aComparisonWaitsUntilTheIconsStopChanging() throws {
+        // Renditions A, B, C as an app icon settles; each render takes the next one, then the last one stays.
+        var renditions = ["A", "B", "C"]
+        func next() -> Data { Data((renditions.count > 1 ? renditions.removeFirst() : renditions[0]).utf8) }
+        let pair = try #require(try Self.pairWithSettledIcons(current: next, legacy: next))
+        #expect(pair.current == Data("C".utf8) && pair.legacy == Data("C".utf8))
+    }
+
+    @Test func aChangedPictureStillFailsTheComparison() throws {
+        let pair = try #require(try Self.pairWithSettledIcons(current: { Data("new".utf8) }, legacy: { Data("old".utf8) }))
+        #expect(pair.current != pair.legacy)
+    }
+
+    @Test func iconsThatNeverSettleGiveNoComparison() throws {
+        var count = 0
+        let pair = try Self.pairWithSettledIcons(attempts: 3, current: { Data("current".utf8) },
+                                                 legacy: { count += 1; return Data("\(count)".utf8) })
+        #expect(pair == nil && count == 6)
     }
 
     static func pixels(_ view: some View, dark: Bool) throws -> Data {
