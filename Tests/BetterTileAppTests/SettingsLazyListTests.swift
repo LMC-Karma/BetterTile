@@ -95,43 +95,42 @@ struct SettingsLazyListTests {
     /// The catalogue builds rows near the viewport only. Scrolling builds the lowest group, and menu
     /// reorder and selection edits keep the catalogue's scroll position and height.
     @Test func menuCatalogueBuildsLowerGroupsWhenTheyScrollIntoView() async throws {
+        var built: [WindowAction] = []
+        MenuActionCatalogueTestHooks.rowAppeared = { built.append($0) }
+        defer { MenuActionCatalogueTestHooks.rowAppeared = nil }
         let model = makeModel(system: FakeAppWindowSystem())
         defer { model.shutdown() }
         let host = try SettingsSnapshotHost(MenuBarSettings(model: model), dark: false, width: 1000, height: 900, fitHeight: false)
         defer { host.close() }
+        let all = WindowActionGroup.flattenedActions
+        let lowest = try #require(WindowActionGroup.allCases.last?.actions)
         func scrollViews(_ view: NSView) -> [NSScrollView] {
             ((view as? NSScrollView).map { [$0] } ?? []) + view.subviews.flatMap(scrollViews)
         }
-        try await waitForSettingsUI("the action catalogue", in: host.view) {
-            scrollViews(host.view).contains { $0.frame.height == 600 && ($0.documentView?.frame.height ?? 0) > 1200 }
+        // The catalogue is the scroll view with the tallest scrolling document.
+        func catalogue() -> NSScrollView? {
+            scrollViews(host.view).filter { ($0.documentView?.frame.height ?? 0) > $0.frame.height }
+                .max { ($0.documentView?.frame.height ?? 0) < ($1.documentView?.frame.height ?? 0) }
         }
-        let catalogue = try #require(scrollViews(host.view).first { $0.frame.height == 600 })
-        let document = try #require(catalogue.documentView)
+        try await waitForSettingsUI("the first catalogue rows", in: host.view) { !built.isEmpty && catalogue() != nil }
+        try await settle(host.view)
+        let scroll = try #require(catalogue())
+        let document = try #require(scroll.documentView)
         try #require(document.isFlipped)
-        // SwiftUI draws each row's text in its own layer; a row that was never built has none.
-        func lowestText() throws -> CGFloat {
-            let root = try #require(document.layer)
-            var lowest: CGFloat = 0
-            func visit(_ layer: CALayer) {
-                if String(describing: type(of: layer)) == "CGDrawingLayer" {
-                    lowest = max(lowest, layer.convert(layer.bounds, to: root).maxY)
-                }
-                layer.sublayers?.forEach(visit)
-            }
-            visit(root)
-            return lowest
-        }
-        #expect(try lowestText() < document.visibleRect.maxY + catalogue.frame.height)
+        let initial = Set(built)
+        #expect(initial.count < all.count)
+        #expect(initial == Set(all.prefix(initial.count)), "rows are built from the top")
+        #expect(initial.isDisjoint(with: lowest))
 
-        document.scroll(NSPoint(x: 0, y: document.frame.height - catalogue.frame.height))
+        document.scroll(NSPoint(x: 0, y: document.frame.height - scroll.frame.height))
         try await waitForSettingsUI("the lowest catalogue group", in: host.view) {
-            (try? lowestText()).map { $0 > document.frame.height - 40 } ?? false
-                && document.visibleRect.maxY >= document.frame.height - 1
+            Set(built).isSuperset(of: lowest) && document.visibleRect.maxY >= document.frame.height - 1
         }
+        try await settle(host.view)
         let origin = document.visibleRect.origin
         let height = document.frame.height
 
-        let lower = try #require(WindowActionGroup.allCases.last?.actions.first { !model.configuration.menuBarActions.contains($0) })
+        let lower = try #require(lowest.first { !model.configuration.menuBarActions.contains($0) })
         let reordered = Array(model.configuration.menuBarActions.reversed())
         model.updateConfiguration { $0.menuBarActions = reordered }
         try await settle(host.view)
@@ -140,7 +139,6 @@ struct SettingsLazyListTests {
         #expect(model.configuration.menuBarActions == reordered + [lower])
         #expect(document.visibleRect.origin == origin)
         #expect(document.frame.height == height)
-        #expect(try lowestText() > document.frame.height - 40)
     }
 
     private func settle(_ view: NSView) async throws {

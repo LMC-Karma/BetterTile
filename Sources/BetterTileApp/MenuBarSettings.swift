@@ -72,6 +72,23 @@ enum MenuActionCatalogue {
     }
 }
 
+#if BETTERTILE_TEST_HOOKS
+/// Tests observe which catalogue rows the lazy stack builds.
+@MainActor enum MenuActionCatalogueTestHooks {
+    static var rowAppeared: ((WindowAction) -> Void)?
+}
+#endif
+
+private extension View {
+    func catalogueRowTestHook(_ action: WindowAction) -> some View {
+#if BETTERTILE_TEST_HOOKS
+        onAppear { MenuActionCatalogueTestHooks.rowAppeared?(action) }
+#else
+        self
+#endif
+    }
+}
+
 struct MenuBarSettings: View {
     @Bindable var model: BetterTileModel
     @State private var search = ""
@@ -131,6 +148,7 @@ struct MenuBarSettings: View {
                                     .toggleStyle(.checkbox)
                                     .padding(.horizontal, SettingsSpacing.s3)
                                     .frame(minHeight: SettingsMetrics.rowMinHeight)
+                                    .catalogueRowTestHook(action)
                                 }
                             }
                         }

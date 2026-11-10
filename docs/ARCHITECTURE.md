@@ -2512,7 +2512,12 @@ can dispatch a window action. Closing Settings stops the embedded renderer.
 Style pictures use the existing Metal shader, icon images and sprite layout on
 an owned offscreen texture. Settings caches at most eight images, keyed by style
 and theme, and clears them on size changes or window close. No panel, display
-link, retained drawable pool or DEBUG-only API is used. If rendering fails, the
+link, retained drawable pool or DEBUG-only API is used. Each picture is rendered
+at no more than 256 px and keeps its logical size. A full-size picture is 589,
+736 or 884 px for Small, Medium or Large; the cap keeps eight cached pictures to
+about 2 MB instead of up to 25 MB. The 72 pt cards therefore look slightly
+smoother than the previous downscaled full-size render. This visible difference
+was accepted on 2026-11-09. If rendering fails, the
 approximation remains, with the same style description. Legacy Strength is encoded for compatibility but
 is not read by either wheel; the panel fallback uses 0.30.
 

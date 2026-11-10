@@ -349,6 +349,8 @@ import Testing
         }
     }
 
+    static let settingsCardMaximumChannelDelta = 80 // measured 41–60 on macOS 27
+
     @Test(.liquidPipeline) func settingsPicturesPreserveTheCardAtDisplayResolution() throws {
         func card(_ image: NSImage) throws -> CGImage {
             let source = try #require(image.cgImage(forProposedRect: nil, context: nil, hints: nil))
@@ -371,10 +373,15 @@ import Testing
                         maximumPixelDimension: 256)))
                     let lhs = Array(try #require(original.dataProvider?.data) as Data)
                     let rhs = Array(try #require(thumbnail.dataProvider?.data) as Data)
-                    let difference = zip(lhs, rhs).reduce(0.0) { $0 + abs(Double($1.0) - Double($1.1)) } / Double(lhs.count) / 255
-                    print("SETTINGS_CARD_DIFF size=\(size.rawValue) preset=\(preset.rawValue) dark=\(dark) mean=\(difference)")
-                    #expect(difference < 0.02)
+                    let deltas = zip(lhs, rhs).map { abs(Int($0) - Int($1)) }
+                    let mean = Double(deltas.reduce(0, +)) / Double(deltas.count) / 255
+                    let maximum = deltas.max() ?? 0
+                    let measured = "size=\(size.rawValue) preset=\(preset.rawValue) dark=\(dark) mean=\(mean) max=\(maximum)"
+                    // The capped picture was accepted as slightly smoother (2026-11-09): mean 0.24–0.53 %.
+                    #expect(mean < 0.01, "\(measured)")
+                    #expect(maximum <= Self.settingsCardMaximumChannelDelta, "\(measured)")
                     if let directory = ProcessInfo.processInfo.environment["BT_SETTINGS_CARD_QA"] {
+                        print("SETTINGS_CARD_DIFF \(measured)")
                         let folder = URL(filePath: directory)
                         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
                         for (name, image) in [("full", original), ("thumbnail", thumbnail)] {
