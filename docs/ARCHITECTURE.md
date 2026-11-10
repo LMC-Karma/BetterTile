@@ -2380,9 +2380,21 @@ centre label. The sets are:
 
 The store loads a PNG on first use and keeps decoded images in one cache of
 at most 1 MiB. A key that is not in the manifest returns nil. The store never
-renders, resamples or substitutes a symbol. A missing wheel image makes atlas
-preparation fail, so the gesture uses `LayoutWheelPanelPresenter`; a missing
-action glyph shows the action's SF Symbol.
+renders, resamples or substitutes a symbol. The store finds its folder with
+`Bundle.module`. Missing artwork is a packaging fault, and it never fails
+silently:
+
+- A missing resource bundle stops the process in every build, through the
+  accessor that SwiftPM and Xcode generate for `Bundle.module`.
+- An unreadable manifest, or a listed PNG that cannot be loaded or decoded,
+  stops a Debug build with an assertion. A Release build logs a fault
+  (subsystem `com.lmckarma.BetterTile`, category `GlyphMaskStore`) and
+  returns nil.
+- A key that is not in the manifest logs one error and returns nil.
+
+After a nil image, the caller's existing fallback runs: atlas preparation
+fails, so the gesture uses `LayoutWheelPanelPresenter`; a missing action
+glyph shows the action's SF Symbol.
 
 The only renderer is the test-only `GlyphMaskReference`
 (`Tests/BetterTileMacOSTests/GlyphMaskReference.swift`), which calls the
@@ -2398,6 +2410,21 @@ new wheel size or command, or a deliberate move to a newer generator host.
 `Tools/generate-glyph-masks.sh --set menu-glass` refreshes only the template
 set from fresh processes. Hold QUIET and DESKTOP around either command on a
 shared test machine.
+
+The manifest hashes whole files, including product files such as
+`LayoutWheelView.swift`. Any edit to one of them, even one that changes no
+icon, fails the freshness test on every host until the images are
+regenerated. Regenerate safely:
+
+1. Run the script on the generator host: the macOS build, architecture and
+   Swift toolchain in the manifest's `platform` record. There, regeneration
+   keeps every stored PNG that still matches a live render, so an edit that
+   changes no icon changes only the source hashes.
+2. If that host is no longer available, regeneration on another OS build
+   records the new host and replaces every shipped image with that build's
+   output. Treat it as an artwork change: expect changed PNGs in review,
+   compare them by eye, and re-measure `knownCrossOSDifferences` on the
+   macOS 26 CI run.
 
 `GlyphMaskStoreTests` choose a mode from the host and log it in every test:
 
@@ -2418,9 +2445,11 @@ Two SF Symbols draw differently on macOS 26 (build 25G332) than in the macOS
 difference) and the Fine-tuning icon `slider.horizontal.3` (4 keys, up to
 1.02). The bundled images ship on every release by decision, so macOS 26
 users see the macOS 27 icons. `GlyphMaskStoreTests.knownCrossOSDifferences`
-lists those 12 exact keys. In tolerance mode they are checked only for
-decoding, recorded size and ink; their live-render and identity comparisons
-are skipped and logged. Any other key that fails still fails the test.
+lists those 12 exact keys. In tolerance mode on macOS 26 only, they are
+checked only for decoding, recorded size and ink; their live-render and
+identity comparisons are skipped and logged. On any other OS they get the
+full tolerance checks, so a later release cannot inherit the exemption. Any
+other key that fails still fails the test.
 
 `MainWindowActionGlyphTests` in the app tests use the same modes. They draw
 each action site twice with the same view code: once with the template from a

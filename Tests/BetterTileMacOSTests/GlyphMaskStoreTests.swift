@@ -162,6 +162,18 @@ struct GlyphMaskStoreTests {
     ]
     static let knownDifferenceReason = "known macOS 26 symbol difference, user-accepted 2026-11-09"
 
+    /// The exemption was measured on macOS 26 and applies only there.
+    static func knownDifferencesApply(host: [String: String] = GlyphMaskTestHost.current) -> Bool {
+        guard let version: String = host["macOS"],
+              let major: Int = Int(version.split(separator: ".").first ?? "") else { return false }
+        return major == 26
+    }
+
+    /// True when a key gets the reduced checks on this host in tolerance mode.
+    static func isKnownDifference(_ key: String) -> Bool {
+        knownDifferencesApply() && knownCrossOSDifferences.contains(key)
+    }
+
     /// Tolerance mode for a listed key: decode, recorded size and ink rules only.
     static func checkKnownDifference(_ key: String, _ image: CGImage) throws {
         let entry: GlyphMaskStore.Entry = try #require(try GlyphMaskReference.storedManifest().entries[key])
@@ -332,7 +344,7 @@ struct GlyphMaskStoreTests {
             }
             for i in members.indices {
                 if totals[i].0 == 0 { skipped += 1; continue }
-                if !mode.isExact && Self.knownCrossOSDifferences.contains(members[i].key) {
+                if !mode.isExact && Self.isKnownDifference(members[i].key) {
                     print("Glyph mask identity: skipped \(members[i].key): \(Self.knownDifferenceReason)")
                     continue
                 }
@@ -371,6 +383,17 @@ struct GlyphMaskStoreTests {
             #expect(manifest.entries[key] != nil, "\(key) is not a bundled key")
         }
         #expect(Self.knownCrossOSDifferences.count == 12)
+    }
+
+    @Test func knownDifferencesApplyOnlyOnMacOS26() {
+        #expect(Self.knownDifferencesApply(host: ["macOS": "26.6"]))
+        #expect(Self.knownDifferencesApply(host: ["macOS": "26"]))
+        #expect(!Self.knownDifferencesApply(host: ["macOS": "27.0.1"]))
+        #expect(!Self.knownDifferencesApply(host: ["macOS": "25.4"]))
+        #expect(!Self.knownDifferencesApply(host: ["macOS": "126.0"]))
+        #expect(!Self.knownDifferencesApply(host: [:]))
+        let applies: Bool = Self.knownDifferencesApply()
+        print("Glyph mask known differences apply on this host: \(applies) (macOS \(GlyphMaskTestHost.current["macOS"] ?? "unknown"))")
     }
 
     @Test func missingArtworkAndUnsupportedSizesAreExplicit() {
@@ -513,7 +536,7 @@ struct GlyphMaskStoreTests {
             image = try #require(GlyphMaskStore.image(set: set, id: id, pointSize: size, scale: scale, appearance: dark ? .dark : .light))
         }
         guard try GlyphMaskReference.mode().isExact else {
-            if Self.knownCrossOSDifferences.contains(key) {
+            if Self.isKnownDifference(key) {
                 try Self.checkKnownDifference(key, image)
                 return
             }
