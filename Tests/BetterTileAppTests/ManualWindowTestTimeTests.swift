@@ -1,6 +1,7 @@
 import BetterTileCore
 import Testing
 import Dispatch
+import Synchronization
 @testable import BetterTileApp
 
 @Suite(.appTestApplication, .timeLimit(.minutes(1))) @MainActor
@@ -229,4 +230,82 @@ func advanceRunsEveryStepOfAMainActorSamplingLoop() async throws {
         await sampling.value
     }
     #expect(lateIterations.isEmpty, "Samples were skipped in \(lateIterations.count) of 10 iterations: \(lateIterations)")
+}
+
+/// Runs actor jobs on the main queue, like a main-actor task, but can hold them.
+/// A held job models a resumed task that has not yet reached its actor.
+private final class HoldableMainQueueExecutor: SerialExecutor {
+    private let state = Mutex<(holding: Bool, jobs: [UnownedJob])>((false, []))
+
+    func enqueue(_ job: consuming ExecutorJob) {
+        let job = UnownedJob(job)
+        let runsNow = state.withLock { state in
+            if state.holding { state.jobs.append(job) }
+            return !state.holding
+        }
+        if runsNow { schedule(job) }
+    }
+
+    func hold() { state.withLock { $0.holding = true } }
+
+    func release() {
+        let jobs = state.withLock { state in
+            state.holding = false
+            defer { state.jobs = [] }
+            return state.jobs
+        }
+        jobs.forEach(schedule)
+    }
+
+    private func schedule(_ job: UnownedJob) {
+        DispatchQueue.main.async { job.runSynchronously(on: self.asUnownedSerialExecutor()) }
+    }
+
+    func asUnownedSerialExecutor() -> UnownedSerialExecutor { UnownedSerialExecutor(ordinary: self) }
+}
+
+private actor HeldSampler {
+    let executor: HoldableMainQueueExecutor
+    private(set) var samples = 0
+    nonisolated var unownedExecutor: UnownedSerialExecutor { executor.asUnownedSerialExecutor() }
+
+    init(executor: HoldableMainQueueExecutor) { self.executor = executor }
+
+    func sample(_ clock: BetterTileClock, times: Int) async {
+        for _ in 0..<times {
+            try? await clock.sleep(for: .milliseconds(40))
+            samples += 1
+        }
+    }
+}
+
+/// While a sleeper that an advance resumed has not reached its actor, its next
+/// wait does not exist yet. The driver must keep virtual time still until it runs.
+@Test(.appTestApplication, .timeLimit(.minutes(1))) @MainActor
+func advanceWaitsForAResumedSleeperToReachItsActor() async throws {
+    let system = makeManualWindowSystem()
+    let manual = try #require(system.manualClock)
+    let executor = HoldableMainQueueExecutor()
+    let sampler = HeldSampler(executor: executor)
+    let start = manual.now
+    let sampling = Task { await sampler.sample(system.clock, times: 3) }
+    defer { sampling.cancel() }
+    try #require(await manual.waitForSleepers(count: 1, timeout: .seconds(45)))
+    executor.hold()
+    manual.advance(by: .milliseconds(40))
+    #expect(manual.returningSleepCount == 1)
+    let driving = Task { @MainActor in await system.advance(by: .seconds(1)) }
+    for _ in 0..<50 {
+        await withCheckedContinuation { continuation in
+            DispatchQueue.main.async { continuation.resume() }
+        }
+    }
+    #expect(manual.now - start == .milliseconds(40),
+            "The driver advanced while a resumed sleeper was still returning to its actor")
+    executor.release()
+    await driving.value
+    #expect(await sampler.samples == 3)
+    // A skipped step leaves a wait past the advance; cancellation ends it.
+    sampling.cancel()
+    await sampling.value
 }

@@ -39,6 +39,10 @@ public final class ManualClock: Clock, Sendable {
     /// Waits that `advance` resumed but whose callers have not run again yet.
     /// A resumed task reaches its actor later than the driver's next main-queue
     /// turn can run. Until it arrives, that caller's next wait is missing.
+    /// The mark clears on the caller's executor only for a caller that reaches
+    /// this sleep without the generic `Clock` requirement, such as `clock` or a
+    /// direct call. A generic caller, such as `BetterTileClock(self)`, clears it
+    /// on the global executor and can still reach its actor later.
     public var returningSleepCount: Int { state.withLock { $0.returning.count } }
     /// Earliest registered policy wait, excluding reservations and cancelled waits.
     public var nextSleepDeadline: Instant? {
@@ -73,7 +77,9 @@ public final class ManualClock: Clock, Sendable {
             state.sleepers[state.nextID] = Sleeper(deadline: deadline)
             return state.nextID
         }
-        // Runs on the caller's executor after the resumed continuation hops back.
+        // For a nonsending caller, this runs on the caller's executor after the
+        // resumed continuation hops back. A generic `Clock` caller runs it on
+        // the global executor.
         defer { _ = state.withLock { $0.returning.remove(id) } }
         try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in

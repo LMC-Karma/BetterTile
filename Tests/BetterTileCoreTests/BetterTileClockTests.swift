@@ -116,9 +116,13 @@ struct BetterTileClockTests {
         let manual = ManualClock()
         let clock = manual.clock
         let task = Task.immediate { @MainActor in try? await clock.sleep(for: .seconds(1)) }
-        #expect(manual.pendingSleepCount == 1)
+        #expect(manual.pendingSleepCount == 1, "The sleep registered after its task suspended")
         manual.advance(by: .seconds(1))
+        // A late registration reads `now` after this advance and never wakes.
+        // Cancellation ends it either way, so a regression fails instead of hanging.
+        task.cancel()
         await manual.drain(task)
+        #expect(manual.pendingSleepCount == 0)
     }
 
     @Test func anAdvancedSleeperCountsAsReturningUntilItsCallerRuns() async {
