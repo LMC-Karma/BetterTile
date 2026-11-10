@@ -16,11 +16,19 @@ sha=lambda data:hashlib.sha256(data).hexdigest()
 old_files={v['file']:sha((resources/v['file']).read_bytes()) for v in old_entries.values()}
 producer=root/'Tests/BetterTileMacOSTests/GlyphMaskReference.swift'
 (work/'producer.swift').write_text('#sourceLocation(file: '+json.dumps(str(producer))+', line: 1)\n'+producer.read_text())
-products=root/'.build/out/Products/Debug'
+# SwiftPM 6.4 puts BetterTileMacOS.o in the bin folder; 6.3 keeps one object
+# per source file under BetterTileMacOS.build and modules under Modules.
+products=Path(subprocess.check_output(['swift','build','--show-bin-path'],cwd=root,text=True).strip())
+def objects(target):
+ single=products/(target+'.o')
+ if single.exists():return [str(single)]
+ found=sorted(str(p) for p in (products/(target+'.build')).glob('*.o'))
+ if not found:raise SystemExit('No objects for '+target+' in '+str(products)+'; run swift build first.')
+ return found
 exe=work/'glyph-mask-process'
 frameworks=Path(subprocess.check_output(['xcode-select','-p'],text=True).strip())/'Platforms/MacOSX.platform/Developer/Library/Frameworks'
 sdk=subprocess.check_output(['xcrun','--sdk','macosx','--show-sdk-path'],text=True).strip()
-cmd=['swiftc','-sdk',sdk,'-swift-version','6','-parse-as-library','-enable-testing','-DBETTERTILE_TEST_HOOKS','-Xfrontend','-load-plugin-library','-Xfrontend',str(frameworks.parents[4]/'Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/host/plugins/testing/libTestingMacros.dylib'),'-I',str(products),'-F',str(frameworks),'-Xlinker','-rpath','-Xlinker',str(frameworks),str(work/'producer.swift'),str(root/'Tests/BetterTileMacOSTests/MenuGlassGlyphReference.swift'),str(root/'Tools/glyph-mask-process.swift'),str(products/'BetterTileMacOS.o'),str(products/'BetterTileCore.o'),'-framework','AppKit','-framework','ApplicationServices','-framework','Carbon','-framework','ColorSync','-o',str(exe)]
+cmd=['swiftc','-sdk',sdk,'-swift-version','6','-parse-as-library','-enable-testing','-DBETTERTILE_TEST_HOOKS','-Xfrontend','-load-plugin-library','-Xfrontend',str(frameworks.parents[4]/'Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/host/plugins/testing/libTestingMacros.dylib'),'-I',str(products),'-I',str(products/'Modules'),'-F',str(frameworks),'-Xlinker','-rpath','-Xlinker',str(frameworks),str(work/'producer.swift'),str(root/'Tests/BetterTileMacOSTests/MenuGlassGlyphReference.swift'),str(root/'Tools/glyph-mask-process.swift'),*objects('BetterTileMacOS'),*objects('BetterTileCore'),'-framework','AppKit','-framework','ApplicationServices','-framework','Carbon','-framework','ColorSync','-o',str(exe)]
 with (work/'compile.log').open('w') as log:subprocess.run(cmd,stdout=log,stderr=subprocess.STDOUT,check=True)
 env=os.environ.copy();env['PACKAGE_RESOURCE_BUNDLE_PATH']=str(products)
 all_cases={};pids=[]

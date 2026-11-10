@@ -172,8 +172,11 @@ struct LayoutWheelLiquidStyle: Equatable {
     }
 
     /// The package resource bundle with `default.metallib`, found where
-    /// SwiftPM's own accessor looks. Unlike `Bundle.module`, a missing bundle
-    /// returns nil instead of stopping the app, so the native wheel remains.
+    /// SwiftPM's own accessor looks. Only this shader lookup stays non-fatal:
+    /// it returns nil, `prepare()` fails with `.shaderBundleMissing`, and the
+    /// panel wheel serves the session. A missing bundle is still a packaging
+    /// fault: `GlyphMaskStore` reaches it through `Bundle.module`, which stops
+    /// the process.
     private static var shaderBundle: Bundle? {
         let name = "BetterTile_BetterTileMacOS.bundle"
         var places = [Bundle.main.resourceURL, Bundle(for: LayoutWheelLiquidPipeline.self).resourceURL,
