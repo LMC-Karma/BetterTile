@@ -80,7 +80,7 @@ struct MenuBarSettings: View {
             .background(SettingsColor.fill, in: .settings(SettingsRadius.control))
 
             ScrollView {
-                VStack(alignment: .leading, spacing: SettingsSpacing.s4) {
+                LazyVStack(alignment: .leading, spacing: SettingsSpacing.s4) {
                     ForEach(WindowActionGroup.allCases) { group in
                         let actions = group.actions.filter { matchesSearch($0, in: group) }
                         if !actions.isEmpty {
