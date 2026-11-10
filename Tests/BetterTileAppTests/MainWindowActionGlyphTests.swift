@@ -1,6 +1,7 @@
 import AppKit
 import BetterTileCore
 @testable import BetterTileMacOS
+import BetterTileTestSupport
 import SwiftUI
 import Testing
 @testable import BetterTileApp
@@ -43,6 +44,24 @@ enum WindowActionGlyphSite: String, CaseIterable, Sendable, CustomStringConverti
 
 @MainActor @Suite(.appTestApplication, .serialized)
 struct MainWindowActionGlyphTests {
+    /// Main's live template matches the bundled bytes only on the host that
+    /// generated them. Elsewhere, CI included, compare within the limits of
+    /// GlyphRasterDifference. See docs/ARCHITECTURE.md, "Layout Wheel glyph masks".
+    static func mode(_ test: String) throws -> GlyphMaskTestMode {
+        let directory = try #require(GlyphMaskStore.resourceDirectory)
+        let manifest = try JSONDecoder().decode(GlyphMaskStore.Manifest.self,
+                                                from: Data(contentsOf: directory.appending(path: "manifest.json")))
+        let mode = GlyphMaskTestMode.current(generator: manifest.platform)
+        mode.log(test)
+        return mode
+    }
+
+    /// The closest of several references, measured with the tolerance metric.
+    static func nearest(_ actual: [UInt8], _ references: [[UInt8]], width: Int, height: Int) -> GlyphRasterDifference? {
+        references.map { GlyphRasterDifference(actual, width: width, height: height, $0, width: width, height: height) }
+            .min { $0.inkDifference < $1.inkDifference }
+    }
+
     struct Case: CustomStringConvertible {
         let action: WindowAction
         let scale: Int
@@ -69,6 +88,8 @@ struct MainWindowActionGlyphTests {
     }
 
     @Test func bundledTemplateIsMainsTemplateObjectForEveryAction() throws {
+        let mode = try Self.mode("menuTemplate")
+        var worst: GlyphRasterDifference?
         for action in WindowAction.allCases {
             WindowActionGlyphCache.templates[action] = nil
             let candidate = try #require(WindowActionGlyphCache.template(for: action))
@@ -78,17 +99,39 @@ struct MainWindowActionGlyphTests {
             #expect(candidate.size == main.size && candidate.size == NSSize(width: 30, height: 26))
             #expect(candidate.representations.map(\.pixelsWide) == main.representations.map(\.pixelsWide))
             #expect(candidate.representations.map(\.pixelsHigh) == main.representations.map(\.pixelsHigh))
-            let bytes = Data(try Self.coverage(candidate))
-            #expect(try MainWindowActionGlyphSamples.templates(for: action)[bytes] != nil,
-                    "\(action): bundled 2x template must equal one of main's rendered templates")
+            let bytes = try Self.coverage(candidate)
+            let references = try MainWindowActionGlyphSamples.templates(for: action)
+            if mode.isExact {
+                #expect(references[Data(bytes)] != nil,
+                        "\(action): bundled 2x template must equal one of main's rendered templates")
+            } else {
+                let difference = try #require(Self.nearest(bytes, references.keys.map { Array($0) }, width: 60, height: 52))
+                if worst.map({ difference.inkDifference > $0.inkDifference }) ?? true { worst = difference }
+                #expect(difference.isWithinLimits, "\(action): \(difference)")
+            }
         }
+        if let worst { print("Window action glyph tolerance test=menuTemplate worst=\(worst)") }
+    }
+
+    /// The disabled and highlighted sites must tint differently from the
+    /// plain site; otherwise their parity proves nothing about those states.
+    @Test func disabledAndHighlightedSitesChangeTheTint() throws {
+        let pairs: [(WindowActionGlyphSite, WindowActionGlyphSite)] = [(.menuPanel, .menuPanelDisabled),
+            (.settingsButton, .settingsButtonDisabled), (.pickerItem, .pickerItemDisabled), (.pickerItem, .pickerItemHighlighted)]
+        for sample in Case.all where sample.action == .leftHalf {
+            for (plain, state) in pairs {
+                #expect(try Self.render(plain, sample) != Self.render(state, sample), "\(state) \(sample)")
+            }
+        }
+        WindowActionGlyphCache.templates[.leftHalf] = nil
     }
 
     /// Each site draws the same view code twice. Only the cached template
     /// object differs: main's rendered image, then the bundled image.
     @Test(arguments: WindowActionGlyphSite.allCases)
     func everySiteDrawsMainsPixels(_ site: WindowActionGlyphSite) throws {
-        var matched = 0, failures: [String] = []
+        let mode = try Self.mode("site-\(site)")
+        var matched = 0, failures: [String] = [], worst: GlyphRasterDifference?
         for sample in Case.all {
             try autoreleasepool {
                 let references = try MainWindowActionGlyphSamples.templates(for: sample.action)
@@ -105,12 +148,35 @@ struct MainWindowActionGlyphTests {
                 empty.isTemplate = true
                 WindowActionGlyphCache.templates[sample.action] = empty
                 #expect(Data(try Self.render(site, sample)) != actual, "\(site) \(sample) does not show the glyph")
-                if expected.contains(actual) { matched += 1 } else { failures.append(sample.description) }
+                if mode.isExact {
+                    if expected.contains(actual) { matched += 1 } else { failures.append(sample.description) }
+                } else {
+                    let size = try Self.size(site, sample)
+                    let difference = try #require(Self.nearest(Array(actual), expected.map { Array($0) },
+                                                               width: size.width, height: size.height))
+                    if worst.map({ difference.inkDifference > $0.inkDifference }) ?? true { worst = difference }
+                    if difference.isWithinLimits { matched += 1 } else { failures.append("\(sample): \(difference)") }
+                }
             }
             WindowActionGlyphCache.templates[sample.action] = nil
         }
-        print("Window action glyph site=\(site) exact=\(matched)/\(Case.all.count)")
+        print("Window action glyph site=\(site) \(mode.isExact ? "exact" : "withinTolerance")=\(matched)/\(Case.all.count)"
+              + (worst.map { " worst=\($0)" } ?? ""))
         #expect(matched == 164, "\(site): \(failures.prefix(8))")
+    }
+
+    /// The pixel size of a site render; every render of one site and case has it.
+    static func size(_ site: WindowActionGlyphSite, _ sample: Case) throws -> (width: Int, height: Int) {
+        let previous = NSApp.appearance
+        defer { NSApp.appearance = previous }
+        var image: CGImage?
+        let appearance = try #require(NSAppearance(named: sample.dark ? .darkAqua : .aqua))
+        NSApp.appearance = appearance
+        appearance.performAsCurrentDrawingAppearance {
+            image = site.isAppKit ? appKit(site, sample, appearance: appearance) : swiftUI(site, sample)
+        }
+        let bitmap = try #require(image)
+        return (bitmap.width, bitmap.height)
     }
 
     static func render(_ site: WindowActionGlyphSite, _ sample: Case) throws -> [UInt8] {
@@ -141,7 +207,9 @@ struct MainWindowActionGlyphTests {
                 .frame(minWidth: 145, alignment: .leading)
             }
             .buttonStyle(.plain)
-            .disabled(site == .settingsButtonDisabled))
+            // The view modifier `disabled` sets this value. The timing guard
+            // reads that spelling as a test trait, so set it directly.
+            .environment(\.isEnabled, site != .settingsButtonDisabled))
         }
         let renderer = ImageRenderer(content: content
             .environment(\.colorScheme, sample.dark ? .dark : .light)

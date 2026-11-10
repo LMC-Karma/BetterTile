@@ -2167,10 +2167,14 @@ Cancel replaces native glass with opaque shapes before shrinking the whole
 presentation. Reduce Motion snaps presentation channels and exits immediately.
 The renderer owns no command callback, window observation or mutation path.
 
-`LayoutWheelController` selects the liquid presenter at launch through
-`LayoutWheelPresenting`. Only the Metal pipeline prepares at launch and on
-configuration changes while closed. Icons, names, the atlas and hidden panel
-prepare when the trigger hold starts, within the existing 220 ms hold. An open
+`LayoutWheelController` reaches the liquid presenter through
+`DeferredLayoutWheelPresenter`, a `LayoutWheelPresenting` wrapper. When a mouse
+trigger is on, the wrapper creates the liquid presenter at launch, and only the
+Metal pipeline prepares at launch and on configuration changes while closed.
+With only a keyboard trigger, the wrapper creates the presenter at the start
+of the first hold and replays the latest warm-up inputs, capture visibility
+and failure handler into it. Icons, names, the atlas and hidden panel prepare
+when the trigger hold starts, within the existing 220 ms hold. An open
 wheel refreshes changed drawing content and appearance in place. Every cancelled hold releases its drawables. Opening uses the
 captured pointer and the content's full fan extent when clamping to the display.
 Missing Metal or shaders, allocation failure during preparation, and open failure
@@ -2368,12 +2372,17 @@ centre label. The sets are:
   computed Metal size, 1x and 2x, Light and Dark, in final wheel ink.
 - `wheelSymbols` and `wheelLabels`: the chevron and the Cancel label.
 - `menu-glass`: black template coverage of the menu and Settings action glyph
-  in a 30×26-point frame, 1x and 2x, Light and Dark.
+  in a 30×26-point frame, 1x and 2x, Light and Dark. `WindowActionGlyphCache`
+  in the app wraps the 2x image as a 30×26-point template `NSImage`, the same
+  object the earlier SwiftUI renderer made. The glass menu panel, Settings
+  buttons and AppKit Picker items each tint it, so highlighted and disabled
+  states keep their colours.
 
 The store loads a PNG on first use and keeps decoded images in one cache of
 at most 1 MiB. A key that is not in the manifest returns nil. The store never
 renders, resamples or substitutes a symbol. A missing wheel image makes atlas
-preparation fail, so the gesture uses `LayoutWheelPanelPresenter`.
+preparation fail, so the gesture uses `LayoutWheelPanelPresenter`; a missing
+action glyph shows the action's SF Symbol.
 
 The only renderer is the test-only `GlyphMaskReference`
 (`Tests/BetterTileMacOSTests/GlyphMaskReference.swift`), which calls the
@@ -2403,6 +2412,12 @@ shared test machine.
   within 35% of the larger total coverage, and the mean ink colour within 8
   of 255 per channel. Symbol ink sizes must stay within 1 point. If a live
   render draws nothing, the test logs it and keeps the bundled image.
+
+`MainWindowActionGlyphTests` in the app tests use the same modes. They draw
+each action site twice with the same view code: once with the template from a
+frozen copy of the earlier renderer, once with the bundled template. Exact
+mode requires identical pixels in all 164 cases per site; tolerance mode
+applies the limits above.
 
 In both modes, each stored wheel and template image must be closer to its own
 live render than to any other glyph's live render in its group. This check
