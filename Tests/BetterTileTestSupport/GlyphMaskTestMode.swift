@@ -26,11 +26,15 @@ public enum GlyphMaskTestMode: Equatable, Sendable, CustomStringConvertible {
         default: break
         }
         let host = host()
-        let different = hostKeys.filter { host[$0] == nil || host[$0] != generator[$0] }
+        var different: [String] = []
+        for key: String in hostKeys where host[key] == nil || host[key] != generator[key] { different.append(key) }
         if different.isEmpty { return .exact }
-        return .tolerance(reason: different.map { key in
-            "\(key) \(summary(host[key])) differs from generator \(summary(generator[key]))"
-        }.joined(separator: "; "))
+        var reasons: [String] = []
+        for key: String in different {
+            let hostValue: String = summary(host[key]), generatorValue: String = summary(generator[key])
+            reasons.append("\(key) \(hostValue) differs from generator \(generatorValue)")
+        }
+        return .tolerance(reason: reasons.joined(separator: "; "))
     }
 
     public var isExact: Bool { self == .exact }
@@ -96,7 +100,10 @@ public struct GlyphRasterDifference: Equatable, Sendable, CustomStringConvertibl
     public let oneSideEmpty: Bool
 
     public var isWithinLimits: Bool {
-        sizeDelta <= Self.sizeLimit && inkDifference <= Self.inkDifferenceLimit && inkColorDelta <= Self.inkColorLimit
+        let sized: Bool = sizeDelta <= Self.sizeLimit
+        let covered: Bool = inkDifference <= Self.inkDifferenceLimit
+        let inked: Bool = inkColorDelta <= Self.inkColorLimit
+        return sized && covered && inked
     }
 
     public var description: String {
@@ -117,13 +124,16 @@ public struct GlyphRasterDifference: Equatable, Sendable, CustomStringConvertibl
             rightTotal += r
             maxAlpha = max(maxAlpha, abs(l - r))
         }
-        inkDifference = Double(difference) / Double(max(leftTotal, rightTotal, 1))
+        let total: Int = max(leftTotal, rightTotal, 1)
+        inkDifference = Double(difference) / Double(total)
         maxAlphaDelta = maxAlpha
         sizeDelta = max(abs(aWidth - bWidth), abs(aHeight - bHeight))
         oneSideEmpty = (leftTotal == 0) != (rightTotal == 0)
         let leftInk = Self.inkColor(left), rightInk = Self.inkColor(right)
         if let leftInk, let rightInk {
-            inkColorDelta = zip(leftInk, rightInk).map { abs($0 - $1) }.max() ?? 0
+            var largest: Int = 0
+            for (left, right) in zip(leftInk, rightInk) { largest = max(largest, abs(left - right)) }
+            inkColorDelta = largest
         } else {
             inkColorDelta = 0
         }
@@ -134,11 +144,16 @@ public struct GlyphRasterDifference: Equatable, Sendable, CustomStringConvertibl
         var sums = [0.0, 0.0, 0.0], count = 0.0
         for offset in stride(from: 0, to: pixels.count, by: 4) where pixels[offset + 3] >= 128 {
             let alpha = Double(pixels[offset + 3])
-            for channel in 0..<3 { sums[channel] += Double(pixels[offset + channel]) * 255 / alpha }
+            for channel: Int in 0..<3 {
+                let value: Double = Double(pixels[offset + channel])
+                sums[channel] += value * 255 / alpha
+            }
             count += 1
         }
         guard count > 0 else { return nil }
-        return sums.map { Int(($0 / count).rounded()) }
+        var result: [Int] = []
+        for sum: Double in sums { result.append(Int((sum / count).rounded())) }
+        return result
     }
 
     private static func centred(_ pixels: [UInt8], _ width: Int, _ height: Int,
