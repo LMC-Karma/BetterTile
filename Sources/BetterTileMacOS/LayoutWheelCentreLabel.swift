@@ -201,12 +201,24 @@ import SwiftUI
         let size: Double
     }
     private static var symbolInkSizes: [SymbolKey: CGSize] = [:]
+    #if BETTERTILE_TEST_HOOKS
+    /// Every request for a measured SF Symbol ink size, cached or not.
+    static var symbolInkSizeCallsForTesting = 0
+    /// Every SwiftUI `ImageRenderer` measurement this type performs.
+    static var symbolInkRendersForTesting = 0
+    #endif
 
     /// SF Symbol image frames include transparent margins. Measure their actual
     /// ink offscreen once per symbol and font size, using the same SwiftUI font.
     private static func symbolInkSize(_ name: String, size: Double) -> CGSize {
+        #if BETTERTILE_TEST_HOOKS
+        symbolInkSizeCallsForTesting += 1
+        #endif
         let key = SymbolKey(name: name, size: size)
         if let cached = symbolInkSizes[key] { return cached }
+        #if BETTERTILE_TEST_HOOKS
+        symbolInkRendersForTesting += 1
+        #endif
         let renderer = ImageRenderer(content: Image(systemName: name)
             .font(.system(size: size, weight: .semibold)).symbolRenderingMode(.monochrome)
             .foregroundStyle(.white).fixedSize().padding(4))
