@@ -2,24 +2,23 @@ import AppKit
 import BetterTileCore
 import BetterTileMacOS
 
-/// The shared store owns decoded bitmap reuse and its memory limit.
+/// Bundled action glyphs, wrapped as the same template image that the
+/// SwiftUI renderer used to produce: 2x black coverage at 30×26 points.
+/// Each call site tints it, so highlighted menu rows, disabled controls and
+/// the glass menu panel keep their own foreground.
 @MainActor enum WindowActionGlyphCache {
-    enum Context: Equatable, Sendable { case primary, glass }
+    /// Internal so tests can draw a reference image through the same sites.
+    static var templates: [WindowAction: NSImage] = [:]
 
-    /// Primary returns final-colour pixels; glass returns black template coverage.
-    static func image(for action: WindowAction, scale: CGFloat, appearance: GlyphMaskStore.Appearance,
-                      context: Context = .primary) -> CGImage? {
-        GlyphMaskStore.image(set: context == .glass ? .menuGlass : .menuActions,
-                            id: action.rawValue, pointSize: 20,
-                            scale: Double(scale), appearance: appearance)
-    }
-
-    /// Glass callers retain the menu's existing foreground style and template tint.
-    static func nsImage(for action: WindowAction, scale: CGFloat, appearance: GlyphMaskStore.Appearance,
-                        context: Context = .primary) -> NSImage? {
-        guard let bitmap = image(for: action, scale: scale, appearance: appearance, context: context) else { return nil }
-        let image = NSImage(cgImage: bitmap, size: NSSize(width: 30, height: 26))
-        image.isTemplate = context == .glass
+    /// Missing bundled artwork returns nil, and the caller shows the symbol.
+    static func template(for action: WindowAction) -> NSImage? {
+        if let cached = templates[action] { return cached }
+        // Both appearances store identical coverage; the template is tinted later.
+        guard let coverage = GlyphMaskStore.image(set: .menuGlass, id: action.rawValue,
+                                                  pointSize: 20, scale: 2, appearance: .light) else { return nil }
+        let image = NSImage(cgImage: coverage, size: NSSize(width: 30, height: 26))
+        image.isTemplate = true
+        templates[action] = image
         return image
     }
 }

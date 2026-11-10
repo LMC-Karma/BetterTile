@@ -3,6 +3,9 @@ import SwiftUI
 import BetterTileCore
 import BetterTileMacOS
 
+// The block below must stay byte-identical to the frozen copy in
+// Tests/BetterTileMacOSTests/MenuGlassGlyphReference.swift. The glyph mask
+// manifest hashes that copy; MainWindowActionGlyphTests checks this one.
 // Frozen shipped WindowActionGlyph from BetterTileApp.swift; only its type name changes.
 struct MenuGlassPanelGlyph: View {
     let action: WindowAction
@@ -38,34 +41,5 @@ extension MenuGlassPanelGlyph {
     static func cachedTemplate(for action: WindowAction) throws -> NSImage {
         guard let image = images[action] else { throw CocoaError(.fileReadCorruptFile) }
         return image
-    }
-}
-
-@MainActor enum MenuGlassGlyphReference {
-    static func render(action: WindowAction, scale: Double, dark: Bool) throws -> CGImage {
-        let previous = NSApp.appearance
-        let appearance = NSAppearance(named: dark ? .darkAqua : .aqua)!
-        NSApp.appearance = appearance
-        defer { NSApp.appearance = previous }
-        var result: CGImage?
-        appearance.performAsCurrentDrawingAppearance {
-            // Invoke the original producer from its actual View.body context.
-            // Test-only invalidation makes every sample render fresh artwork.
-            MenuGlassPanelGlyph.resetReference(for: action)
-            let renderer = ImageRenderer(content: MenuGlassPanelGlyph(action: action)
-                .foregroundStyle(.black).environment(\.colorScheme, dark ? .dark : .light)
-                .environment(\.displayScale, scale))
-            renderer.scale = scale
-            guard let displayed = renderer.cgImage else { return }
-            if scale == 2 {
-                guard let image = try? MenuGlassPanelGlyph.cachedTemplate(for: action) else { return }
-                var rect = NSRect(x: 0, y: 0, width: 30, height: 26)
-                result = image.cgImage(forProposedRect: &rect, context: nil, hints: nil)
-            } else {
-                result = displayed
-            }
-        }
-        guard let result else { throw CocoaError(.fileReadCorruptFile) }
-        return result
     }
 }

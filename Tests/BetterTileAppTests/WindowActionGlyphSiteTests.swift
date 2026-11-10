@@ -11,12 +11,12 @@ import Testing
     @Test func everyActionSurfaceUsesTheSharedGlyphEntryPoints() throws {
         let root = URL(filePath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
         let routes = [
-            "Sources/BetterTileApp/BetterTileApp.swift": ["WindowActionGlyph(action: action)", "WindowActionGlyphCache.image(for: action"],
+            "Sources/BetterTileApp/BetterTileApp.swift": ["WindowActionGlyph(action: action)", "WindowActionGlyphCache.template(for: action)"],
             "Sources/BetterTileApp/LayoutWheelSettings.swift": ["LayoutWheelCommandIcon(command:"],
             "Sources/BetterTileApp/LayoutWheelEditor.swift": ["LayoutWheelActionGlyph(action: action"],
-            "Sources/BetterTileApp/WindowLayoutSettings.swift": ["WindowActionGlyph.image(for: action,"],
+            "Sources/BetterTileApp/WindowLayoutSettings.swift": ["WindowActionGlyph.image(for: action)"],
             "Sources/BetterTileApp/ShortcutsSettings.swift": ["WindowActionGlyph(action: action)"],
-            "Sources/BetterTileApp/SnapZoneSettings.swift": ["WindowActionGlyph.image(for: action,", "WindowActionGlyph(action: assignedAction)"],
+            "Sources/BetterTileApp/SnapZoneSettings.swift": ["WindowActionGlyph.image(for: action)", "WindowActionGlyph(action: assignedAction)"],
             "Sources/BetterTileApp/MenuBarSettings.swift": ["WindowActionGlyph(action: action)"],
             "Sources/BetterTileMacOS/LayoutWheelGlassView.swift": ["LayoutWheelIcon(slot: slot"],
         ]
@@ -27,7 +27,7 @@ import Testing
         // Menu and wheel editor paths must render each target.
         var menuImages = Set<Data>(), editorImages = Set<Data>()
         for action in WindowAction.allCases where WindowActionPartitionGlyph.actions[action] != nil {
-            let menu = ImageRenderer(content: WindowActionGlyph.image(for: action, scale: 2, appearance: .light).frame(width: 30, height: 26))
+            let menu = ImageRenderer(content: WindowActionGlyph.image(for: action).frame(width: 30, height: 26))
             let editor = ImageRenderer(content: LayoutWheelCommandIcon(command: .windowAction(action)).frame(width: 30, height: 26))
             menuImages.insert(try #require(menu.cgImage?.dataProvider?.data) as Data)
             editorImages.insert(try #require(editor.cgImage?.dataProvider?.data) as Data)

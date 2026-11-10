@@ -49,8 +49,6 @@ struct WindowLayoutSettings: View {
     static let modePictureHeight: CGFloat = 88
 
     @Bindable var model: BetterTileModel
-    @Environment(\.displayScale) private var glyphDisplayScale
-    @Environment(\.colorScheme) private var glyphColorScheme
     @State private var settingsMode: LayoutMode
     private let defaults = BetterTileConfiguration()
 
@@ -127,8 +125,7 @@ struct WindowLayoutSettings: View {
                 Picker("When a desktop has one window", selection: configurationBinding(\.singleWindowPlacement)) {
                     Text("Leave Unchanged").tag(nil as WindowAction?)
                     ForEach(WindowAction.snapAssignableActions) { action in
-                        Label { Text(action.title) } icon: { WindowActionGlyph.image(for: action, scale: glyphDisplayScale,
-                                appearance: glyphColorScheme == .dark ? .dark : .light) }
+                        Label { Text(action.title) } icon: { WindowActionGlyph.image(for: action) }
                             .tag(Optional(action))
                     }
                 }
