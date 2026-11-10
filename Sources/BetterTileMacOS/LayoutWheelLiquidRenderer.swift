@@ -1,5 +1,6 @@
 import AppKit
 import BetterTileCore
+import Compression
 import Metal
 import QuartzCore
 import os
@@ -171,8 +172,11 @@ struct LayoutWheelLiquidStyle: Equatable {
     }
 
     /// The package resource bundle with `default.metallib`, found where
-    /// SwiftPM's own accessor looks. Unlike `Bundle.module`, a missing bundle
-    /// returns nil instead of stopping the app, so the native wheel remains.
+    /// SwiftPM's own accessor looks. Only this shader lookup stays non-fatal:
+    /// it returns nil, `prepare()` fails with `.shaderBundleMissing`, and the
+    /// panel wheel serves the session. A missing bundle is still a packaging
+    /// fault: `GlyphMaskStore` reaches it through `Bundle.module`, which stops
+    /// the process.
     private static var shaderBundle: Bundle? {
         let name = "BetterTile_BetterTileMacOS.bundle"
         var places = [Bundle.main.resourceURL, Bundle(for: LayoutWheelLiquidPipeline.self).resourceURL,
@@ -223,6 +227,21 @@ struct LayoutWheelLiquidStyle: Equatable {
         buffer.label = "Layout Wheel frame data"
         self.pipeline = pipeline
         self.buffer = buffer
+    }
+
+    /// Discard the atlas's storage only after every submission that could
+    /// sample it has completed. This probe
+    /// never waits for the GPU; a busy backend keeps normal resource lifetime.
+    @discardableResult
+    func discardAtlasContentsIfIdle(_ atlas: LayoutWheelLiquidAtlas) -> Bool {
+        var acquired = 0
+        defer { for _ in 0..<acquired { inFlight.signal() } }
+        for _ in 0..<Self.framesInFlight {
+            guard inFlight.wait(timeout: .now()) == .success else { return false }
+            acquired += 1
+        }
+        atlas.setPurgeableState(.empty)
+        return true
     }
 
     struct Frame {
@@ -281,6 +300,12 @@ struct LayoutWheelLiquidStyle: Equatable {
     }
 
     #if BETTERTILE_TEST_HOOKS
+    /// Hold a real submission permit without scheduling nondeterministic GPU work.
+    func reserveFrameForTesting() -> (() -> Void)? {
+        guard inFlight.wait(timeout: .now()) == .success else { return nil }
+        let semaphore = inFlight
+        return { semaphore.signal() }
+    }
     /// The shared-buffer region the next encoded frame uses.
     var nextSlotForTesting: Int { slot }
     /// Makes the next encoding fail as if no render encoder were available.
@@ -439,7 +464,84 @@ struct LayoutWheelLiquidStyle: Equatable {
     }
 
     let texture: any MTLTexture
+    private let pixels: any MTLBuffer
     let entries: [Key: Entry]
+
+    @discardableResult
+    func setPurgeableState(_ state: MTLPurgeableState) -> MTLPurgeableState {
+        pixels.setPurgeableState(state)
+    }
+
+    /// A separate shared buffer gives the atlas independently reclaimable
+    /// pages. Ordinary texture allocations can share a driver memory pool.
+    private static func storage(device: any MTLDevice, width: Int, height: Int) -> (any MTLBuffer, any MTLTexture)? {
+        let rowBytes = width * 4
+        guard rowBytes.isMultiple(of: device.minimumLinearTextureAlignment(for: LayoutWheelLiquidPipeline.pixelFormat)),
+              let pixels = device.makeBuffer(length: rowBytes * height, options: .storageModeShared) else { return nil }
+        let descriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: LayoutWheelLiquidPipeline.pixelFormat,
+            width: width, height: height, mipmapped: false)
+        descriptor.usage = [.shaderRead]
+        descriptor.storageMode = .shared
+        guard let texture = pixels.makeTexture(descriptor: descriptor, offset: 0, bytesPerRow: rowBytes) else { return nil }
+        pixels.label = "Layout Wheel atlas pixels"
+        texture.label = "Layout Wheel icons"
+        return (pixels, texture)
+    }
+
+    /// One lossless copy of the packed pixels, without a GPU allocation or a
+    /// SwiftUI render tree. Reused until the atlas key changes or the wheel is disabled.
+    struct Snapshot {
+        let pixels: Data
+        let width: Int
+        let height: Int
+        let entries: [Key: Entry]
+    }
+
+    func snapshot() -> Snapshot? {
+        let sourceCount = texture.width * texture.height * 4
+        // Bound temporary storage. A poorly compressible atlas simply keeps
+        // its warm resources instead of allocating another full-size bitmap.
+        var output = [UInt8](repeating: 0, count: min(sourceCount, 262_144))
+        var scratch = [UInt8](repeating: 0, count: compression_encode_scratch_buffer_size(COMPRESSION_LZ4))
+        let count = output.withUnsafeMutableBufferPointer { destination in
+            scratch.withUnsafeMutableBytes { workspace in
+                compression_encode_buffer(destination.baseAddress!, destination.count,
+                    pixels.contents().assumingMemoryBound(to: UInt8.self), sourceCount,
+                    workspace.baseAddress, COMPRESSION_LZ4)
+            }
+        }
+        guard count > 0 else { return nil }
+        return Snapshot(pixels: Data(output.prefix(count)), width: texture.width, height: texture.height, entries: entries)
+    }
+
+    private static func decode(_ snapshot: Snapshot, into pixels: any MTLBuffer) -> Bool {
+        let expected = snapshot.width * snapshot.height * 4
+        guard expected > 0, expected <= pixels.length, !snapshot.pixels.isEmpty else { return false }
+        let count = snapshot.pixels.withUnsafeBytes { source in
+            compression_decode_buffer(pixels.contents().assumingMemoryBound(to: UInt8.self), expected,
+                source.bindMemory(to: UInt8.self).baseAddress!, source.count, nil, COMPRESSION_LZ4)
+        }
+        return count == expected
+    }
+
+    /// Decode directly into the existing shared buffer. No full-size temporary
+    /// bitmap or additional texture allocation is needed on a matching hold.
+    func restore(_ snapshot: Snapshot) -> Bool {
+        guard texture.width == snapshot.width, texture.height == snapshot.height,
+              Self.decode(snapshot, into: pixels) else { return false }
+        Self.uploadCount += 1
+        return true
+    }
+
+    init?(device: any MTLDevice, snapshot: Snapshot) {
+        Self.buildCount += 1
+        guard let (pixels, texture) = Self.storage(device: device, width: snapshot.width, height: snapshot.height),
+              Self.decode(snapshot, into: pixels) else { return nil }
+        Self.uploadCount += 1
+        self.texture = texture
+        self.pixels = pixels
+        entries = snapshot.entries
+    }
 
     /// Shelf packing with a two-pixel gutter so linear filtering never bleeds.
     init?(device: any MTLDevice, images: [(Key, CGImage)], scale: CGFloat) {
@@ -468,14 +570,11 @@ struct LayoutWheelLiquidStyle: Equatable {
                                            Float(px + image.width) / Float(width), Float(py + image.height) / Float(height)),
                                  size: CGSize(width: CGFloat(image.width) / scale, height: CGFloat(image.height) / scale))
         }
-        let descriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: LayoutWheelLiquidPipeline.pixelFormat,
-                                                                  width: width, height: height, mipmapped: false)
-        descriptor.usage = [.shaderRead]
-        guard let texture = device.makeTexture(descriptor: descriptor) else { return nil }
-        texture.label = "Layout Wheel icons"
+        guard let (pixels, texture) = Self.storage(device: device, width: width, height: height) else { return nil }
         Self.uploadCount += 1
-        texture.replace(region: MTLRegionMake2D(0, 0, width, height), mipmapLevel: 0, withBytes: data, bytesPerRow: width * 4)
+        pixels.contents().copyMemory(from: data, byteCount: width * height * 4)
         self.texture = texture
+        self.pixels = pixels
         self.entries = entries
     }
 }

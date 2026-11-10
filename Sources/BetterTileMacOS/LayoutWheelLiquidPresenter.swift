@@ -1,7 +1,6 @@
 import AppKit
 import BetterTileCore
 import QuartzCore
-import SwiftUI
 import os
 
 /// One moment of the gesture, from Core selection only.
@@ -110,7 +109,7 @@ public struct LayoutWheelLiquidState: Equatable, Sendable {
         return root
     }
     private let blurHost = FlippedView()
-    private let bodyBlur = NSVisualEffectView()
+    private var bodyBlur = NSVisualEffectView()
     private let metalHost = FlippedView()
     private let inkHost = FlippedView()
     private let ink = CALayer()
@@ -147,14 +146,20 @@ public struct LayoutWheelLiquidState: Equatable, Sendable {
     private var style = LayoutWheelLiquidStyle.make(dark: true, opaque: false)
     private var lastTimestamp: Double?
     private var images = LayoutWheelLiquidImages()
+    private let resourceClock: BetterTileClock
+    private var idleReleaseTask: Task<Void, Never>?
+    static let resourceIdleDelay: Duration = .seconds(5)
+    private var idleAtlas: (key: AtlasKey, snapshot: LayoutWheelLiquidAtlas.Snapshot)?
     static let signposter = OSSignposter(subsystem: "com.lmckarma.BetterTile", category: "LiquidWheel")
 
     public convenience init(capturable: Bool = false) {
         self.init(frameSource: LayoutWheelLiquidDisplayLink(), capturable: capturable)
     }
 
-    init(frameSource: any LayoutWheelLiquidFrameSource, capturable: Bool = false) {
+    init(frameSource: any LayoutWheelLiquidFrameSource, capturable: Bool = false,
+         resourceClock: BetterTileClock = .live) {
         self.frameSource = frameSource
+        self.resourceClock = resourceClock
         capturePolicy = OverlayCapturePolicy(showsInRecordings: capturable)
         panel = NSPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel],
                         backing: .buffered, defer: true)
@@ -175,16 +180,14 @@ public struct LayoutWheelLiquidState: Equatable, Sendable {
             view.autoresizingMask = [.width, .height]
             root.addSubview(view)
         }
-        bodyBlur.blendingMode = .behindWindow
-        bodyBlur.state = .active
-        bodyBlur.wantsLayer = true
-        blurHost.addSubview(bodyBlur)
+        installBlurView()
         inkHost.layer?.addSublayer(ink)
         ink.addSublayer(label)
     }
 
     /// Invalidate the frame source before releasing its layer and panel.
     isolated deinit {
+        idleReleaseTask?.cancel()
         frameSource.stop()
         panel.orderOut(nil)
         metalLayer?.removeFromSuperlayer()
@@ -198,6 +201,11 @@ public struct LayoutWheelLiquidState: Equatable, Sendable {
     var makeAtlas: (any MTLDevice, [(LayoutWheelLiquidAtlas.Key, CGImage)], CGFloat) -> LayoutWheelLiquidAtlas? = {
         LayoutWheelLiquidAtlas(device: $0, images: $1, scale: $2)
     }
+    var makeIdleSnapshot: (LayoutWheelLiquidAtlas) -> LayoutWheelLiquidAtlas.Snapshot? = { $0.snapshot() }
+    var restoreAtlas: (any MTLDevice, LayoutWheelLiquidAtlas.Snapshot, LayoutWheelLiquidAtlas?) -> LayoutWheelLiquidAtlas? = {
+        if let atlas = $2 { return atlas.restore($1) ? atlas : nil }
+        return LayoutWheelLiquidAtlas(device: $0, snapshot: $1)
+    }
 
     /// Lets a test make one icon or caption image fail to draw.
     var imageFailure: (LayoutWheelLiquidAtlas.Key) -> Bool = { _ in false }
@@ -209,6 +217,7 @@ public struct LayoutWheelLiquidState: Equatable, Sendable {
     /// neither an open nor a fan ever waits for one. Call at launch and when
     /// the configuration or appearance changes; not while a gesture runs.
     public func prewarm(_ content: LayoutWheelLiquidContent) {
+        cancelIdleRelease()
         let isDark = dark ?? systemDark
         let style = LayoutWheelLiquidStyle.make(dark: isDark, opaque: false)
         let scale = NSScreen.screens.map(\.backingScaleFactor).max() ?? 2
@@ -236,10 +245,12 @@ public struct LayoutWheelLiquidState: Equatable, Sendable {
     @discardableResult
     public func prepareToOpen(_ content: LayoutWheelLiquidContent) -> Bool {
         close()
-        return prepare(content)
+        guard prepare(content) else { scheduleIdleRelease(); return false }
+        return true
     }
 
     private func prepare(_ content: LayoutWheelLiquidContent) -> Bool {
+        cancelIdleRelease()
         #if BETTERTILE_TEST_HOOKS
         preparationCountForTesting += 1
         #endif
@@ -270,6 +281,7 @@ public struct LayoutWheelLiquidState: Equatable, Sendable {
         if panel.frame.size != size { panel.setContentSize(size) }
         root.frame = CGRect(origin: .zero, size: size)
         installMetalLayer(size: size, scale: scale)
+        if bodyBlur.superview == nil { installBlurView() }
         bodyBlur.isHidden = isOpaque || material == .clear || translucency >= 1
         bodyBlur.material = switch material {
         case .frosted: .popover
@@ -482,12 +494,64 @@ public struct LayoutWheelLiquidState: Equatable, Sendable {
 
     func releaseResources() {
         close()
-        atlas = nil
-        atlasKey = nil
+        cancelIdleRelease()
+        idleAtlas = nil
+        discardDrawingResources()
+    }
+
+    private func discardDrawingResources(keepPresentation: Bool = false) {
+        if !keepPresentation {
+            atlas = nil
+            atlasKey = nil
+        }
         images = LayoutWheelLiquidImages()
         content = nil
         label.contents = nil
-        encoder = nil
+        labelKey = nil
+        if !keepPresentation {
+            encoder = nil
+            metalLayer?.removeFromSuperlayer()
+            metalLayer = nil
+            bodyBlur.removeFromSuperview()
+            bodyBlur = NSVisualEffectView()
+            outlineMask.path = nil
+            lastMask = []
+            maskScratch = []
+        }
+        sprites = []
+        state = .init()
+        CATransaction.flush()
+    }
+
+    private func cancelIdleRelease() {
+        idleReleaseTask?.cancel()
+        idleReleaseTask = nil
+    }
+
+    private func scheduleIdleRelease() {
+        cancelIdleRelease()
+        guard model == nil, prepared == nil, atlas != nil || encoder != nil else { return }
+        let clock = resourceClock
+        let deadline = clock.now.advanced(by: Self.resourceIdleDelay)
+        idleReleaseTask = Task { @MainActor [weak self] in
+            do { try await clock.sleep(until: deadline) } catch { return }
+            guard !Task.isCancelled, let self, self.model == nil, self.prepared == nil else { return }
+            // Compression and temporary bitmap storage end in this pool. The
+            // snapshot restores exact pixels without rendering SwiftUI again.
+            autoreleasepool {
+                if let atlas = self.atlas, let key = self.atlasKey {
+                    if self.idleAtlas?.key != key {
+                        guard let snapshot = self.makeIdleSnapshot(atlas) else { return }
+                        self.idleAtlas = (key, snapshot)
+                    }
+                    self.encoder?.discardAtlasContentsIfIdle(atlas)
+                }
+                // Recreating the encoder repeats GPU warm-up. Keep the small
+                // prepared backend and the already-shrunken presentation.
+                self.discardDrawingResources(keepPresentation: true)
+            }
+            self.idleReleaseTask = nil
+        }
     }
 
     private func finishClose() {
@@ -505,6 +569,7 @@ public struct LayoutWheelLiquidState: Equatable, Sendable {
         // Hand the removal to the render server now, so it lets go of the
         // drawables without waiting for an unrelated transaction.
         CATransaction.flush()
+        scheduleIdleRelease()
         onClosed?()
     }
 
@@ -621,6 +686,13 @@ public struct LayoutWheelLiquidState: Equatable, Sendable {
     /// 0.4 pt, so it never shows past the body; the shader tints the rest.
     static let maskInset = 1.0
 
+    private func installBlurView() {
+        bodyBlur.blendingMode = .behindWindow
+        bodyBlur.state = .active
+        bodyBlur.wantsLayer = true
+        blurHost.addSubview(bodyBlur)
+    }
+
     /// One full-size blur view, masked by the outline and the droplets. The
     /// mask is rebuilt only when some point moves by more than 0.4 pt, so a
     /// resting wheel commits nothing. While the wheel fades, the mask shrinks
@@ -719,8 +791,27 @@ public struct LayoutWheelLiquidState: Equatable, Sendable {
     @discardableResult
     private func prepareAtlas(_ content: LayoutWheelLiquidContent, style: LayoutWheelLiquidStyle, scale: CGFloat,
                               device: any MTLDevice) -> Bool {
+        guard LayoutWheelLabelSpace(metal: content) != nil else { return false }
         let key = makeAtlasKey(content, style: style, scale: scale)
-        guard key != atlasKey || atlas == nil else { return true }
+        if key == atlasKey, let atlas {
+            // Reuse the texture object, restoring its discarded pixels before
+            // any frame samples it. The driver need not pool another texture.
+            if atlas.setPurgeableState(.nonVolatile) != .empty { return true }
+            if let idleAtlas, idleAtlas.key == key,
+               let restored = autoreleasepool(invoking: { restoreAtlas(device, idleAtlas.snapshot, atlas) }) {
+                self.atlas = restored
+                return true
+            }
+            self.atlas = nil
+            atlasKey = nil
+            return false
+        }
+        if let idleAtlas, idleAtlas.key == key {
+            guard let restored = autoreleasepool(invoking: { restoreAtlas(device, idleAtlas.snapshot, nil) }) else { return false }
+            atlas = restored
+            atlasKey = key
+            return true
+        }
         var entries: [(LayoutWheelLiquidAtlas.Key, CGImage)] = []
         let layout = content.layout
         var complete = true
@@ -744,7 +835,7 @@ public struct LayoutWheelLiquidState: Equatable, Sendable {
             for sector in LayoutWheelSector.allCases {
                 for (option, slot) in content.fanOptions(sector).enumerated() {
                     add(.option(sector.rawValue, option)) {
-                        $0.icon(slot, symbol: 18 * layout.scale, color: style.ink, dark: style.dark, scale: scale)
+                        $0.icon(slot, symbol: content.fanIconSymbolSize, color: style.ink, dark: style.dark, scale: scale)
                     }
                     if key.captions {
                         add(.optionName(sector.rawValue, option)) {
@@ -753,7 +844,7 @@ public struct LayoutWheelLiquidState: Equatable, Sendable {
                     }
                 }
             }
-            entries.append((.chevron, images.chevron(size: 8 * layout.scale, color: style.ink, scale: scale)))
+            add(.chevron) { $0.chevron(size: content.chevronSymbolSize, color: style.ink, scale: scale) }
         }
         defer { images.finishIconRendering() }
         // Every icon, and every caption that Names draws, must exist. A missing
@@ -761,6 +852,7 @@ public struct LayoutWheelLiquidState: Equatable, Sendable {
         guard complete, let packed = makeAtlas(device, entries, scale) else { return false }
         atlas = packed
         atlasKey = key
+        idleAtlas = nil
         return true
     }
 
@@ -890,6 +982,11 @@ public struct LayoutWheelLiquidState: Equatable, Sendable {
     #if BETTERTILE_TEST_HOOKS
     /// Full preparations: drawables, style, atlas and the warm-up frame.
     private(set) var preparationCountForTesting = 0
+    var idleReleaseTaskForTesting: Task<Void, Never>? { idleReleaseTask }
+    var idleAtlasBytesForTesting: Int { idleAtlas?.snapshot.pixels.count ?? 0 }
+    var retainedImageBytesForTesting: Int { images.retainedImageBytes }
+    var hasEncoderForTesting: Bool { encoder != nil }
+    var blurViewForTesting: NSVisualEffectView { bodyBlur }
     /// Stands in for the display the wheel opens on, which an offscreen test panel lacks.
     var destinationScaleForTesting: CGFloat?
     var labelImageForTesting: CGImage? { label.contents as! CGImage? }
@@ -1008,47 +1105,21 @@ struct LayoutWheelLiquidImageCache {
 /// Cached icon, chevron and label images, reused across opens.
 /// Icons and text each retain at most 512 KiB of bitmap pixels, plus one small chevron.
 @MainActor struct LayoutWheelLiquidImages {
-    private struct IconImage: View {
-        let slot: LayoutWheelSlot
-        let symbol: Double
-        let color: NSColor
-        let dark: Bool
-        var body: some View {
-            let side = 35 / 18 * symbol
-            LayoutWheelIcon(slot: slot, tint: Color(nsColor: color), fontSize: symbol)
-                .frame(width: side, height: side)
-                .environment(\.colorScheme, dark ? .dark : .light)
-        }
-    }
-    private var iconRenderer: ImageRenderer<IconImage>?
     private var icons = LayoutWheelLiquidImageCache(limit: 524_288)
     private var labels = LayoutWheelLiquidImageCache(limit: 524_288)
     private var chevronImage: (key: String, image: CGImage)?
 
     var retainedImageBytes: Int { icons.bytes + labels.bytes }
-    #if BETTERTILE_TEST_HOOKS
-    var rendererForTesting: AnyObject? { iconRenderer }
-    #endif
-
     mutating func icon(_ slot: LayoutWheelSlot, symbol: Double, color: NSColor, dark: Bool, scale: CGFloat) -> CGImage? {
-        let key = "\(slot.label)|\(slot.symbolName)|\(String(describing: slot.glyph))|\(symbol)|\(dark)|\(scale)"
+        let key = "\(GlyphMaskStore.wheelID(slot))|\(symbol)|\(dark)|\(scale)"
         if let image = icons[key] { return image }
-        let content = IconImage(slot: slot, symbol: symbol, color: color, dark: dark)
-        let renderer: ImageRenderer<IconImage>
-        if let existing = iconRenderer {
-            renderer = existing
-            renderer.content = content
-        } else {
-            renderer = ImageRenderer(content: content)
-            iconRenderer = renderer
-        }
-        renderer.scale = scale
-        let image = renderer.cgImage.flatMap(Self.rasterize)
+        let image = GlyphMaskStore.image(set: .wheel, id: GlyphMaskStore.wheelID(slot),
+                                         pointSize: symbol, scale: scale, appearance: dark ? .dark : .light)
         icons[key] = image
         return image
     }
 
-    mutating func finishIconRendering() { iconRenderer = nil }
+    mutating func finishIconRendering() {}
 
     /// A SwiftUI-rendered image can retain its render backend and textures.
     /// Cache only owned bitmap pixels, which are also what the atlas needs.
@@ -1087,16 +1158,12 @@ struct LayoutWheelLiquidImageCache {
         return image
     }
 
-    mutating func chevron(size: Double, color: NSColor, scale: CGFloat) -> CGImage {
-        let key = "\(size)|\(color)|\(scale)"
+    mutating func chevron(size: Double, color: NSColor, scale: CGFloat) -> CGImage? {
+        let dark = (color.usingColorSpace(.sRGB)?.redComponent ?? 0) > 0.5
+        let key = "\(size)|\(dark)|\(scale)"
         if let chevronImage, chevronImage.key == key { return chevronImage.image }
-        let configuration = NSImage.SymbolConfiguration(pointSize: size, weight: .semibold)
-            .applying(.init(paletteColors: [color]))
-        let symbol = NSImage(systemSymbolName: "chevron.right", accessibilityDescription: nil)?
-            .withSymbolConfiguration(configuration)
-        var rect = CGRect(origin: .zero, size: symbol?.size ?? CGSize(width: size, height: size))
-        let image = symbol?.cgImage(forProposedRect: &rect, context: nil, hints: [.ctm: AffineTransform(scale: scale)])
-            ?? Self.blank(scale: scale)
+        guard let image = GlyphMaskStore.image(set: .wheelSymbols, id: "chevron.right", pointSize: size,
+            scale: scale, appearance: dark ? .dark : .light) else { return nil }
         chevronImage = (key, image)
         return image
     }
@@ -1104,35 +1171,26 @@ struct LayoutWheelLiquidImageCache {
     mutating func label(_ name: (name: String, detail: String?, available: Bool)?, content: LayoutWheelLiquidContent,
                         color: NSColor, scale: CGFloat) -> CGImage? {
         // The fitted lines depend on the space the innermost icons leave.
-        let space = LayoutWheelLabelSpace(liquid: content)
+        guard let space = LayoutWheelLabelSpace(metal: content) else { return nil }
         let key = "\(name?.name ?? "")|\(name?.detail ?? "")|\(name?.available ?? true)|\(color)|\(scale)|\(content.layout.scale)"
             + "|\(space.style)|\(space.levelCount)|\(space.iconBoxes)"
         if let image = labels[key] { return image }
-        let s = content.layout.scale
         let ink = color.withAlphaComponent(color.alphaComponent * ((name?.available ?? true) ? 1 : 0.6))
-        var lines: [(String, NSFont)] = []
-        var mark: NSImage?
-        if let name {
-            let fitted = LayoutWheelCentreLabel(name: name.name, mainAction: name.detail, space: space)
-            lines = fitted.lines.map { ($0.text, $0.font) }
-        } else {
-            mark = NSImage(systemSymbolName: "xmark", accessibilityDescription: nil)?
-                .withSymbolConfiguration(.init(pointSize: max(9, 8.8 * s), weight: .semibold)
-                    .applying(.init(paletteColors: [ink])))
-            lines = [("Cancel", .systemFont(ofSize: max(9, 9.5 * s), weight: .medium))]
+        guard let name else {
+            let dark = (color.usingColorSpace(.sRGB)?.redComponent ?? 0) > 0.5
+            let image = GlyphMaskStore.image(set: .wheelLabels, id: "cancel", pointSize: content.cancelTextSize,
+                scale: scale, appearance: dark ? .dark : .light)
+            labels[key] = image
+            return image
         }
+        let fitted = LayoutWheelCentreLabel(name: name.name, mainAction: name.detail, space: space)
+        let lines = fitted.lines.map { ($0.text, $0.font) }
         let attributed = lines.map { NSAttributedString(string: $0.0, attributes: [.font: $0.1, .foregroundColor: ink]) }
         let sizes = attributed.map { $0.size() }
-        let gap = mark == nil ? 0 : 3 * s
-        let markSize = mark?.size ?? .zero
-        let width = ceil(max(sizes.map(\.width).max() ?? 0, markSize.width)) + 4
-        let height = ceil(sizes.reduce(0) { $0 + $1.height } + markSize.height + gap) + 2
-        let image = Self.draw(size: CGSize(width: width, height: height), scale: scale) { context in
+        let width = ceil(sizes.map(\.width).max() ?? 0) + 4
+        let height = ceil(sizes.reduce(0) { $0 + $1.height }) + 2
+        let image = Self.draw(size: CGSize(width: width, height: height), scale: scale) { _ in
             var y = 1.0
-            if let mark {
-                mark.draw(in: CGRect(x: (width - markSize.width) / 2, y: y, width: markSize.width, height: markSize.height))
-                y += markSize.height + gap
-            }
             for (line, size) in zip(attributed, sizes) {
                 line.draw(at: CGPoint(x: (width - size.width) / 2, y: y))
                 y += size.height
@@ -1140,10 +1198,6 @@ struct LayoutWheelLiquidImageCache {
         }
         labels[key] = image
         return image
-    }
-
-    private static func blank(scale: CGFloat) -> CGImage {
-        draw(size: CGSize(width: 1, height: 1), scale: scale) { _ in }!
     }
 
     /// Draws in a flipped, top-left context at the backing scale.

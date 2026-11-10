@@ -23,6 +23,7 @@ let package = Package(
         .target(
             name: "BetterTileMacOS",
             dependencies: ["BetterTileCore"],
+            resources: [.copy("Resources/GlyphMasks")],
             swiftSettings: testHookSettings,
             linkerSettings: [
                 .linkedFramework("ApplicationServices"),

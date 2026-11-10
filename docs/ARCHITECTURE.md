@@ -2170,10 +2170,14 @@ Cancel replaces native glass with opaque shapes before shrinking the whole
 presentation. Reduce Motion snaps presentation channels and exits immediately.
 The renderer owns no command callback, window observation or mutation path.
 
-`LayoutWheelController` selects the liquid presenter at launch through
-`LayoutWheelPresenting`. Only the Metal pipeline prepares at launch and on
-configuration changes while closed. Icons, names, the atlas and hidden panel
-prepare when the trigger hold starts, within the existing 220 ms hold. An open
+`LayoutWheelController` reaches the liquid presenter through
+`DeferredLayoutWheelPresenter`, a `LayoutWheelPresenting` wrapper. When a mouse
+trigger is on, the wrapper creates the liquid presenter at launch, and only the
+Metal pipeline prepares at launch and on configuration changes while closed.
+With only a keyboard trigger, the wrapper creates the presenter at the start
+of the first hold and replays the latest warm-up inputs, capture visibility
+and failure handler into it. Icons, names, the atlas and hidden panel prepare
+when the trigger hold starts, within the existing 220 ms hold. An open
 wheel refreshes changed drawing content and appearance in place. Every cancelled hold releases its drawables. Opening uses the
 captured pointer and the content's full fan extent when clamping to the display.
 Missing Metal or shaders, allocation failure during preparation, and open failure
@@ -2272,12 +2276,20 @@ until a body frame is accepted. Time inside `open` therefore does not measure
 open-to-first-visible-frame latency. Measure that interval from the open request
 to visible content in a timestamped compositor frame, separately from the time
 waiting for command-buffer scheduling. The encoder skips a frame
-instead of waiting if all three data buffers are in flight. SwiftUI icon
-renders are copied into owned bitmap pixels before caching, so cached images
-do not retain the render backend. One icon renderer is reused within each
-atlas preparation and released when preparation finishes. The icon and text
-caches each retain at most 512 KiB of bitmap pixels and 128 images. They evict
-the least recently used image. One packed atlas is retained. The shader is precompiled into the
+instead of waiting if all three data buffers are in flight. Icons, the
+chevron and the Cancel label come from `GlyphMaskStore` (below); the wheel
+renders no SwiftUI icons at run time. Captions and named centre labels stay
+live AppKit text. The icon and text caches each retain at most 512 KiB of
+bitmap pixels and 128 images. They evict the least recently used image. After five seconds closed, the wheel releases
+its bitmap caches and centre-label contents. It keeps one lossless LZ4 snapshot
+of the packed atlas. When every frame submission has completed, it discards
+the atlas's dedicated shared-buffer backing with Metal's purgeable state.
+The buffer supplies a linear texture view, so its pages can be reclaimed
+independently of the driver's ordinary texture pool. The next matching
+hold uploads the exact pixels into the same texture object without rendering
+the icons again. Preparation cancels the idle wait; disabling the wheel also
+releases the snapshot and presentation resources. The small encoder stays
+prepared across idle cleanup to avoid repeated GPU warm-up. The shader is precompiled into the
 package's `default.metallib`, the pipeline is built once, and
 `prepareToOpen` does the remaining setup during the trigger's hold. Its first
 GPU submission warms both pipelines into a one-pixel target without acquiring
@@ -2349,6 +2361,110 @@ A native drag supersedes the prior unfinished placement and commands queued
 before capture. Commands accepted after capture wait for release; the cancelled
 placement cannot discard them or unlock tab dragging during the native gesture.
 Release drains those commands even when no new placement is needed.
+
+### Layout Wheel glyph masks
+
+`GlyphMaskStore` in `BetterTileMacOS` supplies pre-rendered glyph artwork.
+`Sources/BetterTileMacOS/Resources/GlyphMasks/` holds one canonical RGBA PNG
+per distinct image, named by its SHA-256, and `manifest.json`. The manifest
+maps each key (set, id, point size, scale and appearance) to a file, and it
+records SF Symbol ink sizes, which `LayoutWheelLabelSpace` uses to fit the
+centre label. The sets are:
+
+- `wheel`: every wheel command, layout, mode and group-parent icon at every
+  computed Metal size, 1x and 2x, Light and Dark, in final wheel ink.
+- `wheelSymbols` and `wheelLabels`: the chevron and the Cancel label.
+- `menu-glass`: black template coverage of the menu and Settings action glyph
+  in a 30×26-point frame, 1x and 2x, Light and Dark. `WindowActionGlyphCache`
+  in the app wraps the 2x image as a 30×26-point template `NSImage`, the same
+  object the earlier SwiftUI renderer made. The glass menu panel, Settings
+  buttons and AppKit Picker items each tint it, so highlighted and disabled
+  states keep their colours.
+
+The store loads a PNG on first use and keeps decoded images in one cache of
+at most 1 MiB. A key that is not in the manifest returns nil. The store never
+renders, resamples or substitutes a symbol. The store finds its folder with
+`Bundle.module`. Missing artwork is a packaging fault, and it never fails
+silently:
+
+- A missing resource bundle stops the process in every build, through the
+  accessor that SwiftPM and Xcode generate for `Bundle.module`.
+- An unreadable manifest, or a listed PNG that cannot be loaded or decoded,
+  stops a Debug build with an assertion. A Release build logs a fault
+  (subsystem `com.lmckarma.BetterTile`, category `GlyphMaskStore`) and
+  returns nil.
+- A key that is not in the manifest logs one error and returns nil.
+
+After a nil image, the caller's existing fallback runs: atlas preparation
+fails, so the gesture uses `LayoutWheelPanelPresenter`; a missing action
+glyph shows the action's SF Symbol.
+
+The only renderer is the test-only `GlyphMaskReference`
+(`Tests/BetterTileMacOSTests/GlyphMaskReference.swift`), which calls the
+original SwiftUI and AppKit drawing code. It renders each key 20 times and
+stores the most frequent output. The manifest records the SHA-256 of that
+file and of each drawing source it uses, and the generator host's macOS
+build, architecture and Swift toolchain. The images generated on one macOS
+release ship on every supported release, so icons do not depend on the
+user's OS version.
+
+Run `Tools/generate-glyph-masks.sh` after a change to a recorded source, a
+new wheel size or command, or a deliberate move to a newer generator host.
+`Tools/generate-glyph-masks.sh --set menu-glass` refreshes only the template
+set from fresh processes. Hold QUIET and DESKTOP around either command on a
+shared test machine.
+
+The manifest hashes whole files, including product files such as
+`LayoutWheelView.swift`. Any edit to one of them, even one that changes no
+icon, fails the freshness test on every host until the images are
+regenerated. Regenerate safely:
+
+1. Run the script on the generator host: the macOS build, architecture and
+   Swift toolchain in the manifest's `platform` record. There, regeneration
+   keeps every stored PNG that still matches a live render, so an edit that
+   changes no icon changes only the source hashes.
+2. If that host is no longer available, regeneration on another OS build
+   records the new host and replaces every shipped image with that build's
+   output. Treat it as an artwork change: expect changed PNGs in review,
+   compare them by eye, and re-measure `knownCrossOSDifferences` on the
+   macOS 26 CI run.
+
+`GlyphMaskStoreTests` choose a mode from the host and log it in every test:
+
+- **Exact**, when the host's build, architecture and toolchain equal the
+  generator record. Freshness regenerates every key and requires identical
+  manifest entries and PNG bytes. Parity requires each bundled image to equal
+  one of 20 live renders, byte for byte.
+- **Tolerance**, on every other host, CI included. Freshness checks the
+  source hashes, the key inventory, file names, canonical JSON, decoding,
+  sizes, premultiplied channels, wheel ink colour and template coverage. Each
+  image is compared with one live render: the alpha difference must stay
+  within 35% of the larger total coverage, and the mean ink colour within 8
+  of 255 per channel. Symbol ink sizes must stay within 1 point. If a live
+  render draws nothing, the test logs it and keeps the bundled image.
+
+Two SF Symbols draw differently on macOS 26 (build 25G332) than in the macOS
+27 artwork: the wheel's `chevron.right` (8 keys, 0.36–0.74 coverage
+difference) and the Fine-tuning icon `slider.horizontal.3` (4 keys, up to
+1.02). The bundled images ship on every release by decision, so macOS 26
+users see the macOS 27 icons. `GlyphMaskStoreTests.knownCrossOSDifferences`
+lists those 12 exact keys. In tolerance mode on macOS 26 only, they are
+checked only for decoding, recorded size and ink; their live-render and
+identity comparisons are skipped and logged. On any other OS they get the
+full tolerance checks, so a later release cannot inherit the exemption. Any
+other key that fails still fails the test.
+
+`MainWindowActionGlyphTests` in the app tests use the same modes. They draw
+each action site twice with the same view code: once with the template from a
+frozen copy of the earlier renderer, once with the bundled template. Exact
+mode requires identical pixels in all 164 cases per site; tolerance mode
+applies the limits above.
+
+In both modes, each stored wheel and template image must be closer to its own
+live render than to any other glyph's live render in its group. This check
+makes the tolerance identify the glyph: on the generator host the closest
+other glyph differs by 0.147, mirrored arrows at 1x, which is below the 35%
+limit. Set `BT_GLYPH_MASK_TEST_MODE=exact` or `tolerance` to force a mode.
 
 ## Linked resizing
 

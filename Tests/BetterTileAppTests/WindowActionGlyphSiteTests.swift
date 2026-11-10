@@ -11,7 +11,7 @@ import Testing
     @Test func everyActionSurfaceUsesTheSharedGlyphEntryPoints() throws {
         let root = URL(filePath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
         let routes = [
-            "Sources/BetterTileApp/BetterTileApp.swift": ["WindowActionGlyph(action: action)", "LayoutWheelActionGlyph(action: action"],
+            "Sources/BetterTileApp/BetterTileApp.swift": ["WindowActionGlyph(action: action)", "WindowActionGlyphCache.template(for: action)"],
             "Sources/BetterTileApp/LayoutWheelSettings.swift": ["LayoutWheelCommandIcon(command:"],
             "Sources/BetterTileApp/LayoutWheelEditor.swift": ["LayoutWheelActionGlyph(action: action"],
             "Sources/BetterTileApp/WindowLayoutSettings.swift": ["WindowActionGlyph.image(for: action)"],

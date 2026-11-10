@@ -69,7 +69,7 @@ import Testing
         #expect(weakOwner == nil)
     }
 
-    @Test func aReusedRendererUpdatesItsIconAndAppearance() throws {
+    @Test func nativeIconsUpdateTheirArtworkAndInk() throws {
         var images = LayoutWheelLiquidImages()
         let left = images.icon(.init(command: .windowAction(.leftHalf)), symbol: 18, color: .white,
                                dark: true, scale: 2)
@@ -86,34 +86,27 @@ import Testing
         #expect(cached === first)
     }
 
-    @Test func releasingTheImageStoreReleasesItsRenderer() {
-        weak var renderer: AnyObject?
+    @Test func clearingBothImageStoresReleasesTheirOwnedBitmap() {
+        weak var bitmap: CGImage?
         autoreleasepool {
             var images = LayoutWheelLiquidImages()
-            _ = images.icon(.init(command: .windowAction(.leftHalf)), symbol: 18, color: .white,
-                            dark: true, scale: 2)
-            renderer = images.rendererForTesting
-            #expect(renderer != nil)
+            bitmap = images.icon(.init(command: .windowAction(.leftHalf)), symbol: 18,
+                                 color: .white, dark: true, scale: 2)
+            #expect(bitmap != nil)
         }
-        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.05))
-        #expect(renderer == nil)
+        GlyphMaskStore.removeCachedImages()
+        #expect(bitmap == nil)
     }
 
-    @Test func finishingPreparationReleasesTheRendererAndKeepsTheBitmap() throws {
+    @Test func finishingPreparationKeepsTheNativeBitmap() throws {
         var images = LayoutWheelLiquidImages()
-        let image = images.icon(.init(command: .windowAction(.leftHalf)), symbol: 18, color: .white,
-                                dark: true, scale: 2)
+        let image = images.icon(.init(command: .windowAction(.leftHalf)), symbol: 18,
+                                color: .white, dark: true, scale: 2)
         let bitmap = try #require(image)
-        weak var renderer: AnyObject?
-        renderer = images.rendererForTesting
-        #expect(renderer != nil)
         images.finishIconRendering()
-        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.05))
-        #expect(renderer == nil)
-        let cached = images.icon(.init(command: .windowAction(.leftHalf)), symbol: 18, color: .white,
-                                 dark: true, scale: 2)
+        let cached = images.icon(.init(command: .windowAction(.leftHalf)), symbol: 18,
+                                 color: .white, dark: true, scale: 2)
         #expect(cached === bitmap)
-        #expect(images.rendererForTesting == nil)
     }
 
     @Test func changingNamesCannotRetainEveryImage() throws {

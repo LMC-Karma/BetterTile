@@ -126,6 +126,12 @@ public struct LayoutWheelLiquidContent: Equatable, Sendable {
         (rings.count == 2 && ringIndex == 0 ? 16 : 18) * layout.scale
     }
 
+    /// The fan artwork uses the same symbol size as a one-level ring.
+    public var fanIconSymbolSize: Double { 18 * layout.scale }
+    public var chevronSymbolSize: Double { 8 * layout.scale }
+    public var cancelSymbolSize: Double { max(9, 8.8 * layout.scale) }
+    public var cancelTextSize: Double { max(9, 9.5 * layout.scale) }
+
     /// The model's ring index for a selection, or nil when this content has no such ring.
     public func ringIndex(_ ring: LayoutWheelRing) -> Int? {
         rings.firstIndex { $0.ring == ring }
