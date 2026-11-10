@@ -53,6 +53,8 @@ final class DividerDragOverlay {
         content = DividerDragOverlayView(lensLayers: lensLayers)
     }
 
+    deinit { fadeTask?.cancel() }
+
     /// A fade that finishes after a new gesture began must not hide it.
     private var presentationGeneration = 0
     private(set) var fadeTask: Task<Void, Never>?
@@ -61,9 +63,15 @@ final class DividerDragOverlay {
     /// visible meanwhile, but a new gesture must start a fresh presentation.
     private(set) var isFading = false
 
+    private func cancelFade() {
+        presentationGeneration &+= 1
+        fadeTask?.cancel()
+        fadeTask = nil
+    }
+
     func begin(displayFrame: BTRect, below handle: NSWindow, appearance: OverlayAppearance, windows: [WindowSnapshot]) {
         guard let mainFrame = NSScreen.screens.first?.frame else { return }
-        presentationGeneration &+= 1
+        cancelFade()
         isFading = false
         panel?.alphaValue = 1
         content.knob.isHidden = false
@@ -170,6 +178,7 @@ final class DividerDragOverlay {
     /// Fades the previews out once the windows have landed.
     func fadeOut(duration: TimeInterval = 0.12) {
         guard let panel, panel.isVisible else { end(); return }
+        cancelFade()
         isFading = true
         let generation = presentationGeneration
         NSAnimationContext.runAnimationGroup { context in
@@ -181,12 +190,13 @@ final class DividerDragOverlay {
         let clock = clock
         fadeTask = Task { @MainActor [weak self] in
             try? await clock.sleep(for: .seconds(duration))
-            guard let self, self.presentationGeneration == generation else { return }
+            guard !Task.isCancelled, let self, self.presentationGeneration == generation else { return }
             self.end()
         }
     }
 
     func end() {
+        cancelFade()
         isFading = false
         panel?.alphaValue = 1
         content.knob.isHidden = false
