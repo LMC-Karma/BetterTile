@@ -2,6 +2,9 @@ import BetterTileCore
 
 /// Value caches owned by the Accessibility adapter for each window.
 struct WindowMetadata {
+    /// Last observations, including windows on other desktops. They have the
+    /// same lifetime as the identity and the other per-window values.
+    var knownSnapshots: [WindowID: WindowSnapshot] = [:]
     /// Bundle identifiers of observed windows, for per-application minimum
     /// size seeds.
     var applicationKeys: [WindowID: String] = [:]
@@ -23,6 +26,7 @@ struct WindowMetadata {
     var minimizedWindowIDs: Set<WindowID> = []
 
     mutating func remove(_ windowID: WindowID) {
+        knownSnapshots.removeValue(forKey: windowID)
         applicationKeys.removeValue(forKey: windowID)
         continuousSettable.removeValue(forKey: windowID)
         settabilityVerdicts.removeValue(forKey: windowID)

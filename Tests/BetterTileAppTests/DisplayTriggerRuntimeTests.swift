@@ -5,6 +5,34 @@ import Foundation
 import Testing
 @testable import BetterTileApp
 
+@Test(.appTestApplication) @MainActor
+func deletedTriggerLayoutsReleaseLastRunsWithoutLosingExistingOrBoundLayouts() {
+    let h = RuntimeHarness()
+    defer { h.runtime.stop(); h.applier.stop() }
+    var retained: Set<String>? = ["keep.json", "missing-but-bound.json"]
+    h.runtime.retainedLayoutFiles = { retained }
+    for index in 0..<100 {
+        let file = "temporary-\(index).json"
+        h.connected[1] = false; h.runtime.displaysChanged()
+        h.triggers = []; h.bind(file)
+        retained?.insert(file)
+        h.connectSecond(); h.runtime.userInput()
+        #expect(h.runtime.runs[file] != nil)
+        retained?.remove(file)
+        h.runtime.pruneRuns()
+        #expect(h.runtime.runs.isEmpty)
+    }
+    for file in ["keep.json", "missing-but-bound.json"] {
+        h.connected[1] = false; h.runtime.displaysChanged()
+        h.triggers = []; h.bind(file)
+        h.connectSecond(); h.runtime.userInput()
+    }
+    #expect(h.runtime.runs.count == 2)
+    retained = nil
+    h.runtime.pruneRuns()
+    #expect(h.runtime.runs.count == 2)
+}
+
 /// Two displays, `main` and `second`, one desktop each, and the real applier and runtime on top of the fake system.
 @MainActor private final class RuntimeHarness {
     let system = FakeAppWindowSystem()

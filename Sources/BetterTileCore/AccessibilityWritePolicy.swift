@@ -253,8 +253,8 @@ public struct UnresponsiveApplicationGate: Sendable {
         stalls[processIdentifier] ?? 0
     }
 
-    /// Counts every stall of the application and never goes back, so a caller
-    /// can see a stall even when a completed call reset `stallCount` first.
+    /// Counts every stall while the process remains alive, so a caller can
+    /// see a stall even when a completed call reset `stallCount` first.
     public func timeoutSerial(_ processIdentifier: Int32) -> UInt64 {
         timeouts[processIdentifier] ?? 0
     }
@@ -280,5 +280,21 @@ public struct UnresponsiveApplicationGate: Sendable {
         holdsUntil.removeValue(forKey: processIdentifier)
         inventoryBackoffsUntil.removeValue(forKey: processIdentifier)
         stalls.removeValue(forKey: processIdentifier)
+    }
+
+    /// A terminated process cannot answer again. Its replacement at the same
+    /// PID starts with no hold, backoff, or timeout serial from that launch.
+    public mutating func remove(processIdentifier: Int32) {
+        release(processIdentifier)
+        timeouts.removeValue(forKey: processIdentifier)
+    }
+
+    /// Keep hidden and unobserved running applications too. A filtered window
+    /// inventory cannot prove that an application quit.
+    public mutating func retainProcessIdentifiers(_ running: Set<Int32>) {
+        holdsUntil = holdsUntil.filter { running.contains($0.key) }
+        inventoryBackoffsUntil = inventoryBackoffsUntil.filter { running.contains($0.key) }
+        stalls = stalls.filter { running.contains($0.key) }
+        timeouts = timeouts.filter { running.contains($0.key) }
     }
 }

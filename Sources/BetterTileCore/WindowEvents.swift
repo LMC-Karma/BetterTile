@@ -24,7 +24,16 @@ public struct WindowEventBuffer: Sendable {
                 frameEventWindowIDs.insert(windowID)
                 resizedWindowIDs.insert(windowID)
             }
-        case .created, .destroyed, .minimized, .restored:
+        case .destroyed:
+            // A buffered sweep still needs the topology change, but a closed
+            // window can no longer contribute a move or a resize. Holds and
+            // gestures must not retain those keys until their eventual end.
+            if let windowID = event.windowID {
+                frameEventWindowIDs.remove(windowID)
+                resizedWindowIDs.remove(windowID)
+            }
+            topologyChanged = true
+        case .created, .minimized, .restored:
             topologyChanged = true
         case .focused:
             break

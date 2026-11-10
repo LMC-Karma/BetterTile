@@ -22,11 +22,16 @@ public final class ArrivalTrace {
         self.init(isEnabled: defaults.bool(forKey: "BetterTileArrivalTrace"), url: url)
     }
 
-    public init(isEnabled: Bool, url: URL? = nil) {
+    public convenience init(isEnabled: Bool, url: URL? = nil) {
+        self.init(isEnabled: isEnabled, url: url, writerQueue: nil, maximumPendingRecords: 4_096)
+    }
+
+    init(isEnabled: Bool, url: URL?, writerQueue: DispatchQueue?, maximumPendingRecords: Int) {
         self.isEnabled = isEnabled
         runID = isEnabled ? UUID().uuidString : ""
         writer = isEnabled ? ArrivalTraceWriter(url: url ?? FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Logs/BetterTile/arrival-trace.jsonl")) : nil
+            .appendingPathComponent("Library/Logs/BetterTile/arrival-trace.jsonl"),
+            queue: writerQueue, maximumPendingRecords: maximumPendingRecords) : nil
     }
 
     public func record(_ phase: String, pid: Int32, windowID: WindowID? = nil,
@@ -114,6 +119,12 @@ public final class ArrivalTrace {
         record(phase, pid: state.pid, windowID: windowID, reason: reason)
     }
 
+    /// Closure is final. Keep pending and settled diagnostics for live windows,
+    /// including windows on other Spaces, until the adapter confirms closure.
+    public func removeClosedWindow(_ windowID: WindowID) {
+        windows.removeValue(forKey: windowID)
+    }
+
     /// Drains test-owned output. Production never waits for diagnostic disk I/O.
     public func flush() { writer?.flush() }
 }
@@ -129,36 +140,101 @@ private struct ArrivalTraceRecord: Encodable, Sendable {
     let outcome: String?
     let reason: String?
     let ax_hash: UInt?
+    var dropped_records: UInt64? = nil
 }
 
-/// The serial queue owns the handle. Encoding and disk writes stay off the main actor.
+/// The serial queue owns the handle. One worker drains a bounded buffer, so a
+/// stalled disk cannot retain one dispatch block per event. Overload is explicit
+/// in the trace; diagnostic I/O never blocks window placement on the main actor.
 private final class ArrivalTraceWriter: @unchecked Sendable {
-    private let queue = DispatchQueue(label: "com.lmckarma.BetterTile.arrival-trace", qos: .utility)
+    private let queue: DispatchQueue
     private let url: URL
-    private var handle: FileHandle?
+    private let maximumPendingRecords: Int
+    private let lock = NSLock()
+    private var pendingRecords: [ArrivalTraceRecord] = []
+    private var droppedRecords: UInt64 = 0
+    private var lastDropped: ArrivalTraceRecord?
+    private var isDraining = false
+    // Protected by lock. The file handle itself belongs only to queue.
     private var failed = false
-    init(url: URL) { self.url = url }
+    private var handle: FileHandle?
+
+    init(url: URL, queue: DispatchQueue?, maximumPendingRecords: Int) {
+        self.url = url
+        self.queue = queue ?? DispatchQueue(label: "com.lmckarma.BetterTile.arrival-trace", qos: .utility)
+        self.maximumPendingRecords = max(1, maximumPendingRecords)
+    }
+
     func append(_ record: ArrivalTraceRecord) {
-        queue.async { [self] in
-            guard !failed else { return }
-            do {
-                if handle == nil {
-                    try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-                    if !FileManager.default.fileExists(atPath: url.path) {
-                        guard FileManager.default.createFile(atPath: url.path, contents: nil,
-                            attributes: [.posixPermissions: 0o600]) else { throw CocoaError(.fileWriteUnknown) }
-                    }
-                    handle = try FileHandle(forWritingTo: url)
-                    try handle?.seekToEnd()
-                }
-                var data = try JSONEncoder().encode(record)
-                data.append(0x0a)
-                try handle?.write(contentsOf: data)
-            } catch {
-                failed = true
-                NSLog("BetterTile arrival trace write failed: %@", error.localizedDescription)
+        let startWorker = lock.withLock {
+            guard !failed else { return false }
+            if pendingRecords.count < maximumPendingRecords {
+                pendingRecords.append(record)
+            } else {
+                droppedRecords &+= 1
+                lastDropped = record
             }
+            guard !isDraining else { return false }
+            isDraining = true
+            return true
         }
+        if startWorker { queue.async { [self] in drain() } }
+    }
+
+    private func drain() {
+        while let batch = nextBatch() {
+            // A busy writer can span many batches without returning to GCD.
+            // Release Foundation temporaries at each bounded batch boundary.
+            let succeeded = autoreleasepool {
+                do {
+                    if handle == nil {
+                        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+                        if !FileManager.default.fileExists(atPath: url.path) {
+                            guard FileManager.default.createFile(atPath: url.path, contents: nil,
+                                attributes: [.posixPermissions: 0o600]) else { throw CocoaError(.fileWriteUnknown) }
+                        }
+                        handle = try FileHandle(forWritingTo: url)
+                        try handle?.seekToEnd()
+                    }
+                    for record in batch.records { try write(record) }
+                    if let overflow = batch.overflow { try write(overflow) }
+                    return true
+                } catch {
+                    lock.withLock {
+                        failed = true
+                        pendingRecords.removeAll()
+                        droppedRecords = 0
+                        lastDropped = nil
+                        isDraining = false
+                    }
+                    NSLog("BetterTile arrival trace write failed: %@", error.localizedDescription)
+                    return false
+                }
+            }
+            if !succeeded { return }
+        }
+    }
+
+    private func nextBatch() -> (records: [ArrivalTraceRecord], overflow: ArrivalTraceRecord?)? {
+        lock.withLock {
+            guard !pendingRecords.isEmpty else { isDraining = false; return nil }
+            let records = pendingRecords
+            pendingRecords = []
+            let overflow = lastDropped.map {
+                ArrivalTraceRecord(timestamp_ns: $0.timestamp_ns, run_id: $0.run_id, pid: 0,
+                    window_id: nil, phase: "trace_overflow", frame: nil, mode: nil, outcome: "dropped",
+                    reason: "pending_record_limit", ax_hash: nil, dropped_records: droppedRecords)
+            }
+            droppedRecords = 0
+            lastDropped = nil
+            return (records, overflow)
+        }
+    }
+
+    private func write(_ record: ArrivalTraceRecord) throws {
+        var data = try JSONEncoder().encode(record)
+        data.append(0x0a)
+        try handle?.write(contentsOf: data)
     }
     func flush() { queue.sync {} }
     deinit { try? handle?.close() }

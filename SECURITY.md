@@ -55,6 +55,9 @@ monotonic timestamps, a random trace-run ID, process-local window IDs, PIDs,
 opaque AX element hashes, logical-point frames, layout modes, and phase outcomes.
 They contain no window titles, document paths, or app names. New files use owner
 read/write permissions. Encoding and writes run on a serial utility queue.
+At most 4,096 records wait for the disk. If the disk stalls, later records are
+dropped and a `trace_overflow` record states how many were lost. Per-window
+trace state is released when the window closes.
 The file is appended across runs and remains until the tester removes it.
 There is no upload, rotation, or automatic purge. Enable it only for bounded
 local trials; inspect the file before sharing it. Fake-system tests cover the

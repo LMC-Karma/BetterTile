@@ -5,6 +5,11 @@ import Testing
 private func populatedWindowMetadata(_ ids: [WindowID]) -> WindowMetadata {
     var metadata = WindowMetadata()
     for id in ids {
+        metadata.knownSnapshots[id] = WindowSnapshot(
+            id: id, processIdentifier: 42, title: "Known window",
+            frame: BTRect(x: 0, y: 0, width: 500, height: 800),
+            displayID: DisplayID(rawValue: "display")
+        )
         metadata.applicationKeys[id] = "test.application"
         metadata.continuousSettable[id] = true
         metadata.settabilityVerdicts[id] = (true, false)
@@ -24,6 +29,7 @@ private func populatedWindowMetadata(_ ids: [WindowID]) -> WindowMetadata {
     var metadata = populatedWindowMetadata([closed, survivor])
     if reset { metadata.removeAll() } else { metadata.remove(closed) }
     let expected: Set<WindowID> = reset ? [] : [survivor]
+    #expect(Set(metadata.knownSnapshots.keys) == expected)
     #expect(Set(metadata.applicationKeys.keys) == expected)
     #expect(Set(metadata.continuousSettable.keys) == expected)
     #expect(Set(metadata.settabilityVerdicts.keys) == expected)
@@ -34,4 +40,23 @@ private func populatedWindowMetadata(_ ids: [WindowID]) -> WindowMetadata {
     #expect(metadata.managedWindowIDs == expected)
     #expect(Set(metadata.recentWindowIDs) == expected)
     #expect(metadata.minimizedWindowIDs == expected)
+}
+
+@Test(.macOSTestApplication) func confirmedClosuresReleaseKnownSnapshotsWithoutWaitingForAnotherSweep() {
+    let survivor = WindowID(rawValue: "other-desktop")
+    var metadata = populatedWindowMetadata([survivor])
+    let previous = metadata.knownSnapshots[survivor]
+    for index in 0..<100 {
+        let closed = WindowID(rawValue: "closed-\(index)")
+        metadata.knownSnapshots[closed] = WindowSnapshot(
+            id: closed, processIdentifier: 42, title: String(repeating: "title", count: 100),
+            frame: BTRect(x: 0, y: 0, width: 500, height: 800),
+            displayID: DisplayID(rawValue: "display")
+        )
+        metadata.remove(closed)
+    }
+    #expect(Set(metadata.knownSnapshots.keys) == [survivor])
+    #expect(metadata.knownSnapshots[survivor] == previous)
+    metadata.removeAll()
+    #expect(metadata.knownSnapshots.isEmpty)
 }
