@@ -2269,12 +2269,11 @@ until a body frame is accepted. Time inside `open` therefore does not measure
 open-to-first-visible-frame latency. Measure that interval from the open request
 to visible content in a timestamped compositor frame, separately from the time
 waiting for command-buffer scheduling. The encoder skips a frame
-instead of waiting if all three data buffers are in flight. SwiftUI icon
-renders are copied into owned bitmap pixels before caching, so cached images
-do not retain the render backend. One icon renderer is reused within each
-atlas preparation and released when preparation finishes. The icon and text
-caches each retain at most 512 KiB of bitmap pixels and 128 images. They evict
-the least recently used image. After five seconds closed, the wheel releases
+instead of waiting if all three data buffers are in flight. Icons, the
+chevron and the Cancel label come from `GlyphMaskStore` (below); the wheel
+renders no SwiftUI icons at run time. Captions and named centre labels stay
+live AppKit text. The icon and text caches each retain at most 512 KiB of
+bitmap pixels and 128 images. They evict the least recently used image. After five seconds closed, the wheel releases
 its bitmap caches and centre-label contents. It keeps one lossless LZ4 snapshot
 of the packed atlas. When every frame submission has completed, it discards
 the atlas's dedicated shared-buffer backing with Metal's purgeable state.
@@ -2355,6 +2354,61 @@ A native drag supersedes the prior unfinished placement and commands queued
 before capture. Commands accepted after capture wait for release; the cancelled
 placement cannot discard them or unlock tab dragging during the native gesture.
 Release drains those commands even when no new placement is needed.
+
+### Layout Wheel glyph masks
+
+`GlyphMaskStore` in `BetterTileMacOS` supplies pre-rendered glyph artwork.
+`Sources/BetterTileMacOS/Resources/GlyphMasks/` holds one canonical RGBA PNG
+per distinct image, named by its SHA-256, and `manifest.json`. The manifest
+maps each key (set, id, point size, scale and appearance) to a file, and it
+records SF Symbol ink sizes, which `LayoutWheelLabelSpace` uses to fit the
+centre label. The sets are:
+
+- `wheel`: every wheel command, layout, mode and group-parent icon at every
+  computed Metal size, 1x and 2x, Light and Dark, in final wheel ink.
+- `wheelSymbols` and `wheelLabels`: the chevron and the Cancel label.
+- `menu-glass`: black template coverage of the menu and Settings action glyph
+  in a 30×26-point frame, 1x and 2x, Light and Dark.
+
+The store loads a PNG on first use and keeps decoded images in one cache of
+at most 1 MiB. A key that is not in the manifest returns nil. The store never
+renders, resamples or substitutes a symbol. A missing wheel image makes atlas
+preparation fail, so the gesture uses `LayoutWheelPanelPresenter`.
+
+The only renderer is the test-only `GlyphMaskReference`
+(`Tests/BetterTileMacOSTests/GlyphMaskReference.swift`), which calls the
+original SwiftUI and AppKit drawing code. It renders each key 20 times and
+stores the most frequent output. The manifest records the SHA-256 of that
+file and of each drawing source it uses, and the generator host's macOS
+build, architecture and Swift toolchain. The images generated on one macOS
+release ship on every supported release, so icons do not depend on the
+user's OS version.
+
+Run `Tools/generate-glyph-masks.sh` after a change to a recorded source, a
+new wheel size or command, or a deliberate move to a newer generator host.
+`Tools/generate-glyph-masks.sh --set menu-glass` refreshes only the template
+set from fresh processes. Hold QUIET and DESKTOP around either command on a
+shared test machine.
+
+`GlyphMaskStoreTests` choose a mode from the host and log it in every test:
+
+- **Exact**, when the host's build, architecture and toolchain equal the
+  generator record. Freshness regenerates every key and requires identical
+  manifest entries and PNG bytes. Parity requires each bundled image to equal
+  one of 20 live renders, byte for byte.
+- **Tolerance**, on every other host, CI included. Freshness checks the
+  source hashes, the key inventory, file names, canonical JSON, decoding,
+  sizes, premultiplied channels, wheel ink colour and template coverage. Each
+  image is compared with one live render: the alpha difference must stay
+  within 35% of the larger total coverage, and the mean ink colour within 8
+  of 255 per channel. Symbol ink sizes must stay within 1 point. If a live
+  render draws nothing, the test logs it and keeps the bundled image.
+
+In both modes, each stored wheel and template image must be closer to its own
+live render than to any other glyph's live render in its group. This check
+makes the tolerance identify the glyph: on the generator host the closest
+other glyph differs by 0.147, mirrored arrows at 1x, which is below the 35%
+limit. Set `BT_GLYPH_MASK_TEST_MODE=exact` or `tolerance` to force a mode.
 
 ## Linked resizing
 

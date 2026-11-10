@@ -14,13 +14,13 @@ old=json.loads((resources/'manifest.json').read_text())
 old_entries={k:v for k,v in old['entries'].items() if not k.startswith('menu-glass|')}
 sha=lambda data:hashlib.sha256(data).hexdigest()
 old_files={v['file']:sha((resources/v['file']).read_bytes()) for v in old_entries.values()}
-producer=root/'Tests/BetterTileMacOSTests/GlyphMaskStoreTests.swift'
-prefix=producer.read_text().split('@MainActor @Suite',1)[0]
-(work/'producer.swift').write_text('#sourceLocation(file: '+json.dumps(str(producer))+', line: 1)\n'+prefix)
+producer=root/'Tests/BetterTileMacOSTests/GlyphMaskReference.swift'
+(work/'producer.swift').write_text('#sourceLocation(file: '+json.dumps(str(producer))+', line: 1)\n'+producer.read_text())
 products=root/'.build/out/Products/Debug'
 exe=work/'glyph-mask-process'
 frameworks=Path(subprocess.check_output(['xcode-select','-p'],text=True).strip())/'Platforms/MacOSX.platform/Developer/Library/Frameworks'
-cmd=['swiftc','-swift-version','6','-parse-as-library','-enable-testing','-DBETTERTILE_TEST_HOOKS','-Xfrontend','-load-plugin-library','-Xfrontend',str(frameworks.parents[4]/'Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/host/plugins/testing/libTestingMacros.dylib'),'-I',str(products),'-F',str(frameworks),'-Xlinker','-rpath','-Xlinker',str(frameworks),str(work/'producer.swift'),str(root/'Tests/BetterTileMacOSTests/MenuGlassGlyphReference.swift'),str(root/'Tools/glyph-mask-process.swift'),str(products/'BetterTileMacOS.o'),str(products/'BetterTileCore.o'),'-framework','AppKit','-framework','ApplicationServices','-framework','Carbon','-framework','ColorSync','-o',str(exe)]
+sdk=subprocess.check_output(['xcrun','--sdk','macosx','--show-sdk-path'],text=True).strip()
+cmd=['swiftc','-sdk',sdk,'-swift-version','6','-parse-as-library','-enable-testing','-DBETTERTILE_TEST_HOOKS','-Xfrontend','-load-plugin-library','-Xfrontend',str(frameworks.parents[4]/'Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/host/plugins/testing/libTestingMacros.dylib'),'-I',str(products),'-F',str(frameworks),'-Xlinker','-rpath','-Xlinker',str(frameworks),str(work/'producer.swift'),str(root/'Tests/BetterTileMacOSTests/MenuGlassGlyphReference.swift'),str(root/'Tools/glyph-mask-process.swift'),str(products/'BetterTileMacOS.o'),str(products/'BetterTileCore.o'),'-framework','AppKit','-framework','ApplicationServices','-framework','Carbon','-framework','ColorSync','-o',str(exe)]
 with (work/'compile.log').open('w') as log:subprocess.run(cmd,stdout=log,stderr=subprocess.STDOUT,check=True)
 env=os.environ.copy();env['PACKAGE_RESOURCE_BUNDLE_PATH']=str(products)
 all_cases={};pids=[]
@@ -46,7 +46,9 @@ manifest=json.loads((metadata/'manifest.json').read_text())
 assert {k:v for k,v in manifest['entries'].items() if not k.startswith('menu-glass|')}==old_entries
 if a.check:
  assert {k for k in old['entries'] if k.startswith('menu-glass|')}==set(all_cases)
- for field in ['version','platform','sources','symbolInkSizes','findings']:
+ # The platform record names the generator host. It is not compared here;
+ # the tests use it only to choose exact or tolerance mode.
+ for field in ['version','sources','symbolInkSizes','findings']:
   assert manifest[field]==old[field],field
 new_files={};summary=[]
 for key,case in sorted(all_cases.items()):

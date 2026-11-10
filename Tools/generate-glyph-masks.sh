@@ -1,6 +1,10 @@
 #!/bin/bash
-# This renders SwiftUI artwork. On a shared test machine, hold QUIET then
-# DESKTOP around this entire script, including every build and test command.
+# This renders SwiftUI artwork and records this host's macOS build,
+# architecture and Swift toolchain as the generator. The glyph mask tests run
+# exactly only on a host that matches that record and use tolerance checks
+# elsewhere, so regenerate on the machine that should own the exact check.
+# On a shared test machine, hold QUIET then DESKTOP around this entire
+# script, including every build and test command.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 if [[ ${1:-} == --set ]]; then
