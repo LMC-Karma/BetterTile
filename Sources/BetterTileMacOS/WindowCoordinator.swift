@@ -181,6 +181,9 @@ public final class WindowCoordinator {
 
     /// Retires only a window whose closure the window system confirmed.
     public func removeClosedWindow(_ windowID: WindowID) {
+        #if DEBUG
+        arrivalTrace.removeClosedWindow(windowID)
+        #endif
         history.remove(windowID: windowID)
         generations.removeValue(forKey: windowID)
         rollbackWriteFailureGenerations.removeValue(forKey: windowID)

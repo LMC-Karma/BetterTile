@@ -6,6 +6,53 @@ import Testing
 
 @Suite(.macOSTestApplication, .serialized) @MainActor
 struct ArrivalTraceWriterTests {
+    @Test func aBlockedWriterBoundsPendingRecordsAndReportsItsOverflow() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("ArrivalBacklog-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("trace.jsonl")
+        let queue = DispatchQueue(label: "ArrivalBacklogTest")
+        let trace = ArrivalTrace(isEnabled: true, url: url, writerQueue: queue, maximumPendingRecords: 8)
+        queue.suspend()
+        for _ in 0..<10_000 { trace.record("event", pid: 42) }
+        queue.resume()
+        trace.flush()
+        let initial = try rows(url)
+        #expect(initial.count == 9)
+        #expect(initial.filter { $0["phase"] as? String == "event" }.count == 8)
+        let overflow = try #require(initial.last)
+        #expect(overflow["phase"] as? String == "trace_overflow")
+        #expect(overflow["dropped_records"] as? Int == 9_992)
+        let times = initial.compactMap { $0["timestamp_ns"] as? UInt64 }
+        #expect(times == times.sorted())
+        trace.record("after", pid: 42)
+        trace.flush()
+        #expect(try rows(url).last?["phase"] as? String == "after")
+    }
+
+    @Test func confirmedClosureReleasesTraceStateAndKeepsLiveWindowDeduplication() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("ArrivalLifetime-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("trace.jsonl")
+        let trace = ArrivalTrace(isEnabled: true, url: url)
+        let coordinator = WindowCoordinator(system: FakeWindowSystem())
+        coordinator.arrivalTrace = trace
+        let live = WindowID(rawValue: "live")
+        let frame = BTRect(x: 0, y: 0, width: 500, height: 800)
+        trace.readable(pid: 42, windowID: live, frame: frame)
+        for index in 0..<1_000 {
+            let id = WindowID(rawValue: "closed-\(index)")
+            trace.readable(pid: 43, windowID: id, frame: frame)
+            coordinator.removeClosedWindow(id)
+            trace.readable(pid: 42, windowID: live, frame: frame)
+        }
+        let windows = Mirror(reflecting: trace).children.first { $0.label == "windows" }?.value
+        #expect((windows as? any Collection)?.count == 1)
+        trace.flush()
+        let liveRows = try rows(url).filter { $0["window_id"] as? String == live.rawValue }
+        #expect(liveRows.count == 1)
+        #expect(liveRows.first?["phase"] as? String == "first_readable_frame")
+    }
+
     private func rows(_ url: URL) throws -> [[String: Any]] {
         try Data(contentsOf: url).split(separator: 0x0a).map {
             try #require(JSONSerialization.jsonObject(with: Data($0)) as? [String: Any])

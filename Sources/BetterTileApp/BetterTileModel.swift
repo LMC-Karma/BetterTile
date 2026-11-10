@@ -4022,6 +4022,7 @@ final class BetterTileModel {
     }
 
     func watchdog() {
+        displayTriggerRuntime?.pruneRuns()
         if isHoldingDisplayChange { recordDisplayChangeObservation(); return }
         guard refreshPermission() else { return }
         guard activeBentoDrag == nil, !isStabilizingSpace else { return }
@@ -4344,6 +4345,8 @@ final class BetterTileModel {
                 }
                 sessionStore.removeClosedTabbedWindow(windowID)
                 tabbedSteppedWindows.removeValue(forKey: windowID)
+                tabbedReadoptedArrivals.remove(windowID)
+                tabbedRetriedAutomaticFloats.remove(windowID)
                 tabbedUndo = tabbedUndo.mapValues { histories in
                     histories.map { original in
                         var step = original
@@ -6109,6 +6112,9 @@ final class BetterTileModel {
             nativeFullscreenDisplayIDs.removeAll()
         }
         forgetEndedTabbedSessions(displayIDs: displayIDs)
+        if let nativeObservation {
+            savedLayoutApplier?.updateUndoDesktops(nativeObservation, displays: displays)
+        }
         var resolvedActiveDisplay: DisplayID?
         var sweepCommitted = true
         var sweepNeedsRetry = false
@@ -6388,6 +6394,10 @@ final class BetterTileModel {
             announceBentoOverflow(before: activation.session, on: display, windows: displayWindows)
         }
         if sweepCommitted {
+            // A closure can precede the Space notification. After ownership
+            // settles, release its now-inactive return evidence even when a
+            // transition deliberately leaves the active tree for a later pass.
+            for id in consumedDestroyedWindowIDs.sorted() { sessionStore.removeClosedTabbedWindow(id) }
             if !desktopTransition {
                 for display in displays where tabbedTasks[display.id] == nil
                     && !unresolvedRecoveryDisplays.contains(display.id) {
@@ -6404,7 +6414,8 @@ final class BetterTileModel {
             // normal sweep, so the reducer still removes a closed pane at once
             // and captures a minimized pane's reinsertion anchor.
             if !desktopTransition {
-                confirmedGoneWindowIDs.subtract(consumedDestroyedWindowIDs.subtracting(deferredWindowIDs))
+                let consumed = consumedDestroyedWindowIDs.subtracting(deferredWindowIDs)
+                confirmedGoneWindowIDs.subtract(consumed)
                 let stillReportedVisible = Set(windows.filter(\.isEligible).map(\.id))
                 confirmedMinimizedWindowIDs.subtract(
                     consumedMinimizedWindowIDs.subtracting(stillReportedVisible).subtracting(deferredWindowIDs)
@@ -9041,7 +9052,8 @@ extension BetterTileModel {
 
     /// Drops the committed layouts of sessions whose display or Space is gone.
     private func forgetEndedTabbedSessions<IDs: Sequence<DisplayID>>(displayIDs: IDs) {
-        let sessions = displayIDs.flatMap { sessionStore.allSessions(for: $0) }
+        let connected = Set(displayIDs)
+        let sessions = connected.flatMap { sessionStore.allSessions(for: $0) }
         let tabbed = Set(sessions.filter { $0.mode == .tabbed }.map(\.id))
         for id in spacePanelOverlays.keys.filter({ !tabbed.contains($0) }) {
             guard let overlay = spacePanelOverlays.removeValue(forKey: id) else { continue }
@@ -9054,6 +9066,22 @@ extension BetterTileModel {
         provisionalTabbedFloats = provisionalTabbedFloats.filter { live.contains($0.key.sessionID) }
         tabbedCommittedLayouts = tabbedCommittedLayouts.filter { live.contains($0.key) }
         tabbedEntryBaselines = tabbedEntryBaselines.filter { live.contains($0.key) }
+        let retired = Set(sessionStore.retiredSessions.map(\.session.id))
+        func storedOwner(_ id: DesktopSessionID) -> Bool {
+            live.contains(id) || (!retired.contains(id) && sessionStore.retainedSession(id) != nil)
+        }
+        tabbedUndo = tabbedUndo.filter { storedOwner($0.key) }
+        onScreenProtectedPanes = onScreenProtectedPanes.filter { storedOwner($0.key) }
+        applicationRecoveryFallbackMatches = applicationRecoveryFallbackMatches.filter { storedOwner($0.key) }
+        spacePanelCorrections = spacePanelCorrections.filter { storedOwner($0) }
+        // Focus Restore follows the same bounded retirement policy as its
+        // session. An inactive, existing Space keeps its full Restore state.
+        bentoStateBeforeFocus = bentoStateBeforeFocus.filter { retired.contains($0.key) || storedOwner($0.key) }
+        func displayOwner(_ id: DisplayID) -> Bool {
+            connected.contains(id) || sessionStore.session(for: id) != nil || !sessionStore.allSessions(for: id).isEmpty
+        }
+        tabbedExitRequests = tabbedExitRequests.filter { displayOwner($0.key) }
+        deferredTabbedExits = deferredTabbedExits.filter { displayOwner($0.key) }
     }
 
     private func leaveTabbed(displayID: DisplayID, destination: LayoutMode, focusedWindowID: WindowID?) {
@@ -9941,6 +9969,7 @@ extension BetterTileModel {
     }
 
     func refreshSavedLayoutActions() {
+        displayTriggerRuntime?.pruneRuns()
         let values = savedLayoutActions.store.values
         let named = values.compactMapValues(\.shortcut).filter { file, key in
             savedLayoutActions.entries.contains { $0.file == file }
@@ -9990,6 +10019,9 @@ extension BetterTileModel {
                 return await self.commitSavedLayout(plan, desktop: desktop, snapshot: snapshot, isCurrent: isCurrent)
             })
         applier.appGroupsStore = appGroupsStore
+        applier.isDesktopRetained = { [weak self] desktop in
+            self?.sessionStore.allSessions(for: desktop.displayID).contains { $0.nativeSpaceID == desktop.spaceID } == true
+        }
         let groups = appGroupsStore
         applier.isLoadingAppGroups = true
         let load = Task { @MainActor [weak applier] in
@@ -10024,6 +10056,11 @@ extension BetterTileModel {
         let files = SavedLayoutFiles.standard
         let triggerStore = displayTriggerStore
         runtime.triggers = { [weak self] in self?.hasAccessibilityPermission == true ? triggerStore.document.triggers : [] }
+        runtime.retainedLayoutFiles = { [weak self] in
+            guard let self, triggerStore.loadError == nil,
+                  let files = self.savedLayoutActions.knownLibraryFiles else { return nil }
+            return files.union(triggerStore.document.triggers.map(\.layoutFile))
+        }
         runtime.liveDisplays = { DisplayFingerprintReader.current() }
         runtime.isScreenLocked = {
             Self.isLockApplication(NSWorkspace.shared.frontmostApplication?.bundleIdentifier)

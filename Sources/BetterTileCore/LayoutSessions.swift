@@ -289,6 +289,10 @@ public struct LayoutSessionStore: Sendable {
     /// are not this desktop's evidence for matching or for pruning copies,
     /// also after this desktop is retired again. Process-local only.
     private var mergedWindowIDs: [DesktopSessionID: Set<WindowID>] = [:]
+    /// Closure proof for an inferred session's retained identities. An empty
+    /// active owner keeps one marker until a new cohort arrives or it retires.
+    /// Native sessions have a Space owner and do not need this evidence.
+    private var closedInferredWindowIDs: [DesktopSessionID: Set<WindowID>] = [:]
     public private(set) var retiredSessions: [RetiredDesktop] = []
     public struct Restoration: Sendable {
         public var overlap: Int
@@ -437,6 +441,7 @@ public struct LayoutSessionStore: Sendable {
         } else {
             restorationPending.remove(session.id)
         }
+        removeClosedInferredSessions()
         return (session, wasCreated, previousWindowIDs)
     }
 
@@ -630,25 +635,42 @@ public struct LayoutSessionStore: Sendable {
     }
 
     private mutating func removeUnavailableTabbedWindow(_ windowID: WindowID, closed: Bool) {
-        func update(_ session: inout LayoutSession) {
-            guard let state = session.tabbedState,
-                  state.windowIDs.contains(windowID) || state.floatingWindowIDs.contains(windowID)
-                    || (closed && state.returnSlots[windowID] != nil)
-                    || (closed && session.tabbedBaselineFrames[windowID] != nil) else { return }
+        func update(_ session: inout LayoutSession, removeAdaptiveEvidence: Bool = true) -> Bool {
             let previous = session
-            if closed { session.tabbedState?.removeClosedWindow(windowID) }
-            else { session.tabbedState?.stepAway(windowID) }
-            if !closed { session.endFollowing() }
-            if closed { session.tabbedBaselineFrames.removeValue(forKey: windowID) }
-            session.windowIDs.remove(windowID)
-            guard session != previous else { return }
+            // A minimized Adaptive window can close while another Space is
+            // active. Its return evidence has no later reducer to consume it.
+            // Leave tree membership for the reducer that owns its placement.
+            if closed, removeAdaptiveEvidence {
+                session.bentoReinsertionAnchors.removeValue(forKey: windowID)
+                session.followed?.forgetReturn(of: windowID)
+                session.lastObservedFrames.removeValue(forKey: windowID)
+            }
+            if let state = session.tabbedState,
+                state.windowIDs.contains(windowID) || state.floatingWindowIDs.contains(windowID)
+                    || (closed && state.returnSlots[windowID] != nil)
+                    || (closed && session.tabbedBaselineFrames[windowID] != nil) {
+                if closed { session.tabbedState?.removeClosedWindow(windowID) }
+                else { session.tabbedState?.stepAway(windowID) }
+                if !closed { session.endFollowing() }
+                if closed { session.tabbedBaselineFrames.removeValue(forKey: windowID) }
+                session.windowIDs.remove(windowID)
+            }
+            guard session != previous else { return false }
             session.advanceRevision()
+            return true
         }
         for displayID in Array(storedSessions.keys) {
             for id in Array(storedSessions[displayID]?.keys ?? Dictionary<DesktopSessionID, LayoutSession>().keys) {
                 guard var session = storedSessions[displayID]?[id] else { continue }
-                update(&session)
-                storedSessions[displayID]?[id] = session
+                if closed, session.nativeSpaceID == nil, Self.retainedWindowIDs(in: session).contains(windowID) {
+                    closedInferredWindowIDs[id, default: []].insert(windowID)
+                }
+                // Active reducers own their Adaptive/following observations.
+                // Changing them here can invalidate recovery or Apply midway
+                // through its existing closure checkpoint.
+                if update(&session, removeAdaptiveEvidence: activeSessionIDs[displayID] != id) {
+                    storedSessions[displayID]?[id] = session
+                }
             }
         }
         if closed {
@@ -656,7 +678,7 @@ public struct LayoutSessionStore: Sendable {
         }
         for index in retiredSessions.indices {
             let previous = retiredSessions[index].session
-            update(&retiredSessions[index].session)
+            _ = update(&retiredSessions[index].session)
             if closed {
                 retiredSessions[index].windowIDs.remove(windowID)
                 if retiredSessions[index].session.tabbedState == nil {
@@ -672,6 +694,40 @@ public struct LayoutSessionStore: Sendable {
             }
         }
         retiredSessions.removeAll { $0.windowIDs.isEmpty }
+        if closed { removeClosedInferredSessions() }
+    }
+
+    private static func retainedWindowIDs(in session: LayoutSession) -> Set<WindowID> {
+        session.windowIDs.union(session.bentoState.root?.windowIDs ?? [])
+            .union(session.bentoState.floatingWindowIDs)
+            .union(session.excludedFocusWindowIDs)
+            .union(session.bentoReinsertionAnchors.keys)
+            .union(session.tabbedState?.windowIDs ?? [])
+            .union(session.tabbedState?.floatingWindowIDs ?? [])
+            .union(session.tabbedState?.returnSlots.keys.map { $0 } ?? [])
+            .union(session.tabbedBaselineFrames.keys)
+    }
+
+    /// With no Space identity, a desktop can return only through its windows.
+    /// Keep hidden and minimized windows. Retire an inactive owner only after
+    /// every retained identity has confirmed closure. An empty desktop with
+    /// no closure evidence keeps its chosen mode for the fallback match.
+    private mutating func removeClosedInferredSessions() {
+        guard !closedInferredWindowIDs.isEmpty else { return }
+        for display in Array(storedSessions.keys) {
+            for session in allSessions(for: display) where session.nativeSpaceID == nil {
+                let owned = Self.retainedWindowIDs(in: session)
+                let closed = closedInferredWindowIDs[session.id, default: []]
+                guard !closed.isEmpty else { continue }
+                if activeSessionIDs[display] != session.id, owned.isSubset(of: closed) {
+                    storedSessions[display]?.removeValue(forKey: session.id)
+                } else {
+                    let retained = owned.isEmpty ? Set(closed.prefix(1)) : closed.intersection(owned)
+                    closedInferredWindowIDs[session.id] = retained.isEmpty ? nil : retained
+                }
+            }
+        }
+        removeOrphanedObservationMarkers()
     }
 
     public mutating func removeMissingDisplays(_ displayIDs: Set<DisplayID>, at time: TimeInterval = 0) {
@@ -799,6 +855,7 @@ public struct LayoutSessionStore: Sendable {
         let rememberedSessionIDs = retainedSessionIDs.union(retiredSessions.map(\.session.id))
         mergedWindowIDs = mergedWindowIDs.filter { rememberedSessionIDs.contains($0.key) }
         restoredSessionsAwaitingNativeIdentity.formIntersection(retainedSessionIDs)
+        closedInferredWindowIDs = closedInferredWindowIDs.filter { retainedSessionIDs.contains($0.key) }
     }
 
     private func bestMatch(
