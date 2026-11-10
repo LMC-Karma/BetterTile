@@ -27,6 +27,14 @@ struct DisplayTriggerNotice {
     private var reducer: DisplayTriggerReducer
     /// The newest automatic result for each layout file, kept in memory for the Last run row.
     var runs: [String: SavedLayoutRun] = [:]
+    /// The cached library and all bindings, including disabled or missing-file
+    /// bindings. Nil means the owner has not supplied a reliable inventory.
+    var retainedLayoutFiles: () -> Set<String>? = { nil }
+
+    func pruneRuns() {
+        guard !runs.isEmpty, let files = retainedLayoutFiles() else { return }
+        runs = runs.filter { files.contains($0.key) }
+    }
 
     var triggers: () -> [DisplayTrigger] = { [] }
     var liveDisplays: () -> [LiveDisplay] = { [] }
@@ -154,6 +162,7 @@ struct DisplayTriggerNotice {
 
     private func send(_ event: DisplayTriggerEvent) {
         for action in reducer.handle(event, triggers: triggers()) { perform(action) }
+        pruneRuns()
         if !reducer.isLocked { lockTask?.cancel(); lockTask = nil }
         if !(reducer.isWaiting && !reducer.isAwaitingUnlock) && !reducer.isApplying { removeMonitors() }
     }

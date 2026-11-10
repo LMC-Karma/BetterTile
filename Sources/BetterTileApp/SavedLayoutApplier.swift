@@ -412,6 +412,9 @@ private struct SavedLayoutUndoStructure: Equatable {
     var commit: @MainActor (SavedLayoutApplyPlan, SavedLayoutDesktop, SavedLayoutApplySnapshot, @escaping () -> Bool) async -> Bool
     var currentDisplayID: () -> DisplayID? = { nil }
     var didFinish: () -> Void = {}
+    /// A temporary display absence must not retire a desktop the model still
+    /// owns. The model releases this protection when it removes that session.
+    var isDesktopRetained: (SavedLayoutDesktop) -> Bool = { _ in false }
     var feedback: (SavedLayoutFeedback) -> Void = { _ in }
     var application: (String) -> ApplicationChoice? = { id in
         NSWorkspace.shared.urlForApplication(withBundleIdentifier: id).flatMap(ApplicationCatalog.application(at:))
@@ -511,6 +514,29 @@ private struct SavedLayoutUndoStructure: Equatable {
     func updateUndoDesktops(_ observation: NativeDesktopObservation?, displays: [DisplaySnapshot], sessions: [DisplayID: SavedLayoutSession]? = nil) {
         let connected = Set(displays.map(\.id))
         undoDesktops = observation?.currentSpaceByDisplay.filter { connected.contains($0.key) } ?? [:]
+        if let observation, !isBusy, undoRestoration == nil {
+            // Missing observations are not proof that a desktop disappeared.
+            // Keep inactive, existing Spaces and every in-flight checkpoint.
+            func retained(_ desktop: SavedLayoutDesktop) -> Bool {
+                (connected.contains(desktop.displayID)
+                    && observation.knownSpacesByDisplay[desktop.displayID]?.contains(desktop.spaceID) != false)
+                    || isDesktopRetained(desktop)
+            }
+            for desktop in rememberedAssignments.keys.filter({ !retained($0) }) {
+                rememberedAssignments.removeValue(forKey: desktop)
+            }
+            for display in undos.keys.filter({ undos[$0].map { !retained($0.desktop) } == true }) {
+                undos.removeValue(forKey: display)
+            }
+            if undoOrder.contains(where: { undos[$0] == nil }) { undoOrder.removeAll { undos[$0] == nil } }
+            let checkpoints = Set(undos.values.map(\.id))
+            for id in expiredUndoIDs.subtracting(checkpoints) { expiredUndoIDs.remove(id) }
+            for id in positionUndos.keys.filter({ !checkpoints.contains($0) }) { positionUndos.removeValue(forKey: id) }
+            for desktop in undoSessionCache.keys.filter({ !retained($0) })
+                where !undos.values.contains(where: { $0.committedSessions[desktop] != nil }) {
+                undoSessionCache.removeValue(forKey: desktop)
+            }
+        }
         if let sessions { updateUndoSessions(sessions, desktops: undoDesktops) }
     }
 

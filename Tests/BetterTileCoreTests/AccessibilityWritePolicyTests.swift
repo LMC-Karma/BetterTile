@@ -300,3 +300,40 @@ private let target = BTRect(x: 100, y: 100, width: 600, height: 400)
     gate.record(42, cannotComplete: true, elapsed: 0.35, now: 26)
     #expect(gate.inventoryBackoffDeadline(42) == 26 + UnresponsiveApplicationGate.holdSeconds)
 }
+
+@Test func terminatedApplicationsLeaveNoResponsivenessGateState() {
+    var gate = UnresponsiveApplicationGate()
+    let live: Int32 = 42
+    gate.record(live, cannotComplete: true, elapsed: 0.35, now: 100)
+    for pid in Int32(1000)..<11000 {
+        gate.record(pid, cannotComplete: true, elapsed: 0.35, now: 100)
+    }
+    gate.retainProcessIdentifiers([live])
+    #expect(gate.holdDeadline(live) == 102)
+    #expect(gate.inventoryBackoffDeadline(live) == 102)
+    #expect(gate.stallCount(live) == 1)
+    #expect(gate.timeoutSerial(live) == 1)
+    for pid in Int32(1000)..<11000 {
+        #expect(gate.holdDeadline(pid) == nil)
+        #expect(gate.inventoryBackoffDeadline(pid) == nil)
+        #expect(gate.stallCount(pid) == 0)
+        #expect(gate.timeoutSerial(pid) == 0)
+    }
+}
+
+@Test func aReusedPIDStartsFreshButARunningProcessKeepsItsTimeoutSerial() {
+    var gate = UnresponsiveApplicationGate()
+    gate.record(42, cannotComplete: true, elapsed: 0.35, now: 100)
+    gate.release(42)
+    gate.retainProcessIdentifiers([42])
+    #expect(gate.timeoutSerial(42) == 1)
+    gate.remove(processIdentifier: 42)
+    #expect(gate.holdDeadline(42) == nil)
+    #expect(gate.inventoryBackoffDeadline(42) == nil)
+    #expect(gate.stallCount(42) == 0)
+    #expect(gate.timeoutSerial(42) == 0)
+    gate.record(42, cannotComplete: true, elapsed: 0.35, now: 200)
+    #expect(gate.stallCount(42) == 1)
+    #expect(gate.timeoutSerial(42) == 1)
+    #expect(gate.inventoryBackoffDeadline(42) == 202)
+}
