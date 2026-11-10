@@ -1536,7 +1536,6 @@ public final class TabbedOverlayController: NSObject, NSMenuDelegate {
         surface.autoresizingMask = [.width, .height]
         addSubview(surface)
         cutouts.fillRule = .evenOdd
-        layer?.mask = cutouts
         setAccessibilityElement(false)
         updateMask()
     }
@@ -1550,6 +1549,15 @@ public final class TabbedOverlayController: NSObject, NSMenuDelegate {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         surface.frame = bounds
+        // Auto-hide has no strip cutouts. A mask that only repeats the window
+        // bounds can allocate an unnecessary full-area compositing surface.
+        guard !excludedStrips.isEmpty else {
+            layer?.mask = nil
+            cutouts.path = nil
+            CATransaction.commit()
+            return
+        }
+        layer?.mask = cutouts
         cutouts.frame = bounds
         let path = CGMutablePath()
         path.addRect(bounds)
@@ -1701,18 +1709,39 @@ struct TabbedAutoHideAnimation {
 /// only draws; the strip content above it handles every event in its own
 /// coordinates, so clicks never depend on the glass view's internal layout.
 @MainActor final class TabbedPaneView: NSView {
+    #if BETTERTILE_TEST_HOOKS
+    private(set) var appearanceRefreshCount = 0
+    #endif
     let glass = OverlayGlassView()
     let content = TabbedPaneContentView()
 
     weak var owner: TabbedOverlayController? { didSet { content.owner = owner } }
-    var pane: TabbedPane { get { content.pane } set { content.pane = newValue; refreshAppearance() } }
-    var overlayAppearance = OverlayAppearance() { didSet { refreshAppearance() } }
+    var pane: TabbedPane {
+        get { content.pane }
+        set {
+            let wasEmpty = content.pane.tabs.isEmpty
+            content.pane = newValue
+            if wasEmpty != newValue.tabs.isEmpty { refreshAppearance() }
+        }
+    }
+    var overlayAppearance = OverlayAppearance() { didSet { if overlayAppearance != oldValue { refreshAppearance() } } }
     var number: Int { get { content.number } set { content.number = newValue } }
-    var active: Bool { get { content.active } set { content.active = newValue; refreshAppearance() } }
+    var active: Bool {
+        get { content.active }
+        set {
+            guard content.active != newValue else { return }
+            content.active = newValue
+            refreshAppearance()
+        }
+    }
     var titles: [String] { get { content.titles } set { content.titles = newValue } }
     var icons: [NSImage?] { get { content.icons } set { content.icons = newValue } }
     var presentation: TabbedStripPresentation = .alwaysVisible {
-        didSet { content.presentation = presentation; refreshAppearance() }
+        didSet {
+            guard presentation != oldValue else { return }
+            content.presentation = presentation
+            refreshAppearance()
+        }
     }
     var keyboardTab: WindowID? { get { content.keyboardTab } set { content.keyboardTab = newValue } }
     private(set) var collapsed = false
@@ -1729,6 +1758,7 @@ struct TabbedAutoHideAnimation {
     }
 
     func setAutoHideCollapsed(_ value: Bool, at now: TimeInterval, animated: Bool) {
+        guard value != collapsed || autoHideAnimation != nil else { return }
         let current = autoHidePresentation(at: now)
         let changed = value != collapsed
         collapsed = value
@@ -1844,6 +1874,9 @@ struct TabbedAutoHideAnimation {
     var showsGlass: Bool { glass.showsGlass }
 
     func refreshAppearance() {
+        #if BETTERTILE_TEST_HOOKS
+        appearanceRefreshCount += 1
+        #endif
         glass.displayOptions = displayOptions
         glass.isLight = pane.tabs.isEmpty
         // A request panel covers the pane with text, so it uses the popup surface.
