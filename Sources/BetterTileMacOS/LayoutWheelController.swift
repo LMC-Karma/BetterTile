@@ -254,7 +254,7 @@ public final class LayoutWheelController {
     private var localMouseDownMonitor: Any?
 
     public convenience init(configuration: BetterTileConfiguration) {
-        self.init(configuration: configuration, presenter: LayoutWheelLiquidAdapter.make(),
+        self.init(configuration: configuration, presenter: DeferredLayoutWheelPresenter(),
                   modifierFlagsProvider: { NSEvent.modifierFlags.rawValue })
     }
 
