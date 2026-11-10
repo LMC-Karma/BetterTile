@@ -9936,7 +9936,7 @@
     "Sources/BetterTileMacOS/LayoutWheelLiquidContent.swift" : "1f720b1b7f2330c8bc16db73058afde7f5ae24778c43d1a5a1b3de42a2440156",
     "Sources/BetterTileMacOS/LayoutWheelView.swift" : "e254d56caa1221cbb689e28f6eedae92c2af8d047de5076e1fdca44cbc2c229a",
     "Sources/BetterTileMacOS/WindowActionPartitionGlyph.swift" : "69133fdc5b578556d13f49f9540da56bc3ca297cf95efd1919e99a750d771b68",
-    "Tests/BetterTileMacOSTests/GlyphMaskReference.swift" : "10129f0fa0de8b81e45575a274e764773d9348f53b7284af20f971a7e57f0b16",
+    "Tests/BetterTileMacOSTests/GlyphMaskReference.swift" : "dcfddb996d33c6201f07c46764ebdf0ee9aaa55a8b9fc4cabfa8f3915de9d896",
     "Tests/BetterTileMacOSTests/MenuGlassGlyphReference.swift" : "01b4ef1a81a10f57032eb78c58ecfa78b601d98bdd37bc76a90cab83cca72fe4"
   },
   "symbolInkSizes" : {

@@ -59,10 +59,10 @@ private struct ToleranceLog {
 
 @MainActor @Suite(.macOSTestApplication, .serialized)
 struct GlyphMaskStoreTests {
-    @Test func shippedResourcesAreFreshOrRegenerateExplicitly() throws {
+    @Test func shippedResourcesAreFreshOrRegenerateExplicitly() async throws {
         let output = ProcessInfo.processInfo.environment["BT_GENERATE_GLYPH_MASKS"]
         if let output {
-            let (manifest, files) = try GlyphMaskReference.generate()
+            let (manifest, files) = try await GlyphMaskReference.generate()
             let encoder = JSONEncoder(); encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
             let directory = URL(fileURLWithPath: output, isDirectory: true)
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -99,6 +99,7 @@ struct GlyphMaskStoreTests {
             #expect(GlyphMaskReference.sha(data) + ".png" == entry.file, "\(key): file name must be its SHA-256")
             let image = try GlyphMaskReference.storedImage(key, entry)
             try Self.checkSemantics(key, image)
+            await Task.yield()
         }
         #expect(counts == stored.findings)
         let pngs = try FileManager.default.contentsOfDirectory(atPath: directory.path).filter { $0.hasSuffix(".png") }
@@ -106,7 +107,7 @@ struct GlyphMaskStoreTests {
 
         if mode.isExact {
             // Regenerate with N=20 sampling and require the shipped bytes.
-            let (manifest, files) = try GlyphMaskReference.generate(acceptStoredMember: true)
+            let (manifest, files) = try await GlyphMaskReference.generate(acceptStoredMember: true)
             #expect(manifest.version == stored.version)
             #expect(manifest.entries == stored.entries, "Stale entries. Regenerate with Tools/generate-glyph-masks.sh.")
             #expect(manifest.symbolInkSizes == stored.symbolInkSizes, "Stale symbol ink sizes.")
@@ -130,6 +131,7 @@ struct GlyphMaskStoreTests {
                 for (measured, stored) in zip(live, recorded) { delta = max(delta, abs(measured - stored)) }
                 worst = max(worst, delta)
                 #expect(delta <= Self.inkSizeLimit, "\(item.key): live \(live), recorded \(recorded)")
+                await Task.yield()
             }
             print("Glyph mask tolerance test=inkSizes cases=\(inkKeys.count) worstDelta=\(worst)pt limit=\(Self.inkSizeLimit)pt")
         }
@@ -247,23 +249,25 @@ struct GlyphMaskStoreTests {
         return Int(peak)
     }
 
-    @Test func wheelFinalRGBAIsExactAtEveryComputedMetalSize() throws {
+    @Test func wheelFinalRGBAIsExactAtEveryComputedMetalSize() async throws {
         var log = ToleranceLog()
         for size in GlyphMaskReference.wheelSizes {
             for scale in [1.0, 2.0] { for dark in [false, true] { for slot in GlyphMaskReference.wheelSlots {
                 try autoreleasepool { try compare(set: .wheel, id: GlyphMaskStore.wheelID(slot), slot: slot, size: size, scale: scale, dark: dark, log: &log) }
+                await Task.yield()
             } } }
         }
         try finish("wheelSlots", log)
     }
 
-    @Test func menuGlassCoverageIsExactAndOpaqueAtBothScales() throws {
+    @Test func menuGlassCoverageIsExactAndOpaqueAtBothScales() async throws {
         var log = ToleranceLog()
         for action in WindowAction.allCases { for scale in [1.0, 2.0] { for dark in [false, true] {
             try compare(set: .menuGlass, id: action.rawValue, slot: .init(command: .windowAction(action)), size: 20, scale: scale, dark: dark, log: &log)
             let image = try #require(GlyphMaskStore.image(set: .menuGlass, id: action.rawValue, pointSize: 20, scale: scale, appearance: dark ? .dark : .light))
             try Self.checkSemantics(GlyphMaskStore.key(set: .menuGlass, id: action.rawValue, pointSize: 20, scale: scale,
                                                        appearance: dark ? .dark : .light), image)
+            await Task.yield()
         } } }
         try finish("menuGlass", log)
     }
@@ -291,17 +295,18 @@ struct GlyphMaskStoreTests {
         }
     }
 
-    @Test func everyGeneratedWheelSizeAndGroupParentIsExact() throws {
+    @Test func everyGeneratedWheelSizeAndGroupParentIsExact() async throws {
         var log = ToleranceLog()
         for (id, slot) in GlyphMaskReference.catalog { for size in GlyphMaskReference.wheelSizes {
             for scale in [1.0, 2.0] { for dark in [false, true] {
                 try autoreleasepool { try compare(set: .wheel, id: id, slot: slot, size: size, scale: scale, dark: dark, log: &log) }
+                await Task.yield()
             } }
         } }
         try finish("wheelCatalog", log)
     }
 
-    @Test func centreSymbolsMatchAnObservedReferenceOutput() throws {
+    @Test func centreSymbolsMatchAnObservedReferenceOutput() async throws {
         var log = ToleranceLog()
         for content in GlyphMaskReference.sizedContents {
             for scale in [1.0, 2.0] { for dark in [false, true] {
@@ -309,6 +314,7 @@ struct GlyphMaskStoreTests {
                             size: content.chevronSymbolSize, scale: scale, dark: dark, log: &log)
                 try compare(set: .wheelLabels, id: "cancel", slot: .empty,
                             size: content.cancelTextSize, scale: scale, dark: dark, log: &log)
+                await Task.yield()
             } }
         }
         try finish("centre", log)
@@ -317,7 +323,7 @@ struct GlyphMaskStoreTests {
     /// The tolerance limit alone could accept a similar glyph. On every host,
     /// each stored glyph must also be closer to its own live render than to
     /// the live render of any other glyph in its group.
-    @Test func eachStoredGlyphIsNearestToItsOwnLiveRender() throws {
+    @Test func eachStoredGlyphIsNearestToItsOwnLiveRender() async throws {
         let mode = try GlyphMaskReference.mode()
         mode.log("identity")
         let manifest = try GlyphMaskReference.storedManifest()
@@ -341,6 +347,7 @@ struct GlyphMaskStoreTests {
                     live.append(Self.alpha(r)); stored.append(Self.alpha(s)); liveBytes.append(Data(r))
                     totals.append((vDSP.sum(live.last!), vDSP.sum(stored.last!)))
                 }
+                await Task.yield()
             }
             for i in members.indices {
                 if totals[i].0 == 0 { skipped += 1; continue }

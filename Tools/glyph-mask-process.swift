@@ -2,7 +2,7 @@ import AppKit
 import BetterTileCore
 @testable import BetterTileMacOS
 @main struct GlyphProcess {
- @MainActor static func main() throws {
+ @MainActor static func main() async throws {
   _ = NSApplication.shared
   let mode=CommandLine.arguments[1],out=URL(fileURLWithPath:CommandLine.arguments[3],isDirectory:true)
   try FileManager.default.createDirectory(at:out,withIntermediateDirectories:true)
@@ -12,7 +12,7 @@ import BetterTileCore
    try encoder.encode(value).write(to:out.appendingPathComponent("manifest.json"));return
   }
   if mode=="manifest" {
-   let (manifest,files)=try GlyphMaskReference.generate(acceptStoredMember:true, refreshing:.menuGlass)
+   let (manifest,files)=try await GlyphMaskReference.generate(acceptStoredMember:true, refreshing:.menuGlass)
    try encoder.encode(manifest).write(to:out.appendingPathComponent("manifest.json"))
    for (name,data) in files {try data.write(to:out.appendingPathComponent(name))}
    return

@@ -287,7 +287,9 @@ import UniformTypeIdentifiers
         return sources
     }
 
-    static func generate(acceptStoredMember: Bool = false, refreshing: GlyphMaskStore.Set? = nil) throws -> (GlyphMaskStore.Manifest, [String: Data]) {
+    /// Generation renders every case on the main actor for about a minute.
+    /// It yields after each case so other main-actor work keeps running.
+    static func generate(acceptStoredMember: Bool = false, refreshing: GlyphMaskStore.Set? = nil) async throws -> (GlyphMaskStore.Manifest, [String: Data]) {
         var entries: [String: GlyphMaskStore.Entry] = [:], files: [String: Data] = [:]
         var ink: [String: [Double]] = [:]
         var counts: [String: Int] = [:]
@@ -327,6 +329,7 @@ import UniformTypeIdentifiers
             case let .ink(symbol, size):
                 ink[item.key] = try autoreleasepool { try measureInk(symbol: symbol, size: size) }
             }
+            await Task.yield()
         }
         // The generator host. Tests compare these fields only to choose exact
         // or tolerance mode; they never fail on a different host.

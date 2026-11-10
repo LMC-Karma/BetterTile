@@ -96,7 +96,7 @@ struct MainWindowActionGlyphTests {
             == frozen("Tests/BetterTileMacOSTests/MenuGlassGlyphReference.swift"))
     }
 
-    @Test func bundledTemplateIsMainsTemplateObjectForEveryAction() throws {
+    @Test func bundledTemplateIsMainsTemplateObjectForEveryAction() async throws {
         let mode = try Self.mode("menuTemplate")
         var worst: GlyphRasterDifference?
         for action in WindowAction.allCases {
@@ -127,18 +127,20 @@ struct MainWindowActionGlyphTests {
                 if worst.map({ difference.inkDifference > $0.inkDifference }) ?? true { worst = difference }
                 #expect(difference.isWithinLimits, "\(action): \(difference)")
             }
+            await Task.yield()
         }
         if let worst { print("Window action glyph tolerance test=menuTemplate worst=\(worst)") }
     }
 
     /// The disabled and highlighted sites must tint differently from the
     /// plain site; otherwise their parity proves nothing about those states.
-    @Test func disabledAndHighlightedSitesChangeTheTint() throws {
+    @Test func disabledAndHighlightedSitesChangeTheTint() async throws {
         let pairs: [(WindowActionGlyphSite, WindowActionGlyphSite)] = [(.menuPanel, .menuPanelDisabled),
             (.settingsButton, .settingsButtonDisabled), (.pickerItem, .pickerItemDisabled), (.pickerItem, .pickerItemHighlighted)]
         for sample in Case.all where sample.action == .leftHalf {
             for (plain, state) in pairs {
                 #expect(try Self.render(plain, sample) != Self.render(state, sample), "\(state) \(sample)")
+                await Task.yield()
             }
         }
         WindowActionGlyphCache.templates[.leftHalf] = nil
@@ -147,7 +149,7 @@ struct MainWindowActionGlyphTests {
     /// Each site draws the same view code twice. Only the cached template
     /// object differs: main's rendered image, then the bundled image.
     @Test(arguments: WindowActionGlyphSite.allCases)
-    func everySiteDrawsMainsPixels(_ site: WindowActionGlyphSite) throws {
+    func everySiteDrawsMainsPixels(_ site: WindowActionGlyphSite) async throws {
         let mode = try Self.mode("site-\(site)")
         var matched = 0, failures: [String] = [], worst: GlyphRasterDifference?
         for sample in Case.all {
@@ -179,6 +181,7 @@ struct MainWindowActionGlyphTests {
                 }
             }
             WindowActionGlyphCache.templates[sample.action] = nil
+            await Task.yield()
         }
         print("Window action glyph site=\(site) \(mode.isExact ? "exact" : "withinTolerance")=\(matched)/\(Case.all.count)"
               + Self.worstSummary(worst))
