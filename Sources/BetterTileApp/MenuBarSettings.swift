@@ -39,6 +39,56 @@ enum MenuActionOrder {
     }
 }
 
+/// The Menu Bar page's action catalogue: which actions each group lists for a search, and how a
+/// checkbox changes the menu. The catalogue keeps group order; the menu keeps its own order.
+enum MenuActionCatalogue {
+    static func matches(_ action: WindowAction, in group: WindowActionGroup, search: String) -> Bool {
+        let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
+        return query.isEmpty || action.title.localizedStandardContains(query) || group.title.localizedStandardContains(query)
+    }
+
+    static func actions(in group: WindowActionGroup, search: String) -> [WindowAction] {
+        group.actions.filter { matches($0, in: group, search: search) }
+    }
+
+    /// The groups shown for a search, in catalogue order, with no empty group.
+    static func groups(search: String) -> [(group: WindowActionGroup, actions: [WindowAction])] {
+        WindowActionGroup.allCases.compactMap { group in
+            let actions = actions(in: group, search: search)
+            return actions.isEmpty ? nil : (group, actions)
+        }
+    }
+
+    /// A checked action joins the end of the menu. An unchecked action leaves it; the others keep their order.
+    static func setting(_ action: WindowAction, visible: Bool, in selected: [WindowAction]) -> [WindowAction]? {
+        var actions = selected
+        if visible {
+            guard !actions.contains(action) else { return nil }
+            actions.append(action)
+        } else {
+            actions.removeAll { $0 == action }
+        }
+        return actions
+    }
+}
+
+#if BETTERTILE_TEST_HOOKS
+/// Tests observe which catalogue rows the lazy stack builds.
+@MainActor enum MenuActionCatalogueTestHooks {
+    static var rowAppeared: ((WindowAction) -> Void)?
+}
+#endif
+
+private extension View {
+    func catalogueRowTestHook(_ action: WindowAction) -> some View {
+#if BETTERTILE_TEST_HOOKS
+        onAppear { MenuActionCatalogueTestHooks.rowAppeared?(action) }
+#else
+        self
+#endif
+    }
+}
+
 struct MenuBarSettings: View {
     @Bindable var model: BetterTileModel
     @State private var search = ""
@@ -80,9 +130,9 @@ struct MenuBarSettings: View {
             .background(SettingsColor.fill, in: .settings(SettingsRadius.control))
 
             ScrollView {
-                VStack(alignment: .leading, spacing: SettingsSpacing.s4) {
+                LazyVStack(alignment: .leading, spacing: SettingsSpacing.s4) {
                     ForEach(WindowActionGroup.allCases) { group in
-                        let actions = group.actions.filter { matchesSearch($0, in: group) }
+                        let actions = MenuActionCatalogue.actions(in: group, search: search)
                         if !actions.isEmpty {
                             SettingsGroup(group.title, aside: "\(actions.filter { selectedActions.contains($0) }.count) of \(actions.count)") {
                                 ForEach(actions) { action in
@@ -98,13 +148,12 @@ struct MenuBarSettings: View {
                                     .toggleStyle(.checkbox)
                                     .padding(.horizontal, SettingsSpacing.s3)
                                     .frame(minHeight: SettingsMetrics.rowMinHeight)
+                                    .catalogueRowTestHook(action)
                                 }
                             }
                         }
                     }
-                    if !WindowActionGroup.allCases.contains(where: { group in
-                        group.actions.contains { matchesSearch($0, in: group) }
-                    }) {
+                    if MenuActionCatalogue.groups(search: search).isEmpty {
                         HelpText("No actions match “\(search)”. Try a shorter word, such as “third” or “display”.")
                             .padding(.vertical, SettingsSpacing.s4)
                     }
@@ -123,11 +172,6 @@ struct MenuBarSettings: View {
             }
             .padding(.trailing, SettingsSpacing.s1)
         }
-    }
-
-    private func matchesSearch(_ action: WindowAction, in group: WindowActionGroup) -> Bool {
-        let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
-        return query.isEmpty || action.title.localizedStandardContains(query) || group.title.localizedStandardContains(query)
     }
 
     private var editablePreview: some View {
@@ -168,13 +212,7 @@ struct MenuBarSettings: View {
         Binding(
             get: { selectedActions.contains(action) },
             set: { isVisible in
-                var actions = selectedActions
-                if isVisible {
-                    guard !actions.contains(action) else { return }
-                    actions.append(action)
-                } else {
-                    actions.removeAll { $0 == action }
-                }
+                guard let actions = MenuActionCatalogue.setting(action, visible: isVisible, in: selectedActions) else { return }
                 setActions(actions)
             }
         )

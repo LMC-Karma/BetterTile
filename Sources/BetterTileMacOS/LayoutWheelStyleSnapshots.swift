@@ -66,12 +66,13 @@ import Observation
         var configuration = LayoutWheelConfiguration(style: .grouped, levelCount: .two)
         configuration.appearance.size = size
         configuration.appearance.liquid = .init(preset: preset, appearance: dark ? .dark : .light)
-        return render(configuration: configuration, dark: dark)
+        // Style cards are 72 pt high; 256 px keeps them oversampled at 2×.
+        return render(configuration: configuration, dark: dark, maximumPixelDimension: 256)
     }
 
     /// Shared offscreen encode path, also used to measure highlight visibility in tests.
     static func render(configuration: LayoutWheelConfiguration, dark: Bool,
-                       state: LayoutWheelLiquidState = .init(selection: .init(ring: .outer, sector: .right)), opaque: Bool = false, clearLightRimStrength: Float = 0.08, tintIcons: Bool = true, drawIcons: Bool = true) -> NSImage? {
+                       state: LayoutWheelLiquidState = .init(selection: .init(ring: .outer, sector: .right)), opaque: Bool = false, clearLightRimStrength: Float = 0.08, tintIcons: Bool = true, drawIcons: Bool = true, maximumPixelDimension: Int? = nil) -> NSImage? {
         guard let pipeline = LayoutWheelLiquidPipeline.prepare(), let encoder = LayoutWheelLiquidEncoder(pipeline: pipeline) else { return nil }
         let content = LayoutWheelLiquidDefaults.content(configuration: configuration, currentMode: .manual)
         var style = LayoutWheelLiquidDefaults.snapshotStyle(configuration: configuration, dark: dark, opaque: opaque)
@@ -109,7 +110,9 @@ import Observation
         if !tintIcons { for index in stride(from: 2, to: instances.count, by: 3) { instances[index].z = 0 } }
         if !drawIcons { instances.removeAll() }
         let points = CGSize(width: content.diameter, height: content.diameter)
-        let pixels = Int(ceil(content.diameter * 2))
+        let fullPixels = Int(ceil(content.diameter * 2))
+        let pixels = min(fullPixels, max(1, maximumPixelDimension ?? fullPixels))
+        let pointsPerPixel = pixels == fullPixels ? 0.5 : content.diameter / Double(pixels)
         let descriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: LayoutWheelLiquidPipeline.pixelFormat,
                                                                   width: pixels, height: pixels, mipmapped: false)
         descriptor.usage = [.renderTarget]
@@ -117,7 +120,7 @@ import Observation
         guard let texture = pipeline.device.makeTexture(descriptor: descriptor) else { return nil }
         let drawable = OffscreenWheelDrawable(texture: texture)
         guard encoder.draw(model, style: style,
-            frame: .init(center: .init(x: points.width / 2, y: points.height / 2), pointsPerPixel: 0.5),
+            frame: .init(center: .init(x: points.width / 2, y: points.height / 2), pointsPerPixel: pointsPerPixel),
             sprites: .init(atlas: atlas, instances: instances, viewSize: points), drawable: drawable),
               let fence = pipeline.queue.makeCommandBuffer() else { return nil }
         // Settings draws these on the main thread. A stalled GPU gives no thumbnail, never a hang.
@@ -145,6 +148,13 @@ import Observation
                                            width: width, height: height))
         }
         guard let composed = composer.makeImage() else { return nil }
+        if maximumPixelDimension != nil {
+            let bitmap = NSBitmapImageRep(cgImage: composed)
+            bitmap.size = points
+            let result = NSImage(size: points)
+            result.addRepresentation(bitmap)
+            return result
+        }
         return NSImage(cgImage: composed, size: points)
     }
 }
