@@ -326,6 +326,68 @@ import Testing
         }
     }
 
+    @Test(.liquidPipeline) func settingsPicturesBoundPixelStorageWithoutChangingLogicalSize() async throws {
+        for size in LayoutWheelSize.allCases {
+            let snapshots = LayoutWheelStyleSnapshots()
+            await snapshots.load(dark: false, size: size)
+            for preset in LayoutWheelLiquidSettings.Preset.allCases {
+                let image = try #require(snapshots.image(preset: preset, dark: false, size: size))
+                try #require(image.representations.count == 1)
+                let representation = try #require(image.representations.first as? NSBitmapImageRep)
+                let bitmap = try #require(representation.cgImage)
+                #expect(bitmap.width > 0 && bitmap.width <= 256)
+                #expect(bitmap.height == bitmap.width)
+                var configuration = LayoutWheelConfiguration(style: .grouped, levelCount: .two)
+                configuration.appearance.size = size
+                configuration.appearance.liquid = .init(preset: preset, appearance: .light)
+                let diameter = LayoutWheelLiquidDefaults.content(configuration: configuration, currentMode: .manual).diameter
+                #expect(image.size == CGSize(width: diameter, height: diameter))
+                if ProcessInfo.processInfo.environment["BT_SETTINGS_CARD_QA"] != nil {
+                    print("SETTINGS_PICTURE_SIZE size=\(size.rawValue) preset=\(preset.rawValue) fullPixels=\(Int(ceil(diameter * 2))) actualPixels=\(bitmap.width)")
+                }
+            }
+        }
+    }
+
+    @Test(.liquidPipeline) func settingsPicturesPreserveTheCardAtDisplayResolution() throws {
+        func card(_ image: NSImage) throws -> CGImage {
+            let source = try #require(image.cgImage(forProposedRect: nil, context: nil, hints: nil))
+            let context = try #require(CGContext(data: nil, width: 144, height: 144,
+                bitsPerComponent: 8, bytesPerRow: 144 * 4,
+                space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue))
+            context.interpolationQuality = .high
+            context.draw(source, in: CGRect(x: 0, y: 0, width: 144, height: 144))
+            return try #require(context.makeImage())
+        }
+        for size in LayoutWheelSize.allCases {
+            for dark in [false, true] {
+                for preset in LayoutWheelLiquidSettings.Preset.allCases {
+                    var configuration = LayoutWheelConfiguration(style: .grouped, levelCount: .two)
+                    configuration.appearance.size = size
+                    configuration.appearance.liquid = .init(preset: preset, appearance: dark ? .dark : .light)
+                    let original = try card(#require(LayoutWheelStyleSnapshots.render(configuration: configuration, dark: dark)))
+                    let thumbnail = try card(#require(LayoutWheelStyleSnapshots.render(configuration: configuration, dark: dark,
+                        maximumPixelDimension: 256)))
+                    let lhs = Array(try #require(original.dataProvider?.data) as Data)
+                    let rhs = Array(try #require(thumbnail.dataProvider?.data) as Data)
+                    let difference = zip(lhs, rhs).reduce(0.0) { $0 + abs(Double($1.0) - Double($1.1)) } / Double(lhs.count) / 255
+                    print("SETTINGS_CARD_DIFF size=\(size.rawValue) preset=\(preset.rawValue) dark=\(dark) mean=\(difference)")
+                    #expect(difference < 0.02)
+                    if let directory = ProcessInfo.processInfo.environment["BT_SETTINGS_CARD_QA"] {
+                        let folder = URL(filePath: directory)
+                        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+                        for (name, image) in [("full", original), ("thumbnail", thumbnail)] {
+                            let bitmap = NSBitmapImageRep(cgImage: image)
+                            try #require(bitmap.representation(using: .png, properties: [:])).write(
+                                to: folder.appendingPathComponent("\(size.rawValue)-\(preset.rawValue)-\(dark ? "dark" : "light")-\(name).png"))
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     @Test func snapshotPreparationCost() async throws {
         guard let folder = ProcessInfo.processInfo.environment["BT_WHEEL_SNAPSHOT_TIMING_DIR"] else { return }
         let snapshots = LayoutWheelStyleSnapshots()
