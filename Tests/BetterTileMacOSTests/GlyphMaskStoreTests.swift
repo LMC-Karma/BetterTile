@@ -139,6 +139,41 @@ struct GlyphMaskStoreTests {
     /// symbol ink size on a host other than the generator.
     static let inkSizeLimit = 1.0
 
+    /// Bundled keys whose SF Symbol draws differently on macOS 26 than in the
+    /// macOS 27 artwork that ships everywhere. Tolerance mode checks only that
+    /// these PNGs decode at their recorded size with the expected ink, and
+    /// skips their live-render and identity comparisons. Every other key keeps
+    /// the full checks. Measured on CI, macOS 26 build 25G332, Swift 6.3.3.
+    static let knownCrossOSDifferences: Swift.Set<String> = [
+        // The wheel chevron: 0.36–0.74 coverage difference, 1–2 px size.
+        "wheelSymbols|chevron.right|401999999999999a|1.0|dark",
+        "wheelSymbols|chevron.right|401999999999999a|1.0|light",
+        "wheelSymbols|chevron.right|401999999999999a|2.0|dark",
+        "wheelSymbols|chevron.right|401999999999999a|2.0|light",
+        "wheelSymbols|chevron.right|4020000000000000|1.0|dark",
+        "wheelSymbols|chevron.right|4020000000000000|1.0|light",
+        "wheelSymbols|chevron.right|4020000000000000|2.0|dark",
+        "wheelSymbols|chevron.right|4020000000000000|2.0|light",
+        // The Fine-tuning icon: about 1.02 at 1x, 0.47 at 2x.
+        "wheel|symbol:slider.horizontal.3|4030000000000000|1.0|dark",
+        "wheel|symbol:slider.horizontal.3|4030000000000000|1.0|light",
+        "wheel|symbol:slider.horizontal.3|4035999999999999|2.0|dark",
+        "wheel|symbol:slider.horizontal.3|4035999999999999|2.0|light",
+    ]
+    static let knownDifferenceReason = "known macOS 26 symbol difference, user-accepted 2026-11-09"
+
+    /// Tolerance mode for a listed key: decode, recorded size and ink rules only.
+    static func checkKnownDifference(_ key: String, _ image: CGImage) throws {
+        let entry: GlyphMaskStore.Entry = try #require(try GlyphMaskReference.storedManifest().entries[key])
+        let stored: CGImage = try GlyphMaskReference.storedImage(key, entry)
+        #expect(stored.width == entry.width, "\(key): width")
+        #expect(stored.height == entry.height, "\(key): height")
+        #expect(image.width == entry.width, "\(key): drawn width")
+        #expect(image.height == entry.height, "\(key): drawn height")
+        try checkSemantics(key, stored)
+        print("Glyph mask tolerance: skipped live comparison for \(key): \(knownDifferenceReason)")
+    }
+
     /// The ink colour and template rules that every stored PNG keeps on every host.
     static func checkSemantics(_ key: String, _ image: CGImage) throws {
         let parts = key.split(separator: "|")
@@ -297,6 +332,10 @@ struct GlyphMaskStoreTests {
             }
             for i in members.indices {
                 if totals[i].0 == 0 { skipped += 1; continue }
+                if !mode.isExact && Self.knownCrossOSDifferences.contains(members[i].key) {
+                    print("Glyph mask identity: skipped \(members[i].key): \(Self.knownDifferenceReason)")
+                    continue
+                }
                 let own = Self.inkDifference(stored[i], totals[i].1, live[i], totals[i].0)
                 worstOwn = max(worstOwn, own)
                 for j in members.indices where j != i && liveBytes[j] != liveBytes[i] {
@@ -323,6 +362,15 @@ struct GlyphMaskStoreTests {
         let manifest: Bool = FileManager.default.fileExists(atPath: directory.appendingPathComponent("manifest.json").path)
         #expect(manifest)
         print("Glyph mask resources: \(directory.path)")
+    }
+
+    /// The accepted list names exact bundled keys; a typo cannot hide a failure.
+    @Test func knownCrossOSDifferencesAreExactBundledKeys() throws {
+        let manifest = try GlyphMaskReference.storedManifest()
+        for key: String in Self.knownCrossOSDifferences.sorted() {
+            #expect(manifest.entries[key] != nil, "\(key) is not a bundled key")
+        }
+        #expect(Self.knownCrossOSDifferences.count == 12)
     }
 
     @Test func missingArtworkAndUnsupportedSizesAreExplicit() {
@@ -465,6 +513,10 @@ struct GlyphMaskStoreTests {
             image = try #require(GlyphMaskStore.image(set: set, id: id, pointSize: size, scale: scale, appearance: dark ? .dark : .light))
         }
         guard try GlyphMaskReference.mode().isExact else {
+            if Self.knownCrossOSDifferences.contains(key) {
+                try Self.checkKnownDifference(key, image)
+                return
+            }
             // One live render. The bundled image ships unchanged on this host,
             // so it must stay the same glyph within the stated limits.
             let live = try GlyphMaskReference.render(set: set, slot: slot, pointSize: size, scale: scale, dark: dark)
