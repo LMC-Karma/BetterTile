@@ -58,8 +58,9 @@ the session. Restoring a valid file and relaunching resumes normal saving.
 
 `BetterTileClock` in Core wraps Swift's `Clock` protocol with `Duration` and
 monotonic `ContinuousClock.Instant` values. Its live default uses
-`ContinuousClock`. Its sleeps, including `sleep(for:)`, start on the caller's
-executor, so a main-actor caller reads `now` before it leaves the main actor.
+`ContinuousClock`. Its sleeps, including `sleep(for:)`, take an explicit
+isolation parameter and start in the caller's isolation, so a main-actor caller
+reads `now` before it leaves the main actor.
 `BetterTileModel` passes its injected clock to
 `WindowCoordinator`, idle observation retries in `DragSnapController`, and
 display-refresh debouncing. It drives recovery,

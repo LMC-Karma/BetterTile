@@ -505,10 +505,13 @@ next registered sleeper. At most 200 one-millisecond turns remain available for
 short boundary probes. Fixtures can also explicitly request deadline driving
 for shorter waits. A real executor handoff lets resumed operations register
 their next wait before the driver chooses another deadline. `ManualClock` and
-`BetterTileClock` sleeps, including `sleep(for:)`, are `nonisolated(nonsending)`:
-a main-actor task registers its wait before it leaves the main actor. The
-driver also waits until each sleeper that an advance resumed has run again on
-its caller's executor (`returningSleepCount`), so a multi-step policy loop
+`BetterTileClock` sleeps, including `sleep(for:)`, take an explicit
+`isolation: isolated (any Actor)? = #isolation` parameter: a main-actor task
+registers its wait before it leaves the main actor, on every supported
+toolchain. A generic `Clock` call and a call that names `tolerance:` without
+`isolation:` use the plain `Clock` requirement and run on the global executor.
+The driver also waits until each sleeper that an advance resumed has run again
+in its caller's isolation (`returningSleepCount`), so a multi-step policy loop
 such as settlement gets every step of the advanced interval. With no policy
 sleeper, virtual time stays frozen while a separate bounded executor watchdog
 observes completion. The fixture announces a queued event pass's sleep and
