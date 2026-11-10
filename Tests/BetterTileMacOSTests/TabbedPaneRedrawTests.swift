@@ -29,6 +29,9 @@ import Testing
             view.pane = pane
             view.titles = ["Alpha", "Gamma", "Notes"]
         }
+        // An assignment that keeps a value does not refresh the view. Apply the
+        // injected options here, so the host's accessibility settings never decide.
+        view.refreshAppearance()
         window.contentView = view
         flush()
     }
