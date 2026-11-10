@@ -16,6 +16,8 @@ public final class ManualClock: Clock, Sendable {
         var now = ContinuousClock.now // real-time: seeds the manual clock's origin once
         var nextID: UInt64 = 0
         var sleepers: [UInt64: Sleeper] = [:]
+        /// Sleepers that `advance` resumed and that have not yet run on their caller's executor.
+        var returning: Set<UInt64> = []
         var registrationWaiters: [(Int, CheckedContinuation<Void, Never>)] = []
 
         var sleepingCount: Int {
@@ -34,6 +36,10 @@ public final class ManualClock: Clock, Sendable {
     public let minimumResolution: Duration = .nanoseconds(1)
     public var now: Instant { state.withLock { $0.now } }
     public var pendingSleepCount: Int { state.withLock { $0.sleepingCount } }
+    /// Waits that `advance` resumed but whose callers have not run again yet.
+    /// A resumed task reaches its actor later than the driver's next main-queue
+    /// turn can run. Until it arrives, that caller's next wait is missing.
+    public var returningSleepCount: Int { state.withLock { $0.returning.count } }
     /// Earliest registered policy wait, excluding reservations and cancelled waits.
     public var nextSleepDeadline: Instant? {
         state.withLock { state in
@@ -46,16 +52,29 @@ public final class ManualClock: Clock, Sendable {
             state.sleepers.values.contains { $0.deadline == deadline && $0.continuation != nil && !$0.cancelled }
         }
     }
-    public var clock: BetterTileClock { BetterTileClock(self) }
+    /// Calls this clock's own sleep directly, so a wait registers on the
+    /// caller's executor. `BetterTileClock(self)` would call it through the
+    /// generic `Clock` requirement, which leaves the caller's executor first.
+    public var clock: BetterTileClock {
+        BetterTileClock(now: { self.now }, minimumResolution: minimumResolution) {
+            try await self.sleep(until: $0, tolerance: $1)
+        }
+    }
 
     public init() {}
 
+    /// Registers the wait before the caller suspends, on the caller's executor.
+    /// A main-actor task therefore never leaves a gap in which a driver reads
+    /// `nextSleepDeadline` without this wait.
+    nonisolated(nonsending)
     public func sleep(until deadline: Instant, tolerance: Duration? = nil) async throws {
         let id = state.withLock { state in
             state.nextID += 1
             state.sleepers[state.nextID] = Sleeper(deadline: deadline)
             return state.nextID
         }
+        // Runs on the caller's executor after the resumed continuation hops back.
+        defer { _ = state.withLock { $0.returning.remove(id) } }
         try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
                 state.withLock { state in
@@ -86,6 +105,13 @@ public final class ManualClock: Clock, Sendable {
         }
     }
 
+    /// Replaces the standard library's `Clock.sleep(for:)` extension, which
+    /// leaves the caller's executor before it reads `now`.
+    nonisolated(nonsending)
+    public func sleep(for duration: Duration, tolerance: Duration? = nil) async throws {
+        try await self.sleep(until: now.advanced(by: duration), tolerance: tolerance)
+    }
+
     /// Resume due continuations by deadline, then by registration order.
     /// Returns their deadlines in that order. Executor scheduling of the
     /// resumed task bodies is separate; use drain to join those tasks.
@@ -101,6 +127,7 @@ public final class ManualClock: Clock, Sendable {
                 }
             for (id, sleeper) in due {
                 state.sleepers.removeValue(forKey: id)
+                state.returning.insert(id)
                 sleeper.continuation?.resume()
             }
             return due.map { $0.value.deadline }

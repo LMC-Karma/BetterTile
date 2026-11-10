@@ -184,3 +184,49 @@ func manualWindowWaitAllowsAShorterSleepToRegisterWithinItsBudget() async throws
     #expect(!unrelatedTimerFired)
     await operation.value
 }
+
+/// A main-actor policy task registers each manual wait before it suspends, so the
+/// driver always sees the next deadline. The settlement calls `sleep(for:)`.
+@Test(.appTestApplication, .timeLimit(.minutes(1))) @MainActor
+func aMainActorSleepRegistersBeforeItsTaskSuspends() async throws {
+    let system = makeManualWindowSystem()
+    let manual = try #require(system.manualClock)
+    let clock = system.clock
+    for iteration in 0..<20 {
+        let viaProductClock = Task.immediate { @MainActor in try? await clock.sleep(for: .milliseconds(40)) }
+        #expect(manual.pendingSleepCount == 1, "BetterTileClock.sleep(for:) registered late in iteration \(iteration)")
+        let viaManualClock = Task.immediate { @MainActor in try? await manual.sleep(for: .milliseconds(40)) }
+        #expect(manual.pendingSleepCount == 2, "ManualClock.sleep(for:) registered late in iteration \(iteration)")
+        manual.advance(by: .milliseconds(40))
+        // A late registration computes its deadline after this advance and never wakes.
+        viaProductClock.cancel()
+        viaManualClock.cancel()
+        await viaProductClock.value
+        await viaManualClock.value
+        #expect(manual.pendingSleepCount == 0)
+    }
+}
+
+/// The settlement shape: eight 40 ms samples on the main actor. A one-second
+/// advance must not jump past a sample that is still registering. Before the
+/// clock and driver fix, nearly every iteration skipped samples.
+@Test(.appTestApplication, .timeLimit(.minutes(1))) @MainActor
+func advanceRunsEveryStepOfAMainActorSamplingLoop() async throws {
+    let system = makeManualWindowSystem()
+    let clock = system.clock
+    var lateIterations: [Int] = []
+    for iteration in 0..<10 {
+        var samples = 0
+        let sampling = Task { @MainActor in
+            for _ in 0..<8 {
+                try? await clock.sleep(for: .milliseconds(40))
+                samples += 1
+            }
+        }
+        await system.advance(by: .seconds(1))
+        if samples != 8 { lateIterations.append(iteration) }
+        sampling.cancel()
+        await sampling.value
+    }
+    #expect(lateIterations.isEmpty, "Samples were skipped in \(lateIterations.count) of 10 iterations: \(lateIterations)")
+}
