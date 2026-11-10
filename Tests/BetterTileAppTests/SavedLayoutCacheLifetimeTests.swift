@@ -54,7 +54,9 @@ struct SavedLayoutCacheLifetimeTests {
         #expect(actions.knownLibraryFiles == nil)
     }
 
-    @Test func aTemporarilyAbsentDesktopKeepsItsCheckpointUntilTheModelRetiresIt() async {
+    /// A desktop the model still owns, including a retired one, keeps its
+    /// state. After the model forgets it, it stays while it is recent.
+    @Test func anAbsentDesktopKeepsItsCheckpointWhileTheModelOwnsItOrItIsRecent() async {
         let h = ApplyHarness(); defer { h.close() }
         h.addWindow()
         _ = await h.applier.apply(h.document())
@@ -69,11 +71,13 @@ struct SavedLayoutCacheLifetimeTests {
         #expect(h.applier.hasUndo)
         h.applier.isDesktopRetained = { _ in false }
         h.applier.updateUndoDesktops(observation, displays: [other])
-        #expect(count("rememberedAssignments", in: h.applier!) == 0)
-        #expect(!h.applier.hasUndo)
+        #expect(count("rememberedAssignments", in: h.applier!) == 1)
+        #expect(h.applier.hasUndo)
     }
 
-    @Test func reconnectsReleaseSavedLayoutDataAndKeepTheCurrentUndo() async throws {
+    /// Each reconnect brings a new display ID. Only the newest absent
+    /// desktops keep their Saved Layout state, so it stays bounded.
+    @Test func reconnectsKeepOnlyTheNewestAbsentDesktopsAndTheCurrentUndo() async throws {
         let h = ApplyHarness(); defer { h.close() }
         h.usesAllDisplays = true
         let document = SavedLayoutDocument(name: "Memory", mode: .manual,
@@ -94,8 +98,9 @@ struct SavedLayoutCacheLifetimeTests {
             let result = await h.applier.apply(document, displayID: display.id)
             #expect(result.placed == 1)
             h.applier.updateUndoDesktops(h.system.desktopObservation, displays: [display], sessions: h.sessions)
-            for field in ["rememberedAssignments", "undos", "undoOrder", "undoSessionCache"] {
-                #expect(count(field, in: h.applier!) == 1, "\(field) retained a disconnected display")
+            let expected = min(index, SavedLayoutApplier.absentDesktopLimit + 1)
+            for field in ["rememberedAssignments", "undos", "undoOrder", "undoSessionCache", "appliedDesktops"] {
+                #expect(count(field, in: h.applier!) == expected, "\(field) is not bounded by the absent-desktop limit")
             }
             #expect(count("expiredUndoIDs", in: h.applier!) == 0)
             #expect(h.applier.canUndo(on: display.id))
@@ -115,9 +120,11 @@ struct SavedLayoutCacheLifetimeTests {
         h.applier.updateUndoDesktops(nil, displays: [])
         #expect(count("rememberedAssignments", in: h.applier!) == 2)
         #expect(count("undos", in: h.applier!) == 1)
+        // A removed Space is absent, but it is recent, so a returning key
+        // still finds its assignments.
         h.system.desktopObservation?.knownSpacesByDisplay[h.system.mainDisplay.id] = [h.space(2)]
         h.applier.updateUndoDesktops(h.system.desktopObservation, displays: [h.system.mainDisplay])
-        #expect(count("rememberedAssignments", in: h.applier!) == 1)
+        #expect(count("rememberedAssignments", in: h.applier!) == 2)
         #expect(h.applier.canUndo(on: h.system.mainDisplay.id))
     }
 }

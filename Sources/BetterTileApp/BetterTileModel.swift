@@ -9066,17 +9066,17 @@ extension BetterTileModel {
         provisionalTabbedFloats = provisionalTabbedFloats.filter { live.contains($0.key.sessionID) }
         tabbedCommittedLayouts = tabbedCommittedLayouts.filter { live.contains($0.key) }
         tabbedEntryBaselines = tabbedEntryBaselines.filter { live.contains($0.key) }
-        let retired = Set(sessionStore.retiredSessions.map(\.session.id))
+        // A retired desktop is still an owner: a reconnect restores it with
+        // the same session ID. The store keeps at most 32 retired desktops
+        // and forgets one whose windows all closed, so this stays bounded.
         func storedOwner(_ id: DesktopSessionID) -> Bool {
-            live.contains(id) || (!retired.contains(id) && sessionStore.retainedSession(id) != nil)
+            live.contains(id) || sessionStore.retainedSession(id) != nil
         }
         tabbedUndo = tabbedUndo.filter { storedOwner($0.key) }
         onScreenProtectedPanes = onScreenProtectedPanes.filter { storedOwner($0.key) }
         applicationRecoveryFallbackMatches = applicationRecoveryFallbackMatches.filter { storedOwner($0.key) }
         spacePanelCorrections = spacePanelCorrections.filter { storedOwner($0) }
-        // Focus Restore follows the same bounded retirement policy as its
-        // session. An inactive, existing Space keeps its full Restore state.
-        bentoStateBeforeFocus = bentoStateBeforeFocus.filter { retired.contains($0.key) || storedOwner($0.key) }
+        bentoStateBeforeFocus = bentoStateBeforeFocus.filter { storedOwner($0.key) }
         func displayOwner(_ id: DisplayID) -> Bool {
             connected.contains(id) || sessionStore.session(for: id) != nil || !sessionStore.allSessions(for: id).isEmpty
         }
@@ -10020,7 +10020,14 @@ extension BetterTileModel {
             })
         applier.appGroupsStore = appGroupsStore
         applier.isDesktopRetained = { [weak self] desktop in
-            self?.sessionStore.allSessions(for: desktop.displayID).contains { $0.nativeSpaceID == desktop.spaceID } == true
+            guard let store = self?.sessionStore else { return false }
+            func owns(_ session: LayoutSession) -> Bool {
+                session.displayID == desktop.displayID && session.nativeSpaceID == desktop.spaceID
+            }
+            // A retired desktop can return on reconnect. Keep its Undo and
+            // remembered slots until the store forgets that desktop.
+            return store.allSessions(for: desktop.displayID).contains(where: owns)
+                || store.retiredSessions.contains { owns($0.session) }
         }
         let groups = appGroupsStore
         applier.isLoadingAppGroups = true
