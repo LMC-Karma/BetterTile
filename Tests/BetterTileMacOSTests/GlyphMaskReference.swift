@@ -10,25 +10,34 @@ import UniformTypeIdentifiers
 /// The only artwork generator. Product code never imports this reference path.
 @MainActor enum GlyphMaskReference {
     static var wheelSlots: [LayoutWheelSlot] {
-        WindowAction.allCases.map { .init(command: .windowAction($0)) }
-        + LayoutGlyph.all.map { .init(label: $0.title, symbolName: "", glyph: $0, isEmpty: false, isAvailable: true) }
-        + [LayoutWheelCommand.repairBento, .savedLayouts, .savedLayout(file: "Fixture.json", name: "Fixture"),
-           .moreSavedLayouts, .moreLayoutChoices].map { .init(command: $0) }
-        + [.init(label: "Legacy Grid", symbolName: "rectangle.split.3x2", isEmpty: false, isAvailable: true), .empty]
+        var slots: [LayoutWheelSlot] = []
+        for action: WindowAction in WindowAction.allCases { slots.append(LayoutWheelSlot(command: .windowAction(action))) }
+        for glyph: LayoutGlyph in LayoutGlyph.all {
+            slots.append(LayoutWheelSlot(label: glyph.title, symbolName: "", glyph: glyph, isEmpty: false, isAvailable: true))
+        }
+        let commands: [LayoutWheelCommand] = [.repairBento, .savedLayouts, .savedLayout(file: "Fixture.json", name: "Fixture"),
+                                              .moreSavedLayouts, .moreLayoutChoices]
+        for command: LayoutWheelCommand in commands { slots.append(LayoutWheelSlot(command: command)) }
+        slots.append(LayoutWheelSlot(label: "Legacy Grid", symbolName: "rectangle.split.3x2", isEmpty: false, isAvailable: true))
+        slots.append(LayoutWheelSlot.empty)
+        return slots
     }
 
     static var catalog: [String: LayoutWheelSlot] {
         var result: [String: LayoutWheelSlot] = [:]
-        let modes: [LayoutMode?] = [nil] + LayoutMode.availableModes.map(Optional.some)
-        let parents = LayoutWheelSector.allCases.flatMap { sector in
-            modes.map { mode in
+        var modes: [LayoutMode?] = [nil]
+        for mode: LayoutMode in LayoutMode.availableModes { modes.append(mode) }
+        var slots: [LayoutWheelSlot] = wheelSlots
+        for sector: LayoutWheelSector in LayoutWheelSector.allCases {
+            for mode: LayoutMode? in modes {
                 var configuration = LayoutWheelConfiguration(style: .grouped, levelCount: .one)
-                configuration.groupOverrides[sector.rawValue] = .init(quickAction: nil, options: [.windowAction(.leftHalf)])
+                configuration.groupOverrides[sector.rawValue] = LayoutWheelGroupContents(quickAction: nil, options: [.windowAction(.leftHalf)])
                 let scene = LayoutWheelSceneInput(configuration: configuration, currentMode: mode)
-                return scene.slot(.sector(.init(ring: configuration.groupRing, sector: sector)))
+                let selection = LayoutWheelSelection(ring: configuration.groupRing, sector: sector)
+                slots.append(scene.slot(.sector(selection)))
             }
         }
-        for slot in wheelSlots + parents { result[GlyphMaskStore.wheelID(slot)] = slot }
+        for slot: LayoutWheelSlot in slots { result[GlyphMaskStore.wheelID(slot)] = slot }
         return result
     }
 
@@ -48,9 +57,12 @@ import UniformTypeIdentifiers
     }
 
     static var sizedContents: [LayoutWheelLiquidContent] {
-        LayoutWheelSize.allCases.map {
-            LayoutWheelLiquidDefaults.content(configuration: .init(appearance: .init(size: $0)))
+        var contents: [LayoutWheelLiquidContent] = []
+        for size: LayoutWheelSize in LayoutWheelSize.allCases {
+            let configuration = LayoutWheelConfiguration(appearance: LayoutWheelAppearance(size: size))
+            contents.append(LayoutWheelLiquidDefaults.content(configuration: configuration))
         }
+        return contents
     }
 
     static func pixels(_ image: CGImage) throws -> [UInt8] {

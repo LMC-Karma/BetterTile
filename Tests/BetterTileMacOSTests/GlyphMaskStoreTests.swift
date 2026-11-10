@@ -51,7 +51,9 @@ private struct ToleranceLog {
     }
 
     func print(_ test: String) {
-        Swift.print("Glyph mask tolerance test=\(test) cases=\(cases) emptyLiveRenders=\(emptyLive) worst=\(worst.map { "\($0.key): \($0.difference)" } ?? "none")")
+        var summary: String = "none"
+        if let worst { summary = "\(worst.key): \(worst.difference)" }
+        Swift.print("Glyph mask tolerance test=\(test) cases=\(cases) emptyLiveRenders=\(emptyLive) worst=\(summary)")
     }
 }
 
@@ -119,11 +121,13 @@ struct GlyphMaskStoreTests {
             for item in GlyphMaskReference.cases {
                 guard case let .ink(symbol, size) = item, let recorded = stored.symbolInkSizes[item.key] else { continue }
                 let live = try GlyphMaskReference.measureInk(symbol: symbol, size: size, samples: 1)
-                guard live.allSatisfy({ $0 > 0 }) else {
+                let drawn: Bool = !live.contains { (value: Double) -> Bool in value <= 0 }
+                guard drawn else {
                     print("Glyph mask tolerance: \(symbol) draws nothing on this host; the recorded size ships by policy.")
                     continue
                 }
-                let delta = zip(live, recorded).map { abs($0 - $1) }.max() ?? 0
+                var delta: Double = 0
+                for (measured, stored) in zip(live, recorded) { delta = max(delta, abs(measured - stored)) }
                 worst = max(worst, delta)
                 #expect(delta <= Self.inkSizeLimit, "\(item.key): live \(live), recorded \(recorded)")
             }
@@ -140,27 +144,60 @@ struct GlyphMaskStoreTests {
         let parts = key.split(separator: "|")
         let set = try #require(GlyphMaskStore.Set(rawValue: String(parts[0])))
         let dark = parts[4] == "dark", scale = try #require(Double(parts[3]))
-        let bytes = try GlyphMaskReference.pixels(image)
-        #expect(stride(from: 0, to: bytes.count, by: 4).allSatisfy {
-            bytes[$0] <= bytes[$0 + 3] && bytes[$0 + 1] <= bytes[$0 + 3] && bytes[$0 + 2] <= bytes[$0 + 3]
-        }, "\(key): channels must be premultiplied")
-        let peak = stride(from: 3, to: bytes.count, by: 4).map { Int(bytes[$0]) }.max() ?? 0
+        let bytes: [UInt8] = try GlyphMaskReference.pixels(image)
+        let premultiplied: Bool = Self.isPremultiplied(bytes)
+        #expect(premultiplied, "\(key): channels must be premultiplied")
+        let peak: Int = Self.peakAlpha(bytes)
         switch set {
         case .menuGlass:
-            #expect(image.width == Int(30 * scale) && image.height == Int(26 * scale), "\(key): template size")
+            let width: Int = Int(30 * scale), height: Int = Int(26 * scale)
+            let sized: Bool = image.width == width && image.height == height
+            #expect(sized, "\(key): template size")
             #expect(peak == 255, "\(key): template coverage must reach full alpha")
-            #expect(stride(from: 0, to: bytes.count, by: 4).allSatisfy { bytes[$0] == 0 && bytes[$0 + 1] == 0 && bytes[$0 + 2] == 0 },
-                    "\(key): a template stores black coverage")
+            let black: Bool = Self.isBlackCoverage(bytes)
+            #expect(black, "\(key): a template stores black coverage")
         case .wheel, .wheelSymbols, .wheelLabels:
             // Overlapping layers can exceed the tint's alpha, so only the
             // colour of covered pixels is fixed.
             if set == .wheel { #expect(image.width == image.height, "\(key): wheel icons are square") }
             if let ink = GlyphRasterDifference.inkColor(bytes) {
-                let expected = dark ? 255 : 0
-                #expect(ink.allSatisfy { abs($0 - expected) <= GlyphRasterDifference.inkColorLimit },
-                        "\(key): ink \(ink) must be the \(dark ? "dark" : "light") wheel ink")
+                let expected: Int = dark ? 255 : 0
+                var matches: Bool = true
+                for channel: Int in ink where abs(channel - expected) > GlyphRasterDifference.inkColorLimit { matches = false }
+                #expect(matches, "\(key): ink \(ink) must be the \(dark ? "dark" : "light") wheel ink")
             }
         }
+    }
+
+    /// Every colour channel is at most its alpha.
+    static func isPremultiplied(_ bytes: [UInt8]) -> Bool {
+        var offset: Int = 0
+        while offset + 3 < bytes.count {
+            let alpha: UInt8 = bytes[offset + 3]
+            if bytes[offset] > alpha || bytes[offset + 1] > alpha || bytes[offset + 2] > alpha { return false }
+            offset += 4
+        }
+        return true
+    }
+
+    /// Every colour channel is zero, as a template stores it.
+    static func isBlackCoverage(_ bytes: [UInt8]) -> Bool {
+        var offset: Int = 0
+        while offset + 3 < bytes.count {
+            if bytes[offset] != 0 || bytes[offset + 1] != 0 || bytes[offset + 2] != 0 { return false }
+            offset += 4
+        }
+        return true
+    }
+
+    static func peakAlpha(_ bytes: [UInt8]) -> Int {
+        var peak: UInt8 = 0
+        var offset: Int = 3
+        while offset < bytes.count {
+            peak = max(peak, bytes[offset])
+            offset += 4
+        }
+        return Int(peak)
     }
 
     @Test func wheelFinalRGBAIsExactAtEveryComputedMetalSize() throws {
@@ -193,7 +230,10 @@ struct GlyphMaskStoreTests {
         let directory = try #require(GlyphMaskStore.resourceDirectory)
         let manifest = try GlyphMaskReference.storedManifest()
         let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
-        #expect(Swift.Set(manifest.entries.keys.map { String($0.split(separator: "|")[0]) }) == Swift.Set(expected.keys))
+        var namespaces: Swift.Set<String> = []
+        for key: String in manifest.entries.keys { namespaces.insert(String(key.prefix { $0 != "|" })) }
+        let expectedNamespaces: Swift.Set<String> = Swift.Set(expected.keys)
+        #expect(namespaces == expectedNamespaces)
         for (name, hash) in expected {
             let entries = manifest.entries.filter { $0.key.hasPrefix(name + "|") }
             let actual = GlyphMaskReference.sha(try encoder.encode(entries))
@@ -295,23 +335,31 @@ struct GlyphMaskStoreTests {
     @Test func toleranceDifferenceMeasuresCoverageAndInk() {
         func raster(_ width: Int, _ height: Int, alpha: (Int, Int) -> UInt8, ink: UInt8 = 0) -> [UInt8] {
             var bytes: [UInt8] = []
-            for y in 0..<height { for x in 0..<width {
-                let a = alpha(x, y)
-                bytes += [UInt8(Int(ink) * Int(a) / 255), UInt8(Int(ink) * Int(a) / 255), UInt8(Int(ink) * Int(a) / 255), a]
+            for y: Int in 0..<height { for x: Int in 0..<width {
+                let a: UInt8 = alpha(x, y)
+                let product: Int = Int(ink) * Int(a)
+                let channel: UInt8 = UInt8(product / 255)
+                bytes.append(channel); bytes.append(channel); bytes.append(channel); bytes.append(a)
             } }
             return bytes
         }
         let square = raster(10, 10) { x, _ in x < 5 ? 255 : 0 }
         let same = GlyphRasterDifference(square, width: 10, height: 10, square, width: 10, height: 10)
-        #expect(same.inkDifference == 0 && same.inkColorDelta == 0 && same.isWithinLimits)
+        #expect(same.inkDifference == 0)
+        #expect(same.inkColorDelta == 0)
+        #expect(same.isWithinLimits)
         let other = raster(10, 10) { x, _ in x >= 5 ? 255 : 0 }
         #expect(GlyphRasterDifference(square, width: 10, height: 10, other, width: 10, height: 10).inkDifference == 2)
         let white = raster(10, 10, alpha: { x, _ in x < 5 ? 255 : 0 }, ink: 255)
         let inverted = GlyphRasterDifference(square, width: 10, height: 10, white, width: 10, height: 10)
-        #expect(inverted.inkDifference == 0 && inverted.inkColorDelta == 255 && !inverted.isWithinLimits)
+        #expect(inverted.inkDifference == 0)
+        #expect(inverted.inkColorDelta == 255)
+        #expect(!inverted.isWithinLimits)
         let wider = raster(12, 10) { x, _ in (1..<6).contains(x) ? 255 : 0 }
         let padded = GlyphRasterDifference(square, width: 10, height: 10, wider, width: 12, height: 10)
-        #expect(padded.inkDifference == 0 && padded.sizeDelta == 2 && padded.isWithinLimits)
+        #expect(padded.inkDifference == 0)
+        #expect(padded.sizeDelta == 2)
+        #expect(padded.isWithinLimits)
         let empty = raster(10, 10) { _, _ in 0 }
         #expect(GlyphRasterDifference(square, width: 10, height: 10, empty, width: 10, height: 10).oneSideEmpty)
     }
@@ -360,8 +408,18 @@ struct GlyphMaskStoreTests {
         if !mode.isExact { log.print(test) }
     }
 
+    private static func maxChannelDelta(_ a: [UInt8], _ b: [UInt8]) -> Int {
+        var largest: Int = 0
+        for (left, right) in zip(a, b) { largest = max(largest, abs(Int(left) - Int(right))) }
+        return largest
+    }
+
     private static func alpha(_ pixels: [UInt8]) -> [Float] {
-        stride(from: 3, to: pixels.count, by: 4).map { Float(pixels[$0]) }
+        var result: [Float] = []
+        result.reserveCapacity(pixels.count / 4)
+        var offset: Int = 3
+        while offset < pixels.count { result.append(Float(pixels[offset])); offset += 4 }
+        return result
     }
 
     /// GlyphRasterDifference.inkDifference for two equal-size alpha planes.
@@ -411,21 +469,35 @@ struct GlyphMaskStoreTests {
             try GlyphMaskReference.render(set: set, slot: slot, pointSize: size, scale: scale, dark: dark)
         }
         let reference = samples.image
-        #expect(image.width == reference.width && image.height == reference.height)
+        #expect(image.width == reference.width)
+        #expect(image.height == reference.height)
         let expected = try GlyphMaskReference.pixels(reference), actual = try GlyphMaskReference.pixels(image)
         if let path = ProcessInfo.processInfo.environment["BT_GLYPH_MASK_DIAGNOSTICS"] {
             let directory = URL(fileURLWithPath: path, isDirectory: true)
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             let filename = GlyphMaskReference.sha(Data(key.utf8))
-            for (suffix, bitmap) in [("reference", reference), ("stored", image)] {
+            let bitmaps: [(String, CGImage)] = [("reference", reference), ("stored", image)]
+            for (suffix, bitmap) in bitmaps {
                 try GlyphMaskReference.png(bitmap).write(to: directory.appendingPathComponent("\(filename)-\(suffix).png"))
             }
-            let record: [String: Any] = ["set": set.rawValue, "id": id, "pointSize": size, "scale": scale,
-                "dark": dark, "exact": samples.outputs[Data(actual)] != nil, "setSize": samples.outputs.count, "file": filename,
-                "changedPixels": stride(from: 0, to: actual.count, by: 4).filter { offset in
-                    (0..<4).contains { actual[offset + $0] != expected[offset + $0] }
-                }.count,
-                "maxChannelDelta": zip(actual, expected).map { abs(Int($0) - Int($1)) }.max() ?? 0]
+            var changedPixels: Int = 0
+            var offset: Int = 0
+            while offset + 3 < actual.count {
+                if actual[offset..<(offset + 4)] != expected[offset..<(offset + 4)] { changedPixels += 1 }
+                offset += 4
+            }
+            let exact: Bool = samples.outputs[Data(actual)] != nil
+            var record: [String: Any] = [:]
+            record["set"] = set.rawValue
+            record["id"] = id
+            record["pointSize"] = size
+            record["scale"] = scale
+            record["dark"] = dark
+            record["exact"] = exact
+            record["setSize"] = samples.outputs.count
+            record["file"] = filename
+            record["changedPixels"] = changedPixels
+            record["maxChannelDelta"] = Self.maxChannelDelta(actual, expected)
             try JSONSerialization.data(withJSONObject: record, options: [.sortedKeys])
                 .write(to: directory.appendingPathComponent("\(filename).json"))
         }
