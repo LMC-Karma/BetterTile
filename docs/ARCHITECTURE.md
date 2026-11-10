@@ -365,6 +365,40 @@ window identities, UUID associations and retired desktops are never persisted.
 The existing private native-desktop observations are unchanged; this adds no
 permission or dependency.
 
+### Desktop state lifetimes
+
+Long uptime must not keep state for desktops and windows that cannot return.
+The model therefore releases state only when its owner is truly gone:
+
+- **Desktop-owned model state.** Tabbed Undo, on-screen protected panes,
+  application-recovery fallback matches, Space panel corrections and Focus
+  Restore snapshots stay while the session store retains their session. This
+  includes a desktop on the retirement list, because a reconnect restores it
+  with the same session ID. The state goes when the store forgets the desktop:
+  it falls off the 32-entry retirement list, or all its windows close.
+  Restoration itself still clears the history named above.
+- **Saved Layout desktops.** Remembered slot assignments, the Undo Apply
+  checkpoint and its session cache stay while the desktop's Space exists,
+  while the model owns the desktop, including on the retirement list, or while
+  it is one of the 32 most recently applied absent desktops. Restored desktops
+  can bring an older display and Space key back, so the newest absent desktops
+  keep their remembered assignments, and a Display Trigger that applies again
+  after a reconnect keeps same-app windows in their slots. A missing native
+  observation proves nothing and releases nothing. Apply and Undo in flight
+  keep every checkpoint.
+- **Inferred desktops.** Without native Space identity, a desktop can return
+  only through its windows. The store records confirmed closures of an
+  inferred session's windows. When every window identity that an inactive
+  inferred session retains has closed, the store removes the session if its
+  membership still lists closed windows, because no observation can match it.
+  A session that was observed empty still matches a return to an empty
+  desktop, so the store keeps it with its mode. It keeps only the newest such
+  session for each display; choosing among several empty sessions was already
+  arbitrary. An older kept session that changed after it emptied is kept.
+- **Closed-window evidence.** Confirmed closure removes Adaptive return and
+  following evidence from inactive sessions. The active session's reducer owns
+  its own tree and frame observations and consumes the closure itself.
+
 ## Popup and fixed-size windows
 
 A popup window floats at its own size and never joins a Bento or Tabbed
@@ -2682,6 +2716,9 @@ appears.
   Layout guidance, and Undo is offered only while that run's checkpoint is valid.
 - **Pills.** An automatic Apply shows one `ResultPillController` for each display.
   The runtime keeps the newest result for each layout file for the Last run row.
+  It releases a result when a readable library listing no longer contains the
+  file and no trigger names it. An unreadable or missing library folder
+  releases nothing.
   An automatic Apply with nothing to place shows no pill.
 
 

@@ -470,7 +470,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         // Resetting a reused PID inside its read would look like a new timeout.
         for application in applications {
             let previous = launchRecords[application.processIdentifier]?.instance
-            if applicationInstance(for: application) != previous {
+            if applicationInstance(for: application) != previous, previous != nil {
                 previousHolds.removeValue(forKey: application.processIdentifier)
             }
         }
@@ -2189,11 +2189,15 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         if let previous, previous.launchToken == launchToken {
             return previous.instance
         }
-        Self.unresponsiveApplications.withLock { $0.remove(processIdentifier: pid) }
-        unreadableApplicationHolds.removeValue(forKey: pid)
         // A changed launch at a known process identifier means the previous
-        // process quit, and its windows close with it.
-        if previous != nil { removeObserver(for: pid) }
+        // process quit, and its windows close with it. Its unresponsive gate
+        // and hold belong to that process. A first-seen app keeps a gate or
+        // hold that was set before its launch record existed.
+        if previous != nil {
+            Self.unresponsiveApplications.withLock { $0.remove(processIdentifier: pid) }
+            unreadableApplicationHolds.removeValue(forKey: pid)
+            removeObserver(for: pid)
+        }
         let closed = identities.remove(processIdentifier: pid)
         let quitApplications = previous == nil ? [] : bundleIdentifiers(of: pid, windows: closed)
         nextLaunchGeneration &+= 1

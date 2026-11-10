@@ -56,7 +56,9 @@ struct ModelCacheLifetimeTests {
         #expect(previous()?.bentoState.root?.windowIDs == [survivor.id])
     }
 
-    @Test func tabbedUndoKeepsInactiveSpacesAndReleasesRemovedSpaceOwners() async throws {
+    /// A removed Space retires its desktop, which a later observation can
+    /// restore, so its Tabbed Undo stays. It goes when the store forgets it.
+    @Test func tabbedUndoKeepsInactiveAndRetiredSpacesAndReleasesForgottenOwners() async throws {
         let system = makeManualWindowSystem(drivingPolicyDeadlines: true)
         let first = system.windows
         let display = system.mainDisplay.id
@@ -87,7 +89,10 @@ struct ModelCacheLifetimeTests {
         system.desktopObservation?.knownSpacesByDisplay[display] = [two]
         model.beginActiveSpaceStabilization()
         try #require(await system.waitFor { !model.isStabilizingSpace && !model.hasPendingTabbedPlacement })
-        #expect(fields(model, "tabbedUndo").count == 1)
+        #expect(fields(model, "tabbedUndo").count == 2)
+        system.desktopObservation?.windowMembership[first[0].id] = nil
+        system.eventHandler?(.init(kind: .destroyed, windowID: first[0].id, processIdentifier: first[0].processIdentifier))
+        #expect(await system.waitFor { fields(model, "tabbedUndo").count == 1 })
         let before = model.activeTabbedState
         model.performTabbed(.undo)
         try #require(await system.waitFor { !model.hasPendingTabbedPlacement })

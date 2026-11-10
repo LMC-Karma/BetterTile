@@ -293,6 +293,14 @@ public struct LayoutSessionStore: Sendable {
     /// active owner keeps one marker until a new cohort arrives or it retires.
     /// Native sessions have a Space owner and do not need this evidence.
     private var closedInferredWindowIDs: [DesktopSessionID: Set<WindowID>] = [:]
+    /// The newest inferred desktop per display whose windows all closed
+    /// after it was observed empty, with its revision at that time. A return
+    /// to an empty desktop matches it, so it keeps its chosen mode.
+    private var emptiedInferredSessions: [DisplayID: EmptiedInferredSession] = [:]
+    private struct EmptiedInferredSession: Sendable {
+        var id: DesktopSessionID
+        var revision: UInt64
+    }
     public private(set) var retiredSessions: [RetiredDesktop] = []
     public struct Restoration: Sendable {
         public var overlap: Int
@@ -709,18 +717,29 @@ public struct LayoutSessionStore: Sendable {
     }
 
     /// With no Space identity, a desktop can return only through its windows.
-    /// Keep hidden and minimized windows. Retire an inactive owner only after
-    /// every retained identity has confirmed closure. An empty desktop with
-    /// no closure evidence keeps its chosen mode for the fallback match.
+    /// Keep hidden and minimized windows. Act on an inactive owner only after
+    /// every retained identity has confirmed closure:
+    /// - If its membership still lists closed windows, no observation can
+    ///   match it again, so remove it.
+    /// - If it was observed empty, a return to that empty desktop matches it.
+    ///   Keep it with its mode, but keep only the newest such owner per
+    ///   display. Choosing between several empty owners was already arbitrary.
+    /// An empty desktop with no closure evidence keeps its chosen mode.
     private mutating func removeClosedInferredSessions() {
         guard !closedInferredWindowIDs.isEmpty else { return }
-        for display in Array(storedSessions.keys) {
-            for session in allSessions(for: display) where session.nativeSpaceID == nil {
+        for display in storedSessions.keys.sorted() {
+            let sessions = allSessions(for: display).sorted { $0.id.rawValue.uuidString < $1.id.rawValue.uuidString }
+            for session in sessions where session.nativeSpaceID == nil {
                 let owned = Self.retainedWindowIDs(in: session)
                 let closed = closedInferredWindowIDs[session.id, default: []]
                 guard !closed.isEmpty else { continue }
                 if activeSessionIDs[display] != session.id, owned.isSubset(of: closed) {
-                    storedSessions[display]?.removeValue(forKey: session.id)
+                    closedInferredWindowIDs.removeValue(forKey: session.id)
+                    if session.windowIDs.isEmpty {
+                        keepEmptiedInferredSession(session, on: display)
+                    } else {
+                        storedSessions[display]?.removeValue(forKey: session.id)
+                    }
                 } else {
                     let retained = owned.isEmpty ? Set(closed.prefix(1)) : closed.intersection(owned)
                     closedInferredWindowIDs[session.id] = retained.isEmpty ? nil : retained
@@ -728,6 +747,19 @@ public struct LayoutSessionStore: Sendable {
             }
         }
         removeOrphanedObservationMarkers()
+    }
+
+    /// Releases the previous emptied owner on this display only when it is
+    /// inactive and unchanged since it emptied. A desktop the user returned
+    /// to and changed is ordinary state again.
+    private mutating func keepEmptiedInferredSession(_ session: LayoutSession, on display: DisplayID) {
+        if let previous = emptiedInferredSessions[display], previous.id != session.id,
+           activeSessionIDs[display] != previous.id,
+           let old = storedSessions[display]?[previous.id],
+           old.nativeSpaceID == nil, old.windowIDs.isEmpty, old.revision == previous.revision {
+            storedSessions[display]?.removeValue(forKey: previous.id)
+        }
+        emptiedInferredSessions[display] = EmptiedInferredSession(id: session.id, revision: session.revision)
     }
 
     public mutating func removeMissingDisplays(_ displayIDs: Set<DisplayID>, at time: TimeInterval = 0) {
@@ -856,6 +888,7 @@ public struct LayoutSessionStore: Sendable {
         mergedWindowIDs = mergedWindowIDs.filter { rememberedSessionIDs.contains($0.key) }
         restoredSessionsAwaitingNativeIdentity.formIntersection(retainedSessionIDs)
         closedInferredWindowIDs = closedInferredWindowIDs.filter { retainedSessionIDs.contains($0.key) }
+        emptiedInferredSessions = emptiedInferredSessions.filter { storedSessions[$0.key]?[$0.value.id] != nil }
     }
 
     private func bestMatch(
