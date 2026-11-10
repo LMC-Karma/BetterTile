@@ -315,8 +315,9 @@ struct GlyphMaskStoreTests {
     /// target's own SwiftPM resource bundle, found by Bundle.module.
     @Test func resourcesResolveInsideTheTargetResourceBundle() throws {
         let directory: URL = try #require(GlyphMaskStore.resourceDirectory)
-        let bundleName: String = directory.deletingLastPathComponent().deletingLastPathComponent()
-            .deletingLastPathComponent().lastPathComponent
+        // SwiftPM 6.3 makes a flat bundle; 6.4 and Xcode use Contents/Resources.
+        let components: [String] = directory.pathComponents
+        let bundleName: String = components.last { (component: String) -> Bool in component.hasSuffix(".bundle") } ?? ""
         #expect(directory.lastPathComponent == "GlyphMasks")
         #expect(bundleName == "BetterTile_BetterTileMacOS.bundle", "\(directory.path)")
         let manifest: Bool = FileManager.default.fileExists(atPath: directory.appendingPathComponent("manifest.json").path)
