@@ -311,6 +311,19 @@ struct GlyphMaskStoreTests {
         #expect(checked > 1_500)
     }
 
+    /// The store reads the folder that Package.swift copies into the
+    /// target's own SwiftPM resource bundle, found by Bundle.module.
+    @Test func resourcesResolveInsideTheTargetResourceBundle() throws {
+        let directory: URL = try #require(GlyphMaskStore.resourceDirectory)
+        let bundleName: String = directory.deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().lastPathComponent
+        #expect(directory.lastPathComponent == "GlyphMasks")
+        #expect(bundleName == "BetterTile_BetterTileMacOS.bundle", "\(directory.path)")
+        let manifest: Bool = FileManager.default.fileExists(atPath: directory.appendingPathComponent("manifest.json").path)
+        #expect(manifest)
+        print("Glyph mask resources: \(directory.path)")
+    }
+
     @Test func missingArtworkAndUnsupportedSizesAreExplicit() {
         #expect(GlyphMaskStore.image(set: .menuGlass, id: "missing", pointSize: 20, scale: 1, appearance: .light) == nil)
         #expect(GlyphMaskStore.image(set: .menuGlass, id: WindowAction.maximize.rawValue, pointSize: 19.8, scale: 1, appearance: .light) == nil)
