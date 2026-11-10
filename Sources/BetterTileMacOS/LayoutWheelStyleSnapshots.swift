@@ -99,7 +99,8 @@ import Observation
                 }
             }
         }
-        entries.append((.chevron, iconImages.chevron(size: 8 * content.layout.scale, color: style.ink, scale: 2)))
+        guard let chevron = iconImages.chevron(size: content.chevronSymbolSize, color: style.ink, scale: 2) else { return nil }
+        entries.append((.chevron, chevron))
         let label = iconImages.label(content.centreName(state), content: content, color: style.ink, scale: 2)
         iconImages.finishIconRendering()
         guard let atlas = LayoutWheelLiquidAtlas(device: pipeline.device, images: entries, scale: 2) else { return nil }

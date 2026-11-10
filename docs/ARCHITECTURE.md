@@ -2274,7 +2274,16 @@ renders are copied into owned bitmap pixels before caching, so cached images
 do not retain the render backend. One icon renderer is reused within each
 atlas preparation and released when preparation finishes. The icon and text
 caches each retain at most 512 KiB of bitmap pixels and 128 images. They evict
-the least recently used image. One packed atlas is retained. The shader is precompiled into the
+the least recently used image. After five seconds closed, the wheel releases
+its bitmap caches and centre-label contents. It keeps one lossless LZ4 snapshot
+of the packed atlas. When every frame submission has completed, it discards
+the atlas's dedicated shared-buffer backing with Metal's purgeable state.
+The buffer supplies a linear texture view, so its pages can be reclaimed
+independently of the driver's ordinary texture pool. The next matching
+hold uploads the exact pixels into the same texture object without rendering
+the icons again. Preparation cancels the idle wait; disabling the wheel also
+releases the snapshot and presentation resources. The small encoder stays
+prepared across idle cleanup to avoid repeated GPU warm-up. The shader is precompiled into the
 package's `default.metallib`, the pipeline is built once, and
 `prepareToOpen` does the remaining setup during the trigger's hold. Its first
 GPU submission warms both pipelines into a one-pixel target without acquiring
