@@ -2404,6 +2404,15 @@ shared test machine.
   of 255 per channel. Symbol ink sizes must stay within 1 point. If a live
   render draws nothing, the test logs it and keeps the bundled image.
 
+Two SF Symbols draw differently on macOS 26 (build 25G332) than in the macOS
+27 artwork: the wheel's `chevron.right` (8 keys, 0.36–0.74 coverage
+difference) and the Fine-tuning icon `slider.horizontal.3` (4 keys, up to
+1.02). The bundled images ship on every release by decision, so macOS 26
+users see the macOS 27 icons. `GlyphMaskStoreTests.knownCrossOSDifferences`
+lists those 12 exact keys. In tolerance mode they are checked only for
+decoding, recorded size and ink; their live-render and identity comparisons
+are skipped and logged. Any other key that fails still fails the test.
+
 In both modes, each stored wheel and template image must be closer to its own
 live render than to any other glyph's live render in its group. This check
 makes the tolerance identify the glyph: on the generator host the closest
