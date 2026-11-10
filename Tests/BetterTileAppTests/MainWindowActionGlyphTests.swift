@@ -58,8 +58,13 @@ struct MainWindowActionGlyphTests {
 
     /// The closest of several references, measured with the tolerance metric.
     static func nearest(_ actual: [UInt8], _ references: [[UInt8]], width: Int, height: Int) -> GlyphRasterDifference? {
-        references.map { GlyphRasterDifference(actual, width: width, height: height, $0, width: width, height: height) }
-            .min { $0.inkDifference < $1.inkDifference }
+        var best: GlyphRasterDifference?
+        for reference: [UInt8] in references {
+            let difference = GlyphRasterDifference(actual, width: width, height: height, reference, width: width, height: height)
+            if let current = best, current.inkDifference <= difference.inkDifference { continue }
+            best = difference
+        }
+        return best
     }
 
     struct Case: CustomStringConvertible {
@@ -69,9 +74,13 @@ struct MainWindowActionGlyphTests {
         var description: String { "\(action.rawValue)-\(scale)x-\(dark ? "dark" : "light")" }
 
         static var all: [Case] {
-            WindowAction.allCases.flatMap { action in
-                [1, 2].flatMap { scale in [false, true].map { Case(action: action, scale: scale, dark: $0) } }
+            var cases: [Case] = []
+            for action: WindowAction in WindowAction.allCases {
+                for scale: Int in [1, 2] {
+                    for dark: Bool in [false, true] { cases.append(Case(action: action, scale: scale, dark: dark)) }
+                }
             }
+            return cases
         }
     }
 
@@ -95,17 +104,26 @@ struct MainWindowActionGlyphTests {
             let candidate = try #require(WindowActionGlyphCache.template(for: action))
             #expect(candidate === WindowActionGlyphCache.template(for: action))
             let main = try #require(try MainWindowActionGlyphSamples.templates(for: action).values.first)
-            #expect(candidate.isTemplate && main.isTemplate)
-            #expect(candidate.size == main.size && candidate.size == NSSize(width: 30, height: 26))
-            #expect(candidate.representations.map(\.pixelsWide) == main.representations.map(\.pixelsWide))
-            #expect(candidate.representations.map(\.pixelsHigh) == main.representations.map(\.pixelsHigh))
+            #expect(candidate.isTemplate)
+            #expect(main.isTemplate)
+            let templateSize = NSSize(width: 30, height: 26)
+            #expect(candidate.size == main.size)
+            #expect(candidate.size == templateSize)
+            let candidateWidths: [Int] = candidate.representations.map { (rep: NSImageRep) -> Int in rep.pixelsWide }
+            let mainWidths: [Int] = main.representations.map { (rep: NSImageRep) -> Int in rep.pixelsWide }
+            let candidateHeights: [Int] = candidate.representations.map { (rep: NSImageRep) -> Int in rep.pixelsHigh }
+            let mainHeights: [Int] = main.representations.map { (rep: NSImageRep) -> Int in rep.pixelsHigh }
+            #expect(candidateWidths == mainWidths)
+            #expect(candidateHeights == mainHeights)
             let bytes = try Self.coverage(candidate)
             let references = try MainWindowActionGlyphSamples.templates(for: action)
             if mode.isExact {
                 #expect(references[Data(bytes)] != nil,
                         "\(action): bundled 2x template must equal one of main's rendered templates")
             } else {
-                let difference = try #require(Self.nearest(bytes, references.keys.map { Array($0) }, width: 60, height: 52))
+                var candidates: [[UInt8]] = []
+                for data: Data in references.keys { candidates.append([UInt8](data)) }
+                let difference = try #require(Self.nearest(bytes, candidates, width: 60, height: 52))
                 if worst.map({ difference.inkDifference > $0.inkDifference }) ?? true { worst = difference }
                 #expect(difference.isWithinLimits, "\(action): \(difference)")
             }
@@ -152,7 +170,9 @@ struct MainWindowActionGlyphTests {
                     if expected.contains(actual) { matched += 1 } else { failures.append(sample.description) }
                 } else {
                     let size = try Self.size(site, sample)
-                    let difference = try #require(Self.nearest(Array(actual), expected.map { Array($0) },
+                    var candidates: [[UInt8]] = []
+                    for data: Data in expected { candidates.append([UInt8](data)) }
+                    let difference = try #require(Self.nearest([UInt8](actual), candidates,
                                                                width: size.width, height: size.height))
                     if worst.map({ difference.inkDifference > $0.inkDifference }) ?? true { worst = difference }
                     if difference.isWithinLimits { matched += 1 } else { failures.append("\(sample): \(difference)") }
@@ -161,8 +181,13 @@ struct MainWindowActionGlyphTests {
             WindowActionGlyphCache.templates[sample.action] = nil
         }
         print("Window action glyph site=\(site) \(mode.isExact ? "exact" : "withinTolerance")=\(matched)/\(Case.all.count)"
-              + (worst.map { " worst=\($0)" } ?? ""))
+              + Self.worstSummary(worst))
         #expect(matched == 164, "\(site): \(failures.prefix(8))")
+    }
+
+    static func worstSummary(_ worst: GlyphRasterDifference?) -> String {
+        guard let worst else { return "" }
+        return " worst=\(worst)"
     }
 
     /// The pixel size of a site render; every render of one site and case has it.
@@ -240,7 +265,8 @@ struct MainWindowActionGlyphTests {
         var rect = NSRect(x: 0, y: 0, width: 30, height: 26)
         let bitmap = try #require(image.cgImage(forProposedRect: &rect, context: nil,
                                                 hints: [.ctm: AffineTransform(scale: 2)]))
-        try #require(bitmap.width == 60 && bitmap.height == 52)
+        try #require(bitmap.width == 60)
+        try #require(bitmap.height == 52)
         return try pixels(bitmap)
     }
 
