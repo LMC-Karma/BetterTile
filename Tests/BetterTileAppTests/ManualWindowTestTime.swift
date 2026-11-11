@@ -106,7 +106,10 @@ extension FakeAppWindowSystem {
             }
             let next = manualClock.nextSleepDeadline
             let limit = min(checkpoint ?? deadline, deadline)
-            if isAwaitingWindowEventSleepRegistration?() == true
+            // A task that a past advance resumed may still be hopping back to its
+            // actor. Its next wait is not registered yet, so do not jump past it.
+            if manualClock.returningSleepCount > 0
+                || isAwaitingWindowEventSleepRegistration?() == true
                 || checkpoint.map({ manualClock.now >= $0 }) == true
                 || next.map({ $0 > limit }) == true {
                 guard executor.now < idleDeadline else { return false }
