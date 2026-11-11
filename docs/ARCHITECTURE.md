@@ -567,8 +567,9 @@ complete inventory recorded for the same launch. A per-PID LaunchServices
 lookup (`NSRunningApplication(processIdentifier:)`) can return nothing for a
 running application for a moment. Saved Layout Apply compares each participant's
 bundle identifier before every write, so such an answer used to refuse the whole
-Apply with nothing moved. The adapter asks LaunchServices only when no record
-names the current launch.
+Apply with nothing moved. Bundle-ID resolution uses the recorded name when
+available; it makes another per-PID lookup only when that record cannot name
+the launch. Launch detection still asks LaunchServices on every targeted read.
 
 An element that is valid but not readable yet is read again after 8 ms, within
 the original 500 ms readiness deadline, and never through a complete inventory.

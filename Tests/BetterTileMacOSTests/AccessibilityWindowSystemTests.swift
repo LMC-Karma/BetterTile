@@ -112,6 +112,57 @@ import Testing
     #expect(AccessibilityWindowSystem.targetedReadBundleIdentifier(
         recordInstance: nil, recordBundleIdentifier: nil, windowInstance: current,
         lookUp: missing) == nil)
+    // A process cannot change its bundle: for the same launch the record wins over a
+    // different fresh answer. Another launch at the same PID takes the fresh answer.
+    #expect(AccessibilityWindowSystem.targetedReadBundleIdentifier(
+        recordInstance: current, recordBundleIdentifier: "com.example.Fixture", windowInstance: current,
+        lookUp: { "com.example.Other" }) == "com.example.Fixture")
+    #expect(AccessibilityWindowSystem.targetedReadBundleIdentifier(
+        recordInstance: earlier, recordBundleIdentifier: "com.example.Fixture", windowInstance: current,
+        lookUp: { "com.example.Other" }) == "com.example.Other")
+}
+
+/// The adapter's targeted-read entry point keeps the recorded name of a launch while
+/// the per-PID lookup answers nothing or something else. The PID has no process, so
+/// the launch comes from the seeded record, as during a nil LaunchServices answer.
+@Test(.macOSTestApplication) @MainActor func targetedReadApplicationKeepsTheRecordedNameOfItsLaunch() {
+    let system = AccessibilityWindowSystem()
+    let pid = pid_t(Int32.max - 7)
+    var lookups: [pid_t] = []
+    var answer: String? = nil
+    system.targetedReadBundleLookup = { lookups.append($0); return answer }
+    let launch = system.recordLaunchForTesting(pid: pid, bundleIdentifier: "com.example.Fixture")
+    var read = system.targetedReadApplication(forPID: pid)
+    #expect(read.instance == launch)
+    #expect(read.bundleIdentifier == "com.example.Fixture")
+    answer = "com.example.Other"
+    read = system.targetedReadApplication(forPID: pid)
+    #expect(read.bundleIdentifier == "com.example.Fixture")
+    #expect(lookups.isEmpty)
+    // A launch recorded without a name asks the lookup.
+    let unnamed = pid - 1
+    system.recordLaunchForTesting(pid: unnamed, bundleIdentifier: nil)
+    answer = "com.example.Fresh"
+    #expect(system.targetedReadApplication(forPID: unnamed).bundleIdentifier == "com.example.Fresh")
+    #expect(lookups == [unnamed])
+}
+
+/// `windowSnapshot(id:)` and `readCreatedWindow(token:)` need a live, readable AX
+/// window before they name an application, so tests cannot run them. Each must
+/// name its application through `targetedReadApplication(forPID:)`; a direct per-PID
+/// LaunchServices lookup brought back "0 placed · 4 need attention".
+@Test(.macOSTestApplication) func bothTargetedReadsNameTheirApplicationThroughTheRecordedLaunch() throws {
+    let root = URL(filePath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+    let source = try String(contentsOf: root.appending(path: "Sources/BetterTileMacOS/AccessibilityWindowSystem.swift"), encoding: .utf8)
+    for signature in ["func windowSnapshot(id: WindowID) throws -> WindowSnapshot? {",
+                      "public func readCreatedWindow(token: UInt64) -> CreatedWindowRead {"] {
+        let start = try #require(source.range(of: signature), "\(signature)")
+        let end = try #require(source.range(of: "\n    }\n", range: start.upperBound..<source.endIndex))
+        let body = String(source[start.upperBound..<end.lowerBound])
+        #expect(body.contains("let application = targetedReadApplication(forPID: pid)"), "\(signature)")
+        #expect(body.contains("bundleIdentifier: application.bundleIdentifier"), "\(signature)")
+        #expect(!body.contains("NSRunningApplication"), "\(signature)")
+    }
 }
 
 /// Only two real answers make a window unmovable. An application that did
