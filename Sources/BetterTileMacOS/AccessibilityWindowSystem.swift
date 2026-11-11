@@ -616,10 +616,11 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         guard let entry = creationElements[token], (try? ensurePermission()) != nil else { return .unavailable }
         let element = entry.element
         let pid = entry.processIdentifier
+        let application = applicationInstance(forPID: pid)
         guard var window = snapshot(
             element,
-            application: applicationInstance(forPID: pid),
-            bundleIdentifier: NSRunningApplication(processIdentifier: pid)?.bundleIdentifier,
+            application: application,
+            bundleIdentifier: bundleIdentifier(of: application),
             displays: displays()
         ) else {
             var role: CFTypeRef?
@@ -671,12 +672,35 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         guard let element = elements[id] ?? refreshElement(for: id) else { return nil }
         var pid: pid_t = 0
         guard AXUIElementGetPid(element, &pid) == .success else { return nil }
+        let application = applicationInstance(forPID: pid)
         return snapshot(
             element,
-            application: applicationInstance(forPID: pid),
-            bundleIdentifier: NSRunningApplication(processIdentifier: pid)?.bundleIdentifier,
+            application: application,
+            bundleIdentifier: bundleIdentifier(of: application),
             displays: displays()
         ).flatMap(classifyByNativeMembership)
+    }
+
+    /// A targeted read names the application as the complete inventory recorded it
+    /// for this launch. A fresh per-PID LaunchServices lookup can briefly answer
+    /// without a bundle identifier while the application runs, and a process cannot
+    /// change its bundle.
+    private func bundleIdentifier(of application: ApplicationLaunchInstance) -> String? {
+        let record = launchRecords[application.processIdentifier]
+        return Self.targetedReadBundleIdentifier(
+            recordInstance: record?.instance, recordBundleIdentifier: record?.bundleIdentifier,
+            windowInstance: application
+        ) { NSRunningApplication(processIdentifier: application.processIdentifier)?.bundleIdentifier }
+    }
+
+    nonisolated static func targetedReadBundleIdentifier(
+        recordInstance: ApplicationLaunchInstance?,
+        recordBundleIdentifier: String?,
+        windowInstance: ApplicationLaunchInstance,
+        lookUp: () -> String?
+    ) -> String? {
+        if recordInstance == windowInstance, let recordBundleIdentifier { return recordBundleIdentifier }
+        return lookUp()
     }
 
     func windowSnapshot(exactWindowID: CGWindowID) throws -> WindowSnapshot? {

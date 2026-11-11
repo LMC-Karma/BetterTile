@@ -90,6 +90,30 @@ import Testing
 }
 
 
+/// A targeted read names the application as the complete inventory did. A fresh
+/// per-PID LaunchServices lookup can answer without a bundle identifier while the
+/// application runs, which made Saved Layout Apply refuse every pane before any write.
+@Test(.macOSTestApplication) func aTargetedReadKeepsTheBundleIdentifierItsLaunchRecorded() {
+    let current = ApplicationLaunchInstance(processIdentifier: 42, generation: 2)
+    let earlier = ApplicationLaunchInstance(processIdentifier: 42, generation: 1)
+    var lookups = 0
+    let missing: () -> String? = { lookups += 1; return nil }
+    #expect(AccessibilityWindowSystem.targetedReadBundleIdentifier(
+        recordInstance: current, recordBundleIdentifier: "com.example.Fixture", windowInstance: current,
+        lookUp: missing) == "com.example.Fixture")
+    #expect(lookups == 0)
+    // An unnamed record or another launch at the same PID proves nothing; ask LaunchServices.
+    #expect(AccessibilityWindowSystem.targetedReadBundleIdentifier(
+        recordInstance: current, recordBundleIdentifier: nil, windowInstance: current,
+        lookUp: { "com.example.Fresh" }) == "com.example.Fresh")
+    #expect(AccessibilityWindowSystem.targetedReadBundleIdentifier(
+        recordInstance: earlier, recordBundleIdentifier: "com.example.Quit", windowInstance: current,
+        lookUp: { "com.example.Fresh" }) == "com.example.Fresh")
+    #expect(AccessibilityWindowSystem.targetedReadBundleIdentifier(
+        recordInstance: nil, recordBundleIdentifier: nil, windowInstance: current,
+        lookUp: missing) == nil)
+}
+
 /// Only two real answers make a window unmovable. An application that did
 /// not answer leaves the question open, so a drag asks again on its next
 /// tick instead of keeping the window still for the rest of the drag.
