@@ -16,6 +16,8 @@ public final class ManualClock: Clock, Sendable {
         var now = ContinuousClock.now // real-time: seeds the manual clock's origin once
         var nextID: UInt64 = 0
         var sleepers: [UInt64: Sleeper] = [:]
+        /// Sleepers that `advance` resumed and that have not yet run on their caller's executor.
+        var returning: Set<UInt64> = []
         var registrationWaiters: [(Int, CheckedContinuation<Void, Never>)] = []
 
         var sleepingCount: Int {
@@ -34,6 +36,14 @@ public final class ManualClock: Clock, Sendable {
     public let minimumResolution: Duration = .nanoseconds(1)
     public var now: Instant { state.withLock { $0.now } }
     public var pendingSleepCount: Int { state.withLock { $0.sleepingCount } }
+    /// Waits that `advance` resumed but whose callers have not run again yet.
+    /// A resumed task reaches its actor later than the driver's next main-queue
+    /// turn can run. Until it arrives, that caller's next wait is missing.
+    /// The mark clears in the caller's isolation only for a caller that reaches
+    /// the isolated sleep, such as `clock` or a direct concrete call. A generic
+    /// `Clock` caller, such as `BetterTileClock(self)`, clears it on the global
+    /// executor and can still reach its actor later.
+    public var returningSleepCount: Int { state.withLock { $0.returning.count } }
     /// Earliest registered policy wait, excluding reservations and cancelled waits.
     public var nextSleepDeadline: Instant? {
         state.withLock { state in
@@ -46,17 +56,43 @@ public final class ManualClock: Clock, Sendable {
             state.sleepers.values.contains { $0.deadline == deadline && $0.continuation != nil && !$0.cancelled }
         }
     }
-    public var clock: BetterTileClock { BetterTileClock(self) }
+    /// Calls this clock's isolated sleep directly, so a wait registers in the
+    /// caller's isolation. `BetterTileClock(self)` would call it through the
+    /// generic `Clock` requirement, which leaves the caller's isolation first.
+    public var clock: BetterTileClock {
+        BetterTileClock(now: { self.now }, minimumResolution: minimumResolution) { deadline, tolerance, isolation in
+            try await self.sleep(until: deadline, tolerance: tolerance, isolation: isolation)
+        }
+    }
 
     public init() {}
 
-    public func sleep(until deadline: Instant, tolerance: Duration? = nil) async throws {
+    /// The `Clock` requirement, for generic callers. It runs on the global
+    /// executor. A concrete call that names `tolerance:` without `isolation:`
+    /// also resolves here.
+    public func sleep(until deadline: Instant, tolerance: Duration?) async throws {
+        try await self.sleep(until: deadline, tolerance: tolerance, isolation: nil)
+    }
+
+    /// Registers the wait in the caller's isolation, before the caller suspends.
+    /// A main-actor task therefore never leaves a gap in which a driver reads
+    /// `nextSleepDeadline` without this wait.
+    public func sleep(until deadline: Instant, tolerance: Duration? = nil,
+                      isolation: isolated (any Actor)? = #isolation) async throws {
         let id = state.withLock { state in
             state.nextID += 1
             state.sleepers[state.nextID] = Sleeper(deadline: deadline)
             return state.nextID
         }
-        try await withTaskCancellationHandler {
+        // This runs in `isolation` after the resumed continuation hops back.
+        // For a generic `Clock` caller, that is the global executor.
+        defer { _ = state.withLock { $0.returning.remove(id) } }
+        try await withTaskCancellationHandler(operation: {
+            // Capturing `isolation` isolates this closure to it (SE-0420), so the
+            // continuation below registers before the caller's actor is released.
+            // Without the capture, the Swift 6.3 SDK's continuation receives a nil
+            // `#isolation` and registers on the global executor.
+            _ = isolation
             try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
                 state.withLock { state in
                     let sleeper = state.sleepers[id]!
@@ -72,7 +108,7 @@ public final class ManualClock: Clock, Sendable {
                     }
                 }
             }
-        } onCancel: {
+        }, onCancel: {
             self.state.withLock { state in
                 guard let sleeper = state.sleepers[id] else { return }
                 if let continuation = sleeper.continuation {
@@ -83,7 +119,14 @@ public final class ManualClock: Clock, Sendable {
                     state.sleepers[id]?.cancelled = true
                 }
             }
-        }
+        }, isolation: isolation)
+    }
+
+    /// Replaces the standard library's `Clock.sleep(for:)` extension, which
+    /// leaves the caller's isolation before it reads `now`.
+    public func sleep(for duration: Duration, tolerance: Duration? = nil,
+                      isolation: isolated (any Actor)? = #isolation) async throws {
+        try await self.sleep(until: now.advanced(by: duration), tolerance: tolerance, isolation: isolation)
     }
 
     /// Resume due continuations by deadline, then by registration order.
@@ -101,6 +144,7 @@ public final class ManualClock: Clock, Sendable {
                 }
             for (id, sleeper) in due {
                 state.sleepers.removeValue(forKey: id)
+                state.returning.insert(id)
                 sleeper.continuation?.resume()
             }
             return due.map { $0.value.deadline }

@@ -112,6 +112,47 @@ struct BetterTileClockTests {
         #expect(manual.pendingSleepCount == 0)
     }
 
+    @Test func aSleepRegistersOnTheCallersActorBeforeItSuspends() async {
+        let manual = ManualClock()
+        let clock = manual.clock
+        let task = Task.immediate { @MainActor in try? await clock.sleep(for: .seconds(1)) }
+        #expect(manual.pendingSleepCount == 1, "The sleep registered after its task suspended")
+        manual.advance(by: .seconds(1))
+        // A late registration reads `now` after this advance and never wakes.
+        // Cancellation ends it either way, so a regression fails instead of hanging.
+        task.cancel()
+        await manual.drain(task)
+        #expect(manual.pendingSleepCount == 0)
+    }
+
+    @Test func anAdvancedSleeperCountsAsReturningUntilItsCallerRuns() async {
+        let manual = ManualClock()
+        var resumed = false
+        let task = Task { @MainActor in
+            try? await manual.clock.sleep(for: .seconds(1))
+            resumed = true
+        }
+        await manual.waitForSleepers(count: 1)
+        #expect(manual.returningSleepCount == 0)
+        manual.advance(by: .seconds(1))
+        // This test holds the main actor, so the resumed task cannot have run yet.
+        #expect(manual.returningSleepCount == 1)
+        #expect(!resumed)
+        await manual.drain(task)
+        #expect(resumed)
+        #expect(manual.returningSleepCount == 0)
+    }
+
+    @Test func aCancelledSleeperIsNotReturning() async {
+        let manual = ManualClock()
+        let task = Task { @MainActor in try? await manual.clock.sleep(for: .seconds(1)) }
+        await manual.waitForSleepers(count: 1)
+        task.cancel()
+        await manual.drain(task)
+        #expect(manual.returningSleepCount == 0)
+        #expect(manual.pendingSleepCount == 0)
+    }
+
     @Test func drainWaitsForWorkAfterChainedSleeps() async {
         let manual = ManualClock()
         var completed = false
