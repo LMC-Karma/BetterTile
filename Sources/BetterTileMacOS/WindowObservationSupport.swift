@@ -239,14 +239,12 @@ struct WindowServerIndex {
     private var framesByPID: [pid_t: [BTRect]]
 
     init(records: [WindowServerRecord]) {
-        recordsByID = [:]
-        framesByPID = [:]
-        for record in records {
-            if recordsByID[record.windowID] == nil { recordsByID[record.windowID] = record }
-            if record.layer == 0 && record.isOnscreen {
-                framesByPID[record.processIdentifier, default: []].append(record.frame)
-            }
+        recordsByID = records.reduce(into: [:]) { result, record in
+            if result[record.windowID] == nil { result[record.windowID] = record }
         }
+        framesByPID = Dictionary(grouping: records.filter { $0.layer == 0 && $0.isOnscreen }) {
+            $0.processIdentifier
+        }.mapValues { $0.map(\.frame) }
     }
 
     var isEmpty: Bool { framesByPID.isEmpty }

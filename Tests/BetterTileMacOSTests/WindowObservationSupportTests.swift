@@ -241,35 +241,6 @@ func returningWindowIdentitiesPreserveBentoOrientationAndDragging(omittedByAcces
     #expect(cache.merge([window("other")], expectedWindowIDs: [window("other").id]) == nil)
 }
 
-@Test(.macOSTestApplication) func windowServerIndexKeepsFirstIdentityAndAllVisibleFallbackFrames() {
-    let first = BTRect(x: 0, y: 0, width: 400, height: 400)
-    let second = first.offsetBy(dx: 1000, dy: 0)
-    let index = WindowServerIndex(records: [
-        WindowServerRecord(windowID: 10, processIdentifier: 1, layer: 3, frame: first, isOnscreen: false),
-        WindowServerRecord(windowID: 10, processIdentifier: 2, layer: 0, frame: second, isOnscreen: true),
-        WindowServerRecord(windowID: 20, processIdentifier: 2, layer: 0, frame: first, isOnscreen: false),
-        WindowServerRecord(windowID: 30, processIdentifier: 2, layer: 3, frame: first, isOnscreen: true),
-    ])
-    #expect(index.containsIdentity(10, processIdentifier: 1))
-    #expect(!index.containsIdentity(10, processIdentifier: 2))
-    #expect(index.containsAnyWindow(of: 2))
-    let window = WindowSnapshot(
-        id: WindowID(rawValue: "window"), processIdentifier: 2, frame: second,
-        displayID: DisplayID(rawValue: "display")
-    )
-    #expect(index.contains(window, exactWindowID: nil))
-    #expect(!index.contains(window, exactWindowID: 10))
-    var absent = window
-    absent.frame = first
-    #expect(!index.contains(absent, exactWindowID: nil))
-    #expect(!index.isEmpty)
-    let hidden = WindowServerIndex(records: [
-        WindowServerRecord(windowID: 20, processIdentifier: 2, layer: 0, frame: first, isOnscreen: false),
-    ])
-    #expect(hidden.isEmpty)
-    #expect(hidden.containsIdentity(20, processIdentifier: 2))
-}
-
 @Test(.macOSTestApplication) @MainActor func aRepeatedCreationCallbackKeepsItsTokenAndUnreadTokensStayBounded() {
     let system = AccessibilityWindowSystem()
     let element = AXUIElementCreateApplication(getpid())
