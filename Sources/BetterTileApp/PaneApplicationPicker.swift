@@ -64,14 +64,23 @@ extension PaneApplicationLaunching {
     }
 
     func isAlive(_ instance: PaneApplicationInstance, of application: ApplicationChoice) -> Bool {
-        Self.isAlive(instance, among: NSRunningApplication.runningApplications(withBundleIdentifier: application.id))
+        Self.isAlive(instance, of: application,
+                     listed: { NSRunningApplication.runningApplications(withBundleIdentifier: application.id) },
+                     lookUp: { RunningApplicationLookup.application(processIdentifier: $0) })
     }
 
-    /// An accessory or background process can still open windows and can become regular again.
-    static func isAlive(_ instance: PaneApplicationInstance, among applications: [NSRunningApplication]) -> Bool {
-        applications.contains {
-            !$0.isTerminated && $0.processIdentifier == instance.processIdentifier && $0.launchDate == instance.launchDate
+    /// The process is alive when either answer names it with the recorded launch date: the bundle ID's running
+    /// applications, or the running-application lookup for its PID. Either answer can miss a running process,
+    /// so one match is enough, and the lookup is read only when the list has no match. Activation policy is
+    /// not checked: an accessory or background process can still open windows and can become regular again.
+    static func isAlive(_ instance: PaneApplicationInstance, of application: ApplicationChoice,
+                        listed: () -> [NSRunningApplication], lookUp: (pid_t) -> NSRunningApplication?) -> Bool {
+        func matches(_ running: NSRunningApplication) -> Bool {
+            !running.isTerminated && running.processIdentifier == instance.processIdentifier
+                && running.launchDate == instance.launchDate
         }
+        if listed().contains(where: matches) { return true }
+        return lookUp(instance.processIdentifier).map { $0.bundleIdentifier == application.id && matches($0) } == true
     }
 
     func reopen(_ application: ApplicationChoice, instance: PaneApplicationInstance, activating: Bool, timeout: TimeInterval) async throws {

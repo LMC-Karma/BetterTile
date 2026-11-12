@@ -2705,18 +2705,77 @@ func paneLauncherRefusedRequestKeepsEndedInstanceGuard(refusal: String) async th
             "The ended instance's guard must stay until a request actually dispatches")
 }
 
-/// The workspace liveness question ignores activation policy. The test host runs without a regular policy.
-@Test(.appTestApplication) @MainActor func paneLauncherWorkspaceLivenessIgnoresActivationPolicy() throws {
-    let current = NSRunningApplication.current
-    try #require(current.activationPolicy != .regular, "The test host must not be a regular app for this check")
-    let instance = PaneApplicationInstance(processIdentifier: current.processIdentifier, launchDate: current.launchDate)
-    #expect(WorkspacePaneApplicationLauncher.isAlive(instance, among: [current]))
-    let otherDate = PaneApplicationInstance(processIdentifier: current.processIdentifier,
-        launchDate: (current.launchDate ?? Date(timeIntervalSince1970: 1)).addingTimeInterval(1))
-    #expect(!WorkspacePaneApplicationLauncher.isAlive(otherDate, among: [current]))
-    #expect(!WorkspacePaneApplicationLauncher.isAlive(
-        PaneApplicationInstance(processIdentifier: current.processIdentifier &+ 1, launchDate: current.launchDate), among: [current]))
-    #expect(!WorkspacePaneApplicationLauncher.isAlive(instance, among: []))
+/// A made-up running application for liveness tests. It never names a real process.
+private final class StubRunningApplication: NSRunningApplication, @unchecked Sendable {
+    private let stubProcessIdentifier: pid_t
+    private let stubLaunchDate: Date?
+    private let stubBundleIdentifier: String?
+    private let stubPolicy: NSApplication.ActivationPolicy
+    private let stubTerminated: Bool
+
+    init(processIdentifier: pid_t, launchDate: Date?, bundleIdentifier: String? = paneTestApp.id,
+         policy: NSApplication.ActivationPolicy = .regular, terminated: Bool = false) {
+        stubProcessIdentifier = processIdentifier
+        stubLaunchDate = launchDate
+        stubBundleIdentifier = bundleIdentifier
+        stubPolicy = policy
+        stubTerminated = terminated
+        super.init()
+    }
+
+    override var processIdentifier: pid_t { stubProcessIdentifier }
+    override var launchDate: Date? { stubLaunchDate }
+    override var bundleIdentifier: String? { stubBundleIdentifier }
+    override var activationPolicy: NSApplication.ActivationPolicy { stubPolicy }
+    override var isTerminated: Bool { stubTerminated }
+}
+
+private let livenessLaunchDate = Date(timeIntervalSince1970: 1)
+private let livenessInstance = PaneApplicationInstance(processIdentifier: 9_001, launchDate: livenessLaunchDate)
+
+@MainActor private func workspaceIsAlive(listed: [NSRunningApplication], perPID: NSRunningApplication? = nil,
+                                         instance: PaneApplicationInstance = livenessInstance) -> Bool {
+    WorkspacePaneApplicationLauncher.isAlive(instance, of: paneTestApp, listed: { listed }, lookUp: { pid in
+        #expect(pid == instance.processIdentifier)
+        return perPID
+    })
+}
+
+/// The workspace liveness question matches the recorded process ID and launch date, skips a process that
+/// reports termination, and ignores activation policy.
+@Test(.appTestApplication) @MainActor func paneLauncherWorkspaceLivenessIgnoresPolicyAndSkipsTerminated() {
+    for policy in [NSApplication.ActivationPolicy.regular, .accessory, .prohibited] {
+        #expect(workspaceIsAlive(listed: [StubRunningApplication(processIdentifier: 9_001, launchDate: livenessLaunchDate,
+                                                                policy: policy)]), "policy \(policy.rawValue)")
+    }
+    let terminated = StubRunningApplication(processIdentifier: 9_001, launchDate: livenessLaunchDate, terminated: true)
+    #expect(!workspaceIsAlive(listed: [terminated]))
+    #expect(!workspaceIsAlive(listed: [], perPID: terminated))
+    #expect(!workspaceIsAlive(listed: [StubRunningApplication(processIdentifier: 9_001, launchDate: Date(timeIntervalSince1970: 2))]))
+    #expect(!workspaceIsAlive(listed: [StubRunningApplication(processIdentifier: 9_002, launchDate: livenessLaunchDate)]))
+    #expect(!workspaceIsAlive(listed: []))
+    // Without launch dates a reused process ID cannot be told apart, so it counts as alive.
+    let undated = PaneApplicationInstance(processIdentifier: 9_001, launchDate: nil)
+    #expect(workspaceIsAlive(listed: [StubRunningApplication(processIdentifier: 9_001, launchDate: nil)], instance: undated))
+}
+
+/// The bundle ID's list can miss a running process. The per-process lookup can then still find it, which keeps
+/// the guard. The lookup can only add a match: it never turns the list's match into an ended process.
+@Test(.appTestApplication) @MainActor func paneLauncherWorkspaceLivenessAlsoAsksTheRunningApplicationLookup() {
+    let running = StubRunningApplication(processIdentifier: 9_001, launchDate: livenessLaunchDate, policy: .accessory)
+    #expect(workspaceIsAlive(listed: [], perPID: running))
+    #expect(workspaceIsAlive(listed: [running], perPID: nil))
+    #expect(!workspaceIsAlive(listed: [], perPID: StubRunningApplication(processIdentifier: 9_001, launchDate: livenessLaunchDate,
+                                                                          bundleIdentifier: "com.example.Other")))
+    #expect(!workspaceIsAlive(listed: [], perPID: StubRunningApplication(processIdentifier: 9_001,
+                                                                          launchDate: Date(timeIntervalSince1970: 2))))
+    #expect(!workspaceIsAlive(listed: [], perPID: nil))
+    var lookUps = 0
+    _ = WorkspacePaneApplicationLauncher.isAlive(livenessInstance, of: paneTestApp, listed: { [running] }, lookUp: { _ in
+        lookUps += 1
+        return nil
+    })
+    #expect(lookUps == 0, "A match in the list needs no per-process lookup")
 }
 
 // Unconfirmed arrivals keep the explicit click fallback after automatic placement.
