@@ -1,3 +1,4 @@
+import AppKit
 import CoreGraphics
 import Testing
 @testable import BetterTileCore
@@ -290,5 +291,84 @@ struct AccessibilityReleaseTests {
         for _ in 0..<3 { #expect(evidence.confirmClosed(withoutIDs, windowServer: list([(1, false)])).isEmpty) }
         _ = evidence.confirmClosed(withoutIDs, windowServer: list([]))
         #expect(evidence.confirmClosed(withoutIDs, windowServer: list([])) == [Self.open, Self.closed])
+    }
+}
+
+/// The adapter prepares each complete sweep with `ApplicationInventorySweep.prepare`.
+/// These fakes stand in for running applications; no process is messaged.
+@Suite(.macOSTestApplication) struct InventorySweepPreparationTests {
+    private struct App { let pid: Int32; let managed: Bool }
+
+    @Test func runningHiddenAppsKeepTheirGateAndReusedPIDsAreAdmittedBeforeAnyRead() {
+        let reused = App(pid: 10, managed: true), hidden = App(pid: 11, managed: false)
+        let stalledBefore = App(pid: 12, managed: true), quit: Int32 = 13
+        var gate = UnresponsiveApplicationGate()
+        for pid in [reused.pid, hidden.pid, stalledBefore.pid, quit] {
+            gate.record(pid, cannotComplete: true, elapsed: 0.35, now: 100)
+        }
+        var reads: [Int32] = []
+        let prepared = ApplicationInventorySweep.prepare(
+            running: [reused, hidden, stalledBefore], processIdentifier: \.pid, isManaged: \.managed,
+            previousHolds: [reused.pid: 150],
+            retainRunning: { gate.retainProcessIdentifiers($0) },
+            admitChangedLaunch: { app in
+                guard app.pid == reused.pid else { return false }
+                gate.remove(processIdentifier: app.pid)
+                return true
+            })
+        #expect(prepared.applications.map(\.pid) == [reused.pid, stalledBefore.pid])
+        #expect(prepared.previousHolds.isEmpty, "The quit process's hold must not hold its successor")
+        #expect(gate.stallCount(hidden.pid) == 1, "A hidden running application keeps its gate")
+        #expect(gate.timeoutSerial(quit) == 0 && gate.stallCount(quit) == 0)
+        #expect(gate.timeoutSerial(reused.pid) == 0)
+        var recovery: Set<Int32>? = nil
+        let holds = ApplicationInventorySweep.run(prepared.applications, processIdentifier: \.pid,
+            previousHolds: prepared.previousHolds, recoveryPIDs: &recovery, now: { 200 }, gate: { gate }) { app in
+            reads.append(app.pid)
+        }
+        #expect(reads == [reused.pid, stalledBefore.pid], "A reset seen inside a read looks like a timeout")
+        #expect(holds.isEmpty)
+    }
+
+    /// The order the preparation prevents: a reset inside the reused PID's read
+    /// changes its timeout serial, so the sweep skips a later stalled application.
+    @Test func admittingAReusedPIDInsideItsReadWouldSkipALaterStalledApplication() {
+        var gate = UnresponsiveApplicationGate()
+        for pid: Int32 in [10, 12] { gate.record(pid, cannotComplete: true, elapsed: 0.35, now: 100) }
+        var reads: [Int32] = []
+        var recovery: Set<Int32>? = nil
+        _ = ApplicationInventorySweep.run([App(pid: 10, managed: true), App(pid: 12, managed: true)],
+            processIdentifier: \.pid, previousHolds: [:], recoveryPIDs: &recovery, now: { 200 }, gate: { gate }) { app in
+            if app.pid == 10 { gate.remove(processIdentifier: 10) }
+            reads.append(app.pid)
+        }
+        #expect(reads == [10])
+    }
+}
+
+/// `applicationInstance(for:)` with this test process as the running application.
+@Suite(.macOSTestApplication, .serialized) @MainActor
+struct LaunchAdmissionGateTests {
+    @Test func aFirstSeenLaunchKeepsItsGateAndAChangedLaunchAtAKnownPIDResetsIt() {
+        let application = NSRunningApplication.current
+        let pid = application.processIdentifier
+        func gate<T>(_ body: (inout UnresponsiveApplicationGate) -> T) -> T {
+            AccessibilityWindowSystem.unresponsiveApplications.withLock { body(&$0) }
+        }
+        defer { gate { $0.remove(processIdentifier: pid) } }
+        gate { $0.record(pid, cannotComplete: true, elapsed: 0.35, now: 100) }
+        let system = AccessibilityWindowSystem()
+
+        let first = system.admitLaunchForTesting(application)
+        #expect(gate { $0.timeoutSerial(pid) } == 1, "A gate set before the first launch record must stay")
+        #expect(system.admitLaunchForTesting(application) == first)
+        #expect(gate { $0.timeoutSerial(pid) } == 1)
+
+        // A different launch token at the same PID means the old process quit.
+        let token = application.launchDate?.timeIntervalSinceReferenceDate.bitPattern
+        let replaced = system.recordLaunchForTesting(pid: pid, bundleIdentifier: nil, launchToken: (token ?? 0) &+ 1)
+        let admitted = system.admitLaunchForTesting(application)
+        #expect(admitted != replaced)
+        #expect(gate { ($0.timeoutSerial(pid), $0.stallCount(pid), $0.holdDeadline(pid)) } == (0, 0, nil))
     }
 }

@@ -451,29 +451,31 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         var snapshots: [WindowSnapshot] = []
         var refreshedElements: [WindowID: AXUIElement] = [:]
         var observedApplications: [ApplicationLaunchInstance: Set<CFHashCode>] = [:]
-        var previousHolds = unreadableApplicationHolds
+        let heldBefore = unreadableApplicationHolds
         unreadableApplicationHolds.removeAll()
-        let runningApplications = NSWorkspace.shared.runningApplications
-        Self.unresponsiveApplications.withLock {
-            $0.retainProcessIdentifiers(Set(runningApplications.map(\.processIdentifier)))
-        }
-        let applications = runningApplications.filter { application in
-            Self.shouldManageApplication(
-                processIdentifier: application.processIdentifier,
-                ownProcessIdentifier: getpid(),
-                activationPolicy: application.activationPolicy,
-                isHidden: application.isHidden,
-                includeHidden: false
-            )
-        }
-        // Admit launch generations before the sweep captures timeout serials.
-        // Resetting a reused PID inside its read would look like a new timeout.
-        for application in applications {
-            let previous = launchRecords[application.processIdentifier]?.instance
-            if applicationInstance(for: application) != previous, previous != nil {
-                previousHolds.removeValue(forKey: application.processIdentifier)
+        let prepared = ApplicationInventorySweep.prepare(
+            running: NSWorkspace.shared.runningApplications,
+            processIdentifier: \.processIdentifier,
+            isManaged: { application in
+                Self.shouldManageApplication(
+                    processIdentifier: application.processIdentifier,
+                    ownProcessIdentifier: getpid(),
+                    activationPolicy: application.activationPolicy,
+                    isHidden: application.isHidden,
+                    includeHidden: false
+                )
+            },
+            previousHolds: heldBefore,
+            retainRunning: { pids in Self.unresponsiveApplications.withLock { $0.retainProcessIdentifiers(pids) } },
+            admitChangedLaunch: { application in
+                // Admit every launch, first-seen ones too, before any read.
+                let previous = launchRecords[application.processIdentifier]?.instance
+                let admitted = applicationInstance(for: application)
+                return previous != nil && admitted != previous
             }
-        }
+        )
+        let applications = prepared.applications
+        let previousHolds = prepared.previousHolds
         unreadableApplicationHolds = ApplicationInventorySweep.run(
             applications,
             processIdentifier: \.processIdentifier,
@@ -713,11 +715,16 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
     #if BETTERTILE_TEST_HOOKS
     /// Seeds the launch record that a complete inventory would write for `pid`.
     @discardableResult
-    func recordLaunchForTesting(pid: pid_t, bundleIdentifier: String?) -> ApplicationLaunchInstance {
+    func recordLaunchForTesting(pid: pid_t, bundleIdentifier: String?, launchToken: UInt64? = nil) -> ApplicationLaunchInstance {
         nextLaunchGeneration &+= 1
         let instance = ApplicationLaunchInstance(processIdentifier: pid, generation: nextLaunchGeneration)
-        launchRecords[pid] = LaunchRecord(launchToken: nil, instance: instance, bundleIdentifier: bundleIdentifier)
+        launchRecords[pid] = LaunchRecord(launchToken: launchToken, instance: instance, bundleIdentifier: bundleIdentifier)
         return instance
+    }
+
+    /// Admits `application`'s launch as a complete inventory does.
+    func admitLaunchForTesting(_ application: NSRunningApplication) -> ApplicationLaunchInstance {
+        applicationInstance(for: application)
     }
     #endif
 
