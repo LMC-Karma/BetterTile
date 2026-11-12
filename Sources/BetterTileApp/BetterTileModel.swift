@@ -9084,6 +9084,16 @@ extension BetterTileModel {
         deferredTabbedExits = deferredTabbedExits.filter { displayOwner($0.key) }
     }
 
+    #if BETTERTILE_TEST_HOOKS
+    /// Fills the desktop-owned maps that only rare recovery paths write, so
+    /// lifetime tests can check every map that follows its desktop.
+    func seedRareDesktopStateForTesting(_ id: DesktopSessionID, protecting window: WindowID) {
+        onScreenProtectedPanes[id, default: []].insert(window)
+        applicationRecoveryFallbackMatches[id] = true
+        spacePanelCorrections.insert(id)
+    }
+    #endif
+
     private func leaveTabbed(displayID: DisplayID, destination: LayoutMode, focusedWindowID: WindowID?) {
         guard let exitOwner = sessionStore.session(for: displayID) else { return }
         guard tabbedExiting.insert(displayID).inserted else {

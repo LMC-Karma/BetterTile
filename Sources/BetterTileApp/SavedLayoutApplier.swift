@@ -451,7 +451,9 @@ private struct SavedLayoutUndoStructure: Equatable {
     /// Desktops in Apply order, oldest first. A reconnect or a restored
     /// desktop can bring a desktop's key back after the model forgot it, so
     /// an absent desktop keeps its state while it is one of the newest
-    /// `absentDesktopLimit` absent desktops. This bound is far above normal use.
+    /// `absentDesktopLimit` absent desktops. A newer absent desktop past that
+    /// limit evicts the oldest one, which then returns without remembered
+    /// slots or Undo. The limit matches the session store's retired list.
     private var appliedDesktops: [SavedLayoutDesktop] = []
     static let absentDesktopLimit = 32
     private func noteApplied(_ desktop: SavedLayoutDesktop) {

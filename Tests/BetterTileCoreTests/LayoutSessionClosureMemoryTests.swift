@@ -200,4 +200,47 @@ struct LayoutSessionClosureMemoryTests {
         #expect(session.bentoReinsertionAnchors[closed] != nil)
         #expect(session.revision == revision, "The active reducer must keep its recovery revision until it consumes the closure")
     }
+
+    /// A transaction interrupted before its desktop retired finishes its
+    /// bookkeeping against the retired revision. Closing a window that the
+    /// retired desktop knows only from observed frames or a following return
+    /// must not advance that revision. A member's closure still does.
+    @Test func anInterruptedTransactionStillFinishesAfterAStaleWindowClosesOnItsRetiredDesktop() throws {
+        let window = FollowedLayoutTests.window("returning")
+        var (_, _, original) = try FollowedLayoutTests.fixture(windows: [window])
+        original.excludedFocusWindowIDs = [window.id]
+        let followed = FollowedLayoutTests.reduce(original, windows: [], minimized: [window.id]).followed
+        try #require(followed?.returnVacancies[window.id] != nil)
+        let display = DisplayID(rawValue: "unplugged")
+        let member = WindowID(rawValue: "member"), peer = WindowID(rawValue: "peer")
+        let stale = WindowID(rawValue: "stale-frame")
+        var store = LayoutSessionStore()
+        _ = store.activate(displayID: display, windowIDs: [member, peer], focusedWindowID: member,
+            defaultMode: .bento, reuseActiveWhenUnmatched: false, nativeSpaceID: .init(rawValue: 7))
+        store.update(display) {
+            $0.bentoState.root = .leaf(member)
+            $0.followed = followed
+            $0.lastObservedFrames = [member: BTRect(x: 0, y: 0, width: 500, height: 800),
+                                     stale: BTRect(x: 500, y: 0, width: 500, height: 800)]
+        }
+        // The interrupted transaction captured this revision.
+        let captured = try #require(store.session(for: display))
+        store.removeMissingDisplays([])
+        let retired = try #require(store.retiredSessions.first { $0.session.id == captured.id })
+        #expect(retired.session.revision == captured.revision)
+
+        store.removeClosedTabbedWindow(stale)
+        store.removeClosedTabbedWindow(window.id)
+        #expect(store.retiredSessions.first { $0.session.id == captured.id }?.session.revision == captured.revision)
+        var finished = captured
+        finished.focusedWindowID = peer
+        #expect(store.commitRetiredBookkeeping(finished, replacing: captured.revision) != nil,
+            "A stale window's closure refused the interrupted transaction's bookkeeping")
+
+        let committed = try #require(store.retiredSessions.first { $0.session.id == captured.id }?.session)
+        store.removeClosedTabbedWindow(member)
+        let afterMember = try #require(store.retiredSessions.first { $0.session.id == captured.id }?.session)
+        #expect(afterMember.revision != committed.revision, "A member's closure changes the retired desktop, as on main")
+        #expect(afterMember.windowIDs == [peer])
+    }
 }

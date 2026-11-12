@@ -368,24 +368,37 @@ permission or dependency.
 ### Desktop state lifetimes
 
 Long uptime must not keep state for desktops and windows that cannot return.
-The model therefore releases state only when its owner is truly gone:
+Each structure below keeps its entries while a return can still use them, and
+otherwise follows a fixed limit. The limits are a bounded retention policy,
+not a guarantee that any desktop can return after any amount of change.
 
+- **Retired desktops.** The session store keeps at most 32 retired desktops,
+  oldest dropped first, and forgets a retired desktop whose windows all
+  closed. This limit is unchanged. A desktop dropped from the list can still
+  come back on screen, but it returns as a new desktop with the default mode.
+  Stored native Spaces have no such limit.
 - **Desktop-owned model state.** Tabbed Undo, on-screen protected panes,
   application-recovery fallback matches, Space panel corrections and Focus
-  Restore snapshots stay while the session store retains their session. This
-  includes a desktop on the retirement list, because a reconnect restores it
-  with the same session ID. The state goes when the store forgets the desktop:
-  it falls off the 32-entry retirement list, or all its windows close.
-  Restoration itself still clears the history named above.
+  Restore snapshots stay while the session store holds their session, stored
+  or retired. During a display-change hold an absent display's desktops stay
+  stored. The state goes when the store forgets the desktop.
+- **What a restore clears.** When a reconnect restores a retired desktop, the
+  store clears its observed frames, following state, last work area and
+  Tabbed baseline frames. The model then clears that desktop's Tabbed Undo,
+  committed Tabbed layout and Tabbed entry baseline, discards window move
+  history for the restored windows, and invalidates Saved Layout Undo that
+  involves those windows or the old desktop. Focus Restore snapshots,
+  protected panes, recovery fallback matches, panel corrections and Saved
+  Layout slot assignments stay.
 - **Saved Layout desktops.** Remembered slot assignments, the Undo Apply
-  checkpoint and its session cache stay while the desktop's Space exists,
-  while the model owns the desktop, including on the retirement list, or while
-  it is one of the 32 most recently applied absent desktops. Restored desktops
-  can bring an older display and Space key back, so the newest absent desktops
-  keep their remembered assignments, and a Display Trigger that applies again
-  after a reconnect keeps same-app windows in their slots. A missing native
-  observation proves nothing and releases nothing. Apply and Undo in flight
-  keep every checkpoint.
+  checkpoint and its session cache stay while the desktop's Space exists on a
+  connected display, while the model holds a session for it (stored or
+  retired), or while it is one of the 32 most recently applied desktops that
+  meet neither condition. A 33rd newer absent desktop evicts the oldest; if
+  that desktop returns, it has no remembered slots and no Undo. The window
+  sweep updates this list on every pass that has a native desktop
+  observation. A missing observation releases nothing, and an Apply or Undo
+  in flight keeps every checkpoint.
 - **Inferred desktops.** Without native Space identity, a desktop can return
   only through its windows. The store records confirmed closures of an
   inferred session's windows. When every window identity that an inactive
@@ -396,8 +409,16 @@ The model therefore releases state only when its owner is truly gone:
   session for each display; choosing among several empty sessions was already
   arbitrary. An older kept session that changed after it emptied is kept.
 - **Closed-window evidence.** Confirmed closure removes Adaptive return and
-  following evidence from inactive sessions. The active session's reducer owns
-  its own tree and frame observations and consumes the closure itself.
+  following evidence from inactive stored sessions. The active session's
+  reducer owns its own tree and frame observations and consumes the closure
+  itself. Retired sessions keep observed frames and following state, which a
+  restore clears, so a closure that changes nothing else does not advance a
+  retired desktop's revision.
+- **Processes and windows.** The unresponsive-application gate keeps entries
+  only for running processes, hidden ones included; a new launch at a known
+  process ID starts with no hold or timeout serial. Tabbed readoption markers,
+  held move and resize events and known window snapshots go when their window
+  closes.
 
 ## Popup and fixed-size windows
 

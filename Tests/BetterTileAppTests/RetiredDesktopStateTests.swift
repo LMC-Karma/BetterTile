@@ -87,8 +87,11 @@ struct RetiredDesktopStateTests {
         f.model.performTabbed(.preset(.columns, grouping: .distributeWindows))
         try await f.idle()
         let original = try #require(f.store().session(for: f.display))
+        f.model.seedRareDesktopStateForTesting(original.id, protecting: f.left)
         let owned = f.ownedFields(original.id)
-        try #require(owned["tabbedUndo"] == true)
+        // A Tabbed desktop has no Focus snapshot; the Adaptive Focus test covers it.
+        try #require(owned.filter { $0.key != "bentoStateBeforeFocus" }.values.allSatisfy { $0 },
+            "Every other desktop-owned map must hold a value to test")
 
         try await f.replaceDisplay("away", uuid: "B", space: 2)
         if !carryOver {
@@ -242,9 +245,12 @@ struct RetiredDesktopStateTests {
         f.system.emitsMinimizationEvents = true
         f.model.setActiveMode(.bento)
         try await f.idle()
+        let tiled = Dictionary(uniqueKeysWithValues: f.system.windows.map { ($0.id, $0.frame) })
+        try #require(tiled[f.left] != tiled[f.right])
         f.system.focusedID = f.left
         f.model.perform(.maximize)
         try await f.idle()
+        try #require(f.system.windows.first { $0.id == f.right }?.isMinimized == true)
         let original = try #require(f.store().session(for: f.display))
         try #require(f.ownedFields(original.id)["bentoStateBeforeFocus"] == true)
 
@@ -255,6 +261,43 @@ struct RetiredDesktopStateTests {
         try await f.replaceDisplay(f.system.mainDisplay.id.rawValue, uuid: "A", space: 3)
         #expect(try f.store().session(for: f.display)?.id == original.id)
         #expect(f.ownedFields(original.id)["bentoStateBeforeFocus"] == true)
+
+        f.system.focusedID = f.left
+        f.model.perform(.restore)
+        try await f.idle()
+        for window in f.system.windows {
+            #expect(!window.isMinimized, "Focus Restore left \(window.id.rawValue) minimized")
+            #expect(window.frame.approximatelyEquals(tiled[window.id]!, tolerance: 2),
+                "Focus Restore did not return \(window.id.rawValue) to its tiled frame")
+        }
+        #expect(f.ownedFields(original.id)["bentoStateBeforeFocus"] == false)
+    }
+
+    /// Saved Layout asks the model whether it still owns an absent desktop.
+    /// The model answers yes while the hold keeps the desktop stored, and
+    /// while it is retired, and no after the store forgets it.
+    @Test func theModelOwnsAnAbsentDesktopWhileItIsStoredOrRetired() async throws {
+        let f = RetiredDesktopFixture(carryOver: false)
+        defer { f.model.shutdown() }
+        f.model.handleApplicationTopologyChange()
+        try await f.idle()
+        let applier = try #require(f.model.savedLayoutApplier)
+        let desktop = SavedLayoutDesktop(displayID: f.display, spaceID: .init(rawValue: 1))
+        try #require(f.store().session(for: desktop.displayID)?.nativeSpaceID == desktop.spaceID)
+        #expect(applier.isDesktopRetained(desktop))
+        f.reconfigure(to: "away", uuid: "B", space: 2)
+        try #require(f.model.isHoldingDisplayChange)
+        try #require(f.store().allSessions(for: desktop.displayID).contains { $0.nativeSpaceID == desktop.spaceID })
+        #expect(applier.isDesktopRetained(desktop), "The hold still stores this desktop")
+        try await f.idle()
+        try #require(f.store().retiredSessions.contains { $0.session.nativeSpaceID == desktop.spaceID })
+        #expect(applier.isDesktopRetained(desktop), "A retired desktop can return")
+        for id in [f.left, f.right] {
+            f.system.windows.removeAll { $0.id == id }
+            f.system.eventHandler?(.init(kind: .destroyed, windowID: id, processIdentifier: 41))
+        }
+        try await f.idle()
+        #expect(!applier.isDesktopRetained(desktop), "A forgotten desktop cannot return")
     }
 
     /// Retired desktops stay bounded. Desktops whose windows all closed are
@@ -267,14 +310,19 @@ struct RetiredDesktopStateTests {
         f.model.performTabbed(.preset(.columns, grouping: .distributeWindows))
         try await f.idle()
         let original = try #require(f.store().session(for: f.display))
+        f.model.seedRareDesktopStateForTesting(original.id, protecting: f.left)
         try await f.replaceDisplay("away", uuid: "B", space: 2)
-        try #require(f.ownedFields(original.id)["tabbedUndo"] == true)
+        try #require(f.ownedFields(original.id).filter { $0.key != "bentoStateBeforeFocus" }.values.allSatisfy { $0 })
         for id in [f.left, f.right] {
             f.system.windows.removeAll { $0.id == id }
             f.system.eventHandler?(.init(kind: .destroyed, windowID: id, processIdentifier: 41))
         }
         try await f.idle()
         #expect(try !f.store().retiredSessions.contains { $0.session.id == original.id })
-        #expect(f.ownedFields(original.id).values.allSatisfy { !$0 })
+        // A window sweep restores its recovery fallback matches when it ends,
+        // so that map is released at the next native desktop selection.
+        f.model.beginActiveSpaceStabilization()
+        try await f.idle()
+        #expect(f.ownedFields(original.id).values.allSatisfy { !$0 }, "\(f.ownedFields(original.id))")
     }
 }

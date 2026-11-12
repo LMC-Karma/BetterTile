@@ -686,7 +686,11 @@ public struct LayoutSessionStore: Sendable {
         }
         for index in retiredSessions.indices {
             let previous = retiredSessions[index].session
-            _ = update(&retiredSessions[index].session)
+            // Restoration clears observed frames and following, and the
+            // list holds at most 32 desktops. Leave both alone here so a
+            // closure that owns nothing else does not advance the revision
+            // that an interrupted transaction finishes against.
+            _ = update(&retiredSessions[index].session, removeAdaptiveEvidence: false)
             if closed {
                 retiredSessions[index].windowIDs.remove(windowID)
                 if retiredSessions[index].session.tabbedState == nil {

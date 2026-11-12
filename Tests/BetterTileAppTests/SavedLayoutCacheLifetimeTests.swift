@@ -109,6 +109,46 @@ struct SavedLayoutCacheLifetimeTests {
         #expect(h.system.windows[0].frame == baseline)
     }
 
+    /// The model's ownership keeps a desktop beyond the absent-desktop limit.
+    /// Without ownership, the 33rd newer absent desktop evicts it.
+    @Test(arguments: [true, false])
+    func modelOwnershipAloneKeepsADesktopPastTheAbsentDesktopLimit(owned: Bool) async throws {
+        let h = ApplyHarness(); defer { h.close() }
+        h.usesAllDisplays = true
+        let document = SavedLayoutDocument(name: "Memory", mode: .manual,
+            slots: [.init(id: "editor", bundleID: "com.example.Editor")],
+            windows: [.init(slot: "editor", rect: .init(x: 0, y: 0, width: 1, height: 1))])
+        let frame = BTRect(x: 100, y: 100, width: 400, height: 300)
+        func applyOnNewDisplay(_ name: String, space: UInt64) async throws -> SavedLayoutDesktop {
+            let display = DisplaySnapshot(id: .init(rawValue: name),
+                frame: h.system.mainDisplay.frame, visibleFrame: h.system.mainDisplay.visibleFrame)
+            let native = NativeSpaceID(rawValue: space)
+            let id = WindowID(rawValue: "window-\(name)")
+            h.system.availableDisplays = [display]
+            h.system.windows = [.init(id: id, processIdentifier: 42, bundleIdentifier: "com.example.Editor",
+                frame: frame, displayID: display.id)]
+            h.system.desktopObservation = .init(currentSpaceByDisplay: [display.id: native],
+                knownSpacesByDisplay: [display.id: [native]], windowMembership: [id: [native]])
+            h.sessions = [:]
+            try #require(await h.applier.apply(document, displayID: display.id).placed == 1)
+            h.applier.updateUndoDesktops(h.system.desktopObservation, displays: [display], sessions: h.sessions)
+            return SavedLayoutDesktop(displayID: display.id, spaceID: native)
+        }
+        let retired = try await applyOnNewDisplay("retired", space: 1)
+        h.applier.isDesktopRetained = { owned && $0 == retired }
+        let newer = SavedLayoutApplier.absentDesktopLimit + 1
+        for index in 1...newer { _ = try await applyOnNewDisplay("reconnect-\(index)", space: UInt64(100 + index)) }
+        // The connected desktop, the 32 newest absent ones, and the owned one.
+        let expected = SavedLayoutApplier.absentDesktopLimit + 1 + (owned ? 1 : 0)
+        for field in ["rememberedAssignments", "undos", "undoSessionCache", "appliedDesktops"] {
+            #expect(count(field, in: h.applier!) == expected, "\(field)")
+        }
+        let applied = Mirror(reflecting: h.applier!).children.first {
+            $0.label?.trimmingCharacters(in: CharacterSet(charactersIn: "_")) == "appliedDesktops"
+        }?.value as? [SavedLayoutDesktop]
+        #expect(applied?.contains(retired) == owned)
+    }
+
     @Test func anInactiveExistingSpaceAndAnUnknownInventoryKeepAssignments() async throws {
         let h = ApplyHarness(); defer { h.close() }
         for space in [1, 2] {
