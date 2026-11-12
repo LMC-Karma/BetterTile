@@ -1865,12 +1865,13 @@ struct TabbedAutoHideAnimation {
         content.layer?.add(fade, forKey: "autoHideFade")
     }
 
-    /// Test seam for the accessibility display options.
+    /// Test seam for the accessibility display options. Closures cannot be compared, so every
+    /// assignment refreshes: the glass reads these options only when the pane refreshes it.
     var displayOptions: () -> (reduceTransparency: Bool, increaseContrast: Bool) = {
         let workspace = NSWorkspace.shared
         return (workspace.accessibilityDisplayShouldReduceTransparency,
                 workspace.accessibilityDisplayShouldIncreaseContrast)
-    }
+    } { didSet { refreshAppearance() } }
     var showsGlass: Bool { glass.showsGlass }
 
     func refreshAppearance() {

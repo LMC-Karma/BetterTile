@@ -48,6 +48,21 @@ func tabbedUnchangedPaneAppearanceReusesNativeGlass() {
     #expect(!view.showsGlass && view.glass.plateOpacity == 1)
 }
 
+/// The skip guards must not hide a new accessibility display-option source: the pane cannot
+/// compare closures, so each assignment reaches the glass, whatever the system settings are.
+@Test(.macOSTestApplication) @MainActor
+func tabbedPaneDisplayOptionsReachTheGlassWithoutAnotherChange() {
+    let view = TabbedPaneView(frame: NSRect(x: 0, y: 0, width: 800, height: 600))
+    let appearance = view.overlayAppearance
+    for options in [(true, false), (false, false), (false, true), (false, false)] {
+        let before = view.appearanceRefreshCount
+        view.displayOptions = { options }
+        view.overlayAppearance = appearance
+        #expect(view.appearanceRefreshCount == before + 1)
+        #expect(view.showsGlass == !(options.0 || options.1))
+    }
+}
+
 @Test(.macOSTestApplication) @MainActor
 func tabbedUnchangedCollapseStillFinishesItsPendingAnimation() {
     let view = TabbedPaneView(frame: NSRect(x: 0, y: 0, width: 800, height: 34))
