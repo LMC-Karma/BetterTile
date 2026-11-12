@@ -776,10 +776,14 @@ func makeModel(system: FakeAppWindowSystem, gestureEvents: SharedGestureEventMon
     })
 }
 
+/// The incomplete sweeps exceed the membership-only miss count, so only the
+/// 1.4 s minimum absence keeps the peer's pane. Policy time decides it: the
+/// test advances the injected clock, so a slow runner cannot stretch the
+/// partial visibility past that minimum.
 @Test(.appTestApplication, arguments: [0, 4]) @MainActor
 func returningToBentoSpaceWithPartialVisibilityDoesNotMoveItsWindows(extraIncompleteSweeps: Int) async throws {
     _ = NSApplication.shared
-    let system = FakeAppWindowSystem()
+    let system = makeManualWindowSystem(drivingPolicyDeadlines: true)
     let firstSpace = NativeSpaceID(rawValue: 1)
     let secondSpace = NativeSpaceID(rawValue: 2)
     let displayID = system.mainDisplay.id
@@ -796,34 +800,39 @@ func returningToBentoSpaceWithPartialVisibilityDoesNotMoveItsWindows(extraIncomp
     defer { model.shutdown() }
     model.configuration.singleWindowPlacement = .maximize
     model.tileCurrentDisplay()
-    try #require(await waitFor { system.cachedRefreshCount >= 2 })
+    try #require(await system.waitFor { system.cachedRefreshCount >= 2 })
     let firstWindows = system.windows
-    model.installWorkspaceTriggers()
+    // Private centers: only this test's Space changes reach the model.
+    // The triggers still start the real 10 s watchdog timer. A watchdog sweep
+    // during the partial phase only adds a miss; the peer keeps its pane until
+    // 1.4 s of policy time pass, and this test advances less than that.
+    let workspace = NotificationCenter()
+    model.installWorkspaceTriggers(center: NotificationCenter(), workspaceCenter: workspace)
 
     system.desktopObservation?.currentSpaceByDisplay[displayID] = secondSpace
     system.windows = []
-    NSWorkspace.shared.notificationCenter.post(name: NSWorkspace.activeSpaceDidChangeNotification, object: nil)
-    try await Task.sleep(for: .milliseconds(200))
+    workspace.post(name: NSWorkspace.activeSpaceDidChangeNotification, object: nil)
+    await system.advance(by: .milliseconds(200))
 
     // macOS can expose one window before its peers during the transition.
     system.desktopObservation?.currentSpaceByDisplay[displayID] = firstSpace
     system.windows = [firstWindows[0]]
     let writes = system.frameWriteCounts
-    NSWorkspace.shared.notificationCenter.post(name: NSWorkspace.activeSpaceDidChangeNotification, object: nil)
-    try await Task.sleep(for: .milliseconds(200))
+    workspace.post(name: NSWorkspace.activeSpaceDidChangeNotification, object: nil)
+    await system.advance(by: .milliseconds(200))
     #expect(system.windows[0].frame == firstWindows[0].frame)
     #expect(system.frameWriteCounts == writes)
 
     for _ in 0..<extraIncompleteSweeps {
         system.eventHandler?(WindowSystemEvent(kind: .created, windowID: firstWindows[0].id, processIdentifier: 42))
-        try await Task.sleep(for: .milliseconds(180))
+        await system.advance(by: .milliseconds(180))
         #expect(system.frameWriteCounts == writes)
         #expect(system.windows[0].frame == firstWindows[0].frame)
     }
 
     system.windows.append(firstWindows[1])
     system.eventHandler?(WindowSystemEvent(kind: .created, windowID: firstWindows[1].id, processIdentifier: 43))
-    try await Task.sleep(for: .milliseconds(300))
+    await system.advance(by: .milliseconds(300))
     #expect(system.windows.map(\.frame) == firstWindows.map(\.frame))
     #expect(system.frameWriteCounts == writes)
 
@@ -832,7 +841,7 @@ func returningToBentoSpaceWithPartialVisibilityDoesNotMoveItsWindows(extraIncomp
     for window in firstWindows {
         system.eventHandler?(WindowSystemEvent(kind: .resized, windowID: window.id, processIdentifier: window.processIdentifier))
     }
-    try await Task.sleep(for: .milliseconds(200))
+    await system.advance(by: .milliseconds(200))
     #expect(system.windows.map(\.frame) == firstWindows.map(\.frame))
     #expect(system.frameWriteCounts == writes)
 }
