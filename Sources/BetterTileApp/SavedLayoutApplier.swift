@@ -415,7 +415,8 @@ private struct SavedLayoutUndoStructure: Equatable {
     /// A display absence must not drop a desktop the model still owns,
     /// including a retired desktop that a reconnect can restore. The model
     /// releases this protection when its session store forgets that desktop.
-    var isDesktopRetained: (SavedLayoutDesktop) -> Bool = { _ in false }
+    /// Called once per cleanup; the set reflects the model at that moment.
+    var retainedDesktops: () -> Set<SavedLayoutDesktop> = { [] }
     var feedback: (SavedLayoutFeedback) -> Void = { _ in }
     var application: (String) -> ApplicationChoice? = { id in
         NSWorkspace.shared.urlForApplication(withBundleIdentifier: id).flatMap(ApplicationCatalog.application(at:))
@@ -531,10 +532,15 @@ private struct SavedLayoutUndoStructure: Equatable {
             // Missing observations are not proof that a desktop disappeared.
             // Keep inactive, existing Spaces, desktops the model still owns,
             // the newest absent desktops and every in-flight checkpoint.
+            let modelDesktops = retainedDesktops()
+            var ownership: [SavedLayoutDesktop: Bool] = [:]
             func owned(_ desktop: SavedLayoutDesktop) -> Bool {
-                (connected.contains(desktop.displayID)
+                if let known = ownership[desktop] { return known }
+                let value = (connected.contains(desktop.displayID)
                     && observation.knownSpacesByDisplay[desktop.displayID]?.contains(desktop.spaceID) != false)
-                    || isDesktopRetained(desktop)
+                    || modelDesktops.contains(desktop)
+                ownership[desktop] = value
+                return value
             }
             let recentAbsent = Set(appliedDesktops.filter { !owned($0) }.suffix(Self.absentDesktopLimit))
             func retained(_ desktop: SavedLayoutDesktop) -> Bool { owned(desktop) || recentAbsent.contains(desktop) }

@@ -510,6 +510,33 @@ public struct LayoutSessionStore: Sendable {
         storedSessions[displayID].map { Array($0.values) } ?? []
     }
 
+    /// The IDs for which `retainedSession(_:)` returns a session: every stored
+    /// session on any display, and every retired one. Built on each access
+    /// from the current state, so a cleanup can test many owners in one pass.
+    public var retainedSessionIDs: Set<DesktopSessionID> {
+        storedSessions.values.reduce(into: Set(retiredSessions.map(\.session.id))) { $0.formUnion($1.keys) }
+    }
+
+    /// The native desktops that the store still holds: a stored session with
+    /// a Space ID, keyed by the display it is stored under, and a retired
+    /// session with a Space ID. Built on each access from the current state.
+    public var retainedNativeDesktops: Set<SavedLayoutDesktop> {
+        var desktops: Set<SavedLayoutDesktop> = []
+        for (displayID, sessions) in storedSessions {
+            for session in sessions.values where session.displayID == displayID {
+                if let space = session.nativeSpaceID {
+                    desktops.insert(SavedLayoutDesktop(displayID: displayID, spaceID: space))
+                }
+            }
+        }
+        for retired in retiredSessions {
+            if let space = retired.session.nativeSpaceID {
+                desktops.insert(SavedLayoutDesktop(displayID: retired.session.displayID, spaceID: space))
+            }
+        }
+        return desktops
+    }
+
     /// Metadata ownership includes dormant and retired desktops. This does not
     /// authorize a window write; those still require the active desktop.
     public func retainedSession(_ id: DesktopSessionID) -> LayoutSession? {

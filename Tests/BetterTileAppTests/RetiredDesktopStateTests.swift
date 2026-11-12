@@ -288,20 +288,20 @@ struct RetiredDesktopStateTests {
         let applier = try #require(f.model.savedLayoutApplier)
         let desktop = SavedLayoutDesktop(displayID: f.display, spaceID: .init(rawValue: 1))
         try #require(f.store().session(for: desktop.displayID)?.nativeSpaceID == desktop.spaceID)
-        #expect(applier.isDesktopRetained(desktop))
+        #expect(applier.retainedDesktops().contains(desktop))
         f.reconfigure(to: "away", uuid: "B", space: 2)
         try #require(f.model.isHoldingDisplayChange)
         try #require(f.store().allSessions(for: desktop.displayID).contains { $0.nativeSpaceID == desktop.spaceID })
-        #expect(applier.isDesktopRetained(desktop), "The hold still stores this desktop")
+        #expect(applier.retainedDesktops().contains(desktop), "The hold still stores this desktop")
         try await f.idle()
         try #require(f.store().retiredSessions.contains { $0.session.nativeSpaceID == desktop.spaceID })
-        #expect(applier.isDesktopRetained(desktop), "A retired desktop can return")
+        #expect(applier.retainedDesktops().contains(desktop), "A retired desktop can return")
         for id in [f.left, f.right] {
             f.system.windows.removeAll { $0.id == id }
             f.system.eventHandler?(.init(kind: .destroyed, windowID: id, processIdentifier: 41))
         }
         try await f.idle()
-        #expect(!applier.isDesktopRetained(desktop), "A forgotten desktop cannot return")
+        #expect(!applier.retainedDesktops().contains(desktop), "A forgotten desktop cannot return")
     }
 
     /// Retired desktops stay bounded. Desktops whose windows all closed are

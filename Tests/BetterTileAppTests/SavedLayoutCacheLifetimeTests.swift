@@ -61,7 +61,7 @@ struct SavedLayoutCacheLifetimeTests {
         h.addWindow()
         _ = await h.applier.apply(h.document())
         let original = SavedLayoutDesktop(displayID: h.system.mainDisplay.id, spaceID: h.space(1))
-        h.applier.isDesktopRetained = { $0 == original }
+        h.applier.retainedDesktops = { [original] }
         let other = DisplaySnapshot(id: .init(rawValue: "other"),
             frame: h.system.mainDisplay.frame, visibleFrame: h.system.mainDisplay.visibleFrame)
         let observation = NativeDesktopObservation(currentSpaceByDisplay: [other.id: h.space(2)],
@@ -69,7 +69,7 @@ struct SavedLayoutCacheLifetimeTests {
         h.applier.updateUndoDesktops(observation, displays: [other])
         #expect(count("rememberedAssignments", in: h.applier!) == 1)
         #expect(h.applier.hasUndo)
-        h.applier.isDesktopRetained = { _ in false }
+        h.applier.retainedDesktops = { [] }
         h.applier.updateUndoDesktops(observation, displays: [other])
         #expect(count("rememberedAssignments", in: h.applier!) == 1)
         #expect(h.applier.hasUndo)
@@ -135,7 +135,7 @@ struct SavedLayoutCacheLifetimeTests {
             return SavedLayoutDesktop(displayID: display.id, spaceID: native)
         }
         let retired = try await applyOnNewDisplay("retired", space: 1)
-        h.applier.isDesktopRetained = { owned && $0 == retired }
+        h.applier.retainedDesktops = { owned ? [retired] : [] }
         let newer = SavedLayoutApplier.absentDesktopLimit + 1
         for index in 1...newer { _ = try await applyOnNewDisplay("reconnect-\(index)", space: UInt64(100 + index)) }
         // The connected desktop, the 32 newest absent ones, and the owned one.

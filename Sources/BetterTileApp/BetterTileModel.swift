@@ -9069,8 +9069,10 @@ extension BetterTileModel {
         // A retired desktop is still an owner: a reconnect restores it with
         // the same session ID. The store keeps at most 32 retired desktops
         // and forgets one whose windows all closed, so this stays bounded.
+        // The owner set is built once here from the current store.
+        let owners = sessionStore.retainedSessionIDs
         func storedOwner(_ id: DesktopSessionID) -> Bool {
-            live.contains(id) || sessionStore.retainedSession(id) != nil
+            live.contains(id) || owners.contains(id)
         }
         tabbedUndo = tabbedUndo.filter { storedOwner($0.key) }
         onScreenProtectedPanes = onScreenProtectedPanes.filter { storedOwner($0.key) }
@@ -10029,16 +10031,9 @@ extension BetterTileModel {
                 return await self.commitSavedLayout(plan, desktop: desktop, snapshot: snapshot, isCurrent: isCurrent)
             })
         applier.appGroupsStore = appGroupsStore
-        applier.isDesktopRetained = { [weak self] desktop in
-            guard let store = self?.sessionStore else { return false }
-            func owns(_ session: LayoutSession) -> Bool {
-                session.displayID == desktop.displayID && session.nativeSpaceID == desktop.spaceID
-            }
-            // A retired desktop can return on reconnect. Keep its Undo and
-            // remembered slots until the store forgets that desktop.
-            return store.allSessions(for: desktop.displayID).contains(where: owns)
-                || store.retiredSessions.contains { owns($0.session) }
-        }
+        // A retired desktop can return on reconnect. Keep its Undo and
+        // remembered slots until the store forgets that desktop.
+        applier.retainedDesktops = { [weak self] in self?.sessionStore.retainedNativeDesktops ?? [] }
         let groups = appGroupsStore
         applier.isLoadingAppGroups = true
         let load = Task { @MainActor [weak applier] in
