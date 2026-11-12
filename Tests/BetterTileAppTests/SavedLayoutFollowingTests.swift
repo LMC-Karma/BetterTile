@@ -53,11 +53,13 @@ import Testing
         return model.settlementTasks.isEmpty && tasks?.isEmpty != false
     }
 
-    private func sweep(_ model: BetterTileModel) async throws {
+    /// With a manual-clock `system`, the waits advance policy time instead of real time.
+    private func sweep(_ model: BetterTileModel, on system: FakeAppWindowSystem? = nil) async throws {
         model.processPendingWindowEvents()
         model.watchdog()
-        try await waitForWindowEventsToDrain(model)
-        try #require(await waitFor { idle(model) })
+        try await waitForWindowEventsToDrain(model, system)
+        if let system { try #require(await system.waitFor { idle(model) }) }
+        else { try #require(await waitFor { idle(model) }) }
         for _ in 0..<20 { await Task.yield() }
     }
 
@@ -607,20 +609,29 @@ extension SavedLayoutFollowingTests {
 }
 
 extension SavedLayoutFollowingTests {
+    /// Policy time runs on the fixture's manual clock, Tabbed focus timers included,
+    /// so a slow runner cannot land a delayed focus refresh inside the checks.
     @Test func refusedPresetAndInvalidFloatKeepFollowing() async throws {
-        let h = ApplyHarness(); defer { h.close() }
+        let system = makeManualWindowSystem(drivingPolicyDeadlines: true)
+        let h = ApplyHarness(system: system); defer { h.close() }
         h.addWindow(id: "editor"); h.addWindow("com.example.Browser", id: "browser", pid: 43)
         h.system.focusedID = h.system.windows[0].id
         let model = h.model(); defer { model.shutdown() }
+        model.tabbedClock = system.clock
+        system.installWindowEventClock(in: model)
         let applier = try #require(model.savedLayoutApplier); applier.observesKeyboard = false
-        _ = await applier.apply(twoPanes(mode: .tabbed), layoutFileID: "Work.json")
+        _ = await system.drive { await applier.apply(self.twoPanes(mode: .tabbed), layoutFileID: "Work.json") }
         model.handleApplicationActivation()
-        try await sweep(model)
+        try await sweep(model, on: system)
+        // The focus refresh waits out the 300 ms suppression after the Apply's
+        // placement, then selects the focused window's pane. Take the baseline after it.
+        await system.advance(by: .seconds(1))
+        try #require(await system.waitFor { idle(model) })
         let before = try session(model, h.system.mainDisplay.id)
         h.system.ignoredFrameWriteWindowIDs = Set(h.system.windows.map(\.id))
         for _ in 0..<2 {
             model.performTabbed(.preset(.rows, grouping: .keepTabGroups))
-            try #require(await waitFor { idle(model) })
+            try #require(await system.waitFor { idle(model) })
             #expect(try session(model, h.system.mainDisplay.id) == before)
         }
         let writes = h.system.frameWriteCounts

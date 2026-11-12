@@ -377,7 +377,11 @@ struct UnresponsiveApplicationSweepModelTests {
         model.watchdog()
         system.adapterInventoryTimeouts?.removeValue(forKey: quiet)
         try #require(system.adapterGate.stallCount(quiet) == 1)
-        await system.advance(by: .seconds(UnresponsiveApplicationGate.holdSeconds + 0.5))
+        // Past the hold and its inventory backoff, but before the recovery timer
+        // probes the application 0.1 s later. That probe would read it and end the stall.
+        await system.advance(by: .seconds(UnresponsiveApplicationGate.holdSeconds + 0.05))
+        try #require(system.adapterGate.stallCount(quiet) == 1)
+        try #require(!system.adapterGate.isInventoryBackedOff(quiet, now: system.uptime))
         for _ in 0..<5 {
             system.adapterApplicationRuns(noisy)
             system.eventHandler?(WindowSystemEvent(kind: .created, windowID: nil, processIdentifier: noisy))
