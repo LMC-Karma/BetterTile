@@ -9695,7 +9695,7 @@ extension BetterTileModel {
             guard let application = request.application else { return }
             let instances = paneApplicationLauncher.runningInstances(of: application)
             guard instances.count == 1, let instance = instances.first,
-                  let running = NSRunningApplication(processIdentifier: instance.processIdentifier),
+                  let running = RunningApplicationLookup.application(processIdentifier: instance.processIdentifier),
                   running.bundleIdentifier == application.id, running.launchDate == instance.launchDate else { return }
             running.activate()
         case .chooseAnotherApp:

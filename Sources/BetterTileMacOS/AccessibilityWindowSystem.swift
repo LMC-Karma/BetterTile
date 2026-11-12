@@ -52,7 +52,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
     /// recovery stop without another Accessibility call after an app quits.
     public var unresponsiveApplicationRecoveryDeadlines: [Int32: TimeInterval] {
         let running = unreadableApplicationHolds.filter { pid, _ in
-            NSRunningApplication(processIdentifier: pid).map { !$0.isTerminated } == true
+            runningApplicationLookup(pid).map { !$0.isTerminated } == true
         }
         return running.reduce(into: [:]) { deadlines, entry in
             let (pid, deadline) = entry
@@ -694,8 +694,17 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         ).flatMap(classifyByNativeMembership)
     }
 
-    /// Answers a per-PID bundle identifier lookup. LaunchServices by default; tests replace it.
-    var targetedReadBundleLookup: (pid_t) -> String? = { NSRunningApplication(processIdentifier: $0)?.bundleIdentifier }
+    /// Finds the running application of a process for every per-PID question this
+    /// adapter asks. `RunningApplicationLookup` by default; tests replace it.
+    var runningApplicationLookup: (pid_t) -> NSRunningApplication? = {
+        RunningApplicationLookup.application(processIdentifier: $0)
+    }
+
+    /// Answers a per-PID bundle identifier lookup when no launch record names the
+    /// launch. `RunningApplicationLookup` by default; tests replace it.
+    var targetedReadBundleLookup: (pid_t) -> String? = {
+        RunningApplicationLookup.application(processIdentifier: $0)?.bundleIdentifier
+    }
 
     /// The launch and application name of one targeted read: `windowSnapshot(id:)`
     /// and `readCreatedWindow(token:)` both use it. It names the application as the
@@ -725,6 +734,11 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
     /// Admits `application`'s launch as a complete inventory does.
     func admitLaunchForTesting(_ application: NSRunningApplication) -> ApplicationLaunchInstance {
         applicationInstance(for: application)
+    }
+
+    /// Seeds the hold that a sweep places on an application it could not read.
+    func holdUnreadableApplicationForTesting(pid: pid_t, until deadline: TimeInterval) {
+        unreadableApplicationHolds[pid] = deadline
     }
     #endif
 
@@ -2127,7 +2141,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
 
         var pid: pid_t = 0
         guard AXUIElementGetPid(window, &pid) == .success,
-              let runningApplication = NSRunningApplication(processIdentifier: pid),
+              let runningApplication = runningApplicationLookup(pid),
               Self.shouldManageApplication(
                   processIdentifier: pid,
                   ownProcessIdentifier: getpid(),
@@ -2280,7 +2294,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
     }
 
     private func applicationInstance(forPID pid: pid_t) -> ApplicationLaunchInstance {
-        if let application = NSRunningApplication(processIdentifier: pid) {
+        if let application = runningApplicationLookup(pid) {
             return applicationInstance(for: application)
         }
         if let record = launchRecords[pid] { return record.instance }
@@ -2649,7 +2663,7 @@ extension AccessibilityWindowSystem: TabbedWindowSystem {
         if activate {
             var pid: pid_t = 0
             guard AXUIElementGetPid(element, &pid) == .success,
-                  let app = NSRunningApplication(processIdentifier: pid) else {
+                  let app = runningApplicationLookup(pid) else {
                 throw WindowSystemError.operationFailed("The application could not be activated.")
             }
             // Activation makes the application's main window key. Make the
@@ -2751,7 +2765,7 @@ private struct NewWindowMenuElement: @unchecked Sendable {
 
 extension AccessibilityWindowSystem: ApplicationWindowRequesting {
     public func activateForWindowRequest(processIdentifier: Int32, bundleIdentifier: String) -> Bool {
-        guard let application = NSRunningApplication(processIdentifier: processIdentifier),
+        guard let application = runningApplicationLookup(processIdentifier),
               application.bundleIdentifier == bundleIdentifier, !application.isTerminated,
               application.activationPolicy == .regular else { return false }
         return application.activate()
@@ -2759,7 +2773,7 @@ extension AccessibilityWindowSystem: ApplicationWindowRequesting {
 
     public func requestNewWindow(processIdentifier: Int32, bundleIdentifier: String,
                                  validating isCurrent: @escaping @MainActor () -> Bool) async -> ApplicationWindowRequestResult {
-        guard let application = NSRunningApplication(processIdentifier: processIdentifier),
+        guard let application = runningApplicationLookup(processIdentifier),
               application.bundleIdentifier == bundleIdentifier, !application.isTerminated,
               application.activationPolicy == .regular else { return .failed("The application is no longer running.") }
         let name = application.localizedName
