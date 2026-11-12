@@ -687,7 +687,8 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         RunningApplicationLookup.application(processIdentifier: $0)
     }
 
-    /// Answers a per-PID bundle identifier lookup. LaunchServices by default; tests replace it.
+    /// Answers a per-PID bundle identifier lookup when no launch record names the
+    /// launch. `RunningApplicationLookup` by default; tests replace it.
     var targetedReadBundleLookup: (pid_t) -> String? = {
         RunningApplicationLookup.application(processIdentifier: $0)?.bundleIdentifier
     }

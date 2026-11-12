@@ -130,6 +130,7 @@ import Testing
     let pid = pid_t(Int32.max - 7)
     var lookups: [pid_t] = []
     var answer: String? = nil
+    system.runningApplicationLookup = { _ in nil }
     system.targetedReadBundleLookup = { lookups.append($0); return answer }
     let launch = system.recordLaunchForTesting(pid: pid, bundleIdentifier: "com.example.Fixture")
     var read = system.targetedReadApplication(forPID: pid)
@@ -180,6 +181,66 @@ import Testing
     #expect(listReads == 1)
     #expect(RunningApplicationLookup.resolve(pid &+ 1, lookUp: { _ in nil }, runningApplications: listed) == nil)
     #expect(RunningApplicationLookup.resolve(pid, lookUp: { _ in nil }, runningApplications: { [] }) == nil)
+    // An entry that reports termination is skipped; a live entry at another PID is not taken.
+    let quitPID = pid_t(Int32.max - 13)
+    let quit = ReportedApplication(processIdentifier: quitPID, terminated: true)
+    let other = ReportedApplication(processIdentifier: quitPID - 1)
+    #expect(RunningApplicationLookup.resolve(quitPID, lookUp: { _ in nil }, runningApplications: { [quit, other] }) == nil)
+    let relaunched = ReportedApplication(processIdentifier: quitPID)
+    #expect(RunningApplicationLookup.resolve(
+        quitPID, lookUp: { _ in nil }, runningApplications: { [quit, relaunched] }) === relaunched)
+}
+
+/// A made-up application for lookup tests. It never names a real process.
+private final class ReportedApplication: NSRunningApplication, @unchecked Sendable {
+    private let reportedProcessIdentifier: pid_t
+    private let reportedLaunchDate: Date?
+    private let reportedBundleIdentifier: String?
+    private let reportsTermination: Bool
+
+    init(processIdentifier: pid_t, launchDate: Date? = nil, bundleIdentifier: String? = nil, terminated: Bool = false) {
+        reportedProcessIdentifier = processIdentifier
+        reportedLaunchDate = launchDate
+        reportedBundleIdentifier = bundleIdentifier
+        reportsTermination = terminated
+        super.init()
+    }
+
+    override var processIdentifier: pid_t { reportedProcessIdentifier }
+    override var launchDate: Date? { reportedLaunchDate }
+    override var bundleIdentifier: String? { reportedBundleIdentifier }
+    override var isTerminated: Bool { reportsTermination }
+}
+
+/// Launch identity comes through the running-application lookup. While the per-PID
+/// lookup answers nil, the list's entry names the launch, so the launch keeps its
+/// launch date and bundle identifier, and a later real answer for the same launch
+/// keeps the same generation. A new launch date at that PID is a new launch.
+@Test(.macOSTestApplication) @MainActor func aTargetedReadNamesItsLaunchFromTheListWhileThePerPIDLookupAnswersNil() {
+    let system = AccessibilityWindowSystem()
+    let pid = pid_t(Int32.max - 17)
+    let started = Date(timeIntervalSinceReferenceDate: 1_000)
+    let fixture = ReportedApplication(processIdentifier: pid, launchDate: started, bundleIdentifier: "com.example.Fixture")
+    var perPID: NSRunningApplication? = nil
+    var listed: [NSRunningApplication] = [fixture]
+    system.runningApplicationLookup = { pid in
+        RunningApplicationLookup.resolve(pid, lookUp: { _ in perPID }, runningApplications: { listed })
+    }
+    system.targetedReadBundleLookup = { _ in nil }
+    let first = system.targetedReadApplication(forPID: pid)
+    #expect(first.bundleIdentifier == "com.example.Fixture")
+    perPID = fixture
+    #expect(system.targetedReadApplication(forPID: pid) == first)
+    // Neither answer: the recorded launch stays, as before this lookup existed.
+    perPID = nil
+    listed = []
+    #expect(system.targetedReadApplication(forPID: pid) == first)
+    let relaunch = ReportedApplication(processIdentifier: pid, launchDate: started.addingTimeInterval(60),
+                                       bundleIdentifier: "com.example.Fixture")
+    perPID = relaunch
+    let second = system.targetedReadApplication(forPID: pid)
+    #expect(second.instance != first.instance)
+    #expect(second.bundleIdentifier == "com.example.Fixture")
 }
 
 /// A recovery hold on an unreadable application stays while the application runs, even
@@ -194,9 +255,10 @@ import Testing
     #expect(system.unresponsiveApplicationRecoveryDeadlines == [running: 50])
 }
 
-/// Raise, hit testing, launch identity, application window requests, Show App and
-/// reopen need a live AX window or a real activation, so tests cannot run them. Each
-/// must find its application through the running-application lookup. A direct per-PID
+/// Raise, hit testing, application window requests, Show App and reopen need a live
+/// AX window or a real activation, so tests cannot run them. Each must find its
+/// application through the running-application lookup. Launch identity and recovery
+/// holds also have behavior tests above. A direct per-PID
 /// lookup can answer nil for a running application and refuse the action.
 @Test(.macOSTestApplication) func everyPerPIDApplicationActionUsesTheRunningApplicationLookup() throws {
     let root = URL(filePath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
