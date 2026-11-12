@@ -165,6 +165,83 @@ import Testing
     }
 }
 
+/// `NSRunningApplication(processIdentifier:)` can answer nil for a running application.
+/// The lookup then reads the workspace's running-application list. A process in neither
+/// answer, such as one that quit, stays without an application.
+@Test(.macOSTestApplication) func aRunningApplicationLookupReadsTheWorkspaceListWhenThePerPIDAnswerIsNil() {
+    let current = NSRunningApplication.current
+    let pid = current.processIdentifier
+    var listReads = 0
+    let listed: () -> [NSRunningApplication] = { listReads += 1; return [current] }
+    // A per-PID answer wins without a list read.
+    #expect(RunningApplicationLookup.resolve(pid, lookUp: { _ in current }, runningApplications: listed) === current)
+    #expect(listReads == 0)
+    #expect(RunningApplicationLookup.resolve(pid, lookUp: { _ in nil }, runningApplications: listed) === current)
+    #expect(listReads == 1)
+    #expect(RunningApplicationLookup.resolve(pid &+ 1, lookUp: { _ in nil }, runningApplications: listed) == nil)
+    #expect(RunningApplicationLookup.resolve(pid, lookUp: { _ in nil }, runningApplications: { [] }) == nil)
+}
+
+/// A recovery hold on an unreadable application stays while the application runs, even
+/// when a per-PID lookup answers nil. The hold of an application that quit is dropped.
+@Test(.macOSTestApplication) @MainActor func aRecoveryHoldStaysWhileItsApplicationRuns() {
+    let system = AccessibilityWindowSystem()
+    let running = pid_t(Int32.max - 11)
+    let quit = pid_t(Int32.max - 12)
+    system.runningApplicationLookup = { $0 == running ? NSRunningApplication.current : nil }
+    system.holdUnreadableApplicationForTesting(pid: running, until: 50)
+    system.holdUnreadableApplicationForTesting(pid: quit, until: 60)
+    #expect(system.unresponsiveApplicationRecoveryDeadlines == [running: 50])
+}
+
+/// Raise, hit testing, launch identity, application window requests, Show App and
+/// reopen need a live AX window or a real activation, so tests cannot run them. Each
+/// must find its application through the running-application lookup. A direct per-PID
+/// lookup can answer nil for a running application and refuse the action.
+@Test(.macOSTestApplication) func everyPerPIDApplicationActionUsesTheRunningApplicationLookup() throws {
+    let root = URL(filePath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+    func source(_ path: String) throws -> String {
+        try String(contentsOf: root.appending(path: path), encoding: .utf8)
+    }
+    let adapter = try source("Sources/BetterTileMacOS/AccessibilityWindowSystem.swift")
+    for signature in [
+        "public var unresponsiveApplicationRecoveryDeadlines: [Int32: TimeInterval] {",
+        "public func window(at point: BTPoint) throws -> WindowSnapshot? {",
+        "private func applicationInstance(forPID pid: pid_t) -> ApplicationLaunchInstance {",
+        "public func raiseWindow(_ id: WindowID, activate: Bool) throws {",
+        "public func activateForWindowRequest(processIdentifier: Int32, bundleIdentifier: String) -> Bool {",
+        "public func requestNewWindow(processIdentifier: Int32, bundleIdentifier: String,",
+    ] {
+        let start = try #require(adapter.range(of: signature), "\(signature)")
+        let end = try #require(adapter.range(of: "\n    }\n", range: start.upperBound..<adapter.endIndex))
+        let body = String(adapter[start.upperBound..<end.lowerBound])
+        #expect(body.contains("runningApplicationLookup("), "\(signature)")
+        #expect(!body.contains("NSRunningApplication(processIdentifier"), "\(signature)")
+    }
+    let appRoutes = [
+        "Sources/BetterTileApp/BetterTileModel.swift":
+            "let running = RunningApplicationLookup.application(processIdentifier: instance.processIdentifier),",
+        "Sources/BetterTileApp/PaneApplicationPicker.swift":
+            "guard let running = RunningApplicationLookup.application(processIdentifier: instance.processIdentifier),",
+    ]
+    for (path, route) in appRoutes { #expect(try source(path).contains(route), "\(path)") }
+    // Only the lookup asks LaunchServices per PID. Two name lookups have their own
+    // fallback, and a missing divider icon changes no action.
+    let allowed = [
+        "Sources/BetterTileMacOS/RunningApplicationLookup.swift": 1,
+        "Sources/BetterTileMacOS/DividerOverlayController.swift": 1,
+        "Sources/BetterTileApp/SavedLayoutApplier.swift": 1,
+        "Sources/BetterTileApp/BetterTileModel.swift": 1,
+    ]
+    let sources = try #require(FileManager.default.enumerator(at: root.appending(path: "Sources"), includingPropertiesForKeys: nil))
+    var found: [String: Int] = [:]
+    for case let url as URL in sources where url.pathExtension == "swift" {
+        let count = try String(contentsOf: url, encoding: .utf8).components(separatedBy: "NSRunningApplication(processIdentifier: ").count - 1
+        if count > 0 { found[String(url.path.dropFirst(root.path.count + 1)), default: 0] += count }
+    }
+    #expect(found == allowed)
+}
+
 /// Only two real answers make a window unmovable. An application that did
 /// not answer leaves the question open, so a drag asks again on its next
 /// tick instead of keeping the window still for the rest of the drag.

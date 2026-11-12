@@ -571,6 +571,13 @@ Apply with nothing moved. Bundle-ID resolution uses the recorded name when
 available; it makes another per-PID lookup only when that record cannot name
 the launch. Launch detection still asks LaunchServices on every targeted read.
 
+Code that needs the running application of a process, for example to raise or
+activate a window, to request a new window, or to keep a recovery hold, uses
+`RunningApplicationLookup`. It asks the per-PID lookup first. When that answer
+is nil, it reads the workspace's running-application list, which keeps a
+running application's entry. An application that has terminated is in neither
+answer, so actions on it still fail.
+
 An element that is valid but not readable yet is read again after 8 ms, within
 the original 500 ms readiness deadline, and never through a complete inventory.
 An invalid element, a window not on the current Space, a callback without an
