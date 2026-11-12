@@ -15,6 +15,9 @@ struct PaneApplicationInstance: Equatable {
 @MainActor protocol PaneApplicationLaunching {
     func runningApplicationBundleIdentifiers() -> Set<String>
     func runningInstances(of application: ApplicationChoice) -> [PaneApplicationInstance]
+    /// Whether this exact process (PID and launch date) still runs, whatever its activation policy.
+    /// `contains` asks a narrower question: whether it is a selectable regular instance.
+    func isAlive(_ instance: PaneApplicationInstance, of application: ApplicationChoice) -> Bool
     func launch(_ application: ApplicationChoice) async throws -> PaneApplicationInstance
     func reopen(_ application: ApplicationChoice, instance: PaneApplicationInstance, activating: Bool, timeout: TimeInterval) async throws
 }
@@ -58,6 +61,17 @@ extension PaneApplicationLaunching {
                 < (orderedPIDs.firstIndex(of: $1.processIdentifier) ?? Int.max)
         }.map { PaneApplicationInstance(processIdentifier: $0.processIdentifier, launchDate: $0.launchDate, isActive: $0.isActive,
             isFrontmost: $0.processIdentifier == frontmostPID) }
+    }
+
+    func isAlive(_ instance: PaneApplicationInstance, of application: ApplicationChoice) -> Bool {
+        Self.isAlive(instance, among: NSRunningApplication.runningApplications(withBundleIdentifier: application.id))
+    }
+
+    /// An accessory or background process can still open windows and can become regular again.
+    static func isAlive(_ instance: PaneApplicationInstance, among applications: [NSRunningApplication]) -> Bool {
+        applications.contains {
+            !$0.isTerminated && $0.processIdentifier == instance.processIdentifier && $0.launchDate == instance.launchDate
+        }
     }
 
     func reopen(_ application: ApplicationChoice, instance: PaneApplicationInstance, activating: Bool, timeout: TimeInterval) async throws {
@@ -503,7 +517,7 @@ struct PaneApplicationClick: Equatable {
 }
 
 /// A cancelled creation cannot be recalled. Quarantine its late arrivals briefly, without retaining a placement.
-/// A new request for the same app ignores the guard once its recorded instance has ended.
+/// A new request for the same app drops the guard when it dispatches, if the guard's recorded process has ended.
 struct PaneApplicationArrivalGuard {
     let id = UUID()
     let applicationID: String

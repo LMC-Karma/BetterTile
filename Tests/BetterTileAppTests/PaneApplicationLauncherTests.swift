@@ -6,19 +6,49 @@ import SwiftUI
 import Testing
 @testable import BetterTileApp
 
+/// Holds a fake launch until the test releases it or cancels the launching task. No clock is involved.
+@MainActor private final class FakeLaunchHold {
+    private var continuation: CheckedContinuation<Void, Never>?
+    private var released = false
+
+    func wait() async {
+        await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                if released || Task.isCancelled { continuation.resume() } else { self.continuation = continuation }
+            }
+        } onCancel: {
+            Task { @MainActor in self.release() }
+        }
+    }
+
+    func release() {
+        released = true
+        continuation?.resume()
+        continuation = nil
+    }
+}
+
 @MainActor private final class FakePaneApplicationLauncher: PaneApplicationLaunching {
+    /// Selectable regular instances.
     var instances: [String: [PaneApplicationInstance]] = [:]
+    /// Running instances that are not selectable, such as an app with an accessory policy.
+    var backgroundInstances: [String: [PaneApplicationInstance]] = [:]
     var launches: [ApplicationChoice] = []
     var reopens: [Int32] = []
     var reopenActivations: [Bool] = []
     var failure = false
     var runningInstanceReadCount = 0
     /// Suspends a launch after it is recorded, as a slow NSWorkspace launch would.
-    var launchHold: (() async -> Void)?
+    var launchHold: FakeLaunchHold?
     func runningApplicationBundleIdentifiers() -> Set<String> { Set(instances.filter { !$0.value.isEmpty }.map(\.key)) }
     func runningInstances(of application: ApplicationChoice) -> [PaneApplicationInstance] {
         runningInstanceReadCount += 1
         return instances[application.id] ?? []
+    }
+    func isAlive(_ instance: PaneApplicationInstance, of application: ApplicationChoice) -> Bool {
+        ((instances[application.id] ?? []) + (backgroundInstances[application.id] ?? [])).contains {
+            $0.processIdentifier == instance.processIdentifier && $0.launchDate == instance.launchDate
+        }
     }
     func reopen(_ application: ApplicationChoice, instance: PaneApplicationInstance, activating: Bool, timeout: TimeInterval) async throws {
         reopens.append(instance.processIdentifier)
@@ -27,7 +57,7 @@ import Testing
     }
     func launch(_ application: ApplicationChoice) async throws -> PaneApplicationInstance {
         launches.append(application)
-        if let launchHold { await launchHold() }
+        if let launchHold { await launchHold.wait() }
         try Task.checkCancellation()
         if failure { throw CocoaError(.executableNotLoadable) }
         let instance = PaneApplicationInstance(processIdentifier: 701, launchDate: Date(timeIntervalSince1970: 1))
@@ -2556,15 +2586,17 @@ func paneLauncherEndedInstanceDoesNotRefuseNextRequest(ending: String) async thr
 }
 
 /// The earlier instance still runs and may still open its window, so the guard keeps refusing inside 30 seconds.
-@Test(.appTestApplication, arguments: ["running", "second-copy", "launch-in-flight"]) @MainActor
+@Test(.appTestApplication, arguments: ["running", "second-copy", "accessory", "nil-launch-date", "launch-in-flight"]) @MainActor
 func paneLauncherLiveEarlierRequestStillRefusesNextRequest(earlier: String) async throws {
     let (system, model, launcher, right, clock) = try await paneLauncherFixtureWithClock()
     defer { model.shutdown() }
     clock.now = 1_000
     system.newWindowRequestResult = .requested
-    if earlier == "launch-in-flight" {
+    switch earlier {
+    case "launch-in-flight":
         // The launch is dispatched but has not returned an instance when the user cancels.
-        launcher.launchHold = { try? await Task.sleep(for: .seconds(3_600)) }
+        let hold = FakeLaunchHold()
+        launcher.launchHold = hold
         let first = try #require(model.beginPaneApplicationPicker(paneID: right, on: system.mainDisplay.id))
         model.choosePaneApplication(paneTestApp, requestID: first.id)
         try #require(await waitFor { launcher.launches.count == 1 })
@@ -2573,12 +2605,27 @@ func paneLauncherLiveEarlierRequestStillRefusesNextRequest(earlier: String) asyn
         await launch?.value
         #expect(first.instance == nil)
         launcher.launchHold = nil
-    } else {
+    case "nil-launch-date":
+        // Without launch dates a reused PID is indistinguishable from the recorded process, so the guard stays.
+        launcher.instances[paneTestApp.id] = [.init(processIdentifier: 701, launchDate: nil)]
+        let first = try #require(model.beginPaneApplicationPicker(paneID: right, on: system.mainDisplay.id))
+        model.choosePaneApplication(paneTestApp, requestID: first.id)
+        await waitForPaneMenuRequest(model)
+        #expect(first.instance == PaneApplicationInstance(processIdentifier: 701, launchDate: nil))
+        model.cancelPaneApplicationRequest()
+    default:
         _ = try await placeLaunchedPaneApplication(system, model, launcher, pane: right)
+        let launched = PaneApplicationInstance(processIdentifier: 701, launchDate: Date(timeIntervalSince1970: 1))
         if earlier == "second-copy" {
             launcher.instances[paneTestApp.id]?.append(.init(processIdentifier: 703, launchDate: Date(timeIntervalSince1970: 3)))
+        } else if earlier == "accessory" {
+            // The app hides its Dock icon without quitting. It is no longer selectable, but it still runs.
+            launcher.instances[paneTestApp.id] = []
+            launcher.backgroundInstances[paneTestApp.id] = [launched]
         }
     }
+    let launches = launcher.launches.count
+    let windowRequests = system.newWindowRequests.count
 
     clock.now += 2
     let next = try #require(model.beginPaneApplicationPicker(paneID: right, on: system.mainDisplay.id))
@@ -2589,8 +2636,87 @@ func paneLauncherLiveEarlierRequestStillRefusesNextRequest(earlier: String) asyn
         return
     }
     #expect(reason.hasPrefix(paneEarlierRequestPrefix))
-    #expect(launcher.launches.count == 1)
-    #expect(system.newWindowRequests.isEmpty)
+    #expect(launcher.launches.count == launches)
+    #expect(system.newWindowRequests.count == windowRequests)
+
+    if earlier == "accessory" {
+        // The app becomes regular again and delivers a late window. The earlier guard still holds it.
+        model.cancelPaneApplicationRequest()
+        launcher.backgroundInstances[paneTestApp.id] = []
+        launcher.instances[paneTestApp.id] = [.init(processIdentifier: 701, launchDate: Date(timeIntervalSince1970: 1))]
+        let late = appendPaneArrival(system, id: "late-after-accessory")
+        try #require(await waitFor { model.activeTabbedState?.floatingWindowIDs.contains(late) == true && !model.hasPendingTabbedPlacement })
+        #expect(system.frameWriteCounts[late, default: 0] == 0)
+        #expect(model.activeTabbedState?.paneID(containing: late) == nil)
+    }
+}
+
+/// A dead guard is dropped only when the new request dispatches. A request refused for another reason keeps it.
+@Test(.appTestApplication, arguments: ["live-guard", "several-copies"]) @MainActor
+func paneLauncherRefusedRequestKeepsEndedInstanceGuard(refusal: String) async throws {
+    let (system, model, launcher, right, clock) = try await paneLauncherFixtureWithClock()
+    defer { model.shutdown() }
+    clock.now = 1_000
+    system.newWindowRequestResult = .requested
+    let earlier = PaneApplicationInstance(processIdentifier: 701, launchDate: Date(timeIntervalSince1970: 1))
+    launcher.instances[paneTestApp.id] = [earlier]
+    let first = try #require(model.beginPaneApplicationPicker(paneID: right, on: system.mainDisplay.id))
+    model.choosePaneApplication(paneTestApp, requestID: first.id)
+    await waitForPaneMenuRequest(model)
+    model.cancelPaneApplicationRequest()
+    #expect(model.paneApplicationArrivalGuards.map(\.instance) == [earlier])
+
+    switch refusal {
+    case "live-guard":
+        // A second copy (702) is active. An explicit retry asks it for a window and leaves a second guard.
+        let other = PaneApplicationInstance(processIdentifier: 702, launchDate: Date(timeIntervalSince1970: 2), isActive: true)
+        launcher.instances[paneTestApp.id] = [earlier, other]
+        clock.now += 1
+        let second = try #require(model.beginPaneApplicationPicker(paneID: right, on: system.mainDisplay.id))
+        model.choosePaneApplication(paneTestApp, requestID: second.id, retry: true)
+        await model.paneApplicationLaunchTask?.value
+        #expect(system.newWindowRequests.map(\.0) == [701, 702])
+        model.cancelPaneApplicationRequest()
+        #expect(model.paneApplicationArrivalGuards.compactMap(\.instance?.processIdentifier) == [701, 702])
+        launcher.instances[paneTestApp.id] = [other] // 701 quits; 702 still runs.
+    default:
+        // 701 quits. Two other copies run and neither is active or frontmost.
+        launcher.instances[paneTestApp.id] = [.init(processIdentifier: 702, launchDate: Date(timeIntervalSince1970: 2)),
+                                              .init(processIdentifier: 703, launchDate: Date(timeIntervalSince1970: 3))]
+    }
+    let windowRequests = system.newWindowRequests.count
+
+    clock.now += 1
+    let next = try #require(model.beginPaneApplicationPicker(paneID: right, on: system.mainDisplay.id))
+    model.choosePaneApplication(paneTestApp, requestID: next.id)
+    await model.paneApplicationLaunchTask?.value
+    guard case let .fallback(reason) = next.phase else {
+        Issue.record("The request must be refused")
+        return
+    }
+    if refusal == "live-guard" {
+        #expect(reason.hasPrefix(paneEarlierRequestPrefix))
+    } else {
+        #expect(next.fallbackReason == .severalCopies)
+    }
+    #expect(system.newWindowRequests.count == windowRequests)
+    #expect(launcher.launches.isEmpty)
+    #expect(model.paneApplicationArrivalGuards.contains { $0.instance == earlier },
+            "The ended instance's guard must stay until a request actually dispatches")
+}
+
+/// The workspace liveness question ignores activation policy. The test host runs without a regular policy.
+@Test(.appTestApplication) @MainActor func paneLauncherWorkspaceLivenessIgnoresActivationPolicy() throws {
+    let current = NSRunningApplication.current
+    try #require(current.activationPolicy != .regular, "The test host must not be a regular app for this check")
+    let instance = PaneApplicationInstance(processIdentifier: current.processIdentifier, launchDate: current.launchDate)
+    #expect(WorkspacePaneApplicationLauncher.isAlive(instance, among: [current]))
+    let otherDate = PaneApplicationInstance(processIdentifier: current.processIdentifier,
+        launchDate: (current.launchDate ?? Date(timeIntervalSince1970: 1)).addingTimeInterval(1))
+    #expect(!WorkspacePaneApplicationLauncher.isAlive(otherDate, among: [current]))
+    #expect(!WorkspacePaneApplicationLauncher.isAlive(
+        PaneApplicationInstance(processIdentifier: current.processIdentifier &+ 1, launchDate: current.launchDate), among: [current]))
+    #expect(!WorkspacePaneApplicationLauncher.isAlive(instance, among: []))
 }
 
 // Unconfirmed arrivals keep the explicit click fallback after automatic placement.

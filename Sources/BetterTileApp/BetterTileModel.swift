@@ -321,7 +321,7 @@ final class BetterTileModel {
     var paneApplicationPopover: PaneApplicationPopover? {
         didSet { syncSharedGestureMonitoring() }
     }
-    private var paneApplicationArrivalGuards: [PaneApplicationArrivalGuard] = []
+    private(set) var paneApplicationArrivalGuards: [PaneApplicationArrivalGuard] = []
     private var tabbedOverlays: [DisplayID: TabbedOverlayController] = [:]
     var tabbedOverlayFactory: () -> TabbedOverlayController = { TabbedOverlayController() }
     var paneApplicationPopoverFactory: (PaneApplicationRequest, OverlayAppearance) -> PaneApplicationPopover = {
@@ -9410,14 +9410,18 @@ extension BetterTileModel {
                     ($0.tabbedState?.windowIDs ?? []).union($0.tabbedState?.floatingWindowIDs ?? [])
                 })
             let now = self.paneApplicationUptime()
-            // A guard with a recorded instance reserves only that instance's windows. Once the
-            // instance has ended, no late window can come from it, so it no longer refuses a request.
+            self.paneApplicationArrivalGuards.removeAll { $0.expiresAt <= now }
+            // A guard with a recorded instance reserves only that process's windows. Once the process
+            // has ended, in any activation policy, no late window can come from it. Such a guard does not
+            // refuse this request, and it is dropped only when this request dispatches.
             let launcher = self.paneApplicationLauncher
-            self.paneApplicationArrivalGuards.removeAll { arrivalGuard in
-                arrivalGuard.expiresAt <= now || (arrivalGuard.applicationID == application.id
-                    && arrivalGuard.instance.map { !launcher.contains($0, of: application) } == true)
-            }
-            guard retry || !self.paneApplicationArrivalGuards.contains(where: { $0.applicationID == application.id }) else {
+            let ended = Set(self.paneApplicationArrivalGuards.filter { arrivalGuard in
+                arrivalGuard.applicationID == application.id
+                    && arrivalGuard.instance.map { !launcher.isAlive($0, of: application) } == true
+            }.map(\.id))
+            guard retry || !self.paneApplicationArrivalGuards.contains(where: {
+                $0.applicationID == application.id && !ended.contains($0.id)
+            }) else {
                 self.paneApplicationFallback(request, reason: "An earlier request may still open a window. Choose a window from this desktop, or try again.")
                 return
             }
@@ -9431,6 +9435,7 @@ extension BetterTileModel {
             request.launching = instances.isEmpty
             request.deadline = self.paneApplicationUptime()
                 + (request.launching ? max(30, self.paneApplicationTimeout) : self.paneApplicationTimeout)
+            self.paneApplicationArrivalGuards.removeAll { ended.contains($0.id) }
             request.dispatched = true
             request.focusIntent?.expectActivation(of: application.id)
             let valid: @MainActor () -> Bool = { [weak self] in
