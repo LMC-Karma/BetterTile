@@ -503,6 +503,7 @@ struct PaneApplicationClick: Equatable {
 }
 
 /// A cancelled creation cannot be recalled. Quarantine its late arrivals briefly, without retaining a placement.
+/// A new request for the same app ignores the guard once its recorded instance has ended.
 struct PaneApplicationArrivalGuard {
     let id = UUID()
     let applicationID: String

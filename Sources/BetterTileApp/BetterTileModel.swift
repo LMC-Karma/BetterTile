@@ -9410,7 +9410,13 @@ extension BetterTileModel {
                     ($0.tabbedState?.windowIDs ?? []).union($0.tabbedState?.floatingWindowIDs ?? [])
                 })
             let now = self.paneApplicationUptime()
-            self.paneApplicationArrivalGuards.removeAll { $0.expiresAt <= now }
+            // A guard with a recorded instance reserves only that instance's windows. Once the
+            // instance has ended, no late window can come from it, so it no longer refuses a request.
+            let launcher = self.paneApplicationLauncher
+            self.paneApplicationArrivalGuards.removeAll { arrivalGuard in
+                arrivalGuard.expiresAt <= now || (arrivalGuard.applicationID == application.id
+                    && arrivalGuard.instance.map { !launcher.contains($0, of: application) } == true)
+            }
             guard retry || !self.paneApplicationArrivalGuards.contains(where: { $0.applicationID == application.id }) else {
                 self.paneApplicationFallback(request, reason: "An earlier request may still open a window. Choose a window from this desktop, or try again.")
                 return

@@ -13,6 +13,8 @@ import Testing
     var reopenActivations: [Bool] = []
     var failure = false
     var runningInstanceReadCount = 0
+    /// Suspends a launch after it is recorded, as a slow NSWorkspace launch would.
+    var launchHold: (() async -> Void)?
     func runningApplicationBundleIdentifiers() -> Set<String> { Set(instances.filter { !$0.value.isEmpty }.map(\.key)) }
     func runningInstances(of application: ApplicationChoice) -> [PaneApplicationInstance] {
         runningInstanceReadCount += 1
@@ -25,6 +27,7 @@ import Testing
     }
     func launch(_ application: ApplicationChoice) async throws -> PaneApplicationInstance {
         launches.append(application)
+        if let launchHold { await launchHold() }
         try Task.checkCancellation()
         if failure { throw CocoaError(.executableNotLoadable) }
         let instance = PaneApplicationInstance(processIdentifier: 701, launchDate: Date(timeIntervalSince1970: 1))
@@ -2499,6 +2502,95 @@ func paneLauncherCancelledArrivalGuardExpiresAtThirtySeconds(elapsed: Double) as
         #expect(next.phase == .waiting)
         #expect(system.newWindowRequests.count == 2)
     }
+}
+
+private let paneEarlierRequestPrefix = "An earlier request may still open a window."
+
+/// Launches the stopped test app through "+", places its first window as a tab, and returns that window.
+@MainActor private func placeLaunchedPaneApplication(_ system: FakeAppWindowSystem, _ model: BetterTileModel,
+                                                     _ launcher: FakePaneApplicationLauncher, pane: UUID) async throws -> WindowID {
+    let first = try #require(model.beginPaneApplicationPicker(paneID: pane, on: system.mainDisplay.id))
+    model.choosePaneApplication(paneTestApp, requestID: first.id)
+    try #require(await waitFor { launcher.launches.count == 1 && first.instance != nil })
+    let id = appendPaneArrival(system, id: "launched")
+    try #require(await waitFor { model.paneApplicationRequest == nil && !model.hasPendingTabbedPlacement })
+    #expect(model.activeTabbedState?.paneID(containing: id) == pane)
+    return id
+}
+
+/// The quit app's window and tab are gone. Its arrival guard can no longer receive a late window.
+@Test(.appTestApplication, arguments: ["quit", "relaunched", "reused-pid"]) @MainActor
+func paneLauncherEndedInstanceDoesNotRefuseNextRequest(ending: String) async throws {
+    let (system, model, launcher, right, clock) = try await paneLauncherFixtureWithClock()
+    defer { model.shutdown() }
+    clock.now = 1_000
+    system.newWindowRequestResult = .requested
+    let placed = try await placeLaunchedPaneApplication(system, model, launcher, pane: right)
+
+    // The launched instance (PID 701, launched at 1) quits. A relaunch is a different instance.
+    switch ending {
+    case "quit": launcher.instances[paneTestApp.id] = []
+    case "relaunched": launcher.instances[paneTestApp.id] = [.init(processIdentifier: 702, launchDate: Date(timeIntervalSince1970: 2))]
+    default: launcher.instances[paneTestApp.id] = [.init(processIdentifier: 701, launchDate: Date(timeIntervalSince1970: 2))]
+    }
+    system.windows.removeAll { $0.id == placed }
+    system.eventHandler?(WindowSystemEvent(kind: .destroyed, windowID: placed, processIdentifier: 701))
+    try await waitForWindowEventsToDrain(model)
+    try #require(await waitFor { model.activeTabbedState?.windowIDs.contains(placed) == false && !model.hasPendingTabbedPlacement })
+
+    clock.now += 2
+    let next = try #require(model.beginPaneApplicationPicker(paneID: right, on: system.mainDisplay.id))
+    model.choosePaneApplication(paneTestApp, requestID: next.id)
+    await model.paneApplicationLaunchTask?.value
+    if case let .fallback(reason) = next.phase {
+        Issue.record("An ended instance must not refuse the next request: \(reason)")
+    }
+    #expect(next.phase == .waiting)
+    if ending == "quit" {
+        #expect(launcher.launches.count == 2)
+        #expect(system.newWindowRequests.isEmpty)
+    } else {
+        #expect(launcher.launches.count == 1)
+        #expect(system.newWindowRequests.map(\.0) == [ending == "relaunched" ? 702 : 701])
+    }
+}
+
+/// The earlier instance still runs and may still open its window, so the guard keeps refusing inside 30 seconds.
+@Test(.appTestApplication, arguments: ["running", "second-copy", "launch-in-flight"]) @MainActor
+func paneLauncherLiveEarlierRequestStillRefusesNextRequest(earlier: String) async throws {
+    let (system, model, launcher, right, clock) = try await paneLauncherFixtureWithClock()
+    defer { model.shutdown() }
+    clock.now = 1_000
+    system.newWindowRequestResult = .requested
+    if earlier == "launch-in-flight" {
+        // The launch is dispatched but has not returned an instance when the user cancels.
+        launcher.launchHold = { try? await Task.sleep(for: .seconds(3_600)) }
+        let first = try #require(model.beginPaneApplicationPicker(paneID: right, on: system.mainDisplay.id))
+        model.choosePaneApplication(paneTestApp, requestID: first.id)
+        try #require(await waitFor { launcher.launches.count == 1 })
+        let launch = model.paneApplicationLaunchTask
+        model.cancelPaneApplicationRequest()
+        await launch?.value
+        #expect(first.instance == nil)
+        launcher.launchHold = nil
+    } else {
+        _ = try await placeLaunchedPaneApplication(system, model, launcher, pane: right)
+        if earlier == "second-copy" {
+            launcher.instances[paneTestApp.id]?.append(.init(processIdentifier: 703, launchDate: Date(timeIntervalSince1970: 3)))
+        }
+    }
+
+    clock.now += 2
+    let next = try #require(model.beginPaneApplicationPicker(paneID: right, on: system.mainDisplay.id))
+    model.choosePaneApplication(paneTestApp, requestID: next.id)
+    await model.paneApplicationLaunchTask?.value
+    guard case let .fallback(reason) = next.phase else {
+        Issue.record("A live earlier request must still refuse the next request")
+        return
+    }
+    #expect(reason.hasPrefix(paneEarlierRequestPrefix))
+    #expect(launcher.launches.count == 1)
+    #expect(system.newWindowRequests.isEmpty)
 }
 
 // Unconfirmed arrivals keep the explicit click fallback after automatic placement.
