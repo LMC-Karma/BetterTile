@@ -97,6 +97,10 @@ struct RetiredDesktopStateTests {
         if !carryOver {
             try #require(f.store().retiredSessions.contains { $0.session.id == original.id })
             #expect(f.ownedFields(original.id) == owned, "A retired desktop lost state that its reconnect can use")
+            // A desktop selection also prunes, outside any window sweep.
+            f.model.beginActiveSpaceStabilization()
+            try await f.idle()
+            #expect(f.ownedFields(original.id) == owned, "A desktop selection dropped a retired desktop's state")
         }
 
         try await f.replaceDisplay("returned", uuid: "A", space: 3)
