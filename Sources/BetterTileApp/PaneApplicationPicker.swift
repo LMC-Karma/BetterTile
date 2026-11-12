@@ -76,7 +76,7 @@ extension PaneApplicationLaunching {
 
     func reopen(_ application: ApplicationChoice, instance: PaneApplicationInstance, activating: Bool, timeout: TimeInterval) async throws {
         guard timeout > 0, !Task.isCancelled else { throw CocoaError(.userCancelled) }
-        guard let running = NSRunningApplication(processIdentifier: instance.processIdentifier),
+        guard let running = RunningApplicationLookup.application(processIdentifier: instance.processIdentifier),
               running.bundleIdentifier == application.id, running.launchDate == instance.launchDate,
               !running.isTerminated else {
             throw CocoaError(.executableNotLoadable)

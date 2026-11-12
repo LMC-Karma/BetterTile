@@ -130,6 +130,7 @@ import Testing
     let pid = pid_t(Int32.max - 7)
     var lookups: [pid_t] = []
     var answer: String? = nil
+    system.runningApplicationLookup = { _ in nil }
     system.targetedReadBundleLookup = { lookups.append($0); return answer }
     let launch = system.recordLaunchForTesting(pid: pid, bundleIdentifier: "com.example.Fixture")
     var read = system.targetedReadApplication(forPID: pid)
@@ -163,6 +164,144 @@ import Testing
         #expect(body.contains("bundleIdentifier: application.bundleIdentifier"), "\(signature)")
         #expect(!body.contains("NSRunningApplication"), "\(signature)")
     }
+}
+
+/// `NSRunningApplication(processIdentifier:)` can answer nil for a running application.
+/// The lookup then reads the workspace's running-application list. A process in neither
+/// answer, such as one that quit, stays without an application.
+@Test(.macOSTestApplication) func aRunningApplicationLookupReadsTheWorkspaceListWhenThePerPIDAnswerIsNil() {
+    let current = NSRunningApplication.current
+    let pid = current.processIdentifier
+    var listReads = 0
+    let listed: () -> [NSRunningApplication] = { listReads += 1; return [current] }
+    // A per-PID answer wins without a list read.
+    #expect(RunningApplicationLookup.resolve(pid, lookUp: { _ in current }, runningApplications: listed) === current)
+    #expect(listReads == 0)
+    #expect(RunningApplicationLookup.resolve(pid, lookUp: { _ in nil }, runningApplications: listed) === current)
+    #expect(listReads == 1)
+    #expect(RunningApplicationLookup.resolve(pid &+ 1, lookUp: { _ in nil }, runningApplications: listed) == nil)
+    #expect(RunningApplicationLookup.resolve(pid, lookUp: { _ in nil }, runningApplications: { [] }) == nil)
+    // An entry that reports termination is skipped; a live entry at another PID is not taken.
+    let quitPID = pid_t(Int32.max - 13)
+    let quit = ReportedApplication(processIdentifier: quitPID, terminated: true)
+    let other = ReportedApplication(processIdentifier: quitPID - 1)
+    #expect(RunningApplicationLookup.resolve(quitPID, lookUp: { _ in nil }, runningApplications: { [quit, other] }) == nil)
+    let relaunched = ReportedApplication(processIdentifier: quitPID)
+    #expect(RunningApplicationLookup.resolve(
+        quitPID, lookUp: { _ in nil }, runningApplications: { [quit, relaunched] }) === relaunched)
+}
+
+/// A made-up application for lookup tests. It never names a real process.
+private final class ReportedApplication: NSRunningApplication, @unchecked Sendable {
+    private let reportedProcessIdentifier: pid_t
+    private let reportedLaunchDate: Date?
+    private let reportedBundleIdentifier: String?
+    private let reportsTermination: Bool
+
+    init(processIdentifier: pid_t, launchDate: Date? = nil, bundleIdentifier: String? = nil, terminated: Bool = false) {
+        reportedProcessIdentifier = processIdentifier
+        reportedLaunchDate = launchDate
+        reportedBundleIdentifier = bundleIdentifier
+        reportsTermination = terminated
+        super.init()
+    }
+
+    override var processIdentifier: pid_t { reportedProcessIdentifier }
+    override var launchDate: Date? { reportedLaunchDate }
+    override var bundleIdentifier: String? { reportedBundleIdentifier }
+    override var isTerminated: Bool { reportsTermination }
+}
+
+/// Launch identity comes through the running-application lookup. While the per-PID
+/// lookup answers nil, the list's entry names the launch, so the launch keeps its
+/// launch date and bundle identifier, and a later real answer for the same launch
+/// keeps the same generation. A new launch date at that PID is a new launch.
+@Test(.macOSTestApplication) @MainActor func aTargetedReadNamesItsLaunchFromTheListWhileThePerPIDLookupAnswersNil() {
+    let system = AccessibilityWindowSystem()
+    let pid = pid_t(Int32.max - 17)
+    let started = Date(timeIntervalSinceReferenceDate: 1_000)
+    let fixture = ReportedApplication(processIdentifier: pid, launchDate: started, bundleIdentifier: "com.example.Fixture")
+    var perPID: NSRunningApplication? = nil
+    var listed: [NSRunningApplication] = [fixture]
+    system.runningApplicationLookup = { pid in
+        RunningApplicationLookup.resolve(pid, lookUp: { _ in perPID }, runningApplications: { listed })
+    }
+    system.targetedReadBundleLookup = { _ in nil }
+    let first = system.targetedReadApplication(forPID: pid)
+    #expect(first.bundleIdentifier == "com.example.Fixture")
+    perPID = fixture
+    #expect(system.targetedReadApplication(forPID: pid) == first)
+    // Neither answer: the recorded launch stays, as before this lookup existed.
+    perPID = nil
+    listed = []
+    #expect(system.targetedReadApplication(forPID: pid) == first)
+    let relaunch = ReportedApplication(processIdentifier: pid, launchDate: started.addingTimeInterval(60),
+                                       bundleIdentifier: "com.example.Fixture")
+    perPID = relaunch
+    let second = system.targetedReadApplication(forPID: pid)
+    #expect(second.instance != first.instance)
+    #expect(second.bundleIdentifier == "com.example.Fixture")
+}
+
+/// A recovery hold on an unreadable application stays while the application runs, even
+/// when a per-PID lookup answers nil. The hold of an application that quit is dropped.
+@Test(.macOSTestApplication) @MainActor func aRecoveryHoldStaysWhileItsApplicationRuns() {
+    let system = AccessibilityWindowSystem()
+    let running = pid_t(Int32.max - 11)
+    let quit = pid_t(Int32.max - 12)
+    system.runningApplicationLookup = { $0 == running ? NSRunningApplication.current : nil }
+    system.holdUnreadableApplicationForTesting(pid: running, until: 50)
+    system.holdUnreadableApplicationForTesting(pid: quit, until: 60)
+    #expect(system.unresponsiveApplicationRecoveryDeadlines == [running: 50])
+}
+
+/// Raise, hit testing, application window requests, Show App and reopen need a live
+/// AX window or a real activation, so tests cannot run them. Each must find its
+/// application through the running-application lookup. Launch identity and recovery
+/// holds also have behavior tests above. A direct per-PID
+/// lookup can answer nil for a running application and refuse the action.
+@Test(.macOSTestApplication) func everyPerPIDApplicationActionUsesTheRunningApplicationLookup() throws {
+    let root = URL(filePath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+    func source(_ path: String) throws -> String {
+        try String(contentsOf: root.appending(path: path), encoding: .utf8)
+    }
+    let adapter = try source("Sources/BetterTileMacOS/AccessibilityWindowSystem.swift")
+    for signature in [
+        "public var unresponsiveApplicationRecoveryDeadlines: [Int32: TimeInterval] {",
+        "public func window(at point: BTPoint) throws -> WindowSnapshot? {",
+        "private func applicationInstance(forPID pid: pid_t) -> ApplicationLaunchInstance {",
+        "public func raiseWindow(_ id: WindowID, activate: Bool) throws {",
+        "public func activateForWindowRequest(processIdentifier: Int32, bundleIdentifier: String) -> Bool {",
+        "public func requestNewWindow(processIdentifier: Int32, bundleIdentifier: String,",
+    ] {
+        let start = try #require(adapter.range(of: signature), "\(signature)")
+        let end = try #require(adapter.range(of: "\n    }\n", range: start.upperBound..<adapter.endIndex))
+        let body = String(adapter[start.upperBound..<end.lowerBound])
+        #expect(body.contains("runningApplicationLookup("), "\(signature)")
+        #expect(!body.contains("NSRunningApplication(processIdentifier"), "\(signature)")
+    }
+    let appRoutes = [
+        "Sources/BetterTileApp/BetterTileModel.swift":
+            "let running = RunningApplicationLookup.application(processIdentifier: instance.processIdentifier),",
+        "Sources/BetterTileApp/PaneApplicationPicker.swift":
+            "guard let running = RunningApplicationLookup.application(processIdentifier: instance.processIdentifier),",
+    ]
+    for (path, route) in appRoutes { #expect(try source(path).contains(route), "\(path)") }
+    // Only the lookup asks LaunchServices per PID. Two name lookups have their own
+    // fallback, and a missing divider icon changes no action.
+    let allowed = [
+        "Sources/BetterTileMacOS/RunningApplicationLookup.swift": 1,
+        "Sources/BetterTileMacOS/DividerOverlayController.swift": 1,
+        "Sources/BetterTileApp/SavedLayoutApplier.swift": 1,
+        "Sources/BetterTileApp/BetterTileModel.swift": 1,
+    ]
+    let sources = try #require(FileManager.default.enumerator(at: root.appending(path: "Sources"), includingPropertiesForKeys: nil))
+    var found: [String: Int] = [:]
+    for case let url as URL in sources where url.pathExtension == "swift" {
+        let count = try String(contentsOf: url, encoding: .utf8).components(separatedBy: "NSRunningApplication(processIdentifier: ").count - 1
+        if count > 0 { found[String(url.path.dropFirst(root.path.count + 1)), default: 0] += count }
+    }
+    #expect(found == allowed)
 }
 
 /// Only two real answers make a window unmovable. An application that did
