@@ -37,6 +37,12 @@ import Testing
     }
     /// Replaces the only display. The hold ends, so the old display's desktops retire.
     func replaceDisplay(_ name: String, uuid: String, space: UInt64) async throws {
+        reconfigure(to: name, uuid: uuid, space: space)
+        try await idle()
+    }
+    /// Moves every window to `screen` inside a display reconfiguration.
+    /// The hold keeps the previous display's desktops until it ends.
+    func reconfigure(to name: String, uuid: String, space: UInt64) {
         model.handleDisplayChange(.displayReconfigurationBegan)
         var screen = system.mainDisplay
         screen.id = DisplayID(rawValue: name)
@@ -48,7 +54,6 @@ import Testing
             knownSpacesByDisplay: [screen.id: [native]],
             windowMembership: Dictionary(uniqueKeysWithValues: system.windows.map { ($0.id, [native]) }))
         model.handleDisplayChange(.displayReconfigurationEnded)
-        try await idle()
     }
     func field(_ name: String, of owner: Any) -> Any? {
         Mirror(reflecting: owner).children.first {
@@ -151,6 +156,105 @@ struct RetiredDesktopStateTests {
         let again = await f.system.drive { await applier.apply(document, displayID: f.display, automatic: true) }
         #expect(again?.issues.isEmpty == true)
         #expect(applier.lastPlan?.assignments == remembered, "A reconnect swapped two same-app windows")
+    }
+
+    /// A lid close or a short unplug ends inside the display hold. Cleanup
+    /// that runs while the display is absent must keep every desktop-owned
+    /// value, so the returning desktop keeps its Tabbed layout and Undo.
+    @Test func aDisplayThatReturnsDuringTheHoldKeepsItsDesktopState() async throws {
+        let f = RetiredDesktopFixture(carryOver: false)
+        defer { f.model.shutdown() }
+        let home = f.display
+        f.model.setActiveMode(.tabbed)
+        try await f.idle()
+        f.model.performTabbed(.preset(.columns, grouping: .distributeWindows))
+        try await f.idle()
+        let original = try #require(f.store().session(for: home))
+        let owned = f.ownedFields(original.id)
+        try #require(owned["tabbedUndo"] == true)
+
+        f.reconfigure(to: "away", uuid: "B", space: 2)
+        try #require(f.model.isHoldingDisplayChange)
+        // Saved Layout cleanup runs on menu and shortcut target refreshes,
+        // also during the hold.
+        f.model.refreshSavedLayoutActionTarget()
+        #expect(f.ownedFields(original.id) == owned)
+        #expect(try f.store().allSessions(for: home).contains { $0.id == original.id })
+
+        f.reconfigure(to: home.rawValue, uuid: "A", space: 1)
+        try await f.idle()
+        let returned = try #require(f.store().session(for: home))
+        #expect(returned.id == original.id && returned.mode == .tabbed)
+        #expect(f.ownedFields(original.id)["tabbedUndo"] == true)
+        let before = f.model.activeTabbedState
+        f.model.performTabbed(.undo)
+        try await f.idle()
+        #expect(f.model.activeTabbedState != before, "Tabbed Undo was lost while the display was absent")
+    }
+
+    /// Saved Layout Undo is still available after the display goes away and
+    /// comes back, both inside the hold and after its desktop retired.
+    @Test(arguments: [false, true])
+    func savedLayoutUndoWorksAfterTheDisplayReturns(afterRetirement: Bool) async throws {
+        let f = RetiredDesktopFixture(carryOver: false)
+        defer { f.model.shutdown() }
+        let home = f.display
+        try await f.idle()
+        let applier = try #require(f.model.savedLayoutApplier)
+        applier.observesKeyboard = false
+        applier.application = { id in .init(bundleIdentifier: id, name: id, url: URL(fileURLWithPath: "/fixture/\(id).app")) }
+        let document = SavedLayoutDocument(name: "Stack", mode: .manual,
+            slots: [.init(id: "top", bundleID: "com.example.Editor"), .init(id: "bottom", bundleID: "com.example.Editor")],
+            windows: [.init(slot: "top", rect: .init(x: 0, y: 0, width: 1, height: 0.5)),
+                      .init(slot: "bottom", rect: .init(x: 0, y: 0.5, width: 1, height: 0.5))])
+        let previous = Dictionary(uniqueKeysWithValues: f.system.windows.map { ($0.id, $0.frame) })
+        let applied = await f.system.drive { await applier.apply(document, displayID: home) }
+        try #require(applied?.placed == 2)
+        try await f.idle()
+        try #require(applier.canUndo(on: home))
+
+        if afterRetirement {
+            try await f.replaceDisplay("away", uuid: "B", space: 2)
+            #expect(applier.hasUndo, "A retired desktop lost its Saved Layout Undo")
+            try await f.replaceDisplay(home.rawValue, uuid: "A", space: 1)
+        } else {
+            f.reconfigure(to: "away", uuid: "B", space: 2)
+            try #require(f.model.isHoldingDisplayChange)
+            f.model.refreshSavedLayoutActionTarget()
+            #expect(applier.hasUndo)
+            f.reconfigure(to: home.rawValue, uuid: "A", space: 1)
+            try await f.idle()
+        }
+        f.model.refreshSavedLayoutActionTarget()
+        #expect(applier.canUndo(on: home), "Saved Layout Undo is unavailable after the display returned")
+        _ = await f.system.drive { await applier.undoLastApply(displayID: home); return true }
+        try await f.idle()
+        for window in f.system.windows {
+            #expect(window.frame == previous[window.id], "Undo did not restore \(window.id.rawValue)")
+        }
+    }
+
+    /// Adaptive Focus keeps the layout it covers. A retired desktop keeps
+    /// that snapshot, so Restore after a reconnect still has it.
+    @Test func aRetiredAdaptiveDesktopKeepsItsFocusRestoreSnapshot() async throws {
+        let f = RetiredDesktopFixture(carryOver: false)
+        defer { f.model.shutdown() }
+        f.system.emitsMinimizationEvents = true
+        f.model.setActiveMode(.bento)
+        try await f.idle()
+        f.system.focusedID = f.left
+        f.model.perform(.maximize)
+        try await f.idle()
+        let original = try #require(f.store().session(for: f.display))
+        try #require(f.ownedFields(original.id)["bentoStateBeforeFocus"] == true)
+
+        try await f.replaceDisplay("away", uuid: "B", space: 2)
+        try #require(f.store().retiredSessions.contains { $0.session.id == original.id })
+        #expect(f.ownedFields(original.id)["bentoStateBeforeFocus"] == true,
+            "A retired desktop lost the layout that Focus Restore returns to")
+        try await f.replaceDisplay(f.system.mainDisplay.id.rawValue, uuid: "A", space: 3)
+        #expect(try f.store().session(for: f.display)?.id == original.id)
+        #expect(f.ownedFields(original.id)["bentoStateBeforeFocus"] == true)
     }
 
     /// Retired desktops stay bounded. Desktops whose windows all closed are
