@@ -803,6 +803,9 @@ func returningToBentoSpaceWithPartialVisibilityDoesNotMoveItsWindows(extraIncomp
     try #require(await system.waitFor { system.cachedRefreshCount >= 2 })
     let firstWindows = system.windows
     // Private centers: only this test's Space changes reach the model.
+    // The triggers still start the real 10 s watchdog timer. A watchdog sweep
+    // during the partial phase only adds a miss; the peer keeps its pane until
+    // 1.4 s of policy time pass, and this test advances less than that.
     let workspace = NotificationCenter()
     model.installWorkspaceTriggers(center: NotificationCenter(), workspaceCenter: workspace)
 
