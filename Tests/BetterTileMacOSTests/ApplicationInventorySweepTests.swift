@@ -347,6 +347,12 @@ struct AccessibilityReleaseTests {
 }
 
 /// `applicationInstance(for:)` with this test process as the running application.
+///
+/// Warning: this suite writes the test process's own process ID into the
+/// process-wide `AccessibilityWindowSystem.unresponsiveApplications` gate, and
+/// `.serialized` orders only this suite. Its `defer` removes the entry. A
+/// future test that runs a real inventory in parallel could still see it, so
+/// such a test should not depend on the gate state of this process.
 @Suite(.macOSTestApplication, .serialized) @MainActor
 struct LaunchAdmissionGateTests {
     @Test func aFirstSeenLaunchKeepsItsGateAndAChangedLaunchAtAKnownPIDResetsIt() {

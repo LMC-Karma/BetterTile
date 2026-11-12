@@ -371,8 +371,8 @@ Long uptime must not keep state for desktops and windows that cannot return.
 Each structure below keeps its entries while a return can still use them, and
 otherwise follows a fixed limit. The limits are a bounded retention policy,
 not a guarantee that any desktop can return after any amount of change.
-Each cleanup builds its owner sets once, from the session store's state at
-that moment; no owner set is kept between cleanups.
+Each cleanup builds its desktop owner sets once, from the session store's
+state at that moment; no owner set is kept between cleanups.
 
 - **Retired desktops.** The session store keeps at most 32 retired desktops,
   oldest dropped first, and forgets a retired desktop whose windows all

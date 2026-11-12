@@ -149,6 +149,23 @@ struct SavedLayoutCacheLifetimeTests {
         #expect(applied?.contains(retired) == owned)
     }
 
+    /// With no Saved Layout desktop state, cleanup has nothing to release and
+    /// does not ask the model for its desktops. With state, it asks once.
+    @Test func cleanupAsksForTheModelDesktopsOnlyWhenThereIsDesktopState() async {
+        let h = ApplyHarness(); defer { h.close() }
+        h.arrive(1)
+        var asked = 0
+        h.applier.retainedDesktops = { asked += 1; return [] }
+        h.applier.updateUndoDesktops(h.system.desktopObservation, displays: [h.system.mainDisplay])
+        #expect(asked == 0)
+        h.addWindow()
+        #expect(await h.applier.apply(h.document()).placed == 1)
+        asked = 0
+        h.applier.updateUndoDesktops(h.system.desktopObservation, displays: [h.system.mainDisplay])
+        #expect(asked == 1)
+        #expect(count("rememberedAssignments", in: h.applier!) == 1)
+    }
+
     @Test func anInactiveExistingSpaceAndAnUnknownInventoryKeepAssignments() async throws {
         let h = ApplyHarness(); defer { h.close() }
         for space in [1, 2] {

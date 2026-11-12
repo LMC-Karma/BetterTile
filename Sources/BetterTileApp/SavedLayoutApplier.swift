@@ -528,7 +528,11 @@ private struct SavedLayoutUndoStructure: Equatable {
     func updateUndoDesktops(_ observation: NativeDesktopObservation?, displays: [DisplaySnapshot], sessions: [DisplayID: SavedLayoutSession]? = nil) {
         let connected = Set(displays.map(\.id))
         undoDesktops = observation?.currentSpaceByDisplay.filter { connected.contains($0.key) } ?? [:]
-        if let observation, !isBusy, undoRestoration == nil {
+        // With no desktop state at all, every step below changes nothing, so
+        // skip building the model's desktop set.
+        let hasDesktopState = !(appliedDesktops.isEmpty && rememberedAssignments.isEmpty && undos.isEmpty
+            && undoOrder.isEmpty && undoSessionCache.isEmpty && expiredUndoIDs.isEmpty && positionUndos.isEmpty)
+        if let observation, !isBusy, undoRestoration == nil, hasDesktopState {
             // Missing observations are not proof that a desktop disappeared.
             // Keep inactive, existing Spaces, desktops the model still owns,
             // the newest absent desktops and every in-flight checkpoint.
