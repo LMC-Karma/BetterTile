@@ -562,6 +562,15 @@ turn and reuses the focus that the pass read. One complete inventory then
 validates the result after the ordinary delay; if it disagrees, the usual
 reconciliation corrects the layout.
 
+A targeted read names a window's application with the bundle identifier that the
+complete inventory recorded for the same launch. A per-PID LaunchServices
+lookup (`NSRunningApplication(processIdentifier:)`) can return nothing for a
+running application for a moment. Saved Layout Apply compares each participant's
+bundle identifier before every write, so such an answer used to refuse the whole
+Apply with nothing moved. Bundle-ID resolution uses the recorded name when
+available; it makes another per-PID lookup only when that record cannot name
+the launch. Launch detection still asks LaunchServices on every targeted read.
+
 An element that is valid but not readable yet is read again after 8 ms, within
 the original 500 ms readiness deadline, and never through a complete inventory.
 An invalid element, a window not on the current Space, a callback without an

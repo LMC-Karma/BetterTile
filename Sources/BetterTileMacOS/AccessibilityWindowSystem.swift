@@ -616,10 +616,11 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         guard let entry = creationElements[token], (try? ensurePermission()) != nil else { return .unavailable }
         let element = entry.element
         let pid = entry.processIdentifier
+        let application = targetedReadApplication(forPID: pid)
         guard var window = snapshot(
             element,
-            application: applicationInstance(forPID: pid),
-            bundleIdentifier: NSRunningApplication(processIdentifier: pid)?.bundleIdentifier,
+            application: application.instance,
+            bundleIdentifier: application.bundleIdentifier,
             displays: displays()
         ) else {
             var role: CFTypeRef?
@@ -671,12 +672,52 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         guard let element = elements[id] ?? refreshElement(for: id) else { return nil }
         var pid: pid_t = 0
         guard AXUIElementGetPid(element, &pid) == .success else { return nil }
+        let application = targetedReadApplication(forPID: pid)
         return snapshot(
             element,
-            application: applicationInstance(forPID: pid),
-            bundleIdentifier: NSRunningApplication(processIdentifier: pid)?.bundleIdentifier,
+            application: application.instance,
+            bundleIdentifier: application.bundleIdentifier,
             displays: displays()
         ).flatMap(classifyByNativeMembership)
+    }
+
+    /// Answers a per-PID bundle identifier lookup. LaunchServices by default; tests replace it.
+    var targetedReadBundleLookup: (pid_t) -> String? = { NSRunningApplication(processIdentifier: $0)?.bundleIdentifier }
+
+    /// The launch and application name of one targeted read: `windowSnapshot(id:)`
+    /// and `readCreatedWindow(token:)` both use it. It names the application as the
+    /// complete inventory recorded it for this launch. A fresh per-PID LaunchServices
+    /// lookup can briefly answer without a bundle identifier while the application
+    /// runs, and a process cannot change its bundle.
+    func targetedReadApplication(forPID pid: pid_t) -> (instance: ApplicationLaunchInstance, bundleIdentifier: String?) {
+        let application = applicationInstance(forPID: pid)
+        let record = launchRecords[pid]
+        let bundleIdentifier = Self.targetedReadBundleIdentifier(
+            recordInstance: record?.instance, recordBundleIdentifier: record?.bundleIdentifier,
+            windowInstance: application
+        ) { targetedReadBundleLookup(pid) }
+        return (application, bundleIdentifier)
+    }
+
+    #if BETTERTILE_TEST_HOOKS
+    /// Seeds the launch record that a complete inventory would write for `pid`.
+    @discardableResult
+    func recordLaunchForTesting(pid: pid_t, bundleIdentifier: String?) -> ApplicationLaunchInstance {
+        nextLaunchGeneration &+= 1
+        let instance = ApplicationLaunchInstance(processIdentifier: pid, generation: nextLaunchGeneration)
+        launchRecords[pid] = LaunchRecord(launchToken: nil, instance: instance, bundleIdentifier: bundleIdentifier)
+        return instance
+    }
+    #endif
+
+    nonisolated static func targetedReadBundleIdentifier(
+        recordInstance: ApplicationLaunchInstance?,
+        recordBundleIdentifier: String?,
+        windowInstance: ApplicationLaunchInstance,
+        lookUp: () -> String?
+    ) -> String? {
+        if recordInstance == windowInstance, let recordBundleIdentifier { return recordBundleIdentifier }
+        return lookUp()
     }
 
     func windowSnapshot(exactWindowID: CGWindowID) throws -> WindowSnapshot? {
