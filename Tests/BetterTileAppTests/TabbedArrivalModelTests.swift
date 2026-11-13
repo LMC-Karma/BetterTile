@@ -96,6 +96,15 @@ import Testing
     #expect(await waitFor {
         system.windows.first { $0.id == big }.map { PlacementBounds.isContained($0.frame, in: system.mainDisplay.visibleFrame) } == true
     })
+
+    func readoptedCount() -> Int? {
+        Mirror(reflecting: model).children.first { $0.label == "_tabbedReadoptedArrivals" || $0.label == "tabbedReadoptedArrivals" }
+            .flatMap { ($0.value as? Set<WindowID>)?.count }
+    }
+    #expect(readoptedCount() == 1)
+    system.windows.removeAll { $0.id == big }
+    system.eventHandler?(.init(kind: .destroyed, windowID: big, processIdentifier: 900_022))
+    #expect(readoptedCount() == 0)
 }
 
 /// Two windows that float in the same sweep are both named in one pill.

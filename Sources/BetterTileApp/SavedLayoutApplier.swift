@@ -412,6 +412,11 @@ private struct SavedLayoutUndoStructure: Equatable {
     var commit: @MainActor (SavedLayoutApplyPlan, SavedLayoutDesktop, SavedLayoutApplySnapshot, @escaping () -> Bool) async -> Bool
     var currentDisplayID: () -> DisplayID? = { nil }
     var didFinish: () -> Void = {}
+    /// A display absence must not drop a desktop the model still owns,
+    /// including a retired desktop that a reconnect can restore. The model
+    /// releases this protection when its session store forgets that desktop.
+    /// Called once per cleanup; the set reflects the model at that moment.
+    var retainedDesktops: () -> Set<SavedLayoutDesktop> = { [] }
     var feedback: (SavedLayoutFeedback) -> Void = { _ in }
     var application: (String) -> ApplicationChoice? = { id in
         NSWorkspace.shared.urlForApplication(withBundleIdentifier: id).flatMap(ApplicationCatalog.application(at:))
@@ -444,6 +449,18 @@ private struct SavedLayoutUndoStructure: Equatable {
     /// At most one completed result per display waits for this user's session to return.
     private var deferredAutomaticRuns: [DisplayID: SavedLayoutRun] = [:]
     private var rememberedAssignments: [SavedLayoutDesktop: (SavedLayoutDocument, [String: WindowID], URL?)] = [:]
+    /// Desktops in Apply order, oldest first. A reconnect or a restored
+    /// desktop can bring a desktop's key back after the model forgot it, so
+    /// an absent desktop keeps its state while it is one of the newest
+    /// `absentDesktopLimit` absent desktops. A newer absent desktop past that
+    /// limit evicts the oldest one, which then returns without remembered
+    /// slots or Undo. The limit matches the session store's retired list.
+    private var appliedDesktops: [SavedLayoutDesktop] = []
+    static let absentDesktopLimit = 32
+    private func noteApplied(_ desktop: SavedLayoutDesktop) {
+        appliedDesktops.removeAll { $0 == desktop }
+        appliedDesktops.append(desktop)
+    }
     private var lastRunAutomatic = false
     var refusedSizes: [WindowID: BTSize] = [:]
     /// A model refusal before any mutation keeps the preceding Undo checkpoint.
@@ -511,6 +528,42 @@ private struct SavedLayoutUndoStructure: Equatable {
     func updateUndoDesktops(_ observation: NativeDesktopObservation?, displays: [DisplaySnapshot], sessions: [DisplayID: SavedLayoutSession]? = nil) {
         let connected = Set(displays.map(\.id))
         undoDesktops = observation?.currentSpaceByDisplay.filter { connected.contains($0.key) } ?? [:]
+        // With no desktop state at all, every step below changes nothing, so
+        // skip building the model's desktop set.
+        let hasDesktopState = !(appliedDesktops.isEmpty && rememberedAssignments.isEmpty && undos.isEmpty
+            && undoOrder.isEmpty && undoSessionCache.isEmpty && expiredUndoIDs.isEmpty && positionUndos.isEmpty)
+        if let observation, !isBusy, undoRestoration == nil, hasDesktopState {
+            // Missing observations are not proof that a desktop disappeared.
+            // Keep inactive, existing Spaces, desktops the model still owns,
+            // the newest absent desktops and every in-flight checkpoint.
+            let modelDesktops = retainedDesktops()
+            var ownership: [SavedLayoutDesktop: Bool] = [:]
+            func owned(_ desktop: SavedLayoutDesktop) -> Bool {
+                if let known = ownership[desktop] { return known }
+                let value = (connected.contains(desktop.displayID)
+                    && observation.knownSpacesByDisplay[desktop.displayID]?.contains(desktop.spaceID) != false)
+                    || modelDesktops.contains(desktop)
+                ownership[desktop] = value
+                return value
+            }
+            let recentAbsent = Set(appliedDesktops.filter { !owned($0) }.suffix(Self.absentDesktopLimit))
+            func retained(_ desktop: SavedLayoutDesktop) -> Bool { owned(desktop) || recentAbsent.contains(desktop) }
+            appliedDesktops.removeAll { !retained($0) }
+            for desktop in rememberedAssignments.keys.filter({ !retained($0) }) {
+                rememberedAssignments.removeValue(forKey: desktop)
+            }
+            for display in undos.keys.filter({ undos[$0].map { !retained($0.desktop) } == true }) {
+                undos.removeValue(forKey: display)
+            }
+            if undoOrder.contains(where: { undos[$0] == nil }) { undoOrder.removeAll { undos[$0] == nil } }
+            let checkpoints = Set(undos.values.map(\.id))
+            for id in expiredUndoIDs.subtracting(checkpoints) { expiredUndoIDs.remove(id) }
+            for id in positionUndos.keys.filter({ !checkpoints.contains($0) }) { positionUndos.removeValue(forKey: id) }
+            for desktop in undoSessionCache.keys.filter({ !retained($0) })
+                where !undos.values.contains(where: { $0.committedSessions[desktop] != nil }) {
+                undoSessionCache.removeValue(forKey: desktop)
+            }
+        }
         if let sessions { updateUndoSessions(sessions, desktops: undoDesktops) }
     }
 
@@ -1072,6 +1125,7 @@ private struct SavedLayoutUndoStructure: Equatable {
         }
         guard await commitProgress(plan, desktop: desktop, state: transaction, isCurrent: isCurrent, result: &result) else { return result }
         rememberedAssignments[desktop] = (document, plan.assignments, positionContext?.layoutURL)
+        noteApplied(desktop)
         let windowNames = Dictionary(uniqueKeysWithValues: state.windows.map { ($0.id, windowApplicationName($0)) })
         completedPlanPresentation = SavedLayoutPlanPresentation(document: document, plan: plan, windows: prepared.windows,
             workArea: display.visibleFrame, groups: appGroupsStore?.document ?? .init(),
@@ -1125,6 +1179,7 @@ private struct SavedLayoutUndoStructure: Equatable {
             checkpoint = record.id
             undos[desktop.displayID] = record
             undoOrder.removeAll { $0 == desktop.displayID }; undoOrder.append(desktop.displayID)
+            noteApplied(desktop)
             runCheckpoint = true
             // isCurrent already checks stability, readiness, generation and Space
             // in one destination snapshot. Do not read it twice for each write.

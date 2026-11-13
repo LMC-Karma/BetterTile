@@ -400,9 +400,8 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
 
     /// Windows seen by an earlier sweep, kept in memory only. Saved Layouts uses them to say that an
     /// app's window is on another desktop. Nothing here is persisted or used to move a window.
-    private var knownWindowSnapshots: [WindowID: WindowSnapshot] = [:]
     public func knownWindows() -> [WindowSnapshot] {
-        knownWindowSnapshots.values.filter { identities.records[$0.id] != nil }
+        metadata.knownSnapshots.values.filter { identities.records[$0.id] != nil }
     }
 
     /// Hidden applications are skipped by AX inventory, but their known
@@ -452,17 +451,31 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         var snapshots: [WindowSnapshot] = []
         var refreshedElements: [WindowID: AXUIElement] = [:]
         var observedApplications: [ApplicationLaunchInstance: Set<CFHashCode>] = [:]
-        let previousHolds = unreadableApplicationHolds
+        let heldBefore = unreadableApplicationHolds
         unreadableApplicationHolds.removeAll()
-        let applications = NSWorkspace.shared.runningApplications.filter { application in
-            Self.shouldManageApplication(
-                processIdentifier: application.processIdentifier,
-                ownProcessIdentifier: getpid(),
-                activationPolicy: application.activationPolicy,
-                isHidden: application.isHidden,
-                includeHidden: false
-            )
-        }
+        let prepared = ApplicationInventorySweep.prepare(
+            running: NSWorkspace.shared.runningApplications,
+            processIdentifier: \.processIdentifier,
+            isManaged: { application in
+                Self.shouldManageApplication(
+                    processIdentifier: application.processIdentifier,
+                    ownProcessIdentifier: getpid(),
+                    activationPolicy: application.activationPolicy,
+                    isHidden: application.isHidden,
+                    includeHidden: false
+                )
+            },
+            previousHolds: heldBefore,
+            retainRunning: { pids in Self.unresponsiveApplications.withLock { $0.retainProcessIdentifiers(pids) } },
+            admitChangedLaunch: { application in
+                // Admit every launch, first-seen ones too, before any read.
+                let previous = launchRecords[application.processIdentifier]?.instance
+                let admitted = applicationInstance(for: application)
+                return previous != nil && admitted != previous
+            }
+        )
+        let applications = prepared.applications
+        let previousHolds = prepared.previousHolds
         unreadableApplicationHolds = ApplicationInventorySweep.run(
             applications,
             processIdentifier: \.processIdentifier,
@@ -495,7 +508,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
                     bundleIdentifier: application.bundleIdentifier,
                     displays: availableDisplays
                 ) else { continue }
-                knownWindowSnapshots[snapshot.id] = snapshot
+                metadata.knownSnapshots[snapshot.id] = snapshot
                 if let windowServer,
                    !windowServer.contains(
                        snapshot,
@@ -532,7 +545,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
             windowServer: windowServer
         )
         removeCachedState(for: closedWhileUnread.sorted().compactMap { identities.remove($0) }, notifyClosure: true)
-        knownWindowSnapshots = knownWindowSnapshots.filter { identities.records[$0.key] != nil }
+        metadata.knownSnapshots = metadata.knownSnapshots.filter { identities.records[$0.key] != nil }
         let sorted = snapshots.sorted { $0.id < $1.id }
         snapshotCache.recordFullSweep(sorted)
         snapshotGeneration &+= 1
@@ -711,11 +724,16 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
     #if BETTERTILE_TEST_HOOKS
     /// Seeds the launch record that a complete inventory would write for `pid`.
     @discardableResult
-    func recordLaunchForTesting(pid: pid_t, bundleIdentifier: String?) -> ApplicationLaunchInstance {
+    func recordLaunchForTesting(pid: pid_t, bundleIdentifier: String?, launchToken: UInt64? = nil) -> ApplicationLaunchInstance {
         nextLaunchGeneration &+= 1
         let instance = ApplicationLaunchInstance(processIdentifier: pid, generation: nextLaunchGeneration)
-        launchRecords[pid] = LaunchRecord(launchToken: nil, instance: instance, bundleIdentifier: bundleIdentifier)
+        launchRecords[pid] = LaunchRecord(launchToken: launchToken, instance: instance, bundleIdentifier: bundleIdentifier)
         return instance
+    }
+
+    /// Admits `application`'s launch as a complete inventory does.
+    func admitLaunchForTesting(_ application: NSRunningApplication) -> ApplicationLaunchInstance {
+        applicationInstance(for: application)
     }
 
     /// Seeds the hold that a sweep places on an application it could not read.
@@ -1617,6 +1635,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         defer { Self.signposter.endInterval("synchronizeObservers", interval) }
         let runningApplications = NSWorkspace.shared.runningApplications
         let runningPIDs = Set(runningApplications.map(\.processIdentifier))
+        Self.unresponsiveApplications.withLock { $0.retainProcessIdentifiers(runningPIDs) }
         // A failed observer installation must not prevent termination cleanup.
         // Hidden or policy-filtered running applications are not terminated.
         let knownPIDs = Set(launchRecords.keys).union(identities.records.values.map { $0.application.processIdentifier })
@@ -2192,8 +2211,14 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
             return previous.instance
         }
         // A changed launch at a known process identifier means the previous
-        // process quit, and its windows close with it.
-        if previous != nil { removeObserver(for: pid) }
+        // process quit, and its windows close with it. Its unresponsive gate
+        // and hold belong to that process. A first-seen app keeps a gate or
+        // hold that was set before its launch record existed.
+        if previous != nil {
+            Self.unresponsiveApplications.withLock { $0.remove(processIdentifier: pid) }
+            unreadableApplicationHolds.removeValue(forKey: pid)
+            removeObserver(for: pid)
+        }
         let closed = identities.remove(processIdentifier: pid)
         let quitApplications = previous == nil ? [] : bundleIdentifiers(of: pid, windows: closed)
         nextLaunchGeneration &+= 1

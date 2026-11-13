@@ -17,6 +17,34 @@ import BetterTileCore
 /// The Accessibility adapter runs this loop over its running applications.
 /// Tests run it with injected per-application read times.
 enum ApplicationInventorySweep {
+    /// Prepares one complete sweep, before any read can capture a timeout
+    /// serial.
+    ///
+    /// 1. `retainRunning` receives every running PID, hidden and unmanaged
+    ///    applications included. A filtered inventory cannot prove a quit.
+    /// 2. `admitChangedLaunch` admits each managed application's launch. It
+    ///    returns true when a new launch replaced a known one at the same
+    ///    PID; that PID then loses the hold of the process that quit.
+    ///
+    /// Admitting a reused PID inside its read would reset its timeout serial
+    /// there, and `run` would count the reset as a timeout.
+    static func prepare<Application>(
+        running: [Application],
+        processIdentifier: (Application) -> Int32,
+        isManaged: (Application) -> Bool,
+        previousHolds: [Int32: Double],
+        retainRunning: (Set<Int32>) -> Void,
+        admitChangedLaunch: (Application) -> Bool
+    ) -> (applications: [Application], previousHolds: [Int32: Double]) {
+        retainRunning(Set(running.map(processIdentifier)))
+        let applications = running.filter(isManaged)
+        var holds = previousHolds
+        for application in applications where admitChangedLaunch(application) {
+            holds.removeValue(forKey: processIdentifier(application))
+        }
+        return (applications, holds)
+    }
+
     /// Reads each application through `read`, or keeps it. Returns the
     /// inventory deadline of every application that this sweep did not read.
     ///
