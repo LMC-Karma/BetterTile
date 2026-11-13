@@ -26,7 +26,8 @@ enum ApplicationWindowPresentation {
 enum SettingsWindowPlacement {
     /// The band at the top of the window that the user drags.
     static let titleBarHeight: CGFloat = 28
-    /// The part of that band that must be on one screen for the user to grab it.
+    /// The width of that band that must be on one screen, with at least half the
+    /// band's height (14 pt), for the user to grab it.
     static let reachableTitleWidth: CGFloat = 80
 
     /// Keeps `remembered` while the user can still reach its title bar on a live

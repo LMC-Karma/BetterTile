@@ -9,7 +9,6 @@ import Testing
     init(_ value: T?) { self.value = value }
 }
 
-/// Settings opened and closed through the app delegate, as the app does, in an off-screen window.
 /// AppKit calls a sheet's completion handler on the main thread.
 private final class SheetResponse: @unchecked Sendable {
     var value: NSApplication.ModalResponse?
@@ -20,6 +19,7 @@ private final class SheetResponse: @unchecked Sendable {
     var frames = [CGRect(x: 900_000, y: -50_000, width: 200_000, height: 100_000)]
 }
 
+/// Settings opened and closed through the app delegate, as the app does, in an off-screen window.
 @MainActor private final class SettingsWindowHarness {
     let model: BetterTileModel
     let delegate: BetterTileAppDelegate
@@ -304,7 +304,9 @@ struct SettingsWindowLifetimeTests {
         harness.model.requestedSettingsDestination = page
         harness.delegate.showSettingsForTesting()
         // The new window takes the request before any view update, so the closed window's
-        // view tree, alive until its deferred release, finds nothing to take.
+        // view tree, alive until its deferred release, finds nothing to take. In the test process
+        // this also passes without the hand-off: the new view takes the request while AppKit
+        // orders the window front. The test guards that ordering.
         #expect(harness.model.requestedSettingsDestination == nil)
         let reopened = try #require(harness.delegate.settingsWindowForTesting)
         #expect(reopened !== first)
