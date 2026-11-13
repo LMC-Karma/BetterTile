@@ -1993,9 +1993,16 @@ work-area changes, permission loss, owner teardown and shutdown discard the
 request. Cancelled or expired creation keeps a 30-second guard without a
 destination. On Tabbed desktops its late arrivals stay floating; another
 creation for that app waits for the guard to expire or the user chooses an
-existing window. The pane's explicit **Try Again** action can repeat the request;
-The earlier guard remains; only eligible creations of the new request may auto-place. Offering
-choices also retains this guard, even after an explicit selection, because the request may still produce another window.
+existing window. The exception is a guard whose recorded process (process ID
+and launch date) no longer runs in any activation policy. The process counts
+as ended only when neither the bundle ID's running applications nor
+`RunningApplicationLookup` names it. Such a guard no longer refuses, and the
+new creation drops it when it dispatches. A guard without a recorded process
+still waits. The pane's explicit **Try Again** action can repeat the request;
+the earlier guard remains unless its process has ended, and only eligible
+creations of the new request may auto-place. Offering choices also retains this
+guard, even after an explicit selection, because the request may still produce
+another window.
 After the guard expires, new unseen arrivals follow ordinary policy.
 The 200 ms timer runs only while waiting, placing, or offering the bounded
 arrived-window click fallback. Choosing and other fallbacks retain no polling

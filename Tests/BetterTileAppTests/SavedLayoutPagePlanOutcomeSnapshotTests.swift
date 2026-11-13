@@ -11,6 +11,9 @@ import Testing
     func runningInstances(of application: ApplicationChoice) -> [PaneApplicationInstance] {
         runningApplicationBundleIdentifiers().contains(application.id) ? [.init(processIdentifier: 42, launchDate: nil)] : []
     }
+    func isAlive(_ instance: PaneApplicationInstance, of application: ApplicationChoice) -> Bool {
+        runningInstances(of: application).contains { $0.processIdentifier == instance.processIdentifier }
+    }
     func launch(_ application: ApplicationChoice) async throws -> PaneApplicationInstance { calls += 1; throw CancellationError() }
     func reopen(_ application: ApplicationChoice, instance: PaneApplicationInstance, activating: Bool, timeout: TimeInterval) async throws { calls += 1; throw CancellationError() }
 }
