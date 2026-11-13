@@ -303,6 +303,9 @@ struct SettingsWindowLifetimeTests {
         first.performClose(nil)
         harness.model.requestedSettingsDestination = page
         harness.delegate.showSettingsForTesting()
+        // The new window takes the request before any view update, so the closed window's
+        // view tree, alive until its deferred release, finds nothing to take.
+        #expect(harness.model.requestedSettingsDestination == nil)
         let reopened = try #require(harness.delegate.settingsWindowForTesting)
         #expect(reopened !== first)
         let view = try #require(reopened.contentView)

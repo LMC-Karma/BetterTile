@@ -2120,19 +2120,27 @@ The participation editor's Suggested tag uses an opaque `accentShadeColor`
 capsule with white text, following the same contrast palette as primary overlay
 buttons. It has no separate hover or press colour variant.
 
-The app delegate builds a new Settings window on each open and frees it on
-each close. AppKit and SwiftUI keep bookkeeping for each control that a window
-has shown, such as KVO dependencies, until that window is freed. A Settings
-window kept for the app's life therefore grew with every page visit. A new
-window opens on General unless a caller set `requestedSettingsDestination`
-first. The first window of a launch is centered. Later windows take the frame
-of the last closed one. On close, the delegate saves the frame under the
-autosave name and then gives up the name, because AppKit refuses a name that a
-live window still holds. It also ends any attached sheet, as a cancel. The
-configuration and shortcut bindings live in `BetterTileModel`, and saved
-layouts in their files, so a close changes none of them. The delegate owns the Saved Layouts `SavedLayoutEditor`, so an unsaved
-draft survives a close as it survives a page change. The search text, selected
-page, scroll positions and other page state close with the window.
+Closing Settings frees its window. AppKit and SwiftUI keep bookkeeping for
+each control that a window has shown, such as KVO dependencies, until that
+window is freed. A Settings window kept for the app's life therefore grew with
+every page visit. Opening Settings after a close builds a new window; opening
+it while it is already open shows the same window. A new window opens on
+General, or on the page a caller set in `requestedSettingsDestination`. The
+delegate takes that request when it builds the window, so the closed window's
+view tree cannot take it before its deferred release. The first window of a
+launch is centered. Later windows take the frame of the last closed one, kept
+on a live screen: `SettingsWindowPlacement` keeps the frame while its title bar
+is reachable, and otherwise centers the window on the screen it overlaps most,
+or the first screen, shrunk to fit. On close, the delegate saves the frame
+under the autosave name and then gives up the name, because AppKit refuses a
+name that a live window still holds. It ends any attached sheet with a cancel
+response. The configuration and shortcut bindings live in `BetterTileModel`,
+and saved layouts in their files, so a close changes none of them. The
+delegate owns the Saved Layouts `SavedLayoutEditor`, so an unsaved draft
+survives a close as it survives a page change. A close cancels the sheets and
+alerts that the editor drives, so they do not return on the next visit. The
+search text, selected page, scroll positions and other page state close with
+the window.
 
 Settings presents Add Rule and Add Floating Window in a transparent,
 key-capable child `NSPanel` using `PopupGlassHost`. This replaces only their
