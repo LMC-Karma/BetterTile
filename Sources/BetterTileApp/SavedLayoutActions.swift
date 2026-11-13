@@ -197,6 +197,9 @@ extension SavedLayoutWatching { var hasUnwatchedFiles: Bool { false } }
         if isObserving { watcher.stop() }
     }
     var names: [String: String] { Dictionary(uniqueKeysWithValues: entries.map { ($0.file, $0.name) }) }
+    /// A readable listing includes invalid files. A temporarily missing folder
+    /// does not prove that its layouts were deleted.
+    var knownLibraryFiles: Set<String>? { libraryIdentity.map { _ in Set(signature.keys) } }
     var menuEntries: [SavedLayoutActionEntry] { entries.filter { store.settings(for: $0.file).showInMenuBar } }
     var wheelEntries: [SavedLayoutActionEntry] { entries.filter { store.settings(for: $0.file).showInWheel } }
 
