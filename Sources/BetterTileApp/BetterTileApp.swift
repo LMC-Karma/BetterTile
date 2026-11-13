@@ -762,11 +762,13 @@ final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSWindowDele
             Self.signposter.endInterval("createSettings", creation)
         }
         activateForSettings()
-        if created {
+        if created, let window = settingsWindow {
             if let closedSettingsFrame {
-                settingsWindow?.setFrame(closedSettingsFrame, display: false)
+                // The display that showed the closed window can be gone.
+                let screen = NSScreen.screens.first { $0.frame.intersects(closedSettingsFrame) } ?? NSScreen.main
+                window.setFrame(window.constrainFrameRect(closedSettingsFrame, to: screen), display: false)
             } else {
-                settingsWindow?.center()
+                window.center()
             }
         }
         settingsWindow?.makeKeyAndOrderFront(nil)
