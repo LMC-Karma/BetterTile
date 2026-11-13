@@ -49,10 +49,12 @@ import SwiftUI
             checkForUpdates: {},
             openSetup: openSetup,
             selection: selection,
-            search: search
+            search: search,
+            savedLayoutEditor: SavedLayoutEditor()
         )
 #else
-        SettingsView(model: model, openSetup: openSetup, selection: selection, search: search)
+        SettingsView(model: model, openSetup: openSetup, selection: selection, search: search,
+                     savedLayoutEditor: SavedLayoutEditor())
 #endif
     }
 

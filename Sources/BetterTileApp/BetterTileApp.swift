@@ -20,6 +20,40 @@ enum ApplicationWindowPresentation {
     }
 }
 
+/// Where a reopened Settings window goes. Frames are AppKit screen frames, with
+/// the origin at the bottom left. Screens are the live screens' visible frames,
+/// the menu-bar screen first.
+enum SettingsWindowPlacement {
+    /// The band at the top of the window that the user drags.
+    static let titleBarHeight: CGFloat = 28
+    /// The part of that band that must be on one screen for the user to grab it.
+    static let reachableTitleWidth: CGFloat = 80
+
+    /// Keeps `remembered` while the user can still reach its title bar on a live
+    /// screen. Otherwise the window goes to the center of the screen it overlaps
+    /// most, or of the first screen, and shrinks to fit that screen.
+    static func frame(for remembered: CGRect, screens: [CGRect]) -> CGRect {
+        guard let first = screens.first else { return remembered }
+        if screens.contains(where: { titleBarIsReachable(remembered, on: $0) }) { return remembered }
+        var target = first
+        var overlap: CGFloat = 0
+        for screen in screens {
+            let shared = screen.intersection(remembered)
+            let area = shared.isNull ? 0 : shared.width * shared.height
+            if area > overlap { target = screen; overlap = area }
+        }
+        let size = CGSize(width: min(remembered.width, target.width), height: min(remembered.height, target.height))
+        return CGRect(x: target.midX - size.width / 2, y: target.midY - size.height / 2,
+                      width: size.width, height: size.height)
+    }
+
+    static func titleBarIsReachable(_ frame: CGRect, on screen: CGRect) -> Bool {
+        let titleBar = CGRect(x: frame.minX, y: frame.maxY - titleBarHeight, width: frame.width, height: titleBarHeight)
+        let shown = screen.intersection(titleBar)
+        return !shown.isNull && shown.width >= min(reachableTitleWidth, frame.width) && shown.height >= titleBarHeight / 2
+    }
+}
+
 private enum BetterTileVariant {
     static var displayName: String {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String ?? "BetterTile"
@@ -326,11 +360,12 @@ final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSWindowDele
     }
 
     /// Tests build Settings in their own window, with their own Saved Layouts
-    /// folder and frame name, and never activate the test process.
+    /// folder, frame name and screens, and never activate the test process.
     struct SettingsPresentationForTesting {
         var makeWindow: @MainActor (NSViewController) -> NSWindow
         var savedLayoutEditor: SavedLayoutEditor
         var frameAutosaveName: String?
+        var screens: @MainActor () -> [CGRect]
     }
 
     convenience init(model: BetterTileModel, settingsPresentation: SettingsPresentationForTesting) {
@@ -723,10 +758,16 @@ final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSWindowDele
         let created = settingsWindow == nil
         if settingsWindow == nil {
             let creation = Self.signposter.beginInterval("createSettings")
+            // The new window takes a page request here. Until its deferred
+            // release, a closed window's view tree still observes the model,
+            // so the request must not stay there for it to take.
+            let requested = model.requestedSettingsDestination
+            model.requestedSettingsDestination = nil
 #if DEBUG
             let settingsView = SettingsView(
                 model: model,
                 openSetup: { [weak self] in self?.showSetupAssistant() },
+                selection: requested ?? .general,
                 savedLayoutEditor: savedLayoutEditor
             )
 #else
@@ -743,6 +784,7 @@ final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSWindowDele
                 ),
                 checkForUpdates: { [weak self] in self?.checkForUpdates(nil) },
                 openSetup: { [weak self] in self?.showSetupAssistant() },
+                selection: requested ?? .general,
                 savedLayoutEditor: savedLayoutEditor
             )
 #endif
@@ -765,8 +807,8 @@ final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSWindowDele
         if created, let window = settingsWindow {
             if let closedSettingsFrame {
                 // The display that showed the closed window can be gone.
-                let screen = NSScreen.screens.first { $0.frame.intersects(closedSettingsFrame) } ?? NSScreen.main
-                window.setFrame(window.constrainFrameRect(closedSettingsFrame, to: screen), display: false)
+                let frame = SettingsWindowPlacement.frame(for: closedSettingsFrame, screens: settingsScreens())
+                window.setFrame(frame, display: false)
             } else {
                 window.center()
             }
@@ -787,6 +829,13 @@ final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSWindowDele
         if let settingsPresentationForTesting { return settingsPresentationForTesting.frameAutosaveName }
 #endif
         return "BetterTileSettingsWindow"
+    }
+
+    private func settingsScreens() -> [CGRect] {
+#if BETTERTILE_TEST_HOOKS
+        if let settingsPresentationForTesting { return settingsPresentationForTesting.screens() }
+#endif
+        return NSScreen.screens.map(\.visibleFrame)
     }
 
     private func activateForSettings() {
@@ -858,15 +907,18 @@ final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSWindowDele
     }
 
     /// AppKit and SwiftUI keep bookkeeping for each control a window has shown,
-    /// such as KVO dependencies and text-field observers, until that window is
-    /// freed. A Settings window kept for the app's life grew with every page
-    /// visit, so each close frees it and the next open builds a new one.
+    /// such as KVO dependencies, until that window is freed. A Settings window
+    /// kept for the app's life grew with every page visit, so each close frees
+    /// it and the next open builds a new one.
     private func releaseSettingsWindow(_ window: NSWindow) {
         settingsWindow = nil
         closedSettingsFrame = window.frame
         // Sparkle can close Settings while a sheet is open. An attached sheet
-        // keeps its closed parent alive, so cancel it as its Cancel button would.
-        for sheet in window.sheets { window.endSheet(sheet) }
+        // keeps its closed parent alive, so end it with a cancel response.
+        for sheet in window.sheets { window.endSheet(sheet, returnCode: .cancel) }
+        // The editor outlives the window. Its sheets and alerts end with the
+        // window, so the next Saved Layouts visit does not show them again.
+        savedLayoutEditor.cancelPresentations()
         // AppKit refuses an autosave name that a live window still holds, and
         // the closed window can outlive a quick reopen. Save its frame, then
         // free the name for the next window. The saved frame stays.

@@ -155,7 +155,8 @@ struct SettingsView: View {
     let openSetup: () -> Void
     @State var selection: SettingsDestination = .general
     @State var search = ""
-    @State var savedLayoutEditor = SavedLayoutEditor()
+    /// The app delegate's editor, so an unsaved draft outlives the window.
+    @State var savedLayoutEditor: SavedLayoutEditor
     @FocusState private var searchFocused: Bool
 
     var body: some View {

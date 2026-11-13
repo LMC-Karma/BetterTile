@@ -112,6 +112,15 @@ struct SavedLayoutResize {
     var pendingImport: SavedLayoutImport?
     @ObservationIgnored var fileOpener = SavedLayoutFileOpener()
 
+    /// Ends the sheets and alerts this editor drives, as their Cancel buttons do.
+    /// The draft and its history stay.
+    func cancelPresentations() {
+        creation.cancelSetup()
+        creation.keepEditing()
+        creation.updateToConfirm = nil
+        pendingImport = nil
+    }
+
     @discardableResult func reloadFromDisk() -> Bool {
         guard let source = url ?? sourceURL else { return false }
         return reload(source)

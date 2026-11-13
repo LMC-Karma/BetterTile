@@ -10,10 +10,22 @@ import Testing
 }
 
 /// Settings opened and closed through the app delegate, as the app does, in an off-screen window.
+/// AppKit calls a sheet's completion handler on the main thread.
+private final class SheetResponse: @unchecked Sendable {
+    var value: NSApplication.ModalResponse?
+}
+
+@MainActor private final class ScreenList {
+    /// A made-up screen around the area where off-screen test windows land.
+    var frames = [CGRect(x: 900_000, y: -50_000, width: 200_000, height: 100_000)]
+}
+
 @MainActor private final class SettingsWindowHarness {
     let model: BetterTileModel
     let delegate: BetterTileAppDelegate
     let layouts: URL
+    /// The visible frames the delegate places a reopened window on.
+    let screens = ScreenList()
 
     init(frameAutosaveName: String? = nil) {
         model = makeModel(system: FakeAppWindowSystem())
@@ -22,8 +34,11 @@ import Testing
         delegate = BetterTileAppDelegate(model: model, settingsPresentation: .init(
             makeWindow: { OffscreenTestWindow(contentViewController: $0) },
             savedLayoutEditor: SavedLayoutEditor(files: .init(directory: layouts)),
-            frameAutosaveName: frameAutosaveName))
+            frameAutosaveName: frameAutosaveName,
+            screens: { [screens] in screens.frames }))
     }
+
+    var editor: SavedLayoutEditor { delegate.savedLayoutEditorForTesting }
 
     func shutdown() {
         delegate.settingsWindowForTesting?.close()
@@ -73,6 +88,7 @@ import Testing
     let wall = ContinuousClock() // real-time: the release follows AppKit's own queued work
     let deadline = wall.now.advanced(by: timeout)
     while !released(), wall.now < deadline {
+        // real-time: AppKit and SwiftUI signal no completion for this teardown, so poll it
         try await BetterTileClock.live.sleep(for: .milliseconds(20))
     }
     #expect(released(), Comment(rawValue: "\(description) is still alive"))
@@ -151,13 +167,14 @@ struct SettingsWindowLifetimeTests {
         let harness = SettingsWindowHarness()
         defer { harness.shutdown() }
         let closed: Released<NSWindow>, sheet: Released<NSWindow>
+        let response = SheetResponse()
         do {
             let window = try await harness.open()
             try await harness.visit(.general, in: window)
             let panel = OffscreenTestPanel(contentRect: NSRect(x: 0, y: 0, width: 320, height: 200),
                                            styleMask: [.titled], backing: .buffered, defer: true)
             panel.isReleasedWhenClosed = false
-            window.beginSheet(panel, completionHandler: nil)
+            window.beginSheet(panel) { response.value = $0 }
             let view = try #require(window.contentView)
             try await waitForSettingsUI("the attached sheet", in: view) { window.attachedSheet === panel }
             closed = Released(window)
@@ -167,6 +184,7 @@ struct SettingsWindowLifetimeTests {
         #expect(harness.delegate.settingsWindowForTesting == nil)
         try await waitForRelease("The Settings window closed with a sheet") { closed.value == nil }
         try await waitForRelease("The sheet of the closed window") { sheet.value == nil }
+        #expect(response.value == .cancel, "The sheet ends as its Cancel button would end it")
 
         let reopened = try await harness.open()
         #expect(reopened.attachedSheet == nil)
@@ -220,5 +238,156 @@ struct SettingsWindowLifetimeTests {
         #expect(reopened !== first)
         #expect(reopened.frameAutosaveName == name)
         #expect(reopened.frame == frame)
+    }
+
+    /// The removed display's frame is gone from the screen list. The next window must land on a live screen.
+    @Test func reopenedSettingsMovesOffARemovedDisplay() async throws {
+        let harness = SettingsWindowHarness()
+        defer { harness.shutdown() }
+        do {
+            let first = try await harness.open()
+            first.setFrame(NSRect(x: 1_000_000, y: 0, width: 1110, height: 832), display: false)
+            first.performClose(nil)
+        }
+        // Whole-point center: AppKit rounds a window's origin.
+        let remaining = CGRect(x: 2_000_000, y: 0, width: 1440, height: 876)
+        harness.screens.frames = [remaining]
+        let reopened = try await harness.open()
+        #expect(reopened.frame == CGRect(x: 2_000_000 + 165, y: 22, width: 1110, height: 832))
+        #expect(remaining.contains(reopened.frame))
+    }
+
+    /// Only the delegate's editor keeps an unsaved draft across a close. The reopened page must use it.
+    @Test func unsavedSavedLayoutDraftSurvivesClose() async throws {
+        let harness = SettingsWindowHarness()
+        defer { harness.shutdown() }
+        let closed: Released<NSWindow>
+        do {
+            let window = try await harness.open()
+            try await harness.visit(.savedLayouts, in: window)
+            harness.editor.newLayout(mode: .bento)
+            #expect(harness.editor.edit { $0.name = "Unsaved Draft" })
+            #expect(harness.editor.hasUnsavedChanges)
+            closed = Released(window)
+            window.performClose(nil)
+        }
+        try await waitForRelease("The closed Settings window") { closed.value == nil }
+        let draft = try #require(harness.editor.document)
+
+        // A file the editor has not listed yet. Only a page that reads the delegate's editor lists it.
+        let other = SavedLayoutEditor(files: .init(directory: harness.layouts))
+        other.newLayout(mode: .tabbed)
+        #expect(other.save(as: "Saved Elsewhere"))
+        let added = try #require(other.url)
+        #expect(!harness.editor.entries.contains(added))
+
+        let reopened = try await harness.open()
+        try await harness.visit(.savedLayouts, in: reopened)
+        let view = try #require(reopened.contentView)
+        try await waitForSettingsUI("the new file in the delegate's editor", in: view) {
+            harness.editor.entries.contains(added)
+        }
+        #expect(harness.editor.hasUnsavedChanges)
+        #expect(harness.editor.document == draft)
+        #expect(harness.editor.url == nil)
+    }
+
+    /// A caller can close Settings and ask for a page in the same turn, before the closed window's
+    /// view tree is freed. The request belongs to the new window.
+    @Test(arguments: [SettingsDestination.savedLayouts, .shortcuts])
+    func sameTurnReopenLandsOnTheRequestedPage(page: SettingsDestination) async throws {
+        let harness = SettingsWindowHarness()
+        defer { harness.shutdown() }
+        let first = try await harness.open()
+        try await harness.visit(.menuBar, in: first)
+        first.performClose(nil)
+        harness.model.requestedSettingsDestination = page
+        harness.delegate.showSettingsForTesting()
+        let reopened = try #require(harness.delegate.settingsWindowForTesting)
+        #expect(reopened !== first)
+        let view = try #require(reopened.contentView)
+        try await waitForSettingsUI("the requested \(page.rawValue) page", in: view) {
+            harness.model.requestedSettingsDestination == nil && selectedPage(in: reopened) == page
+        }
+    }
+
+    /// The editor outlives the window, so the sheets and alerts it drives must end with the window,
+    /// as their Cancel buttons end them. The page here is General, so no SwiftUI sheet is shown.
+    @Test func closingSettingsCancelsTheEditorsSheetsAndAlerts() async throws {
+        let harness = SettingsWindowHarness()
+        defer { harness.shutdown() }
+        let window = try await harness.open()
+        let editor = harness.editor
+        let creation = editor.creation
+        editor.newLayout(mode: .bento)
+        let document = try #require(editor.document)
+        creation.showingSetup = true
+        creation.pending = .cancelDraft
+        creation.updateToConfirm = .updateFromDesktop
+        editor.pendingImport = SavedLayoutImport(source: harness.layouts.appending(path: "import.json"),
+            transfer: SavedLayoutTransfer(document: document, appGroups: []), groups: .init())
+        // Never leave a flag for a later Saved Layouts visit, even when an expectation fails.
+        defer { editor.cancelPresentations() }
+        window.performClose(nil)
+        #expect(!creation.showingSetup)
+        #expect(creation.pending == nil)
+        #expect(creation.updateToConfirm == nil)
+        #expect(editor.pendingImport == nil)
+        #expect(editor.document == document, "The draft stays")
+    }
+}
+
+@Suite struct SettingsWindowPlacementTests {
+    /// Visible frames: the menu-bar screen at the origin, and a larger screen to its right.
+    let main = CGRect(x: 0, y: 0, width: 1920, height: 1055)
+    let right = CGRect(x: 1920, y: 0, width: 2560, height: 1415)
+    let size = CGSize(width: 1060, height: 812)
+
+    private func centered(on screen: CGRect, _ size: CGSize) -> CGRect {
+        CGRect(x: screen.midX - size.width / 2, y: screen.midY - size.height / 2, width: size.width, height: size.height)
+    }
+
+    @Test func keepsAFrameOnALiveScreen() {
+        let frame = CGRect(origin: CGPoint(x: 300, y: 100), size: size)
+        #expect(SettingsWindowPlacement.frame(for: frame, screens: [main]) == frame)
+    }
+
+    @Test func keepsAFrameThatSpansTwoScreens() {
+        let frame = CGRect(origin: CGPoint(x: 1500, y: 100), size: size)
+        #expect(SettingsWindowPlacement.frame(for: frame, screens: [main, right]) == frame)
+    }
+
+    /// The display that held the frame was on this side of the remaining screen and is gone.
+    @Test(arguments: [CGPoint(x: 2100, y: 200), CGPoint(x: -1500, y: 200), CGPoint(x: 400, y: 1300),
+                      CGPoint(x: 400, y: -1200)])
+    func centersAFrameFromARemovedDisplay(origin: CGPoint) {
+        let frame = CGRect(origin: origin, size: size)
+        let placed = SettingsWindowPlacement.frame(for: frame, screens: [main])
+        #expect(placed == centered(on: main, size))
+        #expect(main.contains(placed))
+    }
+
+    @Test func shrinksAFrameLargerThanTheRemainingScreen() {
+        let small = CGRect(x: 0, y: 0, width: 1440, height: 875)
+        let frame = CGRect(x: 2100, y: 0, width: 2400, height: 1300)
+        #expect(SettingsWindowPlacement.frame(for: frame, screens: [small]) == small)
+    }
+
+    /// Most of the window is on the right screen, but its title bar is above that screen's top.
+    @Test func movesAnUnreachableTitleBarOntoTheScreenWithTheLargestOverlap() {
+        let frame = CGRect(origin: CGPoint(x: 1800, y: 900), size: size)
+        #expect(SettingsWindowPlacement.frame(for: frame, screens: [main, right]) == centered(on: right, size))
+    }
+
+    @Test func needsEnoughOfTheTitleBarToGrab() {
+        let barelyShown = CGRect(origin: CGPoint(x: main.maxX - 40, y: 100), size: size)
+        #expect(SettingsWindowPlacement.frame(for: barelyShown, screens: [main]) == centered(on: main, size))
+        let grabbable = CGRect(origin: CGPoint(x: main.maxX - 100, y: 100), size: size)
+        #expect(SettingsWindowPlacement.frame(for: grabbable, screens: [main]) == grabbable)
+    }
+
+    @Test func keepsTheFrameWithoutScreens() {
+        let frame = CGRect(origin: CGPoint(x: 2100, y: 200), size: size)
+        #expect(SettingsWindowPlacement.frame(for: frame, screens: []) == frame)
     }
 }
