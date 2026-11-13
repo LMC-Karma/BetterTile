@@ -15,6 +15,9 @@ struct PaneApplicationInstance: Equatable {
 @MainActor protocol PaneApplicationLaunching {
     func runningApplicationBundleIdentifiers() -> Set<String>
     func runningInstances(of application: ApplicationChoice) -> [PaneApplicationInstance]
+    /// Whether this exact process (PID and launch date) still runs, whatever its activation policy.
+    /// `contains` asks a narrower question: whether it is a selectable regular instance.
+    func isAlive(_ instance: PaneApplicationInstance, of application: ApplicationChoice) -> Bool
     func launch(_ application: ApplicationChoice) async throws -> PaneApplicationInstance
     func reopen(_ application: ApplicationChoice, instance: PaneApplicationInstance, activating: Bool, timeout: TimeInterval) async throws
 }
@@ -58,6 +61,26 @@ extension PaneApplicationLaunching {
                 < (orderedPIDs.firstIndex(of: $1.processIdentifier) ?? Int.max)
         }.map { PaneApplicationInstance(processIdentifier: $0.processIdentifier, launchDate: $0.launchDate, isActive: $0.isActive,
             isFrontmost: $0.processIdentifier == frontmostPID) }
+    }
+
+    func isAlive(_ instance: PaneApplicationInstance, of application: ApplicationChoice) -> Bool {
+        Self.isAlive(instance, of: application,
+                     listed: { NSRunningApplication.runningApplications(withBundleIdentifier: application.id) },
+                     lookUp: { RunningApplicationLookup.application(processIdentifier: $0) })
+    }
+
+    /// The process is alive when either answer names it with the recorded launch date: the bundle ID's running
+    /// applications, or the running-application lookup for its PID. Either answer can miss a running process,
+    /// so one match is enough, and the lookup is read only when the list has no match. Activation policy is
+    /// not checked: an accessory or background process can still open windows and can become regular again.
+    static func isAlive(_ instance: PaneApplicationInstance, of application: ApplicationChoice,
+                        listed: () -> [NSRunningApplication], lookUp: (pid_t) -> NSRunningApplication?) -> Bool {
+        func matches(_ running: NSRunningApplication) -> Bool {
+            !running.isTerminated && running.processIdentifier == instance.processIdentifier
+                && running.launchDate == instance.launchDate
+        }
+        if listed().contains(where: matches) { return true }
+        return lookUp(instance.processIdentifier).map { $0.bundleIdentifier == application.id && matches($0) } == true
     }
 
     func reopen(_ application: ApplicationChoice, instance: PaneApplicationInstance, activating: Bool, timeout: TimeInterval) async throws {
@@ -503,6 +526,7 @@ struct PaneApplicationClick: Equatable {
 }
 
 /// A cancelled creation cannot be recalled. Quarantine its late arrivals briefly, without retaining a placement.
+/// A new request for the same app drops the guard when it dispatches, if the guard's recorded process has ended.
 struct PaneApplicationArrivalGuard {
     let id = UUID()
     let applicationID: String
