@@ -303,6 +303,9 @@ final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSWindowDele
     private var statusItem: NSStatusItem!
     private var repairStatusItem: NSStatusItem!
     private var settingsWindow: NSWindow?
+    /// An unsaved Saved Layout draft survives a change of Settings page, so it
+    /// also survives closing the Settings window.
+    private lazy var savedLayoutEditor = SavedLayoutEditor()
     private var setupWindow: NSWindow?
     private var globalDismissMonitor: Any?
     private var localDismissMonitor: Any?
@@ -310,11 +313,31 @@ final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSWindowDele
 #if BETTERTILE_TEST_HOOKS
     private var closeMenuPanelForTesting: ((MenuPanelCloseReason) -> Void)?
 
+    private var settingsPresentationForTesting: SettingsPresentationForTesting?
+
     convenience init(model: BetterTileModel, closeMenuPanel: @escaping (MenuPanelCloseReason) -> Void) {
         self.init()
         self.model = model
         closeMenuPanelForTesting = closeMenuPanel
     }
+
+    /// Tests build Settings in their own window, with their own Saved Layouts
+    /// folder and frame name, and never activate the test process.
+    struct SettingsPresentationForTesting {
+        var makeWindow: @MainActor (NSViewController) -> NSWindow
+        var savedLayoutEditor: SavedLayoutEditor
+        var frameAutosaveName: String?
+    }
+
+    convenience init(model: BetterTileModel, settingsPresentation: SettingsPresentationForTesting) {
+        self.init(model: model, closeMenuPanel: { _ in })
+        settingsPresentationForTesting = settingsPresentation
+        savedLayoutEditor = settingsPresentation.savedLayoutEditor
+    }
+
+    var settingsWindowForTesting: NSWindow? { settingsWindow }
+    var savedLayoutEditorForTesting: SavedLayoutEditor { savedLayoutEditor }
+    func showSettingsForTesting() { showSettings() }
 #endif
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -699,7 +722,8 @@ final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSWindowDele
 #if DEBUG
             let settingsView = SettingsView(
                 model: model,
-                openSetup: { [weak self] in self?.showSetupAssistant() }
+                openSetup: { [weak self] in self?.showSetupAssistant() },
+                savedLayoutEditor: savedLayoutEditor
             )
 #else
             let settingsView = SettingsView(
@@ -714,11 +738,12 @@ final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSWindowDele
                     }
                 ),
                 checkForUpdates: { [weak self] in self?.checkForUpdates(nil) },
-                openSetup: { [weak self] in self?.showSetupAssistant() }
+                openSetup: { [weak self] in self?.showSetupAssistant() },
+                savedLayoutEditor: savedLayoutEditor
             )
 #endif
             let host = NSHostingController(rootView: settingsView)
-            let window = NSWindow(contentViewController: host)
+            let window = makeSettingsWindow(host)
             window.title = "\(BetterTileVariant.displayName) Settings"
             window.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
             // Full-size content includes the 52 pt title bar, so these keep
@@ -727,17 +752,38 @@ final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSWindowDele
             window.setContentSize(NSSize(width: 1060, height: 812))
             window.isReleasedWhenClosed = false
             ApplicationWindowPresentation.configure(window)
-            window.setFrameAutosaveName("BetterTileSettingsWindow")
+            if let name = settingsFrameAutosaveName { window.setFrameAutosaveName(name) }
             window.delegate = self
             settingsWindow = window
             Self.signposter.endInterval("createSettings", creation)
         }
-        NSApp.activate(ignoringOtherApps: true)
+        activateForSettings()
         if created {
             settingsWindow?.center()
         }
         settingsWindow?.makeKeyAndOrderFront(nil)
         settingsWindow?.orderFrontRegardless()
+    }
+
+    private func makeSettingsWindow(_ host: NSViewController) -> NSWindow {
+#if BETTERTILE_TEST_HOOKS
+        if let settingsPresentationForTesting { return settingsPresentationForTesting.makeWindow(host) }
+#endif
+        return NSWindow(contentViewController: host)
+    }
+
+    private var settingsFrameAutosaveName: String? {
+#if BETTERTILE_TEST_HOOKS
+        if let settingsPresentationForTesting { return settingsPresentationForTesting.frameAutosaveName }
+#endif
+        return "BetterTileSettingsWindow"
+    }
+
+    private func activateForSettings() {
+#if BETTERTILE_TEST_HOOKS
+        if settingsPresentationForTesting != nil { return }
+#endif
+        NSApp.activate(ignoringOtherApps: true)
     }
 
     private func showSetupAtLaunchIfNeeded() {

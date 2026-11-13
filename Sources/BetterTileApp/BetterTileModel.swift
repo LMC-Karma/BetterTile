@@ -564,7 +564,7 @@ final class BetterTileModel {
     var paneGapRelayoutSleep: (Duration) async throws -> Void = { try await BetterTileClock.live.sleep(for: $0) }
     private var configurationSaveTask: Task<Void, Never>?
     private var configurationNeedsSave = false
-    private var isShortcutCaptureActive = false
+    private(set) var isShortcutCaptureActive = false
     private var isShutDown = false
     private var displayChangeHold = DisplayChangeHold()
     private var displayChangeHoldTask: Task<Void, Never>?
