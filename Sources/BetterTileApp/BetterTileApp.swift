@@ -302,7 +302,11 @@ final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSWindowDele
     private var menuPanel: MenuPanelController<BetterTileMenuPanel>?
     private var statusItem: NSStatusItem!
     private var repairStatusItem: NSStatusItem!
+    /// The open Settings window. Closing Settings frees it; the next open builds a new one.
     private var settingsWindow: NSWindow?
+    /// The frame of the last closed Settings window. The next window of this
+    /// launch opens there, as the kept window used to; the first one is centered.
+    private var closedSettingsFrame: NSRect?
     /// An unsaved Saved Layout draft survives a change of Settings page, so it
     /// also survives closing the Settings window.
     private lazy var savedLayoutEditor = SavedLayoutEditor()
@@ -759,7 +763,11 @@ final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSWindowDele
         }
         activateForSettings()
         if created {
-            settingsWindow?.center()
+            if let closedSettingsFrame {
+                settingsWindow?.setFrame(closedSettingsFrame, display: false)
+            } else {
+                settingsWindow?.center()
+            }
         }
         settingsWindow?.makeKeyAndOrderFront(nil)
         settingsWindow?.orderFrontRegardless()
@@ -842,7 +850,31 @@ final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSWindowDele
             // A new request starts at its requested page. Retaining the closed
             // hosting controller would retain the previous SwiftUI page state.
             setupWindow = nil
+        } else {
+            releaseSettingsWindow(window)
         }
+    }
+
+    /// AppKit and SwiftUI keep bookkeeping for each control a window has shown,
+    /// such as KVO dependencies and text-field observers, until that window is
+    /// freed. A Settings window kept for the app's life grew with every page
+    /// visit, so each close frees it and the next open builds a new one.
+    private func releaseSettingsWindow(_ window: NSWindow) {
+        settingsWindow = nil
+        closedSettingsFrame = window.frame
+        // Sparkle can close Settings while a sheet is open. An attached sheet
+        // keeps its closed parent alive, so cancel it as its Cancel button would.
+        for sheet in window.sheets { window.endSheet(sheet) }
+        // AppKit refuses an autosave name that a live window still holds, and
+        // the closed window can outlive a quick reopen. Save its frame, then
+        // free the name for the next window. The saved frame stays.
+        if let name = settingsFrameAutosaveName {
+            window.saveFrame(usingName: name)
+            window.setFrameAutosaveName("")
+        }
+        // Free the view tree after the current event: a Settings control can
+        // close its own window, as Check for Updates does before an update.
+        DispatchQueue.main.async { window.contentViewController = nil }
     }
 
     @objc private func showTabBar() {
