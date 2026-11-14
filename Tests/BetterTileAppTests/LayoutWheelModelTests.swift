@@ -8,7 +8,7 @@ import Testing
 @testable import BetterTileApp
 
 @MainActor
-final class FakeAppWindowSystem: BetterTileWindowSystem, CreatedWindowReading, TabbedWindowSystem, MinimumSizeProbing, ApplicationWindowRequesting {
+final class FakeAppWindowSystem: BetterTileWindowSystem, CreatedWindowReading, LaunchedApplicationReading, TabbedWindowSystem, MinimumSizeProbing, ApplicationWindowRequesting {
     let manualClock: ManualClock?
     /// Use registered deadlines even for short boundary waits.
     var drivesPolicyDeadlines = false
@@ -460,6 +460,28 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, CreatedWindowReading, T
               let window = windows.first(where: { $0.id == id }) else { return .unavailable }
         guard let observation = desktopObservation else { return .window(window) }
         return observation.windowsOnCurrentSpaces([window]).first.map(CreatedWindowRead.window) ?? .unavailable
+    }
+    /// Every launched-application read, in order, by process.
+    private(set) var launchedApplicationReads: [Int32] = []
+    /// Processes that a launched-application read reports as unavailable:
+    /// quit, not a regular application, hidden, or BetterTile itself.
+    var unavailableLaunchedProcessIDs: Set<Int32> = []
+    /// Processes without exact window identities: a launched-application read
+    /// cannot identify their windows and, while one is ordinary, asks for a
+    /// complete inventory whether or not the window is on screen yet.
+    var unidentifiedLaunchedProcessIDs: Set<Int32> = []
+    func readLaunchedApplication(processIdentifier pid: Int32) -> LaunchedApplicationRead {
+        launchedApplicationReads.append(pid)
+        guard permission, !unavailableLaunchedProcessIDs.contains(pid), !unresponsiveProcessIDs.contains(pid)
+        else { return .unavailable }
+        if unidentifiedLaunchedProcessIDs.contains(pid) {
+            return windows.contains { $0.processIdentifier == pid && !$0.isHidden && $0.isEligible && !$0.isFloating }
+                ? .needsCompleteInventory : .notReady
+        }
+        let shown = classifyUsingNativeCache(windows.filter {
+            $0.processIdentifier == pid && !offscreenWindowIDs.contains($0.id) && !$0.isHidden
+        })
+        return shown.isEmpty ? .notReady : .windows(shown)
     }
     func cachedVisibleWindows(adding added: [WindowSnapshot]) -> [WindowSnapshot]? {
         guard cachedSnapshotsAvailable else { return nil }

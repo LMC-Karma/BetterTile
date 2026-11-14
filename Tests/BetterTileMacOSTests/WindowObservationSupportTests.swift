@@ -460,3 +460,102 @@ func hiddenApplicationLaunchRequiresPositiveCurrentEvidence(evidence: String) {
     #expect(registry.windowIDs(belongingTo: [current]) == [second])
     #expect(registry.windowIDs(belongingTo: []).isEmpty)
 }
+
+private func lateRecord(_ id: CGWindowID, pid: pid_t = 42, layer: Int = 0, onscreen: Bool,
+                        frame: BTRect = BTRect(x: 0, y: 0, width: 600, height: 400)) -> WindowServerRecord {
+    WindowServerRecord(windowID: id, processIdentifier: pid, layer: layer, frame: frame, isOnscreen: onscreen)
+}
+
+private func lateWindow(_ name: String, pid: Int32 = 42, floating: Bool = false,
+                        frame: BTRect = BTRect(x: 0, y: 0, width: 600, height: 400)) -> WindowSnapshot {
+    WindowSnapshot(id: WindowID(rawValue: name), processIdentifier: pid, frame: frame,
+                   displayID: DisplayID(rawValue: "main"), isFloating: floating)
+}
+
+/// The live late arrival: the sweep's window-server list, read before the
+/// Accessibility reads, has the launched window's record but not on screen. The
+/// targeted re-check after the reads admits it once it is on screen, and keeps
+/// out a first-seen window that stays off screen or sits above the normal layer.
+@Test(.macOSTestApplication) func lateOnScreenRecheckAdmitsAWindowShownDuringTheSweep() {
+    let shown = LateOnScreenRecheck.Candidate(snapshot: lateWindow("shown"), exactWindowID: 701)
+    let stillHidden = LateOnScreenRecheck.Candidate(snapshot: lateWindow("hidden"), exactWindowID: 702)
+    let panel = LateOnScreenRecheck.Candidate(snapshot: lateWindow("panel"), exactWindowID: 703)
+    let reused = LateOnScreenRecheck.Candidate(snapshot: lateWindow("reused"), exactWindowID: 704)
+    let early = WindowServerIndex(records: [lateRecord(701, onscreen: false)])
+    #expect(!early.contains(shown.snapshot, exactWindowID: 701))
+
+    var requested: [Set<CGWindowID>] = []
+    let admitted = LateOnScreenRecheck.admitted([shown, stillHidden, panel, reused]) { ids in
+        requested.append(ids)
+        return WindowServerIndex(records: [lateRecord(701, onscreen: true), lateRecord(702, onscreen: false),
+                                           lateRecord(703, layer: 3, onscreen: true), lateRecord(704, pid: 43, onscreen: true)])
+    }
+    #expect(admitted == [shown.snapshot.id])
+    #expect(requested == [[701, 702, 703, 704]], "One targeted read for every candidate")
+
+    var calls = 0
+    #expect(LateOnScreenRecheck.admitted([]) { _ in calls += 1; return nil }.isEmpty)
+    #expect(calls == 0, "No candidates, no read")
+    #expect(LateOnScreenRecheck.admitted([shown]) { _ in nil }.isEmpty, "A failed read admits nothing")
+}
+
+/// Sol's round-4 sequence, without exact identities: returned window A moves
+/// to the frame of first-seen window B on another Space after the
+/// Accessibility reads, and the window server now shows only A's record, at
+/// B's frame. Neither the re-check nor discovery's read admits B, because
+/// neither admits a window by frame; the next complete sweep's ordinary filter
+/// decides, as on main.
+@Test(.macOSTestApplication) func withoutExactIdentitiesNoWindowIsAdmittedByFrame() {
+    let f1 = BTRect(x: 800, y: 0, width: 400, height: 400)
+    let b = lateWindow("other-space-b", frame: f1)
+    // The window server now: A's only on-screen record, at F1.
+    let current = [lateRecord(900, onscreen: true, frame: f1)]
+    var reads = 0
+    let admitted = LateOnScreenRecheck.admitted([.init(snapshot: b, exactWindowID: nil)]) { _ in
+        reads += 1
+        return WindowServerIndex(records: current)
+    }
+    #expect(admitted.isEmpty, "B is not admitted by A's record")
+    #expect(reads == 0, "Nothing to read without an exact identity")
+
+    let discovery = LaunchedWindowVisibility.classify([b], processIdentifier: 42, exactIDs: [:]) { _ in
+        reads += 1
+        return current
+    }
+    #expect(discovery.shown.isEmpty, "Discovery places nothing it cannot identify")
+    #expect(discovery.hasUnidentifiedWindow, "It asks for a complete inventory instead")
+    #expect(reads == 0)
+}
+
+/// Discovery's own read: exact identities through one targeted read, panels
+/// above the normal layer as floating, and floating verdicts reported as
+/// provisional so the adapter clears them. A floating window without an exact
+/// identity asks for no inventory.
+@Test(.macOSTestApplication) func launchedWindowVisibilityShowsOnlyWindowsWithExactIdentity() {
+    let frame = BTRect(x: 0, y: 0, width: 600, height: 400)
+    let window = lateWindow("launched", frame: frame)
+    let panel = lateWindow("panel", frame: BTRect(x: 10, y: 10, width: 200, height: 100))
+    let building = lateWindow("building", floating: true, frame: BTRect(x: 300, y: 300, width: 500, height: 300))
+
+    let exact = LaunchedWindowVisibility.classify([window, panel, building], processIdentifier: 42,
+        exactIDs: [window.id: 801, panel.id: 802, building.id: 803]) { _ in
+        [lateRecord(801, onscreen: true, frame: frame), lateRecord(802, layer: 3, onscreen: true), lateRecord(803, onscreen: false)]
+    }
+    #expect(exact.shown.map(\.id) == [window.id, panel.id])
+    #expect(exact.shown.first { $0.id == panel.id }?.isFloating == true)
+    #expect(exact.provisionalFloatingIDs == [building.id], "An early floating verdict is provisional")
+    #expect(!exact.hasUnidentifiedWindow)
+
+    let unidentifiedSplash = LaunchedWindowVisibility.classify([building], processIdentifier: 42, exactIDs: [:]) { _ in nil }
+    #expect(unidentifiedSplash.shown.isEmpty && !unidentifiedSplash.hasUnidentifiedWindow)
+}
+
+/// A discovery read registers again the application-level notifications that
+/// failed when the observer was installed, and only those.
+@Test(.macOSTestApplication) func applicationObservationRepairRegistersOnlyMissingNotifications() {
+    let all = ApplicationObservationRepair.applicationNotifications
+    #expect(all == [kAXWindowCreatedNotification, kAXFocusedWindowChangedNotification])
+    #expect(ApplicationObservationRepair.missing(registered: []) == all)
+    #expect(ApplicationObservationRepair.missing(registered: [kAXFocusedWindowChangedNotification]) == [kAXWindowCreatedNotification])
+    #expect(ApplicationObservationRepair.missing(registered: Set(all)).isEmpty)
+}

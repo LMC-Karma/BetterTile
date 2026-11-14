@@ -89,3 +89,45 @@ public struct WindowEventRetryBackoff: Sendable {
         delay = Self.initialDelay
     }
 }
+
+/// When launch discovery reads a launched application again.
+///
+/// A burst covers the measured case: the launch sweep reads the first window
+/// while the window server does not show it yet, and the window shows about
+/// 10–40 ms later. The continuation covers an application that builds its first
+/// window before its observer exists but shows it later, at a cadence that backs
+/// off from four reads a second to one. A window created after the observer
+/// exists announces itself with a creation event and gets its own created-window
+/// arrival; discovery skips its reads while that arrival is pending and goes on
+/// afterwards. The continuation only has to bridge the first seconds of a launch,
+/// and it ends well before the 10 s watchdog. One read asks only the launched
+/// application through Accessibility.
+public enum LaunchDiscoverySchedule {
+    /// The delay before each turn: 7 turns in the first 0.5 s, then 9 turns
+    /// over the next 5.5 s, 16 scheduled turns in a nominal 6 s. Focus-requested
+    /// reads (`focusReadLimit`) come on top.
+    public static let delays: [Duration] = [
+        .milliseconds(10), .milliseconds(15), .milliseconds(25), .milliseconds(50),
+        .milliseconds(100), .milliseconds(150), .milliseconds(150),
+        .milliseconds(250), .milliseconds(250), .milliseconds(500), .milliseconds(500),
+        .milliseconds(500), .milliseconds(750), .milliseconds(750), .seconds(1), .seconds(1),
+    ]
+
+    /// Nil when discovery has had all its turns.
+    public static func delay(beforeTurn turn: Int) -> Duration? {
+        delays.indices.contains(turn) ? delays[turn] : nil
+    }
+
+    /// The nominal time from the launch sweep to the last turn. Each turn's own
+    /// work and main-actor delays add to it; the turn count is the hard bound.
+    public static var bound: Duration { delays.reduce(.zero, +) }
+
+    /// A focus change of the launched application asks for a read outside the
+    /// schedule. Such reads are at least this far apart, so a burst of focus
+    /// events costs one read per interval.
+    public static let focusReadInterval: Duration = .milliseconds(100)
+
+    /// At most this many focus-requested reads per discovery. With the
+    /// scheduled turns, one discovery makes at most 24 reads.
+    public static let focusReadLimit = 8
+}
