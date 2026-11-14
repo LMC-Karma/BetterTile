@@ -32,11 +32,18 @@ extension FakeAppWindowSystem {
     }
 
     @MainActor
-    func join<Result: Sendable>(_ task: Task<Result, Never>?, budget: Duration = .seconds(120)) async -> Result? {
+    func join<Result: Sendable>(_ task: Task<Result, Never>?, budget: Duration = .seconds(120),
+                                reporter: HelperFailureReporter = .issue) async -> Result? {
         guard let task else { return nil }
-        let result = await drive(budget: budget) { await task.value }
-        if case nil = result { task.cancel() }
-        return result
+        return reportingBudgetExpiry(await joinOutcome(task, budget: budget), to: reporter)
+    }
+
+    /// Joins `task` as `join` does, without recording anything. A task that misses its budget is cancelled.
+    @MainActor
+    func joinOutcome<Result: Sendable>(_ task: Task<Result, Never>, budget: Duration = .seconds(120)) async -> DriveOutcome<Result> {
+        let outcome = await driveOutcome(budget: budget) { await task.value }
+        if case .budgetExpired = outcome { task.cancel() }
+        return outcome
     }
 
     /// Stop at this event pass, before a replacement pass or recovery timer runs.
@@ -132,9 +139,20 @@ extension FakeAppWindowSystem {
     @MainActor
     func drive<Result: Sendable>(
         budget: Duration = .seconds(120), stoppingTimeAt checkpoint: ContinuousClock.Instant? = nil,
+        reporter: HelperFailureReporter = .issue,
         _ operation: @escaping @MainActor () async -> Result
     ) async -> Result? {
-        guard manualClock != nil else { return await operation() }
+        reportingBudgetExpiry(await driveOutcome(budget: budget, stoppingTimeAt: checkpoint, operation), to: reporter)
+    }
+
+    /// Drives `operation` as `drive` does, without recording anything. An operation that misses its budget is
+    /// cancelled.
+    @MainActor
+    func driveOutcome<Result: Sendable>(
+        budget: Duration = .seconds(120), stoppingTimeAt checkpoint: ContinuousClock.Instant? = nil,
+        _ operation: @escaping @MainActor () async -> Result
+    ) async -> DriveOutcome<Result> {
+        guard manualClock != nil else { return .finished(await operation()) }
         var completed = false
         let task = Task { @MainActor in
             let result = await operation()
@@ -142,12 +160,22 @@ extension FakeAppWindowSystem {
             return result
         }
         let finished = await waitFor(timeout: budget, stoppingTimeAt: checkpoint) { completed }
-        #expect(finished, "The fixture's operation must finish within its virtual-time budget")
         guard finished else {
             task.cancel()
+            return .budgetExpired
+        }
+        return .finished(await task.value)
+    }
+
+    @MainActor
+    private func reportingBudgetExpiry<Result>(_ outcome: DriveOutcome<Result>, to reporter: HelperFailureReporter) -> Result? {
+        switch outcome {
+        case let .finished(result):
+            return result
+        case .budgetExpired:
+            reporter.record("The fixture's operation must finish within its virtual-time budget", sourceLocation: #_sourceLocation)
             return nil
         }
-        return await task.value
     }
 
     /// Give policy timers the requested interval, without advancing wall time.
@@ -161,6 +189,15 @@ extension FakeAppWindowSystem {
         _ = await drive(stoppingTimeAt: deadline) { try? await manualClock.sleep(until: deadline) }
     }
 }
+
+/// How a driven fixture operation ended.
+enum DriveOutcome<Result> {
+    case finished(Result)
+    /// Virtual time reached the budget, or executor progress stopped, before the operation finished.
+    case budgetExpired
+}
+
+extension DriveOutcome: Equatable where Result: Equatable {}
 
 @MainActor
 private func waitForLiveWindowState(timeout: Duration, _ condition: () -> Bool) async -> Bool {

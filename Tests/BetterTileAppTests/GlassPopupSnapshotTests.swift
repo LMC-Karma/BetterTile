@@ -2,6 +2,7 @@ import AppKit
 import BetterTileCore
 import CoreImage
 import SwiftUI
+import BetterTileTestSupport
 import Testing
 @testable import BetterTileApp
 @testable import BetterTileMacOS
@@ -88,21 +89,28 @@ import Testing
         defer { window.close() }
         let root = ChangingDrawingView(frame: NSRect(x: 0, y: 0, width: 120, height: 80))
         window.contentView = root
-        let explained = MatchedIssue()
         let expected = contentAppears ? "the drawing was still changing at the last poll" : "the expected content never appeared"
-        try await withKnownIssue("readiness gives up") {
-            try await GlassPopupScene.ready(root, timeout: .milliseconds(100)) {
-                root.shade += 1
-                root.needsDisplay = true
-                return contentAppears
-            }
-        } matching: { issue in
-            if issue.error is CancellationError { return true }
-            let text = String(describing: issue)
-            if text.contains("Not ready after 6 of 6 polls: \(expected)") { explained.seen = true; return true }
-            return false
+        func neverReady() -> Bool {
+            root.shade += 1
+            root.needsDisplay = true
+            return contentAppears
         }
-        #expect(explained.seen)
+        let failure = try #require(await GlassPopupScene.readinessFailure(root, timeout: .milliseconds(100), neverReady),
+                                   "readiness gives up")
+        #expect(failure.summary.hasPrefix("Not ready after 6 of 6 polls: \(expected)."), "\(failure.summary)")
+        #expect(failure.message.hasPrefix(failure.summary))
+
+        // `ready` records that explanation and stops its caller.
+        let failures = HelperFailureLog()
+        var continued = false
+        await #expect(throws: CancellationError.self) {
+            try await GlassPopupScene.ready(root, timeout: .milliseconds(100), reporter: .collecting(into: failures), neverReady)
+            continued = true
+        }
+        #expect(!continued)
+        #expect(failures.messages.count == 1)
+        #expect(failures.messages.first?.hasPrefix("Not ready after 6 of 6 polls: \(expected).") == true,
+                "\(failures.messages)")
     }
 
     @Test(arguments: variants)
@@ -452,7 +460,26 @@ import Testing
     /// The explicit content view excludes native glass, whose independent redraws do not
     /// describe SwiftUI readiness. Its geometry in the root must settle as well.
     static func ready(_ root: NSView, showing text: String? = nil, rowsDrawn: Double = 0, in content: NSView? = nil,
-                              timeout: Duration = .seconds(5), _ condition: () -> Bool = { true }) async throws {
+                      timeout: Duration = .seconds(5), reporter: HelperFailureReporter = .issue,
+                      _ condition: () -> Bool = { true }) async throws {
+        guard let failure = await readinessFailure(root, showing: text, rowsDrawn: rowsDrawn, in: content,
+                                                   timeout: timeout, condition) else { return }
+        reporter.record(Comment(rawValue: failure.message), sourceLocation: #_sourceLocation)
+        throw CancellationError()
+    }
+
+    /// Why readiness gave up.
+    struct ReadinessFailure {
+        /// The first sentence of `message`: the polls it used of its budget and why it stopped.
+        var summary: String
+        /// The whole explanation that `ready` records.
+        var message: String
+    }
+
+    /// Waits as `ready` does, without recording anything. Returns nil when the scene is ready, and otherwise
+    /// why readiness gave up.
+    static func readinessFailure(_ root: NSView, showing text: String? = nil, rowsDrawn: Double = 0, in content: NSView? = nil,
+                                 timeout: Duration = .seconds(5), _ condition: () -> Bool = { true }) async -> ReadinessFailure? {
         var previous: GlassPixels?
         var previousGeometry: [NSRect]?
         var drawn = 0.0
@@ -478,7 +505,7 @@ import Testing
             defer { previous = pixels; previousGeometry = geometry }
             return pixels == previous && previousGeometry == geometry && drawn >= rowsDrawn
         }
-        if settled { return }
+        if settled { return nil }
         let budget = Int((timeout / .milliseconds(20)).rounded(.up)) + 1
         let verdict = drawings == 0 ? "the expected content never appeared"
             : lastUnmet == polls ? "the expected content was missing at the last poll"
@@ -489,8 +516,7 @@ import Testing
         let summary = "Not ready after \(polls) of \(budget) polls: \(verdict). Compared \(drawings) drawings; "
             + "content last unmet at poll \(unmet), drawing last changed at poll \(changed)."
         let frames = descendants(root).filter { $0 is OverlayGlassView || $0 is NSGlassEffectView || $0.subviews.contains(where: { $0 === content }) }.map { "\(type(of: $0)): \($0.frame), bounds \($0.bounds), auto \($0.translatesAutoresizingMaskIntoConstraints)" }
-        Issue.record("\(summary) Expected \(text ?? "a stable picture"), \(rowsDrawn) drawn, last \(drawn); root \(root.frame), content \(String(describing: content?.frame)); frames \(frames); showing \(texts(in: root).filter { !$0.isEmpty })")
-        throw CancellationError()
+        return ReadinessFailure(summary: summary, message: "\(summary) Expected \(text ?? "a stable picture"), \(rowsDrawn) drawn, last \(drawn); root \(root.frame), content \(String(describing: content?.frame)); frames \(frames); showing \(texts(in: root).filter { !$0.isEmpty })")
     }
 
     /// The view's own drawing, as AppKit caches it. Native glass draws its offscreen fallback here.
@@ -745,7 +771,3 @@ private final class ChangingDrawingView: NSView {
     }
 }
 
-/// Records, from the known-issue matcher, that the expected explanation appeared.
-private final class MatchedIssue: @unchecked Sendable {
-    var seen = false
-}

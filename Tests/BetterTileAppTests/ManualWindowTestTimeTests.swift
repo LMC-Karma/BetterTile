@@ -1,4 +1,5 @@
 import BetterTileCore
+import BetterTileTestSupport
 import Testing
 import Dispatch
 import Synchronization
@@ -15,11 +16,26 @@ struct ManualWindowTestTimeTests {
         }
         defer { task.cancel() }
         try #require(await clock.waitForSleepers(count: 1, timeout: .seconds(45)))
-        var result: Int?
-        await withKnownIssue("The virtual-time budget must report missing progress") {
-            result = await system.join(task, budget: .milliseconds(5))
-        }
+        let failures = HelperFailureLog()
+        let result = await system.join(task, budget: .milliseconds(5), reporter: .collecting(into: failures))
         #expect(result == nil)
+        #expect(failures.messages == [budgetExpiryMessage], "The virtual-time budget must report missing progress")
+        #expect(failures.reported.map(\.sourceLocation.fileID) == ["BetterTileAppTests/ManualWindowTestTime.swift"],
+                "The report keeps pointing at the helper, as its #expect did")
+        #expect(task.isCancelled)
+        #expect(clock.pendingSleepCount == 0)
+    }
+
+    @Test func aJoinOutcomeSaysTheBudgetExpired() async throws {
+        let system = makeManualWindowSystem()
+        let clock = try #require(system.manualClock)
+        let task = Task {
+            try? await clock.sleep(for: .seconds(1_000))
+            return 42
+        }
+        defer { task.cancel() }
+        try #require(await clock.waitForSleepers(count: 1, timeout: .seconds(45)))
+        #expect(await system.joinOutcome(task, budget: .milliseconds(5)) == .budgetExpired)
         #expect(task.isCancelled)
         #expect(clock.pendingSleepCount == 0)
     }
@@ -28,18 +44,26 @@ struct ManualWindowTestTimeTests {
         let system = makeManualWindowSystem()
         let clock = try #require(system.manualClock)
         var started = false
-        var result: Int?
-        await withKnownIssue("The virtual-time budget must report missing progress") {
-            result = await system.drive(budget: .milliseconds(5)) {
-                started = true
-                try? await clock.sleep(for: .seconds(1_000))
-                return 42
-            }
+        let outcome = await system.driveOutcome(budget: .milliseconds(5)) {
+            started = true
+            try? await clock.sleep(for: .seconds(1_000))
+            return 42
         }
-        #expect(result == nil)
+        #expect(outcome == .budgetExpired)
         #expect(started)
         #expect(clock.pendingSleepCount == 0)
+
+        let failures = HelperFailureLog()
+        let result = await system.drive(budget: .milliseconds(5), reporter: .collecting(into: failures)) {
+            try? await clock.sleep(for: .seconds(1_000))
+            return 42
+        }
+        #expect(result == nil)
+        #expect(failures.messages == [budgetExpiryMessage], "The virtual-time budget must report missing progress")
+        #expect(clock.pendingSleepCount == 0)
     }
+
+    private let budgetExpiryMessage = "The fixture's operation must finish within its virtual-time budget"
 }
 
 @Test(.appTestApplication, .timeLimit(.minutes(1))) @MainActor

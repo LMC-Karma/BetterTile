@@ -1,5 +1,6 @@
 import AppKit
 import BetterTileCore
+import BetterTileTestSupport
 import Testing
 @testable import BetterTileApp
 @testable import BetterTileMacOS
@@ -20,13 +21,20 @@ import Testing
         return proposed.minX >= 500_000 ? proposed : frame(proposed)
     }
 
-    static func check(_ window: NSWindow, sourceLocation: SourceLocation = #_sourceLocation) {
+    static func check(_ window: NSWindow, sourceLocation: SourceLocation = #_sourceLocation,
+                      reporter: HelperFailureReporter = .issue) {
         // Read back after AppKit ordering: titled windows can otherwise be
         // constrained back onto a display even with an offscreen input frame.
-        #expect(window.frame.isEmpty || !NSScreen.screens.contains { $0.frame.intersects(window.frame) },
-                "Test window \(type(of: window)) intersects a display: \(window.frame)",
-                sourceLocation: sourceLocation)
+        if let violation = displayViolation(of: window) {
+            reporter.record(Comment(rawValue: violation), sourceLocation: sourceLocation)
+        }
         TestWindowAudit.sample()
+    }
+
+    /// The failure `check` reports for `window`'s actual frame, or nil when the window stays off every display.
+    static func displayViolation(of window: NSWindow) -> String? {
+        guard !window.frame.isEmpty, NSScreen.screens.contains(where: { $0.frame.intersects(window.frame) }) else { return nil }
+        return "Test window \(type(of: window)) intersects a display: \(window.frame)"
     }
 
     static func panel() -> NSPanel {

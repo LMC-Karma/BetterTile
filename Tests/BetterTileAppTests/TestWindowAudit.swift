@@ -1,4 +1,5 @@
 import AppKit
+import BetterTileTestSupport
 import Testing
 
 /// Samples only windows owned by this test process. Enable JSON evidence with
@@ -16,15 +17,14 @@ import Testing
     }
 
     static func sample(displays suppliedDisplays: [NSRect]? = nil,
-                       enforceOffscreen: Bool = !OffscreenTestWindows.localWindowTestsEnabled) {
+                       enforceOffscreen: Bool = !OffscreenTestWindows.localWindowTestsEnabled,
+                       reporter: HelperFailureReporter = .issue) {
         guard let app = NSApp else { return }
         let actualDisplays = NSScreen.screens.map(\.frame)
-        let displays = suppliedDisplays ?? actualDisplays
-        let visible = app.windows.filter(\.isVisible)
-        for window in visible where enforceOffscreen {
-            if !window.frame.isEmpty, displays.contains(where: { $0.intersects(window.frame) }),
-               reported.insert(ObjectIdentifier(window)).inserted {
-                Issue.record("Visible test window \(type(of: window)) intersects a display: \(window.frame)")
+        if enforceOffscreen {
+            for violation in displayViolations(on: suppliedDisplays ?? actualDisplays)
+            where reported.insert(ObjectIdentifier(violation.window)).inserted {
+                reporter.record(Comment(rawValue: violation.message), sourceLocation: #_sourceLocation)
             }
         }
         guard let path = ProcessInfo.processInfo.environment["BETTERTILE_TEST_WINDOW_AUDIT"] else { return }
@@ -47,6 +47,16 @@ import Testing
             "windows": Array(records.values)
         ], options: [.prettyPrinted, .sortedKeys]) {
             try? data.write(to: URL(filePath: path), options: .atomic)
+        }
+    }
+
+    /// The visible windows of this process that intersect `displays`, each with the failure `sample` reports for it.
+    /// This reads state only: it does not record an Issue or mark a window as reported.
+    static func displayViolations(on displays: [NSRect]) -> [(window: NSWindow, message: String)] {
+        guard let app = NSApp else { return [] }
+        return app.windows.filter(\.isVisible).compactMap { window in
+            guard !window.frame.isEmpty, displays.contains(where: { $0.intersects(window.frame) }) else { return nil }
+            return (window, "Visible test window \(type(of: window)) intersects a display: \(window.frame)")
         }
     }
 }
