@@ -1,5 +1,6 @@
 import AppKit
 import BetterTileCore
+import BetterTileTestSupport
 import Testing
 @testable import BetterTileApp
 @testable import BetterTileMacOS
@@ -64,9 +65,12 @@ import Testing
     panel.orderFrontForTesting()
     #expect(panel.isVisible)
     #expect(!NSScreen.screens.contains { $0.frame.intersects(panel.frame) })
-    withKnownIssue("The suite sampler must reject a panel intersecting its injected display") {
-        TestWindowAudit.sample(displays: [panel.frame], enforceOffscreen: true)
-    }
+    let message = "Visible test window NSPanel intersects a display: \(panel.frame)"
+    #expect(TestWindowAudit.displayViolations(on: [panel.frame]).contains { $0.window === panel && $0.message == message },
+            "The suite sampler must reject a panel intersecting its injected display")
+    let failures = HelperFailureLog()
+    TestWindowAudit.sample(displays: [panel.frame], enforceOffscreen: true, reporter: .collecting(into: failures))
+    #expect(failures.messages.contains(message), "The sampler must report the panel it rejects")
 }
 
 @Test(.appTestApplication) @MainActor func simulatedVisiblePanelsAlsoKeepTheirFramesOffscreen() throws {
@@ -93,9 +97,14 @@ import Testing
                           styleMask: [.borderless], backing: .buffered, defer: true)
     window.isReleasedWhenClosed = false
     defer { window.close() }
-    withKnownIssue("The guard must reject the deliberately intersecting frame") {
-        OffscreenTestWindows.check(window)
-    }
+    let message = "Test window NSWindow intersects a display: \(window.frame)"
+    #expect(OffscreenTestWindows.displayViolation(of: window) == message,
+            "The guard must reject the deliberately intersecting frame")
+    let failures = HelperFailureLog()
+    let location = SourceLocation(fileID: "Fixture/Caller.swift", filePath: "/Fixture/Caller.swift", line: 7, column: 3)
+    OffscreenTestWindows.check(window, sourceLocation: location, reporter: .collecting(into: failures))
+    #expect(failures.reported == [HelperFailureLog.Entry(message: message, sourceLocation: location)],
+            "The guard reports the rejection at its caller's location")
 }
 
 @Test(.appTestApplication) @MainActor func productionModelPanelFactoriesKeepTheirDefaults() throws {

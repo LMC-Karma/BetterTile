@@ -48,15 +48,21 @@ private enum SettingsUILease {
     static let shared = AsyncTestLease()
 }
 
-/// Drive layout until the observed UI condition holds. The budget counts layout opportunities, one per 20 ms step:
-/// another main-actor test can stall this task without giving SwiftUI a chance to update. Each poll lays out and
-/// draws `view`, though, and on a loaded machine a poll can take far longer than its step. The wait therefore also
-/// ends once `timeout` has passed in wall time and it has had at least `minimumSettingsUIPolls` opportunities, so a
-/// condition that never holds cannot keep the main actor busy, and the tests queued behind it, for many times its
-/// timeout.
-@MainActor func waitForSettingsUI(_ description: String, in view: NSView,
-                                 timeout: Duration = .seconds(30),
-                                 until ready: () -> Bool) async throws {
+/// How a Settings UI wait ended.
+enum SettingsUIWaitOutcome: Equatable {
+    case settled
+    /// The condition never held. `polls` counts every poll, including the final one.
+    case exhausted(polls: Int)
+}
+
+/// Drive layout until the observed UI condition holds, and return how the wait ended without recording anything.
+/// The budget counts layout opportunities, one per 20 ms step: another main-actor test can stall this task without
+/// giving SwiftUI a chance to update. Each poll lays out and draws `view`, though, and on a loaded machine a poll can
+/// take far longer than its step. The wait therefore also ends once `timeout` has passed in wall time and it has had
+/// at least `minimumSettingsUIPolls` opportunities, so a condition that never holds cannot keep the main actor busy,
+/// and the tests queued behind it, for many times its timeout.
+@MainActor func settleSettingsUI(in view: NSView, timeout: Duration = .seconds(30),
+                                 until ready: () -> Bool) async -> SettingsUIWaitOutcome {
     func poll() -> Bool {
         view.layoutSubtreeIfNeeded()
         view.displayIfNeeded()
@@ -65,16 +71,23 @@ private enum SettingsUILease {
     let step = Duration.milliseconds(20)
     let wall = ContinuousClock() // real-time: bounds the wall time of a wait whose polls can be slow on a loaded machine
     let deadline = wall.now.advanced(by: timeout)
-    var settled = false
     var polls = 0
     for _ in 0..<Int((timeout / step).rounded(.up)) {
         polls += 1
-        if poll() { settled = true; break }
+        if poll() { return .settled }
         if polls >= minimumSettingsUIPolls, wall.now >= deadline { break }
         try? await BetterTileClock.live.sleep(for: step)
     }
-    if !settled { settled = poll() }
-    try #require(settled, Comment(rawValue: "Exhausted layout opportunities waiting for \(description)"))
+    return poll() ? .settled : .exhausted(polls: polls + 1)
+}
+
+/// Waits as `settleSettingsUI` does, and fails the test, stopping the caller, when the condition never holds.
+@MainActor func waitForSettingsUI(_ description: String, in view: NSView,
+                                 timeout: Duration = .seconds(30), reporter: HelperFailureReporter = .issue,
+                                 until ready: () -> Bool) async throws {
+    guard case .exhausted = await settleSettingsUI(in: view, timeout: timeout, until: ready) else { return }
+    try reporter.require(Comment(rawValue: "Exhausted layout opportunities waiting for \(description)"),
+                         sourceLocation: #_sourceLocation)
 }
 
 /// Opportunities a Settings UI wait always gets, even after its wall-clock deadline: a main-actor stall in another
@@ -118,19 +131,33 @@ let minimumSettingsUIPolls = 5
     #expect(passes == 2)
 }
 
-@Test(.appTestApplication, .settingsUI) @MainActor func settingsUIWaitEndsAtItsWallClockDeadlineWhenPollsAreSlow() async throws {
+@Test(.appTestApplication, .settingsUI) @MainActor func settingsUIWaitEndsAtItsWallClockDeadlineWhenPollsAreSlow() async {
     let view = NSView(frame: NSRect(x: 0, y: 0, width: 20, height: 20))
     var polls = 0
     // Ten 20 ms opportunities, but each poll takes 50 ms and the condition never holds.
-    await withKnownIssue("The condition never holds, so the wait reports that it exhausted its opportunities") {
-        try await waitForSettingsUI("a condition that never holds", in: view, timeout: .milliseconds(200)) {
-            polls += 1
-            Thread.sleep(forTimeInterval: 0.05) // real-time: makes each poll slower than its step, as on a loaded machine
-            return false
-        }
+    let outcome = await settleSettingsUI(in: view, timeout: .milliseconds(200)) {
+        polls += 1
+        Thread.sleep(forTimeInterval: 0.05) // real-time: makes each poll slower than its step, as on a loaded machine
+        return false
     }
+    #expect(outcome == .exhausted(polls: polls), "The condition never holds, so the wait reports that it exhausted its opportunities")
     // Counting opportunities alone would use all ten. The wall-clock deadline ends the wait after the minimum.
     #expect(polls >= minimumSettingsUIPolls && polls < 10, "polls: \(polls)")
+}
+
+@Test(.appTestApplication, .settingsUI) @MainActor func settingsUIWaitFailsAndStopsItsCallerWhenTheConditionNeverHolds() async {
+    let view = NSView(frame: NSRect(x: 0, y: 0, width: 20, height: 20))
+    let failures = HelperFailureLog()
+    var continued = false
+    await #expect(throws: HelperFailureLog.Stopped.self) {
+        try await waitForSettingsUI("a condition that never holds", in: view, timeout: .milliseconds(40),
+                                    reporter: .collecting(into: failures)) { false }
+        continued = true
+    }
+    #expect(!continued)
+    #expect(failures.messages == ["Exhausted layout opportunities waiting for a condition that never holds"])
+    #expect(failures.reported.map(\.sourceLocation.fileID) == ["BetterTileAppTests/SettingsUITestSupport.swift"],
+            "Like the #require it replaces, the failure points at the helper")
 }
 
 /// A control that tracks a press in its own event loop until the button is released, as a switch can.
