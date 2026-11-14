@@ -22,9 +22,9 @@ import Testing
 
     func milliseconds(_ runs: Int, _ body: () throws -> Void) rethrows -> [Double] {
         try (0..<runs).map { _ in
-            let start = DispatchTime.now().uptimeNanoseconds
+            let start = DispatchTime.now().uptimeNanoseconds // real-time: opt-in benchmark measures elapsed main-thread time
             try body()
-            return Double(DispatchTime.now().uptimeNanoseconds - start) / 1e6
+            return Double(DispatchTime.now().uptimeNanoseconds - start) / 1e6 // real-time: opt-in benchmark measures elapsed main-thread time
         }
     }
     func median(_ values: [Double]) -> Double { values.sorted()[values.count / 2] }

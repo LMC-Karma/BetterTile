@@ -3479,7 +3479,7 @@ final class BetterTileModel {
         sessionStore.sessions.values.contains { $0.mode == .bento || $0.mode == .tabbed }
     }
 
-    private static func isOrdinary(_ window: WindowSnapshot) -> Bool { window.isEligible && !window.isFloating }
+    private nonisolated static func isOrdinary(_ window: WindowSnapshot) -> Bool { window.isEligible && !window.isFloating }
 
     private func startLaunchDiscovery(_ pid: Int32) {
         guard !isShutDown, hasAccessibilityPermission, placesNewWindows,
@@ -3516,9 +3516,9 @@ final class BetterTileModel {
     private func requestLaunchDiscoveryFocusRead(_ pid: Int32) {
         guard var discovery = launchDiscoveries[pid], discovery.focusTask == nil,
               discovery.focusReads < LaunchDiscoverySchedule.focusReadLimit else { return }
+        let clock = clock
         let earliest = discovery.lastFocusRead.map { $0.advanced(by: LaunchDiscoverySchedule.focusReadInterval) }
         let delay = earliest.map { max(.zero, clock.now.duration(to: $0)) } ?? .zero
-        let clock = clock
         discovery.focusTask = Task { @MainActor [weak self] in
             if delay > .zero { try? await clock.sleep(for: delay) } else { await Task.yield() }
             guard !Task.isCancelled, let self, self.launchDiscoveries[pid] != nil else { return }
@@ -3581,7 +3581,7 @@ final class BetterTileModel {
         case let .windows(windows):
             // Decided by each window's current state: a window first read as
             // floating or not yet eligible counts once it is ordinary.
-            let ordinary = windows.filter(Self.isOrdinary)
+            let ordinary = windows.filter { Self.isOrdinary($0) }
             guard !ordinary.isEmpty else { return true }
             placeDiscoveredWindows(ordinary)
             return launchDiscoveries[pid] != nil
