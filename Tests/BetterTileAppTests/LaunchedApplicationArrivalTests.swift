@@ -281,7 +281,7 @@ struct LaunchedApplicationArrivalTests {
 
     /// Launch, then a token-bearing creation at 0.4 s whose geometry is not
     /// complete until 0.65 s. The creation keeps its own token, its own 0.5 s
-    /// deadline and the targeted read, as on main.
+    /// deadline and the targeted read, as without launch discovery.
     @Test(arguments: [LayoutMode.bento, .tabbed])
     func creationDuringDiscoveryKeepsItsOwnReadinessDeadline(mode: LayoutMode) async throws {
         let (system, model) = try await fixture(mode)
@@ -302,7 +302,7 @@ struct LaunchedApplicationArrivalTests {
         system.notReadyReads[token] = 0
         system.offscreenWindowIDs.remove(id)
         await run(to: 1.2, from: &now, system, clock) { isPlaced(id, system, model) }
-        #expect(isPlaced(id, system, model), "Placed by the creation's own readiness interval, as on main")
+        #expect(isPlaced(id, system, model), "Placed by the creation's own readiness interval")
         #expect(now <= 0.9, "Placed at \(now) s, inside the creation's deadline")
         #expect(system.createdReadCount > createdReads, "The creation used its targeted read")
         try await waitForWindowEventsToDrain(model, system)
@@ -480,7 +480,7 @@ struct LaunchedApplicationArrivalTests {
 
     /// Without exact identities, discovery's own read places nothing. A missed
     /// first window is found by the complete inventory that the next scheduled
-    /// turn asks for, where main's ordinary filter decides it.
+    /// turn asks for, where the sweep's frame filter decides it.
     @Test(arguments: [LayoutMode.bento, .tabbed])
     func withoutExactIdentitiesAMissedFirstWindowIsPlacedByACompleteInventory(mode: LayoutMode) async throws {
         let (system, model) = try await fixture(mode)
@@ -503,10 +503,11 @@ struct LaunchedApplicationArrivalTests {
         #expect(system.launchedApplicationReads.count <= 2)
     }
 
-    /// The bound without exact identities: a first window that main's filter
-    /// still rejects causes at most one complete inventory per scheduled turn
-    /// (16 for one launch), none for focus-requested reads, and none after
-    /// discovery ends.
+    /// The bound without exact identities: a first window that the sweep's
+    /// frame filter still rejects causes at most one complete inventory per
+    /// scheduled turn (16 for one launch) and none for focus-requested reads.
+    /// The last request's pass may run just after discovery ends; once it has
+    /// drained, nothing more runs.
     @Test(arguments: [LayoutMode.bento, .tabbed])
     func withoutExactIdentitiesDiscoveryCausesAtMostOneInventoryPerScheduledTurn(mode: LayoutMode) async throws {
         let (system, model) = try await fixture(mode)
@@ -530,7 +531,7 @@ struct LaunchedApplicationArrivalTests {
         #expect(inventories >= 1)
         let sweeps = system.completeSweepCount
         await system.advance(by: .seconds(20))
-        #expect(system.completeSweepCount == sweeps, "Nothing after discovery ends: \(system.completeSweepCount - sweeps) more")
+        #expect(system.completeSweepCount == sweeps, "Nothing once the queued pass drained: \(system.completeSweepCount - sweeps) more")
     }
 
     /// The same while an application is held as unresponsive.

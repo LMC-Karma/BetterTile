@@ -734,7 +734,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         }
         for id in visibility.provisionalFloatingIDs { metadata.popupVerdicts[id] = nil }
         let shown = visibility.shown
-        // Without an exact identity, the complete inventory's ordinary filter decides, as on main.
+        // Without an exact identity, the complete inventory's frame filter decides.
         let unresolved: LaunchedApplicationRead = visibility.hasUnidentifiedWindow ? .needsCompleteInventory : .notReady
         guard shown.contains(where: { $0.isEligible && !$0.isFloating }) else { return unresolved }
         let classified = refreshNativeDesktopObservation()?.windowsOnCurrentSpaces(shown) ?? shown

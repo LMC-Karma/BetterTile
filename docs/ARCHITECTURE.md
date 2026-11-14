@@ -659,20 +659,21 @@ readable but not on screen in that list. The sweep therefore checks windows
 that it sees for the first time once more after the Accessibility reads
 (`LateOnScreenRecheck`), with one targeted window-server read of their exact
 IDs. A window without an exact ID is never admitted by this check; the next
-complete sweep's ordinary filter decides it, as on main. If the launch sweep still returns
-no ordinary window of a regular, visible, launched application, and a display
+complete sweep's frame filter decides it. If the launch sweep still returns no
+ordinary window of a regular, visible, launched application, and a display
 shows Adaptive or Tabbed, launch discovery reads that one application
 (`LaunchedApplicationReading`, `LaunchedWindowVisibility`): its window list,
 one targeted window-server read of their exact IDs, and its Space membership.
 It never takes a complete inventory itself, and it never places a window that
 it cannot identify by exact ID. Without exact IDs (private APIs disabled, or a
 failed ID call), a scheduled turn that reads an ordinary window of the
-application asks for one complete inventory instead, at the arrival delay or
-the active backoff, where main's ordinary filter decides it. Focus-requested
-reads never ask for one, so one launch causes at most 16 such inventories, one
-per scheduled turn, and none after discovery ends. With exact IDs nothing of
-this applies. An early floating
-verdict is provisional, as for a created window's read. Turns follow
+application hands it to a complete inventory instead, at the arrival delay or
+the active backoff, where the sweep's frame filter decides it. Focus-requested
+reads never hand off, so one launch makes at most 16 such handoff requests,
+one per scheduled turn, and none after discovery ends. A pass that the last
+request queued, and the ordinary retries of a failed inventory, can still run
+after that. With exact IDs none of this applies. An early floating verdict is
+provisional, as for a created window's read. Turns follow
 `LaunchDiscoverySchedule`: 7 in the first 0.5 s, then 9 more that back off to
 one a second, 16 in all over about 6 s. A focus change of that application
 asks for an extra read; these are coalesced, at least 100 ms apart and at most

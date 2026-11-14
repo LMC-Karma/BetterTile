@@ -290,22 +290,22 @@ struct WindowServerIndex {
 /// one targeted read of their exact identities. Only windows that the sweep
 /// sees for the first time qualify, so a window that stays off screen (on
 /// another Space, or a background tab) costs one extra check in its life, not
-/// one in every sweep. A window without an exact identity is never admitted
-/// here: the ordinary filter of the next complete sweep decides it, as on main.
+/// one in every sweep. A window without an exact identity cannot be a
+/// candidate: the frame filter of the next complete sweep decides it.
 enum LateOnScreenRecheck {
     struct Candidate: Equatable {
         var snapshot: WindowSnapshot
-        /// Nil without the exact-identity capability; such a candidate is not admitted.
-        var exactWindowID: CGWindowID?
+        var exactWindowID: CGWindowID
     }
 
     /// The candidates whose exact identity the targeted read shows on screen at
     /// the normal layer, for their own process. `read` runs at most once, and
-    /// only when a candidate has an exact identity.
+    /// not at all without candidates.
     static func admitted(_ candidates: [Candidate], read: (Set<CGWindowID>) -> WindowServerIndex?) -> Set<WindowID> {
-        let exact = candidates.compactMap { candidate in candidate.exactWindowID.map { (candidate.snapshot, $0) } }
-        guard !exact.isEmpty, let index = read(Set(exact.map(\.1))) else { return [] }
-        return Set(exact.filter { index.isOnScreen($0.1, processIdentifier: $0.0.processIdentifier) }.map(\.0.id))
+        guard !candidates.isEmpty, let index = read(Set(candidates.map(\.exactWindowID))) else { return [] }
+        return Set(candidates.filter {
+            index.isOnScreen($0.exactWindowID, processIdentifier: $0.snapshot.processIdentifier)
+        }.map(\.snapshot.id))
     }
 }
 
@@ -314,8 +314,7 @@ enum LateOnScreenRecheck {
 /// identities. A window above the normal layer is shown as floating, like the
 /// complete inventory classifies it. A window without an exact identity is
 /// never shown by this read; an ordinary one is reported so that discovery
-/// hands it to a complete inventory, whose ordinary filter decides it as on
-/// main. A floating verdict this early is provisional: the window can still be
+/// hands it to a complete inventory, whose frame filter decides it. A floating verdict this early is provisional: the window can still be
 /// building its subrole and buttons, so its cached popup verdict is cleared,
 /// as a created window's read does.
 enum LaunchedWindowVisibility {

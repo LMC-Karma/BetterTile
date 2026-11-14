@@ -503,15 +503,16 @@ private func lateWindow(_ name: String, pid: Int32 = 42, floating: Bool = false,
 /// to the frame of first-seen window B on another Space after the
 /// Accessibility reads, and the window server now shows only A's record, at
 /// B's frame. Neither the re-check nor discovery's read admits B, because
-/// neither admits a window by frame; the next complete sweep's ordinary filter
-/// decides, as on main.
+/// neither admits a window by frame; the next complete sweep's frame filter
+/// decides it. B cannot be a re-check candidate at all, since a candidate needs
+/// an exact identity; with no candidates the re-check reads and admits nothing.
 @Test(.macOSTestApplication) func withoutExactIdentitiesNoWindowIsAdmittedByFrame() {
     let f1 = BTRect(x: 800, y: 0, width: 400, height: 400)
     let b = lateWindow("other-space-b", frame: f1)
     // The window server now: A's only on-screen record, at F1.
     let current = [lateRecord(900, onscreen: true, frame: f1)]
     var reads = 0
-    let admitted = LateOnScreenRecheck.admitted([.init(snapshot: b, exactWindowID: nil)]) { _ in
+    let admitted = LateOnScreenRecheck.admitted([]) { _ in
         reads += 1
         return WindowServerIndex(records: current)
     }

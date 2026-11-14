@@ -3575,7 +3575,7 @@ final class BetterTileModel {
             return true
         case .needsCompleteInventory:
             // Without an exact identity the read places nothing. The inventory's ordinary
-            // filter decides, as on main, and ends discovery when it sees the window.
+            // filter decides, and ends discovery when it sees the window.
             if isScheduled { requestCompleteInventoryForDiscovery() }
             return true
         case let .windows(windows):

@@ -350,7 +350,7 @@ public enum LaunchedApplicationRead: Sendable, Equatable {
     /// The application answers, but shows no window on a current Space yet.
     case notReady
     /// The application has an ordinary window that this read cannot identify
-    /// by exact identity. A complete inventory decides it, as on main.
+    /// by exact identity. A complete inventory's frame filter decides it.
     case needsCompleteInventory
     /// The application quit, is not one that BetterTile manages (not a regular
     /// application, hidden, or BetterTile itself), is held as unresponsive, or
