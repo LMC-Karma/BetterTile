@@ -25,6 +25,10 @@ struct LaunchedApplicationArrivalTests {
             frame: BTRect(x: 100, y: 100, width: 600, height: 400), displayID: system.mainDisplay.id))
         system.focusedID = system.windows[0].id
         let model = makeModel(system: system)
+        // Tabbed's own timers, such as the focus refresh after a focus event,
+        // run on the manual clock too. On the live clock, a slow runner let
+        // those timers fire between steps and add inventories to the counts.
+        model.tabbedClock = system.clock
         model.configuration.singleWindowPlacement = .maximize
         model.setActiveMode(mode)
         try #require(await system.waitFor { model.settlementTasks.isEmpty && (mode != .tabbed || model.activeTabbedState != nil) })
@@ -508,6 +512,12 @@ struct LaunchedApplicationArrivalTests {
     /// scheduled turn (16 for one launch) and none for focus-requested reads.
     /// The last request's pass may run just after discovery ends; once it has
     /// drained, nothing more runs.
+    ///
+    /// In Tabbed, each focus event also starts Tabbed's own focus refresh. That
+    /// refresh is not discovery's and takes its own inventory. It waits 80 ms of
+    /// policy time, so the next event, 50 ms later, replaces it; only the
+    /// refresh after the last event runs. The test counts that one apart.
+    /// Discovery causes the same inventories in Adaptive and Tabbed.
     @Test(arguments: [LayoutMode.bento, .tabbed])
     func withoutExactIdentitiesDiscoveryCausesAtMostOneInventoryPerScheduledTurn(mode: LayoutMode) async throws {
         let (system, model) = try await fixture(mode)
@@ -529,6 +539,12 @@ struct LaunchedApplicationArrivalTests {
         let inventories = system.completeSweepCount - sweepsAfterLaunch
         #expect(inventories <= LaunchDiscoverySchedule.delays.count, "\(inventories) complete inventories for one launch")
         #expect(inventories >= 1)
+        if mode == .tabbed {
+            #expect(model.tabbedNeedsFocusRefresh, "Tabbed's refresh for the last focus event is still waiting")
+            let beforeRefresh = system.completeSweepCount
+            try #require(await system.waitFor { !model.tabbedNeedsFocusRefresh })
+            #expect(system.completeSweepCount - beforeRefresh == 1, "Tabbed's focus refresh takes one inventory of its own")
+        }
         let sweeps = system.completeSweepCount
         await system.advance(by: .seconds(20))
         #expect(system.completeSweepCount == sweeps, "Nothing once the queued pass drained: \(system.completeSweepCount - sweeps) more")
